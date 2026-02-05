@@ -2,7 +2,11 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/gofixpoint/wisp/internal/mount"
+	"github.com/gofixpoint/wisp/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -22,9 +26,35 @@ Modes:
   rw      - Read-write access; writes go directly to source
   overlay - Read-write access; writes do not affect source`,
 	Args: cobra.ExactArgs(2),
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		src := args[0]
+		target := args[1]
 		mode, _ := cmd.Flags().GetString("mode")
-		fmt.Printf("mount: src=%s target=%s mode=%s (not yet implemented)\n", args[0], args[1], mode)
+
+		// Convert to absolute paths
+		absSrc, err := filepath.Abs(src)
+		if err != nil {
+			return fmt.Errorf("failed to resolve source path: %w", err)
+		}
+		absTarget, err := filepath.Abs(target)
+		if err != nil {
+			return fmt.Errorf("failed to resolve target path: %w", err)
+		}
+
+		// Create state manager
+		st, err := state.NewStateInHomeDir()
+		if err != nil {
+			return err
+		}
+
+		// Perform mount
+		if err := mount.Mount(absSrc, absTarget, mode, st); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			return err
+		}
+
+		fmt.Printf("Mounted %s to %s (mode: %s)\n", absSrc, absTarget, mode)
+		return nil
 	},
 }
 
