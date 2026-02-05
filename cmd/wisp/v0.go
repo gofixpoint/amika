@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gofixpoint/wisp/internal/materialize"
 	"github.com/gofixpoint/wisp/internal/mount"
 	"github.com/gofixpoint/wisp/internal/state"
 	"github.com/spf13/cobra"
@@ -96,13 +97,44 @@ var materializeCmd = &cobra.Command{
 
 This simulates a sandboxed execution model where the script runs in isolation
 and its outputs are "materialized" to the host.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		script, _ := cmd.Flags().GetString("script")
 		workdir, _ := cmd.Flags().GetString("workdir")
 		outdir, _ := cmd.Flags().GetString("outdir")
 		destdir, _ := cmd.Flags().GetString("destdir")
-		fmt.Printf("materialize: script=%s workdir=%s outdir=%s destdir=%s (not yet implemented)\n",
-			script, workdir, outdir, destdir)
+
+		// Convert to absolute paths
+		absScript, err := filepath.Abs(script)
+		if err != nil {
+			return fmt.Errorf("failed to resolve script path: %w", err)
+		}
+		absWorkdir, err := filepath.Abs(workdir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve workdir path: %w", err)
+		}
+		absOutdir, err := filepath.Abs(outdir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve outdir path: %w", err)
+		}
+		absDestdir, err := filepath.Abs(destdir)
+		if err != nil {
+			return fmt.Errorf("failed to resolve destdir path: %w", err)
+		}
+
+		opts := materialize.Options{
+			Script:  absScript,
+			Workdir: absWorkdir,
+			Outdir:  absOutdir,
+			Destdir: absDestdir,
+		}
+
+		if err := materialize.Run(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			return err
+		}
+
+		fmt.Printf("Materialized output from %s to %s\n", absOutdir, absDestdir)
+		return nil
 	},
 }
 
