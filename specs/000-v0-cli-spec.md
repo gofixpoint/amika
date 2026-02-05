@@ -106,7 +106,23 @@ The CLI must check for these dependencies at startup and display helpful error m
 
 ## State Management
 
-Active mounts are tracked in `~/.wispbase/` directory. This enables:
+Active mounts are tracked in `~/.wispbase/mounts.jsonl`. This is a JSON Lines file where each line is a mount entry serialized as JSON.
+
+**File format** (`~/.wispbase/mounts.jsonl`):
+```jsonl
+{"source":"/path/to/src1","target":"/path/to/target1","mode":"ro"}
+{"source":"/path/to/src2","target":"/path/to/target2","mode":"overlay","tempDir":"/tmp/wisp-xxxx"}
+```
+
+**Mount entry fields:**
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source` | Yes | Source directory path |
+| `target` | Yes | Target mount path |
+| `mode` | Yes | Mount mode: `ro`, `rw`, or `overlay` |
+| `tempDir` | No | Temporary directory path (only for overlay mode) |
+
+This enables:
 
 - Listing active mounts
 - Proper cleanup on unmount (especially for overlay mode temp directories)
