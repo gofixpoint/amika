@@ -63,8 +63,29 @@ var unmountCmd = &cobra.Command{
 	Short: "Unmount a previously mounted target",
 	Long:  `Unmount a previously mounted target and clean up any associated resources.`,
 	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("unmount: target=%s (not yet implemented)\n", args[0])
+	RunE: func(cmd *cobra.Command, args []string) error {
+		target := args[0]
+
+		// Convert to absolute path
+		absTarget, err := filepath.Abs(target)
+		if err != nil {
+			return fmt.Errorf("failed to resolve target path: %w", err)
+		}
+
+		// Create state manager
+		st, err := state.NewStateInHomeDir()
+		if err != nil {
+			return err
+		}
+
+		// Perform unmount
+		if err := mount.Unmount(absTarget, st); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			return err
+		}
+
+		fmt.Printf("Unmounted %s\n", absTarget)
+		return nil
 	},
 }
 
