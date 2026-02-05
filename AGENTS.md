@@ -23,7 +23,7 @@ Wisp is a Go CLI tool. The project uses standard Go tooling with no external bui
 
 - `cmd/wisp/main.go` - Main entry point for the CLI
 - `dist/` - Build output directory (gitignored)
-- `bin/wisp` - Symlink to the compiled binary
+- `bin/wisp` - Wrapper script that auto-builds and runs dist/wisp
 
 ## Development Notes
 
