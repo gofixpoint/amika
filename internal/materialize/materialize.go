@@ -7,25 +7,22 @@ import (
 )
 
 // Options contains the options for the materialize command.
+// Exactly one of Script or Cmd must be set.
 type Options struct {
-	Script  string // Path to the script to execute
-	Workdir string // Working directory for script execution
-	Outdir  string // Directory where the script writes output files
-	Destdir string // Host directory where output files are copied
+	Script     string   // Path to the script to execute
+	ScriptArgs []string // Arguments to pass to the script
+	Cmd        string   // Bash command string to execute
+	Workdir    string   // Working directory for script execution
+	Outdir     string   // Directory where the script writes output files
+	Destdir    string   // Host directory where output files are copied
 }
 
-// Run executes a script and copies its output to the destination directory.
+// Run executes a script or command and copies its output to the destination directory.
 func Run(opts Options) error {
-	// Validate script exists and is executable
-	scriptInfo, err := os.Stat(opts.Script)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("script does not exist: %s", opts.Script)
-		}
-		return fmt.Errorf("failed to stat script: %w", err)
-	}
-	if scriptInfo.IsDir() {
-		return fmt.Errorf("script is a directory: %s", opts.Script)
+	hasScript := opts.Script != ""
+	hasCmd := opts.Cmd != ""
+	if hasScript == hasCmd {
+		return fmt.Errorf("exactly one of Script or Cmd must be set")
 	}
 
 	// Create workdir if it doesn't exist
@@ -43,14 +40,32 @@ func Run(opts Options) error {
 		return fmt.Errorf("failed to create destdir: %w", err)
 	}
 
-	// Execute the script
-	cmd := exec.Command(opts.Script)
+	// Build the command based on execution mode
+	var cmd *exec.Cmd
+	if hasScript {
+		// Validate script exists and is not a directory
+		scriptInfo, err := os.Stat(opts.Script)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("script does not exist: %s", opts.Script)
+			}
+			return fmt.Errorf("failed to stat script: %w", err)
+		}
+		if scriptInfo.IsDir() {
+			return fmt.Errorf("script is a directory: %s", opts.Script)
+		}
+
+		cmd = exec.Command(opts.Script, opts.ScriptArgs...)
+	} else {
+		cmd = exec.Command("bash", "-c", opts.Cmd)
+	}
+
 	cmd.Dir = opts.Workdir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("script execution failed: %w", err)
+		return fmt.Errorf("execution failed: %w", err)
 	}
 
 	// Copy outdir contents to destdir using rsync
