@@ -8,62 +8,6 @@ import (
 	"testing"
 )
 
-func TestResolveSandboxOutdir(t *testing.T) {
-	tests := []struct {
-		name        string
-		outdir      string
-		sandboxRoot string
-		workdir     string
-		want        string
-	}{
-		{
-			name:        "empty returns workdir",
-			outdir:      "",
-			sandboxRoot: "/tmp/wisp-sandbox-abc",
-			workdir:     "/tmp/wisp-sandbox-abc/home/wisp/workspace",
-			want:        "/tmp/wisp-sandbox-abc/home/wisp/workspace",
-		},
-		{
-			name:        "absolute path resolved relative to sandbox root",
-			outdir:      "/output",
-			sandboxRoot: "/tmp/wisp-sandbox-abc",
-			workdir:     "/tmp/wisp-sandbox-abc/home/wisp/workspace",
-			want:        "/tmp/wisp-sandbox-abc/output",
-		},
-		{
-			name:        "relative path resolved relative to workdir",
-			outdir:      "output",
-			sandboxRoot: "/tmp/wisp-sandbox-abc",
-			workdir:     "/tmp/wisp-sandbox-abc/home/wisp/workspace",
-			want:        "/tmp/wisp-sandbox-abc/home/wisp/workspace/output",
-		},
-		{
-			name:        "absolute nested path",
-			outdir:      "/var/data/out",
-			sandboxRoot: "/tmp/wisp-sandbox-abc",
-			workdir:     "/tmp/wisp-sandbox-abc/home/wisp/workspace",
-			want:        "/tmp/wisp-sandbox-abc/var/data/out",
-		},
-		{
-			name:        "relative nested path",
-			outdir:      "sub/dir",
-			sandboxRoot: "/tmp/wisp-sandbox-abc",
-			workdir:     "/tmp/wisp-sandbox-abc/home/wisp/workspace",
-			want:        "/tmp/wisp-sandbox-abc/home/wisp/workspace/sub/dir",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := resolveSandboxOutdir(tt.outdir, tt.sandboxRoot, tt.workdir)
-			if got != tt.want {
-				t.Errorf("resolveSandboxOutdir(%q, %q, %q) = %q, want %q",
-					tt.outdir, tt.sandboxRoot, tt.workdir, got, tt.want)
-			}
-		})
-	}
-}
-
 // buildWisp builds the wisp binary for integration tests and returns its path.
 func buildWisp(t *testing.T) string {
 	t.Helper()

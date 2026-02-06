@@ -2,29 +2,12 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/gofixpoint/wisp/internal/materialize"
+	"github.com/gofixpoint/wisp/internal/sandbox"
 	"github.com/spf13/cobra"
 )
-
-const sandboxWorkdir = "/home/wisp/workspace"
-
-// resolveSandboxOutdir resolves the outdir flag relative to the sandbox.
-//   - Empty → returns workdir (default: script CWD)
-//   - Absolute → relative to sandbox root (e.g. /output → sandboxRoot/output)
-//   - Relative → relative to workdir (e.g. out → workdir/out)
-func resolveSandboxOutdir(outdir, sandboxRoot, workdir string) string {
-	if outdir == "" {
-		return workdir
-	}
-	if filepath.IsAbs(outdir) {
-		return filepath.Join(sandboxRoot, strings.TrimPrefix(outdir, "/"))
-	}
-	return filepath.Join(workdir, outdir)
-}
 
 var topMaterializeCmd = &cobra.Command{
 	Use:   "materialize [-- script-args...]",
@@ -63,21 +46,12 @@ Examples:
 			return err
 		}
 
-		// Create sandbox root
-		sandboxRoot, err := os.MkdirTemp("", "wisp-sandbox-*")
+		sb, err := sandbox.NewTmpDirSandboxPaths("", outdir)
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}
-		defer os.RemoveAll(sandboxRoot)
+		defer sb.Cleanup()
 
-		// Create workdir inside sandbox
-		workdir := filepath.Join(sandboxRoot, sandboxWorkdir[1:]) // trim leading /
-		if err := os.MkdirAll(workdir, 0755); err != nil {
-			return fmt.Errorf("failed to create sandbox workdir: %w", err)
-		}
-
-		// Resolve outdir and destdir
-		absOutdir := resolveSandboxOutdir(outdir, sandboxRoot, workdir)
 		absDestdir, err := filepath.Abs(destdir)
 		if err != nil {
 			return fmt.Errorf("failed to resolve destdir path: %w", err)
@@ -85,10 +59,10 @@ Examples:
 
 		opts := materialize.Options{
 			Cmd:     cmdStr,
-			Workdir: workdir,
-			Outdir:  absOutdir,
+			Workdir: sb.GetWorkdir(),
+			Outdir:  sb.GetOutdir(),
 			Destdir: absDestdir,
-			Env:     []string{"WISP_SANDBOX_ROOT=" + sandboxRoot},
+			Env:     []string{"WISP_SANDBOX_ROOT=" + sb.GetRoot()},
 		}
 
 		if script != "" {
@@ -104,7 +78,7 @@ Examples:
 			return err
 		}
 
-		fmt.Printf("Materialized output from %s to %s\n", absOutdir, absDestdir)
+		fmt.Printf("Materialized output from %s to %s\n", sb.GetOutdir(), absDestdir)
 		return nil
 	},
 }
