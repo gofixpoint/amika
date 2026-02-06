@@ -17,6 +17,7 @@ type Options struct {
 	Workdir    string   // Working directory for script execution
 	Outdir     string   // Directory where the script writes output files
 	Destdir    string   // Host directory where output files are copied
+	Env        []string // Extra environment variables (KEY=VALUE) for the child process
 }
 
 // Run executes a script or command and copies its output to the destination directory.
@@ -63,6 +64,9 @@ func Run(opts Options) error {
 	}
 
 	cmd.Dir = opts.Workdir
+	if len(opts.Env) > 0 {
+		cmd.Env = append(os.Environ(), opts.Env...)
+	}
 	cmd.Stdout = os.Stdout
 
 	var stderrBuf bytes.Buffer
