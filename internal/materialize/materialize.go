@@ -1,9 +1,11 @@
 package materialize
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // Options contains the options for the materialize command.
@@ -62,10 +64,40 @@ func Run(opts Options) error {
 
 	cmd.Dir = opts.Workdir
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	// Print header before execution
+	if hasScript {
+		cmdLine := strings.Join(append([]string{opts.Script}, opts.ScriptArgs...), " ")
+		fmt.Fprintf(os.Stderr, "Running script:\n\n> %s\n\n", cmdLine)
+	} else {
+		fmt.Fprintf(os.Stderr, "Running command:\n\n> %s\n\n", opts.Cmd)
+	}
 
 	if err := cmd.Run(); err != nil {
+		label := "Script"
+		if hasCmd {
+			label = "Command"
+		}
+		captured := strings.TrimRight(stderrBuf.String(), "\n")
+		if captured != "" {
+			lines := strings.Split(captured, "\n")
+			quoted := make([]string, len(lines))
+			for i, line := range lines {
+				quoted[i] = "> " + line
+			}
+			fmt.Fprintf(os.Stderr, "%s failed to run:\n\n%s\n\n", label, strings.Join(quoted, "\n"))
+		} else {
+			fmt.Fprintf(os.Stderr, "%s failed to run.\n", label)
+		}
 		return fmt.Errorf("execution failed: %w", err)
+	}
+
+	// On success, write captured stderr through so it's still visible
+	if stderrBuf.Len() > 0 {
+		stderrBuf.WriteTo(os.Stderr)
 	}
 
 	// Copy outdir contents to destdir using rsync

@@ -107,6 +107,9 @@ With --cmd, a bash command string is executed directly:
   wisp v0 materialize --cmd "python3 helper.py --seed 42" --workdir w --outdir o --destdir d`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+
 		script, _ := cmd.Flags().GetString("script")
 		cmdStr, _ := cmd.Flags().GetString("cmd")
 		workdir, _ := cmd.Flags().GetString("workdir")
@@ -159,7 +162,6 @@ With --cmd, a bash command string is executed directly:
 		}
 
 		if err := materialize.Run(opts); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
 			return err
 		}
 
