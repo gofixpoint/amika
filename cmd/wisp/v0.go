@@ -91,23 +91,47 @@ var unmountCmd = &cobra.Command{
 }
 
 var materializeCmd = &cobra.Command{
-	Use:   "materialize",
-	Short: "Run a script and copy output files to a destination",
-	Long: `Run a script and copy output files to a destination directory.
+	Use:   "materialize [-- script-args...]",
+	Short: "Run a script or command and copy output files to a destination",
+	Long: `Run a script or command and copy output files to a destination directory.
 
-This simulates a sandboxed execution model where the script runs in isolation
-and its outputs are "materialized" to the host.`,
+This simulates a sandboxed execution model where the script/command runs in
+isolation and its outputs are "materialized" to the host.
+
+Exactly one of --script or --cmd must be specified.
+
+With --script, any arguments after -- are forwarded to the script:
+  wisp v0 materialize --script ./foo.sh --workdir w --outdir o --destdir d -- arg1 arg2
+
+With --cmd, a bash command string is executed directly:
+  wisp v0 materialize --cmd "python3 helper.py --seed 42" --workdir w --outdir o --destdir d`,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+
 		script, _ := cmd.Flags().GetString("script")
+		cmdStr, _ := cmd.Flags().GetString("cmd")
 		workdir, _ := cmd.Flags().GetString("workdir")
 		outdir, _ := cmd.Flags().GetString("outdir")
 		destdir, _ := cmd.Flags().GetString("destdir")
 
-		// Convert to absolute paths
-		absScript, err := filepath.Abs(script)
-		if err != nil {
-			return fmt.Errorf("failed to resolve script path: %w", err)
+		// Validate mutual exclusivity
+		hasScript := script != ""
+		hasCmd := cmdStr != ""
+		if !hasScript && !hasCmd {
+			return fmt.Errorf("exactly one of --script or --cmd must be specified")
 		}
+		if hasScript && hasCmd {
+			return fmt.Errorf("--script and --cmd are mutually exclusive")
+		}
+
+		// Trailing args are only allowed with --script
+		if hasCmd && len(args) > 0 {
+			return fmt.Errorf("trailing arguments are not allowed with --cmd")
+		}
+
+		// Convert to absolute paths
 		absWorkdir, err := filepath.Abs(workdir)
 		if err != nil {
 			return fmt.Errorf("failed to resolve workdir path: %w", err)
@@ -122,14 +146,22 @@ and its outputs are "materialized" to the host.`,
 		}
 
 		opts := materialize.Options{
-			Script:  absScript,
+			Cmd:     cmdStr,
 			Workdir: absWorkdir,
 			Outdir:  absOutdir,
 			Destdir: absDestdir,
 		}
 
+		if hasScript {
+			absScript, err := filepath.Abs(script)
+			if err != nil {
+				return fmt.Errorf("failed to resolve script path: %w", err)
+			}
+			opts.Script = absScript
+			opts.ScriptArgs = args
+		}
+
 		if err := materialize.Run(opts); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
 			return err
 		}
 
@@ -152,11 +184,11 @@ func init() {
 	mountCmd.MarkFlagRequired("mode")
 
 	// Materialize command flags
-	materializeCmd.Flags().String("script", "", "Path to the script to execute (required)")
+	materializeCmd.Flags().String("script", "", "Path to the script to execute (mutually exclusive with --cmd)")
+	materializeCmd.Flags().String("cmd", "", "Bash command string to execute (mutually exclusive with --script)")
 	materializeCmd.Flags().String("workdir", "", "Working directory for script execution (required)")
 	materializeCmd.Flags().String("outdir", "", "Directory where the script writes output files (required)")
 	materializeCmd.Flags().String("destdir", "", "Host directory where output files are copied (required)")
-	materializeCmd.MarkFlagRequired("script")
 	materializeCmd.MarkFlagRequired("workdir")
 	materializeCmd.MarkFlagRequired("outdir")
 	materializeCmd.MarkFlagRequired("destdir")
