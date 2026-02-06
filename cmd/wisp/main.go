@@ -3,13 +3,19 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("wisp - a command-line tool")
-		os.Exit(0)
-	}
+var rootCmd = &cobra.Command{
+	Use:   "wisp",
+	Short: "Wisp - filesystem mounting and script execution",
+	Long:  `Wisp provides filesystem mounting and script execution with output materialization.`,
+}
 
-	fmt.Printf("Hello, %s!\n", os.Args[1])
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
