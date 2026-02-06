@@ -78,7 +78,7 @@ Examples:
 			return err
 		}
 
-		fmt.Printf("Materialized output from %s to %s\n", sb.GetOutdir(), absDestdir)
+		fmt.Printf("Materialized output to %s\n", absDestdir)
 		return nil
 	},
 }
