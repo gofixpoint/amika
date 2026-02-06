@@ -90,6 +90,23 @@ var unmountCmd = &cobra.Command{
 	},
 }
 
+// validateScriptCmdFlags checks that exactly one of script/cmd is set and that
+// trailing args are only used with --script.
+func validateScriptCmdFlags(script, cmdStr string, trailingArgs []string) error {
+	hasScript := script != ""
+	hasCmd := cmdStr != ""
+	if !hasScript && !hasCmd {
+		return fmt.Errorf("exactly one of --script or --cmd must be specified")
+	}
+	if hasScript && hasCmd {
+		return fmt.Errorf("--script and --cmd are mutually exclusive")
+	}
+	if hasCmd && len(trailingArgs) > 0 {
+		return fmt.Errorf("trailing arguments are not allowed with --cmd")
+	}
+	return nil
+}
+
 var materializeCmd = &cobra.Command{
 	Use:   "materialize [-- script-args...]",
 	Short: "Run a script or command and copy output files to a destination",
@@ -116,20 +133,10 @@ With --cmd, a bash command string is executed directly:
 		outdir, _ := cmd.Flags().GetString("outdir")
 		destdir, _ := cmd.Flags().GetString("destdir")
 
-		// Validate mutual exclusivity
+		if err := validateScriptCmdFlags(script, cmdStr, args); err != nil {
+			return err
+		}
 		hasScript := script != ""
-		hasCmd := cmdStr != ""
-		if !hasScript && !hasCmd {
-			return fmt.Errorf("exactly one of --script or --cmd must be specified")
-		}
-		if hasScript && hasCmd {
-			return fmt.Errorf("--script and --cmd are mutually exclusive")
-		}
-
-		// Trailing args are only allowed with --script
-		if hasCmd && len(args) > 0 {
-			return fmt.Errorf("trailing arguments are not allowed with --cmd")
-		}
 
 		// Convert to absolute paths
 		absWorkdir, err := filepath.Abs(workdir)
