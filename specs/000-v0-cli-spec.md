@@ -1,17 +1,17 @@
-# Wisp v0 CLI Specification
+# Clawbox v0 CLI Specification
 
 ## Overview
 
-Wisp v0 provides filesystem mounting and script execution with output materialization. The v0 implementation targets macOS using bindfs and macFUSE.
+Clawbox v0 provides filesystem mounting and script execution with output materialization. The v0 implementation targets macOS using bindfs and macFUSE.
 
 ## Commands
 
-### `wisp v0 materialize`
+### `clawbox v0 materialize`
 
 Runs a script and copies output files to a destination directory. This simulates a sandboxed execution model where the script runs in isolation and its outputs are "materialized" to the host.
 
 ```
-wisp v0 materialize \
+clawbox v0 materialize \
     --script <path> \
     --workdir <path> \
     --outdir <path> \
@@ -37,12 +37,12 @@ wisp v0 materialize \
 
 ---
 
-### `wisp v0 mount`
+### `clawbox v0 mount`
 
 Mounts a source directory to a target path with specified access mode.
 
 ```
-wisp v0 mount <src> <target> --mode <mode>
+clawbox v0 mount <src> <target> --mode <mode>
 ```
 
 **Arguments:**
@@ -71,12 +71,12 @@ wisp v0 mount <src> <target> --mode <mode>
 
 ---
 
-### `wisp v0 unmount`
+### `clawbox v0 unmount`
 
 Unmounts a previously mounted target.
 
 ```
-wisp v0 unmount <target>
+clawbox v0 unmount <target>
 ```
 
 **Arguments:**
@@ -95,7 +95,7 @@ wisp v0 unmount <target>
 
 ## Dependencies
 
-Wisp v0 requires the following dependencies on macOS:
+Clawbox v0 requires the following dependencies on macOS:
 
 - **macFUSE**: Provides FUSE support on macOS
 - **bindfs**: FUSE filesystem for mounting directories
@@ -106,12 +106,12 @@ The CLI must check for these dependencies at startup and display helpful error m
 
 ## State Management
 
-Active mounts are tracked in `~/.wispbase/mounts.jsonl`. This is a JSON Lines file where each line is a mount entry serialized as JSON.
+Active mounts are tracked in `~/.clawboxbase/mounts.jsonl`. This is a JSON Lines file where each line is a mount entry serialized as JSON.
 
-**File format** (`~/.wispbase/mounts.jsonl`):
+**File format** (`~/.clawboxbase/mounts.jsonl`):
 ```jsonl
 {"source":"/path/to/src1","target":"/path/to/target1","mode":"ro"}
-{"source":"/path/to/src2","target":"/path/to/target2","mode":"overlay","tempDir":"/tmp/wisp-xxxx"}
+{"source":"/path/to/src2","target":"/path/to/target2","mode":"overlay","tempDir":"/tmp/clawbox-xxxx"}
 ```
 
 **Mount entry fields:**

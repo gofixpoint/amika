@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Build the binary
-go build -o dist/wisp ./cmd/wisp
+go build -o dist/clawbox ./cmd/clawbox
 
 # Run the binary
-dist/wisp
+dist/clawbox
 
 # Run tests
 go test ./...
@@ -17,13 +17,13 @@ go test ./...
 
 ## Project Overview
 
-Wisp is a Go CLI tool. The project uses standard Go tooling with no external build systems.
+Clawbox is a Go CLI tool. The project uses standard Go tooling with no external build systems.
 
 ## Code Structure
 
-- `cmd/wisp/main.go` - Main entry point for the CLI
+- `cmd/clawbox/main.go` - Main entry point for the CLI
 - `dist/` - Build output directory (gitignored)
-- `bin/wisp` - Wrapper script that auto-builds and runs dist/wisp
+- `bin/clawbox` - Wrapper script that auto-builds and runs dist/clawbox
 
 ## Development Notes
 

@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/gofixpoint/wisp/internal/state"
+	"github.com/gofixpoint/clawbox/internal/state"
 )
 
 // Unmount unmounts a target and cleans up any associated resources.

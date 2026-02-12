@@ -1,6 +1,6 @@
 # Specifications
 
-This directory contains product, design, and technical specifications for the Wisp project.
+This directory contains product, design, and technical specifications for the Clawbox project.
 
 ## Creating a New Spec
 

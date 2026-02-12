@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofixpoint/wisp/internal/deps"
-	"github.com/gofixpoint/wisp/internal/state"
+	"github.com/gofixpoint/clawbox/internal/deps"
+	"github.com/gofixpoint/clawbox/internal/state"
 )
 
 // skipIfDepsNotInstalled skips the test if macFUSE or bindfs are not installed.
@@ -24,7 +24,7 @@ func setupTestDirs(t *testing.T) (srcDir, targetDir string, st state.State, clea
 	t.Helper()
 
 	// Create temp base directory
-	baseDir, err := os.MkdirTemp("", "wisp-test-*")
+	baseDir, err := os.MkdirTemp("", "clawbox-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp base directory: %v", err)
 	}
@@ -43,7 +43,7 @@ func setupTestDirs(t *testing.T) (srcDir, targetDir string, st state.State, clea
 		t.Fatalf("Failed to create state directory: %v", err)
 	}
 
-	st = state.NewState(stateDir, ".wispstate")
+	st = state.NewState(stateDir, ".clawboxstate")
 
 	cleanup = func() {
 		// Try to unmount if still mounted (cleanup on test failure)

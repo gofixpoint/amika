@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/gofixpoint/wisp/internal/materialize"
-	"github.com/gofixpoint/wisp/internal/sandbox"
+	"github.com/gofixpoint/clawbox/internal/materialize"
+	"github.com/gofixpoint/clawbox/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +16,7 @@ var topMaterializeCmd = &cobra.Command{
 files to a destination directory.
 
 The sandbox mimics a filesystem root with an implicit working directory at
-/home/wisp/workspace. The script/command runs with CWD set to this workdir.
+/home/clawbox/workspace. The script/command runs with CWD set to this workdir.
 
 Exactly one of --script or --cmd must be specified.
 
@@ -25,13 +25,13 @@ The --outdir flag controls which sandbox directory gets copied to --destdir:
   Absolute     Resolved relative to sandbox root (e.g. /output)
   Relative     Resolved relative to workdir (e.g. out)
 
-The WISP_SANDBOX_ROOT environment variable is set for the child process,
+The CLAWBOX_SANDBOX_ROOT environment variable is set for the child process,
 pointing to the sandbox root directory.
 
 Examples:
-  wisp materialize --cmd "echo hi > result.txt" --destdir /tmp/dest
-  wisp materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
-  wisp materialize --cmd "echo hi > $WISP_SANDBOX_ROOT/output/r.txt" --outdir /output --destdir /tmp/dest`,
+  clawbox materialize --cmd "echo hi > result.txt" --destdir /tmp/dest
+  clawbox materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
+  clawbox materialize --cmd "echo hi > $CLAWBOX_SANDBOX_ROOT/output/r.txt" --outdir /output --destdir /tmp/dest`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -62,7 +62,7 @@ Examples:
 			Workdir: sb.GetWorkdir(),
 			Outdir:  sb.GetOutdir(),
 			Destdir: absDestdir,
-			Env:     []string{"WISP_SANDBOX_ROOT=" + sb.GetRoot()},
+			Env:     []string{"CLAWBOX_SANDBOX_ROOT=" + sb.GetRoot()},
 		}
 
 		if script != "" {
