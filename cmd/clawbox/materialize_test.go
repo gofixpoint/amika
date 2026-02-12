@@ -8,15 +8,15 @@ import (
 	"testing"
 )
 
-// buildWisp builds the wisp binary for integration tests and returns its path.
-func buildWisp(t *testing.T) string {
+// buildClawbox builds the clawbox binary for integration tests and returns its path.
+func buildClawbox(t *testing.T) string {
 	t.Helper()
-	binPath := filepath.Join(t.TempDir(), "wisp")
+	binPath := filepath.Join(t.TempDir(), "clawbox")
 	cmd := exec.Command("go", "build", "-o", binPath, "./")
-	cmd.Dir = filepath.Join(findModuleRoot(t), "cmd", "wisp")
+	cmd.Dir = filepath.Join(findModuleRoot(t), "cmd", "clawbox")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("failed to build wisp: %v\n%s", err, out)
+		t.Fatalf("failed to build clawbox: %v\n%s", err, out)
 	}
 	return binPath
 }
@@ -41,7 +41,7 @@ func findModuleRoot(t *testing.T) string {
 }
 
 func TestTopMaterialize_CmdDefaultOutdir(t *testing.T) {
-	bin := buildWisp(t)
+	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
 	cmd := exec.Command(bin, "materialize",
@@ -50,7 +50,7 @@ func TestTopMaterialize_CmdDefaultOutdir(t *testing.T) {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("wisp materialize failed: %v\n%s", err, out)
+		t.Fatalf("clawbox materialize failed: %v\n%s", err, out)
 	}
 
 	data, err := os.ReadFile(filepath.Join(destdir, "result.txt"))
@@ -63,17 +63,17 @@ func TestTopMaterialize_CmdDefaultOutdir(t *testing.T) {
 }
 
 func TestTopMaterialize_CmdAbsoluteOutdir(t *testing.T) {
-	bin := buildWisp(t)
+	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
 	cmd := exec.Command(bin, "materialize",
-		"--cmd", `mkdir -p "$WISP_SANDBOX_ROOT/output" && echo hello > "$WISP_SANDBOX_ROOT/output/result.txt"`,
+		"--cmd", `mkdir -p "$CLAWBOX_SANDBOX_ROOT/output" && echo hello > "$CLAWBOX_SANDBOX_ROOT/output/result.txt"`,
 		"--outdir", "/output",
 		"--destdir", destdir,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("wisp materialize failed: %v\n%s", err, out)
+		t.Fatalf("clawbox materialize failed: %v\n%s", err, out)
 	}
 
 	data, err := os.ReadFile(filepath.Join(destdir, "result.txt"))
@@ -86,7 +86,7 @@ func TestTopMaterialize_CmdAbsoluteOutdir(t *testing.T) {
 }
 
 func TestTopMaterialize_CmdRelativeOutdir(t *testing.T) {
-	bin := buildWisp(t)
+	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
 	cmd := exec.Command(bin, "materialize",
@@ -96,7 +96,7 @@ func TestTopMaterialize_CmdRelativeOutdir(t *testing.T) {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("wisp materialize failed: %v\n%s", err, out)
+		t.Fatalf("clawbox materialize failed: %v\n%s", err, out)
 	}
 
 	data, err := os.ReadFile(filepath.Join(destdir, "result.txt"))
@@ -109,7 +109,7 @@ func TestTopMaterialize_CmdRelativeOutdir(t *testing.T) {
 }
 
 func TestTopMaterialize_SandboxCleanup(t *testing.T) {
-	bin := buildWisp(t)
+	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
 	cmd := exec.Command(bin, "materialize",
@@ -118,7 +118,7 @@ func TestTopMaterialize_SandboxCleanup(t *testing.T) {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("wisp materialize failed: %v\n%s", err, out)
+		t.Fatalf("clawbox materialize failed: %v\n%s", err, out)
 	}
 
 	data, err := os.ReadFile(filepath.Join(destdir, "sandbox-path.txt"))
@@ -135,7 +135,7 @@ func TestTopMaterialize_SandboxCleanup(t *testing.T) {
 }
 
 func TestTopMaterialize_Script(t *testing.T) {
-	bin := buildWisp(t)
+	bin := buildClawbox(t)
 	destdir := t.TempDir()
 	scriptDir := t.TempDir()
 	script := filepath.Join(scriptDir, "gen.sh")
@@ -151,7 +151,7 @@ func TestTopMaterialize_Script(t *testing.T) {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("wisp materialize failed: %v\n%s", err, out)
+		t.Fatalf("clawbox materialize failed: %v\n%s", err, out)
 	}
 
 	data, err := os.ReadFile(filepath.Join(destdir, "result.txt"))

@@ -10,7 +10,7 @@ func setupTestDir(t *testing.T) (string, func()) {
 	t.Helper()
 
 	// Create a temporary directory for testing
-	tmpDir, err := os.MkdirTemp("", "wisp-state-test-*")
+	tmpDir, err := os.MkdirTemp("", "clawbox-state-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -26,9 +26,9 @@ func TestNewState(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
-	expected := filepath.Join(tmpDir, ".wispbase")
+	expected := filepath.Join(tmpDir, ".clawboxbase")
 	if s.StateDir() != expected {
 		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), expected)
 	}
@@ -48,7 +48,7 @@ func TestNewStateInHomeDir(t *testing.T) {
 		t.Fatalf("NewStateInHomeDir failed: %v", err)
 	}
 
-	expected := filepath.Join(tmpDir, ".wispbase")
+	expected := filepath.Join(tmpDir, ".clawboxbase")
 	if s.StateDir() != expected {
 		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), expected)
 	}
@@ -58,13 +58,13 @@ func TestSaveAndGetMount(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
 	info := MountInfo{
 		Source:  "/path/to/source",
 		Target:  "/path/to/target",
 		Mode:    "overlay",
-		TempDir: "/tmp/wisp-1234",
+		TempDir: "/tmp/clawbox-1234",
 	}
 
 	// Save mount
@@ -92,7 +92,7 @@ func TestSaveAndGetMount(t *testing.T) {
 	}
 
 	// Verify the file exists
-	mountsFile := filepath.Join(tmpDir, ".wispbase", "mounts.jsonl")
+	mountsFile := filepath.Join(tmpDir, ".clawboxbase", "mounts.jsonl")
 	if _, err := os.Stat(mountsFile); os.IsNotExist(err) {
 		t.Error("mounts.jsonl file should exist after SaveMount")
 	}
@@ -102,7 +102,7 @@ func TestSaveMountUpdatesExisting(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
 	info := MountInfo{
 		Source: "/path/to/source",
@@ -145,7 +145,7 @@ func TestGetMountNotFound(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
 	_, err := s.GetMount("/nonexistent/target")
 	if err == nil {
@@ -157,7 +157,7 @@ func TestRemoveMount(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
 	info := MountInfo{
 		Source: "/path/to/source",
@@ -186,7 +186,7 @@ func TestRemoveMountNonexistent(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
 	// Removing nonexistent mount should not error
 	if err := s.RemoveMount("/nonexistent/target"); err != nil {
@@ -198,7 +198,7 @@ func TestListMounts(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
 	// Initially empty
 	mounts, err := s.ListMounts()
@@ -236,7 +236,7 @@ func TestMountExists(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 	target := "/path/to/target"
 
 	// Should not exist initially
@@ -274,9 +274,9 @@ func TestStateDir(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".wispbase")
+	s := NewState(tmpDir, ".clawboxbase")
 
-	expected := filepath.Join(tmpDir, ".wispbase")
+	expected := filepath.Join(tmpDir, ".clawboxbase")
 	if s.StateDir() != expected {
 		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), expected)
 	}
@@ -286,8 +286,8 @@ func TestDifferentBasenames(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s1 := NewState(tmpDir, ".wispbase")
-	s2 := NewState(tmpDir, ".wisptest")
+	s1 := NewState(tmpDir, ".clawboxbase")
+	s2 := NewState(tmpDir, ".clawboxtest")
 
 	dir1 := s1.StateDir()
 	dir2 := s2.StateDir()
@@ -296,8 +296,8 @@ func TestDifferentBasenames(t *testing.T) {
 		t.Error("different basenames should produce different state directories")
 	}
 
-	expectedDir1 := filepath.Join(tmpDir, ".wispbase")
-	expectedDir2 := filepath.Join(tmpDir, ".wisptest")
+	expectedDir1 := filepath.Join(tmpDir, ".clawboxbase")
+	expectedDir2 := filepath.Join(tmpDir, ".clawboxtest")
 
 	if dir1 != expectedDir1 {
 		t.Errorf("dir1 mismatch: got %s, want %s", dir1, expectedDir1)

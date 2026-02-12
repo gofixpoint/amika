@@ -1,4 +1,4 @@
-# wisp
+# clawbox
 
 A command-line tool.
 

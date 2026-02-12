@@ -1,4 +1,4 @@
-module github.com/gofixpoint/wisp
+module github.com/gofixpoint/clawbox
 
 go 1.25.3
 

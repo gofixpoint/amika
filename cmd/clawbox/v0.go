@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gofixpoint/wisp/internal/materialize"
-	"github.com/gofixpoint/wisp/internal/mount"
-	"github.com/gofixpoint/wisp/internal/state"
+	"github.com/gofixpoint/clawbox/internal/materialize"
+	"github.com/gofixpoint/clawbox/internal/mount"
+	"github.com/gofixpoint/clawbox/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -118,10 +118,10 @@ isolation and its outputs are "materialized" to the host.
 Exactly one of --script or --cmd must be specified.
 
 With --script, any arguments after -- are forwarded to the script:
-  wisp v0 materialize --script ./foo.sh --workdir w --outdir o --destdir d -- arg1 arg2
+  clawbox v0 materialize --script ./foo.sh --workdir w --outdir o --destdir d -- arg1 arg2
 
 With --cmd, a bash command string is executed directly:
-  wisp v0 materialize --cmd "python3 helper.py --seed 42" --workdir w --outdir o --destdir d`,
+  clawbox v0 materialize --cmd "python3 helper.py --seed 42" --workdir w --outdir o --destdir d`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true

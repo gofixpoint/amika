@@ -7,13 +7,13 @@
 ## Building
 
 ```bash
-go build -o dist/wisp ./cmd/wisp
+go build -o dist/clawbox ./cmd/clawbox
 ```
 
 ## Running
 
 ```bash
-dist/wisp
+dist/clawbox
 ```
 
 ## Testing

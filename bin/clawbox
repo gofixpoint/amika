@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ ! -f "$REPO_ROOT/dist/clawbox" ]; then
+  echo "Building clawbox..." >&2
+  (cd "$REPO_ROOT" && go build -o dist/clawbox ./cmd/clawbox)
+fi
+
+exec "$REPO_ROOT/dist/clawbox" "$@"

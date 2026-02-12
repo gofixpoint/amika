@@ -8,9 +8,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "wisp",
-	Short: "Wisp - filesystem mounting and script execution",
-	Long:  `Wisp provides filesystem mounting and script execution with output materialization.`,
+	Use:   "clawbox",
+	Short: "Clawbox - filesystem mounting and script execution",
+	Long:  `Clawbox provides filesystem mounting and script execution with output materialization.`,
 }
 
 func main() {

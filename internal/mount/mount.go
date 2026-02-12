@@ -5,8 +5,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/gofixpoint/wisp/internal/deps"
-	"github.com/gofixpoint/wisp/internal/state"
+	"github.com/gofixpoint/clawbox/internal/deps"
+	"github.com/gofixpoint/clawbox/internal/state"
 )
 
 // Mode represents the mount access mode.
@@ -122,7 +122,7 @@ func mountReadWrite(src, target string) error {
 // mountOverlay creates a copy of source in a temp directory and mounts it.
 func mountOverlay(src, target string) (string, error) {
 	// Create temp directory
-	tempDir, err := os.MkdirTemp("", "wisp-overlay-*")
+	tempDir, err := os.MkdirTemp("", "clawbox-overlay-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp directory: %w", err)
 	}
