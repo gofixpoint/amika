@@ -8,13 +8,21 @@ import (
 	"path/filepath"
 )
 
+// MountBinding represents a host directory mounted into a sandbox.
+type MountBinding struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Mode   string `json:"mode"` // "ro" or "rw"
+}
+
 // SandboxInfo represents a tracked sandbox.
 type SandboxInfo struct {
-	Name        string `json:"name"`
-	Provider    string `json:"provider"`
-	ContainerID string `json:"containerId"`
-	Image       string `json:"image"`
-	CreatedAt   string `json:"createdAt"`
+	Name        string         `json:"name"`
+	Provider    string         `json:"provider"`
+	ContainerID string         `json:"containerId"`
+	Image       string         `json:"image"`
+	CreatedAt   string         `json:"createdAt"`
+	Mounts      []MountBinding `json:"mounts,omitempty"`
 }
 
 // SandboxStore manages sandbox state persistence.
