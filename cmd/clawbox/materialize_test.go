@@ -44,7 +44,7 @@ func TestTopMaterialize_CmdDefaultOutdir(t *testing.T) {
 	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
-	cmd := exec.Command(bin, "materialize",
+	cmd := exec.Command(bin, "materialize", "--image", "ubuntu:latest",
 		"--cmd", "echo hello > result.txt",
 		"--destdir", destdir,
 	)
@@ -66,7 +66,7 @@ func TestTopMaterialize_CmdAbsoluteOutdir(t *testing.T) {
 	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
-	cmd := exec.Command(bin, "materialize",
+	cmd := exec.Command(bin, "materialize", "--image", "ubuntu:latest",
 		"--cmd", `mkdir -p "$CLAWBOX_SANDBOX_ROOT/output" && echo hello > "$CLAWBOX_SANDBOX_ROOT/output/result.txt"`,
 		"--outdir", "/output",
 		"--destdir", destdir,
@@ -89,7 +89,7 @@ func TestTopMaterialize_CmdRelativeOutdir(t *testing.T) {
 	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
-	cmd := exec.Command(bin, "materialize",
+	cmd := exec.Command(bin, "materialize", "--image", "ubuntu:latest",
 		"--cmd", "mkdir -p out && echo hello > out/result.txt",
 		"--outdir", "out",
 		"--destdir", destdir,
@@ -112,7 +112,7 @@ func TestTopMaterialize_SandboxCleanup(t *testing.T) {
 	bin := buildClawbox(t)
 	destdir := t.TempDir()
 
-	cmd := exec.Command(bin, "materialize",
+	cmd := exec.Command(bin, "materialize", "--image", "ubuntu:latest",
 		"--cmd", "pwd > sandbox-path.txt",
 		"--destdir", destdir,
 	)
@@ -144,7 +144,7 @@ func TestTopMaterialize_Script(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(bin, "materialize",
+	cmd := exec.Command(bin, "materialize", "--image", "ubuntu:latest",
 		"--script", script,
 		"--destdir", destdir,
 		"--", "foo", "bar",

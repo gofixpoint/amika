@@ -19,3 +19,4 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
+
