@@ -22,7 +22,9 @@ type SandboxInfo struct {
 	ContainerID string         `json:"containerId"`
 	Image       string         `json:"image"`
 	CreatedAt   string         `json:"createdAt"`
+	Preset      string         `json:"preset,omitempty"`
 	Mounts      []MountBinding `json:"mounts,omitempty"`
+	Env         []string       `json:"env,omitempty"`
 }
 
 // SandboxStore manages sandbox state persistence.

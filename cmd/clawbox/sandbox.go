@@ -31,11 +31,31 @@ var sandboxCreateCmd = &cobra.Command{
 		provider, _ := cmd.Flags().GetString("provider")
 		name, _ := cmd.Flags().GetString("name")
 		image, _ := cmd.Flags().GetString("image")
+		preset, _ := cmd.Flags().GetString("preset")
 		mountStrs, _ := cmd.Flags().GetStringArray("mount")
+		envStrs, _ := cmd.Flags().GetStringArray("env")
 		yes, _ := cmd.Flags().GetBool("yes")
 
 		if provider != "docker" {
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
+		}
+
+		// Handle preset: build image if needed, override --image
+		if preset != "" {
+			if cmd.Flags().Changed("image") {
+				return fmt.Errorf("--preset and --image are mutually exclusive")
+			}
+			image = "clawbox-" + preset + ":latest"
+			if !sandbox.DockerImageExists(image) {
+				dockerfile, err := sandbox.GetPresetDockerfile(preset)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Building %q preset image (this may take a few minutes)...\n", preset)
+				if err := sandbox.BuildDockerImage(image, dockerfile); err != nil {
+					return err
+				}
+			}
 		}
 
 		mounts, err := parseMountFlags(mountStrs)
@@ -72,7 +92,7 @@ var sandboxCreateCmd = &cobra.Command{
 			}
 		}
 
-		containerID, err := sandbox.CreateDockerSandbox(name, image, mounts)
+		containerID, err := sandbox.CreateDockerSandbox(name, image, mounts, envStrs)
 		if err != nil {
 			return err
 		}
@@ -83,7 +103,9 @@ var sandboxCreateCmd = &cobra.Command{
 			ContainerID: containerID,
 			Image:       image,
 			CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+			Preset:      preset,
 			Mounts:      mounts,
+			Env:         envStrs,
 		}
 		if err := store.Save(info); err != nil {
 			return fmt.Errorf("sandbox created but failed to save state: %w", err)
@@ -207,7 +229,9 @@ func init() {
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
 	sandboxCreateCmd.Flags().String("image", "ubuntu:latest", "Docker image to use")
+	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
+	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 
 	// Delete flags
