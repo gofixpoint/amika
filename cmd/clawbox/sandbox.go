@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -27,9 +31,16 @@ var sandboxCreateCmd = &cobra.Command{
 		provider, _ := cmd.Flags().GetString("provider")
 		name, _ := cmd.Flags().GetString("name")
 		image, _ := cmd.Flags().GetString("image")
+		mountStrs, _ := cmd.Flags().GetStringArray("mount")
+		yes, _ := cmd.Flags().GetBool("yes")
 
 		if provider != "docker" {
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
+		}
+
+		mounts, err := parseMountFlags(mountStrs)
+		if err != nil {
+			return err
 		}
 
 		store := sandbox.NewSandboxStore(sandboxStoreDir)
@@ -46,7 +57,22 @@ var sandboxCreateCmd = &cobra.Command{
 			return fmt.Errorf("sandbox %q already exists", name)
 		}
 
-		containerID, err := sandbox.CreateDockerSandbox(name, image)
+		if len(mounts) > 0 && !yes {
+			fmt.Println("You are about to mount:")
+			for _, m := range mounts {
+				fmt.Printf("  %s -> %s:%s (%s)\n", m.Source, name, m.Target, m.Mode)
+			}
+			fmt.Print("Continue? [y/N] ")
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
+
+		containerID, err := sandbox.CreateDockerSandbox(name, image, mounts)
 		if err != nil {
 			return err
 		}
@@ -57,6 +83,7 @@ var sandboxCreateCmd = &cobra.Command{
 			ContainerID: containerID,
 			Image:       image,
 			CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+			Mounts:      mounts,
 		}
 		if err := store.Save(info); err != nil {
 			return fmt.Errorf("sandbox created but failed to save state: %w", err)
@@ -124,6 +151,52 @@ var sandboxListCmd = &cobra.Command{
 	},
 }
 
+// parseMountFlags parses --mount flag values in the format source:target[:mode].
+// Mode defaults to "rw" if omitted.
+func parseMountFlags(flags []string) ([]sandbox.MountBinding, error) {
+	var mounts []sandbox.MountBinding
+	seen := make(map[string]bool)
+
+	for _, raw := range flags {
+		parts := strings.SplitN(raw, ":", 3)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("invalid mount format %q: expected source:target[:mode]", raw)
+		}
+
+		source := parts[0]
+		target := parts[1]
+		mode := "rw"
+		if len(parts) == 3 {
+			mode = parts[2]
+		}
+
+		absSource, err := filepath.Abs(source)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve source path %q: %w", source, err)
+		}
+
+		if !strings.HasPrefix(target, "/") {
+			return nil, fmt.Errorf("mount target %q must be an absolute path", target)
+		}
+
+		if mode != "ro" && mode != "rw" {
+			return nil, fmt.Errorf("invalid mount mode %q: must be \"ro\" or \"rw\"", mode)
+		}
+
+		if seen[target] {
+			return nil, fmt.Errorf("duplicate mount target %q", target)
+		}
+		seen[target] = true
+
+		mounts = append(mounts, sandbox.MountBinding{
+			Source: absSource,
+			Target: target,
+			Mode:   mode,
+		})
+	}
+	return mounts, nil
+}
+
 func init() {
 	rootCmd.AddCommand(sandboxCmd)
 	sandboxCmd.AddCommand(sandboxCreateCmd)
@@ -134,6 +207,8 @@ func init() {
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
 	sandboxCreateCmd.Flags().String("image", "ubuntu:latest", "Docker image to use")
+	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
+	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 
 	// Delete flags
 	sandboxDeleteCmd.Flags().String("name", "", "Name of the sandbox to delete (required)")

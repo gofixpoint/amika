@@ -7,9 +7,19 @@ import (
 )
 
 // CreateDockerSandbox creates a long-running Docker container with the given
-// name and image. Returns the container ID.
-func CreateDockerSandbox(name, image string) (string, error) {
-	cmd := exec.Command("docker", "run", "-d", "--name", name, image, "tail", "-f", "/dev/null")
+// name, image, and optional bind mounts. Returns the container ID.
+func CreateDockerSandbox(name, image string, mounts []MountBinding) (string, error) {
+	args := []string{"run", "-d", "--name", name}
+	for _, m := range mounts {
+		vol := m.Source + ":" + m.Target
+		if m.Mode == "ro" {
+			vol += ":ro"
+		}
+		args = append(args, "-v", vol)
+	}
+	args = append(args, image, "tail", "-f", "/dev/null")
+
+	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to create docker sandbox: %s", strings.TrimSpace(string(out)))

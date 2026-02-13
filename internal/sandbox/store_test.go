@@ -127,6 +127,51 @@ func TestSandboxStore_CreatesDirectory(t *testing.T) {
 	}
 }
 
+func TestSandboxStore_MountsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSandboxStore(dir)
+
+	info := SandboxInfo{
+		Name:     "sb-mounts",
+		Provider: "docker",
+		Image:    "ubuntu:latest",
+		Mounts: []MountBinding{
+			{Source: "/host/src", Target: "/workspace", Mode: "ro"},
+			{Source: "/host/data", Target: "/data", Mode: "rw"},
+		},
+	}
+
+	if err := store.Save(info); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	got, err := store.Get("sb-mounts")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if len(got.Mounts) != 2 {
+		t.Fatalf("expected 2 mounts, got %d", len(got.Mounts))
+	}
+	if got.Mounts[0].Source != "/host/src" || got.Mounts[0].Target != "/workspace" || got.Mounts[0].Mode != "ro" {
+		t.Errorf("mount[0] = %+v, unexpected", got.Mounts[0])
+	}
+	if got.Mounts[1].Source != "/host/data" || got.Mounts[1].Target != "/data" || got.Mounts[1].Mode != "rw" {
+		t.Errorf("mount[1] = %+v, unexpected", got.Mounts[1])
+	}
+}
+
+func TestSandboxStore_NoMountsOmitted(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSandboxStore(dir)
+
+	store.Save(SandboxInfo{Name: "no-mounts", Provider: "docker"})
+
+	got, _ := store.Get("no-mounts")
+	if got.Mounts != nil {
+		t.Errorf("expected nil mounts, got %v", got.Mounts)
+	}
+}
+
 func TestSandboxStore_EmptyFileReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	store := NewSandboxStore(dir)
