@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const sandboxWorkdir = "/home/clawbox/workspace"
+const SandboxWorkdir = "/home/clawbox/workspace"
 
 type SandboxPaths interface {
 	GetRoot() string
@@ -45,7 +45,7 @@ func NewTmpDirSandboxPaths(workdir, outdir string) (SandboxPaths, error) {
 	}
 	actualWorkdir := workdir
 	if actualWorkdir == "" {
-		actualWorkdir = sandboxWorkdir
+		actualWorkdir = SandboxWorkdir
 	}
 	resolved := resolveSandboxOutdir(root, outdir, actualWorkdir)
 	if err := os.MkdirAll(resolved.GetWorkdir(), 0755); err != nil {
