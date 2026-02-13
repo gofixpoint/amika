@@ -19,33 +19,35 @@
 
 ## Why
 
-AI agents work best when they have a filesystem. But getting the right data onto that filesystem is painful.
+AI agents like Claude Code and OpenClaw have converged on the best interface for knowledge work: give the agent a computer and let it operate on files. The problem is getting the right data onto that computer, especially when you're running agents inside ephemeral sandboxes (Daytona, Modal, etc.).
 
-Your data lives across HubSpot, Linear, Notion, Gmail -- scattered behind APIs and authentication walls. You end up copy-pasting context into prompts or writing bespoke integrations for every workflow.
+So we built Clawbox: a filesystem for AI agents. It started because I wanted to automate my sales pipeline with Claude Code. (Yes, only an engineer would run sales on a POSIX filesystem with a coding agent…)
 
-Ephemeral sandboxes start empty every time. Your agent has no memory of the files it worked with yesterday.
+Clawbox lets you pull scattered data from Hubspot, Linear, wherever, and connect that data to your agent sandboxes, persisting it across sessions. You can also use the data outside sandboxes on your local machine.
 
-**Clawbox fixes this.** It gives your agents a filesystem that connects to your tools, mounts into sandboxes, and persists across sessions.
+**Think of us kind of like Dropbox, but for you AI agents.**
 
 ## How It Works
 
-1. **Materialize** -- Run scripts that pull data from any source. Outputs land as files on your local filesystem.
-2. **Mount** -- Mount directories into Docker sandboxes with access control (read-only, read-write, overlay).
+1. **Materialize** -- Run scripts that pull data from any source. Outputs land as files in your filesystem repo.
+2. **Mount** -- Mount directories into sandboxes with access control (read-only, read-write, overlay).
 3. **Work** -- Your agent reads and writes files inside the sandbox. You control what syncs back.
 
 ```
-┌──────────────┐      ┌─────────────────────┐      ┌─────────────────┐
+┌──────────────┐      ┌──────────────────────┐      ┌─────────────────┐
 │  Your Tools  │ ──── │ Clawbox Filesystem   │ ──── │  Agent Sandbox  │
 │              │      │                      │      │                 │
 │  HubSpot     │      │  materialize ──> fs  │      │  mounted dirs   │
 │  Linear      │      │  scripts, commands   │      │  ro / rw / ovl  │
 │  Notion      │      │                      │      │                 │
-└──────────────┘      └─────────────────────┘      └─────────────────┘
+└──────────────┘      └──────────────────────┘      └─────────────────┘
 ```
 
 ## Quick Start
 
 **Prerequisites:** Go 1.21+, Docker, macOS
+
+Right now, we only support mounting into Docker containers, but we are expanding to support network-mounting filesystems onto any machine.
 
 ```bash
 # Clone and build
@@ -63,7 +65,9 @@ cat /tmp/demo/greeting.txt
 
 ## Example: Sales Pipeline
 
-Clawbox shines when agents need real data from your tools. Here's how it powers an automated sales workflow:
+*We've built some materialization scripts for our own use cases and put them inside `./scripts`. We're taking pull requests if there's other standard data flows to materialize for agents.*
+
+Because we're big engineering nerds, we run part of our sales workflow in Claude Code. It was a PITA to get the right CRM data to Claude, so we automated it:
 
 ```bash
 # 1. Materialize CRM data -- a script pulls deals from HubSpot as JSON files
@@ -83,13 +87,24 @@ Clawbox shines when agents need real data from your tools. Here's how it powers 
 ls ./output/
 ```
 
-Scripts run daily. Data stays fresh. Agents get context without copy-paste.
+You can also let Claude work off the data on your host computer, without a sandbox:
+
+```bash
+# Just work off the data outside the sandbox. Either `cd ./data/deals`,
+# or mount it somewhere first:
+./dist/clawbox mount ./data/deals ~/workspace/claude/sales --mode rw
+```
+
+Run materialization scripts on any cron schedule. Data stays fresh. Agents get
+context without copy-paste.
 
 ## Commands
 
 ### `clawbox materialize`
 
-Execute a script or command in a sandbox and copy outputs to your filesystem.
+Execute a script or command and copy outputs to your filesystem. By default, all
+scripts run inside isolated sandboxes so they cannot accidentally overwrite
+files on your computer.
 
 ```bash
 # Run a script, copy results to a destination
