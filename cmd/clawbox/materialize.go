@@ -45,6 +45,7 @@ Examples:
 		destdir, _ := cmd.Flags().GetString("destdir")
 		image, _ := cmd.Flags().GetString("image")
 		mountStrs, _ := cmd.Flags().GetStringArray("mount")
+		envStrs, _ := cmd.Flags().GetStringArray("env")
 
 		if err := validateScriptCmdFlags(script, cmdStr, args); err != nil {
 			return err
@@ -91,6 +92,11 @@ Examples:
 				vol += ":ro"
 			}
 			dockerArgs = append(dockerArgs, "-v", vol)
+		}
+
+		// Environment variables
+		for _, e := range envStrs {
+			dockerArgs = append(dockerArgs, "-e", e)
 		}
 
 		// Script auto-mount and command
@@ -147,7 +153,8 @@ func init() {
 	topMaterializeCmd.Flags().String("cmd", "", "Bash command string to execute (mutually exclusive with --script)")
 	topMaterializeCmd.Flags().String("outdir", "", "Container directory to copy from (default: workdir)")
 	topMaterializeCmd.Flags().String("destdir", "", "Host directory where output files are copied (required)")
-	topMaterializeCmd.Flags().String("image", "ubuntu:latest", "Docker image to use")
+	topMaterializeCmd.Flags().String("image", "clawbox-claude:latest", "Docker image to use")
 	topMaterializeCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
+	topMaterializeCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	topMaterializeCmd.MarkFlagRequired("destdir")
 }
