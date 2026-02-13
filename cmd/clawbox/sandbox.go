@@ -228,7 +228,7 @@ func init() {
 	// Create flags
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
-	sandboxCreateCmd.Flags().String("image", "ubuntu:latest", "Docker image to use")
+	sandboxCreateCmd.Flags().String("image", "clawbox-claude:latest", "Docker image to use")
 	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")

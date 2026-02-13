@@ -153,7 +153,7 @@ func init() {
 	topMaterializeCmd.Flags().String("cmd", "", "Bash command string to execute (mutually exclusive with --script)")
 	topMaterializeCmd.Flags().String("outdir", "", "Container directory to copy from (default: workdir)")
 	topMaterializeCmd.Flags().String("destdir", "", "Host directory where output files are copied (required)")
-	topMaterializeCmd.Flags().String("image", "ubuntu:latest", "Docker image to use")
+	topMaterializeCmd.Flags().String("image", "clawbox-claude:latest", "Docker image to use")
 	topMaterializeCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	topMaterializeCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	topMaterializeCmd.MarkFlagRequired("destdir")
