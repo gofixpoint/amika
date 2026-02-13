@@ -12,9 +12,10 @@ import (
 )
 
 var v0Cmd = &cobra.Command{
-	Use:   "v0",
-	Short: "v0 commands for filesystem mounting and materialization",
-	Long:  `v0 provides filesystem mounting and script execution with output materialization. Targets macOS using bindfs and macFUSE.`,
+	Use:    "v0",
+	Short:  "v0 commands for filesystem mounting and materialization",
+	Long:   `v0 provides filesystem mounting and script execution with output materialization. Targets macOS using bindfs and macFUSE.`,
+	Hidden: true,
 }
 
 var mountCmd = &cobra.Command{
