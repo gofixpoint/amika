@@ -74,8 +74,8 @@ Examples:
 			}
 		}
 
-		if !interactive && destdir == "" {
-			return fmt.Errorf("--destdir is required (or use --interactive)")
+		if destdir == "" {
+			return fmt.Errorf("--destdir is required")
 		}
 
 		mounts, err := parseMountFlags(mountStrs)
