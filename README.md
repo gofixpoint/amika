@@ -65,14 +65,14 @@ cat /tmp/demo/greeting.txt
 
 ## Example: Sales Pipeline
 
-*We've built some materialization scripts for our own use cases and put them inside `./scripts`. We're taking pull requests if there's other standard data flows to materialize for agents.*
+*We've built some materialization scripts for our own use cases and put them inside `./materialization-scripts`. We're taking pull requests if there's other standard data flows to materialize for agents.*
 
 Because we're big engineering nerds, we run part of our sales workflow in Claude Code. It was a PITA to get the right CRM data to Claude, so we automated it:
 
 ```bash
 # 1. Materialize CRM data -- a script pulls deals from HubSpot as JSON files
 ./dist/clawbox materialize \
-  --script ./scripts/pull-hubspot-deals.sh \
+  --script ./materialization-scripts/pull-hubspot-deals.sh \
   --destdir ./data/deals
 
 # 2. Create a sandbox with the data mounted read-only
