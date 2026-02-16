@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">clawbox</h1>
-  <p align="center"><strong>The filesystem for your AI agents.</strong></p>
-  <p align="center">Pull data from your tools. Mount it into sandboxes. Let your agents work on files.</p>
+  <p align="center"><strong>Multiplayer sandbox and filesystem for your AI agents</strong></p>
+  <p align="center">Create and share AI sandboxes, loaded with your files and connected to your apps.</p>
 </p>
 
 <p align="center">
@@ -19,19 +19,27 @@
 
 ## Why
 
-AI agents like Claude Code and OpenClaw have converged on the best interface for knowledge work: give the agent a computer and let it operate on files. The problem is getting the right data onto that computer, especially when you're running agents inside ephemeral sandboxes (Daytona, Modal, etc.).
+AI agents like Claude Code and OpenClaw have converged on the best interface for knowledge work: give the agent a computer and let it operate on files. But then you run into two problems:
 
-So we built Clawbox: a filesystem for AI agents. It started because I wanted to automate my sales pipeline with Claude Code. (Yes, only an engineer would run sales on a POSIX filesystem with a coding agent…)
+1. getting the right data onto your sandbox
+2. sharing your AI agents or vibe-coded apps with your teammates
 
-Clawbox lets you pull scattered data from Hubspot, Linear, wherever, and connect that data to your agent sandboxes, persisting it across sessions. You can also use the data outside sandboxes on your local machine.
+So we're built Clawbox: multiplayer sandboxes and a shared filesystem for your AI agents. It started because we wanted to automate our sales pipeline with Claude Code. (Yes, only an engineer would run sales on a POSIX filesystem with a coding agent…)
 
-**Think of us kind of like Dropbox, but for you AI agents.**
+Clawbox lets you spin up sandboxes on any infra provider, load them with data from your SaaS products and the web, and then share them with your teammates.
+
+Reasons to share with your teammates:
+
+1. your agent vibe-coded an app and you want your coworkers to use it
+2. you want to hand off an in-progress agent coding session without losing context
+3. your teammate wants to fork your agentic workflow into their own sandbox
 
 ## How It Works
 
 1. **Materialize** -- Run scripts that pull data from any source. Outputs land as files in your filesystem repo.
 2. **Mount** -- Mount directories into sandboxes with access control (read-only, read-write, overlay).
 3. **Work** -- Your agent reads and writes files inside the sandbox. You control what syncs back.
+4. **Share** (coming soon) -- at the end, you can share access to your sandbox with your teammates. You can freeze the sandbox, or let them take over or fork it
 
 ```
 ┌──────────────┐      ┌──────────────────────┐      ┌─────────────────┐
