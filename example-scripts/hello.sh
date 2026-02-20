@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-echo "hello clawbox!" > hello.md
+echo "hello amika!" > hello.md

@@ -8,9 +8,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:                "clawbox",
-	Short:              "Clawbox - filesystem mounting and script execution",
-	Long:               `Clawbox provides filesystem mounting and script execution with output materialization.`,
+	Use:                "amika",
+	Short:              "Amika - filesystem mounting and script execution",
+	Long:               `Amika provides filesystem mounting and script execution with output materialization.`,
 	CompletionOptions:  cobra.CompletionOptions{HiddenDefaultCmd: true},
 }
 

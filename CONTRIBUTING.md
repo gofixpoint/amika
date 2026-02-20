@@ -7,13 +7,13 @@
 ## Building
 
 ```bash
-go build -o dist/clawbox ./cmd/clawbox
+go build -o dist/amika ./cmd/amika
 ```
 
 ## Running
 
 ```bash
-dist/clawbox
+dist/amika
 ```
 
 ## Testing

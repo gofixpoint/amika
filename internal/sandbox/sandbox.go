@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const SandboxWorkdir = "/home/clawbox/workspace"
+const SandboxWorkdir = "/home/amika/workspace"
 
 type SandboxPaths interface {
 	GetRoot() string
@@ -39,7 +39,7 @@ func (s *tmpDirSandboxPaths) Cleanup() error {
 }
 
 func NewTmpDirSandboxPaths(workdir, outdir string) (SandboxPaths, error) {
-	root, err := os.MkdirTemp("", "clawbox-sandbox-*")
+	root, err := os.MkdirTemp("", "amika-sandbox-*")
 	if err != nil {
 		return nil, err
 	}

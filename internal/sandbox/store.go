@@ -36,7 +36,7 @@ type SandboxStore interface {
 }
 
 type fileSandboxStore struct {
-	dir string // e.g. ".clawbox"
+	dir string // e.g. ".amika"
 }
 
 // NewSandboxStore creates a SandboxStore backed by a JSONL file in the given directory.

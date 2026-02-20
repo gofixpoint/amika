@@ -35,12 +35,12 @@ type State interface {
 // fileState implements State using a JSONL file.
 type fileState struct {
 	dirname  string // parent directory (e.g., "/Users/foo")
-	basename string // directory name (e.g., ".clawboxbase")
+	basename string // directory name (e.g., ".amikabase")
 }
 
 // NewState creates a new State instance.
 // dirname is the parent directory path (e.g., "/Users/foo").
-// basename is the state directory name (e.g., ".clawboxbase").
+// basename is the state directory name (e.g., ".amikabase").
 func NewState(dirname string, basename string) State {
 	return &fileState{
 		dirname:  dirname,
@@ -48,13 +48,13 @@ func NewState(dirname string, basename string) State {
 	}
 }
 
-// NewStateInHomeDir creates a new State instance in ~/.clawboxbase.
+// NewStateInHomeDir creates a new State instance in ~/.amikabase.
 func NewStateInHomeDir() (State, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
-	return NewState(home, ".clawboxbase"), nil
+	return NewState(home, ".amikabase"), nil
 }
 
 // StateDir returns the path to the state directory.

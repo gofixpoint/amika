@@ -39,7 +39,7 @@ func DockerImageExists(name string) bool {
 
 // BuildDockerImage builds a Docker image from the given Dockerfile content.
 func BuildDockerImage(name string, dockerfile []byte) error {
-	tmpDir, err := os.MkdirTemp("", "clawbox-build-*")
+	tmpDir, err := os.MkdirTemp("", "amika-build-*")
 	if err != nil {
 		return fmt.Errorf("failed to create build context: %w", err)
 	}

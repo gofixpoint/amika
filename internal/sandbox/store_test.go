@@ -115,7 +115,7 @@ func TestSandboxStore_List(t *testing.T) {
 }
 
 func TestSandboxStore_CreatesDirectory(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "nested", ".clawbox")
+	dir := filepath.Join(t.TempDir(), "nested", ".amika")
 	store := NewSandboxStore(dir)
 
 	if err := store.Save(SandboxInfo{Name: "sb1"}); err != nil {
