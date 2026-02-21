@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gofixpoint/clawbox/internal/sandbox"
+	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +17,7 @@ var topMaterializeCmd = &cobra.Command{
 	Long: `Run a script or command in an ephemeral Docker container and copy output
 files to a destination directory.
 
-The container runs with a working directory at /home/clawbox/workspace.
+The container runs with a working directory at /home/amika/workspace.
 The script/command runs with CWD set to this workdir.
 
 Exactly one of --script or --cmd must be specified.
@@ -31,12 +31,12 @@ Host directories can be mounted into the container using --mount:
   --mount /host/path:/container/path:ro
 
 Use --interactive (-i) to connect stdin/stdout for interactive programs like Claude:
-  clawbox materialize -i --cmd claude --mount $(pwd):/workspace
+  amika materialize -i --cmd claude --mount $(pwd):/workspace
 
 Examples:
-  clawbox materialize --cmd "echo hi > result.txt" --destdir /tmp/dest
-  clawbox materialize --script ./hello.sh --destdir /tmp/dest
-  clawbox materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...`,
+  amika materialize --cmd "echo hi > result.txt" --destdir /tmp/dest
+  amika materialize --script ./hello.sh --destdir /tmp/dest
+  amika materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -61,7 +61,7 @@ Examples:
 			if cmd.Flags().Changed("image") {
 				return fmt.Errorf("--preset and --image are mutually exclusive")
 			}
-			image = "clawbox-" + preset + ":latest"
+			image = "amika-" + preset + ":latest"
 			if !sandbox.DockerImageExists(image) {
 				dockerfile, err := sandbox.GetPresetDockerfile(preset)
 				if err != nil {
@@ -120,7 +120,7 @@ Examples:
 		// If destdir is set, create temp dir for output capture
 		var tmpDir string
 		if destdir != "" {
-			tmpDir, err = os.MkdirTemp("", "clawbox-materialize-*")
+			tmpDir, err = os.MkdirTemp("", "amika-materialize-*")
 			if err != nil {
 				return fmt.Errorf("failed to create temp dir: %w", err)
 			}
@@ -159,8 +159,8 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("failed to resolve script path: %w", err)
 			}
-			dockerArgs = append(dockerArgs, "-v", absScript+":/.clawbox/script:ro")
-			dockerArgs = append(dockerArgs, image, "/.clawbox/script")
+			dockerArgs = append(dockerArgs, "-v", absScript+":/.amika/script:ro")
+			dockerArgs = append(dockerArgs, image, "/.amika/script")
 			dockerArgs = append(dockerArgs, args...)
 		} else {
 			if interactive {
@@ -223,7 +223,7 @@ func init() {
 	topMaterializeCmd.Flags().String("cmd", "", "Bash command string to execute (mutually exclusive with --script)")
 	topMaterializeCmd.Flags().String("outdir", "", "Container directory to copy from (default: workdir)")
 	topMaterializeCmd.Flags().String("destdir", "", "Host directory where output files are copied")
-	topMaterializeCmd.Flags().String("image", "clawbox-claude:latest", "Docker image to use")
+	topMaterializeCmd.Flags().String("image", "amika-claude:latest", "Docker image to use")
 	topMaterializeCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
 	topMaterializeCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	topMaterializeCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")

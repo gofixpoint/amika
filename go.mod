@@ -1,4 +1,4 @@
-module github.com/gofixpoint/clawbox
+module github.com/gofixpoint/amika
 
 go 1.25.3
 

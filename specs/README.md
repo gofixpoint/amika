@@ -1,6 +1,6 @@
 # Specifications
 
-This directory contains product, design, and technical specifications for the Clawbox project.
+This directory contains product, design, and technical specifications for the Amika project.
 
 ## Creating a New Spec
 

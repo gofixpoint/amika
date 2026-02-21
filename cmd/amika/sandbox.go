@@ -9,11 +9,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/gofixpoint/clawbox/internal/sandbox"
+	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
-const sandboxStoreDir = ".clawbox"
+const sandboxStoreDir = ".amika"
 
 var sandboxCmd = &cobra.Command{
 	Use:   "sandbox",
@@ -45,7 +45,7 @@ var sandboxCreateCmd = &cobra.Command{
 			if cmd.Flags().Changed("image") {
 				return fmt.Errorf("--preset and --image are mutually exclusive")
 			}
-			image = "clawbox-" + preset + ":latest"
+			image = "amika-" + preset + ":latest"
 			if !sandbox.DockerImageExists(image) {
 				dockerfile, err := sandbox.GetPresetDockerfile(preset)
 				if err != nil {
@@ -228,7 +228,7 @@ func init() {
 	// Create flags
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
-	sandboxCreateCmd.Flags().String("image", "clawbox-claude:latest", "Docker image to use")
+	sandboxCreateCmd.Flags().String("image", "amika-claude:latest", "Docker image to use")
 	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")

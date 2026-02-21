@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Build the binary
-go build -o dist/clawbox ./cmd/clawbox
+go build -o dist/amika ./cmd/amika
 
 # Run the binary
-dist/clawbox
+dist/amika
 
 # Run tests
 go test ./...
@@ -17,13 +17,13 @@ go test ./...
 
 ## Project Overview
 
-Clawbox is a Go CLI tool. The project uses standard Go tooling with no external build systems.
+Amika is a Go CLI tool. The project uses standard Go tooling with no external build systems.
 
 ## Code Structure
 
-- `cmd/clawbox/main.go` - Main entry point for the CLI
+- `cmd/amika/main.go` - Main entry point for the CLI
 - `dist/` - Build output directory (gitignored)
-- `bin/clawbox` - Wrapper script that auto-builds and runs dist/clawbox
+- `bin/amika` - Wrapper script that auto-builds and runs dist/amika
 
 ## Development Notes
 

@@ -1,18 +1,18 @@
 <p align="center">
-  <h1 align="center">clawbox</h1>
+  <h1 align="center">amika</h1>
   <p align="center"><strong>The filesystem for your AI agents.</strong></p>
   <p align="center">Pull data from your tools. Mount it into sandboxes. Let your agents work on files.</p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/gofixpoint/clawbox/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/gofixpoint/amika/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/built%20with-Go-00ADD8.svg" alt="Go"></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="macOS">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha">
 </p>
 
 <p align="center">
-  <a href="https://withclawbox.com">withclawbox.com</a>
+  <a href="https://withamika.com">withamika.com</a>
 </p>
 
 ---
@@ -21,9 +21,9 @@
 
 AI agents like Claude Code and OpenClaw have converged on the best interface for knowledge work: give the agent a computer and let it operate on files. The problem is getting the right data onto that computer, especially when you're running agents inside ephemeral sandboxes (Daytona, Modal, etc.).
 
-So we built Clawbox: a filesystem for AI agents. It started because I wanted to automate my sales pipeline with Claude Code. (Yes, only an engineer would run sales on a POSIX filesystem with a coding agent…)
+So we built Amika: a filesystem for AI agents. It started because I wanted to automate my sales pipeline with Claude Code. (Yes, only an engineer would run sales on a POSIX filesystem with a coding agent…)
 
-Clawbox lets you pull scattered data from Hubspot, Linear, wherever, and connect that data to your agent sandboxes, persisting it across sessions. You can also use the data outside sandboxes on your local machine.
+Amika lets you pull scattered data from Hubspot, Linear, wherever, and connect that data to your agent sandboxes, persisting it across sessions. You can also use the data outside sandboxes on your local machine.
 
 **Think of us kind of like Dropbox, but for you AI agents.**
 
@@ -35,7 +35,7 @@ Clawbox lets you pull scattered data from Hubspot, Linear, wherever, and connect
 
 ```
 ┌──────────────┐      ┌──────────────────────┐      ┌─────────────────┐
-│  Your Tools  │ ──── │ Clawbox Filesystem   │ ──── │  Agent Sandbox  │
+│  Your Tools  │ ──── │ Amika Filesystem     │ ──── │  Agent Sandbox  │
 │              │      │                      │      │                 │
 │  HubSpot     │      │  materialize ──> fs  │      │  mounted dirs   │
 │  Linear      │      │  scripts, commands   │      │  ro / rw / ovl  │
@@ -51,15 +51,15 @@ Right now, we only support mounting into Docker containers, but we are expanding
 
 ```bash
 # Clone and build
-git clone https://github.com/gofixpoint/clawbox.git && cd clawbox
-go build -o dist/clawbox ./cmd/clawbox
+git clone https://github.com/gofixpoint/amika.git && cd amika
+go build -o dist/amika ./cmd/amika
 
 # Materialize: run a command and capture its output as files
-./dist/clawbox materialize --cmd "echo hello > greeting.txt" --destdir /tmp/demo
+./dist/amika materialize --cmd "echo hello > greeting.txt" --destdir /tmp/demo
 cat /tmp/demo/greeting.txt
 
 # Create a Docker sandbox with a mounted directory
-./dist/clawbox sandbox create --name my-sandbox \
+./dist/amika sandbox create --name my-sandbox \
   --mount /tmp/demo:/workspace/data:ro
 ```
 
@@ -71,12 +71,12 @@ Because we're big engineering nerds, we run part of our sales workflow in Claude
 
 ```bash
 # 1. Materialize CRM data -- a script pulls deals from HubSpot as JSON files
-./dist/clawbox materialize \
+./dist/amika materialize \
   --script ./materialization-scripts/pull-hubspot-deals.sh \
   --destdir ./data/deals
 
 # 2. Create a sandbox with the data mounted read-only
-./dist/clawbox sandbox create --name sales-agent \
+./dist/amika sandbox create --name sales-agent \
   --mount ./data/deals:/workspace/deals:ro \
   --mount ./output:/workspace/drafts:rw
 
@@ -92,7 +92,7 @@ You can also let Claude work off the data on your host computer, without a sandb
 ```bash
 # Just work off the data outside the sandbox. Either `cd ./data/deals`,
 # or mount it somewhere first:
-./dist/clawbox mount ./data/deals ~/workspace/claude/sales --mode rw
+./dist/amika mount ./data/deals ~/workspace/claude/sales --mode rw
 ```
 
 Run materialization scripts on any cron schedule. Data stays fresh. Agents get
@@ -100,7 +100,7 @@ context without copy-paste.
 
 ## Commands
 
-### `clawbox materialize`
+### `amika materialize`
 
 Execute a script or command and copy outputs to your filesystem. By default, all
 scripts run inside isolated sandboxes so they cannot accidentally overwrite
@@ -108,46 +108,46 @@ files on your computer.
 
 ```bash
 # Run a script, copy results to a destination
-clawbox materialize --script ./pull-data.sh --destdir ./output
+amika materialize --script ./pull-data.sh --destdir ./output
 
 # Run an inline command
-clawbox materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
+amika materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
 
 # Specify which directory to copy from inside the sandbox
-clawbox materialize --script ./transform.sh --outdir /app/results --destdir ./output
+amika materialize --script ./transform.sh --outdir /app/results --destdir ./output
 ```
 
-### `clawbox sandbox create|delete|list`
+### `amika sandbox create|delete|list`
 
 Manage Docker-backed persistent sandboxes with mounted directories.
 
 ```bash
 # Create a sandbox with mounts
-clawbox sandbox create --name dev-sandbox \
+amika sandbox create --name dev-sandbox \
   --image ubuntu:latest \
   --mount ./src:/workspace/src:ro \
   --mount ./out:/workspace/out:rw
 
 # List running sandboxes
-clawbox sandbox list
+amika sandbox list
 
 # Delete a sandbox
-clawbox sandbox delete --name dev-sandbox
+amika sandbox delete --name dev-sandbox
 ```
 
-### `clawbox v0 mount|unmount`
+### `amika v0 mount|unmount`
 
 Mount and unmount directories with fine-grained access control.
 
 ```bash
 # Mount a directory read-only
-clawbox v0 mount ./data /mnt/data --mode ro
+amika v0 mount ./data /mnt/data --mode ro
 
 # Mount with overlay (writes don't affect source)
-clawbox v0 mount ./data /mnt/data --mode overlay
+amika v0 mount ./data /mnt/data --mode overlay
 
 # Unmount
-clawbox v0 unmount /mnt/data
+amika v0 unmount /mnt/data
 ```
 
 ## Roadmap
@@ -164,7 +164,7 @@ clawbox v0 unmount /mnt/data
 
 ## Status
 
-Clawbox is **alpha software**. It runs on macOS only. APIs and CLI flags will change. We're building in public -- if something breaks or you have ideas, [open an issue](https://github.com/gofixpoint/clawbox/issues). Feedback shapes what we build next.
+Amika is **alpha software**. It runs on macOS only. APIs and CLI flags will change. We're building in public -- if something breaks or you have ideas, [open an issue](https://github.com/gofixpoint/amika/issues). Feedback shapes what we build next.
 
 ## Contributing
 

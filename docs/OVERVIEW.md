@@ -1,30 +1,30 @@
-# Clawbox Overview
+# Amika Overview
 
-Clawbox is a Go CLI tool for executing scripts in sandboxed environments with controlled filesystem access and output materialization. It targets macOS and uses bindfs/macFUSE for filesystem mounting.
+Amika is a Go CLI tool for executing scripts in sandboxed environments with controlled filesystem access and output materialization. It targets macOS and uses bindfs/macFUSE for filesystem mounting.
 
 ## Core Concepts
 
-**Sandboxed execution**: Scripts run inside a temporary, isolated directory structure. The sandbox has a root, a working directory (default `/home/clawbox/workspace`), and an output directory. All paths are forced under the sandbox root for security.
+**Sandboxed execution**: Scripts run inside a temporary, isolated directory structure. The sandbox has a root, a working directory (default `/home/amika/workspace`), and an output directory. All paths are forced under the sandbox root for security.
 
-**Materialization**: After a script finishes, clawbox copies its output files from the sandbox to a host destination directory using rsync, then cleans up the sandbox.
+**Materialization**: After a script finishes, amika copies its output files from the sandbox to a host destination directory using rsync, then cleans up the sandbox.
 
 **Filesystem mounts**: Source directories can be mounted to target paths with three access modes: read-only (`ro`), read-write (`rw`), and overlay (copy-on-write isolation).
 
 ## Commands
 
-### `clawbox materialize`
+### `amika materialize`
 
 The primary command. Creates a temporary sandbox, runs a script or bash command inside it, and copies the output to a destination.
 
 ```bash
 # Run a command, copy output to /tmp/dest
-clawbox materialize --cmd "echo hi > result.txt" --destdir /tmp/dest
+amika materialize --cmd "echo hi > result.txt" --destdir /tmp/dest
 
 # Run a script with arguments
-clawbox materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
+amika materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
 
 # Specify a custom output directory within the sandbox
-clawbox materialize --cmd "echo data > /output/file.txt" --outdir /output --destdir /tmp/dest
+amika materialize --cmd "echo data > /output/file.txt" --outdir /output --destdir /tmp/dest
 ```
 
 Key flags:
@@ -32,25 +32,25 @@ Key flags:
 - `--outdir <path>` - sandbox directory to copy from (default: working directory)
 - `--destdir <path>` - host directory to copy output to (required)
 
-The child process receives a `CLAWBOX_SANDBOX_ROOT` environment variable pointing to the sandbox root.
+The child process receives a `AMIKA_SANDBOX_ROOT` environment variable pointing to the sandbox root.
 
-### `clawbox v0 mount <src> <target> --mode <mode>`
+### `amika v0 mount <src> <target> --mode <mode>`
 
 Mount a source directory to a target path with a specified access mode:
 - **`ro`**: Read-only via bindfs
 - **`rw`**: Read-write via bindfs (writes go to source)
 - **`overlay`**: Copies source to a temp directory and mounts that; writes are isolated from the original
 
-Mount state is tracked in `~/.clawboxbase/mounts.jsonl`.
+Mount state is tracked in `~/.amikabase/mounts.jsonl`.
 
-### `clawbox v0 unmount <target>`
+### `amika v0 unmount <target>`
 
 Unmount a previously mounted target and clean up resources (including overlay temp directories).
 
 ## Architecture
 
 ```
-cmd/clawbox/           CLI entry point and Cobra command definitions
+cmd/amika/           CLI entry point and Cobra command definitions
 internal/
   materialize/      Script execution and rsync-based output copying
   sandbox/          Temporary sandbox creation and path resolution

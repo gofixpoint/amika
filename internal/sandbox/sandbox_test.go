@@ -20,41 +20,41 @@ func TestResolveSandboxOutdir(t *testing.T) {
 			name:    "empty outdir with absolute workdir",
 			root:    "/tmp/sb",
 			outdir:  "",
-			workdir: "/home/clawbox/workspace",
-			wantW:   "/tmp/sb/home/clawbox/workspace",
-			wantO:   "/tmp/sb/home/clawbox/workspace",
+			workdir: "/home/amika/workspace",
+			wantW:   "/tmp/sb/home/amika/workspace",
+			wantO:   "/tmp/sb/home/amika/workspace",
 		},
 		{
 			name:    "absolute outdir",
 			root:    "/tmp/sb",
 			outdir:  "/output",
-			workdir: "/home/clawbox/workspace",
-			wantW:   "/tmp/sb/home/clawbox/workspace",
+			workdir: "/home/amika/workspace",
+			wantW:   "/tmp/sb/home/amika/workspace",
 			wantO:   "/tmp/sb/output",
 		},
 		{
 			name:    "relative outdir",
 			root:    "/tmp/sb",
 			outdir:  "out",
-			workdir: "/home/clawbox/workspace",
-			wantW:   "/tmp/sb/home/clawbox/workspace",
-			wantO:   "/tmp/sb/home/clawbox/workspace/out",
+			workdir: "/home/amika/workspace",
+			wantW:   "/tmp/sb/home/amika/workspace",
+			wantO:   "/tmp/sb/home/amika/workspace/out",
 		},
 		{
 			name:    "absolute nested outdir",
 			root:    "/tmp/sb",
 			outdir:  "/var/data/out",
-			workdir: "/home/clawbox/workspace",
-			wantW:   "/tmp/sb/home/clawbox/workspace",
+			workdir: "/home/amika/workspace",
+			wantW:   "/tmp/sb/home/amika/workspace",
 			wantO:   "/tmp/sb/var/data/out",
 		},
 		{
 			name:    "relative nested outdir",
 			root:    "/tmp/sb",
 			outdir:  "sub/dir",
-			workdir: "/home/clawbox/workspace",
-			wantW:   "/tmp/sb/home/clawbox/workspace",
-			wantO:   "/tmp/sb/home/clawbox/workspace/sub/dir",
+			workdir: "/home/amika/workspace",
+			wantW:   "/tmp/sb/home/amika/workspace",
+			wantO:   "/tmp/sb/home/amika/workspace/sub/dir",
 		},
 		{
 			name:    "relative workdir nested under sandbox root",
@@ -97,8 +97,8 @@ func TestNewTmpDirSandboxPaths_DefaultWorkdir(t *testing.T) {
 	}
 	defer sb.Cleanup()
 
-	if !strings.HasSuffix(sb.GetWorkdir(), "/home/clawbox/workspace") {
-		t.Errorf("workdir %q should end with /home/clawbox/workspace", sb.GetWorkdir())
+	if !strings.HasSuffix(sb.GetWorkdir(), "/home/amika/workspace") {
+		t.Errorf("workdir %q should end with /home/amika/workspace", sb.GetWorkdir())
 	}
 
 	if !strings.HasPrefix(sb.GetWorkdir(), sb.GetRoot()) {

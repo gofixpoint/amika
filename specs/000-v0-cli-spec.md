@@ -1,17 +1,17 @@
-# Clawbox v0 CLI Specification
+# Amika v0 CLI Specification
 
 ## Overview
 
-Clawbox v0 provides filesystem mounting and script execution with output materialization. The v0 implementation targets macOS using bindfs and macFUSE.
+Amika v0 provides filesystem mounting and script execution with output materialization. The v0 implementation targets macOS using bindfs and macFUSE.
 
 ## Commands
 
-### `clawbox v0 materialize`
+### `amika v0 materialize`
 
 Runs a script and copies output files to a destination directory. This simulates a sandboxed execution model where the script runs in isolation and its outputs are "materialized" to the host.
 
 ```
-clawbox v0 materialize \
+amika v0 materialize \
     --script <path> \
     --workdir <path> \
     --outdir <path> \
@@ -37,12 +37,12 @@ clawbox v0 materialize \
 
 ---
 
-### `clawbox v0 mount`
+### `amika v0 mount`
 
 Mounts a source directory to a target path with specified access mode.
 
 ```
-clawbox v0 mount <src> <target> --mode <mode>
+amika v0 mount <src> <target> --mode <mode>
 ```
 
 **Arguments:**
@@ -71,12 +71,12 @@ clawbox v0 mount <src> <target> --mode <mode>
 
 ---
 
-### `clawbox v0 unmount`
+### `amika v0 unmount`
 
 Unmounts a previously mounted target.
 
 ```
-clawbox v0 unmount <target>
+amika v0 unmount <target>
 ```
 
 **Arguments:**
@@ -95,7 +95,7 @@ clawbox v0 unmount <target>
 
 ## Dependencies
 
-Clawbox v0 requires the following dependencies on macOS:
+Amika v0 requires the following dependencies on macOS:
 
 - **macFUSE**: Provides FUSE support on macOS
 - **bindfs**: FUSE filesystem for mounting directories
@@ -106,12 +106,12 @@ The CLI must check for these dependencies at startup and display helpful error m
 
 ## State Management
 
-Active mounts are tracked in `~/.clawboxbase/mounts.jsonl`. This is a JSON Lines file where each line is a mount entry serialized as JSON.
+Active mounts are tracked in `~/.amikabase/mounts.jsonl`. This is a JSON Lines file where each line is a mount entry serialized as JSON.
 
-**File format** (`~/.clawboxbase/mounts.jsonl`):
+**File format** (`~/.amikabase/mounts.jsonl`):
 ```jsonl
 {"source":"/path/to/src1","target":"/path/to/target1","mode":"ro"}
-{"source":"/path/to/src2","target":"/path/to/target2","mode":"overlay","tempDir":"/tmp/clawbox-xxxx"}
+{"source":"/path/to/src2","target":"/path/to/target2","mode":"overlay","tempDir":"/tmp/amika-xxxx"}
 ```
 
 **Mount entry fields:**
