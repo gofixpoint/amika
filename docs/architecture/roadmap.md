@@ -14,9 +14,9 @@ These principles guide all design decisions.
 2. **Access control is enforced at the filesystem layer.**
    Read-only, read-write, and overlay modes define what agents can modify.
 
-## Core Architectural Planes
+## Architecture Overview
 
-To scale from a local CLI to a cloud-native data plane, Amika is divided into two distinct layers: the **Execution Plane** and the **Data Plane**.
+Amika is divided into two layers: the **Execution Plane** (where agents run) and the **Data Plane** (how data flows in and out).
 
 ```
 External Sources          Data Plane                    Execution Plane
@@ -29,16 +29,7 @@ External Sources          Data Plane                    Execution Plane
 └──────────────┘    └─────────────────────┘    └─────────────────────────┘
 ```
 
-### The Execution Plane (Sandbox & Mount)
-
-*Purpose: Provides the POSIX-compliant environment where the agent operates.*
-
-* 🟢 **Local Docker Support**: Persistent sandboxes with controlled directory mounting.
-* 🟢 **Multi-Mode Mounting**: Support for `ro` (read-only), `rw` (read-write), and `overlay` (copy-on-write) modes.
-* 🟡 **Linux and MacOS Support**: We support `macFUSE` and `fuse3` for Mac OS and Linux compatibility.
-* ⚪ **Network-Mountable FS**: You should be able to migrate your filesystem between local containers and any cloud-hosted remote sandbox (Modal, E2B, Daytona, Cloudflare, etc.)
-
-### The Data Plane (Materialization & Sync)
+## Data Plane: Materialization & Sync
 
 *Purpose: Manages the lifecycle of data—pulling it from sources and ensuring it stays fresh.*
 
@@ -46,34 +37,31 @@ External Sources          Data Plane                    Execution Plane
 * 🟡 **Connector Framework**: Standardized interfaces for external storage (Postgres, S3, Git) and SaaS APIs (HubSpot, Linear).
 * ⚪ **The Sync Engine**: Moving from one-off copies to a live reconciliation engine that tracks incremental changes and bi-directional updates.
 
-## Filesystem Materialization
+Materialization is the process of shaping external data into a local file tree. The three modes above evolve from simple to sophisticated:
 
-Materialization is the process of shaping external data into a local file tree. We support three evolving modes:
-
-1. **Batch Materialization (Current)**: Run a command; sync the resulting directory to a destination.
-2. **Sync-Based Materialization (Active)**: A live directory that incrementally mirrors a SaaS tool (e.g., your HubSpot contacts appearing as a directory of Markdown files).
-3. **Dynamic Materialization (Planned)**: Virtual files generated on-demand. For example, reading `logs.txt` might trigger a real-time API call to a logging provider without the data ever sitting on disk.
+1. **Batch**: Run a command; sync the resulting directory to a destination.
+2. **Sync-Based**: A live directory that incrementally mirrors a SaaS tool (e.g., your HubSpot contacts appearing as a directory of Markdown files).
+3. **Dynamic (Planned)**: Virtual files generated on-demand. For example, reading `logs.txt` might trigger a real-time API call to a logging provider without the data ever sitting on disk.
 
 ## Execution Plane: Mounts & Sandboxes
 
-### Cross-Platform Support
+*Purpose: Provides the POSIX-compliant environment where the agent operates.*
 
-Amika currently requires macOS with macFUSE/bindfs. To support agents running in cloud environments (Modal, E2B, Daytona, Lambda), we need:
+* 🟢 **Local Docker Support**: Persistent sandboxes with controlled directory mounting.
+* 🟢 **Multi-Mode Mounting**: Support for `ro` (read-only), `rw` (read-write), and `overlay` (copy-on-write) modes.
+* 🟡 **Linux and macOS Support**: We support `macFUSE` and `fuse3` for macOS and Linux compatibility.
+* ⚪ **Network-Mountable FS**: Move from local FUSE to a networked protocol (likely 9P or a custom gRPC-based file server) so remote sandboxes can mount Amika filesystems without being on the same host. This enables migration between local containers and cloud-hosted sandboxes (Modal, E2B, Daytona, Cloudflare, etc.).
 
-- **Linux support**: Implement `fuse3`-based mounting for standard Linux kernels
-- **Network-mountable filesystem**: Move from local FUSE to a networked protocol (likely 9P or a custom gRPC-based file server) so remote sandboxes can mount Amika filesystems without being on the same host
-- **Remote sandbox mounting**: First-class support for mounting into ephemeral cloud sandboxes
+Planned additions:
 
-### Mount Modes
-
-The current ro/rw/overlay modes stay. We're adding:
-
-- **Per-agent mount configurations**: Different agents get different views of the same filesystem, with different permission sets
-- **Lazy loading**: Don't sync the entire file tree upfront; pull files on demand for faster sandbox boot times
+- **Per-agent mount configurations**: Different agents get different views of the same filesystem, with different permission sets.
+- **Lazy loading**: Don't sync the entire file tree upfront; pull files on demand for faster sandbox boot times.
 
 ## Security & Transformation Pipeline
 
-The filesystem acts as a security firewall between the LLM and sensitive data.
+The filesystem acts as a security firewall between the LLM and sensitive data. The data flow through inbound and outbound filters.
+
+-The filesystem acts as a security firewall between the LLM and sensitive data.
 
 ```
 External Source
@@ -105,18 +93,7 @@ As data moves from a source to the agent, Amika can modify it in transit:
 * **Audit Logs**: A full syscall-level trace of every file the agent read or wrote.
 * **Staging Area**: AI writes land in a staging area in the source-of-truth repo. A human or "Supervisor Agent" must approve the changes before they are committed to the production datastore.
 
-### Threat Model
-
-The security layer is designed to protect against:
-
-- **Prompt injection via file contents**: Inbound filters can sanitize or tokenize content before it reaches the agent
-- **Data exfiltration via write-back**: Outbound filters validate what the agent is trying to send to external systems
-- **Cross-agent data leakage**: Per-agent mount configs with isolated permission sets
-- **Sandbox escape**: Enforced path boundaries (all paths forced under sandbox root)
-
-### Audit Logs
-
-All agent reads and writes to the filesystem can be tracked, producing a full audit trail of what the agent accessed and modified.
+**Threat model.** The security layer protects against: prompt injection via file contents (inbound filters sanitize/tokenize before reaching the agent), data exfiltration via write-back (outbound filters validate what agents send to external systems), cross-agent data leakage (per-agent mount configs with isolated permission sets), and sandbox escape (enforced path boundaries with all paths forced under sandbox root).
 
 ## Versioning & Agent Traces
 
