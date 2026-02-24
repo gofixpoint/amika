@@ -125,13 +125,14 @@ var sandboxCreateCmd = &cobra.Command{
 }
 
 var sandboxDeleteCmd = &cobra.Command{
-	Use:   "delete",
+	Use:   "delete <name>",
 	Short: "Delete a sandbox",
 	Long:  `Delete a sandbox and remove its backing container.`,
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
-		name, _ := cmd.Flags().GetString("name")
+		name := args[0]
 
 		store := sandbox.NewSandboxStore(sandboxStoreDir)
 
@@ -242,7 +243,4 @@ func init() {
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 
-	// Delete flags
-	sandboxDeleteCmd.Flags().String("name", "", "Name of the sandbox to delete (required)")
-	sandboxDeleteCmd.MarkFlagRequired("name")
 }
