@@ -9,11 +9,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/spf13/cobra"
 )
-
-const sandboxStoreDir = ".amika"
 
 var sandboxCmd = &cobra.Command{
 	Use:   "sandbox",
@@ -71,7 +70,11 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
-		store := sandbox.NewSandboxStore(sandboxStoreDir)
+		stateDir, err := config.StateDir()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewSandboxStore(stateDir)
 
 		// Generate a name if not provided
 		if name == "" {
@@ -134,7 +137,11 @@ var sandboxDeleteCmd = &cobra.Command{
 
 		name := args[0]
 
-		store := sandbox.NewSandboxStore(sandboxStoreDir)
+		stateDir, err := config.StateDir()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewSandboxStore(stateDir)
 
 		info, err := store.Get(name)
 		if err != nil {
@@ -160,7 +167,11 @@ var sandboxListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all sandboxes",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store := sandbox.NewSandboxStore(sandboxStoreDir)
+		stateDir, err := config.StateDir()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewSandboxStore(stateDir)
 
 		sandboxes, err := store.List()
 		if err != nil {

@@ -34,32 +34,20 @@ type State interface {
 
 // fileState implements State using a JSONL file.
 type fileState struct {
-	dirname  string // parent directory (e.g., "/Users/foo")
-	basename string // directory name (e.g., ".amikabase")
+	stateDir string // amika state directory path
 }
 
 // NewState creates a new State instance.
-// dirname is the parent directory path (e.g., "/Users/foo").
-// basename is the state directory name (e.g., ".amikabase").
-func NewState(dirname string, basename string) State {
+// stateDir is the full path to the amika state directory.
+func NewState(stateDir string) State {
 	return &fileState{
-		dirname:  dirname,
-		basename: basename,
+		stateDir: stateDir,
 	}
-}
-
-// NewStateInHomeDir creates a new State instance in ~/.amikabase.
-func NewStateInHomeDir() (State, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
-	}
-	return NewState(home, ".amikabase"), nil
 }
 
 // StateDir returns the path to the state directory.
 func (s *fileState) StateDir() string {
-	return filepath.Join(s.dirname, s.basename)
+	return s.stateDir
 }
 
 // mountsFilePath returns the path to the mounts.jsonl file.

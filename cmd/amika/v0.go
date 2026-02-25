@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/materialize"
 	"github.com/gofixpoint/amika/internal/mount"
 	"github.com/gofixpoint/amika/internal/state"
@@ -44,10 +45,11 @@ Modes:
 		}
 
 		// Create state manager
-		st, err := state.NewStateInHomeDir()
+		stateDir, err := config.StateDir()
 		if err != nil {
 			return err
 		}
+		st := state.NewState(stateDir)
 
 		// Perform mount
 		if err := mount.Mount(absSrc, absTarget, mode, st); err != nil {
@@ -75,10 +77,11 @@ var unmountCmd = &cobra.Command{
 		}
 
 		// Create state manager
-		st, err := state.NewStateInHomeDir()
+		stateDir, err := config.StateDir()
 		if err != nil {
 			return err
 		}
+		st := state.NewState(stateDir)
 
 		// Perform unmount
 		if err := mount.Unmount(absTarget, st); err != nil {
