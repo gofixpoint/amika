@@ -6,14 +6,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAuthExtract_ExportMappingAndSorting(t *testing.T) {
 	bin := buildAmika(t)
 	home := t.TempDir()
 
-	writeJSONFixture(t, filepath.Join(home, ".claude.json"), `{"ANTHROPIC_API_KEY":"anth-key","OPENAI_API_KEY":"open-key"}`)
-	writeJSONFixture(t, filepath.Join(home, ".config", "opencode", "auth.json"), `{"foo-bar":{"api_key":"foo-key"}}`)
+	writeJSONFixture(t, filepath.Join(home, ".claude.json"), `{"apiKey":"sk-ant-anth-key"}`)
+	writeJSONFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"open-key"}`)
+	writeJSONFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{"foo-bar":{"type":"api","key":"foo-key"}}`)
 
 	cmd := exec.Command(bin, "auth", "extract", "--export", "--homedir", home)
 	out, err := cmd.CombinedOutput()
@@ -23,8 +25,8 @@ func TestAuthExtract_ExportMappingAndSorting(t *testing.T) {
 
 	gotLines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	wantLines := []string{
-		"export ANTHROPIC_API_KEY='anth-key'",
-		"export CLAUDE_API_KEY='anth-key'",
+		"export ANTHROPIC_API_KEY='sk-ant-anth-key'",
+		"export CLAUDE_API_KEY='sk-ant-anth-key'",
 		"export CODEX_API_KEY='open-key'",
 		"export FOO_BAR_API_KEY='foo-key'",
 		"export OPENAI_API_KEY='open-key'",
@@ -45,8 +47,11 @@ func TestAuthExtract_ExportMappingAndSorting(t *testing.T) {
 func TestAuthExtract_NoOAuth(t *testing.T) {
 	bin := buildAmika(t)
 	home := t.TempDir()
+	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
 
-	writeJSONFixture(t, filepath.Join(home, ".config", "amika", "oauth.json"), `{"OPENAI_API_KEY":"oauth-open","GROQ_API_KEY":"oauth-groq"}`)
+	writeJSONFixture(t, filepath.Join(home, ".claude-oauth-credentials.json"), `{"claudeAiOauth":{"accessToken":"claude-oauth","expiresAt":"`+future+`"}}`)
+	writeJSONFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"tokens":{"access_token":"codex-oauth"}}`)
+	writeJSONFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{"openai":{"type":"oauth","access":"op-open"},"groq":{"type":"oauth","access":"op-groq"}}`)
 
 	cmdWithOAuth := exec.Command(bin, "auth", "extract", "--homedir", home)
 	outWithOAuth, err := cmdWithOAuth.CombinedOutput()
@@ -54,11 +59,14 @@ func TestAuthExtract_NoOAuth(t *testing.T) {
 		t.Fatalf("amika auth extract failed: %v\n%s", err, outWithOAuth)
 	}
 	textWithOAuth := string(outWithOAuth)
-	if !strings.Contains(textWithOAuth, "OPENAI_API_KEY='oauth-open'") {
-		t.Fatalf("expected OPENAI credential in output, got:\n%s", textWithOAuth)
+	if !strings.Contains(textWithOAuth, "ANTHROPIC_API_KEY='claude-oauth'") {
+		t.Fatalf("expected Claude OAuth credential in output, got:\n%s", textWithOAuth)
 	}
-	if !strings.Contains(textWithOAuth, "GROQ_API_KEY='oauth-groq'") {
-		t.Fatalf("expected GROQ credential in output, got:\n%s", textWithOAuth)
+	if !strings.Contains(textWithOAuth, "OPENAI_API_KEY='codex-oauth'") {
+		t.Fatalf("expected Codex OAuth credential in output, got:\n%s", textWithOAuth)
+	}
+	if !strings.Contains(textWithOAuth, "GROQ_API_KEY='op-groq'") {
+		t.Fatalf("expected OpenCode OAuth generic credential in output, got:\n%s", textWithOAuth)
 	}
 
 	cmdNoOAuth := exec.Command(bin, "auth", "extract", "--homedir", home, "--no-oauth")

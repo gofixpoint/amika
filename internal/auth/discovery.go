@@ -3,23 +3,26 @@ package auth
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
-	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
-var envStyleAPIKeyPattern = regexp.MustCompile(`(?i)^([A-Z0-9_-]+)_API_KEY$`)
-
-type credentialSource struct {
-	precedence int
-	oauth      bool
-	files      []string
+type sourceDef struct {
+	id       string
+	priority int
+	oauth    bool
+	parse    func(homeDir string, includeOAuth bool, now time.Time) (map[string]string, error)
 }
 
 type candidate struct {
-	value      string
-	precedence int
+	value    string
+	priority int
+	order    int
 }
 
 // Discover scans known local credential sources and returns deduplicated results.
@@ -33,19 +36,37 @@ func Discover(opts Options) (CredentialSet, error) {
 		}
 	}
 
+	now := time.Now().UTC()
 	winners := make(map[string]candidate)
-	for _, src := range configuredSources(homeDir) {
+
+	for order, src := range configuredSources() {
 		if src.oauth && !opts.IncludeOAuth {
 			continue
 		}
-		for _, path := range src.files {
-			found, err := collectFileCredentials(path, src.precedence, winners)
-			if err != nil {
-				return CredentialSet{}, err
-			}
-			if !found {
+
+		hits, err := src.parse(homeDir, opts.IncludeOAuth, now)
+		if err != nil {
+			return CredentialSet{}, fmt.Errorf("%s discovery failed: %w", src.id, err)
+		}
+
+		for provider, value := range hits {
+			provider = canonicalProvider(provider)
+			value = strings.TrimSpace(value)
+			if provider == "" || value == "" {
 				continue
 			}
+
+			current, ok := winners[provider]
+			if ok {
+				if current.priority > src.priority {
+					continue
+				}
+				if current.priority == src.priority && current.order <= order {
+					continue
+				}
+			}
+
+			winners[provider] = candidate{value: value, priority: src.priority, order: order}
 		}
 	}
 
@@ -67,137 +88,323 @@ func Discover(opts Options) (CredentialSet, error) {
 	return result, nil
 }
 
-func configuredSources(homeDir string) []credentialSource {
-	return []credentialSource{
-		{
-			precedence: 4,
-			files: []string{
-				filepath.Join(homeDir, ".claude.json"),
-				filepath.Join(homeDir, ".config", "claude", "config.json"),
-				filepath.Join(homeDir, ".config", "claude", "credentials.json"),
-				filepath.Join(homeDir, ".codex", "auth.json"),
-				filepath.Join(homeDir, ".config", "codex", "auth.json"),
-				filepath.Join(homeDir, ".config", "opencode", "auth.json"),
-				filepath.Join(homeDir, ".config", "amp", "config.json"),
-				filepath.Join(homeDir, ".config", "pi", "config.json"),
-			},
-		},
-		{
-			precedence: 3,
-			files: []string{
-				filepath.Join(homeDir, ".amika", "env-cache.json"),
-				filepath.Join(homeDir, ".cache", "amika", "env-cache.json"),
-			},
-		},
-		{
-			precedence: 2,
-			files: []string{
-				filepath.Join(homeDir, ".config", "amika", "keychain.json"),
-			},
-		},
-		{
-			oauth:      true,
-			precedence: 1,
-			files: []string{
-				filepath.Join(homeDir, ".config", "amika", "oauth.json"),
-				filepath.Join(homeDir, ".local", "share", "amika", "oauth.json"),
-			},
-		},
+func configuredSources() []sourceDef {
+	return []sourceDef{
+		{id: "claude_api", priority: 500, parse: parseClaudeAPI},
+		{id: "claude_oauth", priority: 400, oauth: true, parse: parseClaudeOAuth},
+		{id: "codex", priority: 300, parse: parseCodex},
+		{id: "opencode", priority: 200, parse: parseOpenCode},
+		{id: "amp", priority: 100, parse: parseAmp},
 	}
 }
 
-func collectFileCredentials(path string, precedence int, winners map[string]candidate) (bool, error) {
+func parseClaudeAPI(homeDir string, _ bool, _ time.Time) (map[string]string, error) {
+	paths := []string{
+		filepath.Join(homeDir, ".claude.json.api"),
+		filepath.Join(homeDir, ".claude.json"),
+	}
+	fields := []string{"primaryApiKey", "apiKey", "anthropicApiKey", "customApiKey"}
+
+	for _, path := range paths {
+		obj, found, err := readJSONObjectIfExists(path)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+
+		for _, field := range fields {
+			value, exists, err := getStringPath(obj, field)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+			}
+			if !exists || value == "" {
+				continue
+			}
+			if strings.HasPrefix(value, "sk-ant-") {
+				return map[string]string{"anthropic": value}, nil
+			}
+		}
+	}
+
+	return nil, nil
+}
+
+func parseClaudeOAuth(homeDir string, includeOAuth bool, now time.Time) (map[string]string, error) {
+	if !includeOAuth {
+		return nil, nil
+	}
+
+	paths := []string{
+		filepath.Join(homeDir, ".claude", ".credentials.json"),
+		filepath.Join(homeDir, ".claude-oauth-credentials.json"),
+	}
+
+	for _, path := range paths {
+		obj, found, err := readJSONObjectIfExists(path)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			continue
+		}
+
+		token, exists, err := getStringPath(obj, "claudeAiOauth.accessToken")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+		}
+		if !exists || token == "" {
+			continue
+		}
+
+		expiresAt, hasExpiry, err := getStringPath(obj, "claudeAiOauth.expiresAt")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+		}
+		if hasExpiry {
+			expiresTime, err := time.Parse(time.RFC3339, expiresAt)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse credentials file %q: invalid claudeAiOauth.expiresAt: %w", path, err)
+			}
+			if !expiresTime.After(now) {
+				continue
+			}
+		}
+
+		return map[string]string{"anthropic": token}, nil
+	}
+
+	return nil, nil
+}
+
+func parseCodex(homeDir string, includeOAuth bool, _ time.Time) (map[string]string, error) {
+	path := filepath.Join(homeDir, ".codex", "auth.json")
+	obj, found, err := readJSONObjectIfExists(path)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+
+	apiKey, exists, err := getStringPath(obj, "OPENAI_API_KEY")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+	}
+	if exists && apiKey != "" {
+		return map[string]string{"openai": apiKey}, nil
+	}
+
+	if includeOAuth {
+		token, exists, err := getStringPath(obj, "tokens.access_token")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+		}
+		if exists && token != "" {
+			return map[string]string{"openai": token}, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func parseOpenCode(homeDir string, includeOAuth bool, now time.Time) (map[string]string, error) {
+	path := filepath.Join(homeDir, ".local", "share", "opencode", "auth.json")
+	obj, found, err := readJSONObjectIfExists(path)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+
+	providerNames := make([]string, 0, len(obj))
+	for provider := range obj {
+		providerNames = append(providerNames, provider)
+	}
+	sort.Strings(providerNames)
+
+	result := make(map[string]string)
+	for _, provider := range providerNames {
+		rawEntry := obj[provider]
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse credentials file %q: provider %q must be an object", path, provider)
+		}
+
+		typeValue, exists, err := getStringPath(entry, "type")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+		}
+		if !exists || typeValue == "" {
+			continue
+		}
+
+		canonical := canonicalProvider(provider)
+		if canonical == "" {
+			continue
+		}
+
+		typeValue = strings.ToLower(typeValue)
+		switch typeValue {
+		case "api":
+			key, exists, err := getStringPath(entry, "key")
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+			}
+			if !exists || key == "" {
+				continue
+			}
+			if _, alreadySet := result[canonical]; !alreadySet {
+				result[canonical] = key
+			}
+		case "oauth":
+			if !includeOAuth {
+				continue
+			}
+			accessToken, exists, err := getStringPath(entry, "access")
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+			}
+			if !exists || accessToken == "" {
+				continue
+			}
+
+			if rawExpiry, hasExpiry := entry["expires"]; hasExpiry {
+				expiresMillis, err := parseEpochMillis(rawExpiry)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse credentials file %q: invalid expires for provider %q: %w", path, provider, err)
+				}
+				expiresTime := time.UnixMilli(expiresMillis)
+				if !expiresTime.After(now) {
+					continue
+				}
+			}
+
+			if _, alreadySet := result[canonical]; !alreadySet {
+				result[canonical] = accessToken
+			}
+		default:
+			continue
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, nil
+	}
+	return result, nil
+}
+
+func parseAmp(homeDir string, _ bool, _ time.Time) (map[string]string, error) {
+	path := filepath.Join(homeDir, ".amp", "config.json")
+	obj, found, err := readJSONObjectIfExists(path)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+
+	fields := []string{
+		"anthropicApiKey",
+		"anthropic_api_key",
+		"apiKey",
+		"api_key",
+		"accessToken",
+		"access_token",
+		"token",
+		"auth.anthropicApiKey",
+		"auth.apiKey",
+		"auth.token",
+		"anthropic.apiKey",
+		"anthropic.token",
+	}
+
+	for _, field := range fields {
+		value, exists, err := getStringPath(obj, field)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+		}
+		if exists && value != "" {
+			return map[string]string{"anthropic": value}, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func readJSONObjectIfExists(path string) (map[string]any, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return nil, false, nil
 		}
-		return false, fmt.Errorf("failed to read credentials file %q: %w", path, err)
+		return nil, false, fmt.Errorf("failed to read credentials file %q: %w", path, err)
 	}
 
 	var payload any
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return false, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
+		return nil, false, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
 	}
 
-	hits := collectCredentials(payload, "")
-	for provider, value := range hits {
-		provider = canonicalProvider(provider)
-		if provider == "" || value == "" {
-			continue
-		}
-		if current, ok := winners[provider]; ok && current.precedence >= precedence {
-			continue
-		}
-		winners[provider] = candidate{value: value, precedence: precedence}
-	}
-	return true, nil
-}
-
-func collectCredentials(node any, providerHint string) map[string]string {
-	out := make(map[string]string)
-	walk(node, canonicalProvider(providerHint), out)
-	return out
-}
-
-func walk(node any, providerHint string, out map[string]string) {
-	switch v := node.(type) {
-	case map[string]any:
-		for key, raw := range v {
-			keyLower := strings.ToLower(strings.TrimSpace(key))
-
-			if provider, ok := providerFromEnvStyleKey(key); ok {
-				if value := stringValue(raw); value != "" {
-					out[provider] = value
-				}
-			}
-
-			nextHint := providerHint
-			if inferred := canonicalProvider(keyLower); inferred != "" {
-				nextHint = inferred
-			}
-			if isGenericSecretKey(keyLower) {
-				if value := stringValue(raw); value != "" && providerHint != "" {
-					out[providerHint] = value
-				}
-			}
-
-			walk(raw, nextHint, out)
-		}
-	case []any:
-		for _, item := range v {
-			walk(item, providerHint, out)
-		}
-	}
-}
-
-func providerFromEnvStyleKey(key string) (string, bool) {
-	m := envStyleAPIKeyPattern.FindStringSubmatch(strings.TrimSpace(key))
-	if len(m) != 2 {
-		return "", false
-	}
-	provider := canonicalProvider(strings.ToLower(m[1]))
-	if provider == "" {
-		return "", false
-	}
-	return provider, true
-}
-
-func isGenericSecretKey(key string) bool {
-	switch key {
-	case "api_key", "apikey", "api-key", "token", "access_token":
-		return true
-	default:
-		return false
-	}
-}
-
-func stringValue(v any) string {
-	s, ok := v.(string)
+	obj, ok := payload.(map[string]any)
 	if !ok {
-		return ""
+		return nil, false, fmt.Errorf("failed to parse credentials file %q: expected JSON object", path)
 	}
-	return strings.TrimSpace(s)
+
+	return obj, true, nil
+}
+
+func getStringPath(obj map[string]any, path string) (string, bool, error) {
+	parts := strings.Split(path, ".")
+	var current any = obj
+
+	for i, part := range parts {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return "", false, fmt.Errorf("path %q expects an object at %q", path, strings.Join(parts[:i], "."))
+		}
+
+		raw, exists := m[part]
+		if !exists {
+			return "", false, nil
+		}
+
+		if i == len(parts)-1 {
+			s, ok := raw.(string)
+			if !ok {
+				return "", false, fmt.Errorf("path %q must be a string", path)
+			}
+			return strings.TrimSpace(s), true, nil
+		}
+
+		current = raw
+	}
+
+	return "", false, nil
+}
+
+func parseEpochMillis(raw any) (int64, error) {
+	switch v := raw.(type) {
+	case float64:
+		if math.Trunc(v) != v {
+			return 0, fmt.Errorf("must be an integer epoch millis")
+		}
+		return int64(v), nil
+	case int64:
+		return v, nil
+	case int:
+		return int64(v), nil
+	case json.Number:
+		i, err := strconv.ParseInt(string(v), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("must be an integer epoch millis")
+		}
+		return i, nil
+	default:
+		return 0, fmt.Errorf("must be numeric epoch millis")
+	}
 }
 
 func canonicalProvider(name string) string {

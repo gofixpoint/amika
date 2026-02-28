@@ -34,11 +34,67 @@ CLI semantics alignment decisions:
    - `anthropic` (optional)
    - `openai` (optional)
    - `other` (`map[string]string`, provider -> credential)
-4. Resolve duplicates by precedence:
-   - `agent config > env cache > keychain > oauth`
+4. Resolve duplicates by precedence using explicit numeric source priorities (higher wins), with first-defined source winning ties.
 5. Emit zero or more env assignment lines to stdout.
 
 No credentials found is a success case (exit code 0, empty stdout).
+
+## Local Discovery Matrix
+
+All paths are resolved from the effective home directory (`--homedir` when provided, otherwise OS home).
+
+Claude Code API (first matching file and field wins):
+
+- files in order:
+  - `~/.claude.json.api`
+  - `~/.claude.json`
+- fields in order:
+  - `primaryApiKey`
+  - `apiKey`
+  - `anthropicApiKey`
+  - `customApiKey`
+- accepted only when key starts with `sk-ant-`
+
+Claude OAuth (skipped with `--no-oauth`):
+
+- files in order:
+  - `~/.claude/.credentials.json`
+  - `~/.claude-oauth-credentials.json`
+- JSON path:
+  - `claudeAiOauth.accessToken`
+  - optional `claudeAiOauth.expiresAt` (RFC3339); expired tokens ignored
+
+Codex:
+
+- file: `~/.codex/auth.json`
+- API key: `OPENAI_API_KEY`
+- OAuth (optional): `tokens.access_token`
+
+OpenCode:
+
+- file: `~/.local/share/opencode/auth.json`
+- top-level object keyed by provider name
+- provider entry:
+  - `type = "api"` -> `key`
+  - `type = "oauth"` -> `access`, optional `expires` epoch millis (expired tokens ignored)
+- providers `anthropic` and `openai` map to dedicated slots; others map to generic provider output
+
+Amp:
+
+- file: `~/.amp/config.json`
+- first non-empty field wins:
+  - `anthropicApiKey`
+  - `anthropic_api_key`
+  - `apiKey`
+  - `api_key`
+  - `accessToken`
+  - `access_token`
+  - `token`
+  - `auth.anthropicApiKey`
+  - `auth.apiKey`
+  - `auth.token`
+  - `anthropic.apiKey`
+  - `anthropic.token`
 
 ## Output Mapping
 
