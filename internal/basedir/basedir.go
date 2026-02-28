@@ -1,3 +1,4 @@
+// Package basedir resolves XDG base directories and Amika-managed file paths.
 package basedir
 
 import (
@@ -176,10 +177,12 @@ func (p *xdgPaths) SandboxesStateFile() (string, error) {
 	return SandboxesStateFileIn(dir), nil
 }
 
+// MountsStateFileIn returns the mounts state file path under the given state directory.
 func MountsStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, mountsStateFile)
 }
 
+// SandboxesStateFileIn returns the sandboxes state file path under the given state directory.
 func SandboxesStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, sandboxesFile)
 }

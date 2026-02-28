@@ -22,7 +22,7 @@ Examples:
   amika auth extract
   amika auth extract --export
   eval "$(amika auth extract --export)"`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 

@@ -1,3 +1,4 @@
+// Package auth discovers local credentials and renders environment assignments.
 package auth
 
 import (

@@ -22,12 +22,12 @@ func TestResolveAndEnsureImage_ExplicitPresetBuildsWhenMissing(t *testing.T) {
 
 	var builtImage string
 	var gotBuildPreset string
-	dockerImageExistsFn = func(name string) bool { return false }
+	dockerImageExistsFn = func(_ string) bool { return false }
 	getPresetDockerfileFn = func(name string) ([]byte, error) {
 		gotBuildPreset = name
 		return []byte("FROM scratch"), nil
 	}
-	buildDockerImageFn = func(name string, dockerfile []byte) error {
+	buildDockerImageFn = func(name string, _ []byte) error {
 		builtImage = name
 		return nil
 	}
@@ -61,11 +61,11 @@ func TestResolveAndEnsureImage_DefaultBuildPresetWhenImageNotChanged(t *testing.
 	resetImageResolutionStubs(t)
 
 	var built bool
-	dockerImageExistsFn = func(name string) bool { return false }
-	getPresetDockerfileFn = func(name string) ([]byte, error) {
+	dockerImageExistsFn = func(_ string) bool { return false }
+	getPresetDockerfileFn = func(_ string) ([]byte, error) {
 		return []byte("FROM scratch"), nil
 	}
-	buildDockerImageFn = func(name string, dockerfile []byte) error {
+	buildDockerImageFn = func(_ string, _ []byte) error {
 		built = true
 		return nil
 	}
@@ -90,11 +90,11 @@ func TestResolveAndEnsureImage_NoDefaultBuildWhenImageChanged(t *testing.T) {
 	resetImageResolutionStubs(t)
 
 	buildCalled := false
-	dockerImageExistsFn = func(name string) bool { return false }
-	getPresetDockerfileFn = func(name string) ([]byte, error) {
+	dockerImageExistsFn = func(_ string) bool { return false }
+	getPresetDockerfileFn = func(_ string) ([]byte, error) {
 		return []byte("FROM scratch"), nil
 	}
-	buildDockerImageFn = func(name string, dockerfile []byte) error {
+	buildDockerImageFn = func(_ string, _ []byte) error {
 		buildCalled = true
 		return nil
 	}
@@ -118,8 +118,8 @@ func TestResolveAndEnsureImage_NoDefaultBuildWhenImageChanged(t *testing.T) {
 func TestResolveAndEnsureImage_UnknownPreset(t *testing.T) {
 	resetImageResolutionStubs(t)
 
-	dockerImageExistsFn = func(name string) bool { return false }
-	getPresetDockerfileFn = func(name string) ([]byte, error) {
+	dockerImageExistsFn = func(_ string) bool { return false }
+	getPresetDockerfileFn = func(_ string) ([]byte, error) {
 		return nil, errors.New("unknown preset")
 	}
 
@@ -136,8 +136,8 @@ func TestResolveAndEnsureImage_SkipsBuildWhenImageExists(t *testing.T) {
 	resetImageResolutionStubs(t)
 
 	buildCalled := false
-	dockerImageExistsFn = func(name string) bool { return true }
-	buildDockerImageFn = func(name string, dockerfile []byte) error {
+	dockerImageExistsFn = func(_ string) bool { return true }
+	buildDockerImageFn = func(_ string, _ []byte) error {
 		buildCalled = true
 		return nil
 	}
