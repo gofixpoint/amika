@@ -1,3 +1,4 @@
+// Package mount provides filesystem mounting operations using bindfs.
 package mount
 
 import (
@@ -13,9 +14,12 @@ import (
 type Mode string
 
 const (
+	// ModeReadOnly mounts the source as read-only.
 	ModeReadOnly Mode = "ro"
+	// ModeReadWrite mounts the source as read-write.
 	ModeReadWrite Mode = "rw"
-	ModeOverlay  Mode = "overlay"
+	// ModeOverlay mounts a copy of the source, leaving the original unchanged.
+	ModeOverlay Mode = "overlay"
 )
 
 // ValidateMode checks if a mode string is valid.

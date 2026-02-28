@@ -90,10 +90,10 @@ func TestResolveSandboxOutdir(t *testing.T) {
 	}
 }
 
-func TestNewTmpDirSandboxPaths_DefaultWorkdir(t *testing.T) {
-	sb, err := NewTmpDirSandboxPaths("", "")
+func TestNewTmpDirPaths_DefaultWorkdir(t *testing.T) {
+	sb, err := NewTmpDirPaths("", "")
 	if err != nil {
-		t.Fatalf("NewTmpDirSandboxPaths failed: %v", err)
+		t.Fatalf("NewTmpDirPaths failed: %v", err)
 	}
 	defer sb.Cleanup()
 
@@ -124,10 +124,10 @@ func TestNewTmpDirSandboxPaths_DefaultWorkdir(t *testing.T) {
 	}
 }
 
-func TestNewTmpDirSandboxPaths_CustomWorkdir(t *testing.T) {
-	sb, err := NewTmpDirSandboxPaths("/custom/workdir", "")
+func TestNewTmpDirPaths_CustomWorkdir(t *testing.T) {
+	sb, err := NewTmpDirPaths("/custom/workdir", "")
 	if err != nil {
-		t.Fatalf("NewTmpDirSandboxPaths failed: %v", err)
+		t.Fatalf("NewTmpDirPaths failed: %v", err)
 	}
 	defer sb.Cleanup()
 
@@ -146,11 +146,11 @@ func TestNewTmpDirSandboxPaths_CustomWorkdir(t *testing.T) {
 	}
 }
 
-func TestNewTmpDirSandboxPaths_OutdirVariants(t *testing.T) {
+func TestNewTmpDirPaths_OutdirVariants(t *testing.T) {
 	t.Run("default outdir equals workdir", func(t *testing.T) {
-		sb, err := NewTmpDirSandboxPaths("", "")
+		sb, err := NewTmpDirPaths("", "")
 		if err != nil {
-			t.Fatalf("NewTmpDirSandboxPaths failed: %v", err)
+			t.Fatalf("NewTmpDirPaths failed: %v", err)
 		}
 		defer sb.Cleanup()
 
@@ -160,9 +160,9 @@ func TestNewTmpDirSandboxPaths_OutdirVariants(t *testing.T) {
 	})
 
 	t.Run("absolute outdir nested under root", func(t *testing.T) {
-		sb, err := NewTmpDirSandboxPaths("", "/output")
+		sb, err := NewTmpDirPaths("", "/output")
 		if err != nil {
-			t.Fatalf("NewTmpDirSandboxPaths failed: %v", err)
+			t.Fatalf("NewTmpDirPaths failed: %v", err)
 		}
 		defer sb.Cleanup()
 
@@ -173,9 +173,9 @@ func TestNewTmpDirSandboxPaths_OutdirVariants(t *testing.T) {
 	})
 
 	t.Run("relative outdir nested under workdir", func(t *testing.T) {
-		sb, err := NewTmpDirSandboxPaths("", "out")
+		sb, err := NewTmpDirPaths("", "out")
 		if err != nil {
-			t.Fatalf("NewTmpDirSandboxPaths failed: %v", err)
+			t.Fatalf("NewTmpDirPaths failed: %v", err)
 		}
 		defer sb.Cleanup()
 
@@ -187,9 +187,9 @@ func TestNewTmpDirSandboxPaths_OutdirVariants(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	sb, err := NewTmpDirSandboxPaths("", "")
+	sb, err := NewTmpDirPaths("", "")
 	if err != nil {
-		t.Fatalf("NewTmpDirSandboxPaths failed: %v", err)
+		t.Fatalf("NewTmpDirPaths failed: %v", err)
 	}
 
 	root := sb.GetRoot()

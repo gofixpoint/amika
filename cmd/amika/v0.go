@@ -67,7 +67,7 @@ var unmountCmd = &cobra.Command{
 	Short: "Unmount a previously mounted target",
 	Long:  `Unmount a previously mounted target and clean up any associated resources.`,
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		target := args[0]
 
 		// Convert to absolute path

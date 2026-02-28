@@ -1,3 +1,4 @@
+// Package sandbox manages sandboxed environments backed by container providers.
 package sandbox
 
 import (

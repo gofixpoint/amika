@@ -1,3 +1,4 @@
+// Package deps provides dependency checking for required system tools.
 package deps
 
 import (
