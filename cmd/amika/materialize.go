@@ -56,23 +56,16 @@ Examples:
 			return err
 		}
 
-		// Handle preset: build image if needed, override --image
-		if preset != "" {
-			if cmd.Flags().Changed("image") {
-				return fmt.Errorf("--preset and --image are mutually exclusive")
-			}
-			image = "amika-" + preset + ":latest"
-			if !sandbox.DockerImageExists(image) {
-				dockerfile, err := sandbox.GetPresetDockerfile(preset)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("Building %q preset image (this may take a few minutes)...\n", preset)
-				if err := sandbox.BuildDockerImage(image, dockerfile); err != nil {
-					return err
-				}
-			}
+		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
+			Image:              image,
+			Preset:             preset,
+			ImageFlagChanged:   cmd.Flags().Changed("image"),
+			DefaultBuildPreset: "claude",
+		})
+		if err != nil {
+			return err
 		}
+		image = resolvedImage.Image
 
 		if destdir == "" {
 			return fmt.Errorf("--destdir is required")
