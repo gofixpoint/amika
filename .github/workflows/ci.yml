@@ -16,8 +16,19 @@ jobs:
         with:
           go-version: "1.25.x"
 
-      - run: go build ./...
+      - name: Check formatting
+        run: make fmtcheck
 
-      - run: go vet ./...
+      - name: Vet
+        run: make vet
 
-      - run: go test ./...
+      - name: Lint
+        uses: docker://ghcr.io/morphy2k/revive-action:v2
+        with:
+          config: revive.toml
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test

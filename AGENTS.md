@@ -5,19 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build and Development Commands
 
 ```bash
-# Build the binary
-go build -o dist/amika ./cmd/amika
+# Run all CI checks locally (fmt, vet, lint, build, test)
+make ci
 
-# Run the binary
-dist/amika
-
-# Run tests
-go test ./...
+# Individual targets
+make build   # go build ./...
+make test    # go test ./...
+make vet     # go vet ./...
+make fmt     # check formatting
+make lint    # run revive linter
 ```
 
 ## Project Overview
 
-Amika is a Go CLI tool. The project uses standard Go tooling with no external build systems.
+Amika is a Go CLI tool. The project uses standard Go tooling with a Makefile for common commands.
 
 ## Code Structure
 
@@ -28,5 +29,6 @@ Amika is a Go CLI tool. The project uses standard Go tooling with no external bu
 ## Development Notes
 
 - Requires Go 1.21 or later
-- No linter is currently configured
-- No external dependencies yet
+- Linting uses [revive](https://github.com/mgechev/revive) — config in `revive.toml`
+- All exported symbols must have doc comments (enforced by the `exported` rule)
+- No external dependencies need to be installed for linting; `make lint` uses `go run`
