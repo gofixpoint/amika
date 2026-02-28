@@ -39,31 +39,16 @@ var sandboxCreateCmd = &cobra.Command{
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
 		}
 
-		// Handle preset: build image if needed, override --image
-		if preset != "" {
-			if cmd.Flags().Changed("image") {
-				return fmt.Errorf("--preset and --image are mutually exclusive")
-			}
-			image = "amika-" + preset + ":latest"
+		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
+			Image:              image,
+			Preset:             preset,
+			ImageFlagChanged:   cmd.Flags().Changed("image"),
+			DefaultBuildPreset: "claude",
+		})
+		if err != nil {
+			return err
 		}
-
-		// If using a preset (explicit or default), auto-build the image if it
-		// doesn't exist locally. When no --preset and no --image are specified,
-		// the default image is amika-claude:latest which uses the "claude" preset.
-		buildPreset := preset
-		if buildPreset == "" && !cmd.Flags().Changed("image") {
-			buildPreset = "claude"
-		}
-		if buildPreset != "" && !sandbox.DockerImageExists(image) {
-			dockerfile, err := sandbox.GetPresetDockerfile(buildPreset)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("Building %q preset image (this may take a few minutes)...\n", buildPreset)
-			if err := sandbox.BuildDockerImage(image, dockerfile); err != nil {
-				return err
-			}
-		}
+		image = resolvedImage.Image
 
 		mounts, err := parseMountFlags(mountStrs)
 		if err != nil {
