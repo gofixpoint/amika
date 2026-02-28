@@ -14,6 +14,7 @@ const (
 	oauthFile        = "oauth.json"
 	mountsStateFile  = "mounts.jsonl"
 	sandboxesFile    = "sandboxes.jsonl"
+	volumesStateFile = "volumes.jsonl"
 	envXDGConfigHome = "XDG_CONFIG_HOME"
 	envXDGDataHome   = "XDG_DATA_HOME"
 	envXDGCacheHome  = "XDG_CACHE_HOME"
@@ -38,6 +39,7 @@ type Paths interface {
 	AuthOAuthFile() (string, error)
 	MountsStateFile() (string, error)
 	SandboxesStateFile() (string, error)
+	VolumesStateFile() (string, error)
 }
 
 type xdgPaths struct {
@@ -177,6 +179,14 @@ func (p *xdgPaths) SandboxesStateFile() (string, error) {
 	return SandboxesStateFileIn(dir), nil
 }
 
+func (p *xdgPaths) VolumesStateFile() (string, error) {
+	dir, err := p.AmikaStateDir()
+	if err != nil {
+		return "", err
+	}
+	return VolumesStateFileIn(dir), nil
+}
+
 // MountsStateFileIn returns the mounts state file path under the given state directory.
 func MountsStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, mountsStateFile)
@@ -185,4 +195,9 @@ func MountsStateFileIn(stateDir string) string {
 // SandboxesStateFileIn returns the sandboxes state file path under the given state directory.
 func SandboxesStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, sandboxesFile)
+}
+
+// VolumesStateFileIn returns the volumes state file path under the given state directory.
+func VolumesStateFileIn(stateDir string) string {
+	return filepath.Join(stateDir, volumesStateFile)
 }

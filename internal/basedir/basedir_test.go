@@ -66,6 +66,9 @@ func TestPaths_XDGOverrides(t *testing.T) {
 	if got, _ := p.SandboxesStateFile(); got != filepath.Join(state, "amika", "sandboxes.jsonl") {
 		t.Fatalf("SandboxesStateFile = %q", got)
 	}
+	if got, _ := p.VolumesStateFile(); got != filepath.Join(state, "amika", "volumes.jsonl") {
+		t.Fatalf("VolumesStateFile = %q", got)
+	}
 }
 
 func TestStateFileHelpers(t *testing.T) {
@@ -76,6 +79,9 @@ func TestStateFileHelpers(t *testing.T) {
 	}
 	if got := SandboxesStateFileIn(stateDir); got != filepath.Join(stateDir, "sandboxes.jsonl") {
 		t.Fatalf("SandboxesStateFileIn = %q", got)
+	}
+	if got := VolumesStateFileIn(stateDir); got != filepath.Join(stateDir, "volumes.jsonl") {
+		t.Fatalf("VolumesStateFileIn = %q", got)
 	}
 }
 
