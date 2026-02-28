@@ -40,31 +40,52 @@ func TestBuildEnvMap(t *testing.T) {
 		"FOO_BAR_API_KEY":   "foo-key",
 	}
 
-	if !reflect.DeepEqual(env, want) {
-		t.Fatalf("BuildEnvMap() = %#v, want %#v", env, want)
+	if env.Len() != len(want) {
+		t.Fatalf("BuildEnvMap().Len() = %d, want %d", env.Len(), len(want))
+	}
+	for key, wantValue := range want {
+		gotValue, ok := env.Get(key)
+		if !ok {
+			t.Fatalf("BuildEnvMap() missing key %q", key)
+		}
+		if gotValue != wantValue {
+			t.Fatalf("BuildEnvMap()[%q] = %q, want %q", key, gotValue, wantValue)
+		}
 	}
 }
 
-func TestRenderEnvLines_SortedAndEscaped(t *testing.T) {
-	env := map[string]string{
-		"B_API_KEY": "x'y",
-		"A_API_KEY": "abc",
-	}
-	got := RenderEnvLines(env, false)
+func TestEnvVarsLines_SortedAndEscaped(t *testing.T) {
+	env := NewEnvVars()
+	env.Set("B_API_KEY", "x'y")
+	env.Set("A_API_KEY", "abc")
+	got := env.Lines(false)
 	want := []string{
 		"A_API_KEY='abc'",
 		"B_API_KEY='x'\\''y'",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("RenderEnvLines() = %#v, want %#v", got, want)
+		t.Fatalf("EnvVars.Lines() = %#v, want %#v", got, want)
 	}
 }
 
-func TestRenderEnvLines_WithExport(t *testing.T) {
-	env := map[string]string{"A_API_KEY": "abc"}
-	got := RenderEnvLines(env, true)
+func TestEnvVarsLines_WithExport(t *testing.T) {
+	env := NewEnvVars()
+	env.Set("A_API_KEY", "abc")
+	got := env.Lines(true)
 	want := []string{"export A_API_KEY='abc'"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("RenderEnvLines(export) = %#v, want %#v", got, want)
+		t.Fatalf("EnvVars.Lines(export) = %#v, want %#v", got, want)
+	}
+}
+
+func TestEnvVarsSortedKeys(t *testing.T) {
+	env := NewEnvVars()
+	env.Set("C_API_KEY", "c")
+	env.Set("A_API_KEY", "a")
+	env.Set("B_API_KEY", "b")
+	got := env.SortedKeys()
+	want := []string{"A_API_KEY", "B_API_KEY", "C_API_KEY"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("EnvVars.SortedKeys() = %#v, want %#v", got, want)
 	}
 }

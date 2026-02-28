@@ -39,7 +39,7 @@ Examples:
 		}
 
 		env := auth.BuildEnvMap(result)
-		for _, line := range auth.RenderEnvLines(env, withExport) {
+		for _, line := range env.Lines(withExport) {
 			fmt.Fprintln(cmd.OutOrStdout(), line)
 		}
 		return nil
