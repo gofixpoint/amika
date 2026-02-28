@@ -36,20 +36,16 @@ type Store interface {
 }
 
 type fileStore struct {
-	dir string // the amika state directory path
+	filePath string // resolved sandboxes state file path
 }
 
-// NewStore creates a Store backed by a JSONL file in the given directory.
-func NewStore(dir string) Store {
-	return &fileStore{dir: dir}
-}
-
-func (s *fileStore) filePath() string {
-	return filepath.Join(s.dir, "sandboxes.jsonl")
+// NewStore creates a Store backed by the provided sandboxes JSONL file path.
+func NewStore(filePath string) Store {
+	return &fileStore{filePath: filePath}
 }
 
 func (s *fileStore) readAll() ([]Info, error) {
-	f, err := os.Open(s.filePath())
+	f, err := os.Open(s.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -78,11 +74,11 @@ func (s *fileStore) readAll() ([]Info, error) {
 }
 
 func (s *fileStore) writeAll(sandboxes []Info) error {
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.filePath), 0755); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
-	f, err := os.Create(s.filePath())
+	f, err := os.Create(s.filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create sandboxes file: %w", err)
 	}

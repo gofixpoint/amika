@@ -27,7 +27,7 @@ func TestNewState(t *testing.T) {
 	defer cleanup()
 
 	stateDir := filepath.Join(tmpDir, "amika-state")
-	s := NewState(stateDir)
+	s := NewState(filepath.Join(stateDir, "mounts.jsonl"))
 
 	if s.StateDir() != stateDir {
 		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), stateDir)
@@ -39,7 +39,7 @@ func TestSaveAndGetMount(t *testing.T) {
 	defer cleanup()
 
 	stateDir := filepath.Join(tmpDir, "amika-state")
-	s := NewState(stateDir)
+	s := NewState(filepath.Join(stateDir, "mounts.jsonl"))
 
 	info := MountInfo{
 		Source:  "/path/to/source",
@@ -83,7 +83,7 @@ func TestSaveMountUpdatesExisting(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir)
+	s := NewState(filepath.Join(tmpDir, "mounts.jsonl"))
 
 	info := MountInfo{
 		Source: "/path/to/source",
@@ -126,7 +126,7 @@ func TestGetMountNotFound(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir)
+	s := NewState(filepath.Join(tmpDir, "mounts.jsonl"))
 
 	_, err := s.GetMount("/nonexistent/target")
 	if err == nil {
@@ -138,7 +138,7 @@ func TestRemoveMount(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir)
+	s := NewState(filepath.Join(tmpDir, "mounts.jsonl"))
 
 	info := MountInfo{
 		Source: "/path/to/source",
@@ -167,7 +167,7 @@ func TestRemoveMountNonexistent(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir)
+	s := NewState(filepath.Join(tmpDir, "mounts.jsonl"))
 
 	// Removing nonexistent mount should not error
 	if err := s.RemoveMount("/nonexistent/target"); err != nil {
@@ -179,7 +179,7 @@ func TestListMounts(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir)
+	s := NewState(filepath.Join(tmpDir, "mounts.jsonl"))
 
 	// Initially empty
 	mounts, err := s.ListMounts()
@@ -217,7 +217,7 @@ func TestMountExists(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir)
+	s := NewState(filepath.Join(tmpDir, "mounts.jsonl"))
 	target := "/path/to/target"
 
 	// Should not exist initially
@@ -255,7 +255,7 @@ func TestStateDir(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir)
+	s := NewState(filepath.Join(tmpDir, "mounts.jsonl"))
 
 	if s.StateDir() != tmpDir {
 		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), tmpDir)

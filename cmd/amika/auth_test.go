@@ -18,6 +18,7 @@ func TestAuthExtract_ExportMappingAndSorting(t *testing.T) {
 	writeJSONFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{"foo-bar":{"type":"api","key":"foo-key"}}`)
 
 	cmd := exec.Command(bin, "auth", "extract", "--export", "--homedir", home)
+	cmd.Env = withXDGEnv(home)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("amika auth extract failed: %v\n%s", err, out)
@@ -54,6 +55,7 @@ func TestAuthExtract_NoOAuth(t *testing.T) {
 	writeJSONFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{"openai":{"type":"oauth","access":"op-open"},"groq":{"type":"oauth","access":"op-groq"}}`)
 
 	cmdWithOAuth := exec.Command(bin, "auth", "extract", "--homedir", home)
+	cmdWithOAuth.Env = withXDGEnv(home)
 	outWithOAuth, err := cmdWithOAuth.CombinedOutput()
 	if err != nil {
 		t.Fatalf("amika auth extract failed: %v\n%s", err, outWithOAuth)
@@ -70,6 +72,7 @@ func TestAuthExtract_NoOAuth(t *testing.T) {
 	}
 
 	cmdNoOAuth := exec.Command(bin, "auth", "extract", "--homedir", home, "--no-oauth")
+	cmdNoOAuth.Env = withXDGEnv(home)
 	outNoOAuth, err := cmdNoOAuth.CombinedOutput()
 	if err != nil {
 		t.Fatalf("amika auth extract --no-oauth failed: %v\n%s", err, outNoOAuth)
@@ -86,6 +89,7 @@ func TestAuthExtract_ParseError(t *testing.T) {
 	writeJSONFixture(t, filepath.Join(home, ".claude.json"), `{not-json}`)
 
 	cmd := exec.Command(bin, "auth", "extract", "--homedir", home)
+	cmd.Env = withXDGEnv(home)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected non-zero exit code, got success\noutput:\n%s", out)
@@ -103,4 +107,15 @@ func writeJSONFixture(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write fixture %s: %v", path, err)
 	}
+}
+
+func withXDGEnv(home string) []string {
+	env := append([]string{}, os.Environ()...)
+	env = append(env,
+		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
+		"XDG_DATA_HOME="+filepath.Join(home, ".local", "share"),
+		"XDG_CACHE_HOME="+filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME="+filepath.Join(home, ".local", "state"),
+	)
+	return env
 }

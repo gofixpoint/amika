@@ -45,11 +45,11 @@ Modes:
 		}
 
 		// Create state manager
-		stateDir, err := config.StateDir()
+		mountsFile, err := config.MountsStateFile()
 		if err != nil {
 			return err
 		}
-		st := state.NewState(stateDir)
+		st := state.NewState(mountsFile)
 
 		// Perform mount
 		if err := mount.Mount(absSrc, absTarget, mode, st); err != nil {
@@ -77,11 +77,11 @@ var unmountCmd = &cobra.Command{
 		}
 
 		// Create state manager
-		stateDir, err := config.StateDir()
+		mountsFile, err := config.MountsStateFile()
 		if err != nil {
 			return err
 		}
-		st := state.NewState(stateDir)
+		st := state.NewState(mountsFile)
 
 		// Perform unmount
 		if err := mount.Unmount(absTarget, st); err != nil {

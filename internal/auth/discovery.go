@@ -6,17 +6,20 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gofixpoint/amika/internal/basedir"
 )
 
 type sourceDef struct {
 	id       string
 	priority int
 	oauth    bool
-	parse    func(homeDir string, includeOAuth bool, now time.Time) (map[string]string, error)
+	parse    func(homeDir string, includeOAuth bool, now time.Time, paths basedir.Paths) (map[string]string, error)
 }
 
 type candidate struct {
@@ -37,6 +40,7 @@ func Discover(opts Options) (CredentialSet, error) {
 	}
 
 	now := time.Now().UTC()
+	paths := basedir.New(homeDir)
 	winners := make(map[string]candidate)
 
 	for order, src := range configuredSources() {
@@ -44,7 +48,7 @@ func Discover(opts Options) (CredentialSet, error) {
 			continue
 		}
 
-		hits, err := src.parse(homeDir, opts.IncludeOAuth, now)
+		hits, err := src.parse(homeDir, opts.IncludeOAuth, now, paths)
 		if err != nil {
 			return CredentialSet{}, fmt.Errorf("%s discovery failed: %w", src.id, err)
 		}
@@ -93,12 +97,15 @@ func configuredSources() []sourceDef {
 		{id: "claude_api", priority: 500, parse: parseClaudeAPI},
 		{id: "claude_oauth", priority: 400, oauth: true, parse: parseClaudeOAuth},
 		{id: "codex", priority: 300, parse: parseCodex},
+		{id: "amika_env_cache", priority: 290, parse: parseAmikaEnvCache},
+		{id: "amika_keychain", priority: 280, parse: parseAmikaKeychain},
+		{id: "amika_oauth", priority: 270, oauth: true, parse: parseAmikaOAuth},
 		{id: "opencode", priority: 200, parse: parseOpenCode},
 		{id: "amp", priority: 100, parse: parseAmp},
 	}
 }
 
-func parseClaudeAPI(homeDir string, _ bool, _ time.Time) (map[string]string, error) {
+func parseClaudeAPI(homeDir string, _ bool, _ time.Time, _ basedir.Paths) (map[string]string, error) {
 	paths := []string{
 		filepath.Join(homeDir, ".claude.json.api"),
 		filepath.Join(homeDir, ".claude.json"),
@@ -131,7 +138,7 @@ func parseClaudeAPI(homeDir string, _ bool, _ time.Time) (map[string]string, err
 	return nil, nil
 }
 
-func parseClaudeOAuth(homeDir string, includeOAuth bool, now time.Time) (map[string]string, error) {
+func parseClaudeOAuth(homeDir string, includeOAuth bool, now time.Time, _ basedir.Paths) (map[string]string, error) {
 	if !includeOAuth {
 		return nil, nil
 	}
@@ -178,7 +185,7 @@ func parseClaudeOAuth(homeDir string, includeOAuth bool, now time.Time) (map[str
 	return nil, nil
 }
 
-func parseCodex(homeDir string, includeOAuth bool, _ time.Time) (map[string]string, error) {
+func parseCodex(homeDir string, includeOAuth bool, _ time.Time, _ basedir.Paths) (map[string]string, error) {
 	path := filepath.Join(homeDir, ".codex", "auth.json")
 	obj, found, err := readJSONObjectIfExists(path)
 	if err != nil {
@@ -209,7 +216,7 @@ func parseCodex(homeDir string, includeOAuth bool, _ time.Time) (map[string]stri
 	return nil, nil
 }
 
-func parseOpenCode(homeDir string, includeOAuth bool, now time.Time) (map[string]string, error) {
+func parseOpenCode(homeDir string, includeOAuth bool, now time.Time, _ basedir.Paths) (map[string]string, error) {
 	path := filepath.Join(homeDir, ".local", "share", "opencode", "auth.json")
 	obj, found, err := readJSONObjectIfExists(path)
 	if err != nil {
@@ -296,7 +303,7 @@ func parseOpenCode(homeDir string, includeOAuth bool, now time.Time) (map[string
 	return result, nil
 }
 
-func parseAmp(homeDir string, _ bool, _ time.Time) (map[string]string, error) {
+func parseAmp(homeDir string, _ bool, _ time.Time, _ basedir.Paths) (map[string]string, error) {
 	path := filepath.Join(homeDir, ".amp", "config.json")
 	obj, found, err := readJSONObjectIfExists(path)
 	if err != nil {
@@ -332,6 +339,93 @@ func parseAmp(homeDir string, _ bool, _ time.Time) (map[string]string, error) {
 	}
 
 	return nil, nil
+}
+
+func parseAmikaEnvCache(_ string, _ bool, _ time.Time, paths basedir.Paths) (map[string]string, error) {
+	path, err := paths.AuthEnvCacheFile()
+	if err != nil {
+		return nil, err
+	}
+	return parseAmikaCredentialFile(path)
+}
+
+func parseAmikaKeychain(_ string, _ bool, _ time.Time, paths basedir.Paths) (map[string]string, error) {
+	path, err := paths.AuthKeychainFile()
+	if err != nil {
+		return nil, err
+	}
+	return parseAmikaCredentialFile(path)
+}
+
+func parseAmikaOAuth(_ string, includeOAuth bool, _ time.Time, paths basedir.Paths) (map[string]string, error) {
+	if !includeOAuth {
+		return nil, nil
+	}
+	path, err := paths.AuthOAuthFile()
+	if err != nil {
+		return nil, err
+	}
+	return parseAmikaCredentialFile(path)
+}
+
+var envStyleAPIKeyPattern = regexp.MustCompile(`(?i)^([A-Z0-9_-]+)_API_KEY$`)
+
+func parseAmikaCredentialFile(path string) (map[string]string, error) {
+	obj, found, err := readJSONObjectIfExists(path)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make(map[string]string)
+	for _, key := range keys {
+		raw := obj[key]
+		value, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+
+		keyUpper := strings.ToUpper(strings.TrimSpace(key))
+		switch keyUpper {
+		case "ANTHROPIC_API_KEY", "CLAUDE_API_KEY":
+			if _, exists := result["anthropic"]; !exists {
+				result["anthropic"] = value
+			}
+		case "OPENAI_API_KEY", "CODEX_API_KEY":
+			if _, exists := result["openai"]; !exists {
+				result["openai"] = value
+			}
+		default:
+			match := envStyleAPIKeyPattern.FindStringSubmatch(keyUpper)
+			if len(match) != 2 {
+				continue
+			}
+			provider := canonicalProvider(strings.ToLower(match[1]))
+			if provider == "" {
+				continue
+			}
+			if _, exists := result[provider]; !exists {
+				result[provider] = value
+			}
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, nil
+	}
+	return result, nil
 }
 
 func readJSONObjectIfExists(path string) (map[string]any, bool, error) {

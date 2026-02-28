@@ -43,7 +43,7 @@ func setupTestDirs(t *testing.T) (srcDir, targetDir string, st state.State, clea
 		t.Fatalf("Failed to create state directory: %v", err)
 	}
 
-	st = state.NewState(stateDir)
+	st = state.NewState(filepath.Join(stateDir, "mounts.jsonl"))
 
 	cleanup = func() {
 		// Try to unmount if still mounted (cleanup on test failure)

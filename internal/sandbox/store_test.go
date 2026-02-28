@@ -8,7 +8,7 @@ import (
 
 func TestStore_SaveAndGet(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	info := Info{
 		Name:        "test-sb",
@@ -36,7 +36,7 @@ func TestStore_SaveAndGet(t *testing.T) {
 
 func TestStore_GetNotFound(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	_, err := store.Get("nonexistent")
 	if err == nil {
@@ -46,7 +46,7 @@ func TestStore_GetNotFound(t *testing.T) {
 
 func TestStore_SaveReplacesExisting(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	store.Save(Info{Name: "sb1", ContainerID: "old"})
 	store.Save(Info{Name: "sb1", ContainerID: "new"})
@@ -64,7 +64,7 @@ func TestStore_SaveReplacesExisting(t *testing.T) {
 
 func TestStore_Remove(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	store.Save(Info{Name: "sb1"})
 	store.Save(Info{Name: "sb2"})
@@ -89,7 +89,7 @@ func TestStore_Remove(t *testing.T) {
 
 func TestStore_RemoveNonexistent(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	// Should not error when removing something that doesn't exist
 	if err := store.Remove("nope"); err != nil {
@@ -99,7 +99,7 @@ func TestStore_RemoveNonexistent(t *testing.T) {
 
 func TestStore_List(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	store.Save(Info{Name: "a"})
 	store.Save(Info{Name: "b"})
@@ -116,7 +116,7 @@ func TestStore_List(t *testing.T) {
 
 func TestStore_CreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "amika-state")
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	if err := store.Save(Info{Name: "sb1"}); err != nil {
 		t.Fatalf("Save failed: %v", err)
@@ -129,7 +129,7 @@ func TestStore_CreatesDirectory(t *testing.T) {
 
 func TestStore_MountsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	info := Info{
 		Name:     "sb-mounts",
@@ -162,7 +162,7 @@ func TestStore_MountsRoundTrip(t *testing.T) {
 
 func TestStore_NoMountsOmitted(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	store.Save(Info{Name: "no-mounts", Provider: "docker"})
 
@@ -174,7 +174,7 @@ func TestStore_NoMountsOmitted(t *testing.T) {
 
 func TestStore_EmptyFileReturnsNil(t *testing.T) {
 	dir := t.TempDir()
-	store := NewStore(dir)
+	store := NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 
 	all, err := store.List()
 	if err != nil {
