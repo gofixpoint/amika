@@ -135,6 +135,21 @@ amika sandbox list
 amika sandbox delete --name dev-sandbox
 ```
 
+### `amika auth extract`
+
+Discover locally stored credentials and print shell environment assignments.
+
+```bash
+# Print assignments
+amika auth extract
+
+# Export for current shell session
+eval "$(amika auth extract --export)"
+
+# Use an alternate home directory for discovery
+amika auth extract --homedir /tmp/test-home --no-oauth
+```
+
 ### `amika v0 mount|unmount`
 
 Mount and unmount directories with fine-grained access control.

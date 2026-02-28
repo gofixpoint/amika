@@ -41,7 +41,7 @@ Mount a source directory to a target path with a specified access mode:
 - **`rw`**: Read-write via bindfs (writes go to source)
 - **`overlay`**: Copies source to a temp directory and mounts that; writes are isolated from the original
 
-Mount state is tracked in `~/.local/state/amika/mounts.jsonl` (override with `AMIKA_STATE_DIRECTORY`).
+Mount state is tracked in Amika state storage files. See [storage.md](./storage.md) for XDG-resolved paths and `AMIKA_STATE_DIRECTORY` override behavior.
 
 ### `amika v0 unmount <target>`
 

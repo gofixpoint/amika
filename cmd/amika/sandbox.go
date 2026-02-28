@@ -56,11 +56,11 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
-		stateDir, err := config.StateDir()
+		sandboxesFile, err := config.SandboxesStateFile()
 		if err != nil {
 			return err
 		}
-		store := sandbox.NewStore(stateDir)
+		store := sandbox.NewStore(sandboxesFile)
 
 		// Generate a name if not provided
 		if name == "" {
@@ -121,11 +121,11 @@ var sandboxDeleteCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, args []string) error {
 		name := args[0]
 
-		stateDir, err := config.StateDir()
+		sandboxesFile, err := config.SandboxesStateFile()
 		if err != nil {
 			return err
 		}
-		store := sandbox.NewStore(stateDir)
+		store := sandbox.NewStore(sandboxesFile)
 
 		info, err := store.Get(name)
 		if err != nil {
@@ -152,11 +152,11 @@ var sandboxListCmd = &cobra.Command{
 	Short: "List all sandboxes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		stateDir, err := config.StateDir()
+		sandboxesFile, err := config.SandboxesStateFile()
 		if err != nil {
 			return err
 		}
-		store := sandbox.NewStore(stateDir)
+		store := sandbox.NewStore(sandboxesFile)
 
 		sandboxes, err := store.List()
 		if err != nil {

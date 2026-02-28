@@ -35,32 +35,30 @@ type State interface {
 
 // fileState implements State using a JSONL file.
 type fileState struct {
-	stateDir string // amika state directory path
+	mountsFilePath string // resolved mounts state file path
 }
 
 // NewState creates a new State instance.
-// stateDir is the full path to the amika state directory.
-func NewState(stateDir string) State {
+// mountsFilePath is the full path to mounts.jsonl.
+func NewState(mountsFilePath string) State {
 	return &fileState{
-		stateDir: stateDir,
+		mountsFilePath: mountsFilePath,
 	}
 }
 
 // StateDir returns the path to the state directory.
 func (s *fileState) StateDir() string {
-	return s.stateDir
+	return filepath.Dir(s.mountsFilePath)
 }
 
-// mountsFilePath returns the path to the mounts.jsonl file.
-func (s *fileState) mountsFilePath() string {
-	return filepath.Join(s.StateDir(), "mounts.jsonl")
+// mountsPath returns the path to the mounts.jsonl file.
+func (s *fileState) mountsPath() string {
+	return s.mountsFilePath
 }
 
 // readAllMounts reads all mounts from the JSONL file.
 func (s *fileState) readAllMounts() ([]MountInfo, error) {
-	filePath := s.mountsFilePath()
-
-	file, err := os.Open(filePath)
+	file, err := os.Open(s.mountsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []MountInfo{}, nil
@@ -92,15 +90,14 @@ func (s *fileState) readAllMounts() ([]MountInfo, error) {
 
 // writeAllMounts writes all mounts to the JSONL file.
 func (s *fileState) writeAllMounts(mounts []MountInfo) error {
-	dir := s.StateDir()
+	dir := filepath.Dir(s.mountsPath())
 
 	// Ensure state directory exists
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	filePath := s.mountsFilePath()
-	file, err := os.Create(filePath)
+	file, err := os.Create(s.mountsPath())
 	if err != nil {
 		return fmt.Errorf("failed to create mounts file: %w", err)
 	}
