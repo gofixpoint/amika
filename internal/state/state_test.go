@@ -26,31 +26,11 @@ func TestNewState(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	stateDir := filepath.Join(tmpDir, "amika-state")
+	s := NewState(stateDir)
 
-	expected := filepath.Join(tmpDir, ".amikabase")
-	if s.StateDir() != expected {
-		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), expected)
-	}
-}
-
-func TestNewStateInHomeDir(t *testing.T) {
-	// Override HOME for this test
-	tmpDir, cleanup := setupTestDir(t)
-	defer cleanup()
-
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
-
-	s, err := NewStateInHomeDir()
-	if err != nil {
-		t.Fatalf("NewStateInHomeDir failed: %v", err)
-	}
-
-	expected := filepath.Join(tmpDir, ".amikabase")
-	if s.StateDir() != expected {
-		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), expected)
+	if s.StateDir() != stateDir {
+		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), stateDir)
 	}
 }
 
@@ -58,7 +38,8 @@ func TestSaveAndGetMount(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	stateDir := filepath.Join(tmpDir, "amika-state")
+	s := NewState(stateDir)
 
 	info := MountInfo{
 		Source:  "/path/to/source",
@@ -92,7 +73,7 @@ func TestSaveAndGetMount(t *testing.T) {
 	}
 
 	// Verify the file exists
-	mountsFile := filepath.Join(tmpDir, ".amikabase", "mounts.jsonl")
+	mountsFile := filepath.Join(stateDir, "mounts.jsonl")
 	if _, err := os.Stat(mountsFile); os.IsNotExist(err) {
 		t.Error("mounts.jsonl file should exist after SaveMount")
 	}
@@ -102,7 +83,7 @@ func TestSaveMountUpdatesExisting(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	s := NewState(tmpDir)
 
 	info := MountInfo{
 		Source: "/path/to/source",
@@ -145,7 +126,7 @@ func TestGetMountNotFound(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	s := NewState(tmpDir)
 
 	_, err := s.GetMount("/nonexistent/target")
 	if err == nil {
@@ -157,7 +138,7 @@ func TestRemoveMount(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	s := NewState(tmpDir)
 
 	info := MountInfo{
 		Source: "/path/to/source",
@@ -186,7 +167,7 @@ func TestRemoveMountNonexistent(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	s := NewState(tmpDir)
 
 	// Removing nonexistent mount should not error
 	if err := s.RemoveMount("/nonexistent/target"); err != nil {
@@ -198,7 +179,7 @@ func TestListMounts(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	s := NewState(tmpDir)
 
 	// Initially empty
 	mounts, err := s.ListMounts()
@@ -236,7 +217,7 @@ func TestMountExists(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	s := NewState(tmpDir)
 	target := "/path/to/target"
 
 	// Should not exist initially
@@ -274,35 +255,9 @@ func TestStateDir(t *testing.T) {
 	tmpDir, cleanup := setupTestDir(t)
 	defer cleanup()
 
-	s := NewState(tmpDir, ".amikabase")
+	s := NewState(tmpDir)
 
-	expected := filepath.Join(tmpDir, ".amikabase")
-	if s.StateDir() != expected {
-		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), expected)
-	}
-}
-
-func TestDifferentBasenames(t *testing.T) {
-	tmpDir, cleanup := setupTestDir(t)
-	defer cleanup()
-
-	s1 := NewState(tmpDir, ".amikabase")
-	s2 := NewState(tmpDir, ".amikatest")
-
-	dir1 := s1.StateDir()
-	dir2 := s2.StateDir()
-
-	if dir1 == dir2 {
-		t.Error("different basenames should produce different state directories")
-	}
-
-	expectedDir1 := filepath.Join(tmpDir, ".amikabase")
-	expectedDir2 := filepath.Join(tmpDir, ".amikatest")
-
-	if dir1 != expectedDir1 {
-		t.Errorf("dir1 mismatch: got %s, want %s", dir1, expectedDir1)
-	}
-	if dir2 != expectedDir2 {
-		t.Errorf("dir2 mismatch: got %s, want %s", dir2, expectedDir2)
+	if s.StateDir() != tmpDir {
+		t.Errorf("StateDir mismatch: got %s, want %s", s.StateDir(), tmpDir)
 	}
 }

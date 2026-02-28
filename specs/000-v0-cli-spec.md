@@ -106,9 +106,9 @@ The CLI must check for these dependencies at startup and display helpful error m
 
 ## State Management
 
-Active mounts are tracked in `~/.amikabase/mounts.jsonl`. This is a JSON Lines file where each line is a mount entry serialized as JSON.
+Active mounts are tracked in `~/.local/state/amika/mounts.jsonl` (override with `AMIKA_STATE_DIRECTORY`). This is a JSON Lines file where each line is a mount entry serialized as JSON.
 
-**File format** (`~/.amikabase/mounts.jsonl`):
+**File format** (`~/.local/state/amika/mounts.jsonl`):
 ```jsonl
 {"source":"/path/to/src1","target":"/path/to/target1","mode":"ro"}
 {"source":"/path/to/src2","target":"/path/to/target2","mode":"overlay","tempDir":"/tmp/amika-xxxx"}

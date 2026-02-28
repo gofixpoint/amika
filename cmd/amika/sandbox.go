@@ -9,11 +9,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/spf13/cobra"
 )
-
-const sandboxStoreDir = ".amika"
 
 var sandboxCmd = &cobra.Command{
 	Use:   "sandbox",
@@ -46,15 +45,23 @@ var sandboxCreateCmd = &cobra.Command{
 				return fmt.Errorf("--preset and --image are mutually exclusive")
 			}
 			image = "amika-" + preset + ":latest"
-			if !sandbox.DockerImageExists(image) {
-				dockerfile, err := sandbox.GetPresetDockerfile(preset)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("Building %q preset image (this may take a few minutes)...\n", preset)
-				if err := sandbox.BuildDockerImage(image, dockerfile); err != nil {
-					return err
-				}
+		}
+
+		// If using a preset (explicit or default), auto-build the image if it
+		// doesn't exist locally. When no --preset and no --image are specified,
+		// the default image is amika-claude:latest which uses the "claude" preset.
+		buildPreset := preset
+		if buildPreset == "" && !cmd.Flags().Changed("image") {
+			buildPreset = "claude"
+		}
+		if buildPreset != "" && !sandbox.DockerImageExists(image) {
+			dockerfile, err := sandbox.GetPresetDockerfile(buildPreset)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Building %q preset image (this may take a few minutes)...\n", buildPreset)
+			if err := sandbox.BuildDockerImage(image, dockerfile); err != nil {
+				return err
 			}
 		}
 
@@ -63,7 +70,11 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
-		store := sandbox.NewSandboxStore(sandboxStoreDir)
+		stateDir, err := config.StateDir()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewSandboxStore(stateDir)
 
 		// Generate a name if not provided
 		if name == "" {
@@ -117,15 +128,20 @@ var sandboxCreateCmd = &cobra.Command{
 }
 
 var sandboxDeleteCmd = &cobra.Command{
-	Use:   "delete",
+	Use:   "delete <name>",
 	Short: "Delete a sandbox",
 	Long:  `Delete a sandbox and remove its backing container.`,
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
-		name, _ := cmd.Flags().GetString("name")
+		name := args[0]
 
-		store := sandbox.NewSandboxStore(sandboxStoreDir)
+		stateDir, err := config.StateDir()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewSandboxStore(stateDir)
 
 		info, err := store.Get(name)
 		if err != nil {
@@ -151,7 +167,11 @@ var sandboxListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all sandboxes",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store := sandbox.NewSandboxStore(sandboxStoreDir)
+		stateDir, err := config.StateDir()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewSandboxStore(stateDir)
 
 		sandboxes, err := store.List()
 		if err != nil {
@@ -234,7 +254,4 @@ func init() {
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 
-	// Delete flags
-	sandboxDeleteCmd.Flags().String("name", "", "Name of the sandbox to delete (required)")
-	sandboxDeleteCmd.MarkFlagRequired("name")
 }
