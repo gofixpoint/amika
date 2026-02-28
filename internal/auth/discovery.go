@@ -235,6 +235,9 @@ func parseOpenCode(homeDir string, includeOAuth bool, now time.Time, _ basedir.P
 	result := make(map[string]string)
 	for _, provider := range providerNames {
 		rawEntry := obj[provider]
+		if rawEntry == nil {
+			continue
+		}
 		entry, ok := rawEntry.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("failed to parse credentials file %q: provider %q must be an object", path, provider)
@@ -279,6 +282,13 @@ func parseOpenCode(homeDir string, includeOAuth bool, now time.Time, _ basedir.P
 			}
 
 			if rawExpiry, hasExpiry := entry["expires"]; hasExpiry {
+				if rawExpiry == nil {
+					// Null expiry is treated as missing (no expiry enforcement).
+					if _, alreadySet := result[canonical]; !alreadySet {
+						result[canonical] = accessToken
+					}
+					continue
+				}
 				expiresMillis, err := parseEpochMillis(rawExpiry)
 				if err != nil {
 					return nil, fmt.Errorf("failed to parse credentials file %q: invalid expires for provider %q: %w", path, provider, err)
@@ -455,6 +465,9 @@ func getStringPath(obj map[string]any, path string) (string, bool, error) {
 	var current any = obj
 
 	for i, part := range parts {
+		if current == nil {
+			return "", false, nil
+		}
 		m, ok := current.(map[string]any)
 		if !ok {
 			return "", false, fmt.Errorf("path %q expects an object at %q", path, strings.Join(parts[:i], "."))
@@ -466,6 +479,9 @@ func getStringPath(obj map[string]any, path string) (string, bool, error) {
 		}
 
 		if i == len(parts)-1 {
+			if raw == nil {
+				return "", false, nil
+			}
 			s, ok := raw.(string)
 			if !ok {
 				return "", false, fmt.Errorf("path %q must be a string", path)

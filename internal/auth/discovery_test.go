@@ -172,6 +172,100 @@ func TestDiscover_ParseErrors(t *testing.T) {
 	})
 }
 
+func TestDiscover_NullValuesAreSkipped(t *testing.T) {
+	t.Run("codex_null_api_key_falls_back_to_oauth", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		writeDiscoveryFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":null,"tokens":{"access_token":"codex-oauth"}}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.OpenAI != "codex-oauth" {
+			t.Fatalf("OpenAI = %q, want %q", result.OpenAI, "codex-oauth")
+		}
+	})
+
+	t.Run("codex_null_tokens_object_is_ignored", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		writeDiscoveryFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"tokens":null}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.OpenAI != "" {
+			t.Fatalf("OpenAI = %q, want empty", result.OpenAI)
+		}
+	})
+
+	t.Run("claude_api_null_field_does_not_block_fallback", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		writeDiscoveryFixture(t, filepath.Join(home, ".claude.json"), `{"primaryApiKey":null,"apiKey":"sk-ant-live"}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.Anthropic != "sk-ant-live" {
+			t.Fatalf("Anthropic = %q, want %q", result.Anthropic, "sk-ant-live")
+		}
+	})
+
+	t.Run("claude_oauth_null_access_token_is_ignored", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		writeDiscoveryFixture(t, filepath.Join(home, ".claude-oauth-credentials.json"), `{"claudeAiOauth":{"accessToken":null}}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.Anthropic != "" {
+			t.Fatalf("Anthropic = %q, want empty", result.Anthropic)
+		}
+	})
+
+	t.Run("opencode_null_provider_entry_is_ignored", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		writeDiscoveryFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{
+			"openai": null,
+			"groq": {"type": "api", "key": "op-groq"}
+		}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.OpenAI != "" {
+			t.Fatalf("OpenAI = %q, want empty", result.OpenAI)
+		}
+		if result.Other == nil || result.Other["groq"] != "op-groq" {
+			t.Fatalf("Other.groq = %q, want %q", result.Other["groq"], "op-groq")
+		}
+	})
+
+	t.Run("opencode_null_oauth_expiry_treated_as_missing", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		writeDiscoveryFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{
+			"openai": {"type": "oauth", "access": "op-open", "expires": null}
+		}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.OpenAI != "op-open" {
+			t.Fatalf("OpenAI = %q, want %q", result.OpenAI, "op-open")
+		}
+	})
+}
+
 func TestDiscover_AmikaXDGFiles(t *testing.T) {
 	home := t.TempDir()
 	setXDGForHome(t, home)
