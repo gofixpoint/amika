@@ -1,3 +1,4 @@
+// Package main implements the amika CLI.
 package main
 
 import (
@@ -8,10 +9,10 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:                "amika",
-	Short:              "Amika - filesystem mounting and script execution",
-	Long:               `Amika provides filesystem mounting and script execution with output materialization.`,
-	CompletionOptions:  cobra.CompletionOptions{HiddenDefaultCmd: true},
+	Use:               "amika",
+	Short:             "Amika - filesystem mounting and script execution",
+	Long:              `Amika provides filesystem mounting and script execution with output materialization.`,
+	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 }
 
 func main() {

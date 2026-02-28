@@ -1,3 +1,4 @@
+// Package state manages persistent mount state.
 package state
 
 import (

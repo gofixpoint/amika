@@ -24,7 +24,8 @@ var sandboxCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new sandbox",
 	Long:  `Create a new sandbox using the specified provider. Currently only "docker" is supported.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
 
 		provider, _ := cmd.Flags().GetString("provider")
@@ -74,7 +75,7 @@ var sandboxCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		store := sandbox.NewSandboxStore(stateDir)
+		store := sandbox.NewStore(stateDir)
 
 		// Generate a name if not provided
 		if name == "" {
@@ -108,7 +109,7 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
-		info := sandbox.SandboxInfo{
+		info := sandbox.Info{
 			Name:        name,
 			Provider:    provider,
 			ContainerID: containerID,
@@ -132,16 +133,14 @@ var sandboxDeleteCmd = &cobra.Command{
 	Short: "Delete a sandbox",
 	Long:  `Delete a sandbox and remove its backing container.`,
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-
+	RunE: func(_ *cobra.Command, args []string) error {
 		name := args[0]
 
 		stateDir, err := config.StateDir()
 		if err != nil {
 			return err
 		}
-		store := sandbox.NewSandboxStore(stateDir)
+		store := sandbox.NewStore(stateDir)
 
 		info, err := store.Get(name)
 		if err != nil {
@@ -166,12 +165,13 @@ var sandboxDeleteCmd = &cobra.Command{
 var sandboxListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all sandboxes",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		stateDir, err := config.StateDir()
 		if err != nil {
 			return err
 		}
-		store := sandbox.NewSandboxStore(stateDir)
+		store := sandbox.NewStore(stateDir)
 
 		sandboxes, err := store.List()
 		if err != nil {

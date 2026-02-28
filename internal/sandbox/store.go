@@ -15,8 +15,8 @@ type MountBinding struct {
 	Mode   string `json:"mode"` // "ro" or "rw"
 }
 
-// SandboxInfo represents a tracked sandbox.
-type SandboxInfo struct {
+// Info represents a tracked sandbox.
+type Info struct {
 	Name        string         `json:"name"`
 	Provider    string         `json:"provider"`
 	ContainerID string         `json:"containerId"`
@@ -27,28 +27,28 @@ type SandboxInfo struct {
 	Env         []string       `json:"env,omitempty"`
 }
 
-// SandboxStore manages sandbox state persistence.
-type SandboxStore interface {
-	Save(info SandboxInfo) error
-	Get(name string) (SandboxInfo, error)
+// Store manages sandbox state persistence.
+type Store interface {
+	Save(info Info) error
+	Get(name string) (Info, error)
 	Remove(name string) error
-	List() ([]SandboxInfo, error)
+	List() ([]Info, error)
 }
 
-type fileSandboxStore struct {
+type fileStore struct {
 	dir string // the amika state directory path
 }
 
-// NewSandboxStore creates a SandboxStore backed by a JSONL file in the given directory.
-func NewSandboxStore(dir string) SandboxStore {
-	return &fileSandboxStore{dir: dir}
+// NewStore creates a Store backed by a JSONL file in the given directory.
+func NewStore(dir string) Store {
+	return &fileStore{dir: dir}
 }
 
-func (s *fileSandboxStore) filePath() string {
+func (s *fileStore) filePath() string {
 	return filepath.Join(s.dir, "sandboxes.jsonl")
 }
 
-func (s *fileSandboxStore) readAll() ([]SandboxInfo, error) {
+func (s *fileStore) readAll() ([]Info, error) {
 	f, err := os.Open(s.filePath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -58,14 +58,14 @@ func (s *fileSandboxStore) readAll() ([]SandboxInfo, error) {
 	}
 	defer f.Close()
 
-	var sandboxes []SandboxInfo
+	var sandboxes []Info
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			continue
 		}
-		var info SandboxInfo
+		var info Info
 		if err := json.Unmarshal([]byte(line), &info); err != nil {
 			continue // skip malformed lines
 		}
@@ -77,7 +77,7 @@ func (s *fileSandboxStore) readAll() ([]SandboxInfo, error) {
 	return sandboxes, nil
 }
 
-func (s *fileSandboxStore) writeAll(sandboxes []SandboxInfo) error {
+func (s *fileStore) writeAll(sandboxes []Info) error {
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("failed to create storage directory: %w", err)
 	}
@@ -103,7 +103,7 @@ func (s *fileSandboxStore) writeAll(sandboxes []SandboxInfo) error {
 	return nil
 }
 
-func (s *fileSandboxStore) Save(info SandboxInfo) error {
+func (s *fileStore) Save(info Info) error {
 	sandboxes, err := s.readAll()
 	if err != nil {
 		return err
@@ -125,10 +125,10 @@ func (s *fileSandboxStore) Save(info SandboxInfo) error {
 	return s.writeAll(sandboxes)
 }
 
-func (s *fileSandboxStore) Get(name string) (SandboxInfo, error) {
+func (s *fileStore) Get(name string) (Info, error) {
 	sandboxes, err := s.readAll()
 	if err != nil {
-		return SandboxInfo{}, err
+		return Info{}, err
 	}
 
 	for _, sb := range sandboxes {
@@ -136,16 +136,16 @@ func (s *fileSandboxStore) Get(name string) (SandboxInfo, error) {
 			return sb, nil
 		}
 	}
-	return SandboxInfo{}, fmt.Errorf("no sandbox found with name: %s", name)
+	return Info{}, fmt.Errorf("no sandbox found with name: %s", name)
 }
 
-func (s *fileSandboxStore) Remove(name string) error {
+func (s *fileStore) Remove(name string) error {
 	sandboxes, err := s.readAll()
 	if err != nil {
 		return err
 	}
 
-	var filtered []SandboxInfo
+	var filtered []Info
 	for _, sb := range sandboxes {
 		if sb.Name != name {
 			filtered = append(filtered, sb)
@@ -159,6 +159,6 @@ func (s *fileSandboxStore) Remove(name string) error {
 	return s.writeAll(filtered)
 }
 
-func (s *fileSandboxStore) List() ([]SandboxInfo, error) {
+func (s *fileStore) List() ([]Info, error) {
 	return s.readAll()
 }

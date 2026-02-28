@@ -7,38 +7,41 @@ import (
 	"strings"
 )
 
+// SandboxWorkdir is the default working directory inside the sandbox.
 const SandboxWorkdir = "/home/amika/workspace"
 
-type SandboxPaths interface {
+// Paths provides access to the directory layout of a sandbox.
+type Paths interface {
 	GetRoot() string
 	GetWorkdir() string
 	GetOutdir() string
 	Cleanup() error
 }
 
-type tmpDirSandboxPaths struct {
+type tmpDirPaths struct {
 	Root    string // Path to the sandbox root directory
 	Workdir string // Path to the working directory within the sandbox
 	Outdir  string // Subdirectory for output within the sandbox
 }
 
-func (s *tmpDirSandboxPaths) GetRoot() string {
+func (s *tmpDirPaths) GetRoot() string {
 	return s.Root
 }
 
-func (s *tmpDirSandboxPaths) GetWorkdir() string {
+func (s *tmpDirPaths) GetWorkdir() string {
 	return s.Workdir
 }
 
-func (s *tmpDirSandboxPaths) GetOutdir() string {
+func (s *tmpDirPaths) GetOutdir() string {
 	return s.Outdir
 }
 
-func (s *tmpDirSandboxPaths) Cleanup() error {
+func (s *tmpDirPaths) Cleanup() error {
 	return os.RemoveAll(s.Root)
 }
 
-func NewTmpDirSandboxPaths(workdir, outdir string) (SandboxPaths, error) {
+// NewTmpDirPaths creates a new temporary directory-based Paths.
+func NewTmpDirPaths(workdir, outdir string) (Paths, error) {
 	root, err := os.MkdirTemp("", "amika-sandbox-*")
 	if err != nil {
 		return nil, err
@@ -60,7 +63,7 @@ func NewTmpDirSandboxPaths(workdir, outdir string) (SandboxPaths, error) {
 //   - Absolute → relative to sandbox root (e.g. /output → sandboxRoot/output)
 //   - Relative → relative to workdir (e.g. out → workdir/out)
 //   - Any absolute outdir or workdir is forcibly nested under sandboxRoot for security
-func resolveSandboxOutdir(sandboxRoot, outdir, workdir string) SandboxPaths {
+func resolveSandboxOutdir(sandboxRoot, outdir, workdir string) Paths {
 	// Ensure workdir is always nested under sandboxRoot
 	cleanWorkdir := workdir
 	if filepath.IsAbs(workdir) {
@@ -78,7 +81,7 @@ func resolveSandboxOutdir(sandboxRoot, outdir, workdir string) SandboxPaths {
 		resolvedOutdir = filepath.Join(cleanWorkdir, outdir)
 	}
 
-	return &tmpDirSandboxPaths{
+	return &tmpDirPaths{
 		Root:    sandboxRoot,
 		Workdir: cleanWorkdir,
 		Outdir:  resolvedOutdir,

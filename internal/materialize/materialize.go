@@ -1,3 +1,4 @@
+// Package materialize runs scripts or commands and copies their output to a destination.
 package materialize
 
 import (

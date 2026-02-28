@@ -1,3 +1,4 @@
+// Package config provides configuration and path resolution for amika.
 package config
 
 import (

@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func TestSandboxStore_SaveAndGet(t *testing.T) {
+func TestStore_SaveAndGet(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
-	info := SandboxInfo{
+	info := Info{
 		Name:        "test-sb",
 		Provider:    "docker",
 		ContainerID: "abc123",
@@ -34,9 +34,9 @@ func TestSandboxStore_SaveAndGet(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_GetNotFound(t *testing.T) {
+func TestStore_GetNotFound(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
 	_, err := store.Get("nonexistent")
 	if err == nil {
@@ -44,12 +44,12 @@ func TestSandboxStore_GetNotFound(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_SaveReplacesExisting(t *testing.T) {
+func TestStore_SaveReplacesExisting(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
-	store.Save(SandboxInfo{Name: "sb1", ContainerID: "old"})
-	store.Save(SandboxInfo{Name: "sb1", ContainerID: "new"})
+	store.Save(Info{Name: "sb1", ContainerID: "old"})
+	store.Save(Info{Name: "sb1", ContainerID: "new"})
 
 	got, _ := store.Get("sb1")
 	if got.ContainerID != "new" {
@@ -62,12 +62,12 @@ func TestSandboxStore_SaveReplacesExisting(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_Remove(t *testing.T) {
+func TestStore_Remove(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
-	store.Save(SandboxInfo{Name: "sb1"})
-	store.Save(SandboxInfo{Name: "sb2"})
+	store.Save(Info{Name: "sb1"})
+	store.Save(Info{Name: "sb2"})
 
 	if err := store.Remove("sb1"); err != nil {
 		t.Fatalf("Remove failed: %v", err)
@@ -87,9 +87,9 @@ func TestSandboxStore_Remove(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_RemoveNonexistent(t *testing.T) {
+func TestStore_RemoveNonexistent(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
 	// Should not error when removing something that doesn't exist
 	if err := store.Remove("nope"); err != nil {
@@ -97,13 +97,13 @@ func TestSandboxStore_RemoveNonexistent(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_List(t *testing.T) {
+func TestStore_List(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
-	store.Save(SandboxInfo{Name: "a"})
-	store.Save(SandboxInfo{Name: "b"})
-	store.Save(SandboxInfo{Name: "c"})
+	store.Save(Info{Name: "a"})
+	store.Save(Info{Name: "b"})
+	store.Save(Info{Name: "c"})
 
 	all, err := store.List()
 	if err != nil {
@@ -114,11 +114,11 @@ func TestSandboxStore_List(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_CreatesDirectory(t *testing.T) {
+func TestStore_CreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "amika-state")
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
-	if err := store.Save(SandboxInfo{Name: "sb1"}); err != nil {
+	if err := store.Save(Info{Name: "sb1"}); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
@@ -127,11 +127,11 @@ func TestSandboxStore_CreatesDirectory(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_MountsRoundTrip(t *testing.T) {
+func TestStore_MountsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
-	info := SandboxInfo{
+	info := Info{
 		Name:     "sb-mounts",
 		Provider: "docker",
 		Image:    "ubuntu:latest",
@@ -160,11 +160,11 @@ func TestSandboxStore_MountsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_NoMountsOmitted(t *testing.T) {
+func TestStore_NoMountsOmitted(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
-	store.Save(SandboxInfo{Name: "no-mounts", Provider: "docker"})
+	store.Save(Info{Name: "no-mounts", Provider: "docker"})
 
 	got, _ := store.Get("no-mounts")
 	if got.Mounts != nil {
@@ -172,9 +172,9 @@ func TestSandboxStore_NoMountsOmitted(t *testing.T) {
 	}
 }
 
-func TestSandboxStore_EmptyFileReturnsNil(t *testing.T) {
+func TestStore_EmptyFileReturnsNil(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSandboxStore(dir)
+	store := NewStore(dir)
 
 	all, err := store.List()
 	if err != nil {
