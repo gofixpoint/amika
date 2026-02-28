@@ -7,6 +7,12 @@ import (
 )
 
 func TestPaths_DefaultsFromHomeOverride(t *testing.T) {
+	// Clear XDG vars so we test the home-override fallback path.
+	setEnv(t, envXDGConfigHome, "")
+	setEnv(t, envXDGDataHome, "")
+	setEnv(t, envXDGCacheHome, "")
+	setEnv(t, envXDGStateHome, "")
+
 	home := t.TempDir()
 	p := New(home)
 
