@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Result contains discovered credentials by canonical provider buckets.
-type Result struct {
+// CredentialSet contains discovered credentials by canonical provider buckets.
+type CredentialSet struct {
 	Anthropic string
 	OpenAI    string
 	Other     map[string]string
@@ -27,7 +27,7 @@ func NormalizeProviderName(provider string) string {
 }
 
 // BuildEnvMap converts discovered credentials into environment variables.
-func BuildEnvMap(result Result) map[string]string {
+func BuildEnvMap(result CredentialSet) map[string]string {
 	env := make(map[string]string)
 
 	if result.Anthropic != "" {

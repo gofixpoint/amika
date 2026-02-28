@@ -23,13 +23,13 @@ type candidate struct {
 }
 
 // Discover scans known local credential sources and returns deduplicated results.
-func Discover(opts Options) (Result, error) {
+func Discover(opts Options) (CredentialSet, error) {
 	homeDir := opts.HomeDir
 	if homeDir == "" {
 		var err error
 		homeDir, err = os.UserHomeDir()
 		if err != nil {
-			return Result{}, fmt.Errorf("failed to get home directory: %w", err)
+			return CredentialSet{}, fmt.Errorf("failed to get home directory: %w", err)
 		}
 	}
 
@@ -41,7 +41,7 @@ func Discover(opts Options) (Result, error) {
 		for _, path := range src.files {
 			found, err := collectFileCredentials(path, src.precedence, winners)
 			if err != nil {
-				return Result{}, err
+				return CredentialSet{}, err
 			}
 			if !found {
 				continue
@@ -49,7 +49,7 @@ func Discover(opts Options) (Result, error) {
 		}
 	}
 
-	result := Result{Other: make(map[string]string)}
+	result := CredentialSet{Other: make(map[string]string)}
 	for provider, winner := range winners {
 		switch provider {
 		case "anthropic":

@@ -23,7 +23,7 @@ func TestNormalizeProviderName(t *testing.T) {
 }
 
 func TestBuildEnvMap(t *testing.T) {
-	result := Result{
+	result := CredentialSet{
 		Anthropic: "anth-key",
 		OpenAI:    "open-key",
 		Other: map[string]string{
