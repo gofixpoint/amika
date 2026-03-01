@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,11 +37,17 @@ var sandboxCreateCmd = &cobra.Command{
 		preset, _ := cmd.Flags().GetString("preset")
 		mountStrs, _ := cmd.Flags().GetStringArray("mount")
 		volumeStrs, _ := cmd.Flags().GetStringArray("volume")
+		gitPath, _ := cmd.Flags().GetString("git")
+		noClean, _ := cmd.Flags().GetBool("no-clean")
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		yes, _ := cmd.Flags().GetBool("yes")
+		gitFlagChanged := cmd.Flags().Changed("git")
 
 		if provider != "docker" {
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
+		}
+		if err := validateGitFlags(gitFlagChanged, noClean); err != nil {
+			return err
 		}
 
 		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
@@ -60,6 +68,16 @@ var sandboxCreateCmd = &cobra.Command{
 		volumeMounts, err := parseVolumeFlags(volumeStrs)
 		if err != nil {
 			return err
+		}
+		var gitMountInfo *gitMountInfo
+		if gitFlagChanged {
+			info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo)
+			if err != nil {
+				return err
+			}
+			defer cleanupGitMount()
+			gitMountInfo = &info
+			mounts = append(mounts, info.Mount)
 		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
@@ -89,9 +107,24 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		if (len(mounts) > 0 || len(volumeMounts) > 0) && !yes {
+			if gitMountInfo != nil {
+				mode := "clean"
+				if gitMountInfo.NoClean {
+					mode = "no-clean"
+				}
+				fmt.Println("Git repo to mount:")
+				fmt.Printf("  repo: %s\n", gitMountInfo.RepoName)
+				fmt.Printf("  root: %s\n", gitMountInfo.RepoRoot)
+				fmt.Printf("  mode: %s\n", mode)
+				fmt.Printf("  target: %s\n", gitMountInfo.Mount.Target)
+			}
 			fmt.Println("You are about to mount:")
 			for _, m := range mounts {
-				fmt.Printf("  %s -> %s:%s (%s)\n", m.Source, name, m.Target, m.Mode)
+				source := m.Source
+				if m.Mode == "rwcopy" && m.SnapshotFrom != "" {
+					source = m.SnapshotFrom
+				}
+				fmt.Printf("  %s -> %s:%s (%s)\n", source, name, m.Target, m.Mode)
 			}
 			for _, v := range volumeMounts {
 				fmt.Printf("  volume %s -> %s:%s (%s)\n", v.Volume, name, v.Target, v.Mode)
@@ -390,6 +423,97 @@ func validateMountTargets(bindMounts, volumeMounts []sandbox.MountBinding) error
 	return nil
 }
 
+func validateGitFlags(gitEnabled, noClean bool) error {
+	if noClean && !gitEnabled {
+		return fmt.Errorf("--no-clean requires --git")
+	}
+	return nil
+}
+
+type gitMountInfo struct {
+	RepoName string
+	RepoRoot string
+	NoClean  bool
+	Mount    sandbox.MountBinding
+}
+
+func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst string) error) (gitMountInfo, func(), error) {
+	repoRoot, err := resolveGitRoot(startPath)
+	if err != nil {
+		return gitMountInfo{}, func() {}, err
+	}
+
+	repoName := filepath.Base(repoRoot)
+	target := path.Join(sandbox.SandboxWorkdir, repoName)
+	source := repoRoot
+	cleanup := func() {}
+	if !noClean {
+		tmpDir, err := os.MkdirTemp("", "amika-git-clean-*")
+		if err != nil {
+			return gitMountInfo{}, cleanup, fmt.Errorf("failed to create temp directory for git mount: %w", err)
+		}
+		cloneDest := filepath.Join(tmpDir, repoName)
+		if err := cloneFn(repoRoot, cloneDest); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			return gitMountInfo{}, cleanup, err
+		}
+		source = cloneDest
+		cleanup = func() { _ = os.RemoveAll(tmpDir) }
+	}
+
+	return gitMountInfo{
+		RepoName: repoName,
+		RepoRoot: repoRoot,
+		NoClean:  noClean,
+		Mount: sandbox.MountBinding{
+			Type:         "bind",
+			Source:       source,
+			Target:       target,
+			Mode:         "rwcopy",
+			SnapshotFrom: repoRoot,
+		},
+	}, cleanup, nil
+}
+
+func resolveGitRoot(startPath string) (string, error) {
+	if startPath == "" {
+		startPath = "."
+	}
+	absPath, err := filepath.Abs(startPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve git start path %q: %w", startPath, err)
+	}
+
+	current := absPath
+	if stat, err := os.Stat(absPath); err == nil && !stat.IsDir() {
+		current = filepath.Dir(absPath)
+	}
+
+	for {
+		gitMarker := filepath.Join(current, ".git")
+		if _, err := os.Stat(gitMarker); err == nil {
+			return current, nil
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+
+	return "", fmt.Errorf("no git repository root found from %q", absPath)
+}
+
+func cloneGitRepo(src, dst string) error {
+	cmd := exec.Command("git", "clone", "--local", "--no-hardlinks", src, dst)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to prepare clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func generateRWCopyVolumeName(sandboxName, target string) string {
 	sanitizedTarget := strings.NewReplacer("/", "-", "_", "-", ".", "-").Replace(strings.TrimPrefix(target, "/"))
 	if sanitizedTarget == "" {
@@ -470,6 +594,9 @@ func init() {
 	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rwcopy)")
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
+	sandboxCreateCmd.Flags().String("git", "", "Mount the current git repo root (or repo containing PATH) into /home/amika/workspace/{repo}")
+	sandboxCreateCmd.Flags().Lookup("git").NoOptDefVal = "."
+	sandboxCreateCmd.Flags().Bool("no-clean", false, "With --git, include untracked files from working tree instead of a clean clone")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
