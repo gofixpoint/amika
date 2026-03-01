@@ -60,7 +60,7 @@ Examples:
 			Image:              image,
 			Preset:             preset,
 			ImageFlagChanged:   cmd.Flags().Changed("image"),
-			DefaultBuildPreset: "claude",
+			DefaultBuildPreset: "coder",
 		})
 		if err != nil {
 			return err
@@ -77,7 +77,7 @@ Examples:
 		}
 
 		// Auto-mount host Claude config for the claude preset
-		if preset == "claude" {
+		if preset == "claude" || preset == "coder" {
 			homeDir, err := os.UserHomeDir()
 			if err == nil {
 				claudeDir := filepath.Join(homeDir, ".claude")
@@ -216,8 +216,8 @@ func init() {
 	topMaterializeCmd.Flags().String("cmd", "", "Bash command string to execute (mutually exclusive with --script)")
 	topMaterializeCmd.Flags().String("outdir", "", "Container directory to copy from (default: workdir)")
 	topMaterializeCmd.Flags().String("destdir", "", "Host directory where output files are copied")
-	topMaterializeCmd.Flags().String("image", "amika-claude:latest", "Docker image to use")
-	topMaterializeCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
+	topMaterializeCmd.Flags().String("image", sandbox.DefaultCoderImage, "Docker image to use")
+	topMaterializeCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"coder\" or \"claude\")")
 	topMaterializeCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	topMaterializeCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	topMaterializeCmd.Flags().BoolP("interactive", "i", false, "Run interactively with TTY (for programs like claude)")

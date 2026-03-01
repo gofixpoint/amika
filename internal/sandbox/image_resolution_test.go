@@ -33,27 +33,67 @@ func TestResolveAndEnsureImage_ExplicitPresetBuildsWhenMissing(t *testing.T) {
 	}
 
 	res, err := ResolveAndEnsureImage(PresetImageOptions{
-		Image:              "amika-claude:latest",
+		Image:              DefaultCoderImage,
 		Preset:             "claude",
-		DefaultBuildPreset: "claude",
+		DefaultBuildPreset: "coder",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.Image != "amika-claude:latest" {
-		t.Fatalf("image = %q, want %q", res.Image, "amika-claude:latest")
+	if res.Image != DefaultCoderImage {
+		t.Fatalf("image = %q, want %q", res.Image, DefaultCoderImage)
 	}
-	if res.EffectivePreset != "claude" {
-		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "claude")
+	if res.EffectivePreset != "coder" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "coder")
 	}
-	if res.BuildPreset != "claude" {
-		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "claude")
+	if res.BuildPreset != "coder" {
+		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "coder")
 	}
-	if gotBuildPreset != "claude" {
-		t.Fatalf("dockerfile preset = %q, want %q", gotBuildPreset, "claude")
+	if gotBuildPreset != "coder" {
+		t.Fatalf("dockerfile preset = %q, want %q", gotBuildPreset, "coder")
 	}
-	if builtImage != "amika-claude:latest" {
-		t.Fatalf("built image = %q, want %q", builtImage, "amika-claude:latest")
+	if builtImage != DefaultCoderImage {
+		t.Fatalf("built image = %q, want %q", builtImage, DefaultCoderImage)
+	}
+}
+
+func TestResolveAndEnsureImage_ExplicitCoderPresetBuildsWhenMissing(t *testing.T) {
+	resetImageResolutionStubs(t)
+
+	var builtImage string
+	var gotBuildPreset string
+	dockerImageExistsFn = func(_ string) bool { return false }
+	getPresetDockerfileFn = func(name string) ([]byte, error) {
+		gotBuildPreset = name
+		return []byte("FROM scratch"), nil
+	}
+	buildDockerImageFn = func(name string, _ []byte) error {
+		builtImage = name
+		return nil
+	}
+
+	res, err := ResolveAndEnsureImage(PresetImageOptions{
+		Image:              DefaultCoderImage,
+		Preset:             "coder",
+		DefaultBuildPreset: "coder",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Image != DefaultCoderImage {
+		t.Fatalf("image = %q, want %q", res.Image, DefaultCoderImage)
+	}
+	if res.EffectivePreset != "coder" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "coder")
+	}
+	if res.BuildPreset != "coder" {
+		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "coder")
+	}
+	if gotBuildPreset != "coder" {
+		t.Fatalf("dockerfile preset = %q, want %q", gotBuildPreset, "coder")
+	}
+	if builtImage != DefaultCoderImage {
+		t.Fatalf("built image = %q, want %q", builtImage, DefaultCoderImage)
 	}
 }
 
@@ -71,15 +111,15 @@ func TestResolveAndEnsureImage_DefaultBuildPresetWhenImageNotChanged(t *testing.
 	}
 
 	res, err := ResolveAndEnsureImage(PresetImageOptions{
-		Image:              "amika-claude:latest",
+		Image:              DefaultCoderImage,
 		ImageFlagChanged:   false,
-		DefaultBuildPreset: "claude",
+		DefaultBuildPreset: "coder",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.BuildPreset != "claude" {
-		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "claude")
+	if res.BuildPreset != "coder" {
+		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "coder")
 	}
 	if !built {
 		t.Fatal("expected build to run")
@@ -102,7 +142,7 @@ func TestResolveAndEnsureImage_NoDefaultBuildWhenImageChanged(t *testing.T) {
 	res, err := ResolveAndEnsureImage(PresetImageOptions{
 		Image:              "ubuntu:latest",
 		ImageFlagChanged:   true,
-		DefaultBuildPreset: "claude",
+		DefaultBuildPreset: "coder",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -124,8 +164,8 @@ func TestResolveAndEnsureImage_UnknownPreset(t *testing.T) {
 	}
 
 	_, err := ResolveAndEnsureImage(PresetImageOptions{
-		Image:  "amika-claude:latest",
-		Preset: "claude",
+		Image:  DefaultCoderImage,
+		Preset: "nope",
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -143,9 +183,9 @@ func TestResolveAndEnsureImage_SkipsBuildWhenImageExists(t *testing.T) {
 	}
 
 	_, err := ResolveAndEnsureImage(PresetImageOptions{
-		Image:              "amika-claude:latest",
+		Image:              DefaultCoderImage,
 		ImageFlagChanged:   false,
-		DefaultBuildPreset: "claude",
+		DefaultBuildPreset: "coder",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -85,7 +85,7 @@ find "$tmp/out" -maxdepth 3 -type f | head
 
 ```bash
 tmp="$(mktemp -d)"
-./dist/amika materialize --preset claude --cmd "echo ok > smoke.txt" --destdir "$tmp/out"
+./dist/amika materialize --preset coder --cmd "echo ok > smoke.txt" --destdir "$tmp/out"
 cat "$tmp/out/smoke.txt"
 ```
 
