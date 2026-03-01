@@ -77,7 +77,7 @@ find "$tmp/out" -maxdepth 3 -type f | head
 ```bash
 ./dist/amika sandbox create --name amika-smoke --yes
 ./dist/amika sandbox list | grep amika-smoke
-docker exec -it amika-smoke /bin/bash
+./dist/amika sandbox connect amika-smoke
 ./dist/amika sandbox delete amika-smoke
 ```
 

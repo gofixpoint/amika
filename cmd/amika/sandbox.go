@@ -321,6 +321,45 @@ var sandboxListCmd = &cobra.Command{
 	},
 }
 
+var sandboxConnectCmd = &cobra.Command{
+	Use:   "connect <name>",
+	Short: "Connect to a sandbox console",
+	Long:  `Connect to a running sandbox container and open an interactive shell.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+
+		name := args[0]
+		shell, _ := cmd.Flags().GetString("shell")
+		if err := validateShell(shell); err != nil {
+			return err
+		}
+
+		sandboxesFile, err := config.SandboxesStateFile()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewStore(sandboxesFile)
+		info, err := store.Get(name)
+		if err != nil {
+			return fmt.Errorf("sandbox %q not found", name)
+		}
+		if info.Provider != "docker" {
+			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", info.Provider)
+		}
+
+		dockerArgs := buildSandboxConnectArgs(name, shell)
+		dockerCmd := exec.Command("docker", dockerArgs...)
+		dockerCmd.Stdin = os.Stdin
+		dockerCmd.Stdout = os.Stdout
+		dockerCmd.Stderr = os.Stderr
+		if err := dockerCmd.Run(); err != nil {
+			return fmt.Errorf("failed to connect to sandbox %q with shell %q: %w", name, shell, err)
+		}
+		return nil
+	},
+}
+
 // parseMountFlags parses --mount flag values in the format source:target[:mode].
 // Mode defaults to "rwcopy" if omitted.
 func parseMountFlags(flags []string) ([]sandbox.MountBinding, error) {
@@ -430,6 +469,17 @@ func validateGitFlags(gitEnabled, noClean bool) error {
 		return fmt.Errorf("--no-clean requires --git")
 	}
 	return nil
+}
+
+func validateShell(shell string) error {
+	if strings.TrimSpace(shell) == "" {
+		return fmt.Errorf("--shell must not be empty")
+	}
+	return nil
+}
+
+func buildSandboxConnectArgs(name, shell string) []string {
+	return []string{"exec", "-it", name, shell}
 }
 
 type gitMountInfo struct {
@@ -715,6 +765,7 @@ func init() {
 	sandboxCmd.AddCommand(sandboxCreateCmd)
 	sandboxCmd.AddCommand(sandboxDeleteCmd)
 	sandboxCmd.AddCommand(sandboxListCmd)
+	sandboxCmd.AddCommand(sandboxConnectCmd)
 
 	// Create flags
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
@@ -729,5 +780,6 @@ func init() {
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
+	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
 
 }

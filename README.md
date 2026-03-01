@@ -118,7 +118,7 @@ amika materialize --cmd "curl -s https://api.example.com/data > result.json" --d
 amika materialize --script ./transform.sh --outdir /app/results --destdir ./output
 ```
 
-### `amika sandbox create|delete|list`
+### `amika sandbox create|delete|list|connect`
 
 Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
@@ -145,6 +145,12 @@ amika sandbox create --name dev-sandbox-2 \
 
 # List running sandboxes
 amika sandbox list
+
+# Connect to a sandbox console (zsh by default)
+amika sandbox connect dev-sandbox
+
+# Connect using a different shell
+amika sandbox connect dev-sandbox --shell bash
 
 # Delete a sandbox (preserves associated volumes by default)
 amika sandbox delete dev-sandbox
