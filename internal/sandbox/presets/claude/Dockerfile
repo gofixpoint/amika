@@ -5,6 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     git \
     curl \
+    zsh \
     build-essential \
     python3 \
     python3-pip \
@@ -19,4 +20,3 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 # Install TypeScript and Claude Code CLI
 RUN npm install -g typescript tsx @anthropic-ai/claude-code
-
