@@ -46,6 +46,61 @@ func ClaudeMounts(homeDir string) []MountSpec {
 	return specs
 }
 
+// OpenCodeMounts returns mount specs for OpenCode configuration directories that
+// exist under homeDir.
+func OpenCodeMounts(homeDir string) []MountSpec {
+	var specs []MountSpec
+
+	paths := []struct {
+		rel       string
+		container string
+	}{
+		{".config/opencode", containerHome + "/.config/opencode"},
+		{filepath.Join(".local", "share", "opencode"), containerHome + "/.local/share/opencode"},
+		{filepath.Join(".local", "state", "opencode"), containerHome + "/.local/state/opencode"},
+	}
+
+	for _, p := range paths {
+		full := filepath.Join(homeDir, p.rel)
+		if info, err := os.Stat(full); err == nil && info.IsDir() {
+			specs = append(specs, MountSpec{
+				HostPath:      full,
+				ContainerPath: p.container,
+				IsDir:         true,
+			})
+		}
+	}
+
+	return specs
+}
+
+// CodexMounts returns mount specs for Codex configuration directories that
+// exist under homeDir.
+func CodexMounts(homeDir string) []MountSpec {
+	var specs []MountSpec
+
+	codexDir := filepath.Join(homeDir, ".codex")
+	if info, err := os.Stat(codexDir); err == nil && info.IsDir() {
+		specs = append(specs, MountSpec{
+			HostPath:      codexDir,
+			ContainerPath: containerHome + "/.codex",
+			IsDir:         true,
+		})
+	}
+
+	return specs
+}
+
+// AllMounts returns mount specs for all supported coding agent configurations
+// that exist under homeDir.
+func AllMounts(homeDir string) []MountSpec {
+	var specs []MountSpec
+	specs = append(specs, ClaudeMounts(homeDir)...)
+	specs = append(specs, OpenCodeMounts(homeDir)...)
+	specs = append(specs, CodexMounts(homeDir)...)
+	return specs
+}
+
 // RWCopyMounts converts MountSpecs into sandbox MountBindings with rwcopy mode.
 func RWCopyMounts(specs []MountSpec) []sandbox.MountBinding {
 	mounts := make([]sandbox.MountBinding, 0, len(specs))
