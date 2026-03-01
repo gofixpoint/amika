@@ -284,6 +284,23 @@ func TestValidateGitFlags(t *testing.T) {
 	}
 }
 
+func TestValidateShell(t *testing.T) {
+	if err := validateShell("zsh"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := validateShell("   "); err == nil {
+		t.Fatal("expected error for empty shell")
+	}
+}
+
+func TestBuildSandboxConnectArgs(t *testing.T) {
+	got := buildSandboxConnectArgs("sb-1", "zsh")
+	want := []string{"exec", "-it", "-w", "/home/amika", "sb-1", "zsh"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
 func TestResolveGitRoot(t *testing.T) {
 	t.Run("finds from nested directory", func(t *testing.T) {
 		root := t.TempDir()
