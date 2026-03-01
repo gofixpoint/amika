@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -35,11 +38,17 @@ var sandboxCreateCmd = &cobra.Command{
 		preset, _ := cmd.Flags().GetString("preset")
 		mountStrs, _ := cmd.Flags().GetStringArray("mount")
 		volumeStrs, _ := cmd.Flags().GetStringArray("volume")
+		gitPath, _ := cmd.Flags().GetString("git")
+		noClean, _ := cmd.Flags().GetBool("no-clean")
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		yes, _ := cmd.Flags().GetBool("yes")
+		gitFlagChanged := cmd.Flags().Changed("git")
 
 		if provider != "docker" {
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
+		}
+		if err := validateGitFlags(gitFlagChanged, noClean); err != nil {
+			return err
 		}
 
 		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
@@ -60,6 +69,16 @@ var sandboxCreateCmd = &cobra.Command{
 		volumeMounts, err := parseVolumeFlags(volumeStrs)
 		if err != nil {
 			return err
+		}
+		var gitMountInfo *gitMountInfo
+		if gitFlagChanged {
+			info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo)
+			if err != nil {
+				return err
+			}
+			defer cleanupGitMount()
+			gitMountInfo = &info
+			mounts = append(mounts, info.Mount)
 		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
@@ -89,18 +108,34 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		if (len(mounts) > 0 || len(volumeMounts) > 0) && !yes {
+			if gitMountInfo != nil {
+				mode := "clean"
+				if gitMountInfo.NoClean {
+					mode = "no-clean"
+				}
+				fmt.Println("Git repo to mount:")
+				fmt.Printf("  repo: %s\n", gitMountInfo.RepoName)
+				fmt.Printf("  root: %s\n", gitMountInfo.RepoRoot)
+				fmt.Printf("  mode: %s\n", mode)
+				fmt.Printf("  target: %s\n", gitMountInfo.Mount.Target)
+			}
 			fmt.Println("You are about to mount:")
 			for _, m := range mounts {
-				fmt.Printf("  %s -> %s:%s (%s)\n", m.Source, name, m.Target, m.Mode)
+				source := m.Source
+				if m.Mode == "rwcopy" && m.SnapshotFrom != "" {
+					source = m.SnapshotFrom
+				}
+				fmt.Printf("  %s -> %s:%s (%s)\n", source, name, m.Target, m.Mode)
 			}
 			for _, v := range volumeMounts {
 				fmt.Printf("  volume %s -> %s:%s (%s)\n", v.Volume, name, v.Target, v.Mode)
 			}
-			fmt.Print("Continue? [y/N] ")
 			reader := bufio.NewReader(os.Stdin)
-			answer, _ := reader.ReadString('\n')
-			answer = strings.TrimSpace(strings.ToLower(answer))
-			if answer != "y" && answer != "yes" {
+			confirmed, err := promptForConfirmation(reader)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
 				fmt.Println("Aborted.")
 				return nil
 			}
@@ -390,6 +425,224 @@ func validateMountTargets(bindMounts, volumeMounts []sandbox.MountBinding) error
 	return nil
 }
 
+func validateGitFlags(gitEnabled, noClean bool) error {
+	if noClean && !gitEnabled {
+		return fmt.Errorf("--no-clean requires --git")
+	}
+	return nil
+}
+
+type gitMountInfo struct {
+	RepoName string
+	RepoRoot string
+	NoClean  bool
+	Mount    sandbox.MountBinding
+}
+
+func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst string) error) (gitMountInfo, func(), error) {
+	repoRoot, err := resolveGitRoot(startPath)
+	if err != nil {
+		return gitMountInfo{}, func() {}, err
+	}
+
+	repoName := filepath.Base(repoRoot)
+	target := path.Join(sandbox.SandboxWorkdir, repoName)
+	tmpDir, err := os.MkdirTemp("", "amika-git-mount-*")
+	if err != nil {
+		return gitMountInfo{}, func() {}, fmt.Errorf("failed to create temp directory for git mount: %w", err)
+	}
+	preparedRepo := filepath.Join(tmpDir, repoName)
+	if noClean {
+		if err := copyRepoWorkingTree(repoRoot, preparedRepo); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			return gitMountInfo{}, func() {}, err
+		}
+	} else {
+		if err := cloneFn(repoRoot, preparedRepo); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			return gitMountInfo{}, func() {}, err
+		}
+	}
+	if err := syncGitRemotes(repoRoot, preparedRepo); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return gitMountInfo{}, func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+
+	return gitMountInfo{
+		RepoName: repoName,
+		RepoRoot: repoRoot,
+		NoClean:  noClean,
+		Mount: sandbox.MountBinding{
+			Type:         "bind",
+			Source:       preparedRepo,
+			Target:       target,
+			Mode:         "rwcopy",
+			SnapshotFrom: repoRoot,
+		},
+	}, cleanup, nil
+}
+
+func resolveGitRoot(startPath string) (string, error) {
+	if startPath == "" {
+		startPath = "."
+	}
+	absPath, err := filepath.Abs(startPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve git start path %q: %w", startPath, err)
+	}
+
+	current := absPath
+	if stat, err := os.Stat(absPath); err == nil && !stat.IsDir() {
+		current = filepath.Dir(absPath)
+	}
+
+	for {
+		gitMarker := filepath.Join(current, ".git")
+		if _, err := os.Stat(gitMarker); err == nil {
+			return current, nil
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+
+	return "", fmt.Errorf("no git repository root found from %q", absPath)
+}
+
+func cloneGitRepo(src, dst string) error {
+	cmd := exec.Command("git", "clone", "--local", "--no-hardlinks", src, dst)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to prepare clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func copyRepoWorkingTree(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create no-clean parent for %q: %w", dst, err)
+	}
+	cmd := exec.Command("cp", "-a", src, dst)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to prepare no-clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".git")); err != nil {
+		return fmt.Errorf("failed to prepare no-clean git mount from %q: missing .git in %q", src, dst)
+	}
+	return nil
+}
+
+func syncGitRemotes(srcRepo, dstRepo string) error {
+	srcRemotes, err := listGitRemotes(srcRepo)
+	if err != nil {
+		return fmt.Errorf("failed to read remotes from source repo %q: %w", srcRepo, err)
+	}
+	filtered := make(map[string]string)
+	for name, url := range srcRemotes {
+		if isNetworkRemoteURL(url) {
+			filtered[name] = url
+		}
+	}
+
+	dstRemotes, err := listGitRemotes(dstRepo)
+	if err != nil {
+		return fmt.Errorf("failed to read remotes from prepared repo %q: %w", dstRepo, err)
+	}
+	for _, name := range sortedRemoteNames(dstRemotes) {
+		if err := runGit(dstRepo, "remote", "remove", name); err != nil {
+			return fmt.Errorf("failed to remove remote %q from prepared repo %q: %w", name, dstRepo, err)
+		}
+	}
+	for _, name := range sortedRemoteNames(filtered) {
+		if err := runGit(dstRepo, "remote", "add", name, filtered[name]); err != nil {
+			return fmt.Errorf("failed to add remote %q to prepared repo %q: %w", name, dstRepo, err)
+		}
+	}
+	return nil
+}
+
+func listGitRemotes(repo string) (map[string]string, error) {
+	out, err := runGitOutput(repo, "remote")
+	if err != nil {
+		return nil, err
+	}
+	names := strings.Fields(strings.TrimSpace(out))
+	remotes := make(map[string]string, len(names))
+	for _, name := range names {
+		url, err := runGitOutput(repo, "remote", "get-url", name)
+		if err != nil {
+			return nil, err
+		}
+		remotes[name] = strings.TrimSpace(url)
+	}
+	return remotes, nil
+}
+
+func isNetworkRemoteURL(url string) bool {
+	switch {
+	case strings.HasPrefix(url, "http://"),
+		strings.HasPrefix(url, "https://"),
+		strings.HasPrefix(url, "ssh://"):
+		return true
+	case strings.HasPrefix(url, "file://"):
+		return false
+	}
+	// Accept scp-like SSH syntax: user@host:path/to/repo.git
+	at := strings.Index(url, "@")
+	colon := strings.Index(url, ":")
+	return at > 0 && colon > at+1
+}
+
+func sortedRemoteNames(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func runGit(repo string, args ...string) error {
+	_, err := runGitOutput(repo, args...)
+	return err
+}
+
+func runGitOutput(repo string, args ...string) (string, error) {
+	cmdArgs := append([]string{"-C", repo}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func promptForConfirmation(reader *bufio.Reader) (bool, error) {
+	for {
+		fmt.Print("Continue? [y/n] ")
+		answer, err := reader.ReadString('\n')
+		if err != nil {
+			return false, fmt.Errorf("failed to read confirmation: %w", err)
+		}
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		switch answer {
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		case "":
+			fmt.Println("Please enter 'y' or 'n'.")
+		default:
+			fmt.Println("Invalid response. Please enter 'y' or 'n'.")
+		}
+	}
+}
+
 func generateRWCopyVolumeName(sandboxName, target string) string {
 	sanitizedTarget := strings.NewReplacer("/", "-", "_", "-", ".", "-").Replace(strings.TrimPrefix(target, "/"))
 	if sanitizedTarget == "" {
@@ -470,6 +723,9 @@ func init() {
 	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rwcopy)")
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
+	sandboxCreateCmd.Flags().String("git", "", "Mount the current git repo root (or repo containing PATH) into /home/amika/workspace/{repo}")
+	sandboxCreateCmd.Flags().Lookup("git").NoOptDefVal = "."
+	sandboxCreateCmd.Flags().Bool("no-clean", false, "With --git, include untracked files from working tree instead of a clean clone")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")

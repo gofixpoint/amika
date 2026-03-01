@@ -129,6 +129,16 @@ amika sandbox create --name dev-sandbox \
   --mount ./src:/workspace/src:ro \
   --mount ./out:/workspace/out
 
+# Mount the current git repository to /home/amika/workspace/{repo_name}
+# Uses a clean snapshot by default (committed HEAD content)
+amika sandbox create --name dev-sandbox --git
+
+# Mount repo containing the specified path
+amika sandbox create --name dev-sandbox --git ./src
+
+# Include untracked working-tree files in the snapshot
+amika sandbox create --name dev-sandbox --git --no-clean
+
 # Attach an existing tracked volume
 amika sandbox create --name dev-sandbox-2 \
   --volume amika-rwcopy-dev-sandbox-workspace-out-123:/workspace/out:rw
@@ -148,6 +158,10 @@ amika sandbox delete dev-sandbox --delete-volumes
 - `ro`: read-only bind mount from host
 - `rw`: read-write bind mount from host (writes sync to host)
 - `rwcopy`: read-write snapshot in Docker volume (default; no host sync back)
+
+Preferred in-sandbox workspace directory: `/home/amika/workspace`.
+When using `--git`, Amika mounts the detected repository to
+`/home/amika/workspace/{repo_name}`.
 
 ### `amika volume list|delete`
 
