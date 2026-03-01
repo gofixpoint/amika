@@ -57,7 +57,7 @@ var sandboxCreateCmd = &cobra.Command{
 			Image:              image,
 			Preset:             preset,
 			ImageFlagChanged:   cmd.Flags().Changed("image"),
-			DefaultBuildPreset: "claude",
+			DefaultBuildPreset: "coder",
 		})
 		if err != nil {
 			return err
@@ -772,8 +772,8 @@ func init() {
 	// Create flags
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
-	sandboxCreateCmd.Flags().String("image", "amika-claude:latest", "Docker image to use")
-	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"claude\")")
+	sandboxCreateCmd.Flags().String("image", sandbox.DefaultCoderImage, "Docker image to use")
+	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"coder\" or \"claude\")")
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rwcopy)")
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().String("git", "", "Mount the current git repo root (or repo containing PATH) into /home/amika/workspace/{repo}")
