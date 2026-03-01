@@ -8,17 +8,19 @@ import (
 )
 
 const (
-	appName          = "amika"
-	envCacheFile     = "env-cache.json"
-	keychainFile     = "keychain.json"
-	oauthFile        = "oauth.json"
-	mountsStateFile  = "mounts.jsonl"
-	sandboxesFile    = "sandboxes.jsonl"
-	volumesStateFile = "volumes.jsonl"
-	envXDGConfigHome = "XDG_CONFIG_HOME"
-	envXDGDataHome   = "XDG_DATA_HOME"
-	envXDGCacheHome  = "XDG_CACHE_HOME"
-	envXDGStateHome  = "XDG_STATE_HOME"
+	appName             = "amika"
+	envCacheFile        = "env-cache.json"
+	keychainFile        = "keychain.json"
+	oauthFile           = "oauth.json"
+	mountsStateFile     = "mounts.jsonl"
+	sandboxesFile       = "sandboxes.jsonl"
+	volumesStateFile    = "volumes.jsonl"
+	fileMountsStateFile = "rwcopy-mounts.jsonl"
+	fileMountsDir       = "rwcopy-mounts.d"
+	envXDGConfigHome    = "XDG_CONFIG_HOME"
+	envXDGDataHome      = "XDG_DATA_HOME"
+	envXDGCacheHome     = "XDG_CACHE_HOME"
+	envXDGStateHome     = "XDG_STATE_HOME"
 )
 
 // Paths resolves XDG base directories and Amika-managed file locations.
@@ -40,6 +42,8 @@ type Paths interface {
 	MountsStateFile() (string, error)
 	SandboxesStateFile() (string, error)
 	VolumesStateFile() (string, error)
+	FileMountsStateFile() (string, error)
+	FileMountsDir() (string, error)
 }
 
 type xdgPaths struct {
@@ -187,6 +191,22 @@ func (p *xdgPaths) VolumesStateFile() (string, error) {
 	return VolumesStateFileIn(dir), nil
 }
 
+func (p *xdgPaths) FileMountsStateFile() (string, error) {
+	dir, err := p.AmikaStateDir()
+	if err != nil {
+		return "", err
+	}
+	return FileMountsStateFileIn(dir), nil
+}
+
+func (p *xdgPaths) FileMountsDir() (string, error) {
+	dir, err := p.AmikaStateDir()
+	if err != nil {
+		return "", err
+	}
+	return FileMountsDirIn(dir), nil
+}
+
 // MountsStateFileIn returns the mounts state file path under the given state directory.
 func MountsStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, mountsStateFile)
@@ -200,4 +220,14 @@ func SandboxesStateFileIn(stateDir string) string {
 // VolumesStateFileIn returns the volumes state file path under the given state directory.
 func VolumesStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, volumesStateFile)
+}
+
+// FileMountsStateFileIn returns the file mounts state file path under the given state directory.
+func FileMountsStateFileIn(stateDir string) string {
+	return filepath.Join(stateDir, fileMountsStateFile)
+}
+
+// FileMountsDirIn returns the file mounts directory path under the given state directory.
+func FileMountsDirIn(stateDir string) string {
+	return filepath.Join(stateDir, fileMountsDir)
 }
