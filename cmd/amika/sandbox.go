@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -26,6 +27,15 @@ var sandboxCmd = &cobra.Command{
 
 const sandboxConnectWorkdir = "/home/amika"
 
+var runSandboxConnect = func(name, shell string, stdin io.Reader, stdout, stderr io.Writer) error {
+	dockerArgs := buildSandboxConnectArgs(name, shell)
+	dockerCmd := exec.Command("docker", dockerArgs...)
+	dockerCmd.Stdin = stdin
+	dockerCmd.Stdout = stdout
+	dockerCmd.Stderr = stderr
+	return dockerCmd.Run()
+}
+
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new sandbox",
@@ -44,6 +54,7 @@ var sandboxCreateCmd = &cobra.Command{
 		noClean, _ := cmd.Flags().GetBool("no-clean")
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		yes, _ := cmd.Flags().GetBool("yes")
+		connect, _ := cmd.Flags().GetBool("connect")
 		gitFlagChanged := cmd.Flags().Changed("git")
 
 		if provider != "docker" {
@@ -240,6 +251,11 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Sandbox %q created (container %s)\n", name, containerID[:12])
+		if connect {
+			if err := runSandboxConnect(name, "zsh", os.Stdin, os.Stdout, os.Stderr); err != nil {
+				return fmt.Errorf("sandbox %q created but failed to connect with shell %q: %w", name, "zsh", err)
+			}
+		}
 		return nil
 	},
 }
@@ -368,12 +384,7 @@ var sandboxConnectCmd = &cobra.Command{
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", info.Provider)
 		}
 
-		dockerArgs := buildSandboxConnectArgs(name, shell)
-		dockerCmd := exec.Command("docker", dockerArgs...)
-		dockerCmd.Stdin = os.Stdin
-		dockerCmd.Stdout = os.Stdout
-		dockerCmd.Stderr = os.Stderr
-		if err := dockerCmd.Run(); err != nil {
+		if err := runSandboxConnect(name, shell, os.Stdin, os.Stdout, os.Stderr); err != nil {
 			return fmt.Errorf("failed to connect to sandbox %q with shell %q: %w", name, shell, err)
 		}
 		return nil
@@ -868,6 +879,7 @@ func init() {
 	sandboxCreateCmd.Flags().Bool("no-clean", false, "With --git, include untracked files from working tree instead of a clean clone")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
+	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")

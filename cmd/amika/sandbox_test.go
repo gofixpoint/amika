@@ -622,6 +622,16 @@ func TestSandboxDeleteAliases(t *testing.T) {
 	}
 }
 
+func TestSandboxCreateHasConnectFlag(t *testing.T) {
+	flag := sandboxCreateCmd.Flags().Lookup("connect")
+	if flag == nil {
+		t.Fatal("sandbox create command must define --connect")
+	}
+	if flag.Value.Type() != "bool" {
+		t.Fatalf("connect flag type = %q, want bool", flag.Value.Type())
+	}
+}
+
 func createGitRepo(t *testing.T, remotes map[string]string) string {
 	t.Helper()
 
