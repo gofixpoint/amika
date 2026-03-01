@@ -58,9 +58,10 @@ var volumeListCmd = &cobra.Command{
 }
 
 var volumeDeleteCmd = &cobra.Command{
-	Use:   "delete <name>",
-	Short: "Delete a tracked volume",
-	Args:  cobra.ExactArgs(1),
+	Use:     "delete <name>",
+	Aliases: []string{"rm", "remove"},
+	Short:   "Delete a tracked volume",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		force, _ := cmd.Flags().GetBool("force")
