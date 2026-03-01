@@ -45,3 +45,19 @@ func VolumesStateFile() (string, error) {
 	}
 	return basedir.New("").VolumesStateFile()
 }
+
+// FileMountsStateFile returns the resolved file mounts state file path.
+func FileMountsStateFile() (string, error) {
+	if dir := os.Getenv(EnvStateDirectory); dir != "" {
+		return basedir.FileMountsStateFileIn(dir), nil
+	}
+	return basedir.New("").FileMountsStateFile()
+}
+
+// FileMountsDir returns the resolved file mounts directory path.
+func FileMountsDir() (string, error) {
+	if dir := os.Getenv(EnvStateDirectory); dir != "" {
+		return basedir.FileMountsDirIn(dir), nil
+	}
+	return basedir.New("").FileMountsDir()
+}
