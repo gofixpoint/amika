@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/gofixpoint/amika/internal/agentconfig"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/spf13/cobra"
@@ -92,6 +93,13 @@ var sandboxCreateCmd = &cobra.Command{
 			defer cleanupGitMount()
 			gitMountInfo = &info
 			mounts = append(mounts, info.Mount)
+		}
+		if agentconfig.IsAgentPreset(preset) {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				agentMounts := agentconfig.RWCopyMounts(agentconfig.ClaudeMounts(homeDir))
+				mounts = append(mounts, agentMounts...)
+			}
 		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
