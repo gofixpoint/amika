@@ -129,11 +129,12 @@ var sandboxCreateCmd = &cobra.Command{
 			for _, v := range volumeMounts {
 				fmt.Printf("  volume %s -> %s:%s (%s)\n", v.Volume, name, v.Target, v.Mode)
 			}
-			fmt.Print("Continue? [y/N] ")
 			reader := bufio.NewReader(os.Stdin)
-			answer, _ := reader.ReadString('\n')
-			answer = strings.TrimSpace(strings.ToLower(answer))
-			if answer != "y" && answer != "yes" {
+			confirmed, err := promptForConfirmation(reader)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
 				fmt.Println("Aborted.")
 				return nil
 			}
@@ -512,6 +513,27 @@ func cloneGitRepo(src, dst string) error {
 		return fmt.Errorf("failed to prepare clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func promptForConfirmation(reader *bufio.Reader) (bool, error) {
+	for {
+		fmt.Print("Continue? [y/n] ")
+		answer, err := reader.ReadString('\n')
+		if err != nil {
+			return false, fmt.Errorf("failed to read confirmation: %w", err)
+		}
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		switch answer {
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		case "":
+			fmt.Println("Please enter 'y' or 'n'.")
+		default:
+			fmt.Println("Invalid response. Please enter 'y' or 'n'.")
+		}
+	}
 }
 
 func generateRWCopyVolumeName(sandboxName, target string) string {

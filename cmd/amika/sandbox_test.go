@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -410,4 +411,46 @@ func TestPrepareGitMount_CleanClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Dir(clonedDst)); !os.IsNotExist(err) {
 		t.Fatalf("expected temp git clone directory to be removed, err=%v", err)
 	}
+}
+
+func TestPromptForConfirmation(t *testing.T) {
+	t.Run("yes", func(t *testing.T) {
+		ok, err := promptForConfirmation(bufio.NewReader(strings.NewReader("y\n")))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected confirmation")
+		}
+	})
+
+	t.Run("no", func(t *testing.T) {
+		ok, err := promptForConfirmation(bufio.NewReader(strings.NewReader("n\n")))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ok {
+			t.Fatal("expected rejection")
+		}
+	})
+
+	t.Run("blank then yes reprompts", func(t *testing.T) {
+		ok, err := promptForConfirmation(bufio.NewReader(strings.NewReader("\nYES\n")))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected confirmation after reprompt")
+		}
+	})
+
+	t.Run("invalid then no reprompts", func(t *testing.T) {
+		ok, err := promptForConfirmation(bufio.NewReader(strings.NewReader("maybe\nno\n")))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ok {
+			t.Fatal("expected rejection after reprompt")
+		}
+	})
 }
