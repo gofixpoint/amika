@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt fmtcheck lint ci
+.PHONY: build test vet fmt fmtcheck lint ci setup
 
 build:
 	go build ./...
@@ -24,3 +24,6 @@ lint:
 	go run github.com/mgechev/revive@v1.14.0 -set_exit_status -config revive.toml ./...
 
 ci: fmtcheck vet lint build test
+
+setup:
+	./setup-repo.sh
