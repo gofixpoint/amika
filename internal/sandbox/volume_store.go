@@ -11,10 +11,10 @@ import (
 
 // VolumeInfo represents a tracked docker volume.
 type VolumeInfo struct {
-	Name       string   `json:"name"`
-	CreatedAt  string   `json:"createdAt"`
-	CreatedBy  string   `json:"createdBy,omitempty"`
-	SourcePath string   `json:"sourcePath,omitempty"`
+	Name        string   `json:"name"`
+	CreatedAt   string   `json:"createdAt"`
+	CreatedBy   string   `json:"createdBy,omitempty"`
+	SourcePath  string   `json:"sourcePath,omitempty"`
 	SandboxRefs []string `json:"sandboxRefs,omitempty"`
 }
 
