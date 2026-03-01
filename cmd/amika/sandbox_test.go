@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -355,9 +358,10 @@ func TestResolveGitRoot(t *testing.T) {
 }
 
 func TestPrepareGitMount_NoClean(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
-		t.Fatalf("failed to create .git directory: %v", err)
+	root := createGitRepo(t, map[string]string{"origin": "https://github.com/example/upstream.git"})
+	untracked := filepath.Join(root, "local.txt")
+	if err := os.WriteFile(untracked, []byte("untracked"), 0644); err != nil {
+		t.Fatalf("failed to create untracked file: %v", err)
 	}
 
 	info, cleanup, err := prepareGitMount(root, true, func(_, _ string) error {
@@ -369,8 +373,8 @@ func TestPrepareGitMount_NoClean(t *testing.T) {
 		t.Fatalf("prepareGitMount failed: %v", err)
 	}
 
-	if info.Mount.Source != root {
-		t.Fatalf("source = %q, want %q", info.Mount.Source, root)
+	if info.Mount.Source == root {
+		t.Fatal("source should be a prepared temp repo, not host repo")
 	}
 	wantTarget := "/home/amika/workspace/" + filepath.Base(root)
 	if info.Mount.Target != wantTarget {
@@ -379,19 +383,27 @@ func TestPrepareGitMount_NoClean(t *testing.T) {
 	if info.Mount.Mode != "rwcopy" {
 		t.Fatalf("mode = %q, want rwcopy", info.Mount.Mode)
 	}
+	if _, err := os.Stat(filepath.Join(info.Mount.Source, "local.txt")); err != nil {
+		t.Fatalf("expected untracked file in prepared repo: %v", err)
+	}
 }
 
 func TestPrepareGitMount_CleanClone(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
-		t.Fatalf("failed to create .git directory: %v", err)
-	}
+	root := createGitRepo(t, map[string]string{
+		"origin": "https://github.com/example/upstream.git",
+		"local":  "/tmp/local-path",
+	})
 
 	var clonedSrc, clonedDst string
 	info, cleanup, err := prepareGitMount(root, false, func(src, dst string) error {
 		clonedSrc = src
 		clonedDst = dst
-		return os.MkdirAll(dst, 0755)
+		cmd := exec.Command("git", "clone", "--local", "--no-hardlinks", src, dst)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("clone failed: %s", out)
+		}
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("prepareGitMount failed: %v", err)
@@ -406,10 +418,61 @@ func TestPrepareGitMount_CleanClone(t *testing.T) {
 	if info.Mount.Source != clonedDst {
 		t.Fatalf("mount source = %q, want clone destination %q", info.Mount.Source, clonedDst)
 	}
+	gotRemotes := readGitRemotes(t, clonedDst)
+	wantRemotes := map[string]string{"origin": "https://github.com/example/upstream.git"}
+	if !reflect.DeepEqual(gotRemotes, wantRemotes) {
+		t.Fatalf("prepared remotes = %#v, want %#v", gotRemotes, wantRemotes)
+	}
 
 	cleanup()
 	if _, err := os.Stat(filepath.Dir(clonedDst)); !os.IsNotExist(err) {
 		t.Fatalf("expected temp git clone directory to be removed, err=%v", err)
+	}
+}
+
+func TestSyncGitRemotes(t *testing.T) {
+	src := createGitRepo(t, map[string]string{
+		"origin": "https://github.com/example/upstream.git",
+		"fork":   "git@github.com:example/fork.git",
+		"local":  "/Users/dbmikus/workspace/github.com/example/repo",
+		"file":   "file:///Users/dbmikus/workspace/github.com/example/repo",
+	})
+	dst := createGitRepo(t, map[string]string{
+		"origin": "/tmp/source-repo",
+		"other":  "ssh://git@internal.example.com/repo.git",
+	})
+
+	if err := syncGitRemotes(src, dst); err != nil {
+		t.Fatalf("syncGitRemotes failed: %v", err)
+	}
+
+	got := readGitRemotes(t, dst)
+	want := map[string]string{
+		"fork":   "git@github.com:example/fork.git",
+		"origin": "https://github.com/example/upstream.git",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("remotes = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsNetworkRemoteURL(t *testing.T) {
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{url: "https://github.com/org/repo.git", want: true},
+		{url: "http://github.com/org/repo.git", want: true},
+		{url: "ssh://git@github.com/org/repo.git", want: true},
+		{url: "git@github.com:org/repo.git", want: true},
+		{url: "/Users/me/repo", want: false},
+		{url: "../repo", want: false},
+		{url: "file:///Users/me/repo", want: false},
+	}
+	for _, tt := range tests {
+		if got := isNetworkRemoteURL(tt.url); got != tt.want {
+			t.Fatalf("isNetworkRemoteURL(%q) = %v, want %v", tt.url, got, tt.want)
+		}
 	}
 }
 
@@ -453,4 +516,47 @@ func TestPromptForConfirmation(t *testing.T) {
 			t.Fatal("expected rejection after reprompt")
 		}
 	})
+}
+
+func createGitRepo(t *testing.T, remotes map[string]string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	runGitCmd(t, root, "init")
+	runGitCmd(t, root, "config", "user.name", "Test User")
+	runGitCmd(t, root, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("test\n"), 0644); err != nil {
+		t.Fatalf("failed to write README: %v", err)
+	}
+	runGitCmd(t, root, "add", "README.md")
+	runGitCmd(t, root, "commit", "-m", "init")
+
+	names := make([]string, 0, len(remotes))
+	for name := range remotes {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		runGitCmd(t, root, "remote", "add", name, remotes[name])
+	}
+	return root
+}
+
+func readGitRemotes(t *testing.T, repo string) map[string]string {
+	t.Helper()
+	remotes, err := listGitRemotes(repo)
+	if err != nil {
+		t.Fatalf("listGitRemotes(%q) failed: %v", repo, err)
+	}
+	return remotes
+}
+
+func runGitCmd(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	cmdArgs := append([]string{"-C", repo}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
 }

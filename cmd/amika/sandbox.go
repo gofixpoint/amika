@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -446,21 +447,27 @@ func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst strin
 
 	repoName := filepath.Base(repoRoot)
 	target := path.Join(sandbox.SandboxWorkdir, repoName)
-	source := repoRoot
-	cleanup := func() {}
-	if !noClean {
-		tmpDir, err := os.MkdirTemp("", "amika-git-clean-*")
-		if err != nil {
-			return gitMountInfo{}, cleanup, fmt.Errorf("failed to create temp directory for git mount: %w", err)
-		}
-		cloneDest := filepath.Join(tmpDir, repoName)
-		if err := cloneFn(repoRoot, cloneDest); err != nil {
-			_ = os.RemoveAll(tmpDir)
-			return gitMountInfo{}, cleanup, err
-		}
-		source = cloneDest
-		cleanup = func() { _ = os.RemoveAll(tmpDir) }
+	tmpDir, err := os.MkdirTemp("", "amika-git-mount-*")
+	if err != nil {
+		return gitMountInfo{}, func() {}, fmt.Errorf("failed to create temp directory for git mount: %w", err)
 	}
+	preparedRepo := filepath.Join(tmpDir, repoName)
+	if noClean {
+		if err := copyRepoWorkingTree(repoRoot, preparedRepo); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			return gitMountInfo{}, func() {}, err
+		}
+	} else {
+		if err := cloneFn(repoRoot, preparedRepo); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			return gitMountInfo{}, func() {}, err
+		}
+	}
+	if err := syncGitRemotes(repoRoot, preparedRepo); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return gitMountInfo{}, func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
 
 	return gitMountInfo{
 		RepoName: repoName,
@@ -468,7 +475,7 @@ func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst strin
 		NoClean:  noClean,
 		Mount: sandbox.MountBinding{
 			Type:         "bind",
-			Source:       source,
+			Source:       preparedRepo,
 			Target:       target,
 			Mode:         "rwcopy",
 			SnapshotFrom: repoRoot,
@@ -513,6 +520,106 @@ func cloneGitRepo(src, dst string) error {
 		return fmt.Errorf("failed to prepare clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func copyRepoWorkingTree(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create no-clean parent for %q: %w", dst, err)
+	}
+	cmd := exec.Command("cp", "-a", src, dst)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to prepare no-clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".git")); err != nil {
+		return fmt.Errorf("failed to prepare no-clean git mount from %q: missing .git in %q", src, dst)
+	}
+	return nil
+}
+
+func syncGitRemotes(srcRepo, dstRepo string) error {
+	srcRemotes, err := listGitRemotes(srcRepo)
+	if err != nil {
+		return fmt.Errorf("failed to read remotes from source repo %q: %w", srcRepo, err)
+	}
+	filtered := make(map[string]string)
+	for name, url := range srcRemotes {
+		if isNetworkRemoteURL(url) {
+			filtered[name] = url
+		}
+	}
+
+	dstRemotes, err := listGitRemotes(dstRepo)
+	if err != nil {
+		return fmt.Errorf("failed to read remotes from prepared repo %q: %w", dstRepo, err)
+	}
+	for _, name := range sortedRemoteNames(dstRemotes) {
+		if err := runGit(dstRepo, "remote", "remove", name); err != nil {
+			return fmt.Errorf("failed to remove remote %q from prepared repo %q: %w", name, dstRepo, err)
+		}
+	}
+	for _, name := range sortedRemoteNames(filtered) {
+		if err := runGit(dstRepo, "remote", "add", name, filtered[name]); err != nil {
+			return fmt.Errorf("failed to add remote %q to prepared repo %q: %w", name, dstRepo, err)
+		}
+	}
+	return nil
+}
+
+func listGitRemotes(repo string) (map[string]string, error) {
+	out, err := runGitOutput(repo, "remote")
+	if err != nil {
+		return nil, err
+	}
+	names := strings.Fields(strings.TrimSpace(out))
+	remotes := make(map[string]string, len(names))
+	for _, name := range names {
+		url, err := runGitOutput(repo, "remote", "get-url", name)
+		if err != nil {
+			return nil, err
+		}
+		remotes[name] = strings.TrimSpace(url)
+	}
+	return remotes, nil
+}
+
+func isNetworkRemoteURL(url string) bool {
+	switch {
+	case strings.HasPrefix(url, "http://"),
+		strings.HasPrefix(url, "https://"),
+		strings.HasPrefix(url, "ssh://"):
+		return true
+	case strings.HasPrefix(url, "file://"):
+		return false
+	}
+	// Accept scp-like SSH syntax: user@host:path/to/repo.git
+	at := strings.Index(url, "@")
+	colon := strings.Index(url, ":")
+	return at > 0 && colon > at+1
+}
+
+func sortedRemoteNames(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func runGit(repo string, args ...string) error {
+	_, err := runGitOutput(repo, args...)
+	return err
+}
+
+func runGitOutput(repo string, args ...string) (string, error) {
+	cmdArgs := append([]string{"-C", repo}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
 }
 
 func promptForConfirmation(reader *bufio.Reader) (bool, error) {
