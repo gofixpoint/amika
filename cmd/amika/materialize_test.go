@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const runExpensiveTestsEnv = "AMIKA_RUN_EXPENSIVE_TESTS"
+
 // buildAmika builds the amika binary for integration tests and returns its path.
 func buildAmika(t *testing.T) string {
 	t.Helper()
@@ -166,7 +168,7 @@ func TestTopMaterialize_Script(t *testing.T) {
 }
 
 func TestTopMaterialize_PresetAgentsAvailableOnPath(t *testing.T) {
-	requireDocker(t)
+	requireExpensiveDockerTests(t)
 
 	bin := buildAmika(t)
 	prefix := fmt.Sprintf("amika-test-%d", time.Now().UnixNano())
@@ -218,6 +220,16 @@ func TestTopMaterialize_PresetAgentsAvailableOnPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func requireExpensiveDockerTests(t *testing.T) {
+	t.Helper()
+
+	if os.Getenv(runExpensiveTestsEnv) != "1" {
+		t.Skipf("set %s=1 to run expensive Docker rebuild tests", runExpensiveTestsEnv)
+	}
+
+	requireDocker(t)
 }
 
 func requireDocker(t *testing.T) {

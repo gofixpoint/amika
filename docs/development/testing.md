@@ -102,3 +102,11 @@ Run the full Go test suite after smoke checks:
 ```bash
 go test ./...
 ```
+
+## Expensive Docker Rebuild Test (Opt-in)
+
+The preset image rebuild integration test is skipped by default. Run it explicitly:
+
+```bash
+AMIKA_RUN_EXPENSIVE_TESTS=1 go test ./cmd/amika -run TestTopMaterialize_PresetAgentsAvailableOnPath -count=1
+```
