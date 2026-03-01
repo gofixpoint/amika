@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -26,17 +28,27 @@ var volumeListCmd = &cobra.Command{
 		}
 		store := sandbox.NewVolumeStore(volumesFile)
 
+		fileMountsFile, err := config.FileMountsStateFile()
+		if err != nil {
+			return err
+		}
+		fmStore := sandbox.NewFileMountStore(fileMountsFile)
+
 		volumes, err := store.List()
 		if err != nil {
 			return err
 		}
-		if len(volumes) == 0 {
+		fileMounts, err := fmStore.List()
+		if err != nil {
+			return err
+		}
+		if len(volumes) == 0 && len(fileMounts) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No volumes found.")
 			return nil
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tCREATED\tIN_USE\tSANDBOXES\tSOURCE")
+		fmt.Fprintln(w, "NAME\tTYPE\tCREATED\tIN_USE\tSANDBOXES\tSOURCE")
 		for _, v := range volumes {
 			inUse := "no"
 			if len(v.SandboxRefs) > 0 {
@@ -44,12 +56,29 @@ var volumeListCmd = &cobra.Command{
 			}
 			fmt.Fprintf(
 				w,
-				"%s\t%s\t%s\t%s\t%s\n",
+				"%s\t%s\t%s\t%s\t%s\t%s\n",
 				v.Name,
+				"directory",
 				v.CreatedAt,
 				inUse,
 				strings.Join(v.SandboxRefs, ","),
 				v.SourcePath,
+			)
+		}
+		for _, fm := range fileMounts {
+			inUse := "no"
+			if len(fm.SandboxRefs) > 0 {
+				inUse = "yes"
+			}
+			fmt.Fprintf(
+				w,
+				"%s\t%s\t%s\t%s\t%s\t%s\n",
+				fm.Name,
+				"file",
+				fm.CreatedAt,
+				inUse,
+				strings.Join(fm.SandboxRefs, ","),
+				fm.SourcePath,
 			)
 		}
 		w.Flush()
@@ -71,11 +100,30 @@ var volumeDeleteCmd = &cobra.Command{
 			return err
 		}
 		store := sandbox.NewVolumeStore(volumesFile)
-		if err := deleteTrackedVolume(store, name, force, sandbox.RemoveDockerVolume); err != nil {
+
+		fileMountsFile, err := config.FileMountsStateFile()
+		if err != nil {
 			return err
 		}
-		fmt.Printf("Volume %q deleted\n", name)
-		return nil
+		fmStore := sandbox.NewFileMountStore(fileMountsFile)
+
+		if _, err := store.Get(name); err == nil {
+			if err := deleteTrackedVolume(store, name, force, sandbox.RemoveDockerVolume); err != nil {
+				return err
+			}
+			fmt.Printf("Volume %q deleted\n", name)
+			return nil
+		}
+
+		if _, err := fmStore.Get(name); err == nil {
+			if err := deleteTrackedFileMount(fmStore, name, force); err != nil {
+				return err
+			}
+			fmt.Printf("Volume %q deleted\n", name)
+			return nil
+		}
+
+		return fmt.Errorf("no volume found with name: %s", name)
 	},
 }
 
@@ -96,6 +144,29 @@ func deleteTrackedVolume(
 
 	if err := removeVolumeFn(name); err != nil {
 		return err
+	}
+	if err := store.Remove(name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func deleteTrackedFileMount(
+	store sandbox.FileMountStore,
+	name string,
+	force bool,
+) error {
+	fm, err := store.Get(name)
+	if err != nil {
+		return err
+	}
+
+	if len(fm.SandboxRefs) > 0 && !force {
+		return fmt.Errorf("volume %q is in use by sandboxes: %s (use --force to delete)", name, strings.Join(fm.SandboxRefs, ", "))
+	}
+
+	if err := os.RemoveAll(filepath.Dir(fm.CopyPath)); err != nil {
+		return fmt.Errorf("failed to remove file mount directory: %w", err)
 	}
 	if err := store.Remove(name); err != nil {
 		return err
