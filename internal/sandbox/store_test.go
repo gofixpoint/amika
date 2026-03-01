@@ -136,8 +136,8 @@ func TestStore_MountsRoundTrip(t *testing.T) {
 		Provider: "docker",
 		Image:    "ubuntu:latest",
 		Mounts: []MountBinding{
-			{Source: "/host/src", Target: "/workspace", Mode: "ro"},
-			{Source: "/host/data", Target: "/data", Mode: "rw"},
+			{Type: "bind", Source: "/host/src", Target: "/workspace", Mode: "ro"},
+			{Type: "volume", Volume: "vol-data", Target: "/data", Mode: "rw", SnapshotFrom: "/host/data"},
 		},
 	}
 
@@ -152,11 +152,32 @@ func TestStore_MountsRoundTrip(t *testing.T) {
 	if len(got.Mounts) != 2 {
 		t.Fatalf("expected 2 mounts, got %d", len(got.Mounts))
 	}
-	if got.Mounts[0].Source != "/host/src" || got.Mounts[0].Target != "/workspace" || got.Mounts[0].Mode != "ro" {
+	if got.Mounts[0].Type != "bind" || got.Mounts[0].Source != "/host/src" || got.Mounts[0].Target != "/workspace" || got.Mounts[0].Mode != "ro" {
 		t.Errorf("mount[0] = %+v, unexpected", got.Mounts[0])
 	}
-	if got.Mounts[1].Source != "/host/data" || got.Mounts[1].Target != "/data" || got.Mounts[1].Mode != "rw" {
+	if got.Mounts[1].Type != "volume" || got.Mounts[1].Volume != "vol-data" || got.Mounts[1].Target != "/data" || got.Mounts[1].Mode != "rw" || got.Mounts[1].SnapshotFrom != "/host/data" {
 		t.Errorf("mount[1] = %+v, unexpected", got.Mounts[1])
+	}
+}
+
+func TestStore_LegacyMountsDefaultToBind(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sandboxes.jsonl")
+	content := `{"name":"sb-legacy","provider":"docker","image":"ubuntu:latest","mounts":[{"source":"/host/src","target":"/workspace","mode":"ro"}]}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	store := NewStore(path)
+	got, err := store.Get("sb-legacy")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if len(got.Mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(got.Mounts))
+	}
+	if got.Mounts[0].Type != "bind" {
+		t.Fatalf("Type = %q, want %q", got.Mounts[0].Type, "bind")
 	}
 }
 

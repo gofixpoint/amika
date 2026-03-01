@@ -38,7 +38,7 @@ Amika lets you pull scattered data from Hubspot, Linear, wherever, and connect t
 │  Your Tools  │ ──── │ Amika Filesystem     │ ──── │  Agent Sandbox  │
 │              │      │                      │      │                 │
 │  HubSpot     │      │  materialize ──> fs  │      │  mounted dirs   │
-│  Linear      │      │  scripts, commands   │      │  ro / rw / ovl  │
+│  Linear      │      │  scripts, commands   │      │  ro / rw / rwcopy │
 │  Notion      │      │                      │      │                 │
 └──────────────┘      └──────────────────────┘      └─────────────────┘
 ```
@@ -59,8 +59,9 @@ go build -o dist/amika ./cmd/amika
 cat /tmp/demo/greeting.txt
 
 # Create a Docker sandbox with a mounted directory
+# (mode defaults to rwcopy when omitted)
 ./dist/amika sandbox create --name my-sandbox \
-  --mount /tmp/demo:/workspace/data:ro
+  --mount /tmp/demo:/workspace/data
 ```
 
 ## Example: Sales Pipeline
@@ -75,10 +76,10 @@ Because we're big engineering nerds, we run part of our sales workflow in Claude
   --script ./materialization-scripts/pull-hubspot-deals.sh \
   --destdir ./data/deals
 
-# 2. Create a sandbox with the data mounted read-only
+# 2. Create a sandbox with data mounts
 ./dist/amika sandbox create --name sales-agent \
   --mount ./data/deals:/workspace/deals:ro \
-  --mount ./output:/workspace/drafts:rw
+  --mount ./output:/workspace/drafts
 
 # 3. Your agent runs inside the sandbox, reads deal files, writes draft emails
 # The agent sees /workspace/deals (read-only) and writes to /workspace/drafts
@@ -119,20 +120,48 @@ amika materialize --script ./transform.sh --outdir /app/results --destdir ./outp
 
 ### `amika sandbox create|delete|list`
 
-Manage Docker-backed persistent sandboxes with mounted directories.
+Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 ```bash
 # Create a sandbox with mounts
 amika sandbox create --name dev-sandbox \
   --image ubuntu:latest \
   --mount ./src:/workspace/src:ro \
-  --mount ./out:/workspace/out:rw
+  --mount ./out:/workspace/out
+
+# Attach an existing tracked volume
+amika sandbox create --name dev-sandbox-2 \
+  --volume amika-rwcopy-dev-sandbox-workspace-out-123:/workspace/out:rw
 
 # List running sandboxes
 amika sandbox list
 
-# Delete a sandbox
-amika sandbox delete --name dev-sandbox
+# Delete a sandbox (preserves associated volumes by default)
+amika sandbox delete dev-sandbox
+
+# Delete sandbox and also delete associated unreferenced volumes
+amika sandbox delete dev-sandbox --delete-volumes
+```
+
+`--mount` modes:
+
+- `ro`: read-only bind mount from host
+- `rw`: read-write bind mount from host (writes sync to host)
+- `rwcopy`: read-write snapshot in Docker volume (default; no host sync back)
+
+### `amika volume list|delete`
+
+Inspect and delete tracked Docker volumes used by sandboxes.
+
+```bash
+# List tracked volumes and usage
+amika volume list
+
+# Delete an unused volume
+amika volume delete my-volume
+
+# Force delete even if referenced by sandboxes
+amika volume delete my-volume --force
 ```
 
 ### `amika auth extract`

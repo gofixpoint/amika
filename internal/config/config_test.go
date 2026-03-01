@@ -174,3 +174,48 @@ func TestSandboxesStateFile_EnvOverride(t *testing.T) {
 		t.Errorf("SandboxesStateFile() = %q, want %q", got, want)
 	}
 }
+
+func TestVolumesStateFile_Default(t *testing.T) {
+	orig := os.Getenv(EnvStateDirectory)
+	_ = os.Unsetenv(EnvStateDirectory)
+	defer func() {
+		if orig != "" {
+			_ = os.Setenv(EnvStateDirectory, orig)
+		}
+	}()
+
+	got, err := VolumesStateFile()
+	if err != nil {
+		t.Fatalf("VolumesStateFile() error: %v", err)
+	}
+
+	want, err := basedir.New("").VolumesStateFile()
+	if err != nil {
+		t.Fatalf("basedir VolumesStateFile() error: %v", err)
+	}
+	if got != want {
+		t.Errorf("VolumesStateFile() = %q, want %q", got, want)
+	}
+}
+
+func TestVolumesStateFile_EnvOverride(t *testing.T) {
+	override := t.TempDir()
+	orig := os.Getenv(EnvStateDirectory)
+	_ = os.Setenv(EnvStateDirectory, override)
+	defer func() {
+		if orig != "" {
+			_ = os.Setenv(EnvStateDirectory, orig)
+		} else {
+			_ = os.Unsetenv(EnvStateDirectory)
+		}
+	}()
+
+	got, err := VolumesStateFile()
+	if err != nil {
+		t.Fatalf("VolumesStateFile() error: %v", err)
+	}
+	want := basedir.VolumesStateFileIn(override)
+	if got != want {
+		t.Errorf("VolumesStateFile() = %q, want %q", got, want)
+	}
+}

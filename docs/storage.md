@@ -16,8 +16,10 @@ Amika does not use a legacy `~/.amika` fallback for these files.
 
 - `mounts.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/mounts.jsonl`
 - `sandboxes.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/sandboxes.jsonl`
+- `volumes.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/volumes.jsonl`
 
 If `AMIKA_STATE_DIRECTORY` is set, state files are stored there instead:
 
 - `${AMIKA_STATE_DIRECTORY}/mounts.jsonl`
 - `${AMIKA_STATE_DIRECTORY}/sandboxes.jsonl`
+- `${AMIKA_STATE_DIRECTORY}/volumes.jsonl`

@@ -37,3 +37,11 @@ func SandboxesStateFile() (string, error) {
 	}
 	return basedir.New("").SandboxesStateFile()
 }
+
+// VolumesStateFile returns the resolved volumes state file path.
+func VolumesStateFile() (string, error) {
+	if dir := os.Getenv(EnvStateDirectory); dir != "" {
+		return basedir.VolumesStateFileIn(dir), nil
+	}
+	return basedir.New("").VolumesStateFile()
+}

@@ -10,9 +10,12 @@ import (
 
 // MountBinding represents a host directory mounted into a sandbox.
 type MountBinding struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Mode   string `json:"mode"` // "ro" or "rw"
+	Type         string `json:"type,omitempty"` // "bind" or "volume"
+	Source       string `json:"source,omitempty"`
+	Volume       string `json:"volume,omitempty"`
+	Target       string `json:"target"`
+	Mode         string `json:"mode"` // "ro", "rw", or "rwcopy" for create-time host mount input
+	SnapshotFrom string `json:"snapshotFrom,omitempty"`
 }
 
 // Info represents a tracked sandbox.
@@ -64,6 +67,16 @@ func (s *fileStore) readAll() ([]Info, error) {
 		var info Info
 		if err := json.Unmarshal([]byte(line), &info); err != nil {
 			continue // skip malformed lines
+		}
+		for i := range info.Mounts {
+			if info.Mounts[i].Type == "" {
+				// Backward compatibility: legacy entries had source/target/mode only.
+				if info.Mounts[i].Volume != "" {
+					info.Mounts[i].Type = "volume"
+				} else {
+					info.Mounts[i].Type = "bind"
+				}
+			}
 		}
 		sandboxes = append(sandboxes, info)
 	}
