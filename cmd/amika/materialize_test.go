@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // buildAmika builds the amika binary for integration tests and returns its path.
@@ -160,5 +162,69 @@ func TestTopMaterialize_Script(t *testing.T) {
 	}
 	if got := string(data); got != "foo bar\n" {
 		t.Errorf("result = %q, want %q", got, "foo bar\n")
+	}
+}
+
+func TestTopMaterialize_PresetAgentsAvailableOnPath(t *testing.T) {
+	requireDocker(t)
+
+	bin := buildAmika(t)
+	prefix := fmt.Sprintf("amika-test-%d", time.Now().UnixNano())
+
+	tests := []struct {
+		name   string
+		preset string
+		cmdStr string
+	}{
+		{
+			name:   "coder includes claude codex opencode",
+			preset: "coder",
+			cmdStr: "command -v claude && command -v codex && command -v opencode && echo ok > ready.txt",
+		},
+		{
+			name:   "claude includes only claude",
+			preset: "claude",
+			cmdStr: "command -v claude && ! command -v codex && ! command -v opencode && echo ok > ready.txt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tag := fmt.Sprintf("%s-%s:latest", prefix, tt.preset)
+			t.Cleanup(func() {
+				removeCmd := exec.Command("docker", "image", "rm", "-f", tag)
+				_, _ = removeCmd.CombinedOutput()
+			})
+
+			destdir := t.TempDir()
+			cmd := exec.Command(
+				bin, "materialize",
+				"--preset", tt.preset,
+				"--cmd", tt.cmdStr,
+				"--destdir", destdir,
+			)
+			cmd.Env = append(os.Environ(), "AMIKA_PRESET_IMAGE_PREFIX="+prefix)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("amika materialize failed: %v\n%s", err, out)
+			}
+
+			data, err := os.ReadFile(filepath.Join(destdir, "ready.txt"))
+			if err != nil {
+				t.Fatalf("failed to read ready.txt: %v", err)
+			}
+			if string(data) != "ok\n" {
+				t.Fatalf("ready.txt = %q, want %q", string(data), "ok\n")
+			}
+		})
+	}
+}
+
+func requireDocker(t *testing.T) {
+	t.Helper()
+
+	cmd := exec.Command("docker", "info")
+	if err := cmd.Run(); err != nil {
+		t.Skipf("docker unavailable: %v", err)
 	}
 }

@@ -6,7 +6,9 @@ import (
 	"os"
 )
 
-// DefaultCoderImage is the default Docker image used for coder/claude presets.
+const presetImagePrefixEnv = "AMIKA_PRESET_IMAGE_PREFIX"
+
+// DefaultCoderImage is the default Docker image used for the coder preset.
 const DefaultCoderImage = "amika/coder:latest"
 
 // PresetImageOptions controls how image/preset resolution and auto-build work.
@@ -42,12 +44,12 @@ func ResolveAndEnsureImage(opts PresetImageOptions) (PresetImageResult, error) {
 	}
 
 	if opts.Preset != "" {
-		normalizedPreset := normalizePresetName(opts.Preset)
-		result.EffectivePreset = normalizedPreset
-		result.BuildPreset = normalizedPreset
-		result.Image = presetImageName(normalizedPreset)
+		result.EffectivePreset = opts.Preset
+		result.BuildPreset = opts.Preset
+		result.Image = presetImageName(opts.Preset)
 	} else if !opts.ImageFlagChanged && opts.DefaultBuildPreset != "" {
-		result.BuildPreset = normalizePresetName(opts.DefaultBuildPreset)
+		result.BuildPreset = opts.DefaultBuildPreset
+		result.Image = presetImageName(opts.DefaultBuildPreset)
 	}
 
 	if result.BuildPreset != "" && !dockerImageExistsFn(result.Image) {
@@ -65,6 +67,9 @@ func ResolveAndEnsureImage(opts PresetImageOptions) (PresetImageResult, error) {
 }
 
 func presetImageName(preset string) string {
+	if prefix := os.Getenv(presetImagePrefixEnv); prefix != "" {
+		return prefix + "-" + preset + ":latest"
+	}
 	switch preset {
 	case "coder":
 		return DefaultCoderImage
