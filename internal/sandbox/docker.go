@@ -5,25 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
 // CreateDockerSandbox creates a long-running Docker container with the given
 // name, image, and optional bind mounts. Returns the container ID.
 func CreateDockerSandbox(name, image string, mounts []MountBinding, env []string) (string, error) {
-	args := []string{"run", "-d", "--name", name}
-	for _, m := range mounts {
-		vol := m.Source + ":" + m.Target
-		if m.Mode == "ro" {
-			vol += ":ro"
-		}
-		args = append(args, "-v", vol)
-	}
-	for _, e := range env {
-		args = append(args, "-e", e)
-	}
-	args = append(args, image, "tail", "-f", "/dev/null")
-
+	args := buildDockerRunArgs(name, image, mounts, env)
 	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -68,4 +57,87 @@ func RemoveDockerSandbox(name string) error {
 		return fmt.Errorf("failed to remove docker sandbox: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// CreateDockerVolume creates a named docker volume.
+func CreateDockerVolume(name string) error {
+	cmd := exec.Command("docker", "volume", "create", name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create docker volume %q: %s", name, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RemoveDockerVolume removes a named docker volume.
+func RemoveDockerVolume(name string) error {
+	cmd := exec.Command("docker", "volume", "rm", name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to remove docker volume %q: %s", name, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// DockerVolumeExists checks if a Docker volume exists locally.
+func DockerVolumeExists(name string) bool {
+	cmd := exec.Command("docker", "volume", "inspect", name)
+	return cmd.Run() == nil
+}
+
+// CopyHostDirToVolume copies hostDir contents into the root of volumeName.
+func CopyHostDirToVolume(volumeName, hostDir string) error {
+	if hostDir == "" {
+		return fmt.Errorf("host directory is required")
+	}
+	absHostDir, err := filepath.Abs(hostDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve host directory %q: %w", hostDir, err)
+	}
+
+	cmd := exec.Command(
+		"docker", "run", "--rm",
+		"-v", absHostDir+":/src:ro",
+		"-v", volumeName+":/dst",
+		"alpine:3.20",
+		"sh", "-c", "cp -a /src/. /dst/",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to copy %q into volume %q: %s", absHostDir, volumeName, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string) []string {
+	args := []string{"run", "-d", "--name", name}
+	for _, m := range mounts {
+		vol := mountVolumeSpec(m)
+		if vol == "" {
+			continue
+		}
+		args = append(args, "-v", vol)
+	}
+	for _, e := range env {
+		args = append(args, "-e", e)
+	}
+	args = append(args, image, "tail", "-f", "/dev/null")
+	return args
+}
+
+func mountVolumeSpec(m MountBinding) string {
+	var src string
+	if m.Type == "volume" {
+		src = m.Volume
+	} else {
+		src = m.Source
+	}
+	if src == "" || m.Target == "" {
+		return ""
+	}
+	vol := src + ":" + m.Target
+	if m.Mode == "ro" {
+		vol += ":ro"
+	}
+	return vol
 }
