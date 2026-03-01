@@ -245,13 +245,20 @@ var sandboxCreateCmd = &cobra.Command{
 }
 
 var sandboxDeleteCmd = &cobra.Command{
-	Use:   "delete <name>",
-	Short: "Delete a sandbox",
-	Long:  `Delete a sandbox and remove its backing container.`,
-	Args:  cobra.ExactArgs(1),
+	Use:     "delete <name>",
+	Aliases: []string{"rm", "remove"},
+	Short:   "Delete a sandbox",
+	Long:    `Delete a sandbox and remove its backing container.`,
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		deleteVolumes, _ := cmd.Flags().GetBool("delete-volumes")
+		keepVolumes, _ := cmd.Flags().GetBool("keep-volumes")
+		deleteVolumesSet := cmd.Flags().Changed("delete-volumes")
+		keepVolumesSet := cmd.Flags().Changed("keep-volumes")
+		if err := validateDeleteVolumeFlags(deleteVolumesSet, deleteVolumes, keepVolumesSet, keepVolumes); err != nil {
+			return err
+		}
 
 		sandboxesFile, err := config.SandboxesStateFile()
 		if err != nil {
@@ -267,6 +274,17 @@ var sandboxDeleteCmd = &cobra.Command{
 		info, err := store.Get(name)
 		if err != nil {
 			return fmt.Errorf("sandbox %q not found", name)
+		}
+
+		deleteVolumes, err = resolveDeleteVolumes(
+			volumeStore,
+			name,
+			deleteVolumesSet,
+			keepVolumesSet,
+			bufio.NewReader(cmd.InOrStdin()),
+		)
+		if err != nil {
+			return err
 		}
 
 		if info.Provider == "docker" {
@@ -762,6 +780,75 @@ func cleanupSandboxVolumes(
 	return statuses, nil
 }
 
+func validateDeleteVolumeFlags(
+	deleteVolumesSet bool,
+	deleteVolumes bool,
+	keepVolumesSet bool,
+	keepVolumes bool,
+) error {
+	if deleteVolumesSet && !deleteVolumes {
+		return fmt.Errorf("--delete-volumes does not accept an explicit value; use --delete-volumes or omit the flag")
+	}
+	if keepVolumesSet && !keepVolumes {
+		return fmt.Errorf("--keep-volumes does not accept an explicit value; use --keep-volumes or omit the flag")
+	}
+	if deleteVolumesSet && keepVolumesSet {
+		return fmt.Errorf("cannot use --delete-volumes and --keep-volumes together")
+	}
+	return nil
+}
+
+// resolveDeleteVolumes determines whether sandbox delete should remove volumes.
+// Precedence is:
+//  1. --delete-volumes
+//  2. --keep-volumes
+//  3. no explicit flag: prompt only when this sandbox is the sole ref for any
+//     attached volume.
+func resolveDeleteVolumes(
+	volumeStore sandbox.VolumeStore,
+	sandboxName string,
+	deleteVolumesSet bool,
+	keepVolumesSet bool,
+	reader *bufio.Reader,
+) (bool, error) {
+	if deleteVolumesSet {
+		return true, nil
+	}
+	if keepVolumesSet {
+		return false, nil
+	}
+
+	volumes, err := volumeStore.VolumesForSandbox(sandboxName)
+	if err != nil {
+		return false, fmt.Errorf("failed to load associated volumes: %w", err)
+	}
+
+	var exclusive []string
+	for _, volume := range volumes {
+		exclusiveToSandbox := true
+		for _, ref := range volume.SandboxRefs {
+			if ref != sandboxName {
+				exclusiveToSandbox = false
+				break
+			}
+		}
+		if exclusiveToSandbox {
+			exclusive = append(exclusive, volume.Name)
+		}
+	}
+	if len(exclusive) == 0 {
+		return false, nil
+	}
+
+	fmt.Printf("Sandbox %q is the only user of volumes: %s\n", sandboxName, strings.Join(exclusive, ", "))
+	fmt.Println("Delete these volumes as part of sandbox deletion?")
+	confirmed, err := promptForConfirmation(reader)
+	if err != nil {
+		return false, err
+	}
+	return confirmed, nil
+}
+
 func init() {
 	rootCmd.AddCommand(sandboxCmd)
 	sandboxCmd.AddCommand(sandboxCreateCmd)
@@ -782,6 +869,7 @@ func init() {
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
+	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
 
 }

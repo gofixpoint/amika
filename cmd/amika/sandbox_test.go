@@ -275,6 +275,84 @@ func TestCleanupSandboxVolumes_DeleteFailureReported(t *testing.T) {
 	}
 }
 
+func TestValidateDeleteVolumeFlags(t *testing.T) {
+	if err := validateDeleteVolumeFlags(true, false, false, false); err == nil {
+		t.Fatal("expected explicit false delete-volumes to fail")
+	}
+	if err := validateDeleteVolumeFlags(false, false, true, false); err == nil {
+		t.Fatal("expected explicit false keep-volumes to fail")
+	}
+	if err := validateDeleteVolumeFlags(true, true, true, true); err == nil {
+		t.Fatal("expected mutually exclusive flags to fail")
+	}
+	if err := validateDeleteVolumeFlags(true, true, false, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := validateDeleteVolumeFlags(false, false, true, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveDeleteVolumes_FlagPrecedence(t *testing.T) {
+	store := sandbox.NewVolumeStore(filepath.Join(t.TempDir(), "volumes.jsonl"))
+
+	got, err := resolveDeleteVolumes(store, "sb-1", true, false, bufio.NewReader(strings.NewReader("")))
+	if err != nil {
+		t.Fatalf("resolveDeleteVolumes failed: %v", err)
+	}
+	if !got {
+		t.Fatal("expected delete-volumes to win")
+	}
+
+	got, err = resolveDeleteVolumes(store, "sb-1", false, true, bufio.NewReader(strings.NewReader("")))
+	if err != nil {
+		t.Fatalf("resolveDeleteVolumes failed: %v", err)
+	}
+	if got {
+		t.Fatal("expected keep-volumes to preserve")
+	}
+}
+
+func TestResolveDeleteVolumes_DefaultPromptsOnExclusive(t *testing.T) {
+	dir := t.TempDir()
+	store := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
+	if err := store.Save(sandbox.VolumeInfo{Name: "vol-1", SandboxRefs: []string{"sb-1"}}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	got, err := resolveDeleteVolumes(store, "sb-1", false, false, bufio.NewReader(strings.NewReader("y\n")))
+	if err != nil {
+		t.Fatalf("resolveDeleteVolumes failed: %v", err)
+	}
+	if !got {
+		t.Fatal("expected prompt confirmation to enable deletion")
+	}
+
+	got, err = resolveDeleteVolumes(store, "sb-1", false, false, bufio.NewReader(strings.NewReader("n\n")))
+	if err != nil {
+		t.Fatalf("resolveDeleteVolumes failed: %v", err)
+	}
+	if got {
+		t.Fatal("expected prompt rejection to preserve")
+	}
+}
+
+func TestResolveDeleteVolumes_DefaultNoPromptWhenNoExclusive(t *testing.T) {
+	dir := t.TempDir()
+	store := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
+	if err := store.Save(sandbox.VolumeInfo{Name: "vol-1", SandboxRefs: []string{"sb-1", "sb-2"}}); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	got, err := resolveDeleteVolumes(store, "sb-1", false, false, bufio.NewReader(strings.NewReader("")))
+	if err != nil {
+		t.Fatalf("resolveDeleteVolumes failed: %v", err)
+	}
+	if got {
+		t.Fatal("expected shared volumes to be preserved by default")
+	}
+}
+
 func TestValidateGitFlags(t *testing.T) {
 	if err := validateGitFlags(false, true); err == nil {
 		t.Fatal("expected error when --no-clean is used without --git")
@@ -533,6 +611,15 @@ func TestPromptForConfirmation(t *testing.T) {
 			t.Fatal("expected rejection after reprompt")
 		}
 	})
+}
+
+func TestSandboxDeleteAliases(t *testing.T) {
+	if !slices.Contains(sandboxDeleteCmd.Aliases, "rm") {
+		t.Fatal("sandbox delete command must include alias \"rm\"")
+	}
+	if !slices.Contains(sandboxDeleteCmd.Aliases, "remove") {
+		t.Fatal("sandbox delete command must include alias \"remove\"")
+	}
 }
 
 func createGitRepo(t *testing.T, remotes map[string]string) string {

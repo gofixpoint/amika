@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,5 +81,14 @@ func TestVolumeListCmd_PrintsTrackedVolumes(t *testing.T) {
 	}
 	if !strings.Contains(out, "sb-a") {
 		t.Fatalf("expected sandbox refs in output, got:\n%s", out)
+	}
+}
+
+func TestVolumeDeleteAliases(t *testing.T) {
+	if !slices.Contains(volumeDeleteCmd.Aliases, "rm") {
+		t.Fatal("volume delete command must include alias \"rm\"")
+	}
+	if !slices.Contains(volumeDeleteCmd.Aliases, "remove") {
+		t.Fatal("volume delete command must include alias \"remove\"")
 	}
 }
