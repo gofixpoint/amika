@@ -4,6 +4,14 @@
 
 - Go 1.21 or later
 
+## Setup
+
+After cloning, configure git hooks:
+
+```bash
+make setup
+```
+
 ## Development
 
 ```bash

@@ -5,6 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build and Development Commands
 
 ```bash
+# Set up git hooks (one-time after clone)
+make setup
+
 # Run all CI checks locally (fmt, vet, lint, build, test)
 make ci
 
