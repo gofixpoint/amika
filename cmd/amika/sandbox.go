@@ -212,14 +212,20 @@ var sandboxDeleteCmd = &cobra.Command{
 	Short: "Delete a sandbox",
 	Long:  `Delete a sandbox and remove its backing container.`,
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		deleteVolumes, _ := cmd.Flags().GetBool("delete-volumes")
 
 		sandboxesFile, err := config.SandboxesStateFile()
 		if err != nil {
 			return err
 		}
 		store := sandbox.NewStore(sandboxesFile)
+		volumesFile, err := config.VolumesStateFile()
+		if err != nil {
+			return err
+		}
+		volumeStore := sandbox.NewVolumeStore(volumesFile)
 
 		info, err := store.Get(name)
 		if err != nil {
@@ -232,11 +238,19 @@ var sandboxDeleteCmd = &cobra.Command{
 			}
 		}
 
+		volumeStatuses, volumeErr := cleanupSandboxVolumes(volumeStore, name, deleteVolumes, sandbox.RemoveDockerVolume)
+
 		if err := store.Remove(name); err != nil {
 			return fmt.Errorf("container removed but failed to update state: %w", err)
 		}
 
 		fmt.Printf("Sandbox %q deleted\n", name)
+		for _, line := range volumeStatuses {
+			fmt.Println(line)
+		}
+		if volumeErr != nil {
+			return volumeErr
+		}
 		return nil
 	},
 }
@@ -384,6 +398,65 @@ func generateRWCopyVolumeName(sandboxName, target string) string {
 	return "amika-rwcopy-" + sandboxName + "-" + sanitizedTarget + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
+func cleanupSandboxVolumes(
+	volumeStore sandbox.VolumeStore,
+	sandboxName string,
+	deleteVolumes bool,
+	removeVolumeFn func(string) error,
+) ([]string, error) {
+	volumes, err := volumeStore.VolumesForSandbox(sandboxName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load associated volumes: %w", err)
+	}
+	if len(volumes) == 0 {
+		return nil, nil
+	}
+
+	statuses := make([]string, 0, len(volumes))
+	var errs []string
+
+	for _, volume := range volumes {
+		if err := volumeStore.RemoveSandboxRef(volume.Name, sandboxName); err != nil {
+			statuses = append(statuses, fmt.Sprintf("volume %s: delete-failed: failed to update refs", volume.Name))
+			errs = append(errs, fmt.Sprintf("failed to remove sandbox ref for volume %q: %v", volume.Name, err))
+			continue
+		}
+
+		if !deleteVolumes {
+			statuses = append(statuses, fmt.Sprintf("volume %s: preserved", volume.Name))
+			continue
+		}
+
+		inUse, err := volumeStore.IsInUse(volume.Name)
+		if err != nil {
+			statuses = append(statuses, fmt.Sprintf("volume %s: delete-failed: failed to check usage", volume.Name))
+			errs = append(errs, fmt.Sprintf("failed to check usage for volume %q: %v", volume.Name, err))
+			continue
+		}
+		if inUse {
+			statuses = append(statuses, fmt.Sprintf("volume %s: preserved (still referenced)", volume.Name))
+			continue
+		}
+
+		if err := removeVolumeFn(volume.Name); err != nil {
+			statuses = append(statuses, fmt.Sprintf("volume %s: delete-failed: %v", volume.Name, err))
+			errs = append(errs, fmt.Sprintf("failed to delete volume %q: %v", volume.Name, err))
+			continue
+		}
+		if err := volumeStore.Remove(volume.Name); err != nil {
+			statuses = append(statuses, fmt.Sprintf("volume %s: delete-failed: failed to remove state entry", volume.Name))
+			errs = append(errs, fmt.Sprintf("failed to remove volume state for %q: %v", volume.Name, err))
+			continue
+		}
+		statuses = append(statuses, fmt.Sprintf("volume %s: deleted", volume.Name))
+	}
+
+	if len(errs) > 0 {
+		return statuses, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return statuses, nil
+}
+
 func init() {
 	rootCmd.AddCommand(sandboxCmd)
 	sandboxCmd.AddCommand(sandboxCreateCmd)
@@ -399,5 +472,6 @@ func init() {
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
+	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 
 }
