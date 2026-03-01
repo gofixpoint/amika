@@ -24,6 +24,8 @@ var sandboxCmd = &cobra.Command{
 	Long:  `Create and delete sandboxed environments backed by container providers.`,
 }
 
+const sandboxConnectWorkdir = "/home/amika"
+
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new sandbox",
@@ -479,7 +481,7 @@ func validateShell(shell string) error {
 }
 
 func buildSandboxConnectArgs(name, shell string) []string {
-	return []string{"exec", "-it", name, shell}
+	return []string{"exec", "-it", "-w", sandboxConnectWorkdir, name, shell}
 }
 
 type gitMountInfo struct {

@@ -295,7 +295,7 @@ func TestValidateShell(t *testing.T) {
 
 func TestBuildSandboxConnectArgs(t *testing.T) {
 	got := buildSandboxConnectArgs("sb-1", "zsh")
-	want := []string{"exec", "-it", "sb-1", "zsh"}
+	want := []string{"exec", "-it", "-w", "/home/amika", "sb-1", "zsh"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)
 	}

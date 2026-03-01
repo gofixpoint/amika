@@ -146,7 +146,7 @@ amika sandbox create --name dev-sandbox-2 \
 # List running sandboxes
 amika sandbox list
 
-# Connect to a sandbox console (zsh by default)
+# Connect to a sandbox console (zsh by default, starting in /home/amika)
 amika sandbox connect dev-sandbox
 
 # Connect using a different shell
