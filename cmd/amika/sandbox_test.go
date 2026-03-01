@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/internal/sandbox"
@@ -266,5 +268,146 @@ func TestCleanupSandboxVolumes_DeleteFailureReported(t *testing.T) {
 	}
 	if len(lines) != 1 || lines[0] != "volume vol-1: delete-failed: boom" {
 		t.Fatalf("lines = %v", lines)
+	}
+}
+
+func TestValidateGitFlags(t *testing.T) {
+	if err := validateGitFlags(false, true); err == nil {
+		t.Fatal("expected error when --no-clean is used without --git")
+	}
+	if err := validateGitFlags(true, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveGitRoot(t *testing.T) {
+	t.Run("finds from nested directory", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+			t.Fatalf("failed to create .git directory: %v", err)
+		}
+		nested := filepath.Join(root, "a", "b")
+		if err := os.MkdirAll(nested, 0755); err != nil {
+			t.Fatalf("failed to create nested dir: %v", err)
+		}
+
+		got, err := resolveGitRoot(nested)
+		if err != nil {
+			t.Fatalf("resolveGitRoot failed: %v", err)
+		}
+		if got != root {
+			t.Fatalf("got %q, want %q", got, root)
+		}
+	})
+
+	t.Run("accepts .git file", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /tmp/worktree"), 0644); err != nil {
+			t.Fatalf("failed to create .git file: %v", err)
+		}
+		nested := filepath.Join(root, "nested")
+		if err := os.MkdirAll(nested, 0755); err != nil {
+			t.Fatalf("failed to create nested dir: %v", err)
+		}
+
+		got, err := resolveGitRoot(nested)
+		if err != nil {
+			t.Fatalf("resolveGitRoot failed: %v", err)
+		}
+		if got != root {
+			t.Fatalf("got %q, want %q", got, root)
+		}
+	})
+
+	t.Run("handles file path input", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+			t.Fatalf("failed to create .git directory: %v", err)
+		}
+		filePath := filepath.Join(root, "nested", "file.txt")
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			t.Fatalf("failed to create nested dir: %v", err)
+		}
+		if err := os.WriteFile(filePath, []byte("x"), 0644); err != nil {
+			t.Fatalf("failed to write file: %v", err)
+		}
+
+		got, err := resolveGitRoot(filePath)
+		if err != nil {
+			t.Fatalf("resolveGitRoot failed: %v", err)
+		}
+		if got != root {
+			t.Fatalf("got %q, want %q", got, root)
+		}
+	})
+
+	t.Run("errors when repo is not found", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := resolveGitRoot(dir)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "no git repository root found") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestPrepareGitMount_NoClean(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	info, cleanup, err := prepareGitMount(root, true, func(_, _ string) error {
+		t.Fatal("cloneFn should not be called in --no-clean mode")
+		return nil
+	})
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("prepareGitMount failed: %v", err)
+	}
+
+	if info.Mount.Source != root {
+		t.Fatalf("source = %q, want %q", info.Mount.Source, root)
+	}
+	wantTarget := "/home/amika/workspace/" + filepath.Base(root)
+	if info.Mount.Target != wantTarget {
+		t.Fatalf("target = %q, want %q", info.Mount.Target, wantTarget)
+	}
+	if info.Mount.Mode != "rwcopy" {
+		t.Fatalf("mode = %q, want rwcopy", info.Mount.Mode)
+	}
+}
+
+func TestPrepareGitMount_CleanClone(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+
+	var clonedSrc, clonedDst string
+	info, cleanup, err := prepareGitMount(root, false, func(src, dst string) error {
+		clonedSrc = src
+		clonedDst = dst
+		return os.MkdirAll(dst, 0755)
+	})
+	if err != nil {
+		t.Fatalf("prepareGitMount failed: %v", err)
+	}
+
+	if clonedSrc != root {
+		t.Fatalf("clone source = %q, want %q", clonedSrc, root)
+	}
+	if clonedDst == "" {
+		t.Fatal("expected clone destination to be set")
+	}
+	if info.Mount.Source != clonedDst {
+		t.Fatalf("mount source = %q, want clone destination %q", info.Mount.Source, clonedDst)
+	}
+
+	cleanup()
+	if _, err := os.Stat(filepath.Dir(clonedDst)); !os.IsNotExist(err) {
+		t.Fatalf("expected temp git clone directory to be removed, err=%v", err)
 	}
 }
