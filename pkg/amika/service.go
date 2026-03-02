@@ -400,7 +400,7 @@ func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sa
 		_ = os.Remove(tmpFile.Name())
 		return nil, nil, fmt.Errorf("%w: write SetupScriptText file: %v", ErrInternal, err)
 	}
-	if err := tmpFile.Chmod(0o644); err != nil {
+	if err := tmpFile.Chmod(0o755); err != nil {
 		_ = os.Remove(tmpFile.Name())
 		return nil, nil, fmt.Errorf("%w: set permissions on SetupScriptText file: %v", ErrInternal, err)
 	}

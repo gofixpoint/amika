@@ -71,6 +71,26 @@ func TestCreateSandbox_SetupScriptAndTextMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestResolveSetupScriptMount_SetupScriptTextCreatesExecutableFile(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	mount, cleanup, err := resolveSetupScriptMount("sb", "", "#!/usr/bin/env bash\necho hi\n")
+	if err != nil {
+		t.Fatalf("resolveSetupScriptMount err = %v", err)
+	}
+	defer cleanup()
+	if mount == nil {
+		t.Fatal("expected mount, got nil")
+	}
+
+	info, err := os.Stat(mount.Source)
+	if err != nil {
+		t.Fatalf("stat setup script err = %v", err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("expected setup script mode 0755, got %04o", info.Mode().Perm())
+	}
+}
+
 func TestCreateSandbox_InvalidPortBinding(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	svc := NewService(Options{})
