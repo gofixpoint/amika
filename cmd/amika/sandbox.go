@@ -56,6 +56,7 @@ var sandboxCreateCmd = &cobra.Command{
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		yes, _ := cmd.Flags().GetBool("yes")
 		connect, _ := cmd.Flags().GetBool("connect")
+		setupScript, _ := cmd.Flags().GetString("setup-script")
 		gitFlagChanged := cmd.Flags().Changed("git")
 
 		if provider != "docker" {
@@ -100,6 +101,21 @@ var sandboxCreateCmd = &cobra.Command{
 				agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
 				mounts = append(mounts, agentMounts...)
 			}
+		}
+		if setupScript != "" {
+			absSetupScript, err := filepath.Abs(setupScript)
+			if err != nil {
+				return fmt.Errorf("failed to resolve setup-script path %q: %w", setupScript, err)
+			}
+			if _, err := os.Stat(absSetupScript); err != nil {
+				return fmt.Errorf("setup-script %q is not accessible: %w", absSetupScript, err)
+			}
+			mounts = append(mounts, sandbox.MountBinding{
+				Type:   "bind",
+				Source: absSetupScript,
+				Target: "/opt/setup.sh",
+				Mode:   "ro",
+			})
 		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
@@ -1053,6 +1069,7 @@ func init() {
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
+	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /opt/setup.sh in the container (read-only)")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
