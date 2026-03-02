@@ -1,7 +1,8 @@
 .PHONY: build test vet fmt fmtcheck lint ci setup
 
 build:
-	go build ./...
+	mkdir -p dist
+	go build -o dist/amika ./cmd/amika
 
 test:
 	go test ./...

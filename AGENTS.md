@@ -1,8 +1,14 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Build and Development Commands
+
+**Always use `make build` to build the project.** If you run `go build` directly, you must output to `dist/`:
+
+```bash
+go build -o dist/amika ./cmd/amika
+```
 
 ```bash
 # Set up git hooks (one-time after clone)
@@ -12,7 +18,7 @@ make setup
 make ci
 
 # Individual targets
-make build   # go build ./...
+make build   # go build -o dist/amika ./cmd/amika
 make test    # go test ./...
 make vet     # go vet ./...
 make fmt     # check formatting
