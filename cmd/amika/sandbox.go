@@ -107,6 +107,15 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 		volumeStore := sandbox.NewVolumeStore(volumesFile)
+		fileMountsFile, err := config.FileMountsStateFile()
+		if err != nil {
+			return err
+		}
+		fileMountStore := sandbox.NewFileMountStore(fileMountsFile)
+		fileMountsBaseDir, err := config.FileMountsDir()
+		if err != nil {
+			return err
+		}
 
 		// Generate a name if not provided
 		if name == "" {
@@ -157,13 +166,21 @@ var sandboxCreateCmd = &cobra.Command{
 		var runtimeMounts []sandbox.MountBinding
 		createdVolumes := make([]string, 0)
 		addedRefs := make(map[string]bool)
-		rollbackVolumeState := func() {
+		createdFileMountDirs := make([]string, 0)
+		addedFileRefs := make(map[string]bool)
+		rollbackAll := func() {
 			for volumeName := range addedRefs {
 				_ = volumeStore.RemoveSandboxRef(volumeName, name)
 			}
 			for _, volumeName := range createdVolumes {
 				_ = volumeStore.Remove(volumeName)
 				_ = sandbox.RemoveDockerVolume(volumeName)
+			}
+			for mountName := range addedFileRefs {
+				_ = fileMountStore.Remove(mountName)
+			}
+			for _, dir := range createdFileMountDirs {
+				_ = os.RemoveAll(dir)
 			}
 		}
 
@@ -175,55 +192,90 @@ var sandboxCreateCmd = &cobra.Command{
 
 			stat, err := os.Stat(m.Source)
 			if err != nil {
-				rollbackVolumeState()
+				rollbackAll()
 				return fmt.Errorf("rwcopy source %q is not accessible: %w", m.Source, err)
 			}
-			if !stat.IsDir() {
-				rollbackVolumeState()
-				return fmt.Errorf("rwcopy source %q must be a directory", m.Source)
-			}
 
-			volumeName := generateRWCopyVolumeName(name, m.Target)
-			if err := sandbox.CreateDockerVolume(volumeName); err != nil {
-				rollbackVolumeState()
-				return err
-			}
-			createdVolumes = append(createdVolumes, volumeName)
+			if stat.IsDir() {
+				volumeName := generateRWCopyVolumeName(name, m.Target)
+				if err := sandbox.CreateDockerVolume(volumeName); err != nil {
+					rollbackAll()
+					return err
+				}
+				createdVolumes = append(createdVolumes, volumeName)
 
-			if err := sandbox.CopyHostDirToVolume(volumeName, m.Source); err != nil {
-				rollbackVolumeState()
-				return err
-			}
+				if err := sandbox.CopyHostDirToVolume(volumeName, m.Source); err != nil {
+					rollbackAll()
+					return err
+				}
 
-			info := sandbox.VolumeInfo{
-				Name:        volumeName,
-				CreatedAt:   time.Now().UTC().Format(time.RFC3339),
-				CreatedBy:   "rwcopy",
-				SourcePath:  m.Source,
-				SandboxRefs: []string{name},
-			}
-			if err := volumeStore.Save(info); err != nil {
-				rollbackVolumeState()
-				return fmt.Errorf("failed to save volume state for %q: %w", volumeName, err)
-			}
-			addedRefs[volumeName] = true
+				volInfo := sandbox.VolumeInfo{
+					Name:        volumeName,
+					CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+					CreatedBy:   "rwcopy",
+					SourcePath:  m.Source,
+					SandboxRefs: []string{name},
+				}
+				if err := volumeStore.Save(volInfo); err != nil {
+					rollbackAll()
+					return fmt.Errorf("failed to save volume state for %q: %w", volumeName, err)
+				}
+				addedRefs[volumeName] = true
 
-			runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
-				Type:         "volume",
-				Volume:       volumeName,
-				Target:       m.Target,
-				Mode:         "rw",
-				SnapshotFrom: m.Source,
-			})
+				runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
+					Type:         "volume",
+					Volume:       volumeName,
+					Target:       m.Target,
+					Mode:         "rw",
+					SnapshotFrom: m.Source,
+				})
+			} else {
+				mountName := generateRWCopyFileMountName(name, m.Target)
+				copyDir := filepath.Join(fileMountsBaseDir, mountName)
+				if err := os.MkdirAll(copyDir, 0755); err != nil {
+					rollbackAll()
+					return fmt.Errorf("failed to create file mount directory for %q: %w", mountName, err)
+				}
+				createdFileMountDirs = append(createdFileMountDirs, copyDir)
+
+				copyPath := filepath.Join(copyDir, filepath.Base(m.Source))
+				if err := copyFile(m.Source, copyPath); err != nil {
+					rollbackAll()
+					return fmt.Errorf("failed to copy file for rwcopy mount %q: %w", m.Source, err)
+				}
+
+				fmInfo := sandbox.FileMountInfo{
+					Name:        mountName,
+					Type:        "file",
+					CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+					CreatedBy:   "rwcopy",
+					SourcePath:  m.Source,
+					CopyPath:    copyPath,
+					SandboxRefs: []string{name},
+				}
+				if err := fileMountStore.Save(fmInfo); err != nil {
+					rollbackAll()
+					return fmt.Errorf("failed to save file mount state for %q: %w", mountName, err)
+				}
+				addedFileRefs[mountName] = true
+
+				runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
+					Type:         "bind",
+					Source:       copyPath,
+					Target:       m.Target,
+					Mode:         "rw",
+					SnapshotFrom: m.Source,
+				})
+			}
 		}
 
 		for _, v := range volumeMounts {
 			if _, err := volumeStore.Get(v.Volume); err != nil {
-				rollbackVolumeState()
+				rollbackAll()
 				return fmt.Errorf("volume %q is not tracked; create via rwcopy first", v.Volume)
 			}
 			if err := volumeStore.AddSandboxRef(v.Volume, name); err != nil {
-				rollbackVolumeState()
+				rollbackAll()
 				return fmt.Errorf("failed to attach volume %q: %w", v.Volume, err)
 			}
 			addedRefs[v.Volume] = true
@@ -232,7 +284,7 @@ var sandboxCreateCmd = &cobra.Command{
 
 		containerID, err := sandbox.CreateDockerSandbox(name, image, runtimeMounts, envStrs)
 		if err != nil {
-			rollbackVolumeState()
+			rollbackAll()
 			return err
 		}
 
@@ -286,6 +338,11 @@ var sandboxDeleteCmd = &cobra.Command{
 			return err
 		}
 		volumeStore := sandbox.NewVolumeStore(volumesFile)
+		fileMountsFile, err := config.FileMountsStateFile()
+		if err != nil {
+			return err
+		}
+		fileMountStore := sandbox.NewFileMountStore(fileMountsFile)
 
 		info, err := store.Get(name)
 		if err != nil {
@@ -294,6 +351,7 @@ var sandboxDeleteCmd = &cobra.Command{
 
 		deleteVolumes, err = resolveDeleteVolumes(
 			volumeStore,
+			fileMountStore,
 			name,
 			deleteVolumesSet,
 			keepVolumesSet,
@@ -310,6 +368,7 @@ var sandboxDeleteCmd = &cobra.Command{
 		}
 
 		volumeStatuses, volumeErr := cleanupSandboxVolumes(volumeStore, name, deleteVolumes, sandbox.RemoveDockerVolume)
+		fileMountStatuses, fileMountErr := cleanupSandboxFileMounts(fileMountStore, name, deleteVolumes)
 
 		if err := store.Remove(name); err != nil {
 			return fmt.Errorf("container removed but failed to update state: %w", err)
@@ -319,8 +378,14 @@ var sandboxDeleteCmd = &cobra.Command{
 		for _, line := range volumeStatuses {
 			fmt.Println(line)
 		}
+		for _, line := range fileMountStatuses {
+			fmt.Println(line)
+		}
 		if volumeErr != nil {
 			return volumeErr
+		}
+		if fileMountErr != nil {
+			return fileMountErr
 		}
 		return nil
 	},
@@ -732,6 +797,29 @@ func generateRWCopyVolumeName(sandboxName, target string) string {
 	return "amika-rwcopy-" + sandboxName + "-" + sanitizedTarget + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
+func generateRWCopyFileMountName(sandboxName, target string) string {
+	sanitizedTarget := strings.NewReplacer("/", "-", "_", "-", ".", "-").Replace(strings.TrimPrefix(target, "/"))
+	if sanitizedTarget == "" {
+		sanitizedTarget = "root"
+	}
+	return "amika-rwcopy-file-" + sandboxName + "-" + sanitizedTarget + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+func copyFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("failed to stat source file %q: %w", src, err)
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("failed to read source file %q: %w", src, err)
+	}
+	if err := os.WriteFile(dst, data, srcInfo.Mode()); err != nil {
+		return fmt.Errorf("failed to write destination file %q: %w", dst, err)
+	}
+	return nil
+}
+
 func cleanupSandboxVolumes(
 	volumeStore sandbox.VolumeStore,
 	sandboxName string,
@@ -791,6 +879,64 @@ func cleanupSandboxVolumes(
 	return statuses, nil
 }
 
+func cleanupSandboxFileMounts(
+	fileMountStore sandbox.FileMountStore,
+	sandboxName string,
+	deleteMounts bool,
+) ([]string, error) {
+	mounts, err := fileMountStore.FileMountsForSandbox(sandboxName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load associated file mounts: %w", err)
+	}
+	if len(mounts) == 0 {
+		return nil, nil
+	}
+
+	statuses := make([]string, 0, len(mounts))
+	var errs []string
+
+	for _, fm := range mounts {
+		if err := fileMountStore.RemoveSandboxRef(fm.Name, sandboxName); err != nil {
+			statuses = append(statuses, fmt.Sprintf("file-mount %s: delete-failed: failed to update refs", fm.Name))
+			errs = append(errs, fmt.Sprintf("failed to remove sandbox ref for file mount %q: %v", fm.Name, err))
+			continue
+		}
+
+		if !deleteMounts {
+			statuses = append(statuses, fmt.Sprintf("file-mount %s: preserved", fm.Name))
+			continue
+		}
+
+		inUse, err := fileMountStore.IsInUse(fm.Name)
+		if err != nil {
+			statuses = append(statuses, fmt.Sprintf("file-mount %s: delete-failed: failed to check usage", fm.Name))
+			errs = append(errs, fmt.Sprintf("failed to check usage for file mount %q: %v", fm.Name, err))
+			continue
+		}
+		if inUse {
+			statuses = append(statuses, fmt.Sprintf("file-mount %s: preserved (still referenced)", fm.Name))
+			continue
+		}
+
+		if err := os.RemoveAll(filepath.Dir(fm.CopyPath)); err != nil {
+			statuses = append(statuses, fmt.Sprintf("file-mount %s: delete-failed: %v", fm.Name, err))
+			errs = append(errs, fmt.Sprintf("failed to delete file mount directory for %q: %v", fm.Name, err))
+			continue
+		}
+		if err := fileMountStore.Remove(fm.Name); err != nil {
+			statuses = append(statuses, fmt.Sprintf("file-mount %s: delete-failed: failed to remove state entry", fm.Name))
+			errs = append(errs, fmt.Sprintf("failed to remove file mount state for %q: %v", fm.Name, err))
+			continue
+		}
+		statuses = append(statuses, fmt.Sprintf("file-mount %s: deleted", fm.Name))
+	}
+
+	if len(errs) > 0 {
+		return statuses, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return statuses, nil
+}
+
 func validateDeleteVolumeFlags(
 	deleteVolumesSet bool,
 	deleteVolumes bool,
@@ -817,6 +963,7 @@ func validateDeleteVolumeFlags(
 //     attached volume.
 func resolveDeleteVolumes(
 	volumeStore sandbox.VolumeStore,
+	fileMountStore sandbox.FileMountStore,
 	sandboxName string,
 	deleteVolumesSet bool,
 	keepVolumesSet bool,
@@ -847,6 +994,24 @@ func resolveDeleteVolumes(
 			exclusive = append(exclusive, volume.Name)
 		}
 	}
+
+	fileMounts, err := fileMountStore.FileMountsForSandbox(sandboxName)
+	if err != nil {
+		return false, fmt.Errorf("failed to load associated file mounts: %w", err)
+	}
+	for _, fm := range fileMounts {
+		exclusiveToSandbox := true
+		for _, ref := range fm.SandboxRefs {
+			if ref != sandboxName {
+				exclusiveToSandbox = false
+				break
+			}
+		}
+		if exclusiveToSandbox {
+			exclusive = append(exclusive, fm.Name)
+		}
+	}
+
 	if len(exclusive) == 0 {
 		return false, nil
 	}
