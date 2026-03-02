@@ -1,4 +1,4 @@
-.PHONY: goenv build test test-unit test-integration test-contract test-all coverage vet fmt fmtcheck lint ci setup
+.PHONY: goenv build test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
 
 UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)|/internal/mount($$|/)')
 
@@ -24,6 +24,9 @@ test-integration: goenv
 
 test-contract: goenv
 	go test ./test/contract/...
+
+test-expensive: goenv
+	AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 $(MAKE) test-all
 
 test-all: test-unit test-integration test-contract
 
