@@ -86,6 +86,12 @@ func DockerVolumeExists(name string) bool {
 }
 
 // CopyHostDirToVolume copies hostDir contents into the root of volumeName.
+//
+// Docker named volumes live in Docker-managed storage and are not directly
+// accessible from the host filesystem. To populate a volume from host data,
+// we spin up a throwaway Alpine container with two mounts: the host directory
+// (read-only) and the target volume (read-write). The container runs cp -a to
+// copy everything from one to the other, then exits and is removed.
 func CopyHostDirToVolume(volumeName, hostDir string) error {
 	if hostDir == "" {
 		return fmt.Errorf("host directory is required")
