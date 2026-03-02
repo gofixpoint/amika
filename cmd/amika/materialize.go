@@ -77,7 +77,7 @@ Examples:
 			return err
 		}
 
-		if agentconfig.IsAgentPreset(preset) {
+		{
 			homeDir, err := os.UserHomeDir()
 			if err == nil {
 				agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
