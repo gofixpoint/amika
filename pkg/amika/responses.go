@@ -10,6 +10,7 @@ type Sandbox struct {
 	Preset      string
 	Mounts      []Mount
 	Env         []string
+	Ports       []PortBinding
 }
 
 // DeleteSandboxResult reports sandbox deletion details.

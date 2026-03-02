@@ -11,8 +11,8 @@ import (
 
 // CreateDockerSandbox creates a long-running Docker container with the given
 // name, image, and optional bind mounts. Returns the container ID.
-func CreateDockerSandbox(name, image string, mounts []MountBinding, env []string) (string, error) {
-	args := buildDockerRunArgs(name, image, mounts, env)
+func CreateDockerSandbox(name, image string, mounts []MountBinding, env []string, ports []PortBinding) (string, error) {
+	args := buildDockerRunArgs(name, image, mounts, env, ports)
 	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -115,7 +115,7 @@ func CopyHostDirToVolume(volumeName, hostDir string) error {
 	return nil
 }
 
-func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string) []string {
+func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string, ports []PortBinding) []string {
 	args := []string{"run", "-d", "--name", name}
 	for _, m := range mounts {
 		vol := mountVolumeSpec(m)
@@ -124,11 +124,33 @@ func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string)
 		}
 		args = append(args, "-v", vol)
 	}
+	for _, p := range ports {
+		spec := portPublishSpec(p)
+		if spec == "" {
+			continue
+		}
+		args = append(args, "-p", spec)
+	}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
 	args = append(args, image, "tail", "-f", "/dev/null")
 	return args
+}
+
+func portPublishSpec(p PortBinding) string {
+	if p.HostPort <= 0 || p.ContainerPort <= 0 {
+		return ""
+	}
+	protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
+	if protocol == "" {
+		protocol = "tcp"
+	}
+	hostIP := strings.TrimSpace(p.HostIP)
+	if hostIP == "" {
+		return fmt.Sprintf("%d:%d/%s", p.HostPort, p.ContainerPort, protocol)
+	}
+	return fmt.Sprintf("%s:%d:%d/%s", hostIP, p.HostPort, p.ContainerPort, protocol)
 }
 
 func mountVolumeSpec(m MountBinding) string {

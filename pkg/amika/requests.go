@@ -10,6 +10,14 @@ type Mount struct {
 	SnapshotFrom string
 }
 
+// PortBinding represents a published container port.
+type PortBinding struct {
+	HostIP        string `json:"HostIP,omitempty"`
+	HostPort      int    `json:"HostPort"`
+	ContainerPort int    `json:"ContainerPort"`
+	Protocol      string `json:"Protocol,omitempty"`
+}
+
 // CreateSandboxRequest describes sandbox creation input.
 type CreateSandboxRequest struct {
 	Provider        string
@@ -21,8 +29,9 @@ type CreateSandboxRequest struct {
 	GitPath         string
 	NoClean         bool
 	Env             []string
-	SetupScript     string `json:"SetupScript,omitempty"`
-	SetupScriptText string `json:"SetupScriptText,omitempty"`
+	Ports           []PortBinding `json:"Ports,omitempty"`
+	SetupScript     string        `json:"SetupScript,omitempty"`
+	SetupScriptText string        `json:"SetupScriptText,omitempty"`
 }
 
 // DeleteSandboxRequest describes sandbox deletion input.

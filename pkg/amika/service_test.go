@@ -71,6 +71,39 @@ func TestCreateSandbox_SetupScriptAndTextMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestCreateSandbox_InvalidPortBinding(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	svc := NewService(Options{})
+	_, err := svc.CreateSandbox(context.Background(), CreateSandboxRequest{
+		Provider: "docker",
+		Name:     "sb",
+		Image:    "img",
+		Ports: []PortBinding{
+			{HostPort: 0, ContainerPort: 80, Protocol: "tcp"},
+		},
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected invalid argument, got %v", err)
+	}
+}
+
+func TestCreateSandbox_DuplicatePortBinding(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	svc := NewService(Options{})
+	_, err := svc.CreateSandbox(context.Background(), CreateSandboxRequest{
+		Provider: "docker",
+		Name:     "sb",
+		Image:    "img",
+		Ports: []PortBinding{
+			{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+			{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 8080, Protocol: "tcp"},
+		},
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected invalid argument, got %v", err)
+	}
+}
+
 func TestDeleteSandbox_NotFound(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	svc := NewService(Options{})

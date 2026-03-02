@@ -10,6 +10,7 @@ type SandboxRecord struct {
 	Preset      string
 	Mounts      []Mount
 	Env         []string
+	Ports       []PortBinding
 }
 
 // VolumeRecord stores tracked volume metadata.

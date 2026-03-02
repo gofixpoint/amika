@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gofixpoint/amika/internal/auth"
@@ -58,8 +59,12 @@ func (s *Service) CreateSandbox(_ context.Context, req amika.CreateSandboxReques
 	if _, err := s.deps.Sandboxes.Get(req.Name); err == nil {
 		return amika.Sandbox{}, fmt.Errorf("%w: sandbox %q already exists", amika.ErrInvalidArgument, req.Name)
 	}
+	publishedPorts, err := normalizePortBindings(req.Ports)
+	if err != nil {
+		return amika.Sandbox{}, err
+	}
 
-	containerID, err := s.deps.Docker.CreateSandbox(req.Name, req.Image, toPortMounts(req.Mounts, req.Volumes), req.Env)
+	containerID, err := s.deps.Docker.CreateSandbox(req.Name, req.Image, toPortMounts(req.Mounts, req.Volumes), req.Env, toPortBindings(publishedPorts))
 	if err != nil {
 		return amika.Sandbox{}, fmt.Errorf("%w: %v", amika.ErrDependency, err)
 	}
@@ -77,6 +82,7 @@ func (s *Service) CreateSandbox(_ context.Context, req amika.CreateSandboxReques
 		Preset:      req.Preset,
 		Mounts:      toPortMounts(req.Mounts, req.Volumes),
 		Env:         req.Env,
+		Ports:       toPortBindings(publishedPorts),
 	}
 	if err := s.deps.Sandboxes.Save(rec); err != nil {
 		return amika.Sandbox{}, fmt.Errorf("%w: %v", amika.ErrInternal, err)
@@ -91,6 +97,7 @@ func (s *Service) CreateSandbox(_ context.Context, req amika.CreateSandboxReques
 		Preset:      rec.Preset,
 		Mounts:      toPublicMounts(rec.Mounts),
 		Env:         rec.Env,
+		Ports:       toPublicPorts(rec.Ports),
 	}, nil
 }
 
@@ -133,6 +140,7 @@ func (s *Service) ListSandboxes(context.Context, amika.ListSandboxesRequest) (am
 			Preset:      rec.Preset,
 			Mounts:      toPublicMounts(rec.Mounts),
 			Env:         rec.Env,
+			Ports:       toPublicPorts(rec.Ports),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
@@ -266,6 +274,19 @@ func toPublicMounts(mounts []ports.Mount) []amika.Mount {
 	return out
 }
 
+func toPublicPorts(bindings []ports.PortBinding) []amika.PortBinding {
+	out := make([]amika.PortBinding, 0, len(bindings))
+	for _, p := range bindings {
+		out = append(out, amika.PortBinding{
+			HostIP:        p.HostIP,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      p.Protocol,
+		})
+	}
+	return out
+}
+
 func toPublicVolume(v ports.VolumeRecord, typ string) amika.Volume {
 	return amika.Volume{Name: v.Name, Type: typ, CreatedAt: v.CreatedAt, InUse: len(v.SandboxRefs) > 0, Sandboxes: v.SandboxRefs, SourcePath: v.SourcePath}
 }
@@ -279,4 +300,53 @@ func toPortMounts(mounts []amika.Mount, volumes []amika.Mount) []ports.Mount {
 		out = append(out, ports.Mount{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
 	}
 	return out
+}
+
+func toPortBindings(bindings []amika.PortBinding) []ports.PortBinding {
+	out := make([]ports.PortBinding, 0, len(bindings))
+	for _, p := range bindings {
+		out = append(out, ports.PortBinding{
+			HostIP:        p.HostIP,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      p.Protocol,
+		})
+	}
+	return out
+}
+
+func normalizePortBindings(in []amika.PortBinding) ([]amika.PortBinding, error) {
+	out := make([]amika.PortBinding, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, p := range in {
+		hostIP := strings.TrimSpace(p.HostIP)
+		if hostIP == "" {
+			hostIP = "127.0.0.1"
+		}
+		if p.HostPort < 1 || p.HostPort > 65535 {
+			return nil, fmt.Errorf("%w: HostPort %d must be between 1 and 65535", amika.ErrInvalidArgument, p.HostPort)
+		}
+		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
+			return nil, fmt.Errorf("%w: ContainerPort %d must be between 1 and 65535", amika.ErrInvalidArgument, p.ContainerPort)
+		}
+		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		if protocol != "tcp" && protocol != "udp" {
+			return nil, fmt.Errorf("%w: Protocol %q must be tcp or udp", amika.ErrInvalidArgument, p.Protocol)
+		}
+		key := fmt.Sprintf("%s:%d/%s", hostIP, p.HostPort, protocol)
+		if seen[key] {
+			return nil, fmt.Errorf("%w: duplicate published port binding %s", amika.ErrInvalidArgument, key)
+		}
+		seen[key] = true
+		out = append(out, amika.PortBinding{
+			HostIP:        hostIP,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      protocol,
+		})
+	}
+	return out, nil
 }

@@ -115,6 +115,7 @@ func TestCreateSandboxBodyIncludesSetupScriptFields(t *testing.T) {
 		GitPath:         "",
 		NoClean:         false,
 		Env:             []string{},
+		Ports:           []amika.PortBinding{{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}},
 		SetupScript:     "/tmp/setup.sh",
 		SetupScriptText: "#!/usr/bin/env bash\necho hi\n",
 	}
@@ -133,6 +134,12 @@ func TestCreateSandboxBodyIncludesSetupScriptFields(t *testing.T) {
 	}
 	if svc.req.SetupScriptText != "#!/usr/bin/env bash\necho hi\n" {
 		t.Fatalf("SetupScriptText=%q", svc.req.SetupScriptText)
+	}
+	if len(svc.req.Ports) != 1 {
+		t.Fatalf("Ports len=%d", len(svc.req.Ports))
+	}
+	if svc.req.Ports[0].HostPort != 8080 || svc.req.Ports[0].ContainerPort != 80 {
+		t.Fatalf("Ports=%+v", svc.req.Ports)
 	}
 }
 
@@ -158,6 +165,9 @@ func TestOpenAPICreateSandboxUsesPascalCaseSetupScriptFields(t *testing.T) {
 	}
 	if _, ok := props["SetupScriptText"]; !ok {
 		t.Fatalf("missing SetupScriptText property")
+	}
+	if _, ok := props["Ports"]; !ok {
+		t.Fatalf("missing Ports property")
 	}
 
 	required, hasRequired := createReq["required"]

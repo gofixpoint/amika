@@ -12,7 +12,7 @@ import (
 
 type stubDocker struct{}
 
-func (stubDocker) CreateSandbox(string, string, []ports.Mount, []string) (string, error) {
+func (stubDocker) CreateSandbox(string, string, []ports.Mount, []string, []ports.PortBinding) (string, error) {
 	return "container-123", nil
 }
 func (stubDocker) RemoveSandbox(string) error               { return nil }
@@ -76,6 +76,16 @@ func TestNewService_ImplementsPublicService(t *testing.T) {
 	}
 	if _, err := svc.CreateSandbox(ctx, amika.CreateSandboxRequest{Name: "new-sb", Provider: "docker", Image: "img"}); err != nil {
 		t.Fatalf("CreateSandbox unexpected err = %v", err)
+	}
+	if _, err := svc.CreateSandbox(ctx, amika.CreateSandboxRequest{
+		Name:     "sb-invalid-port",
+		Provider: "docker",
+		Image:    "img",
+		Ports: []amika.PortBinding{
+			{HostPort: 0, ContainerPort: 80},
+		},
+	}); !errors.Is(err, amika.ErrInvalidArgument) {
+		t.Fatalf("CreateSandbox invalid ports err = %v, want ErrInvalidArgument", err)
 	}
 	if _, err := svc.DeleteSandbox(ctx, amika.DeleteSandboxRequest{Names: []string{"missing"}}); !errors.Is(err, amika.ErrNotFound) {
 		t.Fatalf("DeleteSandbox err = %v, want ErrNotFound", err)
