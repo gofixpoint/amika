@@ -4,10 +4,11 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Build and Development Commands
 
-**Always use `make build` to build the project.** If you run `go build` directly, you must output to `dist/`:
+**Use `make build` to build both binaries, or `make build-cli` / `make build-server` for one binary.** If you run `go build` directly, you must output to `dist/`:
 
 ```bash
 go build -o dist/amika ./cmd/amika
+go build -o dist/amika-server ./cmd/amika-server
 ```
 
 ```bash
@@ -18,7 +19,9 @@ make setup
 make ci
 
 # Individual targets
-make build   # go build -o dist/amika ./cmd/amika
+make build         # builds both dist/amika and dist/amika-server
+make build-cli     # go build -o dist/amika ./cmd/amika
+make build-server  # go build -o dist/amika-server ./cmd/amika-server
 make test    # go test ./...
 make vet     # go vet ./...
 make fmt     # check formatting
@@ -32,8 +35,10 @@ Amika is a Go CLI tool. The project uses standard Go tooling with a Makefile for
 ## Code Structure
 
 - `cmd/amika/main.go` - Main entry point for the CLI
+- `cmd/amika-server/main.go` - Main entry point for the HTTP server
 - `dist/` - Build output directory (gitignored)
 - `bin/amika` - Wrapper script that auto-builds and runs dist/amika
+- `bin/amika-server` - Wrapper script that auto-builds and runs dist/amika-server
 
 ## Development Notes
 

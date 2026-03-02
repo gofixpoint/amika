@@ -1,4 +1,4 @@
-.PHONY: goenv build test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
+.PHONY: goenv build build-cli build-server test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
 
 UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)|/internal/mount($$|/)')
 
@@ -8,9 +8,15 @@ export GOTMPDIR := $(CURDIR)/.gotmp
 goenv:
 	mkdir -p "$(GOCACHE)" "$(GOTMPDIR)"
 
-build: goenv
+build: build-cli build-server
+
+build-cli: goenv
 	mkdir -p dist
 	go build -o dist/amika ./cmd/amika
+
+build-server: goenv
+	mkdir -p dist
+	go build -o dist/amika-server ./cmd/amika-server
 
 test: goenv
 	go test ./...
