@@ -114,8 +114,3 @@ func RWCopyMounts(specs []MountSpec) []sandbox.MountBinding {
 	}
 	return mounts
 }
-
-// IsAgentPreset returns true for presets that use agent configuration files.
-func IsAgentPreset(preset string) bool {
-	return preset == "claude" || preset == "coder"
-}

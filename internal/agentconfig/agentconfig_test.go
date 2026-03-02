@@ -281,20 +281,3 @@ func TestRWCopyMounts_Empty(t *testing.T) {
 		t.Fatalf("expected 0 mounts, got %d", len(mounts))
 	}
 }
-
-func TestIsAgentPreset(t *testing.T) {
-	tests := []struct {
-		preset string
-		want   bool
-	}{
-		{"claude", true},
-		{"coder", true},
-		{"", false},
-		{"custom", false},
-	}
-	for _, tt := range tests {
-		if got := IsAgentPreset(tt.preset); got != tt.want {
-			t.Errorf("IsAgentPreset(%q) = %v, want %v", tt.preset, got, tt.want)
-		}
-	}
-}
