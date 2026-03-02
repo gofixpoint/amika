@@ -76,13 +76,7 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	} else if _, err := s.sandboxes.Get(name); err == nil {
 		return Sandbox{}, fmt.Errorf("%w: sandbox %q already exists", ErrInvalidArgument, name)
 	}
-	mounts := make([]sandbox.MountBinding, 0, len(req.Mounts)+len(req.Volumes))
-	for _, m := range req.Mounts {
-		mounts = append(mounts, sandbox.MountBinding{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
-	}
-	for _, m := range req.Volumes {
-		mounts = append(mounts, sandbox.MountBinding{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
-	}
+	mounts := toSandboxMountBindings(req.Mounts, req.Volumes)
 	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env)
 	if err != nil {
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrDependency, err)
@@ -236,6 +230,17 @@ func (s *serviceImpl) ExtractAuth(_ context.Context, req AuthExtractRequest) (Au
 		return AuthExtractResult{}, fmt.Errorf("%w: %v", ErrDependency, err)
 	}
 	return AuthExtractResult{Lines: auth.BuildEnvMap(result).Lines(req.WithExport)}, nil
+}
+
+func toSandboxMountBindings(mounts []Mount, volumes []Mount) []sandbox.MountBinding {
+	out := make([]sandbox.MountBinding, 0, len(mounts)+len(volumes))
+	for _, m := range mounts {
+		out = append(out, sandbox.MountBinding{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
+	}
+	for _, m := range volumes {
+		out = append(out, sandbox.MountBinding{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
+	}
+	return out
 }
 
 type initErrorService struct{ err error }
