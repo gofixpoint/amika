@@ -52,6 +52,7 @@ Examples:
 		mountStrs, _ := cmd.Flags().GetStringArray("mount")
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		interactive, _ := cmd.Flags().GetBool("interactive")
+		setupScript, _ := cmd.Flags().GetString("setup-script")
 
 		if err := validateScriptCmdFlags(script, cmdStr, args); err != nil {
 			return err
@@ -83,6 +84,22 @@ Examples:
 				agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
 				mounts = append(mounts, agentMounts...)
 			}
+		}
+
+		if setupScript != "" {
+			absSetupScript, err := filepath.Abs(setupScript)
+			if err != nil {
+				return fmt.Errorf("failed to resolve setup-script path %q: %w", setupScript, err)
+			}
+			if _, err := os.Stat(absSetupScript); err != nil {
+				return fmt.Errorf("setup-script %q is not accessible: %w", absSetupScript, err)
+			}
+			mounts = append(mounts, sandbox.MountBinding{
+				Type:   "bind",
+				Source: absSetupScript,
+				Target: "/opt/setup.sh",
+				Mode:   "ro",
+			})
 		}
 
 		// Process rwcopy mounts into runtime mounts with ephemeral cleanup
@@ -278,4 +295,5 @@ func init() {
 	topMaterializeCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	topMaterializeCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	topMaterializeCmd.Flags().BoolP("interactive", "i", false, "Run interactively with TTY (for programs like claude)")
+	topMaterializeCmd.Flags().String("setup-script", "", "Mount a local script file to /opt/setup.sh in the container (read-only)")
 }

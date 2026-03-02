@@ -24,3 +24,10 @@ RUN npm install -g typescript tsx @anthropic-ai/claude-code
 
 RUN mkdir -p /home/amika
 WORKDIR /home/amika
+
+# Default no-op setup script; users can shadow it via --setup-script.
+# The ENTRYPOINT runs the setup script then execs into CMD, so user scripts
+# don't need to include `exec "$@"` themselves.
+RUN printf '#!/bin/bash\nexit 0\n' > /opt/setup.sh \
+    && chmod +x /opt/setup.sh
+ENTRYPOINT ["/bin/bash", "-c", "/opt/setup.sh && exec \"$@\"", "--"]
