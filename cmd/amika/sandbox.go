@@ -17,6 +17,7 @@ import (
 	"github.com/gofixpoint/amika/internal/agentconfig"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
+	"github.com/gofixpoint/amika/pkg/amika"
 	"github.com/spf13/cobra"
 )
 
@@ -429,25 +430,19 @@ var sandboxListCmd = &cobra.Command{
 	Short: "List all sandboxes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err != nil {
-			return err
-		}
-		store := sandbox.NewStore(sandboxesFile)
-
-		sandboxes, err := store.List()
+		result, err := amika.NewService(amika.Options{}).ListSandboxes(cmd.Context(), amika.ListSandboxesRequest{})
 		if err != nil {
 			return err
 		}
 
-		if len(sandboxes) == 0 {
+		if len(result.Items) == 0 {
 			fmt.Println("No sandboxes found.")
 			return nil
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		fmt.Fprintln(w, "NAME\tPROVIDER\tIMAGE\tCREATED")
-		for _, sb := range sandboxes {
+		for _, sb := range result.Items {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", sb.Name, sb.Provider, sb.Image, sb.CreatedAt)
 		}
 		w.Flush()

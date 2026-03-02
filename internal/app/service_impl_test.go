@@ -71,7 +71,7 @@ func TestNewService_ImplementsPublicService(t *testing.T) {
 	if _, err := svc.CreateSandbox(ctx, amika.CreateSandboxRequest{}); !errors.Is(err, amika.ErrUnimplemented) {
 		t.Fatalf("CreateSandbox err = %v, want ErrUnimplemented", err)
 	}
-	if _, err := svc.ExtractAuth(ctx, amika.AuthExtractRequest{}); !errors.Is(err, amika.ErrUnimplemented) {
-		t.Fatalf("ExtractAuth err = %v, want ErrUnimplemented", err)
+	if _, err := svc.ExtractAuth(ctx, amika.AuthExtractRequest{}); err != nil {
+		t.Fatalf("ExtractAuth err = %v, want nil", err)
 	}
 }

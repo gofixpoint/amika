@@ -14,6 +14,16 @@ import (
 	"github.com/gofixpoint/amika/internal/sandbox"
 )
 
+func runRootCommand(args ...string) (string, error) {
+	buf := &strings.Builder{}
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+	rootCmd.SetArgs(args)
+	err := rootCmd.Execute()
+	rootCmd.SetArgs(nil)
+	return buf.String(), err
+}
+
 func TestParseMountFlags(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -823,5 +833,25 @@ func runGitCmd(t *testing.T, repo string, args ...string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+func TestSandboxListCommand_PrintsRows(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
+	store := sandbox.NewStore(filepath.Join(dir, "sandboxes.jsonl"))
+	if err := store.Save(sandbox.Info{Name: "sb-a", Provider: "docker", Image: "img", CreatedAt: "now"}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRootCommand("sandbox", "list")
+	if err != nil {
+		t.Fatalf("sandbox list failed: %v", err)
+	}
+	if !strings.Contains(out, "NAME") || !strings.Contains(out, "PROVIDER") {
+		t.Fatalf("missing header: %s", out)
+	}
+	if !strings.Contains(out, "sb-a") {
+		t.Fatalf("missing sandbox row: %s", out)
 	}
 }
