@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/materialize"
@@ -42,14 +43,77 @@ func NewService(deps Dependencies) (*Service, error) {
 // Ensure Service satisfies the public service interface.
 var _ amika.Service = (*Service)(nil)
 
-// CreateSandbox is a placeholder while behavior is migrated from CLI adapters.
-func (s *Service) CreateSandbox(context.Context, amika.CreateSandboxRequest) (amika.Sandbox, error) {
-	return amika.Sandbox{}, amika.ErrUnimplemented
+// CreateSandbox creates and persists a sandbox record after creating the backing runtime sandbox.
+func (s *Service) CreateSandbox(_ context.Context, req amika.CreateSandboxRequest) (amika.Sandbox, error) {
+	provider := req.Provider
+	if provider == "" {
+		provider = "docker"
+	}
+	if provider != "docker" {
+		return amika.Sandbox{}, fmt.Errorf("%w: unsupported provider %q", amika.ErrInvalidArgument, provider)
+	}
+	if req.Name == "" {
+		return amika.Sandbox{}, fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	if _, err := s.deps.Sandboxes.Get(req.Name); err == nil {
+		return amika.Sandbox{}, fmt.Errorf("%w: sandbox %q already exists", amika.ErrInvalidArgument, req.Name)
+	}
+
+	containerID, err := s.deps.Docker.CreateSandbox(req.Name, req.Image, toPortMounts(req.Mounts, req.Volumes), req.Env)
+	if err != nil {
+		return amika.Sandbox{}, fmt.Errorf("%w: %v", amika.ErrDependency, err)
+	}
+
+	now := time.Now().UTC()
+	if s.deps.Clock != nil {
+		now = s.deps.Clock.Now().UTC()
+	}
+	rec := ports.SandboxRecord{
+		Name:        req.Name,
+		Provider:    provider,
+		ContainerID: containerID,
+		Image:       req.Image,
+		CreatedAt:   now.Format(time.RFC3339),
+		Preset:      req.Preset,
+		Mounts:      toPortMounts(req.Mounts, req.Volumes),
+		Env:         req.Env,
+	}
+	if err := s.deps.Sandboxes.Save(rec); err != nil {
+		return amika.Sandbox{}, fmt.Errorf("%w: %v", amika.ErrInternal, err)
+	}
+
+	return amika.Sandbox{
+		Name:        rec.Name,
+		Provider:    rec.Provider,
+		ContainerID: rec.ContainerID,
+		Image:       rec.Image,
+		CreatedAt:   rec.CreatedAt,
+		Preset:      rec.Preset,
+		Mounts:      toPublicMounts(rec.Mounts),
+		Env:         rec.Env,
+	}, nil
 }
 
-// DeleteSandbox is a placeholder while behavior is migrated from CLI adapters.
-func (s *Service) DeleteSandbox(context.Context, amika.DeleteSandboxRequest) (amika.DeleteSandboxResult, error) {
-	return amika.DeleteSandboxResult{}, amika.ErrUnimplemented
+// DeleteSandbox removes one or more sandboxes and their backing runtime sandboxes.
+func (s *Service) DeleteSandbox(_ context.Context, req amika.DeleteSandboxRequest) (amika.DeleteSandboxResult, error) {
+	deleted := make([]string, 0, len(req.Names))
+	for _, name := range req.Names {
+		rec, err := s.deps.Sandboxes.Get(name)
+		if err != nil {
+			return amika.DeleteSandboxResult{}, fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, name)
+		}
+		if rec.Provider == "docker" {
+			if err := s.deps.Docker.RemoveSandbox(name); err != nil {
+				return amika.DeleteSandboxResult{}, fmt.Errorf("%w: %v", amika.ErrDependency, err)
+			}
+		}
+		if err := s.deps.Sandboxes.Remove(name); err != nil {
+			return amika.DeleteSandboxResult{}, fmt.Errorf("%w: %v", amika.ErrInternal, err)
+		}
+		deleted = append(deleted, name)
+	}
+
+	return amika.DeleteSandboxResult{Deleted: deleted}, nil
 }
 
 // ListSandboxes lists persisted sandbox records.
@@ -75,9 +139,29 @@ func (s *Service) ListSandboxes(context.Context, amika.ListSandboxesRequest) (am
 	return amika.ListSandboxesResult{Items: items}, nil
 }
 
-// ConnectSandbox is a placeholder while behavior is migrated from CLI adapters.
-func (s *Service) ConnectSandbox(context.Context, amika.ConnectSandboxRequest) error {
-	return amika.ErrUnimplemented
+// ConnectSandbox opens an interactive shell in an existing sandbox.
+func (s *Service) ConnectSandbox(ctx context.Context, req amika.ConnectSandboxRequest) error {
+	if req.Name == "" {
+		return fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	if req.Shell == "" {
+		req.Shell = "zsh"
+	}
+	rec, err := s.deps.Sandboxes.Get(req.Name)
+	if err != nil {
+		return fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, req.Name)
+	}
+	if rec.Provider != "docker" {
+		return fmt.Errorf("%w: unsupported provider %q", amika.ErrInvalidArgument, rec.Provider)
+	}
+	if s.deps.Runner == nil {
+		return fmt.Errorf("%w: command runner unavailable", amika.ErrDependency)
+	}
+	args := []string{"exec", "-it", "-w", "/home/amika", req.Name, req.Shell}
+	if _, err := s.deps.Runner.Run(ctx, "docker", args, ports.RunOptions{}); err != nil {
+		return fmt.Errorf("%w: %v", amika.ErrDependency, err)
+	}
+	return nil
 }
 
 // Materialize runs local materialization flow.
@@ -184,4 +268,15 @@ func toPublicMounts(mounts []ports.Mount) []amika.Mount {
 
 func toPublicVolume(v ports.VolumeRecord, typ string) amika.Volume {
 	return amika.Volume{Name: v.Name, Type: typ, CreatedAt: v.CreatedAt, InUse: len(v.SandboxRefs) > 0, Sandboxes: v.SandboxRefs, SourcePath: v.SourcePath}
+}
+
+func toPortMounts(mounts []amika.Mount, volumes []amika.Mount) []ports.Mount {
+	out := make([]ports.Mount, 0, len(mounts)+len(volumes))
+	for _, m := range mounts {
+		out = append(out, ports.Mount{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
+	}
+	for _, m := range volumes {
+		out = append(out, ports.Mount{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
+	}
+	return out
 }

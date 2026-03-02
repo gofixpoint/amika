@@ -13,7 +13,7 @@ import (
 type stubDocker struct{}
 
 func (stubDocker) CreateSandbox(string, string, []ports.Mount, []string) (string, error) {
-	return "", nil
+	return "container-123", nil
 }
 func (stubDocker) RemoveSandbox(string) error               { return nil }
 func (stubDocker) CreateVolume(string) error                { return nil }
@@ -22,10 +22,12 @@ func (stubDocker) CopyHostDirToVolume(string, string) error { return nil }
 
 type stubSandboxStore struct{}
 
-func (stubSandboxStore) Save(ports.SandboxRecord) error          { return nil }
-func (stubSandboxStore) Get(string) (ports.SandboxRecord, error) { return ports.SandboxRecord{}, nil }
-func (stubSandboxStore) Remove(string) error                     { return nil }
-func (stubSandboxStore) List() ([]ports.SandboxRecord, error)    { return nil, nil }
+func (stubSandboxStore) Save(ports.SandboxRecord) error { return nil }
+func (stubSandboxStore) Get(name string) (ports.SandboxRecord, error) {
+	return ports.SandboxRecord{}, errors.New("not found")
+}
+func (stubSandboxStore) Remove(string) error                  { return nil }
+func (stubSandboxStore) List() ([]ports.SandboxRecord, error) { return nil, nil }
 
 type stubVolumeStore struct{}
 
@@ -60,6 +62,7 @@ func TestNewService_ImplementsPublicService(t *testing.T) {
 		Sandboxes:   stubSandboxStore{},
 		Volumes:     stubVolumeStore{},
 		FileMounts:  stubFileMountStore{},
+		Runner:      stubRunner{},
 		Clock:       stubClock{},
 		IDGenerator: stubIDGenerator{},
 	})
@@ -68,10 +71,25 @@ func TestNewService_ImplementsPublicService(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := svc.CreateSandbox(ctx, amika.CreateSandboxRequest{}); !errors.Is(err, amika.ErrUnimplemented) {
-		t.Fatalf("CreateSandbox err = %v, want ErrUnimplemented", err)
+	if _, err := svc.CreateSandbox(ctx, amika.CreateSandboxRequest{}); !errors.Is(err, amika.ErrInvalidArgument) {
+		t.Fatalf("CreateSandbox err = %v, want ErrInvalidArgument", err)
+	}
+	if _, err := svc.CreateSandbox(ctx, amika.CreateSandboxRequest{Name: "new-sb", Provider: "docker", Image: "img"}); err != nil {
+		t.Fatalf("CreateSandbox unexpected err = %v", err)
+	}
+	if _, err := svc.DeleteSandbox(ctx, amika.DeleteSandboxRequest{Names: []string{"missing"}}); !errors.Is(err, amika.ErrNotFound) {
+		t.Fatalf("DeleteSandbox err = %v, want ErrNotFound", err)
+	}
+	if err := svc.ConnectSandbox(ctx, amika.ConnectSandboxRequest{Name: "missing"}); !errors.Is(err, amika.ErrNotFound) {
+		t.Fatalf("ConnectSandbox err = %v, want ErrNotFound", err)
 	}
 	if _, err := svc.ExtractAuth(ctx, amika.AuthExtractRequest{}); err != nil {
 		t.Fatalf("ExtractAuth err = %v, want nil", err)
 	}
+}
+
+type stubRunner struct{}
+
+func (stubRunner) Run(context.Context, string, []string, ports.RunOptions) (ports.RunResult, error) {
+	return ports.RunResult{}, nil
 }
