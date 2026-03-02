@@ -21,8 +21,8 @@ type CreateSandboxRequest struct {
 	GitPath         string
 	NoClean         bool
 	Env             []string
-	SetupScript     string
-	SetupScriptText string
+	SetupScript     string `json:"SetupScript,omitempty"`
+	SetupScriptText string `json:"SetupScriptText,omitempty"`
 }
 
 // DeleteSandboxRequest describes sandbox deletion input.

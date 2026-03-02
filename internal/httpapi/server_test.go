@@ -159,4 +159,14 @@ func TestOpenAPICreateSandboxUsesPascalCaseSetupScriptFields(t *testing.T) {
 	if _, ok := props["SetupScriptText"]; !ok {
 		t.Fatalf("missing SetupScriptText property")
 	}
+
+	required, hasRequired := createReq["required"]
+	if !hasRequired {
+		return
+	}
+	for _, field := range required.([]any) {
+		if field == "SetupScript" || field == "SetupScriptText" {
+			t.Fatalf("field %v should not be required", field)
+		}
+	}
 }
