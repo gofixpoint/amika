@@ -20,7 +20,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # Install coding agent CLIs.
-RUN npm install -g typescript tsx @anthropic-ai/claude-code @openai/codex opencode-ai
+RUN npm install -g pnpm typescript tsx @anthropic-ai/claude-code @openai/codex opencode-ai
 
 RUN mkdir -p /home/amika
 WORKDIR /home/amika
