@@ -261,13 +261,12 @@ var sandboxCreateCmd = &cobra.Command{
 }
 
 var sandboxDeleteCmd = &cobra.Command{
-	Use:     "delete <name>",
+	Use:     "delete <name> [<name>...]",
 	Aliases: []string{"rm", "remove"},
-	Short:   "Delete a sandbox",
-	Long:    `Delete a sandbox and remove its backing container.`,
-	Args:    cobra.ExactArgs(1),
+	Short:   "Delete one or more sandboxes",
+	Long:    `Delete one or more sandboxes and remove their backing containers.`,
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
 		deleteVolumes, _ := cmd.Flags().GetBool("delete-volumes")
 		keepVolumes, _ := cmd.Flags().GetBool("keep-volumes")
 		deleteVolumesSet := cmd.Flags().Changed("delete-volumes")
@@ -287,40 +286,50 @@ var sandboxDeleteCmd = &cobra.Command{
 		}
 		volumeStore := sandbox.NewVolumeStore(volumesFile)
 
-		info, err := store.Get(name)
-		if err != nil {
-			return fmt.Errorf("sandbox %q not found", name)
-		}
+		var errs []string
+		for _, name := range args {
+			info, err := store.Get(name)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
+				continue
+			}
 
-		deleteVolumes, err = resolveDeleteVolumes(
-			volumeStore,
-			name,
-			deleteVolumesSet,
-			keepVolumesSet,
-			bufio.NewReader(cmd.InOrStdin()),
-		)
-		if err != nil {
-			return err
-		}
+			deleteVols, err := resolveDeleteVolumes(
+				volumeStore,
+				name,
+				deleteVolumesSet,
+				keepVolumesSet,
+				bufio.NewReader(cmd.InOrStdin()),
+			)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+				continue
+			}
 
-		if info.Provider == "docker" {
-			if err := sandbox.RemoveDockerSandbox(name); err != nil {
-				return err
+			if info.Provider == "docker" {
+				if err := sandbox.RemoveDockerSandbox(name); err != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+					continue
+				}
+			}
+
+			volumeStatuses, volumeErr := cleanupSandboxVolumes(volumeStore, name, deleteVols, sandbox.RemoveDockerVolume)
+
+			if err := store.Remove(name); err != nil {
+				errs = append(errs, fmt.Sprintf("sandbox %q: container removed but failed to update state: %v", name, err))
+				continue
+			}
+
+			fmt.Printf("Sandbox %q deleted\n", name)
+			for _, line := range volumeStatuses {
+				fmt.Println(line)
+			}
+			if volumeErr != nil {
+				errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, volumeErr))
 			}
 		}
-
-		volumeStatuses, volumeErr := cleanupSandboxVolumes(volumeStore, name, deleteVolumes, sandbox.RemoveDockerVolume)
-
-		if err := store.Remove(name); err != nil {
-			return fmt.Errorf("container removed but failed to update state: %w", err)
-		}
-
-		fmt.Printf("Sandbox %q deleted\n", name)
-		for _, line := range volumeStatuses {
-			fmt.Println(line)
-		}
-		if volumeErr != nil {
-			return volumeErr
+		if len(errs) > 0 {
+			return fmt.Errorf("%s", strings.Join(errs, "\n"))
 		}
 		return nil
 	},
