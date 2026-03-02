@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/sandbox"
 )
 
@@ -19,30 +20,34 @@ type MountSpec struct {
 	IsDir         bool   // true = directory, false = file
 }
 
-// ClaudeMounts returns mount specs for Claude Code configuration files that
-// exist under homeDir. Returns nil if neither ~/.claude/ nor ~/.claude.json
-// exists.
+// ClaudeMounts returns mount specs for Claude Code credential files that
+// exist under homeDir.
 func ClaudeMounts(homeDir string) []MountSpec {
+	return fileMounts(homeDir, auth.ClaudeCredentialPaths())
+}
+
+// OpenCodeMounts returns mount specs for OpenCode credential and config files
+// that exist under homeDir.
+func OpenCodeMounts(homeDir string) []MountSpec {
+	paths := append(auth.OpenCodeCredentialPaths(),
+		filepath.Join(".local", "state", "opencode", "model.json"),
+	)
+	return fileMounts(homeDir, paths)
+}
+
+// CodexMounts returns mount specs for Codex credential files that exist under
+// homeDir.
+func CodexMounts(homeDir string) []MountSpec {
+	return fileMounts(homeDir, auth.CodexCredentialPaths())
+}
+
+// AllMounts returns mount specs for all supported coding agent configurations
+// that exist under homeDir.
+func AllMounts(homeDir string) []MountSpec {
 	var specs []MountSpec
-
-	claudeDir := filepath.Join(homeDir, ".claude")
-	if info, err := os.Stat(claudeDir); err == nil && info.IsDir() {
-		specs = append(specs, MountSpec{
-			HostPath:      claudeDir,
-			ContainerPath: containerHome + "/.claude",
-			IsDir:         true,
-		})
-	}
-
-	claudeJSON := filepath.Join(homeDir, ".claude.json")
-	if info, err := os.Stat(claudeJSON); err == nil && !info.IsDir() {
-		specs = append(specs, MountSpec{
-			HostPath:      claudeJSON,
-			ContainerPath: containerHome + "/.claude.json",
-			IsDir:         false,
-		})
-	}
-
+	specs = append(specs, ClaudeMounts(homeDir)...)
+	specs = append(specs, OpenCodeMounts(homeDir)...)
+	specs = append(specs, CodexMounts(homeDir)...)
 	return specs
 }
 
@@ -60,7 +65,21 @@ func RWCopyMounts(specs []MountSpec) []sandbox.MountBinding {
 	return mounts
 }
 
-// IsAgentPreset returns true for presets that use agent configuration files.
-func IsAgentPreset(preset string) bool {
-	return preset == "claude" || preset == "coder"
+// fileMounts stats each relative path under homeDir and returns a MountSpec
+// for every path that exists as a regular file.
+func fileMounts(homeDir string, relPaths []string) []MountSpec {
+	var specs []MountSpec
+	for _, rel := range relPaths {
+		full := filepath.Join(homeDir, rel)
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		specs = append(specs, MountSpec{
+			HostPath:      full,
+			ContainerPath: containerHome + "/" + rel,
+			IsDir:         false,
+		})
+	}
+	return specs
 }

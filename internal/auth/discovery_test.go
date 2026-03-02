@@ -300,6 +300,46 @@ func TestDiscover_AmikaXDGFiles(t *testing.T) {
 	}
 }
 
+func TestClaudeCredentialPaths(t *testing.T) {
+	got := ClaudeCredentialPaths()
+	want := []string{
+		".claude.json.api",
+		".claude.json",
+		filepath.Join(".claude", ".credentials.json"),
+		".claude-oauth-credentials.json",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCodexCredentialPaths(t *testing.T) {
+	got := CodexCredentialPaths()
+	want := []string{filepath.Join(".codex", "auth.json")}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	if got[0] != want[0] {
+		t.Errorf("[0] = %q, want %q", got[0], want[0])
+	}
+}
+
+func TestOpenCodeCredentialPaths(t *testing.T) {
+	got := OpenCodeCredentialPaths()
+	want := []string{filepath.Join(".local", "share", "opencode", "auth.json")}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	if got[0] != want[0] {
+		t.Errorf("[0] = %q, want %q", got[0], want[0])
+	}
+}
+
 func writeDiscoveryFixture(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
