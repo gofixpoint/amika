@@ -1,112 +1,86 @@
 # Development Testing
 
-This guide is the binary-focused integration smoke plan to confirm Amika still works end-to-end after changes.
+This guide defines the automated test pyramid for Amika and the command flow to run it locally.
 
-## Testing Plan
+## Test Pyramid
 
-Run tests in this order so failures are easier to isolate:
+1. Unit tests: fast, deterministic, no Docker dependency.
+2. Integration tests: command and package behavior across process/runtime boundaries.
+3. Contract tests: lock user-visible CLI behavior and key error contracts.
+4. Docker-backed integration tests: opt-in suites that require Docker.
 
-1. Build and command smoke checks.
-2. `auth` smoke checks.
-3. `materialize` end-to-end with `materialization-scripts/random-tree.py`.
-4. `sandbox` lifecycle end-to-end (Docker required).
-5. Optional preset integration check.
-6. Full automated suite (`go test ./...`).
+## Command Flow
 
-Pass criteria:
+Run tests in this order:
 
-- All commands exit with code `0`.
-- `materialize` produces output files in `destdir`.
-- `sandbox create/list/delete` shows expected lifecycle behavior.
-- `go test ./...` passes.
+1. Build: `make build`
+2. Unit tests: `make test-unit`
+3. Integration tests: `make test-integration`
+4. Contract tests: `make test-contract`
+5. Coverage gate: `make coverage`
 
-If a step fails, capture:
-
-- exact command run
-- exit code
-- stderr/stdout output
-- environment notes (Docker running, host OS, relevant env vars)
-
-## Build
+Run all non-Docker suites with:
 
 ```bash
-go build -o dist/amika ./cmd/amika
+make test-all
 ```
 
-## Command Smoke Checks
-
-These should all succeed and print help/usage information:
+Run CI-equivalent checks with:
 
 ```bash
-./dist/amika --help
-./dist/amika sandbox --help
-./dist/amika materialize --help
-./dist/amika auth --help
-./dist/amika auth extract --help
+make ci
 ```
 
-## Auth Smoke Check
+## Docker-Backed Integration Tests (Opt-in)
 
-Run auth extract in both modes to verify command execution path:
+Docker suites are disabled by default and run only when:
+
+- `AMIKA_RUN_DOCKER_INTEGRATION=1`
+
+Run them with:
 
 ```bash
-./dist/amika auth extract
-./dist/amika auth extract --export
+AMIKA_RUN_DOCKER_INTEGRATION=1 make test-unit
+AMIKA_RUN_DOCKER_INTEGRATION=1 make test-integration
 ```
 
-## Materialize End-to-End (Project Script)
+## Expensive Preset Rebuild Tests (Opt-in)
 
-Use the repository script `materialization-scripts/random-tree.py`:
+The preset image rebuild test requires both Docker integration mode and the expensive toggle:
+
+- `AMIKA_RUN_DOCKER_INTEGRATION=1`
+- `AMIKA_RUN_EXPENSIVE_TESTS=1`
+
+Run with:
 
 ```bash
-tmp="$(mktemp -d)"
-
-./dist/amika materialize \
-  --script ./materialization-scripts/random-tree.py \
-  --destdir "$tmp/out" -- .
+AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 \
+  go test ./cmd/amika -run TestTopMaterialize_PresetAgentsAvailableOnPath -count=1
 ```
 
-Verify files were materialized:
+## Coverage Gates
+
+Coverage thresholds are checked by `scripts/test/check_coverage.sh` and configured in:
+
+- `test/coverage-baseline.env`
+
+Current thresholds:
+
+- `AMIKA_MIN_INTERNAL_COVERAGE=70.0`
+- `AMIKA_MIN_CMD_COVERAGE=35.0`
+
+You can override thresholds temporarily:
 
 ```bash
-find "$tmp/out" -maxdepth 3 -type f | head
+AMIKA_MIN_INTERNAL_COVERAGE=72.0 AMIKA_MIN_CMD_COVERAGE=36.0 make coverage
 ```
 
-## Sandbox Lifecycle End-to-End (Docker Required)
+## Failure Triage Template
 
-```bash
-./dist/amika sandbox create --name amika-smoke --yes
-./dist/amika sandbox list | grep amika-smoke
-./dist/amika sandbox connect amika-smoke
-./dist/amika sandbox delete amika-smoke
-```
+When filing or debugging a failing test, capture:
 
-## Optional Materialize + Preset Check
-
-```bash
-tmp="$(mktemp -d)"
-./dist/amika materialize --preset coder --cmd "echo ok > smoke.txt" --destdir "$tmp/out"
-cat "$tmp/out/smoke.txt"
-```
-
-Expected output:
-
-```text
-ok
-```
-
-## Automated Test Suite
-
-Run the full Go test suite after smoke checks:
-
-```bash
-go test ./...
-```
-
-## Expensive Docker Rebuild Test (Opt-in)
-
-The preset image rebuild integration test is skipped by default. Run it explicitly:
-
-```bash
-AMIKA_RUN_EXPENSIVE_TESTS=1 go test ./cmd/amika -run TestTopMaterialize_PresetAgentsAvailableOnPath -count=1
-```
+1. Exact command run.
+2. Exit code.
+3. Full stdout/stderr.
+4. Whether Docker was available/running.
+5. Relevant environment variables (`AMIKA_RUN_DOCKER_INTEGRATION`, `AMIKA_RUN_EXPENSIVE_TESTS`, coverage overrides).
