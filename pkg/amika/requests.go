@@ -1,0 +1,72 @@
+package amika
+
+// Mount represents a mount binding request or response shape.
+type Mount struct {
+	Type         string
+	Source       string
+	Volume       string
+	Target       string
+	Mode         string
+	SnapshotFrom string
+}
+
+// CreateSandboxRequest describes sandbox creation input.
+type CreateSandboxRequest struct {
+	Provider    string
+	Name        string
+	Image       string
+	Preset      string
+	Mounts      []Mount
+	Volumes     []Mount
+	GitPath     string
+	NoClean     bool
+	Env         []string
+	SetupScript string
+}
+
+// DeleteSandboxRequest describes sandbox deletion input.
+type DeleteSandboxRequest struct {
+	Names         []string
+	DeleteVolumes bool
+	KeepVolumes   bool
+}
+
+// ListSandboxesRequest describes sandbox listing input.
+type ListSandboxesRequest struct{}
+
+// ConnectSandboxRequest describes connect input.
+type ConnectSandboxRequest struct {
+	Name  string
+	Shell string
+}
+
+// MaterializeRequest describes materialization input.
+type MaterializeRequest struct {
+	Script      string
+	ScriptArgs  []string
+	Cmd         string
+	Outdir      string
+	Destdir     string
+	Image       string
+	Preset      string
+	Mounts      []Mount
+	Env         []string
+	Interactive bool
+	SetupScript string
+}
+
+// ListVolumesRequest describes volume listing input.
+type ListVolumesRequest struct{}
+
+// DeleteVolumeRequest describes volume deletion input.
+type DeleteVolumeRequest struct {
+	Names []string
+	Force bool
+}
+
+// AuthExtractRequest describes credential extraction input.
+type AuthExtractRequest struct {
+	WithExport bool
+	HomeDir    string
+	NoOAuth    bool
+}
