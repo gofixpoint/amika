@@ -517,6 +517,33 @@ func parseEpochMillis(raw any) (int64, error) {
 	}
 }
 
+// ClaudeCredentialPaths returns the home-relative paths where Claude Code
+// stores credentials. Callers should join each with a home directory.
+func ClaudeCredentialPaths() []string {
+	return []string{
+		".claude.json.api",
+		".claude.json",
+		filepath.Join(".claude", ".credentials.json"),
+		".claude-oauth-credentials.json",
+	}
+}
+
+// CodexCredentialPaths returns the home-relative paths where Codex stores
+// credentials. Callers should join each with a home directory.
+func CodexCredentialPaths() []string {
+	return []string{
+		filepath.Join(".codex", "auth.json"),
+	}
+}
+
+// OpenCodeCredentialPaths returns the home-relative paths where OpenCode
+// stores credentials. Callers should join each with a home directory.
+func OpenCodeCredentialPaths() []string {
+	return []string{
+		filepath.Join(".local", "share", "opencode", "auth.json"),
+	}
+}
+
 func canonicalProvider(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {

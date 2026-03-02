@@ -6,80 +6,63 @@ import (
 	"testing"
 )
 
-func TestClaudeMounts_BothExist(t *testing.T) {
-	home := t.TempDir()
-	if err := os.Mkdir(filepath.Join(home, ".claude"), 0755); err != nil {
+// writeFixtureFile creates a file at homeDir/rel with parent directories.
+func writeFixtureFile(t *testing.T, homeDir, rel string) {
+	t.Helper()
+	full := filepath.Join(homeDir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(full, []byte("{}"), 0644); err != nil {
 		t.Fatal(err)
-	}
-
-	specs := ClaudeMounts(home)
-	if len(specs) != 2 {
-		t.Fatalf("expected 2 specs, got %d", len(specs))
-	}
-
-	dir := specs[0]
-	if dir.HostPath != filepath.Join(home, ".claude") {
-		t.Errorf("dir HostPath = %q, want %q", dir.HostPath, filepath.Join(home, ".claude"))
-	}
-	if dir.ContainerPath != "/home/amika/.claude" {
-		t.Errorf("dir ContainerPath = %q, want /home/amika/.claude", dir.ContainerPath)
-	}
-	if !dir.IsDir {
-		t.Error("dir IsDir = false, want true")
-	}
-
-	file := specs[1]
-	if file.HostPath != filepath.Join(home, ".claude.json") {
-		t.Errorf("file HostPath = %q, want %q", file.HostPath, filepath.Join(home, ".claude.json"))
-	}
-	if file.ContainerPath != "/home/amika/.claude.json" {
-		t.Errorf("file ContainerPath = %q, want /home/amika/.claude.json", file.ContainerPath)
-	}
-	if file.IsDir {
-		t.Error("file IsDir = true, want false")
 	}
 }
 
-func TestClaudeMounts_OnlyDir(t *testing.T) {
+func TestClaudeMounts_AllExist(t *testing.T) {
 	home := t.TempDir()
-	if err := os.Mkdir(filepath.Join(home, ".claude"), 0755); err != nil {
-		t.Fatal(err)
+	writeFixtureFile(t, home, ".claude.json.api")
+	writeFixtureFile(t, home, ".claude.json")
+	writeFixtureFile(t, home, filepath.Join(".claude", ".credentials.json"))
+	writeFixtureFile(t, home, ".claude-oauth-credentials.json")
+
+	specs := ClaudeMounts(home)
+	if len(specs) != 4 {
+		t.Fatalf("expected 4 specs, got %d", len(specs))
 	}
+
+	wantContainers := []string{
+		"/home/amika/.claude.json.api",
+		"/home/amika/.claude.json",
+		"/home/amika/.claude/.credentials.json",
+		"/home/amika/.claude-oauth-credentials.json",
+	}
+	for i, want := range wantContainers {
+		if specs[i].ContainerPath != want {
+			t.Errorf("specs[%d].ContainerPath = %q, want %q", i, specs[i].ContainerPath, want)
+		}
+		if specs[i].IsDir {
+			t.Errorf("specs[%d].IsDir = true, want false", i)
+		}
+	}
+}
+
+func TestClaudeMounts_SomeExist(t *testing.T) {
+	home := t.TempDir()
+	writeFixtureFile(t, home, ".claude.json")
 
 	specs := ClaudeMounts(home)
 	if len(specs) != 1 {
 		t.Fatalf("expected 1 spec, got %d", len(specs))
-	}
-	if !specs[0].IsDir {
-		t.Error("expected IsDir = true")
-	}
-	if specs[0].ContainerPath != "/home/amika/.claude" {
-		t.Errorf("ContainerPath = %q, want /home/amika/.claude", specs[0].ContainerPath)
-	}
-}
-
-func TestClaudeMounts_OnlyFile(t *testing.T) {
-	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte("{}"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	specs := ClaudeMounts(home)
-	if len(specs) != 1 {
-		t.Fatalf("expected 1 spec, got %d", len(specs))
-	}
-	if specs[0].IsDir {
-		t.Error("expected IsDir = false")
 	}
 	if specs[0].ContainerPath != "/home/amika/.claude.json" {
 		t.Errorf("ContainerPath = %q, want /home/amika/.claude.json", specs[0].ContainerPath)
 	}
+	if specs[0].IsDir {
+		t.Error("IsDir = true, want false")
+	}
 }
 
-func TestClaudeMounts_NeitherExists(t *testing.T) {
+func TestClaudeMounts_NoneExist(t *testing.T) {
 	home := t.TempDir()
 	specs := ClaudeMounts(home)
 	if specs != nil {
@@ -87,64 +70,53 @@ func TestClaudeMounts_NeitherExists(t *testing.T) {
 	}
 }
 
-func TestClaudeMounts_ClaudeIsFile(t *testing.T) {
+func TestClaudeMounts_DirectoryIsSkipped(t *testing.T) {
 	home := t.TempDir()
-	// .claude exists as a regular file, not a directory — should not be included
-	if err := os.WriteFile(filepath.Join(home, ".claude"), []byte("not a dir"), 0644); err != nil {
+	// Create .claude.json as a directory — should be skipped since we expect a file.
+	if err := os.Mkdir(filepath.Join(home, ".claude.json"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	specs := ClaudeMounts(home)
 	if specs != nil {
-		t.Fatalf("expected nil when .claude is a file, got %v", specs)
+		t.Fatalf("expected nil when path is a directory, got %v", specs)
 	}
 }
 
 func TestOpenCodeMounts_AllExist(t *testing.T) {
 	home := t.TempDir()
-	mkdirAll := func(rel string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Join(home, rel), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mkdirAll(".config/opencode")
-	mkdirAll(filepath.Join(".local", "share", "opencode"))
-	mkdirAll(filepath.Join(".local", "state", "opencode"))
+	writeFixtureFile(t, home, filepath.Join(".local", "share", "opencode", "auth.json"))
+	writeFixtureFile(t, home, filepath.Join(".local", "state", "opencode", "model.json"))
 
 	specs := OpenCodeMounts(home)
-	if len(specs) != 3 {
-		t.Fatalf("expected 3 specs, got %d", len(specs))
+	if len(specs) != 2 {
+		t.Fatalf("expected 2 specs, got %d", len(specs))
 	}
 
 	wantContainers := []string{
-		"/home/amika/.config/opencode",
-		"/home/amika/.local/share/opencode",
-		"/home/amika/.local/state/opencode",
+		"/home/amika/.local/share/opencode/auth.json",
+		"/home/amika/.local/state/opencode/model.json",
 	}
 	for i, want := range wantContainers {
 		if specs[i].ContainerPath != want {
 			t.Errorf("specs[%d].ContainerPath = %q, want %q", i, specs[i].ContainerPath, want)
 		}
-		if !specs[i].IsDir {
-			t.Errorf("specs[%d].IsDir = false, want true", i)
+		if specs[i].IsDir {
+			t.Errorf("specs[%d].IsDir = true, want false", i)
 		}
 	}
 }
 
-func TestOpenCodeMounts_SomeExist(t *testing.T) {
+func TestOpenCodeMounts_OnlyAuth(t *testing.T) {
 	home := t.TempDir()
-	// Only create .config/opencode
-	if err := os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	writeFixtureFile(t, home, filepath.Join(".local", "share", "opencode", "auth.json"))
 
 	specs := OpenCodeMounts(home)
 	if len(specs) != 1 {
 		t.Fatalf("expected 1 spec, got %d", len(specs))
 	}
-	if specs[0].ContainerPath != "/home/amika/.config/opencode" {
-		t.Errorf("ContainerPath = %q, want /home/amika/.config/opencode", specs[0].ContainerPath)
+	if specs[0].ContainerPath != "/home/amika/.local/share/opencode/auth.json" {
+		t.Errorf("ContainerPath = %q, want /home/amika/.local/share/opencode/auth.json", specs[0].ContainerPath)
 	}
 }
 
@@ -156,40 +128,35 @@ func TestOpenCodeMounts_NoneExist(t *testing.T) {
 	}
 }
 
-func TestOpenCodeMounts_PathIsFile(t *testing.T) {
+func TestOpenCodeMounts_DirectoryIsSkipped(t *testing.T) {
 	home := t.TempDir()
-	// Create .config/opencode as a file, not a directory
-	if err := os.MkdirAll(filepath.Join(home, ".config"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".config", "opencode"), []byte("not a dir"), 0644); err != nil {
+	// Create auth.json as a directory — should be skipped.
+	if err := os.MkdirAll(filepath.Join(home, ".local", "share", "opencode", "auth.json"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	specs := OpenCodeMounts(home)
 	if specs != nil {
-		t.Fatalf("expected nil when opencode path is a file, got %v", specs)
+		t.Fatalf("expected nil when path is a directory, got %v", specs)
 	}
 }
 
-func TestCodexMounts_DirExists(t *testing.T) {
+func TestCodexMounts_FileExists(t *testing.T) {
 	home := t.TempDir()
-	if err := os.Mkdir(filepath.Join(home, ".codex"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	writeFixtureFile(t, home, filepath.Join(".codex", "auth.json"))
 
 	specs := CodexMounts(home)
 	if len(specs) != 1 {
 		t.Fatalf("expected 1 spec, got %d", len(specs))
 	}
-	if specs[0].HostPath != filepath.Join(home, ".codex") {
-		t.Errorf("HostPath = %q, want %q", specs[0].HostPath, filepath.Join(home, ".codex"))
+	if specs[0].HostPath != filepath.Join(home, ".codex", "auth.json") {
+		t.Errorf("HostPath = %q, want %q", specs[0].HostPath, filepath.Join(home, ".codex", "auth.json"))
 	}
-	if specs[0].ContainerPath != "/home/amika/.codex" {
-		t.Errorf("ContainerPath = %q, want /home/amika/.codex", specs[0].ContainerPath)
+	if specs[0].ContainerPath != "/home/amika/.codex/auth.json" {
+		t.Errorf("ContainerPath = %q, want /home/amika/.codex/auth.json", specs[0].ContainerPath)
 	}
-	if !specs[0].IsDir {
-		t.Error("IsDir = false, want true")
+	if specs[0].IsDir {
+		t.Error("IsDir = true, want false")
 	}
 }
 
@@ -201,31 +168,26 @@ func TestCodexMounts_NotPresent(t *testing.T) {
 	}
 }
 
-func TestCodexMounts_PathIsFile(t *testing.T) {
+func TestCodexMounts_DirectoryIsSkipped(t *testing.T) {
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, ".codex"), []byte("not a dir"), 0644); err != nil {
+	// Create auth.json as a directory — should be skipped.
+	if err := os.MkdirAll(filepath.Join(home, ".codex", "auth.json"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	specs := CodexMounts(home)
 	if specs != nil {
-		t.Fatalf("expected nil when .codex is a file, got %v", specs)
+		t.Fatalf("expected nil when path is a directory, got %v", specs)
 	}
 }
 
 func TestAllMounts_Combined(t *testing.T) {
 	home := t.TempDir()
 
-	// Create one item from each discovery function
-	if err := os.Mkdir(filepath.Join(home, ".claude"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(home, ".codex"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	// Create one file from each agent.
+	writeFixtureFile(t, home, ".claude.json")
+	writeFixtureFile(t, home, filepath.Join(".local", "share", "opencode", "auth.json"))
+	writeFixtureFile(t, home, filepath.Join(".codex", "auth.json"))
 
 	specs := AllMounts(home)
 	if len(specs) != 3 {
@@ -233,13 +195,16 @@ func TestAllMounts_Combined(t *testing.T) {
 	}
 
 	wantContainers := map[string]bool{
-		"/home/amika/.claude":          true,
-		"/home/amika/.config/opencode": true,
-		"/home/amika/.codex":           true,
+		"/home/amika/.claude.json":                    true,
+		"/home/amika/.local/share/opencode/auth.json": true,
+		"/home/amika/.codex/auth.json":                true,
 	}
 	for _, s := range specs {
 		if !wantContainers[s.ContainerPath] {
 			t.Errorf("unexpected ContainerPath %q", s.ContainerPath)
+		}
+		if s.IsDir {
+			t.Errorf("IsDir = true for %q, want false", s.ContainerPath)
 		}
 		delete(wantContainers, s.ContainerPath)
 	}
@@ -250,8 +215,8 @@ func TestAllMounts_Combined(t *testing.T) {
 
 func TestRWCopyMounts(t *testing.T) {
 	specs := []MountSpec{
-		{HostPath: "/home/user/.claude", ContainerPath: "/home/amika/.claude", IsDir: true},
 		{HostPath: "/home/user/.claude.json", ContainerPath: "/home/amika/.claude.json", IsDir: false},
+		{HostPath: "/home/user/.codex/auth.json", ContainerPath: "/home/amika/.codex/auth.json", IsDir: false},
 	}
 
 	mounts := RWCopyMounts(specs)
