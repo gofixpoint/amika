@@ -22,6 +22,11 @@ func NewHandler(service amika.Service) http.Handler {
 	api := humago.New(mux, config)
 	registerHealth(api)
 	registerListSandboxes(api, service)
+	registerCreateSandbox(api, service)
+	registerDeleteSandbox(api, service)
+	registerListVolumes(api, service)
+	registerDeleteVolume(api, service)
+	registerAuthExtract(api, service)
 	registerMaterialize(api, service)
 	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -45,9 +50,7 @@ func registerHealth(api huma.API) {
 	})
 }
 
-type listSandboxesOutput struct {
-	Body amika.ListSandboxesResult
-}
+type listSandboxesOutput struct{ Body amika.ListSandboxesResult }
 
 func registerListSandboxes(api huma.API, service amika.Service) {
 	huma.Get(api, "/v1/sandboxes", func(ctx context.Context, _ *struct{}) (*listSandboxesOutput, error) {
@@ -59,13 +62,76 @@ func registerListSandboxes(api huma.API, service amika.Service) {
 	})
 }
 
-type materializeInput struct {
-	Body amika.MaterializeRequest
+type createSandboxInput struct{ Body amika.CreateSandboxRequest }
+type createSandboxOutput struct{ Body amika.Sandbox }
+
+func registerCreateSandbox(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/sandboxes", func(ctx context.Context, input *createSandboxInput) (*createSandboxOutput, error) {
+		result, err := service.CreateSandbox(ctx, input.Body)
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &createSandboxOutput{Body: result}, nil
+	})
 }
 
-type materializeOutput struct {
-	Body amika.MaterializeResult
+type deleteSandboxInput struct {
+	Name string `path:"name"`
 }
+type deleteSandboxOutput struct{ Body amika.DeleteSandboxResult }
+
+func registerDeleteSandbox(api huma.API, service amika.Service) {
+	huma.Delete(api, "/v1/sandboxes/{name}", func(ctx context.Context, input *deleteSandboxInput) (*deleteSandboxOutput, error) {
+		result, err := service.DeleteSandbox(ctx, amika.DeleteSandboxRequest{Names: []string{input.Name}})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &deleteSandboxOutput{Body: result}, nil
+	})
+}
+
+type listVolumesOutput struct{ Body amika.ListVolumesResult }
+
+func registerListVolumes(api huma.API, service amika.Service) {
+	huma.Get(api, "/v1/volumes", func(ctx context.Context, _ *struct{}) (*listVolumesOutput, error) {
+		result, err := service.ListVolumes(ctx, amika.ListVolumesRequest{})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &listVolumesOutput{Body: result}, nil
+	})
+}
+
+type deleteVolumeInput struct {
+	Name string `path:"name"`
+}
+type deleteVolumeOutput struct{ Body amika.DeleteVolumeResult }
+
+func registerDeleteVolume(api huma.API, service amika.Service) {
+	huma.Delete(api, "/v1/volumes/{name}", func(ctx context.Context, input *deleteVolumeInput) (*deleteVolumeOutput, error) {
+		result, err := service.DeleteVolume(ctx, amika.DeleteVolumeRequest{Names: []string{input.Name}})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &deleteVolumeOutput{Body: result}, nil
+	})
+}
+
+type authExtractInput struct{ Body amika.AuthExtractRequest }
+type authExtractOutput struct{ Body amika.AuthExtractResult }
+
+func registerAuthExtract(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/auth/extract", func(ctx context.Context, input *authExtractInput) (*authExtractOutput, error) {
+		result, err := service.ExtractAuth(ctx, input.Body)
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &authExtractOutput{Body: result}, nil
+	})
+}
+
+type materializeInput struct{ Body amika.MaterializeRequest }
+type materializeOutput struct{ Body amika.MaterializeResult }
 
 func registerMaterialize(api huma.API, service amika.Service) {
 	huma.Post(api, "/v1/materialize", func(ctx context.Context, input *materializeInput) (*materializeOutput, error) {
