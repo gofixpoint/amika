@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gofixpoint/amika/internal/agentconfig"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -76,26 +77,73 @@ Examples:
 			return err
 		}
 
-		// Auto-mount host Claude config for the claude preset
-		if preset == "claude" || preset == "coder" {
+		if agentconfig.IsAgentPreset(preset) {
 			homeDir, err := os.UserHomeDir()
 			if err == nil {
-				claudeDir := filepath.Join(homeDir, ".claude")
-				if _, err := os.Stat(claudeDir); err == nil {
-					mounts = append(mounts, sandbox.MountBinding{
-						Source: claudeDir,
-						Target: "/root/.claude",
-						Mode:   "rw",
-					})
-					claudeJSON := filepath.Join(homeDir, ".claude.json")
-					if _, err := os.Stat(claudeJSON); err == nil {
-						mounts = append(mounts, sandbox.MountBinding{
-							Source: claudeJSON,
-							Target: "/root/.claude.json",
-							Mode:   "rw",
-						})
-					}
+				agentMounts := agentconfig.RWCopyMounts(agentconfig.ClaudeMounts(homeDir))
+				mounts = append(mounts, agentMounts...)
+			}
+		}
+
+		// Process rwcopy mounts into runtime mounts with ephemeral cleanup
+		var runtimeMounts []sandbox.MountBinding
+		var ephemeralVolumes []string
+		var ephemeralFileDirs []string
+		defer func() {
+			for _, vol := range ephemeralVolumes {
+				_ = sandbox.RemoveDockerVolume(vol)
+			}
+			for _, dir := range ephemeralFileDirs {
+				_ = os.RemoveAll(dir)
+			}
+		}()
+
+		for _, m := range mounts {
+			if m.Mode != "rwcopy" {
+				runtimeMounts = append(runtimeMounts, m)
+				continue
+			}
+
+			stat, err := os.Stat(m.Source)
+			if err != nil {
+				return fmt.Errorf("rwcopy source %q is not accessible: %w", m.Source, err)
+			}
+
+			if stat.IsDir() {
+				volumeName := generateRWCopyVolumeName("materialize", m.Target)
+				if err := sandbox.CreateDockerVolume(volumeName); err != nil {
+					return err
 				}
+				ephemeralVolumes = append(ephemeralVolumes, volumeName)
+
+				if err := sandbox.CopyHostDirToVolume(volumeName, m.Source); err != nil {
+					return err
+				}
+
+				runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
+					Type:   "volume",
+					Volume: volumeName,
+					Target: m.Target,
+					Mode:   "rw",
+				})
+			} else {
+				copyDir, err := os.MkdirTemp("", "amika-materialize-rwcopy-*")
+				if err != nil {
+					return fmt.Errorf("failed to create temp dir for rwcopy file: %w", err)
+				}
+				ephemeralFileDirs = append(ephemeralFileDirs, copyDir)
+
+				copyPath := filepath.Join(copyDir, filepath.Base(m.Source))
+				if err := copyFile(m.Source, copyPath); err != nil {
+					return fmt.Errorf("failed to copy file for rwcopy mount %q: %w", m.Source, err)
+				}
+
+				runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
+					Type:   "bind",
+					Source: copyPath,
+					Target: m.Target,
+					Mode:   "rw",
+				})
 			}
 		}
 
@@ -132,9 +180,18 @@ Examples:
 			dockerArgs = append(dockerArgs, "-v", tmpDir+":"+containerOutdir)
 		}
 
-		// User mounts
-		for _, m := range mounts {
-			vol := m.Source + ":" + m.Target
+		// User and agent config mounts
+		for _, m := range runtimeMounts {
+			var src string
+			if m.Type == "volume" {
+				src = m.Volume
+			} else {
+				src = m.Source
+			}
+			if src == "" || m.Target == "" {
+				continue
+			}
+			vol := src + ":" + m.Target
 			if m.Mode == "ro" {
 				vol += ":ro"
 			}
