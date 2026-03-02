@@ -94,10 +94,10 @@ var sandboxCreateCmd = &cobra.Command{
 			gitMountInfo = &info
 			mounts = append(mounts, info.Mount)
 		}
-		if agentconfig.IsAgentPreset(preset) {
+		{
 			homeDir, err := os.UserHomeDir()
 			if err == nil {
-				agentMounts := agentconfig.RWCopyMounts(agentconfig.ClaudeMounts(homeDir))
+				agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
 				mounts = append(mounts, agentMounts...)
 			}
 		}
