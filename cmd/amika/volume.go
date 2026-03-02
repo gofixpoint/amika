@@ -58,12 +58,11 @@ var volumeListCmd = &cobra.Command{
 }
 
 var volumeDeleteCmd = &cobra.Command{
-	Use:     "delete <name>",
+	Use:     "delete <name> [<name>...]",
 	Aliases: []string{"rm", "remove"},
-	Short:   "Delete a tracked volume",
-	Args:    cobra.ExactArgs(1),
+	Short:   "Delete one or more tracked volumes",
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
 		force, _ := cmd.Flags().GetBool("force")
 
 		volumesFile, err := config.VolumesStateFile()
@@ -71,10 +70,18 @@ var volumeDeleteCmd = &cobra.Command{
 			return err
 		}
 		store := sandbox.NewVolumeStore(volumesFile)
-		if err := deleteTrackedVolume(store, name, force, sandbox.RemoveDockerVolume); err != nil {
-			return err
+
+		var errs []string
+		for _, name := range args {
+			if err := deleteTrackedVolume(store, name, force, sandbox.RemoveDockerVolume); err != nil {
+				errs = append(errs, fmt.Sprintf("volume %q: %v", name, err))
+				continue
+			}
+			fmt.Printf("Volume %q deleted\n", name)
 		}
-		fmt.Printf("Volume %q deleted\n", name)
+		if len(errs) > 0 {
+			return fmt.Errorf("%s", strings.Join(errs, "\n"))
+		}
 		return nil
 	},
 }
