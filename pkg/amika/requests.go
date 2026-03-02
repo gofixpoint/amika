@@ -12,16 +12,17 @@ type Mount struct {
 
 // CreateSandboxRequest describes sandbox creation input.
 type CreateSandboxRequest struct {
-	Provider    string
-	Name        string
-	Image       string
-	Preset      string
-	Mounts      []Mount
-	Volumes     []Mount
-	GitPath     string
-	NoClean     bool
-	Env         []string
-	SetupScript string
+	Provider        string
+	Name            string
+	Image           string
+	Preset          string
+	Mounts          []Mount
+	Volumes         []Mount
+	GitPath         string
+	NoClean         bool
+	Env             []string
+	SetupScript     string
+	SetupScriptText string
 }
 
 // DeleteSandboxRequest describes sandbox deletion input.

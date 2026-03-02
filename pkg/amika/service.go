@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gofixpoint/amika/internal/auth"
@@ -76,9 +77,23 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	} else if _, err := s.sandboxes.Get(name); err == nil {
 		return Sandbox{}, fmt.Errorf("%w: sandbox %q already exists", ErrInvalidArgument, name)
 	}
+	if req.SetupScript != "" && req.SetupScriptText != "" {
+		return Sandbox{}, fmt.Errorf("%w: SetupScript and SetupScriptText are mutually exclusive", ErrInvalidArgument)
+	}
+
 	mounts := toSandboxMountBindings(req.Mounts, req.Volumes)
+	cleanupSetupScript := func() {}
+	setupScriptMount, cleanup, err := resolveSetupScriptMount(name, req.SetupScript, req.SetupScriptText)
+	if err != nil {
+		return Sandbox{}, err
+	}
+	if setupScriptMount != nil {
+		mounts = append(mounts, *setupScriptMount)
+		cleanupSetupScript = cleanup
+	}
 	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env)
 	if err != nil {
+		cleanupSetupScript()
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrDependency, err)
 	}
 	info := sandbox.Info{Name: name, Provider: provider, ContainerID: containerID, Image: req.Image, CreatedAt: time.Now().UTC().Format(time.RFC3339), Preset: req.Preset, Mounts: mounts, Env: req.Env}
@@ -241,6 +256,65 @@ func toSandboxMountBindings(mounts []Mount, volumes []Mount) []sandbox.MountBind
 		out = append(out, sandbox.MountBinding{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
 	}
 	return out
+}
+
+func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sandbox.MountBinding, func(), error) {
+	const setupScriptTarget = "/opt/setup.sh"
+
+	if setupScriptPath != "" {
+		absSetupScript, err := filepath.Abs(setupScriptPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: failed to resolve SetupScript path %q: %v", ErrInvalidArgument, setupScriptPath, err)
+		}
+		if _, err := os.Stat(absSetupScript); err != nil {
+			return nil, nil, fmt.Errorf("%w: SetupScript %q is not accessible: %v", ErrInvalidArgument, absSetupScript, err)
+		}
+		return &sandbox.MountBinding{
+			Type:   "bind",
+			Source: absSetupScript,
+			Target: setupScriptTarget,
+			Mode:   "ro",
+		}, func() {}, nil
+	}
+	if setupScriptText == "" {
+		return nil, func() {}, nil
+	}
+
+	stateDir, err := config.StateDir()
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: resolve state directory for SetupScriptText: %v", ErrInternal, err)
+	}
+	setupScriptDir := filepath.Join(stateDir, "setup-scripts")
+	if err := os.MkdirAll(setupScriptDir, 0o755); err != nil {
+		return nil, nil, fmt.Errorf("%w: create setup scripts directory: %v", ErrInternal, err)
+	}
+
+	prefix := "inline-setup-"
+	if trimmedName := strings.TrimSpace(name); trimmedName != "" {
+		safeName := strings.NewReplacer("/", "-", "\\", "-", "*", "-").Replace(trimmedName)
+		prefix += safeName + "-"
+	}
+	tmpFile, err := os.CreateTemp(setupScriptDir, prefix+"*.sh")
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: create SetupScriptText file: %v", ErrInternal, err)
+	}
+	defer tmpFile.Close()
+
+	if _, err := tmpFile.WriteString(setupScriptText); err != nil {
+		_ = os.Remove(tmpFile.Name())
+		return nil, nil, fmt.Errorf("%w: write SetupScriptText file: %v", ErrInternal, err)
+	}
+	if err := tmpFile.Chmod(0o644); err != nil {
+		_ = os.Remove(tmpFile.Name())
+		return nil, nil, fmt.Errorf("%w: set permissions on SetupScriptText file: %v", ErrInternal, err)
+	}
+
+	return &sandbox.MountBinding{
+		Type:   "bind",
+		Source: tmpFile.Name(),
+		Target: setupScriptTarget,
+		Mode:   "ro",
+	}, func() { _ = os.Remove(tmpFile.Name()) }, nil
 }
 
 type initErrorService struct{ err error }

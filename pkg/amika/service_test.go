@@ -57,6 +57,20 @@ func TestCreateSandbox_DuplicateName(t *testing.T) {
 	}
 }
 
+func TestCreateSandbox_SetupScriptAndTextMutuallyExclusive(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	svc := NewService(Options{})
+	_, err := svc.CreateSandbox(context.Background(), CreateSandboxRequest{
+		Provider:        "docker",
+		Name:            "sb",
+		SetupScript:     "/tmp/setup.sh",
+		SetupScriptText: "#!/usr/bin/env bash\necho hi\n",
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected invalid argument, got %v", err)
+	}
+}
+
 func TestDeleteSandbox_NotFound(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	svc := NewService(Options{})
