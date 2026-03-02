@@ -23,7 +23,7 @@ func (stubDocker) CopyHostDirToVolume(string, string) error { return nil }
 type stubSandboxStore struct{}
 
 func (stubSandboxStore) Save(ports.SandboxRecord) error { return nil }
-func (stubSandboxStore) Get(name string) (ports.SandboxRecord, error) {
+func (stubSandboxStore) Get(_ string) (ports.SandboxRecord, error) {
 	return ports.SandboxRecord{}, errors.New("not found")
 }
 func (stubSandboxStore) Remove(string) error                  { return nil }
