@@ -41,3 +41,7 @@ Amika is a Go CLI tool. The project uses standard Go tooling with a Makefile for
 - Linting uses [revive](https://github.com/mgechev/revive) — config in `revive.toml`
 - All exported symbols must have doc comments (enforced by the `exported` rule)
 - No external dependencies need to be installed for linting; `make lint` uses `go run`
+
+## Cursor Cloud specific instructions
+
+See [AGENTS.cursor.md](AGENTS.cursor.md).
