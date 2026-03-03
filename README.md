@@ -103,9 +103,7 @@ context without copy-paste.
 
 ### `amika materialize`
 
-Execute a script or command and copy outputs to your filesystem. By default, all
-scripts run inside isolated sandboxes so they cannot accidentally overwrite
-files on your computer.
+Execute a script or command in an isolated Docker container and copy outputs to your filesystem.
 
 ```bash
 # Run a script, copy results to a destination
@@ -114,105 +112,48 @@ amika materialize --script ./pull-data.sh --destdir ./output
 # Run an inline command
 amika materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
 
-# Specify which directory to copy from inside the sandbox
-amika materialize --script ./transform.sh --outdir /app/results --destdir ./output
+# Run interactively (e.g. launch Claude Code inside a container)
+amika materialize -i --cmd claude --mount $(pwd):/workspace
 ```
 
-### `amika sandbox create|delete|list|connect`
+### `amika sandbox create|list|connect|delete`
 
 Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 ```bash
-# Create a sandbox with mounts
+# Create a sandbox with mounts (mode defaults to rwcopy)
 amika sandbox create --name dev-sandbox \
-  --image ubuntu:latest \
   --mount ./src:/workspace/src:ro \
   --mount ./out:/workspace/out
 
-# Mount the current git repository to /home/amika/workspace/{repo_name}
-# Uses a clean snapshot by default (committed HEAD content)
+# Mount the current git repo into the sandbox
 amika sandbox create --name dev-sandbox --git
 
-# Mount repo containing the specified path
-amika sandbox create --name dev-sandbox --git ./src
-
-# Include untracked working-tree files in the snapshot
-amika sandbox create --name dev-sandbox --git --no-clean
-
-# Attach an existing tracked volume
-amika sandbox create --name dev-sandbox-2 \
-  --volume amika-rwcopy-dev-sandbox-workspace-out-123:/workspace/out:rw
-
-# List running sandboxes
+# List, connect, delete
 amika sandbox list
-
-# Connect to a sandbox console (zsh by default, starting in /home/amika)
 amika sandbox connect dev-sandbox
-
-# Connect using a different shell
-amika sandbox connect dev-sandbox --shell bash
-
-# Delete a sandbox (preserves associated volumes by default)
 amika sandbox delete dev-sandbox
-
-# Delete sandbox and also delete associated unreferenced volumes
-amika sandbox delete dev-sandbox --delete-volumes
 ```
-
-`--mount` modes:
-
-- `ro`: read-only bind mount from host
-- `rw`: read-write bind mount from host (writes sync to host)
-- `rwcopy`: read-write snapshot in Docker volume (default; no host sync back)
-
-Preferred in-sandbox workspace directory: `/home/amika/workspace`.
-When using `--git`, Amika mounts the detected repository to
-`/home/amika/workspace/{repo_name}`.
 
 ### `amika volume list|delete`
 
 Inspect and delete tracked Docker volumes used by sandboxes.
 
 ```bash
-# List tracked volumes and usage
 amika volume list
-
-# Delete an unused volume
 amika volume delete my-volume
-
-# Force delete even if referenced by sandboxes
-amika volume delete my-volume --force
 ```
 
 ### `amika auth extract`
 
-Discover locally stored credentials and print shell environment assignments.
+Discover locally stored credentials from Claude Code, Codex, OpenCode, and Amp.
 
 ```bash
-# Print assignments
 amika auth extract
-
-# Export for current shell session
 eval "$(amika auth extract --export)"
-
-# Use an alternate home directory for discovery
-amika auth extract --homedir /tmp/test-home --no-oauth
 ```
 
-### `amika v0 mount|unmount`
-
-Mount and unmount directories with fine-grained access control.
-
-```bash
-# Mount a directory read-only
-amika v0 mount ./data /mnt/data --mode ro
-
-# Mount with overlay (writes don't affect source)
-amika v0 mount ./data /mnt/data --mode overlay
-
-# Unmount
-amika v0 unmount /mnt/data
-```
+For the full flag reference, see [docs/cli-reference.md](docs/cli-reference.md). For credential discovery details, see [docs/auth.md](docs/auth.md). For preset images, see [docs/presets.md](docs/presets.md).
 
 ## Roadmap
 

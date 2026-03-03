@@ -1,0 +1,275 @@
+# CLI Reference
+
+Complete reference for all `amika` commands, flags, and environment variables.
+
+## `amika materialize`
+
+Run a script or command in an ephemeral Docker container and copy outputs to a destination directory.
+
+The container runs with working directory `/home/amika/workspace`. Exactly one of `--script` or `--cmd` must be specified.
+
+```bash
+# Run a script, copy results to a destination
+amika materialize --script ./pull-data.sh --destdir ./output
+
+# Run an inline command
+amika materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
+
+# Specify which container directory to copy from
+amika materialize --script ./transform.sh --outdir /app/results --destdir ./output
+
+# Run interactively (e.g. launch Claude Code inside the container)
+amika materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...
+
+# Use a preset image
+amika materialize --preset claude --cmd "claude --help" --destdir /tmp/out
+
+# Run a setup script before the main command
+amika materialize --setup-script ./install-deps.sh --cmd "echo done" --destdir /tmp/out
+```
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--script <path>` | | Path to the script to execute (mutually exclusive with `--cmd`) |
+| `--cmd <string>` | | Bash command string to execute (mutually exclusive with `--script`) |
+| `--outdir <path>` | workdir | Container directory to copy from. Absolute paths are used as-is; relative paths resolve from workdir |
+| `--destdir <path>` | **(required)** | Host directory where output files are copied |
+| `--image <image>` | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`) |
+| `--preset <name>` | | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
+| `--mount <spec>` | | Mount a host directory (`source:target[:mode]`, mode defaults to `rw`). Repeatable |
+| `--env <KEY=VALUE>` | | Set environment variable in the container. Repeatable |
+| `-i`, `--interactive` | `false` | Run interactively with TTY (for programs like `claude`) |
+| `--setup-script <path>` | | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
+
+Script arguments can be passed after `--`:
+
+```bash
+amika materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
+```
+
+---
+
+## `amika sandbox`
+
+Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
+
+### `amika sandbox create`
+
+Create a new sandbox.
+
+```bash
+# Minimal — auto-generates a name, uses the coder preset image
+amika sandbox create --yes
+
+# Named sandbox with mounts
+amika sandbox create --name dev-sandbox \
+  --mount ./src:/workspace/src:ro \
+  --mount ./out:/workspace/out
+
+# Mount the current git repo (clean clone by default)
+amika sandbox create --name dev-sandbox --git
+
+# Mount git repo with untracked/uncommitted files included
+amika sandbox create --name dev-sandbox --git --no-clean
+
+# Mount git repo containing a specific path
+amika sandbox create --name dev-sandbox --git ./src
+
+# Use the claude preset image
+amika sandbox create --name claude-box --preset claude
+
+# Use a custom Docker image
+amika sandbox create --name custom-box --image myimage:latest
+
+# Attach an existing tracked volume
+amika sandbox create --name dev-sandbox-2 \
+  --volume amika-rwcopy-dev-sandbox-workspace-out-123:/workspace/out:rw
+
+# Set environment variables
+amika sandbox create --name dev-sandbox --env MY_KEY=my_value
+
+# Create and immediately connect
+amika sandbox create --name dev-sandbox --connect
+
+# Run a setup script on container start
+amika sandbox create --name dev-sandbox --setup-script ./install-deps.sh
+```
+
+#### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--name <name>` | auto-generated | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`) |
+| `--provider <name>` | `docker` | Sandbox provider (only `docker` is currently supported) |
+| `--image <image>` | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`) |
+| `--preset <name>` | | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
+| `--mount <spec>` | | Mount a host path (`source:target[:mode]`, mode defaults to `rwcopy`). Repeatable |
+| `--volume <spec>` | | Mount an existing named volume (`name:target[:mode]`, mode defaults to `rw`). Repeatable |
+| `--git [path]` | | Mount the git repo root (or repo containing `path`) to `/home/amika/workspace/{repo}`. Uses a clean clone by default |
+| `--no-clean` | `false` | With `--git`, include untracked/uncommitted files instead of a clean clone |
+| `--env <KEY=VALUE>` | | Set environment variable. Repeatable |
+| `--yes` | `false` | Skip mount confirmation prompt |
+| `--connect` | `false` | Connect to the sandbox shell immediately after creation |
+| `--setup-script <path>` | | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
+
+#### Mount modes
+
+| Mode | Behavior |
+|------|----------|
+| `ro` | Read-only bind mount from host |
+| `rw` | Read-write bind mount from host (writes sync back to host) |
+| `rwcopy` | Read-write snapshot in a Docker volume (default for `--mount`). Host files are copied in; writes stay in the volume and do not sync back |
+
+### `amika sandbox list`
+
+List all tracked sandboxes.
+
+```bash
+amika sandbox list
+```
+
+Output columns: `NAME`, `PROVIDER`, `IMAGE`, `CREATED`.
+
+### `amika sandbox connect`
+
+Connect to a running sandbox container with an interactive shell.
+
+```bash
+# Connect with default shell (zsh)
+amika sandbox connect dev-sandbox
+
+# Connect with a different shell
+amika sandbox connect dev-sandbox --shell bash
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--shell <shell>` | `zsh` | Shell to run in the sandbox container |
+
+The shell starts in `/home/amika`.
+
+### `amika sandbox delete`
+
+Delete one or more sandboxes and their backing containers. Aliases: `rm`, `remove`.
+
+```bash
+# Delete a sandbox (prompts about exclusive volumes)
+amika sandbox delete dev-sandbox
+
+# Delete multiple sandboxes
+amika sandbox delete sandbox-1 sandbox-2
+
+# Also delete associated unreferenced volumes
+amika sandbox delete dev-sandbox --delete-volumes
+
+# Keep all volumes without prompting
+amika sandbox delete dev-sandbox --keep-volumes
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--delete-volumes` | `false` | Delete associated volumes that are no longer referenced by other sandboxes |
+| `--keep-volumes` | `false` | Keep associated volumes without prompting, even if this sandbox is the only reference |
+
+When neither flag is set and the sandbox is the sole reference for a volume, you will be prompted to decide.
+
+---
+
+## `amika volume`
+
+Manage tracked Docker volumes used by sandboxes.
+
+### `amika volume list`
+
+List all tracked volumes (both directory-backed and file-backed).
+
+```bash
+amika volume list
+```
+
+Output columns: `NAME`, `TYPE`, `CREATED`, `IN_USE`, `SANDBOXES`, `SOURCE`.
+
+### `amika volume delete`
+
+Delete one or more tracked volumes. Aliases: `rm`, `remove`.
+
+```bash
+# Delete an unused volume
+amika volume delete my-volume
+
+# Force delete even if referenced by sandboxes
+amika volume delete my-volume --force
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--force` | `false` | Delete volume even if still referenced by sandboxes |
+
+---
+
+## `amika auth`
+
+Authentication credential commands.
+
+### `amika auth extract`
+
+Discover locally stored credentials from multiple sources and print shell environment assignments.
+
+```bash
+# Print assignments
+amika auth extract
+
+# Export for current shell session
+eval "$(amika auth extract --export)"
+
+# Use an alternate home directory
+amika auth extract --homedir /tmp/test-home
+
+# Skip OAuth credential sources
+amika auth extract --no-oauth
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--export` | `false` | Prefix each line with `export` |
+| `--homedir <path>` | | Override home directory used for credential discovery |
+| `--no-oauth` | `false` | Skip OAuth credential sources |
+
+See [auth.md](auth.md) for details on supported credential sources and priority.
+
+---
+
+## `amika v0`
+
+Legacy commands using local bindfs/macFUSE mounts. These are hidden from `--help` by default.
+
+### `amika v0 mount <src> <target> --mode <mode>`
+
+Mount a source directory to a target path.
+
+| Mode | Behavior |
+|------|----------|
+| `ro` | Read-only via bindfs |
+| `rw` | Read-write via bindfs |
+| `overlay` | Copies source to a temp directory and mounts that; writes are isolated |
+
+### `amika v0 unmount <target>`
+
+Unmount a previously mounted target and clean up resources.
+
+### `amika v0 materialize`
+
+Legacy local sandbox materialize (non-Docker). Runs scripts in a temporary directory on the host.
+
+---
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AMIKA_STATE_DIRECTORY` | Override the default state directory (`~/.local/state/amika`). All state files are stored here when set |
+| `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets. E.g. setting to `myregistry/amika` produces `myregistry/amika-coder:latest` |
+| `AMIKA_SANDBOX_ROOT` | Set inside materialize containers, pointing to the sandbox root directory |
+| `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test` |
