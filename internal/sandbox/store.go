@@ -18,6 +18,14 @@ type MountBinding struct {
 	SnapshotFrom string `json:"snapshotFrom,omitempty"`
 }
 
+// PortBinding represents a published container port.
+type PortBinding struct {
+	HostIP        string `json:"hostIp,omitempty"`
+	HostPort      int    `json:"hostPort"`
+	ContainerPort int    `json:"containerPort"`
+	Protocol      string `json:"protocol,omitempty"`
+}
+
 // Info represents a tracked sandbox.
 type Info struct {
 	Name        string         `json:"name"`
@@ -28,6 +36,7 @@ type Info struct {
 	Preset      string         `json:"preset,omitempty"`
 	Mounts      []MountBinding `json:"mounts,omitempty"`
 	Env         []string       `json:"env,omitempty"`
+	Ports       []PortBinding  `json:"ports,omitempty"`
 }
 
 // Store manages sandbox state persistence.

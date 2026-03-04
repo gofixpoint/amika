@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gofixpoint/amika/internal/auth"
@@ -76,16 +77,54 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	} else if _, err := s.sandboxes.Get(name); err == nil {
 		return Sandbox{}, fmt.Errorf("%w: sandbox %q already exists", ErrInvalidArgument, name)
 	}
-	mounts := toSandboxMountBindings(req.Mounts, req.Volumes)
-	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env)
+	if req.SetupScript != "" && req.SetupScriptText != "" {
+		return Sandbox{}, fmt.Errorf("%w: SetupScript and SetupScriptText are mutually exclusive", ErrInvalidArgument)
+	}
+	ports, err := normalizePortBindings(req.Ports)
 	if err != nil {
+		return Sandbox{}, err
+	}
+
+	mounts := toSandboxMountBindings(req.Mounts, req.Volumes)
+	cleanupSetupScript := func() {}
+	setupScriptMount, cleanup, err := resolveSetupScriptMount(name, req.SetupScript, req.SetupScriptText)
+	if err != nil {
+		return Sandbox{}, err
+	}
+	if setupScriptMount != nil {
+		mounts = append(mounts, *setupScriptMount)
+		cleanupSetupScript = cleanup
+	}
+	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, toSandboxPortBindings(ports))
+	if err != nil {
+		cleanupSetupScript()
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrDependency, err)
 	}
-	info := sandbox.Info{Name: name, Provider: provider, ContainerID: containerID, Image: req.Image, CreatedAt: time.Now().UTC().Format(time.RFC3339), Preset: req.Preset, Mounts: mounts, Env: req.Env}
+	info := sandbox.Info{
+		Name:        name,
+		Provider:    provider,
+		ContainerID: containerID,
+		Image:       req.Image,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Preset:      req.Preset,
+		Mounts:      mounts,
+		Env:         req.Env,
+		Ports:       toSandboxPortBindings(ports),
+	}
 	if err := s.sandboxes.Save(info); err != nil {
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
-	return Sandbox{Name: info.Name, Provider: info.Provider, ContainerID: info.ContainerID, Image: info.Image, CreatedAt: info.CreatedAt, Preset: info.Preset, Mounts: toMounts(info.Mounts), Env: info.Env}, nil
+	return Sandbox{
+		Name:        info.Name,
+		Provider:    info.Provider,
+		ContainerID: info.ContainerID,
+		Image:       info.Image,
+		CreatedAt:   info.CreatedAt,
+		Preset:      info.Preset,
+		Mounts:      toMounts(info.Mounts),
+		Env:         info.Env,
+		Ports:       toPortBindings(info.Ports),
+	}, nil
 }
 func (s *serviceImpl) DeleteSandbox(_ context.Context, req DeleteSandboxRequest) (DeleteSandboxResult, error) {
 	deleted := make([]string, 0, len(req.Names))
@@ -138,7 +177,17 @@ func (s *serviceImpl) ListSandboxes(context.Context, ListSandboxesRequest) (List
 	}
 	out := make([]Sandbox, 0, len(items))
 	for _, it := range items {
-		out = append(out, Sandbox{Name: it.Name, Provider: it.Provider, ContainerID: it.ContainerID, Image: it.Image, CreatedAt: it.CreatedAt, Preset: it.Preset, Mounts: toMounts(it.Mounts), Env: it.Env})
+		out = append(out, Sandbox{
+			Name:        it.Name,
+			Provider:    it.Provider,
+			ContainerID: it.ContainerID,
+			Image:       it.Image,
+			CreatedAt:   it.CreatedAt,
+			Preset:      it.Preset,
+			Mounts:      toMounts(it.Mounts),
+			Env:         it.Env,
+			Ports:       toPortBindings(it.Ports),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return ListSandboxesResult{Items: out}, nil
@@ -241,6 +290,127 @@ func toSandboxMountBindings(mounts []Mount, volumes []Mount) []sandbox.MountBind
 		out = append(out, sandbox.MountBinding{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
 	}
 	return out
+}
+
+func normalizePortBindings(in []PortBinding) ([]PortBinding, error) {
+	out := make([]PortBinding, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, p := range in {
+		hostIP := strings.TrimSpace(p.HostIP)
+		if hostIP == "" {
+			hostIP = "127.0.0.1"
+		}
+		if p.HostPort < 1 || p.HostPort > 65535 {
+			return nil, fmt.Errorf("%w: HostPort %d must be between 1 and 65535", ErrInvalidArgument, p.HostPort)
+		}
+		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
+			return nil, fmt.Errorf("%w: ContainerPort %d must be between 1 and 65535", ErrInvalidArgument, p.ContainerPort)
+		}
+		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		if protocol != "tcp" && protocol != "udp" {
+			return nil, fmt.Errorf("%w: Protocol %q must be tcp or udp", ErrInvalidArgument, p.Protocol)
+		}
+		key := fmt.Sprintf("%s:%d/%s", hostIP, p.HostPort, protocol)
+		if seen[key] {
+			return nil, fmt.Errorf("%w: duplicate published port binding %s", ErrInvalidArgument, key)
+		}
+		seen[key] = true
+		out = append(out, PortBinding{
+			HostIP:        hostIP,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      protocol,
+		})
+	}
+	return out, nil
+}
+
+func toSandboxPortBindings(in []PortBinding) []sandbox.PortBinding {
+	out := make([]sandbox.PortBinding, 0, len(in))
+	for _, p := range in {
+		out = append(out, sandbox.PortBinding{
+			HostIP:        p.HostIP,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      p.Protocol,
+		})
+	}
+	return out
+}
+
+func toPortBindings(in []sandbox.PortBinding) []PortBinding {
+	out := make([]PortBinding, 0, len(in))
+	for _, p := range in {
+		out = append(out, PortBinding{
+			HostIP:        p.HostIP,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      p.Protocol,
+		})
+	}
+	return out
+}
+
+func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sandbox.MountBinding, func(), error) {
+	const setupScriptTarget = "/opt/setup.sh"
+
+	if setupScriptPath != "" {
+		absSetupScript, err := filepath.Abs(setupScriptPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: failed to resolve SetupScript path %q: %v", ErrInvalidArgument, setupScriptPath, err)
+		}
+		if _, err := os.Stat(absSetupScript); err != nil {
+			return nil, nil, fmt.Errorf("%w: SetupScript %q is not accessible: %v", ErrInvalidArgument, absSetupScript, err)
+		}
+		return &sandbox.MountBinding{
+			Type:   "bind",
+			Source: absSetupScript,
+			Target: setupScriptTarget,
+			Mode:   "ro",
+		}, func() {}, nil
+	}
+	if setupScriptText == "" {
+		return nil, func() {}, nil
+	}
+
+	stateDir, err := config.StateDir()
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: resolve state directory for SetupScriptText: %v", ErrInternal, err)
+	}
+	setupScriptDir := filepath.Join(stateDir, "setup-scripts")
+	if err := os.MkdirAll(setupScriptDir, 0o755); err != nil {
+		return nil, nil, fmt.Errorf("%w: create setup scripts directory: %v", ErrInternal, err)
+	}
+
+	prefix := "inline-setup-"
+	if trimmedName := strings.TrimSpace(name); trimmedName != "" {
+		safeName := strings.NewReplacer("/", "-", "\\", "-", "*", "-").Replace(trimmedName)
+		prefix += safeName + "-"
+	}
+	tmpFile, err := os.CreateTemp(setupScriptDir, prefix+"*.sh")
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: create SetupScriptText file: %v", ErrInternal, err)
+	}
+	defer tmpFile.Close()
+
+	if _, err := tmpFile.WriteString(setupScriptText); err != nil {
+		_ = os.Remove(tmpFile.Name())
+		return nil, nil, fmt.Errorf("%w: write SetupScriptText file: %v", ErrInternal, err)
+	}
+	if err := tmpFile.Chmod(0o755); err != nil {
+		_ = os.Remove(tmpFile.Name())
+		return nil, nil, fmt.Errorf("%w: set permissions on SetupScriptText file: %v", ErrInternal, err)
+	}
+
+	return &sandbox.MountBinding{
+		Type:   "bind",
+		Source: tmpFile.Name(),
+		Target: setupScriptTarget,
+		Mode:   "ro",
+	}, func() { _ = os.Remove(tmpFile.Name()) }, nil
 }
 
 type initErrorService struct{ err error }

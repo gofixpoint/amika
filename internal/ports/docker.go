@@ -10,9 +10,17 @@ type Mount struct {
 	SnapshotFrom string
 }
 
+// PortBinding describes a published container port at the infrastructure boundary.
+type PortBinding struct {
+	HostIP        string
+	HostPort      int
+	ContainerPort int
+	Protocol      string
+}
+
 // DockerClient defines operations the app layer needs from Docker.
 type DockerClient interface {
-	CreateSandbox(name, image string, mounts []Mount, env []string) (string, error)
+	CreateSandbox(name, image string, mounts []Mount, env []string, ports []PortBinding) (string, error)
 	RemoveSandbox(name string) error
 	CreateVolume(name string) error
 	RemoveVolume(name string) error

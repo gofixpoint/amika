@@ -55,6 +55,8 @@ var sandboxCreateCmd = &cobra.Command{
 		gitPath, _ := cmd.Flags().GetString("git")
 		noClean, _ := cmd.Flags().GetBool("no-clean")
 		envStrs, _ := cmd.Flags().GetStringArray("env")
+		portStrs, _ := cmd.Flags().GetStringArray("port")
+		portHostIP, _ := cmd.Flags().GetString("port-host-ip")
 		yes, _ := cmd.Flags().GetBool("yes")
 		connect, _ := cmd.Flags().GetBool("connect")
 		setupScript, _ := cmd.Flags().GetString("setup-script")
@@ -83,6 +85,10 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 		volumeMounts, err := parseVolumeFlags(volumeStrs)
+		if err != nil {
+			return err
+		}
+		publishedPorts, err := parsePortFlags(portStrs, portHostIP)
 		if err != nil {
 			return err
 		}
@@ -307,7 +313,7 @@ var sandboxCreateCmd = &cobra.Command{
 			runtimeMounts = append(runtimeMounts, v)
 		}
 
-		containerID, err := sandbox.CreateDockerSandbox(name, image, runtimeMounts, envStrs)
+		containerID, err := sandbox.CreateDockerSandbox(name, image, runtimeMounts, envStrs, publishedPorts)
 		if err != nil {
 			rollbackAll()
 			return err
@@ -322,12 +328,19 @@ var sandboxCreateCmd = &cobra.Command{
 			Preset:      preset,
 			Mounts:      runtimeMounts,
 			Env:         envStrs,
+			Ports:       publishedPorts,
 		}
 		if err := store.Save(info); err != nil {
 			return fmt.Errorf("sandbox created but failed to save state: %w", err)
 		}
 
 		fmt.Printf("Sandbox %q created (container %s)\n", name, containerID[:12])
+		if len(publishedPorts) > 0 {
+			fmt.Println("Published ports:")
+			for _, p := range publishedPorts {
+				fmt.Printf("  %s\n", formatPortBinding(p))
+			}
+		}
 		if connect {
 			if err := runSandboxConnect(name, "zsh", os.Stdin, os.Stdout, os.Stderr); err != nil {
 				return fmt.Errorf("sandbox %q created but failed to connect with shell %q: %w", name, "zsh", err)
@@ -441,9 +454,9 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tPROVIDER\tIMAGE\tCREATED")
+		fmt.Fprintln(w, "NAME\tPROVIDER\tIMAGE\tPORTS\tCREATED")
 		for _, sb := range result.Items {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", sb.Name, sb.Provider, sb.Image, sb.CreatedAt)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.Provider, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
 		}
 		w.Flush()
 		return nil
@@ -482,6 +495,97 @@ var sandboxConnectCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// parsePortFlags parses --port flag values in the format hostPort:containerPort[/protocol].
+func parsePortFlags(flags []string, hostIP string) ([]sandbox.PortBinding, error) {
+	hostIP = strings.TrimSpace(hostIP)
+	if hostIP == "" {
+		return nil, fmt.Errorf("--port-host-ip must not be empty")
+	}
+
+	ports := make([]sandbox.PortBinding, 0, len(flags))
+	seen := make(map[string]bool, len(flags))
+	for _, raw := range flags {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			return nil, fmt.Errorf("invalid port format %q: expected hostPort:containerPort[/protocol]", raw)
+		}
+
+		mainPart := value
+		protocol := "tcp"
+		if strings.Contains(value, "/") {
+			parts := strings.SplitN(value, "/", 2)
+			mainPart = parts[0]
+			protocol = strings.ToLower(strings.TrimSpace(parts[1]))
+		}
+		if protocol != "tcp" && protocol != "udp" {
+			return nil, fmt.Errorf("invalid port protocol %q: must be \"tcp\" or \"udp\"", protocol)
+		}
+
+		parts := strings.SplitN(mainPart, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid port format %q: expected hostPort:containerPort[/protocol]", raw)
+		}
+		hostPort, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid host port in %q: %w", raw, err)
+		}
+		containerPort, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid container port in %q: %w", raw, err)
+		}
+		if hostPort < 1 || hostPort > 65535 {
+			return nil, fmt.Errorf("host port %d must be between 1 and 65535", hostPort)
+		}
+		if containerPort < 1 || containerPort > 65535 {
+			return nil, fmt.Errorf("container port %d must be between 1 and 65535", containerPort)
+		}
+
+		key := fmt.Sprintf("%s:%d/%s", hostIP, hostPort, protocol)
+		if seen[key] {
+			return nil, fmt.Errorf("duplicate published port binding %s", key)
+		}
+		seen[key] = true
+		ports = append(ports, sandbox.PortBinding{
+			HostIP:        hostIP,
+			HostPort:      hostPort,
+			ContainerPort: containerPort,
+			Protocol:      protocol,
+		})
+	}
+	return ports, nil
+}
+
+func formatPortBindings(bindings []amika.PortBinding) string {
+	if len(bindings) == 0 {
+		return "-"
+	}
+	out := make([]string, 0, len(bindings))
+	for _, p := range bindings {
+		hostIP := p.HostIP
+		if strings.TrimSpace(hostIP) == "" {
+			hostIP = "127.0.0.1"
+		}
+		protocol := p.Protocol
+		if strings.TrimSpace(protocol) == "" {
+			protocol = "tcp"
+		}
+		out = append(out, fmt.Sprintf("%s:%d->%d/%s", hostIP, p.HostPort, p.ContainerPort, protocol))
+	}
+	return strings.Join(out, ",")
+}
+
+func formatPortBinding(binding sandbox.PortBinding) string {
+	hostIP := binding.HostIP
+	if strings.TrimSpace(hostIP) == "" {
+		hostIP = "127.0.0.1"
+	}
+	protocol := binding.Protocol
+	if strings.TrimSpace(protocol) == "" {
+		protocol = "tcp"
+	}
+	return fmt.Sprintf("%s:%d->%d/%s", hostIP, binding.HostPort, binding.ContainerPort, protocol)
 }
 
 // parseMountFlags parses --mount flag values in the format source:target[:mode].
@@ -1067,6 +1171,8 @@ func init() {
 	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"coder\" or \"claude\")")
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rwcopy)")
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
+	sandboxCreateCmd.Flags().StringArray("port", nil, "Publish a container port (hostPort:containerPort[/protocol], protocol defaults to tcp)")
+	sandboxCreateCmd.Flags().String("port-host-ip", "127.0.0.1", "Host IP address to bind published ports")
 	sandboxCreateCmd.Flags().String("git", "", "Mount the current git repo root (or repo containing PATH) into /home/amika/workspace/{repo}")
 	sandboxCreateCmd.Flags().Lookup("git").NoOptDefVal = "."
 	sandboxCreateCmd.Flags().Bool("no-clean", false, "With --git, include untracked files from working tree instead of a clean clone")

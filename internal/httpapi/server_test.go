@@ -38,6 +38,16 @@ func (stubService) ExtractAuth(context.Context, amika.AuthExtractRequest) (amika
 	return amika.AuthExtractResult{Lines: []string{"A='1'"}}, nil
 }
 
+type captureCreateSandboxService struct {
+	stubService
+	req amika.CreateSandboxRequest
+}
+
+func (s *captureCreateSandboxService) CreateSandbox(_ context.Context, req amika.CreateSandboxRequest) (amika.Sandbox, error) {
+	s.req = req
+	return amika.Sandbox{Name: req.Name}, nil
+}
+
 func TestEndpoints(t *testing.T) {
 	h := NewHandler(stubService{})
 	cases := []struct {
@@ -88,6 +98,85 @@ func TestOpenAPIIncludesV1Paths(t *testing.T) {
 	for _, p := range []string{"/v1/sandboxes", "/v1/volumes", "/v1/auth/extract", "/v1/materialize"} {
 		if _, ok := paths[p]; !ok {
 			t.Fatalf("missing path %s", p)
+		}
+	}
+}
+
+func TestCreateSandboxBodyIncludesSetupScriptFields(t *testing.T) {
+	svc := &captureCreateSandboxService{}
+	h := NewHandler(svc)
+	payload := amika.CreateSandboxRequest{
+		Provider:        "docker",
+		Name:            "sb",
+		Image:           "",
+		Preset:          "",
+		Mounts:          []amika.Mount{},
+		Volumes:         []amika.Mount{},
+		GitPath:         "",
+		NoClean:         false,
+		Env:             []string{},
+		Ports:           []amika.PortBinding{{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}},
+		SetupScript:     "/tmp/setup.sh",
+		SetupScriptText: "#!/usr/bin/env bash\necho hi\n",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/sandboxes", bytes.NewReader(body))
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+	if svc.req.SetupScript != "/tmp/setup.sh" {
+		t.Fatalf("SetupScript=%q", svc.req.SetupScript)
+	}
+	if svc.req.SetupScriptText != "#!/usr/bin/env bash\necho hi\n" {
+		t.Fatalf("SetupScriptText=%q", svc.req.SetupScriptText)
+	}
+	if len(svc.req.Ports) != 1 {
+		t.Fatalf("Ports len=%d", len(svc.req.Ports))
+	}
+	if svc.req.Ports[0].HostPort != 8080 || svc.req.Ports[0].ContainerPort != 80 {
+		t.Fatalf("Ports=%+v", svc.req.Ports)
+	}
+}
+
+func TestOpenAPICreateSandboxUsesPascalCaseSetupScriptFields(t *testing.T) {
+	h := NewHandler(stubService{})
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status=%d", res.Code)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	components := doc["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	createReq := schemas["CreateSandboxRequest"].(map[string]any)
+	props := createReq["properties"].(map[string]any)
+	if _, ok := props["SetupScript"]; !ok {
+		t.Fatalf("missing SetupScript property")
+	}
+	if _, ok := props["SetupScriptText"]; !ok {
+		t.Fatalf("missing SetupScriptText property")
+	}
+	if _, ok := props["Ports"]; !ok {
+		t.Fatalf("missing Ports property")
+	}
+
+	required, hasRequired := createReq["required"]
+	if !hasRequired {
+		return
+	}
+	for _, field := range required.([]any) {
+		if field == "SetupScript" || field == "SetupScriptText" {
+			t.Fatalf("field %v should not be required", field)
 		}
 	}
 }

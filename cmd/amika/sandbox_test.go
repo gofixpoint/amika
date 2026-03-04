@@ -184,6 +184,71 @@ func TestValidateMountTargets_DuplicateAcrossMountAndVolume(t *testing.T) {
 	}
 }
 
+func TestParsePortFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   []string
+		hostIP  string
+		wantLen int
+		wantErr bool
+	}{
+		{
+			name:    "single port with protocol",
+			flags:   []string{"8080:80/tcp"},
+			hostIP:  "127.0.0.1",
+			wantLen: 1,
+		},
+		{
+			name:    "default protocol",
+			flags:   []string{"5353:5353"},
+			hostIP:  "127.0.0.1",
+			wantLen: 1,
+		},
+		{
+			name:    "invalid protocol",
+			flags:   []string{"8080:80/sctp"},
+			hostIP:  "127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "invalid format",
+			flags:   []string{"8080"},
+			hostIP:  "127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "duplicate host binding",
+			flags:   []string{"8080:80/tcp", "8080:81/tcp"},
+			hostIP:  "127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "empty host ip",
+			flags:   []string{"8080:80"},
+			hostIP:  " ",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ports, err := parsePortFlags(tt.flags, tt.hostIP)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(ports) != tt.wantLen {
+				t.Fatalf("expected %d ports, got %d", tt.wantLen, len(ports))
+			}
+		})
+	}
+}
+
 func TestCleanupSandboxVolumes_PreserveDefault(t *testing.T) {
 	dir := t.TempDir()
 	store := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
@@ -840,7 +905,15 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
 	store := sandbox.NewStore(filepath.Join(dir, "sandboxes.jsonl"))
-	if err := store.Save(sandbox.Info{Name: "sb-a", Provider: "docker", Image: "img", CreatedAt: "now"}); err != nil {
+	if err := store.Save(sandbox.Info{
+		Name:      "sb-a",
+		Provider:  "docker",
+		Image:     "img",
+		CreatedAt: "now",
+		Ports: []sandbox.PortBinding{
+			{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -848,10 +921,13 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sandbox list failed: %v", err)
 	}
-	if !strings.Contains(out, "NAME") || !strings.Contains(out, "PROVIDER") {
+	if !strings.Contains(out, "NAME") || !strings.Contains(out, "PROVIDER") || !strings.Contains(out, "PORTS") {
 		t.Fatalf("missing header: %s", out)
 	}
 	if !strings.Contains(out, "sb-a") {
 		t.Fatalf("missing sandbox row: %s", out)
+	}
+	if !strings.Contains(out, "127.0.0.1:8080->80/tcp") {
+		t.Fatalf("missing ports in row: %s", out)
 	}
 }
