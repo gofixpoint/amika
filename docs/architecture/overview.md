@@ -55,6 +55,7 @@ internal/
     store.go             Sandbox state persistence (JSONL)
     volume_store.go      Volume state persistence (JSONL)
     file_mount_store.go  File mount state persistence (JSONL)
+    presets.go           Embeds preset Dockerfiles via go:embed
     presets/
       coder/Dockerfile   Coder preset (Claude + Codex + OpenCode)
       claude/Dockerfile  Claude-only preset

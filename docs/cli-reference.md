@@ -305,8 +305,14 @@ The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
 | `DELETE` | `/v1/sandboxes/{name}` | Delete a sandbox |
 | `GET` | `/v1/volumes` | List volumes |
 | `DELETE` | `/v1/volumes/{name}` | Delete a volume |
-| `GET` | `/v1/auth/extract` | Extract credentials |
+| `POST` | `/v1/auth/extract` | Extract credentials |
 | `POST` | `/v1/materialize` | Run a materialize operation |
+
+### API-Only Fields
+
+The HTTP API accepts some fields that are not available as CLI flags:
+
+- **`SetupScriptText`** (on `POST /v1/sandboxes`): Inline setup script content as a string. Amika writes it to a temporary file and mounts it as `/opt/setup.sh`. Mutually exclusive with `SetupScript` (file path).
 
 ---
 
@@ -318,4 +324,4 @@ The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
 | `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets. E.g. setting to `myregistry/amika` produces `myregistry/amika-coder:latest` |
 | `AMIKA_SANDBOX_ROOT` | Set inside materialize containers, pointing to the sandbox root directory |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test` |
-| `PORT` | Override listen address for `amika-server` (mutually exclusive with `-addr` flag) |
+| `PORT` | Override listen address for `amika-server`. Accepts a plain port (`8080` becomes `:8080`) or full address (`127.0.0.1:8080`). Mutually exclusive with `-addr` flag |
