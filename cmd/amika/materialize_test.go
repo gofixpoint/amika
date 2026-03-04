@@ -11,6 +11,7 @@ import (
 )
 
 const runExpensiveTestsEnv = "AMIKA_RUN_EXPENSIVE_TESTS"
+const runDockerIntegrationTestsEnv = "AMIKA_RUN_DOCKER_INTEGRATION"
 
 // buildAmika builds the amika binary for integration tests and returns its path.
 func buildAmika(t *testing.T) string {
@@ -45,6 +46,7 @@ func findModuleRoot(t *testing.T) string {
 }
 
 func TestTopMaterialize_CmdDefaultOutdir(t *testing.T) {
+	requireDockerIntegration(t)
 	bin := buildAmika(t)
 	destdir := t.TempDir()
 
@@ -67,6 +69,7 @@ func TestTopMaterialize_CmdDefaultOutdir(t *testing.T) {
 }
 
 func TestTopMaterialize_CmdAbsoluteOutdir(t *testing.T) {
+	requireDockerIntegration(t)
 	bin := buildAmika(t)
 	destdir := t.TempDir()
 
@@ -90,6 +93,7 @@ func TestTopMaterialize_CmdAbsoluteOutdir(t *testing.T) {
 }
 
 func TestTopMaterialize_CmdRelativeOutdir(t *testing.T) {
+	requireDockerIntegration(t)
 	bin := buildAmika(t)
 	destdir := t.TempDir()
 
@@ -113,6 +117,7 @@ func TestTopMaterialize_CmdRelativeOutdir(t *testing.T) {
 }
 
 func TestTopMaterialize_SandboxCleanup(t *testing.T) {
+	requireDockerIntegration(t)
 	bin := buildAmika(t)
 	destdir := t.TempDir()
 
@@ -139,6 +144,7 @@ func TestTopMaterialize_SandboxCleanup(t *testing.T) {
 }
 
 func TestTopMaterialize_Script(t *testing.T) {
+	requireDockerIntegration(t)
 	bin := buildAmika(t)
 	destdir := t.TempDir()
 	scriptDir := t.TempDir()
@@ -225,8 +231,18 @@ func TestTopMaterialize_PresetAgentsAvailableOnPath(t *testing.T) {
 func requireExpensiveDockerTests(t *testing.T) {
 	t.Helper()
 
+	requireDockerIntegration(t)
+
 	if os.Getenv(runExpensiveTestsEnv) != "1" {
 		t.Skipf("set %s=1 to run expensive Docker rebuild tests", runExpensiveTestsEnv)
+	}
+}
+
+func requireDockerIntegration(t *testing.T) {
+	t.Helper()
+
+	if os.Getenv(runDockerIntegrationTestsEnv) != "1" {
+		t.Skipf("set %s=1 to run docker-backed integration tests", runDockerIntegrationTestsEnv)
 	}
 
 	requireDocker(t)

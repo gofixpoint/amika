@@ -1,3 +1,6 @@
 dist/
 scratch/
 .DS_Store
+.gocache/
+.gotmp/
+.gomodcache/
