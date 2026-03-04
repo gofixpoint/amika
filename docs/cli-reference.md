@@ -95,6 +95,12 @@ amika sandbox create --name dev-sandbox --connect
 
 # Run a setup script on container start
 amika sandbox create --name dev-sandbox --setup-script ./install-deps.sh
+
+# Publish a container port to the host
+amika sandbox create --name dev-sandbox --port 8080:8080
+
+# Publish a port bound to all interfaces
+amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
 ```
 
 #### Flags
@@ -110,6 +116,8 @@ amika sandbox create --name dev-sandbox --setup-script ./install-deps.sh
 | `--git [path]` | | Mount the git repo root (or repo containing `path`) to `/home/amika/workspace/{repo}`. Uses a clean clone by default |
 | `--no-clean` | `false` | With `--git`, include untracked/uncommitted files instead of a clean clone |
 | `--env <KEY=VALUE>` | | Set environment variable. Repeatable |
+| `--port <spec>` | | Publish a container port (`hostPort:containerPort[/protocol]`, protocol defaults to `tcp`). Repeatable |
+| `--port-host-ip <ip>` | `127.0.0.1` | Host IP address to bind published ports to |
 | `--yes` | `false` | Skip mount confirmation prompt |
 | `--connect` | `false` | Connect to the sandbox shell immediately after creation |
 | `--setup-script <path>` | | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
@@ -265,6 +273,43 @@ Legacy local sandbox materialize (non-Docker). Runs scripts in a temporary direc
 
 ---
 
+## `amika-server`
+
+HTTP server that exposes the Amika API as a REST service. This is a separate binary (`dist/amika-server`).
+
+```bash
+# Start with default address (:8080)
+amika-server
+
+# Specify a custom listen address
+amika-server -addr :9090
+
+# Or use the PORT environment variable
+PORT=9090 amika-server
+```
+
+| Flag / Env | Default | Description |
+|------------|---------|-------------|
+| `-addr <host:port>` | `:8080` | HTTP listen address |
+| `PORT` (env) | | Override listen address (mutually exclusive with `-addr`) |
+
+The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/health` | Health check |
+| `GET` | `/v1/sandboxes` | List sandboxes |
+| `POST` | `/v1/sandboxes` | Create a sandbox |
+| `DELETE` | `/v1/sandboxes/{name}` | Delete a sandbox |
+| `GET` | `/v1/volumes` | List volumes |
+| `DELETE` | `/v1/volumes/{name}` | Delete a volume |
+| `GET` | `/v1/auth/extract` | Extract credentials |
+| `POST` | `/v1/materialize` | Run a materialize operation |
+
+---
+
 ## Environment Variables
 
 | Variable | Description |
@@ -273,3 +318,4 @@ Legacy local sandbox materialize (non-Docker). Runs scripts in a temporary direc
 | `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets. E.g. setting to `myregistry/amika` produces `myregistry/amika-coder:latest` |
 | `AMIKA_SANDBOX_ROOT` | Set inside materialize containers, pointing to the sandbox root directory |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test` |
+| `PORT` | Override listen address for `amika-server` (mutually exclusive with `-addr` flag) |

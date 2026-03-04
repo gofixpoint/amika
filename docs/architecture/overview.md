@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Amika is a Go CLI tool that pulls data from external sources, materializes it as files, and mounts those files into Docker-backed sandboxes for AI coding agents. It targets macOS.
+Amika is a Go CLI tool and HTTP server that pulls data from external sources, materializes it as files, and mounts those files into Docker-backed sandboxes for AI coding agents. It targets macOS.
 
 For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, see [README.md](../../README.md).
 
@@ -28,6 +28,7 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 | `amika volume list\|delete` | Manage tracked Docker volumes created by `rwcopy` mounts |
 | `amika auth extract` | Discover local credentials and print shell environment assignments |
 | `amika v0 mount\|unmount\|materialize` | Legacy local bindfs/macFUSE commands (hidden) |
+| `amika-server` | HTTP server exposing the same functionality as a REST API |
 
 See [cli-reference.md](../cli-reference.md) for full flag documentation.
 
@@ -41,6 +42,9 @@ cmd/amika/
   volume.go            volume list/delete commands
   auth.go              auth extract command
   v0.go                Legacy v0 mount/unmount/materialize (hidden)
+
+cmd/amika-server/
+  main.go              HTTP server entry point (REST API)
 
 internal/
   sandbox/             Docker sandbox management
@@ -65,11 +69,19 @@ internal/
 
   config/              XDG path resolution and state file locations
   basedir/             XDG base directory resolution
+  httpapi/             HTTP handler for the REST API server
+  app/                 Application service layer implementation
+  ports/               Port interfaces for Docker and store operations
 
   mount/               bindfs-based mount/unmount operations (v0)
   materialize/         Local sandbox script execution (v0)
   state/               JSONL mount state persistence (v0)
   deps/                Dependency checking (macFUSE, bindfs) (v0)
+
+pkg/amika/             Public service API (used by both CLI and HTTP server)
+  service.go           Service interface and implementation
+  requests.go          Request types
+  responses.go         Response types
 ```
 
 ## System Dependencies

@@ -15,7 +15,7 @@ The default preset, used when no `--image` or `--preset` flag is provided.
 **Included tools:**
 - git, curl, zsh, build-essential
 - Python 3 + pip
-- Node.js 22
+- Node.js 22, pnpm
 - TypeScript, tsx
 - Claude Code (`@anthropic-ai/claude-code`)
 - Codex (`@openai/codex`)
@@ -32,7 +32,7 @@ A lighter preset focused on Claude Code only.
 **Included tools:**
 - git, curl, zsh, build-essential
 - Python 3 + pip
-- Node.js 22
+- Node.js 22, pnpm
 - TypeScript, tsx
 - Claude Code (`@anthropic-ai/claude-code`)
 

@@ -52,7 +52,7 @@ Right now, we only support mounting into Docker containers, but we are expanding
 ```bash
 # Clone and build
 git clone https://github.com/gofixpoint/amika.git && cd amika
-go build -o dist/amika ./cmd/amika
+make build-cli
 
 # Materialize: run a command and capture its output as files
 ./dist/amika materialize --cmd "echo hello > greeting.txt" --destdir /tmp/demo
