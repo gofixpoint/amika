@@ -19,7 +19,9 @@ make setup
 make ci
 
 # Individual targets
-make build   # go build ./...
+make build         # builds both dist/amika and dist/amika-server
+make build-cli     # go build -o dist/amika ./cmd/amika
+make build-server  # go build -o dist/amika-server ./cmd/amika-server
 make test    # go test ./...
 make vet     # go vet ./...
 make fmt     # check formatting
@@ -30,4 +32,5 @@ make lint    # run revive linter
 
 ```bash
 dist/amika
+dist/amika-server
 ```
