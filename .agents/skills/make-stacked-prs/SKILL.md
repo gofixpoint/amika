@@ -77,19 +77,19 @@ Process each branch **one at a time, in order**:
    - Commit log with changed files: `git log --name-status <base>..<branch>` (use `$(git merge-base <onto-base-branch> <first-branch>)..<first-branch>` if `onto-base-branch` is not a direct ancestor of `first-branch`)
    - Diff content: `git diff <base>...<branch>` to understand the actual changes
 4. **PR body must include**:
-   - A **stack navigation list** showing all branches in the chain. For PRs already created, include links. For PRs not yet created, show the branch name with "(PR pending)". Example:
+   - A **stack navigation list** showing all branches in the chain. Each entry shows the branch name. For the current PR, show `` `#THIS` ← you are here `` (no link). For other PRs already created, link with `#<number>`. For PRs not yet created, show "(PR pending)". Example:
      ```
      ## Stack
 
-     1. #12 ← you are here
-     2. branch-B (PR pending)
-     3. branch-C (PR pending)
+     1. `first-branch` #12
+     2. `branch-B` `#THIS` ← you are here
+     3. `branch-C` (PR pending)
      ```
    - A summary of changes derived from the commits and diff.
 5. **Show the proposed title, body, and base branch to the user.** Use `AskUserQuestion` to confirm before running `gh pr create`.
 6. Create the PR: `gh pr create --base <base> --head <branch> --title "<title>" --body "<body>"`
 
-After **all** PRs are created, go back and update the bodies of earlier PRs to fill in PR links that weren't available when those PRs were created. Use `gh pr edit <number> --body "<updated-body>"` for each PR that had "(PR pending)" placeholders.
+After **all** PRs are created, go back and update the bodies of earlier PRs to fill in PR links that weren't available when those PRs were created. Use `gh pr edit <number> --body "<updated-body>"` for each PR that had "(PR pending)" placeholders. When updating, keep the self-reference as `` `#THIS` ← you are here `` (never link a PR to itself).
 
 ### Step 7: Cleanup
 
@@ -97,9 +97,9 @@ After **all** PRs are created, go back and update the bodies of earlier PRs to f
 2. Display a summary of all created PRs with their URLs:
    ```
    Created 3 stacked PRs:
-     1. #12 <url> (first-branch → onto-base-branch)
-     2. #13 <url> (branch-B → first-branch)
-     3. #14 <url> (last-branch → branch-B)
+     1. `first-branch` #12 <url> (→ onto-base-branch)
+     2. `branch-B` #13 <url> (→ first-branch)
+     3. `last-branch` #14 <url> (→ branch-B)
    ```
 
 ## Edge Cases
