@@ -18,7 +18,7 @@
 
 ## What is Amika?
 
-Amika is an open-source CLI and HTTP API for running AI coding agents in Docker sandboxes. Each sandbox comes pre-configured with development tools and agent CLIs — Claude Code, Codex, and OpenCode — ready to go out of the box.
+Amika is an open-source CLI and HTTP API for running AI coding agents in sandboxes. Each sandbox comes pre-configured with development tools and agent CLIs — Claude Code, Codex, and OpenCode — ready to go out of the box.
 
 Agent credentials are auto-discovered from your host machine and mounted into every sandbox. Git repos are cloned in with `--git`, and setup scripts let you customize the environment on creation. The REST API (`amika-server`) exposes the same functionality for programmatic access.
 
@@ -27,7 +27,7 @@ This is the same infra pattern used by Ramp, Coinbase, and Stripe for their in-h
 ## Key Features
 
 - **Preset environments** — Ubuntu 24.04 sandboxes with Claude Code, Codex, OpenCode, Python, Node.js, and standard dev tools
-- **Credential auto-discovery** — Zero-config agent auth; API keys and OAuth tokens are found and mounted automatically
+- **Credential auto-discovery** — Zero-config agent auth; your Claude Code and Codex API keys and OAuth tokens are found and mounted automatically
 - **Git repo mounting** — Clone your repo into a sandbox with `--git` (clean clone by default, or `--no-clean` for uncommitted files)
 - **Setup scripts** — Run custom initialization logic on sandbox creation with `--setup-script`
 - **Port publishing** — Expose container ports to the host for live previews with `--port`
@@ -35,7 +35,7 @@ This is the same infra pattern used by Ramp, Coinbase, and Stripe for their in-h
 
 ## Quick Start
 
-**Prerequisites:** Go 1.21+, Docker, macOS
+**Prerequisites:** Go 1.21+, Docker, macOS or Linux
 
 ### Install
 
@@ -46,6 +46,8 @@ make build
 
 ### Create Your First Sandbox
 
+Run this from within a git repo, and the `--git` flag will pick up the repo root and mount the entire repo into your sandbox.
+
 ```bash
 ./dist/amika sandbox create --name my-sandbox --git --connect
 ```
@@ -54,8 +56,10 @@ Inside the sandbox you get a zsh shell at `/home/amika/workspace/{repo}` with yo
 
 ### Run Claude Code in a Sandbox
 
+Create a sandbox with your git repo and auto-connect to it:
+
 ```bash
-./dist/amika sandbox create --preset claude --git --connect
+./dist/amika sandbox create --git --connect
 # Inside the sandbox:
 claude "Add unit tests for the auth module"
 ```
@@ -63,42 +67,42 @@ claude "Add unit tests for the auth module"
 ### Run Multiple Agents in Parallel
 
 ```bash
-./dist/amika sandbox create --name task-1 --preset coder --git
-./dist/amika sandbox create --name task-2 --preset coder --git
+./dist/amika sandbox create --name task-1 --git
+./dist/amika sandbox create --name task-2 --git
 ./dist/amika sandbox list
 ```
 
 ## How It Works
 
 ```
-┌─────────────────┐
-│   Your Host      │
-│                  │       ┌──────────────────────────────────┐
+┌────────────────────┐
+│   Your Host        │
+│                    │     ┌──────────────────────────────────┐
 │  Git repo ───────────>   │  Docker Sandbox                  │
-│                  │       │                                  │
+│                    │     │                                  │
 │  Credentials ────────>   │  /home/amika/workspace/{repo}    │
-│  (auto-discovered)       │  Agent CLIs ready (claude, codex)│
-│                  │       │  Dev tools (git, node, python)   │
+│  (auto-discovered) │     │  Agent CLIs ready (claude, codex)│
+│                    │     │  Dev tools (git, node, python)   │
 │  Setup script ───────>   │  /opt/setup.sh runs on start     │
-│                  │       │                                  │
-│  Port 8080 <─────────    │  --port 8080:8080                │
-│  (live preview)  │       │                                  │
-└─────────────────┘       └──────────────────────────────────┘
+│                    │     │                                  │
+│  Port 8080 <──────────   │  --port 8080:8080                │
+│  (live preview)    │     │                                  │
+└────────────────────┘     └──────────────────────────────────┘
 ```
 
 ## Commands Overview
 
-| Command                 | Description                                                              |
-| ----------------------- | ------------------------------------------------------------------------ |
-| `amika sandbox create`  | Create a new Docker sandbox with mounts, presets, and environment config |
-| `amika sandbox list`    | List all tracked sandboxes                                               |
-| `amika sandbox connect` | Attach to a running sandbox with an interactive shell                    |
-| `amika sandbox delete`  | Delete sandboxes and optionally their volumes                            |
-| `amika materialize`     | Run a script/command in an ephemeral container and copy outputs to host  |
-| `amika volume list`     | List tracked Docker volumes                                              |
-| `amika volume delete`   | Delete tracked Docker volumes                                            |
-| `amika auth extract`    | Discover and print locally stored agent credentials                      |
-| `amika-server`          | Start the HTTP API server                                                |
+| Command                 | Description                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `amika sandbox create`  | Create a new Docker sandbox with mounts, presets, and environment config      |
+| `amika sandbox list`    | List all tracked sandboxes                                                    |
+| `amika sandbox connect` | Attach to a running sandbox with an interactive shell                         |
+| `amika sandbox delete`  | Delete sandboxes and optionally their volumes                                 |
+| `amika materialize`     | Run a script/command in an ephemeral container and copy outputs files to host |
+| `amika volume list`     | List tracked Docker volumes                                                   |
+| `amika volume delete`   | Delete tracked Docker volumes                                                 |
+| `amika auth extract`    | Discover and print locally stored agent credentials                           |
+| `amika-server`          | Start the HTTP API server                                                     |
 
 For the full flag reference, see [docs/cli-reference.md](docs/cli-reference.md).
 
@@ -122,7 +126,7 @@ See the [endpoint table in docs/cli-reference.md](docs/cli-reference.md#api-endp
 | `coder` (default) | `amika/coder:latest`  | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code, Codex, OpenCode |
 | `claude`          | `amika/claude:latest` | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code                  |
 
-Preset images are built automatically on first use from bundled Dockerfiles (one-time build, takes a few minutes).
+Preset images are built automatically on first use from bundled Dockerfiles (one-time build, takes a minute).
 
 Agent credentials are auto-discovered from your host and mounted as read-only snapshots — coding agents authenticate without manual configuration. See [docs/presets.md](docs/presets.md) and [docs/auth.md](docs/auth.md) for details.
 
@@ -134,11 +138,9 @@ Agent credentials are auto-discovered from your host and mounted as read-only sn
 - [x] Setup scripts (`--setup-script`)
 - [x] Port publishing (`--port`)
 - [x] REST API with OpenAPI docs
-- [ ] Linux support
-- [ ] Scheduled sandbox jobs
+- [x] Linux support
 - [ ] Remote providers (Modal, E2B, Daytona)
-- [ ] Web UI
-- [ ] Slack integration
+- [ ] Scheduled sandbox jobs
 
 ## Status
 
