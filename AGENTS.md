@@ -30,7 +30,9 @@ make lint    # run revive linter
 
 ## Project Overview
 
-Amika is a Go CLI tool that materializes data from external sources and mounts it into Docker-backed sandboxes for AI coding agents. It also includes an HTTP server (`amika-server`) that exposes the same functionality as a REST API. The project uses standard Go tooling with a Makefile for common commands.
+Amika is a Go module that lets people control sandboxed AI agents, focused on use-cases for AI coding agents. The goal is to provide the infra for users to build their own software factories. It includes a CLI tool `amika`, a Go package `pkg/amika
+
+ CLI tool that materializes data from external sources and mounts it into Docker-backed sandboxes for AI coding agents. It also includes an HTTP server (`amika-server`) that exposes the same functionality as a REST API. The project uses standard Go tooling with a Makefile for common commands.
 
 ## Runtime Dependencies
 

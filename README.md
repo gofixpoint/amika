@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">amika</h1>
-  <p align="center"><strong>The filesystem for your AI agents.</strong></p>
-  <p align="center">Pull data from your tools. Mount it into sandboxes. Let your agents work on files.</p>
+  <p align="center"><strong>Infra to build your software factory.</strong></p>
+  <p align="center">Build background agents that automate software generation. Spin up multiplayer sandboxes pre-loaded with any coding agent.</p>
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://withamika.com">withamika.com</a>
+  <a href="https://amika.dev">amika.dev</a>
 </p>
 
 ---
