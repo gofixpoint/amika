@@ -44,7 +44,7 @@ When you pass `--setup-script`, your script is bind-mounted over the no-op, so t
 
 - The script must be executable (`chmod +x`).
 - If the script exits with a non-zero status, the container's main command will not run.
-- Preset images are cached locally. If you have an existing preset image from before this feature was added, you need to rebuild it by removing the old image first: `docker rmi amika/coder:latest`.
+- Preset images are cached locally. If you have an existing preset image from before the setup script feature was added, you need to rebuild your images by removing the old image first: `docker rmi amika/coder:latest`.
 
 ## Agent Credential Auto-Mounting
 

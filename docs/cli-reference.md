@@ -2,55 +2,6 @@
 
 Complete reference for all `amika` commands, flags, and environment variables.
 
-## `amika materialize`
-
-Run a script or command in an ephemeral Docker container and copy outputs to a destination directory.
-
-The container runs with working directory `/home/amika/workspace`. Exactly one of `--script` or `--cmd` must be specified.
-
-```bash
-# Run a script, copy results to a destination
-amika materialize --script ./pull-data.sh --destdir ./output
-
-# Run an inline command
-amika materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
-
-# Specify which container directory to copy from
-amika materialize --script ./transform.sh --outdir /app/results --destdir ./output
-
-# Run interactively (e.g. launch Claude Code inside the container)
-amika materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...
-
-# Use a preset image
-amika materialize --preset claude --cmd "claude --help" --destdir /tmp/out
-
-# Run a setup script before the main command
-amika materialize --setup-script ./install-deps.sh --cmd "echo done" --destdir /tmp/out
-```
-
-### Flags
-
-| Flag                    | Default              | Description                                                                                                          |
-| ----------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `--script <path>`       |                      | Path to the script to execute (mutually exclusive with `--cmd`)                                                      |
-| `--cmd <string>`        |                      | Bash command string to execute (mutually exclusive with `--script`)                                                  |
-| `--outdir <path>`       | workdir              | Container directory to copy from. Absolute paths are used as-is; relative paths resolve from workdir                 |
-| `--destdir <path>`      | **(required)**       | Host directory where output files are copied                                                                         |
-| `--image <image>`       | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`)                                                             |
-| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
-| `--mount <spec>`        |                      | Mount a host directory (`source:target[:mode]`, mode defaults to `rw`). Repeatable                                   |
-| `--env <KEY=VALUE>`     |                      | Set environment variable in the container. Repeatable                                                                |
-| `-i`, `--interactive`   | `false`              | Run interactively with TTY (for programs like `claude`)                                                              |
-| `--setup-script <path>` |                      | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
-
-Script arguments can be passed after `--`:
-
-```bash
-amika materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
-```
-
----
-
 ## `amika sandbox`
 
 Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
@@ -138,7 +89,7 @@ List all tracked sandboxes.
 amika sandbox list
 ```
 
-Output columns: `NAME`, `PROVIDER`, `IMAGE`, `CREATED`.
+Output columns: `NAME`, `PROVIDER`, `IMAGE`, `PORTS`, `CREATED`.
 
 ### `amika sandbox connect`
 
@@ -249,27 +200,52 @@ See [auth.md](auth.md) for details on supported credential sources and priority.
 
 ---
 
-## `amika v0`
+## `amika materialize`
 
-Legacy commands using local bindfs/macFUSE mounts. These are hidden from `--help` by default.
+Run a script or command in an ephemeral Docker container and copy outputs to a destination directory.
 
-### `amika v0 mount <src> <target> --mode <mode>`
+The container runs with working directory `/home/amika/workspace`. Exactly one of `--script` or `--cmd` must be specified.
 
-Mount a source directory to a target path.
+```bash
+# Run a script, copy results to a destination
+amika materialize --script ./pull-data.sh --destdir ./output
 
-| Mode      | Behavior                                                               |
-| --------- | ---------------------------------------------------------------------- |
-| `ro`      | Read-only via bindfs                                                   |
-| `rw`      | Read-write via bindfs                                                  |
-| `overlay` | Copies source to a temp directory and mounts that; writes are isolated |
+# Run an inline command
+amika materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
 
-### `amika v0 unmount <target>`
+# Specify which container directory to copy from
+amika materialize --script ./transform.sh --outdir /app/results --destdir ./output
 
-Unmount a previously mounted target and clean up resources.
+# Run interactively (e.g. launch Claude Code inside the container)
+amika materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...
 
-### `amika v0 materialize`
+# Use a preset image
+amika materialize --preset claude --cmd "claude --help" --destdir /tmp/out
 
-Legacy local sandbox materialize (non-Docker). Runs scripts in a temporary directory on the host.
+# Run a setup script before the main command
+amika materialize --setup-script ./install-deps.sh --cmd "echo done" --destdir /tmp/out
+```
+
+### Flags
+
+| Flag                    | Default              | Description                                                                                                          |
+| ----------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--script <path>`       |                      | Path to the script to execute (mutually exclusive with `--cmd`)                                                      |
+| `--cmd <string>`        |                      | Bash command string to execute (mutually exclusive with `--script`)                                                  |
+| `--outdir <path>`       | workdir              | Container directory to copy from. Absolute paths are used as-is; relative paths resolve from workdir                 |
+| `--destdir <path>`      | **(required)**       | Host directory where output files are copied                                                                         |
+| `--image <image>`       | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`)                                                             |
+| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
+| `--mount <spec>`        |                      | Mount a host directory (`source:target[:mode]`, mode defaults to `rw`). Repeatable                                   |
+| `--env <KEY=VALUE>`     |                      | Set environment variable in the container. Repeatable                                                                |
+| `-i`, `--interactive`   | `false`              | Run interactively with TTY (for programs like `claude`)                                                              |
+| `--setup-script <path>` |                      | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
+
+Script arguments can be passed after `--`:
+
+```bash
+amika materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
+```
 
 ---
 
@@ -322,6 +298,5 @@ The HTTP API accepts some fields that are not available as CLI flags:
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `AMIKA_STATE_DIRECTORY`     | Override the default state directory (`~/.local/state/amika`). All state files are stored here when set                                                            |
 | `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets. E.g. setting to `myregistry/amika` produces `myregistry/amika-coder:latest`                                     |
-| `AMIKA_SANDBOX_ROOT`        | Set inside materialize containers, pointing to the sandbox root directory                                                                                          |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test`                                                                                   |
 | `PORT`                      | Override listen address for `amika-server`. Accepts a plain port (`8080` becomes `:8080`) or full address (`127.0.0.1:8080`). Mutually exclusive with `-addr` flag |

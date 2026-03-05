@@ -1,8 +1,6 @@
 # Amika Architecture Roadmap
 
-Amika is a filesystem for AI agents — it pulls data from your tools, shapes it into files, and mounts it into agent sandboxes with fine-grained access control.
-
-This document describes where Amika is today, what we're building next, and the long-term architecture we're working toward. For user-facing docs, see [README.md](../../README.md).
+This document describes the roadmap for the Amika filesystem. For user-facing docs, see [README.md](../../README.md).
 
 ## Architectural Invariants
 

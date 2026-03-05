@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Amika is a Go CLI tool and HTTP server that pulls data from external sources, materializes it as files, and mounts those files into Docker-backed sandboxes for AI coding agents. It targets macOS.
+Amika is an open-source CLI and HTTP API for running AI coding agents in sandboxes. Each sandbox comes pre-configured with development tools and agent CLIs — Claude Code, Codex, and OpenCode — ready to go out of the box.
 
 For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, see [README.md](../../README.md).
 
@@ -28,7 +28,6 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 | `amika sandbox create\|list\|connect\|delete` | Manage persistent Docker sandboxes                                                  |
 | `amika volume list\|delete`                   | Manage tracked Docker volumes created by `rwcopy` mounts                            |
 | `amika auth extract`                          | Discover local credentials and print shell environment assignments                  |
-| `amika v0 mount\|unmount\|materialize`        | Legacy local bindfs/macFUSE commands (hidden)                                       |
 | `amika-server`                                | HTTP server exposing the same functionality as a REST API                           |
 
 See [cli-reference.md](../cli-reference.md) for full flag documentation.
@@ -88,12 +87,10 @@ pkg/amika/             Public service API (used by both CLI and HTTP server)
 
 ## System Dependencies
 
-| Tool    | Required By                        | Purpose                                                 |
-| ------- | ---------------------------------- | ------------------------------------------------------- |
-| Docker  | `materialize`, `sandbox`, `volume` | Container runtime for sandboxes                         |
-| rsync   | `materialize`                      | Copies output files from container to host              |
-| bindfs  | `v0 mount` (legacy)                | Virtual filesystem mounting via `brew install bindfs`   |
-| macFUSE | `v0 mount` (legacy)                | FUSE support on macOS via `brew install --cask macfuse` |
+| Tool   | Required By                        | Purpose                                    |
+| ------ | ---------------------------------- | ------------------------------------------ |
+| Docker | `materialize`, `sandbox`, `volume` | Container runtime for sandboxes            |
+| rsync  | `materialize`                      | Copies output files from container to host |
 
 ## State Storage
 

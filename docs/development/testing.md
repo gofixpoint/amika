@@ -9,6 +9,19 @@ This guide defines the automated test pyramid for Amika and the command flow to 
 3. Contract tests: lock user-visible CLI behavior and key error contracts.
 4. Docker-backed integration tests: opt-in suites that require Docker.
 
+## Make Targets
+
+| Target                  | What it runs                                                                                  |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| `make test`             | `go test ./...` — all tests in one shot                                                       |
+| `make test-unit`        | Unit tests only (excludes integration, contract, and legacy mount packages)                   |
+| `make test-integration` | `go test ./test/integration/...`                                                              |
+| `make test-contract`    | `go test ./test/contract/...`                                                                 |
+| `make test-all`         | `test-unit` + `test-integration` + `test-contract`                                            |
+| `make test-expensive`   | Sets `AMIKA_RUN_DOCKER_INTEGRATION=1` and `AMIKA_RUN_EXPENSIVE_TESTS=1`, then runs `test-all` |
+| `make coverage`         | Runs `scripts/test/check_coverage.sh` against configured thresholds                           |
+| `make ci`               | run all CI targets                                                                            |
+
 ## Command Flow
 
 Run tests in this order:
@@ -51,7 +64,13 @@ The preset image rebuild test requires both Docker integration mode and the expe
 - `AMIKA_RUN_DOCKER_INTEGRATION=1`
 - `AMIKA_RUN_EXPENSIVE_TESTS=1`
 
-Run with:
+The simplest way to run these is with the make target, which sets both env vars and runs `test-all`:
+
+```bash
+make test-expensive
+```
+
+To run a single expensive test directly:
 
 ```bash
 AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 \
