@@ -31,11 +31,11 @@ External Sources          Data Plane                    Execution Plane
 
 ## Data Plane: Materialization & Sync
 
-*Purpose: Manages the lifecycle of data—pulling it from sources and ensuring it stays fresh.*
+_Purpose: Manages the lifecycle of data—pulling it from sources and ensuring it stays fresh._
 
-* 🟢 **Batch Materialization**: Scripts run once in a sandbox and capture outputs via `rsync`.
-* 🟡 **Connector Framework**: Standardized interfaces for external storage (Postgres, S3, Git) and SaaS APIs (HubSpot, Linear).
-* ⚪ **The Sync Engine**: Moving from one-off copies to a live reconciliation engine that tracks incremental changes and bi-directional updates.
+- 🟢 **Batch Materialization**: Scripts run once in a sandbox and capture outputs via `rsync`.
+- 🟡 **Connector Framework**: Standardized interfaces for external storage (Postgres, S3, Git) and SaaS APIs (HubSpot, Linear).
+- ⚪ **The Sync Engine**: Moving from one-off copies to a live reconciliation engine that tracks incremental changes and bi-directional updates.
 
 Materialization is the process of shaping external data into a local file tree. The three modes above evolve from simple to sophisticated:
 
@@ -45,12 +45,12 @@ Materialization is the process of shaping external data into a local file tree. 
 
 ## Execution Plane: Mounts & Sandboxes
 
-*Purpose: Provides the POSIX-compliant environment where the agent operates.*
+_Purpose: Provides the POSIX-compliant environment where the agent operates._
 
-* 🟢 **Local Docker Support**: Persistent sandboxes with controlled directory mounting.
-* 🟢 **Multi-Mode Mounting**: Support for `ro` (read-only), `rw` (read-write), and `overlay` (copy-on-write) modes.
-* 🟡 **Linux and macOS Support**: We support `macFUSE` and `fuse3` for macOS and Linux compatibility.
-* ⚪ **Network-Mountable FS**: Move from local FUSE to a networked protocol (likely 9P or a custom gRPC-based file server) so remote sandboxes can mount Amika filesystems without being on the same host. This enables migration between local containers and cloud-hosted sandboxes (Modal, E2B, Daytona, Cloudflare, etc.).
+- 🟢 **Local Docker Support**: Persistent sandboxes with controlled directory mounting.
+- 🟢 **Multi-Mode Mounting**: Support for `ro` (read-only), `rw` (read-write), and `overlay` (copy-on-write) modes.
+- 🟡 **Linux and macOS Support**: We support `macFUSE` and `fuse3` for macOS and Linux compatibility.
+- ⚪ **Network-Mountable FS**: Move from local FUSE to a networked protocol (likely 9P or a custom gRPC-based file server) so remote sandboxes can mount Amika filesystems without being on the same host. This enables migration between local containers and cloud-hosted sandboxes (Modal, E2B, Daytona, Cloudflare, etc.).
 
 Planned additions:
 
@@ -85,13 +85,13 @@ Other external stores (object storage, SQL DB, etc.)
 
 As data moves from a source to the agent, Amika can modify it in transit:
 
-* **PII Redaction**: Automatically scrubbing SSNs, emails, or keys.
-* **Opaque Tokenization**: Replacing sensitive values with tokens. The AI operates on the token, and Amika "detokenizes" the value only when the agent writes back to the source-of-truth filesystem repository.
+- **PII Redaction**: Automatically scrubbing SSNs, emails, or keys.
+- **Opaque Tokenization**: Replacing sensitive values with tokens. The AI operates on the token, and Amika "detokenizes" the value only when the agent writes back to the source-of-truth filesystem repository.
 
 ### Outbound: Validation & Approval
 
-* **Audit Logs**: A full syscall-level trace of every file the agent read or wrote.
-* **Staging Area**: AI writes land in a staging area in the source-of-truth repo. A human or "Supervisor Agent" must approve the changes before they are committed to the production datastore.
+- **Audit Logs**: A full syscall-level trace of every file the agent read or wrote.
+- **Staging Area**: AI writes land in a staging area in the source-of-truth repo. A human or "Supervisor Agent" must approve the changes before they are committed to the production datastore.
 
 **Threat model.** The security layer protects against: prompt injection via file contents (inbound filters sanitize/tokenize before reaching the agent), data exfiltration via write-back (outbound filters validate what agents send to external systems), cross-agent data leakage (per-agent mount configs with isolated permission sets), and sandbox escape (enforced path boundaries with all paths forced under sandbox root).
 
@@ -99,8 +99,8 @@ As data moves from a source to the agent, Amika can modify it in transit:
 
 Optionally, you can treat the agent's workspace like a Git repository, providing historical context for every change.
 
-* **Agent Commits**: Every edit includes metadata about which agent made the change and why.
-* **Session Traces**: Linking the LLM's chat transcript directly to the file changes it produced.
+- **Agent Commits**: Every edit includes metadata about which agent made the change and why.
+- **Session Traces**: Linking the LLM's chat transcript directly to the file changes it produced.
 
 ## Data Views
 

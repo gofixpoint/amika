@@ -30,18 +30,18 @@ amika materialize --setup-script ./install-deps.sh --cmd "echo done" --destdir /
 
 ### Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--script <path>` | | Path to the script to execute (mutually exclusive with `--cmd`) |
-| `--cmd <string>` | | Bash command string to execute (mutually exclusive with `--script`) |
-| `--outdir <path>` | workdir | Container directory to copy from. Absolute paths are used as-is; relative paths resolve from workdir |
-| `--destdir <path>` | **(required)** | Host directory where output files are copied |
-| `--image <image>` | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`) |
-| `--preset <name>` | | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
-| `--mount <spec>` | | Mount a host directory (`source:target[:mode]`, mode defaults to `rw`). Repeatable |
-| `--env <KEY=VALUE>` | | Set environment variable in the container. Repeatable |
-| `-i`, `--interactive` | `false` | Run interactively with TTY (for programs like `claude`) |
-| `--setup-script <path>` | | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
+| Flag                    | Default              | Description                                                                                                          |
+| ----------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--script <path>`       |                      | Path to the script to execute (mutually exclusive with `--cmd`)                                                      |
+| `--cmd <string>`        |                      | Bash command string to execute (mutually exclusive with `--script`)                                                  |
+| `--outdir <path>`       | workdir              | Container directory to copy from. Absolute paths are used as-is; relative paths resolve from workdir                 |
+| `--destdir <path>`      | **(required)**       | Host directory where output files are copied                                                                         |
+| `--image <image>`       | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`)                                                             |
+| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
+| `--mount <spec>`        |                      | Mount a host directory (`source:target[:mode]`, mode defaults to `rw`). Repeatable                                   |
+| `--env <KEY=VALUE>`     |                      | Set environment variable in the container. Repeatable                                                                |
+| `-i`, `--interactive`   | `false`              | Run interactively with TTY (for programs like `claude`)                                                              |
+| `--setup-script <path>` |                      | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
 
 Script arguments can be passed after `--`:
 
@@ -105,29 +105,29 @@ amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
 
 #### Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--name <name>` | auto-generated | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`) |
-| `--provider <name>` | `docker` | Sandbox provider (only `docker` is currently supported) |
-| `--image <image>` | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`) |
-| `--preset <name>` | | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
-| `--mount <spec>` | | Mount a host path (`source:target[:mode]`, mode defaults to `rwcopy`). Repeatable |
-| `--volume <spec>` | | Mount an existing named volume (`name:target[:mode]`, mode defaults to `rw`). Repeatable |
-| `--git [path]` | | Mount the git repo root (or repo containing `path`) to `/home/amika/workspace/{repo}`. Uses a clean clone by default |
-| `--no-clean` | `false` | With `--git`, include untracked/uncommitted files instead of a clean clone |
-| `--env <KEY=VALUE>` | | Set environment variable. Repeatable |
-| `--port <spec>` | | Publish a container port (`hostPort:containerPort[/protocol]`, protocol defaults to `tcp`). Repeatable |
-| `--port-host-ip <ip>` | `127.0.0.1` | Host IP address to bind published ports to |
-| `--yes` | `false` | Skip mount confirmation prompt |
-| `--connect` | `false` | Connect to the sandbox shell immediately after creation |
-| `--setup-script <path>` | | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
+| Flag                    | Default              | Description                                                                                                          |
+| ----------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--name <name>`         | auto-generated       | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`)                    |
+| `--provider <name>`     | `docker`             | Sandbox provider (only `docker` is currently supported)                                                              |
+| `--image <image>`       | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`)                                                             |
+| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md) |
+| `--mount <spec>`        |                      | Mount a host path (`source:target[:mode]`, mode defaults to `rwcopy`). Repeatable                                    |
+| `--volume <spec>`       |                      | Mount an existing named volume (`name:target[:mode]`, mode defaults to `rw`). Repeatable                             |
+| `--git [path]`          |                      | Mount the git repo root (or repo containing `path`) to `/home/amika/workspace/{repo}`. Uses a clean clone by default |
+| `--no-clean`            | `false`              | With `--git`, include untracked/uncommitted files instead of a clean clone                                           |
+| `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                 |
+| `--port <spec>`         |                      | Publish a container port (`hostPort:containerPort[/protocol]`, protocol defaults to `tcp`). Repeatable               |
+| `--port-host-ip <ip>`   | `127.0.0.1`          | Host IP address to bind published ports to                                                                           |
+| `--yes`                 | `false`              | Skip mount confirmation prompt                                                                                       |
+| `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                              |
+| `--setup-script <path>` |                      | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
 
 #### Mount modes
 
-| Mode | Behavior |
-|------|----------|
-| `ro` | Read-only bind mount from host |
-| `rw` | Read-write bind mount from host (writes sync back to host) |
+| Mode     | Behavior                                                                                                                                 |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ro`     | Read-only bind mount from host                                                                                                           |
+| `rw`     | Read-write bind mount from host (writes sync back to host)                                                                               |
 | `rwcopy` | Read-write snapshot in a Docker volume (default for `--mount`). Host files are copied in; writes stay in the volume and do not sync back |
 
 ### `amika sandbox list`
@@ -152,9 +152,9 @@ amika sandbox connect dev-sandbox
 amika sandbox connect dev-sandbox --shell bash
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--shell <shell>` | `zsh` | Shell to run in the sandbox container |
+| Flag              | Default | Description                           |
+| ----------------- | ------- | ------------------------------------- |
+| `--shell <shell>` | `zsh`   | Shell to run in the sandbox container |
 
 The shell starts in `/home/amika`.
 
@@ -176,10 +176,10 @@ amika sandbox delete dev-sandbox --delete-volumes
 amika sandbox delete dev-sandbox --keep-volumes
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--delete-volumes` | `false` | Delete associated volumes that are no longer referenced by other sandboxes |
-| `--keep-volumes` | `false` | Keep associated volumes without prompting, even if this sandbox is the only reference |
+| Flag               | Default | Description                                                                           |
+| ------------------ | ------- | ------------------------------------------------------------------------------------- |
+| `--delete-volumes` | `false` | Delete associated volumes that are no longer referenced by other sandboxes            |
+| `--keep-volumes`   | `false` | Keep associated volumes without prompting, even if this sandbox is the only reference |
 
 When neither flag is set and the sandbox is the sole reference for a volume, you will be prompted to decide.
 
@@ -211,8 +211,8 @@ amika volume delete my-volume
 amika volume delete my-volume --force
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
+| Flag      | Default | Description                                         |
+| --------- | ------- | --------------------------------------------------- |
 | `--force` | `false` | Delete volume even if still referenced by sandboxes |
 
 ---
@@ -239,11 +239,11 @@ amika auth extract --homedir /tmp/test-home
 amika auth extract --no-oauth
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--export` | `false` | Prefix each line with `export` |
-| `--homedir <path>` | | Override home directory used for credential discovery |
-| `--no-oauth` | `false` | Skip OAuth credential sources |
+| Flag               | Default | Description                                           |
+| ------------------ | ------- | ----------------------------------------------------- |
+| `--export`         | `false` | Prefix each line with `export`                        |
+| `--homedir <path>` |         | Override home directory used for credential discovery |
+| `--no-oauth`       | `false` | Skip OAuth credential sources                         |
 
 See [auth.md](auth.md) for details on supported credential sources and priority.
 
@@ -257,10 +257,10 @@ Legacy commands using local bindfs/macFUSE mounts. These are hidden from `--help
 
 Mount a source directory to a target path.
 
-| Mode | Behavior |
-|------|----------|
-| `ro` | Read-only via bindfs |
-| `rw` | Read-write via bindfs |
+| Mode      | Behavior                                                               |
+| --------- | ---------------------------------------------------------------------- |
+| `ro`      | Read-only via bindfs                                                   |
+| `rw`      | Read-write via bindfs                                                  |
 | `overlay` | Copies source to a temp directory and mounts that; writes are isolated |
 
 ### `amika v0 unmount <target>`
@@ -288,25 +288,25 @@ amika-server -addr :9090
 PORT=9090 amika-server
 ```
 
-| Flag / Env | Default | Description |
-|------------|---------|-------------|
-| `-addr <host:port>` | `:8080` | HTTP listen address |
-| `PORT` (env) | | Override listen address (mutually exclusive with `-addr`) |
+| Flag / Env          | Default | Description                                               |
+| ------------------- | ------- | --------------------------------------------------------- |
+| `-addr <host:port>` | `:8080` | HTTP listen address                                       |
+| `PORT` (env)        |         | Override listen address (mutually exclusive with `-addr`) |
 
 The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
 
 ### API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/v1/health` | Health check |
-| `GET` | `/v1/sandboxes` | List sandboxes |
-| `POST` | `/v1/sandboxes` | Create a sandbox |
-| `DELETE` | `/v1/sandboxes/{name}` | Delete a sandbox |
-| `GET` | `/v1/volumes` | List volumes |
-| `DELETE` | `/v1/volumes/{name}` | Delete a volume |
-| `POST` | `/v1/auth/extract` | Extract credentials |
-| `POST` | `/v1/materialize` | Run a materialize operation |
+| Method   | Path                   | Description                 |
+| -------- | ---------------------- | --------------------------- |
+| `GET`    | `/v1/health`           | Health check                |
+| `GET`    | `/v1/sandboxes`        | List sandboxes              |
+| `POST`   | `/v1/sandboxes`        | Create a sandbox            |
+| `DELETE` | `/v1/sandboxes/{name}` | Delete a sandbox            |
+| `GET`    | `/v1/volumes`          | List volumes                |
+| `DELETE` | `/v1/volumes/{name}`   | Delete a volume             |
+| `POST`   | `/v1/auth/extract`     | Extract credentials         |
+| `POST`   | `/v1/materialize`      | Run a materialize operation |
 
 ### API-Only Fields
 
@@ -318,10 +318,10 @@ The HTTP API accepts some fields that are not available as CLI flags:
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `AMIKA_STATE_DIRECTORY` | Override the default state directory (`~/.local/state/amika`). All state files are stored here when set |
-| `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets. E.g. setting to `myregistry/amika` produces `myregistry/amika-coder:latest` |
-| `AMIKA_SANDBOX_ROOT` | Set inside materialize containers, pointing to the sandbox root directory |
-| `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test` |
-| `PORT` | Override listen address for `amika-server`. Accepts a plain port (`8080` becomes `:8080`) or full address (`127.0.0.1:8080`). Mutually exclusive with `-addr` flag |
+| Variable                    | Description                                                                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AMIKA_STATE_DIRECTORY`     | Override the default state directory (`~/.local/state/amika`). All state files are stored here when set                                                            |
+| `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets. E.g. setting to `myregistry/amika` produces `myregistry/amika-coder:latest`                                     |
+| `AMIKA_SANDBOX_ROOT`        | Set inside materialize containers, pointing to the sandbox root directory                                                                                          |
+| `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test`                                                                                   |
+| `PORT`                      | Override listen address for `amika-server`. Accepts a plain port (`8080` becomes `:8080`) or full address (`127.0.0.1:8080`). Mutually exclusive with `-addr` flag |

@@ -11,6 +11,7 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 **Materialization**: Ephemeral Docker containers run scripts or commands, and their output files are copied to a host destination via `rsync`.
 
 **Mount modes**: Host directories can be mounted into sandboxes with three access modes:
+
 - `ro` — read-only bind mount
 - `rw` — read-write bind mount (writes sync back to host)
 - `rwcopy` — read-write snapshot in a Docker volume (default; host is not modified)
@@ -21,14 +22,14 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `amika materialize` | Run a script/command in an ephemeral container and copy outputs to a host directory |
-| `amika sandbox create\|list\|connect\|delete` | Manage persistent Docker sandboxes |
-| `amika volume list\|delete` | Manage tracked Docker volumes created by `rwcopy` mounts |
-| `amika auth extract` | Discover local credentials and print shell environment assignments |
-| `amika v0 mount\|unmount\|materialize` | Legacy local bindfs/macFUSE commands (hidden) |
-| `amika-server` | HTTP server exposing the same functionality as a REST API |
+| Command                                       | Description                                                                         |
+| --------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `amika materialize`                           | Run a script/command in an ephemeral container and copy outputs to a host directory |
+| `amika sandbox create\|list\|connect\|delete` | Manage persistent Docker sandboxes                                                  |
+| `amika volume list\|delete`                   | Manage tracked Docker volumes created by `rwcopy` mounts                            |
+| `amika auth extract`                          | Discover local credentials and print shell environment assignments                  |
+| `amika v0 mount\|unmount\|materialize`        | Legacy local bindfs/macFUSE commands (hidden)                                       |
+| `amika-server`                                | HTTP server exposing the same functionality as a REST API                           |
 
 See [cli-reference.md](../cli-reference.md) for full flag documentation.
 
@@ -87,12 +88,12 @@ pkg/amika/             Public service API (used by both CLI and HTTP server)
 
 ## System Dependencies
 
-| Tool | Required By | Purpose |
-|------|-------------|---------|
-| Docker | `materialize`, `sandbox`, `volume` | Container runtime for sandboxes |
-| rsync | `materialize` | Copies output files from container to host |
-| bindfs | `v0 mount` (legacy) | Virtual filesystem mounting via `brew install bindfs` |
-| macFUSE | `v0 mount` (legacy) | FUSE support on macOS via `brew install --cask macfuse` |
+| Tool    | Required By                        | Purpose                                                 |
+| ------- | ---------------------------------- | ------------------------------------------------------- |
+| Docker  | `materialize`, `sandbox`, `volume` | Container runtime for sandboxes                         |
+| rsync   | `materialize`                      | Copies output files from container to host              |
+| bindfs  | `v0 mount` (legacy)                | Virtual filesystem mounting via `brew install bindfs`   |
+| macFUSE | `v0 mount` (legacy)                | FUSE support on macOS via `brew install --cask macfuse` |
 
 ## State Storage
 

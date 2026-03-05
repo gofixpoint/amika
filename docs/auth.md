@@ -19,16 +19,16 @@ amika auth extract --no-oauth
 
 Amika scans the following credential sources, in priority order (highest first):
 
-| Priority | Source | ID | File(s) | Providers |
-|----------|--------|----|---------|-----------|
-| 500 | Claude API key | `claude_api` | `~/.claude.json.api`, `~/.claude.json` | Anthropic |
-| 400 | Claude OAuth | `claude_oauth` | `~/.claude/.credentials.json`, `~/.claude-oauth-credentials.json` | Anthropic |
-| 300 | Codex | `codex` | `~/.codex/auth.json` | OpenAI |
-| 290 | Amika env cache | `amika_env_cache` | `${XDG_CACHE_HOME}/amika/env-cache.json` | Any |
-| 280 | Amika keychain | `amika_keychain` | `${XDG_DATA_HOME}/amika/keychain.json` | Any |
-| 270 | Amika OAuth | `amika_oauth` | `${XDG_STATE_HOME}/amika/oauth.json` | Any |
-| 200 | OpenCode | `opencode` | `~/.local/share/opencode/auth.json` | Any (per-provider entries) |
-| 100 | Amp | `amp` | `~/.amp/config.json` | Anthropic |
+| Priority | Source          | ID                | File(s)                                                           | Providers                  |
+| -------- | --------------- | ----------------- | ----------------------------------------------------------------- | -------------------------- |
+| 500      | Claude API key  | `claude_api`      | `~/.claude.json.api`, `~/.claude.json`                            | Anthropic                  |
+| 400      | Claude OAuth    | `claude_oauth`    | `~/.claude/.credentials.json`, `~/.claude-oauth-credentials.json` | Anthropic                  |
+| 300      | Codex           | `codex`           | `~/.codex/auth.json`                                              | OpenAI                     |
+| 290      | Amika env cache | `amika_env_cache` | `${XDG_CACHE_HOME}/amika/env-cache.json`                          | Any                        |
+| 280      | Amika keychain  | `amika_keychain`  | `${XDG_DATA_HOME}/amika/keychain.json`                            | Any                        |
+| 270      | Amika OAuth     | `amika_oauth`     | `${XDG_STATE_HOME}/amika/oauth.json`                              | Any                        |
+| 200      | OpenCode        | `opencode`        | `~/.local/share/opencode/auth.json`                               | Any (per-provider entries) |
+| 100      | Amp             | `amp`             | `~/.amp/config.json`                                              | Anthropic                  |
 
 When multiple sources provide a credential for the same provider, the highest-priority source wins.
 
@@ -70,8 +70,8 @@ OAuth tokens with an `expiresAt` or `expires` timestamp are skipped if expired.
 
 ## Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--export` | `false` | Prefix each line with `export` |
+| Flag               | Default | Description                                           |
+| ------------------ | ------- | ----------------------------------------------------- |
+| `--export`         | `false` | Prefix each line with `export`                        |
 | `--homedir <path>` | `$HOME` | Override home directory used for credential discovery |
-| `--no-oauth` | `false` | Skip OAuth credential sources |
+| `--no-oauth`       | `false` | Skip OAuth credential sources                         |

@@ -88,17 +88,17 @@ claude "Add unit tests for the auth module"
 
 ## Commands Overview
 
-| Command | Description |
-|---------|-------------|
-| `amika sandbox create` | Create a new Docker sandbox with mounts, presets, and environment config |
-| `amika sandbox list` | List all tracked sandboxes |
-| `amika sandbox connect` | Attach to a running sandbox with an interactive shell |
-| `amika sandbox delete` | Delete sandboxes and optionally their volumes |
-| `amika materialize` | Run a script/command in an ephemeral container and copy outputs to host |
-| `amika volume list` | List tracked Docker volumes |
-| `amika volume delete` | Delete tracked Docker volumes |
-| `amika auth extract` | Discover and print locally stored agent credentials |
-| `amika-server` | Start the HTTP API server |
+| Command                 | Description                                                              |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `amika sandbox create`  | Create a new Docker sandbox with mounts, presets, and environment config |
+| `amika sandbox list`    | List all tracked sandboxes                                               |
+| `amika sandbox connect` | Attach to a running sandbox with an interactive shell                    |
+| `amika sandbox delete`  | Delete sandboxes and optionally their volumes                            |
+| `amika materialize`     | Run a script/command in an ephemeral container and copy outputs to host  |
+| `amika volume list`     | List tracked Docker volumes                                              |
+| `amika volume delete`   | Delete tracked Docker volumes                                            |
+| `amika auth extract`    | Discover and print locally stored agent credentials                      |
+| `amika-server`          | Start the HTTP API server                                                |
 
 For the full flag reference, see [docs/cli-reference.md](docs/cli-reference.md).
 
@@ -117,10 +117,10 @@ See the [endpoint table in docs/cli-reference.md](docs/cli-reference.md#api-endp
 
 ## Presets
 
-| Preset | Image | Includes |
-|--------|-------|----------|
-| `coder` (default) | `amika/coder:latest` | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code, Codex, OpenCode |
-| `claude` | `amika/claude:latest` | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code |
+| Preset            | Image                 | Includes                                                                         |
+| ----------------- | --------------------- | -------------------------------------------------------------------------------- |
+| `coder` (default) | `amika/coder:latest`  | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code, Codex, OpenCode |
+| `claude`          | `amika/claude:latest` | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code                  |
 
 Preset images are built automatically on first use from bundled Dockerfiles (one-time build, takes a few minutes).
 

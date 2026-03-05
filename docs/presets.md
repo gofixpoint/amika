@@ -13,6 +13,7 @@ The default preset, used when no `--image` or `--preset` flag is provided.
 **Base:** Ubuntu 24.04
 
 **Included tools:**
+
 - git, curl, zsh, build-essential
 - Python 3 + pip
 - Node.js 22, pnpm
@@ -30,6 +31,7 @@ A lighter preset focused on Claude Code only.
 **Base:** Ubuntu 24.04
 
 **Included tools:**
+
 - git, curl, zsh, build-essential
 - Python 3 + pip
 - Node.js 22, pnpm
@@ -91,15 +93,18 @@ When creating a sandbox or running materialize, Amika automatically discovers an
 The following credential files are auto-mounted when they exist:
 
 **Claude Code:**
+
 - `~/.claude.json.api`
 - `~/.claude.json`
 - `~/.claude/.credentials.json`
 - `~/.claude-oauth-credentials.json`
 
 **Codex:**
+
 - `~/.codex/auth.json`
 
 **OpenCode:**
+
 - `~/.local/share/opencode/auth.json`
 - `~/.local/state/opencode/model.json`
 
