@@ -7,8 +7,7 @@
 <p align="center">
   <a href="https://github.com/gofixpoint/amika/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/built%20with-Go-00ADD8.svg" alt="Go"></a>
-  <img src="https://img.shields.io/badge/platform-macOS-lightgrey.svg" alt="macOS">
-  <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha">
+  <img src="https://img.shields.io/badge/status-beta-yellow.svg" alt="Beta">
 </p>
 
 <p align="center">
@@ -17,159 +16,133 @@
 
 ---
 
-## Why
+## What is Amika?
 
-AI agents like Claude Code and OpenClaw have converged on the best interface for knowledge work: give the agent a computer and let it operate on files. The problem is getting the right data onto that computer, especially when you're running agents inside ephemeral sandboxes (Daytona, Modal, etc.).
+Amika is an open-source CLI and HTTP API for running AI coding agents in Docker sandboxes. Each sandbox comes pre-configured with development tools and agent CLIs — Claude Code, Codex, and OpenCode — ready to go out of the box.
 
-So we built Amika: a filesystem for AI agents. It started because I wanted to automate my sales pipeline with Claude Code. (Yes, only an engineer would run sales on a POSIX filesystem with a coding agent…)
+Agent credentials are auto-discovered from your host machine and mounted into every sandbox. Git repos are cloned in with `--git`, and setup scripts let you customize the environment on creation. The REST API (`amika-server`) exposes the same functionality for programmatic access.
 
-Amika lets you pull scattered data from Hubspot, Linear, wherever, and connect that data to your agent sandboxes, persisting it across sessions. You can also use the data outside sandboxes on your local machine.
+This is the same infra pattern used by Ramp, Coinbase, and Stripe for their in-house coding agent platforms.
 
-**Think of us kind of like Dropbox, but for you AI agents.**
+## Key Features
 
-## How It Works
-
-1. **Materialize** -- Run scripts that pull data from any source. Outputs land as files in your filesystem repo.
-2. **Mount** -- Mount directories into sandboxes with access control (read-only, read-write, overlay).
-3. **Work** -- Your agent reads and writes files inside the sandbox. You control what syncs back.
-
-```
-┌──────────────┐      ┌──────────────────────┐      ┌─────────────────┐
-│  Your Tools  │ ──── │ Amika Filesystem     │ ──── │  Agent Sandbox  │
-│              │      │                      │      │                 │
-│  HubSpot     │      │  materialize ──> fs  │      │  mounted dirs   │
-│  Linear      │      │  scripts, commands   │      │  ro / rw / rwcopy │
-│  Notion      │      │                      │      │                 │
-└──────────────┘      └──────────────────────┘      └─────────────────┘
-```
+- **Preset environments** — Ubuntu 24.04 sandboxes with Claude Code, Codex, OpenCode, Python, Node.js, and standard dev tools
+- **Credential auto-discovery** — Zero-config agent auth; API keys and OAuth tokens are found and mounted automatically
+- **Git repo mounting** — Clone your repo into a sandbox with `--git` (clean clone by default, or `--no-clean` for uncommitted files)
+- **Setup scripts** — Run custom initialization logic on sandbox creation with `--setup-script`
+- **Port publishing** — Expose container ports to the host for live previews with `--port`
+- **REST API** — `amika-server` exposes all operations as HTTP endpoints with OpenAPI docs at `/docs`
 
 ## Quick Start
 
 **Prerequisites:** Go 1.21+, Docker, macOS
 
-Right now, we only support mounting into Docker containers, but we are expanding to support network-mounting filesystems onto any machine.
+### Install
 
 ```bash
-# Clone and build
 git clone https://github.com/gofixpoint/amika.git && cd amika
-make build-cli
-
-# Materialize: run a command and capture its output as files
-./dist/amika materialize --cmd "echo hello > greeting.txt" --destdir /tmp/demo
-cat /tmp/demo/greeting.txt
-
-# Create a Docker sandbox with a mounted directory
-# (mode defaults to rwcopy when omitted)
-./dist/amika sandbox create --name my-sandbox \
-  --mount /tmp/demo:/workspace/data
+make build
 ```
 
-## Example: Sales Pipeline
-
-*We've built some materialization scripts for our own use cases and put them inside `./materialization-scripts`. We're taking pull requests if there's other standard data flows to materialize for agents.*
-
-Because we're big engineering nerds, we run part of our sales workflow in Claude Code. It was a PITA to get the right CRM data to Claude, so we automated it:
+### Create Your First Sandbox
 
 ```bash
-# 1. Materialize CRM data -- a script pulls deals from HubSpot as JSON files
-./dist/amika materialize \
-  --script ./materialization-scripts/pull-hubspot-deals.sh \
-  --destdir ./data/deals
-
-# 2. Create a sandbox with data mounts
-./dist/amika sandbox create --name sales-agent \
-  --mount ./data/deals:/workspace/deals:ro \
-  --mount ./output:/workspace/drafts
-
-# 3. Your agent runs inside the sandbox, reads deal files, writes draft emails
-# The agent sees /workspace/deals (read-only) and writes to /workspace/drafts
-
-# 4. Review drafts on your host at ./output/
-ls ./output/
+./dist/amika sandbox create --name my-sandbox --git --connect
 ```
 
-You can also let Claude work off the data on your host computer, without a sandbox:
+Inside the sandbox you get a zsh shell at `/home/amika/workspace/{repo}` with your full repo, dev tools, and agent credentials ready.
+
+### Run Claude Code in a Sandbox
 
 ```bash
-# Just work off the data outside the sandbox. Either `cd ./data/deals`,
-# or mount it somewhere first:
-./dist/amika mount ./data/deals ~/workspace/claude/sales --mode rw
+./dist/amika sandbox create --preset claude --git --connect
+# Inside the sandbox:
+claude "Add unit tests for the auth module"
 ```
 
-Run materialization scripts on any cron schedule. Data stays fresh. Agents get
-context without copy-paste.
-
-## Commands
-
-### `amika materialize`
-
-Execute a script or command in an isolated Docker container and copy outputs to your filesystem.
+### Run Multiple Agents in Parallel
 
 ```bash
-# Run a script, copy results to a destination
-amika materialize --script ./pull-data.sh --destdir ./output
-
-# Run an inline command
-amika materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
-
-# Run interactively (e.g. launch Claude Code inside a container)
-amika materialize -i --cmd claude --mount $(pwd):/workspace
+./dist/amika sandbox create --name task-1 --preset coder --git
+./dist/amika sandbox create --name task-2 --preset coder --git
+./dist/amika sandbox list
 ```
 
-### `amika sandbox create|list|connect|delete`
+## How It Works
 
-Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
+```
+┌─────────────────┐
+│   Your Host      │
+│                  │       ┌──────────────────────────────────┐
+│  Git repo ───────────>   │  Docker Sandbox                  │
+│                  │       │                                  │
+│  Credentials ────────>   │  /home/amika/workspace/{repo}    │
+│  (auto-discovered)       │  Agent CLIs ready (claude, codex)│
+│                  │       │  Dev tools (git, node, python)   │
+│  Setup script ───────>   │  /opt/setup.sh runs on start     │
+│                  │       │                                  │
+│  Port 8080 <─────────    │  --port 8080:8080                │
+│  (live preview)  │       │                                  │
+└─────────────────┘       └──────────────────────────────────┘
+```
+
+## Commands Overview
+
+| Command | Description |
+|---------|-------------|
+| `amika sandbox create` | Create a new Docker sandbox with mounts, presets, and environment config |
+| `amika sandbox list` | List all tracked sandboxes |
+| `amika sandbox connect` | Attach to a running sandbox with an interactive shell |
+| `amika sandbox delete` | Delete sandboxes and optionally their volumes |
+| `amika materialize` | Run a script/command in an ephemeral container and copy outputs to host |
+| `amika volume list` | List tracked Docker volumes |
+| `amika volume delete` | Delete tracked Docker volumes |
+| `amika auth extract` | Discover and print locally stored agent credentials |
+| `amika-server` | Start the HTTP API server |
+
+For the full flag reference, see [docs/cli-reference.md](docs/cli-reference.md).
+
+## HTTP API
+
+Start the server:
 
 ```bash
-# Create a sandbox with mounts (mode defaults to rwcopy)
-amika sandbox create --name dev-sandbox \
-  --mount ./src:/workspace/src:ro \
-  --mount ./out:/workspace/out
-
-# Mount the current git repo into the sandbox
-amika sandbox create --name dev-sandbox --git
-
-# List, connect, delete
-amika sandbox list
-amika sandbox connect dev-sandbox
-amika sandbox delete dev-sandbox
+./dist/amika-server
+# Listening on :8080
 ```
 
-### `amika volume list|delete`
+OpenAPI documentation is available at `/docs`. The API mirrors the CLI — create sandboxes, run materializations, extract credentials, and manage volumes over HTTP.
 
-Inspect and delete tracked Docker volumes used by sandboxes.
+See the [endpoint table in docs/cli-reference.md](docs/cli-reference.md#api-endpoints) for the full list of routes.
 
-```bash
-amika volume list
-amika volume delete my-volume
-```
+## Presets
 
-### `amika auth extract`
+| Preset | Image | Includes |
+|--------|-------|----------|
+| `coder` (default) | `amika/coder:latest` | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code, Codex, OpenCode |
+| `claude` | `amika/claude:latest` | Ubuntu 24.04, git, zsh, Python 3, Node.js 22, pnpm, Claude Code |
 
-Discover locally stored credentials from Claude Code, Codex, OpenCode, and Amp.
+Preset images are built automatically on first use from bundled Dockerfiles (one-time build, takes a few minutes).
 
-```bash
-amika auth extract
-eval "$(amika auth extract --export)"
-```
-
-For the full flag reference, see [docs/cli-reference.md](docs/cli-reference.md). For credential discovery details, see [docs/auth.md](docs/auth.md). For preset images, see [docs/presets.md](docs/presets.md).
+Agent credentials are auto-discovered from your host and mounted as read-only snapshots — coding agents authenticate without manual configuration. See [docs/presets.md](docs/presets.md) and [docs/auth.md](docs/auth.md) for details.
 
 ## Roadmap
 
-- [x] Sandboxed script execution with output materialization
 - [x] Docker-backed persistent sandboxes
-- [x] Filesystem mounts (ro / rw / overlay)
-- [ ] Scheduled jobs (cron-style materialization)
-- [ ] Built-in connectors (HubSpot, Linear, Notion, Gmail)
+- [x] Credential auto-discovery and mounting
+- [x] Git repo mounting (`--git`)
+- [x] Setup scripts (`--setup-script`)
+- [x] Port publishing (`--port`)
+- [x] REST API with OpenAPI docs
 - [ ] Linux support
-- [ ] Network-mountable filesystem
-- [ ] Filesystem versioning and branching
-- [ ] Remote sandbox mounting (Modal, E2B, Daytona)
+- [ ] Scheduled sandbox jobs
+- [ ] Remote providers (Modal, E2B, Daytona)
+- [ ] Web UI
+- [ ] Slack integration
 
 ## Status
 
-Amika is **alpha software**. It runs on macOS only. APIs and CLI flags will change. We're building in public -- if something breaks or you have ideas, [open an issue](https://github.com/gofixpoint/amika/issues). Feedback shapes what we build next.
+Amika is in **beta**. APIs and CLI flags may change. If something breaks or you have ideas, [open an issue](https://github.com/gofixpoint/amika/issues) — feedback shapes what we build next.
 
 ## Contributing
 
