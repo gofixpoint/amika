@@ -44,4 +44,22 @@ When you pass `--setup-script`, your script is bind-mounted over the no-op, so t
 
 - The script must be executable (`chmod +x`).
 - If the script exits with a non-zero status, the container's main command will not run.
-- Preset images are cached locally. If you have an existing preset image from before this feature was added, you need to rebuild it by removing the old image first: `docker rmi amika/coder:latest`.
+- Preset images are cached locally. If you have an existing preset image from before the setup script feature was added, you need to rebuild your images by removing the old image first: `docker rmi amika/coder:latest`.
+
+## Agent Credential Auto-Mounting
+
+When creating a sandbox or running materialize, Amika automatically discovers credential files for supported coding agents on the host and mounts them into the container as `rwcopy` snapshots. This means agents running inside containers can authenticate without manual configuration.
+
+The container receives copies of the files — the originals on the host are never modified.
+
+### Files mounted
+
+**Claude Code:** `~/.claude.json.api`, `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude-oauth-credentials.json`
+
+**Codex:** `~/.codex/auth.json`
+
+**OpenCode:** `~/.local/share/opencode/auth.json`, `~/.local/state/opencode/model.json`
+
+Only files that exist on the host are mounted. Inside the container, they appear at the same relative paths under `/home/amika/`.
+
+This behavior is automatic and requires no flags. See [presets.md](presets.md) for more details on preset images.
