@@ -117,12 +117,7 @@ var sandboxCreateCmd = &cobra.Command{
 				if _, err := os.Stat(scriptPath); err != nil {
 					return fmt.Errorf("setup_script %q from .amika/config.toml is not accessible: %w", cfg.Lifecycle.SetupScript, err)
 				}
-				mounts = append(mounts, sandbox.MountBinding{
-					Type:   "bind",
-					Source: scriptPath,
-					Target: "/opt/setup.sh",
-					Mode:   "ro",
-				})
+				mounts = append(mounts, setupScriptBindMount(scriptPath))
 			}
 		}
 		{
@@ -140,12 +135,7 @@ var sandboxCreateCmd = &cobra.Command{
 			if _, err := os.Stat(absSetupScript); err != nil {
 				return fmt.Errorf("setup-script %q is not accessible: %w", absSetupScript, err)
 			}
-			mounts = append(mounts, sandbox.MountBinding{
-				Type:   "bind",
-				Source: absSetupScript,
-				Target: "/opt/setup.sh",
-				Mode:   "ro",
-			})
+			mounts = append(mounts, setupScriptBindMount(absSetupScript))
 		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
@@ -958,6 +948,16 @@ func generateRWCopyFileMountName(sandboxName, target string) string {
 		sanitizedTarget = "root"
 	}
 	return "amika-rwcopy-file-" + sandboxName + "-" + sanitizedTarget + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+// setupScriptBindMount returns a read-only bind mount for absPath to /opt/setup.sh.
+func setupScriptBindMount(absPath string) sandbox.MountBinding {
+	return sandbox.MountBinding{
+		Type:   "bind",
+		Source: absPath,
+		Target: "/opt/setup.sh",
+		Mode:   "ro",
+	}
 }
 
 func copyFile(src, dst string) error {
