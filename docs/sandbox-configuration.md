@@ -77,11 +77,11 @@ Works exactly like `--setup-script`: the script is bind-mounted read-only at `/o
 
 `--setup-script` always takes priority. When that flag is passed explicitly, `.amika/config.toml` is not consulted for the setup script.
 
-| Flags passed | Source used |
-|---|---|
-| `--git` only | `.amika/config.toml` (if present) |
-| `--git --setup-script /path/script.sh` | `--setup-script` flag |
-| `--setup-script /path/script.sh` (no `--git`) | `--setup-script` flag |
+| Flags passed                                  | Source used                       |
+| --------------------------------------------- | --------------------------------- |
+| `--git` only                                  | `.amika/config.toml` (if present) |
+| `--git --setup-script /path/script.sh`        | `--setup-script` flag             |
+| `--setup-script /path/script.sh` (no `--git`) | `--setup-script` flag             |
 
 ### Example
 
