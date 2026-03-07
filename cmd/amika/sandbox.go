@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofixpoint/amika/internal/agentconfig"
+	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/gofixpoint/amika/pkg/amika"
@@ -101,6 +102,28 @@ var sandboxCreateCmd = &cobra.Command{
 			defer cleanupGitMount()
 			gitMountInfo = &info
 			mounts = append(mounts, info.Mount)
+		}
+		// Read .amika/config.toml from git repo root, unless --setup-script was explicitly provided.
+		if gitMountInfo != nil && !cmd.Flags().Changed("setup-script") {
+			cfg, err := amikaconfig.LoadConfig(gitMountInfo.RepoRoot)
+			if err != nil {
+				return fmt.Errorf("failed to read .amika/config.toml: %w", err)
+			}
+			if cfg != nil && cfg.Lifecycle.SetupScript != "" {
+				scriptPath := cfg.Lifecycle.SetupScript
+				if !filepath.IsAbs(scriptPath) {
+					scriptPath = filepath.Join(gitMountInfo.RepoRoot, scriptPath)
+				}
+				if _, err := os.Stat(scriptPath); err != nil {
+					return fmt.Errorf("setup_script %q from .amika/config.toml is not accessible: %w", cfg.Lifecycle.SetupScript, err)
+				}
+				mounts = append(mounts, sandbox.MountBinding{
+					Type:   "bind",
+					Source: scriptPath,
+					Target: "/opt/setup.sh",
+					Mode:   "ro",
+				})
+			}
 		}
 		{
 			homeDir, err := os.UserHomeDir()
