@@ -46,6 +46,57 @@ When you pass `--setup-script`, your script is bind-mounted over the no-op, so t
 - If the script exits with a non-zero status, the container's main command will not run.
 - Preset images are cached locally. If you have an existing preset image from before the setup script feature was added, you need to rebuild your images by removing the old image first: `docker rmi amika/coder:latest`.
 
+## Per-repo configuration: `.amika/config.toml`
+
+When you use `--git`, Amika looks for a `.amika/config.toml` file at the root of the repository and applies it automatically. This lets you commit sandbox configuration alongside your code so every collaborator gets the same environment without passing extra flags.
+
+### File location
+
+```
+<repo-root>/
+  .amika/
+    config.toml
+```
+
+### Supported fields
+
+```toml
+[lifecycle]
+# Path to an executable that is mounted into the container at /opt/setup.sh.
+# Relative paths are resolved from the repository root.
+setup_script = "scripts/setup.sh"
+```
+
+#### `[lifecycle].setup_script`
+
+Works exactly like `--setup-script`: the script is bind-mounted read-only at `/opt/setup.sh` and the container's ENTRYPOINT runs it before the main command.
+
+**Path resolution:** if the value is a relative path it is resolved from the repository root (the directory containing `.git`). Absolute paths are used as-is.
+
+### Interaction with `--setup-script`
+
+`--setup-script` always takes priority. When that flag is passed explicitly, `.amika/config.toml` is not consulted for the setup script.
+
+| Flags passed | Source used |
+|---|---|
+| `--git` only | `.amika/config.toml` (if present) |
+| `--git --setup-script /path/script.sh` | `--setup-script` flag |
+| `--setup-script /path/script.sh` (no `--git`) | `--setup-script` flag |
+
+### Example
+
+Given this repository layout:
+
+```
+my-project/
+  .amika/
+    config.toml       # setup_script = "scripts/setup.sh"
+  scripts/
+    setup.sh          # must be executable (chmod +x)
+```
+
+Running `amika sandbox create --git` from anywhere inside `my-project` will automatically mount `scripts/setup.sh` to `/opt/setup.sh` in the container.
+
 ## Agent Credential Auto-Mounting
 
 When creating a sandbox or running materialize, Amika automatically discovers credential files for supported coding agents on the host and mounts them into the container as `rwcopy` snapshots. This means agents running inside containers can authenticate without manual configuration.
