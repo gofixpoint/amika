@@ -901,6 +901,124 @@ func runGitCmd(t *testing.T, repo string, args ...string) {
 	}
 }
 
+func TestMaterializeRWCopyMounts_Passthrough(t *testing.T) {
+	dir := t.TempDir()
+	volumeStore := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
+	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+
+	input := []sandbox.MountBinding{
+		{Type: "bind", Source: "/host/src", Target: "/workspace", Mode: "ro"},
+		{Type: "volume", Volume: "vol1", Target: "/data", Mode: "rw"},
+	}
+
+	runtimeMounts, rb, err := materializeRWCopyMounts(input, "test-sb", volumeStore, fileMountStore, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runtimeMounts) != 2 {
+		t.Fatalf("expected 2 mounts, got %d", len(runtimeMounts))
+	}
+	if runtimeMounts[0].Source != "/host/src" || runtimeMounts[1].Volume != "vol1" {
+		t.Fatalf("mounts not passed through unchanged: %+v", runtimeMounts)
+	}
+
+	// Rollback on passthrough mounts should be a noop (no state was created).
+	rb.Rollback()
+}
+
+func TestMaterializeRWCopyMounts_FileRWCopy(t *testing.T) {
+	dir := t.TempDir()
+	volumeStore := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
+	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fileMountsBaseDir := filepath.Join(dir, "file-mounts")
+	if err := os.MkdirAll(fileMountsBaseDir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	srcFile := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(srcFile, []byte("key: value"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	input := []sandbox.MountBinding{
+		{Type: "bind", Source: srcFile, Target: "/app/config.yaml", Mode: "rwcopy"},
+	}
+
+	runtimeMounts, rb, err := materializeRWCopyMounts(input, "test-sb", volumeStore, fileMountStore, fileMountsBaseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runtimeMounts) != 1 {
+		t.Fatalf("expected 1 runtime mount, got %d", len(runtimeMounts))
+	}
+
+	m := runtimeMounts[0]
+	if m.Type != "bind" {
+		t.Fatalf("type = %q, want bind", m.Type)
+	}
+	if m.Mode != "rw" {
+		t.Fatalf("mode = %q, want rw", m.Mode)
+	}
+	if m.SnapshotFrom != srcFile {
+		t.Fatalf("snapshot_from = %q, want %q", m.SnapshotFrom, srcFile)
+	}
+
+	// Verify the copy actually exists on disk.
+	if _, err := os.Stat(m.Source); err != nil {
+		t.Fatalf("copied file does not exist at %q: %v", m.Source, err)
+	}
+
+	// Verify a file mount store entry was created.
+	mounts, err := fileMountStore.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 file mount store entry, got %d", len(mounts))
+	}
+
+	rb.Rollback()
+}
+
+func TestMaterializeRWCopyMounts_Disarm(t *testing.T) {
+	dir := t.TempDir()
+	volumeStore := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
+	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fileMountsBaseDir := filepath.Join(dir, "file-mounts")
+	if err := os.MkdirAll(fileMountsBaseDir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	srcFile := filepath.Join(dir, "secret.yaml")
+	if err := os.WriteFile(srcFile, []byte("token: abc"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	input := []sandbox.MountBinding{
+		{Type: "bind", Source: srcFile, Target: "/app/secret.yaml", Mode: "rwcopy"},
+	}
+
+	runtimeMounts, rb, err := materializeRWCopyMounts(input, "test-sb", volumeStore, fileMountStore, fileMountsBaseDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	rb.Disarm()
+	rb.Rollback() // Should be a noop after Disarm.
+
+	// The copied file and store entry must still exist.
+	if _, err := os.Stat(runtimeMounts[0].Source); err != nil {
+		t.Fatalf("file should still exist after Disarm+Rollback: %v", err)
+	}
+	mounts, err := fileMountStore.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(mounts) != 1 {
+		t.Fatalf("store entry should still exist after Disarm+Rollback, got %d entries", len(mounts))
+	}
+}
+
 func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
