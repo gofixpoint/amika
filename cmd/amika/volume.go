@@ -70,11 +70,15 @@ var volumeListCmd = &cobra.Command{
 			if len(fm.SandboxRefs) > 0 {
 				inUse = "yes"
 			}
+			fmType := fm.Type
+			if fmType == "" {
+				fmType = "file"
+			}
 			fmt.Fprintf(
 				w,
 				"%s\t%s\t%s\t%s\t%s\t%s\n",
 				fm.Name,
-				"file",
+				fmType,
 				fm.CreatedAt,
 				inUse,
 				strings.Join(fm.SandboxRefs, ","),

@@ -72,8 +72,10 @@ func TestCreateSandbox_SetupScriptAndTextMutuallyExclusive(t *testing.T) {
 }
 
 func TestResolveSetupScriptMount_SetupScriptTextCreatesExecutableFile(t *testing.T) {
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	mount, cleanup, err := resolveSetupScriptMount("sb", "", "#!/usr/bin/env bash\necho hi\n")
+	dir := t.TempDir()
+	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
+	fmDir := filepath.Join(dir, "amika-volumes.d")
+	mount, cleanup, err := resolveSetupScriptMount("sb", "", "#!/usr/bin/env bash\necho hi\n", fmStore, fmDir)
 	if err != nil {
 		t.Fatalf("resolveSetupScriptMount err = %v", err)
 	}
@@ -88,6 +90,61 @@ func TestResolveSetupScriptMount_SetupScriptTextCreatesExecutableFile(t *testing
 	}
 	if info.Mode().Perm() != 0o755 {
 		t.Fatalf("expected setup script mode 0755, got %04o", info.Mode().Perm())
+	}
+}
+
+func TestResolveSetupScriptMount_TracksInFileMountStore(t *testing.T) {
+	dir := t.TempDir()
+	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
+	fmDir := filepath.Join(dir, "amika-volumes.d")
+	mount, cleanup, err := resolveSetupScriptMount("sb", "", "#!/usr/bin/env bash\necho hi\n", fmStore, fmDir)
+	if err != nil {
+		t.Fatalf("resolveSetupScriptMount err = %v", err)
+	}
+	if mount == nil {
+		t.Fatal("expected mount, got nil")
+	}
+
+	// Verify the entry was tracked in the store.
+	entries, err := fmStore.FileMountsForSandbox("sb")
+	if err != nil {
+		t.Fatalf("FileMountsForSandbox err = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Type != "setup-script" {
+		t.Fatalf("expected type setup-script, got %q", entries[0].Type)
+	}
+	if entries[0].CopyPath != mount.Source {
+		t.Fatalf("CopyPath = %q, want %q", entries[0].CopyPath, mount.Source)
+	}
+
+	// Verify cleanup removes both the file and the store entry.
+	cleanup()
+	if _, err := os.Stat(mount.Source); !os.IsNotExist(err) {
+		t.Fatal("expected setup script file to be removed after cleanup")
+	}
+	entries, err = fmStore.FileMountsForSandbox("sb")
+	if err != nil {
+		t.Fatalf("FileMountsForSandbox err = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected 0 entries after cleanup, got %d", len(entries))
+	}
+}
+
+func TestResolveSetupScriptMount_NoTextReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
+	fmDir := filepath.Join(dir, "amika-volumes.d")
+	mount, cleanup, err := resolveSetupScriptMount("sb", "", "", fmStore, fmDir)
+	if err != nil {
+		t.Fatalf("resolveSetupScriptMount err = %v", err)
+	}
+	defer cleanup()
+	if mount != nil {
+		t.Fatal("expected nil mount for empty text")
 	}
 }
 

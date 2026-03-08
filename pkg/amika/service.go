@@ -98,7 +98,11 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 
 	mounts := toSandboxMountBindings(req.Mounts, req.Volumes)
 	cleanupSetupScript := func() {}
-	setupScriptMount, cleanup, err := resolveSetupScriptMount(name, req.SetupScript, req.SetupScriptText)
+	fileMountsDir, err := config.FileMountsDir()
+	if err != nil {
+		return Sandbox{}, fmt.Errorf("%w: %v", ErrInternal, err)
+	}
+	setupScriptMount, cleanup, err := resolveSetupScriptMount(name, req.SetupScript, req.SetupScriptText, s.fileMounts, fileMountsDir)
 	if err != nil {
 		return Sandbox{}, err
 	}
@@ -243,7 +247,11 @@ func (s *serviceImpl) ListVolumes(context.Context, ListVolumesRequest) (ListVolu
 		out = append(out, Volume{Name: v.Name, Type: "directory", CreatedAt: v.CreatedAt, InUse: len(v.SandboxRefs) > 0, Sandboxes: v.SandboxRefs, SourcePath: v.SourcePath})
 	}
 	for _, v := range fms {
-		out = append(out, Volume{Name: v.Name, Type: "file", CreatedAt: v.CreatedAt, InUse: len(v.SandboxRefs) > 0, Sandboxes: v.SandboxRefs, SourcePath: v.SourcePath})
+		volType := v.Type
+		if volType == "" {
+			volType = "file"
+		}
+		out = append(out, Volume{Name: v.Name, Type: volType, CreatedAt: v.CreatedAt, InUse: len(v.SandboxRefs) > 0, Sandboxes: v.SandboxRefs, SourcePath: v.SourcePath})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return ListVolumesResult{Items: out}, nil
@@ -365,7 +373,11 @@ func toPortBindings(in []sandbox.PortBinding) []PortBinding {
 	return out
 }
 
-func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sandbox.MountBinding, func(), error) {
+func resolveSetupScriptMount(
+	sandboxName, setupScriptPath, setupScriptText string,
+	fileMountStore sandbox.FileMountStore,
+	fileMountsBaseDir string,
+) (*sandbox.MountBinding, func(), error) {
 	const setupScriptTarget = "/opt/setup.sh"
 
 	if setupScriptPath != "" {
@@ -387,41 +399,47 @@ func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sa
 		return nil, func() {}, nil
 	}
 
-	stateDir, err := config.StateDir()
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: resolve state directory for SetupScriptText: %v", ErrInternal, err)
-	}
-	setupScriptDir := filepath.Join(stateDir, "setup-scripts")
-	if err := os.MkdirAll(setupScriptDir, 0o755); err != nil {
-		return nil, nil, fmt.Errorf("%w: create setup scripts directory: %v", ErrInternal, err)
+	mountName := generateSetupScriptMountName(sandboxName)
+	mountDir := filepath.Join(fileMountsBaseDir, mountName)
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		return nil, nil, fmt.Errorf("%w: create setup script directory: %v", ErrInternal, err)
 	}
 
-	prefix := "inline-setup-"
-	if trimmedName := strings.TrimSpace(name); trimmedName != "" {
-		safeName := strings.NewReplacer("/", "-", "\\", "-", "*", "-").Replace(trimmedName)
-		prefix += safeName + "-"
-	}
-	tmpFile, err := os.CreateTemp(setupScriptDir, prefix+"*.sh")
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: create SetupScriptText file: %v", ErrInternal, err)
-	}
-	defer tmpFile.Close()
-
-	if _, err := tmpFile.WriteString(setupScriptText); err != nil {
-		_ = os.Remove(tmpFile.Name())
+	scriptPath := filepath.Join(mountDir, "setup.sh")
+	if err := os.WriteFile(scriptPath, []byte(setupScriptText), 0o755); err != nil {
+		_ = os.RemoveAll(mountDir)
 		return nil, nil, fmt.Errorf("%w: write SetupScriptText file: %v", ErrInternal, err)
 	}
-	if err := tmpFile.Chmod(0o755); err != nil {
-		_ = os.Remove(tmpFile.Name())
-		return nil, nil, fmt.Errorf("%w: set permissions on SetupScriptText file: %v", ErrInternal, err)
+
+	info := sandbox.FileMountInfo{
+		Name:        mountName,
+		Type:        "setup-script",
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		CreatedBy:   "setup-script",
+		CopyPath:    scriptPath,
+		SandboxRefs: []string{sandboxName},
+	}
+	if err := fileMountStore.Save(info); err != nil {
+		_ = os.RemoveAll(mountDir)
+		return nil, nil, fmt.Errorf("%w: save setup script state: %v", ErrInternal, err)
+	}
+
+	rollback := func() {
+		_ = os.RemoveAll(mountDir)
+		_ = fileMountStore.Remove(mountName)
 	}
 
 	return &sandbox.MountBinding{
 		Type:   "bind",
-		Source: tmpFile.Name(),
+		Source: scriptPath,
 		Target: setupScriptTarget,
 		Mode:   "ro",
-	}, func() { _ = os.Remove(tmpFile.Name()) }, nil
+	}, rollback, nil
+}
+
+func generateSetupScriptMountName(sandboxName string) string {
+	safeName := strings.NewReplacer("/", "-", "\\", "-", "*", "-").Replace(strings.TrimSpace(sandboxName))
+	return "amika-setup-script-" + safeName + "-" + fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
 type initErrorService struct{ err error }
