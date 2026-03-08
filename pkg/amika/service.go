@@ -85,6 +85,17 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		return Sandbox{}, err
 	}
 
+	resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
+		Image:              req.Image,
+		Preset:             req.Preset,
+		ImageFlagChanged:   req.Image != "",
+		DefaultBuildPreset: "coder",
+	})
+	if err != nil {
+		return Sandbox{}, fmt.Errorf("%w: %v", ErrDependency, err)
+	}
+	req.Image = resolvedImage.Image
+
 	mounts := toSandboxMountBindings(req.Mounts, req.Volumes)
 	cleanupSetupScript := func() {}
 	setupScriptMount, cleanup, err := resolveSetupScriptMount(name, req.SetupScript, req.SetupScriptText)
