@@ -18,6 +18,7 @@ import (
 	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
+	"github.com/gofixpoint/amika/internal/txn"
 	"github.com/gofixpoint/amika/pkg/amika"
 	"github.com/spf13/cobra"
 )
@@ -898,22 +899,6 @@ func collectMounts(
 	}, nil
 }
 
-// Rollbacker allows callers to undo partial mount state or disarm cleanup once
-// the sandbox has been successfully created.
-type Rollbacker interface {
-	// Rollback undoes any partial state created during mount materialization
-	// (removes created volumes, file mount directories, and store entries).
-	Rollback()
-	// Disarm prevents Rollback from doing anything on subsequent calls.
-	// Call after the sandbox is successfully created and state is persisted.
-	Disarm()
-}
-
-type rollbackerFn struct{ fn func() }
-
-func (r *rollbackerFn) Rollback() { r.fn() }
-func (r *rollbackerFn) Disarm()   { r.fn = func() {} }
-
 // setupScriptMountFromConfig reads repoRoot/.amika/config.toml and returns a
 // bind mount for lifecycle.setup_script if one is configured. Returns nil, nil
 // when the file is absent or no setup_script is set.
@@ -958,14 +943,14 @@ func materializeRWCopyMounts(
 	volumeStore sandbox.VolumeStore,
 	fileMountStore sandbox.FileMountStore,
 	fileMountsBaseDir string,
-) ([]sandbox.MountBinding, Rollbacker, error) {
+) ([]sandbox.MountBinding, txn.Rollbacker, error) {
 	var runtimeMounts []sandbox.MountBinding
 	createdVolumes := make([]string, 0)
 	addedRefs := make(map[string]bool)
 	createdFileMountDirs := make([]string, 0)
 	addedFileRefs := make(map[string]bool)
 
-	rb := &rollbackerFn{fn: func() {
+	rb := txn.NewRollbacker(func() {
 		for volumeName := range addedRefs {
 			_ = volumeStore.RemoveSandboxRef(volumeName, sandboxName)
 		}
@@ -979,7 +964,7 @@ func materializeRWCopyMounts(
 		for _, dir := range createdFileMountDirs {
 			_ = os.RemoveAll(dir)
 		}
-	}}
+	})
 
 	for _, m := range mounts {
 		if m.Mode != "rwcopy" {
