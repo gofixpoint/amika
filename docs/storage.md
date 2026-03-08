@@ -26,11 +26,22 @@ If `AMIKA_STATE_DIRECTORY` is set, state files are stored there instead:
 - `${AMIKA_STATE_DIRECTORY}/amika-volumes.jsonl`
 - `${AMIKA_STATE_DIRECTORY}/mounts.jsonl` _(v0 legacy commands only)_
 
-## File Mount Copies
+## Amika-Managed Volumes (`amika-volumes`)
 
-When `rwcopy` mode is used with individual files (not directories), Amika copies the file into a local directory:
+Amika-managed volumes are host-side file copies stored in:
 
 - `${XDG_STATE_HOME:-~/.local/state}/amika/amika-volumes.d/`
 - Or `${AMIKA_STATE_DIRECTORY}/amika-volumes.d/` when the override is set
 
-These copies are cleaned up when the associated sandbox is deleted with `--delete-volumes`.
+These are tracked in `amika-volumes.jsonl` and include:
+
+- **File rwcopy snapshots** (`type: "file"`): When `rwcopy` mode is used with individual files (not directories), Amika copies the file into a subdirectory under `amika-volumes.d/` and bind-mounts the copy into the container.
+- **Inline setup scripts** (`type: "setup-script"`): When `SetupScriptText` is provided via the API, the script is written to `amika-volumes.d/` and bind-mounted read-only at `/opt/setup.sh`.
+
+All entries are cleaned up when the associated sandbox is deleted with `--delete-volumes`.
+
+## Docker-Managed Volumes (`volumes`)
+
+Docker-managed volumes are tracked in `volumes.jsonl` and created when `rwcopy` mode is used with **directories**. These are standard Docker named volumes — the Docker daemon manages the underlying storage. Amika tracks them for lifecycle management (sandbox reference counting, cleanup on deletion).
+
+The key difference: `amika-volumes` are host-side file copies managed entirely by Amika, while `volumes` are Docker volumes managed by the Docker daemon and tracked by Amika.
