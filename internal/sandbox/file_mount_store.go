@@ -9,7 +9,7 @@ import (
 	"slices"
 )
 
-// FileMountInfo represents a tracked file-based rwcopy mount.
+// FileMountInfo represents a tracked Amika-managed volume (file copy or setup script).
 type FileMountInfo struct {
 	Name        string   `json:"name"`
 	Type        string   `json:"type"`

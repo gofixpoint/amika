@@ -129,7 +129,7 @@ Unlike `sandbox create`, materialize runs ephemeral containers (`docker run --rm
 
 - **Docker volumes** created for directory rwcopy: `docker volume rm` after the container exits.
 - **File-based copies** created for file rwcopy: `os.RemoveAll` on the copy directory after the container exits.
-- **No state tracking**: since these are ephemeral, they should not be saved to `volumes.jsonl` or `rwcopy-mounts.jsonl`. They are created before the container runs and deleted after it exits, using `defer` for reliability.
+- **No state tracking**: since these are ephemeral, they should not be saved to `volumes.jsonl` or `amika-volumes.jsonl`. They are created before the container runs and deleted after it exits, using `defer` for reliability.
 - **On creation failure** (before the container runs): the same rollback logic applies — clean up any partially created volumes or file copies.
 
 ## Test Plan

@@ -69,10 +69,10 @@ func TestPaths_XDGOverrides(t *testing.T) {
 	if got, _ := p.VolumesStateFile(); got != filepath.Join(state, "amika", "volumes.jsonl") {
 		t.Fatalf("VolumesStateFile = %q", got)
 	}
-	if got, _ := p.FileMountsStateFile(); got != filepath.Join(state, "amika", "rwcopy-mounts.jsonl") {
+	if got, _ := p.FileMountsStateFile(); got != filepath.Join(state, "amika", "amika-volumes.jsonl") {
 		t.Fatalf("FileMountsStateFile = %q", got)
 	}
-	if got, _ := p.FileMountsDir(); got != filepath.Join(state, "amika", "rwcopy-mounts.d") {
+	if got, _ := p.FileMountsDir(); got != filepath.Join(state, "amika", "amika-volumes.d") {
 		t.Fatalf("FileMountsDir = %q", got)
 	}
 }
@@ -89,10 +89,10 @@ func TestStateFileHelpers(t *testing.T) {
 	if got := VolumesStateFileIn(stateDir); got != filepath.Join(stateDir, "volumes.jsonl") {
 		t.Fatalf("VolumesStateFileIn = %q", got)
 	}
-	if got := FileMountsStateFileIn(stateDir); got != filepath.Join(stateDir, "rwcopy-mounts.jsonl") {
+	if got := FileMountsStateFileIn(stateDir); got != filepath.Join(stateDir, "amika-volumes.jsonl") {
 		t.Fatalf("FileMountsStateFileIn = %q", got)
 	}
-	if got := FileMountsDirIn(stateDir); got != filepath.Join(stateDir, "rwcopy-mounts.d") {
+	if got := FileMountsDirIn(stateDir); got != filepath.Join(stateDir, "amika-volumes.d") {
 		t.Fatalf("FileMountsDirIn = %q", got)
 	}
 }

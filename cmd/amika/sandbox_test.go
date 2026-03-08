@@ -371,7 +371,7 @@ func TestValidateDeleteVolumeFlags(t *testing.T) {
 func TestResolveDeleteVolumes_FlagPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	store := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
-	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	got, err := resolveDeleteVolumes(store, fmStore, "sb-1", true, false, bufio.NewReader(strings.NewReader("")))
 	if err != nil {
@@ -393,7 +393,7 @@ func TestResolveDeleteVolumes_FlagPrecedence(t *testing.T) {
 func TestResolveDeleteVolumes_DefaultPromptsOnExclusive(t *testing.T) {
 	dir := t.TempDir()
 	store := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
-	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	if err := store.Save(sandbox.VolumeInfo{Name: "vol-1", SandboxRefs: []string{"sb-1"}}); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestResolveDeleteVolumes_DefaultPromptsOnExclusive(t *testing.T) {
 func TestResolveDeleteVolumes_DefaultNoPromptWhenNoExclusive(t *testing.T) {
 	dir := t.TempDir()
 	store := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
-	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fmStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	if err := store.Save(sandbox.VolumeInfo{Name: "vol-1", SandboxRefs: []string{"sb-1", "sb-2"}}); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestResolveDeleteVolumes_DefaultNoPromptWhenNoExclusive(t *testing.T) {
 
 func TestCleanupSandboxFileMounts_PreserveDefault(t *testing.T) {
 	dir := t.TempDir()
-	store := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	copyDir := filepath.Join(dir, "fm-1")
 	if err := os.MkdirAll(copyDir, 0755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
@@ -466,7 +466,7 @@ func TestCleanupSandboxFileMounts_PreserveDefault(t *testing.T) {
 
 func TestCleanupSandboxFileMounts_DeleteUnused(t *testing.T) {
 	dir := t.TempDir()
-	store := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	copyDir := filepath.Join(dir, "fm-1")
 	if err := os.MkdirAll(copyDir, 0755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
@@ -496,7 +496,7 @@ func TestCleanupSandboxFileMounts_DeleteUnused(t *testing.T) {
 
 func TestCleanupSandboxFileMounts_PreserveStillReferenced(t *testing.T) {
 	dir := t.TempDir()
-	store := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	copyPath := filepath.Join(dir, "fm-1", "file.yaml")
 	if err := store.Save(sandbox.FileMountInfo{Name: "fm-1", CopyPath: copyPath, SandboxRefs: []string{"sb-1", "sb-2"}}); err != nil {
 		t.Fatalf("Save failed: %v", err)
@@ -521,7 +521,7 @@ func TestCleanupSandboxFileMounts_PreserveStillReferenced(t *testing.T) {
 
 func TestCleanupSandboxFileMounts_DeleteFailureReported(t *testing.T) {
 	dir := t.TempDir()
-	store := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	// CopyPath points to a non-existent dir; RemoveAll succeeds on non-existent paths,
 	// so we test by making the store entry point at a path that cannot be removed.
 	// However, os.RemoveAll doesn't error for non-existent paths, so we test by

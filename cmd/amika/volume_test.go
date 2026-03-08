@@ -102,13 +102,13 @@ func TestVolumeListCmd_PrintsBothTypes(t *testing.T) {
 		SourcePath: "/host/data",
 	})
 
-	fmStore := sandbox.NewFileMountStore(filepath.Join(stateDir, "rwcopy-mounts.jsonl"))
+	fmStore := sandbox.NewFileMountStore(filepath.Join(stateDir, "amika-volumes.jsonl"))
 	_ = fmStore.Save(sandbox.FileMountInfo{
 		Name:       "fm-1",
 		Type:       "file",
 		CreatedAt:  "2026-01-02T00:00:00Z",
 		SourcePath: "/host/config.yaml",
-		CopyPath:   "/state/rwcopy-mounts.d/fm-1/config.yaml",
+		CopyPath:   "/state/amika-volumes.d/fm-1/config.yaml",
 	})
 
 	buf := &bytes.Buffer{}
@@ -136,7 +136,7 @@ func TestVolumeListCmd_PrintsBothTypes(t *testing.T) {
 
 func TestDeleteTrackedFileMount_InUseRequiresForce(t *testing.T) {
 	dir := t.TempDir()
-	store := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	if err := store.Save(sandbox.FileMountInfo{
 		Name:        "fm-1",
 		CopyPath:    filepath.Join(dir, "fm-1", "file.yaml"),
@@ -156,7 +156,7 @@ func TestDeleteTrackedFileMount_InUseRequiresForce(t *testing.T) {
 
 func TestDeleteTrackedFileMount_ForceDeletes(t *testing.T) {
 	dir := t.TempDir()
-	store := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	copyDir := filepath.Join(dir, "fm-1")
 	if err := os.MkdirAll(copyDir, 0755); err != nil {

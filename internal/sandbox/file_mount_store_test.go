@@ -8,7 +8,7 @@ import (
 
 func TestFileMountStore_SaveAndGet(t *testing.T) {
 	dir := t.TempDir()
-	store := NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	info := FileMountInfo{
 		Name:       "fm-1",
@@ -16,7 +16,7 @@ func TestFileMountStore_SaveAndGet(t *testing.T) {
 		CreatedAt:  "2026-01-01T00:00:00Z",
 		CreatedBy:  "rwcopy",
 		SourcePath: "/host/config.yaml",
-		CopyPath:   "/state/rwcopy-mounts.d/fm-1/config.yaml",
+		CopyPath:   "/state/amika-volumes.d/fm-1/config.yaml",
 	}
 	if err := store.Save(info); err != nil {
 		t.Fatalf("Save failed: %v", err)
@@ -32,8 +32,8 @@ func TestFileMountStore_SaveAndGet(t *testing.T) {
 	if got.SourcePath != "/host/config.yaml" {
 		t.Fatalf("SourcePath = %q, want %q", got.SourcePath, "/host/config.yaml")
 	}
-	if got.CopyPath != "/state/rwcopy-mounts.d/fm-1/config.yaml" {
-		t.Fatalf("CopyPath = %q, want %q", got.CopyPath, "/state/rwcopy-mounts.d/fm-1/config.yaml")
+	if got.CopyPath != "/state/amika-volumes.d/fm-1/config.yaml" {
+		t.Fatalf("CopyPath = %q, want %q", got.CopyPath, "/state/amika-volumes.d/fm-1/config.yaml")
 	}
 	if got.Type != "file" {
 		t.Fatalf("Type = %q, want %q", got.Type, "file")
@@ -42,7 +42,7 @@ func TestFileMountStore_SaveAndGet(t *testing.T) {
 
 func TestFileMountStore_SaveReplacesExisting(t *testing.T) {
 	dir := t.TempDir()
-	store := NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	_ = store.Save(FileMountInfo{Name: "fm-1", CreatedBy: "rwcopy"})
 	_ = store.Save(FileMountInfo{Name: "fm-1", CreatedBy: "manual"})
@@ -58,7 +58,7 @@ func TestFileMountStore_SaveReplacesExisting(t *testing.T) {
 
 func TestFileMountStore_Remove(t *testing.T) {
 	dir := t.TempDir()
-	store := NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	_ = store.Save(FileMountInfo{Name: "fm-1"})
 	_ = store.Save(FileMountInfo{Name: "fm-2"})
@@ -77,7 +77,7 @@ func TestFileMountStore_Remove(t *testing.T) {
 
 func TestFileMountStore_AddRemoveSandboxRef(t *testing.T) {
 	dir := t.TempDir()
-	store := NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	_ = store.Save(FileMountInfo{Name: "fm-1"})
 
@@ -108,7 +108,7 @@ func TestFileMountStore_AddRemoveSandboxRef(t *testing.T) {
 
 func TestFileMountStore_FileMountsForSandboxAndInUse(t *testing.T) {
 	dir := t.TempDir()
-	store := NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	_ = store.Save(FileMountInfo{Name: "fm-1", SandboxRefs: []string{"sb-a", "sb-b"}})
 	_ = store.Save(FileMountInfo{Name: "fm-2", SandboxRefs: []string{"sb-b"}})
@@ -141,7 +141,7 @@ func TestFileMountStore_FileMountsForSandboxAndInUse(t *testing.T) {
 
 func TestFileMountStore_CreatesDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "amika-state")
-	store := NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	store := NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	if err := store.Save(FileMountInfo{Name: "fm-1"}); err != nil {
 		t.Fatalf("Save failed: %v", err)

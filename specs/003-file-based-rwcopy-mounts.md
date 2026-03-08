@@ -50,7 +50,7 @@ Docker volume rwcopy (spec 002) and file-based rwcopy (this spec) use different 
 | **Backing store**                | Docker named volume                    | File in Amika state directory                               |
 | **How data is copied**           | Transient Alpine container (see below) | Go `os.ReadFile`/`os.WriteFile` copies the file on the host |
 | **Container mount type**         | Volume mount (`-v volumeName:/target`) | Bind mount (`-v /state/copy:/target`)                       |
-| **Tracked in**                   | `volumes.jsonl`                        | `rwcopy-mounts.jsonl` (separate file)                       |
+| **Tracked in**                   | `volumes.jsonl`                        | `amika-volumes.jsonl` (separate file)                       |
 | **How backing store is deleted** | `docker volume rm`                     | `os.RemoveAll` on copy directory                            |
 
 **Shared lifecycle semantics (identical for both):**
@@ -83,21 +83,21 @@ File-based rwcopy mounts avoid this indirection entirely — since the backing s
 
 Path (same resolution as `volumes.jsonl`):
 
-- `${AMIKA_STATE_DIRECTORY}/rwcopy-mounts.jsonl`
-- or `${XDG_STATE_HOME:-~/.local/state}/amika/rwcopy-mounts.jsonl`
+- `${AMIKA_STATE_DIRECTORY}/amika-volumes.jsonl`
+- or `${XDG_STATE_HOME:-~/.local/state}/amika/amika-volumes.jsonl`
 
 ### New Data Directory
 
 File copies are stored under:
 
-- `${AMIKA_STATE_DIRECTORY}/rwcopy-mounts.d/{mount-name}/{filename}`
-- or `${XDG_STATE_HOME:-~/.local/state}/amika/rwcopy-mounts.d/{mount-name}/{filename}`
+- `${AMIKA_STATE_DIRECTORY}/amika-volumes.d/{mount-name}/{filename}`
+- or `${XDG_STATE_HOME:-~/.local/state}/amika/amika-volumes.d/{mount-name}/{filename}`
 
 Each mount gets its own subdirectory to avoid filename collisions and simplify cleanup (`os.RemoveAll` on the mount directory).
 
 ### File Mount State Entry
 
-Each line in `rwcopy-mounts.jsonl` stores one record:
+Each line in `amika-volumes.jsonl` stores one record:
 
 | Field         | Type     | Description                          |
 | ------------- | -------- | ------------------------------------ |
@@ -120,8 +120,8 @@ This parallels the Docker volume naming (`amika-rwcopy-{sandboxName}-{sanitizedT
 ```
 $XDG_STATE_HOME/amika/
 ├── volumes.jsonl                          # Docker volume state (existing)
-├── rwcopy-mounts.jsonl                    # File mount state (new)
-└── rwcopy-mounts.d/                       # File copy storage (new)
+├── amika-volumes.jsonl                    # File mount state (new)
+└── amika-volumes.d/                       # File copy storage (new)
     └── amika-rwcopy-file-coral-tokyo-home-amika--claude-json-1709312400000000000/
         └── .claude.json                   # Copied file
 ```
@@ -133,9 +133,9 @@ $XDG_STATE_HOME/amika/
 During `sandbox create`, when processing an rwcopy mount whose source is a regular file (not a directory):
 
 1. Generate a unique mount name.
-2. Create the mount directory under `rwcopy-mounts.d/`.
+2. Create the mount directory under `amika-volumes.d/`.
 3. Copy the source file into the mount directory, preserving permissions.
-4. Save the `FileMountInfo` record to `rwcopy-mounts.jsonl`.
+4. Save the `FileMountInfo` record to `amika-volumes.jsonl`.
 5. Add a runtime bind mount: the copied file maps to the container target path, read-write.
 
 ### Failure and Rollback
@@ -143,7 +143,7 @@ During `sandbox create`, when processing an rwcopy mount whose source is a regul
 If sandbox creation fails after creating file mount resources:
 
 1. Remove all newly created mount directories (`os.RemoveAll`).
-2. Remove corresponding state entries from `rwcopy-mounts.jsonl`.
+2. Remove corresponding state entries from `amika-volumes.jsonl`.
 3. This runs alongside the existing Docker volume rollback — both rollbacks execute.
 
 ### Sandbox Deletion
@@ -157,8 +157,8 @@ File-based rwcopy mounts follow the same deletion behavior as Docker volumes:
 
 Deleting a file-based mount means:
 
-- `os.RemoveAll` on the mount's copy directory (the directory under `rwcopy-mounts.d/`)
-- Remove the state entry from `rwcopy-mounts.jsonl`
+- `os.RemoveAll` on the mount's copy directory (the directory under `amika-volumes.d/`)
+- Remove the state entry from `amika-volumes.jsonl`
 
 ### Atomicity
 
@@ -185,7 +185,7 @@ amika-rwcopy-file-coral-tokyo-home-...      file       2026-01-02T00:00:00Z  yes
 Lookup order:
 
 1. Check `volumes.jsonl` (Docker volume). If found, use existing delete flow.
-2. Check `rwcopy-mounts.jsonl` (file mount). If found, delete the copy directory and state entry.
+2. Check `amika-volumes.jsonl` (file mount). If found, delete the copy directory and state entry.
 3. If neither, return "not found" error.
 
 In-use protection and `--force` semantics apply identically to both types.
@@ -213,8 +213,8 @@ type FileMountStore interface {
 
 Add to `Paths` interface and `xdgPaths`:
 
-- `FileMountsStateFile()` — returns `$stateDir/rwcopy-mounts.jsonl`
-- `FileMountsDir()` — returns `$stateDir/rwcopy-mounts.d`
+- `FileMountsStateFile()` — returns `$stateDir/amika-volumes.jsonl`
+- `FileMountsDir()` — returns `$stateDir/amika-volumes.d`
 
 Add public helpers:
 
@@ -247,7 +247,7 @@ Add `FileMountsStateFile()` and `FileMountsDir()` with `AMIKA_STATE_DIRECTORY` o
 2. Sandbox ref add/remove behavior.
 3. `FileMountsForSandbox` returns correct subset.
 4. `IsInUse` returns true when refs exist, false otherwise.
-5. Path resolution for `rwcopy-mounts.jsonl` and `rwcopy-mounts.d` with default and env override.
+5. Path resolution for `amika-volumes.jsonl` and `amika-volumes.d` with default and env override.
 
 ### Creation and Rollback
 
@@ -288,6 +288,6 @@ Add `FileMountsStateFile()` and `FileMountsDir()` with `AMIKA_STATE_DIRECTORY` o
 
 ## Future Considerations
 
-1. Directory-based file mounts — if a future use case requires rwcopy of a directory without Docker, the `rwcopy-mounts.d` structure already supports filesystem trees.
+1. Directory-based file mounts — if a future use case requires rwcopy of a directory without Docker, the `amika-volumes.d` structure already supports filesystem trees.
 2. Deduplication — multiple sandboxes from the same source could share a single copy with copy-on-write semantics, but this adds complexity for limited benefit.
 3. Checksums — storing a hash of the source file at copy time would allow detecting whether the host original has changed since the snapshot.

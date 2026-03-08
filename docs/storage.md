@@ -16,21 +16,21 @@ Amika does not use a legacy `~/.amika` fallback for these files.
 
 - `sandboxes.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/sandboxes.jsonl`
 - `volumes.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/volumes.jsonl`
-- `rwcopy-mounts.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/rwcopy-mounts.jsonl`
+- `amika-volumes.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/amika-volumes.jsonl`
 - `mounts.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/mounts.jsonl` _(v0 legacy commands only)_
 
 If `AMIKA_STATE_DIRECTORY` is set, state files are stored there instead:
 
 - `${AMIKA_STATE_DIRECTORY}/sandboxes.jsonl`
 - `${AMIKA_STATE_DIRECTORY}/volumes.jsonl`
-- `${AMIKA_STATE_DIRECTORY}/rwcopy-mounts.jsonl`
+- `${AMIKA_STATE_DIRECTORY}/amika-volumes.jsonl`
 - `${AMIKA_STATE_DIRECTORY}/mounts.jsonl` _(v0 legacy commands only)_
 
 ## File Mount Copies
 
 When `rwcopy` mode is used with individual files (not directories), Amika copies the file into a local directory:
 
-- `${XDG_STATE_HOME:-~/.local/state}/amika/rwcopy-mounts.d/`
-- Or `${AMIKA_STATE_DIRECTORY}/rwcopy-mounts.d/` when the override is set
+- `${XDG_STATE_HOME:-~/.local/state}/amika/amika-volumes.d/`
+- Or `${AMIKA_STATE_DIRECTORY}/amika-volumes.d/` when the override is set
 
 These copies are cleaned up when the associated sandbox is deleted with `--delete-volumes`.

@@ -43,7 +43,7 @@ type VolumeStore interface {
 	ForSandbox(name string) ([]VolumeRecord, error)
 }
 
-// FileMountStore persists rwcopy file mount records.
+// FileMountStore persists Amika-managed volume records (file copies and setup scripts).
 type FileMountStore interface {
 	Save(info VolumeRecord) error
 	Get(name string) (VolumeRecord, error)
