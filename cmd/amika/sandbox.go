@@ -105,19 +105,12 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		// Read .amika/config.toml from git repo root, unless --setup-script was explicitly provided.
 		if gitMountInfo != nil && !cmd.Flags().Changed("setup-script") {
-			cfg, err := amikaconfig.LoadConfig(gitMountInfo.RepoRoot)
+			mount, err := setupScriptMountFromConfig(gitMountInfo.RepoRoot)
 			if err != nil {
-				return fmt.Errorf("failed to read .amika/config.toml: %w", err)
+				return err
 			}
-			if cfg != nil && cfg.Lifecycle.SetupScript != "" {
-				scriptPath := cfg.Lifecycle.SetupScript
-				if !filepath.IsAbs(scriptPath) {
-					scriptPath = filepath.Join(gitMountInfo.RepoRoot, scriptPath)
-				}
-				if _, err := os.Stat(scriptPath); err != nil {
-					return fmt.Errorf("setup_script %q from .amika/config.toml is not accessible: %w", cfg.Lifecycle.SetupScript, err)
-				}
-				mounts = append(mounts, setupScriptBindMount(scriptPath))
+			if mount != nil {
+				mounts = append(mounts, *mount)
 			}
 		}
 		{
@@ -948,6 +941,28 @@ func generateRWCopyFileMountName(sandboxName, target string) string {
 		sanitizedTarget = "root"
 	}
 	return "amika-rwcopy-file-" + sandboxName + "-" + sanitizedTarget + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+// setupScriptMountFromConfig reads repoRoot/.amika/config.toml and returns a
+// bind mount for lifecycle.setup_script if one is configured. Returns nil, nil
+// when the file is absent or no setup_script is set.
+func setupScriptMountFromConfig(repoRoot string) (*sandbox.MountBinding, error) {
+	cfg, err := amikaconfig.LoadConfig(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .amika/config.toml: %w", err)
+	}
+	if cfg == nil || cfg.Lifecycle.SetupScript == "" {
+		return nil, nil
+	}
+	scriptPath := cfg.Lifecycle.SetupScript
+	if !filepath.IsAbs(scriptPath) {
+		scriptPath = filepath.Join(repoRoot, scriptPath)
+	}
+	if _, err := os.Stat(scriptPath); err != nil {
+		return nil, fmt.Errorf("setup_script %q from .amika/config.toml is not accessible: %w", cfg.Lifecycle.SetupScript, err)
+	}
+	m := setupScriptBindMount(scriptPath)
+	return &m, nil
 }
 
 // setupScriptBindMount returns a read-only bind mount for absPath to /opt/setup.sh.
