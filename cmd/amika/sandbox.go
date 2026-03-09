@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofixpoint/amika/internal/agentconfig"
+	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/gofixpoint/amika/pkg/amika"
@@ -102,6 +103,16 @@ var sandboxCreateCmd = &cobra.Command{
 			gitMountInfo = &info
 			mounts = append(mounts, info.Mount)
 		}
+		// Read .amika/config.toml from git repo root, unless --setup-script was explicitly provided.
+		if gitMountInfo != nil && !cmd.Flags().Changed("setup-script") {
+			mount, err := setupScriptMountFromConfig(gitMountInfo.RepoRoot)
+			if err != nil {
+				return err
+			}
+			if mount != nil {
+				mounts = append(mounts, *mount)
+			}
+		}
 		{
 			homeDir, err := os.UserHomeDir()
 			if err == nil {
@@ -117,12 +128,7 @@ var sandboxCreateCmd = &cobra.Command{
 			if _, err := os.Stat(absSetupScript); err != nil {
 				return fmt.Errorf("setup-script %q is not accessible: %w", absSetupScript, err)
 			}
-			mounts = append(mounts, sandbox.MountBinding{
-				Type:   "bind",
-				Source: absSetupScript,
-				Target: "/opt/setup.sh",
-				Mode:   "ro",
-			})
+			mounts = append(mounts, setupScriptBindMount(absSetupScript))
 		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
@@ -935,6 +941,38 @@ func generateRWCopyFileMountName(sandboxName, target string) string {
 		sanitizedTarget = "root"
 	}
 	return "amika-rwcopy-file-" + sandboxName + "-" + sanitizedTarget + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+// setupScriptMountFromConfig reads repoRoot/.amika/config.toml and returns a
+// bind mount for lifecycle.setup_script if one is configured. Returns nil, nil
+// when the file is absent or no setup_script is set.
+func setupScriptMountFromConfig(repoRoot string) (*sandbox.MountBinding, error) {
+	cfg, err := amikaconfig.LoadConfig(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .amika/config.toml: %w", err)
+	}
+	if cfg == nil || cfg.Lifecycle.SetupScript == "" {
+		return nil, nil
+	}
+	scriptPath := cfg.Lifecycle.SetupScript
+	if !filepath.IsAbs(scriptPath) {
+		scriptPath = filepath.Join(repoRoot, scriptPath)
+	}
+	if _, err := os.Stat(scriptPath); err != nil {
+		return nil, fmt.Errorf("setup_script %q from .amika/config.toml is not accessible: %w", cfg.Lifecycle.SetupScript, err)
+	}
+	m := setupScriptBindMount(scriptPath)
+	return &m, nil
+}
+
+// setupScriptBindMount returns a read-only bind mount for absPath to /opt/setup.sh.
+func setupScriptBindMount(absPath string) sandbox.MountBinding {
+	return sandbox.MountBinding{
+		Type:   "bind",
+		Source: absPath,
+		Target: "/opt/setup.sh",
+		Mode:   "ro",
+	}
 }
 
 func copyFile(src, dst string) error {
