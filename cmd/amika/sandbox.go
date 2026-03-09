@@ -18,6 +18,7 @@ import (
 	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
+	"github.com/gofixpoint/amika/internal/txn"
 	"github.com/gofixpoint/amika/pkg/amika"
 	"github.com/spf13/cobra"
 )
@@ -81,55 +82,17 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		image = resolvedImage.Image
 
-		mounts, err := parseMountFlags(mountStrs)
+		collected, err := collectMounts(mountStrs, volumeStrs, portStrs, portHostIP,
+			gitPath, gitFlagChanged, noClean,
+			setupScript, cmd.Flags().Changed("setup-script"))
 		if err != nil {
 			return err
 		}
-		volumeMounts, err := parseVolumeFlags(volumeStrs)
-		if err != nil {
-			return err
-		}
-		publishedPorts, err := parsePortFlags(portStrs, portHostIP)
-		if err != nil {
-			return err
-		}
-		var gitMountInfo *gitMountInfo
-		if gitFlagChanged {
-			info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo)
-			if err != nil {
-				return err
-			}
-			defer cleanupGitMount()
-			gitMountInfo = &info
-			mounts = append(mounts, info.Mount)
-		}
-		// Read .amika/config.toml from git repo root, unless --setup-script was explicitly provided.
-		if gitMountInfo != nil && !cmd.Flags().Changed("setup-script") {
-			mount, err := setupScriptMountFromConfig(gitMountInfo.RepoRoot)
-			if err != nil {
-				return err
-			}
-			if mount != nil {
-				mounts = append(mounts, *mount)
-			}
-		}
-		{
-			homeDir, err := os.UserHomeDir()
-			if err == nil {
-				agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
-				mounts = append(mounts, agentMounts...)
-			}
-		}
-		if setupScript != "" {
-			absSetupScript, err := filepath.Abs(setupScript)
-			if err != nil {
-				return fmt.Errorf("failed to resolve setup-script path %q: %w", setupScript, err)
-			}
-			if _, err := os.Stat(absSetupScript); err != nil {
-				return fmt.Errorf("setup-script %q is not accessible: %w", absSetupScript, err)
-			}
-			mounts = append(mounts, setupScriptBindMount(absSetupScript))
-		}
+		defer collected.Cleanup()
+		mounts := collected.Mounts
+		volumeMounts := collected.VolumeMounts
+		publishedPorts := collected.Ports
+		gitMountInfo := collected.GitInfo
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
 		}
@@ -200,128 +163,35 @@ var sandboxCreateCmd = &cobra.Command{
 			}
 		}
 
-		var runtimeMounts []sandbox.MountBinding
-		createdVolumes := make([]string, 0)
-		addedRefs := make(map[string]bool)
-		createdFileMountDirs := make([]string, 0)
-		addedFileRefs := make(map[string]bool)
-		rollbackAll := func() {
-			for volumeName := range addedRefs {
-				_ = volumeStore.RemoveSandboxRef(volumeName, name)
-			}
-			for _, volumeName := range createdVolumes {
-				_ = volumeStore.Remove(volumeName)
-				_ = sandbox.RemoveDockerVolume(volumeName)
-			}
-			for mountName := range addedFileRefs {
-				_ = fileMountStore.Remove(mountName)
-			}
-			for _, dir := range createdFileMountDirs {
-				_ = os.RemoveAll(dir)
-			}
+		runtimeMounts, rb, err := materializeRWCopyMounts(mounts, name, volumeStore, fileMountStore, fileMountsBaseDir)
+		if err != nil {
+			return err
 		}
 
-		for _, m := range mounts {
-			if m.Mode != "rwcopy" {
-				runtimeMounts = append(runtimeMounts, m)
-				continue
+		attachedVolumeRefs := make([]string, 0)
+		rollbackVolumes := func() {
+			for _, volumeName := range attachedVolumeRefs {
+				_ = volumeStore.RemoveSandboxRef(volumeName, name)
 			}
-
-			stat, err := os.Stat(m.Source)
-			if err != nil {
-				rollbackAll()
-				return fmt.Errorf("rwcopy source %q is not accessible: %w", m.Source, err)
-			}
-
-			if stat.IsDir() {
-				volumeName := generateRWCopyVolumeName(name, m.Target)
-				if err := sandbox.CreateDockerVolume(volumeName); err != nil {
-					rollbackAll()
-					return err
-				}
-				createdVolumes = append(createdVolumes, volumeName)
-
-				if err := sandbox.CopyHostDirToVolume(volumeName, m.Source); err != nil {
-					rollbackAll()
-					return err
-				}
-
-				volInfo := sandbox.VolumeInfo{
-					Name:        volumeName,
-					CreatedAt:   time.Now().UTC().Format(time.RFC3339),
-					CreatedBy:   "rwcopy",
-					SourcePath:  m.Source,
-					SandboxRefs: []string{name},
-				}
-				if err := volumeStore.Save(volInfo); err != nil {
-					rollbackAll()
-					return fmt.Errorf("failed to save volume state for %q: %w", volumeName, err)
-				}
-				addedRefs[volumeName] = true
-
-				runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
-					Type:         "volume",
-					Volume:       volumeName,
-					Target:       m.Target,
-					Mode:         "rw",
-					SnapshotFrom: m.Source,
-				})
-			} else {
-				mountName := generateRWCopyFileMountName(name, m.Target)
-				copyDir := filepath.Join(fileMountsBaseDir, mountName)
-				if err := os.MkdirAll(copyDir, 0755); err != nil {
-					rollbackAll()
-					return fmt.Errorf("failed to create file mount directory for %q: %w", mountName, err)
-				}
-				createdFileMountDirs = append(createdFileMountDirs, copyDir)
-
-				copyPath := filepath.Join(copyDir, filepath.Base(m.Source))
-				if err := copyFile(m.Source, copyPath); err != nil {
-					rollbackAll()
-					return fmt.Errorf("failed to copy file for rwcopy mount %q: %w", m.Source, err)
-				}
-
-				fmInfo := sandbox.FileMountInfo{
-					Name:        mountName,
-					Type:        "file",
-					CreatedAt:   time.Now().UTC().Format(time.RFC3339),
-					CreatedBy:   "rwcopy",
-					SourcePath:  m.Source,
-					CopyPath:    copyPath,
-					SandboxRefs: []string{name},
-				}
-				if err := fileMountStore.Save(fmInfo); err != nil {
-					rollbackAll()
-					return fmt.Errorf("failed to save file mount state for %q: %w", mountName, err)
-				}
-				addedFileRefs[mountName] = true
-
-				runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
-					Type:         "bind",
-					Source:       copyPath,
-					Target:       m.Target,
-					Mode:         "rw",
-					SnapshotFrom: m.Source,
-				})
-			}
+			rb.Rollback()
 		}
 
 		for _, v := range volumeMounts {
 			if _, err := volumeStore.Get(v.Volume); err != nil {
-				rollbackAll()
+				rollbackVolumes()
 				return fmt.Errorf("volume %q is not tracked; create via rwcopy first", v.Volume)
 			}
 			if err := volumeStore.AddSandboxRef(v.Volume, name); err != nil {
-				rollbackAll()
+				rollbackVolumes()
 				return fmt.Errorf("failed to attach volume %q: %w", v.Volume, err)
 			}
-			addedRefs[v.Volume] = true
+			attachedVolumeRefs = append(attachedVolumeRefs, v.Volume)
 			runtimeMounts = append(runtimeMounts, v)
 		}
 
 		containerID, err := sandbox.CreateDockerSandbox(name, image, runtimeMounts, envStrs, publishedPorts)
 		if err != nil {
-			rollbackAll()
+			rollbackVolumes()
 			return err
 		}
 
@@ -339,6 +209,7 @@ var sandboxCreateCmd = &cobra.Command{
 		if err := store.Save(info); err != nil {
 			return fmt.Errorf("sandbox created but failed to save state: %w", err)
 		}
+		rb.Disarm()
 
 		fmt.Printf("Sandbox %q created (container %s)\n", name, containerID[:12])
 		if len(publishedPorts) > 0 {
@@ -943,6 +814,91 @@ func generateRWCopyFileMountName(sandboxName, target string) string {
 	return "amika-rwcopy-file-" + sandboxName + "-" + sanitizedTarget + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
+// collectedMounts holds all mounts and related data gathered from CLI flags,
+// git, agent credentials, and setup-script before materialization.
+type collectedMounts struct {
+	Mounts       []sandbox.MountBinding
+	VolumeMounts []sandbox.MountBinding
+	Ports        []sandbox.PortBinding
+	GitInfo      *gitMountInfo // nil if --git was not used
+	Cleanup      func()        // removes git temp dir; noop if no --git
+}
+
+// collectMounts gathers all mounts from CLI flags, git clone, .amika/config.toml,
+// agent credentials, and setup-script. Call Cleanup (e.g. via defer) to remove any
+// temporary directories created for the git mount.
+func collectMounts(
+	mountStrs, volumeStrs, portStrs []string,
+	portHostIP string,
+	gitPath string,
+	gitFlagChanged bool,
+	noClean bool,
+	setupScript string,
+	setupScriptFlagChanged bool,
+) (collectedMounts, error) {
+	mounts, err := parseMountFlags(mountStrs)
+	if err != nil {
+		return collectedMounts{}, err
+	}
+	volumeMounts, err := parseVolumeFlags(volumeStrs)
+	if err != nil {
+		return collectedMounts{}, err
+	}
+	publishedPorts, err := parsePortFlags(portStrs, portHostIP)
+	if err != nil {
+		return collectedMounts{}, err
+	}
+
+	cleanup := func() {}
+	var gmi *gitMountInfo
+	if gitFlagChanged {
+		info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo)
+		if err != nil {
+			return collectedMounts{}, err
+		}
+		cleanup = cleanupGitMount
+		gmi = &info
+		mounts = append(mounts, info.Mount)
+	}
+
+	if gmi != nil && !setupScriptFlagChanged {
+		mount, err := setupScriptMountFromConfig(gmi.RepoRoot)
+		if err != nil {
+			cleanup()
+			return collectedMounts{}, err
+		}
+		if mount != nil {
+			mounts = append(mounts, *mount)
+		}
+	}
+
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
+		mounts = append(mounts, agentMounts...)
+	}
+
+	if setupScript != "" {
+		absSetupScript, err := filepath.Abs(setupScript)
+		if err != nil {
+			cleanup()
+			return collectedMounts{}, fmt.Errorf("failed to resolve setup-script path %q: %w", setupScript, err)
+		}
+		if _, err := os.Stat(absSetupScript); err != nil {
+			cleanup()
+			return collectedMounts{}, fmt.Errorf("setup-script %q is not accessible: %w", absSetupScript, err)
+		}
+		mounts = append(mounts, setupScriptBindMount(absSetupScript))
+	}
+
+	return collectedMounts{
+		Mounts:       mounts,
+		VolumeMounts: volumeMounts,
+		Ports:        publishedPorts,
+		GitInfo:      gmi,
+		Cleanup:      cleanup,
+	}, nil
+}
+
 // setupScriptMountFromConfig reads repoRoot/.amika/config.toml and returns a
 // bind mount for lifecycle.setup_script if one is configured. Returns nil, nil
 // when the file is absent or no setup_script is set.
@@ -973,6 +929,129 @@ func setupScriptBindMount(absPath string) sandbox.MountBinding {
 		Target: "/opt/setup.sh",
 		Mode:   "ro",
 	}
+}
+
+// materializeRWCopyMounts converts logical mounts that use mode "rwcopy" into
+// real Docker volumes (for directory sources) or bind-mounted file copies (for
+// file sources). Mounts with other modes are passed through unchanged.
+//
+// The returned Rollbacker must have Rollback called on any error path to undo
+// partial state; call Disarm after the sandbox is successfully created.
+func materializeRWCopyMounts(
+	mounts []sandbox.MountBinding,
+	sandboxName string,
+	volumeStore sandbox.VolumeStore,
+	fileMountStore sandbox.FileMountStore,
+	fileMountsBaseDir string,
+) ([]sandbox.MountBinding, txn.Rollbacker, error) {
+	var runtimeMounts []sandbox.MountBinding
+	createdVolumes := make([]string, 0)
+	addedRefs := make(map[string]bool)
+	createdFileMountDirs := make([]string, 0)
+	addedFileRefs := make(map[string]bool)
+
+	rb := txn.NewRollbacker(func() {
+		for volumeName := range addedRefs {
+			_ = volumeStore.RemoveSandboxRef(volumeName, sandboxName)
+		}
+		for _, volumeName := range createdVolumes {
+			_ = volumeStore.Remove(volumeName)
+			_ = sandbox.RemoveDockerVolume(volumeName)
+		}
+		for mountName := range addedFileRefs {
+			_ = fileMountStore.Remove(mountName)
+		}
+		for _, dir := range createdFileMountDirs {
+			_ = os.RemoveAll(dir)
+		}
+	})
+
+	for _, m := range mounts {
+		if m.Mode != "rwcopy" {
+			runtimeMounts = append(runtimeMounts, m)
+			continue
+		}
+
+		stat, err := os.Stat(m.Source)
+		if err != nil {
+			rb.Rollback()
+			return nil, rb, fmt.Errorf("rwcopy source %q is not accessible: %w", m.Source, err)
+		}
+
+		if stat.IsDir() {
+			volumeName := generateRWCopyVolumeName(sandboxName, m.Target)
+			if err := sandbox.CreateDockerVolume(volumeName); err != nil {
+				rb.Rollback()
+				return nil, rb, err
+			}
+			createdVolumes = append(createdVolumes, volumeName)
+
+			if err := sandbox.CopyHostDirToVolume(volumeName, m.Source); err != nil {
+				rb.Rollback()
+				return nil, rb, err
+			}
+
+			volInfo := sandbox.VolumeInfo{
+				Name:        volumeName,
+				CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+				CreatedBy:   "rwcopy",
+				SourcePath:  m.Source,
+				SandboxRefs: []string{sandboxName},
+			}
+			if err := volumeStore.Save(volInfo); err != nil {
+				rb.Rollback()
+				return nil, rb, fmt.Errorf("failed to save volume state for %q: %w", volumeName, err)
+			}
+			addedRefs[volumeName] = true
+
+			runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
+				Type:         "volume",
+				Volume:       volumeName,
+				Target:       m.Target,
+				Mode:         "rw",
+				SnapshotFrom: m.Source,
+			})
+		} else {
+			mountName := generateRWCopyFileMountName(sandboxName, m.Target)
+			copyDir := filepath.Join(fileMountsBaseDir, mountName)
+			if err := os.MkdirAll(copyDir, 0755); err != nil {
+				rb.Rollback()
+				return nil, rb, fmt.Errorf("failed to create file mount directory for %q: %w", mountName, err)
+			}
+			createdFileMountDirs = append(createdFileMountDirs, copyDir)
+
+			copyPath := filepath.Join(copyDir, filepath.Base(m.Source))
+			if err := copyFile(m.Source, copyPath); err != nil {
+				rb.Rollback()
+				return nil, rb, fmt.Errorf("failed to copy file for rwcopy mount %q: %w", m.Source, err)
+			}
+
+			fmInfo := sandbox.FileMountInfo{
+				Name:        mountName,
+				Type:        "file",
+				CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+				CreatedBy:   "rwcopy",
+				SourcePath:  m.Source,
+				CopyPath:    copyPath,
+				SandboxRefs: []string{sandboxName},
+			}
+			if err := fileMountStore.Save(fmInfo); err != nil {
+				rb.Rollback()
+				return nil, rb, fmt.Errorf("failed to save file mount state for %q: %w", mountName, err)
+			}
+			addedFileRefs[mountName] = true
+
+			runtimeMounts = append(runtimeMounts, sandbox.MountBinding{
+				Type:         "bind",
+				Source:       copyPath,
+				Target:       m.Target,
+				Mode:         "rw",
+				SnapshotFrom: m.Source,
+			})
+		}
+	}
+
+	return runtimeMounts, rb, nil
 }
 
 func copyFile(src, dst string) error {
