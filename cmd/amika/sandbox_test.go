@@ -904,7 +904,7 @@ func runGitCmd(t *testing.T, repo string, args ...string) {
 func TestMaterializeRWCopyMounts_Passthrough(t *testing.T) {
 	dir := t.TempDir()
 	volumeStore := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
-	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 
 	input := []sandbox.MountBinding{
 		{Type: "bind", Source: "/host/src", Target: "/workspace", Mode: "ro"},
@@ -929,7 +929,7 @@ func TestMaterializeRWCopyMounts_Passthrough(t *testing.T) {
 func TestMaterializeRWCopyMounts_FileRWCopy(t *testing.T) {
 	dir := t.TempDir()
 	volumeStore := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
-	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	fileMountsBaseDir := filepath.Join(dir, "file-mounts")
 	if err := os.MkdirAll(fileMountsBaseDir, 0755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
@@ -983,7 +983,7 @@ func TestMaterializeRWCopyMounts_FileRWCopy(t *testing.T) {
 func TestMaterializeRWCopyMounts_Disarm(t *testing.T) {
 	dir := t.TempDir()
 	volumeStore := sandbox.NewVolumeStore(filepath.Join(dir, "volumes.jsonl"))
-	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "rwcopy-mounts.jsonl"))
+	fileMountStore := sandbox.NewFileMountStore(filepath.Join(dir, "amika-volumes.jsonl"))
 	fileMountsBaseDir := filepath.Join(dir, "file-mounts")
 	if err := os.MkdirAll(fileMountsBaseDir, 0755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
