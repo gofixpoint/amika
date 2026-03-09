@@ -88,7 +88,7 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
 		Image:              req.Image,
 		Preset:             req.Preset,
-		ImageFlagChanged:   req.Image != "" && req.Preset == "",
+		ImageFlagChanged:   req.Image != "",
 		DefaultBuildPreset: "coder",
 	})
 	if err != nil {
