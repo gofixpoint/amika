@@ -165,24 +165,74 @@ func parseClaudeOAuth(homeDir string, includeOAuth bool, now time.Time, _ basedi
 			continue
 		}
 
-		expiresAt, hasExpiry, err := getStringPath(obj, "claudeAiOauth.expiresAt")
+		expiresTime, hasExpiry, err := parseClaudeOAuthExpiry(obj)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse credentials file %q: %w", path, err)
 		}
-		if hasExpiry {
-			expiresTime, err := time.Parse(time.RFC3339, expiresAt)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse credentials file %q: invalid claudeAiOauth.expiresAt: %w", path, err)
-			}
-			if !expiresTime.After(now) {
-				continue
-			}
+		if hasExpiry && !expiresTime.After(now) {
+			continue
 		}
 
 		return map[string]string{"anthropic": token}, nil
 	}
 
 	return nil, nil
+}
+
+// parseClaudeOAuthExpiry extracts claudeAiOauth.expiresAt from the parsed
+// credentials object, handling both RFC 3339 strings (legacy) and numeric
+// epoch-millisecond values (current).
+func parseClaudeOAuthExpiry(obj map[string]any) (time.Time, bool, error) {
+	raw, found := getValuePath(obj, "claudeAiOauth.expiresAt")
+	if !found || raw == nil {
+		return time.Time{}, false, nil
+	}
+
+	switch v := raw.(type) {
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return time.Time{}, false, nil
+		}
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return time.Time{}, false, fmt.Errorf("invalid claudeAiOauth.expiresAt: %w", err)
+		}
+		return t, true, nil
+	default:
+		ms, err := parseEpochMillis(raw)
+		if err != nil {
+			return time.Time{}, false, fmt.Errorf("invalid claudeAiOauth.expiresAt: %w", err)
+		}
+		return time.UnixMilli(ms), true, nil
+	}
+}
+
+// getValuePath navigates a dot-separated path into a nested JSON object and
+// returns the raw value at the leaf. It returns (nil, false) when any
+// intermediate key is missing.
+func getValuePath(obj map[string]any, path string) (any, bool) {
+	parts := strings.Split(path, ".")
+	var current any = obj
+
+	for i, part := range parts {
+		if current == nil {
+			return nil, false
+		}
+		m, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		raw, exists := m[part]
+		if !exists {
+			return nil, false
+		}
+		if i == len(parts)-1 {
+			return raw, true
+		}
+		current = raw
+	}
+	return nil, false
 }
 
 func parseCodex(homeDir string, includeOAuth bool, _ time.Time, _ basedir.Paths) (map[string]string, error) {

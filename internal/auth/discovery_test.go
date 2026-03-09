@@ -58,6 +58,40 @@ func TestDiscover_ClaudeOAuthExpiryAndNoOAuth(t *testing.T) {
 	}
 }
 
+func TestDiscover_ClaudeOAuthNumericExpiry(t *testing.T) {
+	t.Run("future_epoch_millis", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		future := time.Now().Add(2 * time.Hour).UnixMilli()
+		writeDiscoveryFixture(t, filepath.Join(home, ".claude-oauth-credentials.json"),
+			`{"claudeAiOauth":{"accessToken":"oauth-num","expiresAt":`+itoa(future)+`}}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.Anthropic != "oauth-num" {
+			t.Fatalf("Anthropic = %q, want %q", result.Anthropic, "oauth-num")
+		}
+	})
+
+	t.Run("expired_epoch_millis", func(t *testing.T) {
+		home := t.TempDir()
+		setXDGForHome(t, home)
+		past := time.Now().Add(-2 * time.Hour).UnixMilli()
+		writeDiscoveryFixture(t, filepath.Join(home, ".claude-oauth-credentials.json"),
+			`{"claudeAiOauth":{"accessToken":"oauth-expired","expiresAt":`+itoa(past)+`}}`)
+
+		result, err := Discover(Options{HomeDir: home, IncludeOAuth: true})
+		if err != nil {
+			t.Fatalf("Discover() unexpected error: %v", err)
+		}
+		if result.Anthropic != "" {
+			t.Fatalf("Anthropic = %q, want empty", result.Anthropic)
+		}
+	})
+}
+
 func TestDiscover_CodexPrefersAPIOverOAuth(t *testing.T) {
 	home := t.TempDir()
 	setXDGForHome(t, home)
