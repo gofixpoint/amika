@@ -30,13 +30,16 @@ RUN npm install -g pnpm typescript tsx @anthropic-ai/claude-code
 RUN printf '#!/bin/bash\nexit 0\n' > /opt/setup.sh \
     && chmod +x /opt/setup.sh
 
+# amikad is for the daemon
+RUN mkdir -p /var/log/amika /opt/amika /run/amika /etc/amikad
+
 # Amika hook scripts that run before/after the user setup script.
-# pre-setup.sh: no-op by default.
+# pre-setup.sh: clones repo, optionally starts opencode web.
 # post-setup.sh: chowns /home/amika to the amika user.
-RUN mkdir -p /opt/amika \
-    && printf '#!/bin/bash\nexit 0\n' > /opt/amika/pre-setup.sh \
-    && printf '#!/bin/bash\nsudo chown -R amika:amika /home/amika\n' > /opt/amika/post-setup.sh \
-    && chmod +x /opt/amika/pre-setup.sh /opt/amika/post-setup.sh
+RUN printf '#!/bin/bash\nsudo chown -R amika:amika /home/amika\n' > /opt/amika/post-setup.sh \
+    && chmod +x /opt/amika/post-setup.sh
+COPY pre-setup.sh /opt/amika/pre-setup.sh
+RUN chmod +x /opt/amika/pre-setup.sh
 
 # Create user with home directory
 RUN useradd -m -s /usr/bin/zsh amika
