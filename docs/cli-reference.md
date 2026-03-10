@@ -289,6 +289,7 @@ The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
 The HTTP API accepts some fields that are not available as CLI flags:
 
 - **`SetupScriptText`** (on `POST /v1/sandboxes`): Inline setup script content as a string. Amika writes it to a temporary file and mounts it as `/opt/setup.sh`. Mutually exclusive with `SetupScript` (file path).
+- **`GitRepo`** (on `POST /v1/sandboxes`): URL of a git repository to clone into the sandbox. The repo is cloned on the host, copied into a Docker volume, and mounted at `/home/amika/workspace/<repo-name>`. Supported schemes: `https://`, `http://`, `ssh://`, `file:///` (absolute paths only), and SCP-style (`git@host:path`). See [sandbox-configuration.md](sandbox-configuration.md) for details.
 
 ---
 
