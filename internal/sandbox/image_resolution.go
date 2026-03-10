@@ -35,21 +35,22 @@ var (
 
 // ResolveAndEnsureImage resolves image/preset behavior and auto-builds presets when needed.
 func ResolveAndEnsureImage(opts PresetImageOptions) (PresetImageResult, error) {
-	if opts.Preset != "" && opts.ImageFlagChanged {
-		return PresetImageResult{}, fmt.Errorf("--preset and --image are mutually exclusive")
-	}
-
 	result := PresetImageResult{
 		Image: opts.Image,
 	}
 
 	if opts.Preset != "" {
 		result.EffectivePreset = opts.Preset
-		result.BuildPreset = opts.Preset
-		result.Image = presetImageName(opts.Preset)
-	} else if !opts.ImageFlagChanged && opts.DefaultBuildPreset != "" {
-		result.BuildPreset = opts.DefaultBuildPreset
-		result.Image = presetImageName(opts.DefaultBuildPreset)
+	}
+
+	if !opts.ImageFlagChanged {
+		if opts.Preset != "" {
+			result.BuildPreset = opts.Preset
+			result.Image = presetImageName(opts.Preset)
+		} else if opts.DefaultBuildPreset != "" {
+			result.BuildPreset = opts.DefaultBuildPreset
+			result.Image = presetImageName(opts.DefaultBuildPreset)
+		}
 	}
 
 	if result.BuildPreset != "" && !dockerImageExistsFn(result.Image) {

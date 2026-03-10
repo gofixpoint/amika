@@ -6,14 +6,67 @@ import (
 	"testing"
 )
 
-func TestResolveAndEnsureImage_PresetAndImageMutuallyExclusive(t *testing.T) {
-	_, err := ResolveAndEnsureImage(PresetImageOptions{
+func TestResolveAndEnsureImage_PresetAndImageTogetherImageWins(t *testing.T) {
+	resetImageResolutionStubs(t)
+
+	buildCalled := false
+	dockerImageExistsFn = func(_ string) bool { return true }
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
+		buildCalled = true
+		return nil
+	}
+
+	res, err := ResolveAndEnsureImage(PresetImageOptions{
 		Image:            "ubuntu:latest",
 		Preset:           "claude",
 		ImageFlagChanged: true,
 	})
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Image != "ubuntu:latest" {
+		t.Fatalf("image = %q, want %q", res.Image, "ubuntu:latest")
+	}
+	if res.EffectivePreset != "claude" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "claude")
+	}
+	if res.BuildPreset != "" {
+		t.Fatalf("build preset = %q, want empty", res.BuildPreset)
+	}
+	if buildCalled {
+		t.Fatal("build should not have been called")
+	}
+}
+
+func TestResolveAndEnsureImage_PresetAndImageTogetherNoAutoBuild(t *testing.T) {
+	resetImageResolutionStubs(t)
+
+	dockerImageExistsFn = func(_ string) bool { return false }
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		t.Fatal("writePresetBuildContextFn should not be called")
+		return "", nil, nil
+	}
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
+		t.Fatal("buildDockerImageFn should not be called")
+		return nil
+	}
+
+	res, err := ResolveAndEnsureImage(PresetImageOptions{
+		Image:            "my-custom:dev",
+		Preset:           "coder",
+		ImageFlagChanged: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Image != "my-custom:dev" {
+		t.Fatalf("image = %q, want %q", res.Image, "my-custom:dev")
+	}
+	if res.EffectivePreset != "coder" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "coder")
+	}
+	if res.BuildPreset != "" {
+		t.Fatalf("build preset = %q, want empty", res.BuildPreset)
 	}
 }
 
