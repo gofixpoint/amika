@@ -4,13 +4,14 @@ set -euo pipefail
 #/ Usage: bin/build-docker-images <image> [--platform <platform>] [--ignore-unstaged] [--push-daytona]
 #/
 #/ Build preset Docker images and tag them with the current git commit.
-#/ By default, builds for both linux/amd64 and linux/arm64.
+#/ By default, builds for the host architecture. With --push-daytona,
+#/ builds for linux/amd64 (Daytona's architecture).
 #/
 #/ Arguments:
 #/   <image>              One of: amika/coder, amika/claude, all
 #/
 #/ Options:
-#/   --platform <plat>    Build for a single platform (linux/amd64 or linux/arm64)
+#/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
 #/   --ignore-unstaged    Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona after building (requires linux/amd64)
 #/   --help               Show this help message
@@ -75,9 +76,12 @@ if [ "$PUSH_DAYTONA" = true ] && [ "$PLATFORM" = "linux/arm64" ]; then
   exit 1
 fi
 
-# Default platform: build for both architectures
+# Default platform: host architecture, or linux/amd64 when pushing to Daytona
 if [ -z "$PLATFORM" ]; then
-  PLATFORM="linux/amd64,linux/arm64"
+  if [ "$PUSH_DAYTONA" = true ]; then
+    PLATFORM="linux/amd64"
+  fi
+  # Otherwise, no --platform flag is passed to docker build (uses host arch)
 fi
 
 # Check for unstaged changes
@@ -106,8 +110,14 @@ for preset in "${PRESETS[@]}"; do
   image_tag="amika/${preset}:${VERSION}"
   dockerfile="$REPO_ROOT/internal/sandbox/presets/${preset}/Dockerfile"
 
-  echo "Building ${image_tag} (platform: ${PLATFORM}) from ${dockerfile}..."
-  docker build --platform "$PLATFORM" -f "$dockerfile" -t "$image_tag" "$REPO_ROOT"
+  platform_args=()
+  if [ -n "$PLATFORM" ]; then
+    platform_args=(--platform "$PLATFORM")
+    echo "Building ${image_tag} (platform: ${PLATFORM}) from ${dockerfile}..."
+  else
+    echo "Building ${image_tag} from ${dockerfile}..."
+  fi
+  docker build "${platform_args[@]}" -f "$dockerfile" -t "$image_tag" "$REPO_ROOT"
 
   if [ "$PUSH_DAYTONA" = true ]; then
     echo "Pushing ${image_tag} to Daytona..."
