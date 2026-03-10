@@ -92,9 +92,7 @@ internal/
   httpapi/               HTTP handler for the REST API
   app/                   Application service layer
   ports/                 Port interfaces for Docker and stores
-  mount/                 bindfs-based mount/unmount (v0 legacy)
   materialize/           Local sandbox script execution (v0 legacy)
-  state/                 JSONL mount state persistence (v0 legacy)
 pkg/amika/               Public service API (used by CLI and HTTP server)
 materialization-scripts/ Example scripts for pulling data
 docs/                    In-depth documentation

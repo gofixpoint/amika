@@ -12,6 +12,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func validateScriptCmdFlags(script, cmdStr string, trailingArgs []string) error {
+	hasScript := script != ""
+	hasCmd := cmdStr != ""
+	if !hasScript && !hasCmd {
+		return fmt.Errorf("exactly one of --script or --cmd must be specified")
+	}
+	if hasScript && hasCmd {
+		return fmt.Errorf("--script and --cmd are mutually exclusive")
+	}
+	if hasCmd && len(trailingArgs) > 0 {
+		return fmt.Errorf("trailing arguments are not allowed with --cmd")
+	}
+	return nil
+}
+
 var topMaterializeCmd = &cobra.Command{
 	Use:   "materialize [-- script-args...]",
 	Short: "Run a script or command in an ephemeral Docker container and copy outputs to a destination",

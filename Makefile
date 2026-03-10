@@ -1,6 +1,6 @@
 .PHONY: goenv build build-cli build-server test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
 
-UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)|/internal/mount($$|/)')
+UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 
 export GOCACHE := $(CURDIR)/.gocache
 export GOTMPDIR := $(CURDIR)/.gotmp
