@@ -43,4 +43,6 @@ ENV HOME=/home/amika
 RUN mkdir -p /home/amika
 WORKDIR /home/amika
 
+COPY --chown=amika:amika .zshrc /home/amika/.zshrc
+
 ENTRYPOINT ["/bin/bash", "-c", "/opt/setup.sh && exec \"$@\"", "--"]

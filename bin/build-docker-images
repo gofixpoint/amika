@@ -117,7 +117,7 @@ for preset in "${PRESETS[@]}"; do
   else
     echo "Building ${image_tag} from ${dockerfile}..."
   fi
-  docker build "${platform_args[@]}" -f "$dockerfile" -t "$image_tag" "$REPO_ROOT"
+  docker build "${platform_args[@]}" -f "$dockerfile" -t "$image_tag" "$REPO_ROOT/internal/sandbox/presets"
 
   if [ "$PUSH_DAYTONA" = true ]; then
     echo "Pushing ${image_tag} to Daytona..."
