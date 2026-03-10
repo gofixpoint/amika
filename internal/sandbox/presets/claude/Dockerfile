@@ -1,3 +1,5 @@
+# Locally, this image is called "amika/claude"
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive

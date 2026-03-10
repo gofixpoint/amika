@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+#/ Usage: bin/build-docker-images <image> [--ignore-unstaged] [--push-daytona]
+#/
+#/ Build preset Docker images and tag them with the current git commit.
+#/
+#/ Arguments:
+#/   <image>              One of: amika/coder, amika/claude, all
+#/
+#/ Options:
+#/   --ignore-unstaged    Continue even if there are unstaged changes
+#/   --push-daytona       Push built images to Daytona after building
+#/   --help               Show this help message
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+usage() {
+  grep '^#/' "$0" | cut -c4-
+}
+
+# Parse arguments
+IMAGE=""
+IGNORE_UNSTAGED=false
+PUSH_DAYTONA=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --ignore-unstaged) IGNORE_UNSTAGED=true ;;
+    --push-daytona)    PUSH_DAYTONA=true ;;
+    --help)            usage; exit 0 ;;
+    -*)                echo "Unknown option: $arg" >&2; usage >&2; exit 1 ;;
+    *)
+      if [ -z "$IMAGE" ]; then
+        IMAGE="$arg"
+      else
+        echo "Unexpected argument: $arg" >&2; usage >&2; exit 1
+      fi
+      ;;
+  esac
+done
+
+if [ -z "$IMAGE" ]; then
+  echo "Error: <image> argument is required." >&2
+  echo "" >&2
+  usage >&2
+  exit 1
+fi
+
+# Validate image argument
+case "$IMAGE" in
+  amika/coder|amika/claude|all) ;;
+  *) echo "Error: <image> must be one of: amika/coder, amika/claude, all" >&2; exit 1 ;;
+esac
+
+# Check for unstaged changes
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+  if [ "$IGNORE_UNSTAGED" = false ]; then
+    echo "Error: there are unstaged/uncommitted changes. Use --ignore-unstaged to continue anyway." >&2
+    exit 1
+  else
+    echo "Warning: there are unstaged/uncommitted changes, continuing anyway." >&2
+  fi
+fi
+
+# Determine git version tag
+VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+
+# Determine which presets to build
+PRESETS=()
+case "$IMAGE" in
+  amika/coder)  PRESETS=(coder) ;;
+  amika/claude) PRESETS=(claude) ;;
+  all)          PRESETS=(coder claude) ;;
+esac
+
+# Build images
+for preset in "${PRESETS[@]}"; do
+  image_tag="amika/${preset}:${VERSION}"
+  dockerfile="$REPO_ROOT/internal/sandbox/presets/${preset}/Dockerfile"
+
+  echo "Building ${image_tag} from ${dockerfile}..."
+  docker build -f "$dockerfile" -t "$image_tag" "$REPO_ROOT"
+
+  if [ "$PUSH_DAYTONA" = true ]; then
+    echo "Pushing ${image_tag} to Daytona..."
+    daytona snapshot push "$image_tag" --name "$image_tag"
+  fi
+done
+
+echo "Done."
