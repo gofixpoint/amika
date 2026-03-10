@@ -68,7 +68,7 @@ amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
 | `--no-clean`            | `false`              | With `--git`, include untracked/uncommitted files instead of a clean clone                                           |
 | `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                 |
 | `--port <spec>`         |                      | Publish a container port (`hostPort:containerPort[/protocol]`, protocol defaults to `tcp`). Repeatable               |
-| `--port-host-ip <ip>`   | `127.0.0.1`          | Host IP address to bind published ports to                                                                           |
+| `--port-host-ip <ip>`   | `127.0.0.1`          | Host IP address to bind all published ports to. Use `0.0.0.0` to bind to all interfaces                             |
 | `--yes`                 | `false`              | Skip mount confirmation prompt                                                                                       |
 | `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                              |
 | `--setup-script <path>` |                      | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
@@ -283,6 +283,28 @@ The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
 | `DELETE` | `/v1/volumes/{name}`   | Delete a volume             |
 | `POST`   | `/v1/auth/extract`     | Extract credentials         |
 | `POST`   | `/v1/materialize`      | Run a materialize operation |
+
+### `POST /v1/sandboxes` — Port Publishing
+
+The `Ports` field accepts an array of port binding objects. It is the HTTP API equivalent of the `--port` and `--port-host-ip` CLI flags.
+
+```json
+{
+  "Ports": [
+    {"HostIP": "127.0.0.1", "HostPort": 8080, "ContainerPort": 80, "Protocol": "tcp"},
+    {"HostPort": 5432, "ContainerPort": 5432, "Protocol": "tcp"}
+  ]
+}
+```
+
+| Field           | Required | Default     | Description                                                         |
+| --------------- | -------- | ----------- | ------------------------------------------------------------------- |
+| `HostPort`      | yes      |             | Port on the host (1–65535)                                          |
+| `ContainerPort` | yes      |             | Port inside the container (1–65535)                                 |
+| `Protocol`      | no       | `"tcp"`     | `"tcp"` or `"udp"`                                                  |
+| `HostIP`        | no       | `127.0.0.1` | Host IP to bind the port. Use `"0.0.0.0"` to bind all interfaces   |
+
+Duplicate bindings (same `HostIP:HostPort/Protocol`) are rejected with a 400 error.
 
 ### API-Only Fields
 
