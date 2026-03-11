@@ -41,8 +41,6 @@ cmd/amika/
   materialize.go       Docker-based materialize command
   volume.go            volume list/delete commands
   auth.go              auth extract command
-  v0.go                Legacy v0 mount/unmount/materialize (hidden)
-
 cmd/amika-server/
   main.go              HTTP server entry point (REST API)
 
@@ -74,10 +72,7 @@ internal/
   app/                 Application service layer implementation
   ports/               Port interfaces for Docker and store operations
 
-  mount/               bindfs-based mount/unmount operations (v0)
   materialize/         Local sandbox script execution (v0)
-  state/               JSONL mount state persistence (v0)
-  deps/                Dependency checking (macFUSE, bindfs) (v0)
 
 pkg/amika/             Public service API (used by both CLI and HTTP server)
   service.go           Service interface and implementation

@@ -47,8 +47,7 @@ _Purpose: Provides the POSIX-compliant environment where the agent operates._
 
 - 🟢 **Local Docker Support**: Persistent sandboxes with controlled directory mounting.
 - 🟢 **Multi-Mode Mounting**: Support for `ro` (read-only), `rw` (read-write), and `overlay` (copy-on-write) modes.
-- 🟡 **Linux and macOS Support**: We support `macFUSE` and `fuse3` for macOS and Linux compatibility.
-- ⚪ **Network-Mountable FS**: Move from local FUSE to a networked protocol (likely 9P or a custom gRPC-based file server) so remote sandboxes can mount Amika filesystems without being on the same host. This enables migration between local containers and cloud-hosted sandboxes (Modal, E2B, Daytona, Cloudflare, etc.).
+- ⚪ **Network-Mountable FS**: Move to a networked protocol (likely 9P or a custom gRPC-based file server) so remote sandboxes can mount Amika filesystems without being on the same host. This enables migration between local containers and cloud-hosted sandboxes (Modal, E2B, Daytona, Cloudflare, etc.).
 
 Planned additions:
 

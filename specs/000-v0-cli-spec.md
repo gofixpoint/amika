@@ -1,3 +1,5 @@
+> **Deprecated**: The v0 commands (`v0 mount`, `v0 unmount`, `v0 materialize`) and their macFUSE/bindfs dependencies have been removed. This spec is kept for historical reference only.
+
 # Amika v0 CLI Specification
 
 ## Overview

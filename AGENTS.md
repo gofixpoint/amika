@@ -38,7 +38,6 @@ Amika is a Go module that lets people control sandboxed AI agents, focused on us
 
 - **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `claude`) are auto-built on first use from Dockerfiles in `internal/sandbox/presets/`.
 - **rsync** is required by the `materialize` command to copy output files.
-- The `v0` legacy commands require bindfs and macFUSE on macOS.
 
 ## Code Structure
 
@@ -48,7 +47,6 @@ Amika is a Go module that lets people control sandboxed AI agents, focused on us
 - `materialize.go` — `materialize` command (Docker-based)
 - `volume.go` — `volume list|delete` commands
 - `auth.go` — `auth extract` command
-- `v0.go` — Legacy `v0 mount|unmount|materialize` commands (hidden)
 
 ### HTTP Server (`cmd/amika-server/`)
 - `main.go` — Entry point for the HTTP server (listens on `:8080` by default)
@@ -62,10 +60,7 @@ Amika is a Go module that lets people control sandboxed AI agents, focused on us
 - `httpapi/` — HTTP handler for the REST API server
 - `app/` — Application service layer implementation
 - `ports/` — Port interfaces for Docker and store operations
-- `mount/` — bindfs-based mount/unmount operations (v0 legacy)
 - `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
-- `state/` — JSONL mount state persistence (v0 legacy)
-- `deps/` — Dependency checking for macFUSE, bindfs (v0 legacy)
 
 ### Public Package (`pkg/amika/`)
 - `service.go` — Public service API used by both the CLI and HTTP server
