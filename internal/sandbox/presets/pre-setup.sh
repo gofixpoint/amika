@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 OPENCODE_WEB_PORT=65535
 
 if [[ -n "${AMIKA_AGENT_CWD:-}" ]]; then
@@ -13,9 +15,9 @@ cd "$amika_agent_cwd"
 if command -v opencode &> /dev/null; then
   mkdir -p /var/log/amika
 
-  sudo -u amika \
-    nohup env OPENCODE_SERVER_PASSWORD='fill-me-in' bash -c \
-    "cd \"$amika_agent_cwd\" && exec opencode web --port \"$OPENCODE_WEB_PORT\" --mdns" \
+  sudo -H -u amika \
+    nohup env OPENCODE_SERVER_PASSWORD='fill-me-in' \
+    /opt/amika/opencode-setup.sh "$amika_agent_cwd" "$OPENCODE_WEB_PORT" \
     > /var/log/amika/opencode-web.log 2>&1 &
 
   echo "$!" > /run/amika/opencode-web.pid

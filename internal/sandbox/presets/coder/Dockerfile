@@ -38,8 +38,8 @@ RUN mkdir -p /var/log/amika /opt/amika /run/amika /etc/amikad
 # post-setup.sh: chowns /home/amika to the amika user.
 RUN printf '#!/bin/bash\nsudo chown -R amika:amika /home/amika\n' > /opt/amika/post-setup.sh \
     && chmod +x /opt/amika/post-setup.sh
-COPY pre-setup.sh /opt/amika/pre-setup.sh
-RUN chmod +x /opt/amika/pre-setup.sh
+COPY pre-setup.sh opencode-setup.sh /opt/amika/
+RUN chmod +x /opt/amika/pre-setup.sh /opt/amika/opencode-setup.sh
 
 # Create user with home directory
 RUN useradd -m -s /usr/bin/zsh amika
