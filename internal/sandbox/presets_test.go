@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,19 @@ func TestGetPresetDockerfile_CoderAndClaudeDiffer(t *testing.T) {
 	}
 	if string(coderData) == string(claudeData) {
 		t.Fatal("expected coder and claude Dockerfiles to differ")
+	}
+}
+
+func TestGetPresetDockerfile_PreservesAgentCWDForPreSetup(t *testing.T) {
+	for _, preset := range []string{"coder", "claude"} {
+		data, err := GetPresetDockerfile(preset)
+		if err != nil {
+			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
+		}
+		content := string(data)
+		if !strings.Contains(content, `sudo AMIKA_AGENT_CWD=`) || !strings.Contains(content, `/opt/amika/pre-setup.sh`) {
+			t.Fatalf("%s Dockerfile does not preserve AMIKA_AGENT_CWD for pre-setup", preset)
+		}
 	}
 }
 

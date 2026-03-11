@@ -93,6 +93,9 @@ var sandboxCreateCmd = &cobra.Command{
 		volumeMounts := collected.VolumeMounts
 		publishedPorts := collected.Ports
 		gitMountInfo := collected.GitInfo
+		if gitMountInfo != nil && !hasEnvKey(envStrs, "AMIKA_AGENT_CWD") {
+			envStrs = append(envStrs, "AMIKA_AGENT_CWD="+gitMountInfo.Mount.Target)
+		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
 		}
@@ -1272,6 +1275,16 @@ func resolveDeleteVolumes(
 		return false, err
 	}
 	return confirmed, nil
+}
+
+func hasEnvKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

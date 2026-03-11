@@ -56,4 +56,7 @@ WORKDIR /home/amika
 
 COPY --chown=amika:amika .zshrc /home/amika/.zshrc
 
-ENTRYPOINT ["/bin/bash", "-c", "/opt/amika/pre-setup.sh && /opt/setup.sh && /opt/amika/post-setup.sh && exec \"$@\"", "--"]
+# We run the pre-setup and post-setup as root. setup runs as the amika user.
+# Pre and post-setup are not intended to be user-facing configuration. They are
+# for the amika system.
+ENTRYPOINT ["/bin/bash", "-c", "sudo AMIKA_AGENT_CWD=\"$AMIKA_AGENT_CWD\" /opt/amika/pre-setup.sh && /opt/setup.sh && sudo /opt/amika/post-setup.sh && exec \"$@\"", "--"]
