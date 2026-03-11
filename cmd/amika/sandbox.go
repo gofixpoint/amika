@@ -334,17 +334,27 @@ var sandboxDeleteCmd = &cobra.Command{
 
 		var errs []string
 		for _, name := range args {
-			info, localErr := store.Get(name)
-			if localErr != nil && (mode == "remote" || mode == "both") {
-				// Not found locally, try remote.
+			// Remote-only mode: skip local entirely.
+			if mode == "remote" {
 				if remoteClient != nil {
 					if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
 						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
-						continue
+					} else {
+						fmt.Printf("Sandbox %q deleted (remote)\n", name)
 					}
-					fmt.Printf("Sandbox %q deleted (remote)\n", name)
-					continue
 				}
+				continue
+			}
+
+			info, localErr := store.Get(name)
+			if localErr != nil && mode == "both" && remoteClient != nil {
+				// Not found locally, try remote.
+				if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+				} else {
+					fmt.Printf("Sandbox %q deleted (remote)\n", name)
+				}
+				continue
 			}
 			if localErr != nil {
 				errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
@@ -1397,18 +1407,19 @@ func hasEnvKey(env []string, key string) bool {
 		}
 	}
 	return false
+}
+
 func createRemoteSandbox(cmd *cobra.Command) error {
 	name, _ := cmd.Flags().GetString("name")
-	githubURL, _ := cmd.Flags().GetString("github-url")
-	gitPath, _ := cmd.Flags().GetString("git")
+	gitValue, _ := cmd.Flags().GetString("git")
 
-	// If --github-url not provided, try to derive from --git repo's remote.
-	if githubURL == "" && cmd.Flags().Changed("git") {
-		derived, err := deriveGitHubURL(gitPath)
+	var gitURL string
+	if cmd.Flags().Changed("git") {
+		resolved, err := resolveGitURL(gitValue)
 		if err != nil {
-			return fmt.Errorf("could not derive GitHub URL from git repo: %w\nUse --github-url to specify it explicitly", err)
+			return err
 		}
-		githubURL = derived
+		gitURL = resolved
 	}
 
 	client, err := getRemoteClient()
@@ -1419,7 +1430,7 @@ func createRemoteSandbox(cmd *cobra.Command) error {
 	req := apiclient.CreateSandboxRequest{
 		Name:      name,
 		Provider:  "daytona",
-		GitHubURL: githubURL,
+		GitHubURL: gitURL,
 	}
 
 	sb, err := client.CreateSandbox(req)
@@ -1431,12 +1442,20 @@ func createRemoteSandbox(cmd *cobra.Command) error {
 	return nil
 }
 
-// deriveGitHubURL resolves the git repo at startPath and returns the origin remote URL
-// if it looks like a GitHub URL.
-func deriveGitHubURL(startPath string) (string, error) {
-	repoRoot, err := resolveGitRoot(startPath)
+// resolveGitURL takes the --git flag value and returns a git URL suitable for
+// remote sandbox creation. If the value is already an HTTP(S) or SSH URL, it is
+// returned directly. Otherwise it is treated as a local path and the origin
+// remote URL is extracted.
+func resolveGitURL(value string) (string, error) {
+	// Already a URL — use as-is.
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "git@") {
+		return value, nil
+	}
+
+	// Treat as local path — derive from origin remote.
+	repoRoot, err := resolveGitRoot(value)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("could not find git repo at %q: %w", value, err)
 	}
 	remotes, err := listGitRemotes(repoRoot)
 	if err != nil {
@@ -1444,15 +1463,10 @@ func deriveGitHubURL(startPath string) (string, error) {
 	}
 	origin, ok := remotes["origin"]
 	if !ok {
-		return "", fmt.Errorf("no origin remote found")
+		return "", fmt.Errorf("no origin remote found in %q; specify a git HTTP(S) or SSH URL directly with --git <url>", repoRoot)
 	}
-	// Normalize SSH URL to HTTPS.
-	if strings.HasPrefix(origin, "git@github.com:") {
-		origin = "https://github.com/" + strings.TrimPrefix(origin, "git@github.com:")
-	}
-	origin = strings.TrimSuffix(origin, ".git")
-	if !strings.Contains(origin, "github.com") {
-		return "", fmt.Errorf("origin remote %q is not a GitHub URL", origin)
+	if !isNetworkRemoteURL(origin) {
+		return "", fmt.Errorf("origin remote %q is a local path; specify a git HTTP(S) or SSH URL directly with --git <url>", origin)
 	}
 	return origin, nil
 }
@@ -1484,7 +1498,6 @@ func init() {
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
 	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /opt/setup.sh in the container (read-only)")
-	sandboxCreateCmd.Flags().String("github-url", "", "GitHub repository URL for remote sandbox creation")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
