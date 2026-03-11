@@ -112,7 +112,7 @@ func TestCreateSandboxBodyIncludesSetupScriptFields(t *testing.T) {
 		Preset:          "",
 		Mounts:          []amika.Mount{},
 		Volumes:         []amika.Mount{},
-		GitPath:         "",
+		GitRepo:         "",
 		NoClean:         false,
 		Env:             []string{},
 		Ports:           []amika.PortBinding{{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}},
@@ -168,6 +168,9 @@ func TestOpenAPICreateSandboxUsesPascalCaseSetupScriptFields(t *testing.T) {
 	}
 	if _, ok := props["Ports"]; !ok {
 		t.Fatalf("missing Ports property")
+	}
+	if _, ok := props["GitRepo"]; !ok {
+		t.Fatalf("missing GitRepo property")
 	}
 
 	required, hasRequired := createReq["required"]

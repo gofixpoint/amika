@@ -153,6 +153,44 @@ func TestMaterialize_RequiresDestdir(t *testing.T) {
 	}
 }
 
+func TestParseGitRepoURL(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		wantName string
+		wantErr  bool
+	}{
+		{name: "https with .git", input: "https://github.com/octocat/Hello-World.git", wantName: "Hello-World"},
+		{name: "https without .git", input: "https://github.com/octocat/Hello-World", wantName: "Hello-World"},
+		{name: "http", input: "http://example.com/repo.git", wantName: "repo"},
+		{name: "ssh scheme", input: "ssh://git@github.com/org/proj.git", wantName: "proj"},
+		{name: "file absolute", input: "file:///home/user/myrepo.git", wantName: "myrepo"},
+		{name: "file relative rejected", input: "file://relative/path", wantErr: true},
+		{name: "scp style with user", input: "git@github.com:org/proj.git", wantName: "proj"},
+		{name: "scp style no user", input: "github.com:proj.git", wantName: "proj"},
+		{name: "unknown scheme", input: "ftp://example.com/repo.git", wantErr: true},
+		{name: "empty", input: "", wantErr: true},
+		{name: "bare path no colon", input: "/local/path/repo", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseGitRepoURL(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got name=%q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.wantName {
+				t.Fatalf("got %q, want %q", got, tc.wantName)
+			}
+		})
+	}
+}
+
 func TestDeleteVolume_NotFound(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	svc := NewService(Options{})

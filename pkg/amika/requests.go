@@ -26,7 +26,7 @@ type CreateSandboxRequest struct {
 	Preset          string
 	Mounts          []Mount
 	Volumes         []Mount
-	GitPath         string
+	GitRepo         string `json:"GitRepo,omitempty"`
 	NoClean         bool
 	Env             []string
 	Ports           []PortBinding `json:"Ports,omitempty"`

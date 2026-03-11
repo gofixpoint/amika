@@ -46,6 +46,51 @@ When you pass `--setup-script`, your script is bind-mounted over the no-op, so t
 - If the script exits with a non-zero status, the container's main command will not run.
 - Preset images are cached locally. If you have an existing preset image from before the setup script feature was added, you need to rebuild your images by removing the old image first: `docker rmi amika/coder:latest`.
 
+## Git Repository Cloning
+
+The `--git` CLI flag and the `GitRepo` HTTP API field clone a remote or local git repository into a Docker volume that is mounted at `/home/amika/workspace/<repo-name>` inside the sandbox.
+
+### CLI (`--git`)
+
+`--git` clones the local repository containing the current working directory (or a given path). It always sources from a local git repo on the host.
+
+```bash
+# Clone the current repo (clean clone)
+amika sandbox create --git
+
+# Include untracked/uncommitted files
+amika sandbox create --git --no-clean
+
+# Clone the repo containing a specific path
+amika sandbox create --git ./src
+```
+
+### HTTP API (`GitRepo`)
+
+The `GitRepo` field on `POST /v1/sandboxes` accepts a URL pointing to any remote or local git repository. Supported URL schemes:
+
+| Scheme     | Example                                               |
+| ---------- | ----------------------------------------------------- |
+| `https://` | `https://github.com/octocat/Hello-World.git`          |
+| `http://`  | `http://git.example.com/repo.git`                     |
+| `ssh://`   | `ssh://git@github.com/org/proj.git`                   |
+| `file:///` | `file:///home/user/local-repo.git` (must be absolute) |
+| SCP-style  | `git@github.com:org/proj.git`                         |
+
+```bash
+curl -X POST http://localhost:8080/v1/sandboxes \
+  -H 'Content-Type: application/json' \
+  -d '{"GitRepo": "https://github.com/octocat/Hello-World.git"}'
+```
+
+The repository is cloned on the host, copied into a named Docker volume, and mounted read-write at `/home/amika/workspace/<repo-name>`. The volume is tracked by `amika volume list`. If the clone fails, no sandbox is created.
+
+### Notes
+
+- `file://` URLs must use three slashes (`file:///absolute/path`). Relative paths are rejected.
+- The volume name is derived from the sandbox name and repo name, e.g. `amika-git-teal-tokyo-Hello-World-<timestamp>`.
+- Deleting the sandbox does not automatically delete the git volume; use `amika volume delete` when you no longer need it.
+
 ## Per-repo configuration: `.amika/config.toml`
 
 When you use `--git`, Amika looks for a `.amika/config.toml` file at the root of the repository and applies it automatically. This lets you commit sandbox configuration alongside your code so every collaborator gets the same environment without passing extra flags.

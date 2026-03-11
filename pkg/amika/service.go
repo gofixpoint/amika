@@ -3,8 +3,10 @@ package amika
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -106,9 +108,20 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		mounts = append(mounts, *setupScriptMount)
 		cleanupSetupScript = cleanup
 	}
+	cleanupGitRepo := func() {}
+	if req.GitRepo != "" {
+		gitMount, gitCleanup, err := s.resolveGitRepoMount(name, req.GitRepo)
+		if err != nil {
+			cleanupSetupScript()
+			return Sandbox{}, err
+		}
+		mounts = append(mounts, gitMount)
+		cleanupGitRepo = gitCleanup
+	}
 	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, toSandboxPortBindings(ports))
 	if err != nil {
 		cleanupSetupScript()
+		cleanupGitRepo()
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrDependency, err)
 	}
 	info := sandbox.Info{
@@ -363,6 +376,128 @@ func toPortBindings(in []sandbox.PortBinding) []PortBinding {
 		})
 	}
 	return out
+}
+
+// parseGitRepoURL validates gitRepo and returns the repository name derived
+// from the last path component of the URL (with any .git suffix removed).
+func parseGitRepoURL(gitRepo string) (string, error) {
+	if gitRepo == "" {
+		return "", fmt.Errorf("GitRepo must not be empty")
+	}
+	switch {
+	case strings.HasPrefix(gitRepo, "https://"),
+		strings.HasPrefix(gitRepo, "http://"),
+		strings.HasPrefix(gitRepo, "ssh://"):
+		u, err := url.Parse(gitRepo)
+		if err != nil || u.Host == "" {
+			return "", fmt.Errorf("%w: invalid GitRepo URL %q", ErrInvalidArgument, gitRepo)
+		}
+		return repoNameFromPath(u.Path), nil
+	case strings.HasPrefix(gitRepo, "file:///"):
+		p := strings.TrimPrefix(gitRepo, "file://")
+		if !filepath.IsAbs(p) {
+			return "", fmt.Errorf("%w: file:// GitRepo must use an absolute path: %q", ErrInvalidArgument, gitRepo)
+		}
+		return repoNameFromPath(p), nil
+	case strings.HasPrefix(gitRepo, "file://"):
+		// file:// with non-absolute path (e.g. file://relative) is rejected
+		return "", fmt.Errorf("%w: file:// GitRepo must use an absolute path (use file:///...): %q", ErrInvalidArgument, gitRepo)
+	}
+	// SCP-style: [user@]host:path
+	if isScpStyleURL(gitRepo) {
+		colon := strings.Index(gitRepo, ":")
+		return repoNameFromPath(gitRepo[colon+1:]), nil
+	}
+	return "", fmt.Errorf("%w: unsupported GitRepo URL scheme %q", ErrInvalidArgument, gitRepo)
+}
+
+// repoNameFromPath returns the last path component with any .git suffix removed.
+func repoNameFromPath(p string) string {
+	name := path.Base(p)
+	return strings.TrimSuffix(name, ".git")
+}
+
+// isScpStyleURL reports whether s looks like SCP-style SSH syntax: [user@]host:path.
+// Strings containing "://" are URL schemes and are not SCP-style.
+func isScpStyleURL(s string) bool {
+	if strings.Contains(s, "://") {
+		return false
+	}
+	at := strings.Index(s, "@")
+	colon := strings.Index(s, ":")
+	if colon < 0 {
+		return false
+	}
+	if at >= 0 {
+		return colon > at+1
+	}
+	// no @: host:path — colon must not be at position 0 and path must follow
+	return colon > 0 && colon < len(s)-1
+}
+
+// resolveGitRepoMount clones gitRepo to a temp directory, copies it into a
+// Docker volume, and returns a volume MountBinding targeting the sandbox
+// workspace. The returned cleanup func removes the volume on error; call it
+// only on failure paths.
+func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (sandbox.MountBinding, func(), error) {
+	repoName, err := parseGitRepoURL(gitRepo)
+	if err != nil {
+		return sandbox.MountBinding{}, func() {}, err
+	}
+
+	tmpDir, err := os.MkdirTemp("", "amika-git-clone-*")
+	if err != nil {
+		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: create temp dir for git clone: %v", ErrInternal, err)
+	}
+	cloneDst := filepath.Join(tmpDir, repoName)
+
+	cloneURL := gitRepo
+	if strings.HasPrefix(gitRepo, "file:///") {
+		cloneURL = strings.TrimPrefix(gitRepo, "file://")
+	}
+
+	cmd := exec.Command("git", "clone", cloneURL, cloneDst)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: git clone %q failed: %s", ErrDependency, gitRepo, strings.TrimSpace(string(out)))
+	}
+
+	volumeName := fmt.Sprintf("amika-git-%s-%s-%d", sandboxName, repoName, time.Now().UnixNano())
+	if err := sandbox.CreateDockerVolume(volumeName); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: create git volume: %v", ErrDependency, err)
+	}
+	if err := sandbox.CopyHostDirToVolume(volumeName, cloneDst); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		_ = sandbox.RemoveDockerVolume(volumeName)
+		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: copy git repo to volume: %v", ErrInternal, err)
+	}
+	_ = os.RemoveAll(tmpDir) // volume is the source of truth from here
+
+	volInfo := sandbox.VolumeInfo{
+		Name:        volumeName,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		CreatedBy:   "git-repo",
+		SourcePath:  gitRepo,
+		SandboxRefs: []string{sandboxName},
+	}
+	if err := s.volumes.Save(volInfo); err != nil {
+		_ = sandbox.RemoveDockerVolume(volumeName)
+		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: save git volume state: %v", ErrInternal, err)
+	}
+
+	cleanup := func() {
+		_ = s.volumes.Remove(volumeName)
+		_ = sandbox.RemoveDockerVolume(volumeName)
+	}
+	mount := sandbox.MountBinding{
+		Type:         "volume",
+		Volume:       volumeName,
+		Target:       path.Join(sandbox.SandboxWorkdir, repoName),
+		Mode:         "rw",
+		SnapshotFrom: gitRepo,
+	}
+	return mount, cleanup, nil
 }
 
 func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sandbox.MountBinding, func(), error) {
