@@ -8,6 +8,7 @@ type Sandbox struct {
 	Image       string
 	CreatedAt   string
 	Preset      string
+	Location    string // "local" or "remote"
 	Mounts      []Mount
 	Env         []string
 	Ports       []PortBinding

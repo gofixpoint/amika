@@ -1,0 +1,118 @@
+// Package apiclient provides an HTTP client for the remote Amika API.
+package apiclient
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// DefaultAPIURL is the default remote API base URL.
+const DefaultAPIURL = "https://api.amika.dev"
+
+// Client calls the remote Amika API with a bearer token.
+type Client struct {
+	BaseURL     string
+	AccessToken string
+	HTTP        *http.Client
+}
+
+// NewClient creates a Client for the given base URL and access token.
+func NewClient(baseURL, accessToken string) *Client {
+	return &Client{
+		BaseURL:     strings.TrimRight(baseURL, "/"),
+		AccessToken: accessToken,
+		HTTP:        &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// CreateSandboxRequest is the request body for POST /api/sandboxes.
+type CreateSandboxRequest struct {
+	Name               string `json:"name,omitempty"`
+	Provider           string `json:"provider,omitempty"`
+	GitHubURL          string `json:"github_url,omitempty"`
+	AutoStopInterval   *int   `json:"auto_stop_interval,omitempty"`
+	AutoDeleteInterval *int   `json:"auto_delete_interval,omitempty"`
+}
+
+// RemoteSandbox represents a sandbox returned by the remote API.
+type RemoteSandbox struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Provider  string `json:"provider"`
+	GitHubURL string `json:"github_url"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListSandboxes fetches sandboxes from the remote API.
+func (c *Client) ListSandboxes() ([]RemoteSandbox, error) {
+	var result []RemoteSandbox
+	if err := c.doJSON("GET", "/api/sandboxes", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list sandboxes: %w", err)
+	}
+	return result, nil
+}
+
+// CreateSandbox creates a sandbox on the remote API.
+func (c *Client) CreateSandbox(req CreateSandboxRequest) (*RemoteSandbox, error) {
+	var result RemoteSandbox
+	if err := c.doJSON("POST", "/api/sandboxes", req, &result); err != nil {
+		return nil, fmt.Errorf("remote create sandbox: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteSandbox deletes a sandbox on the remote API.
+func (c *Client) DeleteSandbox(name string) error {
+	if err := c.doJSON("DELETE", "/api/sandboxes/"+name, nil, nil); err != nil {
+		return fmt.Errorf("remote delete sandbox: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) doJSON(method, path string, body interface{}, out interface{}) error {
+	var bodyReader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshalling request: %w", err)
+		}
+		bodyReader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequest(method, c.BaseURL+path, bodyReader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.AccessToken)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	if out != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
+	}
+	return nil
+}

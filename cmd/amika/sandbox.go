@@ -16,6 +16,8 @@ import (
 
 	"github.com/gofixpoint/amika/internal/agentconfig"
 	"github.com/gofixpoint/amika/internal/amikaconfig"
+	"github.com/gofixpoint/amika/internal/apiclient"
+	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/gofixpoint/amika/internal/txn"
@@ -30,6 +32,58 @@ var sandboxCmd = &cobra.Command{
 }
 
 const sandboxConnectWorkdir = "/home/amika"
+
+const envAPIURL = "AMIKA_API_URL"
+
+// TODO: Parse env variables from an environment file (e.g. .amika/.env or ~/.config/amika/env)
+// so users don't need to export AMIKA_API_URL, AMIKA_WORKOS_CLIENT_ID, etc. in their shell profile.
+
+// sandboxMode determines whether a command operates locally, remotely, or both.
+// Returns "local", "remote", or "both".
+func sandboxMode(cmd *cobra.Command) string {
+	local, _ := cmd.Flags().GetBool("local")
+	remote, _ := cmd.Flags().GetBool("remote")
+	if local {
+		return "local"
+	}
+	if remote {
+		return "remote"
+	}
+	// Default: if logged in, use remote; otherwise local.
+	session, _ := auth.LoadSession()
+	if session == nil {
+		return "local"
+	}
+	return "both"
+}
+
+// isLoggedIn returns true if a WorkOS session exists on disk.
+func isLoggedIn() bool {
+	session, _ := auth.LoadSession()
+	return session != nil
+}
+
+// printLocalOnlyNotice prints a notice when the user is not logged in and
+// no explicit --local flag was set.
+func printLocalOnlyNotice(cmd *cobra.Command) {
+	local, _ := cmd.Flags().GetBool("local")
+	if !local && !isLoggedIn() {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Note: showing local resources only. Run \"amika auth login\" to access remote sandboxes.")
+	}
+}
+
+// getRemoteClient returns an API client authenticated with the current session.
+func getRemoteClient() (*apiclient.Client, error) {
+	session, err := auth.GetValidSession(defaultWorkOSClientID)
+	if err != nil {
+		return nil, err
+	}
+	baseURL := os.Getenv(envAPIURL)
+	if baseURL == "" {
+		baseURL = apiclient.DefaultAPIURL
+	}
+	return apiclient.NewClient(baseURL, session.AccessToken), nil
+}
 
 var runSandboxConnect = func(name, shell string, stdin io.Reader, stdout, stderr io.Writer) error {
 	dockerArgs := buildSandboxConnectArgs(name, shell)
@@ -47,6 +101,12 @@ var sandboxCreateCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
+
+		mode := sandboxMode(cmd)
+		if mode == "remote" || mode == "both" {
+			return createRemoteSandbox(cmd)
+		}
+		printLocalOnlyNotice(cmd)
 
 		provider, _ := cmd.Flags().GetString("provider")
 		name, _ := cmd.Flags().GetString("name")
@@ -237,6 +297,8 @@ var sandboxDeleteCmd = &cobra.Command{
 	Long:    `Delete one or more sandboxes and remove their backing containers.`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		mode := sandboxMode(cmd)
+
 		deleteVolumes, _ := cmd.Flags().GetBool("delete-volumes")
 		keepVolumes, _ := cmd.Flags().GetBool("keep-volumes")
 		deleteVolumesSet := cmd.Flags().Changed("delete-volumes")
@@ -261,10 +323,40 @@ var sandboxDeleteCmd = &cobra.Command{
 		}
 		fileMountStore := sandbox.NewFileMountStore(fileMountsFile)
 
+		// Build a remote client if we may need it.
+		var remoteClient *apiclient.Client
+		if mode == "remote" || mode == "both" {
+			remoteClient, err = getRemoteClient()
+			if err != nil {
+				return err
+			}
+		}
+
 		var errs []string
 		for _, name := range args {
-			info, err := store.Get(name)
-			if err != nil {
+			// Remote-only mode: skip local entirely.
+			if mode == "remote" {
+				if remoteClient != nil {
+					if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
+						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					} else {
+						fmt.Printf("Sandbox %q deleted (remote)\n", name)
+					}
+				}
+				continue
+			}
+
+			info, localErr := store.Get(name)
+			if localErr != nil && mode == "both" && remoteClient != nil {
+				// Not found locally, try remote.
+				if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+				} else {
+					fmt.Printf("Sandbox %q deleted (remote)\n", name)
+				}
+				continue
+			}
+			if localErr != nil {
 				errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
 				continue
 			}
@@ -323,20 +415,50 @@ var sandboxListCmd = &cobra.Command{
 	Short: "List all sandboxes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		result, err := amika.NewService(amika.Options{}).ListSandboxes(cmd.Context(), amika.ListSandboxesRequest{})
-		if err != nil {
-			return err
+		mode := sandboxMode(cmd)
+		printLocalOnlyNotice(cmd)
+
+		var allItems []amika.Sandbox
+
+		if mode == "local" || mode == "both" {
+			result, err := amika.NewService(amika.Options{}).ListSandboxes(cmd.Context(), amika.ListSandboxesRequest{})
+			if err != nil {
+				return err
+			}
+			for i := range result.Items {
+				result.Items[i].Location = "local"
+			}
+			allItems = append(allItems, result.Items...)
 		}
 
-		if len(result.Items) == 0 {
+		if mode == "remote" || mode == "both" {
+			client, err := getRemoteClient()
+			if err != nil {
+				return err
+			}
+			remoteSandboxes, err := client.ListSandboxes()
+			if err != nil {
+				return err
+			}
+			for _, rs := range remoteSandboxes {
+				allItems = append(allItems, amika.Sandbox{
+					Name:      rs.Name,
+					Provider:  rs.Provider,
+					CreatedAt: rs.CreatedAt,
+					Location:  "remote",
+				})
+			}
+		}
+
+		if len(allItems) == 0 {
 			fmt.Println("No sandboxes found.")
 			return nil
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tPROVIDER\tIMAGE\tPORTS\tCREATED")
-		for _, sb := range result.Items {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.Provider, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
+		fmt.Fprintln(w, "NAME\tLOCATION\tPROVIDER\tIMAGE\tPORTS\tCREATED")
+		for _, sb := range allItems {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.Location, sb.Provider, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
 		}
 		w.Flush()
 		return nil
@@ -1287,12 +1409,78 @@ func hasEnvKey(env []string, key string) bool {
 	return false
 }
 
+func createRemoteSandbox(cmd *cobra.Command) error {
+	name, _ := cmd.Flags().GetString("name")
+	gitValue, _ := cmd.Flags().GetString("git")
+
+	var gitURL string
+	if cmd.Flags().Changed("git") {
+		resolved, err := resolveGitURL(gitValue)
+		if err != nil {
+			return err
+		}
+		gitURL = resolved
+	}
+
+	client, err := getRemoteClient()
+	if err != nil {
+		return err
+	}
+
+	req := apiclient.CreateSandboxRequest{
+		Name:      name,
+		Provider:  "daytona",
+		GitHubURL: gitURL,
+	}
+
+	sb, err := client.CreateSandbox(req)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q created (remote)\n", sb.Name)
+	return nil
+}
+
+// resolveGitURL takes the --git flag value and returns a git URL suitable for
+// remote sandbox creation. If the value is already an HTTP(S) or SSH URL, it is
+// returned directly. Otherwise it is treated as a local path and the origin
+// remote URL is extracted.
+func resolveGitURL(value string) (string, error) {
+	// Already a URL — use as-is.
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "git@") {
+		return value, nil
+	}
+
+	// Treat as local path — derive from origin remote.
+	repoRoot, err := resolveGitRoot(value)
+	if err != nil {
+		return "", fmt.Errorf("could not find git repo at %q: %w", value, err)
+	}
+	remotes, err := listGitRemotes(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	origin, ok := remotes["origin"]
+	if !ok {
+		return "", fmt.Errorf("no origin remote found in %q; specify a git HTTP(S) or SSH URL directly with --git <url>", repoRoot)
+	}
+	if !isNetworkRemoteURL(origin) {
+		return "", fmt.Errorf("origin remote %q is a local path; specify a git HTTP(S) or SSH URL directly with --git <url>", origin)
+	}
+	return origin, nil
+}
+
 func init() {
 	rootCmd.AddCommand(sandboxCmd)
 	sandboxCmd.AddCommand(sandboxCreateCmd)
 	sandboxCmd.AddCommand(sandboxDeleteCmd)
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
+
+	// Persistent flags for local/remote mode
+	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
+	sandboxCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
 
 	// Create flags
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
@@ -1313,5 +1501,4 @@ func init() {
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
-
 }
