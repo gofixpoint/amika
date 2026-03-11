@@ -183,16 +183,19 @@ func TestTopMaterialize_PresetAgentsAvailableOnPath(t *testing.T) {
 		name   string
 		preset string
 		cmdStr string
+		env    []string
 	}{
 		{
 			name:   "coder includes claude codex opencode",
 			preset: "coder",
 			cmdStr: "command -v claude && command -v codex && command -v opencode && echo ok > ready.txt",
+			env:    []string{"AMIKA_OPENCODE_WEB=0"},
 		},
 		{
 			name:   "claude includes only claude",
 			preset: "claude",
 			cmdStr: "command -v claude && ! command -v codex && ! command -v opencode && echo ok > ready.txt",
+			env:    []string{"AMIKA_OPENCODE_WEB=0"},
 		},
 	}
 
@@ -205,13 +208,15 @@ func TestTopMaterialize_PresetAgentsAvailableOnPath(t *testing.T) {
 			})
 
 			destdir := t.TempDir()
-			cmd := exec.Command(
-				bin, "materialize",
+			args := []string{
+				"materialize",
 				"--preset", tt.preset,
 				"--cmd", tt.cmdStr,
 				"--destdir", destdir,
-			)
-			cmd.Env = append(os.Environ(), "AMIKA_PRESET_IMAGE_PREFIX="+prefix)
+			}
+			cmd := exec.Command(bin, args...)
+			cmd.Env = withEnv(os.Environ(), "AMIKA_PRESET_IMAGE_PREFIX="+prefix)
+			cmd.Env = withEnv(cmd.Env, tt.env...)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("amika materialize failed: %v\n%s", err, out)
@@ -236,6 +241,27 @@ func requireExpensiveDockerTests(t *testing.T) {
 	if os.Getenv(runExpensiveTestsEnv) != "1" {
 		t.Skipf("set %s=1 to run expensive Docker rebuild tests", runExpensiveTestsEnv)
 	}
+}
+
+func withEnv(base []string, kvs ...string) []string {
+	env := append([]string(nil), base...)
+	for _, kv := range kvs {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			env = append(env, kv)
+			continue
+		}
+
+		prefix := key + "="
+		filtered := env[:0]
+		for _, existing := range env {
+			if !strings.HasPrefix(existing, prefix) {
+				filtered = append(filtered, existing)
+			}
+		}
+		env = append(filtered, kv)
+	}
+	return env
 }
 
 func requireDockerIntegration(t *testing.T) {

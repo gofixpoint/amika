@@ -32,6 +32,22 @@ func TestGetPresetDockerfile_PreservesAgentCWDForPreSetup(t *testing.T) {
 	}
 }
 
+func TestGetPresetDockerfile_PreservesOpenCodeEnvForPreSetup(t *testing.T) {
+	for _, preset := range []string{"coder", "claude"} {
+		data, err := GetPresetDockerfile(preset)
+		if err != nil {
+			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
+		}
+		content := string(data)
+		if !strings.Contains(content, `AMIKA_OPENCODE_WEB=\"$AMIKA_OPENCODE_WEB\"`) {
+			t.Fatalf("%s Dockerfile does not preserve AMIKA_OPENCODE_WEB for pre-setup", preset)
+		}
+		if !strings.Contains(content, `OPENCODE_SERVER_PASSWORD=\"$OPENCODE_SERVER_PASSWORD\"`) {
+			t.Fatalf("%s Dockerfile does not preserve OPENCODE_SERVER_PASSWORD for pre-setup", preset)
+		}
+	}
+}
+
 func TestGetPresetDockerfile_DaytonaVariantsClearEntrypoint(t *testing.T) {
 	for _, preset := range []string{"daytona-coder", "daytona-claude"} {
 		data, err := GetPresetDockerfile(preset)

@@ -88,6 +88,8 @@ Examples:
 			return fmt.Errorf("--destdir is required")
 		}
 
+		envStrs = appendPresetRuntimeEnv(envStrs)
+
 		mounts, err := parseMountFlags(mountStrs)
 		if err != nil {
 			return err

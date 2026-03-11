@@ -33,7 +33,7 @@ RUN mkdir -p /usr/local/etc/amikad/setup \
 RUN mkdir -p /var/log/amikad /usr/lib/amikad /run/amikad /usr/local/etc/amikad /var/lib/amikad
 
 # Amika hook scripts that run before/after the user setup script.
-# pre-setup.sh: clones repo, optionally starts opencode web.
+# pre-setup.sh: clones repo, optionally starts opencode web when enabled.
 # post-setup.sh: chowns /home/amika to the amika user.
 RUN printf '#!/bin/bash\nsudo chown -R amika:amika /home/amika\n' > /usr/lib/amikad/post-setup.sh \
     && chmod +x /usr/lib/amikad/post-setup.sh

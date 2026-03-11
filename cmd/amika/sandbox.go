@@ -156,6 +156,7 @@ var sandboxCreateCmd = &cobra.Command{
 		if gitMountInfo != nil && !hasEnvKey(envStrs, "AMIKA_AGENT_CWD") {
 			envStrs = append(envStrs, "AMIKA_AGENT_CWD="+gitMountInfo.Mount.Target)
 		}
+		envStrs = appendPresetRuntimeEnv(envStrs)
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
 		}
@@ -1534,6 +1535,18 @@ Examples:
 		sshCmd.Stderr = os.Stderr
 		return sshCmd.Run()
 	},
+}
+
+func appendPresetRuntimeEnv(env []string) []string {
+	for _, key := range []string{"OPENCODE_SERVER_PASSWORD", "AMIKA_OPENCODE_WEB"} {
+		if hasEnvKey(env, key) {
+			continue
+		}
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
 
 func init() {
