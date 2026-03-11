@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
+.PHONY: goenv build build-cli build-server clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
 
 UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 
@@ -17,6 +17,9 @@ build-cli: goenv
 build-server: goenv
 	mkdir -p dist
 	go build -o dist/amika-server ./cmd/amika-server
+
+clean:
+	rm -rf dist .gocache .gotmp .gomodcache
 
 test: goenv
 	go test ./...
