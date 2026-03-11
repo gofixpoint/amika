@@ -83,7 +83,7 @@ claude "Add unit tests for the auth module"
 │  Credentials ────────>   │  /home/amika/workspace/{repo}    │
 │  (auto-discovered) │     │  Agent CLIs ready (claude, codex)│
 │                    │     │  Dev tools (git, node, python)   │
-│  Setup script ───────>   │  /opt/setup.sh runs on start     │
+│  Setup script ───────>   │  setup.sh runs on start     │
 │                    │     │                                  │
 │  Port 8080 <──────────   │  --port 8080:8080                │
 │  (live preview)    │     │                                  │

@@ -71,7 +71,7 @@ amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
 | `--port-host-ip <ip>`   | `127.0.0.1`          | Host IP address to bind all published ports to. Use `0.0.0.0` to bind to all interfaces                             |
 | `--yes`                 | `false`              | Skip mount confirmation prompt                                                                                       |
 | `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                              |
-| `--setup-script <path>` |                      | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
+| `--setup-script <path>` |                      | Mount a local script to `/etc/amikad/setup/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
 
 #### Mount modes
 
@@ -239,7 +239,7 @@ amika materialize --setup-script ./install-deps.sh --cmd "echo done" --destdir /
 | `--mount <spec>`        |                      | Mount a host directory (`source:target[:mode]`, mode defaults to `rw`). Repeatable                                   |
 | `--env <KEY=VALUE>`     |                      | Set environment variable in the container. Repeatable                                                                |
 | `-i`, `--interactive`   | `false`              | Run interactively with TTY (for programs like `claude`)                                                              |
-| `--setup-script <path>` |                      | Mount a local script to `/opt/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
+| `--setup-script <path>` |                      | Mount a local script to `/etc/amikad/setup/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md)        |
 
 Script arguments can be passed after `--`:
 
@@ -310,7 +310,7 @@ Duplicate bindings (same `HostIP:HostPort/Protocol`) are rejected with a 400 err
 
 The HTTP API accepts some fields that are not available as CLI flags:
 
-- **`SetupScriptText`** (on `POST /v1/sandboxes`): Inline setup script content as a string. Amika writes it to a temporary file and mounts it as `/opt/setup.sh`. Mutually exclusive with `SetupScript` (file path).
+- **`SetupScriptText`** (on `POST /v1/sandboxes`): Inline setup script content as a string. Amika writes it to a temporary file and mounts it as `/etc/amikad/setup/setup.sh`. Mutually exclusive with `SetupScript` (file path).
 - **`GitRepo`** (on `POST /v1/sandboxes`): URL of a git repository to clone into the sandbox. The repo is cloned on the host, copied into a Docker volume, and mounted at `/home/amika/workspace/<repo-name>`. Supported schemes: `https://`, `http://`, `ssh://`, `file:///` (absolute paths only), and SCP-style (`git@host:path`). See [sandbox-configuration.md](sandbox-configuration.md) for details.
 
 ---

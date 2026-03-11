@@ -17,7 +17,7 @@ type Config struct {
 
 // LifecycleConfig holds sandbox lifecycle hooks.
 type LifecycleConfig struct {
-	// SetupScript is the path to an executable to mount at /opt/setup.sh.
+	// SetupScript is the path to an executable to mount at /etc/amikad/setup/setup.sh.
 	// Relative paths are resolved from the repo root.
 	SetupScript string `toml:"setup_script"`
 }

@@ -4,7 +4,7 @@ set -euo pipefail
 
 OPENCODE_WEB_PORT=65535
 
-AMIKA_STATE_DIR="/var/lib/amika"
+AMIKA_STATE_DIR="/var/lib/amikad"
 AMIKA_CWD_FILE="$AMIKA_STATE_DIR/agent-cwd"
 
 if [[ -n "${AMIKA_AGENT_CWD:-}" ]]; then
@@ -27,13 +27,13 @@ if command -v opencode &> /dev/null; then
     exit 1
   fi
 
-  mkdir -p /var/log/amika
+  mkdir -p /var/log/amikad
 
   sudo -H -u amika \
     nohup env OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" \
-    /opt/amika/opencode-setup.sh "$amika_agent_cwd" "$OPENCODE_WEB_PORT" \
-    > /var/log/amika/opencode-web.log 2>&1 &
+    /usr/lib/amikad/opencode-setup.sh "$amika_agent_cwd" "$OPENCODE_WEB_PORT" \
+    > /var/log/amikad/opencode-web.log 2>&1 &
 
-  echo "$!" > /run/amika/opencode-web.pid
-  echo "$OPENCODE_WEB_PORT" > /run/amika/opencode-web.port
+  echo "$!" > /run/amikad/opencode-web.pid
+  echo "$OPENCODE_WEB_PORT" > /run/amikad/opencode-web.port
 fi

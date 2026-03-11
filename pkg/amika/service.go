@@ -504,7 +504,7 @@ func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (sandbox.
 }
 
 func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sandbox.MountBinding, func(), error) {
-	const setupScriptTarget = "/opt/setup.sh"
+	const setupScriptTarget = "/etc/amikad/setup/setup.sh"
 
 	if setupScriptPath != "" {
 		absSetupScript, err := filepath.Abs(setupScriptPath)
