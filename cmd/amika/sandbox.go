@@ -1046,12 +1046,12 @@ func setupScriptMountFromConfig(repoRoot string) (*sandbox.MountBinding, error) 
 	return &m, nil
 }
 
-// setupScriptBindMount returns a read-only bind mount for absPath to /etc/amikad/setup/setup.sh.
+// setupScriptBindMount returns a read-only bind mount for absPath to /usr/local/etc/amikad/setup/setup.sh.
 func setupScriptBindMount(absPath string) sandbox.MountBinding {
 	return sandbox.MountBinding{
 		Type:   "bind",
 		Source: absPath,
-		Target: "/etc/amikad/setup/setup.sh",
+		Target: "/usr/local/etc/amikad/setup/setup.sh",
 		Mode:   "ro",
 	}
 }
@@ -1497,7 +1497,7 @@ func init() {
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
-	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /etc/amikad/setup/setup.sh in the container (read-only)")
+	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")

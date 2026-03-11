@@ -2,7 +2,7 @@
 
 ## Setup Scripts
 
-The `--setup-script` flag lets you mount a local script into the container at `/etc/amikad/setup/setup.sh`. The script runs automatically when the container starts, before the main command (CMD).
+The `--setup-script` flag lets you mount a local script into the container at `/usr/local/etc/amikad/setup/setup.sh`. The script runs automatically when the container starts, before the main command (CMD).
 
 ### Usage
 
@@ -30,13 +30,13 @@ The script is mounted read-only, so it cannot be modified from inside the contai
 
 ### How it works
 
-Preset images (coder, claude) bake a no-op `/etc/amikad/setup/setup.sh` into the image and declare an ENTRYPOINT that runs it before execing into CMD:
+Preset images (coder, claude) bake a no-op `/usr/local/etc/amikad/setup/setup.sh` into the image and declare an ENTRYPOINT that runs it before execing into CMD:
 
 ```dockerfile
-RUN mkdir -p /etc/amikad/setup \
-    && printf '#!/bin/bash\nexit 0\n' > /etc/amikad/setup/setup.sh \
-    && chmod +x /etc/amikad/setup/setup.sh
-ENTRYPOINT ["/bin/bash", "-c", "/etc/amikad/setup/setup.sh && exec \"$@\"", "--"]
+RUN mkdir -p /usr/local/etc/amikad/setup \
+    && printf '#!/bin/bash\nexit 0\n' > /usr/local/etc/amikad/setup/setup.sh \
+    && chmod +x /usr/local/etc/amikad/setup/setup.sh
+ENTRYPOINT ["/bin/bash", "-c", "/usr/local/etc/amikad/setup/setup.sh && exec \"$@\"", "--"]
 ```
 
 When you pass `--setup-script`, your script is bind-mounted over the no-op, so the ENTRYPOINT runs your script instead.
@@ -108,14 +108,14 @@ When you use `--git`, Amika looks for a `.amika/config.toml` file at the root of
 
 ```toml
 [lifecycle]
-# Path to an executable that is mounted into the container at /etc/amikad/setup/setup.sh.
+# Path to an executable that is mounted into the container at /usr/local/etc/amikad/setup/setup.sh.
 # Relative paths are resolved from the repository root.
 setup_script = "scripts/setup.sh"
 ```
 
 #### `[lifecycle].setup_script`
 
-Works exactly like `--setup-script`: the script is bind-mounted read-only at `/etc/amikad/setup/setup.sh` and the container's ENTRYPOINT runs it before the main command.
+Works exactly like `--setup-script`: the script is bind-mounted read-only at `/usr/local/etc/amikad/setup/setup.sh` and the container's ENTRYPOINT runs it before the main command.
 
 **Path resolution:** if the value is a relative path it is resolved from the repository root (the directory containing `.git`). Absolute paths are used as-is.
 
@@ -141,7 +141,7 @@ my-project/
     setup.sh          # must be executable (chmod +x)
 ```
 
-Running `amika sandbox create --git` from anywhere inside `my-project` will automatically mount `scripts/setup.sh` to `/etc/amikad/setup/setup.sh` in the container.
+Running `amika sandbox create --git` from anywhere inside `my-project` will automatically mount `scripts/setup.sh` to `/usr/local/etc/amikad/setup/setup.sh` in the container.
 
 ## Agent Credential Auto-Mounting
 

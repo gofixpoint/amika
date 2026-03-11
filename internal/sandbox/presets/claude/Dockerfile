@@ -28,13 +28,14 @@ RUN npm install -g pnpm typescript tsx @anthropic-ai/claude-code
 # The ENTRYPOINT runs the setup script then execs into CMD, so user scripts
 # don't need to include `exec "$@"` themselves.
 # We put setup.sh inside a setup/ directory so we can mount an entire setup
-# volume there.
-RUN mkdir -p /etc/amikad/setup \
-    && printf '#!/bin/bash\nexit 0\n' > /etc/amikad/setup/setup.sh \
-    && chmod +x /etc/amikad/setup/setup.sh
+# volume there. We use /usr/local/etc instead of /etc because some sandbox
+# providers ban mounting to /etc.
+RUN mkdir -p /usr/local/etc/amikad/setup \
+    && printf '#!/bin/bash\nexit 0\n' > /usr/local/etc/amikad/setup/setup.sh \
+    && chmod +x /usr/local/etc/amikad/setup/setup.sh
 
 # amikad is for the daemon
-RUN mkdir -p /var/log/amikad /usr/lib/amikad /run/amikad /etc/amikad /var/lib/amikad
+RUN mkdir -p /var/log/amikad /usr/lib/amikad /run/amikad /usr/local/etc/amikad /var/lib/amikad
 
 # Amika hook scripts that run before/after the user setup script.
 # pre-setup.sh: clones repo, optionally starts opencode web.
@@ -62,4 +63,4 @@ COPY --chown=amika:amika .zshrc /home/amika/.zshrc
 # We run the pre-setup and post-setup as root. setup runs as the amika user.
 # Pre and post-setup are not intended to be user-facing configuration. They are
 # for the amika system.
-ENTRYPOINT ["/bin/bash", "-c", "sudo AMIKA_AGENT_CWD=\"$AMIKA_AGENT_CWD\" /usr/lib/amikad/pre-setup.sh && /etc/amikad/setup/setup.sh && sudo /usr/lib/amikad/post-setup.sh && exec \"$@\"", "--"]
+ENTRYPOINT ["/bin/bash", "-c", "sudo AMIKA_AGENT_CWD=\"$AMIKA_AGENT_CWD\" /usr/lib/amikad/pre-setup.sh && /usr/local/etc/amikad/setup/setup.sh && sudo /usr/lib/amikad/post-setup.sh && exec \"$@\"", "--"]

@@ -68,7 +68,7 @@ The next command that uses the preset will rebuild it.
 
 ## Setup Scripts
 
-Both presets include an ENTRYPOINT that runs `/etc/amikad/setup/setup.sh` before the main command. By default this is a no-op script. When creating a sandbox, use `--setup-script` to inject your own setup logic:
+Both presets include an ENTRYPOINT that runs `/usr/local/etc/amikad/setup/setup.sh` before the main command. By default this is a no-op script. When creating a sandbox, use `--setup-script` to inject your own setup logic:
 
 ```bash
 amika sandbox create --setup-script ./install-deps.sh

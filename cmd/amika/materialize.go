@@ -112,7 +112,7 @@ Examples:
 			mounts = append(mounts, sandbox.MountBinding{
 				Type:   "bind",
 				Source: absSetupScript,
-				Target: "/etc/amikad/setup/setup.sh",
+				Target: "/usr/local/etc/amikad/setup/setup.sh",
 				Mode:   "ro",
 			})
 		}
@@ -310,5 +310,5 @@ func init() {
 	topMaterializeCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	topMaterializeCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	topMaterializeCmd.Flags().BoolP("interactive", "i", false, "Run interactively with TTY (for programs like claude)")
-	topMaterializeCmd.Flags().String("setup-script", "", "Mount a local script file to /etc/amikad/setup/setup.sh in the container (read-only)")
+	topMaterializeCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
 }
