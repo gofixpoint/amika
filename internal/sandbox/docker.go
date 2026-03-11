@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -30,8 +31,23 @@ func DockerImageExists(name string) bool {
 // BuildDockerImage builds a Docker image from a Dockerfile within the given
 // build context directory.
 func BuildDockerImage(name string, contextDir string, dockerfileRelPath string) error {
+	return buildDockerImageWithArgs(name, contextDir, dockerfileRelPath, nil)
+}
+
+func buildDockerImageWithArgs(name string, contextDir string, dockerfileRelPath string, buildArgs map[string]string) error {
 	dockerfilePath := filepath.Join(contextDir, dockerfileRelPath)
-	cmd := exec.Command("docker", "build", "-t", name, "-f", dockerfilePath, contextDir)
+	args := []string{"build", "-t", name, "-f", dockerfilePath}
+	keys := make([]string, 0, len(buildArgs))
+	for key := range buildArgs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		args = append(args, "--build-arg", key+"="+buildArgs[key])
+	}
+	args = append(args, contextDir)
+
+	cmd := exec.Command("docker", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
