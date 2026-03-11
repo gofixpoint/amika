@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+#/ Usage: bin/build-docker-images <image> [--platform <platform>] [--ignore-unstaged] [--push-daytona]
+#/
+#/ Build preset Docker images and tag them with the current git commit.
+#/ By default, builds for the host architecture. With --push-daytona,
+#/ builds for linux/amd64 (Daytona's architecture).
+#/
+#/ Arguments:
+#/   <image>              One of: amika/coder, amika/claude, all
+#/
+#/ Options:
+#/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
+#/   --ignore-unstaged    Continue even if there are unstaged changes
+#/   --push-daytona       Push built images to Daytona after building (requires linux/amd64)
+#/   --help               Show this help message
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+usage() {
+  grep '^#/' "$0" | cut -c4-
+}
+
+# Parse arguments
+IMAGE=""
+PLATFORM=""
+IGNORE_UNSTAGED=false
+PUSH_DAYTONA=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --platform)
+      if [ $# -lt 2 ]; then
+        echo "Error: --platform requires a value" >&2; exit 1
+      fi
+      PLATFORM="$2"; shift 2 ;;
+    --ignore-unstaged) IGNORE_UNSTAGED=true; shift ;;
+    --push-daytona)    PUSH_DAYTONA=true; shift ;;
+    --help)            usage; exit 0 ;;
+    -*)                echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    *)
+      if [ -z "$IMAGE" ]; then
+        IMAGE="$1"
+      else
+        echo "Unexpected argument: $1" >&2; usage >&2; exit 1
+      fi
+      shift ;;
+  esac
+done
+
+if [ -z "$IMAGE" ]; then
+  echo "Error: <image> argument is required." >&2
+  echo "" >&2
+  usage >&2
+  exit 1
+fi
+
+# Validate image argument
+case "$IMAGE" in
+  amika/coder|amika/claude|all) ;;
+  *) echo "Error: <image> must be one of: amika/coder, amika/claude, all" >&2; exit 1 ;;
+esac
+
+# Validate --platform value
+if [ -n "$PLATFORM" ]; then
+  case "$PLATFORM" in
+    linux/amd64|linux/arm64) ;;
+    *) echo "Error: --platform must be one of: linux/amd64, linux/arm64" >&2; exit 1 ;;
+  esac
+fi
+
+# Validate --push-daytona + --platform combination
+if [ "$PUSH_DAYTONA" = true ] && [ "$PLATFORM" = "linux/arm64" ]; then
+  echo "Error: --push-daytona requires linux/amd64; cannot use --platform linux/arm64." >&2
+  exit 1
+fi
+
+# Default platform: host architecture, or linux/amd64 when pushing to Daytona
+if [ -z "$PLATFORM" ]; then
+  if [ "$PUSH_DAYTONA" = true ]; then
+    PLATFORM="linux/amd64"
+  fi
+  # Otherwise, no --platform flag is passed to docker build (uses host arch)
+fi
+
+# Check for unstaged changes
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+  if [ "$IGNORE_UNSTAGED" = false ]; then
+    echo "Error: there are unstaged/uncommitted changes. Use --ignore-unstaged to continue anyway." >&2
+    exit 1
+  else
+    echo "Warning: there are unstaged/uncommitted changes, continuing anyway." >&2
+  fi
+fi
+
+# Determine git version tag
+VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+
+# Determine which presets to build
+PRESETS=()
+case "$IMAGE" in
+  amika/coder)  PRESETS=(coder) ;;
+  amika/claude) PRESETS=(claude) ;;
+  all)          PRESETS=(coder claude) ;;
+esac
+
+# Build images
+for preset in "${PRESETS[@]}"; do
+  image_tag="amika/${preset}:${VERSION}"
+  dockerfile="$REPO_ROOT/internal/sandbox/presets/${preset}/Dockerfile"
+
+  platform_args=()
+  if [ -n "$PLATFORM" ]; then
+    platform_args=(--platform "$PLATFORM")
+    echo "Building ${image_tag} (platform: ${PLATFORM}) from ${dockerfile}..."
+  else
+    echo "Building ${image_tag} from ${dockerfile}..."
+  fi
+  docker build "${platform_args[@]}" -f "$dockerfile" -t "$image_tag" "$REPO_ROOT"
+
+  if [ "$PUSH_DAYTONA" = true ]; then
+    echo "Pushing ${image_tag} to Daytona..."
+    daytona snapshot push "$image_tag" --name "$image_tag"
+  fi
+done
+
+echo "Done."
