@@ -30,6 +30,17 @@ RUN npm install -g pnpm typescript tsx @anthropic-ai/claude-code @openai/codex o
 RUN printf '#!/bin/bash\nexit 0\n' > /opt/setup.sh \
     && chmod +x /opt/setup.sh
 
+# amikad is for the daemon
+RUN mkdir -p /var/log/amika /opt/amika /run/amika /etc/amikad
+
+# Amika hook scripts that run before/after the user setup script.
+# pre-setup.sh: clones repo, optionally starts opencode web.
+# post-setup.sh: chowns /home/amika to the amika user.
+RUN printf '#!/bin/bash\nsudo chown -R amika:amika /home/amika\n' > /opt/amika/post-setup.sh \
+    && chmod +x /opt/amika/post-setup.sh
+COPY pre-setup.sh opencode-setup.sh /opt/amika/
+RUN chmod +x /opt/amika/pre-setup.sh /opt/amika/opencode-setup.sh
+
 # Create user with home directory
 RUN useradd -m -s /usr/bin/zsh amika
 RUN usermod -aG sudo amika
@@ -43,4 +54,9 @@ ENV HOME=/home/amika
 RUN mkdir -p /home/amika
 WORKDIR /home/amika
 
-ENTRYPOINT ["/bin/bash", "-c", "/opt/setup.sh && exec \"$@\"", "--"]
+COPY --chown=amika:amika .zshrc /home/amika/.zshrc
+
+# We run the pre-setup and post-setup as root. setup runs as the amika user.
+# Pre and post-setup are not intended to be user-facing configuration. They are
+# for the amika system.
+ENTRYPOINT ["/bin/bash", "-c", "sudo AMIKA_AGENT_CWD=\"$AMIKA_AGENT_CWD\" /opt/amika/pre-setup.sh && /opt/setup.sh && sudo /opt/amika/post-setup.sh && exec \"$@\"", "--"]

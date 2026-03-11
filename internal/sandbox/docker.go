@@ -27,20 +27,11 @@ func DockerImageExists(name string) bool {
 	return cmd.Run() == nil
 }
 
-// BuildDockerImage builds a Docker image from the given Dockerfile content.
-func BuildDockerImage(name string, dockerfile []byte) error {
-	tmpDir, err := os.MkdirTemp("", "amika-build-*")
-	if err != nil {
-		return fmt.Errorf("failed to create build context: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	dockerfilePath := tmpDir + "/Dockerfile"
-	if err := os.WriteFile(dockerfilePath, dockerfile, 0644); err != nil {
-		return fmt.Errorf("failed to write Dockerfile: %w", err)
-	}
-
-	cmd := exec.Command("docker", "build", "-t", name, "-f", dockerfilePath, tmpDir)
+// BuildDockerImage builds a Docker image from a Dockerfile within the given
+// build context directory.
+func BuildDockerImage(name string, contextDir string, dockerfileRelPath string) error {
+	dockerfilePath := filepath.Join(contextDir, dockerfileRelPath)
+	cmd := exec.Command("docker", "build", "-t", name, "-f", dockerfilePath, contextDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

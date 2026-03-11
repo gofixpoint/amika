@@ -6,14 +6,67 @@ import (
 	"testing"
 )
 
-func TestResolveAndEnsureImage_PresetAndImageMutuallyExclusive(t *testing.T) {
-	_, err := ResolveAndEnsureImage(PresetImageOptions{
+func TestResolveAndEnsureImage_PresetAndImageTogetherImageWins(t *testing.T) {
+	resetImageResolutionStubs(t)
+
+	buildCalled := false
+	dockerImageExistsFn = func(_ string) bool { return true }
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
+		buildCalled = true
+		return nil
+	}
+
+	res, err := ResolveAndEnsureImage(PresetImageOptions{
 		Image:            "ubuntu:latest",
 		Preset:           "claude",
 		ImageFlagChanged: true,
 	})
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Image != "ubuntu:latest" {
+		t.Fatalf("image = %q, want %q", res.Image, "ubuntu:latest")
+	}
+	if res.EffectivePreset != "claude" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "claude")
+	}
+	if res.BuildPreset != "" {
+		t.Fatalf("build preset = %q, want empty", res.BuildPreset)
+	}
+	if buildCalled {
+		t.Fatal("build should not have been called")
+	}
+}
+
+func TestResolveAndEnsureImage_PresetAndImageTogetherNoAutoBuild(t *testing.T) {
+	resetImageResolutionStubs(t)
+
+	dockerImageExistsFn = func(_ string) bool { return false }
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		t.Fatal("writePresetBuildContextFn should not be called")
+		return "", nil, nil
+	}
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
+		t.Fatal("buildDockerImageFn should not be called")
+		return nil
+	}
+
+	res, err := ResolveAndEnsureImage(PresetImageOptions{
+		Image:            "my-custom:dev",
+		Preset:           "coder",
+		ImageFlagChanged: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Image != "my-custom:dev" {
+		t.Fatalf("image = %q, want %q", res.Image, "my-custom:dev")
+	}
+	if res.EffectivePreset != "coder" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "coder")
+	}
+	if res.BuildPreset != "" {
+		t.Fatalf("build preset = %q, want empty", res.BuildPreset)
 	}
 }
 
@@ -21,14 +74,16 @@ func TestResolveAndEnsureImage_ExplicitClaudePresetBuildsWhenMissing(t *testing.
 	resetImageResolutionStubs(t)
 
 	var builtImage string
-	var gotBuildPreset string
+	var builtContextDir string
+	var builtDockerfileRelPath string
 	dockerImageExistsFn = func(_ string) bool { return false }
-	getPresetDockerfileFn = func(name string) ([]byte, error) {
-		gotBuildPreset = name
-		return []byte("FROM scratch"), nil
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		return "/fake/context", func() {}, nil
 	}
-	buildDockerImageFn = func(name string, _ []byte) error {
+	buildDockerImageFn = func(name string, contextDir string, dockerfileRelPath string) error {
 		builtImage = name
+		builtContextDir = contextDir
+		builtDockerfileRelPath = dockerfileRelPath
 		return nil
 	}
 
@@ -49,11 +104,14 @@ func TestResolveAndEnsureImage_ExplicitClaudePresetBuildsWhenMissing(t *testing.
 	if res.BuildPreset != "claude" {
 		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "claude")
 	}
-	if gotBuildPreset != "claude" {
-		t.Fatalf("dockerfile preset = %q, want %q", gotBuildPreset, "claude")
-	}
 	if builtImage != "amika/claude:latest" {
 		t.Fatalf("built image = %q, want %q", builtImage, "amika/claude:latest")
+	}
+	if builtContextDir != "/fake/context" {
+		t.Fatalf("context dir = %q, want %q", builtContextDir, "/fake/context")
+	}
+	if builtDockerfileRelPath != "claude/Dockerfile" {
+		t.Fatalf("dockerfile rel path = %q, want %q", builtDockerfileRelPath, "claude/Dockerfile")
 	}
 }
 
@@ -61,13 +119,11 @@ func TestResolveAndEnsureImage_ExplicitCoderPresetBuildsWhenMissing(t *testing.T
 	resetImageResolutionStubs(t)
 
 	var builtImage string
-	var gotBuildPreset string
 	dockerImageExistsFn = func(_ string) bool { return false }
-	getPresetDockerfileFn = func(name string) ([]byte, error) {
-		gotBuildPreset = name
-		return []byte("FROM scratch"), nil
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		return "/fake/context", func() {}, nil
 	}
-	buildDockerImageFn = func(name string, _ []byte) error {
+	buildDockerImageFn = func(name string, _ string, _ string) error {
 		builtImage = name
 		return nil
 	}
@@ -89,9 +145,6 @@ func TestResolveAndEnsureImage_ExplicitCoderPresetBuildsWhenMissing(t *testing.T
 	if res.BuildPreset != "coder" {
 		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "coder")
 	}
-	if gotBuildPreset != "coder" {
-		t.Fatalf("dockerfile preset = %q, want %q", gotBuildPreset, "coder")
-	}
 	if builtImage != DefaultCoderImage {
 		t.Fatalf("built image = %q, want %q", builtImage, DefaultCoderImage)
 	}
@@ -102,10 +155,10 @@ func TestResolveAndEnsureImage_DefaultBuildPresetWhenImageNotChanged(t *testing.
 
 	var built bool
 	dockerImageExistsFn = func(_ string) bool { return false }
-	getPresetDockerfileFn = func(_ string) ([]byte, error) {
-		return []byte("FROM scratch"), nil
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		return "/fake/context", func() {}, nil
 	}
-	buildDockerImageFn = func(_ string, _ []byte) error {
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
 		built = true
 		return nil
 	}
@@ -134,10 +187,10 @@ func TestResolveAndEnsureImage_NoDefaultBuildWhenImageChanged(t *testing.T) {
 
 	buildCalled := false
 	dockerImageExistsFn = func(_ string) bool { return false }
-	getPresetDockerfileFn = func(_ string) ([]byte, error) {
-		return []byte("FROM scratch"), nil
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		return "/fake/context", func() {}, nil
 	}
-	buildDockerImageFn = func(_ string, _ []byte) error {
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
 		buildCalled = true
 		return nil
 	}
@@ -162,11 +215,11 @@ func TestResolveAndEnsureImage_CustomImageNoPresetSkipsPresetBuildAndNormalizati
 	resetImageResolutionStubs(t)
 
 	dockerImageExistsFn = func(_ string) bool { return false }
-	getPresetDockerfileFn = func(_ string) ([]byte, error) {
-		t.Fatal("getPresetDockerfileFn should not be called")
-		return nil, nil
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		t.Fatal("writePresetBuildContextFn should not be called")
+		return "", nil, nil
 	}
-	buildDockerImageFn = func(_ string, _ []byte) error {
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
 		t.Fatal("buildDockerImageFn should not be called")
 		return nil
 	}
@@ -194,8 +247,8 @@ func TestResolveAndEnsureImage_UnknownPreset(t *testing.T) {
 	resetImageResolutionStubs(t)
 
 	dockerImageExistsFn = func(_ string) bool { return false }
-	getPresetDockerfileFn = func(_ string) ([]byte, error) {
-		return nil, errors.New("unknown preset")
+	writePresetBuildContextFn = func(_ string) (string, func(), error) {
+		return "", nil, errors.New("unknown preset")
 	}
 
 	_, err := ResolveAndEnsureImage(PresetImageOptions{
@@ -212,7 +265,7 @@ func TestResolveAndEnsureImage_SkipsBuildWhenImageExists(t *testing.T) {
 
 	buildCalled := false
 	dockerImageExistsFn = func(_ string) bool { return true }
-	buildDockerImageFn = func(_ string, _ []byte) error {
+	buildDockerImageFn = func(_ string, _ string, _ string) error {
 		buildCalled = true
 		return nil
 	}
@@ -271,15 +324,15 @@ func resetImageResolutionStubs(t *testing.T) {
 	t.Helper()
 
 	oldExists := dockerImageExistsFn
-	oldGetDockerfile := getPresetDockerfileFn
 	oldBuild := buildDockerImageFn
+	oldWriteContext := writePresetBuildContextFn
 	oldWriter := buildMessageWriter
 	buildMessageWriter = &bytes.Buffer{}
 
 	t.Cleanup(func() {
 		dockerImageExistsFn = oldExists
-		getPresetDockerfileFn = oldGetDockerfile
 		buildDockerImageFn = oldBuild
+		writePresetBuildContextFn = oldWriteContext
 		buildMessageWriter = oldWriter
 	})
 }

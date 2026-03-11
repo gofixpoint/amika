@@ -27,38 +27,42 @@ type PresetImageResult struct {
 }
 
 var (
-	dockerImageExistsFn             = DockerImageExists
-	getPresetDockerfileFn           = GetPresetDockerfile
-	buildDockerImageFn              = BuildDockerImage
-	buildMessageWriter    io.Writer = os.Stdout
+	dockerImageExistsFn                 = DockerImageExists
+	buildDockerImageFn                  = BuildDockerImage
+	writePresetBuildContextFn           = WritePresetBuildContext
+	buildMessageWriter        io.Writer = os.Stdout
 )
 
 // ResolveAndEnsureImage resolves image/preset behavior and auto-builds presets when needed.
 func ResolveAndEnsureImage(opts PresetImageOptions) (PresetImageResult, error) {
-	if opts.Preset != "" && opts.ImageFlagChanged {
-		return PresetImageResult{}, fmt.Errorf("--preset and --image are mutually exclusive")
-	}
-
 	result := PresetImageResult{
 		Image: opts.Image,
 	}
 
 	if opts.Preset != "" {
 		result.EffectivePreset = opts.Preset
-		result.BuildPreset = opts.Preset
-		result.Image = presetImageName(opts.Preset)
-	} else if !opts.ImageFlagChanged && opts.DefaultBuildPreset != "" {
-		result.BuildPreset = opts.DefaultBuildPreset
-		result.Image = presetImageName(opts.DefaultBuildPreset)
+	}
+
+	if !opts.ImageFlagChanged {
+		if opts.Preset != "" {
+			result.BuildPreset = opts.Preset
+			result.Image = presetImageName(opts.Preset)
+		} else if opts.DefaultBuildPreset != "" {
+			result.BuildPreset = opts.DefaultBuildPreset
+			result.Image = presetImageName(opts.DefaultBuildPreset)
+		}
 	}
 
 	if result.BuildPreset != "" && !dockerImageExistsFn(result.Image) {
-		dockerfile, err := getPresetDockerfileFn(result.BuildPreset)
+		contextDir, cleanup, err := writePresetBuildContextFn(result.BuildPreset)
 		if err != nil {
 			return PresetImageResult{}, err
 		}
+		defer cleanup()
+
+		dockerfileRelPath := result.BuildPreset + "/Dockerfile"
 		fmt.Fprintf(buildMessageWriter, "Building %q preset image (this may take a few minutes)...\n", result.BuildPreset)
-		if err := buildDockerImageFn(result.Image, dockerfile); err != nil {
+		if err := buildDockerImageFn(result.Image, contextDir, dockerfileRelPath); err != nil {
 			return PresetImageResult{}, err
 		}
 	}

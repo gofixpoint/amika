@@ -117,6 +117,9 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		}
 		mounts = append(mounts, gitMount)
 		cleanupGitRepo = gitCleanup
+		if !hasEnvKey(req.Env, "AMIKA_AGENT_CWD") {
+			req.Env = append(req.Env, "AMIKA_AGENT_CWD="+gitMount.Target)
+		}
 	}
 	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, toSandboxPortBindings(ports))
 	if err != nil {
@@ -590,4 +593,14 @@ func toMounts(in []sandbox.MountBinding) []Mount {
 		out = append(out, Mount{Type: m.Type, Source: m.Source, Volume: m.Volume, Target: m.Target, Mode: m.Mode, SnapshotFrom: m.SnapshotFrom})
 	}
 	return out
+}
+
+func hasEnvKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+	return false
 }
