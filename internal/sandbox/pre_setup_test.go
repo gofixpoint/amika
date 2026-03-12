@@ -98,7 +98,7 @@ func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
 	}
 }
 
-func TestPresetRunHook_LogsToAmikadHookSpecificFiles(t *testing.T) {
+func TestPresetRunHook_UsesAmikaOnlyForSetupAndMirrorsItToAmikad(t *testing.T) {
 	data, err := presetFS.ReadFile("presets/run-hook.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
@@ -106,9 +106,13 @@ func TestPresetRunHook_LogsToAmikadHookSpecificFiles(t *testing.T) {
 
 	content := string(data)
 	for _, want := range []string{
-		`log_dir="/var/log/amikad"`,
-		`log_file="$log_dir/${script_name%.sh}.log"`,
+		`daemon_log_dir="/var/log/amikad"`,
+		`daemon_log_file="$daemon_log_dir/${script_name%.sh}.log"`,
+		`if [[ "$script_name" == "setup.sh" ]]; then`,
+		`log_file="/var/log/amika/setup.log"`,
+		`mirror_to_daemon=1`,
 		`exec >>"$log_file" 2>&1`,
+		`sudo cp "$log_file" "$daemon_log_file"`,
 		`export BASH_ENV="/usr/lib/amikad/bash-error-prelude.sh"`,
 	} {
 		if !strings.Contains(content, want) {

@@ -1,9 +1,11 @@
 #!/bin/bash
 
 # run-hook.sh is the stable entrypoint for all setup lifecycle hooks.
-# It executes one hook script, routes stdout/stderr into
-# /var/log/amikad/<hook>.log, and injects a Bash ERR trap via BASH_ENV so
-# command failures are also written to the same log.
+# It executes one hook script and injects a Bash ERR trap via BASH_ENV so
+# command failures are written to the same log. setup.sh logs to
+# /var/log/amika/setup.log so the amika user can write it, then mirrors the
+# finished file to /var/log/amikad/setup.log. Root-owned hooks log directly to
+# /var/log/amikad.
 
 set -Eeuo pipefail
 
@@ -14,10 +16,17 @@ fi
 
 script_path="$1"
 script_name="$(basename "$script_path")"
-log_dir="/var/log/amikad"
-log_file="$log_dir/${script_name%.sh}.log"
+daemon_log_dir="/var/log/amikad"
+daemon_log_file="$daemon_log_dir/${script_name%.sh}.log"
+log_file="$daemon_log_file"
+mirror_to_daemon=0
 
-mkdir -p "$log_dir"
+if [[ "$script_name" == "setup.sh" ]]; then
+  log_file="/var/log/amika/setup.log"
+  mirror_to_daemon=1
+fi
+
+mkdir -p "$(dirname "$log_file")"
 touch "$log_file"
 
 export AMIKA_HOOK_SCRIPT_NAME="$script_name"
@@ -33,4 +42,17 @@ status=$?
 set -e
 
 echo "[$(date -Is)] finished $script_name exit=$status"
+
+if [[ $mirror_to_daemon -eq 1 ]]; then
+  set +e
+  sudo mkdir -p "$daemon_log_dir"
+  sudo cp "$log_file" "$daemon_log_file"
+  copy_status=$?
+  set -e
+
+  if [[ $copy_status -ne 0 ]]; then
+    echo "[$(date -Is)] failed to mirror $script_name log to $daemon_log_file" >&2
+  fi
+fi
+
 exit "$status"
