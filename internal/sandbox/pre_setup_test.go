@@ -97,3 +97,40 @@ func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
 		t.Fatal("pre-setup.sh should require OPENCODE_SERVER_PASSWORD when opencode web startup is enabled")
 	}
 }
+
+func TestPresetRunHook_LogsToAmikadHookSpecificFiles(t *testing.T) {
+	data, err := presetFS.ReadFile("presets/run-hook.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	for _, want := range []string{
+		`log_dir="/var/log/amikad"`,
+		`log_file="$log_dir/${script_name%.sh}.log"`,
+		`exec >>"$log_file" 2>&1`,
+		`export BASH_ENV="/usr/lib/amikad/bash-error-prelude.sh"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("run-hook.sh missing %q", want)
+		}
+	}
+}
+
+func TestPresetBashErrorPrelude_LogsErrTrapDetails(t *testing.T) {
+	data, err := presetFS.ReadFile("presets/bash-error-prelude.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	for _, want := range []string{
+		`trap 'status=$?; if [[ $status -ne 0 ]]; then`,
+		`ERROR ${AMIKA_HOOK_SCRIPT_NAME:-hook} exit=$status`,
+		`command=${BASH_COMMAND@Q}`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("bash-error-prelude.sh missing %q", want)
+		}
+	}
+}
