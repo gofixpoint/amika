@@ -14,8 +14,13 @@ func TestPresetPreSetup_UsesFixedAmikaInternalPaths(t *testing.T) {
 	content := string(data)
 	for _, want := range []string{
 		`AMIKA_STATE_DIR="/var/lib/amikad"`,
+		`AMIKA_USER_STATE_DIR="/var/lib/amika"`,
 		`AMIKA_LOG_DIR="/var/log/amikad"`,
+		`AMIKA_USER_LOG_DIR="/var/log/amika"`,
 		`AMIKA_RUN_DIR="/run/amikad"`,
+		`AMIKA_USER_RUN_DIR="/run/amika"`,
+		`AMIKA_TMP_DIR="/tmp/amikad"`,
+		`AMIKA_USER_TMP_DIR="/tmp/amika"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("pre-setup.sh missing %q", want)
@@ -23,11 +28,35 @@ func TestPresetPreSetup_UsesFixedAmikaInternalPaths(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`${AMIKA_STATE_DIR:-/var/lib/amikad}`,
+		`${AMIKA_USER_STATE_DIR:-/var/lib/amika}`,
 		`${AMIKA_LOG_DIR:-/var/log/amikad}`,
+		`${AMIKA_USER_LOG_DIR:-/var/log/amika}`,
 		`${AMIKA_RUN_DIR:-/run/amikad}`,
+		`${AMIKA_USER_RUN_DIR:-/run/amika}`,
+		`${AMIKA_TMP_DIR:-/tmp/amikad}`,
+		`${AMIKA_USER_TMP_DIR:-/tmp/amika}`,
 	} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("pre-setup.sh should not allow overriding %q", forbidden)
+		}
+	}
+}
+
+func TestPresetPreSetup_CreatesAmikaAndAmikadDirectories(t *testing.T) {
+	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	for _, want := range []string{
+		`"$AMIKA_STATE_DIR" "$AMIKA_USER_STATE_DIR"`,
+		`"$AMIKA_LOG_DIR" "$AMIKA_USER_LOG_DIR"`,
+		`"$AMIKA_RUN_DIR" "$AMIKA_USER_RUN_DIR"`,
+		`"$AMIKA_TMP_DIR" "$AMIKA_USER_TMP_DIR"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("pre-setup.sh should create paired amika/amikad directories, missing %q", want)
 		}
 	}
 }

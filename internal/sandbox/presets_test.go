@@ -48,6 +48,27 @@ func TestGetPresetDockerfile_PreservesOpenCodeEnvForPreSetup(t *testing.T) {
 	}
 }
 
+func TestGetPresetDockerfile_BaseCreatesAmikaAndAmikadDirectories(t *testing.T) {
+	data, err := GetPresetDockerfile("base")
+	if err != nil {
+		t.Fatalf("unexpected error loading base preset: %v", err)
+	}
+
+	content := string(data)
+	for _, want := range []string{
+		"/var/log/amikad /var/log/amika",
+		"/usr/lib/amikad /usr/lib/amika",
+		"/run/amikad /run/amika",
+		"/usr/local/etc/amikad /usr/local/etc/amika",
+		"/var/lib/amikad /var/lib/amika",
+		"/tmp/amikad /tmp/amika",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("base Dockerfile missing paired amika/amikad directories %q", want)
+		}
+	}
+}
+
 func TestGetPresetDockerfile_DaytonaVariantsClearEntrypoint(t *testing.T) {
 	for _, preset := range []string{"daytona-coder", "daytona-claude"} {
 		data, err := GetPresetDockerfile(preset)

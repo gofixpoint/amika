@@ -76,6 +76,21 @@ amika sandbox create --setup-script ./install-deps.sh
 
 See [sandbox-configuration.md](sandbox-configuration.md) for details.
 
+## Container Directory Layout
+
+Preset images provision parallel `amikad` and `amika` directories inside the container:
+
+- `/usr/lib/amikad` and `/usr/lib/amika`
+- `/usr/local/etc/amikad` and `/usr/local/etc/amika`
+- `/var/lib/amikad` and `/var/lib/amika`
+- `/var/log/amikad` and `/var/log/amika`
+- `/run/amikad` and `/run/amika`
+- `/tmp/amikad` and `/tmp/amika`
+
+Use `amikad` paths for Amika-managed daemon and system files. Use `amika` paths for user-managed Amika content.
+
+The user-supplied setup hook remains at `/usr/local/etc/amikad/setup/setup.sh`.
+
 ## Image Name Prefix
 
 Set the `AMIKA_PRESET_IMAGE_PREFIX` environment variable to override the default image name prefix. For example:
