@@ -1,6 +1,7 @@
 .PHONY: goenv build build-cli build-server clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
 
 UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)')
+GOFMT_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
 
 export GOCACHE := $(CURDIR)/.gocache
 export GOTMPDIR := $(CURDIR)/.gotmp
@@ -46,10 +47,10 @@ vet: goenv
 	go vet ./...
 
 fmt:
-	gofmt -w .
+	@$(GOFMT_FILES) | xargs -0 sh -c '[ "$$#" -eq 0 ] || gofmt -w "$$@"' sh
 
 fmtcheck:
-	@unformatted=$$(gofmt -l .); \
+	@unformatted=$$($(GOFMT_FILES) | xargs -0 sh -c '[ "$$#" -eq 0 ] || gofmt -l "$$@"' sh); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Unformatted files:"; \
 		echo "$$unformatted"; \
