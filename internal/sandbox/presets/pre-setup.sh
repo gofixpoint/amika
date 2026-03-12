@@ -27,6 +27,11 @@ mkdir -p \
   "$AMIKA_LOG_DIR" "$AMIKA_USER_LOG_DIR" \
   "$AMIKA_RUN_DIR" "$AMIKA_USER_RUN_DIR" \
   "$AMIKA_TMP_DIR" "$AMIKA_USER_TMP_DIR"
+chown -R amika:amika \
+  "$AMIKA_USER_STATE_DIR" \
+  "$AMIKA_USER_LOG_DIR" \
+  "$AMIKA_USER_RUN_DIR" \
+  "$AMIKA_USER_TMP_DIR"
 echo "$amika_agent_cwd" > "$AMIKA_CWD_FILE"
 
 cd "$amika_agent_cwd"

@@ -61,6 +61,28 @@ func TestPresetPreSetup_CreatesAmikaAndAmikadDirectories(t *testing.T) {
 	}
 }
 
+func TestPresetPreSetup_ChownsUserManagedAmikaDirectories(t *testing.T) {
+	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, `chown -R amika:amika \`) {
+		t.Fatal("pre-setup.sh should chown user-managed amika directories to the amika user")
+	}
+	for _, want := range []string{
+		`"$AMIKA_USER_STATE_DIR"`,
+		`"$AMIKA_USER_LOG_DIR"`,
+		`"$AMIKA_USER_RUN_DIR"`,
+		`"$AMIKA_USER_TMP_DIR"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("pre-setup.sh should chown %q", want)
+		}
+	}
+}
+
 func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
 	data, err := presetFS.ReadFile("presets/pre-setup.sh")
 	if err != nil {

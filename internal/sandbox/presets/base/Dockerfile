@@ -51,6 +51,13 @@ RUN useradd -m -s /usr/bin/zsh amika
 RUN usermod -aG sudo amika
 # Let amika user run sudo without a password.
 RUN echo "amika ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN chown -R amika:amika \
+    /var/log/amika \
+    /usr/lib/amika \
+    /run/amika \
+    /usr/local/etc/amika \
+    /var/lib/amika \
+    /tmp/amika
 
 # Everything after this point runs as the amika user.
 USER amika

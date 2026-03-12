@@ -69,6 +69,30 @@ func TestGetPresetDockerfile_BaseCreatesAmikaAndAmikadDirectories(t *testing.T) 
 	}
 }
 
+func TestGetPresetDockerfile_BaseChownsUserManagedAmikaDirectories(t *testing.T) {
+	data, err := GetPresetDockerfile("base")
+	if err != nil {
+		t.Fatalf("unexpected error loading base preset: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "RUN chown -R amika:amika") {
+		t.Fatal("base Dockerfile should chown user-managed amika directories to the amika user")
+	}
+	for _, want := range []string{
+		"/var/log/amika",
+		"/usr/lib/amika",
+		"/run/amika",
+		"/usr/local/etc/amika",
+		"/var/lib/amika",
+		"/tmp/amika",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("base Dockerfile missing amika directory ownership handoff for %q", want)
+		}
+	}
+}
+
 func TestGetPresetDockerfile_DaytonaVariantsClearEntrypoint(t *testing.T) {
 	for _, preset := range []string{"daytona-coder", "daytona-claude"} {
 		data, err := GetPresetDockerfile(preset)
