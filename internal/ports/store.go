@@ -1,5 +1,17 @@
 package ports
 
+// ServiceRecord describes a named service and its resolved port bindings.
+type ServiceRecord struct {
+	Name  string
+	Ports []ServicePortRecord
+}
+
+// ServicePortRecord is a resolved port binding with an optional generated URL.
+type ServicePortRecord struct {
+	PortBinding
+	URL string
+}
+
 // SandboxRecord stores sandbox metadata.
 type SandboxRecord struct {
 	Name        string
@@ -11,6 +23,7 @@ type SandboxRecord struct {
 	Mounts      []Mount
 	Env         []string
 	Ports       []PortBinding
+	Services    []ServiceRecord
 }
 
 // VolumeRecord stores tracked volume metadata.

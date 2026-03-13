@@ -12,6 +12,31 @@ type Sandbox struct {
 	Mounts      []Mount
 	Env         []string
 	Ports       []PortBinding
+	Services    []ServiceInfo
+}
+
+// ServiceInfo describes a named service running in a sandbox.
+type ServiceInfo struct {
+	Name  string            `json:"Name"`
+	Ports []ServicePortInfo `json:"Ports"`
+}
+
+// ServicePortInfo is a resolved port binding with an optional generated URL.
+type ServicePortInfo struct {
+	PortBinding
+	URL string `json:"URL,omitempty"`
+}
+
+// ListServicesResult reports listed services.
+type ListServicesResult struct {
+	Items []ServiceListItem
+}
+
+// ServiceListItem is a service with its owning sandbox name.
+type ServiceListItem struct {
+	Service     string
+	SandboxName string
+	Ports       []ServicePortInfo
 }
 
 // DeleteSandboxResult reports sandbox deletion details.

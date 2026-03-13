@@ -29,6 +29,7 @@ type Service interface {
 	ListVolumes(ctx context.Context, req ListVolumesRequest) (ListVolumesResult, error)
 	DeleteVolume(ctx context.Context, req DeleteVolumeRequest) (DeleteVolumeResult, error)
 	ExtractAuth(ctx context.Context, req AuthExtractRequest) (AuthExtractResult, error)
+	ListServices(ctx context.Context, req ListServicesRequest) (ListServicesResult, error)
 }
 
 // Options controls construction of a public Amika service.
@@ -218,6 +219,7 @@ func (s *serviceImpl) ListSandboxes(context.Context, ListSandboxesRequest) (List
 			Mounts:      toMounts(it.Mounts),
 			Env:         it.Env,
 			Ports:       toPortBindings(it.Ports),
+			Services:    toPublicServiceInfos(it.Services),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -310,6 +312,27 @@ func (s *serviceImpl) ExtractAuth(_ context.Context, req AuthExtractRequest) (Au
 		return AuthExtractResult{}, fmt.Errorf("%w: %v", ErrDependency, err)
 	}
 	return AuthExtractResult{Lines: auth.BuildEnvMap(result).Lines(req.WithExport)}, nil
+}
+
+func (s *serviceImpl) ListServices(_ context.Context, req ListServicesRequest) (ListServicesResult, error) {
+	items, err := s.sandboxes.List()
+	if err != nil {
+		return ListServicesResult{}, fmt.Errorf("%w: %v", ErrInternal, err)
+	}
+	var result []ServiceListItem
+	for _, sb := range items {
+		if req.SandboxName != "" && sb.Name != req.SandboxName {
+			continue
+		}
+		for _, svc := range sb.Services {
+			result = append(result, ServiceListItem{
+				Service:     svc.Name,
+				SandboxName: sb.Name,
+				Ports:       toPublicServicePortInfos(svc.Ports),
+			})
+		}
+	}
+	return ListServicesResult{Items: result}, nil
 }
 
 func toSandboxMountBindings(mounts []Mount, volumes []Mount) []sandbox.MountBinding {
@@ -590,6 +613,9 @@ func (s *initErrorService) DeleteVolume(context.Context, DeleteVolumeRequest) (D
 func (s *initErrorService) ExtractAuth(context.Context, AuthExtractRequest) (AuthExtractResult, error) {
 	return AuthExtractResult{}, s.err
 }
+func (s *initErrorService) ListServices(context.Context, ListServicesRequest) (ListServicesResult, error) {
+	return ListServicesResult{}, s.err
+}
 
 func toMounts(in []sandbox.MountBinding) []Mount {
 	out := make([]Mount, 0, len(in))
@@ -607,4 +633,64 @@ func hasEnvKey(env []string, key string) bool {
 		}
 	}
 	return false
+}
+
+func toPublicServiceInfos(in []sandbox.ServiceInfo) []ServiceInfo {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ServiceInfo, 0, len(in))
+	for _, s := range in {
+		out = append(out, ServiceInfo{
+			Name:  s.Name,
+			Ports: toPublicServicePortInfos(s.Ports),
+		})
+	}
+	return out
+}
+
+func toPublicServicePortInfos(in []sandbox.ServicePortInfo) []ServicePortInfo {
+	out := make([]ServicePortInfo, 0, len(in))
+	for _, p := range in {
+		out = append(out, ServicePortInfo{
+			PortBinding: PortBinding{
+				HostIP:        p.HostIP,
+				HostPort:      p.HostPort,
+				ContainerPort: p.ContainerPort,
+				Protocol:      p.Protocol,
+			},
+			URL: p.URL,
+		})
+	}
+	return out
+}
+
+func toSandboxServiceInfos(in []ServiceInfo) []sandbox.ServiceInfo {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]sandbox.ServiceInfo, 0, len(in))
+	for _, s := range in {
+		out = append(out, sandbox.ServiceInfo{
+			Name:  s.Name,
+			Ports: toSandboxServicePortInfos(s.Ports),
+		})
+	}
+	return out
+}
+
+func toSandboxServicePortInfos(in []ServicePortInfo) []sandbox.ServicePortInfo {
+	out := make([]sandbox.ServicePortInfo, 0, len(in))
+	for _, p := range in {
+		out = append(out, sandbox.ServicePortInfo{
+			PortBinding: sandbox.PortBinding{
+				HostIP:        p.HostIP,
+				HostPort:      p.HostPort,
+				ContainerPort: p.ContainerPort,
+				Protocol:      p.Protocol,
+			},
+			URL: p.URL,
+		})
+	}
+	return out
 }
