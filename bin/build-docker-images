@@ -20,6 +20,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Determine git version tag
+VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+
 usage() {
   grep '^#/' "$0" | cut -c4-
 }
@@ -95,9 +98,6 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
     echo "Warning: there are unstaged/uncommitted changes, continuing anyway." >&2
   fi
 fi
-
-# Determine git version tag
-VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
 # Determine which presets to build in dependency order.
 PRESETS=()
