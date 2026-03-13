@@ -113,14 +113,15 @@ esac
 # Build images
 for preset in "${PRESETS[@]}"; do
   image_tag="amika/${preset}:${VERSION}"
+  latest_tag="amika/${preset}:latest"
   dockerfile="$REPO_ROOT/internal/sandbox/presets/${preset}/Dockerfile"
 
   docker_args=(build)
   if [ -n "$PLATFORM" ]; then
     docker_args+=(--platform "$PLATFORM")
-    echo "Building ${image_tag} (platform: ${PLATFORM}) from ${dockerfile}..."
+    echo "Building ${image_tag} and ${latest_tag} (platform: ${PLATFORM}) from ${dockerfile}..."
   else
-    echo "Building ${image_tag} from ${dockerfile}..."
+    echo "Building ${image_tag} and ${latest_tag} from ${dockerfile}..."
   fi
 
   case "$preset" in
@@ -135,7 +136,7 @@ for preset in "${PRESETS[@]}"; do
       ;;
   esac
 
-  docker_args+=(-f "$dockerfile" -t "$image_tag" "$REPO_ROOT/internal/sandbox/presets")
+  docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT/internal/sandbox/presets")
   docker "${docker_args[@]}"
 
   if [ "$PUSH_DAYTONA" = true ] && [[ "$preset" == daytona-* ]]; then

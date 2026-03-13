@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# pre-setup.sh runs first as root for Amika-managed container initialization.
+# It creates fixed amikad/amika directories, remembers the agent working
+# directory, switches into that directory, and optionally starts opencode web
+# before the user-facing setup.sh hook runs.
+
 set -euo pipefail
 
 OPENCODE_WEB_PORT=65535
@@ -37,7 +42,8 @@ echo "$amika_agent_cwd" > "$AMIKA_CWD_FILE"
 cd "$amika_agent_cwd"
 
 # Start opencode web server in the background by default when opencode is
-# installed, unless Amika explicitly disables it.
+# installed, unless Amika explicitly disables it. Output is redirected to
+# /var/log/amikad/opencode-web.log because the server outlives this hook.
 if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; then
   if [[ -z "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
     echo "ERROR: OPENCODE_SERVER_PASSWORD must be set when opencode is installed" >&2

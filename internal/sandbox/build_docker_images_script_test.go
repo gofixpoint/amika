@@ -31,15 +31,18 @@ func TestBuildDockerImagesScript_AllBuildsFullGraphAndPushesOnlyDaytona(t *testi
 	}
 
 	wantOrder := []string{
-		"-t amika/base:abc123",
-		"-t amika/coder:abc123",
-		"-t amika/claude:abc123",
-		"-t amika/daytona-coder:abc123",
-		"-t amika/daytona-claude:abc123",
+		"amika/base",
+		"amika/coder",
+		"amika/claude",
+		"amika/daytona-coder",
+		"amika/daytona-claude",
 	}
 	for i, want := range wantOrder {
-		if !strings.Contains(dockerLines[i], want) {
-			t.Fatalf("docker line %d = %q, want substring %q", i, dockerLines[i], want)
+		if !strings.Contains(dockerLines[i], "-t "+want+":abc123") {
+			t.Fatalf("docker line %d = %q, want hash tag for %q", i, dockerLines[i], want)
+		}
+		if !strings.Contains(dockerLines[i], "-t "+want+":latest") {
+			t.Fatalf("docker line %d = %q, want latest tag for %q", i, dockerLines[i], want)
 		}
 	}
 	if !strings.Contains(dockerLines[1], "--build-arg BASE_IMAGE=amika/base:abc123") {
@@ -96,13 +99,13 @@ func TestBuildDockerImagesScript_DaytonaTargetBuildsPrereqs(t *testing.T) {
 	if len(dockerLines) != 3 {
 		t.Fatalf("docker build count = %d, want 3\nlines=%q", len(dockerLines), dockerLines)
 	}
-	if !strings.Contains(dockerLines[0], "-t amika/base:abc123") {
+	if !strings.Contains(dockerLines[0], "-t amika/base:abc123") || !strings.Contains(dockerLines[0], "-t amika/base:latest") {
 		t.Fatalf("first build should be base, got %q", dockerLines[0])
 	}
-	if !strings.Contains(dockerLines[1], "-t amika/coder:abc123") {
+	if !strings.Contains(dockerLines[1], "-t amika/coder:abc123") || !strings.Contains(dockerLines[1], "-t amika/coder:latest") {
 		t.Fatalf("second build should be coder, got %q", dockerLines[1])
 	}
-	if !strings.Contains(dockerLines[2], "-t amika/daytona-coder:abc123") {
+	if !strings.Contains(dockerLines[2], "-t amika/daytona-coder:abc123") || !strings.Contains(dockerLines[2], "-t amika/daytona-coder:latest") {
 		t.Fatalf("third build should be daytona-coder, got %q", dockerLines[2])
 	}
 }

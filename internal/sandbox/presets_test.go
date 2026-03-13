@@ -26,7 +26,7 @@ func TestGetPresetDockerfile_PreservesAgentCWDForPreSetup(t *testing.T) {
 			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
 		}
 		content := string(data)
-		if !strings.Contains(content, `sudo AMIKA_AGENT_CWD=`) || !strings.Contains(content, `/usr/lib/amikad/pre-setup.sh`) {
+		if !strings.Contains(content, `sudo AMIKA_AGENT_CWD=`) || !strings.Contains(content, `/usr/lib/amikad/run-hook.sh /usr/lib/amikad/pre-setup.sh`) {
 			t.Fatalf("%s Dockerfile does not preserve AMIKA_AGENT_CWD for pre-setup", preset)
 		}
 	}
@@ -44,6 +44,25 @@ func TestGetPresetDockerfile_PreservesOpenCodeEnvForPreSetup(t *testing.T) {
 		}
 		if !strings.Contains(content, `OPENCODE_SERVER_PASSWORD=\"$OPENCODE_SERVER_PASSWORD\"`) {
 			t.Fatalf("%s Dockerfile does not preserve OPENCODE_SERVER_PASSWORD for pre-setup", preset)
+		}
+	}
+}
+
+func TestGetPresetDockerfile_RunsAllHooksThroughLogger(t *testing.T) {
+	for _, preset := range []string{"coder", "claude"} {
+		data, err := GetPresetDockerfile(preset)
+		if err != nil {
+			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
+		}
+		content := string(data)
+		for _, want := range []string{
+			`/usr/lib/amikad/run-hook.sh /usr/lib/amikad/pre-setup.sh`,
+			`/usr/lib/amikad/run-hook.sh /usr/local/etc/amikad/setup/setup.sh`,
+			`/usr/lib/amikad/run-hook.sh /usr/lib/amikad/post-setup.sh`,
+		} {
+			if !strings.Contains(content, want) {
+				t.Fatalf("%s Dockerfile missing hook logger invocation %q", preset, want)
+			}
 		}
 	}
 }

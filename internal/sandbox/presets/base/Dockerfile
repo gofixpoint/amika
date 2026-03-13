@@ -22,9 +22,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # Default no-op setup script; users can shadow it via --setup-script.
-# We put setup.sh inside a setup/ directory so we can mount an entire setup
-# volume there. We use /usr/local/etc instead of /etc because some sandbox
-# providers ban mounting to /etc.
+# This is the user-facing middle hook in the lifecycle:
+# 1. /usr/lib/amikad/pre-setup.sh
+# 2. /usr/local/etc/amikad/setup/setup.sh
+# 3. /usr/lib/amikad/post-setup.sh
+# We put setup.sh inside a setup/ directory so a whole setup volume can be
+# mounted there, and we use /usr/local/etc instead of /etc because some
+# sandbox providers ban mounting to /etc.
 RUN mkdir -p /usr/local/etc/amikad/setup \
     && printf '#!/bin/bash\nexit 0\n' > /usr/local/etc/amikad/setup/setup.sh \
     && chmod +x /usr/local/etc/amikad/setup/setup.sh
@@ -38,13 +42,16 @@ RUN mkdir -p \
     /var/lib/amikad /var/lib/amika \
     /tmp/amikad /tmp/amika
 
-# Amika hook scripts that run before/after the user setup script.
-# pre-setup.sh: clones repo, optionally starts opencode web when enabled.
-# post-setup.sh: chowns /home/amika to the amika user.
-RUN printf '#!/bin/bash\nsudo chown -R amika:amika /home/amika\n' > /usr/lib/amikad/post-setup.sh \
+# Amika lifecycle hooks:
+# pre-setup.sh runs first as root for Amika-managed initialization.
+# setup.sh is user-supplied and runs second.
+# post-setup.sh runs last as root to restore expected ownership after setup.
+# run-hook.sh wraps each hook so stdout, stderr, and Bash ERR trap output land
+# in /var/log/amika/<hook>.log and are mirrored to /var/log/amikad/<hook>.log.
+RUN printf '#!/bin/bash\n# post-setup.sh runs after setup.sh as root.\n# It restores /home/amika ownership in case the user hook wrote files as root.\nsudo chown -R amika:amika /home/amika\n' > /usr/lib/amikad/post-setup.sh \
     && chmod +x /usr/lib/amikad/post-setup.sh
-COPY pre-setup.sh opencode-setup.sh /usr/lib/amikad/
-RUN chmod +x /usr/lib/amikad/pre-setup.sh /usr/lib/amikad/opencode-setup.sh
+COPY pre-setup.sh opencode-setup.sh run-hook.sh bash-error-prelude.sh /usr/lib/amikad/
+RUN chmod +x /usr/lib/amikad/pre-setup.sh /usr/lib/amikad/opencode-setup.sh /usr/lib/amikad/run-hook.sh
 
 # Create user with home directory.
 RUN useradd -m -s /usr/bin/zsh amika
@@ -65,5 +72,6 @@ USER amika
 ENV HOME=/home/amika
 RUN mkdir -p /home/amika
 WORKDIR /home/amika
+RUN mkdir -p /home/amika/workspace
 
 COPY --chown=amika:amika .zshrc /home/amika/.zshrc
