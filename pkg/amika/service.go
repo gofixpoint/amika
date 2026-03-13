@@ -14,6 +14,7 @@ import (
 
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/config"
+	"github.com/gofixpoint/amika/internal/constants"
 	"github.com/gofixpoint/amika/internal/materialize"
 	"github.com/gofixpoint/amika/internal/sandbox"
 )
@@ -120,6 +121,9 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		if !hasEnvKey(req.Env, "AMIKA_AGENT_CWD") {
 			req.Env = append(req.Env, "AMIKA_AGENT_CWD="+gitMount.Target)
 		}
+	}
+	if !hasEnvKey(req.Env, constants.EnvSandboxProvider) {
+		req.Env = append(req.Env, constants.EnvSandboxProvider+"="+constants.ProviderLocalDocker)
 	}
 	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, toSandboxPortBindings(ports))
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/gofixpoint/amika/internal/apiclient"
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/config"
+	"github.com/gofixpoint/amika/internal/constants"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/gofixpoint/amika/internal/txn"
 	"github.com/gofixpoint/amika/pkg/amika"
@@ -157,6 +158,9 @@ var sandboxCreateCmd = &cobra.Command{
 			envStrs = append(envStrs, "AMIKA_AGENT_CWD="+gitMountInfo.Mount.Target)
 		}
 		envStrs = appendPresetRuntimeEnv(envStrs)
+		if !hasEnvKey(envStrs, constants.EnvSandboxProvider) {
+			envStrs = append(envStrs, constants.EnvSandboxProvider+"="+constants.ProviderLocalDocker)
+		}
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/internal/agentconfig"
+	"github.com/gofixpoint/amika/internal/constants"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -89,6 +90,9 @@ Examples:
 		}
 
 		envStrs = appendPresetRuntimeEnv(envStrs)
+		if !hasEnvKey(envStrs, constants.EnvSandboxProvider) {
+			envStrs = append(envStrs, constants.EnvSandboxProvider+"="+constants.ProviderLocalDocker)
+		}
 
 		mounts, err := parseMountFlags(mountStrs)
 		if err != nil {
