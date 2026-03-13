@@ -91,6 +91,13 @@ Use `amikad` paths for Amika-managed daemon and system files. Use `amika` paths 
 
 The user-supplied setup hook remains at `/usr/local/etc/amikad/setup/setup.sh`.
 
+## Reserved Ports
+
+Preset images reserve container ports 60899–60999 for Amika internal services
+(e.g. OpenCode web on 60998, amikad daemon on 60999). See
+[sandbox-configuration.md](sandbox-configuration.md#reserved-ports) for the
+full allocation table.
+
 ## Image Name Prefix
 
 Set the `AMIKA_PRESET_IMAGE_PREFIX` environment variable to override the default image name prefix. For example:

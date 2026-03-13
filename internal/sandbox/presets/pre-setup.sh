@@ -7,7 +7,12 @@
 
 set -euo pipefail
 
-OPENCODE_WEB_PORT=65535
+# Amika reserves container ports 60899-60999 for internal sandbox services.
+# See docs/sandbox-configuration.md for the full port allocation table.
+#   60999 — amikad daemon
+#   60998 — OpenCode web UI
+#   60899-60997 — unassigned (reserved for future use)
+OPENCODE_WEB_PORT=60998
 
 AMIKA_STATE_DIR="/var/lib/amikad"
 AMIKA_USER_STATE_DIR="/var/lib/amika"

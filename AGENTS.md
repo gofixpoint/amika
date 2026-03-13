@@ -80,6 +80,7 @@ Amika is a Go module that lets people control sandboxed AI agents, focused on us
 - Linting uses [revive](https://github.com/mgechev/revive) — config in `revive.toml`
 - All exported symbols must have doc comments (enforced by the `exported` rule)
 - No external dependencies need to be installed for linting; `make lint` uses `go run`
+- Ports 60899–60999 are reserved inside sandbox containers for Amika services. See `docs/sandbox-configuration.md` for the allocation table.
 
 ## Testing Notes
 
