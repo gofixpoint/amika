@@ -160,3 +160,19 @@ The container receives copies of the files — the originals on the host are nev
 Only files that exist on the host are mounted. Inside the container, they appear at the same relative paths under `/home/amika/`.
 
 This behavior is automatic and requires no flags. See [presets.md](presets.md) for more details on preset images.
+
+## Reserved Ports
+
+Amika reserves container ports **60899–60999** (101 ports) for internal
+services that run inside sandboxes. User workloads and setup scripts should
+avoid binding to ports in this range.
+
+| Port        | Service                          | Status   |
+| ----------- | -------------------------------- | -------- |
+| 60999       | amikad daemon                    | Reserved |
+| 60998       | OpenCode web UI                  | Active   |
+| 60899–60997 | *(unassigned, reserved for use)* | Reserved |
+
+The OpenCode web server starts automatically on port 60998 when OpenCode is
+installed in the container and `AMIKA_OPENCODE_WEB` is not set to `0`. The
+port number is written to `/run/amikad/opencode-web.port` at startup.
