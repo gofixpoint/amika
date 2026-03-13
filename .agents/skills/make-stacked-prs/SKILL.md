@@ -77,7 +77,7 @@ Process each branch **one at a time, in order**:
    - Commit log with changed files: `git log --name-status <base>..<branch>` (use `$(git merge-base <onto-base-branch> <first-branch>)..<first-branch>` if `onto-base-branch` is not a direct ancestor of `first-branch`)
    - Diff content: `git diff <base>...<branch>` to understand the actual changes
 4. **PR body must include**:
-   - A **stack navigation list** showing all branches in the chain. Each entry shows the branch name. For the current PR, show `` `#THIS` ← you are here `` (no link). For other PRs already created, link with `#<number>`. For PRs not yet created, show "(PR pending)". Example:
+   - A **stack navigation list** showing all branches in the chain. This should go at the bottom of the PR body. Each entry shows the branch name. For the current PR, show `` `#THIS` ← you are here `` (no link). For other PRs already created, link with `#<number>`. For PRs not yet created, show "(PR pending)". Example:
      ```
      ## Stack
 
