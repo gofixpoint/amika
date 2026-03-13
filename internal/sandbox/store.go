@@ -26,6 +26,18 @@ type PortBinding struct {
 	Protocol      string `json:"protocol,omitempty"`
 }
 
+// ServiceInfo describes a named service and its resolved port bindings.
+type ServiceInfo struct {
+	Name  string            `json:"name"`
+	Ports []ServicePortInfo `json:"ports"`
+}
+
+// ServicePortInfo is a resolved port binding with an optional generated URL.
+type ServicePortInfo struct {
+	PortBinding
+	URL string `json:"url,omitempty"`
+}
+
 // Info represents a tracked sandbox.
 type Info struct {
 	Name        string         `json:"name"`
@@ -37,6 +49,7 @@ type Info struct {
 	Mounts      []MountBinding `json:"mounts,omitempty"`
 	Env         []string       `json:"env,omitempty"`
 	Ports       []PortBinding  `json:"ports,omitempty"`
+	Services    []ServiceInfo  `json:"services,omitempty"`
 }
 
 // Store manages sandbox state persistence.
