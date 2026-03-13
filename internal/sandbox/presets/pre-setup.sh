@@ -45,7 +45,7 @@ cd "$amika_agent_cwd"
 # installed, unless Amika explicitly disables it. Output is redirected to
 # /var/log/amikad/opencode-web.log because the server outlives this hook.
 if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; then
-  if [[ -z "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+  if [[ "${AMIKA_SANDBOX_PROVIDER:-}" == "local-docker" ]] && [[ -z "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
     echo "ERROR: OPENCODE_SERVER_PASSWORD must be set when opencode is installed" >&2
     exit 1
   fi
