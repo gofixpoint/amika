@@ -14,6 +14,9 @@
       "Read(**/*.key)",
       "Read(**/id_rsa*)",
       "Read(**/*.p12)"
+    ],
+    "allow": [
+      "Bash(gh pr list --head:*)"
     ]
   },
   "hooks": {
