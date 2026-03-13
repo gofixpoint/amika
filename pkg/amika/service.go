@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/constants"
@@ -111,22 +112,39 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		cleanupSetupScript = cleanup
 	}
 	cleanupGitRepo := func() {}
+	var repoCfg *amikaconfig.Config
 	if req.GitRepo != "" {
-		gitMount, gitCleanup, err := s.resolveGitRepoMount(name, req.GitRepo)
+		gitResult, gitCleanup, err := s.resolveGitRepoMount(name, req.GitRepo)
 		if err != nil {
 			cleanupSetupScript()
 			return Sandbox{}, err
 		}
-		mounts = append(mounts, gitMount)
+		mounts = append(mounts, gitResult.Mount)
+		repoCfg = gitResult.Config
 		cleanupGitRepo = gitCleanup
 		if !hasEnvKey(req.Env, "AMIKA_AGENT_CWD") {
-			req.Env = append(req.Env, "AMIKA_AGENT_CWD="+gitMount.Target)
+			req.Env = append(req.Env, "AMIKA_AGENT_CWD="+gitResult.Mount.Target)
 		}
 	}
+
+	// Resolve service ports from config and merge with --port bindings.
+	sandboxPorts := toSandboxPortBindings(ports)
+	var serviceInfos []sandbox.ServiceInfo
+	if repoCfg != nil {
+		svcInfos, additionalPorts, err := ResolveServicesFromConfig(repoCfg, sandboxPorts, "127.0.0.1")
+		if err != nil {
+			cleanupSetupScript()
+			cleanupGitRepo()
+			return Sandbox{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		}
+		serviceInfos = svcInfos
+		sandboxPorts = append(sandboxPorts, additionalPorts...)
+	}
+
 	if !hasEnvKey(req.Env, constants.EnvSandboxProvider) {
 		req.Env = append(req.Env, constants.EnvSandboxProvider+"="+constants.ProviderLocalDocker)
 	}
-	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, toSandboxPortBindings(ports))
+	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, sandboxPorts)
 	if err != nil {
 		cleanupSetupScript()
 		cleanupGitRepo()
@@ -141,7 +159,8 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		Preset:      req.Preset,
 		Mounts:      mounts,
 		Env:         req.Env,
-		Ports:       toSandboxPortBindings(ports),
+		Ports:       sandboxPorts,
+		Services:    serviceInfos,
 	}
 	if err := s.sandboxes.Save(info); err != nil {
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrInternal, err)
@@ -156,6 +175,7 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		Mounts:      toMounts(info.Mounts),
 		Env:         info.Env,
 		Ports:       toPortBindings(info.Ports),
+		Services:    toPublicServiceInfos(info.Services),
 	}, nil
 }
 func (s *serviceImpl) DeleteSandbox(_ context.Context, req DeleteSandboxRequest) (DeleteSandboxResult, error) {
@@ -465,19 +485,25 @@ func isScpStyleURL(s string) bool {
 	return colon > 0 && colon < len(s)-1
 }
 
+// gitRepoResult holds the results of resolving a git repo mount.
+type gitRepoResult struct {
+	Mount  sandbox.MountBinding
+	Config *amikaconfig.Config // nil if no .amika/config.toml
+}
+
 // resolveGitRepoMount clones gitRepo to a temp directory, copies it into a
 // Docker volume, and returns a volume MountBinding targeting the sandbox
 // workspace. The returned cleanup func removes the volume on error; call it
-// only on failure paths.
-func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (sandbox.MountBinding, func(), error) {
+// only on failure paths. It also reads .amika/config.toml from the cloned repo.
+func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (gitRepoResult, func(), error) {
 	repoName, err := parseGitRepoURL(gitRepo)
 	if err != nil {
-		return sandbox.MountBinding{}, func() {}, err
+		return gitRepoResult{}, func() {}, err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "amika-git-clone-*")
 	if err != nil {
-		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: create temp dir for git clone: %v", ErrInternal, err)
+		return gitRepoResult{}, func() {}, fmt.Errorf("%w: create temp dir for git clone: %v", ErrInternal, err)
 	}
 	cloneDst := filepath.Join(tmpDir, repoName)
 
@@ -489,18 +515,25 @@ func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (sandbox.
 	cmd := exec.Command("git", "clone", cloneURL, cloneDst)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(tmpDir)
-		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: git clone %q failed: %s", ErrDependency, gitRepo, strings.TrimSpace(string(out)))
+		return gitRepoResult{}, func() {}, fmt.Errorf("%w: git clone %q failed: %s", ErrDependency, gitRepo, strings.TrimSpace(string(out)))
+	}
+
+	// Read .amika/config.toml before the temp dir is cleaned up.
+	repoCfg, err := amikaconfig.LoadConfig(cloneDst)
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return gitRepoResult{}, func() {}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 
 	volumeName := fmt.Sprintf("amika-git-%s-%s-%d", sandboxName, repoName, time.Now().UnixNano())
 	if err := sandbox.CreateDockerVolume(volumeName); err != nil {
 		_ = os.RemoveAll(tmpDir)
-		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: create git volume: %v", ErrDependency, err)
+		return gitRepoResult{}, func() {}, fmt.Errorf("%w: create git volume: %v", ErrDependency, err)
 	}
 	if err := sandbox.CopyHostDirToVolume(volumeName, cloneDst); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		_ = sandbox.RemoveDockerVolume(volumeName)
-		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: copy git repo to volume: %v", ErrInternal, err)
+		return gitRepoResult{}, func() {}, fmt.Errorf("%w: copy git repo to volume: %v", ErrInternal, err)
 	}
 	_ = os.RemoveAll(tmpDir) // volume is the source of truth from here
 
@@ -513,7 +546,7 @@ func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (sandbox.
 	}
 	if err := s.volumes.Save(volInfo); err != nil {
 		_ = sandbox.RemoveDockerVolume(volumeName)
-		return sandbox.MountBinding{}, func() {}, fmt.Errorf("%w: save git volume state: %v", ErrInternal, err)
+		return gitRepoResult{}, func() {}, fmt.Errorf("%w: save git volume state: %v", ErrInternal, err)
 	}
 
 	cleanup := func() {
@@ -527,7 +560,7 @@ func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (sandbox.
 		Mode:         "rw",
 		SnapshotFrom: gitRepo,
 	}
-	return mount, cleanup, nil
+	return gitRepoResult{Mount: mount, Config: repoCfg}, cleanup, nil
 }
 
 func resolveSetupScriptMount(name, setupScriptPath, setupScriptText string) (*sandbox.MountBinding, func(), error) {
