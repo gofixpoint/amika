@@ -5,10 +5,12 @@ set -euo pipefail
 #/
 #/ Build preset Docker images and tag them with the current git commit.
 #/ By default, builds for the host architecture. With --push-daytona,
-#/ builds for linux/amd64 (Daytona's architecture).
+#/ builds for linux/amd64 (Daytona's architecture) and only pushes the
+#/ Daytona variant images.
 #/
 #/ Arguments:
-#/   <image>              One of: amika/coder, amika/claude, all
+#/   <image>              One of: amika/base, amika/coder, amika/claude,
+#/                        amika/daytona-coder, amika/daytona-claude, all
 #/
 #/ Options:
 #/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
@@ -58,8 +60,8 @@ fi
 
 # Validate image argument
 case "$IMAGE" in
-  amika/coder|amika/claude|all) ;;
-  *) echo "Error: <image> must be one of: amika/coder, amika/claude, all" >&2; exit 1 ;;
+  amika/base|amika/coder|amika/claude|amika/daytona-coder|amika/daytona-claude|all) ;;
+  *) echo "Error: <image> must be one of: amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, all" >&2; exit 1 ;;
 esac
 
 # Validate --platform value
@@ -97,12 +99,15 @@ fi
 # Determine git version tag
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
-# Determine which presets to build
+# Determine which presets to build in dependency order.
 PRESETS=()
 case "$IMAGE" in
-  amika/coder)  PRESETS=(coder) ;;
-  amika/claude) PRESETS=(claude) ;;
-  all)          PRESETS=(coder claude) ;;
+  amika/base)            PRESETS=(base) ;;
+  amika/coder)           PRESETS=(base coder) ;;
+  amika/claude)          PRESETS=(base claude) ;;
+  amika/daytona-coder)   PRESETS=(base coder daytona-coder) ;;
+  amika/daytona-claude)  PRESETS=(base claude daytona-claude) ;;
+  all)                   PRESETS=(base coder claude daytona-coder daytona-claude) ;;
 esac
 
 # Build images
@@ -110,16 +115,30 @@ for preset in "${PRESETS[@]}"; do
   image_tag="amika/${preset}:${VERSION}"
   dockerfile="$REPO_ROOT/internal/sandbox/presets/${preset}/Dockerfile"
 
-  platform_args=()
+  docker_args=(build)
   if [ -n "$PLATFORM" ]; then
-    platform_args=(--platform "$PLATFORM")
+    docker_args+=(--platform "$PLATFORM")
     echo "Building ${image_tag} (platform: ${PLATFORM}) from ${dockerfile}..."
   else
     echo "Building ${image_tag} from ${dockerfile}..."
   fi
-  docker build "${platform_args[@]}" -f "$dockerfile" -t "$image_tag" "$REPO_ROOT/internal/sandbox/presets"
 
-  if [ "$PUSH_DAYTONA" = true ]; then
+  case "$preset" in
+    coder|claude)
+      docker_args+=(--build-arg "BASE_IMAGE=amika/base:${VERSION}")
+      ;;
+    daytona-coder)
+      docker_args+=(--build-arg "CODER_IMAGE=amika/coder:${VERSION}")
+      ;;
+    daytona-claude)
+      docker_args+=(--build-arg "CLAUDE_IMAGE=amika/claude:${VERSION}")
+      ;;
+  esac
+
+  docker_args+=(-f "$dockerfile" -t "$image_tag" "$REPO_ROOT/internal/sandbox/presets")
+  docker "${docker_args[@]}"
+
+  if [ "$PUSH_DAYTONA" = true ] && [[ "$preset" == daytona-* ]]; then
     echo "Pushing ${image_tag} to Daytona..."
     daytona snapshot push "$image_tag" --name "$image_tag"
   fi

@@ -28,7 +28,6 @@ type PresetImageResult struct {
 
 var (
 	dockerImageExistsFn                 = DockerImageExists
-	buildDockerImageFn                  = BuildDockerImage
 	writePresetBuildContextFn           = WritePresetBuildContext
 	buildMessageWriter        io.Writer = os.Stdout
 )
@@ -60,9 +59,8 @@ func ResolveAndEnsureImage(opts PresetImageOptions) (PresetImageResult, error) {
 		}
 		defer cleanup()
 
-		dockerfileRelPath := result.BuildPreset + "/Dockerfile"
 		fmt.Fprintf(buildMessageWriter, "Building %q preset image (this may take a few minutes)...\n", result.BuildPreset)
-		if err := buildDockerImageFn(result.Image, contextDir, dockerfileRelPath); err != nil {
+		if err := buildPresetImageFn(result.BuildPreset, contextDir); err != nil {
 			return PresetImageResult{}, err
 		}
 	}
