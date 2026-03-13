@@ -51,18 +51,19 @@ func sandboxMode(cmd *cobra.Command) string {
 	if remote || remoteTarget != "" {
 		return "remote"
 	}
-	// Default: if logged in, use remote; otherwise local.
-	session, _ := auth.LoadSession()
-	if session == nil {
+	// Default: if logged in with a valid session, include remote; otherwise local.
+	// GetValidSession refreshes expired tokens; if that fails the session is
+	// unusable and we fall back to local-only without blocking the command.
+	if _, err := auth.GetValidSession(defaultWorkOSClientID); err != nil {
 		return "local"
 	}
 	return "both"
 }
 
-// isLoggedIn returns true if a WorkOS session exists on disk.
+// isLoggedIn returns true if a valid (or refreshable) WorkOS session exists.
 func isLoggedIn() bool {
-	session, _ := auth.LoadSession()
-	return session != nil
+	_, err := auth.GetValidSession(defaultWorkOSClientID)
+	return err == nil
 }
 
 // printLocalOnlyNotice prints a notice when the user is not logged in and
@@ -116,6 +117,13 @@ var sandboxCreateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
 
+		// Validate flag constraints before any network or auth calls.
+		noClean, _ := cmd.Flags().GetBool("no-clean")
+		gitFlagChanged := cmd.Flags().Changed("git")
+		if err := validateGitFlags(gitFlagChanged, noClean); err != nil {
+			return err
+		}
+
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -134,20 +142,15 @@ var sandboxCreateCmd = &cobra.Command{
 		mountStrs, _ := cmd.Flags().GetStringArray("mount")
 		volumeStrs, _ := cmd.Flags().GetStringArray("volume")
 		gitPath, _ := cmd.Flags().GetString("git")
-		noClean, _ := cmd.Flags().GetBool("no-clean")
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		portStrs, _ := cmd.Flags().GetStringArray("port")
 		portHostIP, _ := cmd.Flags().GetString("port-host-ip")
 		yes, _ := cmd.Flags().GetBool("yes")
 		connect, _ := cmd.Flags().GetBool("connect")
 		setupScript, _ := cmd.Flags().GetString("setup-script")
-		gitFlagChanged := cmd.Flags().Changed("git")
 
 		if provider != "docker" {
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
-		}
-		if err := validateGitFlags(gitFlagChanged, noClean); err != nil {
-			return err
 		}
 
 		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{

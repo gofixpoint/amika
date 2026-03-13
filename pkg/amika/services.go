@@ -137,4 +137,3 @@ func ResolveServicesFromConfig(
 	}
 	return resolveServicePorts(services, existingPorts, hostIP)
 }
-
