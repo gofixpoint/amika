@@ -44,10 +44,11 @@ const envAPIURL = "AMIKA_API_URL"
 func sandboxMode(cmd *cobra.Command) string {
 	local, _ := cmd.Flags().GetBool("local")
 	remote, _ := cmd.Flags().GetBool("remote")
+	remoteTarget, _ := cmd.Flags().GetString("remote-target")
 	if local {
 		return "local"
 	}
-	if remote {
+	if remote || remoteTarget != "" {
 		return "remote"
 	}
 	// Default: if logged in, use remote; otherwise local.
@@ -73,8 +74,24 @@ func printLocalOnlyNotice(cmd *cobra.Command) {
 	}
 }
 
+// getRemoteTarget validates that --remote-target is not combined with --local or --remote, and returns the target string.
+func getRemoteTarget(cmd *cobra.Command) (string, error) {
+	target, _ := cmd.Flags().GetString("remote-target")
+	local, _ := cmd.Flags().GetBool("local")
+	remote, _ := cmd.Flags().GetBool("remote")
+	if target != "" && local {
+		return "", fmt.Errorf("--remote-target and --local are contradictory")
+	}
+	if target != "" && remote {
+		return "", fmt.Errorf("--remote-target and --remote are mutually exclusive")
+	}
+	return target, nil
+}
+
 // getRemoteClient returns an API client authenticated with the current session.
-func getRemoteClient() (*apiclient.Client, error) {
+func getRemoteClient(target string) (*apiclient.Client, error) {
+	// TODO: when named-remote config is added, look up target here.
+	_ = target
 	session, err := auth.GetValidSession(defaultWorkOSClientID)
 	if err != nil {
 		return nil, err
@@ -103,9 +120,14 @@ var sandboxCreateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
 
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
+			return err
+		}
+
 		mode := sandboxMode(cmd)
 		if mode == "remote" || mode == "both" {
-			return createRemoteSandbox(cmd)
+			return createRemoteSandbox(cmd, target)
 		}
 		printLocalOnlyNotice(cmd)
 
@@ -302,6 +324,11 @@ var sandboxDeleteCmd = &cobra.Command{
 	Long:    `Delete one or more sandboxes and remove their backing containers.`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
+			return err
+		}
+
 		mode := sandboxMode(cmd)
 
 		deleteVolumes, _ := cmd.Flags().GetBool("delete-volumes")
@@ -331,7 +358,7 @@ var sandboxDeleteCmd = &cobra.Command{
 		// Build a remote client if we may need it.
 		var remoteClient *apiclient.Client
 		if mode == "remote" || mode == "both" {
-			remoteClient, err = getRemoteClient()
+			remoteClient, err = getRemoteClient(target)
 			if err != nil {
 				return err
 			}
@@ -420,6 +447,11 @@ var sandboxListCmd = &cobra.Command{
 	Short: "List all sandboxes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
+			return err
+		}
+
 		mode := sandboxMode(cmd)
 		printLocalOnlyNotice(cmd)
 
@@ -437,7 +469,7 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		if mode == "remote" || mode == "both" {
-			client, err := getRemoteClient()
+			client, err := getRemoteClient(target)
 			if err != nil {
 				return err
 			}
@@ -1414,7 +1446,7 @@ func hasEnvKey(env []string, key string) bool {
 	return false
 }
 
-func createRemoteSandbox(cmd *cobra.Command) error {
+func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	name, _ := cmd.Flags().GetString("name")
 	gitValue, _ := cmd.Flags().GetString("git")
 
@@ -1427,7 +1459,7 @@ func createRemoteSandbox(cmd *cobra.Command) error {
 		gitURL = resolved
 	}
 
-	client, err := getRemoteClient()
+	client, err := getRemoteClient(target)
 	if err != nil {
 		return err
 	}
@@ -1564,6 +1596,7 @@ func init() {
 	// Persistent flags for local/remote mode
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	sandboxCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
+	sandboxCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 
 	// Create flags
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
