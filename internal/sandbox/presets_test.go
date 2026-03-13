@@ -48,7 +48,7 @@ func TestGetPresetDockerfile_PreservesAgentCWDForPreSetup(t *testing.T) {
 			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
 		}
 		content := string(data)
-		if !strings.Contains(content, `sudo AMIKA_AGENT_CWD=`) || !strings.Contains(content, `/opt/amika/pre-setup.sh`) {
+		if !strings.Contains(content, `sudo AMIKA_AGENT_CWD=`) || !strings.Contains(content, `/usr/lib/amikad/pre-setup.sh`) {
 			t.Fatalf("%s Dockerfile does not preserve AMIKA_AGENT_CWD for pre-setup", preset)
 		}
 	}
