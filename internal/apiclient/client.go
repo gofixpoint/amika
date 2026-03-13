@@ -67,6 +67,36 @@ func (c *Client) CreateSandbox(req CreateSandboxRequest) (*RemoteSandbox, error)
 	return &result, nil
 }
 
+// SSHInfo contains SSH connection details for a remote sandbox.
+type SSHInfo struct {
+	SSHDestination string `json:"ssh_destination"`
+	Token          string `json:"token"`
+	ExpiresAt      string `json:"expires_at"`
+}
+
+// GetSSH retrieves SSH connection details for a remote sandbox.
+func (c *Client) GetSSH(name string) (*SSHInfo, error) {
+	var result SSHInfo
+	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/ssh", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote ssh: %w", err)
+	}
+	return &result, nil
+}
+
+// RevokeSSHRequest is the request body for DELETE /api/sandboxes/{name}/ssh.
+type RevokeSSHRequest struct {
+	Token string `json:"token"`
+}
+
+// RevokeSSH revokes an SSH token for a remote sandbox.
+func (c *Client) RevokeSSH(name, token string) error {
+	req := RevokeSSHRequest{Token: token}
+	if err := c.doJSON("DELETE", "/api/sandboxes/"+name+"/ssh", req, nil); err != nil {
+		return fmt.Errorf("remote revoke ssh: %w", err)
+	}
+	return nil
+}
+
 // DeleteSandbox deletes a sandbox on the remote API.
 func (c *Client) DeleteSandbox(name string) error {
 	if err := c.doJSON("DELETE", "/api/sandboxes/"+name, nil, nil); err != nil {

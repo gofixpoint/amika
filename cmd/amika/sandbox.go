@@ -1471,12 +1471,78 @@ func resolveGitURL(value string) (string, error) {
 	return origin, nil
 }
 
+var sandboxSSHCmd = &cobra.Command{
+	Use:   "ssh <name>",
+	Short: "SSH into a remote sandbox",
+	Long: `Connect to a remote sandbox via SSH, or revoke SSH access.
+
+Examples:
+  amika sandbox ssh my-sandbox
+  amika sandbox ssh my-sandbox --revoke`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+
+		name := args[0]
+
+		// Check if this is a local sandbox.
+		sandboxesFile, err := config.SandboxesStateFile()
+		if err == nil {
+			store := sandbox.NewStore(sandboxesFile)
+			if _, err := store.Get(name); err == nil {
+				return fmt.Errorf("SSH access currently only works for remote sandboxes; %q is a local sandbox", name)
+			}
+		}
+
+		client, err := getRemoteClient()
+		if err != nil {
+			return err
+		}
+
+		revoke, _ := cmd.Flags().GetBool("revoke")
+		if revoke {
+			// Get the current SSH token, then revoke it.
+			info, err := client.GetSSH(name)
+			if err != nil {
+				return err
+			}
+			if info.Token == "" {
+				return fmt.Errorf("no SSH token to revoke for sandbox %q", name)
+			}
+			if err := client.RevokeSSH(name, info.Token); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "SSH access revoked for sandbox %q\n", name)
+			return nil
+		}
+
+		info, err := client.GetSSH(name)
+		if err != nil {
+			return err
+		}
+
+		if info.SSHDestination == "" {
+			return fmt.Errorf("server returned empty SSH destination")
+		}
+
+		// Parse destination and exec ssh.
+		sshArgs := strings.Fields(info.SSHDestination)
+		sshCmd := exec.Command("ssh", sshArgs...)
+		sshCmd.Stdin = os.Stdin
+		sshCmd.Stdout = os.Stdout
+		sshCmd.Stderr = os.Stderr
+		return sshCmd.Run()
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(sandboxCmd)
 	sandboxCmd.AddCommand(sandboxCreateCmd)
 	sandboxCmd.AddCommand(sandboxDeleteCmd)
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
+	sandboxCmd.AddCommand(sandboxSSHCmd)
 
 	// Persistent flags for local/remote mode
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
@@ -1501,4 +1567,5 @@ func init() {
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
+	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
 }
