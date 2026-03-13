@@ -30,17 +30,17 @@ Services solve both problems by letting repos declare named processes and their 
 
 ## TOML Configuration
 
-Services are declared under `[service.<name>]` sections in `.amika/config.toml`:
+Services are declared under `[services.<name>]` sections in `.amika/config.toml`:
 
 ```toml
-[service.api]
+[services.api]
 port = 4838
 url_scheme = "http"
 
-[service.metrics]
+[services.metrics]
 port = "4982/udp"
 
-[service.web]
+[services.web]
 ports = ["4982/udp", 4211, "9872/tcp"]
 url_scheme = [
   { port = 4211, scheme = "http" },
@@ -70,7 +70,7 @@ The shape of `url_scheme` depends on whether the service uses `port` or `ports`:
 **With `port` (single port):** `url_scheme` is a plain string — `"http"` or `"https"`. The scheme applies to the single declared port.
 
 ```toml
-[service.api]
+[services.api]
 port = 4838
 url_scheme = "http"
 ```
@@ -78,7 +78,7 @@ url_scheme = "http"
 **With `ports` (multiple ports):** `url_scheme` is a list of `{port, scheme}` inline tables. Each entry specifies which port gets a URL and with what scheme. Ports not listed do not get URLs — this is intentional so that URLs are only generated for ports the user explicitly opts in to.
 
 ```toml
-[service.web]
+[services.web]
 ports = [4211, "9872/tcp", "4982/udp"]
 url_scheme = [
   { port = 4211, scheme = "http" },
@@ -124,14 +124,14 @@ URLs are computed at sandbox creation time (after port resolution) and stored in
 [lifecycle]
 setup_script = "scripts/setup.sh"
 
-[service.api]
+[services.api]
 port = 4838
 url_scheme = "http"
 
-[service.metrics]
+[services.metrics]
 port = "9090/tcp"
 
-[service.frontend]
+[services.frontend]
 ports = [3000, "3001/tcp"]
 url_scheme = [
   { port = 3000, scheme = "https" },
@@ -147,7 +147,7 @@ Extend the `Config` struct:
 ```go
 type Config struct {
     Lifecycle LifecycleConfig            `toml:"lifecycle"`
-    Service   map[string]ServiceConfig   `toml:"service"`
+    Services  map[string]ServiceConfig   `toml:"services"`
 }
 
 type ServiceConfig struct {
@@ -431,7 +431,7 @@ func registerListServices(api huma.API, service amika.Service) {
 7. Validation error for invalid protocol (e.g. `"4838/sctp"`).
 8. Validation error for reserved port in range 60899–60999.
 9. Validation error for duplicate container port/protocol across services.
-10. Parse config with no `[service.*]` sections — returns nil services, no error.
+10. Parse config with no `[services.*]` sections — returns nil services, no error.
 11. Parse single-port service with `url_scheme = "http"` — parsed port has `URLScheme: "http"`.
 12. Parse single-port service with `url_scheme = "https"` — parsed port has `URLScheme: "https"`.
 13. Parse config with no `url_scheme` — all parsed ports have `URLScheme: ""`.
@@ -479,7 +479,7 @@ func registerListServices(api huma.API, service amika.Service) {
 
 ## Acceptance Criteria
 
-1. `.amika/config.toml` with `[service.<name>]` sections is parsed and validated at sandbox creation time.
+1. `.amika/config.toml` with `[services.<name>]` sections is parsed and validated at sandbox creation time.
 2. Service ports are resolved to host port bindings and published on the container.
 3. Service metadata is stored in `sandbox.Info.Services` and persists in `sandboxes.jsonl`.
 4. `amika service list` displays services with their port mappings in the expected table format.
@@ -504,7 +504,7 @@ func registerListServices(api huma.API, service amika.Service) {
 ## Future Considerations
 
 1. **Process lifecycle management.** Future specs may add `amika service start/stop/restart` commands that manage processes inside the container via the amikad daemon.
-2. **Service health checks.** A `healthcheck` field on `[service.<name>]` (e.g. an HTTP endpoint or TCP check) could be used by `amika service list` to show service status.
+2. **Service health checks.** A `healthcheck` field on `[services.<name>]` (e.g. an HTTP endpoint or TCP check) could be used by `amika service list` to show service status.
 3. **Inter-sandbox networking.** Services could be exposed to other sandboxes via Docker networks, enabling multi-sandbox development environments.
 4. **Environment variables per service.** A service may need its own env vars (e.g. `PORT=4838`). This could be added as an `env` field on the service config.
 5. **Remote provider support.** Remote providers may handle port mapping differently. The service config format is provider-agnostic, but resolution logic will need provider-specific implementations.
