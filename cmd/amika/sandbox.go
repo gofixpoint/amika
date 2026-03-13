@@ -75,15 +75,11 @@ func printLocalOnlyNotice(cmd *cobra.Command) {
 }
 
 // getRemoteTarget validates that --remote-target is not combined with --local or --remote, and returns the target string.
+// The flag is currently hidden and disabled; it will be enabled once named-remote config is implemented.
 func getRemoteTarget(cmd *cobra.Command) (string, error) {
 	target, _ := cmd.Flags().GetString("remote-target")
-	local, _ := cmd.Flags().GetBool("local")
-	remote, _ := cmd.Flags().GetBool("remote")
-	if target != "" && local {
-		return "", fmt.Errorf("--remote-target and --local are contradictory")
-	}
-	if target != "" && remote {
-		return "", fmt.Errorf("--remote-target and --remote are mutually exclusive")
+	if target != "" {
+		return "", fmt.Errorf("--remote-target is not yet supported")
 	}
 	return target, nil
 }
@@ -1597,6 +1593,7 @@ func init() {
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	sandboxCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
 	sandboxCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
+	sandboxCmd.PersistentFlags().MarkHidden("remote-target")
 
 	// Create flags
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")

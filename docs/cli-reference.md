@@ -10,15 +10,14 @@ Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `delete`, `connect`):
 
-| Flag                     | Default | Description                                                     |
-| ------------------------ | ------- | --------------------------------------------------------------- |
-| `--local`                | `false` | Only operate on local sandboxes                                 |
-| `--remote`               | `false` | Only operate on remote sandboxes                                |
-| `--remote-target <name>` |         | Operate on a specific named remote target (implies remote mode) |
+| Flag       | Default | Description                      |
+| ---------- | ------- | -------------------------------- |
+| `--local`  | `false` | Only operate on local sandboxes  |
+| `--remote` | `false` | Only operate on remote sandboxes |
 
 When none of these flags are set, the default behavior depends on login state: if you are logged in, both local and remote sandboxes are shown; otherwise only local.
 
-`--local`, `--remote`, and `--remote-target` are mutually exclusive.
+`--local` and `--remote` are mutually exclusive.
 
 ### `amika sandbox create`
 
