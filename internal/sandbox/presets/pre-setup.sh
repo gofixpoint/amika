@@ -5,8 +5,13 @@ set -euo pipefail
 OPENCODE_WEB_PORT=65535
 
 AMIKA_STATE_DIR="/var/lib/amikad"
+AMIKA_USER_STATE_DIR="/var/lib/amika"
 AMIKA_LOG_DIR="/var/log/amikad"
+AMIKA_USER_LOG_DIR="/var/log/amika"
 AMIKA_RUN_DIR="/run/amikad"
+AMIKA_USER_RUN_DIR="/run/amika"
+AMIKA_TMP_DIR="/tmp/amikad"
+AMIKA_USER_TMP_DIR="/tmp/amika"
 AMIKA_CWD_FILE="$AMIKA_STATE_DIR/agent-cwd"
 
 if [[ -n "${AMIKA_AGENT_CWD:-}" ]]; then
@@ -17,7 +22,16 @@ else
   amika_agent_cwd="/home/amika/workspace"
 fi
 
-mkdir -p "$AMIKA_STATE_DIR"
+mkdir -p \
+  "$AMIKA_STATE_DIR" "$AMIKA_USER_STATE_DIR" \
+  "$AMIKA_LOG_DIR" "$AMIKA_USER_LOG_DIR" \
+  "$AMIKA_RUN_DIR" "$AMIKA_USER_RUN_DIR" \
+  "$AMIKA_TMP_DIR" "$AMIKA_USER_TMP_DIR"
+chown -R amika:amika \
+  "$AMIKA_USER_STATE_DIR" \
+  "$AMIKA_USER_LOG_DIR" \
+  "$AMIKA_USER_RUN_DIR" \
+  "$AMIKA_USER_TMP_DIR"
 echo "$amika_agent_cwd" > "$AMIKA_CWD_FILE"
 
 cd "$amika_agent_cwd"
@@ -29,8 +43,6 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
     echo "ERROR: OPENCODE_SERVER_PASSWORD must be set when opencode is installed" >&2
     exit 1
   fi
-
-  mkdir -p "$AMIKA_LOG_DIR" "$AMIKA_RUN_DIR"
 
   sudo -H -u amika \
     nohup env OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" \

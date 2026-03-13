@@ -29,8 +29,14 @@ RUN mkdir -p /usr/local/etc/amikad/setup \
     && printf '#!/bin/bash\nexit 0\n' > /usr/local/etc/amikad/setup/setup.sh \
     && chmod +x /usr/local/etc/amikad/setup/setup.sh
 
-# amikad is for the daemon.
-RUN mkdir -p /var/log/amikad /usr/lib/amikad /run/amikad /usr/local/etc/amikad /var/lib/amikad
+# amikad is for the daemon; amika is for user-managed Amika files.
+RUN mkdir -p \
+    /var/log/amikad /var/log/amika \
+    /usr/lib/amikad /usr/lib/amika \
+    /run/amikad /run/amika \
+    /usr/local/etc/amikad /usr/local/etc/amika \
+    /var/lib/amikad /var/lib/amika \
+    /tmp/amikad /tmp/amika
 
 # Amika hook scripts that run before/after the user setup script.
 # pre-setup.sh: clones repo, optionally starts opencode web when enabled.
@@ -45,6 +51,13 @@ RUN useradd -m -s /usr/bin/zsh amika
 RUN usermod -aG sudo amika
 # Let amika user run sudo without a password.
 RUN echo "amika ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN chown -R amika:amika \
+    /var/log/amika \
+    /usr/lib/amika \
+    /run/amika \
+    /usr/local/etc/amika \
+    /var/lib/amika \
+    /tmp/amika
 
 # Everything after this point runs as the amika user.
 USER amika
