@@ -6,6 +6,20 @@ Complete reference for all `amika` commands, flags, and environment variables.
 
 Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
+### Global sandbox flags
+
+These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `delete`, `connect`):
+
+| Flag                     | Default | Description                                                     |
+| ------------------------ | ------- | --------------------------------------------------------------- |
+| `--local`                | `false` | Only operate on local sandboxes                                 |
+| `--remote`               | `false` | Only operate on remote sandboxes                                |
+| `--remote-target <name>` |         | Operate on a specific named remote target (implies remote mode) |
+
+When none of these flags are set, the default behavior depends on login state: if you are logged in, both local and remote sandboxes are shown; otherwise only local.
+
+`--local`, `--remote`, and `--remote-target` are mutually exclusive.
+
 ### `amika sandbox create`
 
 Create a new sandbox.
@@ -89,7 +103,7 @@ List all tracked sandboxes.
 amika sandbox list
 ```
 
-Output columns: `NAME`, `PROVIDER`, `IMAGE`, `PORTS`, `CREATED`.
+Output columns: `NAME`, `LOCATION`, `PROVIDER`, `IMAGE`, `PORTS`, `CREATED`.
 
 ### `amika sandbox connect`
 
