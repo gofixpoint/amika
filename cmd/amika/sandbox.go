@@ -1528,7 +1528,12 @@ Examples:
 			}
 		}
 
-		client, err := getRemoteClient()
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
+			return err
+		}
+
+		client, err := getRemoteClient(target)
 		if err != nil {
 			return err
 		}
