@@ -22,6 +22,9 @@ build-server: goenv
 clean:
 	rm -rf dist .gocache .gotmp .gomodcache
 
+clean-docker:
+	docker image rm amika/coder:latest amika/base:latest
+
 test: goenv
 	go test ./...
 
