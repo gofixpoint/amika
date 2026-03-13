@@ -1472,26 +1472,19 @@ func resolveGitURL(value string) (string, error) {
 }
 
 var sandboxSSHCmd = &cobra.Command{
-	Use:   "ssh [name]",
+	Use:   "ssh <name>",
 	Short: "SSH into a remote sandbox",
 	Long: `Connect to a remote sandbox via SSH, or revoke SSH access.
 
 Examples:
   amika sandbox ssh my-sandbox
-  amika sandbox ssh --name my-sandbox
   amika sandbox ssh my-sandbox --revoke`,
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 
-		name, _ := cmd.Flags().GetString("name")
-		if len(args) > 0 {
-			name = args[0]
-		}
-		if name == "" {
-			return fmt.Errorf("sandbox name is required")
-		}
+		name := args[0]
 
 		// Check if this is a local sandbox.
 		sandboxesFile, err := config.SandboxesStateFile()
@@ -1574,6 +1567,5 @@ func init() {
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
-	sandboxSSHCmd.Flags().String("name", "", "Name of the sandbox to SSH into")
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
 }
