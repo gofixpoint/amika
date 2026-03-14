@@ -1,6 +1,8 @@
 package amika
 
 import (
+	"net"
+	"strconv"
 	"testing"
 
 	"github.com/gofixpoint/amika/internal/amikaconfig"
@@ -75,6 +77,47 @@ func TestResolveServicePorts_FallbackRandomWhenHostPortTaken(t *testing.T) {
 	if len(infos) != 1 || infos[0].Ports[0].HostPort != ports[0].HostPort {
 		t.Errorf("service info host port should match allocated port")
 	}
+}
+
+func TestResolveServicePorts_FallbackRandomWhenMirroredHostPortInUse(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to reserve test host port: %v", err)
+	}
+	defer listener.Close()
+
+	reservedPort := listener.Addr().(*net.TCPAddr).Port
+	services := []amikaconfig.ServiceParsed{
+		{Name: "api", Ports: []amikaconfig.ServicePortParsed{
+			{ContainerPort: reservedPort, Protocol: "tcp"},
+		}},
+	}
+
+	infos, ports, err := resolveServicePorts(services, nil, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ports) != 1 {
+		t.Fatalf("expected 1 port, got %d", len(ports))
+	}
+	if ports[0].HostPort == reservedPort {
+		t.Fatalf("expected fallback away from occupied host port %d", reservedPort)
+	}
+	if ports[0].HostPort == 0 {
+		t.Fatal("expected non-zero fallback host port")
+	}
+	if ports[0].ContainerPort != reservedPort {
+		t.Fatalf("expected container port %d, got %d", reservedPort, ports[0].ContainerPort)
+	}
+	if infos[0].Ports[0].HostPort != ports[0].HostPort {
+		t.Fatalf("expected service info host port %d, got %d", ports[0].HostPort, infos[0].Ports[0].HostPort)
+	}
+
+	probeListener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ports[0].HostPort)))
+	if err != nil {
+		t.Fatalf("expected fallback host port %d to be free after allocation, got %v", ports[0].HostPort, err)
+	}
+	probeListener.Close()
 }
 
 func TestResolveServicePorts_ConflictWithPortFlag(t *testing.T) {

@@ -1,8 +1,11 @@
 package amika
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 
 	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/sandbox"
@@ -42,7 +45,7 @@ func resolveServicePorts(
 				return nil, nil, fmt.Errorf("service %q port %s conflicts with --port flag", svc.Name, cKey)
 			}
 
-			hostPort, err := resolveHostPort(sp.ContainerPort, sp.Protocol, claimedHostPorts)
+			hostPort, err := resolveHostPort(hostIP, sp.ContainerPort, sp.Protocol, claimedHostPorts)
 			if err != nil {
 				return nil, nil, fmt.Errorf("service %q port %s: %w", svc.Name, cKey, err)
 			}
@@ -81,38 +84,102 @@ func resolveServicePorts(
 // container. This is the common case when no other binding has claimed that port.
 //
 // Step 2: If the direct mirror port is already claimed, fall back to an
-// OS-assigned ephemeral port. Binding to "127.0.0.1:0" tells the OS to pick
+// OS-assigned ephemeral port. Binding to the configured host IP with port 0
+// tells the OS to pick
 // any available port; we immediately close the listener/connection and return
 // the assigned port number.
 //
 // TCP and UDP use different listener APIs (net.Listen vs net.ListenPacket)
 // because Go's net package exposes them as distinct types.
-func resolveHostPort(containerPort int, protocol string, claimed map[string]bool) (int, error) {
+func resolveHostPort(hostIP string, containerPort int, protocol string, claimed map[string]bool) (int, error) {
 	// Step 1: try direct mirror (host port = container port).
 	key := fmt.Sprintf("%d/%s", containerPort, protocol)
 	if !claimed[key] {
-		return containerPort, nil
+		available, err := isHostPortAvailable(hostIP, containerPort, protocol)
+		if err != nil {
+			return 0, err
+		}
+		if available {
+			return containerPort, nil
+		}
 	}
 
 	// Step 2: fall back to OS-assigned ephemeral port by binding to :0.
+	port, err := allocateRandomHostPort(hostIP, protocol)
+	if err != nil {
+		return 0, err
+	}
+	return port, nil
+}
+
+func isHostPortAvailable(hostIP string, port int, protocol string) (bool, error) {
+	addr := net.JoinHostPort(hostIPForBinding(hostIP), strconv.Itoa(port))
 	if protocol == "udp" {
-		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+		conn, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			if isAddressInUse(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to probe mirrored host port: %w", err)
+		}
+		if closeErr := conn.Close(); closeErr != nil {
+			return false, fmt.Errorf("failed to release probed mirrored host port: %w", closeErr)
+		}
+		return true, nil
+	}
+
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		if isAddressInUse(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to probe mirrored host port: %w", err)
+	}
+	if closeErr := listener.Close(); closeErr != nil {
+		return false, fmt.Errorf("failed to release probed mirrored host port: %w", closeErr)
+	}
+	return true, nil
+}
+
+func allocateRandomHostPort(hostIP string, protocol string) (int, error) {
+	addr := net.JoinHostPort(hostIPForBinding(hostIP), "0")
+	if protocol == "udp" {
+		conn, err := net.ListenPacket("udp", addr)
 		if err != nil {
 			return 0, fmt.Errorf("failed to allocate random host port: %w", err)
 		}
 		port := conn.LocalAddr().(*net.UDPAddr).Port
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			return 0, fmt.Errorf("failed to release allocated random host port: %w", closeErr)
+		}
 		return port, nil
 	}
 
 	// TCP (default)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return 0, fmt.Errorf("failed to allocate random host port: %w", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	if closeErr := listener.Close(); closeErr != nil {
+		return 0, fmt.Errorf("failed to release allocated random host port: %w", closeErr)
+	}
 	return port, nil
+}
+
+func hostIPForBinding(hostIP string) string {
+	if hostIP == "" {
+		return "127.0.0.1"
+	}
+	return hostIP
+}
+
+func isAddressInUse(err error) bool {
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		return false
+	}
+	return opErr.Err != nil && strings.Contains(opErr.Err.Error(), "address already in use")
 }
 
 // ResolveServicesFromConfig parses services from a loaded config
