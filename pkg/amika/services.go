@@ -64,7 +64,8 @@ func resolveServicePorts(
 
 			url := ""
 			if sp.URLScheme != "" {
-				url = fmt.Sprintf("%s://%s", sp.URLScheme, net.JoinHostPort(pb.HostDomain, strconv.Itoa(hostPort)))
+				scheme := localServiceScheme(sp.URLScheme, hostIP)
+				url = fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(pb.HostDomain, strconv.Itoa(hostPort)))
 			}
 
 			svcInfo.Ports = append(svcInfo.Ports, sandbox.ServicePortInfo{
@@ -181,6 +182,21 @@ func hostDomainForService(hostIP string) string {
 		return "localhost"
 	default:
 		return hostIP
+	}
+}
+
+// localServiceScheme downgrades "https" to "http" when the host IP is a
+// local address. Local Docker sandboxes do not have TLS certificates, so
+// advertising an https URL would be misleading.
+func localServiceScheme(scheme, hostIP string) string {
+	if scheme != "https" {
+		return scheme
+	}
+	switch hostIP {
+	case "", "127.0.0.1", "::1":
+		return "http"
+	default:
+		return scheme
 	}
 }
 

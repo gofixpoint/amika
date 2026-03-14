@@ -3,6 +3,7 @@ package amika
 import (
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/internal/amikaconfig"
@@ -202,8 +203,8 @@ func TestResolveServicePorts_MultiPortURLGeneration(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	ports := infos[0].Ports
-	if ports[0].URL != "https://localhost:3000" {
-		t.Errorf("port 3000: expected URL %q, got %q", "https://localhost:3000", ports[0].URL)
+	if ports[0].URL != "http://localhost:3000" {
+		t.Errorf("port 3000: expected URL %q, got %q (https downgraded to http for local host)", "http://localhost:3000", ports[0].URL)
 	}
 	if ports[1].URL != "" {
 		t.Errorf("port 3001: expected empty URL, got %q", ports[1].URL)
@@ -225,5 +226,38 @@ func TestResolveServicePorts_NoURLScheme(t *testing.T) {
 	}
 	if infos[0].Ports[0].URL != "" {
 		t.Errorf("expected empty URL, got %q", infos[0].Ports[0].URL)
+	}
+}
+
+func TestResolveServicePorts_HTTPSDowngradedToHTTPForLocalHost(t *testing.T) {
+	services := []amikaconfig.ServiceParsed{
+		{Name: "web", Ports: []amikaconfig.ServicePortParsed{
+			{ContainerPort: 3000, Protocol: "tcp", URLScheme: "https"},
+		}},
+	}
+	// 127.0.0.1 is local — https must become http.
+	infos, _, err := resolveServicePorts(services, nil, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if infos[0].Ports[0].URL != "http://localhost:3000" {
+		t.Errorf("expected https downgraded to http, got %q", infos[0].Ports[0].URL)
+	}
+}
+
+func TestResolveServicePorts_HTTPSPreservedForNonLocalHost(t *testing.T) {
+	services := []amikaconfig.ServiceParsed{
+		{Name: "web", Ports: []amikaconfig.ServicePortParsed{
+			{ContainerPort: 3000, Protocol: "tcp", URLScheme: "https"},
+		}},
+	}
+	// 0.0.0.0 is not a local loopback — https is preserved.
+	infos, _, err := resolveServicePorts(services, nil, "0.0.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	url := infos[0].Ports[0].URL
+	if !strings.HasPrefix(url, "https://") {
+		t.Errorf("expected https preserved for non-local host, got %q", url)
 	}
 }
