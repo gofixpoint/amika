@@ -171,6 +171,24 @@ func TestResolveServicePorts_URLGeneration(t *testing.T) {
 	}
 }
 
+func TestResolveServicePorts_URLGenerationUsesConfiguredBindAddress(t *testing.T) {
+	services := []amikaconfig.ServiceParsed{
+		{Name: "api", Ports: []amikaconfig.ServicePortParsed{
+			{ContainerPort: 4838, Protocol: "tcp", URLScheme: "http"},
+		}},
+	}
+	infos, ports, err := resolveServicePorts(services, nil, "0.0.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ports[0].HostDomain != "0.0.0.0" {
+		t.Fatalf("expected HostDomain %q, got %q", "0.0.0.0", ports[0].HostDomain)
+	}
+	if infos[0].Ports[0].URL != "http://0.0.0.0:4838" {
+		t.Errorf("expected URL %q, got %q", "http://0.0.0.0:4838", infos[0].Ports[0].URL)
+	}
+}
+
 func TestResolveServicePorts_MultiPortURLGeneration(t *testing.T) {
 	services := []amikaconfig.ServiceParsed{
 		{Name: "web", Ports: []amikaconfig.ServicePortParsed{

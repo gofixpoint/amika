@@ -52,9 +52,10 @@ func resolveServicePorts(
 			hKey := fmt.Sprintf("%d/%s", hostPort, sp.Protocol)
 			claimedHostPorts[hKey] = true
 
+			hostDomain := hostDomainForService(hostIP)
 			pb := sandbox.PortBinding{
 				HostIP:        hostIP,
-				HostDomain:    "localhost",
+				HostDomain:    hostDomain,
 				HostPort:      hostPort,
 				ContainerPort: sp.ContainerPort,
 				Protocol:      sp.Protocol,
@@ -63,7 +64,7 @@ func resolveServicePorts(
 
 			url := ""
 			if sp.URLScheme != "" {
-				url = fmt.Sprintf("%s://%s:%d", sp.URLScheme, pb.HostDomain, hostPort)
+				url = fmt.Sprintf("%s://%s", sp.URLScheme, net.JoinHostPort(pb.HostDomain, strconv.Itoa(hostPort)))
 			}
 
 			svcInfo.Ports = append(svcInfo.Ports, sandbox.ServicePortInfo{
@@ -172,6 +173,15 @@ func hostIPForBinding(hostIP string) string {
 		return "127.0.0.1"
 	}
 	return hostIP
+}
+
+func hostDomainForService(hostIP string) string {
+	switch hostIP {
+	case "", "127.0.0.1", "::1":
+		return "localhost"
+	default:
+		return hostIP
+	}
 }
 
 func isAddressInUse(err error) bool {
