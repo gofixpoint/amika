@@ -63,3 +63,5 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
   echo "$!" > "$AMIKA_RUN_DIR/opencode-web.pid"
   echo "$OPENCODE_WEB_PORT" > "$AMIKA_RUN_DIR/opencode-web.port"
 fi
+
+sudo chown -R amika:amika /home/amika
