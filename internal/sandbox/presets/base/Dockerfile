@@ -48,10 +48,8 @@ RUN mkdir -p \
 # post-setup.sh runs last as root to restore expected ownership after setup.
 # run-hook.sh wraps each hook so stdout, stderr, and Bash ERR trap output land
 # in /var/log/amika/<hook>.log and are mirrored to /var/log/amikad/<hook>.log.
-RUN printf '#!/bin/bash\n# post-setup.sh runs after setup.sh as root.\n# It restores /home/amika ownership in case the user hook wrote files as root.\nsudo chown -R amika:amika /home/amika\n' > /usr/lib/amikad/post-setup.sh \
-    && chmod +x /usr/lib/amikad/post-setup.sh
-COPY pre-setup.sh opencode-setup.sh run-hook.sh bash-error-prelude.sh /usr/lib/amikad/
-RUN chmod +x /usr/lib/amikad/pre-setup.sh /usr/lib/amikad/opencode-setup.sh /usr/lib/amikad/run-hook.sh
+COPY pre-setup.sh post-setup.sh opencode-setup.sh run-hook.sh bash-error-prelude.sh /usr/lib/amikad/
+RUN chmod +x /usr/lib/amikad/pre-setup.sh /usr/lib/amikad/post-setup.sh /usr/lib/amikad/opencode-setup.sh /usr/lib/amikad/run-hook.sh
 
 # Create user with home directory.
 RUN useradd -m -s /usr/bin/zsh amika
