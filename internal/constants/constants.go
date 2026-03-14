@@ -8,4 +8,12 @@ const (
 
 	// ProviderLocalDocker is the provider value for local Docker sandboxes.
 	ProviderLocalDocker = "local-docker"
+
+	// ReservedPortStart is the beginning of the port range reserved for Amika
+	// internal services inside sandbox containers (inclusive).
+	ReservedPortStart = 60899
+
+	// ReservedPortEnd is the end of the port range reserved for Amika
+	// internal services inside sandbox containers (inclusive).
+	ReservedPortEnd = 60999
 )

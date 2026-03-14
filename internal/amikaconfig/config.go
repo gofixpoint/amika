@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/gofixpoint/amika/internal/constants"
 )
 
 // Config is the parsed .amika/config.toml file.
@@ -100,14 +101,15 @@ func ValidateServices(services map[string]ServiceConfig) error {
 	globalPorts := make(map[string]string) // "port/proto" -> service name
 
 	for name, svc := range services {
-		// Rule 1: exactly one of port or ports.
 		hasPort := svc.Port != nil
 		hasPorts := len(svc.Ports) > 0
 		if hasPort && hasPorts {
 			return fmt.Errorf("service %q: port and ports are mutually exclusive", name)
 		}
+
+		// A service with neither port nor ports is valid (metadata-only).
 		if !hasPort && !hasPorts {
-			return fmt.Errorf("service %q: one of port or ports is required", name)
+			continue
 		}
 
 		// Collect and validate port values.
@@ -178,8 +180,8 @@ func validatePortNumber(port int, proto string) (int, string, error) {
 	if proto != "tcp" && proto != "udp" {
 		return 0, "", fmt.Errorf("invalid protocol %q: must be \"tcp\" or \"udp\"", proto)
 	}
-	if port >= 60899 && port <= 60999 {
-		return 0, "", fmt.Errorf("port %d is in the reserved range 60899-60999", port)
+	if port >= constants.ReservedPortStart && port <= constants.ReservedPortEnd {
+		return 0, "", fmt.Errorf("port %d is in the reserved range %d-%d", port, constants.ReservedPortStart, constants.ReservedPortEnd)
 	}
 	return port, proto, nil
 }
@@ -187,22 +189,20 @@ func validatePortNumber(port int, proto string) (int, string, error) {
 func validateURLScheme(name string, svc ServiceConfig, localPorts map[string]bool) error {
 	hasPort := svc.Port != nil
 
+	// Single-port with a simple string url_scheme.
 	if hasPort {
-		// Single-port: url_scheme must be a string.
-		scheme, ok := svc.URLScheme.(string)
-		if !ok {
-			return fmt.Errorf("service %q: url_scheme must be a string when using port (not a list)", name)
+		if scheme, ok := svc.URLScheme.(string); ok {
+			if scheme != "http" && scheme != "https" {
+				return fmt.Errorf("service %q: url_scheme %q must be \"http\" or \"https\"", name, scheme)
+			}
+			return nil
 		}
-		if scheme != "http" && scheme != "https" {
-			return fmt.Errorf("service %q: url_scheme %q must be \"http\" or \"https\"", name, scheme)
-		}
-		return nil
+		// Single port may also use list-form url_scheme — fall through to list validation.
 	}
 
-	// Multi-port: url_scheme must be a list of {port, scheme} mappings.
+	// List-form url_scheme: valid with both port and ports.
 	list, ok := svc.URLScheme.([]interface{})
 	if !ok {
-		// Could be a string used with ports — that's an error.
 		if _, isStr := svc.URLScheme.(string); isStr {
 			return fmt.Errorf("service %q: url_scheme must be a list of {port, scheme} mappings when using ports (not a string)", name)
 		}
@@ -243,16 +243,22 @@ func validateURLScheme(name string, svc ServiceConfig, localPorts map[string]boo
 // parseServiceConfig converts a validated ServiceConfig into a ServiceParsed.
 func parseServiceConfig(name string, svc ServiceConfig) (ServiceParsed, error) {
 	hasPort := svc.Port != nil
+	hasPorts := len(svc.Ports) > 0
+
+	// No ports declared — return a metadata-only service.
+	if !hasPort && !hasPorts {
+		return ServiceParsed{Name: name}, nil
+	}
 
 	// Build url_scheme lookup.
 	schemeMap := make(map[string]string) // "port/proto" -> scheme
 	if svc.URLScheme != nil {
-		if hasPort {
-			scheme := svc.URLScheme.(string)
+		if scheme, ok := svc.URLScheme.(string); ok {
+			// Simple string form — only valid with single port.
 			cp, proto, _ := parsePort(svc.Port)
 			schemeMap[fmt.Sprintf("%d/%s", cp, proto)] = scheme
-		} else {
-			list := svc.URLScheme.([]interface{})
+		} else if list, ok := svc.URLScheme.([]interface{}); ok {
+			// List form — valid with both port and ports.
 			for _, item := range list {
 				mapping := item.(map[string]interface{})
 				cp, proto, _ := parsePort(mapping["port"])

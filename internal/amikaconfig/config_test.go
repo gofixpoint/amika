@@ -188,14 +188,23 @@ ports = [3000]
 	}
 }
 
-// Test 5: Neither port nor ports → error
-func TestParsedServices_ErrorNeitherPortNorPorts(t *testing.T) {
+// Test 5: Neither port nor ports → valid metadata-only service
+func TestParsedServices_NeitherPortNorPorts(t *testing.T) {
 	cfg := loadFromTOML(t, `
 [services.api]
 `)
-	_, err := cfg.ParsedServices()
-	if err == nil {
-		t.Fatal("expected error for neither port nor ports, got nil")
+	services, err := cfg.ParsedServices()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(services))
+	}
+	if services[0].Name != "api" {
+		t.Errorf("expected name %q, got %q", "api", services[0].Name)
+	}
+	if len(services[0].Ports) != 0 {
+		t.Errorf("expected 0 ports, got %d", len(services[0].Ports))
 	}
 }
 
@@ -347,8 +356,8 @@ url_scheme = [
 	}
 }
 
-// Test 16: port used with list-form url_scheme → error
-func TestParsedServices_ErrorPortWithListScheme(t *testing.T) {
+// Test 16: port used with list-form url_scheme → allowed
+func TestParsedServices_PortWithListScheme(t *testing.T) {
 	cfg := loadFromTOML(t, `
 [services.api]
 port = 4838
@@ -356,9 +365,15 @@ url_scheme = [
   { port = 4838, scheme = "http" },
 ]
 `)
-	_, err := cfg.ParsedServices()
-	if err == nil {
-		t.Fatal("expected error for port with list url_scheme, got nil")
+	services, err := cfg.ParsedServices()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(services))
+	}
+	if services[0].Ports[0].URLScheme != "http" {
+		t.Errorf("expected URLScheme %q, got %q", "http", services[0].Ports[0].URLScheme)
 	}
 }
 

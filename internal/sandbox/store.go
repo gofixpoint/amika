@@ -19,8 +19,11 @@ type MountBinding struct {
 }
 
 // PortBinding represents a published container port.
+// For local sandboxes, HostIP is "127.0.0.1" and HostDomain is "localhost".
+// For remote sandboxes, HostIP is empty and HostDomain holds the remote hostname.
 type PortBinding struct {
 	HostIP        string `json:"hostIp,omitempty"`
+	HostDomain    string `json:"hostDomain,omitempty"`
 	HostPort      int    `json:"hostPort"`
 	ContainerPort int    `json:"containerPort"`
 	Protocol      string `json:"protocol,omitempty"`

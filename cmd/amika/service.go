@@ -56,7 +56,7 @@ var serviceListCmd = &cobra.Command{
 				}
 				urlStr := "-"
 				if len(urls) > 0 {
-					urlStr = strings.Join(urls, ",")
+					urlStr = strings.Join(urls, " ")
 				}
 				rows = append(rows, serviceRow{
 					service:     svc.Name,

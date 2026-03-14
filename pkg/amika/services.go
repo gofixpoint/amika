@@ -51,6 +51,7 @@ func resolveServicePorts(
 
 			pb := sandbox.PortBinding{
 				HostIP:        hostIP,
+				HostDomain:    "localhost",
 				HostPort:      hostPort,
 				ContainerPort: sp.ContainerPort,
 				Protocol:      sp.Protocol,
@@ -59,7 +60,7 @@ func resolveServicePorts(
 
 			url := ""
 			if sp.URLScheme != "" {
-				url = fmt.Sprintf("%s://%s:%d", sp.URLScheme, hostIP, hostPort)
+				url = fmt.Sprintf("%s://%s:%d", sp.URLScheme, pb.HostDomain, hostPort)
 			}
 
 			svcInfo.Ports = append(svcInfo.Ports, sandbox.ServicePortInfo{
@@ -74,34 +75,28 @@ func resolveServicePorts(
 	return serviceInfos, additionalPorts, nil
 }
 
-// resolveHostPort tries to assign a host port for the given container port.
-// First attempts direct mirror (hostPort = containerPort), then falls back to random.
+// resolveHostPort assigns a host port for the given container port and protocol.
+//
+// Step 1: Try direct mirror — use the same port number on the host as in the
+// container. This is the common case when no other binding has claimed that port.
+//
+// Step 2: If the direct mirror port is already claimed, fall back to an
+// OS-assigned ephemeral port. Binding to "127.0.0.1:0" tells the OS to pick
+// any available port; we immediately close the listener/connection and return
+// the assigned port number.
+//
+// TCP and UDP use different listener APIs (net.Listen vs net.ListenPacket)
+// because Go's net package exposes them as distinct types.
 func resolveHostPort(containerPort int, protocol string, claimed map[string]bool) (int, error) {
+	// Step 1: try direct mirror (host port = container port).
 	key := fmt.Sprintf("%d/%s", containerPort, protocol)
 	if !claimed[key] {
 		return containerPort, nil
 	}
-	// Fall back to random port assignment.
-	network := "tcp"
+
+	// Step 2: fall back to OS-assigned ephemeral port by binding to :0.
 	if protocol == "udp" {
-		network = "udp"
-	}
-	addr, err := net.ResolveUDPAddr(network, "127.0.0.1:0")
-	if err != nil {
-		// For TCP, use a different approach.
-		if network == "tcp" {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				return 0, fmt.Errorf("failed to allocate random host port: %w", err)
-			}
-			port := listener.Addr().(*net.TCPAddr).Port
-			listener.Close()
-			return port, nil
-		}
-		return 0, fmt.Errorf("failed to allocate random host port: %w", err)
-	}
-	if network == "udp" {
-		conn, err := net.ListenPacket("udp", addr.String())
+		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 		if err != nil {
 			return 0, fmt.Errorf("failed to allocate random host port: %w", err)
 		}
@@ -109,6 +104,8 @@ func resolveHostPort(containerPort int, protocol string, claimed map[string]bool
 		conn.Close()
 		return port, nil
 	}
+
+	// TCP (default)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, fmt.Errorf("failed to allocate random host port: %w", err)

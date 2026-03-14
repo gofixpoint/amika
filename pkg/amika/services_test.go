@@ -28,7 +28,7 @@ func TestResolveServicePorts_DirectMirror(t *testing.T) {
 	}
 }
 
-func TestResolveServicePorts_FallbackRandomWhenTaken(t *testing.T) {
+func TestResolveServicePorts_ConflictSameContainerPort(t *testing.T) {
 	services := []amikaconfig.ServiceParsed{
 		{Name: "api", Ports: []amikaconfig.ServicePortParsed{
 			{ContainerPort: 4838, Protocol: "tcp"},
@@ -38,9 +38,42 @@ func TestResolveServicePorts_FallbackRandomWhenTaken(t *testing.T) {
 		{HostIP: "127.0.0.1", HostPort: 4838, ContainerPort: 4838, Protocol: "tcp"},
 	}
 	_, _, err := resolveServicePorts(services, existing, "127.0.0.1")
-	// This should error because the same container port conflicts with --port flag
+	// This should error because the same container port conflicts with --port flag.
 	if err == nil {
 		t.Fatal("expected error for conflicting container port, got nil")
+	}
+}
+
+func TestResolveServicePorts_FallbackRandomWhenHostPortTaken(t *testing.T) {
+	// Service wants container port 5000, but host port 5000 is already
+	// claimed by a different container port mapping. The service should
+	// fall back to an OS-assigned random host port.
+	services := []amikaconfig.ServiceParsed{
+		{Name: "api", Ports: []amikaconfig.ServicePortParsed{
+			{ContainerPort: 5000, Protocol: "tcp"},
+		}},
+	}
+	existing := []sandbox.PortBinding{
+		{HostIP: "127.0.0.1", HostPort: 5000, ContainerPort: 9999, Protocol: "tcp"},
+	}
+	infos, ports, err := resolveServicePorts(services, existing, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ports) != 1 {
+		t.Fatalf("expected 1 port, got %d", len(ports))
+	}
+	if ports[0].HostPort == 5000 {
+		t.Errorf("expected random fallback port, got direct mirror 5000")
+	}
+	if ports[0].HostPort == 0 {
+		t.Errorf("expected non-zero host port")
+	}
+	if ports[0].ContainerPort != 5000 {
+		t.Errorf("expected container port 5000, got %d", ports[0].ContainerPort)
+	}
+	if len(infos) != 1 || infos[0].Ports[0].HostPort != ports[0].HostPort {
+		t.Errorf("service info host port should match allocated port")
 	}
 }
 
@@ -90,8 +123,8 @@ func TestResolveServicePorts_URLGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if infos[0].Ports[0].URL != "http://127.0.0.1:4838" {
-		t.Errorf("expected URL %q, got %q", "http://127.0.0.1:4838", infos[0].Ports[0].URL)
+	if infos[0].Ports[0].URL != "http://localhost:4838" {
+		t.Errorf("expected URL %q, got %q", "http://localhost:4838", infos[0].Ports[0].URL)
 	}
 }
 
@@ -108,8 +141,8 @@ func TestResolveServicePorts_MultiPortURLGeneration(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	ports := infos[0].Ports
-	if ports[0].URL != "https://127.0.0.1:3000" {
-		t.Errorf("port 3000: expected URL %q, got %q", "https://127.0.0.1:3000", ports[0].URL)
+	if ports[0].URL != "https://localhost:3000" {
+		t.Errorf("port 3000: expected URL %q, got %q", "https://localhost:3000", ports[0].URL)
 	}
 	if ports[1].URL != "" {
 		t.Errorf("port 3001: expected empty URL, got %q", ports[1].URL)
