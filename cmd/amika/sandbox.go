@@ -51,18 +51,19 @@ func sandboxMode(cmd *cobra.Command) string {
 	if remote || remoteTarget != "" {
 		return "remote"
 	}
-	// Default: if logged in, use remote; otherwise local.
-	session, _ := auth.LoadSession()
-	if session == nil {
+	// Default: if logged in with a valid session, include remote; otherwise local.
+	// GetValidSession refreshes expired tokens; if that fails the session is
+	// unusable and we fall back to local-only without blocking the command.
+	if _, err := auth.GetValidSession(defaultWorkOSClientID); err != nil {
 		return "local"
 	}
 	return "both"
 }
 
-// isLoggedIn returns true if a WorkOS session exists on disk.
+// isLoggedIn returns true if a valid (or refreshable) WorkOS session exists.
 func isLoggedIn() bool {
-	session, _ := auth.LoadSession()
-	return session != nil
+	_, err := auth.GetValidSession(defaultWorkOSClientID)
+	return err == nil
 }
 
 // printLocalOnlyNotice prints a notice when the user is not logged in and
@@ -116,6 +117,13 @@ var sandboxCreateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
 
+		// Validate flag constraints before any network or auth calls.
+		noClean, _ := cmd.Flags().GetBool("no-clean")
+		gitFlagChanged := cmd.Flags().Changed("git")
+		if err := validateGitFlags(gitFlagChanged, noClean); err != nil {
+			return err
+		}
+
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -134,20 +142,15 @@ var sandboxCreateCmd = &cobra.Command{
 		mountStrs, _ := cmd.Flags().GetStringArray("mount")
 		volumeStrs, _ := cmd.Flags().GetStringArray("volume")
 		gitPath, _ := cmd.Flags().GetString("git")
-		noClean, _ := cmd.Flags().GetBool("no-clean")
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		portStrs, _ := cmd.Flags().GetStringArray("port")
 		portHostIP, _ := cmd.Flags().GetString("port-host-ip")
 		yes, _ := cmd.Flags().GetBool("yes")
 		connect, _ := cmd.Flags().GetBool("connect")
 		setupScript, _ := cmd.Flags().GetString("setup-script")
-		gitFlagChanged := cmd.Flags().Changed("git")
 
 		if provider != "docker" {
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
-		}
-		if err := validateGitFlags(gitFlagChanged, noClean); err != nil {
-			return err
 		}
 
 		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
@@ -291,6 +294,7 @@ var sandboxCreateCmd = &cobra.Command{
 			Mounts:      runtimeMounts,
 			Env:         envStrs,
 			Ports:       publishedPorts,
+			Services:    collected.Services,
 		}
 		if err := store.Save(info); err != nil {
 			return fmt.Errorf("sandbox created but failed to save state: %w", err)
@@ -302,6 +306,18 @@ var sandboxCreateCmd = &cobra.Command{
 			fmt.Println("Published ports:")
 			for _, p := range publishedPorts {
 				fmt.Printf("  %s\n", formatPortBinding(p))
+			}
+		}
+		if len(collected.Services) > 0 {
+			fmt.Println("Services:")
+			for _, svc := range collected.Services {
+				for _, sp := range svc.Ports {
+					url := "-"
+					if sp.URL != "" {
+						url = sp.URL
+					}
+					fmt.Printf("  %s: %s (url: %s)\n", svc.Name, formatPortBinding(sp.PortBinding), url)
+				}
 			}
 		}
 		if connect {
@@ -978,8 +994,9 @@ type collectedMounts struct {
 	Mounts       []sandbox.MountBinding
 	VolumeMounts []sandbox.MountBinding
 	Ports        []sandbox.PortBinding
-	GitInfo      *gitMountInfo // nil if --git was not used
-	Cleanup      func()        // removes git temp dir; noop if no --git
+	Services     []sandbox.ServiceInfo // resolved service port bindings
+	GitInfo      *gitMountInfo         // nil if --git was not used
+	Cleanup      func()                // removes git temp dir; noop if no --git
 }
 
 // collectMounts gathers all mounts from CLI flags, git clone, .amika/config.toml,
@@ -1019,8 +1036,18 @@ func collectMounts(
 		mounts = append(mounts, info.Mount)
 	}
 
-	if gmi != nil && !setupScriptFlagChanged {
-		mount, err := setupScriptMountFromConfig(gmi.RepoRoot)
+	// Load .amika/config.toml once from the repo root for both setup script and services.
+	var repoCfg *amikaconfig.Config
+	if gmi != nil {
+		repoCfg, err = amikaconfig.LoadConfig(gmi.RepoRoot)
+		if err != nil {
+			cleanup()
+			return collectedMounts{}, fmt.Errorf("failed to read .amika/config.toml: %w", err)
+		}
+	}
+
+	if repoCfg != nil && !setupScriptFlagChanged {
+		mount, err := setupScriptMountFromLoadedConfig(repoCfg, gmi.RepoRoot)
 		if err != nil {
 			cleanup()
 			return collectedMounts{}, err
@@ -1028,6 +1055,18 @@ func collectMounts(
 		if mount != nil {
 			mounts = append(mounts, *mount)
 		}
+	}
+
+	// Resolve service ports from config.
+	var serviceInfos []sandbox.ServiceInfo
+	if repoCfg != nil {
+		svcInfos, additionalPorts, err := amika.ResolveServicesFromConfig(repoCfg, publishedPorts, portHostIP)
+		if err != nil {
+			cleanup()
+			return collectedMounts{}, err
+		}
+		serviceInfos = svcInfos
+		publishedPorts = append(publishedPorts, additionalPorts...)
 	}
 
 	if homeDir, err := os.UserHomeDir(); err == nil {
@@ -1052,19 +1091,15 @@ func collectMounts(
 		Mounts:       mounts,
 		VolumeMounts: volumeMounts,
 		Ports:        publishedPorts,
+		Services:     serviceInfos,
 		GitInfo:      gmi,
 		Cleanup:      cleanup,
 	}, nil
 }
 
-// setupScriptMountFromConfig reads repoRoot/.amika/config.toml and returns a
-// bind mount for lifecycle.setup_script if one is configured. Returns nil, nil
-// when the file is absent or no setup_script is set.
-func setupScriptMountFromConfig(repoRoot string) (*sandbox.MountBinding, error) {
-	cfg, err := amikaconfig.LoadConfig(repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read .amika/config.toml: %w", err)
-	}
+// setupScriptMountFromLoadedConfig uses an already-loaded config to create a
+// bind mount for lifecycle.setup_script if one is configured.
+func setupScriptMountFromLoadedConfig(cfg *amikaconfig.Config, repoRoot string) (*sandbox.MountBinding, error) {
 	if cfg == nil || cfg.Lifecycle.SetupScript == "" {
 		return nil, nil
 	}

@@ -28,6 +28,7 @@ func NewHandler(service amika.Service) http.Handler {
 	registerDeleteVolume(api, service)
 	registerAuthExtract(api, service)
 	registerMaterialize(api, service)
+	registerListServices(api, service)
 	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(api.OpenAPI())
@@ -140,6 +141,23 @@ func registerMaterialize(api huma.API, service amika.Service) {
 			return nil, toHTTPError(err)
 		}
 		return &materializeOutput{Body: result}, nil
+	})
+}
+
+type listServicesInput struct {
+	SandboxName string `query:"sandbox_name"`
+}
+type listServicesOutput struct{ Body amika.ListServicesResult }
+
+func registerListServices(api huma.API, service amika.Service) {
+	huma.Get(api, "/v1/services", func(ctx context.Context, input *listServicesInput) (*listServicesOutput, error) {
+		result, err := service.ListServices(ctx, amika.ListServicesRequest{
+			SandboxName: input.SandboxName,
+		})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &listServicesOutput{Body: result}, nil
 	})
 }
 
