@@ -377,6 +377,50 @@ url_scheme = [
 	}
 }
 
+func TestParsedServices_PortWithEmptyListScheme(t *testing.T) {
+	cfg := loadFromTOML(t, `
+[services.api]
+port = 4838
+url_scheme = []
+`)
+	services, err := cfg.ParsedServices()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if services[0].Ports[0].URLScheme != "" {
+		t.Errorf("expected empty URLScheme, got %q", services[0].Ports[0].URLScheme)
+	}
+}
+
+func TestParsedServices_ErrorPortWithMismatchedListSchemePort(t *testing.T) {
+	cfg := loadFromTOML(t, `
+[services.api]
+port = 4838
+url_scheme = [
+  { port = 9999, scheme = "http" },
+]
+`)
+	_, err := cfg.ParsedServices()
+	if err == nil {
+		t.Fatal("expected error for mismatched single-port url_scheme entry, got nil")
+	}
+}
+
+func TestParsedServices_ErrorPortWithMultipleListSchemes(t *testing.T) {
+	cfg := loadFromTOML(t, `
+[services.api]
+port = 4838
+url_scheme = [
+  { port = 4838, scheme = "http" },
+  { port = 4838, scheme = "https" },
+]
+`)
+	_, err := cfg.ParsedServices()
+	if err == nil {
+		t.Fatal("expected error for multiple single-port url_scheme entries, got nil")
+	}
+}
+
 // Test 17: ports used with string url_scheme → error
 func TestParsedServices_ErrorPortsWithStringScheme(t *testing.T) {
 	cfg := loadFromTOML(t, `

@@ -197,7 +197,7 @@ func validateURLScheme(name string, svc ServiceConfig, localPorts map[string]boo
 			}
 			return nil
 		}
-		// Single port may also use list-form url_scheme — fall through to list validation.
+		// Single port may also use list-form url_scheme, but only as [] or [{port=<same>, scheme=...}].
 	}
 
 	// List-form url_scheme: valid with both port and ports.
@@ -207,6 +207,18 @@ func validateURLScheme(name string, svc ServiceConfig, localPorts map[string]boo
 			return fmt.Errorf("service %q: url_scheme must be a list of {port, scheme} mappings when using ports (not a string)", name)
 		}
 		return fmt.Errorf("service %q: invalid url_scheme format", name)
+	}
+
+	var singlePortKey string
+	if hasPort {
+		cp, proto, err := parsePort(svc.Port)
+		if err != nil {
+			return fmt.Errorf("service %q: %w", name, err)
+		}
+		singlePortKey = fmt.Sprintf("%d/%s", cp, proto)
+		if len(list) > 1 {
+			return fmt.Errorf("service %q: url_scheme list may contain at most one entry when using port", name)
+		}
 	}
 
 	seen := make(map[string]bool)
@@ -231,6 +243,9 @@ func validateURLScheme(name string, svc ServiceConfig, localPorts map[string]boo
 		key := fmt.Sprintf("%d/%s", cp, proto)
 		if !localPorts[key] {
 			return fmt.Errorf("service %q: url_scheme references undeclared port %s", name, key)
+		}
+		if hasPort && key != singlePortKey {
+			return fmt.Errorf("service %q: url_scheme port %s must match declared port %s", name, key, singlePortKey)
 		}
 		if seen[key] {
 			return fmt.Errorf("service %q: duplicate port %s in url_scheme", name, key)
