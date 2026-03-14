@@ -144,6 +144,17 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	if !hasEnvKey(req.Env, constants.EnvSandboxProvider) {
 		req.Env = append(req.Env, constants.EnvSandboxProvider+"="+constants.ProviderLocalDocker)
 	}
+
+	// Resolve provisioned (Amika-managed) services like OpenCode web UI.
+	provSvcInfos, provPorts, err := ResolveProvisionedServices(req.Env, sandboxPorts, "127.0.0.1")
+	if err != nil {
+		cleanupSetupScript()
+		cleanupGitRepo()
+		return Sandbox{}, fmt.Errorf("%w: %v", ErrDependency, err)
+	}
+	serviceInfos = append(serviceInfos, provSvcInfos...)
+	sandboxPorts = append(sandboxPorts, provPorts...)
+
 	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, sandboxPorts)
 	if err != nil {
 		cleanupSetupScript()

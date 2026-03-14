@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gofixpoint/amika/internal/amikaconfig"
+	"github.com/gofixpoint/amika/internal/constants"
 	"github.com/gofixpoint/amika/internal/sandbox"
 )
 
@@ -259,5 +260,55 @@ func TestResolveServicePorts_HTTPSPreservedForNonLocalHost(t *testing.T) {
 	url := infos[0].Ports[0].URL
 	if !strings.HasPrefix(url, "https://") {
 		t.Errorf("expected https preserved for non-local host, got %q", url)
+	}
+}
+
+func TestResolveProvisionedServices_OpenCodeEnabled(t *testing.T) {
+	env := []string{
+		"OPENCODE_SERVER_PASSWORD=secret",
+	}
+	infos, ports, err := ResolveProvisionedServices(env, nil, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(infos))
+	}
+	if infos[0].Name != "opencode" {
+		t.Errorf("expected service name %q, got %q", "opencode", infos[0].Name)
+	}
+	if len(ports) != 1 {
+		t.Fatalf("expected 1 port, got %d", len(ports))
+	}
+	if ports[0].ContainerPort != constants.OpenCodeWebPort {
+		t.Errorf("expected container port %d, got %d", constants.OpenCodeWebPort, ports[0].ContainerPort)
+	}
+	if infos[0].Ports[0].URL == "" {
+		t.Error("expected non-empty URL for opencode service")
+	}
+}
+
+func TestResolveProvisionedServices_DisabledWithoutPassword(t *testing.T) {
+	env := []string{"SOME_OTHER_VAR=value"}
+	infos, ports, err := ResolveProvisionedServices(env, nil, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(infos) != 0 || len(ports) != 0 {
+		t.Errorf("expected no provisioned services without OPENCODE_SERVER_PASSWORD")
+	}
+}
+
+func TestResolveProvisionedServices_DisabledExplicitly(t *testing.T) {
+	env := []string{
+		"OPENCODE_SERVER_PASSWORD=secret",
+		"AMIKA_OPENCODE_WEB=0",
+	}
+	infos, ports, err := ResolveProvisionedServices(env, nil, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(infos) != 0 || len(ports) != 0 {
+		t.Errorf("expected no provisioned services when AMIKA_OPENCODE_WEB=0")
 	}
 }

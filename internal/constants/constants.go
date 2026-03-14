@@ -16,4 +16,7 @@ const (
 	// ReservedPortEnd is the end of the port range reserved for Amika
 	// internal services inside sandbox containers (inclusive).
 	ReservedPortEnd = 60999
+
+	// OpenCodeWebPort is the container port reserved for the OpenCode web UI.
+	OpenCodeWebPort = 60998
 )
