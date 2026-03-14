@@ -182,6 +182,18 @@ var sandboxCreateCmd = &cobra.Command{
 		if !hasEnvKey(envStrs, constants.EnvSandboxProvider) {
 			envStrs = append(envStrs, constants.EnvSandboxProvider+"="+constants.ProviderLocalDocker)
 		}
+
+		// Resolve provisioned (Amika-managed) services such as the OpenCode web
+		// UI. These run on reserved ports inside the container and need explicit
+		// Docker port bindings. Must run after appendPresetRuntimeEnv so
+		// OPENCODE_SERVER_PASSWORD is present in envStrs.
+		provSvcInfos, provPorts, err := amika.ResolveProvisionedServices(envStrs, publishedPorts, portHostIP)
+		if err != nil {
+			return err
+		}
+		collected.Services = append(collected.Services, provSvcInfos...)
+		publishedPorts = append(publishedPorts, provPorts...)
+
 		if err := validateMountTargets(mounts, volumeMounts); err != nil {
 			return err
 		}

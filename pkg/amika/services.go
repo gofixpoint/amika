@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/internal/amikaconfig"
+	"github.com/gofixpoint/amika/internal/constants"
 	"github.com/gofixpoint/amika/internal/sandbox"
 )
 
@@ -64,7 +65,8 @@ func resolveServicePorts(
 
 			url := ""
 			if sp.URLScheme != "" {
-				url = fmt.Sprintf("%s://%s", sp.URLScheme, net.JoinHostPort(pb.HostDomain, strconv.Itoa(hostPort)))
+				scheme := localServiceScheme(sp.URLScheme, hostIP)
+				url = fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(pb.HostDomain, strconv.Itoa(hostPort)))
 			}
 
 			svcInfo.Ports = append(svcInfo.Ports, sandbox.ServicePortInfo{
@@ -182,6 +184,85 @@ func hostDomainForService(hostIP string) string {
 	default:
 		return hostIP
 	}
+}
+
+// localServiceScheme downgrades "https" to "http" when the host IP is a
+// local address. Local Docker sandboxes do not have TLS certificates, so
+// advertising an https URL would be misleading.
+func localServiceScheme(scheme, hostIP string) string {
+	if scheme != "https" {
+		return scheme
+	}
+	switch hostIP {
+	case "", "127.0.0.1", "::1":
+		return "http"
+	default:
+		return scheme
+	}
+}
+
+// ResolveProvisionedServices returns port bindings and service info for
+// Amika-managed internal services (e.g. OpenCode web UI) that run inside
+// sandbox containers on reserved ports. The env slice is the set of
+// environment variables that will be passed to the container.
+func ResolveProvisionedServices(
+	env []string,
+	existingPorts []sandbox.PortBinding,
+	hostIP string,
+) ([]sandbox.ServiceInfo, []sandbox.PortBinding, error) {
+	if !isOpenCodeWebEnabled(env) {
+		return nil, nil, nil
+	}
+
+	const opencodeProtocol = "tcp"
+
+	claimedHostPorts := make(map[string]bool)
+	for _, p := range existingPorts {
+		hKey := fmt.Sprintf("%d/%s", p.HostPort, p.Protocol)
+		claimedHostPorts[hKey] = true
+	}
+
+	hostPort, err := resolveHostPort(hostIP, constants.OpenCodeWebPort, opencodeProtocol, claimedHostPorts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opencode web port: %w", err)
+	}
+
+	hostDomain := hostDomainForService(hostIP)
+	pb := sandbox.PortBinding{
+		HostIP:        hostIP,
+		HostDomain:    hostDomain,
+		HostPort:      hostPort,
+		ContainerPort: constants.OpenCodeWebPort,
+		Protocol:      opencodeProtocol,
+	}
+
+	url := fmt.Sprintf("http://%s", net.JoinHostPort(hostDomain, strconv.Itoa(hostPort)))
+
+	svcInfo := sandbox.ServiceInfo{
+		Name: "opencode",
+		Ports: []sandbox.ServicePortInfo{
+			{PortBinding: pb, URL: url},
+		},
+	}
+
+	return []sandbox.ServiceInfo{svcInfo}, []sandbox.PortBinding{pb}, nil
+}
+
+// isOpenCodeWebEnabled reports whether the environment variables indicate that
+// the OpenCode web UI will be started inside the container. This requires
+// OPENCODE_SERVER_PASSWORD to be set and AMIKA_OPENCODE_WEB to not be "0".
+func isOpenCodeWebEnabled(env []string) bool {
+	hasPassword := false
+	disabled := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "OPENCODE_SERVER_PASSWORD=") {
+			hasPassword = true
+		}
+		if e == "AMIKA_OPENCODE_WEB=0" {
+			disabled = true
+		}
+	}
+	return hasPassword && !disabled
 }
 
 func isAddressInUse(err error) bool {
