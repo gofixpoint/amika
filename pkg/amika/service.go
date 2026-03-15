@@ -71,12 +71,14 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	}
 	name := req.Name
 	if name == "" {
-		for {
-			name = sandbox.GenerateName()
-			if _, err := s.sandboxes.Get(name); err != nil {
-				break
-			}
+		generated, err := sandbox.GenerateUniqueName(func(n string) bool {
+			_, err := s.sandboxes.Get(n)
+			return err == nil
+		})
+		if err != nil {
+			return Sandbox{}, fmt.Errorf("%w: %v", ErrDependency, err)
 		}
+		name = generated
 	} else if _, err := s.sandboxes.Get(name); err == nil {
 		return Sandbox{}, fmt.Errorf("%w: sandbox %q already exists", ErrInvalidArgument, name)
 	}
