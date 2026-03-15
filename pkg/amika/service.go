@@ -79,6 +79,8 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 				break
 			}
 		}
+	} else if err := sandbox.ValidateName(name); err != nil {
+		return Sandbox{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	} else if _, err := s.sandboxes.Get(name); err == nil {
 		return Sandbox{}, fmt.Errorf("%w: sandbox %q already exists", ErrInvalidArgument, name)
 	}
