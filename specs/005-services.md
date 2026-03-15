@@ -61,18 +61,29 @@ url_scheme = [
 - Valid protocols: `tcp`, `udp`.
 - Port numbers must be in the range 1–65535.
 - Ports in the reserved range 60899–60999 are rejected (see `docs/sandbox-configuration.md`).
-- At least one of `port` or `ports` must be specified per service.
+- A service may omit both `port` and `ports`, in which case it is treated as metadata-only and has no resolved ports.
 
 ### `url_scheme` format
 
 The shape of `url_scheme` depends on whether the service uses `port` or `ports`:
 
-**With `port` (single port):** `url_scheme` is a plain string — `"http"` or `"https"`. The scheme applies to the single declared port.
+**With `port` (single port):** `url_scheme` may be either a plain string or a list of inline tables.
+
+- String form: `"http"` or `"https"`. The scheme applies to the single declared port.
+- List form: either `[]` or a single `{port, scheme}` inline table whose `port` exactly matches the declared `port`.
 
 ```toml
 [services.api]
 port = 4838
 url_scheme = "http"
+```
+
+```toml
+[services.api]
+port = 4838
+url_scheme = [
+  { port = 4838, scheme = "http" },
+]
 ```
 
 **With `ports` (multiple ports):** `url_scheme` is a list of `{port, scheme}` inline tables. Each entry specifies which port gets a URL and with what scheme. Ports not listed do not get URLs — this is intentional so that URLs are only generated for ports the user explicitly opts in to.
@@ -90,11 +101,12 @@ url_scheme = [
 **Validation rules for `url_scheme`:**
 
 - Optional. When omitted, no URLs are generated for the service.
-- When `port` is used, `url_scheme` must be a string. A list value is a validation error.
+- When `port` is used, `url_scheme` may be a string, an empty list, or a one-entry list whose `port` matches the declared `port`.
 - When `ports` is used, `url_scheme` must be a list of `{port, scheme}` tables. A string value is a validation error.
 - Each `scheme` value must be `"http"` or `"https"`.
-- Each `port` in a `url_scheme` mapping must reference a port declared in the service's `ports` list (matched by container port and protocol). An unrecognized port is a validation error.
+- Each `port` in a `url_scheme` mapping must reference a port declared in the service. For single-port services using list form, the mapping must match the declared `port` exactly.
 - Duplicate port entries within `url_scheme` are a validation error.
+- For single-port services using list form, more than one entry is a validation error.
 
 ### Port format
 
@@ -106,15 +118,17 @@ This matches the container-port side of the existing `--port` CLI flag syntax.
 
 ### URL generation
 
-For each port that has an associated scheme (either from the string `url_scheme` with `port`, or from a matching entry in the `url_scheme` list with `ports`), Amika generates a URL using the format:
+For each port that has an associated scheme, Amika generates a URL using the format:
 
 ```
-<scheme>://<hostIP>:<hostPort>
+<scheme>://<host-or-bind-address>:<hostPort>
 ```
 
-For example, a service with `port = 4838` and `url_scheme = "http"` that resolves to `127.0.0.1:4838` produces the URL `http://127.0.0.1:4838`.
+For loopback bindings (`127.0.0.1`, `::1`, or empty/default), Amika uses `localhost` in the generated URL. For other bind addresses, it uses the configured bind address directly.
 
-For a multi-port service, only ports with `url_scheme` mappings get URLs. A service with `ports = [3000, 3001, 9090]` and `url_scheme = [{port = 3000, scheme = "https"}]` generates one URL (`https://127.0.0.1:3000`); ports 3001 and 9090 get no URLs.
+For example, a service with `port = 4838` and `url_scheme = "http"` that resolves to loopback on port 4838 produces `http://localhost:4838`. A service bound to `0.0.0.0` on port 4838 produces `http://0.0.0.0:4838`.
+
+For a multi-port service, only ports with `url_scheme` mappings get URLs. A service with `ports = [3000, 3001, 9090]` and `url_scheme = [{port = 3000, scheme = "https"}]` generates one URL (`https://localhost:3000` for loopback binding); ports 3001 and 9090 get no URLs.
 
 URLs are computed at sandbox creation time (after port resolution) and stored in the service metadata. They appear in `amika service list` output and API responses.
 
@@ -153,10 +167,10 @@ type Config struct {
 type ServiceConfig struct {
     Port      interface{}   `toml:"port"`       // int or string
     Ports     []interface{} `toml:"ports"`      // list of int or string
-    URLScheme interface{}   `toml:"url_scheme"` // string (with port) or []URLSchemeMapping (with ports)
+    URLScheme interface{}   `toml:"url_scheme"` // string, []URLSchemeMapping, or empty list depending on port/ports
 }
 
-// URLSchemeMapping maps a port to a URL scheme in multi-port services.
+// URLSchemeMapping maps a port to a URL scheme.
 type URLSchemeMapping struct {
     Port   interface{} `toml:"port"`   // int or "port/protocol" string
     Scheme string      `toml:"scheme"` // "http" or "https"
@@ -167,15 +181,16 @@ type URLSchemeMapping struct {
 
 Add `ValidateServices(services map[string]ServiceConfig) error` that checks:
 
-1. Each service has exactly one of `port` or `ports` (not both, not neither).
+1. Each service has at most one of `port` or `ports`. A service may omit both and remain metadata-only.
 2. Every port value parses to a valid container port (1–65535) and protocol (`tcp` or `udp`).
 3. No port falls in the reserved range 60899–60999.
 4. No duplicate container port/protocol pair across all services in the file.
 5. If `url_scheme` is set:
-   - With `port`: must be a string, either `"http"` or `"https"`. A list is a validation error.
+   - With `port`: may be a string (`"http"` or `"https"`), an empty list, or a one-entry list whose `port` matches the declared port.
    - With `ports`: must be a list of `{port, scheme}` mappings. A string is a validation error.
    - Each `scheme` must be `"http"` or `"https"`.
-   - Each `port` in a mapping must match a declared port in the service's `ports` list.
+   - Each `port` in a mapping must match a declared port in the service.
+   - With `port` and list form, the list may contain at most one entry.
    - No duplicate ports within the `url_scheme` list.
 
 ### Parsed representation
@@ -195,7 +210,7 @@ type ServiceParsed struct {
 }
 ```
 
-Each `ServicePortParsed` carries its own `URLScheme`. For a single-port service with `url_scheme = "http"`, the port's `URLScheme` is `"http"`. For a multi-port service, only ports that appear in the `url_scheme` list get a non-empty `URLScheme`; the rest have `""`.
+Each `ServicePortParsed` carries its own `URLScheme`. For a single-port service with `url_scheme = "http"`, the port's `URLScheme` is `"http"`. For a single-port service using the list form, the port gets the mapped scheme when the list contains a matching entry, or `""` when the list is empty. For a multi-port service, only ports that appear in the `url_scheme` list get a non-empty `URLScheme`; the rest have `""`.
 
 Add a method `Config.ParsedServices() ([]ServiceParsed, error)` that validates and returns the normalized list.
 
@@ -207,7 +222,7 @@ When `--git` is used and the cloned repo contains `.amika/config.toml` with serv
 
 For each service port (`containerPort/protocol`):
 
-1. **Try direct mirror**: attempt `hostPort = containerPort`. If the host port is available (not already claimed by another binding in this sandbox creation), use it.
+1. **Try direct mirror**: attempt `hostPort = containerPort`. If the host port is not already claimed by another binding in this sandbox creation and is available on the configured bind address, use it.
 2. **Fallback**: pick a random available host port by binding to port 0 and reading the assigned port (same mechanism as Docker's random port assignment).
 
 The host IP defaults to `127.0.0.1`, consistent with the `--port-host-ip` default.
@@ -239,11 +254,11 @@ type ServiceInfo struct {
 // ServicePortInfo is a resolved port binding with an optional generated URL.
 type ServicePortInfo struct {
     PortBinding          // embedded: HostIP, HostPort, ContainerPort, Protocol
-    URL         string   `json:"url,omitempty"` // e.g. "http://127.0.0.1:4838", or ""
+    URL         string   `json:"url,omitempty"` // e.g. "http://localhost:4838", or ""
 }
 ```
 
-`URL` is computed at creation time for ports that have an associated `url_scheme`. For example, a port with scheme `"http"` resolved to `127.0.0.1:4838` gets `URL: "http://127.0.0.1:4838"`. Ports without a scheme have an empty `URL` (omitted from JSON).
+`URL` is computed at creation time for ports that have an associated `url_scheme`. For example, a port with scheme `"http"` resolved to loopback on port 4838 gets `URL: "http://localhost:4838"`. Ports without a scheme have an empty `URL` (omitted from JSON).
 
 ### Extended `Info` struct
 
@@ -286,10 +301,10 @@ Tab-separated columns:
 
 ```
 SERVICE    SANDBOX          PORTS                                                URL
-api        teal-tokyo       127.0.0.1:4838->4838/tcp                            http://127.0.0.1:4838
+api        teal-tokyo       127.0.0.1:4838->4838/tcp                            http://localhost:4838
 metrics    teal-tokyo       127.0.0.1:9090->9090/tcp                            -
-frontend   teal-tokyo       127.0.0.1:3000->3000/tcp,127.0.0.1:3001->3001/tcp   https://127.0.0.1:3000
-api        blue-paris       127.0.0.1:4838->4838/tcp                            http://127.0.0.1:4838
+frontend   teal-tokyo       127.0.0.1:3000->3000/tcp,127.0.0.1:3001->3001/tcp   https://localhost:3000
+api        blue-paris       127.0.0.1:4838->4838/tcp                            http://localhost:4838
 ```
 
 Port formatting uses the same `hostIP:hostPort->containerPort/protocol` format as existing `sandbox list` output.
@@ -324,7 +339,7 @@ type ServiceInfo struct {
 // ServicePortInfo is a resolved port binding with an optional generated URL.
 type ServicePortInfo struct {
     PortBinding          // embedded: HostIP, HostPort, ContainerPort, Protocol
-    URL         string   `json:"URL,omitempty"` // e.g. "http://127.0.0.1:4838", or ""
+    URL         string   `json:"URL,omitempty"` // e.g. "http://localhost:4838", or ""
 }
 ```
 
@@ -422,7 +437,7 @@ func registerListServices(api huma.API, service amika.Service) {
 
 ### `internal/amikaconfig` unit tests
 
-1. Parse config with a single `[service.api]` using `port = 4838` — returns one service with port 4838/tcp.
+1. Parse config with a single `[services.api]` using `port = 4838` — returns one service with port 4838/tcp.
 2. Parse config with `port = "9090/udp"` — returns port 9090/udp.
 3. Parse config with `ports = [3000, "3001/tcp", "9090/udp"]` — returns three ports with correct protocols.
 4. Validation error when both `port` and `ports` are set on the same service.
@@ -437,10 +452,13 @@ func registerListServices(api huma.API, service amika.Service) {
 13. Parse config with no `url_scheme` — all parsed ports have `URLScheme: ""`.
 14. Validation error for invalid scheme value (e.g. `"ftp"`, `"ws"`).
 15. Parse multi-port service with `url_scheme = [{port = 3000, scheme = "http"}]` — only port 3000 has `URLScheme: "http"`, others have `""`.
-16. Validation error when `port` is used with a list-form `url_scheme`.
+16. Parse single-port service with `url_scheme = [{port = 4838, scheme = "http"}]` — parsed port has `URLScheme: "http"`.
 17. Validation error when `ports` is used with a string-form `url_scheme`.
-18. Validation error when a `url_scheme` mapping references a port not in the service's `ports` list.
-19. Validation error for duplicate port in `url_scheme` list.
+18. Parse single-port service with `url_scheme = []` — parsed port has `URLScheme: ""`.
+19. Validation error when a single-port `url_scheme` list references a port other than the declared `port`.
+20. Validation error when a single-port `url_scheme` list contains more than one entry.
+21. Validation error when a `url_scheme` mapping references a port not in the service's `ports` list.
+22. Validation error for duplicate port in `url_scheme` list.
 
 ### Port resolution and URL generation unit tests
 
@@ -448,9 +466,10 @@ func registerListServices(api huma.API, service amika.Service) {
 2. Service ports fall back to random host port when direct mirror is taken by a `--port` flag.
 3. Error when a service container port conflicts with a `--port` flag container port.
 4. Multiple services with non-overlapping ports all resolve correctly.
-5. Single-port service with `url_scheme = "http"` resolved to `127.0.0.1:4838` — port has `URL: "http://127.0.0.1:4838"`.
-6. Multi-port service with `url_scheme` mapping for one port — only that port has a URL, others have `URL: ""`.
-7. Service without `url_scheme` — all ports have `URL: ""`.
+5. Single-port service with `url_scheme = "http"` resolved to loopback on port 4838 — port has `URL: "http://localhost:4838"`.
+6. Single-port service with non-loopback bind address uses that bind address in the generated URL.
+7. Multi-port service with `url_scheme` mapping for one port — only that port has a URL, others have `URL: ""`.
+8. Service without `url_scheme` — all ports have `URL: ""`.
 
 ### `sandbox.Info` storage tests
 
@@ -490,9 +509,10 @@ func registerListServices(api huma.API, service amika.Service) {
 9. `--port` flags and service ports merge cleanly; duplicates produce a clear error.
 10. Reserved ports (60899–60999) are rejected in service declarations.
 11. Single-port services with `url_scheme` string have auto-generated URLs in stored metadata, CLI output, and API responses.
-12. Multi-port services with `url_scheme` list generate URLs only for the mapped ports.
-13. Services without `url_scheme` have no URLs in output.
-14. Using a string `url_scheme` with `ports` is a validation error, and vice versa.
+12. Single-port services may also use `url_scheme = []` or a one-entry list whose port matches the declared `port`.
+13. Multi-port services with `url_scheme` list generate URLs only for the mapped ports.
+14. Services without `url_scheme` have no URLs in output.
+15. Using a string `url_scheme` with `ports` is a validation error.
 
 ## Dependencies
 

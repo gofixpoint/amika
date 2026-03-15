@@ -37,6 +37,9 @@ func (stubService) DeleteVolume(context.Context, amika.DeleteVolumeRequest) (ami
 func (stubService) ExtractAuth(context.Context, amika.AuthExtractRequest) (amika.AuthExtractResult, error) {
 	return amika.AuthExtractResult{Lines: []string{"A='1'"}}, nil
 }
+func (stubService) ListServices(context.Context, amika.ListServicesRequest) (amika.ListServicesResult, error) {
+	return amika.ListServicesResult{}, nil
+}
 
 type captureCreateSandboxService struct {
 	stubService

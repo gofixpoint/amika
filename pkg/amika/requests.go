@@ -80,3 +80,8 @@ type AuthExtractRequest struct {
 	HomeDir    string
 	NoOAuth    bool
 }
+
+// ListServicesRequest describes service listing input.
+type ListServicesRequest struct {
+	SandboxName string // optional filter
+}

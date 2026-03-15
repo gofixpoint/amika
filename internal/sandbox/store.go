@@ -19,11 +19,26 @@ type MountBinding struct {
 }
 
 // PortBinding represents a published container port.
+// For local sandboxes, HostIP is "127.0.0.1" and HostDomain is "localhost".
+// For remote sandboxes, HostIP is empty and HostDomain holds the remote hostname.
 type PortBinding struct {
 	HostIP        string `json:"hostIp,omitempty"`
+	HostDomain    string `json:"hostDomain,omitempty"`
 	HostPort      int    `json:"hostPort"`
 	ContainerPort int    `json:"containerPort"`
 	Protocol      string `json:"protocol,omitempty"`
+}
+
+// ServiceInfo describes a named service and its resolved port bindings.
+type ServiceInfo struct {
+	Name  string            `json:"name"`
+	Ports []ServicePortInfo `json:"ports"`
+}
+
+// ServicePortInfo is a resolved port binding with an optional generated URL.
+type ServicePortInfo struct {
+	PortBinding
+	URL string `json:"url,omitempty"`
 }
 
 // Info represents a tracked sandbox.
@@ -37,6 +52,7 @@ type Info struct {
 	Mounts      []MountBinding `json:"mounts,omitempty"`
 	Env         []string       `json:"env,omitempty"`
 	Ports       []PortBinding  `json:"ports,omitempty"`
+	Services    []ServiceInfo  `json:"services,omitempty"`
 }
 
 // Store manages sandbox state persistence.

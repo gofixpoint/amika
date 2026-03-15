@@ -171,7 +171,7 @@ avoid binding to ports in this range.
 | ----------- | -------------------------------- | -------- |
 | 60999       | amikad daemon                    | Reserved |
 | 60998       | OpenCode web UI                  | Active   |
-| 60899–60997 | *(unassigned, reserved for use)* | Reserved |
+| 60899–60997 | _(unassigned, reserved for use)_ | Reserved |
 
 The OpenCode web server starts automatically on port 60998 when OpenCode is
 installed in the container and `AMIKA_OPENCODE_WEB` is not set to `0`. The

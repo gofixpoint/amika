@@ -257,6 +257,28 @@ func (s *Service) DeleteVolume(_ context.Context, req amika.DeleteVolumeRequest)
 	return amika.DeleteVolumeResult{Deleted: deleted}, nil
 }
 
+// ListServices lists services across sandboxes with optional filtering.
+func (s *Service) ListServices(_ context.Context, req amika.ListServicesRequest) (amika.ListServicesResult, error) {
+	recs, err := s.deps.Sandboxes.List()
+	if err != nil {
+		return amika.ListServicesResult{}, fmt.Errorf("%w: list sandboxes: %v", amika.ErrInternal, err)
+	}
+	var items []amika.ServiceListItem
+	for _, rec := range recs {
+		if req.SandboxName != "" && rec.Name != req.SandboxName {
+			continue
+		}
+		for _, svc := range rec.Services {
+			items = append(items, amika.ServiceListItem{
+				Service:     svc.Name,
+				SandboxName: rec.Name,
+				Ports:       toPublicServicePortInfos(svc.Ports),
+			})
+		}
+	}
+	return amika.ListServicesResult{Items: items}, nil
+}
+
 // ExtractAuth extracts auth env assignment lines.
 func (s *Service) ExtractAuth(_ context.Context, req amika.AuthExtractRequest) (amika.AuthExtractResult, error) {
 	result, err := auth.Discover(auth.Options{HomeDir: req.HomeDir, IncludeOAuth: !req.NoOAuth})
@@ -310,6 +332,22 @@ func toPortBindings(bindings []amika.PortBinding) []ports.PortBinding {
 			HostPort:      p.HostPort,
 			ContainerPort: p.ContainerPort,
 			Protocol:      p.Protocol,
+		})
+	}
+	return out
+}
+
+func toPublicServicePortInfos(in []ports.ServicePortRecord) []amika.ServicePortInfo {
+	out := make([]amika.ServicePortInfo, 0, len(in))
+	for _, p := range in {
+		out = append(out, amika.ServicePortInfo{
+			PortBinding: amika.PortBinding{
+				HostIP:        p.HostIP,
+				HostPort:      p.HostPort,
+				ContainerPort: p.ContainerPort,
+				Protocol:      p.Protocol,
+			},
+			URL: p.URL,
 		})
 	}
 	return out
