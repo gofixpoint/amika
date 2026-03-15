@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     ca-certificates \
     gnupg \
+    vim \
+    nano \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22.
