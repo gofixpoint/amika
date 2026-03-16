@@ -220,12 +220,11 @@ var sandboxCreateCmd = &cobra.Command{
 
 		// Generate a name if not provided
 		if name == "" {
-			for {
-				name = sandbox.GenerateName()
-				if _, err := store.Get(name); err != nil {
-					break // name is available
-				}
+			generated, err := sandbox.GenerateUniqueName(store)
+			if err != nil {
+				return err
 			}
+			name = generated
 		} else if _, err := store.Get(name); err == nil {
 			return fmt.Errorf("sandbox %q already exists", name)
 		}

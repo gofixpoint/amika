@@ -14,16 +14,16 @@ func TestSandboxLifecycle(t *testing.T) {
 	name := testutil.NewSandboxName("amika-int")
 
 	t.Cleanup(func() {
-		_ = exec.Command(bin, "sandbox", "delete", name, "--keep-volumes").Run()
+		_ = exec.Command(bin, "sandbox", "delete", "--local", name, "--keep-volumes").Run()
 	})
 
-	create := exec.Command(bin, "sandbox", "create", "--name", name, "--image", "ubuntu:latest", "--yes")
+	create := exec.Command(bin, "sandbox", "create", "--local", "--name", name, "--image", "ubuntu:latest", "--yes")
 	createOut, err := create.CombinedOutput()
 	if err != nil {
 		t.Fatalf("sandbox create failed: %v\n%s", err, string(createOut))
 	}
 
-	list := exec.Command(bin, "sandbox", "list")
+	list := exec.Command(bin, "sandbox", "list", "--local")
 	listOut, err := list.CombinedOutput()
 	if err != nil {
 		t.Fatalf("sandbox list failed: %v\n%s", err, string(listOut))
@@ -32,7 +32,7 @@ func TestSandboxLifecycle(t *testing.T) {
 		t.Fatalf("expected sandbox list output to contain %q, got:\n%s", name, string(listOut))
 	}
 
-	deleteCmd := exec.Command(bin, "sandbox", "delete", name, "--keep-volumes")
+	deleteCmd := exec.Command(bin, "sandbox", "delete", "--local", name, "--keep-volumes")
 	deleteOut, err := deleteCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("sandbox delete failed: %v\n%s", err, string(deleteOut))
