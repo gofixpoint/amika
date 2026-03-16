@@ -95,6 +95,8 @@ Amika is a Go module that lets people control sandboxed AI agents, focused on us
 |----------|---------|
 | `AMIKA_STATE_DIRECTORY` | Override default state directory (`~/.local/state/amika`) |
 | `AMIKA_PRESET_IMAGE_PREFIX` | Override Docker image name prefix for presets |
+| `AMIKA_API_URL` | Override remote API base URL (default: `https://app.amika.dev`) |
+| `AMIKA_WORKOS_CLIENT_ID` | Override default WorkOS client ID for `amika auth login` |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker integration tests |
 | `PORT` | Override listen address for `amika-server` (mutually exclusive with `-addr` flag) |
 
