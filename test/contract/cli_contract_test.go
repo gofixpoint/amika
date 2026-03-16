@@ -21,19 +21,36 @@ func TestSandboxCreateNoCleanRequiresGit(t *testing.T) {
 	}
 }
 
-func TestAuthExtractHelpContract(t *testing.T) {
+func TestSecretsExtractHelpContract(t *testing.T) {
 	bin := testutil.BuildAmikaBinary(t)
 
-	cmd := exec.Command(bin, "auth", "extract", "--help")
+	cmd := exec.Command(bin, "secrets", "extract", "--help")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("auth extract --help failed: %v\n%s", err, string(out))
+		t.Fatalf("secrets extract --help failed: %v\n%s", err, string(out))
 	}
 	text := string(out)
-	if !strings.Contains(text, "--export") {
-		t.Fatalf("expected help output to include --export flag, got:\n%s", text)
+	if !strings.Contains(text, "--push") {
+		t.Fatalf("expected help output to include --push flag, got:\n%s", text)
 	}
 	if !strings.Contains(text, "--no-oauth") {
 		t.Fatalf("expected help output to include --no-oauth flag, got:\n%s", text)
+	}
+	if !strings.Contains(text, "--only") {
+		t.Fatalf("expected help output to include --only flag, got:\n%s", text)
+	}
+}
+
+func TestSecretsPushHelpContract(t *testing.T) {
+	bin := testutil.BuildAmikaBinary(t)
+
+	cmd := exec.Command(bin, "secrets", "push", "--help")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("secrets push --help failed: %v\n%s", err, string(out))
+	}
+	text := string(out)
+	if !strings.Contains(text, "--from-env") {
+		t.Fatalf("expected help output to include --from-env flag, got:\n%s", text)
 	}
 }

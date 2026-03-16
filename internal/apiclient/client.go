@@ -105,6 +105,50 @@ func (c *Client) DeleteSandbox(name string) error {
 	return nil
 }
 
+// Secret represents a secret returned by the remote API.
+type Secret struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Scope string `json:"scope"`
+}
+
+// CreateSecretRequest is the request body for POST /api/secrets.
+type CreateSecretRequest struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Scope string `json:"scope"`
+}
+
+// UpdateSecretRequest is the request body for PUT /api/secrets/[id].
+type UpdateSecretRequest struct {
+	Value string `json:"value"`
+}
+
+// ListSecrets fetches user/org-scoped secrets from the remote API.
+func (c *Client) ListSecrets() ([]Secret, error) {
+	var result []Secret
+	if err := c.doJSON("GET", "/api/secrets", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list secrets: %w", err)
+	}
+	return result, nil
+}
+
+// CreateSecret creates a new secret on the remote API.
+func (c *Client) CreateSecret(req CreateSecretRequest) error {
+	if err := c.doJSON("POST", "/api/secrets", req, nil); err != nil {
+		return fmt.Errorf("remote create secret: %w", err)
+	}
+	return nil
+}
+
+// UpdateSecret updates an existing secret on the remote API.
+func (c *Client) UpdateSecret(id string, req UpdateSecretRequest) error {
+	if err := c.doJSON("PUT", "/api/secrets/"+id, req, nil); err != nil {
+		return fmt.Errorf("remote update secret: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) doJSON(method, path string, body interface{}, out interface{}) error {
 	var bodyReader io.Reader
 	if body != nil {
