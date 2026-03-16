@@ -1,4 +1,53 @@
-# Credential Discovery
+# Authentication
+
+## Login
+
+`amika auth login` authenticates with Amika using the WorkOS Device Authorization Flow.
+
+### Quick Start
+
+```bash
+# Log in (opens browser)
+amika auth login
+
+# Check login status
+amika auth status
+
+# Log out
+amika auth logout
+```
+
+### How It Works
+
+1. The CLI requests a device code from WorkOS.
+2. A user code is displayed and the browser opens for you to authorize.
+3. The CLI polls WorkOS until you complete authorization.
+4. The session (access token, refresh token, email, org) is saved to `${XDG_STATE_HOME}/amika/workos-session.json`.
+5. Access tokens are automatically refreshed when they are within 60 seconds of expiry.
+
+### Session Storage
+
+The session file is stored at `~/.local/state/amika/workos-session.json` by default (following XDG Base Directory conventions). File permissions are set to `0600`.
+
+The path can be overridden with the `AMIKA_STATE_DIRECTORY` environment variable.
+
+### Related Commands
+
+| Command             | Description                               |
+| ------------------- | ----------------------------------------- |
+| `amika auth status` | Show current login status (email and org) |
+| `amika auth logout` | Remove the saved session                  |
+
+### Environment Variables
+
+| Variable                 | Default                 | Description                                                                                                       |
+| ------------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `AMIKA_API_URL`          | `https://app.amika.dev` | Override the remote API base URL. Used by sandbox commands when operating on remote sandboxes                     |
+| `AMIKA_WORKOS_CLIENT_ID` |                         | Override the default WorkOS client ID. If you change `AMIKA_API_URL`, you likely need to update this variable too |
+
+---
+
+## Credential Discovery
 
 `amika auth extract` discovers locally stored API credentials from multiple coding agent tools and prints them as shell environment assignments.
 
