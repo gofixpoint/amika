@@ -8,13 +8,13 @@ import (
 	"github.com/gofixpoint/amika/test/testutil"
 )
 
-func TestAuthExtractHelp(t *testing.T) {
+func TestSecretsExtractHelp(t *testing.T) {
 	bin := testutil.BuildAmikaBinary(t)
 
-	cmd := exec.Command(bin, "auth", "extract", "--help")
+	cmd := exec.Command(bin, "secrets", "extract", "--help")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("auth extract --help failed: %v\n%s", err, string(out))
+		t.Fatalf("secrets extract --help failed: %v\n%s", err, string(out))
 	}
 
 	output := string(out)
