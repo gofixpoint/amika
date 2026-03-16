@@ -39,10 +39,13 @@ func GenerateName() string {
 }
 
 // GenerateUniqueName generates a sandbox name that does not collide with
-// existing names. The exists function should return true when a name is
-// already taken. It first tries plain {color}-{city} names, then falls
-// back to appending a random 4-digit suffix.
-func GenerateUniqueName(exists func(string) bool) (string, error) {
+// existing names in the given store. It first tries plain {color}-{city}
+// names, then falls back to appending a random 4-digit suffix.
+func GenerateUniqueName(store Store) (string, error) {
+	exists := func(name string) bool {
+		_, err := store.Get(name)
+		return err == nil
+	}
 	// Try plain names first.
 	for range 10 {
 		name := GenerateName()

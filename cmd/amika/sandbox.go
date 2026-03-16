@@ -205,10 +205,7 @@ var sandboxCreateCmd = &cobra.Command{
 
 		// Generate a name if not provided
 		if name == "" {
-			generated, err := sandbox.GenerateUniqueName(func(n string) bool {
-				_, err := store.Get(n)
-				return err == nil
-			})
+			generated, err := sandbox.GenerateUniqueName(store)
 			if err != nil {
 				return err
 			}

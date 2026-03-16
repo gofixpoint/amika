@@ -1,9 +1,26 @@
 package sandbox
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// mockStore implements Store for testing GenerateUniqueName.
+type mockStore struct {
+	exists func(string) bool
+}
+
+func (m *mockStore) Get(name string) (Info, error) {
+	if m.exists(name) {
+		return Info{Name: name}, nil
+	}
+	return Info{}, fmt.Errorf("not found")
+}
+
+func (m *mockStore) Save(_ Info) error     { return nil }
+func (m *mockStore) Remove(_ string) error { return nil }
+func (m *mockStore) List() ([]Info, error) { return nil, nil }
 
 func TestGenerateName_Format(t *testing.T) {
 	for range 100 {
@@ -22,7 +39,7 @@ func TestGenerateName_Format(t *testing.T) {
 }
 
 func TestGenerateUniqueName_NoCollision(t *testing.T) {
-	name, err := GenerateUniqueName(func(string) bool { return false })
+	name, err := GenerateUniqueName(&mockStore{exists: func(string) bool { return false }})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,9 +50,9 @@ func TestGenerateUniqueName_NoCollision(t *testing.T) {
 
 func TestGenerateUniqueName_FallsBackToSuffix(t *testing.T) {
 	// Reject all plain color-city names (2 parts), accept suffixed ones (3 parts).
-	name, err := GenerateUniqueName(func(n string) bool {
+	name, err := GenerateUniqueName(&mockStore{exists: func(n string) bool {
 		return len(strings.Split(n, "-")) == 2
-	})
+	}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,7 +63,7 @@ func TestGenerateUniqueName_FallsBackToSuffix(t *testing.T) {
 }
 
 func TestGenerateUniqueName_ErrorOnExhaustion(t *testing.T) {
-	_, err := GenerateUniqueName(func(string) bool { return true })
+	_, err := GenerateUniqueName(&mockStore{exists: func(string) bool { return true }})
 	if err == nil {
 		t.Fatal("expected error when all names are taken")
 	}
