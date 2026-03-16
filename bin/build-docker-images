@@ -15,7 +15,7 @@ set -euo pipefail
 #/ Options:
 #/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
 #/   --ignore-unstaged    Continue even if there are unstaged changes
-#/   --push-daytona       Push built images to Daytona after building (requires linux/amd64)
+#/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
 #/   --help               Show this help message
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -140,8 +140,11 @@ for preset in "${PRESETS[@]}"; do
   docker "${docker_args[@]}"
 
   if [ "$PUSH_DAYTONA" = true ] && [[ "$preset" == daytona-* ]]; then
-    echo "Pushing ${image_tag} to Daytona..."
-    daytona snapshot push "$image_tag" --name "$image_tag"
+    for org in amika-prod Fixpoint; do
+      daytona organization use "$org"
+      echo "Pushing ${image_tag} to Daytona org ${org}..."
+      daytona snapshot push "$image_tag" --name "$image_tag"
+    done
   fi
 done
 
