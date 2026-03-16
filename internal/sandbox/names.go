@@ -54,7 +54,7 @@ func GenerateUniqueName(store Store) (string, error) {
 		}
 	}
 	// Fall back to names with a numeric suffix.
-	for range 100 {
+	for range 10 {
 		name := fmt.Sprintf("%s-%04d", GenerateName(), rand.Intn(10000))
 		if !exists(name) {
 			return name, nil
