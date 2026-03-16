@@ -38,6 +38,7 @@ Examples:
 		noOAuth, _ := cmd.Flags().GetBool("no-oauth")
 		push, _ := cmd.Flags().GetBool("push")
 		onlyFlag, _ := cmd.Flags().GetString("only")
+		scope, _ := cmd.Flags().GetString("scope")
 
 		result, err := auth.Discover(auth.Options{
 			HomeDir:      homeDir,
@@ -110,24 +111,11 @@ Examples:
 		// Push each secret.
 		for _, key := range keys {
 			value, _ := env.Get(key)
-			if remote, ok := existingByName[key]; ok {
-				err = client.UpdateSecret(remote.ID, apiclient.UpdateSecretRequest{
-					Value: value,
-				})
-				if err != nil {
-					return fmt.Errorf("updating secret %s: %w", key, err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "  Updated %s\n", key)
-			} else {
-				err = client.CreateSecret(apiclient.CreateSecretRequest{
-					Name:  key,
-					Value: value,
-				})
-				if err != nil {
-					return fmt.Errorf("creating secret %s: %w", key, err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "  Created %s\n", key)
+			action, err := pushSecret(client, existingByName, key, value, scope)
+			if err != nil {
+				return err
 			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  %s %s\n", action, key)
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "\nPushed %d secret(s).\n", len(keys))
@@ -152,6 +140,7 @@ Examples:
 		cmd.SilenceErrors = true
 
 		fromEnvFlag, _ := cmd.Flags().GetString("from-env")
+		scope, _ := cmd.Flags().GetString("scope")
 
 		// Collect secrets from positional args.
 		secrets := make(map[string]string)
@@ -230,29 +219,49 @@ Examples:
 		// Push each secret.
 		for _, key := range keys {
 			value := secrets[key]
-			if remote, ok := existingByName[key]; ok {
-				err = client.UpdateSecret(remote.ID, apiclient.UpdateSecretRequest{
-					Value: value,
-				})
-				if err != nil {
-					return fmt.Errorf("updating secret %s: %w", key, err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "  Updated %s\n", key)
-			} else {
-				err = client.CreateSecret(apiclient.CreateSecretRequest{
-					Name:  key,
-					Value: value,
-				})
-				if err != nil {
-					return fmt.Errorf("creating secret %s: %w", key, err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "  Created %s\n", key)
+			action, err := pushSecret(client, existingByName, key, value, scope)
+			if err != nil {
+				return err
 			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  %s %s\n", action, key)
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "\nPushed %d secret(s).\n", len(keys))
 		return nil
 	},
+}
+
+// pushSecret creates or updates a single secret. It returns the action taken ("Created" or "Updated").
+// If the secret already exists with a different scope, it returns an error.
+func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, name, value, scope string) (string, error) {
+	remote, exists := existing[name]
+	if !exists {
+		err := client.CreateSecret(apiclient.CreateSecretRequest{
+			Name:  name,
+			Value: value,
+			Scope: scope,
+		})
+		if err != nil {
+			return "", fmt.Errorf("creating secret %s: %w", name, err)
+		}
+		return "Created", nil
+	}
+
+	if remote.Scope != scope {
+		return "", fmt.Errorf(
+			"secret %q already exists with scope %q but you are pushing with scope %q; "+
+				"use --scope=%s to match the existing secret, or delete it first",
+			name, remote.Scope, scope, remote.Scope,
+		)
+	}
+
+	err := client.UpdateSecret(remote.ID, apiclient.UpdateSecretRequest{
+		Value: value,
+	})
+	if err != nil {
+		return "", fmt.Errorf("updating secret %s: %w", name, err)
+	}
+	return "Updated", nil
 }
 
 // getSecretsClient returns an API client for secrets operations.
@@ -309,6 +318,8 @@ func init() {
 	secretsExtractCmd.Flags().Bool("no-oauth", false, "Skip OAuth credential sources")
 	secretsExtractCmd.Flags().Bool("push", false, "Push discovered secrets to the remote Amika secrets store")
 	secretsExtractCmd.Flags().String("only", "", "Comma-separated list of secret names to include (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
+	secretsExtractCmd.Flags().String("scope", "user", "Secret scope: \"user\" (default, private) or \"org\" (visible to org members)")
 
 	secretsPushCmd.Flags().String("from-env", "", "Comma-separated list of environment variable names to read and push (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
+	secretsPushCmd.Flags().String("scope", "user", "Secret scope: \"user\" (default, private) or \"org\" (visible to org members)")
 }

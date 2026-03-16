@@ -107,14 +107,16 @@ func (c *Client) DeleteSandbox(name string) error {
 
 // Secret represents a secret returned by the remote API.
 type Secret struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Scope string `json:"scope"`
 }
 
 // CreateSecretRequest is the request body for POST /api/secrets.
 type CreateSecretRequest struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
+	Scope string `json:"scope"`
 }
 
 // UpdateSecretRequest is the request body for PUT /api/secrets/[id].
