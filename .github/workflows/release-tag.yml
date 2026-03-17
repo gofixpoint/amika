@@ -6,10 +6,10 @@ name: Create Release Tag
 # and GitHub Release publication.
 #
 # Supported tag shapes:
-#   amika/v1.2.3
-#   amika/v1.2.3-rc.1
-#   amika-server/v1.2.3
-#   amika-server/v1.2.3-beta.1
+#   amika@v1.2.3
+#   amika@v1.2.3-rc.1
+#   amika-server@v1.2.3
+#   amika-server@v1.2.3-beta.1
 
 on:
   workflow_dispatch:
@@ -97,7 +97,7 @@ jobs:
           COMPONENT: ${{ inputs.component }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          tag="${COMPONENT}/${VERSION}"
+          tag="${COMPONENT}@${VERSION}"
           if git rev-parse "$tag" >/dev/null 2>&1; then
             echo "Tag $tag already exists." >&2
             exit 1
@@ -114,7 +114,7 @@ jobs:
           COMPONENT: ${{ inputs.component }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          tag="${COMPONENT}/${VERSION}"
+          tag="${COMPONENT}@${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "Release $tag"

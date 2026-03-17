@@ -2,7 +2,7 @@ name: Release
 
 # Publishes a GitHub Release for a component-scoped tag created by
 # release-tag.yml. The workflow:
-# 1. Parses the component and semver from tags like amika/v1.2.3-rc.1
+# 1. Parses the component and semver from tags like amika@v1.2.3-rc.1
 # 2. Builds only that component for linux/darwin on amd64 and arm64
 # 3. Injects version, full commit SHA, and build date into the binary metadata
 # 4. Uploads platform tarballs plus a shared checksums.txt file
@@ -15,8 +15,8 @@ name: Release
 on:
   push:
     tags:
-      - "amika/v*"
-      - "amika-server/v*"
+      - "amika@v*"
+      - "amika-server@v*"
 
 permissions:
   contents: write
@@ -42,11 +42,11 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           case "$TAG" in
-            amika/*)
+            amika@*)
               component="amika"
               binary_name="amika"
               ;;
-            amika-server/*)
+            amika-server@*)
               component="amika-server"
               binary_name="amika-server"
               ;;
@@ -56,7 +56,7 @@ jobs:
               ;;
           esac
 
-          version="${TAG#*/}"
+          version="${TAG#*@}"
           if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'; then
             echo "Tag version is not valid semver: $version" >&2
             exit 1
