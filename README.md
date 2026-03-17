@@ -119,6 +119,18 @@ OpenAPI documentation is available at `/docs`. The API mirrors the CLI — creat
 
 See the [endpoint table in docs/cli-reference.md](docs/cli-reference.md#api-endpoints) for the full list of routes.
 
+## Configuration
+
+Amika reads config from both `${XDG_CONFIG_HOME}/amika/config.toml` and `.amika/config.toml`. The schema is shared between the two locations, repo config overrides global config, and environment variables override both.
+
+```toml
+[api]
+api_url = "https://app.amika.dev"
+auth_client_id = "client_..."
+```
+
+See [docs/sandbox-configuration.md](docs/sandbox-configuration.md) and [docs/auth.md](docs/auth.md) for details.
+
 ## Presets
 
 | Preset            | Image                 | Includes                                                                         |

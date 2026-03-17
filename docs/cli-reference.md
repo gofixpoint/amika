@@ -371,3 +371,20 @@ The HTTP API accepts some fields that are not available as CLI flags:
 | `AMIKA_WORKOS_CLIENT_ID`    | Override the default WorkOS client ID for `amika auth login`. If you change `AMIKA_API_URL`, you likely need to update this too                                    |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test`                                                                                   |
 | `PORT`                      | Override listen address for `amika-server`. Accepts a plain port (`8080` becomes `:8080`) or full address (`127.0.0.1:8080`). Mutually exclusive with `-addr` flag |
+
+## Config Files
+
+Amika reads config from:
+
+- Global: `${XDG_CONFIG_HOME}/amika/config.toml`
+- Repo: `.amika/config.toml`
+
+Shared schema:
+
+```toml
+[api]
+api_url = "https://app.amika.dev"
+auth_client_id = "client_..."
+```
+
+Repo config overrides global config. Environment variables override both.
