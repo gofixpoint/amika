@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gofixpoint/amika/internal/buildmeta"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +14,15 @@ var rootCmd = &cobra.Command{
 	Short:             "Amika - filesystem mounting and script execution",
 	Long:              `Amika provides filesystem mounting and script execution with output materialization.`,
 	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
+}
+
+func init() {
+	rootCmd.Version = versionString()
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
+}
+
+func versionString() string {
+	return buildmeta.New("amika", buildmeta.AmikaVersion).String()
 }
 
 func main() {

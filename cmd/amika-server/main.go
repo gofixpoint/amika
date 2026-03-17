@@ -5,26 +5,51 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/gofixpoint/amika/internal/buildmeta"
 	"github.com/gofixpoint/amika/internal/httpapi"
 	"github.com/gofixpoint/amika/pkg/amika"
 )
 
 func main() {
-	addr, err := resolveListenAddr(flag.CommandLine, os.Args[1:], os.LookupEnv)
+	if err := run(os.Args[1:], os.Stdout, os.LookupEnv, http.ListenAndServe); err != nil {
+		panic(err)
+	}
+}
+
+func run(
+	args []string,
+	stdout io.Writer,
+	lookupEnv func(string) (string, bool),
+	listenAndServe func(string, http.Handler) error,
+) error {
+	fs := flag.NewFlagSet("amika-server", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	addr, addrFlagSet, showVersion, err := parseServerFlags(fs, args)
 	if err != nil {
-		panic(fmt.Errorf("invalid listen address configuration: %w", err))
+		return fmt.Errorf("invalid listen address configuration: %w", err)
+	}
+	if showVersion {
+		fmt.Fprintln(stdout, buildmeta.New("amika-server", buildmeta.AmikaServerVersion).String())
+		return nil
+	}
+	addr, err = applyListenAddrEnv(addr, addrFlagSet, lookupEnv)
+	if err != nil {
+		return fmt.Errorf("invalid listen address configuration: %w", err)
 	}
 
 	handler := httpapi.NewHandler(amika.NewService(amika.Options{}))
 	log.Printf("amika-server listening on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
-		panic(fmt.Errorf("server failed: %w", err))
+	if err := listenAndServe(addr, handler); err != nil {
+		return fmt.Errorf("server failed: %w", err)
 	}
+	return nil
 }
 
 func resolveListenAddr(
@@ -32,10 +57,21 @@ func resolveListenAddr(
 	args []string,
 	lookupEnv func(string) (string, bool),
 ) (string, error) {
+	addr, addrFlagSet, _, err := parseServerFlags(fs, args)
+	if err != nil {
+		return "", err
+	}
+	return applyListenAddrEnv(addr, addrFlagSet, lookupEnv)
+}
+
+func parseServerFlags(fs *flag.FlagSet, args []string) (string, bool, bool, error) {
 	const defaultAddr = ":8080"
 
 	addr := defaultAddr
 	addrFlagSet := false
+	showVersion := false
+
+	fs.BoolVar(&showVersion, "version", false, "Print version information and exit")
 	fs.Func("addr", "HTTP listen address", func(value string) error {
 		addr = value
 		addrFlagSet = true
@@ -43,9 +79,12 @@ func resolveListenAddr(
 	})
 
 	if err := fs.Parse(args); err != nil {
-		return "", err
+		return "", false, false, err
 	}
+	return addr, addrFlagSet, showVersion, nil
+}
 
+func applyListenAddrEnv(addr string, addrFlagSet bool, lookupEnv func(string) (string, bool)) (string, error) {
 	port, portSet := lookupEnv("PORT")
 	if !portSet || port == "" {
 		return addr, nil
