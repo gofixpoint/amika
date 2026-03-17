@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gofixpoint/amika/internal/amikaconfig"
+	"github.com/gofixpoint/amika/internal/apiclient"
 )
 
 func TestLoadConfig_NotExist(t *testing.T) {
@@ -252,6 +253,134 @@ port = 3000
 	}
 }
 
+func TestFindRepoRoot_FindsNearestConfig(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeConfigFile(t, filepath.Join(repoRoot, ".amika", "config.toml"), `[api]
+api_url = "https://repo.example.test"
+`)
+	nested := filepath.Join(repoRoot, "subdir", "deeper")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := amikaconfig.FindRepoRoot(nested)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != repoRoot {
+		t.Fatalf("FindRepoRoot() = %q, want %q", got, repoRoot)
+	}
+}
+
+func TestEffectiveAPIURL_PreferenceOrder(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+api_url = "https://global.example.test"
+`)
+	repoRoot := t.TempDir()
+	writeConfigFile(t, filepath.Join(repoRoot, ".amika", "config.toml"), `[api]
+api_url = "https://repo.example.test"
+`)
+
+	clearEnv(t, amikaconfig.EnvAPIURL)
+	got, err := amikaconfig.EffectiveAPIURL(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://repo.example.test" {
+		t.Fatalf("EffectiveAPIURL() = %q, want repo value", got)
+	}
+
+	setEnvValue(t, amikaconfig.EnvAPIURL, "https://env.example.test")
+	got, err = amikaconfig.EffectiveAPIURL(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://env.example.test" {
+		t.Fatalf("EffectiveAPIURL() with env = %q, want env value", got)
+	}
+}
+
+func TestEffectiveAuthClientID_PreferenceOrder(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+auth_client_id = "global-client"
+`)
+	repoRoot := t.TempDir()
+	writeConfigFile(t, filepath.Join(repoRoot, ".amika", "config.toml"), `[api]
+auth_client_id = "repo-client"
+`)
+
+	clearEnv(t, amikaconfig.EnvWorkOSClientID)
+	got, err := amikaconfig.EffectiveAuthClientID(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "repo-client" {
+		t.Fatalf("EffectiveAuthClientID() = %q, want repo value", got)
+	}
+
+	setEnvValue(t, amikaconfig.EnvWorkOSClientID, "env-client")
+	got, err = amikaconfig.EffectiveAuthClientID(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "env-client" {
+		t.Fatalf("EffectiveAuthClientID() with env = %q, want env value", got)
+	}
+}
+
+func TestEffectiveValues_GlobalOnlyAndDefaults(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+api_url = "https://global.example.test"
+auth_client_id = "global-client"
+`)
+
+	clearEnv(t, amikaconfig.EnvAPIURL)
+	clearEnv(t, amikaconfig.EnvWorkOSClientID)
+
+	apiURL, err := amikaconfig.EffectiveAPIURL("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiURL != "https://global.example.test" {
+		t.Fatalf("EffectiveAPIURL() = %q, want global value", apiURL)
+	}
+
+	clientID, err := amikaconfig.EffectiveAuthClientID("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if clientID != "global-client" {
+		t.Fatalf("EffectiveAuthClientID() = %q, want global value", clientID)
+	}
+
+	os.Remove(filepath.Join(configHome, "amika", "config.toml"))
+
+	apiURL, err = amikaconfig.EffectiveAPIURL("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiURL != apiclient.DefaultAPIURL {
+		t.Fatalf("EffectiveAPIURL() default = %q, want built-in default", apiURL)
+	}
+
+	clientID, err = amikaconfig.EffectiveAuthClientID("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if clientID != amikaconfig.DefaultWorkOSClientID {
+		t.Fatalf("EffectiveAuthClientID() default = %q, want built-in default", clientID)
+	}
+}
+
 // Helper to load a config from TOML content.
 func loadFromTOML(t *testing.T, content string) *amikaconfig.Config {
 	t.Helper()
@@ -296,6 +425,36 @@ func writeConfigFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
 	}
+}
+
+func setEnvValue(t *testing.T, key, value string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.Fatalf("Setenv(%s): %v", key, err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+func clearEnv(t *testing.T, key string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("Unsetenv(%s): %v", key, err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
 }
 
 // Test 1: Single port = 4838 → 4838/tcp

@@ -2,13 +2,11 @@ package main
 
 import (
 	"fmt"
-	"os"
 
+	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/spf13/cobra"
 )
-
-const defaultWorkOSClientID = "client_01KHA495MJS1KT6QBRTYJ239DY"
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -25,9 +23,9 @@ Opens a browser for you to authorize the CLI.`,
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 
-		clientID := os.Getenv("AMIKA_WORKOS_CLIENT_ID")
-		if clientID == "" {
-			clientID = defaultWorkOSClientID
+		clientID, err := amikaconfig.EffectiveAuthClientIDForDir("")
+		if err != nil {
+			return err
 		}
 
 		session, err := auth.DeviceLogin(clientID)

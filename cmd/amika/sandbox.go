@@ -34,8 +34,6 @@ var sandboxCmd = &cobra.Command{
 
 const sandboxConnectWorkdir = "/home/amika"
 
-const envAPIURL = "AMIKA_API_URL"
-
 // TODO: Parse env variables from an environment file (e.g. .amika/.env or ~/.config/amika/env)
 // so users don't need to export AMIKA_API_URL, AMIKA_WORKOS_CLIENT_ID, etc. in their shell profile.
 
@@ -54,7 +52,11 @@ func sandboxMode(cmd *cobra.Command) string {
 	// Default: if logged in with a valid session, include remote; otherwise local.
 	// GetValidSession refreshes expired tokens; if that fails the session is
 	// unusable and we fall back to local-only without blocking the command.
-	if _, err := auth.GetValidSession(defaultWorkOSClientID); err != nil {
+	clientID, err := amikaconfig.EffectiveAuthClientIDForDir("")
+	if err != nil {
+		return "local"
+	}
+	if _, err := auth.GetValidSession(clientID); err != nil {
 		return "local"
 	}
 	return "both"
@@ -62,7 +64,11 @@ func sandboxMode(cmd *cobra.Command) string {
 
 // isLoggedIn returns true if a valid (or refreshable) WorkOS session exists.
 func isLoggedIn() bool {
-	_, err := auth.GetValidSession(defaultWorkOSClientID)
+	clientID, err := amikaconfig.EffectiveAuthClientIDForDir("")
+	if err != nil {
+		return false
+	}
+	_, err = auth.GetValidSession(clientID)
 	return err == nil
 }
 
@@ -86,16 +92,20 @@ func getRemoteTarget(cmd *cobra.Command) (string, error) {
 }
 
 // getRemoteClient returns an API client authenticated with the current session.
-func getRemoteClient(target string) (*apiclient.Client, error) {
+func getRemoteClient(target, repoRoot string) (*apiclient.Client, error) {
 	// TODO: when named-remote config is added, look up target here.
 	_ = target
-	session, err := auth.GetValidSession(defaultWorkOSClientID)
+	clientID, err := amikaconfig.EffectiveAuthClientID(repoRoot)
 	if err != nil {
 		return nil, err
 	}
-	baseURL := os.Getenv(envAPIURL)
-	if baseURL == "" {
-		baseURL = apiclient.DefaultAPIURL
+	session, err := auth.GetValidSession(clientID)
+	if err != nil {
+		return nil, err
+	}
+	baseURL, err := amikaconfig.EffectiveAPIURL(repoRoot)
+	if err != nil {
+		return nil, err
 	}
 	return apiclient.NewClient(baseURL, session.AccessToken), nil
 }
@@ -381,7 +391,7 @@ var sandboxDeleteCmd = &cobra.Command{
 		// Build a remote client if we may need it.
 		var remoteClient *apiclient.Client
 		if mode == "remote" || mode == "both" {
-			remoteClient, err = getRemoteClient(target)
+			remoteClient, err = getRemoteClient(target, "")
 			if err != nil {
 				return err
 			}
@@ -492,7 +502,7 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		if mode == "remote" || mode == "both" {
-			client, err := getRemoteClient(target)
+			client, err := getRemoteClient(target, "")
 			if err != nil {
 				return err
 			}
@@ -1491,6 +1501,7 @@ func hasEnvKey(env []string, key string) bool {
 func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	name, _ := cmd.Flags().GetString("name")
 	gitValue, _ := cmd.Flags().GetString("git")
+	var err error
 
 	var gitURL string
 	if cmd.Flags().Changed("git") {
@@ -1501,7 +1512,15 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		gitURL = resolved
 	}
 
-	client, err := getRemoteClient(target)
+	repoRoot := ""
+	if cmd.Flags().Changed("git") && gitValue != "" && !isNetworkRemoteURL(gitValue) {
+		repoRoot, err = resolveGitRoot(gitValue)
+		if err != nil {
+			return err
+		}
+	}
+
+	client, err := getRemoteClient(target, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -1579,7 +1598,7 @@ Examples:
 			return err
 		}
 
-		client, err := getRemoteClient(target)
+		client, err := getRemoteClient(target, "")
 		if err != nil {
 			return err
 		}

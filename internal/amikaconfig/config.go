@@ -12,8 +12,18 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/gofixpoint/amika/internal/apiclient"
 	"github.com/gofixpoint/amika/internal/basedir"
 	"github.com/gofixpoint/amika/internal/constants"
+)
+
+const (
+	// EnvAPIURL overrides the configured API base URL.
+	EnvAPIURL = "AMIKA_API_URL"
+	// EnvWorkOSClientID overrides the configured WorkOS client ID.
+	EnvWorkOSClientID = "AMIKA_WORKOS_CLIENT_ID"
+	// DefaultWorkOSClientID is the built-in fallback WorkOS client ID.
+	DefaultWorkOSClientID = "client_01KHA495MJS1KT6QBRTYJ239DY"
 )
 
 // Config is the parsed Amika config file.
@@ -65,7 +75,7 @@ func LoadConfig(repoRoot string) (*Config, error) {
 // LoadRepoConfig reads $repoRoot/.amika/config.toml.
 // Returns nil, nil if the file does not exist.
 func LoadRepoConfig(repoRoot string) (*Config, error) {
-	path := filepath.Join(repoRoot, ".amika", "config.toml")
+	path := repoConfigPath(repoRoot)
 	return loadConfigFile(path)
 }
 
@@ -163,6 +173,94 @@ func cloneServiceConfig(svc ServiceConfig) ServiceConfig {
 		cloned.Ports = append([]interface{}(nil), svc.Ports...)
 	}
 	return cloned
+}
+
+// EffectiveAPIURL resolves the API URL with precedence env > repo > global > default.
+func EffectiveAPIURL(repoRoot string) (string, error) {
+	if value := os.Getenv(EnvAPIURL); value != "" {
+		return value, nil
+	}
+
+	cfg, err := LoadEffectiveConfig(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	if cfg != nil && cfg.API.APIURL != "" {
+		return cfg.API.APIURL, nil
+	}
+	return apiclient.DefaultAPIURL, nil
+}
+
+// EffectiveAuthClientID resolves the WorkOS client ID with precedence
+// env > repo > global > default.
+func EffectiveAuthClientID(repoRoot string) (string, error) {
+	if value := os.Getenv(EnvWorkOSClientID); value != "" {
+		return value, nil
+	}
+
+	cfg, err := LoadEffectiveConfig(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	if cfg != nil && cfg.API.AuthClientID != "" {
+		return cfg.API.AuthClientID, nil
+	}
+	return DefaultWorkOSClientID, nil
+}
+
+// EffectiveAPIURLForDir resolves the API URL using the nearest repo config, if any.
+func EffectiveAPIURLForDir(startDir string) (string, error) {
+	repoRoot, err := FindRepoRoot(startDir)
+	if err != nil {
+		return "", err
+	}
+	return EffectiveAPIURL(repoRoot)
+}
+
+// EffectiveAuthClientIDForDir resolves the WorkOS client ID using the nearest
+// repo config, if any.
+func EffectiveAuthClientIDForDir(startDir string) (string, error) {
+	repoRoot, err := FindRepoRoot(startDir)
+	if err != nil {
+		return "", err
+	}
+	return EffectiveAuthClientID(repoRoot)
+}
+
+// FindRepoRoot returns the nearest ancestor directory containing .amika/config.toml.
+// It returns an empty string when no repo config is present.
+func FindRepoRoot(startDir string) (string, error) {
+	dir := startDir
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current working directory: %w", err)
+		}
+	}
+
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve config search path %q: %w", dir, err)
+	}
+
+	for {
+		if _, err := os.Stat(repoConfigPath(dir)); err == nil {
+			return dir, nil
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("failed to inspect repo config in %q: %w", dir, err)
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", nil
+		}
+		dir = parent
+	}
+}
+
+func repoConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, ".amika", "config.toml")
 }
 
 // ParsedServices validates the service declarations and returns a normalized list.
