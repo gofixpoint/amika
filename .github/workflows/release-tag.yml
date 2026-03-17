@@ -6,10 +6,10 @@ name: Create Release Tag
 # and GitHub Release publication.
 #
 # Supported tag shapes:
-#   amika/v1.2.3
-#   amika/v1.2.3-rc.1
-#   amika-server/v1.2.3
-#   amika-server/v1.2.3-beta.1
+#   amika@v1.2.3
+#   amika@v1.2.3-rc.1
+#   amika-server@v1.2.3
+#   amika-server@v1.2.3-beta.1
 
 on:
   workflow_dispatch:
@@ -73,10 +73,17 @@ jobs:
             fi
           fi
 
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Assemble version string
         id: version
@@ -97,7 +104,7 @@ jobs:
           COMPONENT: ${{ inputs.component }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          tag="${COMPONENT}/${VERSION}"
+          tag="${COMPONENT}@${VERSION}"
           if git rev-parse "$tag" >/dev/null 2>&1; then
             echo "Tag $tag already exists." >&2
             exit 1
@@ -114,7 +121,7 @@ jobs:
           COMPONENT: ${{ inputs.component }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          tag="${COMPONENT}/${VERSION}"
+          tag="${COMPONENT}@${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "Release $tag"
