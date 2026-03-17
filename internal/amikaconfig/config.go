@@ -1,4 +1,4 @@
-// Package amikaconfig loads per-repo Amika configuration from .amika/config.toml.
+// Package amikaconfig loads Amika configuration from global and repo config files.
 package amikaconfig
 
 import (
@@ -15,10 +15,17 @@ import (
 	"github.com/gofixpoint/amika/internal/constants"
 )
 
-// Config is the parsed .amika/config.toml file.
+// Config is the parsed Amika config file.
 type Config struct {
+	API       APIConfig                `toml:"api"`
 	Lifecycle LifecycleConfig          `toml:"lifecycle"`
 	Services  map[string]ServiceConfig `toml:"services"`
+}
+
+// APIConfig holds API client configuration.
+type APIConfig struct {
+	APIURL       string `toml:"api_url"`
+	AuthClientID string `toml:"auth_client_id"`
 }
 
 // LifecycleConfig holds sandbox lifecycle hooks.

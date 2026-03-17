@@ -25,7 +25,11 @@ func TestLoadConfig_ValidConfig(t *testing.T) {
 	if err := os.Mkdir(amikaDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := `[lifecycle]
+	content := `[api]
+api_url = "https://example.amika.dev"
+auth_client_id = "client_123"
+
+[lifecycle]
 setup_script = "scripts/setup.sh"
 `
 	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte(content), 0644); err != nil {
@@ -38,6 +42,12 @@ setup_script = "scripts/setup.sh"
 	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
+	}
+	if cfg.API.APIURL != "https://example.amika.dev" {
+		t.Errorf("expected api_url %q, got %q", "https://example.amika.dev", cfg.API.APIURL)
+	}
+	if cfg.API.AuthClientID != "client_123" {
+		t.Errorf("expected auth_client_id %q, got %q", "client_123", cfg.API.AuthClientID)
 	}
 	if cfg.Lifecycle.SetupScript != "scripts/setup.sh" {
 		t.Errorf("expected setup_script %q, got %q", "scripts/setup.sh", cfg.Lifecycle.SetupScript)
@@ -81,6 +91,35 @@ func TestLoadConfig_EmptyLifecycleSection(t *testing.T) {
 	}
 	if cfg.Lifecycle.SetupScript != "" {
 		t.Errorf("expected empty setup_script, got %q", cfg.Lifecycle.SetupScript)
+	}
+}
+
+func TestLoadConfig_APISectionOnly(t *testing.T) {
+	dir := t.TempDir()
+	amikaDir := filepath.Join(dir, ".amika")
+	if err := os.Mkdir(amikaDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := `[api]
+api_url = "https://api.example.test"
+auth_client_id = "client_abc"
+`
+	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := amikaconfig.LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.API.APIURL != "https://api.example.test" {
+		t.Errorf("expected api_url %q, got %q", "https://api.example.test", cfg.API.APIURL)
+	}
+	if cfg.API.AuthClientID != "client_abc" {
+		t.Errorf("expected auth_client_id %q, got %q", "client_abc", cfg.API.AuthClientID)
 	}
 }
 
