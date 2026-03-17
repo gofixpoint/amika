@@ -1,0 +1,187 @@
+name: Release
+
+# Publishes a GitHub Release for a component-scoped tag created by
+# release-tag.yml. The workflow:
+# 1. Parses the component and semver from tags like amika/v1.2.3-rc.1
+# 2. Builds only that component for linux/darwin on amd64 and arm64
+# 3. Injects version, full commit SHA, and build date into the binary metadata
+# 4. Uploads platform tarballs plus a shared checksums.txt file
+# 5. Marks the GitHub Release as a prerelease when the tag contains a semver
+#    prerelease suffix
+#
+# This workflow intentionally uses component-prefixed tags so amika and
+# amika-server can be versioned independently.
+
+on:
+  push:
+    tags:
+      - "amika/v*"
+      - "amika-server/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      component: ${{ steps.parse.outputs.component }}
+      version: ${{ steps.parse.outputs.version }}
+      release_name: ${{ steps.parse.outputs.release_name }}
+      prerelease: ${{ steps.parse.outputs.prerelease }}
+      commit: ${{ steps.parse.outputs.commit }}
+      build_date: ${{ steps.parse.outputs.build_date }}
+      binary_name: ${{ steps.parse.outputs.binary_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: parse
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          case "$TAG" in
+            amika/*)
+              component="amika"
+              binary_name="amika"
+              ;;
+            amika-server/*)
+              component="amika-server"
+              binary_name="amika-server"
+              ;;
+            *)
+              echo "Unsupported tag format: $TAG" >&2
+              exit 1
+              ;;
+          esac
+
+          version="${TAG#*/}"
+          if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'; then
+            echo "Tag version is not valid semver: $version" >&2
+            exit 1
+          fi
+
+          commit="$(git rev-list -n 1 "$TAG")"
+          build_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          prerelease=false
+          if printf '%s' "$version" | grep -q -- '-'; then
+            prerelease=true
+          fi
+
+          {
+            echo "component=$component"
+            echo "version=$version"
+            echo "release_name=$component $version"
+            echo "prerelease=$prerelease"
+            echo "commit=$commit"
+            echo "build_date=$build_date"
+            echo "binary_name=$binary_name"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: metadata
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Build archive
+        env:
+          COMPONENT: ${{ needs.metadata.outputs.component }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          BUILD_DATE: ${{ needs.metadata.outputs.build_date }}
+          BINARY_NAME: ${{ needs.metadata.outputs.binary_name }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          case "$COMPONENT" in
+            amika)
+              package_path="./cmd/amika"
+              ld_version="github.com/gofixpoint/amika/internal/buildmeta.AmikaVersion=$VERSION"
+              ;;
+            amika-server)
+              package_path="./cmd/amika-server"
+              ld_version="github.com/gofixpoint/amika/internal/buildmeta.AmikaServerVersion=$VERSION"
+              ;;
+            *)
+              echo "Unsupported component: $COMPONENT" >&2
+              exit 1
+              ;;
+          esac
+
+          archive_base="${COMPONENT}_${VERSION#v}_${GOOS}_${GOARCH}"
+          staging_dir="dist/${archive_base}"
+          binary_path="${staging_dir}/${BINARY_NAME}"
+
+          mkdir -p "$staging_dir"
+
+          env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+            go build \
+              -trimpath \
+              -ldflags="-s -w -X ${ld_version} -X github.com/gofixpoint/amika/internal/buildmeta.Commit=${COMMIT} -X github.com/gofixpoint/amika/internal/buildmeta.Date=${BUILD_DATE}" \
+              -o "$binary_path" \
+              "$package_path"
+
+          tar -C "dist" -czf "dist/${archive_base}.tar.gz" "${archive_base}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.metadata.outputs.component }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - metadata
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-upload
+          find release-artifacts -type f -name '*.tar.gz' -exec cp {} release-upload/ \;
+          cd release-upload
+          sha256sum *.tar.gz > checksums.txt
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          RELEASE_NAME: ${{ needs.metadata.outputs.release_name }}
+          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+        run: |
+          prerelease_flag=""
+          if [ "$PRERELEASE" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-upload/* --clobber
+          else
+            gh release create "$TAG" release-upload/* \
+              --title "$RELEASE_NAME" \
+              --generate-notes \
+              $prerelease_flag
+          fi
