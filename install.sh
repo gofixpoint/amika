@@ -75,10 +75,6 @@ parse_args() {
       --dry-run)
         DRY_RUN=true
         ;;
-      --latest-prerelease)
-        echo "Error: --latest-prerelease is no longer supported; use --install-version VERSION instead" >&2
-        exit 1
-        ;;
       *)
         echo "Unknown argument: $arg" >&2
         usage >&2
