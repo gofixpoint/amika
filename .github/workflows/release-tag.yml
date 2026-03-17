@@ -21,9 +21,21 @@ on:
         options:
           - amika
           - amika-server
-      version:
-        description: Semver version with v prefix, optionally including a prerelease suffix
+      major:
+        description: Major version number
         required: true
+        type: string
+      minor:
+        description: Minor version number
+        required: true
+        type: string
+      patch:
+        description: Patch version number
+        required: true
+        type: string
+      prerelease:
+        description: "Pre-release suffix (e.g. rc.1, beta.1) — leave empty for stable releases"
+        required: false
         type: string
 
 permissions:
@@ -40,13 +52,25 @@ jobs:
             exit 1
           fi
 
-      - name: Validate version input
+      - name: Validate version inputs
         env:
-          VERSION: ${{ inputs.version }}
+          MAJOR: ${{ inputs.major }}
+          MINOR: ${{ inputs.minor }}
+          PATCH: ${{ inputs.patch }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'; then
-            echo "Version must be semver with a v prefix, optionally with a prerelease suffix." >&2
-            exit 1
+          for part in MAJOR MINOR PATCH; do
+            val=$(eval echo "\$$part")
+            if ! printf '%s' "$val" | grep -Eq '^[0-9]+$'; then
+              echo "$part must be a non-negative integer, got: $val" >&2
+              exit 1
+            fi
+          done
+          if [ -n "$PRERELEASE" ]; then
+            if ! printf '%s' "$PRERELEASE" | grep -Eq '^[0-9A-Za-z]+(\.[0-9A-Za-z]+)*$'; then
+              echo "Pre-release must follow semver pre-release syntax (e.g. rc.1), got: $PRERELEASE" >&2
+              exit 1
+            fi
           fi
 
       - uses: actions/checkout@v4
@@ -54,10 +78,24 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Assemble version string
+        id: version
+        env:
+          MAJOR: ${{ inputs.major }}
+          MINOR: ${{ inputs.minor }}
+          PATCH: ${{ inputs.patch }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          version="v${MAJOR}.${MINOR}.${PATCH}"
+          if [ -n "$PRERELEASE" ]; then
+            version="${version}-${PRERELEASE}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Verify tag does not already exist
         env:
           COMPONENT: ${{ inputs.component }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           tag="${COMPONENT}/${VERSION}"
           if git rev-parse "$tag" >/dev/null 2>&1; then
@@ -74,7 +112,7 @@ jobs:
       - name: Create and push annotated tag
         env:
           COMPONENT: ${{ inputs.component }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           tag="${COMPONENT}/${VERSION}"
           git config user.name "github-actions[bot]"
