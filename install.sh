@@ -3,6 +3,7 @@ set -eu
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
+INCLUDE_PRERELEASE=false
 
 usage() {
   cat <<EOF
@@ -11,7 +12,10 @@ install.sh — install the amika CLI
 Downloads the latest amika release binary from GitHub and installs it.
 
 Usage:
-  sh install.sh [--help]
+  sh install.sh [--help] [--latest-prerelease]
+
+Flags:
+  --latest-prerelease   Include prerelease versions when finding the latest release
 
 Environment variables:
   AMIKA_INSTALL_DIR   Override install directory (default: /usr/local/bin)
@@ -37,6 +41,9 @@ parse_args() {
       --help|-h)
         usage
         exit 0
+        ;;
+      --latest-prerelease)
+        INCLUDE_PRERELEASE=true
         ;;
       *)
         echo "Unknown argument: $arg" >&2
@@ -74,9 +81,24 @@ find_latest_release() {
 
   RELEASES_JSON="$(fetch_url "https://api.github.com/repos/${GITHUB_REPO}/releases")"
 
-  # Find the latest non-prerelease tag matching amika@v* (not amika-server@v*)
+  # Extract tag_name and prerelease fields as paired lines, then filter.
   # The GitHub API returns releases newest-first.
-  TAG="$(echo "$RELEASES_JSON" | grep '"tag_name"' | grep '"amika@v' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')"
+  # Output format: one line per release as "tag_name prerelease_bool"
+  RELEASE_LINES="$(echo "$RELEASES_JSON" \
+    | grep -E '"tag_name"|"prerelease"' \
+    | sed 's/.*"tag_name": *"\([^"]*\)".*/TAG \1/; s/.*"prerelease": *\(true\|false\).*/PRE \1/' \
+    | paste - - \
+    | sed 's/TAG \([^ ]*\).*PRE \(.*\)/\1 \2/')"
+
+  # Filter for amika@v* tags (not amika-server@v*)
+  RELEASE_LINES="$(echo "$RELEASE_LINES" | grep '^amika@v')"
+
+  # Unless --latest-prerelease is set, exclude prereleases
+  if [ "$INCLUDE_PRERELEASE" = "false" ]; then
+    RELEASE_LINES="$(echo "$RELEASE_LINES" | grep ' false$')" || true
+  fi
+
+  TAG="$(echo "$RELEASE_LINES" | head -1 | awk '{print $1}')"
 
   if [ -z "$TAG" ]; then
     echo "Error: could not find a release matching amika@v*" >&2
