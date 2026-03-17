@@ -3,20 +3,21 @@ set -eu
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
-INCLUDE_PRERELEASE=false
+DEFAULT_VERSION="0.1.0-rc.1"
+INSTALL_VERSION="$DEFAULT_VERSION"
 DRY_RUN=false
 
 usage() {
   cat <<EOF
 install.sh — install the amika CLI
 
-Downloads the latest amika release binary from GitHub and installs it.
+Downloads a specific amika release binary from GitHub and installs it.
 
 Usage:
-  sh install.sh [--help] [--latest-prerelease] [--dry-run]
+  sh install.sh [--help] [--install-version VERSION] [--dry-run]
 
 Flags:
-  --latest-prerelease   Include prerelease versions when finding the latest release
+  --install-version     Install a specific version (default: ${DEFAULT_VERSION})
   --dry-run             Show what would be done without downloading or installing
 
 Environment variables:
@@ -24,6 +25,7 @@ Environment variables:
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh | sh
+  sh install.sh --install-version 0.1.0-rc.1
   AMIKA_INSTALL_DIR=~/.local/bin sh install.sh
 EOF
 }
@@ -31,11 +33,12 @@ EOF
 main() {
   parse_args "$@"
   detect_platform
-  find_latest_release
+  set_install_version
 
   ARCHIVE_BASE="amika_${VERSION}_${OS}_${ARCH}"
   ARCHIVE_NAME="${ARCHIVE_BASE}.tar.gz"
   DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${ARCHIVE_NAME}"
+  CHECKSUMS_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/checksums.txt"
 
   if [ "$DRY_RUN" = "true" ]; then
     echo ""
@@ -43,6 +46,7 @@ main() {
     echo "  Platform:     ${OS}/${ARCH}"
     echo "  Version:      ${VERSION} (${TAG})"
     echo "  Download URL: ${DOWNLOAD_URL}"
+    echo "  Checksums:    ${CHECKSUMS_URL}"
     echo "  Install to:   ${INSTALL_DIR}/amika"
     exit 0
   fi
@@ -53,17 +57,27 @@ main() {
 }
 
 parse_args() {
-  for arg in "$@"; do
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
     case "$arg" in
       --help|-h)
         usage
         exit 0
         ;;
-      --latest-prerelease)
-        INCLUDE_PRERELEASE=true
+      --install-version)
+        if [ "$#" -lt 2 ]; then
+          echo "Error: --install-version requires a value" >&2
+          exit 1
+        fi
+        INSTALL_VERSION="$2"
+        shift
         ;;
       --dry-run)
         DRY_RUN=true
+        ;;
+      --latest-prerelease)
+        echo "Error: --latest-prerelease is no longer supported; use --install-version VERSION instead" >&2
+        exit 1
         ;;
       *)
         echo "Unknown argument: $arg" >&2
@@ -71,6 +85,7 @@ parse_args() {
         exit 1
         ;;
     esac
+    shift
   done
 }
 
@@ -96,40 +111,10 @@ detect_platform() {
   esac
 }
 
-find_latest_release() {
-  echo "Finding latest amika release..."
-
-  RELEASES_JSON="$(fetch_url "https://api.github.com/repos/${GITHUB_REPO}/releases")"
-
-  # Extract tag_name and prerelease fields as paired lines, then filter.
-  # The GitHub API returns releases newest-first.
-  # Output format: one line per release as "tag_name prerelease_bool"
-  RELEASE_LINES="$(echo "$RELEASES_JSON" \
-    | grep -E '"tag_name"|"prerelease"' \
-    | sed 's/.*"tag_name": *"\([^"]*\)".*/TAG \1/' \
-    | sed 's/.*"prerelease": *true.*/PRE true/' \
-    | sed 's/.*"prerelease": *false.*/PRE false/' \
-    | paste - - \
-    | sed 's/TAG \([^ ]*\).*PRE \(.*\)/\1 \2/')"
-
-  # Filter for amika@v* tags (not amika-server@v*)
-  RELEASE_LINES="$(echo "$RELEASE_LINES" | grep '^amika@v')"
-
-  # Unless --latest-prerelease is set, exclude prereleases
-  if [ "$INCLUDE_PRERELEASE" = "false" ]; then
-    RELEASE_LINES="$(echo "$RELEASE_LINES" | grep ' false$')" || true
-  fi
-
-  TAG="$(echo "$RELEASE_LINES" | head -1 | awk '{print $1}')"
-
-  if [ -z "$TAG" ]; then
-    echo "Error: could not find a release matching amika@v*" >&2
-    exit 1
-  fi
-
-  # Extract version from tag: amika@v1.2.3 -> 1.2.3
-  VERSION="${TAG#amika@v}"
-  echo "Latest release: ${TAG} (version ${VERSION})"
+set_install_version() {
+  VERSION="${INSTALL_VERSION#v}"
+  TAG="amika@v${VERSION}"
+  echo "Installing amika release: ${TAG}"
 }
 
 download_and_extract() {
@@ -138,6 +123,7 @@ download_and_extract() {
 
   echo "Downloading ${DOWNLOAD_URL}..."
   fetch_url "$DOWNLOAD_URL" > "${TMPDIR_INSTALL}/${ARCHIVE_NAME}"
+  verify_checksum "${TMPDIR_INSTALL}/${ARCHIVE_NAME}"
 
   echo "Extracting..."
   tar -xzf "${TMPDIR_INSTALL}/${ARCHIVE_NAME}" -C "$TMPDIR_INSTALL"
@@ -155,16 +141,68 @@ download_and_extract() {
 }
 
 install_binary() {
-  mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+  ensure_install_dir
+  DEST_PATH="${INSTALL_DIR}/amika"
 
   if [ -w "$INSTALL_DIR" ]; then
-    mv "$BINARY_PATH" "${INSTALL_DIR}/amika"
+    install -m 0755 "$BINARY_PATH" "$DEST_PATH"
   else
-    echo "Installing to ${INSTALL_DIR}/amika (requires sudo)..."
-    sudo mv "$BINARY_PATH" "${INSTALL_DIR}/amika"
+    echo "Installing to ${DEST_PATH} (requires sudo)..."
+    sudo install -m 0755 "$BINARY_PATH" "$DEST_PATH"
+  fi
+}
+
+ensure_install_dir() {
+  if [ -d "$INSTALL_DIR" ]; then
+    return 0
   fi
 
-  chmod +x "${INSTALL_DIR}/amika"
+  if [ -e "$INSTALL_DIR" ]; then
+    echo "Error: install path exists and is not a directory: $INSTALL_DIR" >&2
+    exit 1
+  fi
+
+  if mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "Creating install directory ${INSTALL_DIR} (requires sudo)..."
+  sudo mkdir -p "$INSTALL_DIR"
+}
+
+verify_checksum() {
+  archive_path="$1"
+  checksums_path="${TMPDIR_INSTALL}/checksums.txt"
+
+  echo "Verifying checksum..."
+  fetch_url "$CHECKSUMS_URL" > "$checksums_path"
+
+  checksum_line="$(grep "  ${ARCHIVE_NAME}\$" "$checksums_path" || true)"
+  if [ -z "$checksum_line" ]; then
+    echo "Error: checksum for ${ARCHIVE_NAME} not found in checksums.txt" >&2
+    exit 1
+  fi
+
+  expected_checksum="$(printf '%s\n' "$checksum_line" | awk '{print $1}')"
+  actual_checksum="$(compute_sha256 "$archive_path")"
+
+  if [ "$expected_checksum" != "$actual_checksum" ]; then
+    echo "Error: checksum mismatch for ${ARCHIVE_NAME}" >&2
+    exit 1
+  fi
+}
+
+compute_sha256() {
+  file_path="$1"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file_path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file_path" | awk '{print $1}'
+  else
+    echo "Error: neither sha256sum nor shasum found. Please install one of them." >&2
+    exit 1
+  fi
 }
 
 fetch_url() {
