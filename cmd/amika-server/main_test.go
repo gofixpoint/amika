@@ -59,7 +59,7 @@ func TestRunVersion(t *testing.T) {
 	t.Cleanup(func() {
 		buildmeta.AmikaServerVersion = originalVersion
 	})
-	buildmeta.AmikaServerVersion = "v1.2.3-rc.1"
+	buildmeta.AmikaServerVersion = buildmeta.MustParseSemVer("v1.2.3-rc.1")
 
 	buf := &strings.Builder{}
 	called := false

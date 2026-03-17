@@ -14,7 +14,7 @@ func TestRootVersionFlag(t *testing.T) {
 		rootCmd.Version = versionString()
 	})
 
-	buildmeta.AmikaVersion = "v2.0.0-beta.1"
+	buildmeta.AmikaVersion = buildmeta.MustParseSemVer("v2.0.0-beta.1")
 	rootCmd.Version = versionString()
 
 	output, err := runRootCommand("--version")

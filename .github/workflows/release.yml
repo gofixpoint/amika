@@ -115,11 +115,11 @@ jobs:
           case "$COMPONENT" in
             amika)
               package_path="./cmd/amika"
-              ld_version="github.com/gofixpoint/amika/internal/buildmeta.AmikaVersion=$VERSION"
+              ld_version="github.com/gofixpoint/amika/internal/buildmeta.amikaVersionValue=$VERSION"
               ;;
             amika-server)
               package_path="./cmd/amika-server"
-              ld_version="github.com/gofixpoint/amika/internal/buildmeta.AmikaServerVersion=$VERSION"
+              ld_version="github.com/gofixpoint/amika/internal/buildmeta.amikaServerVersionValue=$VERSION"
               ;;
             *)
               echo "Unsupported component: $COMPONENT" >&2
