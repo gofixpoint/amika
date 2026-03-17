@@ -4,6 +4,7 @@ set -eu
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
 INCLUDE_PRERELEASE=false
+DRY_RUN=false
 
 usage() {
   cat <<EOF
@@ -12,10 +13,11 @@ install.sh — install the amika CLI
 Downloads the latest amika release binary from GitHub and installs it.
 
 Usage:
-  sh install.sh [--help] [--latest-prerelease]
+  sh install.sh [--help] [--latest-prerelease] [--dry-run]
 
 Flags:
   --latest-prerelease   Include prerelease versions when finding the latest release
+  --dry-run             Show what would be done without downloading or installing
 
 Environment variables:
   AMIKA_INSTALL_DIR   Override install directory (default: /usr/local/bin)
@@ -30,6 +32,21 @@ main() {
   parse_args "$@"
   detect_platform
   find_latest_release
+
+  ARCHIVE_BASE="amika_${VERSION}_${OS}_${ARCH}"
+  ARCHIVE_NAME="${ARCHIVE_BASE}.tar.gz"
+  DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${ARCHIVE_NAME}"
+
+  if [ "$DRY_RUN" = "true" ]; then
+    echo ""
+    echo "Dry run — would perform the following:"
+    echo "  Platform:     ${OS}/${ARCH}"
+    echo "  Version:      ${VERSION} (${TAG})"
+    echo "  Download URL: ${DOWNLOAD_URL}"
+    echo "  Install to:   ${INSTALL_DIR}/amika"
+    exit 0
+  fi
+
   download_and_extract
   install_binary
   echo "amika ${VERSION} installed to ${INSTALL_DIR}/amika"
@@ -44,6 +61,9 @@ parse_args() {
         ;;
       --latest-prerelease)
         INCLUDE_PRERELEASE=true
+        ;;
+      --dry-run)
+        DRY_RUN=true
         ;;
       *)
         echo "Unknown argument: $arg" >&2
@@ -86,7 +106,9 @@ find_latest_release() {
   # Output format: one line per release as "tag_name prerelease_bool"
   RELEASE_LINES="$(echo "$RELEASES_JSON" \
     | grep -E '"tag_name"|"prerelease"' \
-    | sed 's/.*"tag_name": *"\([^"]*\)".*/TAG \1/; s/.*"prerelease": *\(true\|false\).*/PRE \1/' \
+    | sed 's/.*"tag_name": *"\([^"]*\)".*/TAG \1/' \
+    | sed 's/.*"prerelease": *true.*/PRE true/' \
+    | sed 's/.*"prerelease": *false.*/PRE false/' \
     | paste - - \
     | sed 's/TAG \([^ ]*\).*PRE \(.*\)/\1 \2/')"
 
@@ -113,10 +135,6 @@ find_latest_release() {
 download_and_extract() {
   TMPDIR_INSTALL="$(mktemp -d)"
   trap 'rm -rf "$TMPDIR_INSTALL"' EXIT
-
-  ARCHIVE_BASE="amika_${VERSION}_${OS}_${ARCH}"
-  ARCHIVE_NAME="${ARCHIVE_BASE}.tar.gz"
-  DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${ARCHIVE_NAME}"
 
   echo "Downloading ${DOWNLOAD_URL}..."
   fetch_url "$DOWNLOAD_URL" > "${TMPDIR_INSTALL}/${ARCHIVE_NAME}"
