@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/gofixpoint/amika/internal/basedir"
 	"github.com/gofixpoint/amika/internal/constants"
 )
 
@@ -58,7 +59,45 @@ type ServiceParsed struct {
 // LoadConfig reads $repoRoot/.amika/config.toml.
 // Returns nil, nil if the file does not exist.
 func LoadConfig(repoRoot string) (*Config, error) {
+	return LoadRepoConfig(repoRoot)
+}
+
+// LoadRepoConfig reads $repoRoot/.amika/config.toml.
+// Returns nil, nil if the file does not exist.
+func LoadRepoConfig(repoRoot string) (*Config, error) {
 	path := filepath.Join(repoRoot, ".amika", "config.toml")
+	return loadConfigFile(path)
+}
+
+// LoadGlobalConfig reads $XDG_CONFIG_HOME/amika/config.toml.
+// Returns nil, nil if the file does not exist.
+func LoadGlobalConfig() (*Config, error) {
+	path, err := basedir.New("").AmikaConfigFile()
+	if err != nil {
+		return nil, err
+	}
+	return loadConfigFile(path)
+}
+
+// LoadEffectiveConfig merges global and repo config files, with repo values
+// overriding global values when both are present.
+func LoadEffectiveConfig(repoRoot string) (*Config, error) {
+	globalCfg, err := LoadGlobalConfig()
+	if err != nil {
+		return nil, err
+	}
+	if repoRoot == "" {
+		return globalCfg, nil
+	}
+
+	repoCfg, err := LoadRepoConfig(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	return Merge(globalCfg, repoCfg), nil
+}
+
+func loadConfigFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -71,6 +110,59 @@ func LoadConfig(repoRoot string) (*Config, error) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+// Merge combines global and repo config, with repo values overriding global values.
+func Merge(globalCfg, repoCfg *Config) *Config {
+	switch {
+	case globalCfg == nil:
+		return cloneConfig(repoCfg)
+	case repoCfg == nil:
+		return cloneConfig(globalCfg)
+	}
+
+	merged := cloneConfig(globalCfg)
+	if repoCfg.API.APIURL != "" {
+		merged.API.APIURL = repoCfg.API.APIURL
+	}
+	if repoCfg.API.AuthClientID != "" {
+		merged.API.AuthClientID = repoCfg.API.AuthClientID
+	}
+	if repoCfg.Lifecycle.SetupScript != "" {
+		merged.Lifecycle.SetupScript = repoCfg.Lifecycle.SetupScript
+	}
+	if len(repoCfg.Services) > 0 {
+		if merged.Services == nil {
+			merged.Services = make(map[string]ServiceConfig, len(repoCfg.Services))
+		}
+		for name, svc := range repoCfg.Services {
+			merged.Services[name] = svc
+		}
+	}
+	return merged
+}
+
+func cloneConfig(cfg *Config) *Config {
+	if cfg == nil {
+		return nil
+	}
+
+	cloned := *cfg
+	if cfg.Services != nil {
+		cloned.Services = make(map[string]ServiceConfig, len(cfg.Services))
+		for name, svc := range cfg.Services {
+			cloned.Services[name] = cloneServiceConfig(svc)
+		}
+	}
+	return &cloned
+}
+
+func cloneServiceConfig(svc ServiceConfig) ServiceConfig {
+	cloned := svc
+	if svc.Ports != nil {
+		cloned.Ports = append([]interface{}(nil), svc.Ports...)
+	}
+	return cloned
 }
 
 // ParsedServices validates the service declarations and returns a normalized list.

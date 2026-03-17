@@ -54,6 +54,9 @@ func TestPaths_XDGOverrides(t *testing.T) {
 	if got, _ := p.AuthEnvCacheFile(); got != filepath.Join(cache, "amika", "env-cache.json") {
 		t.Fatalf("AuthEnvCacheFile = %q", got)
 	}
+	if got, _ := p.AmikaConfigFile(); got != filepath.Join(config, "amika", "config.toml") {
+		t.Fatalf("AmikaConfigFile = %q", got)
+	}
 	if got, _ := p.AuthKeychainFile(); got != filepath.Join(data, "amika", "keychain.json") {
 		t.Fatalf("AuthKeychainFile = %q", got)
 	}
