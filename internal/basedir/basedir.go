@@ -10,6 +10,7 @@ import (
 const (
 	appName             = "amika"
 	envCacheFile        = "env-cache.json"
+	configFile          = "config.toml"
 	keychainFile        = "keychain.json"
 	oauthFile           = "oauth.json"
 	mountsStateFile     = "mounts.jsonl"
@@ -36,6 +37,7 @@ type Paths interface {
 	AmikaCacheDir() (string, error)
 	AmikaStateDir() (string, error)
 
+	AmikaConfigFile() (string, error)
 	AuthEnvCacheFile() (string, error)
 	AuthKeychainFile() (string, error)
 	AuthOAuthFile() (string, error)
@@ -117,6 +119,14 @@ func (p *xdgPaths) AmikaConfigDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, appName), nil
+}
+
+func (p *xdgPaths) AmikaConfigFile() (string, error) {
+	dir, err := p.AmikaConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, configFile), nil
 }
 
 func (p *xdgPaths) AmikaDataDir() (string, error) {

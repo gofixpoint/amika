@@ -45,6 +45,23 @@ The path can be overridden with the `AMIKA_STATE_DIRECTORY` environment variable
 | `AMIKA_API_URL`          | `https://app.amika.dev` | Override the remote API base URL. Used by sandbox commands when operating on remote sandboxes                     |
 | `AMIKA_WORKOS_CLIENT_ID` |                         | Override the default WorkOS client ID. If you change `AMIKA_API_URL`, you likely need to update this variable too |
 
+### Config Files
+
+Amika also reads API settings from config files:
+
+- Global: `${XDG_CONFIG_HOME}/amika/config.toml`
+- Repo: `.amika/config.toml`
+
+Both files use the same schema:
+
+```toml
+[api]
+api_url = "https://app.amika.dev"
+auth_client_id = "client_..."
+```
+
+Precedence is `environment variables > repo config > global config > built-in defaults`.
+
 ---
 
 ## Credential Discovery

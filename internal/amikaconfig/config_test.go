@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gofixpoint/amika/internal/amikaconfig"
+	"github.com/gofixpoint/amika/internal/apiclient"
 )
 
 func TestLoadConfig_NotExist(t *testing.T) {
@@ -25,7 +26,11 @@ func TestLoadConfig_ValidConfig(t *testing.T) {
 	if err := os.Mkdir(amikaDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := `[lifecycle]
+	content := `[api]
+api_url = "https://example.amika.dev"
+auth_client_id = "client_123"
+
+[lifecycle]
 setup_script = "scripts/setup.sh"
 `
 	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte(content), 0644); err != nil {
@@ -38,6 +43,12 @@ setup_script = "scripts/setup.sh"
 	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
+	}
+	if cfg.API.APIURL != "https://example.amika.dev" {
+		t.Errorf("expected api_url %q, got %q", "https://example.amika.dev", cfg.API.APIURL)
+	}
+	if cfg.API.AuthClientID != "client_123" {
+		t.Errorf("expected auth_client_id %q, got %q", "client_123", cfg.API.AuthClientID)
 	}
 	if cfg.Lifecycle.SetupScript != "scripts/setup.sh" {
 		t.Errorf("expected setup_script %q, got %q", "scripts/setup.sh", cfg.Lifecycle.SetupScript)
@@ -84,6 +95,292 @@ func TestLoadConfig_EmptyLifecycleSection(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_APISectionOnly(t *testing.T) {
+	dir := t.TempDir()
+	amikaDir := filepath.Join(dir, ".amika")
+	if err := os.Mkdir(amikaDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := `[api]
+api_url = "https://api.example.test"
+auth_client_id = "client_abc"
+`
+	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := amikaconfig.LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.API.APIURL != "https://api.example.test" {
+		t.Errorf("expected api_url %q, got %q", "https://api.example.test", cfg.API.APIURL)
+	}
+	if cfg.API.AuthClientID != "client_abc" {
+		t.Errorf("expected auth_client_id %q, got %q", "client_abc", cfg.API.AuthClientID)
+	}
+}
+
+func TestLoadGlobalConfig_NotExist(t *testing.T) {
+	home := t.TempDir()
+	setXDGConfigHome(t, filepath.Join(home, ".config"))
+
+	cfg, err := amikaconfig.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg != nil {
+		t.Fatalf("expected nil config, got %+v", cfg)
+	}
+}
+
+func TestLoadGlobalConfig_ValidConfig(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+api_url = "https://global.example.test"
+auth_client_id = "global-client"
+`)
+
+	cfg, err := amikaconfig.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.API.APIURL != "https://global.example.test" {
+		t.Errorf("expected api_url %q, got %q", "https://global.example.test", cfg.API.APIURL)
+	}
+	if cfg.API.AuthClientID != "global-client" {
+		t.Errorf("expected auth_client_id %q, got %q", "global-client", cfg.API.AuthClientID)
+	}
+}
+
+func TestMerge_RepoOverridesGlobal(t *testing.T) {
+	globalCfg := &amikaconfig.Config{
+		API: amikaconfig.APIConfig{
+			APIURL:       "https://global.example.test",
+			AuthClientID: "global-client",
+		},
+		Lifecycle: amikaconfig.LifecycleConfig{
+			SetupScript: "global-setup.sh",
+		},
+		Services: map[string]amikaconfig.ServiceConfig{
+			"api": {Port: int64(8080)},
+			"web": {Port: int64(3000)},
+		},
+	}
+	repoCfg := &amikaconfig.Config{
+		API: amikaconfig.APIConfig{
+			APIURL: "https://repo.example.test",
+		},
+		Lifecycle: amikaconfig.LifecycleConfig{
+			SetupScript: "repo-setup.sh",
+		},
+		Services: map[string]amikaconfig.ServiceConfig{
+			"api":     {Port: int64(9090)},
+			"metrics": {Port: "9091/tcp"},
+		},
+	}
+
+	merged := amikaconfig.Merge(globalCfg, repoCfg)
+	if merged == nil {
+		t.Fatal("expected non-nil merged config")
+	}
+	if merged.API.APIURL != "https://repo.example.test" {
+		t.Errorf("expected repo api_url override, got %q", merged.API.APIURL)
+	}
+	if merged.API.AuthClientID != "global-client" {
+		t.Errorf("expected inherited auth_client_id, got %q", merged.API.AuthClientID)
+	}
+	if merged.Lifecycle.SetupScript != "repo-setup.sh" {
+		t.Errorf("expected repo setup_script override, got %q", merged.Lifecycle.SetupScript)
+	}
+	if got := merged.Services["api"].Port; got != int64(9090) {
+		t.Errorf("expected repo api service override, got %#v", got)
+	}
+	if got := merged.Services["web"].Port; got != int64(3000) {
+		t.Errorf("expected inherited web service, got %#v", got)
+	}
+	if got := merged.Services["metrics"].Port; got != "9091/tcp" {
+		t.Errorf("expected repo metrics service, got %#v", got)
+	}
+}
+
+func TestLoadEffectiveConfig_MergesGlobalAndRepo(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+api_url = "https://global.example.test"
+auth_client_id = "global-client"
+
+[services.api]
+port = 8080
+`)
+
+	repoRoot := t.TempDir()
+	writeConfigFile(t, filepath.Join(repoRoot, ".amika", "config.toml"), `[api]
+auth_client_id = "repo-client"
+
+[services.web]
+port = 3000
+`)
+
+	cfg, err := amikaconfig.LoadEffectiveConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.API.APIURL != "https://global.example.test" {
+		t.Errorf("expected inherited api_url, got %q", cfg.API.APIURL)
+	}
+	if cfg.API.AuthClientID != "repo-client" {
+		t.Errorf("expected repo auth_client_id override, got %q", cfg.API.AuthClientID)
+	}
+	if got := cfg.Services["api"].Port; got != int64(8080) {
+		t.Errorf("expected inherited api service, got %#v", got)
+	}
+	if got := cfg.Services["web"].Port; got != int64(3000) {
+		t.Errorf("expected repo web service, got %#v", got)
+	}
+}
+
+func TestFindRepoRoot_FindsNearestConfig(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeConfigFile(t, filepath.Join(repoRoot, ".amika", "config.toml"), `[api]
+api_url = "https://repo.example.test"
+`)
+	nested := filepath.Join(repoRoot, "subdir", "deeper")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := amikaconfig.FindRepoRoot(nested)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != repoRoot {
+		t.Fatalf("FindRepoRoot() = %q, want %q", got, repoRoot)
+	}
+}
+
+func TestEffectiveAPIURL_PreferenceOrder(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+api_url = "https://global.example.test"
+`)
+	repoRoot := t.TempDir()
+	writeConfigFile(t, filepath.Join(repoRoot, ".amika", "config.toml"), `[api]
+api_url = "https://repo.example.test"
+`)
+
+	clearEnv(t, amikaconfig.EnvAPIURL)
+	got, err := amikaconfig.EffectiveAPIURL(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://repo.example.test" {
+		t.Fatalf("EffectiveAPIURL() = %q, want repo value", got)
+	}
+
+	setEnvValue(t, amikaconfig.EnvAPIURL, "https://env.example.test")
+	got, err = amikaconfig.EffectiveAPIURL(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://env.example.test" {
+		t.Fatalf("EffectiveAPIURL() with env = %q, want env value", got)
+	}
+}
+
+func TestEffectiveAuthClientID_PreferenceOrder(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+auth_client_id = "global-client"
+`)
+	repoRoot := t.TempDir()
+	writeConfigFile(t, filepath.Join(repoRoot, ".amika", "config.toml"), `[api]
+auth_client_id = "repo-client"
+`)
+
+	clearEnv(t, amikaconfig.EnvWorkOSClientID)
+	got, err := amikaconfig.EffectiveAuthClientID(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "repo-client" {
+		t.Fatalf("EffectiveAuthClientID() = %q, want repo value", got)
+	}
+
+	setEnvValue(t, amikaconfig.EnvWorkOSClientID, "env-client")
+	got, err = amikaconfig.EffectiveAuthClientID(repoRoot)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "env-client" {
+		t.Fatalf("EffectiveAuthClientID() with env = %q, want env value", got)
+	}
+}
+
+func TestEffectiveValues_GlobalOnlyAndDefaults(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, ".config")
+	setXDGConfigHome(t, configHome)
+	writeConfigFile(t, filepath.Join(configHome, "amika", "config.toml"), `[api]
+api_url = "https://global.example.test"
+auth_client_id = "global-client"
+`)
+
+	clearEnv(t, amikaconfig.EnvAPIURL)
+	clearEnv(t, amikaconfig.EnvWorkOSClientID)
+
+	apiURL, err := amikaconfig.EffectiveAPIURL("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiURL != "https://global.example.test" {
+		t.Fatalf("EffectiveAPIURL() = %q, want global value", apiURL)
+	}
+
+	clientID, err := amikaconfig.EffectiveAuthClientID("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if clientID != "global-client" {
+		t.Fatalf("EffectiveAuthClientID() = %q, want global value", clientID)
+	}
+
+	os.Remove(filepath.Join(configHome, "amika", "config.toml"))
+
+	apiURL, err = amikaconfig.EffectiveAPIURL("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiURL != apiclient.DefaultAPIURL {
+		t.Fatalf("EffectiveAPIURL() default = %q, want built-in default", apiURL)
+	}
+
+	clientID, err = amikaconfig.EffectiveAuthClientID("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if clientID != amikaconfig.DefaultWorkOSClientID {
+		t.Fatalf("EffectiveAuthClientID() default = %q, want built-in default", clientID)
+	}
+}
+
 // Helper to load a config from TOML content.
 func loadFromTOML(t *testing.T, content string) *amikaconfig.Config {
 	t.Helper()
@@ -103,6 +400,61 @@ func loadFromTOML(t *testing.T, content string) *amikaconfig.Config {
 		t.Fatal("expected non-nil config")
 	}
 	return cfg
+}
+
+func setXDGConfigHome(t *testing.T, path string) {
+	t.Helper()
+	orig, had := os.LookupEnv("XDG_CONFIG_HOME")
+	if err := os.Setenv("XDG_CONFIG_HOME", path); err != nil {
+		t.Fatalf("Setenv(XDG_CONFIG_HOME): %v", err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv("XDG_CONFIG_HOME", orig)
+		} else {
+			_ = os.Unsetenv("XDG_CONFIG_HOME")
+		}
+	})
+}
+
+func writeConfigFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+}
+
+func setEnvValue(t *testing.T, key, value string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.Fatalf("Setenv(%s): %v", key, err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+func clearEnv(t *testing.T, key string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("Unsetenv(%s): %v", key, err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
 }
 
 // Test 1: Single port = 4838 → 4838/tcp

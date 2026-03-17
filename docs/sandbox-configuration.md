@@ -92,7 +92,14 @@ The repository is cloned on the host, copied into a named Docker volume, and mou
 - The volume name is derived from the sandbox name and repo name, e.g. `amika-git-teal-tokyo-Hello-World-<timestamp>`.
 - Deleting the sandbox does not automatically delete the git volume; use `amika volume delete` when you no longer need it.
 
-## Per-repo configuration: `.amika/config.toml`
+## Amika config files
+
+Amika uses a shared config format in two locations:
+
+- Global: `${XDG_CONFIG_HOME}/amika/config.toml`
+- Repo: `.amika/config.toml`
+
+Repo config overrides global config. Environment variables override both.
 
 When you use `--git`, Amika looks for a `.amika/config.toml` file at the root of the repository and applies it automatically. This lets you commit sandbox configuration alongside your code so every collaborator gets the same environment without passing extra flags.
 
@@ -107,11 +114,24 @@ When you use `--git`, Amika looks for a `.amika/config.toml` file at the root of
 ### Supported fields
 
 ```toml
+[api]
+api_url = "https://app.amika.dev"
+auth_client_id = "client_..."
+
 [lifecycle]
 # Path to an executable that is mounted into the container at /usr/local/etc/amikad/setup/setup.sh.
 # Relative paths are resolved from the repository root.
 setup_script = "scripts/setup.sh"
 ```
+
+#### `[api]`
+
+These settings affect remote API access for the CLI and HTTP API:
+
+- `api_url` overrides the Amika API base URL
+- `auth_client_id` overrides the WorkOS client ID used for login and token refresh
+
+Because config is merged, you can put shared defaults in `${XDG_CONFIG_HOME}/amika/config.toml` and override them per repo in `.amika/config.toml`.
 
 #### `[lifecycle].setup_script`
 

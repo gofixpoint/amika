@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/apiclient"
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/spf13/cobra"
@@ -266,13 +267,17 @@ func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, 
 
 // getSecretsClient returns an API client for secrets operations.
 func getSecretsClient() (*apiclient.Client, error) {
-	session, err := auth.GetValidSession(defaultWorkOSClientID)
+	clientID, err := amikaconfig.EffectiveAuthClientIDForDir("")
 	if err != nil {
 		return nil, err
 	}
-	baseURL := os.Getenv(envAPIURL)
-	if baseURL == "" {
-		baseURL = apiclient.DefaultAPIURL
+	session, err := auth.GetValidSession(clientID)
+	if err != nil {
+		return nil, err
+	}
+	baseURL, err := amikaconfig.EffectiveAPIURLForDir("")
+	if err != nil {
+		return nil, err
 	}
 	return apiclient.NewClient(baseURL, session.AccessToken), nil
 }
