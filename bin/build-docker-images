@@ -110,6 +110,10 @@ case "$IMAGE" in
   all)                   PRESETS=(base coder claude daytona-coder daytona-claude) ;;
 esac
 
+# Track what we built/pushed for the summary
+BUILT_IMAGES=()
+PUSHED_SNAPSHOTS=()
+
 # Build images
 for preset in "${PRESETS[@]}"; do
   image_tag="amika/${preset}:${VERSION}"
@@ -138,14 +142,31 @@ for preset in "${PRESETS[@]}"; do
 
   docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT/internal/sandbox/presets")
   docker "${docker_args[@]}"
+  BUILT_IMAGES+=("$image_tag" "$latest_tag")
 
   if [ "$PUSH_DAYTONA" = true ] && [[ "$preset" == daytona-* ]]; then
     for org in amika-prod Fixpoint; do
       daytona organization use "$org"
       echo "Pushing ${image_tag} to Daytona org ${org}..."
       daytona snapshot push "$image_tag" --name "$image_tag"
+      PUSHED_SNAPSHOTS+=("${image_tag} -> ${org}")
     done
   fi
 done
 
+echo ""
+echo "=== Summary ==="
+echo ""
+echo "Built images:"
+for img in "${BUILT_IMAGES[@]}"; do
+  echo "  $img"
+done
+if [ ${#PUSHED_SNAPSHOTS[@]} -gt 0 ]; then
+  echo ""
+  echo "Pushed Daytona snapshots:"
+  for snap in "${PUSHED_SNAPSHOTS[@]}"; do
+    echo "  $snap"
+  done
+fi
+echo ""
 echo "Done."
