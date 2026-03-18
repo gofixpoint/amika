@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/spf13/cobra"
@@ -30,7 +31,17 @@ Opens a browser for you to authorize the CLI.`,
 			clientID = defaultWorkOSClientID
 		}
 
-		session, err := auth.DeviceLogin(clientID)
+		var sessionTTL time.Duration
+		ttlStr, _ := cmd.Flags().GetString("ttl")
+		if ttlStr != "" {
+			var err error
+			sessionTTL, err = auth.ParseDuration(ttlStr)
+			if err != nil {
+				return fmt.Errorf("invalid --ttl value: %w", err)
+			}
+		}
+
+		session, err := auth.DeviceLogin(clientID, sessionTTL)
 		if err != nil {
 			return err
 		}
@@ -86,4 +97,5 @@ func init() {
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authStatusCmd)
 
+	authLoginCmd.Flags().String("ttl", "", "session lifetime (e.g. 60s, 120min, 2h, 7d, 3w); defaults to 7d")
 }

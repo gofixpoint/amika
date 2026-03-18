@@ -12,7 +12,9 @@ import (
 const workosAuthenticateURL = "https://api.workos.com/user_management/authenticate"
 
 // RefreshAccessToken exchanges a refresh token for a new access token via WorkOS.
-func RefreshAccessToken(clientID, refreshToken string) (*WorkOSSession, error) {
+// The sessionExpiresAt value is carried forward from the original login session.
+func RefreshAccessToken(clientID string, oldSession *WorkOSSession) (*WorkOSSession, error) {
+	refreshToken := oldSession.RefreshToken
 	body := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
@@ -53,12 +55,13 @@ func RefreshAccessToken(clientID, refreshToken string) (*WorkOSSession, error) {
 	}
 
 	session := &WorkOSSession{
-		AccessToken:  result.AccessToken,
-		RefreshToken: result.RefreshToken,
-		UserID:       result.User.ID,
-		Email:        result.User.Email,
-		OrgID:        result.OrganizationID,
-		ExpiresAt:    expiresAt,
+		AccessToken:      result.AccessToken,
+		RefreshToken:     result.RefreshToken,
+		UserID:           result.User.ID,
+		Email:            result.User.Email,
+		OrgID:            result.OrganizationID,
+		ExpiresAt:        expiresAt,
+		SessionExpiresAt: oldSession.SessionExpiresAt,
 	}
 
 	if err := SaveSession(*session); err != nil {

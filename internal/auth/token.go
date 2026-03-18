@@ -14,14 +14,18 @@ import (
 
 const sessionFileName = "workos-session.json"
 
+// DefaultSessionTTL is the default duration a login session remains valid.
+const DefaultSessionTTL = 7 * 24 * time.Hour
+
 // WorkOSSession holds the persisted WorkOS authentication state.
 type WorkOSSession struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	UserID       string    `json:"user_id"`
-	Email        string    `json:"email"`
-	OrgID        string    `json:"organization_id"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	AccessToken      string    `json:"access_token"`
+	RefreshToken     string    `json:"refresh_token"`
+	UserID           string    `json:"user_id"`
+	Email            string    `json:"email"`
+	OrgID            string    `json:"organization_id"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	SessionExpiresAt time.Time `json:"session_expires_at"`
 }
 
 func sessionPath() (string, error) {
