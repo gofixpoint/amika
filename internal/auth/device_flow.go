@@ -24,7 +24,12 @@ type deviceCodeResponse struct {
 }
 
 // DeviceLogin performs the OAuth 2.0 Device Authorization Flow via WorkOS.
-func DeviceLogin(clientID string) (*WorkOSSession, error) {
+// The sessionTTL controls how long the overall session remains valid before
+// the user must log in again. Pass 0 to use DefaultSessionTTL.
+func DeviceLogin(clientID string, sessionTTL time.Duration) (*WorkOSSession, error) {
+	if sessionTTL == 0 {
+		sessionTTL = DefaultSessionTTL
+	}
 	// Step 1: Request device code.
 	dc, err := requestDeviceCode(clientID)
 	if err != nil {
@@ -38,7 +43,7 @@ func DeviceLogin(clientID string) (*WorkOSSession, error) {
 	openBrowser(dc.VerificationURIComplete)
 
 	// Step 3: Poll for token.
-	return pollForToken(clientID, dc)
+	return pollForToken(clientID, dc, sessionTTL)
 }
 
 func requestDeviceCode(clientID string) (*deviceCodeResponse, error) {
@@ -72,7 +77,7 @@ func requestDeviceCode(clientID string) (*deviceCodeResponse, error) {
 	return &dc, nil
 }
 
-func pollForToken(clientID string, dc *deviceCodeResponse) (*WorkOSSession, error) {
+func pollForToken(clientID string, dc *deviceCodeResponse, sessionTTL time.Duration) (*WorkOSSession, error) {
 	interval := time.Duration(dc.Interval) * time.Second
 	deadline := time.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
 
@@ -106,7 +111,7 @@ func pollForToken(clientID string, dc *deviceCodeResponse) (*WorkOSSession, erro
 
 		if resp.StatusCode == http.StatusOK {
 			fmt.Println()
-			return parseTokenResponse(respBody)
+			return parseTokenResponse(respBody, sessionTTL)
 		}
 
 		var errResp struct {
@@ -134,7 +139,7 @@ func pollForToken(clientID string, dc *deviceCodeResponse) (*WorkOSSession, erro
 	}
 }
 
-func parseTokenResponse(respBody []byte) (*WorkOSSession, error) {
+func parseTokenResponse(respBody []byte, sessionTTL time.Duration) (*WorkOSSession, error) {
 	var result struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
@@ -154,12 +159,13 @@ func parseTokenResponse(respBody []byte) (*WorkOSSession, error) {
 	}
 
 	session := &WorkOSSession{
-		AccessToken:  result.AccessToken,
-		RefreshToken: result.RefreshToken,
-		UserID:       result.User.ID,
-		Email:        result.User.Email,
-		OrgID:        result.OrganizationID,
-		ExpiresAt:    expiresAt,
+		AccessToken:      result.AccessToken,
+		RefreshToken:     result.RefreshToken,
+		UserID:           result.User.ID,
+		Email:            result.User.Email,
+		OrgID:            result.OrganizationID,
+		ExpiresAt:        expiresAt,
+		SessionExpiresAt: time.Now().Add(sessionTTL),
 	}
 
 	if err := SaveSession(*session); err != nil {

@@ -30,7 +30,7 @@ Opens a browser for you to authorize the CLI.`,
 			clientID = defaultWorkOSClientID
 		}
 
-		session, err := auth.DeviceLogin(clientID)
+		session, err := auth.DeviceLogin(clientID, 0)
 		if err != nil {
 			return err
 		}

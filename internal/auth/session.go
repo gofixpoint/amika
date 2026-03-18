@@ -16,9 +16,14 @@ func GetValidSession(clientID string) (*WorkOSSession, error) {
 		return nil, fmt.Errorf("not logged in, run: amika auth login")
 	}
 
+	// If the overall session has expired, require a fresh login.
+	if !session.SessionExpiresAt.IsZero() && time.Now().After(session.SessionExpiresAt) {
+		return nil, fmt.Errorf("session expired, run: amika auth login")
+	}
+
 	// Refresh if token expires within 60 seconds.
 	if time.Until(session.ExpiresAt) < 60*time.Second {
-		session, err = RefreshAccessToken(clientID, session.RefreshToken)
+		session, err = RefreshAccessToken(clientID, session)
 		if err != nil {
 			return nil, fmt.Errorf("session expired and refresh failed: %w", err)
 		}
