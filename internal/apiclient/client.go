@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// DefaultAPIURL is the default remote API base URL.
-const DefaultAPIURL = "https://app.amika.dev"
-
 // Client calls the remote Amika API with a bearer token.
 type Client struct {
 	BaseURL     string

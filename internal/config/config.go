@@ -10,7 +10,32 @@ import (
 const (
 	// EnvStateDirectory is the environment variable that overrides the default state directory.
 	EnvStateDirectory = "AMIKA_STATE_DIRECTORY"
+	// EnvAPIURL is the environment variable that overrides the default API base URL.
+	EnvAPIURL = "AMIKA_API_URL"
+	// EnvWorkOSClientID is the environment variable that overrides the default WorkOS client ID.
+	EnvWorkOSClientID = "AMIKA_WORKOS_CLIENT_ID"
+
+	// DefaultAPIURL is the default remote API base URL.
+	DefaultAPIURL = "https://app.amika.dev"
+	// DefaultWorkOSClientID is the default WorkOS client ID for device auth.
+	DefaultWorkOSClientID = "client_01KHA495MJS1KT6QBRTYJ239DY"
 )
+
+// APIURL returns the API base URL, checking AMIKA_API_URL first.
+func APIURL() string {
+	if u := os.Getenv(EnvAPIURL); u != "" {
+		return u
+	}
+	return DefaultAPIURL
+}
+
+// WorkOSClientID returns the WorkOS client ID, checking AMIKA_WORKOS_CLIENT_ID first.
+func WorkOSClientID() string {
+	if id := os.Getenv(EnvWorkOSClientID); id != "" {
+		return id
+	}
+	return DefaultWorkOSClientID
+}
 
 // StateDir returns the resolved amika state directory path.
 // It checks AMIKA_STATE_DIRECTORY first, falling back to XDG_STATE_HOME/amika
