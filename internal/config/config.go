@@ -61,3 +61,11 @@ func FileMountsDir() (string, error) {
 	}
 	return basedir.New("").FileMountsDir()
 }
+
+// WorkOSAuthSessionFile returns the resolved WorkOS auth session file path.
+func WorkOSAuthSessionFile() (string, error) {
+	if dir := os.Getenv(EnvStateDirectory); dir != "" {
+		return basedir.WorkOSAuthSessionFileIn(dir), nil
+	}
+	return basedir.New("").WorkOSAuthSessionFile()
+}
