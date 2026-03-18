@@ -12,8 +12,6 @@ import (
 	"github.com/gofixpoint/amika/internal/config"
 )
 
-const sessionFileName = "workos-session.json"
-
 // WorkOSSession holds the persisted WorkOS authentication state.
 type WorkOSSession struct {
 	AccessToken  string    `json:"access_token"`
@@ -24,17 +22,9 @@ type WorkOSSession struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
-func sessionPath() (string, error) {
-	dir, err := config.StateDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, sessionFileName), nil
-}
-
 // SaveSession writes the session to disk with restricted permissions.
 func SaveSession(session WorkOSSession) error {
-	path, err := sessionPath()
+	path, err := config.WorkOSAuthSessionFile()
 	if err != nil {
 		return err
 	}
@@ -50,7 +40,7 @@ func SaveSession(session WorkOSSession) error {
 
 // LoadSession reads the persisted session. Returns nil, nil if no session file exists.
 func LoadSession() (*WorkOSSession, error) {
-	path, err := sessionPath()
+	path, err := config.WorkOSAuthSessionFile()
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +60,7 @@ func LoadSession() (*WorkOSSession, error) {
 
 // DeleteSession removes the persisted session file.
 func DeleteSession() error {
-	path, err := sessionPath()
+	path, err := config.WorkOSAuthSessionFile()
 	if err != nil {
 		return err
 	}

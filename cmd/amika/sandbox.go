@@ -34,8 +34,6 @@ var sandboxCmd = &cobra.Command{
 
 const sandboxConnectWorkdir = "/home/amika"
 
-const envAPIURL = "AMIKA_API_URL"
-
 // TODO: Parse env variables from an environment file (e.g. .amika/.env or ~/.config/amika/env)
 // so users don't need to export AMIKA_API_URL, AMIKA_WORKOS_CLIENT_ID, etc. in their shell profile.
 
@@ -54,7 +52,7 @@ func sandboxMode(cmd *cobra.Command) string {
 	// Default: if logged in with a valid session, include remote; otherwise local.
 	// GetValidSession refreshes expired tokens; if that fails the session is
 	// unusable and we fall back to local-only without blocking the command.
-	if _, err := auth.GetValidSession(defaultWorkOSClientID); err != nil {
+	if _, err := auth.GetValidSession(config.WorkOSClientID()); err != nil {
 		return "local"
 	}
 	return "both"
@@ -62,7 +60,7 @@ func sandboxMode(cmd *cobra.Command) string {
 
 // isLoggedIn returns true if a valid (or refreshable) WorkOS session exists.
 func isLoggedIn() bool {
-	_, err := auth.GetValidSession(defaultWorkOSClientID)
+	_, err := auth.GetValidSession(config.WorkOSClientID())
 	return err == nil
 }
 
@@ -89,15 +87,7 @@ func getRemoteTarget(cmd *cobra.Command) (string, error) {
 func getRemoteClient(target string) (*apiclient.Client, error) {
 	// TODO: when named-remote config is added, look up target here.
 	_ = target
-	session, err := auth.GetValidSession(defaultWorkOSClientID)
-	if err != nil {
-		return nil, err
-	}
-	baseURL := os.Getenv(envAPIURL)
-	if baseURL == "" {
-		baseURL = apiclient.DefaultAPIURL
-	}
-	return apiclient.NewClient(baseURL, session.AccessToken), nil
+	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewWorkOSTokenSource(config.WorkOSClientID())), nil
 }
 
 var runSandboxConnect = func(name, shell string, stdin io.Reader, stdout, stderr io.Writer) error {

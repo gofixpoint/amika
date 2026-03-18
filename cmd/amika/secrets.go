@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofixpoint/amika/internal/apiclient"
 	"github.com/gofixpoint/amika/internal/auth"
+	"github.com/gofixpoint/amika/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -266,15 +267,7 @@ func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, 
 
 // getSecretsClient returns an API client for secrets operations.
 func getSecretsClient() (*apiclient.Client, error) {
-	session, err := auth.GetValidSession(defaultWorkOSClientID)
-	if err != nil {
-		return nil, err
-	}
-	baseURL := os.Getenv(envAPIURL)
-	if baseURL == "" {
-		baseURL = apiclient.DefaultAPIURL
-	}
-	return apiclient.NewClient(baseURL, session.AccessToken), nil
+	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewWorkOSTokenSource(config.WorkOSClientID())), nil
 }
 
 // parseOnlyFilter splits a comma-separated list of secret names into a set.

@@ -17,6 +17,7 @@ const (
 	volumesStateFile    = "volumes.jsonl"
 	fileMountsStateFile = "rwcopy-mounts.jsonl"
 	fileMountsDir       = "rwcopy-mounts.d"
+	workosSessionFile   = "workos-session.json"
 	envXDGConfigHome    = "XDG_CONFIG_HOME"
 	envXDGDataHome      = "XDG_DATA_HOME"
 	envXDGCacheHome     = "XDG_CACHE_HOME"
@@ -44,6 +45,7 @@ type Paths interface {
 	VolumesStateFile() (string, error)
 	FileMountsStateFile() (string, error)
 	FileMountsDir() (string, error)
+	WorkOSAuthSessionFile() (string, error)
 }
 
 type xdgPaths struct {
@@ -207,6 +209,14 @@ func (p *xdgPaths) FileMountsDir() (string, error) {
 	return FileMountsDirIn(dir), nil
 }
 
+func (p *xdgPaths) WorkOSAuthSessionFile() (string, error) {
+	dir, err := p.AmikaStateDir()
+	if err != nil {
+		return "", err
+	}
+	return WorkOSAuthSessionFileIn(dir), nil
+}
+
 // MountsStateFileIn returns the mounts state file path under the given state directory.
 func MountsStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, mountsStateFile)
@@ -230,4 +240,9 @@ func FileMountsStateFileIn(stateDir string) string {
 // FileMountsDirIn returns the file mounts directory path under the given state directory.
 func FileMountsDirIn(stateDir string) string {
 	return filepath.Join(stateDir, fileMountsDir)
+}
+
+// WorkOSAuthSessionFileIn returns the WorkOS auth session file path under the given state directory.
+func WorkOSAuthSessionFileIn(stateDir string) string {
+	return filepath.Join(stateDir, workosSessionFile)
 }
