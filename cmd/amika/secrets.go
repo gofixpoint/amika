@@ -266,15 +266,11 @@ func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, 
 
 // getSecretsClient returns an API client for secrets operations.
 func getSecretsClient() (*apiclient.Client, error) {
-	session, err := auth.GetValidSession(defaultWorkOSClientID)
-	if err != nil {
-		return nil, err
-	}
 	baseURL := os.Getenv(envAPIURL)
 	if baseURL == "" {
 		baseURL = apiclient.DefaultAPIURL
 	}
-	return apiclient.NewClient(baseURL, session.AccessToken), nil
+	return apiclient.NewClientWithTokenSource(baseURL, apiclient.NewWorkOSTokenSource(defaultWorkOSClientID)), nil
 }
 
 // parseOnlyFilter splits a comma-separated list of secret names into a set.

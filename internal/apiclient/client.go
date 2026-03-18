@@ -17,15 +17,20 @@ const DefaultAPIURL = "https://app.amika.dev"
 // Client calls the remote Amika API with a bearer token.
 type Client struct {
 	BaseURL     string
-	AccessToken string
+	TokenSource TokenSource
 	HTTP        *http.Client
 }
 
-// NewClient creates a Client for the given base URL and access token.
+// NewClient creates a Client for the given base URL and static access token.
 func NewClient(baseURL, accessToken string) *Client {
+	return NewClientWithTokenSource(baseURL, NewStaticTokenSource(accessToken))
+}
+
+// NewClientWithTokenSource creates a Client that obtains its bearer token from the given TokenSource.
+func NewClientWithTokenSource(baseURL string, ts TokenSource) *Client {
 	return &Client{
 		BaseURL:     strings.TrimRight(baseURL, "/"),
-		AccessToken: accessToken,
+		TokenSource: ts,
 		HTTP:        &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -163,7 +168,11 @@ func (c *Client) doJSON(method, path string, body interface{}, out interface{}) 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.AccessToken)
+	token, err := c.TokenSource.Token()
+	if err != nil {
+		return fmt.Errorf("obtaining auth token: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

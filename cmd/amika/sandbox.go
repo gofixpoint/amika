@@ -89,15 +89,11 @@ func getRemoteTarget(cmd *cobra.Command) (string, error) {
 func getRemoteClient(target string) (*apiclient.Client, error) {
 	// TODO: when named-remote config is added, look up target here.
 	_ = target
-	session, err := auth.GetValidSession(defaultWorkOSClientID)
-	if err != nil {
-		return nil, err
-	}
 	baseURL := os.Getenv(envAPIURL)
 	if baseURL == "" {
 		baseURL = apiclient.DefaultAPIURL
 	}
-	return apiclient.NewClient(baseURL, session.AccessToken), nil
+	return apiclient.NewClientWithTokenSource(baseURL, apiclient.NewWorkOSTokenSource(defaultWorkOSClientID)), nil
 }
 
 var runSandboxConnect = func(name, shell string, stdin io.Reader, stdout, stderr io.Writer) error {
