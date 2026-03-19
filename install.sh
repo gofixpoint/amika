@@ -3,7 +3,7 @@ set -eu
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
-DEFAULT_VERSION="0.1.0-rc.1"
+DEFAULT_VERSION="0.1.0"
 INSTALL_VERSION="$DEFAULT_VERSION"
 DRY_RUN=false
 
