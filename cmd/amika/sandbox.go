@@ -1672,12 +1672,18 @@ Examples:
 		// The last field is the user@host (or host) destination.
 		remoteHost := fields[len(fields)-1]
 
-		cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+remoteHost, "/home/amika/workspace")
+		remotePath := "/home/amika/workspace"
+		if info.RepoName != "" {
+			remotePath = remotePath + "/" + info.RepoName
+		}
+
+		cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+remoteHost, remotePath)
 		cursorCmd.Stdin = os.Stdin
 		cursorCmd.Stdout = os.Stdout
 		cursorCmd.Stderr = os.Stderr
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", name, remoteHost)
+		fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", remoteHost, remotePath)
 		fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in Cursor to open it.\n")
 		if err := cursorCmd.Run(); err != nil {
 			// Provide a helpful hint if the error might be related to the SSH remote extension.

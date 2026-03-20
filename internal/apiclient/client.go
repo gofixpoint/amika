@@ -74,6 +74,7 @@ type SSHInfo struct {
 	SSHDestination string `json:"ssh_destination"`
 	Token          string `json:"token"`
 	ExpiresAt      string `json:"expires_at"`
+	RepoName       string `json:"repo_name"`
 }
 
 // GetSSH retrieves SSH connection details for a remote sandbox.
