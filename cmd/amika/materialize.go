@@ -29,8 +29,9 @@ func validateScriptCmdFlags(script, cmdStr string, trailingArgs []string) error 
 }
 
 var topMaterializeCmd = &cobra.Command{
-	Use:   "materialize [-- script-args...]",
-	Short: "Run a script or command in an ephemeral Docker container and copy outputs to a destination",
+	Use:    "materialize [-- script-args...]",
+	Short:  "Run a script or command in an ephemeral Docker container and copy outputs to a destination",
+	Hidden: true,
 	Long: `Run a script or command in an ephemeral Docker container and copy output
 files to a destination directory.
 
