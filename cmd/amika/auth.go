@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/config"
@@ -55,20 +56,28 @@ var authStatusCmd = &cobra.Command{
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
 
+		out := cmd.OutOrStdout()
+
+		// Check for API key auth.
+		if apiKey := os.Getenv("AMIKA_API_KEY"); apiKey != "" {
+			fmt.Fprintln(out, "Authenticated via AMIKA_API_KEY environment variable")
+			return nil
+		}
+
 		session, err := auth.LoadSession()
 		if err != nil {
 			return err
 		}
 		if session == nil {
-			fmt.Fprintln(cmd.OutOrStdout(), "Not logged in")
+			fmt.Fprintln(out, "Not logged in")
 			return nil
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s", session.Email)
+		fmt.Fprintf(out, "Logged in as %s", session.Email)
 		if session.OrgID != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), " (org: %s)", session.OrgID)
+			fmt.Fprintf(out, " (org: %s)", session.OrgID)
 		}
-		fmt.Fprintln(cmd.OutOrStdout())
+		fmt.Fprintln(out)
 		return nil
 	},
 }

@@ -84,9 +84,13 @@ func getRemoteTarget(cmd *cobra.Command) (string, error) {
 }
 
 // getRemoteClient returns an API client authenticated with the current session.
+// If AMIKA_API_KEY is set, it is used as a static bearer token instead of the WorkOS session.
 func getRemoteClient(target string) (*apiclient.Client, error) {
 	// TODO: when named-remote config is added, look up target here.
 	_ = target
+	if apiKey := os.Getenv("AMIKA_API_KEY"); apiKey != "" {
+		return apiclient.NewClient(config.APIURL(), apiKey), nil
+	}
 	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewWorkOSTokenSource(config.WorkOSClientID())), nil
 }
 
