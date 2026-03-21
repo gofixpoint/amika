@@ -1545,14 +1545,16 @@ func resolveGitURL(value string) (string, error) {
 }
 
 var sandboxSSHCmd = &cobra.Command{
-	Use:   "ssh <name>",
+	Use:   "ssh <name> [-- <command>...]",
 	Short: "SSH into a remote sandbox",
 	Long: `Connect to a remote sandbox via SSH, or revoke SSH access.
+Optionally pass a command to execute on the remote sandbox instead of opening an interactive session.
 
 Examples:
   amika sandbox ssh my-sandbox
+  amika sandbox ssh my-sandbox -- ls -la
   amika sandbox ssh my-sandbox --revoke`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 		cmd.SilenceErrors = true
@@ -1606,6 +1608,12 @@ Examples:
 
 		// Parse destination and exec ssh.
 		sshArgs := strings.Fields(info.SSHDestination)
+
+		// Append any extra arguments (commands to run remotely).
+		if len(args) > 1 {
+			sshArgs = append(sshArgs, args[1:]...)
+		}
+
 		sshCmd := exec.Command("ssh", sshArgs...)
 		sshCmd.Stdin = os.Stdin
 		sshCmd.Stdout = os.Stdout
