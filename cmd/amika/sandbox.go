@@ -1610,6 +1610,89 @@ Examples:
 	},
 }
 
+var sandboxCodeCmd = &cobra.Command{
+	Use:   "code <name>",
+	Short: "Open a remote sandbox in an editor via SSH",
+	Long: `Open a remote sandbox in an editor (e.g. Cursor) using SSH remote access.
+
+Examples:
+  amika sandbox code my-sandbox
+  amika sandbox code my-sandbox --editor=cursor`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+		cmd.SilenceErrors = true
+
+		name := args[0]
+		editor, _ := cmd.Flags().GetString("editor")
+
+		// Currently only cursor is supported.
+		if editor != "cursor" {
+			return fmt.Errorf("unsupported editor %q; currently only \"cursor\" is supported", editor)
+		}
+
+		// Check if this is a local sandbox.
+		sandboxesFile, err := config.SandboxesStateFile()
+		if err == nil {
+			store := sandbox.NewStore(sandboxesFile)
+			if _, err := store.Get(name); err == nil {
+				return fmt.Errorf("code command currently only works for remote sandboxes; %q is a local sandbox", name)
+			}
+		}
+
+		// Check that cursor CLI is available.
+		if _, err := exec.LookPath("cursor"); err != nil {
+			return fmt.Errorf("cursor CLI is not installed or not in PATH; install it from Cursor > Settings > Extensions > cursor-cli")
+		}
+
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
+			return err
+		}
+
+		client, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
+
+		info, err := client.GetSSH(name)
+		if err != nil {
+			return err
+		}
+
+		if info.SSHDestination == "" {
+			return fmt.Errorf("server returned empty SSH destination")
+		}
+
+		// Build the ssh-remote+ URI for cursor.
+		// SSHDestination may include flags (e.g. "-o StrictHostKeyChecking=no user@host"),
+		// but cursor needs just the host/user@host portion as the remote identifier.
+		sshDest := info.SSHDestination
+		fields := strings.Fields(sshDest)
+		// The last field is the user@host (or host) destination.
+		remoteHost := fields[len(fields)-1]
+
+		remotePath := "/home/amika/workspace"
+		if info.RepoName != "" {
+			remotePath = remotePath + "/" + info.RepoName
+		}
+
+		cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+remoteHost, remotePath)
+		cursorCmd.Stdin = os.Stdin
+		cursorCmd.Stdout = os.Stdout
+		cursorCmd.Stderr = os.Stderr
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", name, remoteHost)
+		fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", remoteHost, remotePath)
+		fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in Cursor to open it.\n")
+		if err := cursorCmd.Run(); err != nil {
+			// Provide a helpful hint if the error might be related to the SSH remote extension.
+			return fmt.Errorf("cursor failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in Cursor", err)
+		}
+		return nil
+	},
+}
+
 func appendPresetRuntimeEnv(env []string) []string {
 	for _, key := range []string{"OPENCODE_SERVER_PASSWORD", "AMIKA_OPENCODE_WEB"} {
 		if hasEnvKey(env, key) {
@@ -1629,6 +1712,7 @@ func init() {
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
 	sandboxCmd.AddCommand(sandboxSSHCmd)
+	sandboxCmd.AddCommand(sandboxCodeCmd)
 
 	// Persistent flags for local/remote mode
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
@@ -1656,4 +1740,5 @@ func init() {
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
+	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor to open (currently only \"cursor\" is supported)")
 }
