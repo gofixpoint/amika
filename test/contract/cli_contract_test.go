@@ -21,13 +21,13 @@ func TestSandboxCreateNoCleanRequiresGit(t *testing.T) {
 	}
 }
 
-func TestSecretsExtractHelpContract(t *testing.T) {
+func TestSecretExtractHelpContract(t *testing.T) {
 	bin := testutil.BuildAmikaBinary(t)
 
-	cmd := exec.Command(bin, "secrets", "extract", "--help")
+	cmd := exec.Command(bin, "secret", "extract", "--help")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("secrets extract --help failed: %v\n%s", err, string(out))
+		t.Fatalf("secret extract --help failed: %v\n%s", err, string(out))
 	}
 	text := string(out)
 	if !strings.Contains(text, "--push") {
@@ -41,13 +41,13 @@ func TestSecretsExtractHelpContract(t *testing.T) {
 	}
 }
 
-func TestSecretsPushHelpContract(t *testing.T) {
+func TestSecretPushHelpContract(t *testing.T) {
 	bin := testutil.BuildAmikaBinary(t)
 
-	cmd := exec.Command(bin, "secrets", "push", "--help")
+	cmd := exec.Command(bin, "secret", "push", "--help")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("secrets push --help failed: %v\n%s", err, string(out))
+		t.Fatalf("secret push --help failed: %v\n%s", err, string(out))
 	}
 	text := string(out)
 	if !strings.Contains(text, "--from-env") {

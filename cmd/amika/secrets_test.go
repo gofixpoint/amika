@@ -17,11 +17,11 @@ func TestSecretsExtract_MappingAndSorting(t *testing.T) {
 	writeJSONFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"open-key"}`)
 	writeJSONFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{"foo-bar":{"type":"api","key":"foo-key"}}`)
 
-	cmd := exec.Command(bin, "secrets", "extract", "--homedir", home)
+	cmd := exec.Command(bin, "secret", "extract", "--homedir", home)
 	cmd.Env = withXDGEnv(home)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("amika secrets extract failed: %v\n%s", err, out)
+		t.Fatalf("amika secret extract failed: %v\n%s", err, out)
 	}
 
 	text := string(out)
@@ -41,11 +41,11 @@ func TestSecretsExtract_NoOAuth(t *testing.T) {
 	writeJSONFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"tokens":{"access_token":"codex-oauth"}}`)
 	writeJSONFixture(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{"openai":{"type":"oauth","access":"op-open"},"groq":{"type":"oauth","access":"op-groq"}}`)
 
-	cmdWithOAuth := exec.Command(bin, "secrets", "extract", "--homedir", home)
+	cmdWithOAuth := exec.Command(bin, "secret", "extract", "--homedir", home)
 	cmdWithOAuth.Env = withXDGEnv(home)
 	outWithOAuth, err := cmdWithOAuth.CombinedOutput()
 	if err != nil {
-		t.Fatalf("amika secrets extract failed: %v\n%s", err, outWithOAuth)
+		t.Fatalf("amika secret extract failed: %v\n%s", err, outWithOAuth)
 	}
 	textWithOAuth := string(outWithOAuth)
 	if !strings.Contains(textWithOAuth, "ANTHROPIC_API_KEY") {
@@ -58,11 +58,11 @@ func TestSecretsExtract_NoOAuth(t *testing.T) {
 		t.Fatalf("expected OpenCode OAuth generic credential in output, got:\n%s", textWithOAuth)
 	}
 
-	cmdNoOAuth := exec.Command(bin, "secrets", "extract", "--homedir", home, "--no-oauth")
+	cmdNoOAuth := exec.Command(bin, "secret", "extract", "--homedir", home, "--no-oauth")
 	cmdNoOAuth.Env = withXDGEnv(home)
 	outNoOAuth, err := cmdNoOAuth.CombinedOutput()
 	if err != nil {
-		t.Fatalf("amika secrets extract --no-oauth failed: %v\n%s", err, outNoOAuth)
+		t.Fatalf("amika secret extract --no-oauth failed: %v\n%s", err, outNoOAuth)
 	}
 	text := string(outNoOAuth)
 	if !strings.Contains(text, "No secrets discovered") {
@@ -77,11 +77,11 @@ func TestSecretsExtract_OnlyFilter(t *testing.T) {
 	writeJSONFixture(t, filepath.Join(home, ".claude.json"), `{"apiKey":"sk-ant-anth-key"}`)
 	writeJSONFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"open-key"}`)
 
-	cmd := exec.Command(bin, "secrets", "extract", "--homedir", home, "--only=ANTHROPIC_API_KEY")
+	cmd := exec.Command(bin, "secret", "extract", "--homedir", home, "--only=ANTHROPIC_API_KEY")
 	cmd.Env = withXDGEnv(home)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("amika secrets extract --only failed: %v\n%s", err, out)
+		t.Fatalf("amika secret extract --only failed: %v\n%s", err, out)
 	}
 
 	text := string(out)
@@ -99,11 +99,11 @@ func TestSecretsExtract_OnlyFilterNoMatch(t *testing.T) {
 
 	writeJSONFixture(t, filepath.Join(home, ".claude.json"), `{"apiKey":"sk-ant-anth-key"}`)
 
-	cmd := exec.Command(bin, "secrets", "extract", "--homedir", home, "--only=NONEXISTENT_KEY")
+	cmd := exec.Command(bin, "secret", "extract", "--homedir", home, "--only=NONEXISTENT_KEY")
 	cmd.Env = withXDGEnv(home)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("amika secrets extract --only failed: %v\n%s", err, out)
+		t.Fatalf("amika secret extract --only failed: %v\n%s", err, out)
 	}
 
 	if !strings.Contains(string(out), "No secrets match the --only filter") {
@@ -117,7 +117,7 @@ func TestSecretsExtract_ParseError(t *testing.T) {
 
 	writeJSONFixture(t, filepath.Join(home, ".claude.json"), `{not-json}`)
 
-	cmd := exec.Command(bin, "secrets", "extract", "--homedir", home)
+	cmd := exec.Command(bin, "secret", "extract", "--homedir", home)
 	cmd.Env = withXDGEnv(home)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -131,7 +131,7 @@ func TestSecretsExtract_ParseError(t *testing.T) {
 func TestSecretsPush_InvalidArg(t *testing.T) {
 	bin := buildAmika(t)
 
-	cmd := exec.Command(bin, "secrets", "push", "NOEQUALS")
+	cmd := exec.Command(bin, "secret", "push", "NOEQUALS")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected non-zero exit code, got success\noutput:\n%s", out)
@@ -144,7 +144,7 @@ func TestSecretsPush_InvalidArg(t *testing.T) {
 func TestSecretsPush_NoArgs(t *testing.T) {
 	bin := buildAmika(t)
 
-	cmd := exec.Command(bin, "secrets", "push")
+	cmd := exec.Command(bin, "secret", "push")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected non-zero exit code, got success\noutput:\n%s", out)
@@ -157,7 +157,7 @@ func TestSecretsPush_NoArgs(t *testing.T) {
 func TestSecretsPush_FromEnvMissing(t *testing.T) {
 	bin := buildAmika(t)
 
-	cmd := exec.Command(bin, "secrets", "push", "--from-env=DEFINITELY_NOT_SET_XYZ")
+	cmd := exec.Command(bin, "secret", "push", "--from-env=DEFINITELY_NOT_SET_XYZ")
 	// Ensure the env var is not set.
 	cmd.Env = append(os.Environ(), "DEFINITELY_NOT_SET_XYZ=")
 	// Actually remove it by filtering.
@@ -175,6 +175,24 @@ func TestSecretsPush_FromEnvMissing(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "is not set") {
 		t.Fatalf("expected 'is not set' error, got:\n%s", out)
+	}
+}
+
+func TestSecretsPluralAlias(t *testing.T) {
+	bin := buildAmika(t)
+	home := t.TempDir()
+
+	writeJSONFixture(t, filepath.Join(home, ".claude.json"), `{"apiKey":"sk-ant-anth-key"}`)
+
+	cmd := exec.Command(bin, "secrets", "extract", "--homedir", home)
+	cmd.Env = withXDGEnv(home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("amika secrets (plural alias) extract failed: %v\n%s", err, out)
+	}
+
+	if !strings.Contains(string(out), "ANTHROPIC_API_KEY") {
+		t.Fatalf("expected ANTHROPIC_API_KEY in output from plural alias, got:\n%s", out)
 	}
 }
 
