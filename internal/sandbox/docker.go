@@ -56,6 +56,16 @@ func buildDockerImageWithArgs(name string, contextDir string, dockerfileRelPath 
 	return nil
 }
 
+// GetDockerContainerState returns the state of a Docker container (e.g. "running", "exited").
+func GetDockerContainerState(name string) (string, error) {
+	cmd := exec.Command("docker", "inspect", "--format", "{{.State.Status}}", name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect docker container %q: %s", name, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // RemoveDockerSandbox stops and removes the Docker container with the given name.
 func RemoveDockerSandbox(name string) error {
 	cmd := exec.Command("docker", "rm", "-f", name)

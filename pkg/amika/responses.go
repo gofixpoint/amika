@@ -3,6 +3,7 @@ package amika
 // Sandbox is a tracked sandbox description.
 type Sandbox struct {
 	Name        string
+	State       string
 	Provider    string
 	ContainerID string
 	Image       string
