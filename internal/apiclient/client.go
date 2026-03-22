@@ -47,7 +47,7 @@ type RemoteSandbox struct {
 	Name      string `json:"name"`
 	Provider  string `json:"provider"`
 	GitHubURL string `json:"github_url"`
-	Status    string `json:"status"`
+	State     string `json:"state"`
 	CreatedAt string `json:"created_at"`
 }
 

@@ -481,6 +481,14 @@ var sandboxListCmd = &cobra.Command{
 			}
 			for i := range result.Items {
 				result.Items[i].Location = "local"
+				if result.Items[i].Provider == "docker" {
+					state, err := sandbox.GetDockerContainerState(result.Items[i].Name)
+					if err != nil {
+						result.Items[i].State = "unknown"
+					} else {
+						result.Items[i].State = state
+					}
+				}
 			}
 			allItems = append(allItems, result.Items...)
 		}
@@ -497,6 +505,7 @@ var sandboxListCmd = &cobra.Command{
 			for _, rs := range remoteSandboxes {
 				allItems = append(allItems, amika.Sandbox{
 					Name:      rs.Name,
+					State:     rs.State,
 					Provider:  rs.Provider,
 					CreatedAt: rs.CreatedAt,
 					Location:  "remote",
@@ -510,9 +519,9 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tLOCATION\tPROVIDER\tIMAGE\tPORTS\tCREATED")
+		fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tPROVIDER\tIMAGE\tPORTS\tCREATED")
 		for _, sb := range allItems {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.Location, sb.Provider, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Provider, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
 		}
 		w.Flush()
 		return nil
