@@ -616,23 +616,48 @@ var sandboxConnectCmd = &cobra.Command{
 			return err
 		}
 
+		// Try local sandbox first.
 		sandboxesFile, err := config.SandboxesStateFile()
+		if err == nil {
+			store := sandbox.NewStore(sandboxesFile)
+			if info, err := store.Get(name); err == nil {
+				if info.Provider != "docker" {
+					return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
+				}
+				if err := runSandboxConnect(name, shell, os.Stdin, os.Stdout, os.Stderr); err != nil {
+					return fmt.Errorf("failed to connect to sandbox %q with shell %q: %w", name, shell, err)
+				}
+				return nil
+			}
+		}
+
+		// Not found locally — try remote SSH.
+		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
 		}
-		store := sandbox.NewStore(sandboxesFile)
-		info, err := store.Get(name)
+
+		client, err := getRemoteClient(target)
 		if err != nil {
-			return fmt.Errorf("sandbox %q not found", name)
-		}
-		if info.Provider != "docker" {
-			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", info.Provider)
+			return err
 		}
 
-		if err := runSandboxConnect(name, shell, os.Stdin, os.Stdout, os.Stderr); err != nil {
-			return fmt.Errorf("failed to connect to sandbox %q with shell %q: %w", name, shell, err)
+		info, err := client.GetSSH(name)
+		if err != nil {
+			return err
 		}
-		return nil
+
+		if info.SSHDestination == "" {
+			return fmt.Errorf("server returned empty SSH destination")
+		}
+
+		sshArgs := strings.Fields(info.SSHDestination)
+
+		sshCmd := exec.Command("ssh", sshArgs...)
+		sshCmd.Stdin = os.Stdin
+		sshCmd.Stdout = os.Stdout
+		sshCmd.Stderr = os.Stderr
+		return sshCmd.Run()
 	},
 }
 
