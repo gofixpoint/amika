@@ -415,6 +415,23 @@ var sandboxDeleteCmd = &cobra.Command{
 	Long:    `Delete one or more sandboxes and remove their backing containers.`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+
+		if !force {
+			reader := bufio.NewReader(cmd.InOrStdin())
+			confirmed, err := confirmAction(
+				fmt.Sprintf("Delete sandbox(es) %s?", strings.Join(args, ", ")),
+				reader,
+			)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
+
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -1062,6 +1079,27 @@ func runGitOutput(repo string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
+}
+
+func confirmAction(message string, reader *bufio.Reader) (bool, error) {
+	for {
+		fmt.Printf("%s [y/n] ", message)
+		answer, err := reader.ReadString('\n')
+		if err != nil {
+			return false, fmt.Errorf("failed to read confirmation: %w", err)
+		}
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		switch answer {
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		case "":
+			fmt.Println("Please enter 'y' or 'n'.")
+		default:
+			fmt.Println("Invalid response. Please enter 'y' or 'n'.")
+		}
+	}
 }
 
 func promptForConfirmation(reader *bufio.Reader) (bool, error) {
@@ -1857,6 +1895,7 @@ func init() {
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
 	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
+	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
