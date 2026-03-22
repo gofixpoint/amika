@@ -100,6 +100,14 @@ func (c *Client) RevokeSSH(name, token string) error {
 	return nil
 }
 
+// StopSandbox stops a sandbox on the remote API.
+func (c *Client) StopSandbox(name string) error {
+	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/stop", nil, nil); err != nil {
+		return fmt.Errorf("remote stop sandbox: %w", err)
+	}
+	return nil
+}
+
 // DeleteSandbox deletes a sandbox on the remote API.
 func (c *Client) DeleteSandbox(name string) error {
 	if err := c.doJSON("DELETE", "/api/sandboxes/"+name, nil, nil); err != nil {
