@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,6 +94,21 @@ var volumeDeleteCmd = &cobra.Command{
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
+
+		if !force {
+			reader := bufio.NewReader(cmd.InOrStdin())
+			confirmed, err := confirmAction(
+				fmt.Sprintf("Delete volume(s) %s?", strings.Join(args, ", ")),
+				reader,
+			)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
 
 		volumesFile, err := config.VolumesStateFile()
 		if err != nil {
