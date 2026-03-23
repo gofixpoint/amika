@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -670,11 +671,15 @@ var sandboxConnectCmd = &cobra.Command{
 
 		sshArgs := strings.Fields(info.SSHDestination)
 
-		sshCmd := exec.Command("ssh", sshArgs...)
-		sshCmd.Stdin = os.Stdin
-		sshCmd.Stdout = os.Stdout
-		sshCmd.Stderr = os.Stderr
-		return sshCmd.Run()
+		// Use syscall.Exec to replace this process with ssh, so that
+		// stdin/stdout/stderr and signals pass through directly with no
+		// intermediary process.
+		sshBin, err := exec.LookPath("ssh")
+		if err != nil {
+			return fmt.Errorf("ssh not found: %w", err)
+		}
+		// argv[0] must be the program name.
+		return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
 	},
 }
 
@@ -1696,8 +1701,12 @@ var sandboxSSHCmd = &cobra.Command{
 	Long: `Connect to a remote sandbox via SSH, or revoke SSH access.
 Optionally pass a command to execute on the remote sandbox instead of opening an interactive session.
 
+Use -t to force pseudo-terminal allocation, which is useful for running interactive
+programs on the remote sandbox (equivalent to ssh -t).
+
 Examples:
   amika sandbox ssh my-sandbox
+  amika sandbox ssh -t my-sandbox -- top
   amika sandbox ssh my-sandbox -- ls -la
   amika sandbox ssh my-sandbox --revoke`,
 	Args: cobra.MinimumNArgs(1),
@@ -1755,16 +1764,28 @@ Examples:
 		// Parse destination and exec ssh.
 		sshArgs := strings.Fields(info.SSHDestination)
 
+		// Insert -t before the destination if pseudo-terminal allocation is requested.
+		forcePTY, _ := cmd.Flags().GetBool("t")
+		if forcePTY {
+			// Insert -t before the last element (the destination host).
+			dest := sshArgs[len(sshArgs)-1]
+			sshArgs = append(sshArgs[:len(sshArgs)-1], "-t", dest)
+		}
+
 		// Append any extra arguments (commands to run remotely).
 		if len(args) > 1 {
 			sshArgs = append(sshArgs, args[1:]...)
 		}
 
-		sshCmd := exec.Command("ssh", sshArgs...)
-		sshCmd.Stdin = os.Stdin
-		sshCmd.Stdout = os.Stdout
-		sshCmd.Stderr = os.Stderr
-		return sshCmd.Run()
+		// Use syscall.Exec to replace this process with ssh, so that
+		// stdin/stdout/stderr and signals pass through directly with no
+		// intermediary process.
+		sshBin, err := exec.LookPath("ssh")
+		if err != nil {
+			return fmt.Errorf("ssh not found: %w", err)
+		}
+		// argv[0] must be the program name.
+		return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
 	},
 }
 
@@ -1899,6 +1920,7 @@ func init() {
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
+	sandboxSSHCmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
 	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor to open (currently only \"cursor\" is supported)")
 }
