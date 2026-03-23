@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     vim \
     nano \
+    tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22.
