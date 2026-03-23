@@ -241,6 +241,49 @@ See [auth.md](auth.md) for details on supported credential sources and priority.
 
 ---
 
+## `amika secret`
+
+Manage secrets in the remote Amika secrets store. See [secrets.md](secrets.md) for details on the env file format and usage.
+
+### `amika secret extract`
+
+Discover locally stored credentials and optionally push them to the remote store.
+
+```bash
+amika secret extract
+amika secret extract --push
+amika secret extract --push --only=ANTHROPIC_API_KEY,OPENAI_API_KEY
+```
+
+| Flag               | Default | Description                                                                                |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------ |
+| `--push`           | `false` | Push discovered secrets to the remote store after confirmation                             |
+| `--only <keys>`    |         | Comma-separated list of secret names to include (e.g. `ANTHROPIC_API_KEY,OPENAI_API_KEY`) |
+| `--scope <scope>`  | `user`  | Secret scope: `user` (private) or `org` (visible to org members)                          |
+| `--homedir <path>` |         | Override home directory used for credential discovery                                      |
+| `--no-oauth`       | `false` | Skip OAuth credential sources                                                              |
+
+### `amika secret push`
+
+Push secrets to the remote store from inline arguments, environment variables, or a `.env` file.
+
+```bash
+amika secret push ANTHROPIC_API_KEY=sk-ant-xxx
+amika secret push --from-env=ANTHROPIC_API_KEY,OPENAI_API_KEY
+amika secret push --from-file=.env
+amika secret push --from-file=.env CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY
+```
+
+| Flag               | Default | Description                                                                                |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------ |
+| `--from-env <keys>` |         | Comma-separated list of environment variable names to read and push                        |
+| `--from-file <path>`|         | Path to a `.env` file containing `KEY=VALUE` secrets. See [secrets.md](secrets.md)         |
+| `--scope <scope>`  | `user`  | Secret scope: `user` (private) or `org` (visible to org members)                          |
+
+When multiple sources are used, positional arguments override `--from-file` values, and `--from-env` overrides both.
+
+---
+
 ## `amika materialize`
 
 Run a script or command in an ephemeral Docker container and copy outputs to a destination directory.

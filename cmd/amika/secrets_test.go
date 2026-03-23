@@ -196,6 +196,173 @@ func TestSecretsPluralAlias(t *testing.T) {
 	}
 }
 
+func TestParseEnvFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantKeys []string
+		wantVals map[string]string
+		wantErr  string
+	}{
+		{
+			name:     "basic key-value pairs",
+			content:  "FOO=bar\nBAZ=qux\n",
+			wantKeys: []string{"FOO", "BAZ"},
+			wantVals: map[string]string{"FOO": "bar", "BAZ": "qux"},
+		},
+		{
+			name:     "comments and blank lines",
+			content:  "# This is a comment\n\nFOO=bar\n  # Indented comment\n\nBAZ=qux\n",
+			wantKeys: []string{"FOO", "BAZ"},
+			wantVals: map[string]string{"FOO": "bar", "BAZ": "qux"},
+		},
+		{
+			name:     "values with hash kept verbatim",
+			content:  "PASSWORD=abc#123\nURL=https://example.com#fragment\n",
+			wantKeys: []string{"PASSWORD", "URL"},
+			wantVals: map[string]string{"PASSWORD": "abc#123", "URL": "https://example.com#fragment"},
+		},
+		{
+			name:     "quotes kept verbatim",
+			content:  "FOO=\"bar baz\"\nBAR='single'\n",
+			wantKeys: []string{"FOO", "BAR"},
+			wantVals: map[string]string{"FOO": "\"bar baz\"", "BAR": "'single'"},
+		},
+		{
+			name:     "empty value",
+			content:  "FOO=\n",
+			wantKeys: []string{"FOO"},
+			wantVals: map[string]string{"FOO": ""},
+		},
+		{
+			name:     "value with equals sign",
+			content:  "CONNECTION=postgres://user:pass@host/db?opt=val\n",
+			wantKeys: []string{"CONNECTION"},
+			wantVals: map[string]string{"CONNECTION": "postgres://user:pass@host/db?opt=val"},
+		},
+		{
+			name:     "duplicate keys last wins",
+			content:  "FOO=first\nFOO=second\n",
+			wantKeys: []string{"FOO"},
+			wantVals: map[string]string{"FOO": "second"},
+		},
+		{
+			name:     "empty file",
+			content:  "",
+			wantKeys: nil,
+			wantVals: map[string]string{},
+		},
+		{
+			name:     "only comments",
+			content:  "# comment\n# another\n",
+			wantKeys: nil,
+			wantVals: map[string]string{},
+		},
+		{
+			name:    "line without equals",
+			content: "FOO=bar\nBADLINE\n",
+			wantErr: "invalid line",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".env")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+
+			gotVals, gotKeys, err := parseEnvFile(path)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got: %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(gotKeys) != len(tt.wantKeys) {
+				t.Fatalf("keys = %v, want %v", gotKeys, tt.wantKeys)
+			}
+			for i, k := range gotKeys {
+				if k != tt.wantKeys[i] {
+					t.Errorf("keys[%d] = %q, want %q", i, k, tt.wantKeys[i])
+				}
+			}
+			for k, want := range tt.wantVals {
+				if got := gotVals[k]; got != want {
+					t.Errorf("value[%q] = %q, want %q", k, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParseEnvFile_NotFound(t *testing.T) {
+	_, _, err := parseEnvFile("/nonexistent/path/.env")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if !strings.Contains(err.Error(), "opening env file") {
+		t.Fatalf("expected 'opening env file' error, got: %v", err)
+	}
+}
+
+func TestSecretsPush_FromFile(t *testing.T) {
+	bin := buildAmika(t)
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("# API keys\nANTHROPIC_API_KEY=sk-ant-test-key-12345678\nOPENAI_API_KEY=sk-openai-test-key-12345678\n"), 0644); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	// Run with --from-file; it will display the secrets and prompt, then fail
+	// because stdin is empty (no "y" confirmation). That's fine — we just
+	// verify the parsing and display worked.
+	cmd := exec.Command(bin, "secret", "push", "--from-file="+envFile)
+	out, _ := cmd.CombinedOutput()
+	text := string(out)
+	if !strings.Contains(text, "ANTHROPIC_API_KEY") {
+		t.Errorf("expected ANTHROPIC_API_KEY in output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "OPENAI_API_KEY") {
+		t.Errorf("expected OPENAI_API_KEY in output, got:\n%s", text)
+	}
+}
+
+func TestSecretsPush_FromFileMissing(t *testing.T) {
+	bin := buildAmika(t)
+
+	cmd := exec.Command(bin, "secret", "push", "--from-file=/nonexistent/.env")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit code, got success\noutput:\n%s", out)
+	}
+	if !strings.Contains(string(out), "opening env file") {
+		t.Fatalf("expected 'opening env file' error, got:\n%s", out)
+	}
+}
+
+func TestSecretsPush_FromFileBadLine(t *testing.T) {
+	bin := buildAmika(t)
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("GOOD=value\nBADLINE\n"), 0644); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+
+	cmd := exec.Command(bin, "secret", "push", "--from-file="+envFile)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit code, got success\noutput:\n%s", out)
+	}
+	if !strings.Contains(string(out), "invalid line") {
+		t.Fatalf("expected 'invalid line' error, got:\n%s", out)
+	}
+}
+
 func TestMaskValue(t *testing.T) {
 	tests := []struct {
 		input string
