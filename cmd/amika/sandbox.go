@@ -130,6 +130,10 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		printLocalOnlyNotice(cmd)
 
+		if secretFlags, _ := cmd.Flags().GetStringArray("secret"); len(secretFlags) > 0 {
+			return fmt.Errorf("--secret requires --remote mode; secrets are resolved by the remote API")
+		}
+
 		provider, _ := cmd.Flags().GetString("provider")
 		name, _ := cmd.Flags().GetString("name")
 		image, _ := cmd.Flags().GetString("image")
@@ -862,6 +866,80 @@ func parseVolumeFlags(flags []string) ([]sandbox.MountBinding, error) {
 		})
 	}
 	return mounts, nil
+}
+
+// parseSecretFlags parses --secret flag values. Supported syntax:
+//   - env:FOO=SECRET_NAME — inject secret SECRET_NAME as env var FOO
+//   - env:SECRET_NAME     — shorthand: env var name equals the secret name
+func parseSecretFlags(flags []string) ([]apiclient.SecretRef, error) {
+	var refs []apiclient.SecretRef
+	seenEnv := make(map[string]bool)
+
+	for _, raw := range flags {
+		idx := strings.Index(raw, ":")
+		if idx < 0 {
+			return nil, fmt.Errorf("invalid --secret format %q: expected type prefix (e.g. env:SECRET_NAME or env:FOO=SECRET_NAME)", raw)
+		}
+
+		prefix := raw[:idx]
+		value := raw[idx+1:]
+
+		switch prefix {
+		case "file":
+			return nil, fmt.Errorf("file: secret type is not yet supported")
+		case "env":
+			// ok
+		default:
+			return nil, fmt.Errorf("unknown secret type %q in %q: supported types are \"env\"", prefix, raw)
+		}
+
+		var envVar, secretName string
+		if eqIdx := strings.Index(value, "="); eqIdx >= 0 {
+			envVar = value[:eqIdx]
+			secretName = value[eqIdx+1:]
+		} else {
+			envVar = value
+			secretName = value
+		}
+
+		if envVar == "" {
+			return nil, fmt.Errorf("empty env var name in --secret %q", raw)
+		}
+		if secretName == "" {
+			return nil, fmt.Errorf("empty secret name in --secret %q", raw)
+		}
+		if seenEnv[envVar] {
+			return nil, fmt.Errorf("duplicate env var %q in --secret flags", envVar)
+		}
+		seenEnv[envVar] = true
+
+		refs = append(refs, apiclient.SecretRef{
+			Name:   secretName,
+			EnvVar: envVar,
+		})
+	}
+	return refs, nil
+}
+
+// parseEnvVarFlags parses --env flag values (KEY=VALUE) into a map.
+func parseEnvVarFlags(flags []string) (map[string]string, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	envVars := make(map[string]string, len(flags))
+	for _, raw := range flags {
+		eqIdx := strings.Index(raw, "=")
+		if eqIdx < 0 {
+			return nil, fmt.Errorf("invalid --env format %q: expected KEY=VALUE", raw)
+		}
+		key := raw[:eqIdx]
+		val := raw[eqIdx+1:]
+		if key == "" {
+			return nil, fmt.Errorf("empty key in --env %q", raw)
+		}
+		envVars[key] = val
+	}
+	return envVars, nil
 }
 
 func validateMountTargets(bindMounts, volumeMounts []sandbox.MountBinding) error {
@@ -1636,6 +1714,8 @@ func hasEnvKey(env []string, key string) bool {
 func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	name, _ := cmd.Flags().GetString("name")
 	gitValue, _ := cmd.Flags().GetString("git")
+	secretFlags, _ := cmd.Flags().GetStringArray("secret")
+	envFlags, _ := cmd.Flags().GetStringArray("env")
 
 	var gitURL string
 	if cmd.Flags().Changed("git") {
@@ -1644,6 +1724,16 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 			return err
 		}
 		gitURL = resolved
+	}
+
+	secrets, err := parseSecretFlags(secretFlags)
+	if err != nil {
+		return err
+	}
+
+	envVars, err := parseEnvVarFlags(envFlags)
+	if err != nil {
+		return err
 	}
 
 	client, err := getRemoteClient(target)
@@ -1655,6 +1745,8 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		Name:      name,
 		Provider:  "daytona",
 		GitHubURL: gitURL,
+		EnvVars:   envVars,
+		Secrets:   secrets,
 	}
 
 	sb, err := client.CreateSandbox(req)
@@ -1913,6 +2005,7 @@ func init() {
 	sandboxCreateCmd.Flags().Lookup("git").NoOptDefVal = "."
 	sandboxCreateCmd.Flags().Bool("no-clean", false, "With --git, include untracked files from working tree instead of a clean clone")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
+	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
 	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")

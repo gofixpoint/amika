@@ -34,11 +34,19 @@ func NewClientWithTokenSource(baseURL string, ts TokenSource) *Client {
 
 // CreateSandboxRequest is the request body for POST /api/sandboxes.
 type CreateSandboxRequest struct {
-	Name               string `json:"name,omitempty"`
-	Provider           string `json:"provider,omitempty"`
-	GitHubURL          string `json:"github_url,omitempty"`
-	AutoStopInterval   *int   `json:"auto_stop_interval,omitempty"`
-	AutoDeleteInterval *int   `json:"auto_delete_interval,omitempty"`
+	Name               string            `json:"name,omitempty"`
+	Provider           string            `json:"provider,omitempty"`
+	GitHubURL          string            `json:"github_url,omitempty"`
+	AutoStopInterval   *int              `json:"auto_stop_interval,omitempty"`
+	AutoDeleteInterval *int              `json:"auto_delete_interval,omitempty"`
+	EnvVars            map[string]string `json:"env_vars,omitempty"`
+	Secrets            []SecretRef       `json:"secrets,omitempty"`
+}
+
+// SecretRef references a named secret to inject into a sandbox.
+type SecretRef struct {
+	Name   string `json:"name"`
+	EnvVar string `json:"env_var,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.
