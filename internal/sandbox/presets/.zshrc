@@ -35,3 +35,11 @@ zstyle ':completion:*' verbose true
 
 zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#)*=0=01;31'
 zstyle ':completion:*:kill:*' command 'ps -u $USER -o pid,%cpu,tty,cputime,cmd'
+
+# Auto-cd into the repo directory inside ~/workspace if there is exactly one.
+if [[ -d ~/workspace ]]; then
+  local -a repos=(~/workspace/*(N/))
+  if (( ${#repos} == 1 )); then
+    cd "${repos[1]}"
+  fi
+fi
