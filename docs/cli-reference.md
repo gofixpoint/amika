@@ -255,13 +255,13 @@ amika secret extract --push
 amika secret extract --push --only=ANTHROPIC_API_KEY,OPENAI_API_KEY
 ```
 
-| Flag               | Default | Description                                                                                |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------ |
-| `--push`           | `false` | Push discovered secrets to the remote store after confirmation                             |
+| Flag               | Default | Description                                                                               |
+| ------------------ | ------- | ----------------------------------------------------------------------------------------- |
+| `--push`           | `false` | Push discovered secrets to the remote store after confirmation                            |
 | `--only <keys>`    |         | Comma-separated list of secret names to include (e.g. `ANTHROPIC_API_KEY,OPENAI_API_KEY`) |
 | `--scope <scope>`  | `user`  | Secret scope: `user` (private) or `org` (visible to org members)                          |
-| `--homedir <path>` |         | Override home directory used for credential discovery                                      |
-| `--no-oauth`       | `false` | Skip OAuth credential sources                                                              |
+| `--homedir <path>` |         | Override home directory used for credential discovery                                     |
+| `--no-oauth`       | `false` | Skip OAuth credential sources                                                             |
 
 ### `amika secret push`
 
@@ -274,11 +274,11 @@ amika secret push --from-file=.env
 amika secret push --from-file=.env CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY
 ```
 
-| Flag               | Default | Description                                                                                |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------ |
-| `--from-env <keys>` |         | Comma-separated list of environment variable names to read and push                        |
-| `--from-file <path>`|         | Path to a `.env` file containing `KEY=VALUE` secrets. See [secrets.md](secrets.md)         |
-| `--scope <scope>`  | `user`  | Secret scope: `user` (private) or `org` (visible to org members)                          |
+| Flag                 | Default | Description                                                                        |
+| -------------------- | ------- | ---------------------------------------------------------------------------------- |
+| `--from-env <keys>`  |         | Comma-separated list of environment variable names to read and push                |
+| `--from-file <path>` |         | Path to a `.env` file containing `KEY=VALUE` secrets. See [secrets.md](secrets.md) |
+| `--scope <scope>`    | `user`  | Secret scope: `user` (private) or `org` (visible to org members)                   |
 
 When multiple sources are used, positional arguments override `--from-file` values, and `--from-env` overrides both.
 
