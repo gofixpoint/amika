@@ -148,23 +148,46 @@ func newSecretPushCmd() *cobra.Command {
 		Short: "Push secrets to the remote Amika secrets store",
 		Long: `Push secrets to the remote Amika secrets store.
 
-Secrets can be provided as KEY=VALUE positional arguments and/or read from
-the current environment using --from-env.
+Secrets can be provided as KEY=VALUE positional arguments, read from
+the current environment using --from-env, or loaded from a .env file
+using --from-file.
+
+When multiple sources are used, positional arguments override --from-file
+values, and --from-env overrides both.
+
+The .env file format is Docker-style: blank lines and lines starting with #
+are skipped, and values are taken verbatim (no quote stripping).
 
 Examples:
   amika secret push ANTHROPIC_API_KEY=sk-ant-xxx
   amika secret push --from-env=ANTHROPIC_API_KEY,OPENAI_API_KEY
-  amika secret push CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY`,
+  amika secret push --from-file=.env
+  amika secret push --from-file=.env CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
 
 			fromEnvFlag, _ := cmd.Flags().GetString("from-env")
+			fromFileFlag, _ := cmd.Flags().GetString("from-file")
 			scope, _ := cmd.Flags().GetString("scope")
 
-			// Collect secrets from positional args.
+			// Collect secrets from --from-file first (lowest priority).
 			secrets := make(map[string]string)
 			var keys []string
+			if fromFileFlag != "" {
+				fileSecrets, fileKeys, err := parseEnvFile(fromFileFlag)
+				if err != nil {
+					return err
+				}
+				for _, key := range fileKeys {
+					if _, exists := secrets[key]; !exists {
+						keys = append(keys, key)
+					}
+					secrets[key] = fileSecrets[key]
+				}
+			}
+
+			// Collect secrets from positional args (override file).
 			for _, arg := range args {
 				idx := strings.IndexByte(arg, '=')
 				if idx < 1 {
@@ -178,7 +201,7 @@ Examples:
 				secrets[key] = value
 			}
 
-			// Collect secrets from environment.
+			// Collect secrets from environment (override both).
 			if fromEnvFlag != "" {
 				for _, name := range strings.Split(fromEnvFlag, ",") {
 					name = strings.TrimSpace(name)
@@ -197,7 +220,7 @@ Examples:
 			}
 
 			if len(secrets) == 0 {
-				return fmt.Errorf("no secrets provided; pass KEY=VALUE args or use --from-env")
+				return fmt.Errorf("no secrets provided; pass KEY=VALUE args, use --from-env, or use --from-file")
 			}
 
 			// Display and confirm.
@@ -252,9 +275,53 @@ Examples:
 	}
 
 	cmd.Flags().String("from-env", "", "Comma-separated list of environment variable names to read and push (e.g. ANTHROPIC_API_KEY,OPENAI_API_KEY)")
+	cmd.Flags().String("from-file", "", "Path to a .env file containing KEY=VALUE secrets (one per line)")
 	cmd.Flags().String("scope", "user", "Secret scope: \"user\" (default, private) or \"org\" (visible to org members)")
 
 	return cmd
+}
+
+// parseEnvFile reads a .env file and returns the secrets and their keys in order.
+// The format is Docker-style: blank lines and lines starting with # are skipped.
+// Each non-empty, non-comment line must contain KEY=VALUE, split on the first =.
+// Values are taken verbatim (no quote stripping or inline comment handling).
+func parseEnvFile(path string) (map[string]string, []string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening env file: %w", err)
+	}
+	defer f.Close()
+
+	secrets := make(map[string]string)
+	var keys []string
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+
+		// Skip blank lines and comments.
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		idx := strings.IndexByte(line, '=')
+		if idx < 1 {
+			return nil, nil, fmt.Errorf("%s:%d: invalid line %q: expected KEY=VALUE", path, lineNum, line)
+		}
+
+		key := strings.TrimSpace(line[:idx])
+		value := line[idx+1:]
+		if _, exists := secrets[key]; !exists {
+			keys = append(keys, key)
+		}
+		secrets[key] = value
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, nil, fmt.Errorf("reading env file %s: %w", path, err)
+	}
+	return secrets, keys, nil
 }
 
 // pushSecret creates or updates a single secret. It returns the action taken ("Created" or "Updated").
