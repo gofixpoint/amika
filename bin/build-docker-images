@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-#/ Usage: bin/build-docker-images <image> [--platform <platform>] [--ignore-unstaged] [--push-daytona]
+#/ Usage: bin/build-docker-images <image>... [--platform <platform>] [--ignore-unstaged] [--push-daytona]
 #/
 #/ Build preset Docker images and tag them with the current git commit.
 #/ By default, builds for the host architecture. With --push-daytona,
@@ -9,8 +9,10 @@ set -euo pipefail
 #/ Daytona variant images.
 #/
 #/ Arguments:
-#/   <image>              One of: amika/base, amika/coder, amika/claude,
-#/                        amika/daytona-coder, amika/daytona-claude, all
+#/   <image>...            One or more of: amika/base, amika/coder, amika/claude,
+#/                         amika/daytona-coder, amika/daytona-claude,
+#/                         amika/dind, amika/coder-dind,
+#/                         amika/daytona-coder-dind, all
 #/
 #/ Options:
 #/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
@@ -23,12 +25,30 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Determine git version tag
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
+VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
+
 usage() {
   grep '^#/' "$0" | cut -c4-
 }
 
+# Returns the preset dependency chain for a given image name.
+image_presets() {
+  case "$1" in
+    amika/base)              echo "base" ;;
+    amika/coder)             echo "base coder" ;;
+    amika/claude)            echo "base claude" ;;
+    amika/daytona-coder)     echo "base coder daytona-coder" ;;
+    amika/daytona-claude)    echo "base claude daytona-claude" ;;
+    amika/dind)              echo "base dind" ;;
+    amika/coder-dind)        echo "base dind coder-dind" ;;
+    amika/daytona-coder-dind) echo "base dind coder-dind daytona-coder-dind" ;;
+    all)                     echo "base coder claude daytona-coder daytona-claude dind coder-dind daytona-coder-dind" ;;
+    *) return 1 ;;
+  esac
+}
+
 # Parse arguments
-IMAGE=""
+IMAGES=()
 PLATFORM=""
 IGNORE_UNSTAGED=false
 PUSH_DAYTONA=false
@@ -44,28 +64,24 @@ while [ $# -gt 0 ]; do
     --push-daytona)    PUSH_DAYTONA=true; shift ;;
     --help)            usage; exit 0 ;;
     -*)                echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
-    *)
-      if [ -z "$IMAGE" ]; then
-        IMAGE="$1"
-      else
-        echo "Unexpected argument: $1" >&2; usage >&2; exit 1
-      fi
-      shift ;;
+    *)                 IMAGES+=("$1"); shift ;;
   esac
 done
 
-if [ -z "$IMAGE" ]; then
-  echo "Error: <image> argument is required." >&2
+if [ ${#IMAGES[@]} -eq 0 ]; then
+  echo "Error: at least one <image> argument is required." >&2
   echo "" >&2
   usage >&2
   exit 1
 fi
 
-# Validate image argument
-case "$IMAGE" in
-  amika/base|amika/coder|amika/claude|amika/daytona-coder|amika/daytona-claude|all) ;;
-  *) echo "Error: <image> must be one of: amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, all" >&2; exit 1 ;;
-esac
+# Validate image arguments
+for img in "${IMAGES[@]}"; do
+  if ! image_presets "$img" > /dev/null 2>&1; then
+    echo "Error: unknown image \"$img\". Must be one of: $VALID_IMAGES" >&2
+    exit 1
+  fi
+done
 
 # Validate --platform value
 if [ -n "$PLATFORM" ]; then
@@ -99,16 +115,21 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
   fi
 fi
 
-# Determine which presets to build in dependency order.
+# Merge all requested images into a single deduplicated preset list,
+# preserving dependency order.
 PRESETS=()
-case "$IMAGE" in
-  amika/base)            PRESETS=(base) ;;
-  amika/coder)           PRESETS=(base coder) ;;
-  amika/claude)          PRESETS=(base claude) ;;
-  amika/daytona-coder)   PRESETS=(base coder daytona-coder) ;;
-  amika/daytona-claude)  PRESETS=(base claude daytona-claude) ;;
-  all)                   PRESETS=(base coder claude daytona-coder daytona-claude) ;;
-esac
+SEEN_PRESETS=""
+for img in "${IMAGES[@]}"; do
+  for p in $(image_presets "$img"); do
+    case " $SEEN_PRESETS " in
+      *" $p "*) ;;  # already seen
+      *)
+        PRESETS+=("$p")
+        SEEN_PRESETS="$SEEN_PRESETS $p"
+        ;;
+    esac
+  done
+done
 
 # Track what we built/pushed for the summary
 BUILT_IMAGES=()
@@ -137,6 +158,15 @@ for preset in "${PRESETS[@]}"; do
       ;;
     daytona-claude)
       docker_args+=(--build-arg "CLAUDE_IMAGE=amika/claude:${VERSION}")
+      ;;
+    dind)
+      docker_args+=(--build-arg "BASE_IMAGE=amika/base:${VERSION}")
+      ;;
+    coder-dind)
+      docker_args+=(--build-arg "DIND_IMAGE=amika/dind:${VERSION}")
+      ;;
+    daytona-coder-dind)
+      docker_args+=(--build-arg "CODER_DIND_IMAGE=amika/coder-dind:${VERSION}")
       ;;
   esac
 

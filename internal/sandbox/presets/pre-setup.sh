@@ -55,6 +55,7 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
     exit 1
   fi
 
+  # shellcheck disable=SC2024  # redirect is by root shell (intended); sudo switches the process user
   sudo -H -u amika \
     nohup env OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" \
     /usr/lib/amikad/opencode-setup.sh "$amika_agent_cwd" "$OPENCODE_WEB_PORT" \
@@ -62,6 +63,11 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
 
   echo "$!" > "$AMIKA_RUN_DIR/opencode-web.pid"
   echo "$OPENCODE_WEB_PORT" > "$AMIKA_RUN_DIR/opencode-web.port"
+fi
+
+# Start Docker daemon if this is a DinD image (marker file baked into the image).
+if [[ -f /usr/local/etc/amika/dind-enabled ]]; then
+  /usr/lib/amikad/docker-setup.sh
 fi
 
 sudo chown -R amika:amika /home/amika

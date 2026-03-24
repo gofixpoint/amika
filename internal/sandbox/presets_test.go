@@ -8,7 +8,7 @@ import (
 )
 
 func TestGetPresetDockerfile_ReturnsDockerfilesForKnownPresets(t *testing.T) {
-	for _, preset := range []string{"base", "coder", "claude", "daytona-coder", "daytona-claude"} {
+	for _, preset := range []string{"base", "coder", "claude", "daytona-coder", "daytona-claude", "dind", "coder-dind", "daytona-coder-dind"} {
 		data, err := GetPresetDockerfile(preset)
 		if err != nil {
 			t.Fatalf("unexpected error for %s: %v", preset, err)
@@ -20,7 +20,7 @@ func TestGetPresetDockerfile_ReturnsDockerfilesForKnownPresets(t *testing.T) {
 }
 
 func TestGetPresetDockerfile_PreservesAgentCWDForPreSetup(t *testing.T) {
-	for _, preset := range []string{"coder", "claude"} {
+	for _, preset := range []string{"coder", "claude", "coder-dind"} {
 		data, err := GetPresetDockerfile(preset)
 		if err != nil {
 			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
@@ -33,7 +33,7 @@ func TestGetPresetDockerfile_PreservesAgentCWDForPreSetup(t *testing.T) {
 }
 
 func TestGetPresetDockerfile_PreservesOpenCodeEnvForPreSetup(t *testing.T) {
-	for _, preset := range []string{"coder", "claude"} {
+	for _, preset := range []string{"coder", "claude", "coder-dind"} {
 		data, err := GetPresetDockerfile(preset)
 		if err != nil {
 			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
@@ -49,7 +49,7 @@ func TestGetPresetDockerfile_PreservesOpenCodeEnvForPreSetup(t *testing.T) {
 }
 
 func TestGetPresetDockerfile_RunsAllHooksThroughLogger(t *testing.T) {
-	for _, preset := range []string{"coder", "claude"} {
+	for _, preset := range []string{"coder", "claude", "coder-dind"} {
 		data, err := GetPresetDockerfile(preset)
 		if err != nil {
 			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
@@ -113,7 +113,7 @@ func TestGetPresetDockerfile_BaseChownsUserManagedAmikaDirectories(t *testing.T)
 }
 
 func TestGetPresetDockerfile_DaytonaVariantsClearEntrypoint(t *testing.T) {
-	for _, preset := range []string{"daytona-coder", "daytona-claude"} {
+	for _, preset := range []string{"daytona-coder", "daytona-claude", "daytona-coder-dind"} {
 		data, err := GetPresetDockerfile(preset)
 		if err != nil {
 			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
@@ -161,6 +161,9 @@ func TestWritePresetBuildContext_ExtractsZshrc(t *testing.T) {
 		filepath.Join("claude", "Dockerfile"),
 		filepath.Join("daytona-coder", "Dockerfile"),
 		filepath.Join("daytona-claude", "Dockerfile"),
+		filepath.Join("dind", "Dockerfile"),
+		filepath.Join("coder-dind", "Dockerfile"),
+		filepath.Join("daytona-coder-dind", "Dockerfile"),
 	} {
 		data, err = os.ReadFile(filepath.Join(contextDir, relPath))
 		if err != nil {

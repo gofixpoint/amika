@@ -39,6 +39,12 @@ func presetBuildOrder(preset string) ([]string, error) {
 		return []string{"base", "coder", "daytona-coder"}, nil
 	case "daytona-claude":
 		return []string{"base", "claude", "daytona-claude"}, nil
+	case "dind":
+		return []string{"base", "dind"}, nil
+	case "coder-dind":
+		return []string{"base", "dind", "coder-dind"}, nil
+	case "daytona-coder-dind":
+		return []string{"base", "dind", "coder-dind", "daytona-coder-dind"}, nil
 	default:
 		return nil, fmt.Errorf("unknown preset %q", preset)
 	}
@@ -52,6 +58,12 @@ func presetBuildArgs(preset string) map[string]string {
 		return map[string]string{"CODER_IMAGE": presetImageName("coder")}
 	case "daytona-claude":
 		return map[string]string{"CLAUDE_IMAGE": presetImageName("claude")}
+	case "dind":
+		return map[string]string{"BASE_IMAGE": presetImageName("base")}
+	case "coder-dind":
+		return map[string]string{"DIND_IMAGE": presetImageName("dind")}
+	case "daytona-coder-dind":
+		return map[string]string{"CODER_DIND_IMAGE": presetImageName("coder-dind")}
 	default:
 		return nil
 	}
