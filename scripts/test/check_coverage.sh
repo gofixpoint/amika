@@ -18,6 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 internal_pkgs="$(go list ./internal/... | grep -Ev '/internal/mount($|/)')"
+# shellcheck disable=SC2086  # intentional word-splitting: $internal_pkgs contains multiple package paths
 go test $internal_pkgs -coverprofile="$tmp_internal" >/dev/null
 go test ./cmd/amika -coverprofile="$tmp_cmd" >/dev/null
 

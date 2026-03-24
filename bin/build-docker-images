@@ -118,13 +118,16 @@ fi
 # Merge all requested images into a single deduplicated preset list,
 # preserving dependency order.
 PRESETS=()
-declare -A SEEN_PRESETS=()
+SEEN_PRESETS=""
 for img in "${IMAGES[@]}"; do
   for p in $(image_presets "$img"); do
-    if [ -z "${SEEN_PRESETS[$p]:-}" ]; then
-      PRESETS+=("$p")
-      SEEN_PRESETS[$p]=1
-    fi
+    case " $SEEN_PRESETS " in
+      *" $p "*) ;;  # already seen
+      *)
+        PRESETS+=("$p")
+        SEEN_PRESETS="$SEEN_PRESETS $p"
+        ;;
+    esac
   done
 done
 

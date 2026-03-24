@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint ci setup
+.PHONY: goenv build build-cli build-server clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
 
 UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 GOFMT_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
@@ -63,7 +63,10 @@ fmtcheck:
 lint: goenv
 	go run github.com/mgechev/revive@v1.14.0 -set_exit_status -config revive.toml ./...
 
-ci: fmtcheck vet lint build test-unit test-integration test-contract coverage
+shellcheck:
+	shellcheck bin/* internal/sandbox/presets/*.sh scripts/test/*.sh install.sh setup-repo.sh materialization-scripts/*.sh
+
+ci: shellcheck fmtcheck vet lint build test-unit test-integration test-contract coverage
 
 setup:
 	./setup-repo.sh

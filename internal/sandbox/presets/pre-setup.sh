@@ -55,6 +55,7 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
     exit 1
   fi
 
+  # shellcheck disable=SC2024  # redirect is by root shell (intended); sudo switches the process user
   sudo -H -u amika \
     nohup env OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" \
     /usr/lib/amikad/opencode-setup.sh "$amika_agent_cwd" "$OPENCODE_WEB_PORT" \
