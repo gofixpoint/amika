@@ -664,26 +664,7 @@ var sandboxConnectCmd = &cobra.Command{
 			return err
 		}
 
-		info, err := client.GetSSH(name)
-		if err != nil {
-			return err
-		}
-
-		if info.SSHDestination == "" {
-			return fmt.Errorf("server returned empty SSH destination")
-		}
-
-		sshArgs := strings.Fields(info.SSHDestination)
-
-		// Use syscall.Exec to replace this process with ssh, so that
-		// stdin/stdout/stderr and signals pass through directly with no
-		// intermediary process.
-		sshBin, err := exec.LookPath("ssh")
-		if err != nil {
-			return fmt.Errorf("ssh not found: %w", err)
-		}
-		// argv[0] must be the program name.
-		return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
+		return execSSH(client, name, false, nil)
 	},
 }
 
@@ -1755,6 +1736,12 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q created (remote)\n", sb.Name)
+
+	connect, _ := cmd.Flags().GetBool("connect")
+	if connect {
+		return execSSH(client, sb.Name, false, nil)
+	}
+
 	return nil
 }
 
@@ -1785,6 +1772,36 @@ func resolveGitURL(value string) (string, error) {
 		return "", fmt.Errorf("origin remote %q is a local path; specify a git HTTP(S) or SSH URL directly with --git <url>", origin)
 	}
 	return origin, nil
+}
+
+// execSSH retrieves SSH connection info for a remote sandbox and replaces the
+// current process with ssh. When forcePTY is true, -t is passed to ssh.
+// extraArgs are appended after the destination (remote commands).
+func execSSH(client *apiclient.Client, name string, forcePTY bool, extraArgs []string) error {
+	info, err := client.GetSSH(name)
+	if err != nil {
+		return err
+	}
+	if info.SSHDestination == "" {
+		return fmt.Errorf("server returned empty SSH destination")
+	}
+
+	sshArgs := strings.Fields(info.SSHDestination)
+
+	if forcePTY {
+		dest := sshArgs[len(sshArgs)-1]
+		sshArgs = append(sshArgs[:len(sshArgs)-1], "-t", dest)
+	}
+
+	if len(extraArgs) > 0 {
+		sshArgs = append(sshArgs, extraArgs...)
+	}
+
+	sshBin, err := exec.LookPath("ssh")
+	if err != nil {
+		return fmt.Errorf("ssh not found: %w", err)
+	}
+	return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
 }
 
 var sandboxSSHCmd = &cobra.Command{
@@ -1844,40 +1861,12 @@ Examples:
 			return nil
 		}
 
-		info, err := client.GetSSH(name)
-		if err != nil {
-			return err
-		}
-
-		if info.SSHDestination == "" {
-			return fmt.Errorf("server returned empty SSH destination")
-		}
-
-		// Parse destination and exec ssh.
-		sshArgs := strings.Fields(info.SSHDestination)
-
-		// Insert -t before the destination if pseudo-terminal allocation is requested.
 		forcePTY, _ := cmd.Flags().GetBool("t")
-		if forcePTY {
-			// Insert -t before the last element (the destination host).
-			dest := sshArgs[len(sshArgs)-1]
-			sshArgs = append(sshArgs[:len(sshArgs)-1], "-t", dest)
-		}
-
-		// Append any extra arguments (commands to run remotely).
+		var extraArgs []string
 		if len(args) > 1 {
-			sshArgs = append(sshArgs, args[1:]...)
+			extraArgs = args[1:]
 		}
-
-		// Use syscall.Exec to replace this process with ssh, so that
-		// stdin/stdout/stderr and signals pass through directly with no
-		// intermediary process.
-		sshBin, err := exec.LookPath("ssh")
-		if err != nil {
-			return fmt.Errorf("ssh not found: %w", err)
-		}
-		// argv[0] must be the program name.
-		return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
+		return execSSH(client, name, forcePTY, extraArgs)
 	},
 }
 
