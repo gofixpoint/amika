@@ -849,11 +849,17 @@ func parseVolumeFlags(flags []string) ([]sandbox.MountBinding, error) {
 	return mounts, nil
 }
 
+// secretMapping holds a parsed --secret flag entry before resolution.
+type secretMapping struct {
+	envVar     string
+	secretName string
+}
+
 // parseSecretFlags parses --secret flag values. Supported syntax:
 //   - env:FOO=SECRET_NAME — inject secret SECRET_NAME as env var FOO
 //   - env:SECRET_NAME     — shorthand: env var name equals the secret name
-func parseSecretFlags(flags []string) ([]apiclient.SecretRef, error) {
-	var refs []apiclient.SecretRef
+func parseSecretFlags(flags []string) ([]secretMapping, error) {
+	var mappings []secretMapping
 	seenEnv := make(map[string]bool)
 
 	for _, raw := range flags {
@@ -894,12 +900,39 @@ func parseSecretFlags(flags []string) ([]apiclient.SecretRef, error) {
 		}
 		seenEnv[envVar] = true
 
-		refs = append(refs, apiclient.SecretRef{
-			Name:   secretName,
-			EnvVar: envVar,
+		mappings = append(mappings, secretMapping{
+			envVar:     envVar,
+			secretName: secretName,
 		})
 	}
-	return refs, nil
+	return mappings, nil
+}
+
+// resolveSecretEnvVars resolves secret names to IDs and returns a map of env var name → secret ID
+// suitable for the secret_env_vars field in the API request.
+func resolveSecretEnvVars(client *apiclient.Client, mappings []secretMapping) (map[string]string, error) {
+	if len(mappings) == 0 {
+		return nil, nil
+	}
+
+	secrets, err := client.ListSecrets()
+	if err != nil {
+		return nil, fmt.Errorf("listing secrets for resolution: %w", err)
+	}
+	byName := make(map[string]string, len(secrets))
+	for _, s := range secrets {
+		byName[s.Name] = s.ID
+	}
+
+	result := make(map[string]string, len(mappings))
+	for _, m := range mappings {
+		id, ok := byName[m.secretName]
+		if !ok {
+			return nil, fmt.Errorf("secret %q not found; push it first with: amika secret push", m.secretName)
+		}
+		result[m.envVar] = id
+	}
+	return result, nil
 }
 
 // parseEnvVarFlags parses --env flag values (KEY=VALUE) into a map.
@@ -1697,6 +1730,12 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	gitValue, _ := cmd.Flags().GetString("git")
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
+	preset, _ := cmd.Flags().GetString("preset")
+	size, _ := cmd.Flags().GetString("size")
+
+	if name == "" {
+		name = sandbox.GenerateName()
+	}
 
 	var gitURL string
 	if cmd.Flags().Changed("git") {
@@ -1707,7 +1746,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		gitURL = resolved
 	}
 
-	secrets, err := parseSecretFlags(secretFlags)
+	secretMappings, err := parseSecretFlags(secretFlags)
 	if err != nil {
 		return err
 	}
@@ -1722,12 +1761,19 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		return err
 	}
 
+	secretEnvVars, err := resolveSecretEnvVars(client, secretMappings)
+	if err != nil {
+		return err
+	}
+
 	req := apiclient.CreateSandboxRequest{
-		Name:      name,
-		Provider:  "daytona",
-		GitHubURL: gitURL,
-		EnvVars:   envVars,
-		Secrets:   secrets,
+		Name:          name,
+		Provider:      "daytona",
+		GitHubURL:     gitURL,
+		EnvVars:       envVars,
+		SecretEnvVars: secretEnvVars,
+		Preset:        preset,
+		Size:          size,
 	}
 
 	sb, err := client.CreateSandbox(req)
@@ -1993,6 +2039,7 @@ func init() {
 	sandboxCreateCmd.Flags().String("git", "", "Mount the current git repo root (or repo containing PATH) into /home/amika/workspace/{repo}")
 	sandboxCreateCmd.Flags().Lookup("git").NoOptDefVal = "."
 	sandboxCreateCmd.Flags().Bool("no-clean", false, "With --git, include untracked files from working tree instead of a clean clone")
+	sandboxCreateCmd.Flags().String("size", "", "Sandbox size: \"xs\" or \"m\" (default \"m\", remote only)")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
