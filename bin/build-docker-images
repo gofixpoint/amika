@@ -25,6 +25,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Determine git version tag
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
+# Daytona snapshot size configurations (parallel arrays for Bash 3 compat)
+SIZES=("xs" "m")
+SIZE_CPUS=("1" "2")
+SIZE_MEMORY=("1" "8")
+SIZE_DISK=("3" "10")
+
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
 
 usage() {
@@ -175,11 +181,18 @@ for preset in "${PRESETS[@]}"; do
   BUILT_IMAGES+=("$image_tag" "$latest_tag")
 
   if [ "$PUSH_DAYTONA" = true ] && [[ "$preset" == daytona-* ]]; then
-    for org in amika-prod Fixpoint; do
-      daytona organization use "$org"
-      echo "Pushing ${image_tag} to Daytona org ${org}..."
-      daytona snapshot push "$image_tag" --name "$image_tag"
-      PUSHED_SNAPSHOTS+=("${image_tag} -> ${org}")
+    for i in "${!SIZES[@]}"; do
+      size="${SIZES[$i]}"
+      cpu="${SIZE_CPUS[$i]}"
+      mem="${SIZE_MEMORY[$i]}"
+      disk="${SIZE_DISK[$i]}"
+      snapshot_name="amika/${preset}-${size}:${VERSION}"
+      for org in amika-prod Fixpoint; do
+        daytona organization use "$org"
+        echo "Pushing ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) to Daytona org ${org}..."
+        daytona snapshot push "$image_tag" --name "$snapshot_name" --cpu "$cpu" --memory "$mem" --disk "$disk"
+        PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+      done
     done
   fi
 done
