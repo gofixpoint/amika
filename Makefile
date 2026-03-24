@@ -23,7 +23,7 @@ clean:
 	rm -rf dist .gocache .gotmp .gomodcache
 
 clean-docker:
-	docker image rm amika/coder:latest amika/base:latest
+	docker image rm amika/coder:latest amika/base:latest amika/dind:latest amika/coder-dind:latest amika/daytona-coder-dind:latest
 
 test: goenv
 	go test ./...

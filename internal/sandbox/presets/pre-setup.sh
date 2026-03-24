@@ -64,4 +64,9 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
   echo "$OPENCODE_WEB_PORT" > "$AMIKA_RUN_DIR/opencode-web.port"
 fi
 
+# Start Docker daemon if this is a DinD image (marker file baked into the image).
+if [[ -f /usr/local/etc/amika/dind-enabled ]]; then
+  /usr/lib/amikad/docker-setup.sh
+fi
+
 sudo chown -R amika:amika /home/amika
