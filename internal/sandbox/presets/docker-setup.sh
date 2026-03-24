@@ -9,8 +9,9 @@ DOCKERD_LOG="/var/log/amikad/dockerd.log"
 DOCKERD_PID_FILE="/run/amikad/dockerd.pid"
 DOCKER_READY_TIMEOUT=30
 
-# Start dockerd in the background.
-nohup dockerd --storage-driver=overlay2 > "$DOCKERD_LOG" 2>&1 &
+# Start dockerd in a new session so it survives process group cleanup
+# when the calling hook (pre-setup.sh) exits.
+setsid dockerd > "$DOCKERD_LOG" 2>&1 &
 echo "$!" > "$DOCKERD_PID_FILE"
 
 # Wait for the Docker socket to become available.
