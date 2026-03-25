@@ -36,6 +36,12 @@ exec >>"$log_file" 2>&1
 
 echo "[$(date -Is)] starting $script_name"
 
+# Source the setup environment if it exists (written by pre-setup.sh).
+if [[ -f /usr/local/etc/amikad/setup/env.sh ]]; then
+  # shellcheck disable=SC1091
+  source /usr/local/etc/amikad/setup/env.sh
+fi
+
 set +e
 "$script_path"
 status=$?

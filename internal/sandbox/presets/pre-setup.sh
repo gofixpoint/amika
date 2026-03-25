@@ -70,4 +70,12 @@ if [[ -f /usr/local/etc/amika/dind-enabled ]]; then
   /usr/lib/amikad/docker-setup.sh
 fi
 
+# Configure pnpm global bin directory so setup.sh can run `pnpm add -g`.
+PNPM_HOME="/home/amika/.local/share/pnpm"
+sudo -H -u amika mkdir -p "$PNPM_HOME"
+cat > /usr/local/etc/amikad/setup/env.sh <<'ENVEOF'
+export PNPM_HOME="$HOME/.local/share/pnpm"
+export PATH="$PNPM_HOME:$PATH"
+ENVEOF
+
 sudo chown -R amika:amika /home/amika
