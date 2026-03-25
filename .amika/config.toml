@@ -1,0 +1,2 @@
+[lifecycle]
+setup_script = ".amika/scripts/setup.sh"
