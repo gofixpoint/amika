@@ -849,12 +849,15 @@ func parseVolumeFlags(flags []string) ([]sandbox.MountBinding, error) {
 	return mounts, nil
 }
 
-// parseSecretFlags parses --secret flag values. Supported syntax:
+// parseSecretFlags parses --secret flag values into a map of env var name → secret name.
+// Supported syntax:
 //   - env:FOO=SECRET_NAME — inject secret SECRET_NAME as env var FOO
 //   - env:SECRET_NAME     — shorthand: env var name equals the secret name
-func parseSecretFlags(flags []string) ([]apiclient.SecretRef, error) {
-	var refs []apiclient.SecretRef
-	seenEnv := make(map[string]bool)
+func parseSecretFlags(flags []string) (map[string]string, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]string, len(flags))
 
 	for _, raw := range flags {
 		idx := strings.Index(raw, ":")
@@ -889,17 +892,13 @@ func parseSecretFlags(flags []string) ([]apiclient.SecretRef, error) {
 		if secretName == "" {
 			return nil, fmt.Errorf("empty secret name in --secret %q", raw)
 		}
-		if seenEnv[envVar] {
+		if _, dup := result[envVar]; dup {
 			return nil, fmt.Errorf("duplicate env var %q in --secret flags", envVar)
 		}
-		seenEnv[envVar] = true
 
-		refs = append(refs, apiclient.SecretRef{
-			Name:   secretName,
-			EnvVar: envVar,
-		})
+		result[envVar] = secretName
 	}
-	return refs, nil
+	return result, nil
 }
 
 // parseEnvVarFlags parses --env flag values (KEY=VALUE) into a map.
@@ -1697,6 +1696,12 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	gitValue, _ := cmd.Flags().GetString("git")
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
+	preset, _ := cmd.Flags().GetString("preset")
+	size, _ := cmd.Flags().GetString("size")
+
+	if name == "" {
+		name = sandbox.GenerateName()
+	}
 
 	var gitURL string
 	if cmd.Flags().Changed("git") {
@@ -1707,7 +1712,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		gitURL = resolved
 	}
 
-	secrets, err := parseSecretFlags(secretFlags)
+	secretEnvVars, err := parseSecretFlags(secretFlags)
 	if err != nil {
 		return err
 	}
@@ -1723,11 +1728,13 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	}
 
 	req := apiclient.CreateSandboxRequest{
-		Name:      name,
-		Provider:  "daytona",
-		GitHubURL: gitURL,
-		EnvVars:   envVars,
-		Secrets:   secrets,
+		Name:          name,
+		Provider:      "daytona",
+		GitHubURL:     gitURL,
+		EnvVars:       envVars,
+		SecretEnvVars: secretEnvVars,
+		Preset:        preset,
+		Size:          size,
 	}
 
 	sb, err := client.CreateSandbox(req)
@@ -1993,6 +2000,7 @@ func init() {
 	sandboxCreateCmd.Flags().String("git", "", "Mount the current git repo root (or repo containing PATH) into /home/amika/workspace/{repo}")
 	sandboxCreateCmd.Flags().Lookup("git").NoOptDefVal = "."
 	sandboxCreateCmd.Flags().Bool("no-clean", false, "With --git, include untracked files from working tree instead of a clean clone")
+	sandboxCreateCmd.Flags().String("size", "", "Sandbox size: \"xs\" or \"m\" (default \"m\", remote only)")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")

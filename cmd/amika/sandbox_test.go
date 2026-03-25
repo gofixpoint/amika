@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofixpoint/amika/internal/apiclient"
 	"github.com/gofixpoint/amika/internal/sandbox"
 )
 
@@ -1055,26 +1054,23 @@ func TestParseSecretFlags(t *testing.T) {
 	tests := []struct {
 		name    string
 		flags   []string
-		want    []apiclient.SecretRef
+		want    map[string]string
 		wantErr string
 	}{
 		{
 			name:  "env with explicit env var",
 			flags: []string{"env:FOO=MY_SECRET"},
-			want:  []apiclient.SecretRef{{Name: "MY_SECRET", EnvVar: "FOO"}},
+			want:  map[string]string{"FOO": "MY_SECRET"},
 		},
 		{
 			name:  "env shorthand",
 			flags: []string{"env:MY_SECRET"},
-			want:  []apiclient.SecretRef{{Name: "MY_SECRET", EnvVar: "MY_SECRET"}},
+			want:  map[string]string{"MY_SECRET": "MY_SECRET"},
 		},
 		{
 			name:  "multiple secrets",
 			flags: []string{"env:FOO=SECRET_A", "env:BAR=SECRET_B"},
-			want: []apiclient.SecretRef{
-				{Name: "SECRET_A", EnvVar: "FOO"},
-				{Name: "SECRET_B", EnvVar: "BAR"},
-			},
+			want:  map[string]string{"FOO": "SECRET_A", "BAR": "SECRET_B"},
 		},
 		{
 			name:  "no flags",

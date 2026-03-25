@@ -40,13 +40,9 @@ type CreateSandboxRequest struct {
 	AutoStopInterval   *int              `json:"auto_stop_interval,omitempty"`
 	AutoDeleteInterval *int              `json:"auto_delete_interval,omitempty"`
 	EnvVars            map[string]string `json:"env_vars,omitempty"`
-	Secrets            []SecretRef       `json:"secrets,omitempty"`
-}
-
-// SecretRef references a named secret to inject into a sandbox.
-type SecretRef struct {
-	Name   string `json:"name"`
-	EnvVar string `json:"env_var,omitempty"`
+	SecretEnvVars      map[string]string `json:"secret_env_vars,omitempty"`
+	Preset             string            `json:"preset,omitempty"`
+	Size               string            `json:"size,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.
