@@ -1054,26 +1054,23 @@ func TestParseSecretFlags(t *testing.T) {
 	tests := []struct {
 		name    string
 		flags   []string
-		want    []secretMapping
+		want    map[string]string
 		wantErr string
 	}{
 		{
 			name:  "env with explicit env var",
 			flags: []string{"env:FOO=MY_SECRET"},
-			want:  []secretMapping{{envVar: "FOO", secretName: "MY_SECRET"}},
+			want:  map[string]string{"FOO": "MY_SECRET"},
 		},
 		{
 			name:  "env shorthand",
 			flags: []string{"env:MY_SECRET"},
-			want:  []secretMapping{{envVar: "MY_SECRET", secretName: "MY_SECRET"}},
+			want:  map[string]string{"MY_SECRET": "MY_SECRET"},
 		},
 		{
 			name:  "multiple secrets",
 			flags: []string{"env:FOO=SECRET_A", "env:BAR=SECRET_B"},
-			want: []secretMapping{
-				{envVar: "FOO", secretName: "SECRET_A"},
-				{envVar: "BAR", secretName: "SECRET_B"},
-			},
+			want:  map[string]string{"FOO": "SECRET_A", "BAR": "SECRET_B"},
 		},
 		{
 			name:  "no flags",

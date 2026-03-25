@@ -849,18 +849,15 @@ func parseVolumeFlags(flags []string) ([]sandbox.MountBinding, error) {
 	return mounts, nil
 }
 
-// secretMapping holds a parsed --secret flag entry before resolution.
-type secretMapping struct {
-	envVar     string
-	secretName string
-}
-
-// parseSecretFlags parses --secret flag values. Supported syntax:
+// parseSecretFlags parses --secret flag values into a map of env var name → secret name.
+// Supported syntax:
 //   - env:FOO=SECRET_NAME — inject secret SECRET_NAME as env var FOO
 //   - env:SECRET_NAME     — shorthand: env var name equals the secret name
-func parseSecretFlags(flags []string) ([]secretMapping, error) {
-	var mappings []secretMapping
-	seenEnv := make(map[string]bool)
+func parseSecretFlags(flags []string) (map[string]string, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]string, len(flags))
 
 	for _, raw := range flags {
 		idx := strings.Index(raw, ":")
@@ -895,42 +892,11 @@ func parseSecretFlags(flags []string) ([]secretMapping, error) {
 		if secretName == "" {
 			return nil, fmt.Errorf("empty secret name in --secret %q", raw)
 		}
-		if seenEnv[envVar] {
+		if _, dup := result[envVar]; dup {
 			return nil, fmt.Errorf("duplicate env var %q in --secret flags", envVar)
 		}
-		seenEnv[envVar] = true
 
-		mappings = append(mappings, secretMapping{
-			envVar:     envVar,
-			secretName: secretName,
-		})
-	}
-	return mappings, nil
-}
-
-// resolveSecretEnvVars resolves secret names to IDs and returns a map of env var name → secret ID
-// suitable for the secret_env_vars field in the API request.
-func resolveSecretEnvVars(client *apiclient.Client, mappings []secretMapping) (map[string]string, error) {
-	if len(mappings) == 0 {
-		return nil, nil
-	}
-
-	secrets, err := client.ListSecrets()
-	if err != nil {
-		return nil, fmt.Errorf("listing secrets for resolution: %w", err)
-	}
-	byName := make(map[string]string, len(secrets))
-	for _, s := range secrets {
-		byName[s.Name] = s.ID
-	}
-
-	result := make(map[string]string, len(mappings))
-	for _, m := range mappings {
-		id, ok := byName[m.secretName]
-		if !ok {
-			return nil, fmt.Errorf("secret %q not found; push it first with: amika secret push", m.secretName)
-		}
-		result[m.envVar] = id
+		result[envVar] = secretName
 	}
 	return result, nil
 }
@@ -1746,7 +1712,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		gitURL = resolved
 	}
 
-	secretMappings, err := parseSecretFlags(secretFlags)
+	secretEnvVars, err := parseSecretFlags(secretFlags)
 	if err != nil {
 		return err
 	}
@@ -1757,11 +1723,6 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	}
 
 	client, err := getRemoteClient(target)
-	if err != nil {
-		return err
-	}
-
-	secretEnvVars, err := resolveSecretEnvVars(client, secretMappings)
 	if err != nil {
 		return err
 	}
