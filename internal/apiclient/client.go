@@ -113,6 +113,14 @@ func (c *Client) StopSandbox(name string) error {
 	return nil
 }
 
+// StartSandbox starts a sandbox on the remote API.
+func (c *Client) StartSandbox(name string) error {
+	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/start", nil, nil); err != nil {
+		return fmt.Errorf("remote start sandbox: %w", err)
+	}
+	return nil
+}
+
 // DeleteSandbox deletes a sandbox on the remote API.
 func (c *Client) DeleteSandbox(name string) error {
 	if err := c.doJSON("DELETE", "/api/sandboxes/"+name, nil, nil); err != nil {
