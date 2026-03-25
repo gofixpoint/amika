@@ -43,6 +43,7 @@ type CreateSandboxRequest struct {
 	SecretEnvVars      map[string]string `json:"secret_env_vars,omitempty"`
 	Preset             string            `json:"preset,omitempty"`
 	Size               string            `json:"size,omitempty"`
+	SetupScriptText    string            `json:"setup_script_text,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.

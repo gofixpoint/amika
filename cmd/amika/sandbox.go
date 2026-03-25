@@ -1698,6 +1698,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	envFlags, _ := cmd.Flags().GetStringArray("env")
 	preset, _ := cmd.Flags().GetString("preset")
 	size, _ := cmd.Flags().GetString("size")
+	setupScript, _ := cmd.Flags().GetString("setup-script")
 
 	if name == "" {
 		name = sandbox.GenerateName()
@@ -1727,14 +1728,24 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		return err
 	}
 
+	var setupScriptText string
+	if setupScript != "" {
+		data, err := os.ReadFile(setupScript)
+		if err != nil {
+			return fmt.Errorf("reading setup script %q: %w", setupScript, err)
+		}
+		setupScriptText = string(data)
+	}
+
 	req := apiclient.CreateSandboxRequest{
-		Name:          name,
-		Provider:      "daytona",
-		GitHubURL:     gitURL,
-		EnvVars:       envVars,
-		SecretEnvVars: secretEnvVars,
-		Preset:        preset,
-		Size:          size,
+		Name:            name,
+		Provider:        "daytona",
+		GitHubURL:       gitURL,
+		EnvVars:         envVars,
+		SecretEnvVars:   secretEnvVars,
+		Preset:          preset,
+		Size:            size,
+		SetupScriptText: setupScriptText,
 	}
 
 	sb, err := client.CreateSandbox(req)
