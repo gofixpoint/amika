@@ -66,6 +66,16 @@ func GetDockerContainerState(name string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// StartDockerSandbox starts a stopped Docker container with the given name.
+func StartDockerSandbox(name string) error {
+	cmd := exec.Command("docker", "start", name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to start docker sandbox: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // StopDockerSandbox stops the Docker container with the given name.
 func StopDockerSandbox(name string) error {
 	cmd := exec.Command("docker", "stop", name)
