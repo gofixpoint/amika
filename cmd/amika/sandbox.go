@@ -339,6 +339,80 @@ var sandboxCreateCmd = &cobra.Command{
 	},
 }
 
+var sandboxStartCmd = &cobra.Command{
+	Use:   "start <name> [<name>...]",
+	Short: "Start one or more stopped sandboxes",
+	Long:  `Start (resume) one or more stopped sandboxes.`,
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
+			return err
+		}
+
+		mode := sandboxMode(cmd)
+
+		sandboxesFile, err := config.SandboxesStateFile()
+		if err != nil {
+			return err
+		}
+		store := sandbox.NewStore(sandboxesFile)
+
+		var remoteClient *apiclient.Client
+		if mode == "remote" || mode == "both" {
+			remoteClient, err = getRemoteClient(target)
+			if err != nil {
+				return err
+			}
+		}
+
+		var errs []string
+		for _, name := range args {
+			// Remote-only mode: skip local entirely.
+			if mode == "remote" {
+				if remoteClient != nil {
+					if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
+						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					} else {
+						fmt.Printf("Sandbox %q started (remote)\n", name)
+					}
+				}
+				continue
+			}
+
+			info, localErr := store.Get(name)
+			if localErr != nil && mode == "both" && remoteClient != nil {
+				// Not found locally, try remote.
+				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+				} else {
+					fmt.Printf("Sandbox %q started (remote)\n", name)
+				}
+				continue
+			}
+			if localErr != nil {
+				errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
+				continue
+			}
+
+			if info.Provider == "docker" {
+				if err := sandbox.StartDockerSandbox(name); err != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+					continue
+				}
+			}
+
+			fmt.Printf("Sandbox %q started\n", name)
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("%s", strings.Join(errs, "\n"))
+		}
+		return nil
+	},
+}
+
 var sandboxStopCmd = &cobra.Command{
 	Use:   "stop <name> [<name>...]",
 	Short: "Stop one or more sandboxes",
@@ -1986,6 +2060,7 @@ func appendPresetRuntimeEnv(env []string) []string {
 func init() {
 	rootCmd.AddCommand(sandboxCmd)
 	sandboxCmd.AddCommand(sandboxCreateCmd)
+	sandboxCmd.AddCommand(sandboxStartCmd)
 	sandboxCmd.AddCommand(sandboxStopCmd)
 	sandboxCmd.AddCommand(sandboxDeleteCmd)
 	sandboxCmd.AddCommand(sandboxListCmd)
