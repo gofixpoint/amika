@@ -66,12 +66,41 @@ func (c *Client) ListSandboxes() ([]RemoteSandbox, error) {
 }
 
 // CreateSandbox creates a sandbox on the remote API.
+// The endpoint returns 202 Accepted with the sandbox in "initializing" state.
+// Use GetSandbox or WaitForSandbox to poll until provisioning completes.
 func (c *Client) CreateSandbox(req CreateSandboxRequest) (*RemoteSandbox, error) {
 	var result RemoteSandbox
 	if err := c.doJSON("POST", "/api/sandboxes", req, &result); err != nil {
 		return nil, fmt.Errorf("remote create sandbox: %w", err)
 	}
 	return &result, nil
+}
+
+// GetSandbox fetches a single sandbox by name from the remote API.
+func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
+	var result RemoteSandbox
+	if err := c.doJSON("GET", "/api/sandboxes/"+name, nil, &result); err != nil {
+		return nil, fmt.Errorf("remote get sandbox: %w", err)
+	}
+	return &result, nil
+}
+
+// WaitForSandbox polls GET /api/sandboxes/{name} until the sandbox reaches
+// a ready or terminal state. It polls every 3 seconds.
+func (c *Client) WaitForSandbox(name string) (*RemoteSandbox, error) {
+	for {
+		sb, err := c.GetSandbox(name)
+		if err != nil {
+			return nil, err
+		}
+		switch sb.State {
+		case "active", "running", "started":
+			return sb, nil
+		case "failed":
+			return sb, fmt.Errorf("sandbox provisioning failed")
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 // SSHInfo contains SSH connection details for a remote sandbox.
