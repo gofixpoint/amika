@@ -1811,15 +1811,19 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		setupScriptText = string(data)
 	}
 
+	// Auto-select Claude credential if one exists.
+	claudeCredentialName := autoSelectClaudeCredential(client)
+
 	req := apiclient.CreateSandboxRequest{
-		Name:            name,
-		Provider:        "daytona",
-		GitHubURL:       gitURL,
-		EnvVars:         envVars,
-		SecretEnvVars:   secretEnvVars,
-		Preset:          preset,
-		Size:            size,
-		SetupScriptText: setupScriptText,
+		Name:                 name,
+		Provider:             "daytona",
+		GitHubURL:            gitURL,
+		EnvVars:              envVars,
+		SecretEnvVars:        secretEnvVars,
+		Preset:               preset,
+		Size:                 size,
+		SetupScriptText:      setupScriptText,
+		ClaudeCredentialName: claudeCredentialName,
 	}
 
 	sb, err := client.CreateSandbox(req)
@@ -1848,6 +1852,17 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 // remote sandbox creation. If the value is already an HTTP(S) or SSH URL, it is
 // returned directly. Otherwise it is treated as a local path and the origin
 // remote URL is extracted.
+// autoSelectClaudeCredential returns the name of the user's Claude credential
+// if exactly one exists on the remote. Returns empty string on any error or
+// if no credentials are uploaded.
+func autoSelectClaudeCredential(client *apiclient.Client) string {
+	creds, err := client.ListClaudeSecrets()
+	if err != nil || len(creds) != 1 {
+		return ""
+	}
+	return creds[0].Name
+}
+
 func resolveGitURL(value string) (string, error) {
 	// Already a URL — use as-is.
 	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "git@") {

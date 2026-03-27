@@ -34,16 +34,17 @@ func NewClientWithTokenSource(baseURL string, ts TokenSource) *Client {
 
 // CreateSandboxRequest is the request body for POST /api/sandboxes.
 type CreateSandboxRequest struct {
-	Name               string            `json:"name,omitempty"`
-	Provider           string            `json:"provider,omitempty"`
-	GitHubURL          string            `json:"github_url,omitempty"`
-	AutoStopInterval   *int              `json:"auto_stop_interval,omitempty"`
-	AutoDeleteInterval *int              `json:"auto_delete_interval,omitempty"`
-	EnvVars            map[string]string `json:"env_vars,omitempty"`
-	SecretEnvVars      map[string]string `json:"secret_env_vars,omitempty"`
-	Preset             string            `json:"preset,omitempty"`
-	Size               string            `json:"size,omitempty"`
-	SetupScriptText    string            `json:"setup_script_text,omitempty"`
+	Name                 string            `json:"name,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	GitHubURL            string            `json:"github_url,omitempty"`
+	AutoStopInterval     *int              `json:"auto_stop_interval,omitempty"`
+	AutoDeleteInterval   *int              `json:"auto_delete_interval,omitempty"`
+	EnvVars              map[string]string `json:"env_vars,omitempty"`
+	SecretEnvVars        map[string]string `json:"secret_env_vars,omitempty"`
+	Preset               string            `json:"preset,omitempty"`
+	Size                 string            `json:"size,omitempty"`
+	SetupScriptText      string            `json:"setup_script_text,omitempty"`
+	ClaudeCredentialName string            `json:"claude_credential_name,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.
@@ -198,6 +199,53 @@ func (c *Client) CreateSecret(req CreateSecretRequest) error {
 func (c *Client) UpdateSecret(id string, req UpdateSecretRequest) error {
 	if err := c.doJSON("PUT", "/api/secrets/"+id, req, nil); err != nil {
 		return fmt.Errorf("remote update secret: %w", err)
+	}
+	return nil
+}
+
+// CreateClaudeSecretRequest is the request body for POST /api/secrets/claude.
+type CreateClaudeSecretRequest struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Type  string `json:"type,omitempty"` // "oauth" (default) or "api_key"
+}
+
+// ClaudeSecretSummary is the response from POST /api/secrets/claude.
+type ClaudeSecretSummary struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Scope string `json:"scope"`
+}
+
+// ClaudeSecretListItem is an item in the GET /api/secrets/claude response.
+type ClaudeSecretListItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// CreateClaudeSecret uploads Claude Code credentials to the remote API.
+func (c *Client) CreateClaudeSecret(req CreateClaudeSecretRequest) (*ClaudeSecretSummary, error) {
+	var result ClaudeSecretSummary
+	if err := c.doJSON("POST", "/api/secrets/claude", req, &result); err != nil {
+		return nil, fmt.Errorf("remote create claude secret: %w", err)
+	}
+	return &result, nil
+}
+
+// ListClaudeSecrets lists Claude credentials for the current user.
+func (c *Client) ListClaudeSecrets() ([]ClaudeSecretListItem, error) {
+	var result []ClaudeSecretListItem
+	if err := c.doJSON("GET", "/api/secrets/claude", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list claude secrets: %w", err)
+	}
+	return result, nil
+}
+
+// DeleteClaudeSecret deletes a credential by ID.
+func (c *Client) DeleteClaudeSecret(id string) error {
+	if err := c.doJSON("DELETE", "/api/secrets/"+id, nil, nil); err != nil {
+		return fmt.Errorf("remote delete secret: %w", err)
 	}
 	return nil
 }

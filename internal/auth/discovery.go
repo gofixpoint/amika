@@ -567,6 +567,88 @@ func parseEpochMillis(raw any) (int64, error) {
 	}
 }
 
+// ClaudeCredential represents a single discovered Claude credential with its
+// type and source preserved, suitable for interactive selection.
+type ClaudeCredential struct {
+	// Type is a human-readable label: "API Key" or "OAuth".
+	Type string
+	// Source describes where the credential was found (e.g. file path or "macOS Keychain").
+	Source string
+	// Value is the raw credential data to upload: the API key string or the full OAuth JSON.
+	Value string
+}
+
+// DiscoverClaudeCredentials scans local credential sources and returns all
+// Claude-specific credentials found, preserving their type and source.
+func DiscoverClaudeCredentials(homeDir string) ([]ClaudeCredential, error) {
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	var creds []ClaudeCredential
+
+	// Check for API keys in Claude config files.
+	apiKeyPaths := []string{
+		filepath.Join(homeDir, ".claude.json.api"),
+		filepath.Join(homeDir, ".claude.json"),
+	}
+	apiKeyFields := []string{"primaryApiKey", "apiKey", "anthropicApiKey", "customApiKey"}
+
+	for _, path := range apiKeyPaths {
+		obj, found, err := readJSONObjectIfExists(path)
+		if err != nil || !found {
+			continue
+		}
+		for _, field := range apiKeyFields {
+			value, exists, err := getStringPath(obj, field)
+			if err != nil || !exists || value == "" {
+				continue
+			}
+			if strings.HasPrefix(value, "sk-ant-") {
+				creds = append(creds, ClaudeCredential{
+					Type:   "API Key",
+					Source: path,
+					Value:  value,
+				})
+				break // one API key per file is enough
+			}
+		}
+	}
+
+	// Check for OAuth credentials in files.
+	oauthPaths := []string{
+		filepath.Join(homeDir, ".claude", ".credentials.json"),
+		filepath.Join(homeDir, ".claude-oauth-credentials.json"),
+	}
+	for _, path := range oauthPaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		raw := strings.TrimSpace(string(data))
+		// Verify it has claudeAiOauth.accessToken.
+		obj, found, err := readJSONObjectIfExists(path)
+		if err != nil || !found {
+			continue
+		}
+		token, exists, _ := getStringPath(obj, "claudeAiOauth.accessToken")
+		if !exists || token == "" {
+			continue
+		}
+		creds = append(creds, ClaudeCredential{
+			Type:   "OAuth",
+			Source: path,
+			Value:  raw,
+		})
+	}
+
+	return creds, nil
+}
+
 // ClaudeCredentialPaths returns the home-relative paths where Claude Code
 // stores credentials. Callers should join each with a home directory.
 func ClaudeCredentialPaths() []string {

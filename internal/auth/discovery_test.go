@@ -374,6 +374,122 @@ func TestOpenCodeCredentialPaths(t *testing.T) {
 	}
 }
 
+func TestDiscoverClaudeCredentials_APIKeyOnly(t *testing.T) {
+	home := t.TempDir()
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude.json"), `{"apiKey":"sk-ant-test-key"}`)
+
+	creds, err := DiscoverClaudeCredentials(home)
+	if err != nil {
+		t.Fatalf("DiscoverClaudeCredentials() error: %v", err)
+	}
+	if len(creds) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(creds))
+	}
+	if creds[0].Type != "API Key" {
+		t.Fatalf("Type = %q, want %q", creds[0].Type, "API Key")
+	}
+	if creds[0].Value != "sk-ant-test-key" {
+		t.Fatalf("Value = %q, want %q", creds[0].Value, "sk-ant-test-key")
+	}
+}
+
+func TestDiscoverClaudeCredentials_OAuthOnly(t *testing.T) {
+	home := t.TempDir()
+	oauthJSON := `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-xxx","refreshToken":"sk-ant-ort01-xxx","expiresAt":9999999999999}}`
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude", ".credentials.json"), oauthJSON)
+
+	creds, err := DiscoverClaudeCredentials(home)
+	if err != nil {
+		t.Fatalf("DiscoverClaudeCredentials() error: %v", err)
+	}
+	if len(creds) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(creds))
+	}
+	if creds[0].Type != "OAuth" {
+		t.Fatalf("Type = %q, want %q", creds[0].Type, "OAuth")
+	}
+	if creds[0].Value != oauthJSON {
+		t.Fatalf("Value = %q, want %q", creds[0].Value, oauthJSON)
+	}
+	if creds[0].Source != filepath.Join(home, ".claude", ".credentials.json") {
+		t.Fatalf("Source = %q, want path ending in .claude/.credentials.json", creds[0].Source)
+	}
+}
+
+func TestDiscoverClaudeCredentials_BothAPIKeyAndOAuth(t *testing.T) {
+	home := t.TempDir()
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude.json"), `{"apiKey":"sk-ant-api-key"}`)
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude", ".credentials.json"), `{"claudeAiOauth":{"accessToken":"oauth-token"}}`)
+
+	creds, err := DiscoverClaudeCredentials(home)
+	if err != nil {
+		t.Fatalf("DiscoverClaudeCredentials() error: %v", err)
+	}
+	if len(creds) != 2 {
+		t.Fatalf("got %d credentials, want 2", len(creds))
+	}
+
+	var types []string
+	for _, c := range creds {
+		types = append(types, c.Type)
+	}
+	if types[0] != "API Key" || types[1] != "OAuth" {
+		t.Fatalf("types = %v, want [API Key, OAuth]", types)
+	}
+}
+
+func TestDiscoverClaudeCredentials_EmptyHome(t *testing.T) {
+	home := t.TempDir()
+
+	creds, err := DiscoverClaudeCredentials(home)
+	if err != nil {
+		t.Fatalf("DiscoverClaudeCredentials() error: %v", err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("got %d credentials, want 0", len(creds))
+	}
+}
+
+func TestDiscoverClaudeCredentials_SkipsNonAnthropicKeys(t *testing.T) {
+	home := t.TempDir()
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude.json"), `{"apiKey":"not-an-anthropic-key"}`)
+
+	creds, err := DiscoverClaudeCredentials(home)
+	if err != nil {
+		t.Fatalf("DiscoverClaudeCredentials() error: %v", err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("got %d credentials, want 0 (non sk-ant- key should be skipped)", len(creds))
+	}
+}
+
+func TestDiscoverClaudeCredentials_SkipsOAuthWithoutAccessToken(t *testing.T) {
+	home := t.TempDir()
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude", ".credentials.json"), `{"claudeAiOauth":{"refreshToken":"rt"}}`)
+
+	creds, err := DiscoverClaudeCredentials(home)
+	if err != nil {
+		t.Fatalf("DiscoverClaudeCredentials() error: %v", err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("got %d credentials, want 0 (missing accessToken should be skipped)", len(creds))
+	}
+}
+
+func TestDiscoverClaudeCredentials_BothOAuthPaths(t *testing.T) {
+	home := t.TempDir()
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude", ".credentials.json"), `{"claudeAiOauth":{"accessToken":"token-1"}}`)
+	writeDiscoveryFixture(t, filepath.Join(home, ".claude-oauth-credentials.json"), `{"claudeAiOauth":{"accessToken":"token-2"}}`)
+
+	creds, err := DiscoverClaudeCredentials(home)
+	if err != nil {
+		t.Fatalf("DiscoverClaudeCredentials() error: %v", err)
+	}
+	if len(creds) != 2 {
+		t.Fatalf("got %d credentials, want 2", len(creds))
+	}
+}
+
 func writeDiscoveryFixture(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
