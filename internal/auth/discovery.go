@@ -106,9 +106,9 @@ func configuredSources() []sourceDef {
 }
 
 func parseClaudeAPI(homeDir string, _ bool, _ time.Time, _ basedir.Paths) (map[string]string, error) {
-	paths := []string{
-		filepath.Join(homeDir, ".claude.json.api"),
-		filepath.Join(homeDir, ".claude.json"),
+	paths := make([]string, len(ClaudeAPIKeyPaths()))
+	for i, p := range ClaudeAPIKeyPaths() {
+		paths[i] = filepath.Join(homeDir, p)
 	}
 	fields := []string{"primaryApiKey", "apiKey", "anthropicApiKey", "customApiKey"}
 
@@ -143,9 +143,9 @@ func parseClaudeOAuth(homeDir string, includeOAuth bool, now time.Time, _ basedi
 		return nil, nil
 	}
 
-	paths := []string{
-		filepath.Join(homeDir, ".claude", ".credentials.json"),
-		filepath.Join(homeDir, ".claude-oauth-credentials.json"),
+	paths := make([]string, len(ClaudeOAuthPaths()))
+	for i, p := range ClaudeOAuthPaths() {
+		paths[i] = filepath.Join(homeDir, p)
 	}
 
 	for _, path := range paths {
@@ -579,7 +579,9 @@ type ClaudeCredential struct {
 }
 
 // DiscoverClaudeCredentials scans local credential sources and returns all
-// Claude-specific credentials found, preserving their type and source.
+// Claude-specific credentials found, preserving their type and source. If
+// homeDir is empty, the user's home directory is obtained from the operating
+// system (e.g. the HOME environment variable or OS-level user database).
 func DiscoverClaudeCredentials(homeDir string) ([]ClaudeCredential, error) {
 	if homeDir == "" {
 		var err error
@@ -592,9 +594,9 @@ func DiscoverClaudeCredentials(homeDir string) ([]ClaudeCredential, error) {
 	var creds []ClaudeCredential
 
 	// Check for API keys in Claude config files.
-	apiKeyPaths := []string{
-		filepath.Join(homeDir, ".claude.json.api"),
-		filepath.Join(homeDir, ".claude.json"),
+	apiKeyPaths := make([]string, len(ClaudeAPIKeyPaths()))
+	for i, p := range ClaudeAPIKeyPaths() {
+		apiKeyPaths[i] = filepath.Join(homeDir, p)
 	}
 	apiKeyFields := []string{"primaryApiKey", "apiKey", "anthropicApiKey", "customApiKey"}
 
@@ -620,9 +622,9 @@ func DiscoverClaudeCredentials(homeDir string) ([]ClaudeCredential, error) {
 	}
 
 	// Check for OAuth credentials in files.
-	oauthPaths := []string{
-		filepath.Join(homeDir, ".claude", ".credentials.json"),
-		filepath.Join(homeDir, ".claude-oauth-credentials.json"),
+	oauthPaths := make([]string, len(ClaudeOAuthPaths()))
+	for i, p := range ClaudeOAuthPaths() {
+		oauthPaths[i] = filepath.Join(homeDir, p)
 	}
 	for _, path := range oauthPaths {
 		data, err := os.ReadFile(path)
@@ -649,15 +651,28 @@ func DiscoverClaudeCredentials(homeDir string) ([]ClaudeCredential, error) {
 	return creds, nil
 }
 
-// ClaudeCredentialPaths returns the home-relative paths where Claude Code
-// stores credentials. Callers should join each with a home directory.
-func ClaudeCredentialPaths() []string {
+// ClaudeAPIKeyPaths returns the home-relative paths where Claude Code stores
+// API key configuration. Callers should join each with a home directory.
+func ClaudeAPIKeyPaths() []string {
 	return []string{
 		".claude.json.api",
 		".claude.json",
+	}
+}
+
+// ClaudeOAuthPaths returns the home-relative paths where Claude Code stores
+// OAuth credentials. Callers should join each with a home directory.
+func ClaudeOAuthPaths() []string {
+	return []string{
 		filepath.Join(".claude", ".credentials.json"),
 		".claude-oauth-credentials.json",
 	}
+}
+
+// ClaudeCredentialPaths returns the home-relative paths where Claude Code
+// stores credentials. Callers should join each with a home directory.
+func ClaudeCredentialPaths() []string {
+	return append(ClaudeAPIKeyPaths(), ClaudeOAuthPaths()...)
 }
 
 // CodexCredentialPaths returns the home-relative paths where Codex stores

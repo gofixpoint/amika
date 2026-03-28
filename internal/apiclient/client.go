@@ -215,7 +215,7 @@ func (c *Client) UpdateSecret(id string, req UpdateSecretRequest) error {
 type CreateClaudeSecretRequest struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
-	Type  string `json:"type,omitempty"` // "oauth" (default) or "api_key"
+	Type  string `json:"type"` // "oauth" or "api_key" — required by the server
 }
 
 // ClaudeSecretSummary is the response from POST /api/secrets/claude.
