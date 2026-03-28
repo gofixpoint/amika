@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/internal/apiclient"
+	"github.com/gofixpoint/amika/internal/arch"
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/spf13/cobra"
@@ -479,9 +479,9 @@ Examples:
 }
 
 // parseClaudeCreds resolves the credential value and type from command flags.
-// It returns an error if mutually exclusive flags --value and --from-file are
-// both provided.
-func parseClaudeCreds(cmd *cobra.Command) (string, string, error) {
+// credType is "oauth" or "api_key". Returns an error if mutually exclusive
+// flags --value and --from-file are both provided.
+func parseClaudeCreds(cmd *cobra.Command) (credValue string, credType string, err error) {
 	value, _ := cmd.Flags().GetString("value")
 	fromFile, _ := cmd.Flags().GetString("from-file")
 	typeFlag, _ := cmd.Flags().GetString("type")
@@ -489,9 +489,6 @@ func parseClaudeCreds(cmd *cobra.Command) (string, string, error) {
 	if value != "" && fromFile != "" {
 		return "", "", fmt.Errorf("--value and --from-file are mutually exclusive")
 	}
-
-	var credValue string
-	var credType string // "oauth" or "api_key"
 
 	switch {
 	case value != "":
@@ -619,7 +616,7 @@ func discoverAllClaudeCredentials() ([]auth.ClaudeCredential, error) {
 	}
 
 	// On macOS, also try the keychain.
-	if isMacOS() {
+	if arch.IsMacOS() {
 		keychainValue, err := readClaudeCredentialFromKeychain()
 		if err == nil && keychainValue != "" && json.Valid([]byte(keychainValue)) {
 			creds = append(creds, auth.ClaudeCredential{
@@ -713,7 +710,7 @@ func autoResolveClaudeCredential(credType string) (string, error) {
 	}
 
 	// OAuth: try keychain on macOS, then credential files.
-	if isMacOS() {
+	if arch.IsMacOS() {
 		value, err := readClaudeCredentialFromKeychain()
 		if err == nil && value != "" {
 			return value, nil
@@ -741,11 +738,6 @@ func autoResolveClaudeCredential(credType string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no OAuth credentials found; on macOS check keychain, or provide --value or --from-file")
-}
-
-// isMacOS reports whether the current operating system is macOS.
-func isMacOS() bool {
-	return runtime.GOOS == "darwin"
 }
 
 // claudeCredentialTypeToAPI maps the discovery type label to the API type field.
