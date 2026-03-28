@@ -1812,7 +1812,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	}
 
 	// Auto-select Claude credential if one exists.
-	claudeCredentialName := autoSelectClaudeCredential(client)
+	claudeCredentialName := autoSelectClaudeCredential(cmd, client)
 
 	req := apiclient.CreateSandboxRequest{
 		Name:                 name,
@@ -1848,15 +1848,27 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	return nil
 }
 
-// autoSelectClaudeCredential returns the name of the user's Claude credential
-// if exactly one exists on the remote. Returns empty string on any error or
-// if no credentials are uploaded.
-func autoSelectClaudeCredential(client *apiclient.Client) string {
+// autoSelectClaudeCredential picks the best Claude credential from the remote
+// store. It prefers the first OAuth credential; if none exist it falls back to
+// the first API key. The chosen credential is printed to stderr. Returns empty
+// string on any error or if no credentials are uploaded.
+func autoSelectClaudeCredential(cmd *cobra.Command, client *apiclient.Client) string {
 	creds, err := client.ListClaudeSecrets()
-	if err != nil || len(creds) != 1 {
+	if err != nil || len(creds) == 0 {
 		return ""
 	}
-	return creds[0].Name
+	var selected apiclient.ClaudeSecretListItem
+	for _, c := range creds {
+		if c.Type == "oauth" {
+			selected = c
+			break
+		}
+	}
+	if selected.Name == "" {
+		selected = creds[0]
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Using Claude credential %q (%s)\n", selected.Name, selected.Type)
+	return selected.Name
 }
 
 // resolveGitURL takes the --git flag value and returns a git URL suitable for
