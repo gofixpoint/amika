@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -400,20 +403,20 @@ func TestClaudeCredentialTypeToAPI(t *testing.T) {
 
 func TestSecretClaudePush_ValueFlag(t *testing.T) {
 	bin := buildAmika(t)
+	srv := newMockClaudeAPI(t)
+	defer srv.Close()
 
-	// With --value and --name, the command will try to hit the API and fail,
-	// but we can verify it gets past validation.
 	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--value", `{"claudeAiOauth":{"accessToken":"test"}}`,
 		"--name", "Test OAuth")
+	cmd.Env = withEnv(os.Environ(), mockAPIEnv(srv.URL)...)
 	out, err := cmd.CombinedOutput()
-	// Expect failure due to no auth, but NOT a validation error.
-	if err == nil {
-		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	if err != nil {
+		t.Fatalf("unexpected error:\n%s", out)
 	}
 	text := string(out)
-	if strings.Contains(text, "must be valid JSON") {
-		t.Fatalf("unexpected validation error for valid JSON:\n%s", text)
+	if !strings.Contains(text, "Created Claude credential") {
+		t.Fatalf("expected success message, got:\n%s", text)
 	}
 }
 
@@ -435,16 +438,18 @@ func TestSecretClaudePush_InvalidOAuthJSON(t *testing.T) {
 
 func TestSecretClaudePush_APIKeyNoJSONValidation(t *testing.T) {
 	bin := buildAmika(t)
+	srv := newMockClaudeAPI(t)
+	defer srv.Close()
 
-	// api_key type should NOT require valid JSON — it should get past validation
-	// and fail at the auth step.
+	// api_key type should NOT require valid JSON — it should succeed.
 	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--value", "sk-ant-api03-plaintext",
 		"--type", "api_key",
 		"--name", "My Key")
+	cmd.Env = withEnv(os.Environ(), mockAPIEnv(srv.URL)...)
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	if err != nil {
+		t.Fatalf("unexpected error:\n%s", out)
 	}
 	text := string(out)
 	if strings.Contains(text, "must be valid JSON") {
@@ -481,26 +486,29 @@ func TestSecretClaudePush_TypeAPIKeyReadsEnv(t *testing.T) {
 
 func TestSecretClaudePush_TypeAPIKeyWithEnvSet(t *testing.T) {
 	bin := buildAmika(t)
+	srv := newMockClaudeAPI(t)
+	defer srv.Close()
 
-	// With ANTHROPIC_API_KEY set, it should get past resolution and fail at auth.
+	// With ANTHROPIC_API_KEY set, it should resolve the key and push successfully.
 	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--type", "api_key",
 		"--name", "Key From Env")
-	cmd.Env = withEnv(os.Environ(), "ANTHROPIC_API_KEY=sk-ant-api03-test")
+	cmd.Env = withEnv(os.Environ(), append(mockAPIEnv(srv.URL), "ANTHROPIC_API_KEY=sk-ant-api03-test")...)
 
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	if err != nil {
+		t.Fatalf("unexpected error:\n%s", out)
 	}
 	text := string(out)
-	// Should NOT be a resolution error.
-	if strings.Contains(text, "ANTHROPIC_API_KEY environment variable is not set") {
-		t.Fatalf("unexpected resolution error when env var is set:\n%s", text)
+	if !strings.Contains(text, "Created Claude credential") {
+		t.Fatalf("expected success message, got:\n%s", text)
 	}
 }
 
 func TestSecretClaudePush_FromFile(t *testing.T) {
 	bin := buildAmika(t)
+	srv := newMockClaudeAPI(t)
+	defer srv.Close()
 
 	credFile := filepath.Join(t.TempDir(), "creds.json")
 	if err := os.WriteFile(credFile, []byte(`{"claudeAiOauth":{"accessToken":"test"}}`), 0644); err != nil {
@@ -510,17 +518,14 @@ func TestSecretClaudePush_FromFile(t *testing.T) {
 	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--from-file", credFile,
 		"--name", "From File")
+	cmd.Env = withEnv(os.Environ(), mockAPIEnv(srv.URL)...)
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	if err != nil {
+		t.Fatalf("unexpected error:\n%s", out)
 	}
 	text := string(out)
-	// Should get past file reading and validation.
-	if strings.Contains(text, "reading credentials file") {
-		t.Fatalf("unexpected file read error:\n%s", text)
-	}
-	if strings.Contains(text, "must be valid JSON") {
-		t.Fatalf("unexpected validation error:\n%s", text)
+	if !strings.Contains(text, "Created Claude credential") {
+		t.Fatalf("expected success message, got:\n%s", text)
 	}
 }
 
@@ -539,14 +544,16 @@ func TestSecretClaudePush_FromFileMissing(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeList_NoAuth(t *testing.T) {
+func TestSecretClaudeList_WithMock(t *testing.T) {
 	bin := buildAmika(t)
+	srv := newMockClaudeAPI(t)
+	defer srv.Close()
 
-	// Without auth, should fail with auth error, not crash.
 	cmd := exec.Command(bin, "secret", "claude", "list")
+	cmd.Env = withEnv(os.Environ(), mockAPIEnv(srv.URL)...)
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	if err != nil {
+		t.Fatalf("unexpected error:\n%s", out)
 	}
 	// Should not panic or give unexpected errors.
 	text := string(out)
@@ -570,13 +577,15 @@ func TestSecretClaudeDelete_NoArgs(t *testing.T) {
 
 func TestSecretClaudePluralAlias(t *testing.T) {
 	bin := buildAmika(t)
+	srv := newMockClaudeAPI(t)
+	defer srv.Close()
 
 	// "secrets claude list" should also work.
 	cmd := exec.Command(bin, "secrets", "claude", "list")
+	cmd.Env = withEnv(os.Environ(), mockAPIEnv(srv.URL)...)
 	out, err := cmd.CombinedOutput()
-	// Will fail with auth error, but the command should be recognized.
-	if err == nil {
-		return // surprisingly succeeded, that's fine
+	if err != nil {
+		t.Fatalf("unexpected error:\n%s", out)
 	}
 	text := string(out)
 	if strings.Contains(text, "unknown command") {
@@ -591,6 +600,38 @@ func writeJSONFixture(t *testing.T, path string, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write fixture %s: %v", path, err)
+	}
+}
+
+// newMockClaudeAPI starts an httptest server that handles Claude secret API
+// endpoints and returns it. The caller should defer server.Close().
+func newMockClaudeAPI(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/secrets/claude":
+			json.NewEncoder(w).Encode(map[string]string{
+				"id":    "cred-test-123",
+				"name":  "Test",
+				"scope": "user",
+			})
+		case r.Method == "GET" && r.URL.Path == "/api/secrets/claude":
+			json.NewEncoder(w).Encode([]interface{}{})
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/secrets/"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// mockAPIEnv returns environment variables that point the CLI at the given
+// mock server instead of the production API.
+func mockAPIEnv(serverURL string) []string {
+	return []string{
+		"AMIKA_API_URL=" + serverURL,
+		"AMIKA_API_KEY=test-bearer-token",
 	}
 }
 
