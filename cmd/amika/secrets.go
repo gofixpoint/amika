@@ -725,9 +725,9 @@ func autoResolveClaudeCredential(credType string) (string, error) {
 		return "", fmt.Errorf("determining home directory: %w", err)
 	}
 
-	oauthPaths := []string{
-		filepath.Join(homeDir, ".claude", ".credentials.json"),
-		filepath.Join(homeDir, ".claude-oauth-credentials.json"),
+	oauthPaths := make([]string, len(auth.ClaudeOAuthPaths()))
+	for i, p := range auth.ClaudeOAuthPaths() {
+		oauthPaths[i] = filepath.Join(homeDir, p)
 	}
 	for _, path := range oauthPaths {
 		data, err := os.ReadFile(path)
