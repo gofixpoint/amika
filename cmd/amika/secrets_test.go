@@ -380,6 +380,210 @@ func TestMaskValue(t *testing.T) {
 	}
 }
 
+func TestClaudeCredentialTypeToAPI(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"OAuth", "oauth"},
+		{"API Key", "api_key"},
+		{"something else", "oauth"},
+		{"", "oauth"},
+	}
+	for _, tt := range tests {
+		got := claudeCredentialTypeToAPI(tt.input)
+		if got != tt.want {
+			t.Errorf("claudeCredentialTypeToAPI(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestSecretClaudeUpload_ValueFlag(t *testing.T) {
+	bin := buildAmika(t)
+
+	// With --value and --name, the command will try to hit the API and fail,
+	// but we can verify it gets past validation.
+	cmd := exec.Command(bin, "secret", "claude", "upload",
+		"--value", `{"claudeAiOauth":{"accessToken":"test"}}`,
+		"--name", "Test OAuth")
+	out, err := cmd.CombinedOutput()
+	// Expect failure due to no auth, but NOT a validation error.
+	if err == nil {
+		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	}
+	text := string(out)
+	if strings.Contains(text, "must be valid JSON") {
+		t.Fatalf("unexpected validation error for valid JSON:\n%s", text)
+	}
+}
+
+func TestSecretClaudeUpload_InvalidOAuthJSON(t *testing.T) {
+	bin := buildAmika(t)
+
+	cmd := exec.Command(bin, "secret", "claude", "upload",
+		"--value", "not-json",
+		"--type", "oauth",
+		"--name", "Bad")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error, got success\noutput:\n%s", out)
+	}
+	if !strings.Contains(string(out), "OAuth credentials must be valid JSON") {
+		t.Fatalf("expected JSON validation error, got:\n%s", out)
+	}
+}
+
+func TestSecretClaudeUpload_APIKeyNoJSONValidation(t *testing.T) {
+	bin := buildAmika(t)
+
+	// api_key type should NOT require valid JSON — it should get past validation
+	// and fail at the auth step.
+	cmd := exec.Command(bin, "secret", "claude", "upload",
+		"--value", "sk-ant-api03-plaintext",
+		"--type", "api_key",
+		"--name", "My Key")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	}
+	text := string(out)
+	if strings.Contains(text, "must be valid JSON") {
+		t.Fatalf("api_key should not require JSON validation:\n%s", text)
+	}
+}
+
+func TestSecretClaudeUpload_TypeAPIKeyReadsEnv(t *testing.T) {
+	bin := buildAmika(t)
+
+	// --type api_key without --value should read ANTHROPIC_API_KEY.
+	// With the env var unset, it should produce an error.
+	cmd := exec.Command(bin, "secret", "claude", "upload",
+		"--type", "api_key",
+		"--name", "Key")
+	cmd.Env = withEnv(os.Environ(), "ANTHROPIC_API_KEY=")
+	// Filter out the env var entirely.
+	var env []string
+	for _, e := range cmd.Env {
+		if !strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			env = append(env, e)
+		}
+	}
+	cmd.Env = env
+
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error, got success\noutput:\n%s", out)
+	}
+	if !strings.Contains(string(out), "ANTHROPIC_API_KEY environment variable is not set") {
+		t.Fatalf("expected ANTHROPIC_API_KEY error, got:\n%s", out)
+	}
+}
+
+func TestSecretClaudeUpload_TypeAPIKeyWithEnvSet(t *testing.T) {
+	bin := buildAmika(t)
+
+	// With ANTHROPIC_API_KEY set, it should get past resolution and fail at auth.
+	cmd := exec.Command(bin, "secret", "claude", "upload",
+		"--type", "api_key",
+		"--name", "Key From Env")
+	cmd.Env = withEnv(os.Environ(), "ANTHROPIC_API_KEY=sk-ant-api03-test")
+
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	}
+	text := string(out)
+	// Should NOT be a resolution error.
+	if strings.Contains(text, "ANTHROPIC_API_KEY environment variable is not set") {
+		t.Fatalf("unexpected resolution error when env var is set:\n%s", text)
+	}
+}
+
+func TestSecretClaudeUpload_FromFile(t *testing.T) {
+	bin := buildAmika(t)
+
+	credFile := filepath.Join(t.TempDir(), "creds.json")
+	if err := os.WriteFile(credFile, []byte(`{"claudeAiOauth":{"accessToken":"test"}}`), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	cmd := exec.Command(bin, "secret", "claude", "upload",
+		"--from-file", credFile,
+		"--name", "From File")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	}
+	text := string(out)
+	// Should get past file reading and validation.
+	if strings.Contains(text, "reading credentials file") {
+		t.Fatalf("unexpected file read error:\n%s", text)
+	}
+	if strings.Contains(text, "must be valid JSON") {
+		t.Fatalf("unexpected validation error:\n%s", text)
+	}
+}
+
+func TestSecretClaudeUpload_FromFileMissing(t *testing.T) {
+	bin := buildAmika(t)
+
+	cmd := exec.Command(bin, "secret", "claude", "upload",
+		"--from-file", "/nonexistent/creds.json",
+		"--name", "Missing")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error, got success\noutput:\n%s", out)
+	}
+	if !strings.Contains(string(out), "reading credentials file") {
+		t.Fatalf("expected file read error, got:\n%s", out)
+	}
+}
+
+func TestSecretClaudeList_NoAuth(t *testing.T) {
+	bin := buildAmika(t)
+
+	// Without auth, should fail with auth error, not crash.
+	cmd := exec.Command(bin, "secret", "claude", "list")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error (no auth), got success\noutput:\n%s", out)
+	}
+	// Should not panic or give unexpected errors.
+	text := string(out)
+	if strings.Contains(text, "panic") {
+		t.Fatalf("unexpected panic:\n%s", text)
+	}
+}
+
+func TestSecretClaudeDelete_NoArgs(t *testing.T) {
+	bin := buildAmika(t)
+
+	cmd := exec.Command(bin, "secret", "claude", "delete")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected error, got success\noutput:\n%s", out)
+	}
+	if !strings.Contains(string(out), "accepts 1 arg(s)") {
+		t.Fatalf("expected args error, got:\n%s", out)
+	}
+}
+
+func TestSecretClaudePluralAlias(t *testing.T) {
+	bin := buildAmika(t)
+
+	// "secrets claude list" should also work.
+	cmd := exec.Command(bin, "secrets", "claude", "list")
+	out, err := cmd.CombinedOutput()
+	// Will fail with auth error, but the command should be recognized.
+	if err == nil {
+		return // surprisingly succeeded, that's fine
+	}
+	text := string(out)
+	if strings.Contains(text, "unknown command") {
+		t.Fatalf("secrets plural alias not working:\n%s", text)
+	}
+}
+
 func writeJSONFixture(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

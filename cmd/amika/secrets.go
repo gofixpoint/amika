@@ -2,8 +2,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -398,12 +403,340 @@ func maskValue(value string) string {
 	return value[:4] + strings.Repeat("*", len(value)-8) + value[len(value)-4:]
 }
 
+var secretClaudeCmd = &cobra.Command{
+	Use:   "claude",
+	Short: "Manage Claude Code credentials",
+	Long:  `Upload and list Claude Code credentials for sandbox authentication.`,
+}
+
+func newSecretClaudeUploadCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "upload",
+		Short: "Upload Claude Code credentials to the remote secrets store",
+		Long: `Upload Claude Code credentials to the remote Amika secrets store.
+
+Scans your system for Claude credentials (API keys and OAuth tokens) and
+lets you choose which one to upload. On macOS, the keychain is also checked.
+
+You can also provide credentials directly via --value or from a file via --from-file.
+
+Examples:
+  amika secret claude upload
+  amika secret claude upload --name "Claude OAuth (Work Laptop)"
+  amika secret claude upload --from-file ~/.claude/.credentials.json
+  amika secret claude upload --value '{"claudeAiOauth":{...}}'`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+
+			nameFlag, _ := cmd.Flags().GetString("name")
+			value, _ := cmd.Flags().GetString("value")
+			fromFile, _ := cmd.Flags().GetString("from-file")
+			typeFlag, _ := cmd.Flags().GetString("type")
+
+			var credValue string
+			var credType string // "oauth" or "api_key"
+
+			switch {
+			case value != "":
+				credValue = value
+				credType = typeFlag
+			case fromFile != "":
+				data, err := os.ReadFile(fromFile)
+				if err != nil {
+					return fmt.Errorf("reading credentials file: %w", err)
+				}
+				credValue = strings.TrimSpace(string(data))
+				credType = typeFlag
+			case cmd.Flags().Changed("type"):
+				// --type was set explicitly without --value/--from-file;
+				// auto-resolve based on the requested type.
+				resolved, err := autoResolveClaudeCredential(typeFlag)
+				if err != nil {
+					return err
+				}
+				credValue = resolved
+				credType = typeFlag
+			default:
+				// Interactive discovery — show all found credentials.
+				cred, err := discoverAndPickClaudeCredential(cmd)
+				if err != nil {
+					return err
+				}
+				credValue = cred.Value
+				credType = claudeCredentialTypeToAPI(cred.Type)
+			}
+
+			// Validate: OAuth credentials must be valid JSON.
+			if credType == "oauth" && !json.Valid([]byte(credValue)) {
+				return fmt.Errorf("OAuth credentials must be valid JSON")
+			}
+
+			// Name is required.
+			name := nameFlag
+			if name == "" {
+				reader := bufio.NewReader(cmd.InOrStdin())
+				defaultName := "Claude OAuth"
+				if credType == "api_key" {
+					defaultName = "Claude API Key"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Name for this credential [%s]: ", defaultName)
+				input, err := reader.ReadString('\n')
+				if err != nil {
+					return fmt.Errorf("reading name: %w", err)
+				}
+				name = strings.TrimSpace(input)
+				if name == "" {
+					name = defaultName
+				}
+			}
+
+			client, err := getSecretsClient()
+			if err != nil {
+				return fmt.Errorf("authenticating with remote API: %w", err)
+			}
+
+			summary, err := client.CreateClaudeSecret(apiclient.CreateClaudeSecretRequest{
+				Name:  name,
+				Value: credValue,
+				Type:  credType,
+			})
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Created Claude credential %q\n", summary.Name)
+			return nil
+		},
+	}
+
+	cmd.Flags().String("name", "", "Human-readable label for the credential (required, prompted if omitted)")
+	cmd.Flags().String("value", "", "Credential value (skips interactive discovery)")
+	cmd.Flags().String("from-file", "", "Path to a credentials file (skips interactive discovery)")
+	cmd.Flags().String("type", "oauth", "Credential type: \"oauth\" (default) or \"api_key\"")
+
+	return cmd
+}
+
+// discoverAndPickClaudeCredential scans the local system for Claude credentials,
+// displays them, and lets the user pick one to upload.
+func discoverAndPickClaudeCredential(cmd *cobra.Command) (auth.ClaudeCredential, error) {
+	// Also check macOS keychain if on darwin.
+	creds, err := discoverAllClaudeCredentials()
+	if err != nil {
+		return auth.ClaudeCredential{}, err
+	}
+
+	if len(creds) == 0 {
+		return auth.ClaudeCredential{}, fmt.Errorf("no Claude credentials found on this system\n\nUse --value or --from-file to provide credentials manually")
+	}
+
+	// Display discovered credentials.
+	fmt.Fprintln(cmd.OutOrStdout(), "Discovered Claude credentials:")
+	fmt.Fprintln(cmd.OutOrStdout())
+	for i, c := range creds {
+		fmt.Fprintf(cmd.OutOrStdout(), "  [%d] %s  (%s)\n", i+1, c.Type, c.Source)
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+
+	// If only one, ask for confirmation directly.
+	var selected auth.ClaudeCredential
+	reader := bufio.NewReader(cmd.InOrStdin())
+	if len(creds) == 1 {
+		selected = creds[0]
+		fmt.Fprintf(cmd.OutOrStdout(), "Upload this credential? [y/N] ")
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "Select credential to upload [1-%d]: ", len(creds))
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return auth.ClaudeCredential{}, fmt.Errorf("reading selection: %w", err)
+		}
+		input = strings.TrimSpace(input)
+		choice, err := strconv.Atoi(input)
+		if err != nil || choice < 1 || choice > len(creds) {
+			return auth.ClaudeCredential{}, fmt.Errorf("invalid selection: %q", input)
+		}
+		selected = creds[choice-1]
+
+		fmt.Fprintf(cmd.OutOrStdout(), "\nUpload %s from %s? [y/N] ", selected.Type, selected.Source)
+	}
+
+	answer, err := reader.ReadString('\n')
+	if err != nil {
+		return auth.ClaudeCredential{}, fmt.Errorf("reading confirmation: %w", err)
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "y" && answer != "yes" {
+		return auth.ClaudeCredential{}, fmt.Errorf("aborted")
+	}
+
+	return selected, nil
+}
+
+// discoverAllClaudeCredentials finds Claude credentials from files and (on macOS) keychain.
+func discoverAllClaudeCredentials() ([]auth.ClaudeCredential, error) {
+	creds, err := auth.DiscoverClaudeCredentials("")
+	if err != nil {
+		return nil, err
+	}
+
+	// On macOS, also try the keychain.
+	if runtime.GOOS == "darwin" {
+		keychainValue, err := readClaudeCredentialFromKeychain()
+		if err == nil && keychainValue != "" && json.Valid([]byte(keychainValue)) {
+			creds = append(creds, auth.ClaudeCredential{
+				Type:   "OAuth",
+				Source: "macOS Keychain",
+				Value:  keychainValue,
+			})
+		}
+	}
+
+	return creds, nil
+}
+
+// readClaudeCredentialFromKeychain reads Claude Code credentials from the macOS keychain.
+func readClaudeCredentialFromKeychain() (string, error) {
+	out, err := exec.Command("security", "find-generic-password", "-s", "Claude Code-credentials", "-w").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func newSecretClaudeListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List uploaded Claude credentials",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+
+			client, err := getSecretsClient()
+			if err != nil {
+				return fmt.Errorf("authenticating with remote API: %w", err)
+			}
+
+			items, err := client.ListClaudeSecrets()
+			if err != nil {
+				return err
+			}
+
+			if len(items) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No Claude credentials found.")
+				return nil
+			}
+
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tNAME\tTYPE")
+			for _, item := range items {
+				fmt.Fprintf(w, "%s\t%s\t%s\n", item.ID, item.Name, item.Type)
+			}
+			return w.Flush()
+		},
+	}
+}
+
+func newSecretClaudeDeleteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <id>",
+		Short: "Delete a Claude credential by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+
+			client, err := getSecretsClient()
+			if err != nil {
+				return fmt.Errorf("authenticating with remote API: %w", err)
+			}
+
+			if err := client.DeleteClaudeSecret(args[0]); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Deleted credential %s\n", args[0])
+			return nil
+		},
+	}
+}
+
+// autoResolveClaudeCredential resolves a credential value automatically based
+// on the requested type, without interactive prompts.
+//   - "api_key": reads the ANTHROPIC_API_KEY environment variable.
+//   - "oauth": on macOS reads from the keychain, otherwise from credential files.
+func autoResolveClaudeCredential(credType string) (string, error) {
+	if credType == "api_key" {
+		key := os.Getenv("ANTHROPIC_API_KEY")
+		if key == "" {
+			return "", fmt.Errorf("ANTHROPIC_API_KEY environment variable is not set")
+		}
+		return key, nil
+	}
+
+	// OAuth: try keychain on macOS, then credential files.
+	if runtime.GOOS == "darwin" {
+		value, err := readClaudeCredentialFromKeychain()
+		if err == nil && value != "" {
+			return value, nil
+		}
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determining home directory: %w", err)
+	}
+
+	oauthPaths := []string{
+		filepath.Join(homeDir, ".claude", ".credentials.json"),
+		filepath.Join(homeDir, ".claude-oauth-credentials.json"),
+	}
+	for _, path := range oauthPaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		value := strings.TrimSpace(string(data))
+		if json.Valid([]byte(value)) {
+			return value, nil
+		}
+	}
+
+	return "", fmt.Errorf("no OAuth credentials found; on macOS check keychain, or provide --value or --from-file")
+}
+
+// claudeCredentialTypeToAPI maps the discovery type label to the API type field.
+func claudeCredentialTypeToAPI(discoveryType string) string {
+	switch discoveryType {
+	case "API Key":
+		return "api_key"
+	default:
+		return "oauth"
+	}
+}
+
 func init() {
 	rootCmd.AddCommand(secretCmd)
 	secretCmd.AddCommand(newSecretExtractCmd())
 	secretCmd.AddCommand(newSecretPushCmd())
+	secretCmd.AddCommand(secretClaudeCmd)
+	secretClaudeCmd.AddCommand(newSecretClaudeUploadCmd())
+	secretClaudeCmd.AddCommand(newSecretClaudeListCmd())
+	secretClaudeCmd.AddCommand(newSecretClaudeDeleteCmd())
 
 	rootCmd.AddCommand(secretsAliasCmd)
 	secretsAliasCmd.AddCommand(newSecretExtractCmd())
 	secretsAliasCmd.AddCommand(newSecretPushCmd())
+
+	// Add claude subcommand to the alias too.
+	secretsClaudeAlias := &cobra.Command{
+		Use:    "claude",
+		Short:  "Manage Claude Code credentials",
+		Long:   `Upload and list Claude Code credentials for sandbox authentication.`,
+		Hidden: true,
+	}
+	secretsAliasCmd.AddCommand(secretsClaudeAlias)
+	secretsClaudeAlias.AddCommand(newSecretClaudeUploadCmd())
+	secretsClaudeAlias.AddCommand(newSecretClaudeListCmd())
+	secretsClaudeAlias.AddCommand(newSecretClaudeDeleteCmd())
 }
