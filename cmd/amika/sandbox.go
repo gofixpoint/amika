@@ -1848,10 +1848,6 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	return nil
 }
 
-// resolveGitURL takes the --git flag value and returns a git URL suitable for
-// remote sandbox creation. If the value is already an HTTP(S) or SSH URL, it is
-// returned directly. Otherwise it is treated as a local path and the origin
-// remote URL is extracted.
 // autoSelectClaudeCredential returns the name of the user's Claude credential
 // if exactly one exists on the remote. Returns empty string on any error or
 // if no credentials are uploaded.
@@ -1863,6 +1859,10 @@ func autoSelectClaudeCredential(client *apiclient.Client) string {
 	return creds[0].Name
 }
 
+// resolveGitURL takes the --git flag value and returns a git URL suitable for
+// remote sandbox creation. If the value is already an HTTP(S) or SSH URL, it is
+// returned directly. Otherwise it is treated as a local path and the origin
+// remote URL is extracted.
 func resolveGitURL(value string) (string, error) {
 	// Already a URL — use as-is.
 	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "git@") {

@@ -398,12 +398,12 @@ func TestClaudeCredentialTypeToAPI(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeUpload_ValueFlag(t *testing.T) {
+func TestSecretClaudePush_ValueFlag(t *testing.T) {
 	bin := buildAmika(t)
 
 	// With --value and --name, the command will try to hit the API and fail,
 	// but we can verify it gets past validation.
-	cmd := exec.Command(bin, "secret", "claude", "upload",
+	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--value", `{"claudeAiOauth":{"accessToken":"test"}}`,
 		"--name", "Test OAuth")
 	out, err := cmd.CombinedOutput()
@@ -417,10 +417,10 @@ func TestSecretClaudeUpload_ValueFlag(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeUpload_InvalidOAuthJSON(t *testing.T) {
+func TestSecretClaudePush_InvalidOAuthJSON(t *testing.T) {
 	bin := buildAmika(t)
 
-	cmd := exec.Command(bin, "secret", "claude", "upload",
+	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--value", "not-json",
 		"--type", "oauth",
 		"--name", "Bad")
@@ -433,12 +433,12 @@ func TestSecretClaudeUpload_InvalidOAuthJSON(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeUpload_APIKeyNoJSONValidation(t *testing.T) {
+func TestSecretClaudePush_APIKeyNoJSONValidation(t *testing.T) {
 	bin := buildAmika(t)
 
 	// api_key type should NOT require valid JSON — it should get past validation
 	// and fail at the auth step.
-	cmd := exec.Command(bin, "secret", "claude", "upload",
+	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--value", "sk-ant-api03-plaintext",
 		"--type", "api_key",
 		"--name", "My Key")
@@ -452,12 +452,12 @@ func TestSecretClaudeUpload_APIKeyNoJSONValidation(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeUpload_TypeAPIKeyReadsEnv(t *testing.T) {
+func TestSecretClaudePush_TypeAPIKeyReadsEnv(t *testing.T) {
 	bin := buildAmika(t)
 
 	// --type api_key without --value should read ANTHROPIC_API_KEY.
 	// With the env var unset, it should produce an error.
-	cmd := exec.Command(bin, "secret", "claude", "upload",
+	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--type", "api_key",
 		"--name", "Key")
 	cmd.Env = withEnv(os.Environ(), "ANTHROPIC_API_KEY=")
@@ -479,11 +479,11 @@ func TestSecretClaudeUpload_TypeAPIKeyReadsEnv(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeUpload_TypeAPIKeyWithEnvSet(t *testing.T) {
+func TestSecretClaudePush_TypeAPIKeyWithEnvSet(t *testing.T) {
 	bin := buildAmika(t)
 
 	// With ANTHROPIC_API_KEY set, it should get past resolution and fail at auth.
-	cmd := exec.Command(bin, "secret", "claude", "upload",
+	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--type", "api_key",
 		"--name", "Key From Env")
 	cmd.Env = withEnv(os.Environ(), "ANTHROPIC_API_KEY=sk-ant-api03-test")
@@ -499,7 +499,7 @@ func TestSecretClaudeUpload_TypeAPIKeyWithEnvSet(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeUpload_FromFile(t *testing.T) {
+func TestSecretClaudePush_FromFile(t *testing.T) {
 	bin := buildAmika(t)
 
 	credFile := filepath.Join(t.TempDir(), "creds.json")
@@ -507,7 +507,7 @@ func TestSecretClaudeUpload_FromFile(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	cmd := exec.Command(bin, "secret", "claude", "upload",
+	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--from-file", credFile,
 		"--name", "From File")
 	out, err := cmd.CombinedOutput()
@@ -524,10 +524,10 @@ func TestSecretClaudeUpload_FromFile(t *testing.T) {
 	}
 }
 
-func TestSecretClaudeUpload_FromFileMissing(t *testing.T) {
+func TestSecretClaudePush_FromFileMissing(t *testing.T) {
 	bin := buildAmika(t)
 
-	cmd := exec.Command(bin, "secret", "claude", "upload",
+	cmd := exec.Command(bin, "secret", "claude", "push",
 		"--from-file", "/nonexistent/creds.json",
 		"--name", "Missing")
 	out, err := cmd.CombinedOutput()

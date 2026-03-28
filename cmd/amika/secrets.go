@@ -406,25 +406,37 @@ func maskValue(value string) string {
 var secretClaudeCmd = &cobra.Command{
 	Use:   "claude",
 	Short: "Manage Claude Code credentials",
-	Long:  `Upload and list Claude Code credentials for sandbox authentication.`,
+	Long:  `Push and list Claude Code credentials for sandbox authentication.`,
 }
 
-func newSecretClaudeUploadCmd() *cobra.Command {
+func newSecretClaudePushCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "upload",
-		Short: "Upload Claude Code credentials to the remote secrets store",
-		Long: `Upload Claude Code credentials to the remote Amika secrets store.
+		Use:   "push",
+		Short: "Push Claude Code credentials to the remote secrets store",
+		Long: `Push Claude Code credentials to the remote Amika secrets store.
 
 Scans your system for Claude credentials (API keys and OAuth tokens) and
-lets you choose which one to upload. On macOS, the keychain is also checked.
+lets you choose which one to push. On macOS, the keychain is also checked.
 
 You can also provide credentials directly via --value or from a file via --from-file.
 
+When using --type to auto-resolve credentials:
+  --type api_key  Reads the ANTHROPIC_API_KEY environment variable.
+  --type oauth    On macOS, reads from the macOS Keychain first, then falls
+                  back to ~/.claude/.credentials.json and
+                  ~/.claude-oauth-credentials.json.
+
+When run interactively (no flags), scans all known credential sources:
+  API keys:  ~/.claude.json.api, ~/.claude.json (fields: primaryApiKey,
+             apiKey, anthropicApiKey, customApiKey with sk-ant- prefix)
+  OAuth:     ~/.claude/.credentials.json, ~/.claude-oauth-credentials.json,
+             and macOS Keychain (on macOS)
+
 Examples:
-  amika secret claude upload
-  amika secret claude upload --name "Claude OAuth (Work Laptop)"
-  amika secret claude upload --from-file ~/.claude/.credentials.json
-  amika secret claude upload --value '{"claudeAiOauth":{...}}'`,
+  amika secret claude push
+  amika secret claude push --name "Claude OAuth (Work Laptop)"
+  amika secret claude push --from-file ~/.claude/.credentials.json
+  amika secret claude push --value '{"claudeAiOauth":{...}}'`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
@@ -519,7 +531,7 @@ Examples:
 }
 
 // discoverAndPickClaudeCredential scans the local system for Claude credentials,
-// displays them, and lets the user pick one to upload.
+// displays them, and lets the user pick one to push.
 func discoverAndPickClaudeCredential(cmd *cobra.Command) (auth.ClaudeCredential, error) {
 	// Also check macOS keychain if on darwin.
 	creds, err := discoverAllClaudeCredentials()
@@ -544,9 +556,9 @@ func discoverAndPickClaudeCredential(cmd *cobra.Command) (auth.ClaudeCredential,
 	reader := bufio.NewReader(cmd.InOrStdin())
 	if len(creds) == 1 {
 		selected = creds[0]
-		fmt.Fprintf(cmd.OutOrStdout(), "Upload this credential? [y/N] ")
+		fmt.Fprintf(cmd.OutOrStdout(), "Push this credential? [y/N] ")
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Select credential to upload [1-%d]: ", len(creds))
+		fmt.Fprintf(cmd.OutOrStdout(), "Select credential to push [1-%d]: ", len(creds))
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			return auth.ClaudeCredential{}, fmt.Errorf("reading selection: %w", err)
@@ -558,7 +570,7 @@ func discoverAndPickClaudeCredential(cmd *cobra.Command) (auth.ClaudeCredential,
 		}
 		selected = creds[choice-1]
 
-		fmt.Fprintf(cmd.OutOrStdout(), "\nUpload %s from %s? [y/N] ", selected.Type, selected.Source)
+		fmt.Fprintf(cmd.OutOrStdout(), "\nPush %s from %s? [y/N] ", selected.Type, selected.Source)
 	}
 
 	answer, err := reader.ReadString('\n')
@@ -607,7 +619,7 @@ func readClaudeCredentialFromKeychain() (string, error) {
 func newSecretClaudeListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List uploaded Claude credentials",
+		Short: "List pushed Claude credentials",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
@@ -720,7 +732,7 @@ func init() {
 	secretCmd.AddCommand(newSecretExtractCmd())
 	secretCmd.AddCommand(newSecretPushCmd())
 	secretCmd.AddCommand(secretClaudeCmd)
-	secretClaudeCmd.AddCommand(newSecretClaudeUploadCmd())
+	secretClaudeCmd.AddCommand(newSecretClaudePushCmd())
 	secretClaudeCmd.AddCommand(newSecretClaudeListCmd())
 	secretClaudeCmd.AddCommand(newSecretClaudeDeleteCmd())
 
@@ -732,11 +744,11 @@ func init() {
 	secretsClaudeAlias := &cobra.Command{
 		Use:    "claude",
 		Short:  "Manage Claude Code credentials",
-		Long:   `Upload and list Claude Code credentials for sandbox authentication.`,
+		Long:   `Push and list Claude Code credentials for sandbox authentication.`,
 		Hidden: true,
 	}
 	secretsAliasCmd.AddCommand(secretsClaudeAlias)
-	secretsClaudeAlias.AddCommand(newSecretClaudeUploadCmd())
+	secretsClaudeAlias.AddCommand(newSecretClaudePushCmd())
 	secretsClaudeAlias.AddCommand(newSecretClaudeListCmd())
 	secretsClaudeAlias.AddCommand(newSecretClaudeDeleteCmd())
 }
