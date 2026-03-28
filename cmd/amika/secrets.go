@@ -619,7 +619,7 @@ func discoverAllClaudeCredentials() ([]auth.ClaudeCredential, error) {
 	}
 
 	// On macOS, also try the keychain.
-	if runtime.GOOS == "darwin" {
+	if isMacOS() {
 		keychainValue, err := readClaudeCredentialFromKeychain()
 		if err == nil && keychainValue != "" && json.Valid([]byte(keychainValue)) {
 			creds = append(creds, auth.ClaudeCredential{
@@ -713,7 +713,7 @@ func autoResolveClaudeCredential(credType string) (string, error) {
 	}
 
 	// OAuth: try keychain on macOS, then credential files.
-	if runtime.GOOS == "darwin" {
+	if isMacOS() {
 		value, err := readClaudeCredentialFromKeychain()
 		if err == nil && value != "" {
 			return value, nil
@@ -741,6 +741,11 @@ func autoResolveClaudeCredential(credType string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no OAuth credentials found; on macOS check keychain, or provide --value or --from-file")
+}
+
+// isMacOS reports whether the current operating system is macOS.
+func isMacOS() bool {
+	return runtime.GOOS == "darwin"
 }
 
 // claudeCredentialTypeToAPI maps the discovery type label to the API type field.
