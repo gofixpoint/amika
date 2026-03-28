@@ -441,66 +441,14 @@ Examples:
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
 
-			nameFlag, _ := cmd.Flags().GetString("name")
-			value, _ := cmd.Flags().GetString("value")
-			fromFile, _ := cmd.Flags().GetString("from-file")
-			typeFlag, _ := cmd.Flags().GetString("type")
-
-			var credValue string
-			var credType string // "oauth" or "api_key"
-
-			switch {
-			case value != "":
-				credValue = value
-				credType = typeFlag
-			case fromFile != "":
-				data, err := os.ReadFile(fromFile)
-				if err != nil {
-					return fmt.Errorf("reading credentials file: %w", err)
-				}
-				credValue = strings.TrimSpace(string(data))
-				credType = typeFlag
-			case cmd.Flags().Changed("type"):
-				// --type was set explicitly without --value/--from-file;
-				// auto-resolve based on the requested type.
-				resolved, err := autoResolveClaudeCredential(typeFlag)
-				if err != nil {
-					return err
-				}
-				credValue = resolved
-				credType = typeFlag
-			default:
-				// Interactive discovery — show all found credentials.
-				cred, err := discoverAndPickClaudeCredential(cmd)
-				if err != nil {
-					return err
-				}
-				credValue = cred.Value
-				credType = claudeCredentialTypeToAPI(cred.Type)
+			credValue, credType, err := parseClaudeCreds(cmd)
+			if err != nil {
+				return err
 			}
 
-			// Validate: OAuth credentials must be valid JSON.
-			if credType == "oauth" && !json.Valid([]byte(credValue)) {
-				return fmt.Errorf("OAuth credentials must be valid JSON")
-			}
-
-			// Name is required.
-			name := nameFlag
-			if name == "" {
-				reader := bufio.NewReader(cmd.InOrStdin())
-				defaultName := "Claude OAuth"
-				if credType == "api_key" {
-					defaultName = "Claude API Key"
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Name for this credential [%s]: ", defaultName)
-				input, err := reader.ReadString('\n')
-				if err != nil {
-					return fmt.Errorf("reading name: %w", err)
-				}
-				name = strings.TrimSpace(input)
-				if name == "" {
-					name = defaultName
-				}
+			name, err := parseClaudeName(cmd, credType)
+			if err != nil {
+				return err
 			}
 
 			client, err := getSecretsClient()
@@ -528,6 +476,84 @@ Examples:
 	cmd.Flags().String("type", "oauth", "Credential type: \"oauth\" (default) or \"api_key\"")
 
 	return cmd
+}
+
+// parseClaudeCreds resolves the credential value and type from command flags.
+// It returns an error if mutually exclusive flags --value and --from-file are
+// both provided.
+func parseClaudeCreds(cmd *cobra.Command) (string, string, error) {
+	value, _ := cmd.Flags().GetString("value")
+	fromFile, _ := cmd.Flags().GetString("from-file")
+	typeFlag, _ := cmd.Flags().GetString("type")
+
+	if value != "" && fromFile != "" {
+		return "", "", fmt.Errorf("--value and --from-file are mutually exclusive")
+	}
+
+	var credValue string
+	var credType string // "oauth" or "api_key"
+
+	switch {
+	case value != "":
+		credValue = value
+		credType = typeFlag
+	case fromFile != "":
+		data, err := os.ReadFile(fromFile)
+		if err != nil {
+			return "", "", fmt.Errorf("reading credentials file: %w", err)
+		}
+		credValue = strings.TrimSpace(string(data))
+		credType = typeFlag
+	case cmd.Flags().Changed("type"):
+		// --type was set explicitly without --value/--from-file;
+		// auto-resolve based on the requested type.
+		resolved, err := autoResolveClaudeCredential(typeFlag)
+		if err != nil {
+			return "", "", err
+		}
+		credValue = resolved
+		credType = typeFlag
+	default:
+		// Interactive discovery — show all found credentials.
+		cred, err := discoverAndPickClaudeCredential(cmd)
+		if err != nil {
+			return "", "", err
+		}
+		credValue = cred.Value
+		credType = claudeCredentialTypeToAPI(cred.Type)
+	}
+
+	// Validate: OAuth credentials must be valid JSON.
+	if credType == "oauth" && !json.Valid([]byte(credValue)) {
+		return "", "", fmt.Errorf("OAuth credentials must be valid JSON")
+	}
+
+	return credValue, credType, nil
+}
+
+// parseClaudeName resolves the credential name from the --name flag or by
+// prompting the user interactively with a type-appropriate default.
+func parseClaudeName(cmd *cobra.Command, credType string) (string, error) {
+	name, _ := cmd.Flags().GetString("name")
+	if name != "" {
+		return name, nil
+	}
+
+	reader := bufio.NewReader(cmd.InOrStdin())
+	defaultName := "Claude OAuth"
+	if credType == "api_key" {
+		defaultName = "Claude API Key"
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Name for this credential [%s]: ", defaultName)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("reading name: %w", err)
+	}
+	name = strings.TrimSpace(input)
+	if name == "" {
+		name = defaultName
+	}
+	return name, nil
 }
 
 // discoverAndPickClaudeCredential scans the local system for Claude credentials,
