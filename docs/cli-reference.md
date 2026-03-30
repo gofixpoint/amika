@@ -201,6 +201,30 @@ amika sandbox code my-sandbox --editor=cursor
 | ------------------ | -------- | -------------------------------- |
 | `--editor <name>`  | `cursor` | Editor to open (currently only `cursor` is supported) |
 
+### `amika sandbox agent-send`
+
+Send a prompt to an AI agent CLI running inside a sandbox container. The message can be provided as a positional argument or piped via stdin. By default the command waits for the agent to finish and streams the response.
+
+```bash
+# Send a message to Claude in a sandbox
+amika sandbox agent-send my-sandbox "Add unit tests for the auth module"
+
+# Pipe a message via stdin
+echo "Fix the failing tests" | amika sandbox agent-send my-sandbox
+
+# Send without waiting for a response
+amika sandbox agent-send my-sandbox "Refactor the API layer" --no-wait
+
+# Use a different agent CLI
+amika sandbox agent-send my-sandbox "Review this code" --agent codex
+```
+
+| Flag                  | Default            | Description                                                  |
+| --------------------- | ------------------ | ------------------------------------------------------------ |
+| `--no-wait`           | `false`            | Send the instruction and return immediately without waiting  |
+| `--workdir <path>`    | `$AMIKA_AGENT_CWD` | Working directory inside the container                       |
+| `--agent <name>`      | `claude`           | Agent CLI to use                                             |
+
 ---
 
 ## `amika volume`
