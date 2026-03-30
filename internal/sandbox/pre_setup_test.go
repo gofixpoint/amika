@@ -114,6 +114,7 @@ func TestPresetRunHook_UsesAmikaOnlyForSetupAndMirrorsItToAmikad(t *testing.T) {
 		`exec >>"$log_file" 2>&1`,
 		`sudo cp "$log_file" "$daemon_log_file"`,
 		`export BASH_ENV="/usr/lib/amikad/bash-error-prelude.sh"`,
+		`_amika_cwd_file="/var/lib/amikad/agent-cwd"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("run-hook.sh missing %q", want)
