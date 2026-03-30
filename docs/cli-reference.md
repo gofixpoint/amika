@@ -8,7 +8,7 @@ Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 ### Global sandbox flags
 
-These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `delete`, `connect`):
+These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `agent-send`):
 
 | Flag       | Default | Description                      |
 | ---------- | ------- | -------------------------------- |
@@ -146,6 +146,60 @@ amika sandbox delete dev-sandbox --keep-volumes
 | `--keep-volumes`   | `false` | Keep associated volumes without prompting, even if this sandbox is the only reference |
 
 When neither flag is set and the sandbox is the sole reference for a volume, you will be prompted to decide.
+
+### `amika sandbox stop`
+
+Stop one or more running sandboxes without removing them.
+
+```bash
+amika sandbox stop dev-sandbox
+amika sandbox stop sandbox-1 sandbox-2
+```
+
+### `amika sandbox start`
+
+Start (resume) one or more stopped sandboxes.
+
+```bash
+amika sandbox start dev-sandbox
+amika sandbox start sandbox-1 sandbox-2
+```
+
+### `amika sandbox ssh`
+
+SSH into a remote sandbox, or revoke SSH access. Optionally pass a command to execute instead of opening an interactive session.
+
+```bash
+# Interactive SSH session
+amika sandbox ssh my-sandbox
+
+# Run a command on the remote sandbox
+amika sandbox ssh my-sandbox -- ls -la
+
+# Force pseudo-terminal allocation (for interactive programs)
+amika sandbox ssh -t my-sandbox -- top
+
+# Revoke SSH access
+amika sandbox ssh my-sandbox --revoke
+```
+
+| Flag        | Default | Description                                                                 |
+| ----------- | ------- | --------------------------------------------------------------------------- |
+| `-t`        | `false` | Force pseudo-terminal allocation (useful for interactive remote programs)    |
+| `--revoke`  | `false` | Revoke SSH access for the sandbox                                           |
+
+### `amika sandbox code`
+
+Open a remote sandbox in an editor via SSH.
+
+```bash
+amika sandbox code my-sandbox
+amika sandbox code my-sandbox --editor=cursor
+```
+
+| Flag               | Default  | Description                      |
+| ------------------ | -------- | -------------------------------- |
+| `--editor <name>`  | `cursor` | Editor to open (currently only `cursor` is supported) |
 
 ---
 
