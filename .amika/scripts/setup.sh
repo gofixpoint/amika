@@ -20,11 +20,12 @@ case "$ARCH" in
 esac
 
 curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz
-tar -C /usr/local -xzf /tmp/go.tar.gz
+sudo tar -C /usr/local -xzf /tmp/go.tar.gz
 rm /tmp/go.tar.gz
 
 # Make Go available system-wide
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile.d/golang.sh
+echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/golang.sh > /dev/null
 
-export PATH=$PATH:/usr/local/go/bin
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.zshrc
 echo "Installed: $(go version)"
