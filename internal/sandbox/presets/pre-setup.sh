@@ -71,8 +71,12 @@ if [[ -f /usr/local/etc/amika/dind-enabled ]]; then
 fi
 
 # Configure pnpm global bin directory so setup.sh can run `pnpm add -g`.
+# Create as root first because Docker bind-mounts (e.g. agent credential files
+# under ~/.local/) can leave intermediate directories root-owned, preventing
+# the amika user from creating subdirectories.
 PNPM_HOME="/home/amika/.local/share/pnpm"
-sudo -H -u amika mkdir -p "$PNPM_HOME"
+mkdir -p "$PNPM_HOME"
+chown -R amika:amika /home/amika/.local
 cat > /usr/local/etc/amikad/setup/env.sh <<'ENVEOF'
 export PNPM_HOME="$HOME/.local/share/pnpm"
 export PATH="$PNPM_HOME:$PATH"
