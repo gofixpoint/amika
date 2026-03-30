@@ -567,6 +567,68 @@ func TestBuildSandboxConnectArgs(t *testing.T) {
 	}
 }
 
+func TestBuildSandboxAgentSendArgs(t *testing.T) {
+	agent := agentConfig{Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}}
+
+	t.Run("wait mode", func(t *testing.T) {
+		got := buildSandboxAgentSendArgs("sb-1", "hello world", false, "/home/amika", agent)
+		want := []string{"exec", "-w", "/home/amika", "sb-1", "claude", "--dangerously-skip-permissions", "-p", "hello world"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("args = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("no-wait mode uses tmux", func(t *testing.T) {
+		got := buildSandboxAgentSendArgs("sb-1", "hello world", true, "/home/amika", agent)
+		// Should start with "exec sb-1 tmux new-session -d -s amika-agent-send-..."
+		if len(got) != 8 {
+			t.Fatalf("expected 8 args, got %d: %#v", len(got), got)
+		}
+		if got[0] != "exec" || got[1] != "sb-1" || got[2] != "tmux" || got[3] != "new-session" || got[4] != "-d" || got[5] != "-s" {
+			t.Fatalf("unexpected prefix: %#v", got[:6])
+		}
+		if !strings.HasPrefix(got[6], "amika-agent-send-") {
+			t.Fatalf("session name = %q, want amika-agent-send-* prefix", got[6])
+		}
+		if !strings.Contains(got[7], "--dangerously-skip-permissions") {
+			t.Fatalf("tmux command = %q, want to contain '--dangerously-skip-permissions'", got[7])
+		}
+	})
+
+	t.Run("custom workdir", func(t *testing.T) {
+		got := buildSandboxAgentSendArgs("sb-1", "test", false, "/workspace", agent)
+		want := []string{"exec", "-w", "/workspace", "sb-1", "claude", "--dangerously-skip-permissions", "-p", "test"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("args = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("custom agent without extra args", func(t *testing.T) {
+		custom := agentConfig{Binary: "my-agent", PrintArg: "--msg"}
+		got := buildSandboxAgentSendArgs("sb-1", "fix it", false, "/home/amika", custom)
+		want := []string{"exec", "-w", "/home/amika", "sb-1", "my-agent", "--msg", "fix it"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("args = %#v, want %#v", got, want)
+		}
+	})
+}
+
+func TestResolveAgentConfig(t *testing.T) {
+	t.Run("known agent claude", func(t *testing.T) {
+		cfg := resolveAgentConfig("claude")
+		if cfg.Binary != "claude" || cfg.PrintArg != "-p" || len(cfg.ExtraArgs) != 1 || cfg.ExtraArgs[0] != "--dangerously-skip-permissions" {
+			t.Fatalf("got %+v, want claude/-p/--dangerously-skip-permissions", cfg)
+		}
+	})
+
+	t.Run("unknown agent uses defaults", func(t *testing.T) {
+		cfg := resolveAgentConfig("custom-agent")
+		if cfg.Binary != "custom-agent" || cfg.PrintArg != "-p" {
+			t.Fatalf("got %+v, want custom-agent/-p", cfg)
+		}
+	})
+}
+
 func TestResolveGitRoot(t *testing.T) {
 	t.Run("finds from nested directory", func(t *testing.T) {
 		root := t.TempDir()
