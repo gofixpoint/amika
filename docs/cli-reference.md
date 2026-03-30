@@ -65,6 +65,13 @@ amika sandbox create --name dev-sandbox --port 8080:8080
 
 # Publish a port bound to all interfaces
 amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
+
+# Clone a specific git branch
+amika sandbox create --name dev-sandbox --git --branch develop
+
+# Inject remote secrets (remote sandboxes only)
+amika sandbox create --name dev-sandbox --git --remote \
+  --secret env:ANTHROPIC_API_KEY=my-claude-key
 ```
 
 #### Flags
@@ -85,6 +92,8 @@ amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
 | `--yes`                 | `false`              | Skip mount confirmation prompt                                                                                                       |
 | `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                                              |
 | `--setup-script <path>` |                      | Mount a local script to `/usr/local/etc/amikad/setup/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
+| `--branch <name>`       |                      | Git branch to clone (defaults to the repo's default branch). Used with `--git`                                                       |
+| `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. Requires `--remote`. See [secrets.md](secrets.md)   |
 
 #### Mount modes
 
@@ -102,7 +111,7 @@ List all tracked sandboxes.
 amika sandbox list
 ```
 
-Output columns: `NAME`, `LOCATION`, `PROVIDER`, `IMAGE`, `PORTS`, `CREATED`.
+Output columns: `NAME`, `STATE`, `LOCATION`, `PROVIDER`, `IMAGE`, `BRANCH`, `PORTS`, `CREATED`.
 
 ### `amika sandbox connect`
 
