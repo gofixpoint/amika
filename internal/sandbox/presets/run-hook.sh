@@ -42,6 +42,14 @@ if [[ -f /usr/local/etc/amikad/setup/env.sh ]]; then
   source /usr/local/etc/amikad/setup/env.sh
 fi
 
+# Change to the agent working directory for the user-facing setup hook only.
+if [[ "$script_name" == "setup.sh" ]]; then
+  _amika_cwd_file="/var/lib/amikad/agent-cwd"
+  if [[ -f "$_amika_cwd_file" ]]; then
+    cd "$(cat "$_amika_cwd_file")"
+  fi
+fi
+
 set +e
 "$script_path"
 status=$?

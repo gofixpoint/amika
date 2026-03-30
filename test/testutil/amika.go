@@ -13,6 +13,8 @@ import (
 const (
 	// RunDockerIntegrationTestsEnv gates Docker-backed integration tests.
 	RunDockerIntegrationTestsEnv = "AMIKA_RUN_DOCKER_INTEGRATION"
+	// RunExpensiveTestsEnv gates expensive tests that rebuild Docker images.
+	RunExpensiveTestsEnv = "AMIKA_RUN_EXPENSIVE_TESTS"
 )
 
 // BuildAmikaBinary builds amika and returns the path to the binary.
@@ -62,6 +64,17 @@ func RequireDockerIntegration(t *testing.T) {
 	cmd := exec.Command("docker", "info")
 	if err := cmd.Run(); err != nil {
 		t.Skipf("docker unavailable: %v", err)
+	}
+}
+
+// RequireExpensiveDockerTests skips unless both Docker integration and expensive tests are enabled.
+func RequireExpensiveDockerTests(t *testing.T) {
+	t.Helper()
+
+	RequireDockerIntegration(t)
+
+	if os.Getenv(RunExpensiveTestsEnv) != "1" {
+		t.Skipf("set %s=1 to run expensive Docker rebuild tests", RunExpensiveTestsEnv)
 	}
 }
 
