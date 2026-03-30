@@ -39,10 +39,7 @@ import (
 // records pwd and the env var to files. The materialize --cmd then copies
 // those files to the output directory where the test can read them.
 func TestSetupScript_CWDAndEnv(t *testing.T) {
-	testutil.RequireDockerIntegration(t)
-	if os.Getenv("AMIKA_RUN_EXPENSIVE_TESTS") != "1" {
-		t.Skip("set AMIKA_RUN_EXPENSIVE_TESTS=1 to run expensive Docker rebuild tests")
-	}
+	testutil.RequireExpensiveDockerTests(t)
 
 	bin := testutil.BuildAmikaBinary(t)
 
