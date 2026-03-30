@@ -369,6 +369,58 @@ amika secret push --from-file=.env CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY
 
 When multiple sources are used, positional arguments override `--from-file` values, and `--from-env` overrides both.
 
+### `amika secret claude`
+
+Manage Claude Code credentials for sandbox authentication. Credentials pushed here can be injected into sandboxes at creation time.
+
+#### `amika secret claude push`
+
+Push Claude Code credentials (API key or OAuth token) to the remote Amika secrets store. Scans your system for Claude credentials and lets you choose which one to push. On macOS, the keychain is also checked.
+
+```bash
+# Interactive — discover and select credentials
+amika secret claude push
+
+# Push with a custom label
+amika secret claude push --name "Claude OAuth (Work Laptop)"
+
+# Push from a credentials file
+amika secret claude push --from-file ~/.claude/.credentials.json
+
+# Push a credential value directly
+amika secret claude push --value '{"claudeAiOauth":{...}}'
+
+# Auto-resolve by type (reads ANTHROPIC_API_KEY env var for api_key)
+amika secret claude push --type api_key
+```
+
+| Flag                 | Default | Description                                                     |
+| -------------------- | ------- | --------------------------------------------------------------- |
+| `--name <label>`     |         | Human-readable label for the credential (prompted if omitted)   |
+| `--value <string>`   |         | Credential value (skips interactive discovery)                  |
+| `--from-file <path>` |         | Path to a credentials file (skips interactive discovery)        |
+| `--type <type>`      | `oauth` | Credential type: `oauth` or `api_key`                           |
+
+`--value` and `--from-file` are mutually exclusive.
+
+#### `amika secret claude list`
+
+List pushed Claude credentials.
+
+```bash
+amika secret claude list
+```
+
+Output columns: `ID`, `NAME`, `TYPE`.
+
+#### `amika secret claude delete`
+
+Delete a Claude credential by ID.
+
+```bash
+amika secret claude delete <id>
+```
+
 ---
 
 ## `amika materialize`
