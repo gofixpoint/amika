@@ -1996,6 +1996,147 @@ Examples:
 	},
 }
 
+// agentConfig describes how to invoke an agent CLI in non-interactive mode.
+type agentConfig struct {
+	Binary    string   // CLI binary name
+	PrintArg  string   // flag for non-interactive print mode
+	ExtraArgs []string // additional flags passed on every invocation
+}
+
+// knownAgents maps agent names to their CLI configuration.
+var knownAgents = map[string]agentConfig{
+	"claude": {Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}},
+}
+
+// resolveAgentConfig returns the agent configuration for the given name.
+// Returns an error if the agent is not in the knownAgents map.
+func resolveAgentConfig(name string) (agentConfig, error) {
+	if cfg, ok := knownAgents[name]; ok {
+		return cfg, nil
+	}
+	known := make([]string, 0, len(knownAgents))
+	for k := range knownAgents {
+		known = append(known, fmt.Sprintf("%q", k))
+	}
+	return agentConfig{}, fmt.Errorf("unknown agent %q; supported agents: %s", name, strings.Join(known, ", "))
+}
+
+func runDockerSandboxAgentSend(name, message string, noWait bool, workdir string, agent agentConfig, stdout, stderr io.Writer) error {
+	dockerArgs := buildDockerAgentSendArgs(name, message, noWait, workdir, agent)
+	dockerCmd := exec.Command("docker", dockerArgs...)
+	if !noWait {
+		dockerCmd.Stdout = stdout
+		dockerCmd.Stderr = stderr
+	}
+	return dockerCmd.Run()
+}
+
+// agentCmdParts returns the agent binary, flags, and message as a flat list.
+func agentCmdParts(agent agentConfig, message string) []string {
+	parts := []string{agent.Binary}
+	parts = append(parts, agent.ExtraArgs...)
+	parts = append(parts, agent.PrintArg, message)
+	return parts
+}
+
+// buildAgentShellCmd returns the shell command string to run the agent.
+// When noWait is true, the command is wrapped in a detached tmux session.
+// The message is shell-quoted so it survives interpretation as a single argument.
+func buildAgentShellCmd(message string, noWait bool, workdir string, agent agentConfig) string {
+	agentStr := strings.Join(agentCmdParts(agent, fmt.Sprintf("%q", message)), " ")
+	cmd := fmt.Sprintf("cd %s && %s", workdir, agentStr)
+	if noWait {
+		sessionName := fmt.Sprintf("amika-agent-send-%d", time.Now().UnixNano())
+		return fmt.Sprintf("tmux new-session -d -s '%s' '%s'", sessionName, cmd)
+	}
+	return cmd
+}
+
+func buildDockerAgentSendArgs(name, message string, noWait bool, workdir string, agent agentConfig) []string {
+	shellCmd := buildAgentShellCmd(message, noWait, workdir, agent)
+	return []string{"exec", name, "bash", "-c", shellCmd}
+}
+
+func isStdinPiped() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) == 0
+}
+
+var sandboxAgentSendCmd = &cobra.Command{
+	Use:   "agent-send <name> [message]",
+	Short: "Send a message to an agent in a sandbox",
+	Long: `Send a prompt to an AI agent CLI running inside a sandbox container.
+The message can be provided as a positional argument or piped via stdin.
+By default the command waits for the agent to finish and streams the response.
+Use --no-wait to send the message and return immediately.`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+
+		name := args[0]
+
+		// Resolve message from args or stdin.
+		var message string
+		if len(args) > 1 {
+			message = strings.Join(args[1:], " ")
+		} else if isStdinPiped() {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("failed to read message from stdin: %w", err)
+			}
+			message = strings.TrimSpace(string(data))
+		}
+		if message == "" {
+			return fmt.Errorf("message is required as an argument or via stdin")
+		}
+
+		noWait, _ := cmd.Flags().GetBool("no-wait")
+		workdir, _ := cmd.Flags().GetString("workdir")
+		agentName, _ := cmd.Flags().GetString("agent")
+		agent, err := resolveAgentConfig(agentName)
+		if err != nil {
+			return err
+		}
+
+		// Try local sandbox first.
+		sandboxesFile, sErr := config.SandboxesStateFile()
+		if sErr == nil {
+			store := sandbox.NewStore(sandboxesFile)
+			if info, gErr := store.Get(name); gErr == nil {
+				if info.Provider != "docker" {
+					return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
+				}
+				if err := runDockerSandboxAgentSend(name, message, noWait, workdir, agent, os.Stdout, os.Stderr); err != nil {
+					if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
+						return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
+					}
+					return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
+				}
+				if noWait {
+					fmt.Fprintf(os.Stderr, "Message sent to %s in sandbox %q\n", agent.Binary, name)
+				}
+				return nil
+			}
+		}
+
+		// Not found locally — try remote via SSH.
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
+			return err
+		}
+		client, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
+
+		shellCmd := buildAgentShellCmd(message, noWait, workdir, agent)
+		return execSSH(client, name, false, []string{shellCmd})
+	},
+}
+
 var sandboxCodeCmd = &cobra.Command{
 	Use:   "code <name>",
 	Short: "Open a remote sandbox in an editor via SSH",
@@ -2102,6 +2243,7 @@ func init() {
 	sandboxCmd.AddCommand(sandboxConnectCmd)
 	sandboxCmd.AddCommand(sandboxSSHCmd)
 	sandboxCmd.AddCommand(sandboxCodeCmd)
+	sandboxCmd.AddCommand(sandboxAgentSendCmd)
 
 	// Persistent flags for local/remote mode
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
@@ -2134,4 +2276,7 @@ func init() {
 	sandboxSSHCmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
 	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor to open (currently only \"cursor\" is supported)")
+	sandboxAgentSendCmd.Flags().Bool("no-wait", false, "Send the instruction and return immediately without waiting for a response")
+	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")
+	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
 }

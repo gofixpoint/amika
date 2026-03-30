@@ -567,6 +567,82 @@ func TestBuildSandboxConnectArgs(t *testing.T) {
 	}
 }
 
+func TestBuildAgentShellCmd(t *testing.T) {
+	agent := agentConfig{Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}}
+
+	t.Run("wait mode", func(t *testing.T) {
+		got := buildAgentShellCmd("hello world", false, "/home/amika", agent)
+		if !strings.Contains(got, "cd /home/amika") {
+			t.Fatalf("cmd = %q, want to contain 'cd /home/amika'", got)
+		}
+		if !strings.Contains(got, "--dangerously-skip-permissions") {
+			t.Fatalf("cmd = %q, want to contain '--dangerously-skip-permissions'", got)
+		}
+		if !strings.Contains(got, "claude") {
+			t.Fatalf("cmd = %q, want to contain 'claude'", got)
+		}
+		if strings.Contains(got, "tmux") {
+			t.Fatalf("cmd = %q, should not contain tmux in wait mode", got)
+		}
+	})
+
+	t.Run("no-wait mode wraps in tmux", func(t *testing.T) {
+		got := buildAgentShellCmd("hello world", true, "/home/amika", agent)
+		if !strings.Contains(got, "tmux new-session -d") {
+			t.Fatalf("cmd = %q, want to contain 'tmux new-session -d'", got)
+		}
+		if !strings.Contains(got, "amika-agent-send-") {
+			t.Fatalf("cmd = %q, want to contain session name prefix", got)
+		}
+		if !strings.Contains(got, "--dangerously-skip-permissions") {
+			t.Fatalf("cmd = %q, want to contain '--dangerously-skip-permissions'", got)
+		}
+	})
+
+	t.Run("custom workdir", func(t *testing.T) {
+		got := buildAgentShellCmd("test", false, "/workspace", agent)
+		if !strings.Contains(got, "cd /workspace") {
+			t.Fatalf("cmd = %q, want to contain 'cd /workspace'", got)
+		}
+	})
+}
+
+func TestBuildDockerAgentSendArgs(t *testing.T) {
+	agent := agentConfig{Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}}
+
+	t.Run("wraps in docker exec bash -c", func(t *testing.T) {
+		got := buildDockerAgentSendArgs("sb-1", "hello", false, "/home/amika", agent)
+		if got[0] != "exec" || got[1] != "sb-1" || got[2] != "bash" || got[3] != "-c" {
+			t.Fatalf("args prefix = %#v, want [exec sb-1 bash -c ...]", got[:4])
+		}
+		if !strings.Contains(got[4], "claude") {
+			t.Fatalf("shell cmd = %q, want to contain 'claude'", got[4])
+		}
+	})
+}
+
+func TestResolveAgentConfig(t *testing.T) {
+	t.Run("known agent claude", func(t *testing.T) {
+		cfg, err := resolveAgentConfig("claude")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.Binary != "claude" || cfg.PrintArg != "-p" || len(cfg.ExtraArgs) != 1 || cfg.ExtraArgs[0] != "--dangerously-skip-permissions" {
+			t.Fatalf("got %+v, want claude/-p/--dangerously-skip-permissions", cfg)
+		}
+	})
+
+	t.Run("unknown agent returns error", func(t *testing.T) {
+		_, err := resolveAgentConfig("custom-agent")
+		if err == nil {
+			t.Fatal("expected error for unknown agent, got nil")
+		}
+		if !strings.Contains(err.Error(), "unknown agent") {
+			t.Fatalf("error = %q, want to contain 'unknown agent'", err.Error())
+		}
+	})
+}
+
 func TestResolveGitRoot(t *testing.T) {
 	t.Run("finds from nested directory", func(t *testing.T) {
 		root := t.TempDir()
