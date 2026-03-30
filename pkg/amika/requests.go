@@ -32,6 +32,7 @@ type CreateSandboxRequest struct {
 	Ports           []PortBinding `json:"Ports,omitempty"`
 	SetupScript     string        `json:"SetupScript,omitempty"`
 	SetupScriptText string        `json:"SetupScriptText,omitempty"`
+	Branch          string        `json:"Branch,omitempty"`
 }
 
 // DeleteSandboxRequest describes sandbox deletion input.

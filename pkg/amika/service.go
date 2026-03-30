@@ -113,7 +113,7 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	cleanupGitRepo := func() {}
 	var repoCfg *amikaconfig.Config
 	if req.GitRepo != "" {
-		gitResult, gitCleanup, err := s.resolveGitRepoMount(name, req.GitRepo)
+		gitResult, gitCleanup, err := s.resolveGitRepoMount(name, req.GitRepo, req.Branch)
 		if err != nil {
 			cleanupSetupScript()
 			return Sandbox{}, err
@@ -171,6 +171,7 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		Env:         req.Env,
 		Ports:       sandboxPorts,
 		Services:    serviceInfos,
+		Branch:      req.Branch,
 	}
 	if err := s.sandboxes.Save(info); err != nil {
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrInternal, err)
@@ -182,6 +183,7 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		Image:       info.Image,
 		CreatedAt:   info.CreatedAt,
 		Preset:      info.Preset,
+		Branch:      info.Branch,
 		Mounts:      toMounts(info.Mounts),
 		Env:         info.Env,
 		Ports:       toPortBindings(info.Ports),
@@ -246,6 +248,7 @@ func (s *serviceImpl) ListSandboxes(context.Context, ListSandboxesRequest) (List
 			Image:       it.Image,
 			CreatedAt:   it.CreatedAt,
 			Preset:      it.Preset,
+			Branch:      it.Branch,
 			Mounts:      toMounts(it.Mounts),
 			Env:         it.Env,
 			Ports:       toPortBindings(it.Ports),
@@ -505,7 +508,7 @@ type gitRepoResult struct {
 // Docker volume, and returns a volume MountBinding targeting the sandbox
 // workspace. The returned cleanup func removes the volume on error; call it
 // only on failure paths. It also reads .amika/config.toml from the cloned repo.
-func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (gitRepoResult, func(), error) {
+func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo, branch string) (gitRepoResult, func(), error) {
 	repoName, err := parseGitRepoURL(gitRepo)
 	if err != nil {
 		return gitRepoResult{}, func() {}, err
@@ -522,7 +525,12 @@ func (s *serviceImpl) resolveGitRepoMount(sandboxName, gitRepo string) (gitRepoR
 		cloneURL = strings.TrimPrefix(gitRepo, "file://")
 	}
 
-	cmd := exec.Command("git", "clone", cloneURL, cloneDst)
+	cloneArgs := []string{"clone"}
+	if branch != "" {
+		cloneArgs = append(cloneArgs, "--branch", branch)
+	}
+	cloneArgs = append(cloneArgs, cloneURL, cloneDst)
+	cmd := exec.Command("git", cloneArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return gitRepoResult{}, func() {}, fmt.Errorf("%w: git clone %q failed: %s", ErrDependency, gitRepo, strings.TrimSpace(string(out)))
