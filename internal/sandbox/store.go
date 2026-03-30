@@ -53,6 +53,7 @@ type Info struct {
 	Env         []string       `json:"env,omitempty"`
 	Ports       []PortBinding  `json:"ports,omitempty"`
 	Services    []ServiceInfo  `json:"services,omitempty"`
+	Branch      string         `json:"branch,omitempty"`
 }
 
 // Store manages sandbox state persistence.

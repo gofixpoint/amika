@@ -163,9 +163,11 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		image = resolvedImage.Image
 
+		branchFlag, _ := cmd.Flags().GetString("branch")
 		collected, err := collectMounts(mountStrs, volumeStrs, portStrs, portHostIP,
 			gitPath, gitFlagChanged, noClean,
-			setupScript, cmd.Flags().Changed("setup-script"))
+			setupScript, cmd.Flags().Changed("setup-script"),
+			branchFlag)
 		if err != nil {
 			return err
 		}
@@ -294,6 +296,7 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
+		branch, _ := cmd.Flags().GetString("branch")
 		info := sandbox.Info{
 			Name:        name,
 			Provider:    provider,
@@ -305,6 +308,7 @@ var sandboxCreateCmd = &cobra.Command{
 			Env:         envStrs,
 			Ports:       publishedPorts,
 			Services:    collected.Services,
+			Branch:      branch,
 		}
 		if err := store.Save(info); err != nil {
 			return fmt.Errorf("sandbox created but failed to save state: %w", err)
@@ -679,6 +683,7 @@ var sandboxListCmd = &cobra.Command{
 					Provider:  rs.Provider,
 					CreatedAt: rs.CreatedAt,
 					Location:  "remote",
+					Branch:    rs.Branch,
 				})
 			}
 		}
@@ -689,9 +694,9 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tPROVIDER\tIMAGE\tPORTS\tCREATED")
+		fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tPROVIDER\tIMAGE\tBRANCH\tPORTS\tCREATED")
 		for _, sb := range allItems {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Provider, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Provider, sb.Image, sb.Branch, formatPortBindings(sb.Ports), sb.CreatedAt)
 		}
 		w.Flush()
 		return nil
@@ -1035,7 +1040,7 @@ type gitMountInfo struct {
 	Mount    sandbox.MountBinding
 }
 
-func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst string) error) (gitMountInfo, func(), error) {
+func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst, branch string) error, branch string) (gitMountInfo, func(), error) {
 	repoRoot, err := resolveGitRoot(startPath)
 	if err != nil {
 		return gitMountInfo{}, func() {}, err
@@ -1054,7 +1059,7 @@ func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst strin
 			return gitMountInfo{}, func() {}, err
 		}
 	} else {
-		if err := cloneFn(repoRoot, preparedRepo); err != nil {
+		if err := cloneFn(repoRoot, preparedRepo, branch); err != nil {
 			_ = os.RemoveAll(tmpDir)
 			return gitMountInfo{}, func() {}, err
 		}
@@ -1109,8 +1114,13 @@ func resolveGitRoot(startPath string) (string, error) {
 	return "", fmt.Errorf("no git repository root found from %q", absPath)
 }
 
-func cloneGitRepo(src, dst string) error {
-	cmd := exec.Command("git", "clone", "--local", "--no-hardlinks", src, dst)
+func cloneGitRepo(src, dst, branch string) error {
+	args := []string{"clone", "--local", "--no-hardlinks"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	args = append(args, src, dst)
+	cmd := exec.Command("git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to prepare clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
@@ -1298,6 +1308,7 @@ func collectMounts(
 	noClean bool,
 	setupScript string,
 	setupScriptFlagChanged bool,
+	branch string,
 ) (collectedMounts, error) {
 	mounts, err := parseMountFlags(mountStrs)
 	if err != nil {
@@ -1315,7 +1326,7 @@ func collectMounts(
 	cleanup := func() {}
 	var gmi *gitMountInfo
 	if gitFlagChanged {
-		info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo)
+		info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo, branch)
 		if err != nil {
 			return collectedMounts{}, err
 		}
@@ -1773,6 +1784,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	preset, _ := cmd.Flags().GetString("preset")
 	size, _ := cmd.Flags().GetString("size")
 	setupScript, _ := cmd.Flags().GetString("setup-script")
+	branch, _ := cmd.Flags().GetString("branch")
 
 	if name == "" {
 		name = sandbox.GenerateName()
@@ -1824,6 +1836,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		Size:                 size,
 		SetupScriptText:      setupScriptText,
 		ClaudeCredentialName: claudeCredentialName,
+		Branch:               branch,
 	}
 
 	sb, err := client.CreateSandbox(req)
@@ -2269,6 +2282,7 @@ func init() {
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
 	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
+	sandboxCreateCmd.Flags().String("branch", "", "Git branch to clone (defaults to repo's default branch)")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")

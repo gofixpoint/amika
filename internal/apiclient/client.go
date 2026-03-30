@@ -45,6 +45,7 @@ type CreateSandboxRequest struct {
 	Size                 string            `json:"size,omitempty"`
 	SetupScriptText      string            `json:"setup_script_text,omitempty"`
 	ClaudeCredentialName string            `json:"claude_credential_name,omitempty"`
+	Branch               string            `json:"branch,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.
@@ -55,6 +56,7 @@ type RemoteSandbox struct {
 	GitHubURL string `json:"github_url"`
 	State     string `json:"state"`
 	CreatedAt string `json:"created_at"`
+	Branch    string `json:"branch"`
 }
 
 // ListSandboxes fetches sandboxes from the remote API.
