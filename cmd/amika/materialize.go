@@ -313,7 +313,7 @@ func init() {
 	topMaterializeCmd.Flags().String("outdir", "", "Container directory to copy from (default: workdir)")
 	topMaterializeCmd.Flags().String("destdir", "", "Host directory where output files are copied")
 	topMaterializeCmd.Flags().String("image", sandbox.DefaultCoderImage, "Docker image to use")
-	topMaterializeCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"coder\" or \"claude\")")
+	topMaterializeCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-dind")`)
 	topMaterializeCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rw)")
 	topMaterializeCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	topMaterializeCmd.Flags().BoolP("interactive", "i", false, "Run interactively with TTY (for programs like claude)")

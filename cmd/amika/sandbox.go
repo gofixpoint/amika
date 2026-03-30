@@ -1782,6 +1782,9 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
 	preset, _ := cmd.Flags().GetString("preset")
+	if err := sandbox.ValidatePreset(preset); err != nil {
+		return err
+	}
 	size, _ := cmd.Flags().GetString("size")
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
@@ -2268,7 +2271,7 @@ func init() {
 	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
 	sandboxCreateCmd.Flags().String("image", sandbox.DefaultCoderImage, "Docker image to use")
-	sandboxCreateCmd.Flags().String("preset", "", "Use a preset environment (e.g. \"coder\" or \"claude\")")
+	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-dind")`)
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rwcopy)")
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().StringArray("port", nil, "Publish a container port (hostPort:containerPort[/protocol], protocol defaults to tcp)")
