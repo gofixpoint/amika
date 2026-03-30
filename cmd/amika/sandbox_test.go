@@ -615,16 +615,22 @@ func TestBuildSandboxAgentSendArgs(t *testing.T) {
 
 func TestResolveAgentConfig(t *testing.T) {
 	t.Run("known agent claude", func(t *testing.T) {
-		cfg := resolveAgentConfig("claude")
+		cfg, err := resolveAgentConfig("claude")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if cfg.Binary != "claude" || cfg.PrintArg != "-p" || len(cfg.ExtraArgs) != 1 || cfg.ExtraArgs[0] != "--dangerously-skip-permissions" {
 			t.Fatalf("got %+v, want claude/-p/--dangerously-skip-permissions", cfg)
 		}
 	})
 
-	t.Run("unknown agent uses defaults", func(t *testing.T) {
-		cfg := resolveAgentConfig("custom-agent")
-		if cfg.Binary != "custom-agent" || cfg.PrintArg != "-p" {
-			t.Fatalf("got %+v, want custom-agent/-p", cfg)
+	t.Run("unknown agent returns error", func(t *testing.T) {
+		_, err := resolveAgentConfig("custom-agent")
+		if err == nil {
+			t.Fatal("expected error for unknown agent, got nil")
+		}
+		if !strings.Contains(err.Error(), "unknown agent") {
+			t.Fatalf("error = %q, want to contain 'unknown agent'", err.Error())
 		}
 	})
 }

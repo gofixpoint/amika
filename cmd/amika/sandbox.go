@@ -2009,15 +2009,19 @@ var knownAgents = map[string]agentConfig{
 }
 
 // resolveAgentConfig returns the agent configuration for the given name.
-// Unknown agents use the name as the binary with "-p" as the default flag.
-func resolveAgentConfig(name string) agentConfig {
+// Returns an error if the agent is not in the knownAgents map.
+func resolveAgentConfig(name string) (agentConfig, error) {
 	if cfg, ok := knownAgents[name]; ok {
-		return cfg
+		return cfg, nil
 	}
-	return agentConfig{Binary: name, PrintArg: "-p"}
+	known := make([]string, 0, len(knownAgents))
+	for k := range knownAgents {
+		known = append(known, fmt.Sprintf("%q", k))
+	}
+	return agentConfig{}, fmt.Errorf("unknown agent %q; supported agents: %s", name, strings.Join(known, ", "))
 }
 
-var runSandboxAgentSend = func(name, message string, noWait bool, workdir string, agent agentConfig, stdout, stderr io.Writer) error {
+func runDockerSandboxAgentSend(name, message string, noWait bool, workdir string, agent agentConfig, stdout, stderr io.Writer) error {
 	dockerArgs := buildSandboxAgentSendArgs(name, message, noWait, workdir, agent)
 	dockerCmd := exec.Command("docker", dockerArgs...)
 	if !noWait {
@@ -2088,24 +2092,27 @@ Use --no-wait to send the message and return immediately.`,
 		noWait, _ := cmd.Flags().GetBool("no-wait")
 		workdir, _ := cmd.Flags().GetString("workdir")
 		agentName, _ := cmd.Flags().GetString("agent")
-		agent := resolveAgentConfig(agentName)
+		agent, err := resolveAgentConfig(agentName)
+		if err != nil {
+			return err
+		}
 
 		// Try local sandbox first.
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err == nil {
+		sandboxesFile, sErr := config.SandboxesStateFile()
+		if sErr == nil {
 			store := sandbox.NewStore(sandboxesFile)
-			if info, err := store.Get(name); err == nil {
+			if info, gErr := store.Get(name); gErr == nil {
 				if info.Provider != "docker" {
 					return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
 				}
-				if err := runSandboxAgentSend(name, message, noWait, workdir, agent, os.Stdout, os.Stderr); err != nil {
+				if err := runDockerSandboxAgentSend(name, message, noWait, workdir, agent, os.Stdout, os.Stderr); err != nil {
 					if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
 						return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
 					}
-					return fmt.Errorf("instruct failed for sandbox %q: %w", name, err)
+					return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
 				}
 				if noWait {
-					fmt.Fprintf(os.Stderr, "Instruction sent to %s in sandbox %q\n", agent.Binary, name)
+					fmt.Fprintf(os.Stderr, "Message sent to %s in sandbox %q\n", agent.Binary, name)
 				}
 				return nil
 			}
@@ -2121,22 +2128,19 @@ Use --no-wait to send the message and return immediately.`,
 			return err
 		}
 
+		// Build the remote command as a single shell string so multi-word
+		// messages and tmux commands are preserved through SSH.
 		agentStr := strings.Join(agentCmdParts(agent, fmt.Sprintf("%q", message)), " ")
 
 		if noWait {
-			// Run in a detached tmux session so the agent survives SSH disconnect.
-			// Pass as a single string so the remote shell keeps the tmux command intact.
 			sessionName := fmt.Sprintf("amika-agent-send-%d", time.Now().UnixNano())
 			shellCmd := fmt.Sprintf("tmux new-session -d -s '%s' 'cd %s && %s'",
 				sessionName, workdir, agentStr)
-			remoteCmd := []string{shellCmd}
-			return execSSH(client, name, false, remoteCmd)
+			return execSSH(client, name, false, []string{shellCmd})
 		}
 
-		// Quote the message so the remote shell keeps it as a single argument.
-		remoteCmd := []string{"cd", workdir, "&&"}
-		remoteCmd = append(remoteCmd, agentCmdParts(agent, fmt.Sprintf("%q", message))...)
-		return execSSH(client, name, false, remoteCmd)
+		remoteCmd := fmt.Sprintf("cd %s && %s", workdir, agentStr)
+		return execSSH(client, name, false, []string{remoteCmd})
 	},
 }
 
@@ -2280,6 +2284,6 @@ func init() {
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
 	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor to open (currently only \"cursor\" is supported)")
 	sandboxAgentSendCmd.Flags().Bool("no-wait", false, "Send the instruction and return immediately without waiting for a response")
-	sandboxAgentSendCmd.Flags().String("workdir", sandboxConnectWorkdir, "Working directory inside the container")
+	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
 }
