@@ -567,48 +567,56 @@ func TestBuildSandboxConnectArgs(t *testing.T) {
 	}
 }
 
-func TestBuildSandboxAgentSendArgs(t *testing.T) {
+func TestBuildAgentShellCmd(t *testing.T) {
 	agent := agentConfig{Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}}
 
 	t.Run("wait mode", func(t *testing.T) {
-		got := buildSandboxAgentSendArgs("sb-1", "hello world", false, "/home/amika", agent)
-		want := []string{"exec", "-w", "/home/amika", "sb-1", "claude", "--dangerously-skip-permissions", "-p", "hello world"}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("args = %#v, want %#v", got, want)
+		got := buildAgentShellCmd("hello world", false, "/home/amika", agent)
+		if !strings.Contains(got, "cd /home/amika") {
+			t.Fatalf("cmd = %q, want to contain 'cd /home/amika'", got)
+		}
+		if !strings.Contains(got, "--dangerously-skip-permissions") {
+			t.Fatalf("cmd = %q, want to contain '--dangerously-skip-permissions'", got)
+		}
+		if !strings.Contains(got, "claude") {
+			t.Fatalf("cmd = %q, want to contain 'claude'", got)
+		}
+		if strings.Contains(got, "tmux") {
+			t.Fatalf("cmd = %q, should not contain tmux in wait mode", got)
 		}
 	})
 
-	t.Run("no-wait mode uses tmux", func(t *testing.T) {
-		got := buildSandboxAgentSendArgs("sb-1", "hello world", true, "/home/amika", agent)
-		// Should start with "exec sb-1 tmux new-session -d -s amika-agent-send-..."
-		if len(got) != 8 {
-			t.Fatalf("expected 8 args, got %d: %#v", len(got), got)
+	t.Run("no-wait mode wraps in tmux", func(t *testing.T) {
+		got := buildAgentShellCmd("hello world", true, "/home/amika", agent)
+		if !strings.Contains(got, "tmux new-session -d") {
+			t.Fatalf("cmd = %q, want to contain 'tmux new-session -d'", got)
 		}
-		if got[0] != "exec" || got[1] != "sb-1" || got[2] != "tmux" || got[3] != "new-session" || got[4] != "-d" || got[5] != "-s" {
-			t.Fatalf("unexpected prefix: %#v", got[:6])
+		if !strings.Contains(got, "amika-agent-send-") {
+			t.Fatalf("cmd = %q, want to contain session name prefix", got)
 		}
-		if !strings.HasPrefix(got[6], "amika-agent-send-") {
-			t.Fatalf("session name = %q, want amika-agent-send-* prefix", got[6])
-		}
-		if !strings.Contains(got[7], "--dangerously-skip-permissions") {
-			t.Fatalf("tmux command = %q, want to contain '--dangerously-skip-permissions'", got[7])
+		if !strings.Contains(got, "--dangerously-skip-permissions") {
+			t.Fatalf("cmd = %q, want to contain '--dangerously-skip-permissions'", got)
 		}
 	})
 
 	t.Run("custom workdir", func(t *testing.T) {
-		got := buildSandboxAgentSendArgs("sb-1", "test", false, "/workspace", agent)
-		want := []string{"exec", "-w", "/workspace", "sb-1", "claude", "--dangerously-skip-permissions", "-p", "test"}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("args = %#v, want %#v", got, want)
+		got := buildAgentShellCmd("test", false, "/workspace", agent)
+		if !strings.Contains(got, "cd /workspace") {
+			t.Fatalf("cmd = %q, want to contain 'cd /workspace'", got)
 		}
 	})
+}
 
-	t.Run("custom agent without extra args", func(t *testing.T) {
-		custom := agentConfig{Binary: "my-agent", PrintArg: "--msg"}
-		got := buildSandboxAgentSendArgs("sb-1", "fix it", false, "/home/amika", custom)
-		want := []string{"exec", "-w", "/home/amika", "sb-1", "my-agent", "--msg", "fix it"}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("args = %#v, want %#v", got, want)
+func TestBuildDockerAgentSendArgs(t *testing.T) {
+	agent := agentConfig{Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}}
+
+	t.Run("wraps in docker exec bash -c", func(t *testing.T) {
+		got := buildDockerAgentSendArgs("sb-1", "hello", false, "/home/amika", agent)
+		if got[0] != "exec" || got[1] != "sb-1" || got[2] != "bash" || got[3] != "-c" {
+			t.Fatalf("args prefix = %#v, want [exec sb-1 bash -c ...]", got[:4])
+		}
+		if !strings.Contains(got[4], "claude") {
+			t.Fatalf("shell cmd = %q, want to contain 'claude'", got[4])
 		}
 	})
 }

@@ -2022,7 +2022,7 @@ func resolveAgentConfig(name string) (agentConfig, error) {
 }
 
 func runDockerSandboxAgentSend(name, message string, noWait bool, workdir string, agent agentConfig, stdout, stderr io.Writer) error {
-	dockerArgs := buildSandboxAgentSendArgs(name, message, noWait, workdir, agent)
+	dockerArgs := buildDockerAgentSendArgs(name, message, noWait, workdir, agent)
 	dockerCmd := exec.Command("docker", dockerArgs...)
 	if !noWait {
 		dockerCmd.Stdout = stdout
@@ -2039,18 +2039,22 @@ func agentCmdParts(agent agentConfig, message string) []string {
 	return parts
 }
 
-func buildSandboxAgentSendArgs(name, message string, noWait bool, workdir string, agent agentConfig) []string {
-	args := []string{"exec"}
+// buildAgentShellCmd returns the shell command string to run the agent.
+// When noWait is true, the command is wrapped in a detached tmux session.
+// The message is shell-quoted so it survives interpretation as a single argument.
+func buildAgentShellCmd(message string, noWait bool, workdir string, agent agentConfig) string {
+	agentStr := strings.Join(agentCmdParts(agent, fmt.Sprintf("%q", message)), " ")
+	cmd := fmt.Sprintf("cd %s && %s", workdir, agentStr)
 	if noWait {
-		// Run in a detached tmux session so the agent survives disconnect.
 		sessionName := fmt.Sprintf("amika-agent-send-%d", time.Now().UnixNano())
-		tmuxCmd := fmt.Sprintf("cd %s && %s", workdir, strings.Join(agentCmdParts(agent, fmt.Sprintf("%q", message)), " "))
-		args = append(args, name, "tmux", "new-session", "-d", "-s", sessionName, tmuxCmd)
-	} else {
-		args = append(args, "-w", workdir, name)
-		args = append(args, agentCmdParts(agent, message)...)
+		return fmt.Sprintf("tmux new-session -d -s '%s' '%s'", sessionName, cmd)
 	}
-	return args
+	return cmd
+}
+
+func buildDockerAgentSendArgs(name, message string, noWait bool, workdir string, agent agentConfig) []string {
+	shellCmd := buildAgentShellCmd(message, noWait, workdir, agent)
+	return []string{"exec", name, "bash", "-c", shellCmd}
 }
 
 func isStdinPiped() bool {
@@ -2128,19 +2132,8 @@ Use --no-wait to send the message and return immediately.`,
 			return err
 		}
 
-		// Build the remote command as a single shell string so multi-word
-		// messages and tmux commands are preserved through SSH.
-		agentStr := strings.Join(agentCmdParts(agent, fmt.Sprintf("%q", message)), " ")
-
-		if noWait {
-			sessionName := fmt.Sprintf("amika-agent-send-%d", time.Now().UnixNano())
-			shellCmd := fmt.Sprintf("tmux new-session -d -s '%s' 'cd %s && %s'",
-				sessionName, workdir, agentStr)
-			return execSSH(client, name, false, []string{shellCmd})
-		}
-
-		remoteCmd := fmt.Sprintf("cd %s && %s", workdir, agentStr)
-		return execSSH(client, name, false, []string{remoteCmd})
+		shellCmd := buildAgentShellCmd(message, noWait, workdir, agent)
+		return execSSH(client, name, false, []string{shellCmd})
 	},
 }
 
