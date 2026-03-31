@@ -1387,27 +1387,15 @@ func collectMounts(
 	}
 
 	if noSetup {
-		tmpFile, err := os.CreateTemp("", "amika-no-setup-*.sh")
+		noopPath, noopCleanup, err := createNoOpSetupScript()
 		if err != nil {
 			cleanup()
-			return collectedMounts{}, fmt.Errorf("failed to create no-op setup script: %w", err)
+			return collectedMounts{}, err
 		}
-		if _, err := tmpFile.WriteString("#!/bin/bash\nexit 0\n"); err != nil {
-			tmpFile.Close()
-			os.Remove(tmpFile.Name())
-			cleanup()
-			return collectedMounts{}, fmt.Errorf("failed to write no-op setup script: %w", err)
-		}
-		tmpFile.Close()
-		if err := os.Chmod(tmpFile.Name(), 0o755); err != nil {
-			os.Remove(tmpFile.Name())
-			cleanup()
-			return collectedMounts{}, fmt.Errorf("failed to chmod no-op setup script: %w", err)
-		}
-		mounts = append(mounts, setupScriptBindMount(tmpFile.Name()))
+		mounts = append(mounts, setupScriptBindMount(noopPath))
 		prevCleanup := cleanup
 		cleanup = func() {
-			os.Remove(tmpFile.Name())
+			noopCleanup()
 			prevCleanup()
 		}
 	} else if setupScript != "" {
@@ -1458,6 +1446,27 @@ func setupScriptBindMount(absPath string) sandbox.MountBinding {
 		Target: "/usr/local/etc/amikad/setup/setup.sh",
 		Mode:   "ro",
 	}
+}
+
+// createNoOpSetupScript creates a temporary executable script that immediately
+// exits with 0. Returns the path to the temp file and a cleanup function that
+// removes it.
+func createNoOpSetupScript() (string, func(), error) {
+	tmpFile, err := os.CreateTemp("", "amika-no-setup-*.sh")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create no-op setup script: %w", err)
+	}
+	if _, err := tmpFile.WriteString("#!/bin/bash\nexit 0\n"); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", nil, fmt.Errorf("failed to write no-op setup script: %w", err)
+	}
+	tmpFile.Close()
+	if err := os.Chmod(tmpFile.Name(), 0o755); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", nil, fmt.Errorf("failed to chmod no-op setup script: %w", err)
+	}
+	return tmpFile.Name(), func() { os.Remove(tmpFile.Name()) }, nil
 }
 
 // materializeRWCopyMounts converts logical mounts that use mode "rwcopy" into
@@ -1859,7 +1868,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		return fmt.Errorf("--no-setup and --setup-script are mutually exclusive")
 	}
 
-	// TODO(amika-mono): Add a proper "no_setup" option to the API server in amika-mono/
+	// TODO(dylan): Add a proper "no_setup" option to the API server in amika-mono/
 	// so we can support this (a) from our web UI, and (b) without hacks like injecting
 	// a no-op setup script text.
 	var setupScriptText string
