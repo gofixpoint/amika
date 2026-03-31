@@ -114,9 +114,13 @@ var sandboxCreateCmd = &cobra.Command{
 
 		// Validate flag constraints before any network or auth calls.
 		noClean, _ := cmd.Flags().GetBool("no-clean")
+		noSetup, _ := cmd.Flags().GetBool("no-setup")
 		gitFlagChanged := cmd.Flags().Changed("git")
 		if err := validateGitFlags(gitFlagChanged, noClean); err != nil {
 			return err
+		}
+		if noSetup && cmd.Flags().Changed("setup-script") {
+			return fmt.Errorf("--no-setup and --setup-script are mutually exclusive")
 		}
 
 		target, err := getRemoteTarget(cmd)
@@ -167,6 +171,7 @@ var sandboxCreateCmd = &cobra.Command{
 		collected, err := collectMounts(mountStrs, volumeStrs, portStrs, portHostIP,
 			gitPath, gitFlagChanged, noClean,
 			setupScript, cmd.Flags().Changed("setup-script"),
+			noSetup,
 			branchFlag)
 		if err != nil {
 			return err
@@ -1308,6 +1313,7 @@ func collectMounts(
 	noClean bool,
 	setupScript string,
 	setupScriptFlagChanged bool,
+	noSetup bool,
 	branch string,
 ) (collectedMounts, error) {
 	mounts, err := parseMountFlags(mountStrs)
@@ -1345,6 +1351,13 @@ func collectMounts(
 		}
 	}
 
+	// Pretend --setup-script was explicitly provided so that the config-based
+	// setup script from .amika/config.toml is not auto-detected (the check
+	// below skips auto-detection when setupScriptFlagChanged is true).
+	if noSetup {
+		setupScriptFlagChanged = true
+	}
+
 	if repoCfg != nil && !setupScriptFlagChanged {
 		mount, err := setupScriptMountFromLoadedConfig(repoCfg, gmi.RepoRoot)
 		if err != nil {
@@ -1373,7 +1386,19 @@ func collectMounts(
 		mounts = append(mounts, agentMounts...)
 	}
 
-	if setupScript != "" {
+	if noSetup {
+		noopPath, noopCleanup, err := createNoOpSetupScript()
+		if err != nil {
+			cleanup()
+			return collectedMounts{}, err
+		}
+		mounts = append(mounts, setupScriptBindMount(noopPath))
+		prevCleanup := cleanup
+		cleanup = func() {
+			noopCleanup()
+			prevCleanup()
+		}
+	} else if setupScript != "" {
 		absSetupScript, err := filepath.Abs(setupScript)
 		if err != nil {
 			cleanup()
@@ -1421,6 +1446,27 @@ func setupScriptBindMount(absPath string) sandbox.MountBinding {
 		Target: "/usr/local/etc/amikad/setup/setup.sh",
 		Mode:   "ro",
 	}
+}
+
+// createNoOpSetupScript creates a temporary executable script that immediately
+// exits with 0. Returns the path to the temp file and a cleanup function that
+// removes it.
+func createNoOpSetupScript() (string, func(), error) {
+	tmpFile, err := os.CreateTemp("", "amika-no-setup-*.sh")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create no-op setup script: %w", err)
+	}
+	if _, err := tmpFile.WriteString("#!/bin/bash\nexit 0\n"); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", nil, fmt.Errorf("failed to write no-op setup script: %w", err)
+	}
+	tmpFile.Close()
+	if err := os.Chmod(tmpFile.Name(), 0o755); err != nil {
+		os.Remove(tmpFile.Name())
+		return "", nil, fmt.Errorf("failed to chmod no-op setup script: %w", err)
+	}
+	return tmpFile.Name(), func() { os.Remove(tmpFile.Name()) }, nil
 }
 
 // materializeRWCopyMounts converts logical mounts that use mode "rwcopy" into
@@ -1817,8 +1863,18 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		return err
 	}
 
+	noSetup, _ := cmd.Flags().GetBool("no-setup")
+	if noSetup && cmd.Flags().Changed("setup-script") {
+		return fmt.Errorf("--no-setup and --setup-script are mutually exclusive")
+	}
+
+	// TODO(dylan): Add a proper "no_setup" option to the API server in amika-mono/
+	// so we can support this (a) from our web UI, and (b) without hacks like injecting
+	// a no-op setup script text.
 	var setupScriptText string
-	if setupScript != "" {
+	if noSetup {
+		setupScriptText = "#!/bin/bash\nexit 0\n"
+	} else if setupScript != "" {
 		data, err := os.ReadFile(setupScript)
 		if err != nil {
 			return fmt.Errorf("reading setup script %q: %w", setupScript, err)
@@ -2285,6 +2341,7 @@ func init() {
 	sandboxCreateCmd.Flags().Bool("yes", false, "Skip mount confirmation prompt")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
 	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
+	sandboxCreateCmd.Flags().Bool("no-setup", false, "Skip the setup script (uses a no-op script instead)")
 	sandboxCreateCmd.Flags().String("branch", "", "Git branch to clone (defaults to repo's default branch)")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
