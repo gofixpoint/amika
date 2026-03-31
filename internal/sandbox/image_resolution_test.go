@@ -18,7 +18,7 @@ func TestResolveAndEnsureImage_PresetAndImageTogetherImageWins(t *testing.T) {
 
 	res, err := ResolveAndEnsureImage(PresetImageOptions{
 		Image:            "ubuntu:latest",
-		Preset:           "claude",
+		Preset:           "coder-dind",
 		ImageFlagChanged: true,
 	})
 	if err != nil {
@@ -27,8 +27,8 @@ func TestResolveAndEnsureImage_PresetAndImageTogetherImageWins(t *testing.T) {
 	if res.Image != "ubuntu:latest" {
 		t.Fatalf("image = %q, want %q", res.Image, "ubuntu:latest")
 	}
-	if res.EffectivePreset != "claude" {
-		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "claude")
+	if res.EffectivePreset != "coder-dind" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "coder-dind")
 	}
 	if res.BuildPreset != "" {
 		t.Fatalf("build preset = %q, want empty", res.BuildPreset)
@@ -70,7 +70,7 @@ func TestResolveAndEnsureImage_PresetAndImageTogetherNoAutoBuild(t *testing.T) {
 	}
 }
 
-func TestResolveAndEnsureImage_ExplicitClaudePresetBuildsWhenMissing(t *testing.T) {
+func TestResolveAndEnsureImage_ExplicitCoderDindPresetBuildsWhenMissing(t *testing.T) {
 	resetImageResolutionStubs(t)
 
 	var builtPreset string
@@ -86,24 +86,24 @@ func TestResolveAndEnsureImage_ExplicitClaudePresetBuildsWhenMissing(t *testing.
 	}
 
 	res, err := ResolveAndEnsureImage(PresetImageOptions{
-		Image:              "amika/claude:latest",
-		Preset:             "claude",
+		Image:              "amika/coder-dind:latest",
+		Preset:             "coder-dind",
 		DefaultBuildPreset: "coder",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.Image != "amika/claude:latest" {
-		t.Fatalf("image = %q, want %q", res.Image, "amika/claude:latest")
+	if res.Image != "amika/coder-dind:latest" {
+		t.Fatalf("image = %q, want %q", res.Image, "amika/coder-dind:latest")
 	}
-	if res.EffectivePreset != "claude" {
-		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "claude")
+	if res.EffectivePreset != "coder-dind" {
+		t.Fatalf("effective preset = %q, want %q", res.EffectivePreset, "coder-dind")
 	}
-	if res.BuildPreset != "claude" {
-		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "claude")
+	if res.BuildPreset != "coder-dind" {
+		t.Fatalf("build preset = %q, want %q", res.BuildPreset, "coder-dind")
 	}
-	if builtPreset != "claude" {
-		t.Fatalf("built preset = %q, want %q", builtPreset, "claude")
+	if builtPreset != "coder-dind" {
+		t.Fatalf("built preset = %q, want %q", builtPreset, "coder-dind")
 	}
 	if builtContextDir != "/fake/context" {
 		t.Fatalf("context dir = %q, want %q", builtContextDir, "/fake/context")

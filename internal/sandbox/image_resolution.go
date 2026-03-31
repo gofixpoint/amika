@@ -4,12 +4,29 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 const presetImagePrefixEnv = "AMIKA_PRESET_IMAGE_PREFIX"
 
 // DefaultCoderImage is the default Docker image used for the coder preset.
 const DefaultCoderImage = "amika/coder:latest"
+
+// AllowedPresets lists the preset names available for user selection via --preset.
+var AllowedPresets = []string{"coder", "coder-dind"}
+
+// ValidatePreset returns an error if preset is non-empty and not in AllowedPresets.
+func ValidatePreset(preset string) error {
+	if preset == "" {
+		return nil
+	}
+	for _, p := range AllowedPresets {
+		if preset == p {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown preset %q; allowed presets: %s", preset, strings.Join(AllowedPresets, ", "))
+}
 
 // PresetImageOptions controls how image/preset resolution and auto-build work.
 type PresetImageOptions struct {
@@ -34,6 +51,10 @@ var (
 
 // ResolveAndEnsureImage resolves image/preset behavior and auto-builds presets when needed.
 func ResolveAndEnsureImage(opts PresetImageOptions) (PresetImageResult, error) {
+	if err := ValidatePreset(opts.Preset); err != nil {
+		return PresetImageResult{}, err
+	}
+
 	result := PresetImageResult{
 		Image: opts.Image,
 	}
