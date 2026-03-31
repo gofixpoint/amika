@@ -1,9 +1,16 @@
 name: Create Release Tag
 
-# Manually cuts a component-scoped annotated release tag from the current main
-# branch tip. This is the entry point for stable and prerelease publishing:
-# the created tag triggers release.yml, which performs the cross-platform build
-# and GitHub Release publication.
+# Manually cuts a component-scoped annotated release tag. This is the entry
+# point for stable and prerelease publishing: the created tag triggers
+# release.yml, which performs the cross-platform build and GitHub Release
+# publication.
+#
+# By default the tag is placed on the current main HEAD. Use the optional
+# "ref" input to tag a specific commit SHA, existing tag, or release branch.
+# The ref must be either:
+#   1. An ancestor of (or equal to) main, OR
+#   2. An ancestor of (or equal to) HEAD of a branch listed in
+#      .github/release-branches.json on main.
 #
 # Supported tag shapes:
 #   amika@v1.2.3
@@ -35,6 +42,10 @@ on:
         type: string
       prerelease:
         description: "Pre-release suffix (e.g. rc.1, beta.1) — leave empty for stable releases"
+        required: false
+        type: string
+      ref:
+        description: "Commit SHA, tag, or branch to release from — leave empty for main HEAD"
         required: false
         type: string
 
@@ -85,6 +96,82 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
+      - name: Fetch all remote branches
+        if: inputs.ref != ''
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - name: Resolve and validate target ref
+        id: target
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$INPUT_REF" ]; then
+            sha=$(git rev-parse HEAD)
+            echo "No ref specified; using main HEAD: $sha"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Resolve the ref to a commit SHA. Supports commit SHAs, tags, and
+          # branch names (checked out as origin/<branch> after the fetch above).
+          sha=""
+          # Try as-is first (works for full/short SHAs and local refs)
+          sha=$(git rev-parse --verify "${INPUT_REF}^{commit}" 2>/dev/null) || true
+          # If that failed, try as a remote branch
+          if [ -z "$sha" ]; then
+            sha=$(git rev-parse --verify "origin/${INPUT_REF}^{commit}" 2>/dev/null) || true
+          fi
+          if [ -z "$sha" ]; then
+            echo "Could not resolve ref '$INPUT_REF' to a commit." >&2
+            exit 1
+          fi
+          echo "Resolved ref '$INPUT_REF' to commit: $sha"
+
+          # --- Check 1: is the commit an ancestor of (or equal to) main? ---
+          if git merge-base --is-ancestor "$sha" HEAD; then
+            echo "Commit $sha is on main — allowed."
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # --- Check 2: is it on an approved release branch? ---
+          # Read the allowlist from main via the GitHub API so a release branch
+          # cannot add itself to the list and self-approve.
+          config_url="https://api.github.com/repos/${{ github.repository }}/contents/.github/release-branches.json?ref=main"
+          config=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" "$config_url" \
+            | jq -r '.content' | base64 -d) || {
+            echo "Could not read .github/release-branches.json from main." >&2
+            exit 1
+          }
+
+          approved_branches=$(echo "$config" | jq -r '.branches[]')
+          if [ -z "$approved_branches" ]; then
+            echo "Commit $sha is not on main and no release branches are approved." >&2
+            exit 1
+          fi
+
+          allowed=false
+          while IFS= read -r branch; do
+            remote_ref="origin/${branch}"
+            if git rev-parse --verify "$remote_ref" >/dev/null 2>&1; then
+              if git merge-base --is-ancestor "$sha" "$remote_ref"; then
+                echo "Commit $sha is on approved release branch '$branch' — allowed."
+                allowed=true
+                break
+              fi
+            fi
+          done <<< "$approved_branches"
+
+          if [ "$allowed" != "true" ]; then
+            echo "Commit $sha is not on main and not on any approved release branch." >&2
+            echo "Approved release branches: $(echo "$config" | jq -r '.branches | join(", ")')" >&2
+            exit 1
+          fi
+
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
       - name: Assemble version string
         id: version
         env:
@@ -110,6 +197,13 @@ jobs:
             exit 1
           fi
 
+      - name: Check out target commit for validation
+        if: inputs.ref != ''
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          git checkout "$TARGET_SHA"
+
       - name: Verify repository is healthy enough to tag
         run: |
           make fmtcheck
@@ -120,9 +214,10 @@ jobs:
         env:
           COMPONENT: ${{ inputs.component }}
           VERSION: ${{ steps.version.outputs.version }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           tag="${COMPONENT}@${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$tag" -m "Release $tag"
+          git tag -a "$tag" "$TARGET_SHA" -m "Release $tag"
           git push origin "$tag"

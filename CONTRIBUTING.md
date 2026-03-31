@@ -101,3 +101,31 @@ docs/                    In-depth documentation
 ## Preset Images
 
 The `coder` and `claude` preset Docker images are auto-built on first use from Dockerfiles in `internal/sandbox/presets/`. See [docs/presets.md](docs/presets.md) for details.
+
+## Releasing
+
+Releases are cut via the **Create Release Tag** workflow (`release-tag.yml`), triggered manually from the Actions tab. It creates an annotated tag which automatically triggers the **Release** workflow (`release.yml`) to build cross-platform binaries and publish a GitHub Release.
+
+### Releasing from main HEAD (default)
+
+Leave the **ref** field empty. The tag is placed on the latest `main` commit.
+
+### Releasing from a specific commit or tag
+
+Enter a commit SHA, short SHA, or existing tag name in the **ref** field. The commit must be an ancestor of (or equal to) `main`.
+
+### Releasing from a release branch
+
+For long-lived release branches (e.g. `release/1.x`), the branch must first be added to `.github/release-branches.json` on `main`:
+
+```json
+{
+  "branches": [
+    "release/1.x"
+  ]
+}
+```
+
+Changes to this file require approval from `@gofixpoint/releasers` (enforced via CODEOWNERS). Once approved, enter the branch name (or a commit SHA on that branch) in the **ref** field.
+
+The allowlist is always read from `main` to prevent a release branch from approving itself.
