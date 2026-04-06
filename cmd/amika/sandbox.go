@@ -2068,6 +2068,9 @@ func agentCmdParts(agent agentConfig, message string) []string {
 func agentCmdPartsWithOpts(agent agentConfig, message string, opts agentRunOpts, jsonOutput bool) []string {
 	parts := []string{agent.Binary}
 	parts = append(parts, agent.ExtraArgs...)
+	// TODO: SessionID is currently pulled from session.Metadata["claude_session_id"].
+	// Move internal keys like this to a separate SystemMetadata field so they don't
+	// collide with client-settable metadata.
 	if opts.SessionID != "" {
 		parts = append(parts, "--resume", opts.SessionID)
 	}
@@ -2192,8 +2195,10 @@ func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait b
 			return nil
 		}
 	} else if len(output) > 0 {
-		// Could not parse JSON — print raw output.
+		// Expected JSON but got something else — dump it so the user can
+		// see what the agent returned, then report the parse failure.
 		stdout.Write(output) //nolint:errcheck
+		return fmt.Errorf("agent-send: unexpected non-JSON output from %s", agent.Binary)
 	}
 
 	if runErr != nil {
