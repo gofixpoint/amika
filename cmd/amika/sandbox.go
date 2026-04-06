@@ -21,6 +21,7 @@ import (
 	"github.com/gofixpoint/amika/internal/auth"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/constants"
+	"github.com/gofixpoint/amika/internal/runmode"
 	"github.com/gofixpoint/amika/internal/sandbox"
 	"github.com/gofixpoint/amika/internal/txn"
 	"github.com/gofixpoint/amika/pkg/amika"
@@ -38,40 +39,10 @@ const sandboxConnectWorkdir = "/home/amika"
 // TODO: Parse env variables from an environment file (e.g. .amika/.env or ~/.config/amika/env)
 // so users don't need to export AMIKA_API_URL, AMIKA_WORKOS_CLIENT_ID, etc. in their shell profile.
 
-// sandboxMode determines whether a command operates locally, remotely, or both.
-// Returns "local", "remote", or "both".
-func sandboxMode(cmd *cobra.Command) string {
-	local, _ := cmd.Flags().GetBool("local")
-	remote, _ := cmd.Flags().GetBool("remote")
-	remoteTarget, _ := cmd.Flags().GetString("remote-target")
-	if local {
-		return "local"
-	}
-	if remote || remoteTarget != "" {
-		return "remote"
-	}
-	// Default: if logged in with a valid session, include remote; otherwise local.
-	// GetValidSession refreshes expired tokens; if that fails the session is
-	// unusable and we fall back to local-only without blocking the command.
-	if _, err := auth.GetValidSession(config.WorkOSClientID()); err != nil {
-		return "local"
-	}
-	return "both"
-}
-
-// isLoggedIn returns true if a valid (or refreshable) WorkOS session exists.
-func isLoggedIn() bool {
+// defaultAuthChecker returns nil when a valid WorkOS session exists.
+func defaultAuthChecker() error {
 	_, err := auth.GetValidSession(config.WorkOSClientID())
-	return err == nil
-}
-
-// printLocalOnlyNotice prints a notice when the user is not logged in and
-// no explicit --local flag was set.
-func printLocalOnlyNotice(cmd *cobra.Command) {
-	local, _ := cmd.Flags().GetBool("local")
-	if !local && !isLoggedIn() {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Note: showing local resources only. Run \"amika auth login\" to access remote sandboxes.")
-	}
+	return err
 }
 
 // getRemoteTarget validates that --remote-target is not combined with --local or --remote, and returns the target string.
@@ -128,11 +99,13 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
-		mode := sandboxMode(cmd)
-		if mode == "remote" || mode == "both" {
+		mode := runmode.Resolve(cmd)
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+			return err
+		}
+		if mode == runmode.Remote {
 			return createRemoteSandbox(cmd, target)
 		}
-		printLocalOnlyNotice(cmd)
 
 		if secretFlags, _ := cmd.Flags().GetStringArray("secret"); len(secretFlags) > 0 {
 			return fmt.Errorf("--secret requires --remote mode; secrets are resolved by the remote API")
@@ -361,59 +334,44 @@ var sandboxStartCmd = &cobra.Command{
 			return err
 		}
 
-		mode := sandboxMode(cmd)
-
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err != nil {
+		mode := runmode.Resolve(cmd)
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
 			return err
-		}
-		store := sandbox.NewStore(sandboxesFile)
-
-		var remoteClient *apiclient.Client
-		if mode == "remote" || mode == "both" {
-			remoteClient, err = getRemoteClient(target)
-			if err != nil {
-				return err
-			}
 		}
 
 		var errs []string
-		for _, name := range args {
-			// Remote-only mode: skip local entirely.
-			if mode == "remote" {
-				if remoteClient != nil {
-					if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
-						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
-					} else {
-						fmt.Printf("Sandbox %q started (remote)\n", name)
-					}
-				}
-				continue
+		if mode == runmode.Remote {
+			remoteClient, err := getRemoteClient(target)
+			if err != nil {
+				return err
 			}
-
-			info, localErr := store.Get(name)
-			if localErr != nil && mode == "both" && remoteClient != nil {
-				// Not found locally, try remote.
+			for _, name := range args {
 				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
 				} else {
 					fmt.Printf("Sandbox %q started (remote)\n", name)
 				}
-				continue
 			}
-			if localErr != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
-				continue
+		} else {
+			sandboxesFile, err := config.SandboxesStateFile()
+			if err != nil {
+				return err
 			}
-
-			if info.Provider == "docker" {
-				if err := sandbox.StartDockerSandbox(name); err != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+			store := sandbox.NewStore(sandboxesFile)
+			for _, name := range args {
+				info, localErr := store.Get(name)
+				if localErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
 					continue
 				}
+				if info.Provider == "docker" {
+					if err := sandbox.StartDockerSandbox(name); err != nil {
+						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+						continue
+					}
+				}
+				fmt.Printf("Sandbox %q started\n", name)
 			}
-
-			fmt.Printf("Sandbox %q started\n", name)
 		}
 		if len(errs) > 0 {
 			return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -435,59 +393,44 @@ var sandboxStopCmd = &cobra.Command{
 			return err
 		}
 
-		mode := sandboxMode(cmd)
-
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err != nil {
+		mode := runmode.Resolve(cmd)
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
 			return err
-		}
-		store := sandbox.NewStore(sandboxesFile)
-
-		var remoteClient *apiclient.Client
-		if mode == "remote" || mode == "both" {
-			remoteClient, err = getRemoteClient(target)
-			if err != nil {
-				return err
-			}
 		}
 
 		var errs []string
-		for _, name := range args {
-			// Remote-only mode: skip local entirely.
-			if mode == "remote" {
-				if remoteClient != nil {
-					if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
-						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
-					} else {
-						fmt.Printf("Sandbox %q stopped (remote)\n", name)
-					}
-				}
-				continue
+		if mode == runmode.Remote {
+			remoteClient, err := getRemoteClient(target)
+			if err != nil {
+				return err
 			}
-
-			info, localErr := store.Get(name)
-			if localErr != nil && mode == "both" && remoteClient != nil {
-				// Not found locally, try remote.
+			for _, name := range args {
 				if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
 				} else {
 					fmt.Printf("Sandbox %q stopped (remote)\n", name)
 				}
-				continue
 			}
-			if localErr != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
-				continue
+		} else {
+			sandboxesFile, err := config.SandboxesStateFile()
+			if err != nil {
+				return err
 			}
-
-			if info.Provider == "docker" {
-				if err := sandbox.StopDockerSandbox(name); err != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+			store := sandbox.NewStore(sandboxesFile)
+			for _, name := range args {
+				info, localErr := store.Get(name)
+				if localErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
 					continue
 				}
+				if info.Provider == "docker" {
+					if err := sandbox.StopDockerSandbox(name); err != nil {
+						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+						continue
+					}
+				}
+				fmt.Printf("Sandbox %q stopped\n", name)
 			}
-
-			fmt.Printf("Sandbox %q stopped\n", name)
 		}
 		if len(errs) > 0 {
 			return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -525,7 +468,10 @@ var sandboxDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		mode := sandboxMode(cmd)
+		mode := runmode.Resolve(cmd)
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+			return err
+		}
 
 		deleteVolumes, _ := cmd.Flags().GetBool("delete-volumes")
 		keepVolumes, _ := cmd.Flags().GetBool("keep-volumes")
@@ -535,100 +481,84 @@ var sandboxDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err != nil {
-			return err
-		}
-		store := sandbox.NewStore(sandboxesFile)
-		volumesFile, err := config.VolumesStateFile()
-		if err != nil {
-			return err
-		}
-		volumeStore := sandbox.NewVolumeStore(volumesFile)
-		fileMountsFile, err := config.FileMountsStateFile()
-		if err != nil {
-			return err
-		}
-		fileMountStore := sandbox.NewFileMountStore(fileMountsFile)
-
-		// Build a remote client if we may need it.
-		var remoteClient *apiclient.Client
-		if mode == "remote" || mode == "both" {
-			remoteClient, err = getRemoteClient(target)
+		var errs []string
+		if mode == runmode.Remote {
+			remoteClient, err := getRemoteClient(target)
 			if err != nil {
 				return err
 			}
-		}
-
-		var errs []string
-		for _, name := range args {
-			// Remote-only mode: skip local entirely.
-			if mode == "remote" {
-				if remoteClient != nil {
-					if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
-						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
-					} else {
-						fmt.Printf("Sandbox %q deleted (remote)\n", name)
-					}
-				}
-				continue
-			}
-
-			info, localErr := store.Get(name)
-			if localErr != nil && mode == "both" && remoteClient != nil {
-				// Not found locally, try remote.
+			for _, name := range args {
 				if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
 				} else {
 					fmt.Printf("Sandbox %q deleted (remote)\n", name)
 				}
-				continue
 			}
-			if localErr != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
-				continue
-			}
-
-			deleteVols, err := resolveDeleteVolumes(
-				volumeStore,
-				fileMountStore,
-				name,
-				deleteVolumesSet,
-				keepVolumesSet,
-				bufio.NewReader(cmd.InOrStdin()),
-			)
+		} else {
+			sandboxesFile, err := config.SandboxesStateFile()
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
-				continue
+				return err
 			}
+			store := sandbox.NewStore(sandboxesFile)
+			volumesFile, err := config.VolumesStateFile()
+			if err != nil {
+				return err
+			}
+			volumeStore := sandbox.NewVolumeStore(volumesFile)
+			fileMountsFile, err := config.FileMountsStateFile()
+			if err != nil {
+				return err
+			}
+			fileMountStore := sandbox.NewFileMountStore(fileMountsFile)
 
-			if info.Provider == "docker" {
-				if err := sandbox.RemoveDockerSandbox(name); err != nil {
+			for _, name := range args {
+				info, localErr := store.Get(name)
+				if localErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
+					continue
+				}
+
+				deleteVols, err := resolveDeleteVolumes(
+					volumeStore,
+					fileMountStore,
+					name,
+					deleteVolumesSet,
+					keepVolumesSet,
+					bufio.NewReader(cmd.InOrStdin()),
+				)
+				if err != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
 					continue
 				}
-			}
 
-			volumeStatuses, volumeErr := cleanupSandboxVolumes(volumeStore, name, deleteVols, sandbox.RemoveDockerVolume)
-			fileMountStatuses, fileMountErr := cleanupSandboxFileMounts(fileMountStore, name, deleteVols)
+				if info.Provider == "docker" {
+					if err := sandbox.RemoveDockerSandbox(name); err != nil {
+						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+						continue
+					}
+				}
 
-			if err := store.Remove(name); err != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q: container removed but failed to update state: %v", name, err))
-				continue
-			}
+				volumeStatuses, volumeErr := cleanupSandboxVolumes(volumeStore, name, deleteVols, sandbox.RemoveDockerVolume)
+				fileMountStatuses, fileMountErr := cleanupSandboxFileMounts(fileMountStore, name, deleteVols)
 
-			fmt.Printf("Sandbox %q deleted\n", name)
-			for _, line := range volumeStatuses {
-				fmt.Println(line)
-			}
-			for _, line := range fileMountStatuses {
-				fmt.Println(line)
-			}
-			if volumeErr != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, volumeErr))
-			}
-			if fileMountErr != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, fileMountErr))
+				if err := store.Remove(name); err != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: container removed but failed to update state: %v", name, err))
+					continue
+				}
+
+				fmt.Printf("Sandbox %q deleted\n", name)
+				for _, line := range volumeStatuses {
+					fmt.Println(line)
+				}
+				for _, line := range fileMountStatuses {
+					fmt.Println(line)
+				}
+				if volumeErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, volumeErr))
+				}
+				if fileMountErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, fileMountErr))
+				}
 			}
 		}
 		if len(errs) > 0 {
@@ -648,12 +578,14 @@ var sandboxListCmd = &cobra.Command{
 			return err
 		}
 
-		mode := sandboxMode(cmd)
-		printLocalOnlyNotice(cmd)
+		mode := runmode.Resolve(cmd)
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+			return err
+		}
 
 		var allItems []amika.Sandbox
 
-		if mode == "local" || mode == "both" {
+		if mode == runmode.Local {
 			result, err := amika.NewService(amika.Options{}).ListSandboxes(cmd.Context(), amika.ListSandboxesRequest{})
 			if err != nil {
 				return err
@@ -670,9 +602,7 @@ var sandboxListCmd = &cobra.Command{
 				}
 			}
 			allItems = append(allItems, result.Items...)
-		}
-
-		if mode == "remote" || mode == "both" {
+		} else {
 			client, err := getRemoteClient(target)
 			if err != nil {
 				return err
@@ -722,32 +652,39 @@ var sandboxConnectCmd = &cobra.Command{
 			return err
 		}
 
-		// Try local sandbox first.
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err == nil {
-			store := sandbox.NewStore(sandboxesFile)
-			if info, err := store.Get(name); err == nil {
-				if info.Provider != "docker" {
-					return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
-				}
-				if err := runSandboxConnect(name, shell, os.Stdin, os.Stdout, os.Stderr); err != nil {
-					return fmt.Errorf("failed to connect to sandbox %q with shell %q: %w", name, shell, err)
-				}
-				return nil
-			}
-		}
-
-		// Not found locally — try remote SSH.
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
+		}
+
+		mode := runmode.Resolve(cmd)
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+			return err
+		}
+
+		if mode == runmode.Local {
+			sandboxesFile, err := config.SandboxesStateFile()
+			if err != nil {
+				return err
+			}
+			store := sandbox.NewStore(sandboxesFile)
+			info, err := store.Get(name)
+			if err != nil {
+				return fmt.Errorf("sandbox %q not found", name)
+			}
+			if info.Provider != "docker" {
+				return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
+			}
+			if err := runSandboxConnect(name, shell, os.Stdin, os.Stdout, os.Stderr); err != nil {
+				return fmt.Errorf("failed to connect to sandbox %q with shell %q: %w", name, shell, err)
+			}
+			return nil
 		}
 
 		client, err := getRemoteClient(target)
 		if err != nil {
 			return err
 		}
-
 		return execSSH(client, name, false, nil)
 	},
 }
@@ -2023,13 +1960,12 @@ Examples:
 
 		name := args[0]
 
-		// Check if this is a local sandbox.
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err == nil {
-			store := sandbox.NewStore(sandboxesFile)
-			if _, err := store.Get(name); err == nil {
-				return fmt.Errorf("SSH access currently only works for remote sandboxes; %q is a local sandbox", name)
-			}
+		mode := runmode.Resolve(cmd)
+		if mode == runmode.Local {
+			return fmt.Errorf("SSH access requires a remote sandbox; omit --local")
+		}
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+			return err
 		}
 
 		target, err := getRemoteTarget(cmd)
@@ -2173,37 +2109,45 @@ Use --no-wait to send the message and return immediately.`,
 			return err
 		}
 
-		// Try local sandbox first.
-		sandboxesFile, sErr := config.SandboxesStateFile()
-		if sErr == nil {
-			store := sandbox.NewStore(sandboxesFile)
-			if info, gErr := store.Get(name); gErr == nil {
-				if info.Provider != "docker" {
-					return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
-				}
-				if err := runDockerSandboxAgentSend(name, message, noWait, workdir, agent, os.Stdout, os.Stderr); err != nil {
-					if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
-						return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
-					}
-					return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
-				}
-				if noWait {
-					fmt.Fprintf(os.Stderr, "Message sent to %s in sandbox %q\n", agent.Binary, name)
-				}
-				return nil
-			}
-		}
-
-		// Not found locally — try remote via SSH.
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
 		}
+
+		mode := runmode.Resolve(cmd)
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+			return err
+		}
+
+		if mode == runmode.Local {
+			sandboxesFile, err := config.SandboxesStateFile()
+			if err != nil {
+				return err
+			}
+			store := sandbox.NewStore(sandboxesFile)
+			info, err := store.Get(name)
+			if err != nil {
+				return fmt.Errorf("sandbox %q not found", name)
+			}
+			if info.Provider != "docker" {
+				return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
+			}
+			if err := runDockerSandboxAgentSend(name, message, noWait, workdir, agent, os.Stdout, os.Stderr); err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
+					return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
+				}
+				return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
+			}
+			if noWait {
+				fmt.Fprintf(os.Stderr, "Message sent to %s in sandbox %q\n", agent.Binary, name)
+			}
+			return nil
+		}
+
 		client, err := getRemoteClient(target)
 		if err != nil {
 			return err
 		}
-
 		shellCmd := buildAgentShellCmd(message, noWait, workdir, agent)
 		return execSSH(client, name, false, []string{shellCmd})
 	},
@@ -2230,13 +2174,12 @@ Examples:
 			return fmt.Errorf("unsupported editor %q; currently only \"cursor\" is supported", editor)
 		}
 
-		// Check if this is a local sandbox.
-		sandboxesFile, err := config.SandboxesStateFile()
-		if err == nil {
-			store := sandbox.NewStore(sandboxesFile)
-			if _, err := store.Get(name); err == nil {
-				return fmt.Errorf("code command currently only works for remote sandboxes; %q is a local sandbox", name)
-			}
+		mode := runmode.Resolve(cmd)
+		if mode == runmode.Local {
+			return fmt.Errorf("code command requires a remote sandbox; omit --local")
+		}
+		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+			return err
 		}
 
 		// Check that cursor CLI is available.
