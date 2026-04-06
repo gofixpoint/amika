@@ -1,3 +1,6 @@
+# Set terminal type for proper rendering in tools like less, git, etc.
+export TERM=xterm
+
 # Set up the prompt (multi-line, similar to zsh adam1 theme)
 
 PS1='\u@\h\n\w\$ '
