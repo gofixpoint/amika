@@ -1116,7 +1116,7 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runRootCommand("sandbox", "list")
+	out, err := runRootCommand("sandbox", "list", "--local")
 	if err != nil {
 		t.Fatalf("sandbox list failed: %v", err)
 	}
