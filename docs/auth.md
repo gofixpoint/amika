@@ -124,3 +124,11 @@ OAuth tokens with an `expiresAt` or `expires` timestamp are skipped if expired.
 | `--export`         | `false` | Prefix each line with `export`                        |
 | `--homedir <path>` | `$HOME` | Override home directory used for credential discovery |
 | `--no-oauth`       | `false` | Skip OAuth credential sources                         |
+
+---
+
+## Remote Credential Management
+
+For remote sandboxes, you can push Claude Code credentials to the Amika secrets store and have them automatically injected at sandbox creation time. This avoids manual authentication inside the sandbox.
+
+See [secrets.md](secrets.md) for the `amika secret claude push/list/delete` workflow.

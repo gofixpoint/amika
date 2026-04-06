@@ -77,3 +77,35 @@ DATABASE_URL=postgres://user:pass#123@db.example.com:5432/mydb
 # Empty value is allowed
 OPTIONAL_FLAG=
 ```
+
+## Claude Code credentials
+
+`amika secret claude` manages Claude Code credentials separately from general secrets. These credentials (OAuth tokens or API keys) can be injected into sandboxes at creation time so Claude Code is pre-authenticated without manual login.
+
+### Workflow
+
+1. **Push credentials** from your local machine:
+
+```bash
+# Interactive discovery (scans Claude config files and macOS keychain)
+amika secret claude push
+
+# Or specify directly
+amika secret claude push --type api_key --value sk-ant-xxx
+```
+
+2. **List stored credentials:**
+
+```bash
+amika secret claude list
+```
+
+3. **Inject when creating a sandbox** — credentials can be selected via the web UI or referenced via the `--secret` flag on `amika sandbox create`.
+
+4. **Delete a credential:**
+
+```bash
+amika secret claude delete <id>
+```
+
+See [cli-reference.md](cli-reference.md) for the full flag reference.

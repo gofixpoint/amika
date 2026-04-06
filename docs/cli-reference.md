@@ -8,7 +8,7 @@ Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 ### Global sandbox flags
 
-These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `delete`, `connect`):
+These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `agent-send`):
 
 | Flag       | Default | Description                      |
 | ---------- | ------- | -------------------------------- |
@@ -65,6 +65,13 @@ amika sandbox create --name dev-sandbox --port 8080:8080
 
 # Publish a port bound to all interfaces
 amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
+
+# Clone a specific git branch
+amika sandbox create --name dev-sandbox --git --branch develop
+
+# Inject remote secrets (remote sandboxes only)
+amika sandbox create --name dev-sandbox --git --remote \
+  --secret env:ANTHROPIC_API_KEY=my-claude-key
 ```
 
 #### Flags
@@ -85,6 +92,8 @@ amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
 | `--yes`                 | `false`              | Skip mount confirmation prompt                                                                                                       |
 | `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                                              |
 | `--setup-script <path>` |                      | Mount a local script to `/usr/local/etc/amikad/setup/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
+| `--branch <name>`       |                      | Git branch to clone (defaults to the repo's default branch). Used with `--git`                                                       |
+| `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. Requires `--remote`. See [secrets.md](secrets.md)   |
 
 #### Mount modes
 
@@ -102,7 +111,7 @@ List all tracked sandboxes.
 amika sandbox list
 ```
 
-Output columns: `NAME`, `LOCATION`, `PROVIDER`, `IMAGE`, `PORTS`, `CREATED`.
+Output columns: `NAME`, `STATE`, `LOCATION`, `PROVIDER`, `IMAGE`, `BRANCH`, `PORTS`, `CREATED`.
 
 ### `amika sandbox connect`
 
@@ -146,6 +155,84 @@ amika sandbox delete dev-sandbox --keep-volumes
 | `--keep-volumes`   | `false` | Keep associated volumes without prompting, even if this sandbox is the only reference |
 
 When neither flag is set and the sandbox is the sole reference for a volume, you will be prompted to decide.
+
+### `amika sandbox stop`
+
+Stop one or more running sandboxes without removing them.
+
+```bash
+amika sandbox stop dev-sandbox
+amika sandbox stop sandbox-1 sandbox-2
+```
+
+### `amika sandbox start`
+
+Start (resume) one or more stopped sandboxes.
+
+```bash
+amika sandbox start dev-sandbox
+amika sandbox start sandbox-1 sandbox-2
+```
+
+### `amika sandbox ssh`
+
+SSH into a remote sandbox, or revoke SSH access. Optionally pass a command to execute instead of opening an interactive session.
+
+```bash
+# Interactive SSH session
+amika sandbox ssh my-sandbox
+
+# Run a command on the remote sandbox
+amika sandbox ssh my-sandbox -- ls -la
+
+# Force pseudo-terminal allocation (for interactive programs)
+amika sandbox ssh -t my-sandbox -- top
+
+# Revoke SSH access
+amika sandbox ssh my-sandbox --revoke
+```
+
+| Flag        | Default | Description                                                                 |
+| ----------- | ------- | --------------------------------------------------------------------------- |
+| `-t`        | `false` | Force pseudo-terminal allocation (useful for interactive remote programs)    |
+| `--revoke`  | `false` | Revoke SSH access for the sandbox                                           |
+
+### `amika sandbox code`
+
+Open a remote sandbox in an editor via SSH.
+
+```bash
+amika sandbox code my-sandbox
+amika sandbox code my-sandbox --editor=cursor
+```
+
+| Flag               | Default  | Description                      |
+| ------------------ | -------- | -------------------------------- |
+| `--editor <name>`  | `cursor` | Editor to open (currently only `cursor` is supported) |
+
+### `amika sandbox agent-send`
+
+Send a prompt to an AI agent CLI running inside a sandbox container. The message can be provided as a positional argument or piped via stdin. By default the command waits for the agent to finish and streams the response.
+
+```bash
+# Send a message to Claude in a sandbox
+amika sandbox agent-send my-sandbox "Add unit tests for the auth module"
+
+# Pipe a message via stdin
+echo "Fix the failing tests" | amika sandbox agent-send my-sandbox
+
+# Send without waiting for a response
+amika sandbox agent-send my-sandbox "Refactor the API layer" --no-wait
+
+# Use a different agent CLI
+amika sandbox agent-send my-sandbox "Review this code" --agent codex
+```
+
+| Flag                  | Default            | Description                                                  |
+| --------------------- | ------------------ | ------------------------------------------------------------ |
+| `--no-wait`           | `false`            | Send the instruction and return immediately without waiting  |
+| `--workdir <path>`    | `$AMIKA_AGENT_CWD` | Working directory inside the container                       |
+| `--agent <name>`      | `claude`           | Agent CLI to use                                             |
 
 ---
 
@@ -281,6 +368,58 @@ amika secret push --from-file=.env CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY
 | `--scope <scope>`    | `user`  | Secret scope: `user` (private) or `org` (visible to org members)                   |
 
 When multiple sources are used, positional arguments override `--from-file` values, and `--from-env` overrides both.
+
+### `amika secret claude`
+
+Manage Claude Code credentials for sandbox authentication. Credentials pushed here can be injected into sandboxes at creation time.
+
+#### `amika secret claude push`
+
+Push Claude Code credentials (API key or OAuth token) to the remote Amika secrets store. Scans your system for Claude credentials and lets you choose which one to push. On macOS, the keychain is also checked.
+
+```bash
+# Interactive — discover and select credentials
+amika secret claude push
+
+# Push with a custom label
+amika secret claude push --name "Claude OAuth (Work Laptop)"
+
+# Push from a credentials file
+amika secret claude push --from-file ~/.claude/.credentials.json
+
+# Push a credential value directly
+amika secret claude push --value '{"claudeAiOauth":{...}}'
+
+# Auto-resolve by type (reads ANTHROPIC_API_KEY env var for api_key)
+amika secret claude push --type api_key
+```
+
+| Flag                 | Default | Description                                                     |
+| -------------------- | ------- | --------------------------------------------------------------- |
+| `--name <label>`     |         | Human-readable label for the credential (prompted if omitted)   |
+| `--value <string>`   |         | Credential value (skips interactive discovery)                  |
+| `--from-file <path>` |         | Path to a credentials file (skips interactive discovery)        |
+| `--type <type>`      | `oauth` | Credential type: `oauth` or `api_key`                           |
+
+`--value` and `--from-file` are mutually exclusive.
+
+#### `amika secret claude list`
+
+List pushed Claude credentials.
+
+```bash
+amika secret claude list
+```
+
+Output columns: `ID`, `NAME`, `TYPE`.
+
+#### `amika secret claude delete`
+
+Delete a Claude credential by ID.
+
+```bash
+amika secret claude delete <id>
+```
 
 ---
 

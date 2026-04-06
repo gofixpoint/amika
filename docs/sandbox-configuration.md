@@ -44,6 +44,7 @@ When you pass `--setup-script`, your script is bind-mounted over the no-op, so t
 ### Notes
 
 - The script must be executable (`chmod +x`).
+- Setup scripts run with the working directory set to the agent's working directory (`$AMIKA_AGENT_CWD`).
 - If the script exits with a non-zero status, the container's main command will not run.
 - Preset images are cached locally. If you have an existing preset image from before the setup script feature was added, you need to rebuild your images by removing the old image first: `docker rmi amika/coder:latest`.
 
@@ -111,6 +112,12 @@ When you use `--git`, Amika looks for a `.amika/config.toml` file at the root of
 # Path to an executable that is mounted into the container at /usr/local/etc/amikad/setup/setup.sh.
 # Relative paths are resolved from the repository root.
 setup_script = "scripts/setup.sh"
+
+[env]
+# Plain environment variables
+MY_VAR = "my-value"
+# Secret references — resolved from the remote secrets store
+MY_SECRET = { secret = "my-secret-name" }
 ```
 
 #### `[lifecycle].setup_script`
@@ -142,6 +149,25 @@ my-project/
 ```
 
 Running `amika sandbox create --git` from anywhere inside `my-project` will automatically mount `scripts/setup.sh` to `/usr/local/etc/amikad/setup/setup.sh` in the container.
+
+### `[env]` — Environment variables
+
+The `[env]` section declares environment variables that are set inside the sandbox. Values can be plain strings or references to secrets stored in the remote Amika secrets store.
+
+```toml
+[env]
+# Plain string — set as-is
+DATABASE_HOST = "localhost"
+
+# Secret reference — resolved from the remote secrets store at sandbox creation
+ANTHROPIC_API_KEY = { secret = "my-anthropic-key" }
+```
+
+Secrets referenced with `{ secret = "name" }` must be pushed to the remote store before sandbox creation, either via `amika secret push` or through the web UI. See [secrets.md](secrets.md) for details.
+
+### Branch selection
+
+When `--branch` is specified on `amika sandbox create`, the `.amika/config.toml` file is read from that branch rather than the repository's default branch. This allows different branches to have different sandbox configurations.
 
 ## Agent Credential Auto-Mounting
 
