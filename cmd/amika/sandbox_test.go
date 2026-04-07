@@ -643,6 +643,103 @@ func TestResolveAgentConfig(t *testing.T) {
 	})
 }
 
+func TestAgentCmdPartsWithOpts(t *testing.T) {
+	agent := agentConfig{Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}}
+
+	t.Run("no opts no json", func(t *testing.T) {
+		got := agentCmdPartsWithOpts(agent, "hello", agentRunOpts{}, false)
+		want := []string{"claude", "--dangerously-skip-permissions", "-p", "hello"}
+		if strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("with session id maps to --resume", func(t *testing.T) {
+		got := agentCmdPartsWithOpts(agent, "hello", agentRunOpts{SessionID: "abc-123"}, true)
+		joined := strings.Join(got, " ")
+		if !strings.Contains(joined, "--resume abc-123") {
+			t.Fatalf("got %q, want --resume abc-123", joined)
+		}
+		if !strings.Contains(joined, "--output-format json") {
+			t.Fatalf("got %q, want --output-format json", joined)
+		}
+	})
+
+	t.Run("with resume maps to --continue", func(t *testing.T) {
+		got := agentCmdPartsWithOpts(agent, "hello", agentRunOpts{Resume: true}, true)
+		joined := strings.Join(got, " ")
+		if !strings.Contains(joined, "--continue") {
+			t.Fatalf("got %q, want --continue", joined)
+		}
+	})
+
+	t.Run("new session passes no session flag", func(t *testing.T) {
+		got := agentCmdPartsWithOpts(agent, "hello", agentRunOpts{NewSession: true}, true)
+		joined := strings.Join(got, " ")
+		if strings.Contains(joined, "--new-session") {
+			t.Fatalf("got %q, should not contain --new-session", joined)
+		}
+		if strings.Contains(joined, "--resume") {
+			t.Fatalf("got %q, should not contain --resume", joined)
+		}
+		if strings.Contains(joined, "--continue") {
+			t.Fatalf("got %q, should not contain --continue", joined)
+		}
+	})
+}
+
+func TestBuildRemoteAgentShellCmd(t *testing.T) {
+	agent := agentConfig{Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}}
+
+	t.Run("wait mode includes json output", func(t *testing.T) {
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", agent, agentRunOpts{})
+		if !strings.Contains(got, "--output-format json") {
+			t.Fatalf("cmd = %q, want --output-format json", got)
+		}
+	})
+
+	t.Run("no-wait mode has no json and wraps in tmux", func(t *testing.T) {
+		got := buildRemoteAgentShellCmd("hello", true, "/home/amika", agent, agentRunOpts{})
+		if strings.Contains(got, "--output-format") {
+			t.Fatalf("cmd = %q, should not contain --output-format in no-wait mode", got)
+		}
+		if !strings.Contains(got, "tmux new-session -d") {
+			t.Fatalf("cmd = %q, want tmux wrap", got)
+		}
+	})
+
+	t.Run("session id maps to --resume", func(t *testing.T) {
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", agent, agentRunOpts{SessionID: "sess-42"})
+		if !strings.Contains(got, "--resume sess-42") {
+			t.Fatalf("cmd = %q, want --resume sess-42", got)
+		}
+	})
+
+	t.Run("resume maps to --continue", func(t *testing.T) {
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", agent, agentRunOpts{Resume: true})
+		if !strings.Contains(got, "--continue") {
+			t.Fatalf("cmd = %q, want --continue", got)
+		}
+	})
+
+	t.Run("new session passes no session flag to claude", func(t *testing.T) {
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", agent, agentRunOpts{NewSession: true})
+		if strings.Contains(got, "--new-session") {
+			t.Fatalf("cmd = %q, should not contain --new-session", got)
+		}
+		if strings.Contains(got, "--resume") {
+			t.Fatalf("cmd = %q, should not contain --resume", got)
+		}
+		if strings.Contains(got, "--continue") {
+			t.Fatalf("cmd = %q, should not contain --continue", got)
+		}
+		// Should still have --output-format json for session capture.
+		if !strings.Contains(got, "--output-format json") {
+			t.Fatalf("cmd = %q, want --output-format json", got)
+		}
+	})
+}
+
 func TestResolveGitRoot(t *testing.T) {
 	t.Run("finds from nested directory", func(t *testing.T) {
 		root := t.TempDir()

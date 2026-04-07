@@ -252,6 +252,82 @@ func (c *Client) DeleteClaudeSecret(id string) error {
 	return nil
 }
 
+// Session represents an agent session on a remote sandbox.
+type Session struct {
+	ID        string                 `json:"id"`
+	SandboxID string                 `json:"sandbox_id"`
+	OrgID     string                 `json:"org_id"`
+	AgentName string                 `json:"agent_name"`
+	Status    string                 `json:"status"`
+	StartedAt string                 `json:"started_at"`
+	EndedAt   *string                `json:"ended_at"`
+	Metadata  map[string]interface{} `json:"metadata"`
+	CreatedAt string                 `json:"created_at"`
+	UpdatedAt string                 `json:"updated_at"`
+}
+
+// CreateSessionRequest is the request body for POST /api/sandboxes/{name}/sessions.
+type CreateSessionRequest struct {
+	AgentName string                 `json:"agent_name"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// UpdateSessionRequest is the request body for PATCH /api/sandboxes/{name}/sessions/{id}.
+type UpdateSessionRequest struct {
+	Status   string                 `json:"status,omitempty"`
+	EndedAt  string                 `json:"ended_at,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// CreateSession creates a new agent session on a remote sandbox.
+func (c *Client) CreateSession(sandboxName string, req CreateSessionRequest) (*Session, error) {
+	var result Session
+	if err := c.doJSON("POST", "/api/sandboxes/"+sandboxName+"/sessions", req, &result); err != nil {
+		return nil, fmt.Errorf("remote create session: %w", err)
+	}
+	return &result, nil
+}
+
+// ListSessions lists agent sessions for a remote sandbox.
+func (c *Client) ListSessions(sandboxName string) ([]Session, error) {
+	var result []Session
+	if err := c.doJSON("GET", "/api/sandboxes/"+sandboxName+"/sessions", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list sessions: %w", err)
+	}
+	return result, nil
+}
+
+// GetLatestSession returns the most recent session for a remote sandbox.
+// Returns nil, nil if no session exists (HTTP 404).
+func (c *Client) GetLatestSession(sandboxName string) (*Session, error) {
+	var result Session
+	if err := c.doJSON("GET", "/api/sandboxes/"+sandboxName+"/sessions/latest", nil, &result); err != nil {
+		if strings.Contains(err.Error(), "HTTP 404") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("remote get latest session: %w", err)
+	}
+	return &result, nil
+}
+
+// GetSession returns a specific session by ID.
+func (c *Client) GetSession(sandboxName, sessionID string) (*Session, error) {
+	var result Session
+	if err := c.doJSON("GET", "/api/sandboxes/"+sandboxName+"/sessions/"+sessionID, nil, &result); err != nil {
+		return nil, fmt.Errorf("remote get session: %w", err)
+	}
+	return &result, nil
+}
+
+// UpdateSession updates a session on a remote sandbox.
+func (c *Client) UpdateSession(sandboxName, sessionID string, req UpdateSessionRequest) (*Session, error) {
+	var result Session
+	if err := c.doJSON("PATCH", "/api/sandboxes/"+sandboxName+"/sessions/"+sessionID, req, &result); err != nil {
+		return nil, fmt.Errorf("remote update session: %w", err)
+	}
+	return &result, nil
+}
+
 func (c *Client) doJSON(method, path string, body interface{}, out interface{}) error {
 	var bodyReader io.Reader
 	if body != nil {
