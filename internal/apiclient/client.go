@@ -138,6 +138,8 @@ func (c *Client) RevokeSSH(name, token string) error {
 }
 
 // StartSandbox starts (resumes) a sandbox on the remote API.
+// The endpoint returns 202 Accepted with the sandbox in "initializing" state.
+// Use WaitForSandboxStart to poll until the sandbox is active.
 func (c *Client) StartSandbox(name string) error {
 	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/start", nil, nil); err != nil {
 		return fmt.Errorf("remote start sandbox: %w", err)
@@ -145,12 +147,50 @@ func (c *Client) StartSandbox(name string) error {
 	return nil
 }
 
+// WaitForSandboxStart polls GET /api/sandboxes/{name} until the sandbox
+// transitions out of "initializing" state. It polls every 3 seconds.
+func (c *Client) WaitForSandboxStart(name string) (*RemoteSandbox, error) {
+	for {
+		sb, err := c.GetSandbox(name)
+		if err != nil {
+			return nil, err
+		}
+		switch sb.State {
+		case "active", "running", "started":
+			return sb, nil
+		case "failed":
+			return sb, fmt.Errorf("sandbox start failed")
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
 // StopSandbox stops a sandbox on the remote API.
+// The endpoint returns 202 Accepted with the sandbox in "stopping" state.
+// Use WaitForSandboxStop to poll until the sandbox is stopped.
 func (c *Client) StopSandbox(name string) error {
 	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/stop", nil, nil); err != nil {
 		return fmt.Errorf("remote stop sandbox: %w", err)
 	}
 	return nil
+}
+
+// WaitForSandboxStop polls GET /api/sandboxes/{name} until the sandbox
+// transitions out of "stopping" state. It polls every 3 seconds.
+func (c *Client) WaitForSandboxStop(name string) (*RemoteSandbox, error) {
+	for {
+		sb, err := c.GetSandbox(name)
+		if err != nil {
+			return nil, err
+		}
+		switch sb.State {
+		case "stopped":
+			return sb, nil
+		case "failed":
+			return sb, fmt.Errorf("sandbox stop failed")
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 // DeleteSandbox deletes a sandbox on the remote API.
