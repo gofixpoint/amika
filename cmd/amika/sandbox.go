@@ -350,6 +350,11 @@ var sandboxStartCmd = &cobra.Command{
 			for _, name := range args {
 				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					continue
+				}
+				fmt.Printf("Sandbox %q starting...\n", name)
+				if _, remoteErr := remoteClient.WaitForSandboxStart(name); remoteErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
 				} else {
 					fmt.Printf("Sandbox %q started (remote)\n", name)
 				}
@@ -408,6 +413,11 @@ var sandboxStopCmd = &cobra.Command{
 			}
 			for _, name := range args {
 				if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
+					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					continue
+				}
+				fmt.Printf("Sandbox %q stopping...\n", name)
+				if _, remoteErr := remoteClient.WaitForSandboxStop(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
 				} else {
 					fmt.Printf("Sandbox %q stopped (remote)\n", name)
@@ -2414,7 +2424,6 @@ func init() {
 	sandboxCmd.AddCommand(sandboxCreateCmd)
 	sandboxCmd.AddCommand(sandboxStartCmd)
 	sandboxCmd.AddCommand(sandboxStopCmd)
-	sandboxCmd.AddCommand(sandboxStartCmd)
 	sandboxCmd.AddCommand(sandboxDeleteCmd)
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
