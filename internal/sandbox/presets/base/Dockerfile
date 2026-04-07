@@ -87,3 +87,4 @@ WORKDIR /home/amika
 RUN mkdir -p /home/amika/workspace
 
 COPY --chown=amika:amika .zshrc /home/amika/.zshrc
+COPY --chown=amika:amika .bashrc /home/amika/.bashrc

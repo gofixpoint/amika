@@ -175,6 +175,23 @@ func TestWritePresetBuildContext_ExtractsZshrc(t *testing.T) {
 	}
 }
 
+func TestWritePresetBuildContext_ExtractsBashrc(t *testing.T) {
+	contextDir, cleanup, err := WritePresetBuildContext("coder")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+
+	bashrcPath := filepath.Join(contextDir, ".bashrc")
+	data, err := os.ReadFile(bashrcPath)
+	if err != nil {
+		t.Fatalf("failed to read .bashrc from context dir: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("expected non-empty .bashrc")
+	}
+}
+
 func TestWritePresetBuildContext_UnknownPresetErrors(t *testing.T) {
 	_, _, err := WritePresetBuildContext("nonexistent")
 	if err == nil {

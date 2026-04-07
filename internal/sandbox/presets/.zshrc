@@ -1,3 +1,6 @@
+# Set terminal type for proper rendering in tools like less, git, etc.
+export TERM=xterm
+
 # Set up the prompt
 
 autoload -Uz promptinit
