@@ -20,7 +20,7 @@ var serviceListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List services across sandboxes",
-	Args:  cobra.NoArgs,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		sandboxName, _ := cmd.Flags().GetString("sandbox-name")
 

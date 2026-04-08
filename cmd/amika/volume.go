@@ -22,7 +22,7 @@ var volumeListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List tracked volumes",
-	Args:  cobra.NoArgs,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		volumesFile, err := config.VolumesStateFile()
 		if err != nil {

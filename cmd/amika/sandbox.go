@@ -584,7 +584,7 @@ var sandboxListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List all sandboxes",
-	Args:  cobra.NoArgs,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
