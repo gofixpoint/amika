@@ -581,8 +581,9 @@ var sandboxDeleteCmd = &cobra.Command{
 }
 
 var sandboxListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all sandboxes",
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List all sandboxes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		target, err := getRemoteTarget(cmd)
