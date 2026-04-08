@@ -641,8 +641,9 @@ func readClaudeCredentialFromKeychain() (string, error) {
 
 func newSecretClaudeListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List pushed Claude credentials",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List pushed Claude credentials",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
