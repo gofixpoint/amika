@@ -51,8 +51,8 @@ func TestPathEscapesSandboxName(t *testing.T) {
 			wantPath:   "/api/sandboxes/a%2Fb/ssh",
 		},
 		{
-			name: "ListSessions with slash",
-			call: func(c *Client) error { _, err := c.ListSessions("a/b"); return err },
+			name:       "ListSessions with slash",
+			call:       func(c *Client) error { _, err := c.ListSessions("a/b"); return err },
 			wantMethod: "GET",
 			wantPath:   "/api/sandboxes/a%2Fb/sessions",
 		},
