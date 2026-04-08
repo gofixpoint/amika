@@ -675,8 +675,9 @@ func newSecretClaudeListCmd() *cobra.Command {
 
 func newSecretClaudeDeleteCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a Claude credential by ID",
+		Use:     "delete <id>",
+		Aliases: []string{"rm"},
+		Short:   "Delete a Claude credential by ID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
