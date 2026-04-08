@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -82,7 +83,7 @@ func (c *Client) CreateSandbox(req CreateSandboxRequest) (*RemoteSandbox, error)
 // GetSandbox fetches a single sandbox by name from the remote API.
 func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
 	var result RemoteSandbox
-	if err := c.doJSON("GET", "/api/sandboxes/"+name, nil, &result); err != nil {
+	if err := c.doJSON("GET", "/api/sandboxes/"+url.PathEscape(name), nil, &result); err != nil {
 		return nil, fmt.Errorf("remote get sandbox: %w", err)
 	}
 	return &result, nil
@@ -125,7 +126,7 @@ type SSHInfo struct {
 // GetSSH retrieves SSH connection details for a remote sandbox.
 func (c *Client) GetSSH(name string) (*SSHInfo, error) {
 	var result SSHInfo
-	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/ssh", nil, &result); err != nil {
+	if err := c.doJSON("POST", "/api/sandboxes/"+url.PathEscape(name)+"/ssh", nil, &result); err != nil {
 		return nil, fmt.Errorf("remote ssh: %w", err)
 	}
 	return &result, nil
@@ -139,7 +140,7 @@ type RevokeSSHRequest struct {
 // RevokeSSH revokes an SSH token for a remote sandbox.
 func (c *Client) RevokeSSH(name, token string) error {
 	req := RevokeSSHRequest{Token: token}
-	if err := c.doJSON("DELETE", "/api/sandboxes/"+name+"/ssh", req, nil); err != nil {
+	if err := c.doJSON("DELETE", "/api/sandboxes/"+url.PathEscape(name)+"/ssh", req, nil); err != nil {
 		return fmt.Errorf("remote revoke ssh: %w", err)
 	}
 	return nil
@@ -149,7 +150,7 @@ func (c *Client) RevokeSSH(name, token string) error {
 // The endpoint returns 202 Accepted with the sandbox in "initializing" state.
 // Use WaitForSandboxStart to poll until the sandbox is active.
 func (c *Client) StartSandbox(name string) error {
-	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/start", nil, nil); err != nil {
+	if err := c.doJSON("POST", "/api/sandboxes/"+url.PathEscape(name)+"/start", nil, nil); err != nil {
 		return fmt.Errorf("remote start sandbox: %w", err)
 	}
 	return nil
@@ -165,7 +166,7 @@ func (c *Client) WaitForSandboxStart(name string) (*RemoteSandbox, error) {
 // The endpoint returns 202 Accepted with the sandbox in "stopping" state.
 // Use WaitForSandboxStop to poll until the sandbox is stopped.
 func (c *Client) StopSandbox(name string) error {
-	if err := c.doJSON("POST", "/api/sandboxes/"+name+"/stop", nil, nil); err != nil {
+	if err := c.doJSON("POST", "/api/sandboxes/"+url.PathEscape(name)+"/stop", nil, nil); err != nil {
 		return fmt.Errorf("remote stop sandbox: %w", err)
 	}
 	return nil
@@ -179,7 +180,7 @@ func (c *Client) WaitForSandboxStop(name string) (*RemoteSandbox, error) {
 
 // DeleteSandbox deletes a sandbox on the remote API.
 func (c *Client) DeleteSandbox(name string) error {
-	if err := c.doJSON("DELETE", "/api/sandboxes/"+name, nil, nil); err != nil {
+	if err := c.doJSON("DELETE", "/api/sandboxes/"+url.PathEscape(name), nil, nil); err != nil {
 		return fmt.Errorf("remote delete sandbox: %w", err)
 	}
 	return nil
@@ -306,7 +307,7 @@ type UpdateSessionRequest struct {
 // CreateSession creates a new agent session on a remote sandbox.
 func (c *Client) CreateSession(sandboxName string, req CreateSessionRequest) (*Session, error) {
 	var result Session
-	if err := c.doJSON("POST", "/api/sandboxes/"+sandboxName+"/sessions", req, &result); err != nil {
+	if err := c.doJSON("POST", "/api/sandboxes/"+url.PathEscape(sandboxName)+"/sessions", req, &result); err != nil {
 		return nil, fmt.Errorf("remote create session: %w", err)
 	}
 	return &result, nil
@@ -315,7 +316,7 @@ func (c *Client) CreateSession(sandboxName string, req CreateSessionRequest) (*S
 // ListSessions lists agent sessions for a remote sandbox.
 func (c *Client) ListSessions(sandboxName string) ([]Session, error) {
 	var result []Session
-	if err := c.doJSON("GET", "/api/sandboxes/"+sandboxName+"/sessions", nil, &result); err != nil {
+	if err := c.doJSON("GET", "/api/sandboxes/"+url.PathEscape(sandboxName)+"/sessions", nil, &result); err != nil {
 		return nil, fmt.Errorf("remote list sessions: %w", err)
 	}
 	return result, nil
@@ -325,7 +326,7 @@ func (c *Client) ListSessions(sandboxName string) ([]Session, error) {
 // Returns nil, nil if no session exists (HTTP 404).
 func (c *Client) GetLatestSession(sandboxName string) (*Session, error) {
 	var result Session
-	if err := c.doJSON("GET", "/api/sandboxes/"+sandboxName+"/sessions/latest", nil, &result); err != nil {
+	if err := c.doJSON("GET", "/api/sandboxes/"+url.PathEscape(sandboxName)+"/sessions/latest", nil, &result); err != nil {
 		if strings.Contains(err.Error(), "HTTP 404") {
 			return nil, nil
 		}
@@ -337,7 +338,7 @@ func (c *Client) GetLatestSession(sandboxName string) (*Session, error) {
 // GetSession returns a specific session by ID.
 func (c *Client) GetSession(sandboxName, sessionID string) (*Session, error) {
 	var result Session
-	if err := c.doJSON("GET", "/api/sandboxes/"+sandboxName+"/sessions/"+sessionID, nil, &result); err != nil {
+	if err := c.doJSON("GET", "/api/sandboxes/"+url.PathEscape(sandboxName)+"/sessions/"+url.PathEscape(sessionID), nil, &result); err != nil {
 		return nil, fmt.Errorf("remote get session: %w", err)
 	}
 	return &result, nil
@@ -346,7 +347,7 @@ func (c *Client) GetSession(sandboxName, sessionID string) (*Session, error) {
 // UpdateSession updates a session on a remote sandbox.
 func (c *Client) UpdateSession(sandboxName, sessionID string, req UpdateSessionRequest) (*Session, error) {
 	var result Session
-	if err := c.doJSON("PATCH", "/api/sandboxes/"+sandboxName+"/sessions/"+sessionID, req, &result); err != nil {
+	if err := c.doJSON("PATCH", "/api/sandboxes/"+url.PathEscape(sandboxName)+"/sessions/"+url.PathEscape(sessionID), req, &result); err != nil {
 		return nil, fmt.Errorf("remote update session: %w", err)
 	}
 	return &result, nil
