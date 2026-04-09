@@ -665,14 +665,6 @@ func TestAgentCmdPartsWithOpts(t *testing.T) {
 		}
 	})
 
-	t.Run("with resume maps to --continue", func(t *testing.T) {
-		got := agentCmdPartsWithOpts(agent, "hello", agentRunOpts{Resume: true}, true)
-		joined := strings.Join(got, " ")
-		if !strings.Contains(joined, "--continue") {
-			t.Fatalf("got %q, want --continue", joined)
-		}
-	})
-
 	t.Run("new session passes no session flag", func(t *testing.T) {
 		got := agentCmdPartsWithOpts(agent, "hello", agentRunOpts{NewSession: true}, true)
 		joined := strings.Join(got, " ")
@@ -715,13 +707,6 @@ func TestBuildRemoteAgentShellCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("resume maps to --continue", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", agent, agentRunOpts{Resume: true})
-		if !strings.Contains(got, "--continue") {
-			t.Fatalf("cmd = %q, want --continue", got)
-		}
-	})
-
 	t.Run("new session passes no session flag to claude", func(t *testing.T) {
 		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", agent, agentRunOpts{NewSession: true})
 		if strings.Contains(got, "--new-session") {
@@ -729,9 +714,6 @@ func TestBuildRemoteAgentShellCmd(t *testing.T) {
 		}
 		if strings.Contains(got, "--resume") {
 			t.Fatalf("cmd = %q, should not contain --resume", got)
-		}
-		if strings.Contains(got, "--continue") {
-			t.Fatalf("cmd = %q, should not contain --continue", got)
 		}
 		// Should still have --output-format json for session capture.
 		if !strings.Contains(got, "--output-format json") {

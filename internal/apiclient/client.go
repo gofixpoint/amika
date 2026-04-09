@@ -276,6 +276,35 @@ func (c *Client) DeleteClaudeSecret(id string) error {
 	return nil
 }
 
+// AgentSendRequest is the request body for POST /api/sandboxes/{name}/agent-send.
+type AgentSendRequest struct {
+	Message    string `json:"message"`
+	NewSession bool   `json:"new_session,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+}
+
+// AgentSendResponse is the response from POST /api/sandboxes/{name}/agent-send.
+type AgentSendResponse struct {
+	Result    string `json:"result"`
+	SessionID string `json:"session_id"`
+	IsError   bool   `json:"is_error"`
+}
+
+// AgentSend sends a message to an agent inside a remote sandbox.
+// The endpoint is synchronous: it blocks until the agent finishes, so a
+// longer HTTP timeout (10 minutes) is used instead of the default 30 seconds.
+func (c *Client) AgentSend(sandboxName string, req AgentSendRequest) (*AgentSendResponse, error) {
+	saved := c.HTTP.Timeout
+	c.HTTP.Timeout = 10 * time.Minute
+	defer func() { c.HTTP.Timeout = saved }()
+
+	var result AgentSendResponse
+	if err := c.doJSON("POST", "/api/sandboxes/"+sandboxName+"/agent-send", req, &result); err != nil {
+		return nil, fmt.Errorf("remote agent-send: %w", err)
+	}
+	return &result, nil
+}
+
 // Session represents an agent session on a remote sandbox.
 type Session struct {
 	ID        string                 `json:"id"`
