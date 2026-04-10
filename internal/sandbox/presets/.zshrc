@@ -1,11 +1,12 @@
 # Set terminal type for proper rendering in tools like less, git, etc.
 export TERM=xterm
 
-# Set up the prompt
+# Set up the prompt (works on both light and dark terminals)
 
-autoload -Uz promptinit
-promptinit
-prompt adam1
+autoload -Uz colors
+colors
+PROMPT='%B%F{blue}%n@%m%f%b
+%B%F{magenta}%~%f%b%# '
 
 setopt histignorealldups sharehistory
 
