@@ -1,9 +1,9 @@
 # Set terminal type for proper rendering in tools like less, git, etc.
 export TERM=xterm
 
-# Set up the prompt (multi-line, similar to zsh adam1 theme)
+# Set up the prompt (works on both light and dark terminals)
 
-PS1='\u@\h\n\w\$ '
+PS1='\[\e[1;34m\]\u@\h\[\e[0m\]\n\[\e[1;35m\]\w\[\e[0m\]\$ '
 
 # History settings
 HISTCONTROL=ignoredups:erasedups
