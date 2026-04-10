@@ -129,3 +129,7 @@ For long-lived release branches (e.g. `release/1.x`), the branch must first be a
 Changes to this file require approval from `@gofixpoint/releasers` (enforced via CODEOWNERS). Once approved, enter the branch name (or a commit SHA on that branch) in the **ref** field.
 
 The allowlist is always read from `main` to prevent a release branch from approving itself.
+
+### Updating the install script
+
+After you make a new release, update the install.sh script and change the `DEFAULT_VERSION`.
