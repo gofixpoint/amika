@@ -2,8 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -2054,8 +2052,7 @@ func runDockerSandboxAgentSend(name, message string, noWait bool, workdir string
 
 // agentRunOpts holds per-invocation options for an agent command.
 type agentRunOpts struct {
-	SessionID  string // resume an existing session
-	Resume     bool   // resume the most recent session
+	SessionID  string // resume an existing session by ID
 	NewSession bool   // start a new session (do not resume)
 }
 
@@ -2073,20 +2070,13 @@ func agentCmdParts(agent agentConfig, message string) []string {
 //
 // Flag mapping (amika → Claude CLI):
 //
-//	SessionID → --resume <id>   (resume a specific session)
-//	Resume    → --continue      (continue the most recent session)
-//	NewSession → (no flag)      (Claude's default is a new session)
+//	SessionID  → --resume <id>   (resume a specific session)
+//	NewSession → (no flag)       (Claude's default is a new session)
 func agentCmdPartsWithOpts(agent agentConfig, message string, opts agentRunOpts, jsonOutput bool) []string {
 	parts := []string{agent.Binary}
 	parts = append(parts, agent.ExtraArgs...)
-	// TODO: SessionID is currently pulled from session.Metadata["claude_session_id"].
-	// Move internal keys like this to a separate SystemMetadata field so they don't
-	// collide with client-settable metadata.
 	if opts.SessionID != "" {
 		parts = append(parts, "--resume", opts.SessionID)
-	}
-	if opts.Resume {
-		parts = append(parts, "--continue")
 	}
 	// NewSession: no flag needed — Claude starts a new session by default.
 	if jsonOutput {
@@ -2123,100 +2113,35 @@ func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent
 	return cmd
 }
 
-// claudeJSONOutput is the subset of fields we parse from
-// `claude -p --output-format json` output.
-type claudeJSONOutput struct {
-	SessionID string `json:"session_id"`
-	Result    string `json:"result"`
-	IsError   bool   `json:"is_error"`
-}
-
-// runRemoteAgentSend runs an agent command on a remote sandbox via SSH,
-// captures the JSON output to extract the session ID, manages sessions
-// via the API, and prints the result text to stdout.
-func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, stdout, stderr io.Writer) error {
-	// Resolve session for default behavior (no explicit session flags).
-	var existingSession *apiclient.Session
-	if !opts.NewSession && opts.SessionID == "" && !opts.Resume {
-		session, err := client.GetLatestSession(name)
-		if err != nil {
-			fmt.Fprintf(stderr, "Warning: could not look up latest session: %v\n", err)
-		} else if session != nil && session.Status == "active" {
-			if claudeID, ok := session.Metadata["claude_session_id"].(string); ok && claudeID != "" {
-				opts.SessionID = claudeID
-				existingSession = session
-			}
-		}
-	}
-
-	shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
-
-	// For no-wait, use execSSH (no output capture needed).
+// runRemoteAgentSend sends a message to an agent inside a remote sandbox.
+// For synchronous (wait) mode it calls POST /api/sandboxes/{name}/agent-send.
+// For no-wait mode it falls back to SSH + tmux so the agent runs detached.
+func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, stdout io.Writer) error {
+	// No-wait mode: fire-and-forget via SSH + tmux (the API endpoint is synchronous).
 	if noWait {
+		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
 		return execSSH(client, name, false, []string{shellCmd})
 	}
 
-	// Get SSH connection info.
-	info, err := client.GetSSH(name)
+	// Synchronous mode: call the API endpoint.
+	req := apiclient.AgentSendRequest{
+		Message:    message,
+		NewSession: opts.NewSession,
+		SessionID:  opts.SessionID,
+	}
+
+	resp, err := client.AgentSend(name, req)
 	if err != nil {
-		return err
-	}
-	if info.SSHDestination == "" {
-		return fmt.Errorf("server returned empty SSH destination")
+		return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
 	}
 
-	// Run SSH via exec.Command so we can capture stdout.
-	sshArgs := strings.Fields(info.SSHDestination)
-	sshArgs = append(sshArgs, shellCmd)
-
-	sshCmd := exec.Command("ssh", sshArgs...)
-	var stdoutBuf bytes.Buffer
-	sshCmd.Stdout = &stdoutBuf
-	sshCmd.Stderr = stderr
-	runErr := sshCmd.Run()
-
-	// Try to parse JSON output regardless of exit code — Claude may
-	// have produced partial results before failing.
-	output := stdoutBuf.Bytes()
-	var parsed claudeJSONOutput
-	jsonOK := len(output) > 0 && json.Unmarshal(output, &parsed) == nil
-
-	if jsonOK {
-		// Print the result text to the caller.
-		fmt.Fprint(stdout, parsed.Result)
-		if parsed.Result != "" && !strings.HasSuffix(parsed.Result, "\n") {
-			fmt.Fprintln(stdout)
-		}
-
-		// Store session if this was a new session (no existing session being resumed).
-		if parsed.SessionID != "" && existingSession == nil {
-			if _, createErr := client.CreateSession(name, apiclient.CreateSessionRequest{
-				AgentName: agent.Binary,
-				Metadata: map[string]interface{}{
-					"claude_session_id": parsed.SessionID,
-				},
-			}); createErr != nil {
-				fmt.Fprintf(stderr, "Warning: failed to store session: %v\n", createErr)
-			}
-		}
-
-		// If we got valid, non-error JSON output, ignore SSH-level exit
-		// codes (e.g. 255 from connection teardown).
-		if !parsed.IsError {
-			return nil
-		}
-	} else if len(output) > 0 {
-		// Expected JSON but got something else — dump it so the user can
-		// see what the agent returned, then report the parse failure.
-		stdout.Write(output) //nolint:errcheck
-		return fmt.Errorf("agent-send: unexpected non-JSON output from %s", agent.Binary)
+	fmt.Fprint(stdout, resp.Result)
+	if resp.Result != "" && !strings.HasSuffix(resp.Result, "\n") {
+		fmt.Fprintln(stdout)
 	}
 
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
-			return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
-		}
-		return fmt.Errorf("agent-send failed for sandbox %q: %w", name, runErr)
+	if resp.IsError {
+		return fmt.Errorf("agent returned an error in sandbox %q", name)
 	}
 	return nil
 }
@@ -2312,11 +2237,10 @@ Use --no-wait to send the message and return immediately.`,
 		}
 
 		sessionID, _ := cmd.Flags().GetString("session-id")
-		resume, _ := cmd.Flags().GetBool("resume")
 		newSession, _ := cmd.Flags().GetBool("new-session")
-		opts := agentRunOpts{SessionID: sessionID, Resume: resume, NewSession: newSession}
+		opts := agentRunOpts{SessionID: sessionID, NewSession: newSession}
 
-		if err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts, os.Stdout, os.Stderr); err != nil {
+		if err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts, os.Stdout); err != nil {
 			return err
 		}
 		if noWait {
@@ -2469,6 +2393,5 @@ func init() {
 	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
 	sandboxAgentSendCmd.Flags().String("session-id", "", "Resume an existing agent session by ID (remote sandboxes only)")
-	sandboxAgentSendCmd.Flags().Bool("resume", false, "Resume the most recent agent session (remote sandboxes only)")
 	sandboxAgentSendCmd.Flags().Bool("new-session", false, "Start a new agent session (remote sandboxes only)")
 }
