@@ -286,7 +286,7 @@ type AgentSendRequest struct {
 
 // AgentSendResponse is the response from POST /api/sandboxes/{name}/agent-send.
 type AgentSendResponse struct {
-	Result    string `json:"result"`
+	Result    string `json:"response"`
 	SessionID string `json:"session_id"`
 	IsError   bool   `json:"is_error"`
 }
