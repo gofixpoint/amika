@@ -255,7 +255,7 @@ func (s *serviceImpl) ListSandboxes(context.Context, ListSandboxesRequest) (List
 			Services:    toPublicServiceInfos(it.Services),
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
 	return ListSandboxesResult{Items: out}, nil
 }
 
