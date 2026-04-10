@@ -143,7 +143,7 @@ func (s *Service) ListSandboxes(context.Context, amika.ListSandboxesRequest) (am
 			Ports:       toPublicPorts(rec.Ports),
 		})
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt > items[j].CreatedAt })
 	return amika.ListSandboxesResult{Items: items}, nil
 }
 

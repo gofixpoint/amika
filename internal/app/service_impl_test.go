@@ -103,3 +103,45 @@ type stubRunner struct{}
 func (stubRunner) Run(context.Context, string, []string, ports.RunOptions) (ports.RunResult, error) {
 	return ports.RunResult{}, nil
 }
+
+// listSandboxStore returns a fixed list of sandbox records for testing sort order.
+type listSandboxStore struct{ stubSandboxStore }
+
+func (listSandboxStore) List() ([]ports.SandboxRecord, error) {
+	return []ports.SandboxRecord{
+		{Name: "alpha", CreatedAt: "2025-01-01T00:00:00Z"},
+		{Name: "gamma", CreatedAt: "2025-03-01T00:00:00Z"},
+		{Name: "beta", CreatedAt: "2025-02-01T00:00:00Z"},
+	}, nil
+}
+
+func TestListSandboxes_SortedByCreatedAtDescending(t *testing.T) {
+	svc, err := NewService(Dependencies{
+		Docker:      stubDocker{},
+		Sandboxes:   listSandboxStore{},
+		Volumes:     stubVolumeStore{},
+		FileMounts:  stubFileMountStore{},
+		Runner:      stubRunner{},
+		Clock:       stubClock{},
+		IDGenerator: stubIDGenerator{},
+	})
+	if err != nil {
+		t.Fatalf("NewService error: %v", err)
+	}
+
+	result, err := svc.ListSandboxes(context.Background(), amika.ListSandboxesRequest{})
+	if err != nil {
+		t.Fatalf("ListSandboxes error: %v", err)
+	}
+
+	if len(result.Items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(result.Items))
+	}
+
+	want := []string{"gamma", "beta", "alpha"}
+	for i, name := range want {
+		if result.Items[i].Name != name {
+			t.Errorf("items[%d].Name = %q, want %q", i, result.Items[i].Name, name)
+		}
+	}
+}
