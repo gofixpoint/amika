@@ -4,6 +4,7 @@ package apiclient
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,18 @@ import (
 	"strings"
 	"time"
 )
+
+// HTTPError is returned by doJSON when the server responds with a non-2xx
+// status code. It carries the raw status and body so callers can inspect or
+// parse the response for structured error information.
+type HTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Body)
+}
 
 // Client calls the remote Amika API with a bearer token.
 type Client struct {
@@ -301,9 +314,51 @@ func (c *Client) AgentSend(sandboxName string, req AgentSendRequest) (*AgentSend
 
 	var result AgentSendResponse
 	if err := c.doJSON("POST", "/api/sandboxes/"+sandboxName+"/agent-send", req, &result); err != nil {
+		if authErr := extractAgentAuthError(err); authErr != "" {
+			return nil, fmt.Errorf("remote agent-send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
+		}
 		return nil, fmt.Errorf("remote agent-send: %w", err)
 	}
 	return &result, nil
+}
+
+// extractAgentAuthError inspects an error returned by the agent-send endpoint
+// and returns a short description if the root cause is an authentication
+// failure in the agent's AI provider (e.g. Anthropic 401). Returns "" if the
+// error is not auth-related.
+func extractAgentAuthError(err error) string {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		return ""
+	}
+
+	// The server wraps the agent result as {"error":"...","details":"<json>"}.
+	var envelope struct {
+		Error   string `json:"error"`
+		Details string `json:"details"`
+	}
+	if json.Unmarshal([]byte(httpErr.Body), &envelope) != nil || envelope.Details == "" {
+		return ""
+	}
+
+	// The details string is itself JSON with the agent run result.
+	var agentResult struct {
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+	}
+	if json.Unmarshal([]byte(envelope.Details), &agentResult) != nil {
+		return ""
+	}
+
+	if !agentResult.IsError {
+		return ""
+	}
+
+	r := agentResult.Result
+	if strings.Contains(r, "authentication_error") || strings.Contains(r, "Invalid authentication credentials") || strings.Contains(r, "Failed to authenticate") {
+		return r
+	}
+	return ""
 }
 
 // Session represents an agent session on a remote sandbox.
@@ -417,7 +472,7 @@ func (c *Client) doJSON(method, path string, body interface{}, out interface{}) 
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return &HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if out != nil && len(respBody) > 0 {
