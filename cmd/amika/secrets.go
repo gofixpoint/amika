@@ -641,8 +641,9 @@ func readClaudeCredentialFromKeychain() (string, error) {
 
 func newSecretClaudeListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List pushed Claude credentials",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List pushed Claude credentials",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
@@ -674,9 +675,10 @@ func newSecretClaudeListCmd() *cobra.Command {
 
 func newSecretClaudeDeleteCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a Claude credential by ID",
-		Args:  cobra.ExactArgs(1),
+		Use:     "delete <id>",
+		Aliases: []string{"rm"},
+		Short:   "Delete a Claude credential by ID",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
