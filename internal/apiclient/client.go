@@ -301,6 +301,9 @@ func (c *Client) AgentSend(sandboxName string, req AgentSendRequest) (*AgentSend
 
 	var result AgentSendResponse
 	if err := c.doJSON("POST", "/api/sandboxes/"+sandboxName+"/agent-send", req, &result); err != nil {
+		if authErr := extractAgentAuthError(err); authErr != "" {
+			return nil, fmt.Errorf("remote agent-send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
+		}
 		return nil, fmt.Errorf("remote agent-send: %w", err)
 	}
 	return &result, nil
@@ -417,7 +420,7 @@ func (c *Client) doJSON(method, path string, body interface{}, out interface{}) 
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return &HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if out != nil && len(respBody) > 0 {
