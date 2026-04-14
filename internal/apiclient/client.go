@@ -287,6 +287,7 @@ type AgentSendRequest struct {
 	Message    string `json:"message"`
 	NewSession bool   `json:"new_session,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
+	Agent      string `json:"agent,omitempty"`
 }
 
 // AgentSendResponse is the response from POST /api/sandboxes/{name}/agent-send.
