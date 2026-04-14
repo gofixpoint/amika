@@ -230,47 +230,52 @@ func (c *Client) UpdateSecret(id string, req UpdateSecretRequest) error {
 	return nil
 }
 
-// CreateClaudeSecretRequest is the request body for POST /api/secrets/claude.
-type CreateClaudeSecretRequest struct {
+// CreateProviderSecretRequest is the request body for
+// POST /api/secrets/<provider>. Shared by provider-scoped credential
+// endpoints (e.g. Claude, Codex).
+type CreateProviderSecretRequest struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 	Type  string `json:"type"` // "oauth" or "api_key" — required by the server
 }
 
-// ClaudeSecretSummary is the response from POST /api/secrets/claude.
-type ClaudeSecretSummary struct {
+// ProviderSecretSummary is the response from POST /api/secrets/<provider>.
+type ProviderSecretSummary struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Scope string `json:"scope"`
 }
 
-// ClaudeSecretListItem is an item in the GET /api/secrets/claude response.
-type ClaudeSecretListItem struct {
+// ProviderSecretListItem is an item in the GET /api/secrets/<provider>
+// response.
+type ProviderSecretListItem struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Type string `json:"type"`
 }
 
-// CreateClaudeSecret uploads Claude Code credentials to the remote API.
-func (c *Client) CreateClaudeSecret(req CreateClaudeSecretRequest) (*ClaudeSecretSummary, error) {
-	var result ClaudeSecretSummary
-	if err := c.doJSON("POST", "/api/secrets/claude", req, &result); err != nil {
-		return nil, fmt.Errorf("remote create claude secret: %w", err)
+// CreateProviderSecret uploads provider-scoped credentials (e.g. Claude,
+// Codex) to the remote API. provider is the URL segment
+// ("claude", "codex").
+func (c *Client) CreateProviderSecret(provider string, req CreateProviderSecretRequest) (*ProviderSecretSummary, error) {
+	var result ProviderSecretSummary
+	if err := c.doJSON("POST", "/api/secrets/"+provider, req, &result); err != nil {
+		return nil, fmt.Errorf("remote create %s secret: %w", provider, err)
 	}
 	return &result, nil
 }
 
-// ListClaudeSecrets lists Claude credentials for the current user.
-func (c *Client) ListClaudeSecrets() ([]ClaudeSecretListItem, error) {
-	var result []ClaudeSecretListItem
-	if err := c.doJSON("GET", "/api/secrets/claude", nil, &result); err != nil {
-		return nil, fmt.Errorf("remote list claude secrets: %w", err)
+// ListProviderSecrets lists provider-scoped credentials for the current user.
+func (c *Client) ListProviderSecrets(provider string) ([]ProviderSecretListItem, error) {
+	var result []ProviderSecretListItem
+	if err := c.doJSON("GET", "/api/secrets/"+provider, nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list %s secrets: %w", provider, err)
 	}
 	return result, nil
 }
 
-// DeleteClaudeSecret deletes a credential by ID.
-func (c *Client) DeleteClaudeSecret(id string) error {
+// DeleteProviderSecret deletes a provider-scoped credential by ID.
+func (c *Client) DeleteProviderSecret(id string) error {
 	if err := c.doJSON("DELETE", "/api/secrets/"+id, nil, nil); err != nil {
 		return fmt.Errorf("remote delete secret: %w", err)
 	}

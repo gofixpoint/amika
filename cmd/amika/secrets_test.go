@@ -383,7 +383,7 @@ func TestMaskValue(t *testing.T) {
 	}
 }
 
-func TestClaudeCredentialTypeToAPI(t *testing.T) {
+func TestCredentialTypeToAPI(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
@@ -394,9 +394,9 @@ func TestClaudeCredentialTypeToAPI(t *testing.T) {
 		{"", "oauth"},
 	}
 	for _, tt := range tests {
-		got := claudeCredentialTypeToAPI(tt.input)
+		got := credentialTypeToAPI(tt.input)
 		if got != tt.want {
-			t.Errorf("claudeCredentialTypeToAPI(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("credentialTypeToAPI(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
