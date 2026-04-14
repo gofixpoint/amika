@@ -1873,11 +1873,11 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 // the first API key. The chosen credential is printed to stderr. Returns empty
 // string on any error or if no credentials are uploaded.
 func autoSelectClaudeCredential(cmd *cobra.Command, client *apiclient.Client) string {
-	creds, err := client.ListClaudeSecrets()
+	creds, err := client.ListProviderSecrets("claude")
 	if err != nil || len(creds) == 0 {
 		return ""
 	}
-	var selected apiclient.ClaudeSecretListItem
+	var selected apiclient.ProviderSecretListItem
 	for _, c := range creds {
 		if c.Type == "oauth" {
 			selected = c

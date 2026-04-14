@@ -651,6 +651,71 @@ func DiscoverClaudeCredentials(homeDir string) ([]ClaudeCredential, error) {
 	return creds, nil
 }
 
+// CodexCredential represents a single discovered Codex credential with its
+// type and source preserved, suitable for interactive selection.
+type CodexCredential struct {
+	// Type is a human-readable label: "API Key" or "OAuth".
+	Type string
+	// Source describes where the credential was found (e.g. file path).
+	Source string
+	// Value is the raw credential data to upload: the API key string or the
+	// full auth.json contents for OAuth.
+	Value string
+}
+
+// DiscoverCodexCredentials scans local credential sources and returns all
+// Codex-specific credentials found, preserving their type and source. If
+// homeDir is empty, the user's home directory is obtained from the operating
+// system (e.g. the HOME environment variable or OS-level user database).
+func DiscoverCodexCredentials(homeDir string) ([]CodexCredential, error) {
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		}
+	}
+
+	var creds []CodexCredential
+
+	for _, rel := range CodexCredentialPaths() {
+		path := filepath.Join(homeDir, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		raw := strings.TrimSpace(string(data))
+
+		obj, found, err := readJSONObjectIfExists(path)
+		if err != nil || !found {
+			continue
+		}
+
+		// API key takes precedence when present and non-empty.
+		apiKey, exists, err := getStringPath(obj, "OPENAI_API_KEY")
+		if err == nil && exists && apiKey != "" {
+			creds = append(creds, CodexCredential{
+				Type:   "API Key",
+				Source: path,
+				Value:  apiKey,
+			})
+		}
+
+		// OAuth credentials are identified by tokens.access_token; the value
+		// uploaded is the entire auth.json file so refresh tokens are preserved.
+		token, exists, err := getStringPath(obj, "tokens.access_token")
+		if err == nil && exists && token != "" {
+			creds = append(creds, CodexCredential{
+				Type:   "OAuth",
+				Source: path,
+				Value:  raw,
+			})
+		}
+	}
+
+	return creds, nil
+}
+
 // ClaudeAPIKeyPaths returns the home-relative paths where Claude Code stores
 // API key configuration. Callers should join each with a home directory.
 func ClaudeAPIKeyPaths() []string {
