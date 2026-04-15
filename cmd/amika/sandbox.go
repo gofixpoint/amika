@@ -2017,14 +2017,31 @@ Examples:
 
 // agentConfig describes how to invoke an agent CLI in non-interactive mode.
 type agentConfig struct {
-	Binary    string   // CLI binary name
-	PrintArg  string   // flag for non-interactive print mode
-	ExtraArgs []string // additional flags passed on every invocation
+	Binary         string   // CLI binary name
+	SubCmd         []string // subcommand for non-interactive mode (e.g., ["exec"] for codex)
+	PrintArg       string   // flag for non-interactive print mode (empty = positional)
+	ExtraArgs      []string // additional flags passed on every invocation
+	ResumeSubCmd   []string // subcommand inserted for session resume (e.g., ["resume"] for codex)
+	ResumeFlag     string   // flag for session resume (e.g., "--resume" for claude; empty = positional)
+	JSONOutputArgs []string // flags to enable JSON output
 }
 
 // knownAgents maps agent names to their CLI configuration.
 var knownAgents = map[string]agentConfig{
-	"claude": {Binary: "claude", PrintArg: "-p", ExtraArgs: []string{"--dangerously-skip-permissions"}},
+	"claude": {
+		Binary:         "claude",
+		PrintArg:       "-p",
+		ExtraArgs:      []string{"--dangerously-skip-permissions"},
+		ResumeFlag:     "--resume",
+		JSONOutputArgs: []string{"--output-format", "json"},
+	},
+	"codex": {
+		Binary:         "codex",
+		SubCmd:         []string{"exec"},
+		ExtraArgs:      []string{"--dangerously-bypass-approvals-and-sandbox"},
+		ResumeSubCmd:   []string{"resume"},
+		JSONOutputArgs: []string{"--json"},
+	},
 }
 
 // resolveAgentConfig returns the agent configuration for the given name.
@@ -2059,30 +2076,45 @@ type agentRunOpts struct {
 // agentCmdParts returns the agent binary, flags, and message as a flat list.
 func agentCmdParts(agent agentConfig, message string) []string {
 	parts := []string{agent.Binary}
+	parts = append(parts, agent.SubCmd...)
 	parts = append(parts, agent.ExtraArgs...)
-	parts = append(parts, agent.PrintArg, message)
+	if agent.PrintArg != "" {
+		parts = append(parts, agent.PrintArg)
+	}
+	parts = append(parts, message)
 	return parts
 }
 
 // agentCmdPartsWithOpts returns the agent binary, flags, session options, and
-// message as a flat list. When jsonOutput is true, --output-format json is
-// appended so the caller can extract the session ID from Claude's output.
+// message as a flat list. When jsonOutput is true, the agent's JSON output
+// flags are appended so the caller can extract the session ID from the output.
 //
-// Flag mapping (amika → Claude CLI):
+// Flag mapping (amika → agent CLI):
 //
-//	SessionID  → --resume <id>   (resume a specific session)
-//	NewSession → (no flag)       (Claude's default is a new session)
+//	Claude:  SessionID → --resume <id>
+//	Codex:   SessionID → exec resume <id> (subcommand + positional)
+//	NewSession → (no flag for either — both default to new session)
 func agentCmdPartsWithOpts(agent agentConfig, message string, opts agentRunOpts, jsonOutput bool) []string {
 	parts := []string{agent.Binary}
-	parts = append(parts, agent.ExtraArgs...)
+	parts = append(parts, agent.SubCmd...)
 	if opts.SessionID != "" {
-		parts = append(parts, "--resume", opts.SessionID)
+		parts = append(parts, agent.ResumeSubCmd...)
 	}
-	// NewSession: no flag needed — Claude starts a new session by default.
+	parts = append(parts, agent.ExtraArgs...)
+	if opts.SessionID != "" && agent.ResumeFlag != "" {
+		parts = append(parts, agent.ResumeFlag, opts.SessionID)
+	}
 	if jsonOutput {
-		parts = append(parts, "--output-format", "json")
+		parts = append(parts, agent.JSONOutputArgs...)
 	}
-	parts = append(parts, agent.PrintArg, message)
+	// Session ID as positional arg when no flag is used (e.g. Codex).
+	if opts.SessionID != "" && agent.ResumeFlag == "" {
+		parts = append(parts, opts.SessionID)
+	}
+	if agent.PrintArg != "" {
+		parts = append(parts, agent.PrintArg)
+	}
+	parts = append(parts, message)
 	return parts
 }
 
@@ -2128,6 +2160,7 @@ func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait b
 		Message:    message,
 		NewSession: opts.NewSession,
 		SessionID:  opts.SessionID,
+		Agent:      agent.Binary,
 	}
 
 	resp, err := client.AgentSend(name, req)
