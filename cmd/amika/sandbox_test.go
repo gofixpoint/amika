@@ -802,10 +802,10 @@ func TestPrepareGitMount_NoClean(t *testing.T) {
 		t.Fatalf("failed to create untracked file: %v", err)
 	}
 
-	info, cleanup, err := prepareGitMount(root, true, func(_, _, _ string) error {
+	info, cleanup, err := prepareGitMount(root, true, func(_, _ string) error {
 		t.Fatal("cloneFn should not be called in --no-clean mode")
 		return nil
-	}, "")
+	}, "", "")
 	defer cleanup()
 	if err != nil {
 		t.Fatalf("prepareGitMount failed: %v", err)
@@ -833,21 +833,16 @@ func TestPrepareGitMount_CleanClone(t *testing.T) {
 	})
 
 	var clonedSrc, clonedDst string
-	info, cleanup, err := prepareGitMount(root, false, func(src, dst, branch string) error {
+	info, cleanup, err := prepareGitMount(root, false, func(src, dst string) error {
 		clonedSrc = src
 		clonedDst = dst
-		args := []string{"clone", "--local", "--no-hardlinks"}
-		if branch != "" {
-			args = append(args, "--branch", branch)
-		}
-		args = append(args, src, dst)
-		cmd := exec.Command("git", args...)
+		cmd := exec.Command("git", "clone", "--local", "--no-hardlinks", src, dst)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("clone failed: %s", out)
 		}
 		return nil
-	}, "")
+	}, "", "")
 	if err != nil {
 		t.Fatalf("prepareGitMount failed: %v", err)
 	}

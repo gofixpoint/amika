@@ -141,11 +141,12 @@ var sandboxCreateCmd = &cobra.Command{
 		image = resolvedImage.Image
 
 		branchFlag, _ := cmd.Flags().GetString("branch")
+		newBranchFlag, _ := cmd.Flags().GetString("new-branch")
 		collected, err := collectMounts(mountStrs, volumeStrs, portStrs, portHostIP,
 			gitPath, gitFlagChanged, noClean,
 			setupScript, cmd.Flags().Changed("setup-script"),
 			noSetup,
-			branchFlag)
+			branchFlag, newBranchFlag)
 		if err != nil {
 			return err
 		}
@@ -275,6 +276,11 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		branch, _ := cmd.Flags().GetString("branch")
+		newBranch, _ := cmd.Flags().GetString("new-branch")
+		effectiveBranch := branch
+		if newBranch != "" {
+			effectiveBranch = newBranch
+		}
 		info := sandbox.Info{
 			Name:        name,
 			Provider:    provider,
@@ -286,7 +292,7 @@ var sandboxCreateCmd = &cobra.Command{
 			Env:         envStrs,
 			Ports:       publishedPorts,
 			Services:    collected.Services,
-			Branch:      branch,
+			Branch:      effectiveBranch,
 		}
 		if err := store.Save(info); err != nil {
 			return fmt.Errorf("sandbox created but failed to save state: %w", err)
@@ -993,7 +999,7 @@ type gitMountInfo struct {
 	Mount    sandbox.MountBinding
 }
 
-func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst, branch string) error, branch string) (gitMountInfo, func(), error) {
+func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst string) error, branch, newBranch string) (gitMountInfo, func(), error) {
 	repoRoot, err := resolveGitRoot(startPath)
 	if err != nil {
 		return gitMountInfo{}, func() {}, err
@@ -1012,12 +1018,16 @@ func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst, bran
 			return gitMountInfo{}, func() {}, err
 		}
 	} else {
-		if err := cloneFn(repoRoot, preparedRepo, branch); err != nil {
+		if err := cloneFn(repoRoot, preparedRepo); err != nil {
 			_ = os.RemoveAll(tmpDir)
 			return gitMountInfo{}, func() {}, err
 		}
 	}
 	if err := syncGitRemotes(repoRoot, preparedRepo); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return gitMountInfo{}, func() {}, err
+	}
+	if err := applyBranchCheckout(preparedRepo, branch, newBranch); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return gitMountInfo{}, func() {}, err
 	}
@@ -1067,18 +1077,111 @@ func resolveGitRoot(startPath string) (string, error) {
 	return "", fmt.Errorf("no git repository root found from %q", absPath)
 }
 
-func cloneGitRepo(src, dst, branch string) error {
-	args := []string{"clone", "--local", "--no-hardlinks"}
-	if branch != "" {
-		args = append(args, "--branch", branch)
-	}
-	args = append(args, src, dst)
+func cloneGitRepo(src, dst string) error {
+	args := []string{"clone", "--local", "--no-hardlinks", src, dst}
 	cmd := exec.Command("git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to prepare clean git mount from %q: %s", src, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// branchOrRemoteExists reports whether a branch exists as a local branch or as
+// a remote-tracking branch under origin.
+func branchOrRemoteExists(repoDir, branch string) bool {
+	for _, ref := range []string{"refs/heads/" + branch, "refs/remotes/origin/" + branch} {
+		cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", ref)
+		if err := cmd.Run(); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// detectDefaultBranch returns "main" or "master" if either exists in repoDir.
+func detectDefaultBranch(repoDir string) (string, error) {
+	for _, b := range []string{"main", "master"} {
+		if branchOrRemoteExists(repoDir, b) {
+			return b, nil
+		}
+	}
+	return "", fmt.Errorf("could not locate 'main' or 'master' branch; specify --branch explicitly")
+}
+
+// runGitInDir runs `git -C dir args...` and returns the combined output on
+// error.
+func runGitInDir(dir string, args ...string) error {
+	full := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", full...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// applyBranchCheckout applies --branch and --new-branch semantics to a prepared
+// git repo directory:
+//
+//   - neither set: no-op (HEAD already matches host's current branch).
+//   - --branch exists: checkout it.
+//   - --branch missing: create it from current HEAD.
+//   - --new-branch only: checkout main/master, create new branch from it.
+//   - --branch + --new-branch: checkout branch (must exist), create new branch.
+func applyBranchCheckout(repoDir, branch, newBranch string) error {
+	base := branch
+	if newBranch != "" && base == "" {
+		def, err := detectDefaultBranch(repoDir)
+		if err != nil {
+			return fmt.Errorf("--new-branch: %w", err)
+		}
+		base = def
+	}
+
+	baseExists := base != "" && branchOrRemoteExists(repoDir, base)
+	if base != "" && baseExists {
+		if err := runGitInDir(repoDir, "checkout", base); err != nil {
+			return fmt.Errorf("failed to checkout base branch %q: %w", base, err)
+		}
+	}
+
+	if newBranch != "" {
+		if !baseExists {
+			return fmt.Errorf("base branch %q does not exist in the repository", base)
+		}
+		if err := runGitInDir(repoDir, "checkout", "-b", newBranch); err != nil {
+			return fmt.Errorf("failed to create branch %q: %w", newBranch, err)
+		}
+		return nil
+	}
+
+	if branch != "" && !baseExists {
+		if err := runGitInDir(repoDir, "checkout", "-b", branch); err != nil {
+			return fmt.Errorf("failed to create branch %q: %w", branch, err)
+		}
+	}
+	return nil
+}
+
+// detectHostCurrentBranch returns the current branch of the git repo rooted at
+// or above startPath. Returns an error if the path is not in a git repo, or if
+// HEAD is detached.
+func detectHostCurrentBranch(startPath string) (string, error) {
+	repoRoot, err := resolveGitRoot(startPath)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to detect current host branch: %w", err)
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" || name == "HEAD" {
+		return "", fmt.Errorf("detached HEAD; specify --branch explicitly")
+	}
+	return name, nil
 }
 
 func copyRepoWorkingTree(src, dst string) error {
@@ -1263,6 +1366,7 @@ func collectMounts(
 	setupScriptFlagChanged bool,
 	noSetup bool,
 	branch string,
+	newBranch string,
 ) (collectedMounts, error) {
 	mounts, err := parseMountFlags(mountStrs)
 	if err != nil {
@@ -1280,7 +1384,7 @@ func collectMounts(
 	cleanup := func() {}
 	var gmi *gitMountInfo
 	if gitFlagChanged {
-		info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo, branch)
+		info, cleanupGitMount, err := prepareGitMount(gitPath, noClean, cloneGitRepo, branch, newBranch)
 		if err != nil {
 			return collectedMounts{}, err
 		}
@@ -1782,18 +1886,31 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	size, _ := cmd.Flags().GetString("size")
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
+	newBranch, _ := cmd.Flags().GetString("new-branch")
 
 	if name == "" {
 		name = sandbox.GenerateName()
 	}
 
 	var gitURL string
+	gitValueIsLocalPath := false
 	if cmd.Flags().Changed("git") {
+		if !strings.HasPrefix(gitValue, "http://") && !strings.HasPrefix(gitValue, "https://") && !strings.HasPrefix(gitValue, "git@") {
+			gitValueIsLocalPath = true
+		}
 		resolved, err := resolveGitURL(gitValue)
 		if err != nil {
 			return err
 		}
 		gitURL = resolved
+	}
+
+	// Neither flag specified: use the host's current branch so the sandbox
+	// mirrors the developer's working branch.
+	if branch == "" && newBranch == "" && gitValueIsLocalPath {
+		if hostBranch, err := detectHostCurrentBranch(gitValue); err == nil {
+			branch = hostBranch
+		}
 	}
 
 	secretEnvVars, err := parseSecretFlags(secretFlags)
@@ -1844,6 +1961,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		SetupScriptText:      setupScriptText,
 		ClaudeCredentialName: claudeCredentialName,
 		Branch:               branch,
+		NewBranchName:        newBranch,
 	}
 
 	sb, err := client.CreateSandbox(req)
@@ -2381,7 +2499,8 @@ func init() {
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
 	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
 	sandboxCreateCmd.Flags().Bool("no-setup", false, "Skip the setup script (uses a no-op script instead)")
-	sandboxCreateCmd.Flags().String("branch", "", "Git branch to clone (defaults to repo's default branch)")
+	sandboxCreateCmd.Flags().String("branch", "", "Git branch to checkout (created if it doesn't exist). Defaults to the host's current branch.")
+	sandboxCreateCmd.Flags().String("new-branch", "", "Create a new git branch. With --branch, starts from that branch; otherwise starts from main/master.")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
