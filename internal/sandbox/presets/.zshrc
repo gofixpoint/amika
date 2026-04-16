@@ -1,6 +1,5 @@
-# Set terminal type for proper rendering in tools like less, git, etc.
-# Only override TERM outside tmux; inside tmux, let it use tmux-256color.
-if [ -z "$TMUX" ]; then
+# Only set TERM if not already set by tmux or a capable terminal like Ghostty.
+if [ -z "$TMUX" ] && [ "$TERM" = "linux" -o "$TERM" = "dumb" ]; then
   export TERM=xterm-256color
 fi
 

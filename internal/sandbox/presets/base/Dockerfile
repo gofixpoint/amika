@@ -20,6 +20,12 @@ RUN apt-get update && apt-get install -y \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Ghostty terminfo so SSH sessions from Ghostty render correctly.
+# Source vendored from ghostty-org/ghostty src/terminfo/ghostty.zig.
+COPY ghostty.terminfo /tmp/ghostty.terminfo
+RUN tic -x -o /usr/share/terminfo /tmp/ghostty.terminfo \
+    && rm /tmp/ghostty.terminfo
+
 # Install Node.js 22.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
@@ -89,3 +95,4 @@ RUN mkdir -p /home/amika/workspace
 
 COPY --chown=amika:amika .zshrc /home/amika/.zshrc
 COPY --chown=amika:amika .bashrc /home/amika/.bashrc
+COPY --chown=amika:amika .tmux.conf /home/amika/.tmux.conf
