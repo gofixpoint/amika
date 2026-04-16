@@ -1,5 +1,8 @@
 # Set terminal type for proper rendering in tools like less, git, etc.
-export TERM=xterm
+# Only override TERM outside tmux; inside tmux, let it use tmux-256color.
+if [ -z "$TMUX" ]; then
+  export TERM=xterm-256color
+fi
 
 # Set up the prompt (works on both light and dark terminals)
 
