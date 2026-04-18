@@ -891,10 +891,10 @@ func TestPrepareGitMount_NoClean(t *testing.T) {
 		t.Fatalf("failed to create untracked file: %v", err)
 	}
 
-	info, cleanup, err := prepareGitMount(root, true, func(_, _, _ string) error {
+	info, cleanup, err := prepareGitMount(root, true, func(_, _ string) error {
 		t.Fatal("cloneFn should not be called in --no-clean mode")
 		return nil
-	}, "")
+	}, "", "")
 	defer cleanup()
 	if err != nil {
 		t.Fatalf("prepareGitMount failed: %v", err)
@@ -922,21 +922,16 @@ func TestPrepareGitMount_CleanClone(t *testing.T) {
 	})
 
 	var clonedSrc, clonedDst string
-	info, cleanup, err := prepareGitMount(root, false, func(src, dst, branch string) error {
+	info, cleanup, err := prepareGitMount(root, false, func(src, dst string) error {
 		clonedSrc = src
 		clonedDst = dst
-		args := []string{"clone", "--local", "--no-hardlinks"}
-		if branch != "" {
-			args = append(args, "--branch", branch)
-		}
-		args = append(args, src, dst)
-		cmd := exec.Command("git", args...)
+		cmd := exec.Command("git", "clone", "--local", "--no-hardlinks", src, dst)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("clone failed: %s", out)
 		}
 		return nil
-	}, "")
+	}, "", "")
 	if err != nil {
 		t.Fatalf("prepareGitMount failed: %v", err)
 	}
@@ -959,6 +954,73 @@ func TestPrepareGitMount_CleanClone(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(filepath.Dir(clonedDst)); !os.IsNotExist(err) {
 		t.Fatalf("expected temp git clone directory to be removed, err=%v", err)
+	}
+}
+
+func TestPrepareGitMount_CleanClone_ChecksOutRemoteTrackingBranch(t *testing.T) {
+	root := createGitRepo(t, map[string]string{
+		"origin": "https://github.com/example/upstream.git",
+	})
+	defaultBranch := gitCurrentBranch(t, root)
+	runGitCmd(t, root, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(root, "feature.txt"), []byte("feature\n"), 0644); err != nil {
+		t.Fatalf("failed to write feature file: %v", err)
+	}
+	runGitCmd(t, root, "add", "feature.txt")
+	runGitCmd(t, root, "commit", "-m", "feature commit")
+	featureCommit := gitRevParse(t, root, "HEAD")
+	runGitCmd(t, root, "checkout", defaultBranch)
+
+	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "feature", "")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("prepareGitMount failed: %v", err)
+	}
+
+	gotCommit := gitRevParse(t, info.Mount.Source, "HEAD")
+	if gotCommit != featureCommit {
+		t.Fatalf("HEAD = %q, want feature commit %q", gotCommit, featureCommit)
+	}
+
+	gotBranch := gitCurrentBranch(t, info.Mount.Source)
+	if gotBranch != "feature" {
+		t.Fatalf("branch = %q, want %q", gotBranch, "feature")
+	}
+}
+
+func TestPrepareGitMount_CleanClone_NewBranchUsesRemoteDefaultBranch(t *testing.T) {
+	root := createGitRepo(t, map[string]string{
+		"origin": "https://github.com/example/upstream.git",
+	})
+	defaultBranch := gitCurrentBranch(t, root)
+	if err := os.WriteFile(filepath.Join(root, "default.txt"), []byte("default\n"), 0644); err != nil {
+		t.Fatalf("failed to write default-branch file: %v", err)
+	}
+	runGitCmd(t, root, "add", "default.txt")
+	runGitCmd(t, root, "commit", "-m", "default branch commit")
+	defaultCommit := gitRevParse(t, root, "HEAD")
+
+	runGitCmd(t, root, "checkout", "-b", "work")
+	if err := os.WriteFile(filepath.Join(root, "work.txt"), []byte("work\n"), 0644); err != nil {
+		t.Fatalf("failed to write work file: %v", err)
+	}
+	runGitCmd(t, root, "add", "work.txt")
+	runGitCmd(t, root, "commit", "-m", "work commit")
+
+	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "", "topic")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("prepareGitMount failed: %v", err)
+	}
+
+	gotBranch := gitCurrentBranch(t, info.Mount.Source)
+	if gotBranch != "topic" {
+		t.Fatalf("branch = %q, want %q", gotBranch, "topic")
+	}
+
+	gotCommit := gitRevParse(t, info.Mount.Source, "HEAD")
+	if gotCommit != defaultCommit {
+		t.Fatalf("HEAD = %q, want %s commit %q", gotCommit, defaultBranch, defaultCommit)
 	}
 }
 
@@ -1148,6 +1210,26 @@ func runGitCmd(t *testing.T, repo string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
+}
+
+func gitRevParse(t *testing.T, repo string, rev string) string {
+	t.Helper()
+	cmd := exec.Command("git", "-C", repo, "rev-parse", rev)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse %s failed: %v\n%s", rev, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitCurrentBranch(t *testing.T, repo string) string {
+	t.Helper()
+	cmd := exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse --abbrev-ref HEAD failed: %v\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func TestMaterializeRWCopyMounts_Passthrough(t *testing.T) {

@@ -47,6 +47,7 @@ type CreateSandboxRequest struct {
 	SetupScriptText      string            `json:"setup_script_text,omitempty"`
 	ClaudeCredentialName string            `json:"claude_credential_name,omitempty"`
 	Branch               string            `json:"branch,omitempty"`
+	NewBranchName        string            `json:"new_branch_name,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.
