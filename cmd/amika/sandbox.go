@@ -1023,11 +1023,11 @@ func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst strin
 			return gitMountInfo{}, func() {}, err
 		}
 	}
-	if err := syncGitRemotes(repoRoot, preparedRepo); err != nil {
+	if err := applyBranchCheckout(preparedRepo, branch, newBranch); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return gitMountInfo{}, func() {}, err
 	}
-	if err := applyBranchCheckout(preparedRepo, branch, newBranch); err != nil {
+	if err := syncGitRemotes(repoRoot, preparedRepo); err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return gitMountInfo{}, func() {}, err
 	}
@@ -1099,6 +1099,16 @@ func branchOrRemoteExists(repoDir, branch string) bool {
 	return false
 }
 
+func localBranchExists(repoDir, branch string) bool {
+	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return cmd.Run() == nil
+}
+
+func remoteTrackingBranchExists(repoDir, branch string) bool {
+	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch)
+	return cmd.Run() == nil
+}
+
 // detectDefaultBranch returns "main" or "master" if either exists in repoDir.
 func detectDefaultBranch(repoDir string) (string, error) {
 	for _, b := range []string{"main", "master"} {
@@ -1117,6 +1127,22 @@ func runGitInDir(dir string, args ...string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func checkoutPreparedBranch(repoDir, branch string) error {
+	switch {
+	case localBranchExists(repoDir, branch):
+		if err := runGitInDir(repoDir, "checkout", branch); err != nil {
+			return fmt.Errorf("failed to checkout base branch %q: %w", branch, err)
+		}
+	case remoteTrackingBranchExists(repoDir, branch):
+		if err := runGitInDir(repoDir, "checkout", "-B", branch, "refs/remotes/origin/"+branch); err != nil {
+			return fmt.Errorf("failed to checkout base branch %q from origin/%s: %w", branch, branch, err)
+		}
+	default:
+		return fmt.Errorf("base branch %q does not exist in the repository", branch)
 	}
 	return nil
 }
@@ -1141,8 +1167,8 @@ func applyBranchCheckout(repoDir, branch, newBranch string) error {
 
 	baseExists := base != "" && branchOrRemoteExists(repoDir, base)
 	if base != "" && baseExists {
-		if err := runGitInDir(repoDir, "checkout", base); err != nil {
-			return fmt.Errorf("failed to checkout base branch %q: %w", base, err)
+		if err := checkoutPreparedBranch(repoDir, base); err != nil {
+			return err
 		}
 	}
 
