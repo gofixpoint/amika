@@ -989,17 +989,17 @@ func TestPrepareGitMount_CleanClone_ChecksOutRemoteTrackingBranch(t *testing.T) 
 	}
 }
 
-func TestPrepareGitMount_CleanClone_NewBranchUsesRemoteDefaultBranch(t *testing.T) {
+// --new-branch without --branch should create the new branch from the host's
+// current branch (work), not from the default branch (main/master).
+func TestPrepareGitMount_CleanClone_NewBranchUsesHostBranch(t *testing.T) {
 	root := createGitRepo(t, map[string]string{
 		"origin": "https://github.com/example/upstream.git",
 	})
-	defaultBranch := gitCurrentBranch(t, root)
 	if err := os.WriteFile(filepath.Join(root, "default.txt"), []byte("default\n"), 0644); err != nil {
 		t.Fatalf("failed to write default-branch file: %v", err)
 	}
 	runGitCmd(t, root, "add", "default.txt")
 	runGitCmd(t, root, "commit", "-m", "default branch commit")
-	defaultCommit := gitRevParse(t, root, "HEAD")
 
 	runGitCmd(t, root, "checkout", "-b", "work")
 	if err := os.WriteFile(filepath.Join(root, "work.txt"), []byte("work\n"), 0644); err != nil {
@@ -1007,6 +1007,7 @@ func TestPrepareGitMount_CleanClone_NewBranchUsesRemoteDefaultBranch(t *testing.
 	}
 	runGitCmd(t, root, "add", "work.txt")
 	runGitCmd(t, root, "commit", "-m", "work commit")
+	workCommit := gitRevParse(t, root, "HEAD")
 
 	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "", "topic")
 	defer cleanup()
@@ -1020,8 +1021,8 @@ func TestPrepareGitMount_CleanClone_NewBranchUsesRemoteDefaultBranch(t *testing.
 	}
 
 	gotCommit := gitRevParse(t, info.Mount.Source, "HEAD")
-	if gotCommit != defaultCommit {
-		t.Fatalf("HEAD = %q, want %s commit %q", gotCommit, defaultBranch, defaultCommit)
+	if gotCommit != workCommit {
+		t.Fatalf("HEAD = %q, want work commit %q", gotCommit, workCommit)
 	}
 }
 

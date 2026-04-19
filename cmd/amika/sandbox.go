@@ -1148,43 +1148,40 @@ func checkoutPreparedBranch(repoDir, branch string) error {
 }
 
 // applyBranchCheckout applies --branch and --new-branch semantics to a prepared
-// git repo directory:
+// git repo directory (HEAD starts on the host's current branch):
 //
 //   - neither set: no-op (HEAD already matches host's current branch).
-//   - --branch exists: checkout it.
-//   - --branch missing: create it from current HEAD.
-//   - --new-branch only: checkout main/master, create new branch from it.
-//   - --branch + --new-branch: checkout branch (must exist), create new branch.
+//   - --branch only: checkout if it exists, create from HEAD if not.
+//   - --new-branch only: create new branch from HEAD.
+//   - --branch + --new-branch: resolve --branch first (checkout or create),
+//     then create --new-branch on top.
 func applyBranchCheckout(repoDir, branch, newBranch string) error {
-	base := branch
-	if newBranch != "" && base == "" {
-		def, err := detectDefaultBranch(repoDir)
-		if err != nil {
-			return fmt.Errorf("--new-branch: %w", err)
-		}
-		base = def
-	}
-
-	baseExists := base != "" && branchOrRemoteExists(repoDir, base)
-	if base != "" && baseExists {
-		if err := checkoutPreparedBranch(repoDir, base); err != nil {
-			return err
-		}
-	}
-
-	if newBranch != "" {
-		if !baseExists {
-			return fmt.Errorf("base branch %q does not exist in the repository", base)
-		}
+	// --new-branch without --branch: create new branch from HEAD (which is
+	// the host's current branch after the clone).
+	if newBranch != "" && branch == "" {
 		if err := runGitInDir(repoDir, "checkout", "-b", newBranch); err != nil {
 			return fmt.Errorf("failed to create branch %q: %w", newBranch, err)
 		}
 		return nil
 	}
 
-	if branch != "" && !baseExists {
-		if err := runGitInDir(repoDir, "checkout", "-b", branch); err != nil {
-			return fmt.Errorf("failed to create branch %q: %w", branch, err)
+	// Resolve --branch: checkout if it exists, create from HEAD if not.
+	if branch != "" {
+		if branchOrRemoteExists(repoDir, branch) {
+			if err := checkoutPreparedBranch(repoDir, branch); err != nil {
+				return err
+			}
+		} else {
+			if err := runGitInDir(repoDir, "checkout", "-b", branch); err != nil {
+				return fmt.Errorf("failed to create branch %q: %w", branch, err)
+			}
+		}
+	}
+
+	// --new-branch on top of --branch.
+	if newBranch != "" {
+		if err := runGitInDir(repoDir, "checkout", "-b", newBranch); err != nil {
+			return fmt.Errorf("failed to create branch %q: %w", newBranch, err)
 		}
 	}
 	return nil
@@ -1419,10 +1416,11 @@ func collectMounts(
 		mounts = append(mounts, info.Mount)
 	}
 
-	// Load .amika/config.toml once from the repo root for both setup script and services.
+	// Load .amika/config.toml from the prepared clone so it reflects the
+	// checked-out branch, not the host working tree.
 	var repoCfg *amikaconfig.Config
 	if gmi != nil {
-		repoCfg, err = amikaconfig.LoadConfig(gmi.RepoRoot)
+		repoCfg, err = amikaconfig.LoadConfig(gmi.Mount.Source)
 		if err != nil {
 			cleanup()
 			return collectedMounts{}, fmt.Errorf("failed to read .amika/config.toml: %w", err)
