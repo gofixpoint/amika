@@ -167,7 +167,18 @@ Secrets referenced with `{ secret = "name" }` must be pushed to the remote store
 
 ### Branch selection
 
-When `--branch` is specified on `amika sandbox create`, the `.amika/config.toml` file is read from that branch rather than the repository's default branch. This allows different branches to have different sandbox configurations.
+`--branch` checks out a branch if it exists, or creates it if it doesn't. `--new-branch` always creates a new branch and errors if it already exists. When both are used, `--branch` is resolved first and `--new-branch` branches off it.
+
+The **base branch** — used when creating a branch that doesn't exist — is your current checked-out branch when `--git` is a local path, or the repo's default branch when it's a URL.
+
+| Flags | Result |
+| --- | --- |
+| _(neither)_ | Base branch |
+| `--branch foo` | `foo` (checked out or created from base) |
+| `--new-branch bar` | `bar` (created from base) |
+| `--branch foo --new-branch bar` | `bar` (created from `foo`) |
+
+`.amika/config.toml` is read from whatever branch the sandbox ends up on.
 
 ## Agent Credential Auto-Mounting
 
