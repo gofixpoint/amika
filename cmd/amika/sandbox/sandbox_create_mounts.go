@@ -1,4 +1,6 @@
-package main
+package sandboxcmd
+
+// sandbox_create_mounts.go parses mount, port, env, and secret create flags.
 
 import (
 	"fmt"

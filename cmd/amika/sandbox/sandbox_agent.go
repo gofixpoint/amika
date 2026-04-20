@@ -1,4 +1,6 @@
-package main
+package sandboxcmd
+
+// sandbox_agent.go implements agent-send command wiring and agent CLI helpers.
 
 import (
 	"fmt"

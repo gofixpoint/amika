@@ -1,4 +1,6 @@
-package main
+package sandboxcmd
+
+// sandbox_create.go implements sandbox creation for local and remote modes.
 
 import (
 	"bufio"

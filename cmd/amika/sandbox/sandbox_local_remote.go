@@ -1,4 +1,6 @@
-package main
+package sandboxcmd
+
+// sandbox_local_remote.go provides shared auth and remote client helpers.
 
 import (
 	"fmt"
