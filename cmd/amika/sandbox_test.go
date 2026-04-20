@@ -1104,39 +1104,41 @@ func TestPrepareGitMount_CleanClone_BranchAndNewBranchCreatesBase(t *testing.T) 
 	}
 }
 
-// Bug #4: .amika/config.toml should be read from the prepared clone (which
-// reflects the checked-out branch), not from the host working tree.
-//
-// collectMounts (line 1425) reads config from gmi.RepoRoot (host path).
-// This test proves that RepoRoot and Mount.Source have different configs
-// when a different branch is checked out, confirming the bug: reading from
-// RepoRoot gives the host branch's config, not the sandbox branch's config.
+// .amika/config.toml and any relative lifecycle.setup_script should both be
+// resolved from the prepared checkout, not from the host working tree.
 func TestConfigReadFromPreparedRepo(t *testing.T) {
 	root := createGitRepo(t, map[string]string{
 		"origin": "https://github.com/example/upstream.git",
 	})
+	defaultBranch := gitCurrentBranch(t, root)
 
-	// Create .amika/config.toml on main with setup_script = "main.sh"
+	// Create config and setup script on the default branch.
 	amikaDir := filepath.Join(root, ".amika")
 	if err := os.MkdirAll(amikaDir, 0755); err != nil {
 		t.Fatalf("failed to create .amika dir: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "main.sh"), []byte("#!/bin/sh\necho main\n"), 0755); err != nil {
+		t.Fatalf("failed to write main setup script: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte("[lifecycle]\nsetup_script = \"main.sh\"\n"), 0644); err != nil {
 		t.Fatalf("failed to write config.toml: %v", err)
 	}
-	runGitCmd(t, root, "add", ".amika/config.toml")
-	runGitCmd(t, root, "commit", "-m", "add config on main")
+	runGitCmd(t, root, "add", ".amika/config.toml", "main.sh")
+	runGitCmd(t, root, "commit", "-m", "add config on default branch")
 
 	// Create "other" branch with a different config.
 	runGitCmd(t, root, "checkout", "-b", "other")
+	if err := os.WriteFile(filepath.Join(root, "other.sh"), []byte("#!/bin/sh\necho other\n"), 0755); err != nil {
+		t.Fatalf("failed to write other setup script: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte("[lifecycle]\nsetup_script = \"other.sh\"\n"), 0644); err != nil {
 		t.Fatalf("failed to write config.toml: %v", err)
 	}
-	runGitCmd(t, root, "add", ".amika/config.toml")
+	runGitCmd(t, root, "add", ".amika/config.toml", "other.sh")
 	runGitCmd(t, root, "commit", "-m", "change config on other")
 
-	// Switch host back to main.
-	runGitCmd(t, root, "checkout", "main")
+	// Switch host back to the repo's initial branch.
+	runGitCmd(t, root, "checkout", defaultBranch)
 
 	// Prepare with --branch other.
 	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "other", "")
@@ -1158,7 +1160,7 @@ func TestConfigReadFromPreparedRepo(t *testing.T) {
 		t.Fatalf("prepared repo setup_script = %q, want %q", got, "other.sh")
 	}
 
-	// RepoRoot (host path) has the main branch config.
+	// RepoRoot (host path) still has the default-branch config.
 	hostCfg, err := amikaconfig.LoadConfig(info.RepoRoot)
 	if err != nil {
 		t.Fatalf("LoadConfig from host repo failed: %v", err)
@@ -1171,11 +1173,35 @@ func TestConfigReadFromPreparedRepo(t *testing.T) {
 		t.Fatalf("host repo setup_script = %q, want %q", got, "main.sh")
 	}
 
-	// BUG: collectMounts reads from RepoRoot, so it would get "main.sh"
-	// instead of "other.sh". This is the wrong behavior — it should read
-	// from Mount.Source to get the config for the branch the sandbox is on.
 	if preparedCfg.Lifecycle.SetupScript == hostCfg.Lifecycle.SetupScript {
-		t.Fatal("expected prepared and host configs to differ, confirming the bug exists")
+		t.Fatal("expected prepared and host configs to differ")
+	}
+
+	mount, err := setupScriptMountFromLoadedConfig(preparedCfg, info.Mount.Source)
+	if err != nil {
+		t.Fatalf("setupScriptMountFromLoadedConfig from prepared repo failed: %v", err)
+	}
+	if mount == nil {
+		t.Fatal("expected setup script mount from prepared repo")
+	}
+	wantPreparedPath := filepath.Join(info.Mount.Source, "other.sh")
+	if mount.Source != wantPreparedPath {
+		t.Fatalf("prepared setup script source = %q, want %q", mount.Source, wantPreparedPath)
+	}
+
+	hostMount, err := setupScriptMountFromLoadedConfig(hostCfg, info.RepoRoot)
+	if err != nil {
+		t.Fatalf("setupScriptMountFromLoadedConfig from host repo failed: %v", err)
+	}
+	if hostMount == nil {
+		t.Fatal("expected setup script mount from host repo")
+	}
+	wantHostPath := filepath.Join(info.RepoRoot, "main.sh")
+	if hostMount.Source != wantHostPath {
+		t.Fatalf("host setup script source = %q, want %q", hostMount.Source, wantHostPath)
+	}
+	if mount.Source == hostMount.Source {
+		t.Fatal("expected prepared and host setup script sources to differ")
 	}
 }
 
