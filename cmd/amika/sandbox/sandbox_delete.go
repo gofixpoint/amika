@@ -1,5 +1,7 @@
 package sandboxcmd
 
+// sandbox_delete.go implements sandbox deletion and associated cleanup flows.
+
 import (
 	"bufio"
 	"fmt"

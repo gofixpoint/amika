@@ -1,5 +1,7 @@
 package sandboxcmd
 
+// sandbox_create_git.go prepares git-backed sandbox mounts and branch state.
+
 import (
 	"fmt"
 	"os"

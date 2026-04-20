@@ -1,5 +1,7 @@
 package sandboxcmd
 
+// sandbox_ssh.go implements sandbox SSH and editor connection commands.
+
 import (
 	"fmt"
 	"os"

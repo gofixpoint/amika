@@ -1,5 +1,6 @@
-// Package sandboxcmd builds the amika sandbox command tree.
 package sandboxcmd
+
+// command.go assembles the top-level sandbox command and its flags.
 
 import (
 	"github.com/gofixpoint/amika/internal/sandbox"

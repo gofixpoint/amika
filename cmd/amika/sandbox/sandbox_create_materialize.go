@@ -1,5 +1,7 @@
 package sandboxcmd
 
+// sandbox_create_materialize.go collects mounts and materializes rwcopy inputs.
+
 import (
 	"bufio"
 	"fmt"

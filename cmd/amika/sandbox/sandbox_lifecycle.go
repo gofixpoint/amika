@@ -1,5 +1,7 @@
 package sandboxcmd
 
+// sandbox_lifecycle.go implements start, stop, list, and connect commands.
+
 import (
 	"fmt"
 	"io"
