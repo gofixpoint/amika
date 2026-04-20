@@ -140,6 +140,7 @@ done
 # Track what we built/pushed for the summary
 BUILT_IMAGES=()
 PUSHED_SNAPSHOTS=()
+EXISTING_SNAPSHOTS=()
 
 # Build images
 for preset in "${PRESETS[@]}"; do
@@ -190,8 +191,19 @@ for preset in "${PRESETS[@]}"; do
       for org in amika-prod Fixpoint; do
         daytona organization use "$org"
         echo "Pushing ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) to Daytona org ${org}..."
-        daytona snapshot push "$image_tag" --name "$snapshot_name" --cpu "$cpu" --memory "$mem" --disk "$disk"
-        PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+        push_output=""
+        push_rc=0
+        push_output=$(daytona snapshot push "$image_tag" --name "$snapshot_name" --cpu "$cpu" --memory "$mem" --disk "$disk" 2>&1 | tee /dev/stderr) || push_rc=$?
+        if [ "$push_rc" -ne 0 ]; then
+          if echo "$push_output" | grep -q "Conflict:.*already exists"; then
+            echo "Snapshot ${snapshot_name} already exists in ${org}, skipping."
+            EXISTING_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+          else
+            exit "$push_rc"
+          fi
+        else
+          PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+        fi
       done
     done
   fi
@@ -208,6 +220,13 @@ if [ ${#PUSHED_SNAPSHOTS[@]} -gt 0 ]; then
   echo ""
   echo "Pushed Daytona snapshots:"
   for snap in "${PUSHED_SNAPSHOTS[@]}"; do
+    echo "  $snap"
+  done
+fi
+if [ ${#EXISTING_SNAPSHOTS[@]} -gt 0 ]; then
+  echo ""
+  echo "Already existing Daytona snapshots (skipped):"
+  for snap in "${EXISTING_SNAPSHOTS[@]}"; do
     echo "  $snap"
   done
 fi
