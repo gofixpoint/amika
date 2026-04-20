@@ -1,5 +1,7 @@
-# Set terminal type for proper rendering in tools like less, git, etc.
-export TERM=xterm
+# Only set TERM if not already set by tmux or a capable terminal like Ghostty.
+if [ -z "$TMUX" ] && [ "$TERM" = "linux" -o "$TERM" = "dumb" ]; then
+  export TERM=xterm-256color
+fi
 
 # Set up the prompt (works on both light and dark terminals)
 
