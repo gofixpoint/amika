@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gofixpoint/amika/internal/amikaconfig"
 	"github.com/gofixpoint/amika/internal/sandbox"
 )
 
@@ -988,17 +989,17 @@ func TestPrepareGitMount_CleanClone_ChecksOutRemoteTrackingBranch(t *testing.T) 
 	}
 }
 
-func TestPrepareGitMount_CleanClone_NewBranchUsesRemoteDefaultBranch(t *testing.T) {
+// --new-branch without --branch should create the new branch from the host's
+// current branch (work), not from the default branch (main/master).
+func TestPrepareGitMount_CleanClone_NewBranchUsesHostBranch(t *testing.T) {
 	root := createGitRepo(t, map[string]string{
 		"origin": "https://github.com/example/upstream.git",
 	})
-	defaultBranch := gitCurrentBranch(t, root)
 	if err := os.WriteFile(filepath.Join(root, "default.txt"), []byte("default\n"), 0644); err != nil {
 		t.Fatalf("failed to write default-branch file: %v", err)
 	}
 	runGitCmd(t, root, "add", "default.txt")
 	runGitCmd(t, root, "commit", "-m", "default branch commit")
-	defaultCommit := gitRevParse(t, root, "HEAD")
 
 	runGitCmd(t, root, "checkout", "-b", "work")
 	if err := os.WriteFile(filepath.Join(root, "work.txt"), []byte("work\n"), 0644); err != nil {
@@ -1006,6 +1007,7 @@ func TestPrepareGitMount_CleanClone_NewBranchUsesRemoteDefaultBranch(t *testing.
 	}
 	runGitCmd(t, root, "add", "work.txt")
 	runGitCmd(t, root, "commit", "-m", "work commit")
+	workCommit := gitRevParse(t, root, "HEAD")
 
 	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "", "topic")
 	defer cleanup()
@@ -1019,8 +1021,187 @@ func TestPrepareGitMount_CleanClone_NewBranchUsesRemoteDefaultBranch(t *testing.
 	}
 
 	gotCommit := gitRevParse(t, info.Mount.Source, "HEAD")
+	if gotCommit != workCommit {
+		t.Fatalf("HEAD = %q, want work commit %q", gotCommit, workCommit)
+	}
+}
+
+// Bug #1: --new-branch without --branch should create the new branch from the
+// host's current branch (HEAD of the clone), not from main/master.
+// Setup: host is on "work" branch which has commits ahead of main.
+// Expected: "topic" branch is created from "work", so HEAD matches work's commit.
+func TestPrepareGitMount_CleanClone_NewBranchFromHostBranch(t *testing.T) {
+	root := createGitRepo(t, map[string]string{
+		"origin": "https://github.com/example/upstream.git",
+	})
+	// Add a commit on the default branch so we can distinguish it from "work".
+	if err := os.WriteFile(filepath.Join(root, "default.txt"), []byte("default\n"), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+	runGitCmd(t, root, "add", "default.txt")
+	runGitCmd(t, root, "commit", "-m", "default branch commit")
+
+	// Create "work" branch with an extra commit.
+	runGitCmd(t, root, "checkout", "-b", "work")
+	if err := os.WriteFile(filepath.Join(root, "work.txt"), []byte("work\n"), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+	runGitCmd(t, root, "add", "work.txt")
+	runGitCmd(t, root, "commit", "-m", "work commit")
+	workCommit := gitRevParse(t, root, "HEAD")
+
+	// Host is on "work". Call with --new-branch only.
+	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "", "topic")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("prepareGitMount failed: %v", err)
+	}
+
+	gotBranch := gitCurrentBranch(t, info.Mount.Source)
+	if gotBranch != "topic" {
+		t.Fatalf("branch = %q, want %q", gotBranch, "topic")
+	}
+
+	// The new branch should be based on "work" (the host's current branch),
+	// not on main/master.
+	gotCommit := gitRevParse(t, info.Mount.Source, "HEAD")
+	if gotCommit != workCommit {
+		t.Fatalf("HEAD = %q, want work commit %q", gotCommit, workCommit)
+	}
+}
+
+// Bug #2: --branch foo --new-branch bar should work even when foo doesn't
+// exist yet. It should create foo from the base branch, then create bar
+// on top of foo.
+func TestPrepareGitMount_CleanClone_BranchAndNewBranchCreatesBase(t *testing.T) {
+	root := createGitRepo(t, map[string]string{
+		"origin": "https://github.com/example/upstream.git",
+	})
+	defaultCommit := gitRevParse(t, root, "HEAD")
+
+	// Neither "feat-1" nor "feat-1-fix" exist.
+	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "feat-1", "feat-1-fix")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("prepareGitMount failed: %v", err)
+	}
+
+	// Should be on feat-1-fix.
+	gotBranch := gitCurrentBranch(t, info.Mount.Source)
+	if gotBranch != "feat-1-fix" {
+		t.Fatalf("branch = %q, want %q", gotBranch, "feat-1-fix")
+	}
+
+	// feat-1 should also exist as a local branch.
+	if !localBranchExists(info.Mount.Source, "feat-1") {
+		t.Fatal("expected local branch feat-1 to exist")
+	}
+
+	// Both branches should be rooted at the same commit as the default branch.
+	gotCommit := gitRevParse(t, info.Mount.Source, "HEAD")
 	if gotCommit != defaultCommit {
-		t.Fatalf("HEAD = %q, want %s commit %q", gotCommit, defaultBranch, defaultCommit)
+		t.Fatalf("HEAD = %q, want default commit %q", gotCommit, defaultCommit)
+	}
+}
+
+// .amika/config.toml and any relative lifecycle.setup_script should both be
+// resolved from the prepared checkout, not from the host working tree.
+func TestConfigReadFromPreparedRepo(t *testing.T) {
+	root := createGitRepo(t, map[string]string{
+		"origin": "https://github.com/example/upstream.git",
+	})
+	defaultBranch := gitCurrentBranch(t, root)
+
+	// Create config and setup script on the default branch.
+	amikaDir := filepath.Join(root, ".amika")
+	if err := os.MkdirAll(amikaDir, 0755); err != nil {
+		t.Fatalf("failed to create .amika dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.sh"), []byte("#!/bin/sh\necho main\n"), 0755); err != nil {
+		t.Fatalf("failed to write main setup script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte("[lifecycle]\nsetup_script = \"main.sh\"\n"), 0644); err != nil {
+		t.Fatalf("failed to write config.toml: %v", err)
+	}
+	runGitCmd(t, root, "add", ".amika/config.toml", "main.sh")
+	runGitCmd(t, root, "commit", "-m", "add config on default branch")
+
+	// Create "other" branch with a different config.
+	runGitCmd(t, root, "checkout", "-b", "other")
+	if err := os.WriteFile(filepath.Join(root, "other.sh"), []byte("#!/bin/sh\necho other\n"), 0755); err != nil {
+		t.Fatalf("failed to write other setup script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(amikaDir, "config.toml"), []byte("[lifecycle]\nsetup_script = \"other.sh\"\n"), 0644); err != nil {
+		t.Fatalf("failed to write config.toml: %v", err)
+	}
+	runGitCmd(t, root, "add", ".amika/config.toml", "other.sh")
+	runGitCmd(t, root, "commit", "-m", "change config on other")
+
+	// Switch host back to the repo's initial branch.
+	runGitCmd(t, root, "checkout", defaultBranch)
+
+	// Prepare with --branch other.
+	info, cleanup, err := prepareGitMount(root, false, cloneGitRepo, "other", "")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("prepareGitMount failed: %v", err)
+	}
+
+	// The prepared repo (Mount.Source) should have the "other" branch config.
+	preparedCfg, err := amikaconfig.LoadConfig(info.Mount.Source)
+	if err != nil {
+		t.Fatalf("LoadConfig from prepared repo failed: %v", err)
+	}
+	if preparedCfg == nil || preparedCfg.Lifecycle.SetupScript != "other.sh" {
+		var got string
+		if preparedCfg != nil {
+			got = preparedCfg.Lifecycle.SetupScript
+		}
+		t.Fatalf("prepared repo setup_script = %q, want %q", got, "other.sh")
+	}
+
+	// RepoRoot (host path) still has the default-branch config.
+	hostCfg, err := amikaconfig.LoadConfig(info.RepoRoot)
+	if err != nil {
+		t.Fatalf("LoadConfig from host repo failed: %v", err)
+	}
+	if hostCfg == nil || hostCfg.Lifecycle.SetupScript != "main.sh" {
+		var got string
+		if hostCfg != nil {
+			got = hostCfg.Lifecycle.SetupScript
+		}
+		t.Fatalf("host repo setup_script = %q, want %q", got, "main.sh")
+	}
+
+	if preparedCfg.Lifecycle.SetupScript == hostCfg.Lifecycle.SetupScript {
+		t.Fatal("expected prepared and host configs to differ")
+	}
+
+	mount, err := setupScriptMountFromLoadedConfig(preparedCfg, info.Mount.Source)
+	if err != nil {
+		t.Fatalf("setupScriptMountFromLoadedConfig from prepared repo failed: %v", err)
+	}
+	if mount == nil {
+		t.Fatal("expected setup script mount from prepared repo")
+	}
+	wantPreparedPath := filepath.Join(info.Mount.Source, "other.sh")
+	if mount.Source != wantPreparedPath {
+		t.Fatalf("prepared setup script source = %q, want %q", mount.Source, wantPreparedPath)
+	}
+
+	hostMount, err := setupScriptMountFromLoadedConfig(hostCfg, info.RepoRoot)
+	if err != nil {
+		t.Fatalf("setupScriptMountFromLoadedConfig from host repo failed: %v", err)
+	}
+	if hostMount == nil {
+		t.Fatal("expected setup script mount from host repo")
+	}
+	wantHostPath := filepath.Join(info.RepoRoot, "main.sh")
+	if hostMount.Source != wantHostPath {
+		t.Fatalf("host setup script source = %q, want %q", hostMount.Source, wantHostPath)
+	}
+	if mount.Source == hostMount.Source {
+		t.Fatal("expected prepared and host setup script sources to differ")
 	}
 }
 
