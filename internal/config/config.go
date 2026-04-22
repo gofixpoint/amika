@@ -14,6 +14,9 @@ const (
 	EnvAPIURL = "AMIKA_API_URL"
 	// EnvWorkOSClientID is the environment variable that overrides the default WorkOS client ID.
 	EnvWorkOSClientID = "AMIKA_WORKOS_CLIENT_ID"
+	// EnvAPIKey is the environment variable that provides a WorkOS organization API key
+	// for bearer-token authentication. When set, it takes precedence over stored credentials.
+	EnvAPIKey = "AMIKA_API_KEY"
 
 	// DefaultAPIURL is the default remote API base URL.
 	DefaultAPIURL = "https://app.amika.dev"
@@ -93,4 +96,12 @@ func WorkOSAuthSessionFile() (string, error) {
 		return basedir.WorkOSAuthSessionFileIn(dir), nil
 	}
 	return basedir.New("").WorkOSAuthSessionFile()
+}
+
+// APIKeyFile returns the resolved stored API key file path.
+func APIKeyFile() (string, error) {
+	if dir := os.Getenv(EnvStateDirectory); dir != "" {
+		return basedir.APIKeyFileIn(dir), nil
+	}
+	return basedir.New("").APIKeyFile()
 }

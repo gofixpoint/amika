@@ -15,8 +15,18 @@ import (
 // TODO: Parse env variables from an environment file (e.g. .amika/.env or ~/.config/amika/env)
 // so users don't need to export AMIKA_API_URL, AMIKA_WORKOS_CLIENT_ID, etc. in their shell profile.
 
-// defaultAuthChecker returns nil when a valid WorkOS session exists.
+// defaultAuthChecker returns nil when any credential source is present:
+// AMIKA_API_KEY env var, a stored API key, or a valid WorkOS session.
+// An unreadable API key file is skipped (matching the request-time
+// resolver) so a corrupt higher-priority file does not block a valid
+// lower-priority session.
 func defaultAuthChecker() error {
+	if os.Getenv(config.EnvAPIKey) != "" {
+		return nil
+	}
+	if stored, err := auth.LoadAPIKey(); err == nil && stored != nil {
+		return nil
+	}
 	_, err := auth.GetValidSession(config.WorkOSClientID())
 	return err
 }
@@ -32,11 +42,9 @@ func getRemoteTarget(cmd *cobra.Command) (string, error) {
 }
 
 // getRemoteClient returns an API client authenticated with the current session.
-// If AMIKA_API_KEY is set, it is used as a static bearer token instead of the WorkOS session.
+// Credentials are resolved per request in the order: AMIKA_API_KEY env var,
+// stored API key file, then WorkOS session.
 func getRemoteClient(target string) (*apiclient.Client, error) {
 	_ = target
-	if apiKey := os.Getenv("AMIKA_API_KEY"); apiKey != "" {
-		return apiclient.NewClient(config.APIURL(), apiKey), nil
-	}
-	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewWorkOSTokenSource(config.WorkOSClientID())), nil
+	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewResolvedTokenSource(config.WorkOSClientID())), nil
 }

@@ -18,6 +18,7 @@ const (
 	fileMountsStateFile = "rwcopy-mounts.jsonl"
 	fileMountsDir       = "rwcopy-mounts.d"
 	workosSessionFile   = "workos-session.json"
+	apiKeyFile          = "api-key.json"
 	envXDGConfigHome    = "XDG_CONFIG_HOME"
 	envXDGDataHome      = "XDG_DATA_HOME"
 	envXDGCacheHome     = "XDG_CACHE_HOME"
@@ -46,6 +47,7 @@ type Paths interface {
 	FileMountsStateFile() (string, error)
 	FileMountsDir() (string, error)
 	WorkOSAuthSessionFile() (string, error)
+	APIKeyFile() (string, error)
 }
 
 type xdgPaths struct {
@@ -217,6 +219,14 @@ func (p *xdgPaths) WorkOSAuthSessionFile() (string, error) {
 	return WorkOSAuthSessionFileIn(dir), nil
 }
 
+func (p *xdgPaths) APIKeyFile() (string, error) {
+	dir, err := p.AmikaStateDir()
+	if err != nil {
+		return "", err
+	}
+	return APIKeyFileIn(dir), nil
+}
+
 // MountsStateFileIn returns the mounts state file path under the given state directory.
 func MountsStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, mountsStateFile)
@@ -245,4 +255,9 @@ func FileMountsDirIn(stateDir string) string {
 // WorkOSAuthSessionFileIn returns the WorkOS auth session file path under the given state directory.
 func WorkOSAuthSessionFileIn(stateDir string) string {
 	return filepath.Join(stateDir, workosSessionFile)
+}
+
+// APIKeyFileIn returns the stored API key file path under the given state directory.
+func APIKeyFileIn(stateDir string) string {
+	return filepath.Join(stateDir, apiKeyFile)
 }
