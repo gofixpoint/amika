@@ -363,12 +363,10 @@ func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, 
 }
 
 // getSecretsClient returns an API client for secrets operations.
-// If AMIKA_API_KEY is set, it is used as a static bearer token instead of the WorkOS session.
+// Credentials are resolved per request in the order: AMIKA_API_KEY env var,
+// stored API key file, then WorkOS session.
 func getSecretsClient() (*apiclient.Client, error) {
-	if apiKey := os.Getenv("AMIKA_API_KEY"); apiKey != "" {
-		return apiclient.NewClient(config.APIURL(), apiKey), nil
-	}
-	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewWorkOSTokenSource(config.WorkOSClientID())), nil
+	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewResolvedTokenSource(config.WorkOSClientID())), nil
 }
 
 // parseOnlyFilter splits a comma-separated list of secret names into a set.

@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,12 @@ import (
 
 	"github.com/gofixpoint/amika/internal/config"
 )
+
+// ErrCorruptSession is returned by LoadSession when the session file exists
+// but cannot be parsed. Distinguishing corruption from other I/O errors lets
+// callers route the user to `amika auth logout` only when logout can actually
+// resolve the problem.
+var ErrCorruptSession = errors.New("corrupt session file")
 
 // WorkOSSession holds the persisted WorkOS authentication state.
 type WorkOSSession struct {
@@ -53,7 +60,7 @@ func LoadSession() (*WorkOSSession, error) {
 	}
 	var session WorkOSSession
 	if err := json.Unmarshal(data, &session); err != nil {
-		return nil, fmt.Errorf("corrupt session file: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrCorruptSession, err)
 	}
 	return &session, nil
 }
