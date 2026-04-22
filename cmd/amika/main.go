@@ -14,6 +14,8 @@ var rootCmd = &cobra.Command{
 	Short:             "Amika - filesystem mounting and script execution",
 	Long:              `Amika provides filesystem mounting and script execution with output materialization.`,
 	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
+	SilenceUsage:      true,
+	SilenceErrors:     true,
 }
 
 func init() {

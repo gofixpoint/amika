@@ -57,9 +57,6 @@ Examples:
   amika materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
-
 		script, _ := cmd.Flags().GetString("script")
 		cmdStr, _ := cmd.Flags().GetString("cmd")
 		outdir, _ := cmd.Flags().GetString("outdir")

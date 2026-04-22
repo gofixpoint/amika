@@ -209,6 +209,30 @@ func detectHostCurrentBranch(startPath string) (string, error) {
 	return name, nil
 }
 
+// isBranchPushedToRemote checks whether the local branch tip matches the
+// tip on the "origin" remote. Always checks against origin directly (not
+// the upstream tracking branch) because sandbox creation resolves the
+// origin URL regardless of what remote the branch tracks.
+func isBranchPushedToRemote(repoDir, branch string) bool {
+	// Get the remote tip SHA from origin.
+	lsCmd := exec.Command("git", "-C", repoDir, "ls-remote", "--heads", "origin", branch)
+	lsOut, err := lsCmd.Output()
+	if err != nil || strings.TrimSpace(string(lsOut)) == "" {
+		return false // branch doesn't exist on origin
+	}
+	remoteSHA := strings.Fields(strings.TrimSpace(string(lsOut)))[0]
+
+	// Get the local branch tip SHA.
+	localCmd := exec.Command("git", "-C", repoDir, "rev-parse", branch)
+	localOut, err := localCmd.Output()
+	if err != nil {
+		return false
+	}
+	localSHA := strings.TrimSpace(string(localOut))
+
+	return remoteSHA == localSHA
+}
+
 func copyRepoWorkingTree(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("failed to create no-clean parent for %q: %w", dst, err)

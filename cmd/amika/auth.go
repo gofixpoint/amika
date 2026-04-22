@@ -29,9 +29,6 @@ Pass --api-key-file to skip the browser flow and store a WorkOS organization
 API key instead. Use "-" to read the key from stdin, which pairs well with
 secret managers in CI (for example: "vault kv get -field=key … | amika auth login --api-key-file -").`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
-
 		apiKeyFile, _ := cmd.Flags().GetString("api-key-file")
 
 		existingSession, sessionErr := auth.LoadSession()
@@ -107,9 +104,6 @@ var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Log out of Amika",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
-
 		out := cmd.OutOrStdout()
 		clearedAny := false
 
@@ -179,9 +173,6 @@ var authStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current authentication status",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
-
 		out := cmd.OutOrStdout()
 
 		envKeySet := os.Getenv(config.EnvAPIKey) != ""

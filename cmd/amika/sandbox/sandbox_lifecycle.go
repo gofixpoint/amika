@@ -32,8 +32,6 @@ var sandboxStartCmd = &cobra.Command{
 	Long:  `Start (resume) one or more stopped sandboxes.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -96,8 +94,6 @@ var sandboxStopCmd = &cobra.Command{
 	Long:  `Stop one or more running sandboxes without removing them.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -231,8 +227,6 @@ var sandboxConnectCmd = &cobra.Command{
 	Long:  `Connect to a running sandbox container and open an interactive shell.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-
 		name := args[0]
 		shell, _ := cmd.Flags().GetString("shell")
 		if err := validateShell(shell); err != nil {

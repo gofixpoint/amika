@@ -52,13 +52,14 @@ type CreateSandboxRequest struct {
 
 // RemoteSandbox represents a sandbox returned by the remote API.
 type RemoteSandbox struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Provider  string `json:"provider"`
-	GitHubURL string `json:"github_url"`
-	State     string `json:"state"`
-	CreatedAt string `json:"created_at"`
-	Branch    string `json:"branch"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Provider     string `json:"provider"`
+	GitHubURL    string `json:"github_url"`
+	State        string `json:"state"`
+	CreatedAt    string `json:"created_at"`
+	Branch       string `json:"branch"`
+	ErrorMessage string `json:"error_message"`
 }
 
 // ListSandboxes fetches sandboxes from the remote API.
@@ -99,6 +100,9 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 			return nil, err
 		}
 		if sb.State == "failed" {
+			if sb.ErrorMessage != "" {
+				return sb, fmt.Errorf("%s", sb.ErrorMessage)
+			}
 			return sb, fmt.Errorf("%s", failMsg)
 		}
 		for _, s := range readyStates {
