@@ -175,9 +175,6 @@ By default the command waits for the agent to finish and streams the response.
 Use --no-wait to send the message and return immediately.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
-
 		name := args[0]
 
 		var message string

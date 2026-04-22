@@ -57,9 +57,6 @@ Examples:
   amika sandbox ssh my-sandbox --revoke`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
-
 		name := args[0]
 
 		mode := runmode.Resolve(cmd)
@@ -115,9 +112,6 @@ Examples:
   amika sandbox code my-sandbox --editor=cursor`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		cmd.SilenceErrors = true
-
 		name := args[0]
 		editor, _ := cmd.Flags().GetString("editor")
 

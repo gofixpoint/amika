@@ -24,8 +24,6 @@ var sandboxCreateCmd = &cobra.Command{
 	Long:  `Create a new sandbox using the specified provider. Currently only "docker" is supported.`,
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		cmd.SilenceUsage = true
-
 		noClean, _ := cmd.Flags().GetBool("no-clean")
 		noSetup, _ := cmd.Flags().GetBool("no-setup")
 		gitFlagChanged := cmd.Flags().Changed("git")

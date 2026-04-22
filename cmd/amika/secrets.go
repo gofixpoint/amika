@@ -46,8 +46,6 @@ Examples:
   amika secret extract --push
   amika secret extract --push --only=ANTHROPIC_API_KEY,OPENAI_API_KEY`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
 
 			homeDir, _ := cmd.Flags().GetString("homedir")
 			noOAuth, _ := cmd.Flags().GetBool("no-oauth")
@@ -169,8 +167,6 @@ Examples:
   amika secret push --from-file=.env
   amika secret push --from-file=.env CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
 
 			fromEnvFlag, _ := cmd.Flags().GetString("from-env")
 			fromFileFlag, _ := cmd.Flags().GetString("from-file")
@@ -511,8 +507,6 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 		Short: fmt.Sprintf("Push %s credentials to the remote secrets store", p.DisplayName),
 		Long:  p.PushLongHelp,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
 
 			credValue, credType, err := parseProviderCreds(cmd, p)
 			if err != nil {
@@ -557,8 +551,6 @@ func newProviderListCmd(p providerConfig) *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   fmt.Sprintf("List pushed %s credentials", p.DisplayName),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
 
 			client, err := getSecretsClient()
 			if err != nil {
@@ -592,8 +584,6 @@ func newProviderDeleteCmd(p providerConfig) *cobra.Command {
 		Short:   fmt.Sprintf("Delete a %s credential by ID", p.DisplayName),
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
 
 			client, err := getSecretsClient()
 			if err != nil {
