@@ -211,17 +211,20 @@ func detectHostCurrentBranch(startPath string) (string, error) {
 
 // isBranchPushedToRemote checks whether the given branch has been pushed to
 // its upstream remote. Returns false if the branch has no upstream tracking
-// branch (never pushed) or if there are local commits not yet pushed.
+// branch and doesn't exist on origin, or if there are local commits not yet
+// pushed.
 func isBranchPushedToRemote(repoDir, branch string) bool {
 	// Check if the branch has an upstream tracking ref set.
 	upstreamCmd := exec.Command("git", "-C", repoDir, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
 	upstreamOut, err := upstreamCmd.Output()
 	if err != nil {
-		return false // No upstream configured — branch was never pushed
+		// No upstream configured — could still be pushed without -u.
+		// Check the remote directly.
+		return remoteBranchExists(repoDir, branch)
 	}
 	upstream := strings.TrimSpace(string(upstreamOut))
 	if upstream == "" {
-		return false
+		return remoteBranchExists(repoDir, branch)
 	}
 
 	// Check if there are local commits ahead of the upstream.
@@ -231,6 +234,18 @@ func isBranchPushedToRemote(repoDir, branch string) bool {
 		return false
 	}
 	return strings.TrimSpace(string(countOut)) == "0"
+}
+
+// remoteBranchExists checks whether a branch exists on the "origin" remote
+// via git ls-remote. This is a network call but only used as a fallback when
+// no upstream tracking is configured.
+func remoteBranchExists(repoDir, branch string) bool {
+	cmd := exec.Command("git", "-C", repoDir, "ls-remote", "--heads", "origin", branch)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }
 
 func copyRepoWorkingTree(src, dst string) error {
