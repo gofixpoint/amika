@@ -209,6 +209,30 @@ func detectHostCurrentBranch(startPath string) (string, error) {
 	return name, nil
 }
 
+// isBranchPushedToRemote checks whether the given branch has been pushed to
+// its upstream remote. Returns false if the branch has no upstream tracking
+// branch (never pushed) or if there are local commits not yet pushed.
+func isBranchPushedToRemote(repoDir, branch string) bool {
+	// Check if the branch has an upstream tracking ref set.
+	upstreamCmd := exec.Command("git", "-C", repoDir, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
+	upstreamOut, err := upstreamCmd.Output()
+	if err != nil {
+		return false // No upstream configured — branch was never pushed
+	}
+	upstream := strings.TrimSpace(string(upstreamOut))
+	if upstream == "" {
+		return false
+	}
+
+	// Check if there are local commits ahead of the upstream.
+	countCmd := exec.Command("git", "-C", repoDir, "rev-list", "--count", upstream+".."+branch)
+	countOut, err := countCmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(countOut)) == "0"
+}
+
 func copyRepoWorkingTree(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("failed to create no-clean parent for %q: %w", dst, err)

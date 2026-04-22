@@ -7,6 +7,15 @@ import (
 	"strings"
 )
 
+// APIErrorResponse mirrors the JSON error envelope returned by the Amika
+// API server (see api-error.ts). It carries a machine-readable error code
+// and a human-readable message.
+type APIErrorResponse struct {
+	Type      string `json:"type"`
+	ErrorCode string `json:"error_code"`
+	Message   string `json:"message"`
+}
+
 // HTTPError is returned by doJSON when the server responds with a non-2xx
 // status code. It carries the raw status and body so callers can inspect or
 // parse the response for structured error information.
@@ -15,8 +24,18 @@ type HTTPError struct {
 	Body       string
 }
 
+// UserMessage extracts the human-readable message from a structured API
+// error response. Falls back to the raw body if parsing fails.
+func (e *HTTPError) UserMessage() string {
+	var resp APIErrorResponse
+	if json.Unmarshal([]byte(e.Body), &resp) == nil && resp.Message != "" {
+		return resp.Message
+	}
+	return e.Body
+}
+
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Body)
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.UserMessage())
 }
 
 // extractAgentAuthError inspects an error returned by the agent-send endpoint
