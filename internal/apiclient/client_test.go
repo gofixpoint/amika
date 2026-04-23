@@ -59,6 +59,15 @@ func TestPathEscapesSandboxName(t *testing.T) {
 			wantPath:   "/api/sandboxes/a%2Fb/sessions",
 		},
 		{
+			name: "AgentSend with slash",
+			call: func(c *Client) error {
+				_, err := c.AgentSend("a/b", AgentSendRequest{Message: "hi"})
+				return err
+			},
+			wantMethod: "POST",
+			wantPath:   "/api/sandboxes/a%2Fb/agent-send",
+		},
+		{
 			name:       "GetSandbox without slash",
 			call:       func(c *Client) error { _, err := c.GetSandbox("simple-name"); return err },
 			wantMethod: "GET",
