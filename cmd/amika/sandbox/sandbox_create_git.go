@@ -209,11 +209,20 @@ func detectHostCurrentBranch(startPath string) (string, error) {
 	return name, nil
 }
 
-// isBranchPushedToRemote checks whether the local branch tip matches the
-// tip on the "origin" remote. Always checks against origin directly (not
-// the upstream tracking branch) because sandbox creation resolves the
-// origin URL regardless of what remote the branch tracks.
-func isBranchPushedToRemote(repoDir, branch string) bool {
+// isLocalBranchReachableFromRemote returns true when the local branch tip
+// is an ancestor of (or equal to) the corresponding branch on the "origin"
+// remote. This means the remote already contains every commit on the local
+// branch, so it is safe to create a sandbox from the remote version.
+//
+// It always checks against origin directly (not the upstream tracking
+// branch) because sandbox creation resolves the origin URL regardless of
+// what remote the branch tracks.
+//
+// The ancestry check uses git merge-base --is-ancestor, which requires the
+// remote SHA to be present in the local object store (e.g. from a prior
+// fetch). If the remote SHA is not available locally the function
+// conservatively returns false.
+func isLocalBranchReachableFromRemote(repoDir, branch string) bool {
 	// Get the remote tip SHA from origin.
 	lsCmd := exec.Command("git", "-C", repoDir, "ls-remote", "--heads", "origin", branch)
 	lsOut, err := lsCmd.Output()
@@ -230,7 +239,15 @@ func isBranchPushedToRemote(repoDir, branch string) bool {
 	}
 	localSHA := strings.TrimSpace(string(localOut))
 
-	return remoteSHA == localSHA
+	if remoteSHA == localSHA {
+		return true
+	}
+
+	// Check if local is an ancestor of remote (i.e. the remote is ahead of
+	// or equal to local). This covers the case where someone else has pushed
+	// additional commits to the remote branch.
+	ancestorCmd := exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", localSHA, remoteSHA)
+	return ancestorCmd.Run() == nil
 }
 
 func copyRepoWorkingTree(src, dst string) error {

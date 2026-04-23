@@ -426,6 +426,72 @@ func TestIsNetworkRemoteURL(t *testing.T) {
 	}
 }
 
+func TestIsLocalBranchReachableFromRemote(t *testing.T) {
+	// Set up a bare repo to act as "origin" and a working clone.
+	bare := t.TempDir()
+	runGitCmd(t, bare, "init", "--bare")
+
+	work := filepath.Join(t.TempDir(), "work")
+	cmd := exec.Command("git", "clone", bare, work)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("clone failed: %s", out)
+	}
+	runGitCmd(t, work, "config", "user.name", "Test User")
+	runGitCmd(t, work, "config", "user.email", "test@example.com")
+
+	// Initial commit and push.
+	if err := os.WriteFile(filepath.Join(work, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	runGitCmd(t, work, "add", "a.txt")
+	runGitCmd(t, work, "commit", "-m", "c1")
+	runGitCmd(t, work, "push", "origin", "HEAD")
+
+	branch := gitCurrentBranch(t, work)
+
+	t.Run("exact match returns true", func(t *testing.T) {
+		if !isLocalBranchReachableFromRemote(work, branch) {
+			t.Fatal("expected true when local matches remote")
+		}
+	})
+
+	// Push another commit, then reset local back so remote is ahead.
+	if err := os.WriteFile(filepath.Join(work, "b.txt"), []byte("b\n"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	runGitCmd(t, work, "add", "b.txt")
+	runGitCmd(t, work, "commit", "-m", "c2")
+	runGitCmd(t, work, "push", "origin", "HEAD")
+	runGitCmd(t, work, "reset", "--hard", "HEAD~1")
+
+	t.Run("local behind remote returns true", func(t *testing.T) {
+		if !isLocalBranchReachableFromRemote(work, branch) {
+			t.Fatal("expected true when local is ancestor of remote")
+		}
+	})
+
+	// Create a divergent local commit (local is no longer an ancestor of remote).
+	if err := os.WriteFile(filepath.Join(work, "c.txt"), []byte("c\n"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	runGitCmd(t, work, "add", "c.txt")
+	runGitCmd(t, work, "commit", "-m", "c3-diverged")
+
+	t.Run("local diverged returns false", func(t *testing.T) {
+		if isLocalBranchReachableFromRemote(work, branch) {
+			t.Fatal("expected false when local has diverged from remote")
+		}
+	})
+
+	t.Run("branch not on remote returns false", func(t *testing.T) {
+		runGitCmd(t, work, "checkout", "-b", "no-remote")
+		if isLocalBranchReachableFromRemote(work, "no-remote") {
+			t.Fatal("expected false when branch does not exist on remote")
+		}
+	})
+}
+
 func createGitRepo(t *testing.T, remotes map[string]string) string {
 	t.Helper()
 

@@ -299,10 +299,11 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		}
 	}
 
-	// Warn if the auto-detected branch hasn't been pushed to the remote.
+	// Warn if the auto-detected branch hasn't been pushed to the remote
+	// or has local commits that the remote doesn't have yet.
 	if branch != "" && newBranch == "" && gitValueIsLocalPath && !cmd.Flags().Changed("branch") {
 		if repoRoot, err := resolveGitRoot(gitValue); err == nil {
-			if !isBranchPushedToRemote(repoRoot, branch) {
+			if !isLocalBranchReachableFromRemote(repoRoot, branch) {
 				return fmt.Errorf(
 					"current branch %q has not been pushed to the remote\n\n"+
 						"The sandbox will either start from an older version of this branch or\n"+
