@@ -590,7 +590,7 @@ func newProviderDeleteCmd(p providerConfig) *cobra.Command {
 				return fmt.Errorf("authenticating with remote API: %w", err)
 			}
 
-			if err := client.DeleteProviderSecret(args[0]); err != nil {
+			if err := client.DeleteProviderSecret(p.APIPath, args[0]); err != nil {
 				return err
 			}
 

@@ -279,10 +279,11 @@ func (c *Client) ListProviderSecrets(provider string) ([]ProviderSecretListItem,
 	return result, nil
 }
 
-// DeleteProviderSecret deletes a provider-scoped credential by ID.
-func (c *Client) DeleteProviderSecret(id string) error {
-	if err := c.doJSON("DELETE", "/api/secrets/"+id, nil, nil); err != nil {
-		return fmt.Errorf("remote delete secret: %w", err)
+// DeleteProviderSecret deletes a provider-scoped credential by ID. provider is
+// the URL segment ("claude", "codex").
+func (c *Client) DeleteProviderSecret(provider, id string) error {
+	if err := c.doJSON("DELETE", "/api/secrets/"+provider+"/"+id, nil, nil); err != nil {
+		return fmt.Errorf("remote delete %s secret: %w", provider, err)
 	}
 	return nil
 }
