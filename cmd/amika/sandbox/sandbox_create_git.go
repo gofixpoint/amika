@@ -218,12 +218,16 @@ func detectHostCurrentBranch(startPath string) (string, error) {
 // branch) because sandbox creation resolves the origin URL regardless of
 // what remote the branch tracks.
 //
-// The ancestry check uses git merge-base --is-ancestor, which requires the
-// remote SHA to be present in the local object store (e.g. from a prior
-// fetch). If the remote SHA is not available locally the function
-// conservatively returns false.
+// The ancestry check uses "git merge-base --is-ancestor", which requires
+// both SHAs to be in the local object store. The remote SHA (obtained via
+// ls-remote) may not be local if the user hasn't fetched recently — the
+// common case when someone else pushes to the branch. To avoid a fetch
+// (which would mutate local state), we fall back to comparing against the
+// last-fetched tracking ref (refs/remotes/origin/<branch>). If local
+// hasn't moved past that ref, and the remote is even further ahead, then
+// local is certainly behind remote and it is safe to proceed.
 func isLocalBranchReachableFromRemote(repoDir, branch string) bool {
-	// Get the remote tip SHA from origin.
+	// Query origin for the branch tip SHA without downloading objects.
 	lsCmd := exec.Command("git", "-C", repoDir, "ls-remote", "--heads", "origin", branch)
 	lsOut, err := lsCmd.Output()
 	if err != nil || strings.TrimSpace(string(lsOut)) == "" {
@@ -239,15 +243,34 @@ func isLocalBranchReachableFromRemote(repoDir, branch string) bool {
 	}
 	localSHA := strings.TrimSpace(string(localOut))
 
+	// Fast path: tips match exactly.
 	if remoteSHA == localSHA {
 		return true
 	}
 
-	// Check if local is an ancestor of remote (i.e. the remote is ahead of
-	// or equal to local). This covers the case where someone else has pushed
-	// additional commits to the remote branch.
-	ancestorCmd := exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", localSHA, remoteSHA)
-	return ancestorCmd.Run() == nil
+	// Check whether the remote SHA exists in the local object store. It
+	// will be present if the user has fetched recently, or if the commit
+	// was created locally and then pushed.
+	catCmd := exec.Command("git", "-C", repoDir, "cat-file", "-e", remoteSHA)
+	if catCmd.Run() == nil {
+		// Remote SHA is local — do a precise ancestry check.
+		// "merge-base --is-ancestor A B" exits 0 when A is an ancestor of B,
+		// meaning the remote (B) contains every commit in local (A).
+		ancestorCmd := exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", localSHA, remoteSHA)
+		return ancestorCmd.Run() == nil
+	}
+
+	// Remote SHA is NOT in the local object store (e.g. someone else pushed
+	// new commits and we haven't fetched). Fall back to the last-fetched
+	// tracking ref: if local hasn't moved past origin/<branch>, then local
+	// has no unpushed commits and must be behind the (even newer) remote.
+	trackingRef := "refs/remotes/origin/" + branch
+	verifyCmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", trackingRef)
+	if verifyCmd.Run() != nil {
+		return false // no tracking ref — can't determine relationship
+	}
+	trackingAncestorCmd := exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", localSHA, trackingRef)
+	return trackingAncestorCmd.Run() == nil
 }
 
 func copyRepoWorkingTree(src, dst string) error {

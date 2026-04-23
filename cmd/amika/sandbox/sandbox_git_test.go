@@ -492,6 +492,72 @@ func TestIsLocalBranchReachableFromRemote(t *testing.T) {
 	})
 }
 
+// TestIsLocalBranchReachableFromRemote_TrackingRefFallback exercises the
+// fallback path where the remote SHA (from ls-remote) is NOT in the local
+// object store. This happens when someone else pushes to the remote and the
+// user hasn't fetched. The function should fall back to comparing against
+// the last-fetched tracking ref (refs/remotes/origin/<branch>).
+func TestIsLocalBranchReachableFromRemote_TrackingRefFallback(t *testing.T) {
+	bare := t.TempDir()
+	runGitCmd(t, bare, "init", "--bare")
+
+	// First clone: "work" — the repo under test.
+	work := filepath.Join(t.TempDir(), "work")
+	cloneCmd := exec.Command("git", "clone", bare, work)
+	if out, err := cloneCmd.CombinedOutput(); err != nil {
+		t.Fatalf("clone failed: %s", out)
+	}
+	runGitCmd(t, work, "config", "user.name", "Test User")
+	runGitCmd(t, work, "config", "user.email", "test@example.com")
+
+	// Push an initial commit from work.
+	if err := os.WriteFile(filepath.Join(work, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	runGitCmd(t, work, "add", "a.txt")
+	runGitCmd(t, work, "commit", "-m", "c1")
+	runGitCmd(t, work, "push", "origin", "HEAD")
+	branch := gitCurrentBranch(t, work)
+
+	// Second clone: "other" — simulates another contributor.
+	other := filepath.Join(t.TempDir(), "other")
+	cloneCmd2 := exec.Command("git", "clone", bare, other)
+	if out, err := cloneCmd2.CombinedOutput(); err != nil {
+		t.Fatalf("clone failed: %s", out)
+	}
+	runGitCmd(t, other, "config", "user.name", "Other User")
+	runGitCmd(t, other, "config", "user.email", "other@example.com")
+
+	// Push a new commit from "other" so the bare repo is ahead of "work".
+	// "work" has never seen this commit — its object store does not contain
+	// the new SHA.
+	if err := os.WriteFile(filepath.Join(other, "b.txt"), []byte("b\n"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	runGitCmd(t, other, "add", "b.txt")
+	runGitCmd(t, other, "commit", "-m", "c2-from-other")
+	runGitCmd(t, other, "push", "origin", "HEAD")
+
+	t.Run("local behind unfetched remote returns true via tracking ref", func(t *testing.T) {
+		if !isLocalBranchReachableFromRemote(work, branch) {
+			t.Fatal("expected true when local is behind remote and remote SHA is not in local store")
+		}
+	})
+
+	// Now make a local commit in "work" so it has diverged from the remote.
+	if err := os.WriteFile(filepath.Join(work, "c.txt"), []byte("c\n"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	runGitCmd(t, work, "add", "c.txt")
+	runGitCmd(t, work, "commit", "-m", "c3-local-only")
+
+	t.Run("local ahead of tracking ref with unfetched remote returns false", func(t *testing.T) {
+		if isLocalBranchReachableFromRemote(work, branch) {
+			t.Fatal("expected false when local has unpushed commits and remote SHA is not in local store")
+		}
+	})
+}
+
 func createGitRepo(t *testing.T, remotes map[string]string) string {
 	t.Helper()
 
