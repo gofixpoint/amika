@@ -311,7 +311,7 @@ func (c *Client) AgentSend(sandboxName string, req AgentSendRequest) (*AgentSend
 	defer func() { c.HTTP.Timeout = saved }()
 
 	var result AgentSendResponse
-	if err := c.doJSON("POST", "/api/sandboxes/"+sandboxName+"/agent-send", req, &result); err != nil {
+	if err := c.doJSON("POST", "/api/sandboxes/"+url.PathEscape(sandboxName)+"/agent-send", req, &result); err != nil {
 		if authErr := extractAgentAuthError(err); authErr != "" {
 			return nil, fmt.Errorf("remote agent-send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
 		}
