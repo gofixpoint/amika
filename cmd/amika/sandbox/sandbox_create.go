@@ -305,7 +305,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		if repoRoot, err := resolveGitRoot(gitValue); err == nil {
 			if !isLocalBranchReachableFromRemote(repoRoot, branch) {
 				return fmt.Errorf(
-					"current branch %q has not been pushed to the remote\n\n"+
+					"current branch %q has not been pushed or is not up-to-date with the remote\n\n"+
 						"The sandbox will either start from an older version of this branch or\n"+
 						"create it fresh from the default branch.\n\n"+
 						"Push your branch first, or use --branch to specify your branch explicitly.",
