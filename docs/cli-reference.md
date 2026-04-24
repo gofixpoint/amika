@@ -281,7 +281,7 @@ Authentication and credential commands.
 
 ### `amika auth login`
 
-Log in to Amika via the WorkOS Device Authorization Flow. Opens a browser for you to authorize the CLI.
+Log in to Amika via a device authorization flow. Opens a browser for you to authorize the CLI.
 
 ```bash
 amika auth login
