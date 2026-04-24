@@ -141,10 +141,12 @@ var sandboxCreateCmd = &cobra.Command{
 		image = resolvedImage.Image
 
 		branchFlag, _ := cmd.Flags().GetString("branch")
+		noClaudeConfig, _ := cmd.Flags().GetBool("no-claude-config")
 		collected, err := collectMounts(mountStrs, volumeStrs, portStrs, portHostIP,
 			gitPath, gitFlagChanged, noClean,
 			setupScript, cmd.Flags().Changed("setup-script"),
 			noSetup,
+			noClaudeConfig,
 			branchFlag)
 		if err != nil {
 			return err
@@ -1262,6 +1264,7 @@ func collectMounts(
 	setupScript string,
 	setupScriptFlagChanged bool,
 	noSetup bool,
+	noClaudeConfig bool,
 	branch string,
 ) (collectedMounts, error) {
 	mounts, err := parseMountFlags(mountStrs)
@@ -1330,7 +1333,13 @@ func collectMounts(
 	}
 
 	if homeDir, err := os.UserHomeDir(); err == nil {
-		agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
+		var specs []agentconfig.MountSpec
+		if noClaudeConfig {
+			specs = agentconfig.AllMountsWithoutClaudeConfig(homeDir)
+		} else {
+			specs = agentconfig.AllMounts(homeDir)
+		}
+		agentMounts := agentconfig.RWCopyMounts(specs)
 		mounts = append(mounts, agentMounts...)
 	}
 
@@ -2415,6 +2424,7 @@ func init() {
 	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
 	sandboxCreateCmd.Flags().Bool("no-setup", false, "Skip the setup script (uses a no-op script instead)")
 	sandboxCreateCmd.Flags().String("branch", "", "Git branch to clone (defaults to repo's default branch)")
+	sandboxCreateCmd.Flags().Bool("no-claude-config", false, "Do not mount the ~/.claude/ directory into the sandbox")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
