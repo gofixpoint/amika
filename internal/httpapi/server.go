@@ -23,6 +23,7 @@ func NewHandler(service amika.Service) http.Handler {
 	registerHealth(api)
 	registerListSandboxes(api, service)
 	registerCreateSandbox(api, service)
+	registerUpdateSandbox(api, service)
 	registerDeleteSandbox(api, service)
 	registerListVolumes(api, service)
 	registerDeleteVolume(api, service)
@@ -73,6 +74,24 @@ func registerCreateSandbox(api huma.API, service amika.Service) {
 			return nil, toHTTPError(err)
 		}
 		return &createSandboxOutput{Body: result}, nil
+	})
+}
+
+type updateSandboxInput struct {
+	Name string                     `path:"name"`
+	Body amika.UpdateSandboxRequest `json:"body"`
+}
+type updateSandboxOutput struct{ Body amika.UpdateSandboxResult }
+
+func registerUpdateSandbox(api huma.API, service amika.Service) {
+	huma.Patch(api, "/v1/sandboxes/{name}", func(ctx context.Context, input *updateSandboxInput) (*updateSandboxOutput, error) {
+		req := input.Body
+		req.Name = input.Name
+		result, err := service.UpdateSandbox(ctx, req)
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &updateSandboxOutput{Body: result}, nil
 	})
 }
 

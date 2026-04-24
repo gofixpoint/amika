@@ -2,19 +2,22 @@ package amika
 
 // Sandbox is a tracked sandbox description.
 type Sandbox struct {
-	Name        string
-	State       string
-	Provider    string
-	ContainerID string
-	Image       string
-	CreatedAt   string
-	Preset      string
-	Location    string // "local" or "remote"
-	Branch      string
-	Mounts      []Mount
-	Env         []string
-	Ports       []PortBinding
-	Services    []ServiceInfo
+	Name              string
+	State             string
+	Provider          string
+	ContainerID       string
+	Image             string
+	CreatedAt         string
+	Preset            string
+	Location          string // "local" or "remote"
+	Branch            string
+	Mounts            []Mount
+	Env               []string
+	Ports             []PortBinding
+	Services          []ServiceInfo
+	TTL               string
+	InactivityTimeout string
+	AutoDeleteTimeout string
 }
 
 // ServiceInfo describes a named service running in a sandbox.
@@ -76,6 +79,11 @@ type ListVolumesResult struct {
 // DeleteVolumeResult reports deleted volumes.
 type DeleteVolumeResult struct {
 	Deleted []string
+}
+
+// UpdateSandboxResult reports sandbox update details.
+type UpdateSandboxResult struct {
+	Sandbox Sandbox
 }
 
 // AuthExtractResult reports extracted env assignment lines.

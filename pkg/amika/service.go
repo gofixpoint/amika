@@ -23,6 +23,7 @@ import (
 // Service defines the public API surface for running Amika operations from Go.
 type Service interface {
 	CreateSandbox(ctx context.Context, req CreateSandboxRequest) (Sandbox, error)
+	UpdateSandbox(ctx context.Context, req UpdateSandboxRequest) (UpdateSandboxResult, error)
 	DeleteSandbox(ctx context.Context, req DeleteSandboxRequest) (DeleteSandboxResult, error)
 	ListSandboxes(ctx context.Context, req ListSandboxesRequest) (ListSandboxesResult, error)
 	ConnectSandbox(ctx context.Context, req ConnectSandboxRequest) error
@@ -176,20 +177,64 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	if err := s.sandboxes.Save(info); err != nil {
 		return Sandbox{}, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
-	return Sandbox{
-		Name:        info.Name,
-		Provider:    info.Provider,
-		ContainerID: info.ContainerID,
-		Image:       info.Image,
-		CreatedAt:   info.CreatedAt,
-		Preset:      info.Preset,
-		Branch:      info.Branch,
-		Mounts:      toMounts(info.Mounts),
-		Env:         info.Env,
-		Ports:       toPortBindings(info.Ports),
-		Services:    toPublicServiceInfos(info.Services),
+	return sandboxFromInfo(info), nil
+}
+func (s *serviceImpl) UpdateSandbox(_ context.Context, req UpdateSandboxRequest) (UpdateSandboxResult, error) {
+	if req.Name == "" {
+		return UpdateSandboxResult{}, fmt.Errorf("%w: sandbox name is required", ErrInvalidArgument)
+	}
+	existing, err := s.sandboxes.Get(req.Name)
+	if err != nil {
+		return UpdateSandboxResult{}, fmt.Errorf("%w: sandbox %q", ErrNotFound, req.Name)
+	}
+
+	updated := existing
+
+	if err := validateOptionalDuration(req.TTL, "TTL"); err != nil {
+		return UpdateSandboxResult{}, err
+	}
+	if req.TTL != nil {
+		updated.TTL = *req.TTL
+	}
+	if err := validateOptionalDuration(req.InactivityTimeout, "InactivityTimeout"); err != nil {
+		return UpdateSandboxResult{}, err
+	}
+	if req.InactivityTimeout != nil {
+		updated.InactivityTimeout = *req.InactivityTimeout
+	}
+	if err := validateOptionalDuration(req.AutoDeleteTimeout, "AutoDeleteTimeout"); err != nil {
+		return UpdateSandboxResult{}, err
+	}
+	if req.AutoDeleteTimeout != nil {
+		updated.AutoDeleteTimeout = *req.AutoDeleteTimeout
+	}
+
+	// Handle rename: update Docker container name and store entry.
+	if req.NewName != nil && *req.NewName != "" && *req.NewName != existing.Name {
+		if _, err := s.sandboxes.Get(*req.NewName); err == nil {
+			return UpdateSandboxResult{}, fmt.Errorf("%w: sandbox %q already exists", ErrInvalidArgument, *req.NewName)
+		}
+		if existing.Provider == "docker" {
+			if err := sandbox.RenameDockerContainer(existing.Name, *req.NewName); err != nil {
+				return UpdateSandboxResult{}, fmt.Errorf("%w: %v", ErrDependency, err)
+			}
+		}
+		// Remove old entry and save with new name.
+		if err := s.sandboxes.Remove(existing.Name); err != nil {
+			return UpdateSandboxResult{}, fmt.Errorf("%w: %v", ErrInternal, err)
+		}
+		updated.Name = *req.NewName
+	}
+
+	if err := s.sandboxes.Save(updated); err != nil {
+		return UpdateSandboxResult{}, fmt.Errorf("%w: %v", ErrInternal, err)
+	}
+
+	return UpdateSandboxResult{
+		Sandbox: sandboxFromInfo(updated),
 	}, nil
 }
+
 func (s *serviceImpl) DeleteSandbox(_ context.Context, req DeleteSandboxRequest) (DeleteSandboxResult, error) {
 	deleted := make([]string, 0, len(req.Names))
 	for _, name := range req.Names {
@@ -241,19 +286,7 @@ func (s *serviceImpl) ListSandboxes(context.Context, ListSandboxesRequest) (List
 	}
 	out := make([]Sandbox, 0, len(items))
 	for _, it := range items {
-		out = append(out, Sandbox{
-			Name:        it.Name,
-			Provider:    it.Provider,
-			ContainerID: it.ContainerID,
-			Image:       it.Image,
-			CreatedAt:   it.CreatedAt,
-			Preset:      it.Preset,
-			Branch:      it.Branch,
-			Mounts:      toMounts(it.Mounts),
-			Env:         it.Env,
-			Ports:       toPortBindings(it.Ports),
-			Services:    toPublicServiceInfos(it.Services),
-		})
+		out = append(out, sandboxFromInfo(it))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
 	return ListSandboxesResult{Items: out}, nil
@@ -645,6 +678,9 @@ type initErrorService struct{ err error }
 func (s *initErrorService) CreateSandbox(context.Context, CreateSandboxRequest) (Sandbox, error) {
 	return Sandbox{}, s.err
 }
+func (s *initErrorService) UpdateSandbox(context.Context, UpdateSandboxRequest) (UpdateSandboxResult, error) {
+	return UpdateSandboxResult{}, s.err
+}
 func (s *initErrorService) DeleteSandbox(context.Context, DeleteSandboxRequest) (DeleteSandboxResult, error) {
 	return DeleteSandboxResult{}, s.err
 }
@@ -666,6 +702,34 @@ func (s *initErrorService) ExtractAuth(context.Context, AuthExtractRequest) (Aut
 }
 func (s *initErrorService) ListServices(context.Context, ListServicesRequest) (ListServicesResult, error) {
 	return ListServicesResult{}, s.err
+}
+
+func sandboxFromInfo(info sandbox.Info) Sandbox {
+	return Sandbox{
+		Name:              info.Name,
+		Provider:          info.Provider,
+		ContainerID:       info.ContainerID,
+		Image:             info.Image,
+		CreatedAt:         info.CreatedAt,
+		Preset:            info.Preset,
+		Branch:            info.Branch,
+		Mounts:            toMounts(info.Mounts),
+		Env:               info.Env,
+		Ports:             toPortBindings(info.Ports),
+		Services:          toPublicServiceInfos(info.Services),
+		TTL:               info.TTL,
+		InactivityTimeout: info.InactivityTimeout,
+		AutoDeleteTimeout: info.AutoDeleteTimeout,
+	}
+}
+
+func validateOptionalDuration(val *string, fieldName string) error {
+	if val != nil && *val != "" {
+		if _, err := time.ParseDuration(*val); err != nil {
+			return fmt.Errorf("%w: invalid %s %q: %v", ErrInvalidArgument, fieldName, *val, err)
+		}
+	}
+	return nil
 }
 
 func toMounts(in []sandbox.MountBinding) []Mount {

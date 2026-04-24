@@ -96,6 +96,16 @@ func RemoveDockerSandbox(name string) error {
 	return nil
 }
 
+// RenameDockerContainer renames a Docker container from oldName to newName.
+func RenameDockerContainer(oldName, newName string) error {
+	cmd := exec.Command("docker", "rename", oldName, newName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to rename docker container: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // CreateDockerVolume creates a named docker volume.
 func CreateDockerVolume(name string) error {
 	cmd := exec.Command("docker", "volume", "create", name)
