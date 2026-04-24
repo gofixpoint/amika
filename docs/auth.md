@@ -2,7 +2,7 @@
 
 ## Login
 
-`amika auth login` authenticates with Amika using the WorkOS Device Authorization Flow.
+`amika auth login` authenticates with Amika using a device authorization flow.
 
 ### Quick Start
 
@@ -19,9 +19,9 @@ amika auth logout
 
 ### How It Works
 
-1. The CLI requests a device code from WorkOS.
+1. The CLI requests a device code from Amika.
 2. A user code is displayed and the browser opens for you to authorize.
-3. The CLI polls WorkOS until you complete authorization.
+3. The CLI polls Amika until you complete authorization.
 4. The session (access token, refresh token, email, org) is saved to `${XDG_STATE_HOME}/amika/workos-session.json`.
 5. Access tokens are automatically refreshed when they are within 60 seconds of expiry.
 

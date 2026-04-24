@@ -23,11 +23,11 @@ var authLoginCmd = &cobra.Command{
 	Short: "Log in to Amika",
 	Long: `Authenticate with Amika.
 
-By default runs the WorkOS Device Authorization Flow and opens a browser.
+By default runs a device authorization flow and opens a browser.
 
-Pass --api-key-file to skip the browser flow and store a WorkOS organization
-API key instead. Use "-" to read the key from stdin, which pairs well with
-secret managers in CI (for example: "vault kv get -field=key … | amika auth login --api-key-file -").`,
+Pass --api-key-file to skip the browser flow and store an Amika API key
+instead. Use "-" to read the key from stdin, which pairs well with secret
+managers in CI (for example: "vault kv get -field=key … | amika auth login --api-key-file -").`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		apiKeyFile, _ := cmd.Flags().GetString("api-key-file")
 
@@ -227,5 +227,5 @@ func init() {
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authStatusCmd)
 
-	authLoginCmd.Flags().String("api-key-file", "", `Read a WorkOS organization API key from this path instead of running the device flow ("-" for stdin)`)
+	authLoginCmd.Flags().String("api-key-file", "", `Read an Amika API key from this path instead of running the device flow ("-" for stdin)`)
 }
