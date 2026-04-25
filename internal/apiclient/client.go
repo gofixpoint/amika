@@ -35,31 +35,54 @@ func NewClientWithTokenSource(baseURL string, ts TokenSource) *Client {
 
 // CreateSandboxRequest is the request body for POST /api/sandboxes.
 type CreateSandboxRequest struct {
-	Name                 string            `json:"name,omitempty"`
-	Provider             string            `json:"provider,omitempty"`
-	GitHubURL            string            `json:"github_url,omitempty"`
-	AutoStopInterval     *int              `json:"auto_stop_interval,omitempty"`
-	AutoDeleteInterval   *int              `json:"auto_delete_interval,omitempty"`
-	EnvVars              map[string]string `json:"env_vars,omitempty"`
-	SecretEnvVars        map[string]string `json:"secret_env_vars,omitempty"`
-	Preset               string            `json:"preset,omitempty"`
-	Size                 string            `json:"size,omitempty"`
-	SetupScriptText      string            `json:"setup_script_text,omitempty"`
-	ClaudeCredentialName string            `json:"claude_credential_name,omitempty"`
-	Branch               string            `json:"branch,omitempty"`
-	NewBranchName        string            `json:"new_branch_name,omitempty"`
+	Name               string               `json:"name,omitempty"`
+	Provider           string               `json:"provider,omitempty"`
+	GitHubURL          string               `json:"github_url,omitempty"`
+	AutoStopInterval   *int                 `json:"auto_stop_interval,omitempty"`
+	AutoDeleteInterval *int                 `json:"auto_delete_interval,omitempty"`
+	EnvVars            map[string]string    `json:"env_vars,omitempty"`
+	SecretEnvVars      map[string]string    `json:"secret_env_vars,omitempty"`
+	Preset             string               `json:"preset,omitempty"`
+	Size               string               `json:"size,omitempty"`
+	SetupScriptText    string               `json:"setup_script_text,omitempty"`
+	AgentCredentials   []AgentCredentialRef `json:"agent_credentials,omitempty"`
+	Branch             string               `json:"branch,omitempty"`
+	NewBranchName      string               `json:"new_branch_name,omitempty"`
+}
+
+// AgentCredentialRef selects which credential of a given kind the server
+// should inject into a sandbox. An entry with only Kind set is the opt-in
+// signal asking the server to walk repo-config defaults / auto-default.
+// None=true is the explicit "do not inject" signal.
+type AgentCredentialRef struct {
+	Kind string `json:"kind"`
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"` // "oauth" or "api_key"
+	None bool   `json:"none,omitempty"`
+}
+
+// ResolvedAgentCredential is one entry in RemoteSandbox.ResolvedAgentCredentials,
+// describing how the server resolved a single agent_credentials request.
+type ResolvedAgentCredential struct {
+	Kind    string `json:"kind"`
+	Outcome string `json:"outcome"` // "resolved" or "skipped"
+	Name    string `json:"name,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.
 type RemoteSandbox struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Provider     string `json:"provider"`
-	GitHubURL    string `json:"github_url"`
-	State        string `json:"state"`
-	CreatedAt    string `json:"created_at"`
-	Branch       string `json:"branch"`
-	ErrorMessage string `json:"error_message"`
+	ID                       string                    `json:"id"`
+	Name                     string                    `json:"name"`
+	Provider                 string                    `json:"provider"`
+	GitHubURL                string                    `json:"github_url"`
+	State                    string                    `json:"state"`
+	CreatedAt                string                    `json:"created_at"`
+	Branch                   string                    `json:"branch"`
+	ErrorMessage             string                    `json:"error_message"`
+	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
 }
 
 // ListSandboxes fetches sandboxes from the remote API.
