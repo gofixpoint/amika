@@ -82,10 +82,12 @@ var sandboxCreateCmd = &cobra.Command{
 
 		branchFlag, _ := cmd.Flags().GetString("branch")
 		newBranchFlag, _ := cmd.Flags().GetString("new-branch")
+		noClaudeConfig, _ := cmd.Flags().GetBool("no-claude-config")
 		collected, err := collectMounts(mountStrs, volumeStrs, portStrs, portHostIP,
 			gitPath, gitFlagChanged, noClean,
 			setupScript, cmd.Flags().Changed("setup-script"),
 			noSetup,
+			noClaudeConfig,
 			branchFlag, newBranchFlag)
 		if err != nil {
 			return err
