@@ -346,26 +346,34 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		setupScriptText = string(data)
 	}
 
-	claudeCredentialName := autoSelectClaudeCredential(cmd, client)
+	credNames, _ := cmd.Flags().GetStringArray("agent-credential")
+	credTypes, _ := cmd.Flags().GetStringArray("agent-credential-type")
+	credNones, _ := cmd.Flags().GetStringArray("no-agent-credential")
+	agentCreds, err := parseAgentCredentialFlags(credNames, credTypes, credNones)
+	if err != nil {
+		return err
+	}
 
 	req := apiclient.CreateSandboxRequest{
-		Name:                 name,
-		Provider:             "daytona",
-		GitHubURL:            gitURL,
-		EnvVars:              envVars,
-		SecretEnvVars:        secretEnvVars,
-		Preset:               preset,
-		Size:                 size,
-		SetupScriptText:      setupScriptText,
-		ClaudeCredentialName: claudeCredentialName,
-		Branch:               branch,
-		NewBranchName:        newBranch,
+		Name:             name,
+		Provider:         "daytona",
+		GitHubURL:        gitURL,
+		EnvVars:          envVars,
+		SecretEnvVars:    secretEnvVars,
+		Preset:           preset,
+		Size:             size,
+		SetupScriptText:  setupScriptText,
+		AgentCredentials: agentCreds,
+		Branch:           branch,
+		NewBranchName:    newBranch,
 	}
 
 	sb, err := client.CreateSandbox(req)
 	if err != nil {
 		return err
 	}
+
+	resolved := sb.ResolvedAgentCredentials
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q initializing...\n", sb.Name)
 
@@ -375,6 +383,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q created (remote)\n", sb.Name)
+	printResolvedAgentCredentials(cmd, resolved)
 
 	connect, _ := cmd.Flags().GetBool("connect")
 	if connect {
@@ -384,23 +393,19 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	return nil
 }
 
-func autoSelectClaudeCredential(cmd *cobra.Command, client *apiclient.Client) string {
-	creds, err := client.ListProviderSecrets("claude")
-	if err != nil || len(creds) == 0 {
-		return ""
+func printResolvedAgentCredentials(cmd *cobra.Command, resolved []apiclient.ResolvedAgentCredential) {
+	if len(resolved) == 0 {
+		return
 	}
-	var selected apiclient.ProviderSecretListItem
-	for _, c := range creds {
-		if c.Type == "oauth" {
-			selected = c
-			break
+	w := cmd.ErrOrStderr()
+	for _, r := range resolved {
+		switch r.Outcome {
+		case "resolved":
+			fmt.Fprintf(w, "Using %s credential %q (%s, source=%s)\n", r.Kind, r.Name, r.Type, r.Source)
+		case "skipped":
+			fmt.Fprintf(w, "Skipped %s credential (%s)\n", r.Kind, r.Reason)
 		}
 	}
-	if selected.Name == "" {
-		selected = creds[0]
-	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Using Claude credential %q (%s)\n", selected.Name, selected.Type)
-	return selected.Name
 }
 
 func appendPresetRuntimeEnv(env []string) []string {
