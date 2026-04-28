@@ -16,6 +16,8 @@ Beyond that, we are working on parts for:
 
 The idea is that you can use the open source on any sandbox provider, or you can use it with Amika’s hosted product, which handles all the tricky parts of scaling and provisioning these sandboxes, and provides extra features for managing hundreds of agents, their filesystems, and security.
 
+![the open source primitives of the software factory][oss-primitives]
+
 # **Components**
 
 **Open source components:**
@@ -137,6 +139,6 @@ Stores secrets for a sandbox. You can either:
 2. Give the agent access to the vault, optionally behind hooks that pause for human approval.  
    1. Safer than putting credentials in environment variables or directly on the filesystem
 
+[oss-primitives]: ./docs/assets/amika-roadmap-oss-primitives.svg
 [single-sbox]: ./docs/assets/single-sbox-arch.svg
-
 [multi-sbox]: ./docs/assets/multi-sbox-arch.svg
