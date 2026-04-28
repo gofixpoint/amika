@@ -31,6 +31,11 @@ type Service interface {
 	DeleteVolume(ctx context.Context, req DeleteVolumeRequest) (DeleteVolumeResult, error)
 	ExtractAuth(ctx context.Context, req AuthExtractRequest) (AuthExtractResult, error)
 	ListServices(ctx context.Context, req ListServicesRequest) (ListServicesResult, error)
+	CopyFromSandbox(ctx context.Context, req CopyFromSandboxRequest) (CopyFromSandboxResult, error)
+	SandboxLs(ctx context.Context, req SandboxLsRequest) (SandboxLsResult, error)
+	SandboxCat(ctx context.Context, req SandboxCatRequest) (SandboxCatResult, error)
+	SandboxRm(ctx context.Context, req SandboxRmRequest) (SandboxRmResult, error)
+	SandboxStat(ctx context.Context, req SandboxStatRequest) (SandboxStatResult, error)
 }
 
 // Options controls construction of a public Amika service.
@@ -666,6 +671,21 @@ func (s *initErrorService) ExtractAuth(context.Context, AuthExtractRequest) (Aut
 }
 func (s *initErrorService) ListServices(context.Context, ListServicesRequest) (ListServicesResult, error) {
 	return ListServicesResult{}, s.err
+}
+func (s *initErrorService) CopyFromSandbox(context.Context, CopyFromSandboxRequest) (CopyFromSandboxResult, error) {
+	return CopyFromSandboxResult{}, s.err
+}
+func (s *initErrorService) SandboxLs(context.Context, SandboxLsRequest) (SandboxLsResult, error) {
+	return SandboxLsResult{}, s.err
+}
+func (s *initErrorService) SandboxCat(context.Context, SandboxCatRequest) (SandboxCatResult, error) {
+	return SandboxCatResult{}, s.err
+}
+func (s *initErrorService) SandboxRm(context.Context, SandboxRmRequest) (SandboxRmResult, error) {
+	return SandboxRmResult{}, s.err
+}
+func (s *initErrorService) SandboxStat(context.Context, SandboxStatRequest) (SandboxStatResult, error) {
+	return SandboxStatResult{}, s.err
 }
 
 func toMounts(in []sandbox.MountBinding) []Mount {

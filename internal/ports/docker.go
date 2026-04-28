@@ -25,4 +25,6 @@ type DockerClient interface {
 	CreateVolume(name string) error
 	RemoveVolume(name string) error
 	CopyHostDirToVolume(volumeName, hostDir string) error
+	CopyFromContainer(containerName, containerPath, hostPath string) error
+	ExecInContainer(containerName string, cmd []string) (string, error)
 }

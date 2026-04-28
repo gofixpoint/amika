@@ -86,3 +86,37 @@ type AuthExtractRequest struct {
 type ListServicesRequest struct {
 	SandboxName string // optional filter
 }
+
+// CopyFromSandboxRequest describes copying files from a sandbox container to the host.
+type CopyFromSandboxRequest struct {
+	Name          string
+	ContainerPath string
+	HostPath      string
+}
+
+// SandboxLsRequest describes listing directory contents inside a sandbox.
+type SandboxLsRequest struct {
+	Name string
+	Path string
+}
+
+// SandboxCatRequest describes reading file contents from a sandbox.
+type SandboxCatRequest struct {
+	Name     string
+	Path     string
+	MaxBytes int64 // 0 = default 10MB
+}
+
+// SandboxRmRequest describes removing files inside a sandbox.
+type SandboxRmRequest struct {
+	Name      string
+	Path      string
+	Recursive bool
+	Force     bool
+}
+
+// SandboxStatRequest describes getting file metadata from a sandbox.
+type SandboxStatRequest struct {
+	Name string
+	Path string
+}

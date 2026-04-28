@@ -82,3 +82,34 @@ type DeleteVolumeResult struct {
 type AuthExtractResult struct {
 	Lines []string
 }
+
+// CopyFromSandboxResult reports sandbox file copy outcome.
+type CopyFromSandboxResult struct{}
+
+// SandboxLsResult reports directory listing from a sandbox.
+type SandboxLsResult struct {
+	Entries []SandboxFileInfo
+}
+
+// SandboxCatResult reports file contents from a sandbox.
+type SandboxCatResult struct {
+	Content   string
+	Truncated bool
+}
+
+// SandboxRmResult reports file removal from a sandbox.
+type SandboxRmResult struct{}
+
+// SandboxStatResult reports file metadata from a sandbox.
+type SandboxStatResult struct {
+	Info SandboxFileInfo
+}
+
+// SandboxFileInfo describes a file or directory inside a sandbox.
+type SandboxFileInfo struct {
+	Name    string `json:"Name"`
+	Size    int64  `json:"Size"`
+	Mode    string `json:"Mode"`
+	ModTime string `json:"ModTime"`
+	IsDir   bool   `json:"IsDir"`
+}

@@ -190,6 +190,48 @@ func portPublishSpec(p PortBinding) string {
 	return fmt.Sprintf("%s:%d:%d/%s", hostIP, p.HostPort, p.ContainerPort, protocol)
 }
 
+// CopyFromContainer copies a file or directory from a Docker container to the
+// host filesystem using `docker cp`. Works on both running and stopped containers.
+func CopyFromContainer(containerName, containerPath, hostPath string) error {
+	cmd := exec.Command("docker", "cp", containerName+":"+containerPath, hostPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		stderr := strings.TrimSpace(string(out))
+		switch {
+		case strings.Contains(stderr, "No such container"):
+			return fmt.Errorf("container %q not found", containerName)
+		case strings.Contains(stderr, "Could not find the file"),
+			strings.Contains(stderr, "no such file or directory"):
+			return fmt.Errorf("path %q not found in container %q", containerPath, containerName)
+		default:
+			return fmt.Errorf("docker cp failed: %s", stderr)
+		}
+	}
+	return nil
+}
+
+// ExecInContainer runs a command inside a running Docker container and returns
+// the combined stdout/stderr output. Returns typed errors based on Docker stderr.
+func ExecInContainer(containerName string, cmdArgs []string) (string, error) {
+	args := append([]string{"exec", containerName}, cmdArgs...)
+	cmd := exec.Command("docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		stderr := strings.TrimSpace(string(out))
+		switch {
+		case strings.Contains(stderr, "No such container"),
+			strings.Contains(stderr, "is not running"):
+			return "", fmt.Errorf("container %q is not running", containerName)
+		case strings.Contains(stderr, "No such file or directory"),
+			strings.Contains(stderr, "cannot access"):
+			return "", fmt.Errorf("path not found in container %q: %s", containerName, stderr)
+		default:
+			return "", fmt.Errorf("docker exec failed: %s", stderr)
+		}
+	}
+	return string(out), nil
+}
+
 func mountVolumeSpec(m MountBinding) string {
 	var src string
 	if m.Type == "volume" {
