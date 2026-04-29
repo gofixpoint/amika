@@ -20,43 +20,43 @@ func TestPathEscapesSandboxName(t *testing.T) {
 			name:       "GetSandbox with slash",
 			call:       func(c *Client) error { _, err := c.GetSandbox("org/proj"); return err },
 			wantMethod: "GET",
-			wantPath:   "/api/sandboxes/org%2Fproj",
+			wantPath:   "/api/v0beta1/sandboxes/org%2Fproj",
 		},
 		{
 			name:       "DeleteSandbox with slash",
 			call:       func(c *Client) error { return c.DeleteSandbox("org/proj") },
 			wantMethod: "DELETE",
-			wantPath:   "/api/sandboxes/org%2Fproj",
+			wantPath:   "/api/v0beta1/sandboxes/org%2Fproj",
 		},
 		{
 			name:       "StartSandbox with slash",
 			call:       func(c *Client) error { return c.StartSandbox("a/b") },
 			wantMethod: "POST",
-			wantPath:   "/api/sandboxes/a%2Fb/start",
+			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/start",
 		},
 		{
 			name:       "StopSandbox with slash",
 			call:       func(c *Client) error { return c.StopSandbox("a/b") },
 			wantMethod: "POST",
-			wantPath:   "/api/sandboxes/a%2Fb/stop",
+			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/stop",
 		},
 		{
 			name:       "GetSSH with slash",
 			call:       func(c *Client) error { _, err := c.GetSSH("a/b"); return err },
 			wantMethod: "POST",
-			wantPath:   "/api/sandboxes/a%2Fb/ssh",
+			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/ssh",
 		},
 		{
 			name:       "RevokeSSH with slash",
 			call:       func(c *Client) error { return c.RevokeSSH("a/b", "tok") },
 			wantMethod: "DELETE",
-			wantPath:   "/api/sandboxes/a%2Fb/ssh",
+			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/ssh",
 		},
 		{
 			name:       "ListSessions with slash",
 			call:       func(c *Client) error { _, err := c.ListSessions("a/b"); return err },
 			wantMethod: "GET",
-			wantPath:   "/api/sandboxes/a%2Fb/sessions",
+			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/sessions",
 		},
 		{
 			name: "AgentSend with slash",
@@ -65,13 +65,13 @@ func TestPathEscapesSandboxName(t *testing.T) {
 				return err
 			},
 			wantMethod: "POST",
-			wantPath:   "/api/sandboxes/a%2Fb/agent-send",
+			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/agent-send",
 		},
 		{
 			name:       "GetSandbox without slash",
 			call:       func(c *Client) error { _, err := c.GetSandbox("simple-name"); return err },
 			wantMethod: "GET",
-			wantPath:   "/api/sandboxes/simple-name",
+			wantPath:   "/api/v0beta1/sandboxes/simple-name",
 		},
 	}
 
