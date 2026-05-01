@@ -15,6 +15,9 @@ const DefaultCoderImage = "amika/coder:latest"
 // AllowedPresets lists the preset names available for user selection via --preset.
 var AllowedPresets = []string{"coder", "coder-dind"}
 
+// AllowedSizes lists the size names available for user selection via --size.
+var AllowedSizes = []string{"xs", "m"}
+
 // ValidatePreset returns an error if preset is non-empty and not in AllowedPresets.
 func ValidatePreset(preset string) error {
 	if preset == "" {
@@ -26,6 +29,19 @@ func ValidatePreset(preset string) error {
 		}
 	}
 	return fmt.Errorf("unknown preset %q; allowed presets: %s", preset, strings.Join(AllowedPresets, ", "))
+}
+
+// ValidateSize returns an error if size is non-empty and not in AllowedSizes.
+func ValidateSize(size string) error {
+	if size == "" {
+		return nil
+	}
+	for _, s := range AllowedSizes {
+		if size == s {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown size %q; allowed sizes: %s", size, strings.Join(AllowedSizes, ", "))
 }
 
 // PresetImageOptions controls how image/preset resolution and auto-build work.
