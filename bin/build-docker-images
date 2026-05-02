@@ -43,15 +43,15 @@ usage() {
 # Returns the preset dependency chain for a given image name.
 image_presets() {
   case "$1" in
-    amika/base)              echo "base" ;;
-    amika/coder)             echo "base coder" ;;
-    amika/claude)            echo "base claude" ;;
-    amika/daytona-coder)     echo "base coder daytona-coder" ;;
-    amika/daytona-claude)    echo "base claude daytona-claude" ;;
-    amika/dind)              echo "base dind" ;;
-    amika/coder-dind)        echo "base dind coder-dind" ;;
-    amika/daytona-coder-dind) echo "base dind coder-dind daytona-coder-dind" ;;
-    all)                     echo "base coder claude daytona-coder daytona-claude dind coder-dind daytona-coder-dind" ;;
+    amika/base)              echo "builder base" ;;
+    amika/coder)             echo "builder base coder" ;;
+    amika/claude)            echo "builder base claude" ;;
+    amika/daytona-coder)     echo "builder base coder daytona-coder" ;;
+    amika/daytona-claude)    echo "builder base claude daytona-claude" ;;
+    amika/dind)              echo "builder base dind" ;;
+    amika/coder-dind)        echo "builder base dind coder-dind" ;;
+    amika/daytona-coder-dind) echo "builder base dind coder-dind daytona-coder-dind" ;;
+    all)                     echo "builder base coder claude daytona-coder daytona-claude dind coder-dind daytona-coder-dind" ;;
     *) return 1 ;;
   esac
 }
@@ -177,6 +177,9 @@ for preset in "${PRESETS[@]}"; do
   fi
 
   case "$preset" in
+    base)
+      docker_args+=(--build-arg "BUILDER_IMAGE=amika/builder:${VERSION}")
+      ;;
     coder|claude)
       docker_args+=(--build-arg "BASE_IMAGE=amika/base:${VERSION}")
       ;;
@@ -197,7 +200,12 @@ for preset in "${PRESETS[@]}"; do
       ;;
   esac
 
-  docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT/internal/sandbox/presets")
+  # The builder preset uses the repo root as build context to access Go source.
+  if [ "$preset" = "builder" ]; then
+    docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT")
+  else
+    docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT/internal/sandbox/presets")
+  fi
   docker "${docker_args[@]}"
   BUILT_IMAGES+=("$image_tag" "$latest_tag")
 
