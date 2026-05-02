@@ -1,0 +1,27 @@
+# Exclude everything by default, then allow only what the base Dockerfile needs.
+# The build context is the repo root so that the Go builder stage can compile
+# amikactl; this file keeps the context small.
+
+**
+
+# Always exclude these even if the allowlist above were ever relaxed.
+dist/
+.git/
+.env*
+
+# Go module files and amikactl source for the builder stage.
+!go.mod
+!go.sum
+!cmd/amikactl/
+
+# Assets for the base image final stage.
+!internal/sandbox/presets/.bashrc
+!internal/sandbox/presets/.tmux.conf
+!internal/sandbox/presets/.zshrc
+!internal/sandbox/presets/bash-error-prelude.sh
+!internal/sandbox/presets/docker-setup.sh
+!internal/sandbox/presets/ghostty.terminfo
+!internal/sandbox/presets/opencode-setup.sh
+!internal/sandbox/presets/post-setup.sh
+!internal/sandbox/presets/pre-setup.sh
+!internal/sandbox/presets/run-hook.sh

@@ -88,6 +88,10 @@ RUN chown -R amika:amika \
     /var/lib/amika \
     /tmp/amika
 
+# Install amikactl so it is available on $PATH inside the sandbox.
+ARG BUILDER_IMAGE=amika/builder:latest
+COPY --from=${BUILDER_IMAGE} /app/amikactl /usr/local/bin/amikactl
+
 # Everything after this point runs as the amika user.
 USER amika
 
