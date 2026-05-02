@@ -1,0 +1,61 @@
+name: Build Daytona Snapshots
+
+# Manually builds the Daytona Coder snapshot images and pushes them to the
+# amika-prod and Fixpoint Daytona orgs. Runs `bin/build-docker-images`
+# against a chosen git ref (defaults to main HEAD).
+#
+# Auth: each Daytona org has its own API key. DAYTONA_PROD_API_KEY is used
+# for amika-prod and DAYTONA_STAGING_API_KEY for Fixpoint. Both secrets
+# live in the `release` environment, whose required reviewers must approve
+# the run before the job starts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA, tag, or branch to build from"
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-daytona-snapshots-${{ inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Validate workflow source branch
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "This workflow can only be run from the main branch." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Install Daytona CLI
+        run: |
+          brew install daytonaio/cli/daytona
+          daytona --version
+
+      - name: Build and push Daytona snapshots
+        env:
+          DAYTONA_PROD_API_KEY: ${{ secrets.DAYTONA_PROD_API_KEY }}
+          DAYTONA_STAGING_API_KEY: ${{ secrets.DAYTONA_STAGING_API_KEY }}
+        run: |
+          ./bin/build-docker-images \
+            amika/daytona-coder \
+            amika/daytona-coder-dind \
+            --push-daytona \
+            --ci
