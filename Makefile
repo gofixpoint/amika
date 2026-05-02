@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
+.PHONY: goenv build build-cli build-server build-amikactl clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
 
 UNIT_PACKAGES = $$(go list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 GOFMT_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
@@ -9,7 +9,7 @@ export GOTMPDIR := $(CURDIR)/.gotmp
 goenv:
 	mkdir -p "$(GOCACHE)" "$(GOTMPDIR)"
 
-build: build-cli build-server
+build: build-cli build-server build-amikactl
 
 build-cli: goenv
 	mkdir -p dist
@@ -18,6 +18,10 @@ build-cli: goenv
 build-server: goenv
 	mkdir -p dist
 	go build -o dist/amika-server ./cmd/amika-server
+
+build-amikactl: goenv
+	mkdir -p dist
+	go build -o dist/amikactl ./cmd/amikactl
 
 clean:
 	rm -rf dist .gocache .gotmp .gomodcache
