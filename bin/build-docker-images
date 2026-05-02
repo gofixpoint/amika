@@ -215,8 +215,9 @@ for preset in "${PRESETS[@]}"; do
             Fixpoint)   api_key="$DAYTONA_STAGING_API_KEY" ;;
           esac
           daytona login --api-key "$api_key"
+        else
+          daytona organization use "$org"
         fi
-        daytona organization use "$org"
         echo "Pushing ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) to Daytona org ${org}..."
         push_output=""
         push_rc=0
