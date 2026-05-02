@@ -20,6 +20,9 @@ RUN apt-get update && apt-get install -y \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
+# Install supervisord for service management.
+RUN pip3 install --break-system-packages supervisor
+
 # Install Ghostty terminfo so SSH sessions from Ghostty render correctly.
 # Source vendored from ghostty-org/ghostty src/terminfo/ghostty.zig.
 COPY ghostty.terminfo /tmp/ghostty.terminfo
