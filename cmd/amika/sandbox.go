@@ -1858,7 +1858,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 	req := apiclient.CreateSandboxRequest{
 		Name:                 name,
 		Provider:             "daytona",
-		GitHubURL:            gitURL,
+		RepoURL:              gitURL,
 		EnvVars:              envVars,
 		SecretEnvVars:        secretEnvVars,
 		Preset:               preset,
