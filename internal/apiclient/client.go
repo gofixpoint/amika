@@ -81,7 +81,6 @@ type ResolvedAgentCredential struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-
 // RemoteSandbox represents a sandbox returned by the remote API.
 type RemoteSandbox struct {
 	ID                       string                    `json:"id"`
