@@ -2,7 +2,7 @@ package sandboxcmd
 
 // sandbox_create_credentials.go parses the --agent-credential,
 // --agent-credential-type, and --no-agent-credential flags into the
-// agent_credentials request body field accepted by POST /api/sandboxes.
+// agent_credentials request body field accepted by POST /api/v0beta1/sandboxes.
 
 import (
 	"fmt"

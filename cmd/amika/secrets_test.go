@@ -612,15 +612,15 @@ func setupMockClaudeAPI(t *testing.T) []string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == "POST" && r.URL.Path == "/api/secrets/claude":
+		case r.Method == "POST" && r.URL.Path == "/api/v0beta1/secrets/claude":
 			json.NewEncoder(w).Encode(map[string]string{
 				"id":    "cred-test-123",
 				"name":  "Test",
 				"scope": "user",
 			})
-		case r.Method == "GET" && r.URL.Path == "/api/secrets/claude":
+		case r.Method == "GET" && r.URL.Path == "/api/v0beta1/secrets/claude":
 			json.NewEncoder(w).Encode([]interface{}{})
-		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/secrets/"):
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/v0beta1/secrets/"):
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)

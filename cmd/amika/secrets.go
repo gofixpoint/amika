@@ -420,7 +420,7 @@ type providerConfig struct {
 	// terse messages ("Claude", "Codex").
 	ShortName string
 	// APIPath is the provider segment of the API endpoint used to build
-	// /api/secrets/<APIPath>.
+	// /api/v0beta1/secrets/<APIPath>.
 	APIPath string
 	// PushLongHelp is the "Long" description for the push command.
 	PushLongHelp string
@@ -590,7 +590,7 @@ func newProviderDeleteCmd(p providerConfig) *cobra.Command {
 				return fmt.Errorf("authenticating with remote API: %w", err)
 			}
 
-			if err := client.DeleteProviderSecret(args[0]); err != nil {
+			if err := client.DeleteProviderSecret(p.APIPath, args[0]); err != nil {
 				return err
 			}
 

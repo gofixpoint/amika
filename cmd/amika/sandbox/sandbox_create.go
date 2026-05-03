@@ -272,6 +272,9 @@ func createRemoteSandbox(cmd *cobra.Command, target string) error {
 		return err
 	}
 	size, _ := cmd.Flags().GetString("size")
+	if err := sandbox.ValidateSize(size); err != nil {
+		return err
+	}
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
 	newBranch, _ := cmd.Flags().GetString("new-branch")

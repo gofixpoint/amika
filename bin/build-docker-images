@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-#/ Usage: bin/build-docker-images <image>... [--platform <platform>] [--ignore-unstaged] [--push-daytona]
+#/ Usage: bin/build-docker-images <image>... [--platform <platform>] [--ignore-unstaged] [--push-daytona] [--ci]
 #/
 #/ Build preset Docker images and tag them with the current git commit.
 #/ By default, builds for the host architecture. With --push-daytona,
@@ -18,6 +18,9 @@ set -euo pipefail
 #/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
 #/   --ignore-unstaged    Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
+#/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
+#/                        before each org switch instead of relying on existing daytona login state.
+#/                        Requires --push-daytona.
 #/   --help               Show this help message
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,6 +61,7 @@ IMAGES=()
 PLATFORM=""
 IGNORE_UNSTAGED=false
 PUSH_DAYTONA=false
+CI_AUTH=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -68,6 +72,7 @@ while [ $# -gt 0 ]; do
       PLATFORM="$2"; shift 2 ;;
     --ignore-unstaged) IGNORE_UNSTAGED=true; shift ;;
     --push-daytona)    PUSH_DAYTONA=true; shift ;;
+    --ci)              CI_AUTH=true; shift ;;
     --help)            usage; exit 0 ;;
     -*)                echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
     *)                 IMAGES+=("$1"); shift ;;
@@ -101,6 +106,21 @@ fi
 if [ "$PUSH_DAYTONA" = true ] && [ "$PLATFORM" = "linux/arm64" ]; then
   echo "Error: --push-daytona requires linux/amd64; cannot use --platform linux/arm64." >&2
   exit 1
+fi
+
+# Validate --ci flag
+if [ "$CI_AUTH" = true ]; then
+  if [ "$PUSH_DAYTONA" != true ]; then
+    echo "Error: --ci requires --push-daytona." >&2
+    exit 1
+  fi
+  missing=()
+  [ -z "${DAYTONA_PROD_API_KEY:-}" ]    && missing+=(DAYTONA_PROD_API_KEY)
+  [ -z "${DAYTONA_STAGING_API_KEY:-}" ] && missing+=(DAYTONA_STAGING_API_KEY)
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "Error: --ci requires the following environment variables to be set: ${missing[*]}" >&2
+    exit 1
+  fi
 fi
 
 # Default platform: host architecture, or linux/amd64 when pushing to Daytona
@@ -189,7 +209,15 @@ for preset in "${PRESETS[@]}"; do
       disk="${SIZE_DISK[$i]}"
       snapshot_name="amika/${preset}-${size}:${VERSION}"
       for org in amika-prod Fixpoint; do
-        daytona organization use "$org"
+        if [ "$CI_AUTH" = true ]; then
+          case "$org" in
+            amika-prod) api_key="$DAYTONA_PROD_API_KEY" ;;
+            Fixpoint)   api_key="$DAYTONA_STAGING_API_KEY" ;;
+          esac
+          daytona login --api-key "$api_key"
+        else
+          daytona organization use "$org"
+        fi
         echo "Pushing ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) to Daytona org ${org}..."
         push_output=""
         push_rc=0
