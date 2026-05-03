@@ -84,6 +84,13 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	if req.SetupScript != "" && req.SetupScriptText != "" {
 		return Sandbox{}, fmt.Errorf("%w: SetupScript and SetupScriptText are mutually exclusive", ErrInvalidArgument)
 	}
+
+	// Calculate expiration timestamps from TTL.
+	ttlResult, err := sandbox.ComputeTTL(req.TTL, req.WarnBefore, time.Now().UTC())
+	if err != nil {
+		return Sandbox{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	expiresAt, warnAt := ttlResult.ExpiresAt, ttlResult.WarnAt
 	ports, err := normalizePortBindings(req.Ports)
 	if err != nil {
 		return Sandbox{}, err
@@ -166,6 +173,8 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		ContainerID: containerID,
 		Image:       req.Image,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		ExpiresAt:   expiresAt,
+		WarnAt:      warnAt,
 		Preset:      req.Preset,
 		Mounts:      mounts,
 		Env:         req.Env,
@@ -182,6 +191,8 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		ContainerID: info.ContainerID,
 		Image:       info.Image,
 		CreatedAt:   info.CreatedAt,
+		ExpiresAt:   info.ExpiresAt,
+		WarnAt:      info.WarnAt,
 		Preset:      info.Preset,
 		Branch:      info.Branch,
 		Mounts:      toMounts(info.Mounts),
@@ -247,6 +258,8 @@ func (s *serviceImpl) ListSandboxes(context.Context, ListSandboxesRequest) (List
 			ContainerID: it.ContainerID,
 			Image:       it.Image,
 			CreatedAt:   it.CreatedAt,
+			ExpiresAt:   it.ExpiresAt,
+			WarnAt:      it.WarnAt,
 			Preset:      it.Preset,
 			Branch:      it.Branch,
 			Mounts:      toMounts(it.Mounts),

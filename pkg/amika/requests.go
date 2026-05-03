@@ -33,6 +33,8 @@ type CreateSandboxRequest struct {
 	SetupScript     string        `json:"SetupScript,omitempty"`
 	SetupScriptText string        `json:"SetupScriptText,omitempty"`
 	Branch          string        `json:"Branch,omitempty"`
+	TTL             string        `json:"TTL,omitempty"`        // duration string, e.g. "2h", "30m"
+	WarnBefore      string        `json:"WarnBefore,omitempty"` // duration before expiry to warn, default "10m"
 }
 
 // DeleteSandboxRequest describes sandbox deletion input.

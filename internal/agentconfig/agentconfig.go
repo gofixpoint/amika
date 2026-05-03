@@ -51,6 +51,16 @@ func AllMounts(homeDir string) []MountSpec {
 	return specs
 }
 
+// AllMountsWithoutClaudeConfig returns mount specs for all supported coding
+// agent configurations except Claude Code credential files. Use this when
+// the sandbox should receive a fresh Claude config (e.g. via --no-claude-config).
+func AllMountsWithoutClaudeConfig(homeDir string) []MountSpec {
+	var specs []MountSpec
+	specs = append(specs, OpenCodeMounts(homeDir)...)
+	specs = append(specs, CodexMounts(homeDir)...)
+	return specs
+}
+
 // RWCopyMounts converts MountSpecs into sandbox MountBindings with rwcopy mode.
 func RWCopyMounts(specs []MountSpec) []sandbox.MountBinding {
 	mounts := make([]sandbox.MountBinding, 0, len(specs))

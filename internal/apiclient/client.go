@@ -40,19 +40,22 @@ func NewClientWithTokenSource(baseURL string, ts TokenSource) *Client {
 
 // CreateSandboxRequest is the request body for POST /api/v0beta1/sandboxes.
 type CreateSandboxRequest struct {
-	Name               string               `json:"name,omitempty"`
-	Provider           string               `json:"provider,omitempty"`
-	RepoURL            string               `json:"repo_url,omitempty"`
-	AutoStopInterval   *int                 `json:"auto_stop_interval,omitempty"`
-	AutoDeleteInterval *int                 `json:"auto_delete_interval,omitempty"`
-	EnvVars            map[string]string    `json:"env_vars,omitempty"`
-	SecretEnvVars      map[string]string    `json:"secret_env_vars,omitempty"`
-	Preset             string               `json:"preset,omitempty"`
-	Size               string               `json:"size,omitempty"`
-	SetupScriptText    string               `json:"setup_script_text,omitempty"`
-	AgentCredentials   []AgentCredentialRef `json:"agent_credentials,omitempty"`
-	Branch             string               `json:"branch,omitempty"`
-	NewBranchName      string               `json:"new_branch_name,omitempty"`
+	Name                 string               `json:"name,omitempty"`
+	Provider             string               `json:"provider,omitempty"`
+	RepoURL              string               `json:"repo_url,omitempty"`
+	AutoStopInterval     *int                 `json:"auto_stop_interval,omitempty"`
+	AutoDeleteInterval   *int                 `json:"auto_delete_interval,omitempty"`
+	EnvVars              map[string]string    `json:"env_vars,omitempty"`
+	SecretEnvVars        map[string]string    `json:"secret_env_vars,omitempty"`
+	Preset               string               `json:"preset,omitempty"`
+	Size                 string               `json:"size,omitempty"`
+	SetupScriptText      string               `json:"setup_script_text,omitempty"`
+	ClaudeCredentialName string               `json:"claude_credential_name,omitempty"`
+	AgentCredentials     []AgentCredentialRef `json:"agent_credentials,omitempty"`
+	Branch               string               `json:"branch,omitempty"`
+	NewBranchName        string               `json:"new_branch_name,omitempty"`
+	TTL                  string               `json:"ttl,omitempty"`
+	WarnBefore           string               `json:"warn_before,omitempty"`
 }
 
 // AgentCredentialRef selects which credential of a given kind the server
@@ -60,20 +63,26 @@ type CreateSandboxRequest struct {
 // signal asking the server to walk repo-config defaults / auto-default.
 // None=true is the explicit "do not inject" signal.
 type AgentCredentialRef struct {
+	// Kind is the agent kind, e.g. "claude" or "codex".
 	Kind string `json:"kind"`
+	// Name is the human-readable credential label (optional; omit to let the
+	// server pick a default).
 	Name string `json:"name,omitempty"`
-	Type string `json:"type,omitempty"` // "oauth" or "api_key"
-	None bool   `json:"none,omitempty"`
+	// Type is "oauth" or "api_key" (optional).
+	Type string `json:"type,omitempty"`
+	// None, when true, tells the server not to inject any credential for this
+	// kind.
+	None bool `json:"none,omitempty"`
 }
 
-// ResolvedAgentCredential is one entry in RemoteSandbox.ResolvedAgentCredentials,
-// describing how the server resolved a single agent_credentials request.
+// ResolvedAgentCredential is returned by the server after a sandbox is
+// created, describing how each requested agent credential was resolved.
 type ResolvedAgentCredential struct {
 	Kind    string `json:"kind"`
-	Outcome string `json:"outcome"` // "resolved" or "skipped"
-	Name    string `json:"name,omitempty"`
-	Type    string `json:"type,omitempty"`
-	Source  string `json:"source,omitempty"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Source  string `json:"source"`
+	Outcome string `json:"outcome"` // "resolved" | "skipped"
 	Reason  string `json:"reason,omitempty"`
 }
 
@@ -86,7 +95,6 @@ type RemoteSandbox struct {
 	State                    string                    `json:"state"`
 	CreatedAt                string                    `json:"created_at"`
 	Branch                   string                    `json:"branch"`
-	ErrorMessage             string                    `json:"error_message"`
 	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
 }
 
@@ -119,7 +127,7 @@ func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
 	return &result, nil
 }
 
-// waitForSandboxState polls GET /api/sandboxes/{name} every 3 seconds until
+// waitForSandboxState polls GET /api/v0beta1/sandboxes/{name} every 3 seconds until
 // the sandbox state matches one of readyStates or "failed".
 func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg string) (*RemoteSandbox, error) {
 	for {
@@ -128,9 +136,6 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 			return nil, err
 		}
 		if sb.State == "failed" {
-			if sb.ErrorMessage != "" {
-				return sb, fmt.Errorf("%s", sb.ErrorMessage)
-			}
 			return sb, fmt.Errorf("%s", failMsg)
 		}
 		for _, s := range readyStates {
@@ -142,7 +147,7 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 	}
 }
 
-// WaitForSandbox polls GET /api/sandboxes/{name} until the sandbox reaches
+// WaitForSandbox polls GET /api/v0beta1/sandboxes/{name} until the sandbox reaches
 // a ready or terminal state. It polls every 3 seconds.
 func (c *Client) WaitForSandbox(name string) (*RemoteSandbox, error) {
 	return c.waitForSandboxState(name, []string{"active", "running", "started"}, "sandbox provisioning failed")
@@ -189,7 +194,7 @@ func (c *Client) StartSandbox(name string) error {
 	return nil
 }
 
-// WaitForSandboxStart polls GET /api/sandboxes/{name} until the sandbox
+// WaitForSandboxStart polls GET /api/v0beta1/sandboxes/{name} until the sandbox
 // transitions out of "initializing" state. It polls every 3 seconds.
 func (c *Client) WaitForSandboxStart(name string) (*RemoteSandbox, error) {
 	return c.waitForSandboxState(name, []string{"active", "running", "started"}, "sandbox start failed")
@@ -205,7 +210,7 @@ func (c *Client) StopSandbox(name string) error {
 	return nil
 }
 
-// WaitForSandboxStop polls GET /api/sandboxes/{name} until the sandbox
+// WaitForSandboxStop polls GET /api/v0beta1/sandboxes/{name} until the sandbox
 // transitions out of "stopping" state. It polls every 3 seconds.
 func (c *Client) WaitForSandboxStop(name string) (*RemoteSandbox, error) {
 	return c.waitForSandboxState(name, []string{"stopped"}, "sandbox stop failed")

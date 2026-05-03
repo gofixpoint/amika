@@ -48,6 +48,8 @@ type Info struct {
 	ContainerID string         `json:"containerId"`
 	Image       string         `json:"image"`
 	CreatedAt   string         `json:"createdAt"`
+	ExpiresAt   string         `json:"expiresAt,omitempty"`
+	WarnAt      string         `json:"warnAt,omitempty"`
 	Preset      string         `json:"preset,omitempty"`
 	Mounts      []MountBinding `json:"mounts,omitempty"`
 	Env         []string       `json:"env,omitempty"`
