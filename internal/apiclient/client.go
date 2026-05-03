@@ -33,43 +33,50 @@ func NewClientWithTokenSource(baseURL string, ts TokenSource) *Client {
 	}
 }
 
-// CreateSandboxRequest is the request body for POST /api/sandboxes.
-type CreateSandboxRequest struct {
-	Name               string               `json:"name,omitempty"`
-	Provider           string               `json:"provider,omitempty"`
-	GitHubURL          string               `json:"github_url,omitempty"`
-	AutoStopInterval   *int                 `json:"auto_stop_interval,omitempty"`
-	AutoDeleteInterval *int                 `json:"auto_delete_interval,omitempty"`
-	EnvVars            map[string]string    `json:"env_vars,omitempty"`
-	SecretEnvVars      map[string]string    `json:"secret_env_vars,omitempty"`
-	Preset             string               `json:"preset,omitempty"`
-	Size               string               `json:"size,omitempty"`
-	SetupScriptText    string               `json:"setup_script_text,omitempty"`
-	AgentCredentials   []AgentCredentialRef `json:"agent_credentials,omitempty"`
-	Branch             string               `json:"branch,omitempty"`
-	NewBranchName      string               `json:"new_branch_name,omitempty"`
-}
-
-// AgentCredentialRef selects which credential of a given kind the server
-// should inject into a sandbox. An entry with only Kind set is the opt-in
-// signal asking the server to walk repo-config defaults / auto-default.
-// None=true is the explicit "do not inject" signal.
+// AgentCredentialRef specifies which credential to use for a given agent kind
+// when creating a remote sandbox.
 type AgentCredentialRef struct {
+	// Kind is the agent kind, e.g. "claude" or "codex".
 	Kind string `json:"kind"`
+	// Name is the human-readable credential label (optional; omit to let the
+	// server pick a default).
 	Name string `json:"name,omitempty"`
-	Type string `json:"type,omitempty"` // "oauth" or "api_key"
-	None bool   `json:"none,omitempty"`
+	// Type is "oauth" or "api_key" (optional).
+	Type string `json:"type,omitempty"`
+	// None, when true, tells the server not to inject any credential for this
+	// kind.
+	None bool `json:"none,omitempty"`
 }
 
-// ResolvedAgentCredential is one entry in RemoteSandbox.ResolvedAgentCredentials,
-// describing how the server resolved a single agent_credentials request.
+// ResolvedAgentCredential is returned by the server after a sandbox is
+// created, describing how each requested agent credential was resolved.
 type ResolvedAgentCredential struct {
 	Kind    string `json:"kind"`
-	Outcome string `json:"outcome"` // "resolved" or "skipped"
-	Name    string `json:"name,omitempty"`
-	Type    string `json:"type,omitempty"`
-	Source  string `json:"source,omitempty"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Source  string `json:"source"`
+	Outcome string `json:"outcome"` // "resolved" | "skipped"
 	Reason  string `json:"reason,omitempty"`
+}
+
+// CreateSandboxRequest is the request body for POST /api/sandboxes.
+type CreateSandboxRequest struct {
+	Name                 string               `json:"name,omitempty"`
+	Provider             string               `json:"provider,omitempty"`
+	GitHubURL            string               `json:"github_url,omitempty"`
+	AutoStopInterval     *int                 `json:"auto_stop_interval,omitempty"`
+	AutoDeleteInterval   *int                 `json:"auto_delete_interval,omitempty"`
+	EnvVars              map[string]string    `json:"env_vars,omitempty"`
+	SecretEnvVars        map[string]string    `json:"secret_env_vars,omitempty"`
+	Preset               string               `json:"preset,omitempty"`
+	Size                 string               `json:"size,omitempty"`
+	SetupScriptText      string               `json:"setup_script_text,omitempty"`
+	ClaudeCredentialName string               `json:"claude_credential_name,omitempty"`
+	Branch               string               `json:"branch,omitempty"`
+	NewBranchName        string               `json:"new_branch_name,omitempty"`
+	TTL                  string               `json:"ttl,omitempty"`
+	WarnBefore           string               `json:"warn_before,omitempty"`
+	AgentCredentials     []AgentCredentialRef `json:"agent_credentials,omitempty"`
 }
 
 // RemoteSandbox represents a sandbox returned by the remote API.
@@ -81,7 +88,6 @@ type RemoteSandbox struct {
 	State                    string                    `json:"state"`
 	CreatedAt                string                    `json:"created_at"`
 	Branch                   string                    `json:"branch"`
-	ErrorMessage             string                    `json:"error_message"`
 	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
 }
 
@@ -123,9 +129,6 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 			return nil, err
 		}
 		if sb.State == "failed" {
-			if sb.ErrorMessage != "" {
-				return sb, fmt.Errorf("%s", sb.ErrorMessage)
-			}
 			return sb, fmt.Errorf("%s", failMsg)
 		}
 		for _, s := range readyStates {
@@ -302,11 +305,10 @@ func (c *Client) ListProviderSecrets(provider string) ([]ProviderSecretListItem,
 	return result, nil
 }
 
-// DeleteProviderSecret deletes a provider-scoped credential by ID. provider is
-// the URL segment ("claude", "codex").
-func (c *Client) DeleteProviderSecret(provider, id string) error {
-	if err := c.doJSON("DELETE", "/api/secrets/"+provider+"/"+id, nil, nil); err != nil {
-		return fmt.Errorf("remote delete %s secret: %w", provider, err)
+// DeleteProviderSecret deletes a provider-scoped credential by ID.
+func (c *Client) DeleteProviderSecret(id string) error {
+	if err := c.doJSON("DELETE", "/api/secrets/"+id, nil, nil); err != nil {
+		return fmt.Errorf("remote delete secret: %w", err)
 	}
 	return nil
 }
