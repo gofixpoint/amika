@@ -213,6 +213,148 @@ func TestAllMounts_Combined(t *testing.T) {
 	}
 }
 
+func TestClaudeConfigDirMount_Exists(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := ClaudeConfigDirMount(home)
+	if spec == nil {
+		t.Fatal("expected non-nil MountSpec")
+	}
+	if spec.ContainerPath != "/home/amika/.claude" {
+		t.Errorf("ContainerPath = %q, want /home/amika/.claude", spec.ContainerPath)
+	}
+	if spec.HostPath != filepath.Join(home, ".claude") {
+		t.Errorf("HostPath = %q, want %q", spec.HostPath, filepath.Join(home, ".claude"))
+	}
+	if !spec.IsDir {
+		t.Error("IsDir = false, want true")
+	}
+}
+
+func TestClaudeConfigDirMount_NotExists(t *testing.T) {
+	home := t.TempDir()
+	spec := ClaudeConfigDirMount(home)
+	if spec != nil {
+		t.Fatalf("expected nil, got %+v", spec)
+	}
+}
+
+func TestClaudeConfigDirMount_FileNotDir(t *testing.T) {
+	home := t.TempDir()
+	// Create .claude as a regular file — should return nil.
+	if err := os.WriteFile(filepath.Join(home, ".claude"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := ClaudeConfigDirMount(home)
+	if spec != nil {
+		t.Fatalf("expected nil when .claude is a file, got %+v", spec)
+	}
+}
+
+func TestAllMounts_WithClaudeDir(t *testing.T) {
+	home := t.TempDir()
+
+	// Create .claude/ directory AND a credential file inside it.
+	writeFixtureFile(t, home, filepath.Join(".claude", ".credentials.json"))
+	// Also create a top-level Claude credential file.
+	writeFixtureFile(t, home, ".claude.json")
+
+	specs := AllMounts(home)
+
+	// Expect: .claude dir mount + .claude.json file mount (but NOT .claude/.credentials.json).
+	wantContainers := map[string]bool{
+		"/home/amika/.claude":      true, // directory mount
+		"/home/amika/.claude.json": true, // top-level file, not inside .claude/
+	}
+	for _, s := range specs {
+		if !wantContainers[s.ContainerPath] {
+			t.Errorf("unexpected ContainerPath %q", s.ContainerPath)
+		}
+		delete(wantContainers, s.ContainerPath)
+	}
+	for path := range wantContainers {
+		t.Errorf("missing expected ContainerPath %q", path)
+	}
+
+	// Verify the directory mount has IsDir=true.
+	for _, s := range specs {
+		if s.ContainerPath == "/home/amika/.claude" && !s.IsDir {
+			t.Error(".claude mount should have IsDir=true")
+		}
+	}
+}
+
+func TestAllMounts_WithoutClaudeDir(t *testing.T) {
+	home := t.TempDir()
+
+	// Only create individual credential files, no .claude/ directory.
+	writeFixtureFile(t, home, ".claude.json")
+	writeFixtureFile(t, home, ".claude-oauth-credentials.json")
+
+	specs := AllMounts(home)
+	if len(specs) != 2 {
+		t.Fatalf("expected 2 specs, got %d", len(specs))
+	}
+
+	wantContainers := map[string]bool{
+		"/home/amika/.claude.json":                   true,
+		"/home/amika/.claude-oauth-credentials.json": true,
+	}
+	for _, s := range specs {
+		if !wantContainers[s.ContainerPath] {
+			t.Errorf("unexpected ContainerPath %q", s.ContainerPath)
+		}
+		if s.IsDir {
+			t.Errorf("IsDir = true for %q, want false", s.ContainerPath)
+		}
+		delete(wantContainers, s.ContainerPath)
+	}
+}
+
+func TestFilterOutSubpaths(t *testing.T) {
+	specs := []MountSpec{
+		{ContainerPath: "/home/amika/.claude.json"},
+		{ContainerPath: "/home/amika/.claude/.credentials.json"},
+		{ContainerPath: "/home/amika/.claude-oauth-credentials.json"},
+	}
+
+	filtered := filterOutSubpaths(specs, ".claude/")
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 specs after filtering, got %d", len(filtered))
+	}
+	for _, s := range filtered {
+		if s.ContainerPath == "/home/amika/.claude/.credentials.json" {
+			t.Error("should have filtered out .claude/.credentials.json")
+		}
+	}
+}
+
+func TestAllMountsWithoutClaudeConfig(t *testing.T) {
+	home := t.TempDir()
+
+	writeFixtureFile(t, home, ".claude.json")
+	writeFixtureFile(t, home, filepath.Join(".claude", ".credentials.json"))
+	writeFixtureFile(t, home, filepath.Join(".local", "share", "opencode", "auth.json"))
+	writeFixtureFile(t, home, filepath.Join(".codex", "auth.json"))
+
+	specs := AllMountsWithoutClaudeConfig(home)
+	if len(specs) != 2 {
+		t.Fatalf("expected 2 specs, got %d", len(specs))
+	}
+
+	for _, s := range specs {
+		if s.ContainerPath == "/home/amika/.claude.json" ||
+			s.ContainerPath == "/home/amika/.claude/.credentials.json" ||
+			s.ContainerPath == "/home/amika/.claude" {
+			t.Errorf("should not include Claude path %q", s.ContainerPath)
+		}
+	}
+}
+
 func TestRWCopyMounts(t *testing.T) {
 	specs := []MountSpec{
 		{HostPath: "/home/user/.claude.json", ContainerPath: "/home/amika/.claude.json", IsDir: false},
