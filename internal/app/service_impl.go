@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -277,6 +278,154 @@ func (s *Service) ListServices(_ context.Context, req amika.ListServicesRequest)
 		}
 	}
 	return amika.ListServicesResult{Items: items}, nil
+}
+
+// CopyFromSandbox copies files from a sandbox container to the host.
+func (s *Service) CopyFromSandbox(_ context.Context, req amika.CopyFromSandboxRequest) (amika.CopyFromSandboxResult, error) {
+	if req.Name == "" {
+		return amika.CopyFromSandboxResult{}, fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	if req.ContainerPath == "" {
+		return amika.CopyFromSandboxResult{}, fmt.Errorf("%w: container path is required", amika.ErrInvalidArgument)
+	}
+	if req.HostPath == "" {
+		return amika.CopyFromSandboxResult{}, fmt.Errorf("%w: host path is required", amika.ErrInvalidArgument)
+	}
+	if _, err := s.deps.Sandboxes.Get(req.Name); err != nil {
+		return amika.CopyFromSandboxResult{}, fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, req.Name)
+	}
+	if err := s.deps.Docker.CopyFromContainer(req.Name, req.ContainerPath, req.HostPath); err != nil {
+		return amika.CopyFromSandboxResult{}, mapDockerErr(err, req.Name, req.ContainerPath)
+	}
+	return amika.CopyFromSandboxResult{}, nil
+}
+
+// SandboxLs lists directory contents inside a sandbox.
+func (s *Service) SandboxLs(_ context.Context, req amika.SandboxLsRequest) (amika.SandboxLsResult, error) {
+	if req.Name == "" {
+		return amika.SandboxLsResult{}, fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	if req.Path == "" {
+		return amika.SandboxLsResult{}, fmt.Errorf("%w: path is required", amika.ErrInvalidArgument)
+	}
+	if _, err := s.deps.Sandboxes.Get(req.Name); err != nil {
+		return amika.SandboxLsResult{}, fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, req.Name)
+	}
+	out, err := s.deps.Docker.ExecInContainer(req.Name, []string{
+		"sh", "-c", fmt.Sprintf("stat -c '%%n|%%s|%%a|%%Y|%%F' %s/* %s/.* 2>/dev/null || true", req.Path, req.Path),
+	})
+	if err != nil {
+		return amika.SandboxLsResult{}, mapDockerErr(err, req.Name, req.Path)
+	}
+	entries := amika.ParseStatOutput(out)
+	filtered := make([]amika.SandboxFileInfo, 0, len(entries))
+	for _, e := range entries {
+		base := e.Name
+		if idx := strings.LastIndex(base, "/"); idx >= 0 {
+			base = base[idx+1:]
+		}
+		if base == "." || base == ".." {
+			continue
+		}
+		e.Name = base
+		filtered = append(filtered, e)
+	}
+	return amika.SandboxLsResult{Entries: filtered}, nil
+}
+
+// SandboxCat reads file contents from a sandbox.
+func (s *Service) SandboxCat(_ context.Context, req amika.SandboxCatRequest) (amika.SandboxCatResult, error) {
+	if req.Name == "" {
+		return amika.SandboxCatResult{}, fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	if req.Path == "" {
+		return amika.SandboxCatResult{}, fmt.Errorf("%w: path is required", amika.ErrInvalidArgument)
+	}
+	if _, err := s.deps.Sandboxes.Get(req.Name); err != nil {
+		return amika.SandboxCatResult{}, fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, req.Name)
+	}
+	maxBytes := req.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 10 * 1024 * 1024
+	}
+	limit := maxBytes + 1
+	out, err := s.deps.Docker.ExecInContainer(req.Name, []string{
+		"head", "-c", strconv.FormatInt(limit, 10), req.Path,
+	})
+	if err != nil {
+		return amika.SandboxCatResult{}, mapDockerErr(err, req.Name, req.Path)
+	}
+	if int64(len(out)) > maxBytes {
+		return amika.SandboxCatResult{}, fmt.Errorf("%w: file exceeds %dMB limit; use 'sandbox cp' instead", amika.ErrInvalidArgument, maxBytes/(1024*1024))
+	}
+	return amika.SandboxCatResult{Content: out, Truncated: false}, nil
+}
+
+// SandboxRm removes files inside a sandbox.
+func (s *Service) SandboxRm(_ context.Context, req amika.SandboxRmRequest) (amika.SandboxRmResult, error) {
+	if req.Name == "" {
+		return amika.SandboxRmResult{}, fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	if req.Path == "" {
+		return amika.SandboxRmResult{}, fmt.Errorf("%w: path is required", amika.ErrInvalidArgument)
+	}
+	if _, err := s.deps.Sandboxes.Get(req.Name); err != nil {
+		return amika.SandboxRmResult{}, fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, req.Name)
+	}
+	rmArgs := []string{"rm"}
+	if req.Recursive {
+		rmArgs = append(rmArgs, "-r")
+	}
+	if req.Force {
+		rmArgs = append(rmArgs, "-f")
+	}
+	rmArgs = append(rmArgs, req.Path)
+	if _, err := s.deps.Docker.ExecInContainer(req.Name, rmArgs); err != nil {
+		return amika.SandboxRmResult{}, mapDockerErr(err, req.Name, req.Path)
+	}
+	return amika.SandboxRmResult{}, nil
+}
+
+// SandboxStat returns file metadata from a sandbox.
+func (s *Service) SandboxStat(_ context.Context, req amika.SandboxStatRequest) (amika.SandboxStatResult, error) {
+	if req.Name == "" {
+		return amika.SandboxStatResult{}, fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	if req.Path == "" {
+		return amika.SandboxStatResult{}, fmt.Errorf("%w: path is required", amika.ErrInvalidArgument)
+	}
+	if _, err := s.deps.Sandboxes.Get(req.Name); err != nil {
+		return amika.SandboxStatResult{}, fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, req.Name)
+	}
+	out, err := s.deps.Docker.ExecInContainer(req.Name, []string{
+		"stat", "-c", "%n|%s|%a|%Y|%F", req.Path,
+	})
+	if err != nil {
+		return amika.SandboxStatResult{}, mapDockerErr(err, req.Name, req.Path)
+	}
+	entries := amika.ParseStatOutput(out)
+	if len(entries) == 0 {
+		return amika.SandboxStatResult{}, fmt.Errorf("%w: path %q not found in sandbox %q", amika.ErrNotFound, req.Path, req.Name)
+	}
+	return amika.SandboxStatResult{Info: entries[0]}, nil
+}
+
+// mapDockerErr maps Docker error messages to typed sentinel errors.
+func mapDockerErr(err error, sandboxName, path string) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		if strings.Contains(msg, "container") {
+			return fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, sandboxName)
+		}
+		return fmt.Errorf("%w: path %q not found in sandbox %q", amika.ErrNotFound, path, sandboxName)
+	case strings.Contains(msg, "not running"):
+		return fmt.Errorf("%w: sandbox %q is not running", amika.ErrInvalidArgument, sandboxName)
+	case strings.Contains(msg, "permission denied"):
+		return fmt.Errorf("%w: permission denied: %q in sandbox %q", amika.ErrInternal, path, sandboxName)
+	default:
+		return fmt.Errorf("%w: %v", amika.ErrDependency, err)
+	}
 }
 
 // ExtractAuth extracts auth env assignment lines.

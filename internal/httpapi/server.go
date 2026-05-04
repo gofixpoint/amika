@@ -29,6 +29,11 @@ func NewHandler(service amika.Service) http.Handler {
 	registerAuthExtract(api, service)
 	registerMaterialize(api, service)
 	registerListServices(api, service)
+	registerSandboxCp(api, service)
+	registerSandboxLs(api, service)
+	registerSandboxCat(api, service)
+	registerSandboxRm(api, service)
+	registerSandboxStat(api, service)
 	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(api.OpenAPI())
@@ -158,6 +163,119 @@ func registerListServices(api huma.API, service amika.Service) {
 			return nil, toHTTPError(err)
 		}
 		return &listServicesOutput{Body: result}, nil
+	})
+}
+
+type sandboxCpInput struct {
+	Name string `path:"name"`
+	Body struct {
+		ContainerPath string `json:"containerPath"`
+		HostPath      string `json:"hostPath"`
+	}
+}
+type sandboxCpOutput struct{ Body amika.CopyFromSandboxResult }
+
+func registerSandboxCp(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/sandboxes/{name}/cp", func(ctx context.Context, input *sandboxCpInput) (*sandboxCpOutput, error) {
+		result, err := service.CopyFromSandbox(ctx, amika.CopyFromSandboxRequest{
+			Name:          input.Name,
+			ContainerPath: input.Body.ContainerPath,
+			HostPath:      input.Body.HostPath,
+		})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &sandboxCpOutput{Body: result}, nil
+	})
+}
+
+type sandboxLsInput struct {
+	Name string `path:"name"`
+	Body struct {
+		Path string `json:"path"`
+	}
+}
+type sandboxLsOutput struct{ Body amika.SandboxLsResult }
+
+func registerSandboxLs(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/sandboxes/{name}/ls", func(ctx context.Context, input *sandboxLsInput) (*sandboxLsOutput, error) {
+		result, err := service.SandboxLs(ctx, amika.SandboxLsRequest{
+			Name: input.Name,
+			Path: input.Body.Path,
+		})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &sandboxLsOutput{Body: result}, nil
+	})
+}
+
+type sandboxCatInput struct {
+	Name string `path:"name"`
+	Body struct {
+		Path     string `json:"path"`
+		MaxBytes int64  `json:"maxBytes,omitempty"`
+	}
+}
+type sandboxCatOutput struct{ Body amika.SandboxCatResult }
+
+func registerSandboxCat(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/sandboxes/{name}/cat", func(ctx context.Context, input *sandboxCatInput) (*sandboxCatOutput, error) {
+		result, err := service.SandboxCat(ctx, amika.SandboxCatRequest{
+			Name:     input.Name,
+			Path:     input.Body.Path,
+			MaxBytes: input.Body.MaxBytes,
+		})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &sandboxCatOutput{Body: result}, nil
+	})
+}
+
+type sandboxRmInput struct {
+	Name string `path:"name"`
+	Body struct {
+		Path      string `json:"path"`
+		Recursive bool   `json:"recursive,omitempty"`
+		Force     bool   `json:"force,omitempty"`
+	}
+}
+type sandboxRmOutput struct{ Body amika.SandboxRmResult }
+
+func registerSandboxRm(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/sandboxes/{name}/rm", func(ctx context.Context, input *sandboxRmInput) (*sandboxRmOutput, error) {
+		result, err := service.SandboxRm(ctx, amika.SandboxRmRequest{
+			Name:      input.Name,
+			Path:      input.Body.Path,
+			Recursive: input.Body.Recursive,
+			Force:     input.Body.Force,
+		})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &sandboxRmOutput{Body: result}, nil
+	})
+}
+
+type sandboxStatInput struct {
+	Name string `path:"name"`
+	Body struct {
+		Path string `json:"path"`
+	}
+}
+type sandboxStatOutput struct{ Body amika.SandboxStatResult }
+
+func registerSandboxStat(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/sandboxes/{name}/stat", func(ctx context.Context, input *sandboxStatInput) (*sandboxStatOutput, error) {
+		result, err := service.SandboxStat(ctx, amika.SandboxStatRequest{
+			Name: input.Name,
+			Path: input.Body.Path,
+		})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &sandboxStatOutput{Body: result}, nil
 	})
 }
 

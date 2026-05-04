@@ -40,6 +40,21 @@ func (stubService) ExtractAuth(context.Context, amika.AuthExtractRequest) (amika
 func (stubService) ListServices(context.Context, amika.ListServicesRequest) (amika.ListServicesResult, error) {
 	return amika.ListServicesResult{}, nil
 }
+func (stubService) CopyFromSandbox(context.Context, amika.CopyFromSandboxRequest) (amika.CopyFromSandboxResult, error) {
+	return amika.CopyFromSandboxResult{}, amika.ErrUnimplemented
+}
+func (stubService) SandboxLs(context.Context, amika.SandboxLsRequest) (amika.SandboxLsResult, error) {
+	return amika.SandboxLsResult{}, amika.ErrUnimplemented
+}
+func (stubService) SandboxCat(context.Context, amika.SandboxCatRequest) (amika.SandboxCatResult, error) {
+	return amika.SandboxCatResult{}, amika.ErrUnimplemented
+}
+func (stubService) SandboxRm(context.Context, amika.SandboxRmRequest) (amika.SandboxRmResult, error) {
+	return amika.SandboxRmResult{}, amika.ErrUnimplemented
+}
+func (stubService) SandboxStat(context.Context, amika.SandboxStatRequest) (amika.SandboxStatResult, error) {
+	return amika.SandboxStatResult{}, amika.ErrUnimplemented
+}
 
 type captureCreateSandboxService struct {
 	stubService
@@ -98,7 +113,7 @@ func TestOpenAPIIncludesV1Paths(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths := doc["paths"].(map[string]any)
-	for _, p := range []string{"/v1/sandboxes", "/v1/volumes", "/v1/auth/extract", "/v1/materialize"} {
+	for _, p := range []string{"/v1/sandboxes", "/v1/volumes", "/v1/auth/extract", "/v1/materialize", "/v1/sandboxes/{name}/cp", "/v1/sandboxes/{name}/ls", "/v1/sandboxes/{name}/cat", "/v1/sandboxes/{name}/rm", "/v1/sandboxes/{name}/stat"} {
 		if _, ok := paths[p]; !ok {
 			t.Fatalf("missing path %s", p)
 		}
@@ -184,5 +199,32 @@ func TestOpenAPICreateSandboxUsesPascalCaseSetupScriptFields(t *testing.T) {
 		if field == "SetupScript" || field == "SetupScriptText" {
 			t.Fatalf("field %v should not be required", field)
 		}
+	}
+}
+
+func TestFilesystemEndpoints(t *testing.T) {
+	h := NewHandler(stubService{})
+	cases := []struct {
+		name string
+		m, u string
+		body string
+		code int
+	}{
+		{"cp returns 501", http.MethodPost, "/v1/sandboxes/sb/cp", `{"containerPath":"/tmp","hostPath":"/local"}`, 501},
+		{"ls returns 501", http.MethodPost, "/v1/sandboxes/sb/ls", `{"path":"/tmp"}`, 501},
+		{"cat returns 501", http.MethodPost, "/v1/sandboxes/sb/cat", `{"path":"/tmp/f"}`, 501},
+		{"rm returns 501", http.MethodPost, "/v1/sandboxes/sb/rm", `{"path":"/tmp/f"}`, 501},
+		{"stat returns 501", http.MethodPost, "/v1/sandboxes/sb/stat", `{"path":"/tmp/f"}`, 501},
+		{"cp missing fields returns 422", http.MethodPost, "/v1/sandboxes/sb/cp", `{}`, 422},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.m, tc.u, bytes.NewReader([]byte(tc.body)))
+			res := httptest.NewRecorder()
+			h.ServeHTTP(res, req)
+			if res.Code != tc.code {
+				t.Fatalf("%s %s status=%d want=%d body=%s", tc.m, tc.u, res.Code, tc.code, res.Body.String())
+			}
+		})
 	}
 }
