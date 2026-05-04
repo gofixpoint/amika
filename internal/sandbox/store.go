@@ -43,17 +43,20 @@ type ServicePortInfo struct {
 
 // Info represents a tracked sandbox.
 type Info struct {
-	Name        string         `json:"name"`
-	Provider    string         `json:"provider"`
-	ContainerID string         `json:"containerId"`
-	Image       string         `json:"image"`
-	CreatedAt   string         `json:"createdAt"`
-	Preset      string         `json:"preset,omitempty"`
-	Mounts      []MountBinding `json:"mounts,omitempty"`
-	Env         []string       `json:"env,omitempty"`
-	Ports       []PortBinding  `json:"ports,omitempty"`
-	Services    []ServiceInfo  `json:"services,omitempty"`
-	Branch      string         `json:"branch,omitempty"`
+	Name              string         `json:"name"`
+	Provider          string         `json:"provider"`
+	ContainerID       string         `json:"containerId"`
+	Image             string         `json:"image"`
+	CreatedAt         string         `json:"createdAt"`
+	Preset            string         `json:"preset,omitempty"`
+	Mounts            []MountBinding `json:"mounts,omitempty"`
+	Env               []string       `json:"env,omitempty"`
+	Ports             []PortBinding  `json:"ports,omitempty"`
+	Services          []ServiceInfo  `json:"services,omitempty"`
+	Branch            string         `json:"branch,omitempty"`
+	TTL               string         `json:"ttl,omitempty"`
+	InactivityTimeout string         `json:"inactivityTimeout,omitempty"`
+	AutoDeleteTimeout string         `json:"autoDeleteTimeout,omitempty"`
 }
 
 // Store manages sandbox state persistence.

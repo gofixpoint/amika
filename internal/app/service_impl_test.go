@@ -19,6 +19,7 @@ func (stubDocker) RemoveSandbox(string) error               { return nil }
 func (stubDocker) CreateVolume(string) error                { return nil }
 func (stubDocker) RemoveVolume(string) error                { return nil }
 func (stubDocker) CopyHostDirToVolume(string, string) error { return nil }
+func (stubDocker) RenameSandbox(string, string) error       { return nil }
 
 type stubSandboxStore struct{}
 

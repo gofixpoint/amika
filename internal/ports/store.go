@@ -14,16 +14,19 @@ type ServicePortRecord struct {
 
 // SandboxRecord stores sandbox metadata.
 type SandboxRecord struct {
-	Name        string
-	Provider    string
-	ContainerID string
-	Image       string
-	CreatedAt   string
-	Preset      string
-	Mounts      []Mount
-	Env         []string
-	Ports       []PortBinding
-	Services    []ServiceRecord
+	Name              string
+	Provider          string
+	ContainerID       string
+	Image             string
+	CreatedAt         string
+	Preset            string
+	Mounts            []Mount
+	Env               []string
+	Ports             []PortBinding
+	Services          []ServiceRecord
+	TTL               string
+	InactivityTimeout string
+	AutoDeleteTimeout string
 }
 
 // VolumeRecord stores tracked volume metadata.

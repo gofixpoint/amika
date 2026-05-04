@@ -88,17 +88,7 @@ func (s *Service) CreateSandbox(_ context.Context, req amika.CreateSandboxReques
 		return amika.Sandbox{}, fmt.Errorf("%w: %v", amika.ErrInternal, err)
 	}
 
-	return amika.Sandbox{
-		Name:        rec.Name,
-		Provider:    rec.Provider,
-		ContainerID: rec.ContainerID,
-		Image:       rec.Image,
-		CreatedAt:   rec.CreatedAt,
-		Preset:      rec.Preset,
-		Mounts:      toPublicMounts(rec.Mounts),
-		Env:         rec.Env,
-		Ports:       toPublicPorts(rec.Ports),
-	}, nil
+	return recordToSandbox(rec), nil
 }
 
 // DeleteSandbox removes one or more sandboxes and their backing runtime sandboxes.
@@ -131,17 +121,7 @@ func (s *Service) ListSandboxes(context.Context, amika.ListSandboxesRequest) (am
 	}
 	items := make([]amika.Sandbox, 0, len(recs))
 	for _, rec := range recs {
-		items = append(items, amika.Sandbox{
-			Name:        rec.Name,
-			Provider:    rec.Provider,
-			ContainerID: rec.ContainerID,
-			Image:       rec.Image,
-			CreatedAt:   rec.CreatedAt,
-			Preset:      rec.Preset,
-			Mounts:      toPublicMounts(rec.Mounts),
-			Env:         rec.Env,
-			Ports:       toPublicPorts(rec.Ports),
-		})
+		items = append(items, recordToSandbox(rec))
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt > items[j].CreatedAt })
 	return amika.ListSandboxesResult{Items: items}, nil
@@ -279,6 +259,61 @@ func (s *Service) ListServices(_ context.Context, req amika.ListServicesRequest)
 	return amika.ListServicesResult{Items: items}, nil
 }
 
+// UpdateSandbox modifies metadata on an existing sandbox.
+func (s *Service) UpdateSandbox(_ context.Context, req amika.UpdateSandboxRequest) (amika.UpdateSandboxResult, error) {
+	if req.Name == "" {
+		return amika.UpdateSandboxResult{}, fmt.Errorf("%w: sandbox name is required", amika.ErrInvalidArgument)
+	}
+	rec, err := s.deps.Sandboxes.Get(req.Name)
+	if err != nil {
+		return amika.UpdateSandboxResult{}, fmt.Errorf("%w: sandbox %q", amika.ErrNotFound, req.Name)
+	}
+
+	updated := rec
+
+	if err := validateOptionalDuration(req.TTL, "TTL"); err != nil {
+		return amika.UpdateSandboxResult{}, err
+	}
+	if req.TTL != nil {
+		updated.TTL = *req.TTL
+	}
+	if err := validateOptionalDuration(req.InactivityTimeout, "InactivityTimeout"); err != nil {
+		return amika.UpdateSandboxResult{}, err
+	}
+	if req.InactivityTimeout != nil {
+		updated.InactivityTimeout = *req.InactivityTimeout
+	}
+	if err := validateOptionalDuration(req.AutoDeleteTimeout, "AutoDeleteTimeout"); err != nil {
+		return amika.UpdateSandboxResult{}, err
+	}
+	if req.AutoDeleteTimeout != nil {
+		updated.AutoDeleteTimeout = *req.AutoDeleteTimeout
+	}
+
+	if req.NewName != nil && *req.NewName != "" && *req.NewName != req.Name {
+		if _, err := s.deps.Sandboxes.Get(*req.NewName); err == nil {
+			return amika.UpdateSandboxResult{}, fmt.Errorf("%w: sandbox %q already exists", amika.ErrInvalidArgument, *req.NewName)
+		}
+		if updated.Provider == "docker" {
+			if err := s.deps.Docker.RenameSandbox(req.Name, *req.NewName); err != nil {
+				return amika.UpdateSandboxResult{}, fmt.Errorf("%w: %v", amika.ErrDependency, err)
+			}
+		}
+		if err := s.deps.Sandboxes.Remove(req.Name); err != nil {
+			return amika.UpdateSandboxResult{}, fmt.Errorf("%w: %v", amika.ErrInternal, err)
+		}
+		updated.Name = *req.NewName
+	}
+
+	if err := s.deps.Sandboxes.Save(updated); err != nil {
+		return amika.UpdateSandboxResult{}, fmt.Errorf("%w: %v", amika.ErrInternal, err)
+	}
+
+	return amika.UpdateSandboxResult{
+		Sandbox: recordToSandbox(updated),
+	}, nil
+}
+
 // ExtractAuth extracts auth env assignment lines.
 func (s *Service) ExtractAuth(_ context.Context, req amika.AuthExtractRequest) (amika.AuthExtractResult, error) {
 	result, err := auth.Discover(auth.Options{HomeDir: req.HomeDir, IncludeOAuth: !req.NoOAuth})
@@ -286,6 +321,32 @@ func (s *Service) ExtractAuth(_ context.Context, req amika.AuthExtractRequest) (
 		return amika.AuthExtractResult{}, fmt.Errorf("%w: %v", amika.ErrDependency, err)
 	}
 	return amika.AuthExtractResult{Lines: auth.BuildEnvMap(result).Lines(req.WithExport)}, nil
+}
+
+func validateOptionalDuration(val *string, fieldName string) error {
+	if val != nil && *val != "" {
+		if _, err := time.ParseDuration(*val); err != nil {
+			return fmt.Errorf("%w: invalid %s %q: %v", amika.ErrInvalidArgument, fieldName, *val, err)
+		}
+	}
+	return nil
+}
+
+func recordToSandbox(rec ports.SandboxRecord) amika.Sandbox {
+	return amika.Sandbox{
+		Name:              rec.Name,
+		Provider:          rec.Provider,
+		ContainerID:       rec.ContainerID,
+		Image:             rec.Image,
+		CreatedAt:         rec.CreatedAt,
+		Preset:            rec.Preset,
+		Mounts:            toPublicMounts(rec.Mounts),
+		Env:               rec.Env,
+		Ports:             toPublicPorts(rec.Ports),
+		TTL:               rec.TTL,
+		InactivityTimeout: rec.InactivityTimeout,
+		AutoDeleteTimeout: rec.AutoDeleteTimeout,
+	}
 }
 
 func toPublicMounts(mounts []ports.Mount) []amika.Mount {

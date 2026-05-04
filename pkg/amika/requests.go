@@ -82,6 +82,16 @@ type AuthExtractRequest struct {
 	NoOAuth    bool
 }
 
+// UpdateSandboxRequest describes sandbox metadata update input.
+// Only non-zero fields are applied.
+type UpdateSandboxRequest struct {
+	Name              string  `json:"Name"`                        // sandbox to update (required)
+	NewName           *string `json:"NewName,omitempty"`           // rename the sandbox
+	TTL               *string `json:"TTL,omitempty"`               // time-to-live duration (e.g. "2h", "30m")
+	InactivityTimeout *string `json:"InactivityTimeout,omitempty"` // inactivity timeout duration
+	AutoDeleteTimeout *string `json:"AutoDeleteTimeout,omitempty"` // auto-delete timeout for suspended sandboxes
+}
+
 // ListServicesRequest describes service listing input.
 type ListServicesRequest struct {
 	SandboxName string // optional filter

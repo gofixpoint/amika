@@ -16,6 +16,9 @@ type stubService struct{}
 func (stubService) CreateSandbox(context.Context, amika.CreateSandboxRequest) (amika.Sandbox, error) {
 	return amika.Sandbox{}, amika.ErrUnimplemented
 }
+func (stubService) UpdateSandbox(context.Context, amika.UpdateSandboxRequest) (amika.UpdateSandboxResult, error) {
+	return amika.UpdateSandboxResult{}, amika.ErrUnimplemented
+}
 func (stubService) DeleteSandbox(context.Context, amika.DeleteSandboxRequest) (amika.DeleteSandboxResult, error) {
 	return amika.DeleteSandboxResult{}, amika.ErrUnimplemented
 }
