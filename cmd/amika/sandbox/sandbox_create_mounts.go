@@ -283,7 +283,7 @@ func formatRepoBanner(identity repoIdentity) string {
 	if identity.Source == repoSourceNone {
 		return "Creating a bare sandbox with no repos."
 	}
-	return fmt.Sprintf("Creating sandbox with repo %s", identity.Name)
+	return fmt.Sprintf("Creating sandbox with repo %s.", identity.Name)
 }
 
 func hasEnvKey(env []string, key string) bool {

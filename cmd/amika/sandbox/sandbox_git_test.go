@@ -657,17 +657,17 @@ func TestFormatRepoBanner(t *testing.T) {
 		{
 			name:     "auto-detect",
 			identity: repoIdentity{Source: repoSourceAutoDetect, Name: "myrepo"},
-			want:     "Creating sandbox with repo myrepo",
+			want:     "Creating sandbox with repo myrepo.",
 		},
 		{
 			name:     "flag-path",
 			identity: repoIdentity{Source: repoSourceFlagPath, Name: "frompath"},
-			want:     "Creating sandbox with repo frompath",
+			want:     "Creating sandbox with repo frompath.",
 		},
 		{
 			name:     "flag-url",
 			identity: repoIdentity{Source: repoSourceFlagURL, Name: "fromurl"},
-			want:     "Creating sandbox with repo fromurl",
+			want:     "Creating sandbox with repo fromurl.",
 		},
 	}
 	for _, tt := range tests {
