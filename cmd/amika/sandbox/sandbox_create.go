@@ -48,6 +48,9 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		mode := runmode.Resolve(cmd)
+		if mode == runmode.Remote && noClean {
+			return fmt.Errorf("--no-clean is only supported for local sandboxes")
+		}
 		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
 			return err
 		}

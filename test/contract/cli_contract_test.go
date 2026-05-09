@@ -34,6 +34,19 @@ func TestSandboxCreateGitAndNoGitConflict(t *testing.T) {
 	}
 }
 
+func TestSandboxCreateNoCleanRejectsRemote(t *testing.T) {
+	bin := testutil.BuildAmikaBinary(t)
+
+	cmd := exec.Command(bin, "sandbox", "create", "--name", "contract-sb", "--no-clean", "--remote", "--yes")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected sandbox create to fail, output:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "--no-clean is only supported for local sandboxes") {
+		t.Fatalf("expected --no-clean/remote contract error, got:\n%s", string(out))
+	}
+}
+
 func TestSecretExtractHelpContract(t *testing.T) {
 	bin := testutil.BuildAmikaBinary(t)
 
