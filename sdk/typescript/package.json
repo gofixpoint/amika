@@ -1,0 +1,53 @@
+{
+  "name": "@amika/sdk",
+  "version": "0.0.1",
+  "description": "TypeScript SDK for Amika, derived from the amika CLI",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@11.1.3",
+  "scripts": {
+    "build": "pnpm run clean && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json --resolve-full-paths",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint",
+    "format": "pnpm dlx prettier --write .",
+    "formatcheck": "pnpm dlx prettier --check .",
+    "test": "vitest run",
+    "ci": "pnpm run typecheck && pnpm run lint && pnpm run formatcheck && pnpm run build && pnpm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^20.12.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "tsc-alias": "^1.8.10",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vite-tsconfig-paths": "^5.1.0",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gofixpoint/amika.git",
+    "directory": "sdk/typescript"
+  }
+}
