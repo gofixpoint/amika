@@ -1,0 +1,24 @@
+diff --git a/src/a.ts b/src/a.ts
+index 0000001..0000002 100644
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,2 +1,2 @@
+-export const A = 1;
++export const A = 2;
+ export const ALWAYS = true;
+diff --git a/src/b.ts b/src/b.ts
+new file mode 100644
+index 0000000..0000003
+--- /dev/null
++++ b/src/b.ts
+@@ -0,0 +1,2 @@
++export const B = 1;
++export const NEW = true;
+diff --git a/src/c.ts b/src/c.ts
+deleted file mode 100644
+index 0000004..0000000
+--- a/src/c.ts
++++ /dev/null
+@@ -1,2 +0,0 @@
+-export const C = 1;
+-export const OLD = true;
