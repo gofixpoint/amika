@@ -23,6 +23,7 @@
     "@eslint/js": "^9.39.2",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.8.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
@@ -34,5 +35,8 @@
     "typescript": "^5",
     "typescript-eslint": "^8.55.0",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "parse-diff": "^0.12.0"
   }
 }
