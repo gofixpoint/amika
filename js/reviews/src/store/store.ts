@@ -17,6 +17,11 @@ import type {
   CommentScope,
   ReviewState,
 } from "./types.js";
+import {
+  locationFromSearch as parseLocationSearch,
+  locationToSearch as serializeLocation,
+} from "../location/serialize.js";
+import type { ReviewLocation } from "../location/types.js";
 
 export interface CreateReviewStoreOptions {
   initialItems?: ReviewItem[];
@@ -68,9 +73,31 @@ export interface ReviewStore {
   getComments(filter?: CommentFilter): Comment[];
   getThread(rootId: CommentId): Comment[];
 
+  // Deep linking
+  getLocation(): ReviewLocation;
+  navigate(loc: ReviewLocation): void;
+  locationToSearch(loc: ReviewLocation): string;
+  locationFromSearch(search: string): ReviewLocation;
+  /**
+   * Subscribe to navigate() requests for line / comment targets. The handler
+   * is the implementation-specific way the host (UI) scrolls the diff viewer
+   * to a particular line. The store itself only fires the event; it does
+   * not own DOM.
+   */
+  onScrollRequest(listener: (target: ScrollTarget) => void): () => void;
+
   // Snapshot
   export(): ReviewExportV1;
   import(snapshot: ReviewExportV1): void;
+}
+
+export interface ScrollTarget {
+  itemId: ReviewItemId;
+  path: string;
+  line: number;
+  side?: "old" | "new";
+  /** Optional comment id that triggered this scroll (for highlighting). */
+  commentId?: CommentId;
 }
 
 export function createReviewStore(
@@ -101,6 +128,7 @@ export function createReviewStore(
   }
 
   const listeners = new Set<(state: ReviewState) => void>();
+  const scrollListeners = new Set<(t: ScrollTarget) => void>();
 
   function setState(next: ReviewState) {
     if (next === state) return;
@@ -273,6 +301,91 @@ export function createReviewStore(
       }
       result.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       return result;
+    },
+
+    getLocation(): ReviewLocation {
+      const { itemId, path } = state.selection;
+      if (!itemId) return { kind: "none" };
+      if (!path) return { kind: "item", itemId };
+      return { kind: "file", itemId, path };
+    },
+
+    navigate(loc) {
+      switch (loc.kind) {
+        case "none":
+          return;
+        case "item":
+          if (state.items.some((i) => i.id === loc.itemId)) {
+            dispatch({ type: "SELECT_FILE", itemId: loc.itemId, path: null });
+          }
+          return;
+        case "file":
+          if (state.items.some((i) => i.id === loc.itemId)) {
+            dispatch({
+              type: "SELECT_FILE",
+              itemId: loc.itemId,
+              path: loc.path,
+            });
+          }
+          return;
+        case "line":
+          if (state.items.some((i) => i.id === loc.itemId)) {
+            dispatch({
+              type: "SELECT_FILE",
+              itemId: loc.itemId,
+              path: loc.path,
+            });
+            for (const l of scrollListeners) {
+              l({
+                itemId: loc.itemId,
+                path: loc.path,
+                line: loc.line,
+                side: loc.side,
+              });
+            }
+          }
+          return;
+        case "comment": {
+          const c = state.comments[loc.commentId];
+          if (!c) return;
+          if (c.scope.kind === "series") return;
+          if (c.scope.kind === "item") {
+            dispatch({
+              type: "SELECT_FILE",
+              itemId: c.scope.itemId,
+              path: null,
+            });
+            return;
+          }
+          dispatch({
+            type: "SELECT_FILE",
+            itemId: c.scope.itemId,
+            path: c.scope.path,
+          });
+          if (c.scope.kind === "line") {
+            for (const l of scrollListeners) {
+              l({
+                itemId: c.scope.itemId,
+                path: c.scope.path,
+                line: c.scope.line,
+                side: c.scope.side,
+                commentId: c.id,
+              });
+            }
+          }
+          return;
+        }
+      }
+    },
+
+    locationToSearch: serializeLocation,
+    locationFromSearch: parseLocationSearch,
+
+    onScrollRequest(listener) {
+      scrollListeners.add(listener);
+      return () => {
+        scrollListeners.delete(listener);
+      };
     },
 
     export: () => exportReview(state, now),

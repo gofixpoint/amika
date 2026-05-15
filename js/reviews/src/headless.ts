@@ -18,4 +18,6 @@ export type { PersistenceAdapter } from "./store/persistence.js";
 export { parsePatch, parsePatches } from "./parser.js";
 export { loadFromFiles, loadFromText } from "./io.js";
 export { hashItemId } from "./util/hashItemId.js";
+export { locationFromSearch, locationToSearch } from "./location/serialize.js";
+export type { ReviewLocation } from "./location/types.js";
 export type * from "./types.js";
