@@ -2,10 +2,10 @@
 
 # run-hook.sh is the stable entrypoint for all setup lifecycle hooks.
 # It executes one hook script and injects a Bash ERR trap via BASH_ENV so
-# command failures are written to the same log. setup.sh logs to
-# /var/log/amika/setup.log so the amika user can write it, then mirrors the
-# finished file to /var/log/amikad/setup.log. Root-owned hooks log directly to
-# /var/log/amikad.
+# command failures are written to the same log. User-facing hooks (setup.sh,
+# start.sh) log to /var/log/amika/<hook>.log so the amika user can write them,
+# then mirror the finished file to /var/log/amikad/<hook>.log. Root-owned
+# hooks log directly to /var/log/amikad.
 
 set -Eeuo pipefail
 
@@ -21,8 +21,8 @@ daemon_log_file="$daemon_log_dir/${script_name%.sh}.log"
 log_file="$daemon_log_file"
 mirror_to_daemon=0
 
-if [[ "$script_name" == "setup.sh" ]]; then
-  log_file="/var/log/amika/setup.log"
+if [[ "$script_name" == "setup.sh" || "$script_name" == "start.sh" ]]; then
+  log_file="/var/log/amika/${script_name%.sh}.log"
   mirror_to_daemon=1
 fi
 
