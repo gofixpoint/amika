@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/gofixpoint/amika/internal/apiclient"
 	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/runmode"
 	"github.com/gofixpoint/amika/internal/sandbox"
@@ -203,6 +204,7 @@ var sandboxListCmd = &cobra.Command{
 					Location:  "remote",
 					Branch:    rs.Branch,
 					Repos:     repoNamesFromURL(rs.RepoURL),
+					CreatedBy: creatorFromRemote(rs.CreatedBy),
 				})
 			}
 		}
@@ -213,13 +215,40 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tPROVIDER\tIMAGE\tBRANCH\tREPO\tPORTS\tCREATED")
+		fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tPROVIDER\tIMAGE\tBRANCH\tREPO\tCREATED BY\tPORTS\tCREATED")
 		for _, sb := range allItems {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Provider, sb.Image, sb.Branch, formatRepos(sb.Repos), formatPortBindings(sb.Ports), sb.CreatedAt)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Provider, sb.Image, sb.Branch, formatRepos(sb.Repos), formatCreatedBy(sb.CreatedBy), formatPortBindings(sb.Ports), sb.CreatedAt)
 		}
 		w.Flush()
 		return nil
 	},
+}
+
+func creatorFromRemote(c *apiclient.RemoteSandboxCreator) *amika.SandboxCreator {
+	if c == nil {
+		return nil
+	}
+	out := &amika.SandboxCreator{}
+	if c.Name != nil {
+		out.Name = *c.Name
+	}
+	if c.Email != nil {
+		out.Email = *c.Email
+	}
+	return out
+}
+
+func formatCreatedBy(c *amika.SandboxCreator) string {
+	if c == nil {
+		return "-"
+	}
+	if c.Name != "" {
+		return c.Name
+	}
+	if c.Email != "" {
+		return c.Email
+	}
+	return "-"
 }
 
 func formatRepos(repos []string) string {

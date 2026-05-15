@@ -118,9 +118,11 @@ List all tracked sandboxes.
 amika sandbox list
 ```
 
-Output columns: `NAME`, `STATE`, `LOCATION`, `PROVIDER`, `IMAGE`, `BRANCH`, `REPO`, `PORTS`, `CREATED`.
+Output columns: `NAME`, `STATE`, `LOCATION`, `PROVIDER`, `IMAGE`, `BRANCH`, `REPO`, `CREATED BY`, `PORTS`, `CREATED`.
 
 The `REPO` column lists the repositories mounted into the sandbox workspace (`/home/amika/workspace/<repo>`). For remote sandboxes it shows the repository name parsed from the sandbox's `repo_url`.
+
+The `CREATED BY` column shows the human who created a remote sandbox (name, falling back to email). It is always `-` for local sandboxes and for remote sandboxes whose creator the server could not resolve (deleted user, API-key principal, or `noop` auth mode).
 
 ### `amika sandbox connect`
 

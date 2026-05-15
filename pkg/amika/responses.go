@@ -16,6 +16,15 @@ type Sandbox struct {
 	Env         []string
 	Ports       []PortBinding
 	Services    []ServiceInfo
+	CreatedBy   *SandboxCreator
+}
+
+// SandboxCreator identifies the human who created a sandbox. Populated only
+// for remote sandboxes; both fields may be empty when the server could not
+// resolve the creator (deleted user, API-key principal, or noop auth mode).
+type SandboxCreator struct {
+	Name  string
+	Email string
 }
 
 // ServiceInfo describes a named service running in a sandbox.

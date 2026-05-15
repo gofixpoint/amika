@@ -88,6 +88,15 @@ type RemoteSandbox struct {
 	Branch                   string                    `json:"branch"`
 	ErrorMessage             string                    `json:"error_message"`
 	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
+	CreatedBy                *RemoteSandboxCreator     `json:"created_by,omitempty"`
+}
+
+// RemoteSandboxCreator describes the human who created a remote sandbox, as
+// returned by the API. Either field may be null if the server could not
+// resolve the user (deleted account, API-key principal, or noop auth mode).
+type RemoteSandboxCreator struct {
+	Name  *string `json:"name"`
+	Email *string `json:"email"`
 }
 
 // ListSandboxes fetches sandboxes from the remote API.
