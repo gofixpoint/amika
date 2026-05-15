@@ -242,7 +242,7 @@ func repoNamesFromURL(repoURL string) []string {
 }
 
 func repoBasenameFromURL(repoURL string) string {
-	p := repoURL
+	p := strings.TrimRight(repoURL, "/")
 	if i := strings.LastIndex(p, "://"); i >= 0 {
 		p = p[i+3:]
 	}

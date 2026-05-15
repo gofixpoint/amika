@@ -13,6 +13,9 @@ func TestRepoBasenameFromURL(t *testing.T) {
 		{"git@github.com:gofixpoint/amika.git", "amika"},
 		{"ssh://git@github.com/gofixpoint/amika.git", "amika"},
 		{"file:///srv/repos/amika.git", "amika"},
+		{"https://github.com/gofixpoint/amika.git/", "amika"},
+		{"https://github.com/gofixpoint/amika/", "amika"},
+		{"https://github.com/gofixpoint/amika.git///", "amika"},
 	}
 	for _, tc := range cases {
 		got := repoBasenameFromURL(tc.in)
