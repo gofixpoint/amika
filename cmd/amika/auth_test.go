@@ -63,12 +63,15 @@ func TestAuthLogin_RefusesWhenAlreadyLoggedIn(t *testing.T) {
 	}
 }
 
-func TestAuthLogin_RefusesWhenSessionStillValid(t *testing.T) {
+func TestAuthLogin_APIKeyFileIgnoresStoredSession(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "")
 
-	// Session expiring well past the 60s refresh window — GetValidSession
-	// returns it without a network call, so login must refuse.
+	// A stored session — valid or not — must not block API-key login.
+	// defaultAuthChecker resolves API keys ahead of sessions, so they
+	// never conflict; and this path is documented to stay reliably
+	// non-interactive (no network, no session validation), which is
+	// load-bearing for CI/offline recovery.
 	if err := auth.SaveSession(auth.WorkOSSession{
 		AccessToken: "tok",
 		Email:       "user@example.com",
@@ -83,46 +86,8 @@ func TestAuthLogin_RefusesWhenSessionStillValid(t *testing.T) {
 	}
 
 	out, err := runRootCommand("auth", "login", "--api-key-file", keyPath)
-	if err == nil {
-		t.Fatalf("expected refusal, got output %q", out)
-	}
-	if !strings.Contains(err.Error(), "already have") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "user@example.com") {
-		t.Fatalf("error should name the stored session: %v", err)
-	}
-}
-
-func TestAuthLogin_ReplacesStaleSession(t *testing.T) {
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	t.Setenv("AMIKA_API_KEY", "")
-
-	// Session with an already-elapsed expiry — commands would say
-	// "not logged in" after a failed refresh, so login must proceed
-	// instead of trapping the user behind a mandatory `auth logout`.
-	// The staleness check is local-only: no network call, no override
-	// of the WorkOS URL needed.
-	if err := auth.SaveSession(auth.WorkOSSession{
-		AccessToken:  "stale",
-		RefreshToken: "stale-refresh",
-		Email:        "stale@example.com",
-		ExpiresAt:    time.Now().Add(-time.Hour),
-	}); err != nil {
-		t.Fatalf("SaveSession: %v", err)
-	}
-
-	keyPath := filepath.Join(t.TempDir(), "key")
-	if err := os.WriteFile(keyPath, []byte("sk_recovered\n"), 0600); err != nil {
-		t.Fatalf("write key: %v", err)
-	}
-
-	out, err := runRootCommand("auth", "login", "--api-key-file", keyPath)
 	if err != nil {
-		t.Fatalf("login should proceed past stale session: %v (out=%q)", err, out)
-	}
-	if !strings.Contains(out, "Stored session for stale@example.com has expired") {
-		t.Fatalf("missing replacement notice: %q", out)
+		t.Fatalf("api-key login should ignore stored session: %v (out=%q)", err, out)
 	}
 	if !strings.Contains(out, "Stored API key") {
 		t.Fatalf("login did not store the new API key: %q", out)
@@ -132,7 +97,7 @@ func TestAuthLogin_ReplacesStaleSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadAPIKey: %v", err)
 	}
-	if loaded == nil || loaded.Key != "sk_recovered" {
+	if loaded == nil || loaded.Key != "sk_new" {
 		t.Fatalf("api key not stored: %+v", loaded)
 	}
 }

@@ -47,16 +47,36 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 			return fmt.Errorf("reading stored API key: %w", keyErr)
 		}
 
-		// A stored session inside the GetValidSession refresh window
-		// (≤ 60s to expiry) is what commands actually trip on when
-		// telling the user to log in: if refresh then fails they see
-		// "not logged in", and refusing here with "already have a
-		// session" would trap them behind a mandatory `auth logout`.
-		// Check locally only — no network call — so `--api-key-file`
-		// login stays reliably non-interactive even when offline.
-		if existingSession != nil && time.Until(existingSession.ExpiresAt) < 60*time.Second {
-			fmt.Fprintf(cmd.OutOrStdout(), "Stored session for %s has expired; replacing.\n", existingSession.Email)
-			existingSession = nil
+		// --api-key-file is local-only by design (it pairs with secret
+		// managers in CI). Sessions don't conflict with stored API
+		// keys — defaultAuthChecker resolves API keys ahead of
+		// sessions — so neither valid nor stale sessions need to gate
+		// this path. Refusing only on existing API-key state keeps
+		// the path reliably non-interactive: no network, no session
+		// validation.
+		if apiKeyFile != "" {
+			if existingKey != nil || keyCorrupt {
+				who := "an API key"
+				if keyCorrupt {
+					who = "an unreadable API key file"
+				}
+				return fmt.Errorf("already have %s stored, run `amika auth logout` first", who)
+			}
+			return loginWithAPIKeyFile(cmd, apiKeyFile)
+		}
+
+		// Device-flow path. If GetValidSession (the same gate commands
+		// use) succeeds, the user is still effectively logged in and
+		// re-authenticating would be wasted work — refuse. If it
+		// fails, the user is stuck: commands say "not logged in" but
+		// the literal "already have a session" message would trap
+		// them behind a mandatory `auth logout`. Treat the session as
+		// absent so login can replace it in-place.
+		if existingSession != nil {
+			if _, refreshErr := auth.GetValidSession(config.WorkOSClientID()); refreshErr != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Stored session for %s is unusable (%v); replacing.\n", existingSession.Email, refreshErr)
+				existingSession = nil
+			}
 		}
 
 		// A corrupt credential file counts as "something stored" —
@@ -74,10 +94,6 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 				who = "an API key"
 			}
 			return fmt.Errorf("already have %s stored, run `amika auth logout` first", who)
-		}
-
-		if apiKeyFile != "" {
-			return loginWithAPIKeyFile(cmd, apiKeyFile)
 		}
 
 		session, err := auth.DeviceLogin(config.WorkOSClientID())
