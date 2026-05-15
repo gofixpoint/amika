@@ -9,7 +9,19 @@ import (
 	"strings"
 )
 
-const workosAuthenticateURL = "https://api.workos.com/user_management/authenticate"
+// workosAuthenticateURL is the WorkOS endpoint used for both refresh-token
+// exchange and device-authorization polling. It is a var (not a const) so
+// tests can point it at a local httptest server.
+var workosAuthenticateURL = "https://api.workos.com/user_management/authenticate"
+
+// SetWorkOSAuthenticateURLForTesting overrides the WorkOS authenticate URL
+// and returns a function that restores the previous value. Intended only
+// for use in cross-package tests.
+func SetWorkOSAuthenticateURLForTesting(url string) func() {
+	prev := workosAuthenticateURL
+	workosAuthenticateURL = url
+	return func() { workosAuthenticateURL = prev }
+}
 
 // RefreshAccessToken exchanges a refresh token for a new access token via WorkOS.
 func RefreshAccessToken(clientID, refreshToken string) (*WorkOSSession, error) {

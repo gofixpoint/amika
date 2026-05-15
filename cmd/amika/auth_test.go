@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +62,86 @@ func TestAuthLogin_RefusesWhenAlreadyLoggedIn(t *testing.T) {
 	loaded, _ := auth.LoadAPIKey()
 	if loaded == nil || loaded.Key != "existing" {
 		t.Fatalf("stored key should be unchanged: %+v", loaded)
+	}
+}
+
+func TestAuthLogin_RefusesWhenSessionStillValid(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+
+	// Session expiring well past the 60s refresh window — GetValidSession
+	// returns it without a network call, so login must refuse.
+	if err := auth.SaveSession(auth.WorkOSSession{
+		AccessToken: "tok",
+		Email:       "user@example.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_new\n"), 0600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	out, err := runRootCommand("auth", "login", "--api-key-file", keyPath)
+	if err == nil {
+		t.Fatalf("expected refusal, got output %q", out)
+	}
+	if !strings.Contains(err.Error(), "already have") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "user@example.com") {
+		t.Fatalf("error should name the stored session: %v", err)
+	}
+}
+
+func TestAuthLogin_ReplacesStaleSession(t *testing.T) {
+	// Refresh server that always rejects — simulates an expired or
+	// revoked refresh token. Login must then proceed instead of trapping
+	// the user behind a mandatory `auth logout`.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"invalid_grant"}`, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	restore := auth.SetWorkOSAuthenticateURLForTesting(srv.URL)
+	defer restore()
+
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+
+	// Session with an already-elapsed expiry forces a refresh attempt.
+	if err := auth.SaveSession(auth.WorkOSSession{
+		AccessToken:  "stale",
+		RefreshToken: "stale-refresh",
+		Email:        "stale@example.com",
+		ExpiresAt:    time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_recovered\n"), 0600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	out, err := runRootCommand("auth", "login", "--api-key-file", keyPath)
+	if err != nil {
+		t.Fatalf("login should proceed past stale session: %v (out=%q)", err, out)
+	}
+	if !strings.Contains(out, "Stored session for stale@example.com is unusable") {
+		t.Fatalf("missing replacement notice: %q", out)
+	}
+	if !strings.Contains(out, "Stored API key") {
+		t.Fatalf("login did not store the new API key: %q", out)
+	}
+
+	loaded, err := auth.LoadAPIKey()
+	if err != nil {
+		t.Fatalf("LoadAPIKey: %v", err)
+	}
+	if loaded == nil || loaded.Key != "sk_recovered" {
+		t.Fatalf("api key not stored: %+v", loaded)
 	}
 }
 
