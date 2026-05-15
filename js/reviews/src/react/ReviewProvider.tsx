@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { createReviewStore, type ReviewStore } from "../store/store.js";
 import type { ReviewItem } from "../types.js";
 import { ReviewStoreContext } from "./context.js";
+import { useLinkSync, type LinkSyncAdapter } from "./useReviewLocation.js";
 
 export interface ReviewProviderProps {
   /** Items the store starts with. Read once on mount; later changes are ignored. */
@@ -19,6 +20,13 @@ export interface ReviewProviderProps {
    * multiple providers).
    */
   store?: ReviewStore;
+  /**
+   * When `true`, bind the review location to `window.location.search`
+   * (push on navigate, hydrate on mount, react to popstate). Pass an
+   * adapter `{ read, write, subscribe? }` to integrate with a router
+   * such as Next.js or React Router.
+   */
+  linkSync?: boolean | LinkSyncAdapter;
   children: ReactNode;
 }
 
@@ -32,6 +40,7 @@ export function ReviewProvider({
   author,
   persistKey,
   store: storeProp,
+  linkSync,
   children,
 }: ReviewProviderProps) {
   const store = useMemo(
@@ -43,7 +52,17 @@ export function ReviewProvider({
 
   return (
     <ReviewStoreContext.Provider value={store}>
+      <LinkSyncBridge linkSync={linkSync} />
       {children}
     </ReviewStoreContext.Provider>
   );
+}
+
+function LinkSyncBridge({
+  linkSync,
+}: {
+  linkSync: ReviewProviderProps["linkSync"];
+}) {
+  useLinkSync(linkSync);
+  return null;
 }
