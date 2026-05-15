@@ -47,17 +47,16 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 			return fmt.Errorf("reading stored API key: %w", keyErr)
 		}
 
-		// A stored session that can't be refreshed is unusable —
-		// commands gate on GetValidSession, so they'll already be
-		// telling the user to log in. Refusing with "already have a
-		// session" would trap the user behind a mandatory `auth
-		// logout`. Treat an unusable session as absent so the login
-		// flow can replace it in-place.
-		if existingSession != nil {
-			if _, refreshErr := auth.GetValidSession(config.WorkOSClientID()); refreshErr != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Stored session for %s is unusable (%v); replacing.\n", existingSession.Email, refreshErr)
-				existingSession = nil
-			}
+		// A stored session inside the GetValidSession refresh window
+		// (≤ 60s to expiry) is what commands actually trip on when
+		// telling the user to log in: if refresh then fails they see
+		// "not logged in", and refusing here with "already have a
+		// session" would trap them behind a mandatory `auth logout`.
+		// Check locally only — no network call — so `--api-key-file`
+		// login stays reliably non-interactive even when offline.
+		if existingSession != nil && time.Until(existingSession.ExpiresAt) < 60*time.Second {
+			fmt.Fprintf(cmd.OutOrStdout(), "Stored session for %s has expired; replacing.\n", existingSession.Email)
+			existingSession = nil
 		}
 
 		// A corrupt credential file counts as "something stored" —

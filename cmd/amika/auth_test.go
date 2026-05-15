@@ -1,8 +1,6 @@
 package main
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,20 +95,14 @@ func TestAuthLogin_RefusesWhenSessionStillValid(t *testing.T) {
 }
 
 func TestAuthLogin_ReplacesStaleSession(t *testing.T) {
-	// Refresh server that always rejects — simulates an expired or
-	// revoked refresh token. Login must then proceed instead of trapping
-	// the user behind a mandatory `auth logout`.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, `{"error":"invalid_grant"}`, http.StatusUnauthorized)
-	}))
-	defer srv.Close()
-	restore := auth.SetWorkOSAuthenticateURLForTesting(srv.URL)
-	defer restore()
-
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "")
 
-	// Session with an already-elapsed expiry forces a refresh attempt.
+	// Session with an already-elapsed expiry — commands would say
+	// "not logged in" after a failed refresh, so login must proceed
+	// instead of trapping the user behind a mandatory `auth logout`.
+	// The staleness check is local-only: no network call, no override
+	// of the WorkOS URL needed.
 	if err := auth.SaveSession(auth.WorkOSSession{
 		AccessToken:  "stale",
 		RefreshToken: "stale-refresh",
@@ -129,7 +121,7 @@ func TestAuthLogin_ReplacesStaleSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login should proceed past stale session: %v (out=%q)", err, out)
 	}
-	if !strings.Contains(out, "Stored session for stale@example.com is unusable") {
+	if !strings.Contains(out, "Stored session for stale@example.com has expired") {
 		t.Fatalf("missing replacement notice: %q", out)
 	}
 	if !strings.Contains(out, "Stored API key") {
