@@ -12,8 +12,16 @@ export type CommentId = string;
 
 export type FileMap = Record<string, string>;
 
-/** Opaque pre-parsed diff metadata produced by @pierre/diffs. */
-export type FileDiffMetadata = Record<string, unknown>;
+/**
+ * Pre-parsed diff metadata for a single file. We require `name` (the file
+ * path) here so the file tree can show the row; everything else is
+ * library-defined and forwarded verbatim. Structurally compatible with
+ * `@pierre/diffs`'s `FileDiffMetadata`.
+ */
+export interface FileDiffMetadata {
+  name: string;
+  [key: string]: unknown;
+}
 
 export type ReviewItem =
   | {

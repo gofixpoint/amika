@@ -311,7 +311,7 @@ function pathsForItem(item: ReviewItem): string[] {
     case "unresolved-file":
       return [item.path];
     case "file-diff":
-      return [];
+      return [item.metadata.name];
   }
 }
 
