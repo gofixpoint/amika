@@ -94,6 +94,7 @@ func collectMounts(
 	setupScript string,
 	setupScriptFlagChanged bool,
 	noSetup bool,
+	noClaudeConfig bool,
 	branch string,
 	newBranch string,
 ) (collectedMounts, error) {
@@ -158,7 +159,13 @@ func collectMounts(
 	}
 
 	if homeDir, err := os.UserHomeDir(); err == nil {
-		agentMounts := agentconfig.RWCopyMounts(agentconfig.AllMounts(homeDir))
+		var specs []agentconfig.MountSpec
+		if noClaudeConfig {
+			specs = agentconfig.AllMountsWithoutClaudeConfig(homeDir)
+		} else {
+			specs = agentconfig.AllMounts(homeDir)
+		}
+		agentMounts := agentconfig.RWCopyMounts(specs)
 		mounts = append(mounts, agentMounts...)
 	}
 
