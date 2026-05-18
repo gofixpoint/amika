@@ -15,10 +15,12 @@ type stubDocker struct{}
 func (stubDocker) CreateSandbox(string, string, []ports.Mount, []string, []ports.PortBinding) (string, error) {
 	return "container-123", nil
 }
-func (stubDocker) RemoveSandbox(string) error               { return nil }
-func (stubDocker) CreateVolume(string) error                { return nil }
-func (stubDocker) RemoveVolume(string) error                { return nil }
-func (stubDocker) CopyHostDirToVolume(string, string) error { return nil }
+func (stubDocker) RemoveSandbox(string) error                       { return nil }
+func (stubDocker) CreateVolume(string) error                        { return nil }
+func (stubDocker) RemoveVolume(string) error                        { return nil }
+func (stubDocker) CopyHostDirToVolume(string, string) error         { return nil }
+func (stubDocker) CopyFromContainer(string, string, string) error   { return nil }
+func (stubDocker) ExecInContainer(string, []string) (string, error) { return "", nil }
 
 type stubSandboxStore struct{}
 
