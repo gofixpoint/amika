@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,10 +10,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/gofixpoint/amika/internal/buildmeta"
+	"github.com/gofixpoint/amika/internal/config"
 	"github.com/gofixpoint/amika/internal/httpapi"
+	"github.com/gofixpoint/amika/internal/sandbox"
+	"github.com/gofixpoint/amika/internal/watcher"
 	"github.com/gofixpoint/amika/pkg/amika"
 )
 
@@ -44,7 +50,32 @@ func run(
 		return fmt.Errorf("invalid listen address configuration: %w", err)
 	}
 
-	handler := httpapi.NewHandler(amika.NewService(amika.Options{}))
+	// Start lifecycle watcher with SSE event broker.
+	broker := httpapi.NewEventBroker()
+	var watcherStore sandbox.Store
+	if sandboxesFile, err := config.SandboxesStateFile(); err == nil {
+		watcherStore = sandbox.NewStore(sandboxesFile)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if watcherStore != nil {
+		w := watcher.New(watcher.Options{
+			Store:    watcherStore,
+			Handlers: []watcher.Handler{broker.Handler()},
+		})
+		go w.Run(ctx)
+	}
+
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		cancel()
+	}()
+
+	handler := httpapi.NewHandlerWithEvents(amika.NewService(amika.Options{}), broker)
 	log.Printf("amika-server listening on %s", addr)
 	if err := listenAndServe(addr, handler); err != nil {
 		return fmt.Errorf("server failed: %w", err)

@@ -6,14 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"github.com/gofixpoint/amika/internal/watcher"
 	"github.com/gofixpoint/amika/pkg/amika"
 )
 
 // NewHandler creates an HTTP handler that exposes the Amika API.
 func NewHandler(service amika.Service) http.Handler {
+	return NewHandlerWithEvents(service, nil)
+}
+
+// NewHandlerWithEvents creates an HTTP handler with optional SSE event streaming.
+// If eventBroker is non-nil, a GET /v1/events SSE endpoint is registered.
+func NewHandlerWithEvents(service amika.Service, eventBroker *EventBroker) http.Handler {
 	mux := http.NewServeMux()
 	config := huma.DefaultConfig("Amika API", "0.1.0")
 	config.OpenAPIPath = "/openapi.json"
@@ -33,8 +41,80 @@ func NewHandler(service amika.Service) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(api.OpenAPI())
 	})
+	if eventBroker != nil {
+		mux.HandleFunc("/v1/events", eventBroker.ServeHTTP)
+	}
 
 	return mux
+}
+
+// EventBroker distributes watcher events to SSE clients.
+type EventBroker struct {
+	mu      sync.Mutex
+	clients map[chan watcher.Event]struct{}
+}
+
+// NewEventBroker creates an EventBroker.
+func NewEventBroker() *EventBroker {
+	return &EventBroker{clients: make(map[chan watcher.Event]struct{})}
+}
+
+// Handler returns a watcher.Handler that broadcasts events to all SSE clients.
+func (b *EventBroker) Handler() watcher.Handler {
+	return func(e watcher.Event) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		for ch := range b.clients {
+			select {
+			case ch <- e:
+			default:
+				// drop if client is slow
+			}
+		}
+	}
+}
+
+// ServeHTTP handles SSE connections on GET /v1/events.
+func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := make(chan watcher.Event, 16)
+	b.mu.Lock()
+	b.clients[ch] = struct{}{}
+	b.mu.Unlock()
+
+	defer func() {
+		b.mu.Lock()
+		delete(b.clients, ch)
+		b.mu.Unlock()
+	}()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-ch:
+			data, err := json.Marshal(e)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, data)
+			flusher.Flush()
+		}
+	}
 }
 
 type healthOutput struct {
