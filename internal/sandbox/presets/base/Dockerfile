@@ -18,9 +18,12 @@ RUN apt-get update && apt-get install -y \
     vim \
     nano \
     tmux \
+    ncurses-term \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ghostty terminfo so SSH sessions from Ghostty render correctly.
+# (Alacritty, kitty, foot, etc. come from the ncurses-term package above;
+# Ghostty isn't in ncurses-term on Ubuntu 24.04, so we vendor it.)
 # Source vendored from ghostty-org/ghostty src/terminfo/ghostty.zig.
 COPY ghostty.terminfo /tmp/ghostty.terminfo
 RUN tic -x -o /usr/share/terminfo /tmp/ghostty.terminfo \
