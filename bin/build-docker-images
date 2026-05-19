@@ -32,7 +32,7 @@ VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 SIZES=("xs" "m")
 SIZE_CPUS=("1" "2")
 SIZE_MEMORY=("1" "8")
-SIZE_DISK=("3" "10")
+SIZE_DISK=("3" "16")
 
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
 
