@@ -1,4 +1,4 @@
-# Only set TERM if not already set by tmux or a capable terminal like Ghostty.
+# Only set TERM if not already set by tmux or a capable terminal like Ghostty or Alacritty.
 if [ -z "$TMUX" ] && [ "$TERM" = "linux" -o "$TERM" = "dumb" ]; then
   export TERM=xterm-256color
 fi
