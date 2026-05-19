@@ -124,5 +124,5 @@ func New(component string, version SemVer) Info {
 
 // String renders the build metadata for human-readable CLI output.
 func (i Info) String() string {
-	return fmt.Sprintf("%s version %s\ncommit: %s\ndate: %s", i.Component, i.Version, i.Commit, i.Date)
+	return fmt.Sprintf("version: %s\ncommit: %s\ndate: %s", i.Version, i.Commit, i.Date)
 }
