@@ -75,7 +75,7 @@ func TestRunVersion(t *testing.T) {
 	}
 
 	got := buf.String()
-	if !strings.Contains(got, "amika-server version v1.2.3-rc.1") {
+	if !strings.Contains(got, "version: v1.2.3-rc.1") {
 		t.Fatalf("run() output = %q, want version line", got)
 	}
 	if !strings.Contains(got, "commit: ") {

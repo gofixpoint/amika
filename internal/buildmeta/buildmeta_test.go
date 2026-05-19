@@ -34,7 +34,7 @@ func TestInfoString(t *testing.T) {
 	}
 
 	got := info.String()
-	want := "amika-server version v1.2.3-rc.1\ncommit: abcdef123456\ndate: 2026-03-17T12:00:00Z"
+	want := "version: v1.2.3-rc.1\ncommit: abcdef123456\ndate: 2026-03-17T12:00:00Z"
 	if got != want {
 		t.Fatalf("info.String() = %q, want %q", got, want)
 	}
