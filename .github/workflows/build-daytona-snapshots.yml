@@ -1,8 +1,9 @@
 name: Build Daytona Snapshots
 
 # Manually builds the Daytona Coder snapshot images and pushes them to the
-# amika-prod and Fixpoint Daytona orgs. Runs `bin/build-docker-images`
-# against a chosen git ref (defaults to main HEAD).
+# amika-prod and Fixpoint Daytona orgs. The "l" and "xl" sizes only go to
+# amika-prod since the Fixpoint (staging) org has lower resource limits.
+# Runs `bin/build-docker-images` against a chosen git ref (defaults to main HEAD).
 #
 # Auth: each Daytona org has its own API key. DAYTONA_PROD_API_KEY is used
 # for amika-prod and DAYTONA_STAGING_API_KEY for Fixpoint. Both secrets

@@ -28,11 +28,15 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Determine git version tag
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
-# Daytona snapshot size configurations (parallel arrays for Bash 3 compat)
+# Daytona snapshot size configurations (parallel arrays for Bash 3 compat).
+# SIZE_ORGS limits which Daytona orgs each size is pushed to. The Fixpoint
+# (staging) org doesn't have high enough resource limits for the larger
+# sizes, so "l" and "xl" only go to amika-prod.
 SIZES=("xs" "m" "l" "xl")
 SIZE_CPUS=("1" "2" "2" "4")
 SIZE_MEMORY=("1" "8" "12" "16")
 SIZE_DISK=("3" "10" "18" "24")
+SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod" "amika-prod")
 
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
 
@@ -208,7 +212,7 @@ for preset in "${PRESETS[@]}"; do
       mem="${SIZE_MEMORY[$i]}"
       disk="${SIZE_DISK[$i]}"
       snapshot_name="amika/${preset}-${size}:${VERSION}"
-      for org in amika-prod Fixpoint; do
+      for org in ${SIZE_ORGS[$i]}; do
         if [ "$CI_AUTH" = true ]; then
           case "$org" in
             amika-prod) api_key="$DAYTONA_PROD_API_KEY" ;;
