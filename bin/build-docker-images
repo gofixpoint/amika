@@ -29,10 +29,10 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
 # Daytona snapshot size configurations (parallel arrays for Bash 3 compat)
-SIZES=("xs" "m")
-SIZE_CPUS=("1" "2")
-SIZE_MEMORY=("1" "8")
-SIZE_DISK=("3" "10")
+SIZES=("xs" "m" "l" "xl")
+SIZE_CPUS=("1" "2" "2" "4")
+SIZE_MEMORY=("1" "8" "12" "16")
+SIZE_DISK=("3" "10" "18" "24")
 
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
 
