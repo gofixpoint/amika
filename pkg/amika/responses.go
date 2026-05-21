@@ -8,6 +8,8 @@ type Sandbox struct {
 	ContainerID string
 	Image       string
 	CreatedAt   string
+	ExpiresAt   string `json:"ExpiresAt,omitempty"`
+	WarnAt      string `json:"WarnAt,omitempty"`
 	Preset      string
 	Location    string // "local" or "remote"
 	Branch      string

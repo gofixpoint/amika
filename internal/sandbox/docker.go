@@ -66,6 +66,21 @@ func GetDockerContainerState(name string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// GetDockerContainerExitCode returns the exit code of a Docker container.
+// Returns -1 if the exit code cannot be determined.
+func GetDockerContainerExitCode(name string) (int, error) {
+	cmd := exec.Command("docker", "inspect", "--format", "{{.State.ExitCode}}", name)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return -1, fmt.Errorf("failed to inspect docker container %q exit code: %s", name, strings.TrimSpace(string(out)))
+	}
+	code := 0
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &code); err != nil {
+		return -1, fmt.Errorf("failed to parse exit code for container %q: %v", name, err)
+	}
+	return code, nil
+}
+
 // StartDockerSandbox starts a stopped Docker container with the given name.
 func StartDockerSandbox(name string) error {
 	cmd := exec.Command("docker", "start", name)
