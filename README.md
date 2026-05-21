@@ -14,7 +14,7 @@
   <a href="https://amika.dev">amika.dev</a>
   <br />
   <br />
-  <a href="https://www.amika.dev">Join Waitlist</a> | <a href="https://discord.gg/xDXk4KjGWg">Discord</a>
+  <a href="https://www.amika.dev">Join Waitlist</a> | <a href="https://docs.amika.dev/">Docs</a> | <a href="https://discord.gg/xDXk4KjGWg">Discord</a>
 </p>
 
 ---
