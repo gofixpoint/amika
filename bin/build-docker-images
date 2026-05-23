@@ -170,7 +170,7 @@ EXISTING_SNAPSHOTS=()
 for preset in "${PRESETS[@]}"; do
   image_tag="amika/${preset}:${VERSION}"
   latest_tag="amika/${preset}:latest"
-  dockerfile="$REPO_ROOT/internal/sandbox/presets/${preset}/Dockerfile"
+  dockerfile="$REPO_ROOT/go/internal/sandbox/presets/${preset}/Dockerfile"
 
   docker_args=(build)
   if [ -n "$PLATFORM" ]; then
@@ -201,7 +201,7 @@ for preset in "${PRESETS[@]}"; do
       ;;
   esac
 
-  docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT/internal/sandbox/presets")
+  docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT/go/internal/sandbox/presets")
   docker "${docker_args[@]}"
   BUILT_IMAGES+=("$image_tag" "$latest_tag")
 
