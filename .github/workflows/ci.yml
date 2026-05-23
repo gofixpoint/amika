@@ -15,6 +15,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
+          cache-dependency-path: go/go.sum
 
       - name: Check formatting
         run: make fmtcheck
@@ -23,9 +24,7 @@ jobs:
         run: make vet
 
       - name: Lint
-        uses: docker://ghcr.io/morphy2k/revive-action:v2
-        with:
-          config: revive.toml
+        run: make lint
 
       - name: Build
         run: make build

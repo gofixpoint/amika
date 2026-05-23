@@ -100,8 +100,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
+          cache-dependency-path: go/go.sum
 
       - name: Build archive
+        working-directory: go
         env:
           COMPONENT: ${{ needs.metadata.outputs.component }}
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -111,15 +113,15 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          mkdir -p dist
+          mkdir -p ../dist
           case "$COMPONENT" in
             amika)
               package_path="./cmd/amika"
-              ld_version="github.com/gofixpoint/amika/internal/buildmeta.amikaVersionValue=$VERSION"
+              ld_version="github.com/gofixpoint/amika/go/internal/buildmeta.amikaVersionValue=$VERSION"
               ;;
             amika-server)
               package_path="./cmd/amika-server"
-              ld_version="github.com/gofixpoint/amika/internal/buildmeta.amikaServerVersionValue=$VERSION"
+              ld_version="github.com/gofixpoint/amika/go/internal/buildmeta.amikaServerVersionValue=$VERSION"
               ;;
             *)
               echo "Unsupported component: $COMPONENT" >&2
@@ -128,7 +130,7 @@ jobs:
           esac
 
           archive_base="${COMPONENT}_${VERSION#v}_${GOOS}_${GOARCH}"
-          staging_dir="dist/${archive_base}"
+          staging_dir="../dist/${archive_base}"
           binary_path="${staging_dir}/${BINARY_NAME}"
 
           mkdir -p "$staging_dir"
@@ -136,11 +138,11 @@ jobs:
           env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
             go build \
               -trimpath \
-              -ldflags="-s -w -X ${ld_version} -X github.com/gofixpoint/amika/internal/buildmeta.Commit=${COMMIT} -X github.com/gofixpoint/amika/internal/buildmeta.Date=${BUILD_DATE}" \
+              -ldflags="-s -w -X ${ld_version} -X github.com/gofixpoint/amika/go/internal/buildmeta.Commit=${COMMIT} -X github.com/gofixpoint/amika/go/internal/buildmeta.Date=${BUILD_DATE}" \
               -o "$binary_path" \
               "$package_path"
 
-          tar -C "dist" -czf "dist/${archive_base}.tar.gz" "${archive_base}"
+          tar -C "../dist" -czf "../dist/${archive_base}.tar.gz" "${archive_base}"
 
       - uses: actions/upload-artifact@v4
         with:
