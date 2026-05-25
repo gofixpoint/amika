@@ -1,0 +1,113 @@
+name: SDK TypeScript Publish
+
+# Publishes @amika/sdk to npm when a sdk-typescript@v* tag is pushed.
+#
+# Guardrails:
+#   1. Only runs for tags shaped `sdk-typescript@vX.Y.Z[-suffix]`.
+#   2. Refuses to publish unless the tagged commit is an ancestor of origin/main
+#      (i.e. the tag points at a commit that has been merged to main).
+#   3. Refuses to publish unless the tag version matches sdk/typescript/package.json.
+#   4. Re-runs typecheck, lint, formatcheck, build, and tests before publishing.
+#
+# Tags are expected to be cut via release-tag.yml. Pushing a tag by hand from a
+# branch that isn't merged to main will fail the ancestry check.
+
+on:
+  push:
+    tags:
+      - "sdk-typescript@v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse and validate tag
+        id: parse
+        working-directory: .
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^sdk-typescript@v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'; then
+            echo "Unsupported tag format: $TAG" >&2
+            exit 1
+          fi
+
+          version="${TAG#sdk-typescript@v}"
+          npm_tag="latest"
+          if printf '%s' "$version" | grep -q -- '-'; then
+            npm_tag="next"
+          fi
+
+          {
+            echo "version=$version"
+            echo "npm_tag=$npm_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag commit is on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch origin main --depth=0 >/dev/null 2>&1 || git fetch origin main
+          tag_sha=$(git rev-list -n 1 "$TAG")
+          if ! git merge-base --is-ancestor "$tag_sha" origin/main; then
+            echo "Tag $TAG points at $tag_sha, which is not an ancestor of origin/main." >&2
+            echo "Publishing is only allowed from commits merged to main." >&2
+            exit 1
+          fi
+          echo "Tag commit $tag_sha is on main."
+
+      - name: Verify package.json version matches tag
+        env:
+          EXPECTED: ${{ steps.parse.outputs.version }}
+        run: |
+          actual=$(node -p "require('./package.json').version")
+          if [ "$actual" != "$EXPECTED" ]; then
+            echo "package.json version ($actual) does not match tag version ($EXPECTED)." >&2
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: sdk/typescript/pnpm-lock.yaml
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm formatcheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TAG: ${{ steps.parse.outputs.npm_tag }}
+        run: pnpm publish --no-git-checks --provenance --access public --tag "$NPM_TAG"
