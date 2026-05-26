@@ -35,6 +35,7 @@ This is the same infra pattern used by Ramp, Coinbase, and Stripe for their in-h
 - **Setup scripts** — Run custom initialization logic on sandbox creation with `--setup-script`
 - **Port publishing** — Expose container ports to the host for live previews with `--port`
 - **REST API** — `amika-server` exposes all operations as HTTP endpoints with OpenAPI docs at `/docs`
+- **TypeScript SDK** — [`@amika/sdk`](sdk/typescript/README.md) wraps the REST API for programmatic access from Node.js
 
 ## Quick Start
 
@@ -121,6 +122,45 @@ Start the server:
 OpenAPI documentation is available at `/docs`. The API mirrors the CLI — create sandboxes, run materializations, extract credentials, and manage volumes over HTTP.
 
 See the [endpoint table in docs/cli-reference.md](docs/cli-reference.md#api-endpoints) for the full list of routes.
+
+## TypeScript SDK
+
+`@amika/sdk` is a typed wrapper around the REST API for Node.js callers.
+
+```bash
+npm install @amika/sdk
+```
+
+```ts
+import { AmikaClient } from "@amika/sdk";
+
+const amika = new AmikaClient({
+  baseUrl: "https://app.amika.dev",
+  accessToken: process.env.AMIKA_API_KEY!,
+});
+
+// Create a sandbox (returns immediately with state "initializing")
+const sb = await amika.createSandbox({
+  name: "dev-box",
+  repoUrl: "https://github.com/gofixpoint/example-repo",
+  preset: "coder",
+});
+
+// Wait until it's ready (polls every 3s)
+await amika.waitForSandbox(sb.name);
+
+// Send a prompt to an agent
+const resp = await amika.agentSend(sb.name, {
+  message: "Refactor the auth module",
+  agent: "claude",
+});
+console.log(resp.result);
+
+// Tear down
+await amika.deleteSandbox(sb.name);
+```
+
+Point `baseUrl` at the hosted API (`https://app.amika.dev`) or a local `amika-server`. See [sdk/typescript/README.md](sdk/typescript/README.md) for the full method list, configuration options, and error handling.
 
 ## Presets
 
