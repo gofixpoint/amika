@@ -20,23 +20,26 @@ const amika = new AmikaClient({
 
 // Create a sandbox (returns immediately with state "initializing")
 const sb = await amika.createSandbox({
-  name: "dev-box",
-  repoUrl: "git@github.com:org/proj.git",
+  name: "hello-amika",
+  provider: "daytona",
+  repoUrl: "git@github.com:gofixpoint/example-repo.git",
   preset: "coder",
-  envVars: { NODE_ENV: "development" },
+  agentCredentials: [{ kind: "claude" }],
 });
+console.log(`Created sandbox "${sb.name}"`);
 
 // Wait until it's ready (polls every 3s, no timeout)
 await amika.waitForSandbox(sb.name);
 
 // Send a prompt to an agent (HTTP timeout is 10 minutes for this endpoint)
 const resp = await amika.agentSend(sb.name, {
-  message: "Refactor the auth module",
+  message: "Write a hello_world.md file with Hello World! in it",
   agent: "claude",
 });
-console.log(resp.result);
+console.log(`Agent Response: ${resp.result}`);
 
 // Tear down
+console.log(`Deleting sandbox "${sb.name}"`);
 await amika.deleteSandbox(sb.name);
 ```
 
