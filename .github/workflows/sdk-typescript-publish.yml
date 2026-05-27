@@ -117,7 +117,6 @@ jobs:
           if [ -z "$NODE_AUTH_TOKEN" ]; then
             echo "NPM_TOKEN is EMPTY — secret not reaching this job"; exit 1
           fi
-          echo "NPM_TOKEN is present"
           # setup-node writes an .npmrc to its user config that pnpm does not
           # reliably read, so write a project-level .npmrc that pnpm honors.
           # pnpm expands ${NODE_AUTH_TOKEN} from the environment at publish time.
