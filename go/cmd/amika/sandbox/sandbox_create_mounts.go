@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/sandbox"
-	"github.com/gofixpoint/amika/go/pkg/amika"
 )
 
 // parsePortFlags parses --port flag values in the format hostPort:containerPort[/protocol].
@@ -70,25 +69,6 @@ func parsePortFlags(flags []string, hostIP string) ([]sandbox.PortBinding, error
 		})
 	}
 	return ports, nil
-}
-
-func formatPortBindings(bindings []amika.PortBinding) string {
-	if len(bindings) == 0 {
-		return "-"
-	}
-	out := make([]string, 0, len(bindings))
-	for _, p := range bindings {
-		hostIP := p.HostIP
-		if strings.TrimSpace(hostIP) == "" {
-			hostIP = "127.0.0.1"
-		}
-		protocol := p.Protocol
-		if strings.TrimSpace(protocol) == "" {
-			protocol = "tcp"
-		}
-		out = append(out, fmt.Sprintf("%s:%d->%d/%s", hostIP, p.HostPort, p.ContainerPort, protocol))
-	}
-	return strings.Join(out, ",")
 }
 
 func formatPortBinding(binding sandbox.PortBinding) string {
