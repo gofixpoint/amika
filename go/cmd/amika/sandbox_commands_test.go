@@ -71,13 +71,24 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sandbox list failed: %v", err)
 	}
-	if !strings.Contains(out, "NAME") || !strings.Contains(out, "PROVIDER") || !strings.Contains(out, "PORTS") {
+	if !strings.Contains(out, "NAME") || !strings.Contains(out, "CREATOR") {
 		t.Fatalf("missing header: %s", out)
+	}
+	if strings.Contains(out, "PROVIDER") || strings.Contains(out, "PORTS") || strings.Contains(out, "IMAGE") {
+		t.Fatalf("unexpected wide-only column in default output: %s", out)
 	}
 	if !strings.Contains(out, "sb-a") {
 		t.Fatalf("missing sandbox row: %s", out)
 	}
-	if !strings.Contains(out, "127.0.0.1:8080->80/tcp") {
-		t.Fatalf("missing ports in row: %s", out)
+
+	longOut, err := runRootCommand("sandbox", "list", "--local", "--long")
+	if err != nil {
+		t.Fatalf("sandbox list --long failed: %v", err)
+	}
+	if !strings.Contains(longOut, "IMAGE") || !strings.Contains(longOut, "PORTS") {
+		t.Fatalf("missing long header: %s", longOut)
+	}
+	if !strings.Contains(longOut, "127.0.0.1:8080->80/tcp") {
+		t.Fatalf("missing ports in long row: %s", longOut)
 	}
 }

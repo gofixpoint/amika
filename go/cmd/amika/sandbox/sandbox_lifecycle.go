@@ -214,10 +214,22 @@ var sandboxListCmd = &cobra.Command{
 			return nil
 		}
 
+		long, err := cmd.Flags().GetBool("long")
+		if err != nil {
+			return err
+		}
+
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tBRANCH\tREPO\tCREATOR\tCREATED")
-		for _, sb := range allItems {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Branch, formatRepos(sb.Repos), formatCreatedBy(sb.CreatedBy), sb.CreatedAt)
+		if long {
+			fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tIMAGE\tBRANCH\tREPO\tCREATOR\tPORTS\tCREATED")
+			for _, sb := range allItems {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Image, sb.Branch, formatRepos(sb.Repos), formatCreatedBy(sb.CreatedBy), formatPortBindings(sb.Ports), sb.CreatedAt)
+			}
+		} else {
+			fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tBRANCH\tREPO\tCREATOR\tCREATED")
+			for _, sb := range allItems {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Branch, formatRepos(sb.Repos), formatCreatedBy(sb.CreatedBy), sb.CreatedAt)
+			}
 		}
 		w.Flush()
 		return nil
