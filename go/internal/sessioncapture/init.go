@@ -76,8 +76,14 @@ func Init(homeDir string, cmd HookCommand) (InitReport, error) {
 }
 
 // ensureClaudeStopHook reads `~/.claude/settings.json`, ensures a `Stop` hook
-// matching command exists, and writes the file back. Returns whether the file
+// running command exists, and writes the file back. Returns whether the file
 // was modified.
+//
+// Any previously installed amika Stop hooks are stripped first (recognized by
+// argv shape, not exact-string equality) so that re-running capture-init from
+// a different `amika` executable path replaces the stale entry instead of
+// appending a second one. The Codex notify path has equivalent handling; this
+// keeps the two in sync.
 //
 // The Claude hooks schema is documented at
 // https://docs.claude.com/en/docs/claude-code/hooks. We model it as nested
@@ -94,11 +100,16 @@ func ensureClaudeStopHook(path, command string) (bool, error) {
 	}
 
 	stopGroups, _ := hooks["Stop"].([]interface{})
-	if claudeHookAlreadyPresent(stopGroups, command) {
+	filtered, removed := stripClaudeAmikaStopHooks(stopGroups)
+
+	// If the only amika hook we removed already matched the current
+	// command, nothing actually changes — short-circuit so callers can
+	// report "already present".
+	if len(removed) == 1 && removed[0] == command {
 		return false, nil
 	}
 
-	stopGroups = append(stopGroups, map[string]interface{}{
+	filtered = append(filtered, map[string]interface{}{
 		"hooks": []interface{}{
 			map[string]interface{}{
 				"type":    "command",
@@ -106,30 +117,114 @@ func ensureClaudeStopHook(path, command string) (bool, error) {
 			},
 		},
 	})
-	hooks["Stop"] = stopGroups
+	hooks["Stop"] = filtered
 	settings["hooks"] = hooks
 
 	return true, writeJSONObject(path, settings)
 }
 
-func claudeHookAlreadyPresent(groups []interface{}, command string) bool {
+// stripClaudeAmikaStopHooks returns the input Stop-hook groups with every
+// amika-installed entry removed (groups that become empty are dropped), plus
+// the raw command strings of the entries that were removed.
+func stripClaudeAmikaStopHooks(groups []interface{}) ([]interface{}, []string) {
+	filtered := make([]interface{}, 0, len(groups))
+	var removed []string
 	for _, raw := range groups {
 		group, ok := raw.(map[string]interface{})
 		if !ok {
+			filtered = append(filtered, raw)
 			continue
 		}
 		entries, _ := group["hooks"].([]interface{})
+		kept := make([]interface{}, 0, len(entries))
 		for _, e := range entries {
 			entry, ok := e.(map[string]interface{})
 			if !ok {
+				kept = append(kept, e)
 				continue
 			}
-			if s, _ := entry["command"].(string); s == command {
-				return true
+			cmd, _ := entry["command"].(string)
+			if looksLikeClaudeAmikaHook(cmd) {
+				removed = append(removed, cmd)
+				continue
 			}
+			kept = append(kept, e)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		group["hooks"] = kept
+		filtered = append(filtered, group)
+	}
+	return filtered, removed
+}
+
+// looksLikeClaudeAmikaHook reports whether cmd is a Stop-hook command line
+// that invokes an amika executable with the Claude capture argv. The
+// executable path may have been quoted (paths with spaces) and may differ
+// from the current amika binary's path — we identify by argv shape rather
+// than exact-string equality so renames don't strand a stale hook entry.
+func looksLikeClaudeAmikaHook(cmd string) bool {
+	argv := splitShellArgv(cmd)
+	wantTail := []string{"sessions", "capture", "--source", "claude"}
+	if len(argv) != len(wantTail)+1 {
+		return false
+	}
+	for i, w := range wantTail {
+		if argv[i+1] != w {
+			return false
 		}
 	}
-	return false
+	return filepath.Base(argv[0]) == "amika"
+}
+
+// splitShellArgv tokenizes a string the way /bin/sh would for the subset of
+// quoting shellQuote produces: single-quoted regions plus the `'\”` escape
+// sequence for literal apostrophes. This is not a full shell parser; it is
+// sufficient to recognize commands we ourselves wrote and a wide range of
+// hand-edited variants.
+func splitShellArgv(s string) []string {
+	var out []string
+	var cur []byte
+	inSingle := false
+	started := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inSingle {
+			if c == '\'' {
+				inSingle = false
+				continue
+			}
+			cur = append(cur, c)
+			started = true
+			continue
+		}
+		if c == '\\' && i+1 < len(s) {
+			cur = append(cur, s[i+1])
+			started = true
+			i++
+			continue
+		}
+		if c == '\'' {
+			inSingle = true
+			started = true
+			continue
+		}
+		if c == ' ' || c == '\t' {
+			if started {
+				out = append(out, string(cur))
+				cur = cur[:0]
+				started = false
+			}
+			continue
+		}
+		cur = append(cur, c)
+		started = true
+	}
+	if started {
+		out = append(out, string(cur))
+	}
+	return out
 }
 
 func readJSONObject(path string) (map[string]interface{}, error) {

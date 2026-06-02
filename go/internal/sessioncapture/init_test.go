@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -200,6 +202,142 @@ trust_level = "trusted"
 	}
 }
 
+func TestInit_UpdatesStaleClaudeHookPath(t *testing.T) {
+	useCodexFallback(t)
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{
+					"hooks": []interface{}{
+						map[string]interface{}{"type": "command", "command": "/old/path/amika sessions capture --source claude"},
+					},
+				},
+			},
+		},
+	}
+	raw, _ := json.Marshal(stale)
+	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Init(home, HookCommand{Exe: "/new/path/amika"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.ClaudeUpdated {
+		t.Errorf("expected ClaudeUpdated=true when binary path changed, got %+v", rep)
+	}
+
+	settings := readClaudeSettings(t, settingsPath)
+	stopCommands := claudeStopCommands(settings)
+	if len(stopCommands) != 1 {
+		t.Fatalf("expected exactly one Stop command after update, got %v", stopCommands)
+	}
+	if stopCommands[0] != "/new/path/amika sessions capture --source claude" {
+		t.Errorf("Stop command not updated: %v", stopCommands)
+	}
+	for _, c := range stopCommands {
+		if strings.Contains(c, "/old/path/amika") {
+			t.Errorf("stale path still present: %v", stopCommands)
+		}
+	}
+}
+
+func TestInit_PreservesNonAmikaStopHooks(t *testing.T) {
+	useCodexFallback(t)
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{
+					"hooks": []interface{}{
+						map[string]interface{}{"type": "command", "command": "other-tool --watch"},
+						map[string]interface{}{"type": "command", "command": "/old/amika sessions capture --source claude"},
+					},
+				},
+			},
+		},
+	}
+	raw, _ := json.Marshal(existing)
+	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Init(home, HookCommand{Exe: "/new/amika"}); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := readClaudeSettings(t, settingsPath)
+	stopCommands := claudeStopCommands(settings)
+	sort.Strings(stopCommands)
+	want := []string{"/new/amika sessions capture --source claude", "other-tool --watch"}
+	if !reflect.DeepEqual(stopCommands, want) {
+		t.Errorf("Stop commands = %v, want %v", stopCommands, want)
+	}
+}
+
+func TestInit_CollapsesDuplicateAmikaHooks(t *testing.T) {
+	useCodexFallback(t)
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{"hooks": []interface{}{
+					map[string]interface{}{"type": "command", "command": "/a/amika sessions capture --source claude"},
+				}},
+				map[string]interface{}{"hooks": []interface{}{
+					map[string]interface{}{"type": "command", "command": "/b/amika sessions capture --source claude"},
+				}},
+			},
+		},
+	}
+	raw, _ := json.Marshal(existing)
+	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Init(home, HookCommand{Exe: "/c/amika"}); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := readClaudeSettings(t, settingsPath)
+	if got := claudeStopCommands(settings); len(got) != 1 || got[0] != "/c/amika sessions capture --source claude" {
+		t.Errorf("expected one collapsed hook pointing at /c/amika, got %v", got)
+	}
+}
+
+func TestLooksLikeClaudeAmikaHook(t *testing.T) {
+	cases := map[string]bool{
+		"/usr/local/bin/amika sessions capture --source claude":     true,
+		"amika sessions capture --source claude":                    true,
+		"./dist/amika sessions capture --source claude":             true,
+		"'/path with space/amika' sessions capture --source claude": true,
+		"/usr/local/bin/not-amika sessions capture --source claude": false,
+		"other-tool --watch":                               false,
+		"amika sessions capture --source codex":            false,
+		"amika sessions capture --source claude --verbose": false,
+		"": false,
+	}
+	for in, want := range cases {
+		if got := looksLikeClaudeAmikaHook(in); got != want {
+			t.Errorf("looksLikeClaudeAmikaHook(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
 func TestShellQuote(t *testing.T) {
 	cases := map[string]string{
 		"/usr/local/bin/amika":   "/usr/local/bin/amika",
@@ -229,7 +367,27 @@ func readClaudeSettings(t *testing.T, path string) map[string]interface{} {
 }
 
 func claudeHasHook(settings map[string]interface{}, command string) bool {
+	for _, c := range claudeStopCommands(settings) {
+		if c == command {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeStopCommands(settings map[string]interface{}) []string {
 	hooks, _ := settings["hooks"].(map[string]interface{})
 	stop, _ := hooks["Stop"].([]interface{})
-	return claudeHookAlreadyPresent(stop, command)
+	var out []string
+	for _, raw := range stop {
+		group, _ := raw.(map[string]interface{})
+		entries, _ := group["hooks"].([]interface{})
+		for _, e := range entries {
+			entry, _ := e.(map[string]interface{})
+			if cmd, ok := entry["command"].(string); ok {
+				out = append(out, cmd)
+			}
+		}
+	}
+	return out
 }
