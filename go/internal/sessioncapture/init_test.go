@@ -152,6 +152,38 @@ notify = ["/old/path/amika", "sessions", "capture", "--source", "codex"]
 	}
 }
 
+func TestInit_TreatsLookalikeNotifyAsConflict(t *testing.T) {
+	useCodexFallback(t)
+	for _, name := range []string{"notamika", "my-amika", "amikatool"} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			cfg := filepath.Join(home, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			contents := `notify = ["/usr/local/bin/` + name + `", "--watch"]` + "\n"
+			if err := os.WriteFile(cfg, []byte(contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			rep, err := Init(home, HookCommand{Exe: "/usr/local/bin/amika"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.CodexUpdated {
+				t.Errorf("expected lookalike %q to be treated as conflict, not replaced", name)
+			}
+			if rep.CodexConflict == "" {
+				t.Errorf("expected CodexConflict to be reported for lookalike %q", name)
+			}
+			got, _ := os.ReadFile(cfg)
+			if string(got) != contents {
+				t.Errorf("notify for lookalike %q was modified:\n%s", name, got)
+			}
+		})
+	}
+}
+
 func TestInit_HonorsCODEX_HOME(t *testing.T) {
 	home := t.TempDir()
 	codexHome := t.TempDir()

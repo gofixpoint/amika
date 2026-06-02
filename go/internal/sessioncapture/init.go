@@ -393,8 +393,10 @@ func findTopLevelNotify(lines []string) (int, string) {
 }
 
 // codexNotifyIsAmika reports whether the value of `notify` invokes the amika
-// binary. We only treat array-form values with an "amika" argv[0] as ours, so
-// users running other notify programs aren't silently overwritten.
+// binary. We only treat array-form values whose argv[0] has basename "amika"
+// as ours, so users running other notify programs aren't silently overwritten.
+// The basename check (vs. a HasSuffix check) is important: "/usr/bin/notamika"
+// and "my-amika" must be treated as third-party tools, not stale Amika hooks.
 func codexNotifyIsAmika(value string) bool {
 	v := strings.TrimSpace(value)
 	if !strings.HasPrefix(v, "[") {
@@ -407,7 +409,7 @@ func codexNotifyIsAmika(value string) bool {
 	if len(argv) == 0 {
 		return false
 	}
-	return strings.HasSuffix(argv[0], "amika") || strings.HasSuffix(argv[0], "/amika")
+	return filepath.Base(argv[0]) == "amika"
 }
 
 // tomlArrayDecode decodes a TOML inline array of strings (e.g.
