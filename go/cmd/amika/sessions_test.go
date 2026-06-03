@@ -35,7 +35,7 @@ func TestSessionsCapture_AcceptsCodexNotifyPayload(t *testing.T) {
 	}
 
 	stateDir := os.Getenv("AMIKA_STATE_DIRECTORY")
-	mirrored, err := os.ReadFile(filepath.Join(stateDir, "sessions", "codex", "2026", "06", "01", "rollout-1.jsonl"))
+	mirrored, err := os.ReadFile(filepath.Join(stateDir, "sessions", "codex", "2026-06-01", "rollout-1.jsonl"))
 	if err != nil {
 		t.Fatalf("mirror missing: %v", err)
 	}

@@ -5,8 +5,8 @@
 // `~/.claude/settings.json` (Stop hook) and `<codex-home>/config.toml`
 // (notify program) that invoke `amika sessions capture --source ...`
 // whenever the agent finishes a turn. Each invocation copies the relevant
-// session JSONL into `<state>/sessions/<source>/`. No daemon, no background
-// process.
+// session JSONL into `<state>/sessions/<source>/<YYYY-MM-DD>/`, grouping a
+// day's sessions together. No daemon, no background process.
 //
 // `<codex-home>` is `$CODEX_HOME` when set, otherwise `~/.codex` (see
 // CodexHome). Honoring the env var matters because Codex itself reads
@@ -48,6 +48,10 @@ type claudeStopHookInput struct {
 
 // CaptureClaude reads the Stop-hook JSON Claude pipes on stdin and copies
 // the referenced transcript into the amika state directory.
+//
+// Mirrors land under a `YYYY-MM-DD/` subdirectory derived from the
+// transcript file's mtime, so a day's sessions sit together without nesting
+// year/month/day directories.
 func CaptureClaude(stdin io.Reader, stateDir string) error {
 	data, err := io.ReadAll(stdin)
 	if err != nil {
@@ -60,11 +64,16 @@ func CaptureClaude(stdin io.Reader, stateDir string) error {
 	if in.TranscriptPath == "" {
 		return errors.New("claude hook input missing transcript_path")
 	}
+	info, err := os.Stat(in.TranscriptPath)
+	if err != nil {
+		return fmt.Errorf("statting claude transcript %s: %w", in.TranscriptPath, err)
+	}
 	name := filepath.Base(in.TranscriptPath)
 	if in.SessionID != "" && !strings.HasSuffix(name, ".jsonl") {
 		name = in.SessionID + ".jsonl"
 	}
-	dst := filepath.Join(CaptureDir(stateDir, SourceClaude), name)
+	day := info.ModTime().Format("2006-01-02")
+	dst := filepath.Join(CaptureDir(stateDir, SourceClaude), day, name)
 	return copyFile(in.TranscriptPath, dst)
 }
 
@@ -75,9 +84,10 @@ func CaptureClaude(stdin io.Reader, stateDir string) error {
 // Codex's notify payload does not include a session path. Picking only the
 // globally newest file across the tree would skip a turn whenever a second
 // concurrent Codex session wrote something more recently — so we walk the
-// whole tree and copy any file that's changed. Mirrors preserve Codex's
-// `YYYY/MM/DD/<rollout>.jsonl` layout under `<state>/sessions/codex/` so
-// nothing collides across days.
+// whole tree and copy any file that's changed. Mirrors flatten Codex's
+// nested `YYYY/MM/DD/<rollout>.jsonl` source layout into a single
+// `YYYY-MM-DD/<rollout>.jsonl` directory under `<state>/sessions/codex/` —
+// session basenames are unique so nothing collides within a day.
 //
 // The Codex state root is `$CODEX_HOME` when set, falling back to
 // `<homeDir>/.codex`. Returns nil with no error when no Codex session
@@ -100,7 +110,15 @@ func CaptureCodex(homeDir, stateDir string) error {
 		if relErr != nil {
 			return relErr
 		}
-		dst := filepath.Join(dstRoot, rel)
+		day, ok := codexDayFromRel(rel)
+		if !ok {
+			info, statErr := os.Stat(path)
+			if statErr != nil {
+				return statErr
+			}
+			day = info.ModTime().Format("2006-01-02")
+		}
+		dst := filepath.Join(dstRoot, day, filepath.Base(rel))
 
 		fresh, freshErr := mirrorIsFresh(path, dst)
 		if freshErr != nil {
@@ -115,6 +133,28 @@ func CaptureCodex(homeDir, stateDir string) error {
 		return walkErr
 	}
 	return nil
+}
+
+// codexDayFromRel extracts a `YYYY-MM-DD` day stamp from a Codex session
+// relative path of the form `YYYY/MM/DD/<rollout>.jsonl`. Returns ok=false
+// if the path doesn't have that shape so callers can fall back to mtime.
+func codexDayFromRel(rel string) (string, bool) {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) < 4 {
+		return "", false
+	}
+	y, m, d := parts[0], parts[1], parts[2]
+	if len(y) != 4 || len(m) != 2 || len(d) != 2 {
+		return "", false
+	}
+	for _, s := range []string{y, m, d} {
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return "", false
+			}
+		}
+	}
+	return y + "-" + m + "-" + d, true
 }
 
 // CodexHome returns the directory Codex uses for config, sessions, auth and
