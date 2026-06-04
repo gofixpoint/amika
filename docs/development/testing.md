@@ -9,6 +9,38 @@ This guide defines the automated test pyramid for Amika and the command flow to 
 3. Contract tests: lock user-visible CLI behavior and key error contracts.
 4. Docker-backed integration tests: opt-in suites that require Docker.
 
+## Testing Principles
+
+These shape the code under test, not the tests themselves.
+
+### Prefer dependency injection over mocks
+
+Shape code so collaborators (Docker clients, stores, clocks, HTTP
+clients) are passed in as arguments or carried on a context struct, and
+substitute a fake or real implementation at the call site.
+`go/internal/ports/` defines interfaces for Docker, store, clock,
+idgen, runner, and filesystem operations; production wiring lives in
+`go/internal/app/`, and tests pass fakes.
+
+Why:
+
+- Dependencies are visible in the type signature; the compiler catches
+  mismatches when names change.
+- The same seam accepts a real implementation or a hand-written fake.
+- No package-level mock state leaks between tests.
+
+Reach for `gomock`, monkey-patching, or build-tag indirection only when
+injection is genuinely impractical (e.g. a third-party package-level
+function). Leave a comment explaining why.
+
+### Functional core, imperative shell
+
+Prefer stateless, pure functions for business logic — they take inputs
+and return outputs with no side effects. Isolate I/O (Docker calls,
+filesystem, network) at the boundaries of the call stack. The
+functional core is easy to unit-test; the shell is exercised by
+integration and contract tests.
+
 ## Make Targets
 
 | Target                  | What it runs                                                                                  |
