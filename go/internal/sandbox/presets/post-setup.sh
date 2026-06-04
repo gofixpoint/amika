@@ -5,4 +5,6 @@
 
 set -euo pipefail
 
-sudo chown -R amika:amika /home/amika
+# Filtering with find instead of a blanket `chown -R` skips files that already
+# have the right owner, avoiding ctime churn and overlayfs copy-ups.
+sudo find /home/amika \( ! -user amika -o ! -group amika \) -exec chown -h amika:amika {} +

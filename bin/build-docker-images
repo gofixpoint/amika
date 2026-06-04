@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-#/ Usage: bin/build-docker-images <image>... [--platform <platform>] [--ignore-unstaged] [--push-daytona] [--ci]
+#/ Usage: bin/build-docker-images <image>... [--platform <platform>] [--ignore-unstaged] [--push-daytona] [--orgs <orgs>] [--ci]
 #/
 #/ Build preset Docker images and tag them with the current git commit.
 #/ By default, builds for the host architecture. With --push-daytona,
@@ -18,8 +18,11 @@ set -euo pipefail
 #/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
 #/   --ignore-unstaged    Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
+#/   --orgs <orgs>        Limit which Daytona orgs snapshots are pushed to: staging (Fixpoint),
+#/                        prod (amika-prod), or all (default). Requires --push-daytona.
 #/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
 #/                        before each org switch instead of relying on existing daytona login state.
+#/                        Only the keys for orgs selected by --orgs are required.
 #/                        Requires --push-daytona.
 #/   --help               Show this help message
 
@@ -63,6 +66,7 @@ IMAGES=()
 PLATFORM=""
 IGNORE_UNSTAGED=false
 PUSH_DAYTONA=false
+ORGS="all"
 CI_AUTH=false
 
 while [ $# -gt 0 ]; do
@@ -74,6 +78,11 @@ while [ $# -gt 0 ]; do
       PLATFORM="$2"; shift 2 ;;
     --ignore-unstaged) IGNORE_UNSTAGED=true; shift ;;
     --push-daytona)    PUSH_DAYTONA=true; shift ;;
+    --orgs)
+      if [ $# -lt 2 ]; then
+        echo "Error: --orgs requires a value" >&2; exit 1
+      fi
+      ORGS="$2"; shift 2 ;;
     --ci)              CI_AUTH=true; shift ;;
     --help)            usage; exit 0 ;;
     -*)                echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
@@ -110,6 +119,25 @@ if [ "$PUSH_DAYTONA" = true ] && [ "$PLATFORM" = "linux/arm64" ]; then
   exit 1
 fi
 
+# Validate --orgs flag
+case "$ORGS" in
+  staging|prod|all) ;;
+  *) echo "Error: --orgs must be one of: staging, prod, all" >&2; exit 1 ;;
+esac
+if [ "$ORGS" != "all" ] && [ "$PUSH_DAYTONA" != true ]; then
+  echo "Error: --orgs requires --push-daytona." >&2
+  exit 1
+fi
+
+# Returns success when the given Daytona org is selected by --orgs.
+org_selected() {
+  case "$ORGS" in
+    all)     return 0 ;;
+    prod)    [ "$1" = "amika-prod" ] ;;
+    staging) [ "$1" = "Fixpoint" ] ;;
+  esac
+}
+
 # Validate --ci flag
 if [ "$CI_AUTH" = true ]; then
   if [ "$PUSH_DAYTONA" != true ]; then
@@ -117,8 +145,12 @@ if [ "$CI_AUTH" = true ]; then
     exit 1
   fi
   missing=()
-  [ -z "${DAYTONA_PROD_API_KEY:-}" ]    && missing+=(DAYTONA_PROD_API_KEY)
-  [ -z "${DAYTONA_STAGING_API_KEY:-}" ] && missing+=(DAYTONA_STAGING_API_KEY)
+  if org_selected amika-prod && [ -z "${DAYTONA_PROD_API_KEY:-}" ]; then
+    missing+=(DAYTONA_PROD_API_KEY)
+  fi
+  if org_selected Fixpoint && [ -z "${DAYTONA_STAGING_API_KEY:-}" ]; then
+    missing+=(DAYTONA_STAGING_API_KEY)
+  fi
   if [ ${#missing[@]} -gt 0 ]; then
     echo "Error: --ci requires the following environment variables to be set: ${missing[*]}" >&2
     exit 1
@@ -211,6 +243,9 @@ for preset in "${PRESETS[@]}"; do
       disk="${SIZE_DISK[$i]}"
       snapshot_name="amika/${preset}-${size}:${VERSION}"
       for org in ${SIZE_ORGS[$i]}; do
+        if ! org_selected "$org"; then
+          continue
+        fi
         if [ "$CI_AUTH" = true ]; then
           case "$org" in
             amika-prod) api_key="$DAYTONA_PROD_API_KEY" ;;
