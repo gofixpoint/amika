@@ -29,14 +29,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
 # Daytona snapshot size configurations (parallel arrays for Bash 3 compat).
-# SIZE_ORGS limits which Daytona orgs each size is pushed to. The Fixpoint
-# (staging) org doesn't have high enough resource limits for the larger
-# sizes, so "l" and "xl" only go to amika-prod.
+# SIZE_ORGS limits which Daytona orgs each size is pushed to.
 SIZES=("xs" "m" "l" "xl")
 SIZE_CPUS=("1" "2" "2" "4")
 SIZE_MEMORY=("1" "8" "12" "16")
 SIZE_DISK=("3" "10" "18" "24")
-SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod" "amika-prod")
+SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint")
 
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
 
