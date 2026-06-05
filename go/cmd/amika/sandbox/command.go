@@ -62,6 +62,7 @@ func New() *cobra.Command {
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
 	sandboxSSHCmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
+	sandboxSSHCmd.Flags().Bool("print", false, "Print the SSH connection string instead of connecting")
 	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor to open (currently only \"cursor\" is supported)")
 	sandboxAgentSendCmd.Flags().Bool("no-wait", false, "Send the instruction and return immediately without waiting for a response")
 	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")

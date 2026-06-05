@@ -15,7 +15,7 @@ import (
 )
 
 var sandboxSSHCmd = &cobra.Command{
-	Use:   "ssh <name> [-- <command>...]",
+	Use:   "ssh [flags] <name> [-- <command>...]",
 	Short: "SSH into a remote sandbox",
 	Long: `Connect to a remote sandbox via SSH, or revoke SSH access.
 Optionally pass a command to execute on the remote sandbox instead of opening an interactive session.
@@ -23,10 +23,13 @@ Optionally pass a command to execute on the remote sandbox instead of opening an
 Use -t to force pseudo-terminal allocation, which is useful for running interactive
 programs on the remote sandbox (equivalent to ssh -t).
 
+Use --print to print the SSH connection string instead of connecting.
+
 Examples:
   amika sandbox ssh my-sandbox
   amika sandbox ssh -t my-sandbox -- top
   amika sandbox ssh my-sandbox -- ls -la
+  amika sandbox ssh --print my-sandbox
   amika sandbox ssh my-sandbox --revoke`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -63,6 +66,19 @@ Examples:
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "SSH access revoked for sandbox %q\n", name)
+			return nil
+		}
+
+		printOnly, _ := cmd.Flags().GetBool("print")
+		if printOnly {
+			info, err := client.GetSSH(name)
+			if err != nil {
+				return err
+			}
+			if info.SSHDestination == "" {
+				return fmt.Errorf("server returned empty SSH destination")
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), info.SSHDestination)
 			return nil
 		}
 
