@@ -10,8 +10,9 @@ import (
 )
 
 var sessionsCmd = &cobra.Command{
-	Use:   "sessions",
-	Short: "Manage local agent session capture",
+	Use:    "sessions",
+	Hidden: true,
+	Short:  "Manage local agent session capture",
 	Long: `Capture sessions from local AI coding agents (Claude Code, Codex) into
 the amika state directory by installing per-agent hooks.
 
