@@ -99,6 +99,36 @@ func TestPathEscapesSandboxName(t *testing.T) {
 	}
 }
 
+func TestGetSSHParsesResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"ssh_destination": "user-token@ssh.app.daytona.io",
+			"token":           "tok-123",
+			"expires_at":      "2026-06-04T18:30:00.000Z",
+			"sandbox_id":      "sb_01HXYZ",
+			"sandbox_name":    "my-sandbox",
+			"repo_name":       "my-repo",
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token")
+	info, err := c.GetSSH("my-sandbox")
+	if err != nil {
+		t.Fatalf("GetSSH: %v", err)
+	}
+	if info.SandboxID != "sb_01HXYZ" {
+		t.Errorf("SandboxID = %q, want %q", info.SandboxID, "sb_01HXYZ")
+	}
+	if info.SandboxName != "my-sandbox" {
+		t.Errorf("SandboxName = %q, want %q", info.SandboxName, "my-sandbox")
+	}
+	if info.SSHDestination != "user-token@ssh.app.daytona.io" {
+		t.Errorf("SSHDestination = %q", info.SSHDestination)
+	}
+}
+
 func TestExtractAgentAuthError(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -13,6 +13,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/constants"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 	"github.com/spf13/cobra"
 )
@@ -397,7 +398,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 
 	connect, _ := cmd.Flags().GetBool("connect")
 	if connect {
-		return execSSH(client, sb.Name, false, nil)
+		return ssh.ExecSSH(client, sb.Name, false, nil)
 	}
 
 	return nil

@@ -14,6 +14,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -127,7 +128,7 @@ func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent
 func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, stdout io.Writer) error {
 	if noWait {
 		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
-		return execSSH(client, name, false, []string{shellCmd})
+		return ssh.ExecSSH(client, name, false, []string{shellCmd})
 	}
 
 	req := apiclient.AgentSendRequest{

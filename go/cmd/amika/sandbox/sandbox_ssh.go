@@ -6,40 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
-	"syscall"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/runmode"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
-
-func execSSH(client *apiclient.Client, name string, forcePTY bool, extraArgs []string) error {
-	info, err := client.GetSSH(name)
-	if err != nil {
-		return err
-	}
-	if info.SSHDestination == "" {
-		return fmt.Errorf("server returned empty SSH destination")
-	}
-
-	sshArgs := strings.Fields(info.SSHDestination)
-
-	if forcePTY {
-		dest := sshArgs[len(sshArgs)-1]
-		sshArgs = append(sshArgs[:len(sshArgs)-1], "-t", dest)
-	}
-
-	if len(extraArgs) > 0 {
-		sshArgs = append(sshArgs, extraArgs...)
-	}
-
-	sshBin, err := exec.LookPath("ssh")
-	if err != nil {
-		return fmt.Errorf("ssh not found: %w", err)
-	}
-	return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
-}
 
 var sandboxSSHCmd = &cobra.Command{
 	Use:   "ssh <name> [-- <command>...]",
@@ -98,7 +71,7 @@ Examples:
 		if len(args) > 1 {
 			extraArgs = args[1:]
 		}
-		return execSSH(client, name, forcePTY, extraArgs)
+		return ssh.ExecSSH(client, name, forcePTY, extraArgs)
 	},
 }
 
@@ -141,34 +114,67 @@ Examples:
 			return err
 		}
 
-		info, err := client.GetSSH(name)
+		cursorTarget, err := prepareCursorSSHTarget(client, basedir.New(""), name)
 		if err != nil {
 			return err
 		}
 
-		if info.SSHDestination == "" {
-			return fmt.Errorf("server returned empty SSH destination")
-		}
-
-		fields := strings.Fields(info.SSHDestination)
-		remoteHost := fields[len(fields)-1]
-
-		remotePath := "/home/amika/workspace"
-		if info.RepoName != "" {
-			remotePath = remotePath + "/" + info.RepoName
-		}
-
-		cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+remoteHost, remotePath)
+		cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+cursorTarget.alias, cursorTarget.remotePath)
 		cursorCmd.Stdin = os.Stdin
 		cursorCmd.Stdout = os.Stdout
 		cursorCmd.Stderr = os.Stderr
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", name, remoteHost)
-		fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", remoteHost, remotePath)
+		fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", name, cursorTarget.alias)
+		fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", cursorTarget.alias, cursorTarget.remotePath)
 		fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in Cursor to open it.\n")
 		if err := cursorCmd.Run(); err != nil {
 			return fmt.Errorf("cursor failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in Cursor", err)
 		}
 		return nil
 	},
+}
+
+type cursorSSHTarget struct {
+	alias      string
+	remotePath string
+}
+
+func prepareCursorSSHTarget(client *apiclient.Client, paths basedir.Paths, name string) (cursorSSHTarget, error) {
+	info, err := client.GetSSH(name)
+	if err != nil {
+		return cursorSSHTarget{}, err
+	}
+	if info.SSHDestination == "" {
+		return cursorSSHTarget{}, fmt.Errorf("server returned empty SSH destination")
+	}
+
+	sandboxID := info.SandboxID
+	sandboxName := info.SandboxName
+	if sandboxID == "" {
+		sb, err := client.GetSandbox(name)
+		if err != nil {
+			return cursorSSHTarget{}, fmt.Errorf("look up sandbox id: %w", err)
+		}
+		sandboxID = sb.ID
+		sandboxName = sb.Name
+	}
+	if sandboxName == "" {
+		sandboxName = name
+	}
+
+	entry, err := ssh.NewHostEntry(sandboxID, sandboxName, info.SSHDestination, info.ExpiresAt)
+	if err != nil {
+		return cursorSSHTarget{}, err
+	}
+	alias, err := ssh.UpsertHost(paths, entry)
+	if err != nil {
+		return cursorSSHTarget{}, fmt.Errorf("write managed SSH config: %w", err)
+	}
+
+	remotePath := "/home/amika/workspace"
+	if info.RepoName != "" {
+		remotePath = remotePath + "/" + info.RepoName
+	}
+
+	return cursorSSHTarget{alias: alias, remotePath: remotePath}, nil
 }

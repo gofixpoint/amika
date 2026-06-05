@@ -162,7 +162,13 @@ type SSHInfo struct {
 	SSHDestination string `json:"ssh_destination"`
 	Token          string `json:"token"`
 	ExpiresAt      string `json:"expires_at"`
-	RepoName       string `json:"repo_name"`
+	// SandboxID is the sandbox's immutable identifier. It is used to key a
+	// stable SSH host alias so an editor's Remote-SSH session re-links across
+	// reconnects rather than treating each rotated token as a new host. It may
+	// be empty when talking to an older server that predates this field.
+	SandboxID   string `json:"sandbox_id"`
+	SandboxName string `json:"sandbox_name"`
+	RepoName    string `json:"repo_name"`
 }
 
 // GetSSH retrieves SSH connection details for a remote sandbox.

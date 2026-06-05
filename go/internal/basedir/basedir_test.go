@@ -77,9 +77,39 @@ func TestPaths_XDGOverrides(t *testing.T) {
 	}
 }
 
+func TestPaths_SSHPaths(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
+	setEnv(t, envXDGStateHome, state)
+
+	p := New(home)
+
+	if got, _ := p.SSHHostsStateFile(); got != filepath.Join(state, "amika", "ssh-hosts.json") {
+		t.Fatalf("SSHHostsStateFile = %q", got)
+	}
+	if got, _ := p.SSHDir(); got != filepath.Join(home, ".ssh") {
+		t.Fatalf("SSHDir = %q", got)
+	}
+	if got, _ := p.SSHConfigFile(); got != filepath.Join(home, ".ssh", "config") {
+		t.Fatalf("SSHConfigFile = %q", got)
+	}
+	if got, _ := p.SSHAmikaConfigFile(); got != filepath.Join(home, ".ssh", "amika.conf") {
+		t.Fatalf("SSHAmikaConfigFile = %q", got)
+	}
+}
+
+func TestSSHAmikaConfigName(t *testing.T) {
+	if got := SSHAmikaConfigName(); got != "amika.conf" {
+		t.Fatalf("SSHAmikaConfigName = %q", got)
+	}
+}
+
 func TestStateFileHelpers(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state", "amika")
 
+	if got := SSHHostsStateFileIn(stateDir); got != filepath.Join(stateDir, "ssh-hosts.json") {
+		t.Fatalf("SSHHostsStateFileIn = %q", got)
+	}
 	if got := MountsStateFileIn(stateDir); got != filepath.Join(stateDir, "mounts.jsonl") {
 		t.Fatalf("MountsStateFileIn = %q", got)
 	}

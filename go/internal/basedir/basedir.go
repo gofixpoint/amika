@@ -19,6 +19,10 @@ const (
 	fileMountsDir       = "rwcopy-mounts.d"
 	workosSessionFile   = "workos-session.json"
 	apiKeyFile          = "api-key.json"
+	sshHostsStateFile   = "ssh-hosts.json"
+	sshDirName          = ".ssh"
+	sshConfigFile       = "config"
+	sshAmikaConfigFile  = "amika.conf"
 	envXDGConfigHome    = "XDG_CONFIG_HOME"
 	envXDGDataHome      = "XDG_DATA_HOME"
 	envXDGCacheHome     = "XDG_CACHE_HOME"
@@ -48,6 +52,11 @@ type Paths interface {
 	FileMountsDir() (string, error)
 	WorkOSAuthSessionFile() (string, error)
 	APIKeyFile() (string, error)
+
+	SSHHostsStateFile() (string, error)
+	SSHDir() (string, error)
+	SSHConfigFile() (string, error)
+	SSHAmikaConfigFile() (string, error)
 }
 
 type xdgPaths struct {
@@ -227,6 +236,44 @@ func (p *xdgPaths) APIKeyFile() (string, error) {
 	return APIKeyFileIn(dir), nil
 }
 
+// SSHHostsStateFile returns the JSON file that records the managed SSH host
+// entries. It is the source of truth from which the SSH config is regenerated.
+func (p *xdgPaths) SSHHostsStateFile() (string, error) {
+	dir, err := p.AmikaStateDir()
+	if err != nil {
+		return "", err
+	}
+	return SSHHostsStateFileIn(dir), nil
+}
+
+// SSHDir returns the user's ~/.ssh directory.
+func (p *xdgPaths) SSHDir() (string, error) {
+	home, err := p.HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, sshDirName), nil
+}
+
+// SSHConfigFile returns the user's primary ~/.ssh/config file.
+func (p *xdgPaths) SSHConfigFile() (string, error) {
+	dir, err := p.SSHDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, sshConfigFile), nil
+}
+
+// SSHAmikaConfigFile returns the Amika-managed ~/.ssh/amika.conf file, which is
+// pulled into the primary config via an Include directive.
+func (p *xdgPaths) SSHAmikaConfigFile() (string, error) {
+	dir, err := p.SSHDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, sshAmikaConfigFile), nil
+}
+
 // MountsStateFileIn returns the mounts state file path under the given state directory.
 func MountsStateFileIn(stateDir string) string {
 	return filepath.Join(stateDir, mountsStateFile)
@@ -260,4 +307,16 @@ func WorkOSAuthSessionFileIn(stateDir string) string {
 // APIKeyFileIn returns the stored API key file path under the given state directory.
 func APIKeyFileIn(stateDir string) string {
 	return filepath.Join(stateDir, apiKeyFile)
+}
+
+// SSHHostsStateFileIn returns the managed SSH hosts state file path under the given state directory.
+func SSHHostsStateFileIn(stateDir string) string {
+	return filepath.Join(stateDir, sshHostsStateFile)
+}
+
+// SSHAmikaConfigName returns the bare filename of the Amika-managed SSH config,
+// as it should appear in an `Include` directive within ~/.ssh/config (Include
+// paths are resolved relative to ~/.ssh).
+func SSHAmikaConfigName() string {
+	return sshAmikaConfigFile
 }
