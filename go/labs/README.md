@@ -8,6 +8,10 @@ code (`go/cmd/amika`, `go/cmd/amika-server`, `go/pkg/amika`, `go/internal/*`).
 This mirrors the spirit of [`golang.org/x/exp`](https://pkg.go.dev/golang.org/x/exp):
 a place to prototype before anything graduates into the supported surface.
 
+User-facing docs for labs tools live under [`docs/labs/`](../../docs/labs/)
+(e.g. the [`akfs` reference](../../docs/labs/akfs.md)). This README covers the
+in-repo policy and module-boundary rationale.
+
 ## Why it lives inside the main module
 
 `go/labs/` is part of the existing `github.com/gofixpoint/amika/go` module rather
