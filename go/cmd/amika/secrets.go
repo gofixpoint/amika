@@ -518,9 +518,32 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 				return err
 			}
 
+			force, _ := cmd.Flags().GetBool("force")
+
 			client, err := getSecretsClient()
 			if err != nil {
 				return fmt.Errorf("authenticating with remote API: %w", err)
+			}
+
+			// Provider secrets have no update endpoint, so --force overwrites by
+			// deleting any same-named credential before creating the new one.
+			// This is not atomic: if the create below fails, the old credential
+			// is already gone.
+			replaced := false
+			if force {
+				existing, err := client.ListProviderSecrets(p.APIPath)
+				if err != nil {
+					return err
+				}
+				for _, item := range existing {
+					if item.Name == name {
+						if err := client.DeleteProviderSecret(p.APIPath, item.ID); err != nil {
+							return fmt.Errorf("overwriting existing %s credential %q: %w",
+								p.ShortName, name, err)
+						}
+						replaced = true
+					}
+				}
 			}
 
 			summary, err := client.CreateProviderSecret(p.APIPath, apiclient.CreateProviderSecretRequest{
@@ -532,7 +555,11 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Created %s credential %q\n", p.ShortName, summary.Name)
+			action := "Created"
+			if replaced {
+				action = "Updated"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s credential %q\n", action, p.ShortName, summary.Name)
 			return nil
 		},
 	}
@@ -541,6 +568,7 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 	cmd.Flags().String("value", "", "Credential value (skips interactive discovery)")
 	cmd.Flags().String("from-file", "", "Path to a credentials file (skips interactive discovery)")
 	cmd.Flags().String("type", "oauth", "Credential type: \"oauth\" (default) or \"api_key\"")
+	cmd.Flags().Bool("force", false, fmt.Sprintf("Overwrite an existing %s credential with the same name", p.ShortName))
 
 	return cmd
 }

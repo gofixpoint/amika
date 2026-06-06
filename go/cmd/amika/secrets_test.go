@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -545,6 +546,64 @@ func TestSecretClaudePush_FromFileMissing(t *testing.T) {
 	}
 }
 
+func TestSecretClaudePush_Force(t *testing.T) {
+	bin := buildAmika(t)
+
+	var mu sync.Mutex
+	var deletedIDs []string
+	mockEnv := setupMockClaudeAPIRecording(t, &mu, &deletedIDs, []map[string]string{
+		{"id": "cred-existing-1", "name": "Test OAuth", "type": "oauth"},
+		{"id": "cred-other-2", "name": "Other", "type": "oauth"},
+	})
+
+	cmd := exec.Command(bin, "secret", "claude", "push",
+		"--force",
+		"--value", `{"claudeAiOauth":{"accessToken":"test"}}`,
+		"--name", "Test OAuth")
+	cmd.Env = mockEnv
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected success, got error: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Updated") {
+		t.Fatalf("expected 'Updated' in output for forced overwrite, got:\n%s", out)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deletedIDs) != 1 || deletedIDs[0] != "cred-existing-1" {
+		t.Fatalf("expected exactly the same-named credential to be deleted, got: %v", deletedIDs)
+	}
+}
+
+func TestSecretClaudePush_NoForceDoesNotDelete(t *testing.T) {
+	bin := buildAmika(t)
+
+	var mu sync.Mutex
+	var deletedIDs []string
+	mockEnv := setupMockClaudeAPIRecording(t, &mu, &deletedIDs, []map[string]string{
+		{"id": "cred-existing-1", "name": "Test OAuth", "type": "oauth"},
+	})
+
+	cmd := exec.Command(bin, "secret", "claude", "push",
+		"--value", `{"claudeAiOauth":{"accessToken":"test"}}`,
+		"--name", "Test OAuth")
+	cmd.Env = mockEnv
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("expected success, got error: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Created") {
+		t.Fatalf("expected 'Created' in output without --force, got:\n%s", out)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deletedIDs) != 0 {
+		t.Fatalf("expected no deletes without --force, got: %v", deletedIDs)
+	}
+}
+
 func TestSecretClaudeList_WithMock(t *testing.T) {
 	bin := buildAmika(t)
 	mockEnv := setupMockClaudeAPI(t)
@@ -621,6 +680,40 @@ func setupMockClaudeAPI(t *testing.T) []string {
 		case r.Method == "GET" && r.URL.Path == "/api/v0beta1/secrets/claude":
 			json.NewEncoder(w).Encode([]interface{}{})
 		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/v0beta1/secrets/"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return withEnv(os.Environ(),
+		"AMIKA_API_URL="+srv.URL,
+		"AMIKA_API_KEY=test-bearer-token",
+	)
+}
+
+// setupMockClaudeAPIRecording is like setupMockClaudeAPI but returns the given
+// existing credentials from the list endpoint and records the IDs passed to the
+// delete endpoint into deletedIDs (guarded by mu). Used to verify --force
+// overwrite behavior.
+func setupMockClaudeAPIRecording(t *testing.T, mu *sync.Mutex, deletedIDs *[]string, existing []map[string]string) []string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/v0beta1/secrets/claude":
+			json.NewEncoder(w).Encode(map[string]string{
+				"id":    "cred-test-123",
+				"name":  "Test OAuth",
+				"scope": "user",
+			})
+		case r.Method == "GET" && r.URL.Path == "/api/v0beta1/secrets/claude":
+			json.NewEncoder(w).Encode(existing)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/v0beta1/secrets/claude/"):
+			id := strings.TrimPrefix(r.URL.Path, "/api/v0beta1/secrets/claude/")
+			mu.Lock()
+			*deletedIDs = append(*deletedIDs, id)
+			mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
