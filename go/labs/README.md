@@ -40,6 +40,5 @@ make build-akfs      # builds dist/akfs
 ## Graduating an experiment
 
 When something here proves out, promote it: move the library into `go/pkg/` (or
-a supported `go/internal/*` package), move the binary to `go/cmd/`, wire it into
-`make build`, and write a spec under `specs/`. Until then, treat everything here
-as throwaway.
+a supported `go/internal/*` package), move the binary to `go/cmd/`, and write a
+spec under `specs/`. Until then, treat everything here as throwaway.

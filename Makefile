@@ -10,7 +10,7 @@ export GOTMPDIR := $(CURDIR)/.gotmp
 goenv:
 	mkdir -p "$(GOCACHE)" "$(GOTMPDIR)"
 
-build: build-cli build-server
+build: build-cli build-server build-akfs
 
 build-cli: goenv
 	mkdir -p dist
@@ -20,7 +20,7 @@ build-server: goenv
 	mkdir -p dist
 	go -C $(GO_DIR) build -o $(CURDIR)/dist/amika-server ./cmd/amika-server
 
-# Experimental (labs) binary. Not part of the default `build` target.
+# Experimental (labs) binary.
 build-akfs: goenv
 	mkdir -p dist
 	go -C $(GO_DIR) build -o $(CURDIR)/dist/akfs ./labs/cmd/akfs
