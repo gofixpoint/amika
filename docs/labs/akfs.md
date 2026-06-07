@@ -1,30 +1,36 @@
 # akfs
 
-`afks` gives agents and humans tools for using filesystems. Computer agents
-interact primarily with files, so we treat the filesystem either:
+`akfs` (Amika filesystem) is experimental tooling for treating files as
+structured data that humans and AI agents can both work with.
 
-1. as the source of truth for data
-2. as a synchronized view of data from another source (ie S3 or a Postgres DB)
+Today it does one thing: extract YAML frontmatter, the `---`-delimited metadata
+block at the top of a Markdown file, and emit it as JSON Lines. That makes a
+directory of posts, docs, notes, or plans queryable with standard tools like
+`jq`, scripts, databases, or a content management system (CMS) import.
 
-`akfs` lets you treat a directory of files as structured, queryable data
-without writing a one-off script for every task. Today it focuses on the YAML
-frontmatter in markdown files: pull the frontmatter out of every file, search
-and validate it, and keep it in sync with an external store such as a SQL
-database or CMS.
+For example, a docs directory might store `title`, `status`, `author`, and
+`tags` in each Markdown file. `akfs fm` can stream that metadata so you can list
+drafts, audit fields, or export records without writing a one-off parser.
 
-For example, Amika keeps an internal "company brain": a directory of markdown
-files where each blog post carries frontmatter like `published_status`,
-`author`, and `related_posts`. With `akfs` we can find posts by those fields,
-confirm every file's frontmatter is well-formed, and sync it to and from our
-CMS.
+Amika is a software factory for AI coding agents: sandboxed agents that
+understand your codebase, connect to your data, run checks, and open pull
+requests. Labs tools like `akfs` explore the filesystem-data layer those agents
+can use.
 
 `akfs` is **experimental** and the interface is **unstable**.
 
 - CLI: [`go/labs/cmd/akfs/`](../../go/labs/cmd/akfs/)
 - Library: [`go/labs/akfs/`](../../go/labs/akfs/) — import path
   `github.com/gofixpoint/amika/go/labs/akfs`
+- Frontmatter parser: [`go/labs/akfs/frontmatter/`](../../go/labs/akfs/frontmatter/)
 
 ## Building and running
+
+Prerequisites:
+
+- Run commands from the repository root.
+- Use the Go version declared by [`go/go.mod`](../../go/go.mod).
+- `akfs` is built from this repo; it is not a standalone package.
 
 ```bash
 make build-akfs          # builds dist/akfs
@@ -33,6 +39,8 @@ make build-akfs          # builds dist/akfs
 # Or use the wrapper, which auto-builds and runs dist/akfs:
 ./bin/akfs --help
 ```
+
+`./bin/akfs` is a contributor wrapper for this repo, not a system-wide install.
 
 ## Commands
 
@@ -47,10 +55,10 @@ as YAML. For example:
 
 ```markdown
 ---
-title: The components of a software factory
+author: Ada
 status: draft
-tags: [software-factory, agents, infrastructure]
-slides: content/slides/components-of-a-software-factory/slides.md
+tags: [planning, agents]
+title: Quarterly planning notes
 ---
 
 # Body content starts here
@@ -63,43 +71,59 @@ slides: content/slides/components-of-a-software-factory/slides.md
 | `akfs fm a.md b.md`         | Parse each file argument, in order.                                                      |
 | `akfs fm -`                 | Parse a **single document** read from stdin.                                             |
 | `akfs fm a.md - b.md`       | Mix file arguments and a stdin document (`-`) in any order.                              |
-| `akfs fm` (no arguments)    | Read stdin as a **newline-delimited list of file paths** and parse each.                 |
+| `akfs fm` (no arguments)    | Read stdin as a **newline-delimited list of file paths** and parse each in list order.   |
 
-The two stdin modes are distinct: a bare `-` argument means "the document is on
-stdin", whereas no arguments at all means "stdin is a list of files to open"
-(handy for `fd`/`find` pipelines). In the file-list mode, blank lines are
-skipped and trailing carriage returns are trimmed.
+The two stdin modes are distinct:
+
+- `akfs fm -` means the single Markdown document is on stdin.
+- `akfs fm` with no arguments means stdin is a list of file paths, one per line.
+
+In file-list mode, blank lines are skipped and trailing carriage returns are
+trimmed.
 
 #### Output
 
 One line of compact JSON per document (JSON Lines), each an object with:
 
-- `filename` — the source file path. Omitted when the document was read from
-  stdin via `-`.
+- `filename` — the source file path. Present for file arguments and paths read
+  from stdin file-list mode; omitted only when the document was read via `-`.
 - `data` — the parsed frontmatter.
 
+Within `data`, keys are emitted in sorted lexicographic order.
+
 ```bash
-$ akfs fm slides.md
-{"filename":"slides.md","data":{"slides":"content/slides/components-of-a-software-factory/slides.md","status":"draft","tags":["software-factory","agents","infrastructure"],"title":"The components of a software factory"}}
+$ akfs fm notes/plan.md
+{"filename":"notes/plan.md","data":{"author":"Ada","status":"draft","tags":["planning","agents"],"title":"Quarterly planning notes"}}
 ```
 
 #### Examples
 
 ```bash
 # A single file
-akfs fm slides.md
+akfs fm notes/plan.md
 
 # Multiple files — one JSON line each, in order
-akfs fm content/pieces/one.md content/pieces/two.md
+akfs fm posts/one.md posts/two.md
 
 # A document piped on stdin (filename omitted from the output)
-cat slides.md | akfs fm -
+cat notes/plan.md | akfs fm -
 
 # A list of files piped on stdin — parse every matched markdown file
-fd -p 'content/pieces/.*\.md' ./biz | akfs fm
+find ./content -name '*.md' | akfs fm
 
-# Equivalent with find
-find ./biz -path '*content/pieces/*.md' | akfs fm
+# Optional: fd is a third-party finder; find works everywhere
+fd -e md . ./content | akfs fm
+```
+
+JSON Lines works well in pipelines because each input file produces one JSON
+object on one line:
+
+```bash
+# List draft files
+find ./content -name '*.md' | akfs fm | jq -r 'select(.data.status == "draft") | .filename'
+
+# Export filename, title, and author as TSV
+find ./content -name '*.md' | akfs fm | jq -r '[.filename, .data.title, .data.author] | @tsv'
 ```
 
 #### Errors
@@ -115,3 +139,19 @@ $ printf 'no frontmatter here\n' | akfs fm -
 ```
 
 When processing multiple inputs, the first failing document aborts the run.
+Output already emitted for earlier documents remains on stdout; the error is
+reported on stderr.
+
+## Planned / not yet implemented
+
+`akfs` currently ships only frontmatter extraction: `akfs frontmatter`, its
+alias `akfs fm`, and `akfs version`. The top-level Go library is still a
+scaffold; the implemented library logic is the frontmatter parser.
+
+Possible future directions:
+
+- Search or filter files by frontmatter fields. For now, pipe `akfs fm` into
+  `jq` or your own scripts.
+- Validate frontmatter against schemas. For now, use external validation tools.
+- Sync file metadata with SQL, a CMS, or another store. Directionality,
+  conflict handling, credentials, and schema design are not implemented.
