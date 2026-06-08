@@ -35,7 +35,7 @@ func TestSessionsCapture_AcceptsCodexNotifyPayload(t *testing.T) {
 	}
 
 	stateDir := os.Getenv("AMIKA_STATE_DIRECTORY")
-	mirrored, err := os.ReadFile(filepath.Join(stateDir, "sessions", "codex", "2026-06-01", "rollout-1.jsonl"))
+	mirrored, err := os.ReadFile(filepath.Join(stateDir, "raw-sessions", "codex", "2026-06-01", "rollout-1.jsonl"))
 	if err != nil {
 		t.Fatalf("mirror missing: %v", err)
 	}
@@ -59,8 +59,8 @@ func TestSessionsCaptureInit_PrintsDestinations(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Captures will be written to:",
-		filepath.Join(stateDir, "sessions", "claude"),
-		filepath.Join(stateDir, "sessions", "codex"),
+		filepath.Join(stateDir, "raw-sessions", "claude"),
+		filepath.Join(stateDir, "raw-sessions", "codex"),
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n--- got ---\n%s", want, out)

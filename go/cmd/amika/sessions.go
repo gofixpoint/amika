@@ -33,8 +33,12 @@ Writes to:
   ~/.codex/config.toml      (sets the notify program)
 
 Captured transcripts land under:
-  $AMIKA_STATE_DIRECTORY/sessions/{claude,codex}/
+  $AMIKA_STATE_DIRECTORY/raw-sessions/{claude,codex}/
 (default $AMIKA_STATE_DIRECTORY is ~/.local/state/amika).
+
+Each transcript gets a sibling <session>.meta.json sidecar recording, per
+turn, the git commit/branch the work happened on and the tool calls that
+turn made.
 
 The exact destination directories are printed when the command runs.
 

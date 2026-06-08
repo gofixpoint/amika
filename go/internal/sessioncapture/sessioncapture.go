@@ -5,8 +5,13 @@
 // `~/.claude/settings.json` (Stop hook) and `<codex-home>/config.toml`
 // (notify program) that invoke `amika sessions capture --source ...`
 // whenever the agent finishes a turn. Each invocation copies the relevant
-// session JSONL into `<state>/sessions/<source>/<YYYY-MM-DD>/`, grouping a
+// session JSONL into `<state>/raw-sessions/<source>/<YYYY-MM-DD>/`, grouping a
 // day's sessions together. No daemon, no background process.
+//
+// Alongside each mirrored transcript, capture maintains a `<stem>.meta.json`
+// sidecar (see meta.go) recording, per turn, the git commit/branch the work
+// happened on plus the tool calls that turn made — so a session that switches
+// branches mid-stream leaves a turn-by-turn record of where each turn landed.
 //
 // `<codex-home>` is `$CODEX_HOME` when set, otherwise `~/.codex` (see
 // CodexHome). Honoring the env var matters because Codex itself reads
@@ -36,7 +41,7 @@ const (
 // CaptureDir returns the directory under stateDir where mirrored sessions
 // for the given source live.
 func CaptureDir(stateDir string, src Source) string {
-	return filepath.Join(stateDir, "sessions", string(src))
+	return filepath.Join(stateDir, "raw-sessions", string(src))
 }
 
 // claudeStopHookInput is the JSON shape Claude Code pipes on stdin when a
@@ -44,6 +49,10 @@ func CaptureDir(stateDir string, src Source) string {
 type claudeStopHookInput struct {
 	SessionID      string `json:"session_id"`
 	TranscriptPath string `json:"transcript_path"`
+	// Cwd is the working directory Claude reports for the session. We prefer
+	// the per-entry cwd recorded in the transcript, but fall back to this
+	// when the transcript carries none (e.g. an empty transcript).
+	Cwd string `json:"cwd"`
 }
 
 // CaptureClaude reads the Stop-hook JSON Claude pipes on stdin and copies
@@ -74,7 +83,10 @@ func CaptureClaude(stdin io.Reader, stateDir string) error {
 	}
 	day := info.ModTime().Format("2006-01-02")
 	dst := filepath.Join(CaptureDir(stateDir, SourceClaude), day, name)
-	return copyFile(in.TranscriptPath, dst)
+	if err := copyFile(in.TranscriptPath, dst); err != nil {
+		return err
+	}
+	return updateClaudeMeta(metaPathFor(dst), in)
 }
 
 // CaptureCodex mirrors every Codex session file whose source mtime is newer
@@ -127,7 +139,13 @@ func CaptureCodex(homeDir, stateDir string) error {
 		if fresh {
 			return nil
 		}
-		return copyFile(path, dst)
+		if err := copyFile(path, dst); err != nil {
+			return err
+		}
+		// Metadata is best-effort: the mirrored transcript is the artifact
+		// that must not be lost, so a meta failure never aborts the walk.
+		_ = updateCodexMeta(metaPathFor(dst), path)
+		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, os.ErrNotExist) {
 		return walkErr
