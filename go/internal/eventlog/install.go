@@ -16,19 +16,35 @@ import (
 // rename of the installed binary's path does not strand stale config entries.
 const binaryName = "amikalog"
 
-// claudeHookEvents is every Claude Code hook event amikalog registers for. The
-// same command handles them all; it reads the specific event from the payload's
-// hook_event_name field.
+// claudeHookEvents is the set of Claude Code hook events amikalog registers
+// for. The same command handles them all; it reads the specific event from the
+// payload's hook_event_name field.
+//
+// This is the agent-activity subset of Claude's full hook catalog (see
+// https://code.claude.com/docs/en/hooks): tool use, prompts, permissions,
+// subagents, tasks, turns, compaction and session lifecycle. Purely UI or
+// environment events (FileChanged, MessageDisplay, CwdChanged, TeammateIdle,
+// WorktreeCreate/Remove, ConfigChange, Elicitation, ...) are intentionally
+// omitted to keep the log signal-bearing rather than a firehose.
 var claudeHookEvents = []string{
-	"PreToolUse",
-	"PostToolUse",
-	"UserPromptSubmit",
-	"Notification",
-	"Stop",
-	"SubagentStop",
 	"SessionStart",
-	"SessionEnd",
+	"UserPromptSubmit",
+	"PreToolUse",
+	"PermissionRequest",
+	"PermissionDenied",
+	"PostToolUse",
+	"PostToolUseFailure",
+	"PostToolBatch",
+	"Notification",
+	"SubagentStart",
+	"SubagentStop",
+	"TaskCreated",
+	"TaskCompleted",
+	"Stop",
+	"StopFailure",
 	"PreCompact",
+	"PostCompact",
+	"SessionEnd",
 }
 
 // codexHookEvents is every Codex lifecycle hook event amikalog registers for in
@@ -48,12 +64,10 @@ var codexHookEvents = []string{
 	"Stop",
 }
 
-// claudeMatcher returns the matcher for a Claude hook group. Claude matches
-// PreToolUse/PostToolUse by tool name ("*" = all); other events take no matcher.
-func claudeMatcher(event string) (string, bool) {
-	if event == "PreToolUse" || event == "PostToolUse" {
-		return "*", true
-	}
+// claudeMatcher returns the matcher for a Claude hook group. Claude treats an
+// omitted matcher as "match all" for every event type, so amikalog never sets
+// one: it wants every invocation regardless of tool name, agent type, etc.
+func claudeMatcher(string) (string, bool) {
 	return "", false
 }
 

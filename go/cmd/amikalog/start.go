@@ -17,7 +17,7 @@ each agent invokes "amikalog hook" on every hook call, recording an append-only
 event (with git context) into the amika state directory.
 
 Writes to:
-  ~/.claude/settings.json   (a hook entry for every Claude hook event)
+  ~/.claude/settings.json   (a hook entry for each Claude agent-activity hook event)
   ~/.codex/hooks.json       (a hook entry for every Codex lifecycle event; honors $CODEX_HOME)
 
 Events land under:
