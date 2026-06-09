@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ ! -f "$REPO_ROOT/dist/amikalog" ]; then
   echo "Building amikalog..." >&2
+  mkdir -p "$REPO_ROOT/dist"
   (cd "$REPO_ROOT/go" && go build -o "$REPO_ROOT/dist/amikalog" ./cmd/amikalog)
 fi
 
