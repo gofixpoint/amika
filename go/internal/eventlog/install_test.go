@@ -237,6 +237,56 @@ func TestUninstall_LeavesUnrelatedHooks(t *testing.T) {
 	}
 }
 
+func TestInit_MigratesLegacyClaudeCaptureHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", "")
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Stale Stop hook left by the removed `amika sessions capture-init`.
+	writeFile(t, settingsPath, `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/usr/local/bin/amika sessions capture --source claude"}]}]}}`)
+
+	if _, err := Init(home, testCommand()); err != nil {
+		t.Fatal(err)
+	}
+	data := readFile(t, settingsPath)
+	if strings.Contains(data, "sessions capture --source claude") {
+		t.Errorf("legacy amika capture hook was not migrated away:\n%s", data)
+	}
+	if strings.Count(data, testCommand().ClaudeCommand()) != len(claudeHookEvents) {
+		t.Errorf("expected one amikalog hook per event after migration:\n%s", data)
+	}
+}
+
+func TestInit_MigratesLegacyCodexNotify(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", "")
+	configPath := filepath.Join(CodexHome(home), "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, configPath, `notify = ["/usr/local/bin/amika", "sessions", "capture", "--source", "codex"]`+"\n")
+
+	rep, err := Init(home, testCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.CodexConflict != "" {
+		t.Errorf("legacy amika notify reported as conflict: %q", rep.CodexConflict)
+	}
+	if !rep.CodexUpdated {
+		t.Error("CodexUpdated = false, want true when migrating legacy notify")
+	}
+	cfg := readFile(t, configPath)
+	if strings.Contains(cfg, "sessions") {
+		t.Errorf("legacy amika notify was not migrated:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, `notify = ["/opt/bin/amikalog", "hook", "--source", "codex"]`) {
+		t.Errorf("amikalog notify not installed after migration:\n%s", cfg)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

@@ -240,7 +240,7 @@ func stripAmikalogHooks(groups []interface{}) ([]interface{}, []string) {
 				continue
 			}
 			cmd, _ := entry["command"].(string)
-			if looksLikeAmikalogClaudeHook(cmd) {
+			if isManagedClaudeHook(cmd) {
 				removed = append(removed, cmd)
 				continue
 			}
@@ -255,13 +255,32 @@ func stripAmikalogHooks(groups []interface{}) ([]interface{}, []string) {
 	return filtered, removed
 }
 
+// isManagedClaudeHook reports whether a hook command is one amikalog owns and
+// may freely replace: its own capture entry, or the deprecated
+// `amika sessions capture --source claude` hook it supersedes (left behind by
+// the removed `amika sessions capture-init`).
+func isManagedClaudeHook(cmd string) bool {
+	return looksLikeAmikalogClaudeHook(cmd) || looksLikeLegacyAmikaCaptureHook(cmd)
+}
+
 // looksLikeAmikalogClaudeHook reports whether cmd invokes an amikalog
 // executable with the Claude capture argv. The executable path may be quoted
 // and may differ from the current binary's path; we identify by argv shape so
 // renames don't strand stale entries.
 func looksLikeAmikalogClaudeHook(cmd string) bool {
+	return matchesHookArgv(cmd, binaryName, []string{"hook", "--source", "claude"})
+}
+
+// looksLikeLegacyAmikaCaptureHook reports whether cmd is the deprecated
+// `amika sessions capture --source claude` Stop hook that amikalog replaces.
+func looksLikeLegacyAmikaCaptureHook(cmd string) bool {
+	return matchesHookArgv(cmd, "amika", []string{"sessions", "capture", "--source", "claude"})
+}
+
+// matchesHookArgv reports whether cmd is a single command whose argv[0] has the
+// given basename and whose remaining args equal wantTail exactly.
+func matchesHookArgv(cmd, wantBase string, wantTail []string) bool {
 	argv := splitShellArgv(cmd)
-	wantTail := []string{"hook", "--source", "claude"}
 	if len(argv) != len(wantTail)+1 {
 		return false
 	}
@@ -270,7 +289,7 @@ func looksLikeAmikalogClaudeHook(cmd string) bool {
 			return false
 		}
 	}
-	return filepath.Base(argv[0]) == binaryName
+	return filepath.Base(argv[0]) == wantBase
 }
 
 // splitShellArgv tokenizes a string the way /bin/sh would for the subset of
@@ -371,7 +390,7 @@ func ensureCodexNotify(path string, argv []string) (updated bool, conflict strin
 		if existing == want {
 			return false, "", nil
 		}
-		if !codexNotifyIsAmika(existing) {
+		if !codexNotifyIsManaged(existing) {
 			return false, existing, nil
 		}
 		replaced := append([]string{}, lines[:start]...)
@@ -403,7 +422,7 @@ func removeCodexNotify(path string) (bool, error) {
 	}
 	lines := splitLines(string(data))
 	start, end, existing := findTopLevelNotify(lines)
-	if start < 0 || !codexNotifyIsAmika(existing) {
+	if start < 0 || !codexNotifyIsManaged(existing) {
 		return false, nil
 	}
 	remaining := append([]string{}, lines[:start]...)
@@ -511,6 +530,31 @@ func tomlValueParses(value string) bool {
 	var holder map[string]interface{}
 	_, err := toml.Decode("x = "+value+"\n", &holder)
 	return err == nil
+}
+
+// codexNotifyIsManaged reports whether a notify value is one amikalog owns and
+// may freely replace: its own program, or the deprecated amika sessions-capture
+// program it supersedes.
+func codexNotifyIsManaged(value string) bool {
+	return codexNotifyIsAmika(value) || codexNotifyIsLegacyAmika(value)
+}
+
+// codexNotifyIsLegacyAmika reports whether a notify value is the deprecated
+// `amika sessions capture --source codex` program left behind by the removed
+// `amika sessions capture-init`.
+func codexNotifyIsLegacyAmika(value string) bool {
+	v := strings.TrimSpace(value)
+	if !strings.HasPrefix(v, "[") {
+		return false
+	}
+	var argv []string
+	if err := tomlArrayDecode(v, &argv); err != nil {
+		return false
+	}
+	if len(argv) < 3 {
+		return false
+	}
+	return filepath.Base(argv[0]) == "amika" && argv[1] == "sessions" && argv[2] == "capture"
 }
 
 // codexNotifyIsAmika reports whether a notify value invokes the amikalog binary.
