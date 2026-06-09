@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ ! -f "$REPO_ROOT/dist/akfs" ]; then
+  echo "Building akfs..." >&2
+  mkdir -p "$REPO_ROOT/dist"
+  (cd "$REPO_ROOT/go" && go build -o "$REPO_ROOT/dist/akfs" ./labs/cmd/akfs)
+fi
+
+exec "$REPO_ROOT/dist/akfs" "$@"

@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
+.PHONY: goenv build build-cli build-server build-akfs clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
 
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
@@ -10,7 +10,7 @@ export GOTMPDIR := $(CURDIR)/.gotmp
 goenv:
 	mkdir -p "$(GOCACHE)" "$(GOTMPDIR)"
 
-build: build-cli build-server
+build: build-cli build-server build-akfs
 
 build-cli: goenv
 	mkdir -p dist
@@ -19,6 +19,11 @@ build-cli: goenv
 build-server: goenv
 	mkdir -p dist
 	go -C $(GO_DIR) build -o $(CURDIR)/dist/amika-server ./cmd/amika-server
+
+# Experimental (labs) binary.
+build-akfs: goenv
+	mkdir -p dist
+	go -C $(GO_DIR) build -o $(CURDIR)/dist/akfs ./labs/cmd/akfs
 
 clean:
 	rm -rf dist .gocache .gotmp .gomodcache
