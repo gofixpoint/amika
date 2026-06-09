@@ -25,11 +25,21 @@ export interface ItemViewProps {
 }
 
 /**
- * Render a ReviewItem with the right pierre component, layered with
- * line-scope comment annotations from the store. Side-aware: for diff modes,
- * comments on the "old" side become deletions-side annotations and "new"
- * comments become additions-side annotations.
+ * Given a multi-file unified diff, return the section for a single file
+ * matched by its "b/" path (the post-change path). Returns null when the
+ * path is not found so callers can fall back to the full text.
  */
+function extractFilePatch(patchText: string, path: string): string | null {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sections = patchText.split(/(?=^diff --git )/m);
+  for (const section of sections) {
+    if (new RegExp(`^diff --git \\S+ b/${escaped}\\n`).test(section)) {
+      return section.trimEnd();
+    }
+  }
+  return null;
+}
+
 export function ItemView({ item, selectedPath, className }: ItemViewProps) {
   const comments = useComments({ itemId: item.id, scope: "line" });
 
@@ -56,14 +66,24 @@ export function ItemView({ item, selectedPath, className }: ItemViewProps) {
   }, [comments, selectedPath]);
 
   switch (item.kind) {
-    case "patch":
+    case "patch": {
+      // PierrePatchDiff requires exactly 1 file diff. Resolve a target path:
+      // prefer the explicit selectedPath, then fall back to the first parsed
+      // file so the component always receives a single-file slice.
+      const targetPath =
+        selectedPath ??
+        (item.parsed?.files[0]?.to ?? item.parsed?.files[0]?.from ?? null);
+      const patch = targetPath
+        ? (extractFilePatch(item.patchText, targetPath) ?? item.patchText)
+        : item.patchText;
       return (
         <PierrePatchDiff<AmikaLineAnnotationMetadata>
-          patch={item.patchText}
+          patch={patch}
           lineAnnotations={diffAnnotations}
           className={className}
         />
       );
+    }
 
     case "multi-file-diff": {
       const path =

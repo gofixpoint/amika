@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { CodeReview, ReviewProvider, useReview } from "@amika/reviews";
+import {
+  CodeReview,
+  ReviewProvider,
+  useReview,
+  usePatches,
+  useReviewState,
+} from "@amika/reviews";
+import type { ReviewItem } from "@amika/reviews";
 
 const FIXTURES = [
   "/fixtures/simple.patch",
@@ -18,9 +25,94 @@ export function App() {
       author={author}
       linkSync
     >
-      <Toolbar />
-      <CodeReview store={undefined} />
+      <AppInner />
     </ReviewProvider>
+  );
+}
+
+function AppInner() {
+  const store = useReview();
+  return (
+    <>
+      <Toolbar />
+      <CodeReview store={store} />
+    </>
+  );
+}
+
+function patchLabel(item: ReviewItem): string {
+  if (item.label) return item.label;
+  if (item.kind === "patch") {
+    const match = item.patchText.match(/^Subject: (?:\[PATCH[^\]]*\] )?(.+)$/m);
+    if (match) return match[1].trim();
+  }
+  return item.id.slice(0, 8);
+}
+
+function PatchNavigator() {
+  const store = useReview();
+  const items = usePatches();
+  const state = useReviewState();
+
+  if (items.length === 0) return null;
+
+  const currentIndex = items.findIndex(
+    (i) => i.id === state.selection.itemId,
+  );
+  const displayIndex = currentIndex === -1 ? 0 : currentIndex;
+  const current = items[displayIndex];
+
+  function go(index: number) {
+    const target = items[index];
+    const files = store.listFiles(target.id);
+    if (files.length > 0) {
+      store.selectFile(files[0].itemId, files[0].path);
+    } else {
+      store.selectFile(target.id, null);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 13,
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => go(displayIndex - 1)}
+        disabled={displayIndex === 0}
+        aria-label="Previous patch"
+      >
+        ←
+      </button>
+      <span
+        title={patchLabel(current)}
+        style={{
+          maxWidth: 260,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: "#24292f",
+        }}
+      >
+        {patchLabel(current)}{" "}
+        <span style={{ color: "#57606a" }}>
+          ({displayIndex + 1}/{items.length})
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={() => go(displayIndex + 1)}
+        disabled={displayIndex === items.length - 1}
+        aria-label="Next patch"
+      >
+        →
+      </button>
+    </div>
   );
 }
 
@@ -75,6 +167,7 @@ function Toolbar() {
       >
         Reset
       </button>
+      <PatchNavigator />
       <span style={{ marginLeft: "auto", color: "#57606a" }}>
         @amika/reviews · example
       </span>
