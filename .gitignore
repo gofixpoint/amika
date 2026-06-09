@@ -5,3 +5,11 @@ scratch/
 .gocache/
 .gotmp/
 .gomodcache/
+
+# JS workspaces
+node_modules/
+js/**/dist/
+js/**/.vite/
+js/**/coverage/
+js/**/playwright-report/
+js/**/test-results/

@@ -1,0 +1,88 @@
+/*
+ * @amika/reviews — minimal default styles for the panel/chrome we author
+ * ourselves. The pierre @pierre/diffs and @pierre/trees components ship
+ * their own styling via shadow DOM and CSS custom properties; theme them
+ * separately through `--trees-*` and the diff CSS variables.
+ *
+ * Hosts can either import this file once or skip it entirely and roll
+ * their own using the `data-amika="..."` selectors emitted by the
+ * components.
+ */
+
+[data-amika="code-review"] {
+  display: grid;
+  grid-template-columns: 240px 1fr 320px;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "header header header"
+    "tree   diff   sidebar";
+  height: 100vh;
+  gap: 1px;
+  background: #d0d7de;
+}
+
+[data-amika="code-review-header"] {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+}
+
+[data-amika="code-review-tree"] {
+  grid-area: tree;
+  background: #ffffff;
+  overflow: auto;
+}
+
+[data-amika="code-review-diff"] {
+  grid-area: diff;
+  background: #ffffff;
+  overflow: auto;
+}
+
+[data-amika="code-review-sidebar"] {
+  grid-area: sidebar;
+  background: #ffffff;
+  overflow: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+[data-amika="comment-form"] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+[data-amika="comment-form-input"] {
+  width: 100%;
+  font: inherit;
+  padding: 6px;
+}
+
+[data-amika="comment"] {
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  padding: 8px;
+  margin: 6px 0;
+}
+
+[data-amika="comment"][data-amika-comment-resolved="true"] {
+  opacity: 0.6;
+}
+
+[data-amika="upload-dropzone"] {
+  border: 2px dashed #d0d7de;
+  border-radius: 6px;
+  padding: 16px;
+  text-align: center;
+}
+
+[data-amika="upload-dropzone"][data-amika-drag-over="true"] {
+  background: #f5fbff;
+  border-color: #0969da;
+}

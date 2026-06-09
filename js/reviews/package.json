@@ -1,0 +1,44 @@
+{
+  "name": "@amika/reviews",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "formatcheck": "prettier --check .",
+    "test": "vitest run"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./headless": "./src/headless.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.8.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "globals": "^16.4.0",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.6.2",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "typescript": "^5",
+    "typescript-eslint": "^8.55.0",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@pierre/diffs": "^1.1.22",
+    "@pierre/trees": "1.0.0-beta.3",
+    "parse-diff": "^0.12.0"
+  }
+}
