@@ -4,6 +4,7 @@ set -eu
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
 DEFAULT_VERSION="0.10.0"
+DEFAULT_AMIKALOG_VERSION="0.1.0"
 COMPONENT="amika"
 INSTALL_VERSION=""
 DRY_RUN=false
@@ -20,8 +21,8 @@ Usage:
 
 Flags:
   --component           Component to install: amika (default) or amikalog
-  --install-version     Install a specific version (amika default: ${DEFAULT_VERSION};
-                        required for amikalog)
+  --install-version     Install a specific version
+                        (amika default: ${DEFAULT_VERSION}; amikalog default: ${DEFAULT_AMIKALOG_VERSION})
   --dry-run             Show what would be done without downloading or installing
 
 Environment variables:
@@ -132,12 +133,10 @@ set_install_version() {
   esac
 
   if [ -z "$INSTALL_VERSION" ]; then
-    if [ "$COMPONENT" = "amika" ]; then
-      INSTALL_VERSION="$DEFAULT_VERSION"
-    else
-      echo "Error: --install-version is required for component ${COMPONENT}" >&2
-      exit 1
-    fi
+    case "$COMPONENT" in
+      amika)    INSTALL_VERSION="$DEFAULT_VERSION" ;;
+      amikalog) INSTALL_VERSION="$DEFAULT_AMIKALOG_VERSION" ;;
+    esac
   fi
 
   VERSION="${INSTALL_VERSION#v}"
