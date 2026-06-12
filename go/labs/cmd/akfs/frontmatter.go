@@ -43,16 +43,16 @@ newline-delimited list of file paths to process (e.g. piped from "fd" or
 frontmatter with a matching "---" line.
 
 Output is one line of compact JSON per document: the parsed frontmatter under a
-"data" key, alongside a "filename" key naming the source file (omitted when the
-document is read from stdin via "-"). With multiple inputs, one JSON line is
-emitted per document, in order.
+"frontmatter" key, alongside a "filename" key naming the source file (omitted
+when the document is read from stdin via "-"). With multiple inputs, one JSON
+line is emitted per document, in order.
 
 The --content flag controls whether the document body following the
 frontmatter is included under a top-level "content" key:
 
   none  do not include the content (default)
   also  include the frontmatter and the content together
-  only  include just the content, dropping the frontmatter ("data")`,
+  only  include just the content, dropping the "frontmatter"`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := contentMode(content)
@@ -90,17 +90,17 @@ frontmatter is included under a top-level "content" key:
 // for stdin) alongside the parsed frontmatter and/or the document body. The
 // mode field selects which of those appear and is not itself serialized.
 type record struct {
-	Filename string         `json:"filename,omitempty"`
-	Data     map[string]any `json:"data"`
-	Content  string         `json:"content"`
-	mode     contentMode
+	Filename    string         `json:"filename,omitempty"`
+	Frontmatter map[string]any `json:"frontmatter"`
+	Content     string         `json:"content"`
+	mode        contentMode
 }
 
-// MarshalJSON emits the record's fields in a stable order — filename, data,
-// content — including only the fields selected by the record's mode. The
-// frontmatter ("data") is included unless the mode is content-only; the body
+// MarshalJSON emits the record's fields in a stable order — filename,
+// frontmatter, content — including only the fields selected by the record's
+// mode. The frontmatter is included unless the mode is content-only; the body
 // ("content") is included when the mode is content-only or content-also. An
-// empty frontmatter block still renders as "data":{}.
+// empty frontmatter block still renders as "frontmatter":{}.
 func (r record) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
@@ -130,7 +130,7 @@ func (r record) MarshalJSON() ([]byte, error) {
 		}
 	}
 	if r.mode != contentOnly {
-		if err := field("data", r.Data); err != nil {
+		if err := field("frontmatter", r.Frontmatter); err != nil {
 			return nil, err
 		}
 	}
@@ -194,9 +194,9 @@ func emit(enc *json.Encoder, r io.Reader, filename string, mode contentMode) err
 		return fmt.Errorf("%s: %w", label, err)
 	}
 	return enc.Encode(record{
-		Filename: filename,
-		Data:     doc.Frontmatter,
-		Content:  doc.Content,
-		mode:     mode,
+		Filename:    filename,
+		Frontmatter: doc.Frontmatter,
+		Content:     doc.Content,
+		mode:        mode,
 	})
 }
