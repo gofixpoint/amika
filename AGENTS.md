@@ -107,6 +107,15 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 - No external dependencies need to be installed for linting; `make lint` uses `go run`
 - Ports 60899–60999 are reserved inside sandbox containers for Amika services. See `docs/sandbox-configuration.md` for the allocation table.
 
+## Documentation Style
+
+For user-facing docs (`docs/`, README):
+
+- Lead with the value prop: what the problem is and why it matters, then the solution, then how to use it. Reference tables (commands, env vars, schemas) come after the narrative, not instead of it.
+- Only document commands and behavior that exist in the current code — verify against the `go/cmd/` sources. Don't import claims from marketing material describing future features.
+- No mid-sentence em-dashes in running prose; the `**Term** — description` separator in bullet lists is fine.
+- Use the `naive-reader-review` skill to pressure-test a doc with a cold reader.
+
 ## Testing Notes
 
 - Docker must be running for integration tests and CLI end-to-end testing
