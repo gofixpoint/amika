@@ -274,12 +274,42 @@ func TestFrontmatterMissingFile(t *testing.T) {
 }
 
 func TestFrontmatterParseErrorNamesSource(t *testing.T) {
-	path := writeTemp(t, "no frontmatter here\n")
+	// An opening delimiter with no closing one is still a parse error; the
+	// message should name the source path.
+	path := writeTemp(t, "---\ntitle: hi\n")
 	_, err := runRootCommand("frontmatter", path)
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}
 	if !strings.Contains(err.Error(), path) {
 		t.Errorf("error %q should mention source path %q", err, path)
+	}
+}
+
+// TestFrontmatterNoFrontmatterIsEmpty verifies that a file with no leading
+// "---" block is not an error: it yields an empty frontmatter object, and with
+// --content the whole file is returned as the body.
+func TestFrontmatterNoFrontmatterIsEmpty(t *testing.T) {
+	path := writeTemp(t, "Just some prose.\nNo frontmatter.\n")
+
+	out, err := runRootCommand("frontmatter", path)
+	if err != nil {
+		t.Fatalf("runRootCommand: %v", err)
+	}
+	recs := decodeLines(t, out)
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1: %q", len(recs), out)
+	}
+	if recs[0].Frontmatter == nil || len(recs[0].Frontmatter) != 0 {
+		t.Errorf("frontmatter = %#v, want empty object", recs[0].Frontmatter)
+	}
+
+	out, err = runRootCommand("frontmatter", "--content", "also", path)
+	if err != nil {
+		t.Fatalf("runRootCommand --content also: %v", err)
+	}
+	recs = decodeLines(t, out)
+	if recs[0].Content != "Just some prose.\nNo frontmatter.\n" {
+		t.Errorf("content = %q, want whole file", recs[0].Content)
 	}
 }

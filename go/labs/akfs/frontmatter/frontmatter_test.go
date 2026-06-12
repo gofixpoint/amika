@@ -168,15 +168,55 @@ func TestParseErrors(t *testing.T) {
 		input   string
 		wantErr error
 	}{
-		{"empty input", "", ErrNoFrontmatter},
-		{"no leading delimiter", "title: hi\n---\n", ErrNoFrontmatter},
 		{"unterminated", "---\ntitle: hi\n", ErrUnterminated},
+		{"single delimiter line", "---", ErrUnterminated},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Parse(strings.NewReader(tt.input))
 			if !errors.Is(err, tt.wantErr) {
 				t.Errorf("Parse() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseNoFrontmatter verifies that input without a leading "---" delimiter
+// is not an error: the frontmatter is empty for both entry points, and
+// ParseWithContent returns the entire input as content, verbatim. Parse, like
+// always, leaves Content empty.
+func TestParseNoFrontmatter(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty input", ""},
+		{"plain body", "title: hi\n---\n"},
+		{"prose", "Just some text.\nNo frontmatter here.\n"},
+		{"no trailing newline", "hello"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Parse(strings.NewReader(tt.input))
+			if err != nil {
+				t.Fatalf("Parse returned error: %v", err)
+			}
+			if got.Frontmatter == nil || len(got.Frontmatter) != 0 {
+				t.Errorf("Parse Frontmatter = %#v, want empty non-nil map", got.Frontmatter)
+			}
+			if got.Content != "" {
+				t.Errorf("Parse Content = %q, want empty (body not read)", got.Content)
+			}
+
+			withContent, err := ParseWithContent(strings.NewReader(tt.input))
+			if err != nil {
+				t.Fatalf("ParseWithContent returned error: %v", err)
+			}
+			if withContent.Frontmatter == nil || len(withContent.Frontmatter) != 0 {
+				t.Errorf("ParseWithContent Frontmatter = %#v, want empty non-nil map", withContent.Frontmatter)
+			}
+			if withContent.Content != tt.input {
+				t.Errorf("ParseWithContent Content = %q, want %q (whole input)", withContent.Content, tt.input)
 			}
 		})
 	}

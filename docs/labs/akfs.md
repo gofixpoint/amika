@@ -50,9 +50,10 @@ make build-akfs          # builds dist/akfs
 Parse the YAML frontmatter block from one or more documents and emit it as JSON.
 Aliased as `akfs fm`.
 
-A document's frontmatter must begin on the first line with a `---` delimiter and
-end with a matching `---` (or `...`) delimiter line; the block between is parsed
-as YAML. For example:
+A document's frontmatter begins on the first line with a `---` delimiter and
+ends with a matching `---` (or `...`) delimiter line; the block between is parsed
+as YAML. A document with no leading `---` is treated as having no frontmatter
+(see [Files without frontmatter](#files-without-frontmatter)). For example:
 
 ```markdown
 ---
@@ -152,16 +153,32 @@ find ./content -name '*.md' | akfs fm | jq -r 'select(.frontmatter.status == "dr
 find ./content -name '*.md' | akfs fm | jq -r '[.filename, .frontmatter.title, .frontmatter.author] | @tsv'
 ```
 
-#### Errors
+#### Files without frontmatter
 
-Parsing fails (non-zero exit) when a document does not start with `---`
-(`no frontmatter found`) or is missing its closing delimiter
-(`unterminated frontmatter`). Errors are prefixed with the source name — the
-file path, or `<stdin>` for a stdin document:
+A document that does not start with a `---` delimiter is **not** an error: it is
+treated as having no frontmatter. The `frontmatter` field is an empty object,
+and (with `--content`) the entire file is returned as the body. This makes it
+safe to run `akfs fm` across a directory that mixes documents with and without
+frontmatter.
 
 ```bash
-$ printf 'no frontmatter here\n' | akfs fm -
-<stdin>: no frontmatter found: input does not start with '---'
+$ printf 'Just some prose.\n' | akfs fm -
+{"frontmatter":{}}
+
+$ printf 'Just some prose.\n' | akfs fm --content also -
+{"frontmatter":{},"content":"Just some prose.\n"}
+```
+
+#### Errors
+
+Parsing fails (non-zero exit) only when a document opens with a `---` delimiter
+but is missing its closing delimiter (`unterminated frontmatter`). Errors are
+prefixed with the source name — the file path, or `<stdin>` for a stdin
+document:
+
+```bash
+$ printf -- '---\ntitle: hi\n' | akfs fm -
+<stdin>: unterminated frontmatter: missing closing '---'
 ```
 
 When processing multiple inputs, the first failing document aborts the run.

@@ -15,10 +15,6 @@ import (
 // delimiter is the line that opens and closes a YAML frontmatter block.
 const delimiter = "---"
 
-// ErrNoFrontmatter is returned when the input does not begin with a frontmatter
-// block (a line containing only "---").
-var ErrNoFrontmatter = errors.New("no frontmatter found: input does not start with '---'")
-
 // ErrUnterminated is returned when an opening "---" delimiter is found but the
 // closing delimiter is missing.
 var ErrUnterminated = errors.New("unterminated frontmatter: missing closing '---'")
@@ -46,9 +42,12 @@ type Document struct {
 // only want the metadata never read past it (large documents are not loaded
 // into memory).
 //
-// An empty frontmatter block parses to an empty, non-nil map. Parse returns
-// ErrNoFrontmatter if the input has no leading delimiter and ErrUnterminated if
-// the closing delimiter is absent.
+// A document with no leading "---" delimiter is treated as having no
+// frontmatter rather than an error: the returned frontmatter is an empty,
+// non-nil map. (In that case ParseWithContent returns the entire input as the
+// content; Parse leaves Content empty, as always.) An empty frontmatter block
+// likewise parses to an empty, non-nil map. Parse returns ErrUnterminated when
+// an opening delimiter is present but its closing delimiter is absent.
 func Parse(r io.Reader) (Document, error) {
 	return parse(r, false)
 }
@@ -57,7 +56,8 @@ func Parse(r io.Reader) (Document, error) {
 // that follows the frontmatter as Document.Content. The single newline
 // separating the closing delimiter from the body is stripped so the content
 // reads as though the frontmatter block were absent; any trailing newline at
-// the end of the input is preserved.
+// the end of the input is preserved. When the document has no frontmatter at
+// all, the entire input is returned verbatim as the content.
 func ParseWithContent(r io.Reader) (Document, error) {
 	return parse(r, true)
 }
@@ -73,7 +73,18 @@ func parse(r io.Reader, wantContent bool) (Document, error) {
 		return Document{}, err
 	}
 	if trimLine(first) != delimiter {
-		return Document{}, ErrNoFrontmatter
+		// No leading delimiter: the document has no frontmatter. Treat the
+		// whole input as content rather than failing. As with any body, the
+		// content is only materialized when the caller asks for it.
+		content := ""
+		if wantContent {
+			rest, err := io.ReadAll(br)
+			if err != nil {
+				return Document{}, err
+			}
+			content = first + string(rest)
+		}
+		return Document{Frontmatter: map[string]any{}, Content: content}, nil
 	}
 	if err == io.EOF {
 		// Input was a single "---" line with no closing delimiter.

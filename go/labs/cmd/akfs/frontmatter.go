@@ -39,8 +39,9 @@ it as JSON.
 Each argument is a file path; the special argument "-" reads a single document
 from stdin. When no arguments are given, stdin is instead treated as a
 newline-delimited list of file paths to process (e.g. piped from "fd" or
-"find"). Each document must begin with a "---" delimiter line and close the
-frontmatter with a matching "---" line.
+"find"). Frontmatter begins on the first line with a "---" delimiter and closes
+with a matching "---" line. A document with no leading "---" is treated as
+having no frontmatter (an empty "frontmatter" object) rather than an error.
 
 Output is one line of compact JSON per document: the parsed frontmatter under a
 "frontmatter" key, alongside a "filename" key naming the source file (omitted
