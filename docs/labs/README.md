@@ -21,4 +21,4 @@ Trying a Labs tool? Start with its doc, then build it from the repo root.
 
 | **Tool** | **Description** | **Documentation** |
 |:---------|:----------------|:------------------|
-| `akfs` | Extract YAML frontmatter from Markdown files as JSON Lines; broader filesystem-data tooling is planned. | [akfs.md](akfs.md) |
+| `akfs` | Extract YAML frontmatter (and optionally the document body) from Markdown files as JSON Lines; broader filesystem-data tooling is planned. | [akfs.md](akfs.md) |

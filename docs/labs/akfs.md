@@ -3,10 +3,11 @@
 `akfs` (Amika filesystem) is experimental tooling for treating files as
 structured data that humans and AI agents can both work with.
 
-Today it does one thing: extract YAML frontmatter, the `---`-delimited metadata
-block at the top of a Markdown file, and emit it as JSON Lines. That makes a
-directory of posts, docs, notes, or plans queryable with standard tools like
-`jq`, scripts, databases, or a content management system (CMS) import.
+Today it focuses on one thing: extract YAML frontmatter, the `---`-delimited
+metadata block at the top of a Markdown file, and emit it as JSON Lines —
+optionally alongside (or instead of) the document body. That makes a directory
+of posts, docs, notes, or plans queryable with standard tools like `jq`,
+scripts, databases, or a content management system (CMS) import.
 
 For example, a docs directory might store `title`, `status`, `author`, and
 `tags` in each Markdown file. `akfs fm` can stream that metadata so you can list
@@ -87,13 +88,38 @@ One line of compact JSON per document (JSON Lines), each an object with:
 
 - `filename` — the source file path. Present for file arguments and paths read
   from stdin file-list mode; omitted only when the document was read via `-`.
-- `data` — the parsed frontmatter.
+- `frontmatter` — the parsed frontmatter.
 
-Within `data`, keys are emitted in sorted lexicographic order.
+Within `frontmatter`, keys are emitted in sorted lexicographic order.
 
 ```bash
 $ akfs fm notes/plan.md
-{"filename":"notes/plan.md","data":{"author":"Ada","status":"draft","tags":["planning","agents"],"title":"Quarterly planning notes"}}
+{"filename":"notes/plan.md","frontmatter":{"author":"Ada","status":"draft","tags":["planning","agents"],"title":"Quarterly planning notes"}}
+```
+
+#### Including the document body (`--content`)
+
+By default `akfs fm` emits only the frontmatter. The `--content` flag controls
+whether the document body — everything after the closing delimiter — is
+included under a top-level `content` key:
+
+| `--content` | Output                                                          |
+|-------------|-----------------------------------------------------------------|
+| `none`      | Only `frontmatter` (the default).                               |
+| `also`      | Both `frontmatter` and `content`.                               |
+| `only`      | Only `content`; the `frontmatter` field is dropped.             |
+
+The `content` value is the document body as if the frontmatter block were not
+there: the single newline separating the closing delimiter from the body is
+stripped, while any trailing newline at the end of the file is preserved. When
+present, fields are ordered `filename`, `frontmatter`, `content`.
+
+```bash
+$ akfs fm --content also notes/plan.md
+{"filename":"notes/plan.md","frontmatter":{"author":"Ada","status":"draft","tags":["planning","agents"],"title":"Quarterly planning notes"},"content":"# Body content starts here\n"}
+
+$ akfs fm --content only notes/plan.md
+{"filename":"notes/plan.md","content":"# Body content starts here\n"}
 ```
 
 #### Examples
@@ -120,10 +146,10 @@ object on one line:
 
 ```bash
 # List draft files
-find ./content -name '*.md' | akfs fm | jq -r 'select(.data.status == "draft") | .filename'
+find ./content -name '*.md' | akfs fm | jq -r 'select(.frontmatter.status == "draft") | .filename'
 
 # Export filename, title, and author as TSV
-find ./content -name '*.md' | akfs fm | jq -r '[.filename, .data.title, .data.author] | @tsv'
+find ./content -name '*.md' | akfs fm | jq -r '[.filename, .frontmatter.title, .frontmatter.author] | @tsv'
 ```
 
 #### Errors
@@ -144,9 +170,10 @@ reported on stderr.
 
 ## Planned / not yet implemented
 
-`akfs` currently ships only frontmatter extraction: `akfs frontmatter`, its
-alias `akfs fm`, and `akfs version`. The top-level Go library is still a
-scaffold; the implemented library logic is the frontmatter parser.
+`akfs` currently ships only frontmatter and document-body extraction:
+`akfs frontmatter`, its alias `akfs fm`, and `akfs version`. The top-level Go
+library is still a scaffold; the implemented library logic is the frontmatter
+parser.
 
 Possible future directions:
 
