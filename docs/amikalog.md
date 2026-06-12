@@ -32,9 +32,13 @@ clean. No daemon, no proxy, no change to how you invoke the agent: you run
 on every hook call.
 
 amikalog's job is the capture half: a complete event log with a stable schema,
-as ordinary files. The reuse half is deliberately open-ended. Because the
-output is just JSON on disk, you close the loop with whatever you already have
-(`jq`, a script, a cron job, your agent's own file tools):
+as ordinary files. Reuse then works at two levels. Locally, the output is just
+JSON on disk, so you close the loop with whatever you already have (`jq`, a
+script, a cron job, your agent's own file tools). And with `beta:push` and
+`beta:fetch`, sessions sync through your org's storage bucket, turning your
+team's whole history into a shared filesystem that agents can fetch, search,
+and slice wherever they run. Either way, past sessions become something future
+runs draw on:
 
 - **Memory** — have a new session read past sessions' event logs in the same
   repo, so agents stop rediscovering the same context.
