@@ -5,3 +5,7 @@ scratch/
 .gocache/
 .gotmp/
 .gomodcache/
+
+.env
+.env.*
+!.env.example
