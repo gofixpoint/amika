@@ -189,7 +189,13 @@ func emit(enc *json.Encoder, r io.Reader, filename string, mode contentMode) err
 	if label == "" {
 		label = "<stdin>"
 	}
-	doc, err := frontmatter.Parse(r)
+	// Only read the document body when it will actually be emitted; otherwise
+	// stop at the closing delimiter so large documents are not loaded.
+	parse := frontmatter.Parse
+	if mode == contentOnly || mode == contentAlso {
+		parse = frontmatter.ParseWithContent
+	}
+	doc, err := parse(r)
 	if err != nil {
 		return fmt.Errorf("%s: %w", label, err)
 	}
