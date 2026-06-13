@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
@@ -56,6 +57,9 @@ type bucketDownloader interface {
 // downloadPageLimit is the page size requested when listing the bucket.
 const downloadPageLimit = 1000
 
+// fetchConcurrency bounds how many objects in a page are downloaded at once.
+const fetchConcurrency = 8
+
 // apiBucketDownloader adapts the Amika API client to bucketDownloader: it lists
 // the bucket one page at a time and GETs each object's signed download URL.
 type apiBucketDownloader struct {
@@ -86,10 +90,11 @@ func (a apiBucketDownloader) Get(obj bucketObject) ([]byte, error) {
 // destDir at its bucket key, recreating the bucket's directory tree. It returns
 // the number of objects written.
 //
-// Objects are downloaded page by page: each page's bytes are fetched before the
-// next page is listed, so a signed download URL is used promptly after it is
-// issued rather than after the whole (possibly multi-page) listing completes —
-// keeping first-page URLs from expiring on large buckets.
+// Objects are downloaded page by page: each page's objects are fetched (in
+// parallel, bounded by fetchConcurrency) before the next page is listed, so a
+// signed download URL is used promptly after it is issued rather than after the
+// whole (possibly multi-page) listing completes — keeping first-page URLs from
+// expiring on large buckets.
 func runFetch(d bucketDownloader, destDir string) (int, error) {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return 0, fmt.Errorf("creating destination dir: %w", err)
@@ -103,38 +108,89 @@ func runFetch(d bucketDownloader, destDir string) (int, error) {
 		return 0, fmt.Errorf("resolving destination dir: %w", err)
 	}
 
-	n := 0
+	total := 0
 	cursor := ""
 	for {
 		objs, next, err := d.ListPage(cursor)
 		if err != nil {
-			return n, err
+			return total, err
 		}
-		for _, obj := range objs {
-			target, err := bucketObjectPath(destDir, obj.key)
-			if err != nil {
-				return n, err
-			}
-			if err := ensureSafeParent(filepath.Dir(target), realRoot); err != nil {
-				return n, fmt.Errorf("object key %q: %w", obj.key, err)
-			}
-			if err := rejectSymlink(target); err != nil {
-				return n, fmt.Errorf("object key %q: %w", obj.key, err)
-			}
-			data, err := d.Get(obj)
-			if err != nil {
-				return n, fmt.Errorf("downloading %s: %w", obj.key, err)
-			}
-			if err := os.WriteFile(target, data, 0o644); err != nil {
-				return n, fmt.Errorf("writing %s: %w", target, err)
-			}
-			n++
+		n, err := downloadPage(d, destDir, realRoot, objs)
+		total += n
+		if err != nil {
+			return total, err
 		}
 		if next == "" {
-			return n, nil
+			return total, nil
 		}
 		cursor = next
 	}
+}
+
+// downloadPage downloads objs concurrently into destDir, returning how many
+// were written. It stops scheduling new downloads once one fails and returns
+// the first error after in-flight downloads drain.
+func downloadPage(d bucketDownloader, destDir, realRoot string, objs []bucketObject) (int, error) {
+	var (
+		mu        sync.Mutex
+		firstErr  error
+		written   int
+		wg        sync.WaitGroup
+		semaphore = make(chan struct{}, fetchConcurrency)
+	)
+	for _, obj := range objs {
+		obj := obj
+		mu.Lock()
+		stop := firstErr != nil
+		mu.Unlock()
+		if stop {
+			break
+		}
+
+		semaphore <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+
+			if err := downloadObject(d, destDir, realRoot, obj); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			written++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return written, firstErr
+}
+
+// downloadObject fetches one object and writes it under destDir at its key,
+// rejecting any key or pre-existing symlink that would escape destDir.
+func downloadObject(d bucketDownloader, destDir, realRoot string, obj bucketObject) error {
+	target, err := bucketObjectPath(destDir, obj.key)
+	if err != nil {
+		return err
+	}
+	if err := ensureSafeParent(filepath.Dir(target), realRoot); err != nil {
+		return fmt.Errorf("object key %q: %w", obj.key, err)
+	}
+	if err := rejectSymlink(target); err != nil {
+		return fmt.Errorf("object key %q: %w", obj.key, err)
+	}
+	data, err := d.Get(obj)
+	if err != nil {
+		return fmt.Errorf("downloading %s: %w", obj.key, err)
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", target, err)
+	}
+	return nil
 }
 
 // ensureSafeParent creates dir and verifies its real (symlink-resolved) path

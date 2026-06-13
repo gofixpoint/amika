@@ -6,9 +6,8 @@ import (
 )
 
 // lockFileName is the advisory lock file amikalog places in each source's
-// sessions directory to serialize concurrent hook processes. It is ignored by
-// countEvents and resolveSessionDir because it neither starts with "event_"
-// nor is a directory.
+// sessions directory to serialize concurrent hook processes. It is ignored when
+// resolving and uploading session files because it lacks the ".jsonl" suffix.
 const lockFileName = ".lock"
 
 // fileLock is a cross-process advisory lock held on an open file.

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -89,16 +89,35 @@ func TestRunFetch_PropagatesDownloadError(t *testing.T) {
 	}
 }
 
+// opsLog records list/get calls; access is mutex-guarded because a page's
+// objects are fetched concurrently.
+type opsLog struct {
+	mu  sync.Mutex
+	ops []string
+}
+
+func (o *opsLog) add(s string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.ops = append(o.ops, s)
+}
+
+func (o *opsLog) snapshot() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.ops...)
+}
+
 // pagedBucketDownloader serves objects across multiple pages and records the
 // order of list/get calls, so a test can assert each page is downloaded before
 // the next is listed (signed URLs are used promptly, not after the full walk).
 type pagedBucketDownloader struct {
 	pages [][]bucketObject
-	ops   *[]string
+	rec   *opsLog
 }
 
 func (p pagedBucketDownloader) ListPage(cursor string) ([]bucketObject, string, error) {
-	*p.ops = append(*p.ops, "list:"+cursor)
+	p.rec.add("list:" + cursor)
 	idx := 0
 	if cursor != "" {
 		idx, _ = strconv.Atoi(cursor)
@@ -114,7 +133,7 @@ func (p pagedBucketDownloader) ListPage(cursor string) ([]bucketObject, string, 
 }
 
 func (p pagedBucketDownloader) Get(obj bucketObject) ([]byte, error) {
-	*p.ops = append(*p.ops, "get:"+obj.key)
+	p.rec.add("get:" + obj.key)
 	return []byte(obj.key), nil
 }
 
@@ -153,13 +172,12 @@ func TestRunFetch_RejectsSymlinkedLeaf(t *testing.T) {
 }
 
 func TestRunFetch_DownloadsEachPageBeforeListingNext(t *testing.T) {
-	var ops []string
 	d := pagedBucketDownloader{
 		pages: [][]bucketObject{
 			{{key: "p0a.json"}, {key: "p0b.json"}},
 			{{key: "p1a.json"}},
 		},
-		ops: &ops,
+		rec: &opsLog{},
 	}
 
 	n, err := runFetch(d, t.TempDir())
@@ -169,9 +187,25 @@ func TestRunFetch_DownloadsEachPageBeforeListingNext(t *testing.T) {
 	if n != 3 {
 		t.Errorf("n = %d, want 3", n)
 	}
-	want := []string{"list:", "get:p0a.json", "get:p0b.json", "list:1", "get:p1a.json"}
-	if !reflect.DeepEqual(ops, want) {
-		t.Errorf("ops = %v, want %v", ops, want)
+
+	// A page's objects are fetched in parallel, so their relative order is not
+	// fixed; what must hold is that every get for a page happens between that
+	// page's list and the next page's list.
+	ops := d.rec.snapshot()
+	if len(ops) != 5 {
+		t.Fatalf("ops = %v, want 5 entries", ops)
+	}
+	if ops[0] != "list:" {
+		t.Errorf("ops[0] = %q, want list:", ops[0])
+	}
+	if page0 := map[string]bool{ops[1]: true, ops[2]: true}; !page0["get:p0a.json"] || !page0["get:p0b.json"] {
+		t.Errorf("ops[1:3] = %v, want page-0 gets before list:1", ops[1:3])
+	}
+	if ops[3] != "list:1" {
+		t.Errorf("ops[3] = %q, want list:1", ops[3])
+	}
+	if ops[4] != "get:p1a.json" {
+		t.Errorf("ops[4] = %q, want get:p1a.json", ops[4])
 	}
 }
 

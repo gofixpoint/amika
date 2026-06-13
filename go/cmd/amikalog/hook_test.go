@@ -7,17 +7,20 @@ import (
 	"testing"
 )
 
-// countEventFiles walks dir and counts files named like event_*.json.
-func countEventFiles(t *testing.T, dir string) int {
+// countEvents walks dir and counts events recorded across all session JSONL
+// files (one event per line).
+func countEvents(t *testing.T, dir string) int {
 	t.Helper()
 	n := 0
-	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
 			return nil
 		}
-		if !d.IsDir() && strings.HasPrefix(d.Name(), "event_") {
-			n++
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
 		}
+		n += strings.Count(string(data), "\n")
 		return nil
 	})
 	return n
@@ -31,8 +34,8 @@ func TestHook_Claude_WritesEvent(t *testing.T) {
 	if _, err := runRootCommandStdin(strings.NewReader(payload), "hook", "--source", "claude"); err != nil {
 		t.Fatalf("hook --source claude: %v", err)
 	}
-	if got := countEventFiles(t, filepath.Join(stateDir, "events", "claude")); got != 1 {
-		t.Fatalf("got %d claude event files, want 1", got)
+	if got := countEvents(t, filepath.Join(stateDir, "events", "claude")); got != 1 {
+		t.Fatalf("got %d claude events, want 1", got)
 	}
 }
 
@@ -46,8 +49,8 @@ func TestHook_Codex_WritesEventFromStdin(t *testing.T) {
 	if _, err := runRootCommandStdin(strings.NewReader(payload), "hook", "--source", "codex"); err != nil {
 		t.Fatalf("hook --source codex (stdin): %v", err)
 	}
-	if got := countEventFiles(t, filepath.Join(stateDir, "events", "codex")); got != 1 {
-		t.Fatalf("got %d codex event files, want 1", got)
+	if got := countEvents(t, filepath.Join(stateDir, "events", "codex")); got != 1 {
+		t.Fatalf("got %d codex events, want 1", got)
 	}
 }
 
@@ -64,8 +67,8 @@ func TestHook_Codex_AcceptsNotifyPayload(t *testing.T) {
 	if _, err := runRootCommand("hook", "--source", "codex", payload); err != nil {
 		t.Fatalf("hook --source codex with payload: %v", err)
 	}
-	if got := countEventFiles(t, filepath.Join(stateDir, "events", "codex")); got != 1 {
-		t.Fatalf("got %d codex event files, want 1", got)
+	if got := countEvents(t, filepath.Join(stateDir, "events", "codex")); got != 1 {
+		t.Fatalf("got %d codex events, want 1", got)
 	}
 }
 

@@ -7,9 +7,9 @@
 // hook event) that invoke `amikalog hook --source ...` on every hook call.
 // Both agents deliver the hook payload on stdin with the same shape
 // (session_id, cwd, hook_event_name, ...). Each invocation appends one JSON
-// file:
+// line to the session's append-only JSONL file:
 //
-//	<state>/events/<source>/sessions/<ts>_<session-id>/event_<seq>_<ts>.json
+//	<state>/events/<source>/sessions/<ts>_<session-id>.jsonl
 //
 // No daemon and no background process are involved. The state directory is the
 // same one the rest of amika uses (see internal/config.StateDir), so
@@ -41,7 +41,7 @@ const (
 )
 
 // EventsDir returns the directory under stateDir that holds a source's session
-// directories: <stateDir>/events/<source>/sessions.
+// files: <stateDir>/events/<source>/sessions.
 func EventsDir(stateDir string, src Source) string {
 	return filepath.Join(stateDir, "events", string(src), "sessions")
 }

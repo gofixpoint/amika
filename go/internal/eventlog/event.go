@@ -1,9 +1,10 @@
 package eventlog
 
 import (
+	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,28 +67,24 @@ func rawPayload(data []byte) json.RawMessage {
 	return json.RawMessage(encoded)
 }
 
-// writeEvent appends ev as a new JSON file under
-// <stateDir>/events/<source>/sessions/<ts>_<session-id>/event_<seq>_<ts>.json.
+// writeEvent appends ev as one JSON line to the session's JSONL file at
+// <stateDir>/events/<source>/sessions/<ts>_<session-id>.jsonl.
 //
-// Writes are append-only: a new file is created for every call and existing
-// files are never modified.
+// One file per session (rather than one file per event) keeps the on-disk tree
+// small, so beta:push uploads a handful of session files instead of thousands
+// of tiny event files. Writes are append-only: the line is appended and earlier
+// lines are never modified.
 //
 // Concurrent hooks for the same session run as separate processes — Claude
 // fires PostToolUse hooks in parallel for parallel tool calls — so an
 // in-process mutex would not help. A cross-process advisory lock on the
-// source's sessions directory makes the whole "resolve session dir → count
-// existing events → create the next file" critical section atomic. Without it
-// two processes could read the same event count and, because each filename
-// carries its own timestamp, write distinct files with the same Seq. Locking at
-// the sessions-root level also serializes session-directory creation, so two
-// first-hooks of a brand-new session cannot create two directories for it.
+// source's sessions directory makes the whole "resolve session file → count
+// existing lines → append the next line" critical section atomic, so two
+// processes cannot assign the same Seq, interleave their bytes in the file, or
+// create two files for one brand-new session.
 //
-// Each event is written to a temporary file and then atomically renamed into
-// place. The lock only serializes writers; beta:push scans and uploads event
-// files without taking it, so a reader could otherwise observe an "event_" file
-// that exists but is not yet fully encoded and upload truncated bytes. The
-// temp file is named so it is ignored by countEvents and the pushed file set
-// (neither has the "event_" prefix) until the rename publishes it complete.
+// The lock only serializes writers; beta:push reads each session file while
+// holding the same lock so it can never observe a half-written final line.
 func writeEvent(stateDir string, ev Event) error {
 	now := time.Now().UTC()
 	ev.Timestamp = now.Format(time.RFC3339Nano)
@@ -103,90 +100,137 @@ func writeEvent(stateDir string, ev Event) error {
 	}
 	defer lock.release()
 
-	sessionDir, err := resolveSessionDir(root, ev.SessionID, now)
-	if err != nil {
-		return err
-	}
-
-	ts := fileTimestamp(now)
-	seq := countEvents(sessionDir)
-	// Pick the first unused sequence number. The lock means no other writer can
-	// claim it between this check and the rename below.
-	for {
-		path := filepath.Join(sessionDir, fmt.Sprintf("event_%d_%s.json", seq, ts))
-		_, statErr := os.Stat(path)
-		if statErr == nil {
-			seq++
-			continue
-		}
-		if !errors.Is(statErr, os.ErrNotExist) {
-			return fmt.Errorf("checking event file %s: %w", path, statErr)
-		}
-		ev.Seq = seq
-		return writeEventFile(sessionDir, path, ev)
-	}
+	sessionFile := resolveSessionFile(root, ev.SessionID, now)
+	ev.Seq = countLines(sessionFile)
+	return appendEvent(sessionFile, ev)
 }
 
-// writeEventFile encodes ev into a temp file in dir and atomically renames it to
-// finalPath, so a concurrent reader never sees a partially-written event.
-func writeEventFile(dir, finalPath string, ev Event) error {
-	f, err := os.CreateTemp(dir, ".event-*.json.tmp")
+// appendEvent appends ev to path as a single newline-terminated JSON line. The
+// event is marshaled fully before the lone Write call so a reader holding the
+// same lock sees either the whole line or none of it.
+//
+// Before writing, any partial trailing record is dropped: a completed record
+// always ends in '\n', so a non-newline tail is the remnant of an append that a
+// returned error, a process kill, or a power loss interrupted. Removing it keeps
+// records from concatenating, so the stream stays parseable and Seq cannot
+// repeat — the crash-safety the old temp-file-and-rename layout gave. A short or
+// failed write here is likewise rolled back to the pre-write length.
+func appendEvent(path string, ev Event) error {
+	line, err := json.Marshal(ev)
 	if err != nil {
-		return fmt.Errorf("creating temp event file in %s: %w", dir, err)
+		return fmt.Errorf("encoding event for %s: %w", path, err)
 	}
-	tmp := f.Name()
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if encErr := enc.Encode(ev); encErr != nil {
+	line = append(line, '\n')
+
+	// O_RDWR (not O_WRONLY) so the heal step can read the tail; O_APPEND still
+	// forces the write itself to the current end.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening session file %s: %w", path, err)
+	}
+
+	info, err := f.Stat()
+	if err != nil {
 		f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("writing event %s: %w", finalPath, encErr)
+		return fmt.Errorf("sizing session file %s: %w", path, err)
 	}
-	if closeErr := f.Close(); closeErr != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("closing event %s: %w", finalPath, closeErr)
+	start, err := healPartialTail(f, info.Size())
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("healing session file %s: %w", path, err)
 	}
-	if renErr := os.Rename(tmp, finalPath); renErr != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("publishing event %s: %w", finalPath, renErr)
+
+	n, writeErr := f.Write(line)
+	if writeErr != nil || n != len(line) {
+		// Drop any bytes this append managed to write. The advisory lock is held,
+		// so no concurrent writer can be sitting past start.
+		_ = f.Truncate(start)
+		f.Close()
+		if writeErr == nil {
+			writeErr = io.ErrShortWrite
+		}
+		return fmt.Errorf("appending event to %s: %w", path, writeErr)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing session file %s: %w", path, err)
 	}
 	return nil
 }
 
-// resolveSessionDir returns the directory holding sessionID's events, creating
-// it (named "<ts>_<session-id>") when it does not yet exist. An existing
-// directory is matched by its "_<session-id>" suffix so a session's events
-// accumulate together regardless of when the directory was first created.
-func resolveSessionDir(root, sessionID string, now time.Time) (string, error) {
+// healPartialTail removes an incomplete trailing record (any bytes after the
+// last newline) from f, returning the resulting size. The common case is cheap:
+// a completed record ends in '\n', so when the file is empty or already ends in
+// '\n' only the final byte is read. The file is read in full only in the rare
+// case of a crash-interrupted tail. The caller holds the advisory lock, so such
+// a tail can only be a dead writer's remnant, never a record in flight.
+func healPartialTail(f *os.File, size int64) (int64, error) {
+	if size == 0 {
+		return 0, nil
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, size-1); err != nil {
+		return 0, err
+	}
+	if last[0] == '\n' {
+		return size, nil
+	}
+	buf := make([]byte, size)
+	if _, err := f.ReadAt(buf, 0); err != nil {
+		return 0, err
+	}
+	// LastIndexByte returns -1 when no newline exists (the whole file is one
+	// unterminated record), so healed becomes 0 and the file is cleared.
+	healed := int64(bytes.LastIndexByte(buf, '\n') + 1)
+	if err := f.Truncate(healed); err != nil {
+		return 0, err
+	}
+	return healed, nil
+}
+
+// resolveSessionFile returns the path to sessionID's JSONL file, named
+// "<ts>_<session-id>.jsonl". An existing file is matched by its
+// "_<session-id>.jsonl" suffix so a session's events keep accumulating in one
+// file regardless of when it was first created. The file itself is created on
+// first append by appendEvent.
+func resolveSessionFile(root, sessionID string, now time.Time) string {
 	safe := sanitizeSessionID(sessionID)
 	if entries, err := os.ReadDir(root); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() {
+			if e.IsDir() {
 				continue
 			}
 			name := e.Name()
-			if idx := strings.IndexByte(name, '_'); idx >= 0 && name[idx+1:] == safe {
-				return filepath.Join(root, name), nil
+			base, ok := strings.CutSuffix(name, ".jsonl")
+			if !ok {
+				continue
+			}
+			if idx := strings.IndexByte(base, '_'); idx >= 0 && base[idx+1:] == safe {
+				return filepath.Join(root, name)
 			}
 		}
 	}
-	dir := filepath.Join(root, fileTimestamp(now)+"_"+safe)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("creating session dir %s: %w", dir, err)
-	}
-	return dir, nil
+	return filepath.Join(root, fileTimestamp(now)+"_"+safe+".jsonl")
 }
 
-// countEvents returns how many event files already live in sessionDir.
-func countEvents(sessionDir string) int {
-	entries, err := os.ReadDir(sessionDir)
+// countLines returns the number of newline-terminated lines (events) already in
+// path, or 0 when the file does not yet exist. It is the next event's Seq.
+func countLines(path string) int {
+	f, err := os.Open(path)
 	if err != nil {
 		return 0
 	}
+	defer f.Close()
 	n := 0
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "event_") {
-			n++
+	buf := make([]byte, 64*1024)
+	for {
+		c, readErr := f.Read(buf)
+		for _, b := range buf[:c] {
+			if b == '\n' {
+				n++
+			}
+		}
+		if readErr != nil {
+			break
 		}
 	}
 	return n

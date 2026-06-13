@@ -96,12 +96,15 @@ Events are written under the amika state directory
 (`~/.local/state/amika` by default; override with `AMIKA_STATE_DIRECTORY`):
 
 ```
-<state>/events/{claude,codex}/sessions/<ts>_<session-id>/event_<seq>_<ts>.json
+<state>/events/{claude,codex}/sessions/<ts>_<session-id>.jsonl
 ```
 
-Each file is one JSON event and is never modified after being written.
-Sessions are ordinary directories you can `grep`, `jq`, sync, or load into a
-database. An event records:
+Each session is a single append-only [JSONL](https://jsonlines.org/) file, one
+JSON event per line; earlier lines are never modified. One file per session
+(rather than one file per event) keeps the tree small, so `beta:push` uploads a
+handful of session files instead of thousands of tiny ones. The files are
+ordinary text you can `grep`, `jq`, sync, or load into a database. Each line
+records:
 
 | Field        | Description                                                              |
 | ------------ | ------------------------------------------------------------------------ |
@@ -128,15 +131,16 @@ amikalog beta:push          # upload not-yet-pushed events
 amikalog beta:fetch <dir>   # download the org bucket into <dir>
 ```
 
-`beta:push` uploads each event file under the object key
-`<repo>/<source>/sessions/...`, where `<repo>` comes from the session's
-`git.repo_root`. Pushed files are tracked in
-`<state>/events/.amikalog-push-state.json`, so repeated runs upload only events
-captured since the last push, and re-pushing is idempotent.
+`beta:push` uploads each session file under the object key
+`<repo>/<source>/sessions/<ts>_<session-id>.jsonl`, where `<repo>` comes from the
+session's `git.repo_root`. Uploads run in parallel. Pushed files are tracked by
+size in `<state>/events/.amikalog-push-state.json`, so repeated runs re-upload
+only sessions that grew new events since the last push, and re-pushing is
+idempotent.
 
-`beta:fetch` downloads every object in the org bucket into a local directory,
-recreating the bucket's key tree on disk: your whole org's sessions, as
-ordinary files.
+`beta:fetch` downloads every object in the org bucket into a local directory (in
+parallel), recreating the bucket's key tree on disk: your whole org's sessions,
+as ordinary files.
 
 ## Command reference
 

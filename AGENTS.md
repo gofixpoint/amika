@@ -79,7 +79,7 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 - `app/` — Application service layer implementation
 - `ports/` — Port interfaces for Docker and store operations
 - `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
-- `eventlog/` — amikalog's hook installer + capture: writes append-only events to `<state>/events/{claude,codex}/sessions/{ts}_{session_id}/event_{seq}_{ts}.json`, annotated with git context. `push.go` uploads not-yet-pushed events via an `Uploader`, tracking sent files in `<state>/events/.amikalog-push-state.json` (object key = `<repo>/<source>/sessions/...`, repo from each session's `git.repo_root`)
+- `eventlog/` — amikalog's hook installer + capture: appends events (one JSON line each) to a per-session JSONL file `<state>/events/{claude,codex}/sessions/{ts}_{session_id}.jsonl`, annotated with git context. `push.go` uploads each changed session file in parallel via an `Uploader`, tracking each file's uploaded byte size in `<state>/events/.amikalog-push-state.json` so only sessions that grew are re-sent (object key = `<repo>/<source>/sessions/<ts>_<session_id>.jsonl`, repo from each session's `git.repo_root`; legacy per-event `event_*.json` files are still uploaded for backward compatibility)
 
 ### Public Package (`go/pkg/amika/`)
 - `service.go` — Public service API used by both the CLI and HTTP server

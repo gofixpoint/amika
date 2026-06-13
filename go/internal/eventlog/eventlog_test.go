@@ -61,8 +61,8 @@ func TestCaptureClaude_SecondEventSameSessionIncrementsSeq(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := countSessionDirs(t, stateDir, SourceClaude); got != 1 {
-		t.Fatalf("got %d session dirs, want 1 (events must share a session dir)", got)
+	if got := countSessions(t, stateDir, SourceClaude); got != 1 {
+		t.Fatalf("got %d session files, want 1 (events must share a session file)", got)
 	}
 	events := readEvents(t, stateDir, SourceClaude)
 	if len(events) != 2 {
@@ -100,9 +100,9 @@ func TestCaptureClaude_ConcurrentSameSessionUniqueSeqs(t *testing.T) {
 		t.Fatalf("concurrent CaptureClaude: %v", err)
 	}
 
-	// All events must land in one session directory...
-	if got := countSessionDirs(t, stateDir, SourceClaude); got != 1 {
-		t.Fatalf("got %d session dirs, want 1 (session-dir creation must be serialized)", got)
+	// All events must land in one session file...
+	if got := countSessions(t, stateDir, SourceClaude); got != 1 {
+		t.Fatalf("got %d session files, want 1 (session-file creation must be serialized)", got)
 	}
 
 	// ...with exactly the contiguous seqs 0..n-1, none duplicated.
@@ -121,6 +121,55 @@ func TestCaptureClaude_ConcurrentSameSessionUniqueSeqs(t *testing.T) {
 		if !seen[i] {
 			t.Errorf("missing seq %d", i)
 		}
+	}
+}
+
+func TestCaptureClaude_HealsPartialTrailingRecord(t *testing.T) {
+	stateDir := t.TempDir()
+	cwd := t.TempDir() // non-repo: deterministic null git
+	mk := func(event string) string {
+		return `{"session_id":"sess-1","cwd":"` + cwd + `","hook_event_name":"` + event + `"}`
+	}
+	if err := CaptureClaude(strings.NewReader(mk("UserPromptSubmit")), stateDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a crash mid-append: a partial record with no trailing newline.
+	sessionFile := onlySessionFile(t, stateDir, SourceClaude)
+	f, err := os.OpenFile(sessionFile, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"session_id":"sess-1","seq":99,"incomplete`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	// The next capture must drop the partial tail before appending.
+	if err := CaptureClaude(strings.NewReader(mk("Stop")), stateDir); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(sessionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "incomplete") {
+		t.Errorf("partial record was not healed; file:\n%s", raw)
+	}
+	events := readEvents(t, stateDir, SourceClaude)
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (partial dropped, both real events kept)", len(events))
+	}
+	seqs := map[int]bool{}
+	for _, ev := range events {
+		if seqs[ev.Seq] {
+			t.Fatalf("duplicate seq %d after healing", ev.Seq)
+		}
+		seqs[ev.Seq] = true
+	}
+	if !seqs[0] || !seqs[1] {
+		t.Errorf("expected contiguous seqs 0 and 1, got %v", seqs)
 	}
 }
 
@@ -192,34 +241,31 @@ func TestCaptureCodex_LegacyNotifyDerivesSessionFromRollout(t *testing.T) {
 	}
 }
 
-// readEvents reads and decodes every event file for src under stateDir.
+// readEvents reads and decodes every event for src under stateDir, parsing each
+// session's JSONL file line by line.
 func readEvents(t *testing.T, stateDir string, src Source) []Event {
 	t.Helper()
 	root := EventsDir(stateDir, src)
 	var events []Event
-	sessionDirs, err := os.ReadDir(root)
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("reading %s: %v", root, err)
 	}
-	for _, sd := range sessionDirs {
-		if !sd.IsDir() {
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		files, err := os.ReadDir(filepath.Join(root, sd.Name()))
+		data, err := os.ReadFile(filepath.Join(root, e.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, f := range files {
-			if !strings.HasPrefix(f.Name(), "event_") {
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if line == "" {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(root, sd.Name(), f.Name()))
-			if err != nil {
-				t.Fatal(err)
-			}
 			var ev Event
-			if err := json.Unmarshal(data, &ev); err != nil {
-				t.Fatalf("decoding %s: %v", f.Name(), err)
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				t.Fatalf("decoding event in %s: %v", e.Name(), err)
 			}
 			events = append(events, ev)
 		}
@@ -227,9 +273,33 @@ func readEvents(t *testing.T, stateDir string, src Source) []Event {
 	return events
 }
 
-// countSessionDirs returns the number of session directories for src (ignoring
-// the .lock file and any other non-directory entries).
-func countSessionDirs(t *testing.T, stateDir string, src Source) int {
+// onlySessionFile returns the path of the single session JSONL file for src,
+// failing if there is not exactly one.
+func onlySessionFile(t *testing.T, stateDir string, src Source) string {
+	t.Helper()
+	root := EventsDir(stateDir, src)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("reading sessions dir: %v", err)
+	}
+	var found string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			if found != "" {
+				t.Fatalf("expected one session file, found multiple")
+			}
+			found = filepath.Join(root, e.Name())
+		}
+	}
+	if found == "" {
+		t.Fatalf("no session file found for %s", src)
+	}
+	return found
+}
+
+// countSessions returns the number of session JSONL files for src (ignoring the
+// .lock file and any other non-.jsonl entries).
+func countSessions(t *testing.T, stateDir string, src Source) int {
 	t.Helper()
 	entries, err := os.ReadDir(EventsDir(stateDir, src))
 	if err != nil {
@@ -237,7 +307,7 @@ func countSessionDirs(t *testing.T, stateDir string, src Source) int {
 	}
 	n := 0
 	for _, e := range entries {
-		if e.IsDir() {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
 			n++
 		}
 	}
