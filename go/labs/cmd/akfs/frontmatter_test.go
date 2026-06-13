@@ -52,8 +52,8 @@ func TestFrontmatterSingleFile(t *testing.T) {
 	if recs[0].Filename != path {
 		t.Errorf("filename = %q, want %q", recs[0].Filename, path)
 	}
-	if recs[0].Data["title"] != "First doc" {
-		t.Errorf("data.title = %v, want %q", recs[0].Data["title"], "First doc")
+	if recs[0].Frontmatter["title"] != "First doc" {
+		t.Errorf("data.title = %v, want %q", recs[0].Frontmatter["title"], "First doc")
 	}
 }
 
@@ -99,8 +99,8 @@ func TestFrontmatterStdinDocument(t *testing.T) {
 	if recs[0].Filename != "" {
 		t.Errorf("filename = %q, want empty (omitted) for stdin document", recs[0].Filename)
 	}
-	if recs[0].Data["title"] != "From stdin" {
-		t.Errorf("data.title = %v, want %q", recs[0].Data["title"], "From stdin")
+	if recs[0].Frontmatter["title"] != "From stdin" {
+		t.Errorf("data.title = %v, want %q", recs[0].Frontmatter["title"], "From stdin")
 	}
 }
 
@@ -122,8 +122,8 @@ func TestFrontmatterStdinFileList(t *testing.T) {
 	if recs[0].Filename != a || recs[1].Filename != b {
 		t.Errorf("filenames = [%q, %q], want [%q, %q]", recs[0].Filename, recs[1].Filename, a, b)
 	}
-	if recs[0].Data["title"] != "First doc" || recs[1].Data["title"] != "Second doc" {
-		t.Errorf("titles = [%v, %v], want [First doc, Second doc]", recs[0].Data["title"], recs[1].Data["title"])
+	if recs[0].Frontmatter["title"] != "First doc" || recs[1].Frontmatter["title"] != "Second doc" {
+		t.Errorf("titles = [%v, %v], want [First doc, Second doc]", recs[0].Frontmatter["title"], recs[1].Frontmatter["title"])
 	}
 }
 
@@ -172,8 +172,8 @@ func TestFrontmatterFilesAndStdinInterleaved(t *testing.T) {
 	if recs[1].Filename != "" {
 		t.Errorf("record 1 filename = %q, want empty (stdin)", recs[1].Filename)
 	}
-	if recs[1].Data["title"] != "From stdin" {
-		t.Errorf("record 1 data.title = %v, want %q", recs[1].Data["title"], "From stdin")
+	if recs[1].Frontmatter["title"] != "From stdin" {
+		t.Errorf("record 1 data.title = %v, want %q", recs[1].Frontmatter["title"], "From stdin")
 	}
 	if recs[2].Filename != b {
 		t.Errorf("record 2 filename = %q, want %q", recs[2].Filename, b)
@@ -192,8 +192,76 @@ func TestFrontmatterFilesIgnoreUnreferencedStdin(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("got %d records, want 1 (stdin ignored): %q", len(recs), out)
 	}
-	if recs[0].Data["title"] != "First doc" {
-		t.Errorf("data.title = %v, want %q (stdin should be ignored)", recs[0].Data["title"], "First doc")
+	if recs[0].Frontmatter["title"] != "First doc" {
+		t.Errorf("data.title = %v, want %q (stdin should be ignored)", recs[0].Frontmatter["title"], "First doc")
+	}
+}
+
+// docWithBody has a blank line between the closing delimiter and the body so
+// the leading-newline-stripping behavior is exercised.
+const docWithBody = "---\ntitle: With body\n---\n\nHello, body.\n"
+
+// TestFrontmatterContentNoneDefault verifies that without --content (the
+// default "none") no content field is emitted and data is present.
+func TestFrontmatterContentNoneDefault(t *testing.T) {
+	path := writeTemp(t, docWithBody)
+	out, err := runRootCommand("frontmatter", path)
+	if err != nil {
+		t.Fatalf("runRootCommand: %v", err)
+	}
+	if strings.Contains(out, "content") {
+		t.Errorf("default output should not contain a content field: %q", out)
+	}
+	recs := decodeLines(t, out)
+	if recs[0].Frontmatter["title"] != "With body" {
+		t.Errorf("data.title = %v, want %q", recs[0].Frontmatter["title"], "With body")
+	}
+}
+
+// TestFrontmatterContentAlso verifies --content=also emits both data and the
+// body, with the leading newline stripped and trailing newline preserved.
+func TestFrontmatterContentAlso(t *testing.T) {
+	path := writeTemp(t, docWithBody)
+	out, err := runRootCommand("frontmatter", "--content", "also", path)
+	if err != nil {
+		t.Fatalf("runRootCommand: %v", err)
+	}
+	recs := decodeLines(t, out)
+	if recs[0].Frontmatter["title"] != "With body" {
+		t.Errorf("data.title = %v, want %q", recs[0].Frontmatter["title"], "With body")
+	}
+	if recs[0].Content != "Hello, body.\n" {
+		t.Errorf("content = %q, want %q", recs[0].Content, "Hello, body.\n")
+	}
+}
+
+// TestFrontmatterContentOnly verifies --content=only emits the body and drops
+// the data field.
+func TestFrontmatterContentOnly(t *testing.T) {
+	path := writeTemp(t, docWithBody)
+	out, err := runRootCommand("frontmatter", "--content", "only", path)
+	if err != nil {
+		t.Fatalf("runRootCommand: %v", err)
+	}
+	if strings.Contains(out, "\"frontmatter\"") {
+		t.Errorf("--content=only output should not contain a frontmatter field: %q", out)
+	}
+	recs := decodeLines(t, out)
+	if recs[0].Content != "Hello, body.\n" {
+		t.Errorf("content = %q, want %q", recs[0].Content, "Hello, body.\n")
+	}
+	if recs[0].Filename != path {
+		t.Errorf("filename = %q, want %q", recs[0].Filename, path)
+	}
+}
+
+// TestFrontmatterContentInvalid verifies an unrecognized --content value is
+// rejected.
+func TestFrontmatterContentInvalid(t *testing.T) {
+	path := writeTemp(t, docWithBody)
+	_, err := runRootCommand("frontmatter", "--content", "bogus", path)
+	if err == nil {
+		t.Fatal("expected error for invalid --content value, got nil")
 	}
 }
 
