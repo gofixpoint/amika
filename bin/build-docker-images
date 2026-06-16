@@ -16,8 +16,11 @@ set -euo pipefail
 #/
 #/ Options:
 #/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
-#/   --no-cache           Pass --no-cache to docker build (disable layer cache entirely)
-#/   --ignore-unstaged    Continue even if there are unstaged changes
+#/   --no-cache              Pass --no-cache to docker build (disable layer cache entirely)
+#/   --no-update-agent-clis  Skip reinstall of agent CLI packages (@anthropic-ai/claude-code,
+#/                           @openai/codex, opencode-ai); reuses the cached layer instead of
+#/                           fetching the latest versions (cache-busted by default)
+#/   --ignore-unstaged       Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
 #/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
 #/                        before each org switch instead of relying on existing daytona login state.
@@ -63,6 +66,7 @@ image_presets() {
 IMAGES=()
 PLATFORM=""
 NO_CACHE=false
+UPDATE_AGENT_CLIS=true
 IGNORE_UNSTAGED=false
 PUSH_DAYTONA=false
 CI_AUTH=false
@@ -74,8 +78,9 @@ while [ $# -gt 0 ]; do
         echo "Error: --platform requires a value" >&2; exit 1
       fi
       PLATFORM="$2"; shift 2 ;;
-    --no-cache)        NO_CACHE=true; shift ;;
-    --ignore-unstaged) IGNORE_UNSTAGED=true; shift ;;
+    --no-cache)           NO_CACHE=true; shift ;;
+    --no-update-agent-clis) UPDATE_AGENT_CLIS=false; shift ;;
+    --ignore-unstaged)    IGNORE_UNSTAGED=true; shift ;;
     --push-daytona)    PUSH_DAYTONA=true; shift ;;
     --ci)              CI_AUTH=true; shift ;;
     --help)            usage; exit 0 ;;
@@ -162,6 +167,12 @@ for img in "${IMAGES[@]}"; do
   done
 done
 
+# Capture a single timestamp for AGENT_CLI_CACHE_BUST so all presets in this
+# run share the same value (consistent cache behavior across coder and claude).
+if [ "$UPDATE_AGENT_CLIS" = true ]; then
+  AGENT_CLI_CACHE_BUST="$(date +%s)"
+fi
+
 # Track what we built/pushed for the summary
 BUILT_IMAGES=()
 PUSHED_SNAPSHOTS=()
@@ -187,6 +198,9 @@ for preset in "${PRESETS[@]}"; do
   case "$preset" in
     coder|claude)
       docker_args+=(--build-arg "BASE_IMAGE=amika/base:${VERSION}")
+      if [ "$UPDATE_AGENT_CLIS" = true ]; then
+        docker_args+=(--build-arg "AGENT_CLI_CACHE_BUST=${AGENT_CLI_CACHE_BUST}")
+      fi
       ;;
     daytona-coder)
       docker_args+=(--build-arg "CODER_IMAGE=amika/coder:${VERSION}")
