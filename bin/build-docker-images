@@ -213,6 +213,9 @@ for preset in "${PRESETS[@]}"; do
       ;;
     coder-dind)
       docker_args+=(--build-arg "DIND_IMAGE=amika/dind:${VERSION}")
+      if [ "$UPDATE_AGENT_CLIS" = true ]; then
+        docker_args+=(--build-arg "AGENT_CLI_CACHE_BUST=${AGENT_CLI_CACHE_BUST}")
+      fi
       ;;
     daytona-coder-dind)
       docker_args+=(--build-arg "CODER_DIND_IMAGE=amika/coder-dind:${VERSION}")
