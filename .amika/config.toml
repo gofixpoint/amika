@@ -1,2 +1,7 @@
 [lifecycle]
 setup_script = ".amika/scripts/setup.sh"
+
+[filesystem]
+repos = [
+    "https://github.com/gofixpoint/amika-mono"
+]
