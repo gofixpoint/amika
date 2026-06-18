@@ -1,5 +1,17 @@
 export { AmikaClient } from "@/client";
-export type { AmikaClientOptions } from "@/client";
+export type {
+  AmikaClientOptions,
+  RunAgentRequest,
+  RunAgentResult,
+  WaitOptions,
+  WorkflowOptions,
+} from "@/client";
+
+export {
+  createSandboxAndWait,
+  runAgent,
+  withSandbox,
+} from "@/workflows";
 
 export { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
 

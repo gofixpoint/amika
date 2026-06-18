@@ -2,6 +2,18 @@ import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
 import { HTTPClient } from "@/http";
 import { StaticTokenSource, type TokenSource } from "@/token";
 import {
+  createSandboxAndWait as createSandboxAndWaitWorkflow,
+  runAgent as runAgentWorkflow,
+  type RunAgentRequest,
+  type RunAgentResult,
+  type WorkflowOptions,
+  withSandbox as withSandboxWorkflow,
+} from "@/workflows";
+import {
+  type WaitOptions,
+  waitForSandboxState,
+} from "@/wait";
+import {
   type AgentSendRequest,
   type AgentSendResponse,
   agentSendRequestToWire,
@@ -31,7 +43,8 @@ const API_BASE_PATH = "/api/v0beta1";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const AGENT_SEND_TIMEOUT_MS = 10 * 60 * 1000;
-const WAIT_POLL_INTERVAL_MS = 3_000;
+
+export type { RunAgentRequest, RunAgentResult, WorkflowOptions, WaitOptions };
 
 export interface AmikaClientOptions {
   baseUrl: string;
@@ -92,16 +105,48 @@ export class AmikaClient {
   }
 
   /**
+   * Create a sandbox and poll until it reaches a ready state. Combines
+   * {@link createSandbox} and {@link waitForSandbox}.
+   */
+  createSandboxAndWait(
+    req: CreateSandboxRequest,
+    wait?: WaitOptions,
+  ): Promise<RemoteSandbox> {
+    return createSandboxAndWaitWorkflow(this, req, wait);
+  }
+
+  /**
+   * Create a sandbox, wait until ready, run `fn`, then delete the sandbox
+   * (best-effort). Re-throws errors from `fn` after cleanup.
+   */
+  withSandbox<T>(
+    req: CreateSandboxRequest,
+    fn: (sandbox: RemoteSandbox) => Promise<T>,
+    options?: WorkflowOptions,
+  ): Promise<T> {
+    return withSandboxWorkflow(this, req, fn, options);
+  }
+
+  /**
+   * Provision a sandbox, send one agent message, and optionally delete the
+   * sandbox when finished.
+   */
+  runAgent(req: RunAgentRequest, options?: WorkflowOptions): Promise<RunAgentResult> {
+    return runAgentWorkflow(this, req, options);
+  }
+
+  /**
    * Polls `getSandbox(name)` every 3 seconds until the sandbox reaches a
    * ready state (`active`, `running`, `started`) or `failed`. No client-side
-   * timeout — matches Go's `WaitForSandbox`.
+   * timeout by default — matches Go's `WaitForSandbox`.
    */
-  waitForSandbox(name: string): Promise<RemoteSandbox> {
+  waitForSandbox(name: string, options?: WaitOptions): Promise<RemoteSandbox> {
     return waitForSandboxState(
       (n) => this.getSandbox(n),
       name,
       ["active", "running", "started"],
       "sandbox provisioning failed",
+      options,
     );
   }
 
@@ -129,12 +174,16 @@ export class AmikaClient {
     );
   }
 
-  waitForSandboxStart(name: string): Promise<RemoteSandbox> {
+  waitForSandboxStart(
+    name: string,
+    options?: WaitOptions,
+  ): Promise<RemoteSandbox> {
     return waitForSandboxState(
       (n) => this.getSandbox(n),
       name,
       ["active", "running", "started"],
       "sandbox start failed",
+      options,
     );
   }
 
@@ -145,12 +194,16 @@ export class AmikaClient {
     );
   }
 
-  waitForSandboxStop(name: string): Promise<RemoteSandbox> {
+  waitForSandboxStop(
+    name: string,
+    options?: WaitOptions,
+  ): Promise<RemoteSandbox> {
     return waitForSandboxState(
       (n) => this.getSandbox(n),
       name,
       ["stopped"],
       "sandbox stop failed",
+      options,
     );
   }
 
@@ -311,25 +364,4 @@ function resolveTokenSource(options: AmikaClientOptions): TokenSource {
   if (options.accessToken !== undefined)
     return new StaticTokenSource(options.accessToken);
   throw new Error("AmikaClient: accessToken or tokenSource is required");
-}
-
-async function waitForSandboxState(
-  getSandbox: (name: string) => Promise<RemoteSandbox>,
-  name: string,
-  readyStates: readonly string[],
-  failMsg: string,
-): Promise<RemoteSandbox> {
-  // Match Go: no client-side timeout, just poll until terminal state.
-  for (;;) {
-    const sb = await getSandbox(name);
-    if (sb.state === "failed") {
-      throw new AmikaError(sb.errorMessage || failMsg);
-    }
-    if (readyStates.includes(sb.state)) return sb;
-    await sleep(WAIT_POLL_INTERVAL_MS);
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
