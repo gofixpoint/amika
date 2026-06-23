@@ -285,7 +285,8 @@ func (c *Client) UpdateSecret(id string, req UpdateSecretRequest) error {
 type CreateProviderSecretRequest struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
-	Type  string `json:"type"` // "oauth" or "api_key" — required by the server
+	Type  string `json:"type"`            // "oauth" or "api_key" — required by the server
+	Scope string `json:"scope,omitempty"` // "user" (default) or "org"; omitted means the server default
 }
 
 // ProviderSecretSummary is the response from POST /api/v0beta1/secrets/<provider>.

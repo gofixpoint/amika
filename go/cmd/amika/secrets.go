@@ -519,6 +519,7 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 			}
 
 			force, _ := cmd.Flags().GetBool("force")
+			scope, _ := cmd.Flags().GetString("scope")
 
 			client, err := getSecretsClient()
 			if err != nil {
@@ -550,6 +551,7 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 				Name:  name,
 				Value: credValue,
 				Type:  credType,
+				Scope: scope,
 			})
 			if err != nil {
 				return err
@@ -568,6 +570,7 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 	cmd.Flags().String("value", "", "Credential value (skips interactive discovery)")
 	cmd.Flags().String("from-file", "", "Path to a credentials file (skips interactive discovery)")
 	cmd.Flags().String("type", "oauth", "Credential type: \"oauth\" (default) or \"api_key\"")
+	cmd.Flags().String("scope", "user", "Credential scope: \"user\" (default, private) or \"org\" (visible to org members)")
 	cmd.Flags().Bool("force", false, fmt.Sprintf("Overwrite an existing %s credential with the same name", p.ShortName))
 
 	return cmd
