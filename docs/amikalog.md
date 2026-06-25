@@ -92,8 +92,9 @@ or alters its behavior.
 
 ## Event storage
 
-Events are written under the amika state directory
-(`~/.local/state/amika` by default; override with `AMIKA_STATE_DIRECTORY`):
+Events are written under the amika state directory, resolved in order:
+`AMIKA_STATE_DIRECTORY` if set, otherwise `$XDG_STATE_HOME/amika`, otherwise
+`~/.local/state/amika`. `amikalog start` prints the resolved paths.
 
 ```
 <state>/events/{claude,codex}/sessions/<ts>_<session-id>.jsonl
@@ -157,9 +158,9 @@ entrypoint the agents' hook systems invoke. It is not meant to be run by hand.
 
 ## Environment variables
 
-| Variable                | Purpose                                                       |
-| ----------------------- | ------------------------------------------------------------- |
-| `AMIKA_STATE_DIRECTORY` | Override the state directory (default `~/.local/state/amika`) |
-| `AMIKA_API_KEY`         | Org API key for `beta:push` / `beta:fetch`                    |
-| `AMIKA_API_URL`         | Override the API base URL (default `https://app.amika.dev`)   |
-| `CODEX_HOME`            | Override the Codex config directory (default `~/.codex`)      |
+| Variable                | Purpose                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------- |
+| `AMIKA_STATE_DIRECTORY` | Override the state directory (else `$XDG_STATE_HOME/amika`, then `~/.local/state/amika`) |
+| `AMIKA_API_KEY`         | Org API key for `beta:push` / `beta:fetch`                                               |
+| `AMIKA_API_URL`         | Override the API base URL (default `https://app.amika.dev`)                              |
+| `CODEX_HOME`            | Override the Codex config directory (default `~/.codex`)                                 |
