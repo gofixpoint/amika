@@ -366,8 +366,9 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	}
 
 	req := apiclient.CreateSandboxRequest{
-		Name:             name,
-		Provider:         "daytona",
+		Name: name,
+		// Provider is intentionally left unset: the remote API falls back to its
+		// configured default provider (SANDBOX_PROVIDER) when none is specified.
 		RepoURL:          gitURL,
 		EnvVars:          envVars,
 		SecretEnvVars:    secretEnvVars,
