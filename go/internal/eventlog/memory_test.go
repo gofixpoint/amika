@@ -101,7 +101,7 @@ func TestCollectMemoryUnits(t *testing.T) {
 		got = append(got, u.objectKey)
 	}
 	sort.Strings(got)
-	want := []string{"myrepo/memory/foo.md", "myrepo/memory/memory.md"}
+	want := []string{"myrepo/claude/memory/foo.md", "myrepo/claude/memory/memory.md"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("object keys = %v, want %v", got, want)
 	}
@@ -143,7 +143,7 @@ func (f *reconcileFixture) localContent(t *testing.T) string {
 
 func TestReconcileMemory_NoCloudCopy_Uploads(t *testing.T) {
 	f := newReconcileFixture(t, "repo/memory/f.md", "local")
-	outcome, err := reconcileMemory(f.unit, f.manifest, f.up, f.down, f.merger)
+	outcome, err := reconcileMemory(f.unit, f.manifest, false, f.up, f.down, f.merger)
 	if err != nil || outcome != outcomeUploaded {
 		t.Fatalf("outcome=%v err=%v, want uploaded", outcome, err)
 	}
@@ -158,7 +158,7 @@ func TestReconcileMemory_NoCloudCopy_Uploads(t *testing.T) {
 func TestReconcileMemory_Identical_Skips(t *testing.T) {
 	f := newReconcileFixture(t, "repo/memory/f.md", "same")
 	f.down.data["repo/memory/f.md"] = []byte("same")
-	outcome, err := reconcileMemory(f.unit, f.manifest, f.up, f.down, f.merger)
+	outcome, err := reconcileMemory(f.unit, f.manifest, false, f.up, f.down, f.merger)
 	if err != nil || outcome != outcomeSkipped {
 		t.Fatalf("outcome=%v err=%v, want skipped", outcome, err)
 	}
@@ -171,7 +171,7 @@ func TestReconcileMemory_OnlyLocalChanged_Uploads(t *testing.T) {
 	f := newReconcileFixture(t, "repo/memory/f.md", "v2")
 	f.down.data["repo/memory/f.md"] = []byte("v1")
 	f.manifest.Synced["repo/memory/f.md"] = memoryEntry{ObjectKey: "repo/memory/f.md", SyncedHash: hashBytes([]byte("v1"))}
-	outcome, err := reconcileMemory(f.unit, f.manifest, f.up, f.down, f.merger)
+	outcome, err := reconcileMemory(f.unit, f.manifest, false, f.up, f.down, f.merger)
 	if err != nil || outcome != outcomeUploaded {
 		t.Fatalf("outcome=%v err=%v, want uploaded", outcome, err)
 	}
@@ -187,7 +187,7 @@ func TestReconcileMemory_OnlyCloudChanged_Pulls(t *testing.T) {
 	f := newReconcileFixture(t, "repo/memory/f.md", "v1")
 	f.down.data["repo/memory/f.md"] = []byte("v2")
 	f.manifest.Synced["repo/memory/f.md"] = memoryEntry{ObjectKey: "repo/memory/f.md", SyncedHash: hashBytes([]byte("v1"))}
-	outcome, err := reconcileMemory(f.unit, f.manifest, f.up, f.down, f.merger)
+	outcome, err := reconcileMemory(f.unit, f.manifest, false, f.up, f.down, f.merger)
 	if err != nil || outcome != outcomePulled {
 		t.Fatalf("outcome=%v err=%v, want pulled", outcome, err)
 	}
@@ -208,7 +208,7 @@ func TestReconcileMemory_BothChanged_Merges(t *testing.T) {
 	f.manifest.Synced["repo/memory/f.md"] = memoryEntry{ObjectKey: "repo/memory/f.md", SyncedHash: hashBytes([]byte("base-v1"))}
 	f.merger.result = []byte("merged\n")
 
-	outcome, err := reconcileMemory(f.unit, f.manifest, f.up, f.down, f.merger)
+	outcome, err := reconcileMemory(f.unit, f.manifest, true, f.up, f.down, f.merger)
 	if err != nil || outcome != outcomeMerged {
 		t.Fatalf("outcome=%v err=%v, want merged", outcome, err)
 	}
@@ -232,7 +232,7 @@ func TestReconcileMemory_MergerUnavailable_DoesNotClobber(t *testing.T) {
 	f.manifest.Synced["repo/memory/f.md"] = memoryEntry{ObjectKey: "repo/memory/f.md", SyncedHash: hashBytes([]byte("base-v1"))}
 	f.merger.err = ErrMergerUnavailable
 
-	_, err := reconcileMemory(f.unit, f.manifest, f.up, f.down, f.merger)
+	_, err := reconcileMemory(f.unit, f.manifest, true, f.up, f.down, f.merger)
 	if !errors.Is(err, ErrMergerUnavailable) {
 		t.Fatalf("err = %v, want ErrMergerUnavailable", err)
 	}
@@ -250,7 +250,7 @@ func TestReconcileMemory_MergeError_DoesNotClobber(t *testing.T) {
 	f.manifest.Synced["repo/memory/f.md"] = memoryEntry{ObjectKey: "repo/memory/f.md", SyncedHash: hashBytes([]byte("base-v1"))}
 	f.merger.err = errors.New("boom")
 
-	_, err := reconcileMemory(f.unit, f.manifest, f.up, f.down, f.merger)
+	_, err := reconcileMemory(f.unit, f.manifest, true, f.up, f.down, f.merger)
 	if err == nil || errors.Is(err, ErrMergerUnavailable) {
 		t.Fatalf("err = %v, want a non-unavailable error", err)
 	}
@@ -259,6 +259,31 @@ func TestReconcileMemory_MergeError_DoesNotClobber(t *testing.T) {
 	}
 	if len(f.up.keys()) != 0 {
 		t.Fatalf("unexpected upload on merge failure: %v", f.up.keys())
+	}
+}
+
+func TestReconcileMemory_BothChanged_NoMerge_SkipsWithoutClobber(t *testing.T) {
+	f := newReconcileFixture(t, "repo/memory/f.md", "local-v2")
+	f.down.data["repo/memory/f.md"] = []byte("cloud-v2")
+	f.manifest.Synced["repo/memory/f.md"] = memoryEntry{ObjectKey: "repo/memory/f.md", SyncedHash: hashBytes([]byte("base-v1"))}
+
+	// merge=false: a both-sides divergence must surface as ErrMergeRequired
+	// without invoking the merger or touching either copy.
+	outcome, err := reconcileMemory(f.unit, f.manifest, false, f.up, f.down, f.merger)
+	if !errors.Is(err, ErrMergeRequired) {
+		t.Fatalf("err = %v, want ErrMergeRequired", err)
+	}
+	if outcome != outcomeSkipped {
+		t.Fatalf("outcome = %v, want skipped", outcome)
+	}
+	if f.merger.calls != 0 {
+		t.Fatalf("merger called %d times without --merge, want 0", f.merger.calls)
+	}
+	if got := f.localContent(t); got != "local-v2" {
+		t.Fatalf("local content changed to %q without --merge", got)
+	}
+	if len(f.up.keys()) != 0 {
+		t.Fatalf("unexpected upload without --merge: %v", f.up.keys())
 	}
 }
 
@@ -280,7 +305,7 @@ func TestPushMemories_UploadsThenSkipsAndWritesManifest(t *testing.T) {
 	down := &fakeDownloader{data: map[string][]byte{}}
 	merger := &fakeMerger{}
 
-	rep, err := PushMemories(stateDir, home, false, up, down, merger)
+	rep, err := PushMemories(stateDir, home, false, false, up, down, merger)
 	if err != nil {
 		t.Fatalf("PushMemories: %v", err)
 	}
@@ -292,8 +317,8 @@ func TestPushMemories_UploadsThenSkipsAndWritesManifest(t *testing.T) {
 	}
 
 	// Second run: the cloud now holds what we uploaded, so it is a no-op skip.
-	down.data["myrepo/memory/fact.md"] = up.bytesFor("myrepo/memory/fact.md")
-	rep2, err := PushMemories(stateDir, home, false, up, down, merger)
+	down.data["myrepo/claude/memory/fact.md"] = up.bytesFor("myrepo/claude/memory/fact.md")
+	rep2, err := PushMemories(stateDir, home, false, false, up, down, merger)
 	if err != nil {
 		t.Fatalf("PushMemories second run: %v", err)
 	}
@@ -344,8 +369,8 @@ func TestCollectMemoryUnits_AllProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectMemoryUnits(false): %v", err)
 	}
-	if len(got) != 1 || got[0].objectKey != "tracked/memory/a.md" {
-		t.Fatalf("default mode keys = %v, want [tracked/memory/a.md]", keysOf(got))
+	if len(got) != 1 || got[0].objectKey != "tracked/claude/memory/a.md" {
+		t.Fatalf("default mode keys = %v, want [tracked/claude/memory/a.md]", keysOf(got))
 	}
 
 	// All-projects mode: both, with the untracked repo segment recovered from git.
@@ -353,11 +378,11 @@ func TestCollectMemoryUnits_AllProjects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectMemoryUnits(true): %v", err)
 	}
-	wantUntracked := "untracked-repo/memory/b.md"
+	wantUntracked := "untracked-repo/claude/memory/b.md"
 	keys := keysOf(got)
 	sort.Strings(keys)
-	if len(keys) != 2 || keys[0] != "tracked/memory/a.md" || keys[1] != wantUntracked {
-		t.Fatalf("all-projects keys = %v, want [tracked/memory/a.md %s]", keys, wantUntracked)
+	if len(keys) != 2 || keys[0] != "tracked/claude/memory/a.md" || keys[1] != wantUntracked {
+		t.Fatalf("all-projects keys = %v, want [tracked/claude/memory/a.md %s]", keys, wantUntracked)
 	}
 }
 

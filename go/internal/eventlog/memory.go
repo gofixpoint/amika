@@ -39,6 +39,13 @@ const mergeTimeout = 5 * time.Minute
 // so a machine without claude still uploads non-diverged memory files.
 var ErrMergerUnavailable = errors.New("merger unavailable")
 
+// ErrMergeRequired is returned by reconcileMemory when a memory file changed on
+// both this machine and in the cloud but merging was not requested (the --merge
+// flag was off). PushMemories treats it like ErrMergerUnavailable: the file is
+// skipped with a warning and neither side is touched, so a divergence surfaces
+// to the user instead of being reconciled automatically.
+var ErrMergeRequired = errors.New("diverged on both sides; re-run with --merge to reconcile")
+
 // Merger reconciles a memory file that changed on both this machine and in the
 // cloud into a single merged document. Implementations should preserve every
 // distinct fact from both sides; PushMemories writes the result back to the
@@ -132,19 +139,25 @@ func claudeProjectDirName(cwd string) string {
 // the git repo there), falling back to "unknown-repo".
 //
 // A memory file lives at ~/.claude/projects/<project>/memory/*.md and its object
-// key is "<repo>/memory/<relpath>". For each file PushMemories compares the local
-// content, the cloud content, and the last-synced hash recorded in a dedicated
-// manifest:
+// key is "<repo>/claude/memory/<relpath>". For each file PushMemories compares
+// the local content, the cloud content, and the last-synced hash recorded in a
+// dedicated manifest:
 //   - no cloud copy        -> upload local
 //   - identical            -> skip
 //   - only local changed   -> upload local
 //   - only cloud changed   -> pull (write cloud to the local file)
-//   - both changed         -> merge with the Merger, write back, and upload
+//   - both changed, merge  -> merge with the Merger, write back, and upload
+//   - both changed, !merge -> skip with a warning, leaving both copies intact
+//
+// merge gates the only-divergent-on-both-sides case: when false (the default), a
+// file that changed on both sides is reported and left untouched rather than
+// reconciled, so no agent runs and neither copy is overwritten without the
+// caller opting in.
 //
 // The run-wide push lock is held for the duration (the same lock Push takes), so
 // concurrent pushes cannot interleave overwrites. Per-file failures are recorded
 // in the report and do not abort the run.
-func PushMemories(stateDir, home string, allProjects bool, up Uploader, down Downloader, merger Merger) (MemoryPushReport, error) {
+func PushMemories(stateDir, home string, allProjects, merge bool, up Uploader, down Downloader, merger Merger) (MemoryPushReport, error) {
 	eventsBase := filepath.Join(stateDir, "events")
 	if err := os.MkdirAll(eventsBase, 0o755); err != nil {
 		return MemoryPushReport{}, fmt.Errorf("creating events dir %s: %w", eventsBase, err)
@@ -169,9 +182,9 @@ func PushMemories(stateDir, home string, allProjects bool, up Uploader, down Dow
 
 	var report MemoryPushReport
 	for _, u := range units {
-		outcome, rerr := reconcileMemory(u, manifest, up, down, merger)
+		outcome, rerr := reconcileMemory(u, manifest, merge, up, down, merger)
 		if rerr != nil {
-			if errors.Is(rerr, ErrMergerUnavailable) {
+			if errors.Is(rerr, ErrMergerUnavailable) || errors.Is(rerr, ErrMergeRequired) {
 				report.Skipped++
 				report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", u.objectKey, rerr))
 				continue
@@ -264,7 +277,7 @@ func collectMemoryUnits(stateDir, home string, allProjects bool) ([]memoryUnit, 
 			if err != nil {
 				return err
 			}
-			objectKey := strings.ToLower(path.Join(repoSeg, memorySegment, rel))
+			objectKey := strings.ToLower(path.Join(repoSeg, string(SourceClaude), memorySegment, rel))
 			// Distinct projects can map to the same repo segment (e.g. a repo and
 			// a subdirectory of it); the first occurrence of a key wins.
 			if seen[objectKey] {
@@ -361,7 +374,7 @@ func cwdFromClaudeTranscripts(projectDir string) string {
 // reconcileMemory reconciles one memory file against its cloud copy using the
 // last-synced hash in manifest, mutating manifest on success. See PushMemories
 // for the decision table.
-func reconcileMemory(u memoryUnit, manifest *memoryManifest, up Uploader, down Downloader, merger Merger) (memoryOutcome, error) {
+func reconcileMemory(u memoryUnit, manifest *memoryManifest, merge bool, up Uploader, down Downloader, merger Merger) (memoryOutcome, error) {
 	localBytes, err := os.ReadFile(u.filePath)
 	if err != nil {
 		return outcomeSkipped, fmt.Errorf("reading %s: %w", u.filePath, err)
@@ -413,8 +426,14 @@ func reconcileMemory(u memoryUnit, manifest *memoryManifest, up Uploader, down D
 	}
 
 	// Both sides changed (or this is the first sync against a pre-existing cloud
-	// copy): merge with the coding agent, then converge both sides. On any merge
-	// failure neither side is touched, so a bad merge can never clobber data.
+	// copy). Without an explicit opt-in to merge, surface the divergence and leave
+	// both copies untouched rather than reconciling automatically.
+	if !merge {
+		return outcomeSkipped, ErrMergeRequired
+	}
+
+	// Merge with the coding agent, then converge both sides. On any merge failure
+	// neither side is touched, so a bad merge can never clobber data.
 	merged, err := merger.Merge(localBytes, cloudBytes)
 	if err != nil {
 		return outcomeSkipped, fmt.Errorf("merging %s: %w", u.objectKey, err)
@@ -475,17 +494,42 @@ func saveMemoryManifest(path string, m *memoryManifest) error {
 
 // claudeMerger merges two versions of a memory file by invoking the locally
 // installed claude CLI in one-shot print mode.
-type claudeMerger struct{}
+type claudeMerger struct {
+	// skipPermissions runs the merge with --dangerously-skip-permissions instead
+	// of the default locked-down mode. It is an explicit, dangerous opt-in: the
+	// merge prompt embeds the cloud copy of a memory file, which may have been
+	// written by anyone with access to the bucket, so allowing the agent to
+	// execute tools turns hostile memory content into arbitrary command execution
+	// on this host. Leave false unless the caller fully trusts every memory file.
+	skipPermissions bool
+}
 
 // NewClaudeMerger returns a Merger backed by the host claude CLI. It returns
 // ErrMergerUnavailable from Merge when the claude binary is not on PATH.
-func NewClaudeMerger() Merger { return claudeMerger{} }
+//
+// dangerouslySkipPermissions runs the merge with --dangerously-skip-permissions.
+// The merge is a pure text transformation that needs no tools, so the default
+// (false) is strongly preferred; pass true only when every memory file being
+// merged is fully trusted, since cloud content is otherwise attacker-influenced.
+func NewClaudeMerger(dangerouslySkipPermissions bool) Merger {
+	return claudeMerger{skipPermissions: dangerouslySkipPermissions}
+}
 
 // Merge runs `claude -p <prompt> --output-format json` with both versions
 // embedded in the prompt and returns the reconciled file content. It requires
 // the claude CLI on PATH (ErrMergerUnavailable otherwise) and asks the model to
 // emit only the merged file content.
-func (claudeMerger) Merge(local, cloud []byte) ([]byte, error) {
+//
+// By default the agent runs with --permission-mode dontAsk so any tool call it
+// attempts is auto-denied rather than executed: the merge only needs to produce
+// text, and the cloud copy in the prompt is not necessarily trusted. When
+// skipPermissions is set the agent runs with --dangerously-skip-permissions
+// instead, which lets it execute tools without a gate (see NewClaudeMerger).
+//
+// Note that --permission-mode dontAsk still honors the host's permissions.allow
+// rules, so a host that has globally pre-allowed tools could still let one run;
+// reconciling under an isolated settings directory would close that gap.
+func (m claudeMerger) Merge(local, cloud []byte) ([]byte, error) {
 	exe, err := exec.LookPath("claude")
 	if err != nil {
 		return nil, fmt.Errorf("%w: claude CLI not found on PATH", ErrMergerUnavailable)
@@ -494,8 +538,13 @@ func (claudeMerger) Merge(local, cloud []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), mergeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, exe, "-p", buildMergePrompt(local, cloud),
-		"--output-format", "json", "--dangerously-skip-permissions")
+	args := []string{"-p", buildMergePrompt(local, cloud), "--output-format", "json"}
+	if m.skipPermissions {
+		args = append(args, "--dangerously-skip-permissions")
+	} else {
+		args = append(args, "--permission-mode", "dontAsk")
+	}
+	cmd := exec.CommandContext(ctx, exe, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -12,9 +12,14 @@ import (
 
 // uploadMemories opts into uploading Claude memory files alongside captured
 // events. allMemoryProjects extends that to projects with no captured session.
+// mergeMemories reconciles files that diverged on both sides; without it such
+// files are skipped with a warning. mergeSkipPermissions runs that merge with
+// claude's --dangerously-skip-permissions.
 var (
-	uploadMemories    bool
-	allMemoryProjects bool
+	uploadMemories       bool
+	allMemoryProjects    bool
+	mergeMemories        bool
+	mergeSkipPermissions bool
 )
 
 var pushCmd = &cobra.Command{
@@ -25,9 +30,15 @@ only events captured since the last push.
 
 Pass --memories to also upload Claude memory files
 (~/.claude/projects/<project>/memory/*.md) for the projects you have captured
-sessions for. Because memory files are edited in place, a file that changed both
-locally and in the cloud is merged with the local claude CLI rather than
-overwritten. Add --all-projects to include projects with no captured session.
+sessions for. Files that changed only locally or only in the cloud sync
+automatically; a file that changed on both sides is left untouched and reported,
+unless you pass --merge, which reconciles it with the local claude CLI. Add
+--all-projects to include projects with no captured session.
+
+--merge runs claude in a locked-down mode that cannot execute tools. Only pass
+--dangerously-skip-permissions if you fully trust every memory file being
+merged, since the cloud copy fed to the merge can be written by anyone with
+access to the bucket.
 
 Set AMIKA_API_KEY to authenticate.`,
 	Args:          cobra.NoArgs,
@@ -36,6 +47,12 @@ Set AMIKA_API_KEY to authenticate.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if allMemoryProjects && !uploadMemories {
 			return fmt.Errorf("--all-projects requires --memories")
+		}
+		if mergeMemories && !uploadMemories {
+			return fmt.Errorf("--merge requires --memories")
+		}
+		if mergeSkipPermissions && !mergeMemories {
+			return fmt.Errorf("--dangerously-skip-permissions requires --merge")
 		}
 		key := os.Getenv(config.EnvAPIKey)
 		if key == "" {
@@ -66,7 +83,7 @@ Set AMIKA_API_KEY to authenticate.`,
 			if herr != nil {
 				return fmt.Errorf("resolving home directory: %w", herr)
 			}
-			mreport, merr := eventlog.PushMemories(stateDir, home, allMemoryProjects, uploader, apiDownloader{client: client}, eventlog.NewClaudeMerger())
+			mreport, merr := eventlog.PushMemories(stateDir, home, allMemoryProjects, mergeMemories, uploader, apiDownloader{client: client}, eventlog.NewClaudeMerger(mergeSkipPermissions))
 			if merr != nil {
 				return fmt.Errorf("pushing memories: %w", merr)
 			}
@@ -126,5 +143,7 @@ func (a apiDownloader) Fetch(objectKey string) ([]byte, bool, error) {
 func init() {
 	pushCmd.Flags().BoolVar(&uploadMemories, "memories", false, "Also upload Claude memory files for projects with captured sessions")
 	pushCmd.Flags().BoolVar(&allMemoryProjects, "all-projects", false, "With --memories, include projects that have no captured session")
+	pushCmd.Flags().BoolVar(&mergeMemories, "merge", false, "With --memories, reconcile files that changed both locally and in the cloud with the local claude CLI (otherwise such files are skipped with a warning)")
+	pushCmd.Flags().BoolVar(&mergeSkipPermissions, "dangerously-skip-permissions", false, "With --merge, run the claude merge with --dangerously-skip-permissions (UNSAFE: lets attacker-influenced memory content execute commands on this host)")
 	rootCmd.AddCommand(pushCmd)
 }
