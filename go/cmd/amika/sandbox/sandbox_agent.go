@@ -115,8 +115,8 @@ func buildAgentShellCmd(message string, noWait bool, workdir string, agent agent
 	return cmd
 }
 
-func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts) string {
-	agentStr := strings.Join(agentCmdPartsWithOpts(agent, fmt.Sprintf("%q", message), opts, !noWait), " ")
+func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, jsonOutput bool) string {
+	agentStr := strings.Join(agentCmdPartsWithOpts(agent, fmt.Sprintf("%q", message), opts, jsonOutput), " ")
 	cmd := fmt.Sprintf("cd %s && %s", workdir, agentStr)
 	if noWait {
 		sessionName := fmt.Sprintf("amika-agent-send-%d", time.Now().UnixNano())
@@ -125,12 +125,29 @@ func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent
 	return cmd
 }
 
-func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, stdout io.Writer) error {
+func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, stdout, stderr io.Writer) error {
 	if noWait {
-		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
+		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts, false)
 		return ssh.ExecSSH(client, name, false, []string{shellCmd})
 	}
 
+	// Server-managed sessions use the synchronous agent-send API so session IDs
+	// and structured responses stay on the control plane.
+	if opts.NewSession || opts.SessionID != "" {
+		return runRemoteAgentSendHTTP(client, name, message, agent, opts, stdout)
+	}
+
+	shellCmd := buildRemoteAgentShellCmd(message, false, workdir, agent, opts, false)
+	if err := ssh.RunSSH(client, name, []string{shellCmd}, nil, stdout, stderr); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
+			return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
+		}
+		return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
+	}
+	return nil
+}
+
+func runRemoteAgentSendHTTP(client *apiclient.Client, name, message string, agent agentConfig, opts agentRunOpts, stdout io.Writer) error {
 	req := apiclient.AgentSendRequest{
 		Message:    message,
 		NewSession: opts.NewSession,
@@ -244,7 +261,7 @@ Use --no-wait to send the message and return immediately.`,
 		newSession, _ := cmd.Flags().GetBool("new-session")
 		opts := agentRunOpts{SessionID: sessionID, NewSession: newSession}
 
-		if err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts, os.Stdout); err != nil {
+		if err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts, os.Stdout, os.Stderr); err != nil {
 			return err
 		}
 		if noWait {
