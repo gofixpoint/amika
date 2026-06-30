@@ -20,6 +20,14 @@ type Uploader interface {
 	Upload(objectKey string, data []byte) error
 }
 
+// Downloader fetches the current bytes of one object from the destination
+// bucket by its object key. exists is false when the bucket has no object at
+// that key. It is used by PushMemories to detect whether a memory file's cloud
+// copy has diverged from the local one before overwriting it.
+type Downloader interface {
+	Fetch(objectKey string) (data []byte, exists bool, err error)
+}
+
 // PushReport summarizes a Push run.
 type PushReport struct {
 	// Uploaded is the number of session files uploaded this run.
@@ -434,6 +442,27 @@ func repoSegmentFromJSONL(data []byte) string {
 		}
 		if readErr != nil {
 			return unknownRepoSegment
+		}
+	}
+}
+
+// cwdFromJSONL returns the working directory recorded in the first line of a
+// session's JSONL snapshot that carries one, or "" when no line records a cwd.
+// Like repoSegmentFromJSONL the snapshot is taken under the lock, so this never
+// sees a partial line. It is used to locate the Claude memory directory for the
+// project the session ran in.
+func cwdFromJSONL(data []byte) string {
+	r := bufio.NewReader(bytes.NewReader(data))
+	for {
+		line, readErr := r.ReadBytes('\n')
+		if len(line) > 0 {
+			var ev Event
+			if json.Unmarshal(line, &ev) == nil && ev.CWD != "" {
+				return ev.CWD
+			}
+		}
+		if readErr != nil {
+			return ""
 		}
 	}
 }

@@ -466,3 +466,125 @@ func TestDownloadFromSignedURL_Non2xxIsHTTPError(t *testing.T) {
 		t.Errorf("status = %d, want 404", httpErr.StatusCode)
 	}
 }
+
+// folderPrefixBucket is an httptest server that mimics the storage backend's
+// listing semantics: it treats the `prefix` query as a FOLDER path, so it
+// returns an object only when the prefix is empty or ends in "/". A prefix equal
+// to a full object key (filename included, no trailing slash) matches nothing —
+// the exact behavior that made GetObjectByKey re-upload every memory file when
+// it listed by the full key. Each object's download_url points back at this same
+// server so the returned bytes can be fetched.
+func folderPrefixBucket(t *testing.T, objects map[string]string) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0beta1/storage/downloads":
+			prefix := r.URL.Query().Get("prefix")
+			out := []map[string]any{}
+			for key := range objects {
+				// Folder semantics: only an empty or "/"-terminated prefix lists
+				// objects; a full-key prefix matches nothing.
+				if prefix != "" && !strings.HasSuffix(prefix, "/") {
+					continue
+				}
+				if !strings.HasPrefix(key, prefix) {
+					continue
+				}
+				out = append(out, map[string]any{
+					"key":           key,
+					"size":          len(objects[key]),
+					"last_modified": "2026-01-01T00:00:00Z",
+					"download_url":  srv.URL + "/dl?key=" + url.QueryEscape(key),
+				})
+			}
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]any{
+				"bucket":      "org-123",
+				"prefix":      prefix,
+				"objects":     out,
+				"expires_in":  3600,
+				"next_cursor": nil,
+			})
+		case "/dl":
+			body, ok := objects[r.URL.Query().Get("key")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestGetObjectByKey_FindsObjectViaFolderPrefix is the regression test for the
+// memory re-upload bug: against a backend that only honors folder prefixes,
+// GetObjectByKey must still find an object by listing its parent folder and
+// exact-matching the key, rather than listing by the full key (which returns
+// nothing). It also asserts the prefix actually sent is the folder, not the key.
+func TestGetObjectByKey_FindsObjectViaFolderPrefix(t *testing.T) {
+	objects := map[string]string{
+		"decyph-ai-app/memory/memory.md": `{"a":1}`,
+		// A sibling that shares the folder, to ensure exact-match (not just
+		// prefix-match) selects the right object.
+		"decyph-ai-app/memory/memory.md.bak": `{"a":2}`,
+	}
+	srv := folderPrefixBucket(t, objects)
+
+	var gotPrefix string
+	c := NewClient(srv.URL, "key-xyz")
+	c.HTTP = recordPrefixClient(&gotPrefix)
+
+	data, found, err := c.GetObjectByKey("decyph-ai-app/memory/memory.md")
+	if err != nil {
+		t.Fatalf("GetObjectByKey: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true (object exists under the folder)")
+	}
+	if string(data) != `{"a":1}` {
+		t.Errorf("data = %q, want %q", string(data), `{"a":1}`)
+	}
+	if gotPrefix != "decyph-ai-app/memory/" {
+		t.Errorf("listing prefix = %q, want the parent folder %q", gotPrefix, "decyph-ai-app/memory/")
+	}
+}
+
+// TestGetObjectByKey_NotFound confirms a genuinely absent object reports found
+// = false (so callers treat it as "no cloud copy yet"), even though the folder
+// listing returns sibling objects.
+func TestGetObjectByKey_NotFound(t *testing.T) {
+	srv := folderPrefixBucket(t, map[string]string{
+		"decyph-ai-app/memory/memory.md": `{"a":1}`,
+	})
+	c := NewClient(srv.URL, "key-xyz")
+
+	data, found, err := c.GetObjectByKey("decyph-ai-app/memory/absent.md")
+	if err != nil {
+		t.Fatalf("GetObjectByKey: %v", err)
+	}
+	if found {
+		t.Errorf("found = true, want false for an absent key (data %q)", string(data))
+	}
+}
+
+// recordPrefixClient returns an *http.Client whose transport records the latest
+// `prefix` query parameter seen on a downloads listing request before forwarding
+// it unchanged, letting a test assert which prefix GetObjectByKey listed by.
+func recordPrefixClient(prefix *string) *http.Client {
+	return &http.Client{Transport: prefixRecorder{prefix: prefix}}
+}
+
+type prefixRecorder struct{ prefix *string }
+
+func (p prefixRecorder) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Path == "/api/v0beta1/storage/downloads" {
+		*p.prefix = r.URL.Query().Get("prefix")
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
