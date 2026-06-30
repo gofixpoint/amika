@@ -5,6 +5,7 @@ package ssh
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -41,4 +42,33 @@ func ExecSSH(client *apiclient.Client, name string, forcePTY bool, extraArgs []s
 		return fmt.Errorf("ssh not found: %w", err)
 	}
 	return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
+}
+
+// RunSSH runs a remote command over SSH, streaming stdin/stdout/stderr to the
+// provided writers. Unlike ExecSSH, it does not replace the current process,
+// so callers can observe output as it arrives and inspect the exit status.
+func RunSSH(client *apiclient.Client, name string, extraArgs []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	info, err := client.GetSSH(name)
+	if err != nil {
+		return err
+	}
+	if info.SSHDestination == "" {
+		return fmt.Errorf("server returned empty SSH destination")
+	}
+
+	sshArgs := strings.Fields(info.SSHDestination)
+	if len(extraArgs) > 0 {
+		sshArgs = append(sshArgs, extraArgs...)
+	}
+
+	sshBin, err := exec.LookPath("ssh")
+	if err != nil {
+		return fmt.Errorf("ssh not found: %w", err)
+	}
+
+	cmd := exec.Command(sshBin, append([]string{"ssh"}, sshArgs...)...)
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }

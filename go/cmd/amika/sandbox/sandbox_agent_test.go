@@ -187,15 +187,22 @@ func TestAgentCmdPartsWithOpts(t *testing.T) {
 func TestBuildRemoteAgentShellCmd(t *testing.T) {
 	claude := knownAgents["claude"]
 
+	t.Run("wait mode streaming omits json output", func(t *testing.T) {
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", claude, agentRunOpts{}, false)
+		if strings.Contains(got, "--output-format") {
+			t.Fatalf("cmd = %q, should not contain --output-format when streaming", got)
+		}
+	})
+
 	t.Run("wait mode includes json output", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", claude, agentRunOpts{})
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", claude, agentRunOpts{}, true)
 		if !strings.Contains(got, "--output-format json") {
 			t.Fatalf("cmd = %q, want --output-format json", got)
 		}
 	})
 
 	t.Run("no-wait mode has no json and wraps in tmux", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", true, "/home/amika", claude, agentRunOpts{})
+		got := buildRemoteAgentShellCmd("hello", true, "/home/amika", claude, agentRunOpts{}, false)
 		if strings.Contains(got, "--output-format") {
 			t.Fatalf("cmd = %q, should not contain --output-format in no-wait mode", got)
 		}
@@ -205,14 +212,14 @@ func TestBuildRemoteAgentShellCmd(t *testing.T) {
 	})
 
 	t.Run("session id maps to --resume", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", claude, agentRunOpts{SessionID: "sess-42"})
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", claude, agentRunOpts{SessionID: "sess-42"}, true)
 		if !strings.Contains(got, "--resume sess-42") {
 			t.Fatalf("cmd = %q, want --resume sess-42", got)
 		}
 	})
 
 	t.Run("new session passes no session flag to claude", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", claude, agentRunOpts{NewSession: true})
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", claude, agentRunOpts{NewSession: true}, true)
 		if strings.Contains(got, "--new-session") {
 			t.Fatalf("cmd = %q, should not contain --new-session", got)
 		}
@@ -227,7 +234,7 @@ func TestBuildRemoteAgentShellCmd(t *testing.T) {
 	codex := knownAgents["codex"]
 
 	t.Run("codex wait mode includes --json", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", codex, agentRunOpts{})
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", codex, agentRunOpts{}, true)
 		if !strings.Contains(got, "--json") {
 			t.Fatalf("cmd = %q, want --json", got)
 		}
@@ -237,7 +244,7 @@ func TestBuildRemoteAgentShellCmd(t *testing.T) {
 	})
 
 	t.Run("codex no-wait wraps in tmux without json", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", true, "/home/amika", codex, agentRunOpts{})
+		got := buildRemoteAgentShellCmd("hello", true, "/home/amika", codex, agentRunOpts{}, false)
 		if strings.Contains(got, "--json") {
 			t.Fatalf("cmd = %q, should not contain --json in no-wait mode", got)
 		}
@@ -247,7 +254,7 @@ func TestBuildRemoteAgentShellCmd(t *testing.T) {
 	})
 
 	t.Run("codex session id uses resume subcommand", func(t *testing.T) {
-		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", codex, agentRunOpts{SessionID: "sess-42"})
+		got := buildRemoteAgentShellCmd("hello", false, "/home/amika", codex, agentRunOpts{SessionID: "sess-42"}, true)
 		if !strings.Contains(got, "codex exec resume") {
 			t.Fatalf("cmd = %q, want 'codex exec resume'", got)
 		}
