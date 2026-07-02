@@ -129,7 +129,7 @@ func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
 	return &result, nil
 }
 
-// waitForSandboxState polls GET /api/sandboxes/{name} every 3 seconds until
+// waitForSandboxState polls GET /api/v0beta1/sandboxes/{name} every 3 seconds until
 // the sandbox state matches one of readyStates or "failed".
 func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg string) (*RemoteSandbox, error) {
 	for {
@@ -152,7 +152,7 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 	}
 }
 
-// WaitForSandbox polls GET /api/sandboxes/{name} until the sandbox reaches
+// WaitForSandbox polls GET /api/v0beta1/sandboxes/{name} until the sandbox reaches
 // a ready or terminal state. It polls every 3 seconds.
 func (c *Client) WaitForSandbox(name string) (*RemoteSandbox, error) {
 	return c.waitForSandboxState(name, []string{"active", "running", "started"}, "sandbox provisioning failed")
@@ -205,7 +205,7 @@ func (c *Client) StartSandbox(name string) error {
 	return nil
 }
 
-// WaitForSandboxStart polls GET /api/sandboxes/{name} until the sandbox
+// WaitForSandboxStart polls GET /api/v0beta1/sandboxes/{name} until the sandbox
 // transitions out of "initializing" state. It polls every 3 seconds.
 func (c *Client) WaitForSandboxStart(name string) (*RemoteSandbox, error) {
 	return c.waitForSandboxState(name, []string{"active", "running", "started"}, "sandbox start failed")
@@ -221,7 +221,7 @@ func (c *Client) StopSandbox(name string) error {
 	return nil
 }
 
-// WaitForSandboxStop polls GET /api/sandboxes/{name} until the sandbox
+// WaitForSandboxStop polls GET /api/v0beta1/sandboxes/{name} until the sandbox
 // transitions out of "stopping" state. It polls every 3 seconds.
 func (c *Client) WaitForSandboxStop(name string) (*RemoteSandbox, error) {
 	return c.waitForSandboxState(name, []string{"stopped"}, "sandbox stop failed")
