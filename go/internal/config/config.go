@@ -2,6 +2,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
@@ -21,7 +22,17 @@ const (
 	// DefaultAPIURL is the default remote API base URL.
 	DefaultAPIURL = "https://app.amika.dev"
 	// DefaultWorkOSClientID is the default WorkOS client ID for device auth.
+	// It matches the production API at DefaultAPIURL.
 	DefaultWorkOSClientID = "client_01KHA495MJS1KT6QBRTYJ239DY"
+
+	// StagingHost is the host of the staging API. Requests against it must be
+	// authenticated with the staging WorkOS environment, not production.
+	StagingHost = "app.staging-amika.dev"
+	// StagingWorkOSClientID is the WorkOS client ID for the staging
+	// environment. The staging API verifies bearer tokens against this
+	// client's issuer, so a token minted by DefaultWorkOSClientID
+	// (production) is rejected with "Invalid bearer token".
+	StagingWorkOSClientID = "client_01KHA4957S0742NKPKGAHV0JZE"
 )
 
 // APIURL returns the API base URL, checking AMIKA_API_URL first.
@@ -32,10 +43,24 @@ func APIURL() string {
 	return DefaultAPIURL
 }
 
-// WorkOSClientID returns the WorkOS client ID, checking AMIKA_WORKOS_CLIENT_ID first.
+// WorkOSClientID returns the WorkOS client ID used for device auth and token
+// verification. An explicit AMIKA_WORKOS_CLIENT_ID always wins. Otherwise the
+// client ID is derived from the API URL so that pointing AMIKA_API_URL at a
+// known environment (e.g. staging) authenticates against the matching WorkOS
+// environment automatically. Without this, logging in against staging mints a
+// production token that staging rejects with a 401 "Invalid bearer token".
 func WorkOSClientID() string {
 	if id := os.Getenv(EnvWorkOSClientID); id != "" {
 		return id
+	}
+	return workOSClientIDForURL(APIURL())
+}
+
+// workOSClientIDForURL maps a known API URL to its WorkOS client ID, falling
+// back to the production default for unrecognized hosts.
+func workOSClientIDForURL(apiURL string) string {
+	if u, err := url.Parse(apiURL); err == nil && u.Host == StagingHost {
+		return StagingWorkOSClientID
 	}
 	return DefaultWorkOSClientID
 }

@@ -219,3 +219,73 @@ func TestVolumesStateFile_EnvOverride(t *testing.T) {
 		t.Errorf("VolumesStateFile() = %q, want %q", got, want)
 	}
 }
+
+func TestWorkOSClientID_EnvOverrideWins(t *testing.T) {
+	// An explicit AMIKA_WORKOS_CLIENT_ID overrides everything, including any
+	// value that would otherwise be derived from the API URL.
+	setEnv(t, EnvWorkOSClientID, "client_custom")
+	setEnv(t, EnvAPIURL, "https://"+StagingHost)
+
+	if got := WorkOSClientID(); got != "client_custom" {
+		t.Errorf("WorkOSClientID() = %q, want %q", got, "client_custom")
+	}
+}
+
+func TestWorkOSClientID_DefaultsToProduction(t *testing.T) {
+	unsetEnv(t, EnvWorkOSClientID)
+	unsetEnv(t, EnvAPIURL)
+
+	if got := WorkOSClientID(); got != DefaultWorkOSClientID {
+		t.Errorf("WorkOSClientID() = %q, want %q", got, DefaultWorkOSClientID)
+	}
+}
+
+func TestWorkOSClientID_DerivedFromStagingURL(t *testing.T) {
+	unsetEnv(t, EnvWorkOSClientID)
+	setEnv(t, EnvAPIURL, "https://"+StagingHost)
+
+	if got := WorkOSClientID(); got != StagingWorkOSClientID {
+		t.Errorf("WorkOSClientID() = %q, want %q", got, StagingWorkOSClientID)
+	}
+}
+
+func TestWorkOSClientID_UnknownURLDefaultsToProduction(t *testing.T) {
+	unsetEnv(t, EnvWorkOSClientID)
+	setEnv(t, EnvAPIURL, "https://app.example.com")
+
+	if got := WorkOSClientID(); got != DefaultWorkOSClientID {
+		t.Errorf("WorkOSClientID() = %q, want %q", got, DefaultWorkOSClientID)
+	}
+}
+
+// setEnv sets an environment variable for the duration of the test, restoring
+// the previous value on cleanup.
+func setEnv(t *testing.T, key, value string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.Fatalf("Setenv(%q): %v", key, err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+// unsetEnv unsets an environment variable for the duration of the test,
+// restoring the previous value on cleanup.
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	orig, had := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("Unsetenv(%q): %v", key, err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, orig)
+		}
+	})
+}
