@@ -258,6 +258,30 @@ func TestWorkOSClientID_UnknownURLDefaultsToProduction(t *testing.T) {
 	}
 }
 
+func TestWorkOSClientIDForURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		apiURL string
+		want   string
+	}{
+		{"production default", DefaultAPIURL, DefaultWorkOSClientID},
+		{"staging", "https://" + StagingHost, StagingWorkOSClientID},
+		{"staging trailing slash", "https://" + StagingHost + "/", StagingWorkOSClientID},
+		{"staging with path", "https://" + StagingHost + "/api/v0beta1", StagingWorkOSClientID},
+		{"staging explicit port", "https://" + StagingHost + ":443", StagingWorkOSClientID},
+		{"staging uppercase host", "https://APP.STAGING-AMIKA.DEV", StagingWorkOSClientID},
+		{"unknown host", "https://app.example.com", DefaultWorkOSClientID},
+		{"empty url", "", DefaultWorkOSClientID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := workOSClientIDForURL(tt.apiURL); got != tt.want {
+				t.Errorf("workOSClientIDForURL(%q) = %q, want %q", tt.apiURL, got, tt.want)
+			}
+		})
+	}
+}
+
 // setEnv sets an environment variable for the duration of the test, restoring
 // the previous value on cleanup.
 func setEnv(t *testing.T, key, value string) {

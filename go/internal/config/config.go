@@ -4,6 +4,7 @@ package config
 import (
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 )
@@ -57,10 +58,14 @@ func WorkOSClientID() string {
 }
 
 // workOSClientIDForURL maps a known API URL to its WorkOS client ID, falling
-// back to the production default for unrecognized hosts.
+// back to the production default for unrecognized or unparsable hosts. Host
+// comparison ignores case and any port so that variants like a trailing slash,
+// an explicit :443, or mixed-case hosts still resolve to staging.
 func workOSClientIDForURL(apiURL string) string {
-	if u, err := url.Parse(apiURL); err == nil && u.Host == StagingHost {
-		return StagingWorkOSClientID
+	if u, err := url.Parse(apiURL); err == nil {
+		if strings.EqualFold(u.Hostname(), StagingHost) {
+			return StagingWorkOSClientID
+		}
 	}
 	return DefaultWorkOSClientID
 }
