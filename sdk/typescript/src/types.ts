@@ -5,11 +5,65 @@
 
 // ---------- Sandboxes ----------
 
-/** Selects which credential of a given kind the server should inject into a sandbox. */
+/**
+ * Selects which stored credential of a given `kind` the server injects
+ * into a sandbox (e.g. a Claude credential surfaces as `ANTHROPIC_API_KEY`
+ * or an on-disk OAuth token).
+ *
+ * One entry engages exactly one kind; at most one entry per kind is
+ * allowed. Within an entry the fields resolve by precedence (first match
+ * wins):
+ *
+ *   1. `none: true` -> inject nothing for this kind (explicit opt-out;
+ *      cannot be combined with `name` or `type`).
+ *
+ *        { kind: "claude", none: true }
+ *
+ *   2. `name` (+ optional `type`) -> use the credential with that name;
+ *      if `type` is also given it must match the stored type.
+ *
+ *        { kind: "claude", name: "personal-oauth" }
+ *        { kind: "claude", name: "work-key", type: "api_key" }
+ *
+ *   3. `type` only -> use the caller's single credential of that type
+ *      for this kind (errors if they have zero or more than one).
+ *
+ *        { kind: "claude", type: "api_key" }
+ *
+ *   4. `{ kind }` alone -> let the server pick: repo default from
+ *      `.amika/config.toml`, else auto-default (OAuth first, then API
+ *      key, considering org-scoped credentials as a fallback).
+ *
+ *        { kind: "claude" }
+ *
+ * IMPORTANT: This is per-entry only. A kind with no entry in the
+ * request's `agentCredentials` array gets NO credential injected, and
+ * auto-default does not run for it. Omitting the array entirely means
+ * the sandbox boots unauthenticated against every agent, regardless of
+ * any configured user or org credential.
+ *
+ *   // Unauthenticated: the agent has no credential to use.
+ *   await client.createSandbox({ repoUrl });
+ *
+ *   // Authenticated: server picks the default Claude credential.
+ *   await client.createSandbox({
+ *     repoUrl,
+ *     agentCredentials: [{ kind: "claude" }],
+ *   });
+ *
+ * The create-sandbox response echoes the outcome per engaged kind in
+ * `resolvedAgentCredentials`, e.g.
+ * `{ kind: "claude", outcome: "resolved", type: "oauth", source: "default:oauth" }`
+ * or `{ kind: "claude", outcome: "skipped", reason: "no_user_credential" }`.
+ */
 export interface AgentCredentialRef {
+  /** Agent this entry configures, e.g. "claude" or "codex". */
   kind: string;
+  /** Select a specific stored credential by its name. */
   name?: string;
+  /** Select by credential type; disambiguates when a name is not given. */
   type?: "oauth" | "api_key";
+  /** Inject nothing for this kind. Cannot be combined with name/type. */
   none?: boolean;
 }
 
