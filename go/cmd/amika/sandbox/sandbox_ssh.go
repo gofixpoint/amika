@@ -78,6 +78,12 @@ Examples:
 			if info.SSHDestination == "" {
 				return fmt.Errorf("server returned empty SSH destination")
 			}
+			// A WebSocket-tunneled sandbox (Vercel) has no plain destination to
+			// print — connecting requires a websocat ProxyCommand + a per-session
+			// key that `amika sandbox ssh` sets up.
+			if info.WebSocketProxyURL != "" {
+				return fmt.Errorf("this sandbox's SSH is tunneled over a WebSocket and has no plain destination to print; run `amika sandbox ssh %s` to connect", name)
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), info.SSHDestination)
 			return nil
 		}
@@ -162,6 +168,13 @@ func prepareCursorSSHTarget(client *apiclient.Client, paths basedir.Paths, name 
 	}
 	if info.SSHDestination == "" {
 		return cursorSSHTarget{}, fmt.Errorf("server returned empty SSH destination")
+	}
+	// The editor path writes a static `~/.ssh/amika.conf` Host block, which can't
+	// yet express the websocat ProxyCommand + per-session identity a
+	// WebSocket-tunneled sandbox (Vercel) needs. Fail clearly rather than write a
+	// Host block that can't connect. `amika sandbox ssh` handles the tunnel.
+	if info.WebSocketProxyURL != "" {
+		return cursorSSHTarget{}, fmt.Errorf("opening a WebSocket-tunneled sandbox (e.g. Vercel) in an editor over SSH is not supported yet; use `amika sandbox ssh %s` for a shell", name)
 	}
 
 	sandboxID := info.SandboxID

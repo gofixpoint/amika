@@ -170,6 +170,14 @@ type SSHInfo struct {
 	SandboxID   string `json:"sandbox_id"`
 	SandboxName string `json:"sandbox_name"`
 	RepoName    string `json:"repo_name"`
+	// WebSocketProxyURL and PrivateKey are set only by providers whose SSH is
+	// tunneled over a WebSocket rather than reached at a routable host (Vercel).
+	// When present, `ssh_destination` is just a "user@label" for display: the
+	// real connection dials `sshd` inside the sandbox through a local `websocat`
+	// ProxyCommand to this wss URL, authenticating with this per-access PEM
+	// private key. Both are empty for gateway providers (Daytona/Freestyle).
+	WebSocketProxyURL string `json:"web_socket_proxy_url"`
+	PrivateKey        string `json:"private_key"`
 }
 
 // GetSSH retrieves SSH connection details for a remote sandbox.
