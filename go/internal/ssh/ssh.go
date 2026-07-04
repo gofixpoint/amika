@@ -4,9 +4,11 @@
 package ssh
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
 
@@ -78,9 +80,39 @@ func execTunneledSSH(info *apiclient.SSHInfo, forcePTY bool, extraArgs []string)
 	}
 	sshArgs = append(sshArgs, extraArgs...)
 
+	// A Ctrl-C on a non-interactive tunneled command (no PTY, so the terminal is
+	// in cooked mode) delivers SIGINT to our whole process group: ssh, our child,
+	// gets it and exits. Without trapping it here the default action would kill
+	// this wrapper first, skipping the deferred cleanup and leaking the minted
+	// PEM key into /tmp. Trap SIGINT/SIGTERM so we stay alive until c.Run returns
+	// (letting the deferred cleanup run) and remove the key eagerly in case we're
+	// killed anyway. We do NOT forward the signal to ssh: it already received the
+	// group signal, and an interactive session puts the terminal in raw mode
+	// (Ctrl-C is delivered to the remote, not to us), so we must never tear that
+	// session down ourselves.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		for range sigCh {
+			cleanup()
+		}
+	}()
+
 	c := exec.Command(sshBin, sshArgs...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return c.Run()
+	runErr := c.Run()
+
+	// Preserve ssh's own exit status the way the direct syscall.Exec path does,
+	// so a remote command's exit code (2, 127, 130, …) survives instead of being
+	// collapsed into Cobra's generic exit 1. os.Exit skips deferred funcs, so
+	// remove the key first.
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		cleanup()
+		os.Exit(exitErr.ExitCode())
+	}
+	return runErr
 }
 
 // tunnelSSHArgs builds the `ssh` arguments for a WebSocket-tunneled sandbox: an
@@ -102,12 +134,32 @@ func tunnelSSHArgs(info *apiclient.SSHInfo, keyPath string, forcePTY bool) ([]st
 		"-o", "IdentitiesOnly=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "ProxyCommand=websocat --binary - " + info.WebSocketProxyURL,
+		"-o", "ProxyCommand=" + proxyCommand(info.WebSocketProxyURL),
 	}
 	if forcePTY {
 		args = append(args, "-t")
 	}
 	return append(args, dest), nil
+}
+
+// proxyCommand builds the ssh ProxyCommand that bridges to the sandbox's sshd
+// over the WebSocket. ssh executes ProxyCommand through the user's shell, after
+// first expanding its own `%` tokens, so a signed wss URL — which routinely
+// contains `%2F`, `&`, `?`, etc. — must be both shell-quoted (so the shell
+// treats it literally) and have every `%` doubled (so ssh's token pass leaves a
+// single literal `%`). Skipping either silently breaks the tunnel.
+func proxyCommand(wsURL string) string {
+	quoted := shellQuote(wsURL)
+	escaped := strings.ReplaceAll(quoted, "%", "%%")
+	return "websocat --binary - " + escaped
+}
+
+// shellQuote wraps s in single quotes so /bin/sh treats every character
+// literally, escaping any embedded single quote by ending the quoted run,
+// inserting an escaped quote, and reopening it. Used for values interpolated
+// into ssh's shell-executed ProxyCommand.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // writeTempIdentity writes a PEM private key to a fresh 0600 temp file and
