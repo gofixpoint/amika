@@ -180,8 +180,17 @@ type SSHInfo struct {
 	PrivateKey        string `json:"private_key"`
 }
 
-// GetSSH retrieves SSH connection details for a remote sandbox.
+// GetSSH retrieves (mints) SSH connection details for a remote sandbox.
+// Minting is synchronous and can be slow: it may resume a stopped sandbox and,
+// for WebSocket-tunneled providers (Vercel), generate a keypair and start the
+// in-sandbox sshd/websocat bridge — each an internal round-trip. A longer HTTP
+// timeout (5 minutes) is used instead of the default 30 seconds so a cold mint
+// doesn't fail spuriously.
 func (c *Client) GetSSH(name string) (*SSHInfo, error) {
+	saved := c.HTTP.Timeout
+	c.HTTP.Timeout = 5 * time.Minute
+	defer func() { c.HTTP.Timeout = saved }()
+
 	var result SSHInfo
 	if err := c.doJSON("POST", apiBasePath+"/sandboxes/"+url.PathEscape(name)+"/ssh", nil, &result); err != nil {
 		return nil, fmt.Errorf("remote ssh: %w", err)
