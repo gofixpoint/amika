@@ -607,6 +607,44 @@ func (c *Client) DownloadFromSignedURL(signedURL string) ([]byte, error) {
 	return body, nil
 }
 
+// GetObjectByKey fetches the current bytes of a single object by its exact
+// bucket key. There is no single-object endpoint, so it lists the object's
+// parent folder and downloads the entry whose Key matches exactly. found is
+// false when no object has that exact key, which the caller can treat as "no
+// cloud copy yet".
+//
+// The listing is restricted to the parent prefix (everything up to and
+// including the final "/") rather than the full key: the storage backend treats
+// a listing prefix as a folder path, so a prefix equal to the full object key
+// (filename included) matches nothing. Listing the folder and exact-matching
+// within it is the only reliable way to find the object.
+func (c *Client) GetObjectByKey(key string) (data []byte, found bool, err error) {
+	prefix := ""
+	if i := strings.LastIndex(key, "/"); i >= 0 {
+		prefix = key[:i+1]
+	}
+	cursor := ""
+	for {
+		resp, err := c.ListDownloads(prefix, cursor, 0)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, o := range resp.Objects {
+			if o.Key == key {
+				b, err := c.DownloadFromSignedURL(o.DownloadURL)
+				if err != nil {
+					return nil, false, err
+				}
+				return b, true, nil
+			}
+		}
+		if resp.NextCursor == nil || *resp.NextCursor == "" {
+			return nil, false, nil
+		}
+		cursor = *resp.NextCursor
+	}
+}
+
 func (c *Client) doJSON(method, path string, body interface{}, out interface{}) error {
 	var bodyReader io.Reader
 	if body != nil {

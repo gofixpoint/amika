@@ -10,17 +10,33 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// uploadMemories opts into uploading Claude memory files alongside captured
+// events. allMemoryProjects extends that to projects with no captured session.
+var (
+	uploadMemories    bool
+	allMemoryProjects bool
+)
+
 var pushCmd = &cobra.Command{
 	Use:   "beta:push",
 	Short: "Upload captured events to your organization",
 	Long: `Upload captured events that have not been pushed yet. Repeated runs upload
 only events captured since the last push.
 
+Pass --memories to also upload Claude memory files
+(~/.claude/projects/<project>/memory/*.md) for the projects you have captured
+sessions for. Because memory files are edited in place, a file that changed both
+locally and in the cloud is merged with the local claude CLI rather than
+overwritten. Add --all-projects to include projects with no captured session.
+
 Set AMIKA_API_KEY to authenticate.`,
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		if allMemoryProjects && !uploadMemories {
+			return fmt.Errorf("--all-projects requires --memories")
+		}
 		key := os.Getenv(config.EnvAPIKey)
 		if key == "" {
 			return fmt.Errorf("set %s to push; amikalog authenticates with an org API key only", config.EnvAPIKey)
@@ -31,18 +47,42 @@ Set AMIKA_API_KEY to authenticate.`,
 		}
 
 		client := apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewStaticTokenSource(key))
-		report, err := eventlog.Push(stateDir, apiUploader{client: client})
+		uploader := apiUploader{client: client}
+		out := cmd.OutOrStdout()
+		errOut := cmd.ErrOrStderr()
+
+		report, err := eventlog.Push(stateDir, uploader)
 		if err != nil {
 			return err
 		}
-
-		out := cmd.OutOrStdout()
 		fmt.Fprintf(out, "uploaded %d, skipped %d, failed %d\n", report.Uploaded, report.Skipped, report.Failed)
-		if report.Failed > 0 {
-			for _, e := range report.Errors {
-				fmt.Fprintf(cmd.ErrOrStderr(), "amikalog: %v\n", e)
+		for _, e := range report.Errors {
+			fmt.Fprintf(errOut, "amikalog: %v\n", e)
+		}
+		failed := report.Failed
+
+		if uploadMemories {
+			home, herr := os.UserHomeDir()
+			if herr != nil {
+				return fmt.Errorf("resolving home directory: %w", herr)
 			}
-			return fmt.Errorf("%d file(s) failed to upload", report.Failed)
+			mreport, merr := eventlog.PushMemories(stateDir, home, allMemoryProjects, uploader, apiDownloader{client: client}, eventlog.NewClaudeMerger())
+			if merr != nil {
+				return fmt.Errorf("pushing memories: %w", merr)
+			}
+			fmt.Fprintf(out, "memories: uploaded %d, merged %d, pulled %d, skipped %d, failed %d\n",
+				mreport.Uploaded, mreport.Merged, mreport.Pulled, mreport.Skipped, mreport.Failed)
+			for _, w := range mreport.Warnings {
+				fmt.Fprintf(errOut, "amikalog: %s\n", w)
+			}
+			for _, e := range mreport.Errors {
+				fmt.Fprintf(errOut, "amikalog: %v\n", e)
+			}
+			failed += mreport.Failed
+		}
+
+		if failed > 0 {
+			return fmt.Errorf("%d file(s) failed to upload", failed)
 		}
 		return nil
 	},
@@ -72,6 +112,19 @@ func (a apiUploader) Upload(objectKey string, data []byte) error {
 	return a.client.UploadToSignedURL(resp.Objects[0].UploadURL, data, "application/json")
 }
 
+// apiDownloader adapts the Amika API client to eventlog.Downloader: it fetches a
+// single object's current bytes by key, used to detect whether a memory file's
+// cloud copy has diverged before overwriting it.
+type apiDownloader struct {
+	client *apiclient.Client
+}
+
+func (a apiDownloader) Fetch(objectKey string) ([]byte, bool, error) {
+	return a.client.GetObjectByKey(objectKey)
+}
+
 func init() {
+	pushCmd.Flags().BoolVar(&uploadMemories, "memories", false, "Also upload Claude memory files for projects with captured sessions")
+	pushCmd.Flags().BoolVar(&allMemoryProjects, "all-projects", false, "With --memories, include projects that have no captured session")
 	rootCmd.AddCommand(pushCmd)
 }
