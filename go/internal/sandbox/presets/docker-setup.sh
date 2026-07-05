@@ -9,15 +9,20 @@ DOCKERD_LOG="/var/log/amikad/dockerd.log"
 DOCKERD_PID_FILE="/run/amikad/dockerd.pid"
 DOCKER_READY_TIMEOUT=30
 
-# A persistent-sandbox snapshot can capture dockerd's own pidfile while the
-# daemon is running. On a fresh boot from that snapshot dockerd is not running,
-# but the pidfile survives pointing at a PID that is no longer dockerd (often
-# reused by another process), so a fresh dockerd refuses to start ("ensure
-# docker is not running or delete /var/run/docker.pid: process with PID N is
-# still running") — wedging the pre-setup hook on every boot from such a
-# snapshot. When no live dockerd is running the pidfile is stale, so remove it.
+# A persistent-sandbox snapshot can capture the Docker and containerd pidfiles
+# while the daemons are running. On a fresh boot from that snapshot neither is
+# running, but the pidfiles survive pointing at PIDs that are no longer theirs
+# (often reused by another process). A fresh dockerd then refuses to start
+# ("ensure docker is not running or delete /var/run/docker.pid: process with PID
+# N is still running"); and even past that, its managed containerd pidfile at
+# /run/docker/containerd/containerd.pid would look alive, so dockerd times out on
+# the dead socket — wedging the pre-setup hook on every boot from such a
+# snapshot. Remove each stale pidfile when its daemon is not actually running.
 if [ -f /var/run/docker.pid ] && ! pgrep -x dockerd >/dev/null 2>&1; then
   rm -f /var/run/docker.pid
+fi
+if [ -f /run/docker/containerd/containerd.pid ] && ! pgrep -x containerd >/dev/null 2>&1; then
+  rm -f /run/docker/containerd/containerd.pid
 fi
 
 # Start dockerd in a new session so it survives process group cleanup
