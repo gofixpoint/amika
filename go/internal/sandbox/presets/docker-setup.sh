@@ -9,6 +9,17 @@ DOCKERD_LOG="/var/log/amikad/dockerd.log"
 DOCKERD_PID_FILE="/run/amikad/dockerd.pid"
 DOCKER_READY_TIMEOUT=30
 
+# A persistent-sandbox snapshot can capture dockerd's own pidfile while the
+# daemon is running. On a fresh boot from that snapshot dockerd is not running,
+# but the pidfile survives pointing at a PID that is no longer dockerd (often
+# reused by another process), so a fresh dockerd refuses to start ("ensure
+# docker is not running or delete /var/run/docker.pid: process with PID N is
+# still running") — wedging the pre-setup hook on every boot from such a
+# snapshot. When no live dockerd is running the pidfile is stale, so remove it.
+if [ -f /var/run/docker.pid ] && ! pgrep -x dockerd >/dev/null 2>&1; then
+  rm -f /var/run/docker.pid
+fi
+
 # Start dockerd in a new session so it survives process group cleanup
 # when the calling hook (pre-setup.sh) exits.
 setsid dockerd > "$DOCKERD_LOG" 2>&1 &
