@@ -3,9 +3,11 @@ if [ -z "$TMUX" ] && [ "$TERM" = "linux" -o "$TERM" = "dumb" ]; then
   export TERM=xterm-256color
 fi
 
-# Set up the prompt (works on both light and dark terminals)
+# Set up the prompt (works on both light and dark terminals). Just the working
+# directory: the user@host line is dropped because the host is an opaque,
+# per-sandbox container id that only adds noise to SSH sessions and command output.
 
-PS1='\[\e[1;34m\]\u@\h\[\e[0m\]\n\[\e[1;35m\]\w\[\e[0m\]\$ '
+PS1='\[\e[1;35m\]\w\[\e[0m\]\$ '
 
 # History settings
 HISTCONTROL=ignoredups:erasedups
