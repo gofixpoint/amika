@@ -285,6 +285,10 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	if err := sandbox.ValidateSize(size); err != nil {
 		return err
 	}
+	githubAuthMode, _ := cmd.Flags().GetString("github-auth-mode")
+	if err := sandbox.ValidateGithubAuthMode(githubAuthMode); err != nil {
+		return err
+	}
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
 	newBranch, _ := cmd.Flags().GetString("new-branch")
@@ -378,6 +382,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 		AgentCredentials: agentCreds,
 		Branch:           branch,
 		NewBranchName:    newBranch,
+		GithubAuthMode:   githubAuthMode,
 	}
 
 	sb, err := client.CreateSandbox(req)

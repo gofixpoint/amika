@@ -54,6 +54,7 @@ type CreateSandboxRequest struct {
 	AgentCredentials   []AgentCredentialRef `json:"agent_credentials,omitempty"`
 	Branch             string               `json:"branch,omitempty"`
 	NewBranchName      string               `json:"new_branch_name,omitempty"`
+	GithubAuthMode     string               `json:"github_auth_mode,omitempty"`
 }
 
 // AgentCredentialRef selects which credential of a given kind the server

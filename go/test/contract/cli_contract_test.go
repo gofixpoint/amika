@@ -80,3 +80,16 @@ func TestSecretPushHelpContract(t *testing.T) {
 		t.Fatalf("expected help output to include --from-env flag, got:\n%s", text)
 	}
 }
+
+func TestSandboxCreateInvalidGithubAuthModeFailsEarly(t *testing.T) {
+	bin := testutil.BuildAmikaBinary(t)
+
+	cmd := exec.Command(bin, "sandbox", "create", "--remote", "--github-auth-mode", "invalid", "--no-git")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected sandbox create to fail, output:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "unknown github-auth-mode") {
+		t.Fatalf("expected unknown github-auth-mode error, got:\n%s", string(out))
+	}
+}
