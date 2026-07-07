@@ -91,6 +91,25 @@ RUN chown -R amika:amika \
     /var/lib/amika \
     /tmp/amika
 
+# Daytona builds linux-vm sandboxes by converting this OCI image into a VM
+# rootfs, and that conversion strips the setuid bit from every setuid binary --
+# /usr/bin/sudo drops from 4755 to 0755. The amika lifecycle relies on the
+# unprivileged `amika` user escalating through passwordless sudo, so a VM whose
+# sudo isn't setuid can't initialize. Inside the VM nothing we can reach runs as
+# root (both command exec and the fs toolbox run as `amika`), so it can't be
+# repaired after boot -- instead we record the setuid binaries now, while the
+# bits are intact, and a systemd oneshot re-applies them early on every VM boot
+# (systemd is PID 1 in Daytona VMs, and sysinit runs before the Daytona agent).
+# Inert on container sandboxes: systemd is not their init, and their setuid bits
+# survive the plain image pull.
+RUN find / -xdev -perm -4000 -type f > /usr/lib/amikad/setuid-manifest.txt 2>/dev/null || true
+COPY restore-setuid.sh /usr/lib/amikad/restore-setuid.sh
+COPY amika-restore-setuid.service /etc/systemd/system/amika-restore-setuid.service
+RUN chmod +x /usr/lib/amikad/restore-setuid.sh \
+    && mkdir -p /etc/systemd/system/sysinit.target.wants \
+    && ln -sf /etc/systemd/system/amika-restore-setuid.service \
+       /etc/systemd/system/sysinit.target.wants/amika-restore-setuid.service
+
 # Everything after this point runs as the amika user.
 USER amika
 
