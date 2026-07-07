@@ -22,6 +22,11 @@ set -euo pipefail
 #/                           fetching the latest versions (cache-busted by default)
 #/   --ignore-unstaged       Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
+#/   --push-daytona-vm    Also publish linux-vm snapshots (amika-daytona-vm-<size>):
+#/                        uploads the coder image into Daytona's registry, then
+#/                        `daytona snapshot create --image … --sandbox-class linux-vm`
+#/                        in the VM region (DAYTONA_VM_REGION, default "experimental").
+#/                        Pair with amika/daytona-coder. Requires linux/amd64.
 #/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
 #/                        before each org switch instead of relying on existing daytona login state.
 #/                        Requires --push-daytona.
@@ -39,6 +44,21 @@ SIZE_CPUS=("1" "2" "2" "4")
 SIZE_MEMORY=("1" "8" "12" "16")
 SIZE_DISK=("3" "10" "18" "24")
 SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint")
+
+# Daytona *VM* (linux-vm) snapshot sizes, published by --push-daytona-vm as
+# `amika-daytona-vm-<size>`. The coder image is uploaded into Daytona's registry
+# with `snapshot push`, then turned into linux-vm snapshots with `snapshot create
+# --image … --sandbox-class linux-vm`. Built for `daytona-coder`
+# (amika-daytona-vm-<size>) and `daytona-coder-dind` (amika-daytona-vm-dind-<size>).
+# VM snapshots must live in a region with linux-vm runners
+# (DAYTONA_VM_REGION, default "experimental"); the default region has only
+# container runners.
+VM_SIZES=("small" "medium" "large")
+VM_CPUS=("1" "2" "4")
+VM_MEMORY=("1" "4" "8")
+VM_DISK=("3" "8" "10")
+VM_REGION="${DAYTONA_VM_REGION:-experimental}"
+VM_ORGS="${DAYTONA_VM_ORGS:-amika-prod Fixpoint}"
 
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
 
@@ -69,6 +89,7 @@ NO_CACHE=false
 UPDATE_AGENT_CLIS=true
 IGNORE_UNSTAGED=false
 PUSH_DAYTONA=false
+PUSH_DAYTONA_VM=false
 CI_AUTH=false
 
 while [ $# -gt 0 ]; do
@@ -82,6 +103,7 @@ while [ $# -gt 0 ]; do
     --no-update-agent-clis) UPDATE_AGENT_CLIS=false; shift ;;
     --ignore-unstaged)    IGNORE_UNSTAGED=true; shift ;;
     --push-daytona)    PUSH_DAYTONA=true; shift ;;
+    --push-daytona-vm) PUSH_DAYTONA_VM=true; shift ;;
     --ci)              CI_AUTH=true; shift ;;
     --help)            usage; exit 0 ;;
     -*)                echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
@@ -112,16 +134,23 @@ if [ -n "$PLATFORM" ]; then
   esac
 fi
 
-# Validate --push-daytona + --platform combination
-if [ "$PUSH_DAYTONA" = true ] && [ "$PLATFORM" = "linux/arm64" ]; then
-  echo "Error: --push-daytona requires linux/amd64; cannot use --platform linux/arm64." >&2
+# True when either push mode is requested (container and/or VM). Both push to
+# Daytona and so share the linux/amd64 requirement and the --ci auth flow.
+PUSH_ANY=false
+if [ "$PUSH_DAYTONA" = true ] || [ "$PUSH_DAYTONA_VM" = true ]; then
+  PUSH_ANY=true
+fi
+
+# Validate --push-daytona[-vm] + --platform combination
+if [ "$PUSH_ANY" = true ] && [ "$PLATFORM" = "linux/arm64" ]; then
+  echo "Error: pushing to Daytona requires linux/amd64; cannot use --platform linux/arm64." >&2
   exit 1
 fi
 
 # Validate --ci flag
 if [ "$CI_AUTH" = true ]; then
-  if [ "$PUSH_DAYTONA" != true ]; then
-    echo "Error: --ci requires --push-daytona." >&2
+  if [ "$PUSH_ANY" != true ]; then
+    echo "Error: --ci requires --push-daytona or --push-daytona-vm." >&2
     exit 1
   fi
   missing=()
@@ -135,7 +164,7 @@ fi
 
 # Default platform: host architecture, or linux/amd64 when pushing to Daytona
 if [ -z "$PLATFORM" ]; then
-  if [ "$PUSH_DAYTONA" = true ]; then
+  if [ "$PUSH_ANY" = true ]; then
     PLATFORM="linux/amd64"
   fi
   # Otherwise, no --platform flag is passed to docker build (uses host arch)
@@ -259,6 +288,165 @@ for preset in "${PRESETS[@]}"; do
         fi
       done
     done
+  fi
+
+  # Publish the coder / coder-dind environment as linux-vm snapshots
+  # (amika-daytona-vm-<size> / amika-daytona-vm-dind-<size>).
+  #
+  # A VM snapshot requires `--sandbox-class linux-vm`, which only `daytona
+  # snapshot create` sets. But `create --image` PULLS its image from a registry
+  # (it cannot take a local image the way `snapshot push` does), and
+  # `create --dockerfile` (remote build) is not available in the VM region. So we
+  # do it in two steps, reusing Daytona's OWN registry — the same one `snapshot
+  # push` uploads to for containers, so there is no separate/external registry:
+  #   1. `snapshot push` the locally-built coder image. That uploads it into
+  #      cr.app.daytona.io and prints the resulting image ref. push only makes
+  #      container snapshots, so the pushed snapshot ("vehicle") is just the
+  #      uploader; the linux-vm snapshots below reference the uploaded image.
+  #   2. `snapshot create --image <that ref> --sandbox-class linux-vm` per size,
+  #      in the VM-capable region (VM_REGION).
+  if [ "$PUSH_DAYTONA_VM" = true ] && { [ "$preset" = "daytona-coder" ] || [ "$preset" = "daytona-coder-dind" ]; }; then
+    # Snapshot name base per preset: daytona-coder -> amika-daytona-vm,
+    # daytona-coder-dind -> amika-daytona-vm-dind. (dind runs dockerd natively in
+    # the VM — no privileged container nesting — so the same image works as a VM.)
+    case "$preset" in
+      daytona-coder)      vm_name_base="amika-daytona-vm" ;;
+      daytona-coder-dind) vm_name_base="amika-daytona-vm-dind" ;;
+    esac
+    # The upload push fails by design (the VM region has no container runners),
+    # so under `set -e`/`pipefail` that expected non-zero exit would silently
+    # abort the whole script. Disable them for this block and check outcomes
+    # explicitly instead. Restored before the closing `fi`.
+    set +e
+    set +o pipefail
+    for org in $VM_ORGS; do
+      # errexit is off here, so a failed auth/org switch would NOT abort on its
+      # own — and the later push/create/delete would then run against whatever
+      # org was already active, publishing to the wrong org. Check these
+      # explicitly and bail on failure.
+      if [ "$CI_AUTH" = true ]; then
+        case "$org" in
+          amika-prod) api_key="$DAYTONA_PROD_API_KEY" ;;
+          Fixpoint)   api_key="$DAYTONA_STAGING_API_KEY" ;;
+          *)
+            echo "Error: --ci has no API key mapping for org '${org}' (from DAYTONA_VM_ORGS)." >&2
+            exit 1
+            ;;
+        esac
+        if ! daytona login --api-key "$api_key"; then
+          echo "Error: 'daytona login' failed for org ${org}; aborting to avoid publishing to the wrong org." >&2
+          exit 1
+        fi
+      else
+        if ! daytona organization use "$org"; then
+          echo "Error: 'daytona organization use ${org}' failed; aborting to avoid publishing to the wrong org." >&2
+          exit 1
+        fi
+      fi
+
+      # Step 1: upload the coder image into Daytona's registry IN THE VM REGION.
+      # `snapshot push` only makes container snapshots, and the VM region has no
+      # container runners — so this push is EXPECTED to fail at the snapshot step
+      # ("No runners ... for sandbox class 'container'"). That is fine: the image
+      # layers upload to the VM region's registry BEFORE that check, which is all
+      # we need. Pushing to the default region instead lands the image in the
+      # wrong region ('us'), and the VM create below cannot inspect it. So target
+      # the VM region, tolerate the push's exit code, and read the uploaded ref
+      # from its output.
+      echo "Uploading ${image_tag} into Daytona's ${VM_REGION} registry (org ${org})..."
+      # Capture directly (no `tee`): the pipe/TTY plumbing seems to make Daytona
+      # emit ANSI redraws into the captured stream. Echo it afterward for the log.
+      push_output=$(daytona snapshot push "$image_tag" \
+        --name "${vm_name_base}-base:${VERSION}" \
+        --region "$VM_REGION" --cpu 1 --memory 1 --disk 3 2>&1)
+      printf '%s\n' "$push_output"
+
+      # Parse the uploaded image ref from the push output: the repository (in [ ]
+      # on the "push refers to repository" line) and the tag `snapshot push`
+      # generated (on the "<tag>: digest: sha256:... size:" line). Use the tag, not
+      # the digest — `snapshot create --image` mangles a repo@sha256 ref into
+      # repo:sha256:... and fails to inspect.
+      #
+      # `snapshot push` renders progress with carriage returns AND ANSI escapes
+      # (cursor-up / erase-line redraws) that land in the captured output and jumble
+      # the lines. perl strips \r + CSI escapes and extracts the ref identically on
+      # macOS and Linux (a raw-ESC `sed` script is not portable across BSD/GNU).
+      vm_image=$(printf '%s\n' "$push_output" | perl -0777 -ne '
+        s/\e\[[0-9;]*[a-zA-Z]//g;   # strip ANSI CSI sequences
+        s/\r//g;                     # strip carriage returns
+        my ($repo) = /repository \[([^\]]+)\]/;
+        # NOT anchored to line start: ANSI cursor moves can leave the tag
+        # concatenated after a layer status ("<layer>: Pushed <tag>: digest: ...")
+        # on one physical line, so match the token immediately before ": digest:".
+        my ($tag)  = /(\S+): digest: sha256:[0-9a-f]+/;
+        print "$repo:$tag" if length($repo) && length($tag);
+      ')
+      if [ -z "$vm_image" ]; then
+        echo "Error: image upload did not produce a registry ref. Raw push output (cat -v, last 30 lines):" >&2
+        printf '%s\n' "$push_output" | cat -v | tail -30 >&2
+        exit 1
+      fi
+      echo "Uploaded VM base image: [${vm_image}]"
+
+      # Step 2: create a linux-vm snapshot per size from the uploaded image.
+      for i in "${!VM_SIZES[@]}"; do
+        vm_size="${VM_SIZES[$i]}"
+        cpu="${VM_CPUS[$i]}"
+        mem="${VM_MEMORY[$i]}"
+        disk="${VM_DISK[$i]}"
+        # `snapshot create` rejects both a `:tag` and a `/` in the snapshot NAME
+        # (empirically — despite the error text claiming slashes are allowed, a
+        # slashed name like `amika/daytona-vm-small` is rejected, while a plain one
+        # is accepted). So the VM snapshots are unversioned and slash-free:
+        # `<vm_name_base>-<size>` (amika-daytona-vm-<size> or
+        # amika-daytona-vm-dind-<size>). That matches the app's default config, so
+        # no env override is needed. Names are unversioned, so an existing snapshot
+        # of this name (a stale failed record, or a prior build) is deleted and
+        # recreated on conflict below, making re-runs idempotent.
+        snapshot_name="${vm_name_base}-${vm_size}"
+        echo "Creating VM ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) in org ${org}, region ${VM_REGION}..."
+        # Create, tolerating a name conflict from an existing snapshot (stale
+        # failed record or prior build): delete and recreate so the run
+        # (re)publishes the current image. Daytona's delete is asynchronous, so
+        # the name can still be taken for a moment after `snapshot delete`
+        # returns — a single immediate recreate can hit the same conflict. Retry
+        # the delete+recreate with backoff until the name frees (or we give up),
+        # rather than aborting the whole publish on a transient conflict.
+        #
+        # Capture output and the REAL exit code directly. Do NOT pipe to `tee`:
+        # with pipefail disabled (above) a pipe returns tee's status (0) and would
+        # mask a failed create, silently recording it as pushed.
+        create_rc=0
+        max_attempts=5
+        for attempt in $(seq 1 "$max_attempts"); do
+          create_output=$(daytona snapshot create "$snapshot_name" \
+            --image "$vm_image" \
+            --sandbox-class linux-vm \
+            --region "$VM_REGION" \
+            --cpu "$cpu" --memory "$mem" --disk "$disk" 2>&1)
+          create_rc=$?
+          printf '%s\n' "$create_output"
+          [ "$create_rc" -eq 0 ] && break
+          # A non-conflict failure is real — stop retrying and let the check below
+          # abort the run.
+          echo "$create_output" | grep -q "Conflict:.*already exists" || break
+          if [ "$attempt" -ge "$max_attempts" ]; then
+            echo "Error: ${snapshot_name} still conflicts after ${max_attempts} delete+recreate attempts in ${org}." >&2
+            break
+          fi
+          echo "Snapshot ${snapshot_name} exists in ${org}; deleting and recreating (attempt ${attempt}/${max_attempts})..."
+          daytona snapshot delete "$snapshot_name" >/dev/null 2>&1 || true
+          sleep 3
+        done
+        if [ "$create_rc" -ne 0 ]; then
+          echo "Error: failed to create ${snapshot_name} in ${org}." >&2
+          exit "$create_rc"
+        fi
+        PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+      done
+    done
+    set -e
+    set -o pipefail
   fi
 done
 
