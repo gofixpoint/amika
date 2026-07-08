@@ -27,6 +27,8 @@ set -euo pipefail
 #/                        `daytona snapshot create --image … --sandbox-class linux-vm`
 #/                        in the VM region (DAYTONA_VM_REGION, default "us-west-2").
 #/                        Pair with amika/daytona-coder. Requires linux/amd64.
+#/                        DAYTONA_VM_ORGS limits target orgs (space-separated);
+#/                        DAYTONA_VM_SIZES limits sizes (e.g. "l xl").
 #/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
 #/                        before each org switch instead of relying on existing daytona login state.
 #/                        Requires --push-daytona.
@@ -64,6 +66,25 @@ VM_MEMORY=("1" "8" "12" "16")
 VM_DISK=("3" "10" "18" "24")
 VM_REGION="${DAYTONA_VM_REGION:-us-west-2}"
 VM_ORGS="${DAYTONA_VM_ORGS:-amika-prod Fixpoint}"
+
+# Optional space-separated subset of VM sizes to publish (e.g. "l xl"), for
+# retrying a partial run without touching sizes that already succeeded. Empty
+# (default) publishes every size in VM_SIZES. Each value must name a size in
+# VM_SIZES. Only affects the linux-vm snapshots; the container --push-daytona
+# path always publishes all sizes.
+VM_SIZES_FILTER="${DAYTONA_VM_SIZES:-}"
+if [ -n "$VM_SIZES_FILTER" ]; then
+  for requested in $VM_SIZES_FILTER; do
+    known=false
+    for size in "${VM_SIZES[@]}"; do
+      [ "$requested" = "$size" ] && { known=true; break; }
+    done
+    if [ "$known" = false ]; then
+      echo "Error: DAYTONA_VM_SIZES contains unknown size '${requested}'. Valid sizes: ${VM_SIZES[*]}" >&2
+      exit 1
+    fi
+  done
+fi
 
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
 
@@ -396,6 +417,13 @@ for preset in "${PRESETS[@]}"; do
       # Step 2: create a linux-vm snapshot per size from the uploaded image.
       for i in "${!VM_SIZES[@]}"; do
         vm_size="${VM_SIZES[$i]}"
+        # Honor the optional DAYTONA_VM_SIZES subset: skip sizes not requested.
+        if [ -n "$VM_SIZES_FILTER" ]; then
+          case " $VM_SIZES_FILTER " in
+            *" $vm_size "*) ;;
+            *) continue ;;
+          esac
+        fi
         cpu="${VM_CPUS[$i]}"
         mem="${VM_MEMORY[$i]}"
         disk="${VM_DISK[$i]}"
