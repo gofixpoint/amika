@@ -53,10 +53,15 @@ SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "am
 # VM snapshots must live in a region with linux-vm runners
 # (DAYTONA_VM_REGION, default "experimental"); the default region has only
 # container runners.
-VM_SIZES=("small" "medium" "large")
-VM_CPUS=("1" "2" "4")
-VM_MEMORY=("1" "4" "8")
-VM_DISK=("3" "8" "10")
+#
+# Sizes mirror the container `SIZE_*` table (same tiers, same dimensions) so a
+# `linux-vm` sandbox is provisioned identically to its container equivalent —
+# the app advertises one size table for both. Keep these in sync with `SIZE_*`
+# above (and with `SANDBOX_SIZE_SPECS` in amika-mono).
+VM_SIZES=("xs" "m" "l" "xl")
+VM_CPUS=("1" "2" "2" "4")
+VM_MEMORY=("1" "8" "12" "16")
+VM_DISK=("3" "10" "18" "24")
 VM_REGION="${DAYTONA_VM_REGION:-experimental}"
 VM_ORGS="${DAYTONA_VM_ORGS:-amika-prod Fixpoint}"
 
@@ -396,7 +401,7 @@ for preset in "${PRESETS[@]}"; do
         disk="${VM_DISK[$i]}"
         # `snapshot create` rejects both a `:tag` and a `/` in the snapshot NAME
         # (empirically — despite the error text claiming slashes are allowed, a
-        # slashed name like `amika/daytona-vm-small` is rejected, while a plain one
+        # slashed name like `amika/daytona-vm-xs` is rejected, while a plain one
         # is accepted). So the VM snapshots are unversioned and slash-free:
         # `<vm_name_base>-<size>` (amika-daytona-vm-<size> or
         # amika-daytona-vm-dind-<size>). That matches the app's default config, so
