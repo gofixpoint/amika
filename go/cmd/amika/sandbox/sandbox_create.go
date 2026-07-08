@@ -32,6 +32,18 @@ var sandboxCreateCmd = &cobra.Command{
 		if noSetup && cmd.Flags().Changed("setup-script") {
 			return fmt.Errorf("--no-setup and --setup-script are mutually exclusive")
 		}
+		mode := runmode.Resolve(cmd)
+		if mode != runmode.Remote && cmd.Flags().Changed("github-auth-mode") {
+			return fmt.Errorf("--github-auth-mode requires --remote mode")
+		}
+		// Validate before the remote auth gate below so a bad value fails
+		// fast even when the caller is not logged in; otherwise the login
+		// error masks the flag error (and the contract test, which runs
+		// unauthenticated, would never see the validation).
+		githubAuthMode, _ := cmd.Flags().GetString("github-auth-mode")
+		if err := sandbox.ValidateGithubAuthMode(githubAuthMode); err != nil {
+			return err
+		}
 
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -48,7 +60,6 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
-		mode := runmode.Resolve(cmd)
 		if mode == runmode.Remote && noClean {
 			return fmt.Errorf("--no-clean is only supported for local sandboxes")
 		}
@@ -285,6 +296,9 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	if err := sandbox.ValidateSize(size); err != nil {
 		return err
 	}
+	// Validated in RunE before the auth gate; only the value is read here.
+	githubAuthMode, _ := cmd.Flags().GetString("github-auth-mode")
+	githubAuthMode = sandbox.CanonicalGithubAuthMode(githubAuthMode)
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
 	newBranch, _ := cmd.Flags().GetString("new-branch")
@@ -378,6 +392,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 		AgentCredentials: agentCreds,
 		Branch:           branch,
 		NewBranchName:    newBranch,
+		GithubAuthMode:   githubAuthMode,
 	}
 
 	sb, err := client.CreateSandbox(req)

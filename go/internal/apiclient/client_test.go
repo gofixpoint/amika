@@ -466,3 +466,33 @@ func TestDownloadFromSignedURL_Non2xxIsHTTPError(t *testing.T) {
 		t.Errorf("status = %d, want 404", httpErr.StatusCode)
 	}
 }
+
+func TestCreateSandboxRequest_JSONOmitsGithubAuthModeWhenEmpty(t *testing.T) {
+	req := CreateSandboxRequest{Name: "my-sandbox"}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "github_auth_mode") {
+		t.Errorf("expected github_auth_mode to be omitted when empty, got: %s", string(data))
+	}
+}
+
+func TestCreateSandboxRequest_JSONIncludesGithubAuthModeWhenSet(t *testing.T) {
+	req := CreateSandboxRequest{Name: "my-sandbox", GithubAuthMode: "pat"}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	got, ok := m["github_auth_mode"]
+	if !ok {
+		t.Fatalf("expected github_auth_mode in JSON, got: %s", string(data))
+	}
+	if got != "pat" {
+		t.Errorf("github_auth_mode = %q, want %q", got, "pat")
+	}
+}
