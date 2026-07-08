@@ -22,8 +22,9 @@ set -euo pipefail
 #/                           fetching the latest versions (cache-busted by default)
 #/   --ignore-unstaged       Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
-#/   --push-daytona-vm    Also publish linux-vm snapshots (amika-daytona-vm-<size>):
-#/                        uploads the coder image into Daytona's registry, then
+#/   --push-daytona-vm    Also publish linux-vm snapshots
+#/                        (amika-daytona-vm-<size>-<version>): uploads the coder
+#/                        image into Daytona's registry, then
 #/                        `daytona snapshot create --image … --sandbox-class linux-vm`
 #/                        in the VM region (DAYTONA_VM_REGION, default "us-west-2").
 #/                        Pair with amika/daytona-coder. Requires linux/amd64.
@@ -48,10 +49,12 @@ SIZE_DISK=("3" "10" "18" "24")
 SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint")
 
 # Daytona *VM* (linux-vm) snapshot sizes, published by --push-daytona-vm as
-# `amika-daytona-vm-<size>`. The coder image is uploaded into Daytona's registry
+# `amika-daytona-vm-<size>-<version>` (VERSION = the git short hash, same tag the
+# container snapshots carry). The coder image is uploaded into Daytona's registry
 # with `snapshot push`, then turned into linux-vm snapshots with `snapshot create
 # --image … --sandbox-class linux-vm`. Built for `daytona-coder`
-# (amika-daytona-vm-<size>) and `daytona-coder-dind` (amika-daytona-vm-dind-<size>).
+# (amika-daytona-vm-<size>-<version>) and `daytona-coder-dind`
+# (amika-daytona-vm-dind-<size>-<version>).
 # VM snapshots must live in a region with linux-vm runners
 # (DAYTONA_VM_REGION, default "us-west-2"); Daytona's default region has only
 # container runners.
@@ -443,52 +446,44 @@ for preset in "${PRESETS[@]}"; do
         # `snapshot create` rejects both a `:tag` and a `/` in the snapshot NAME
         # (empirically — despite the error text claiming slashes are allowed, a
         # slashed name like `amika/daytona-vm-xs` is rejected, while a plain one
-        # is accepted). So the VM snapshots are unversioned and slash-free:
-        # `<vm_name_base>-<size>` (amika-daytona-vm-<size> or
-        # amika-daytona-vm-dind-<size>). That matches the app's default config, so
-        # no env override is needed. Names are unversioned, so an existing snapshot
-        # of this name (a stale failed record, or a prior build) is deleted and
-        # recreated on conflict below, making re-runs idempotent.
-        snapshot_name="${vm_name_base}-${vm_size}"
+        # is accepted). So the version is appended as a `-`-delimited suffix
+        # instead of a `:tag`: `<vm_name_base>-<size>-<VERSION>`
+        # (amika-daytona-vm-<size>-<version> or
+        # amika-daytona-vm-dind-<size>-<version>). The web app pins this exact
+        # name (with `DAYTONA_VM_SNAPSHOT_*` overrides) in amika-mono's
+        # `daytonaVmSnapshots`, mirroring how it pins the container `:<version>`
+        # tags — keep the two in sync when bumping the version.
+        snapshot_name="${vm_name_base}-${vm_size}-${VERSION}"
         echo "Creating VM ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) in org ${org}, region ${VM_REGION}..."
-        # Create, tolerating a name conflict from an existing snapshot (stale
-        # failed record or prior build): delete and recreate so the run
-        # (re)publishes the current image. Daytona's delete is asynchronous, so
-        # the name can still be taken for a moment after `snapshot delete`
-        # returns — a single immediate recreate can hit the same conflict. Retry
-        # the delete+recreate with backoff until the name frees (or we give up),
-        # rather than aborting the whole publish on a transient conflict.
+        # The name is version-pinned, so a conflict means this exact commit's
+        # snapshot already exists — skip it (idempotent re-run), exactly like the
+        # container `snapshot push` path above. Do NOT delete-and-recreate: the
+        # snapshot is immutable for a given VERSION and the deployed app may be
+        # booting sandboxes from it right now, so deleting it would break them. If
+        # a prior run left a broken snapshot at this name, delete it manually (or
+        # publish from a new commit) rather than having the build destroy it.
         #
         # Capture output and the REAL exit code directly. Do NOT pipe to `tee`:
         # with pipefail disabled (above) a pipe returns tee's status (0) and would
         # mask a failed create, silently recording it as pushed.
-        create_rc=0
-        max_attempts=5
-        for attempt in $(seq 1 "$max_attempts"); do
-          create_output=$(daytona snapshot create "$snapshot_name" \
-            --image "$vm_image" \
-            --sandbox-class linux-vm \
-            --region "$VM_REGION" \
-            --cpu "$cpu" --memory "$mem" --disk "$disk" 2>&1)
-          create_rc=$?
-          printf '%s\n' "$create_output"
-          [ "$create_rc" -eq 0 ] && break
-          # A non-conflict failure is real — stop retrying and let the check below
-          # abort the run.
-          echo "$create_output" | grep -q "Conflict:.*already exists" || break
-          if [ "$attempt" -ge "$max_attempts" ]; then
-            echo "Error: ${snapshot_name} still conflicts after ${max_attempts} delete+recreate attempts in ${org}." >&2
-            break
-          fi
-          echo "Snapshot ${snapshot_name} exists in ${org}; deleting and recreating (attempt ${attempt}/${max_attempts})..."
-          daytona snapshot delete "$snapshot_name" >/dev/null 2>&1 || true
-          sleep 3
-        done
+        create_output=$(daytona snapshot create "$snapshot_name" \
+          --image "$vm_image" \
+          --sandbox-class linux-vm \
+          --region "$VM_REGION" \
+          --cpu "$cpu" --memory "$mem" --disk "$disk" 2>&1)
+        create_rc=$?
+        printf '%s\n' "$create_output"
         if [ "$create_rc" -ne 0 ]; then
-          echo "Error: failed to create ${snapshot_name} in ${org}." >&2
-          exit "$create_rc"
+          if echo "$create_output" | grep -q "Conflict:.*already exists"; then
+            echo "VM snapshot ${snapshot_name} already exists in ${org}, skipping."
+            EXISTING_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+          else
+            echo "Error: failed to create ${snapshot_name} in ${org}." >&2
+            exit "$create_rc"
+          fi
+        else
+          PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
         fi
-        PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
       done
     done
     set -e
