@@ -59,7 +59,9 @@ SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "am
 # Sizes mirror the container `SIZE_*` table (same tiers, same dimensions) so a
 # `linux-vm` sandbox is provisioned identically to its container equivalent —
 # the app advertises one size table for both. Keep these in sync with `SIZE_*`
-# above (and with `SANDBOX_SIZE_SPECS` in amika-mono).
+# above (and with `SANDBOX_SIZE_SPECS` in amika-mono). Note that not every size
+# is published for every preset — see `vm_excluded_sizes` below (coder-dind has
+# no xs tier).
 VM_SIZES=("xs" "m" "l" "xl")
 VM_CPUS=("1" "2" "2" "4")
 VM_MEMORY=("1" "8" "12" "16")
@@ -335,9 +337,14 @@ for preset in "${PRESETS[@]}"; do
     # Snapshot name base per preset: daytona-coder -> amika-daytona-vm,
     # daytona-coder-dind -> amika-daytona-vm-dind. (dind runs dockerd natively in
     # the VM — no privileged container nesting — so the same image works as a VM.)
+    # `vm_excluded_sizes` (space-separated) drops tiers a preset can't support.
+    # coder-dind bundles the full Docker engine, whose image does not fit the xs
+    # tier's 3GB disk — the OCI→qcow2 build fails — and a 1 vCPU / 1GB RAM box
+    # can't run docker-in-docker usefully anyway, so xs is not published for it.
+    # Keep in sync with `EXCLUDED_SIZES_BY_PRESET` in amika-mono.
     case "$preset" in
-      daytona-coder)      vm_name_base="amika-daytona-vm" ;;
-      daytona-coder-dind) vm_name_base="amika-daytona-vm-dind" ;;
+      daytona-coder)      vm_name_base="amika-daytona-vm";      vm_excluded_sizes="" ;;
+      daytona-coder-dind) vm_name_base="amika-daytona-vm-dind"; vm_excluded_sizes="xs" ;;
     esac
     # The upload push fails by design (the VM region has no container runners),
     # so under `set -e`/`pipefail` that expected non-zero exit would silently
@@ -417,6 +424,12 @@ for preset in "${PRESETS[@]}"; do
       # Step 2: create a linux-vm snapshot per size from the uploaded image.
       for i in "${!VM_SIZES[@]}"; do
         vm_size="${VM_SIZES[$i]}"
+        # Skip sizes this preset does not support (see vm_excluded_sizes).
+        case " $vm_excluded_sizes " in
+          *" $vm_size "*)
+            echo "Skipping ${vm_name_base}-${vm_size}: ${preset} has no ${vm_size} size."
+            continue ;;
+        esac
         # Honor the optional DAYTONA_VM_SIZES subset: skip sizes not requested.
         if [ -n "$VM_SIZES_FILTER" ]; then
           case " $VM_SIZES_FILTER " in
