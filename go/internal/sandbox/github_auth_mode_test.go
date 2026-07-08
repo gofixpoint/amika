@@ -24,6 +24,10 @@ func TestValidateGithubAuthMode(t *testing.T) {
 			mode: "app_token",
 		},
 		{
+			name: "app-token alias is allowed",
+			mode: "app-token",
+		},
+		{
 			name:    "unknown value is rejected",
 			mode:    "oauth",
 			wantErr: "unknown github-auth-mode",
@@ -49,6 +53,39 @@ func TestValidateGithubAuthMode(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCanonicalGithubAuthMode(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "app-token alias normalizes",
+			in:   "app-token",
+			want: "app_token",
+		},
+		{
+			name: "app_token stays unchanged",
+			in:   "app_token",
+			want: "app_token",
+		},
+		{
+			name: "pat stays unchanged",
+			in:   "pat",
+			want: "pat",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CanonicalGithubAuthMode(tt.in)
+			if got != tt.want {
+				t.Fatalf("CanonicalGithubAuthMode(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}

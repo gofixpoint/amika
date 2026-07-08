@@ -295,6 +295,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	}
 	// Validated in RunE before the auth gate; only the value is read here.
 	githubAuthMode, _ := cmd.Flags().GetString("github-auth-mode")
+	githubAuthMode = sandbox.CanonicalGithubAuthMode(githubAuthMode)
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
 	newBranch, _ := cmd.Flags().GetString("new-branch")
