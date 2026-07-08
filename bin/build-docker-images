@@ -25,7 +25,7 @@ set -euo pipefail
 #/   --push-daytona-vm    Also publish linux-vm snapshots (amika-daytona-vm-<size>):
 #/                        uploads the coder image into Daytona's registry, then
 #/                        `daytona snapshot create --image … --sandbox-class linux-vm`
-#/                        in the VM region (DAYTONA_VM_REGION, default "experimental").
+#/                        in the VM region (DAYTONA_VM_REGION, default "us-west-2").
 #/                        Pair with amika/daytona-coder. Requires linux/amd64.
 #/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
 #/                        before each org switch instead of relying on existing daytona login state.
@@ -51,7 +51,7 @@ SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "am
 # --image … --sandbox-class linux-vm`. Built for `daytona-coder`
 # (amika-daytona-vm-<size>) and `daytona-coder-dind` (amika-daytona-vm-dind-<size>).
 # VM snapshots must live in a region with linux-vm runners
-# (DAYTONA_VM_REGION, default "experimental"); the default region has only
+# (DAYTONA_VM_REGION, default "us-west-2"); Daytona's default region has only
 # container runners.
 #
 # Sizes mirror the container `SIZE_*` table (same tiers, same dimensions) so a
@@ -62,7 +62,7 @@ VM_SIZES=("xs" "m" "l" "xl")
 VM_CPUS=("1" "2" "2" "4")
 VM_MEMORY=("1" "8" "12" "16")
 VM_DISK=("3" "10" "18" "24")
-VM_REGION="${DAYTONA_VM_REGION:-experimental}"
+VM_REGION="${DAYTONA_VM_REGION:-us-west-2}"
 VM_ORGS="${DAYTONA_VM_ORGS:-amika-prod Fixpoint}"
 
 VALID_IMAGES="amika/base, amika/coder, amika/claude, amika/daytona-coder, amika/daytona-claude, amika/dind, amika/coder-dind, amika/daytona-coder-dind, all"
