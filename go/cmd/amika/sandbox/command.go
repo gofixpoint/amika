@@ -56,6 +56,8 @@ func New() *cobra.Command {
 	sandboxCreateCmd.Flags().String("branch", "", "Check out this git branch, or create it if it doesn't exist.")
 	sandboxCreateCmd.Flags().String("new-branch", "", "Create a new git branch. With --branch, starts from that branch; otherwise starts from the current checkout.")
 	sandboxCreateCmd.Flags().String("github-auth-mode", "", "GitHub auth mode for the sandbox runtime: pat, app_token, or app-token (remote only; unset uses server default)")
+	// TODO(KAPRO-518): Unhide --github-auth-mode once the staged rollout is complete.
+	sandboxCreateCmd.Flags().MarkHidden("github-auth-mode")
 	sandboxListCmd.Flags().BoolP("long", "l", false, "Show additional columns (IMAGE, PORTS)")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
