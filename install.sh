@@ -4,7 +4,7 @@ set -eu
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
 DEFAULT_VERSION="0.11.2"
-DEFAULT_AMIKALOG_VERSION="0.1.0"
+DEFAULT_AMIKALOG_VERSION="0.2.0"
 COMPONENT="amika"
 INSTALL_VERSION=""
 DRY_RUN=false
@@ -31,7 +31,7 @@ Environment variables:
 Examples:
   curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh | sh
   sh install.sh --install-version 0.1.0-rc.1
-  sh install.sh --component amikalog --install-version 0.1.0
+  sh install.sh --component amikalog --install-version 0.2.0
   AMIKA_INSTALL_DIR=~/.local/bin sh install.sh
 EOF
 }
