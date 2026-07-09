@@ -501,11 +501,20 @@ for preset in "${PRESETS[@]}"; do
           snapshot_state=$(printf '%s' "$list_json" \
             | jq -r --arg n "$snapshot_name" '[.. | objects | select(.name? == $n)] | .[0].state // empty' 2>/dev/null)
           case "$snapshot_state" in
-            active|inactive)
-              # active = ready; inactive = built OK but idled (Daytona reactivates
-              # on demand). Both are usable, so this is a genuine idempotent re-run.
-              echo "VM snapshot ${snapshot_name} already exists in ${org} (state: ${snapshot_state}), skipping."
+            active)
+              # Only `active` snapshots are directly bootable, so only `active` is
+              # a genuine idempotent re-run we can safely skip.
+              echo "VM snapshot ${snapshot_name} already exists and is active in ${org}, skipping."
               EXISTING_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+              ;;
+            inactive)
+              # Built OK but auto-deactivated after sitting idle. Daytona will NOT
+              # boot a sandbox from an inactive snapshot until it is reactivated, so
+              # a deploy pinned to this exact name would fail even though the record
+              # exists. Don't skip — make the operator reactivate it or publish a
+              # fresh version.
+              echo "Error: ${snapshot_name} already exists in ${org} but is 'inactive'; Daytona cannot boot a sandbox from it until it is reactivated, so a deploy pinned to this name would fail. Reactivate it (via Daytona) or publish from a new commit, then re-run. Refusing to report success on a non-bootable snapshot." >&2
+              exit 1
               ;;
             *)
               echo "Error: ${snapshot_name} already exists in ${org} but is not usable (state: '${snapshot_state:-unknown}'). A prior run likely left a broken or unfinished snapshot at this version-pinned name. Delete it (find its ID via 'daytona snapshot list') and re-run, or publish from a new commit. Refusing to report success on a snapshot the app cannot boot." >&2
