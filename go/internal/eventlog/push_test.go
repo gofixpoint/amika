@@ -99,9 +99,9 @@ func TestPush_UploadsWithRepoPrefixedKeys(t *testing.T) {
 	// On-disk names are uppercase, but object keys are lowercased at upload so
 	// they round-trip through case-folding storage listings.
 	want := []string{
-		"amika/claude/sessions/20240101t000000.000000000z_sess-a/event_0_20240101t000000.000000000z.json",
-		"amika/claude/sessions/20240101t000000.000000000z_sess-a/event_1_20240101t000000.000000000z.json",
-		"unknown-repo/codex/sessions/20240101t000000.000000000z_sess-b/event_0_20240101t000000.000000000z.json",
+		"amika/sessions/claude/20240101t000000.000000000z_sess-a/event_0_20240101t000000.000000000z.json",
+		"amika/sessions/claude/20240101t000000.000000000z_sess-a/event_1_20240101t000000.000000000z.json",
+		"unknown-repo/sessions/codex/20240101t000000.000000000z_sess-b/event_0_20240101t000000.000000000z.json",
 	}
 	got := up.keys()
 	if len(got) != len(want) {
@@ -145,7 +145,7 @@ func TestPush_SecondRunSkipsAlreadyUploaded(t *testing.T) {
 func TestPush_FailedUploadIsNotMarkedDone(t *testing.T) {
 	stateDir := t.TempDir()
 	writeTestEvent(t, stateDir, SourceClaude, "20240101T000000.000000000Z_sess-a", 0, &GitInfo{RepoRoot: "/x/amika"})
-	key := "amika/claude/sessions/20240101t000000.000000000z_sess-a/event_0_20240101t000000.000000000z.json"
+	key := "amika/sessions/claude/20240101t000000.000000000z_sess-a/event_0_20240101t000000.000000000z.json"
 
 	failing := newFakeUploader()
 	failing.failKeys[key] = true
@@ -231,8 +231,33 @@ func TestPush_UploadsJSONLSessionFiles(t *testing.T) {
 		t.Fatalf("report = %+v, want uploaded=2 skipped=0 failed=0", report)
 	}
 	want := []string{
-		"amika/claude/sessions/20240101t000000.000000000z_sess-a.jsonl",
-		"unknown-repo/codex/sessions/20240101t000000.000000000z_sess-b.jsonl",
+		"amika/sessions/claude/20240101t000000.000000000z_sess-a.jsonl",
+		"unknown-repo/sessions/codex/20240101t000000.000000000z_sess-b.jsonl",
+	}
+	if got := up.keys(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("uploaded keys = %v, want %v", got, want)
+	}
+}
+
+func TestPush_JSONLNestedRepoPathFromRemote(t *testing.T) {
+	// When events carry an origin remote, the session is filed under the full
+	// host/owner/repo path (nested as folders), not the repo-root basename, so
+	// two checkouts that share a basename do not collide.
+	stateDir := t.TempDir()
+	writeSessionFile(t, stateDir, SourceClaude, "20240101T000000.000000000Z_sess-a.jsonl",
+		eventLine(t, &GitInfo{RepoRoot: "/home/u/work/amika", Remote: "github.com/fixpoint/amika"}, 0),
+	)
+	writeSessionFile(t, stateDir, SourceCodex, "20240101T000000.000000000Z_sess-b.jsonl",
+		eventLine(t, &GitInfo{RepoRoot: "/home/u/other/amika", Remote: "github.com/otherorg/amika"}, 0),
+	)
+
+	up := newFakeUploader()
+	if _, err := Push(stateDir, up); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	want := []string{
+		"github.com/fixpoint/amika/sessions/claude/20240101t000000.000000000z_sess-a.jsonl",
+		"github.com/otherorg/amika/sessions/codex/20240101t000000.000000000z_sess-b.jsonl",
 	}
 	if got := up.keys(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("uploaded keys = %v, want %v", got, want)
@@ -253,7 +278,7 @@ func TestPush_JSONLRepoPrefixFromLaterLine(t *testing.T) {
 	if _, err := Push(stateDir, up); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
-	want := []string{"amika/claude/sessions/20240101t000000.000000000z_sess-a.jsonl"}
+	want := []string{"amika/sessions/claude/20240101t000000.000000000z_sess-a.jsonl"}
 	if got := up.keys(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("uploaded keys = %v, want %v", got, want)
 	}
@@ -279,7 +304,7 @@ func TestPush_JSONLRepoPrefixNotCappedByLineSize(t *testing.T) {
 	if _, err := Push(stateDir, up); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
-	want := []string{"amika/claude/sessions/20240101t000000.000000000z_sess-a.jsonl"}
+	want := []string{"amika/sessions/claude/20240101t000000.000000000z_sess-a.jsonl"}
 	if got := up.keys(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("uploaded keys = %v, want %v", got, want)
 	}
@@ -290,7 +315,7 @@ func TestPush_UploadsOnlyCompleteRecords(t *testing.T) {
 	// upload only the whole records, never the partial tail.
 	stateDir := t.TempDir()
 	name := "20240101T000000.000000000Z_sess-a.jsonl"
-	key := "amika/claude/sessions/20240101t000000.000000000z_sess-a.jsonl"
+	key := "amika/sessions/claude/20240101t000000.000000000z_sess-a.jsonl"
 	dir := EventsDir(stateDir, SourceClaude)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -325,7 +350,7 @@ func TestPush_PinsObjectKeyAcrossPushes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wantKey := "unknown-repo/claude/sessions/20240101t000000.000000000z_sess-a.jsonl"
+	wantKey := "unknown-repo/sessions/claude/20240101t000000.000000000z_sess-a.jsonl"
 
 	if err := os.WriteFile(path, []byte(eventLine(t, nil, 0)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -360,7 +385,7 @@ func TestPush_RecordsUploadedSizeNotFullFileSize(t *testing.T) {
 	// the new event.
 	stateDir := t.TempDir()
 	name := "20240101T000000.000000000Z_sess-a.jsonl"
-	key := "amika/claude/sessions/20240101t000000.000000000z_sess-a.jsonl"
+	key := "amika/sessions/claude/20240101t000000.000000000z_sess-a.jsonl"
 	path := filepath.Join(EventsDir(stateDir, SourceClaude), name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -405,7 +430,7 @@ func TestPush_RecordsUploadedSizeNotFullFileSize(t *testing.T) {
 func TestPush_ReuploadsGrownSessionAndSkipsUnchanged(t *testing.T) {
 	stateDir := t.TempDir()
 	name := "20240101T000000.000000000Z_sess-a.jsonl"
-	key := "amika/claude/sessions/20240101t000000.000000000z_sess-a.jsonl"
+	key := "amika/sessions/claude/20240101t000000.000000000z_sess-a.jsonl"
 	git := &GitInfo{RepoRoot: "/x/amika"}
 
 	writeSessionFile(t, stateDir, SourceClaude, name, eventLine(t, git, 0))
