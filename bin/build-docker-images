@@ -349,6 +349,13 @@ for preset in "${PRESETS[@]}"; do
       daytona-coder)      vm_name_base="amika-daytona-vm";      vm_excluded_sizes="" ;;
       daytona-coder-dind) vm_name_base="amika-daytona-vm-dind"; vm_excluded_sizes="xs" ;;
     esac
+    # Verifying an existing snapshot's state on conflict (below) parses
+    # `daytona snapshot list --format json` with jq. Fail fast if jq is missing
+    # so we never fall through to silently skipping that safety check.
+    command -v jq >/dev/null 2>&1 || {
+      echo "Error: jq is required for --push-daytona-vm (snapshot state verification)." >&2
+      exit 1
+    }
     # The upload push fails by design (the VM region has no container runners),
     # so under `set -e`/`pipefail` that expected non-zero exit would silently
     # abort the whole script. Disable them for this block and check outcomes
@@ -455,13 +462,17 @@ for preset in "${PRESETS[@]}"; do
         # tags — keep the two in sync when bumping the version.
         snapshot_name="${vm_name_base}-${vm_size}-${VERSION}"
         echo "Creating VM ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) in org ${org}, region ${VM_REGION}..."
-        # The name is version-pinned, so a conflict means this exact commit's
-        # snapshot already exists — skip it (idempotent re-run), exactly like the
-        # container `snapshot push` path above. Do NOT delete-and-recreate: the
-        # snapshot is immutable for a given VERSION and the deployed app may be
-        # booting sandboxes from it right now, so deleting it would break them. If
-        # a prior run left a broken snapshot at this name, delete it manually (or
-        # publish from a new commit) rather than having the build destroy it.
+        # The name is version-pinned, so a conflict means a snapshot already
+        # exists under this exact name. Skipping is only safe if that snapshot is
+        # actually usable: `snapshot create --sandbox-class linux-vm` runs an
+        # async OCI→qcow2 conversion, so a prior run for this VERSION can leave a
+        # record in a failed/unfinished state under this name. Because the app
+        # pins this EXACT name, reporting success unconditionally would let prod
+        # sandboxes boot from a broken snapshot. So on conflict we look up the
+        # existing snapshot's state and skip only when it is usable; otherwise we
+        # fail and make the operator clean it up. We do NOT delete-and-recreate: a
+        # *good* snapshot here is immutable content the deployed app may be booting
+        # from right now, and deleting it would break running sandboxes.
         #
         # Capture output and the REAL exit code directly. Do NOT pipe to `tee`:
         # with pipefail disabled (above) a pipe returns tee's status (0) and would
@@ -473,16 +484,37 @@ for preset in "${PRESETS[@]}"; do
           --cpu "$cpu" --memory "$mem" --disk "$disk" 2>&1)
         create_rc=$?
         printf '%s\n' "$create_output"
-        if [ "$create_rc" -ne 0 ]; then
-          if echo "$create_output" | grep -q "Conflict:.*already exists"; then
-            echo "VM snapshot ${snapshot_name} already exists in ${org}, skipping."
-            EXISTING_SNAPSHOTS+=("${snapshot_name} -> ${org}")
-          else
-            echo "Error: failed to create ${snapshot_name} in ${org}." >&2
-            exit "$create_rc"
-          fi
-        else
+        if [ "$create_rc" -eq 0 ]; then
           PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+        elif echo "$create_output" | grep -q "Conflict:.*already exists"; then
+          # Look up the existing snapshot's state (org-scoped to the org we just
+          # switched to). `snapshot list` has no name filter, so pull JSON and
+          # pick this name out with jq; raise --limit well above the default 100
+          # since versioned snapshots accumulate (size × preset × version). The
+          # recursive-descent select tolerates a bare array or a paginated wrapper.
+          list_json=$(daytona snapshot list --format json --limit 1000 2>/dev/null)
+          list_rc=$?
+          if [ "$list_rc" -ne 0 ] || [ -z "$list_json" ]; then
+            echo "Error: ${snapshot_name} already exists in ${org}, but 'daytona snapshot list' failed so its state could not be verified. Refusing to report success on an unverified snapshot; check it manually and re-run." >&2
+            exit 1
+          fi
+          snapshot_state=$(printf '%s' "$list_json" \
+            | jq -r --arg n "$snapshot_name" '[.. | objects | select(.name? == $n)] | .[0].state // empty' 2>/dev/null)
+          case "$snapshot_state" in
+            active|inactive)
+              # active = ready; inactive = built OK but idled (Daytona reactivates
+              # on demand). Both are usable, so this is a genuine idempotent re-run.
+              echo "VM snapshot ${snapshot_name} already exists in ${org} (state: ${snapshot_state}), skipping."
+              EXISTING_SNAPSHOTS+=("${snapshot_name} -> ${org}")
+              ;;
+            *)
+              echo "Error: ${snapshot_name} already exists in ${org} but is not usable (state: '${snapshot_state:-unknown}'). A prior run likely left a broken or unfinished snapshot at this version-pinned name. Delete it (find its ID via 'daytona snapshot list') and re-run, or publish from a new commit. Refusing to report success on a snapshot the app cannot boot." >&2
+              exit 1
+              ;;
+          esac
+        else
+          echo "Error: failed to create ${snapshot_name} in ${org}." >&2
+          exit "$create_rc"
         fi
       done
     done
