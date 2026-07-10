@@ -45,6 +45,19 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Install the amika and amikalog CLIs from their GitHub releases via the install
+# script documented in the README. Both land in /usr/local/bin (on PATH).
+#   amika:    sandbox / agent management CLI.
+#   amikalog: captures Claude Code / Codex hook activity as append-only events.
+# Fetch the script to a file rather than `curl | sh`: Docker's /bin/sh is dash
+# (no pipefail), so a piped `curl` failure would exit 0 and silently skip the
+# install. Running the downloaded script under `&&` makes a bad fetch or a failed
+# install abort the build instead.
+RUN curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh -o /tmp/amika-install.sh \
+    && sh /tmp/amika-install.sh \
+    && sh /tmp/amika-install.sh --component amikalog \
+    && rm /tmp/amika-install.sh
+
 # Default no-op user-facing hooks; callers can shadow them via
 # --setup-script / --start-script or by uploading their own.
 # Lifecycle order:
