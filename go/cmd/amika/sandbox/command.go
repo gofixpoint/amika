@@ -24,6 +24,7 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
 	sandboxCmd.AddCommand(sandboxSSHCmd)
+	sandboxCmd.AddCommand(sandboxSCPCmd)
 	sandboxCmd.AddCommand(sandboxCodeCmd)
 	sandboxCmd.AddCommand(sandboxAgentSendCmd)
 
@@ -66,6 +67,7 @@ func New() *cobra.Command {
 	sandboxSSHCmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
 	sandboxSSHCmd.Flags().Bool("print", false, "Print the SSH connection string instead of connecting")
+	sandboxSCPCmd.Flags().Bool("print", false, "Print the resolved scp command instead of running it")
 	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor to open (currently only \"cursor\" is supported)")
 	sandboxAgentSendCmd.Flags().Bool("no-wait", false, "Send the instruction and return immediately without waiting for a response")
 	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")
