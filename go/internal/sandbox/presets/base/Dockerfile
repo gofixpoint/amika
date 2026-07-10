@@ -140,3 +140,13 @@ RUN mkdir -p /home/amika/workspace
 COPY --chown=amika:amika .zshrc /home/amika/.zshrc
 COPY --chown=amika:amika .bashrc /home/amika/.bashrc
 COPY --chown=amika:amika .tmux.conf /home/amika/.tmux.conf
+
+# Pre-register the amikalog hooks so every sandbox records Claude Code and Codex
+# activity from first boot, without the user having to run `amikalog start`.
+# This runs as the amika user (see USER above) so it writes the per-user hook
+# configs into this home -- ~/.claude/settings.json and ~/.codex/hooks.json --
+# owned by amika, with the hook command pinned to the absolute installed binary
+# path (/usr/local/bin/amikalog). It only writes those config files (no network),
+# and is idempotent, so it is safe across rebuilds. All presets derive from this
+# base, so installing here covers container and Daytona VM sandboxes alike.
+RUN amikalog start
