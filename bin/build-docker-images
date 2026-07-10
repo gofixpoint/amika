@@ -45,7 +45,7 @@ VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 SIZES=("xs" "m" "l" "xl")
 SIZE_CPUS=("1" "2" "2" "4")
 SIZE_MEMORY=("1" "8" "12" "16")
-SIZE_DISK=("3" "10" "18" "24")
+SIZE_DISK=("3" "10" "24" "32")
 SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint")
 
 # Daytona *VM* (linux-vm) snapshot sizes, published by --push-daytona-vm as
@@ -68,7 +68,7 @@ SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "am
 VM_SIZES=("xs" "m" "l" "xl")
 VM_CPUS=("1" "2" "2" "4")
 VM_MEMORY=("1" "8" "12" "16")
-VM_DISK=("3" "10" "18" "24")
+VM_DISK=("3" "10" "24" "32")
 VM_REGION="${DAYTONA_VM_REGION:-us-west-2}"
 VM_ORGS="${DAYTONA_VM_ORGS:-amika-prod Fixpoint}"
 
