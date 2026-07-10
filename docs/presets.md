@@ -21,6 +21,7 @@ The default preset, used when no `--image` or `--preset` flag is provided.
 - Claude Code (`@anthropic-ai/claude-code`)
 - Codex (`@openai/codex`)
 - OpenCode (`opencode-ai`)
+- amika CLI, amikalog CLI
 
 ### `claude`
 
@@ -37,6 +38,7 @@ A lighter preset focused on Claude Code only.
 - Node.js 22, pnpm
 - TypeScript, tsx
 - Claude Code (`@anthropic-ai/claude-code`)
+- amika CLI, amikalog CLI
 
 ## Usage
 
