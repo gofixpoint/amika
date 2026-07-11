@@ -236,6 +236,115 @@ func (c *Client) DeleteSandbox(name string) error {
 	return nil
 }
 
+// RemoteRepository represents a repository returned by
+// GET /api/v0beta1/repositories.
+type RemoteRepository struct {
+	ID      string `json:"id"`
+	RepoURL string `json:"repo_url"`
+}
+
+// ListRepositories fetches the org's repositories from the remote API.
+func (c *Client) ListRepositories() ([]RemoteRepository, error) {
+	var result []RemoteRepository
+	if err := c.doJSON("GET", apiBasePath+"/repositories", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list repositories: %w", err)
+	}
+	return result, nil
+}
+
+// SandboxSnapshot represents a snapshot captured from a running sandbox, as
+// returned by the /api/v0beta1/sandbox-snapshots endpoints.
+type SandboxSnapshot struct {
+	Snapshot          string  `json:"snapshot"`
+	Provider          string  `json:"provider"`
+	Description       *string `json:"description"`
+	SourceSandboxID   *string `json:"source_sandbox_id"`
+	SourceSandboxName *string `json:"source_sandbox_name"`
+	RepositoryID      *string `json:"repository_id"`
+	BaseSnapshot      *string `json:"base_snapshot"`
+	SandboxPreset     *string `json:"sandbox_preset"`
+	SandboxSize       *string `json:"sandbox_size"`
+	State             string  `json:"state"`
+	ErrorMessage      *string `json:"error_message"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
+}
+
+// CreateSandboxSnapshotRequest is the request body for
+// POST /api/v0beta1/sandbox-snapshots. SandboxRef references the source
+// sandbox by name or id; the server resolves it (id first, then name). Mode
+// is "scrub_and_delete" or "full".
+type CreateSandboxSnapshotRequest struct {
+	SandboxRef  string `json:"sandbox_ref"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+}
+
+// ListSandboxSnapshots lists sandbox-captured snapshots for the caller's org.
+// repositoryID and sourceSandboxID are optional id filters; pass "" to omit.
+func (c *Client) ListSandboxSnapshots(repositoryID, sourceSandboxID string) ([]SandboxSnapshot, error) {
+	q := url.Values{}
+	if repositoryID != "" {
+		q.Set("repository_id", repositoryID)
+	}
+	if sourceSandboxID != "" {
+		q.Set("source_sandbox_id", sourceSandboxID)
+	}
+	path := apiBasePath + "/sandbox-snapshots"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var envelope struct {
+		Items []SandboxSnapshot `json:"items"`
+	}
+	if err := c.doJSON("GET", path, nil, &envelope); err != nil {
+		return nil, fmt.Errorf("remote list sandbox snapshots: %w", err)
+	}
+	return envelope.Items, nil
+}
+
+// CreateSandboxSnapshot starts capturing a snapshot from a running sandbox.
+// The endpoint returns 202 Accepted with the snapshot in the "capturing"
+// state; poll ListSandboxSnapshots until it reaches "active" or "failed".
+func (c *Client) CreateSandboxSnapshot(req CreateSandboxSnapshotRequest) (*SandboxSnapshot, error) {
+	var result SandboxSnapshot
+	if err := c.doJSON("POST", apiBasePath+"/sandbox-snapshots", req, &result); err != nil {
+		return nil, fmt.Errorf("remote create sandbox snapshot: %w", err)
+	}
+	return &result, nil
+}
+
+// SandboxScrubPreview lists the injected secrets a "snapshot and delete" would
+// remove from a sandbox (file paths + env var names only, no values).
+type SandboxScrubPreview struct {
+	Files   []string `json:"files"`
+	EnvVars []string `json:"env_vars"`
+}
+
+// GetSandboxScrubPreview previews which injected secrets a scrub-and-delete
+// snapshot would remove from the given sandbox. sandboxRef is a name or id;
+// the server resolves it (id first, then name).
+func (c *Client) GetSandboxScrubPreview(sandboxRef string) (*SandboxScrubPreview, error) {
+	q := url.Values{}
+	q.Set("sandbox", sandboxRef)
+	q.Set("by", "ref")
+	var result SandboxScrubPreview
+	if err := c.doJSON("GET", apiBasePath+"/sandbox-snapshots/scrub-preview?"+q.Encode(), nil, &result); err != nil {
+		return nil, fmt.Errorf("remote sandbox scrub preview: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteSandboxSnapshot deletes a sandbox snapshot referenced by name or id.
+// The server resolves the reference (id first, then name).
+func (c *Client) DeleteSandboxSnapshot(ref string) error {
+	if err := c.doJSON("DELETE", apiBasePath+"/sandbox-snapshots/"+url.PathEscape(ref)+"?by=ref", nil, nil); err != nil {
+		return fmt.Errorf("remote delete sandbox snapshot: %w", err)
+	}
+	return nil
+}
+
 // Secret represents a secret returned by the remote API.
 type Secret struct {
 	ID    string `json:"id"`
