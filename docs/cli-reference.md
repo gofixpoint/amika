@@ -233,7 +233,7 @@ Sources and targets may be a local path or, additionally, any of these remote fo
 | `sbox://<sbox_name>/PATH`         | A path inside the sandbox (URI form)      |
 | `scp://[user@]host[:port][/path]` | A path on an arbitrary SSH host           |
 
-A bare `<sbox_name>:PATH` is treated as a sandbox reference only when its host matches the sandbox named as the first argument; any other `host:path` is passed through for `scp` to interpret as a normal SSH host. The command resolves each sandbox reference to a fresh SSH destination and connects with `StrictHostKeyChecking=accept-new`.
+A bare `<sbox_name>:PATH` is treated as a sandbox reference only when its host matches the sandbox named as the first argument; any other `host:path` is passed through for `scp` to interpret as a normal SSH host. The command resolves each sandbox reference to a fresh SSH destination. When the sandbox is the only remote, it connects with `StrictHostKeyChecking=accept-new`; when an external host is also involved, no host-key option is injected (scp applies `-o` options to every remote), so your normal SSH config governs.
 
 ```bash
 # Upload a file into the sandbox

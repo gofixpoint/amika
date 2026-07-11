@@ -61,6 +61,9 @@ Examples:
 	},
 }
 
+// sshDefaultPort is the port scp connects to when no -P/port is given.
+const sshDefaultPort = 22
+
 // destResolver resolves a sandbox name to its concrete SSH destination.
 type destResolver func(name string) (ssh.Destination, error)
 
@@ -170,9 +173,7 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 	userSetPort, userSetStrict := scanUserOptions(plan.scpArgv)
 
 	rewritten := make([]string, 0, len(plan.scpArgv))
-	ports := map[int]bool{}
-	sandboxUsed := false
-	remoteUsed := false
+	usage := remoteUsage{ports: map[int]bool{}}
 
 	for _, tok := range plan.scpArgv {
 		switch {
@@ -189,10 +190,8 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 				return nil, err
 			}
 			rewritten = append(rewritten, remoteSpec(d, path))
-			sandboxUsed, remoteUsed = true, true
-			if d.Port != 0 {
-				ports[d.Port] = true
-			}
+			usage.sandbox = true
+			usage.addPort(d.Port)
 
 		case strings.HasPrefix(tok, "scp://"):
 			spec, port, err := parseSCPURI(tok)
@@ -200,10 +199,8 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 				return nil, err
 			}
 			rewritten = append(rewritten, spec)
-			remoteUsed = true
-			if port != 0 {
-				ports[port] = true
-			}
+			usage.external = true
+			usage.addPort(port)
 
 		case isSandboxRef(tok, plan.sandbox):
 			d, err := getDest()
@@ -212,45 +209,70 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 			}
 			path := tok[len(plan.sandbox)+1:]
 			rewritten = append(rewritten, remoteSpec(d, path))
-			sandboxUsed, remoteUsed = true, true
-			if d.Port != 0 {
-				ports[d.Port] = true
-			}
+			usage.sandbox = true
+			usage.addPort(d.Port)
 
 		default:
 			// A native "host:path" (not the sandbox) is a remote scp already
 			// understands; pass it through but count it so the guard below only
 			// trips when every source and target is local.
 			if looksLikeRemote(tok) {
-				remoteUsed = true
+				usage.external = true
+				usage.addPort(0)
 			}
 			rewritten = append(rewritten, tok)
 		}
 	}
 
-	if !remoteUsed {
+	if !usage.sandbox && !usage.external {
 		return nil, fmt.Errorf("no remote source or target found; reference the sandbox as %s:PATH or sbox://%s/PATH, or use an scp:// URI", plan.sandbox, plan.sandbox)
 	}
 
-	opts, err := scpConnectionOptions(sandboxUsed, userSetStrict, userSetPort, ports)
+	opts, err := scpConnectionOptions(usage, userSetStrict, userSetPort)
 	if err != nil {
 		return nil, err
 	}
 	return append(opts, rewritten...), nil
 }
 
+// remoteUsage summarizes the remotes referenced by an scp argv: whether the
+// sandbox and/or an external SSH host appears, which explicit ports the remotes
+// require, and whether any remote relies on scp's default port.
+type remoteUsage struct {
+	sandbox      bool         // any sandbox reference
+	external     bool         // any non-sandbox remote (scp:// URI or native host:path)
+	implicitPort bool         // any remote without an explicit port
+	ports        map[int]bool // explicit ports required by remotes
+}
+
+// addPort records a remote's port requirement; 0 means the remote uses scp's
+// default port.
+func (u *remoteUsage) addPort(port int) {
+	if port == 0 {
+		u.implicitPort = true
+		return
+	}
+	u.ports[port] = true
+}
+
 // scpConnectionOptions builds the scp options implied by the resolved remotes:
 // an accept-new host-key policy for sandbox connections and a single -P port.
 // scp's getopt stops at the first non-option argument, so these must be
 // prepended ahead of the sources and target.
-func scpConnectionOptions(sandboxUsed, userSetStrict, userSetPort bool, ports map[int]bool) ([]string, error) {
+//
+// Both options are global to the whole scp invocation, so each is emitted only
+// when it cannot mis-apply to another remote: the relaxed host-key policy only
+// when the sandbox is the sole remote (an external host keeps the user's normal
+// SSH config), and -P only when every remote agrees on the port (a remote
+// without an explicit port counts as default-port 22).
+func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([]string, error) {
 	var opts []string
-	if sandboxUsed && !userSetStrict {
+	if usage.sandbox && !usage.external && !userSetStrict {
 		opts = append(opts, "-o", "StrictHostKeyChecking=accept-new")
 	}
 	if !userSetPort {
-		distinct := make([]int, 0, len(ports))
-		for p := range ports {
+		distinct := make([]int, 0, len(usage.ports))
+		for p := range usage.ports {
 			distinct = append(distinct, p)
 		}
 		sort.Ints(distinct)
@@ -258,6 +280,9 @@ func scpConnectionOptions(sandboxUsed, userSetStrict, userSetPort bool, ports ma
 			return nil, fmt.Errorf("cannot copy between remotes on different ports %v; scp uses a single port per invocation", distinct)
 		}
 		if len(distinct) == 1 {
+			if usage.implicitPort && distinct[0] != sshDefaultPort {
+				return nil, fmt.Errorf("cannot copy between remotes on different ports: one remote requires port %d while another uses the default port %d; scp uses a single port per invocation", distinct[0], sshDefaultPort)
+			}
 			opts = append(opts, "-P", strconv.Itoa(distinct[0]))
 		}
 	}

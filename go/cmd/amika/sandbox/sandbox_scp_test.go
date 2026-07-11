@@ -144,16 +144,39 @@ func TestBuildSCPInvocation(t *testing.T) {
 			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-P", "2222", "./a.txt", "u@host.example:/x"},
 		},
 		{
+			// An external host is involved, so the sandbox host-key policy is
+			// not injected (scp -o options apply to every remote).
 			name: "scp uri external host with port",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data.csv", "scp://user@host:22/tmp/data.csv"}},
 			dest: daytona,
-			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-P", "22", "user-token@ssh.app.daytona.io:/data.csv", "user@host:/tmp/data.csv"},
+			want: []string{"-P", "22", "user-token@ssh.app.daytona.io:/data.csv", "user@host:/tmp/data.csv"},
 		},
 		{
 			name: "native host path passthrough with sandbox",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "other-host:/backup"}},
 			dest: daytona,
-			want: []string{"-o", "StrictHostKeyChecking=accept-new", "user-token@ssh.app.daytona.io:/data", "other-host:/backup"},
+			want: []string{"user-token@ssh.app.daytona.io:/data", "other-host:/backup"},
+		},
+		{
+			// A ported sandbox with an implicit-port external remote would force
+			// the external host onto the sandbox's port via the global -P.
+			name:    "ported sandbox with implicit-port external remote",
+			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "other-host:/backup"}},
+			dest:    ported,
+			wantErr: "different ports",
+		},
+		{
+			name:    "ported sandbox with portless scp uri",
+			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "scp://host/backup"}},
+			dest:    ported,
+			wantErr: "different ports",
+		},
+		{
+			// Explicit port 22 agrees with the implicit default, so -P 22 is safe.
+			name: "explicit port 22 with implicit-port remote",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:22/data", "other-host:/backup"}},
+			dest: daytona,
+			want: []string{"-P", "22", "host:/data", "other-host:/backup"},
 		},
 		{
 			name: "user set port is not overridden",
