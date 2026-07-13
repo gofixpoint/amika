@@ -55,19 +55,18 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), formatRepoBanner(identity))
 
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
 		if mode == runmode.Remote && noClean {
 			return fmt.Errorf("--no-clean is only supported for local sandboxes")
 		}
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 		if mode == runmode.Remote {
-			return createRemoteSandbox(cmd, target, identity)
+			return createRemoteSandbox(cmd, identity)
 		}
 
 		if secretFlags, _ := cmd.Flags().GetStringArray("secret"); len(secretFlags) > 0 {
@@ -284,7 +283,7 @@ var sandboxCreateCmd = &cobra.Command{
 	},
 }
 
-func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentity) error {
+func createRemoteSandbox(cmd *cobra.Command, identity repoIdentity) error {
 	name, _ := cmd.Flags().GetString("name")
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
@@ -350,10 +349,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 		return err
 	}
 
-	client, err := getRemoteClient(target)
-	if err != nil {
-		return err
-	}
+	client := runmode.NewRemoteClient()
 
 	noSetup, _ := cmd.Flags().GetBool("no-setup")
 	if noSetup && cmd.Flags().Changed("setup-script") {

@@ -14,6 +14,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/arch"
 	"github.com/gofixpoint/amika/go/internal/auth"
+	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
 
@@ -105,10 +106,7 @@ Examples:
 			}
 
 			// Get remote API client.
-			client, err := getSecretsClient()
-			if err != nil {
-				return fmt.Errorf("authenticating with remote API: %w", err)
-			}
+			client := runmode.NewRemoteClient()
 
 			// Fetch existing remote secrets to decide create vs update.
 			existing, err := client.ListSecrets()
@@ -244,10 +242,7 @@ Examples:
 			}
 
 			// Get remote API client.
-			client, err := getSecretsClient()
-			if err != nil {
-				return fmt.Errorf("authenticating with remote API: %w", err)
-			}
+			client := runmode.NewRemoteClient()
 
 			// Fetch existing remote secrets to decide create vs update.
 			existing, err := client.ListSecrets()
@@ -355,13 +350,6 @@ func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, 
 		return "", fmt.Errorf("updating secret %s: %w", name, err)
 	}
 	return "Updated", nil
-}
-
-// getSecretsClient returns an API client for secrets operations.
-// Credentials are resolved per request in the order: AMIKA_API_KEY env var,
-// stored API key file, then WorkOS session.
-func getSecretsClient() (*apiclient.Client, error) {
-	return newRemoteClient(), nil
 }
 
 // parseOnlyFilter splits a comma-separated list of secret names into a set.
@@ -520,10 +508,7 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 			force, _ := cmd.Flags().GetBool("force")
 			scope, _ := cmd.Flags().GetString("scope")
 
-			client, err := getSecretsClient()
-			if err != nil {
-				return fmt.Errorf("authenticating with remote API: %w", err)
-			}
+			client := runmode.NewRemoteClient()
 
 			// Provider secrets have no update endpoint, so --force overwrites by
 			// deleting the conflicting credential before creating the new one.
@@ -598,10 +583,7 @@ func newProviderListCmd(p providerConfig) *cobra.Command {
 		Short:   fmt.Sprintf("List pushed %s credentials", p.DisplayName),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 
-			client, err := getSecretsClient()
-			if err != nil {
-				return fmt.Errorf("authenticating with remote API: %w", err)
-			}
+			client := runmode.NewRemoteClient()
 
 			items, err := client.ListProviderSecrets(p.APIPath)
 			if err != nil {
@@ -631,10 +613,7 @@ func newProviderDeleteCmd(p providerConfig) *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
-			client, err := getSecretsClient()
-			if err != nil {
-				return fmt.Errorf("authenticating with remote API: %w", err)
-			}
+			client := runmode.NewRemoteClient()
 
 			if err := client.DeleteProviderSecret(p.APIPath, args[0]); err != nil {
 				return err

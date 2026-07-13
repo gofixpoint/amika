@@ -68,7 +68,7 @@ func TestAuthLogin_APIKeyFileIgnoresStoredSession(t *testing.T) {
 	t.Setenv("AMIKA_API_KEY", "")
 
 	// A stored session — valid or not — must not block API-key login.
-	// defaultAuthChecker resolves API keys ahead of sessions, so they
+	// runmode.DefaultAuthChecker resolves API keys ahead of sessions, so they
 	// never conflict; and this path is documented to stay reliably
 	// non-interactive (no network, no session validation), which is
 	// load-bearing for CI/offline recovery.

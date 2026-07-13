@@ -39,19 +39,15 @@ Examples:
 		if mode == runmode.Local {
 			return fmt.Errorf("SSH access requires a remote sandbox; omit --local")
 		}
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
-		client, err := getRemoteClient(target)
-		if err != nil {
-			return err
-		}
+		client := runmode.NewRemoteClient()
 
 		revoke, _ := cmd.Flags().GetBool("revoke")
 		if revoke {
@@ -112,7 +108,7 @@ Examples:
 		if mode == runmode.Local {
 			return fmt.Errorf("code command requires a remote sandbox; omit --local")
 		}
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -120,15 +116,11 @@ Examples:
 			return fmt.Errorf("cursor CLI is not installed or not in PATH; install it from Cursor > Settings > Extensions > cursor-cli")
 		}
 
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
-		client, err := getRemoteClient(target)
-		if err != nil {
-			return err
-		}
+		client := runmode.NewRemoteClient()
 
 		cursorTarget, err := prepareCursorSSHTarget(client, basedir.New(""), name)
 		if err != nil {

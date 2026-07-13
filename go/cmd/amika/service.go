@@ -43,7 +43,7 @@ var serviceListCmd = &cobra.Command{
 		}
 
 		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, remoteAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -118,7 +118,7 @@ func localServiceRows(sandboxName string) ([]serviceRow, error) {
 // returns each sandbox's provisioned services (name, port, and generated URL),
 // so no local state is involved.
 func remoteServiceRows(sandboxName string) ([]serviceRow, error) {
-	sandboxes, err := newRemoteClient().ListSandboxes()
+	sandboxes, err := runmode.NewRemoteClient().ListSandboxes()
 	if err != nil {
 		return nil, err
 	}

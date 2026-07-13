@@ -49,7 +49,7 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 
 		// --api-key-file is local-only by design (it pairs with secret
 		// managers in CI). Sessions don't conflict with stored API
-		// keys — defaultAuthChecker resolves API keys ahead of
+		// keys — runmode.DefaultAuthChecker resolves API keys ahead of
 		// sessions — so neither valid nor stale sessions need to gate
 		// this path. Refusing only on existing API-key state keeps
 		// the path reliably non-interactive: no network, no session

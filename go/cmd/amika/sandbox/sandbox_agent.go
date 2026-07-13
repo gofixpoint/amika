@@ -200,13 +200,12 @@ Use --no-wait to send the message and return immediately.`,
 			return err
 		}
 
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
 		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -235,10 +234,7 @@ Use --no-wait to send the message and return immediately.`,
 			return nil
 		}
 
-		client, err := getRemoteClient(target)
-		if err != nil {
-			return err
-		}
+		client := runmode.NewRemoteClient()
 
 		sessionID, _ := cmd.Flags().GetString("session-id")
 		newSession, _ := cmd.Flags().GetBool("new-session")

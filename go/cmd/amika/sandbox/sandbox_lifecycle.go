@@ -34,22 +34,18 @@ var sandboxStartCmd = &cobra.Command{
 	Long:  `Start (resume) one or more stopped sandboxes.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
 		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
 		var errs []string
 		if mode == runmode.Remote {
-			remoteClient, err := getRemoteClient(target)
-			if err != nil {
-				return err
-			}
+			remoteClient := runmode.NewRemoteClient()
 			for _, name := range args {
 				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
@@ -96,22 +92,18 @@ var sandboxStopCmd = &cobra.Command{
 	Long:  `Stop one or more running sandboxes without removing them.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
 		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
 		var errs []string
 		if mode == runmode.Remote {
-			remoteClient, err := getRemoteClient(target)
-			if err != nil {
-				return err
-			}
+			remoteClient := runmode.NewRemoteClient()
 			for _, name := range args {
 				if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
@@ -158,13 +150,12 @@ var sandboxListCmd = &cobra.Command{
 	Short:   "List all sandboxes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
 		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -188,10 +179,7 @@ var sandboxListCmd = &cobra.Command{
 			}
 			allItems = append(allItems, result.Items...)
 		} else {
-			client, err := getRemoteClient(target)
-			if err != nil {
-				return err
-			}
+			client := runmode.NewRemoteClient()
 			remoteSandboxes, err := client.ListSandboxes()
 			if err != nil {
 				return err
@@ -331,13 +319,12 @@ var sandboxConnectCmd = &cobra.Command{
 			return err
 		}
 
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
+		if _, err := getRemoteTarget(cmd); err != nil {
 			return err
 		}
 
 		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -360,10 +347,7 @@ var sandboxConnectCmd = &cobra.Command{
 			return nil
 		}
 
-		client, err := getRemoteClient(target)
-		if err != nil {
-			return err
-		}
+		client := runmode.NewRemoteClient()
 		return ssh.ExecSSH(client, name, false, nil)
 	},
 }
