@@ -145,11 +145,12 @@ func TestBuildSCPInvocation(t *testing.T) {
 		},
 		{
 			// An external host is involved, so the sandbox host-key policy is
-			// not injected (scp -o options apply to every remote).
+			// not injected (scp -o options apply to every remote). Port 22 is
+			// scp's default, so no -P is forced onto the external remote either.
 			name: "scp uri external host with port",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data.csv", "scp://user@host:22/tmp/data.csv"}},
 			dest: daytona,
-			want: []string{"-P", "22", "user-token@ssh.app.daytona.io:/data.csv", "user@host:/tmp/data.csv"},
+			want: []string{"user-token@ssh.app.daytona.io:/data.csv", "user@host:/tmp/data.csv"},
 		},
 		{
 			name: "native host path passthrough with sandbox",
@@ -172,11 +173,21 @@ func TestBuildSCPInvocation(t *testing.T) {
 			wantErr: "different ports",
 		},
 		{
-			// Explicit port 22 agrees with the implicit default, so -P 22 is safe.
+			// The only explicit port is scp's default (22), which scp dials
+			// without -P. Forcing -P 22 would override a config-derived port on
+			// the implicit-port native remote, so no -P is emitted.
 			name: "explicit port 22 with implicit-port remote",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:22/data", "other-host:/backup"}},
 			dest: daytona,
-			want: []string{"-P", "22", "host:/data", "other-host:/backup"},
+			want: []string{"host:/data", "other-host:/backup"},
+		},
+		{
+			// Both remotes explicitly agree on a non-default port, so -P is
+			// injected (no implicit-port remote it could mis-apply to).
+			name: "matching non-default ports inject -P",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:2222/data", "mybox:/backup"}},
+			dest: ported,
+			want: []string{"-P", "2222", "host:/data", "u@host.example:/backup"},
 		},
 		{
 			name: "user set port is not overridden",
@@ -258,6 +269,7 @@ func TestParseSboxURI(t *testing.T) {
 		{raw: "sbox://mybox/home/amika/a.txt", wantName: "mybox", wantPath: "/home/amika/a.txt"},
 		{raw: "sbox://mybox", wantName: "mybox", wantPath: ""},
 		{raw: "sbox:///no-host", wantErr: true},
+		{raw: "sbox://mybox:2222/x", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
@@ -321,6 +333,58 @@ func TestLooksLikeRemote(t *testing.T) {
 		if looksLikeRemote(tok) {
 			t.Errorf("looksLikeRemote(%q) = true, want false", tok)
 		}
+	}
+}
+
+func TestExtraSSHOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		dest string
+		want []string
+	}{
+		{name: "plain host", dest: "token@ssh.app.daytona.io", want: nil},
+		{name: "host with port", dest: "-p 2222 user@host", want: nil},
+		{name: "identity file", dest: "-i /tmp/key user@host", want: []string{"-i", "/tmp/key"}},
+		{name: "config file", dest: "-F /tmp/cfg user@host", want: []string{"-F", "/tmp/cfg"}},
+		{name: "ssh option pair", dest: "-o ProxyCommand=nc user@host", want: []string{"-o", "ProxyCommand=nc"}},
+		{name: "port plus option", dest: "-p 2222 -i /k user@host", want: []string{"-i", "/k"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extraSSHOptions(tt.dest)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("extraSSHOptions(%q) = %#v, want %#v", tt.dest, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScanUserOptions(t *testing.T) {
+	tests := []struct {
+		name       string
+		argv       []string
+		wantPort   bool
+		wantStrict bool
+	}{
+		{name: "no options", argv: []string{"./a", "mybox:/b"}},
+		{name: "explicit -P", argv: []string{"-P", "2222", "./a", "mybox:/b"}, wantPort: true},
+		{name: "attached -P", argv: []string{"-P2222", "./a", "mybox:/b"}, wantPort: true},
+		{name: "bundled -rP", argv: []string{"-rP", "2222", "./a", "mybox:/b"}, wantPort: true},
+		{name: "-o Port pair", argv: []string{"-o", "Port=2222", "./a", "mybox:/b"}, wantPort: true},
+		{name: "-o StrictHostKeyChecking pair", argv: []string{"-o", "StrictHostKeyChecking=yes", "./a", "mybox:/b"}, wantStrict: true},
+		{name: "attached -oStrictHostKeyChecking", argv: []string{"-oStrictHostKeyChecking=no", "./a"}, wantStrict: true},
+		{name: "lowercase -p is preserve not port", argv: []string{"-p", "./a", "mybox:/b"}},
+		{name: "path containing StrictHostKeyChecking is not an option", argv: []string{"./StrictHostKeyChecking.bak", "mybox:/b"}},
+		{name: "path containing P is not a port flag", argv: []string{"./PATH", "mybox:/b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPort, gotStrict := scanUserOptions(tt.argv)
+			if gotPort != tt.wantPort || gotStrict != tt.wantStrict {
+				t.Errorf("scanUserOptions(%#v) = (port=%v, strict=%v), want (port=%v, strict=%v)",
+					tt.argv, gotPort, gotStrict, tt.wantPort, tt.wantStrict)
+			}
+		})
 	}
 }
 
