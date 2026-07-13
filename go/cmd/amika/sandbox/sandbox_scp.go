@@ -358,11 +358,13 @@ func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
 			continue // an operand; scp options precede operands
 		}
 
-		// ssh_config-style option, as "-o KEY=VAL" or "-oKEY=VAL".
+		// ssh_config-style option, as "-o KEY=VAL" or "-oKEY=VAL". OpenSSH also
+		// accepts the "KEY VAL" form (e.g. -o "Port 2222"), so split the key on
+		// the first '=' or whitespace.
 		if optVal := oOptionValue(tok, argv, i); optVal != "" {
 			key := optVal
-			if eq := strings.IndexByte(key, '='); eq >= 0 {
-				key = key[:eq]
+			if sep := strings.IndexAny(key, "= \t"); sep >= 0 {
+				key = key[:sep]
 			}
 			switch {
 			case strings.EqualFold(key, "StrictHostKeyChecking"):
