@@ -202,6 +202,16 @@ func TestBuildSCPInvocation(t *testing.T) {
 			want: []string{"-o", "StrictHostKeyChecking=yes", "./a", "user-token@ssh.app.daytona.io:/x"},
 		},
 		{
+			// -J takes a "[user@]host[:port]" jump-host argument; it must not be
+			// counted as an external remote (which would suppress the sandbox
+			// host-key policy and, on a non-default sandbox port, wrongly trip
+			// the mixed-port error).
+			name: "option argument with host syntax is not a remote",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"-J", "bastion:22", "./a", "mybox:/x"}},
+			dest: ported,
+			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-P", "2222", "-J", "bastion:22", "./a", "u@host.example:/x"},
+		},
+		{
 			name:    "no remote is an error",
 			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"./a", "./b"}},
 			dest:    daytona,
@@ -354,6 +364,35 @@ func TestExtraSSHOptions(t *testing.T) {
 			got := extraSSHOptions(tt.dest)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("extraSSHOptions(%q) = %#v, want %#v", tt.dest, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConsumesNextArg(t *testing.T) {
+	tests := []struct {
+		tok  string
+		want bool
+	}{
+		{tok: "-J", want: true},                // jump host takes next token
+		{tok: "-i", want: true},                // identity file
+		{tok: "-o", want: true},                // ssh option
+		{tok: "-P", want: true},                // port
+		{tok: "-rP", want: true},               // bundled; trailing P takes next token
+		{tok: "-oProxyCommand=x", want: false}, // value attached
+		{tok: "-P2222", want: false},           // value attached
+		{tok: "-r", want: false},               // boolean flag
+		{tok: "-4", want: false},               // boolean flag
+		{tok: "-rv", want: false},              // bundled booleans
+		{tok: "host:/path", want: false},       // operand
+		{tok: "./local", want: false},          // operand
+		{tok: "-", want: false},                // stdin/stdout operand
+		{tok: "--", want: false},               // end-of-options marker
+	}
+	for _, tt := range tests {
+		t.Run(tt.tok, func(t *testing.T) {
+			if got := consumesNextArg(tt.tok); got != tt.want {
+				t.Errorf("consumesNextArg(%q) = %v, want %v", tt.tok, got, tt.want)
 			}
 		})
 	}

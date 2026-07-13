@@ -175,7 +175,19 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 	rewritten := make([]string, 0, len(plan.scpArgv))
 	usage := remoteUsage{ports: map[int]bool{}}
 
-	for _, tok := range plan.scpArgv {
+	for i := 0; i < len(plan.scpArgv); i++ {
+		tok := plan.scpArgv[i]
+
+		// An scp option that takes its argument in the following token (e.g.
+		// "-J bastion:22", "-o ProxyCommand=...", "-i key") passes both tokens
+		// through untouched: the argument may use "host:port" syntax that must
+		// not be mistaken for a copy endpoint.
+		if consumesNextArg(tok) && i+1 < len(plan.scpArgv) {
+			rewritten = append(rewritten, tok, plan.scpArgv[i+1])
+			i++
+			continue
+		}
+
 		switch {
 		case strings.HasPrefix(tok, "sbox://"):
 			name, path, err := parseSboxURI(tok)
@@ -353,6 +365,28 @@ func oOptionValue(tok string, argv []string, i int) string {
 		return tok[len("-o"):]
 	}
 	return ""
+}
+
+// scpArgOptions are scp's single-letter flags that take an argument (from
+// scp(1)). The argument may itself use "host:port" syntax (notably -J, the jump
+// host), so it must be skipped when scanning argv for copy endpoints.
+const scpArgOptions = "cDFiJloPSX"
+
+// consumesNextArg reports whether an scp option token takes the following argv
+// token as its argument (rather than an attached value). It mirrors getopt: in a
+// bundled cluster such as "-rP" only the first argument-taking letter takes a
+// value, and it takes the following token only when nothing is attached after it
+// ("-o" takes the next token; "-oVALUE" and "-rP2222" carry the value inline).
+func consumesNextArg(tok string) bool {
+	if len(tok) < 2 || tok[0] != '-' || tok[1] == '-' {
+		return false // an operand, "-", or "--" end-of-options marker
+	}
+	for i := 1; i < len(tok); i++ {
+		if strings.IndexByte(scpArgOptions, tok[i]) >= 0 {
+			return i == len(tok)-1
+		}
+	}
+	return false
 }
 
 // isSandboxRef reports whether tok is a bare scp-style reference to the named
