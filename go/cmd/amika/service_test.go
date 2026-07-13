@@ -101,6 +101,20 @@ func TestServiceListCommand_Local_NoServices(t *testing.T) {
 	}
 }
 
+// --remote-target is unsupported and must be rejected up front regardless of
+// mode, matching the sandbox command — not silently ignored in local mode.
+func TestServiceListCommand_RemoteTargetRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "list", "--local", "--remote-target", "staging")
+	if err == nil {
+		t.Fatal("expected --remote-target to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not yet supported") {
+		t.Fatalf("expected 'not yet supported' error, got: %v", err)
+	}
+}
+
 // The default mode is remote, so listing without credentials must fail with a
 // login hint rather than silently reading local state.
 func TestServiceListCommand_DefaultRemote_RequiresAuth(t *testing.T) {
@@ -123,11 +137,10 @@ func TestFormatRemoteServicePort(t *testing.T) {
 		in   apiclient.RemoteSandboxService
 		want string
 	}{
-		{"equal ports", apiclient.RemoteSandboxService{HostPort: 3000, ContainerPort: 3000, Protocol: "tcp"}, "3000/tcp"},
-		{"zero host port", apiclient.RemoteSandboxService{HostPort: 0, ContainerPort: 8080, Protocol: "tcp"}, "8080/tcp"},
+		{"equal ports", apiclient.RemoteSandboxService{HostPort: 3000, ContainerPort: 3000, Protocol: "tcp"}, "3000->3000/tcp"},
 		{"differing ports", apiclient.RemoteSandboxService{HostPort: 40001, ContainerPort: 3000, Protocol: "tcp"}, "40001->3000/tcp"},
-		{"empty protocol defaults tcp", apiclient.RemoteSandboxService{HostPort: 3000, ContainerPort: 3000}, "3000/tcp"},
-		{"udp protocol", apiclient.RemoteSandboxService{HostPort: 53, ContainerPort: 53, Protocol: "udp"}, "53/udp"},
+		{"empty protocol defaults tcp", apiclient.RemoteSandboxService{HostPort: 3000, ContainerPort: 3000}, "3000->3000/tcp"},
+		{"udp protocol", apiclient.RemoteSandboxService{HostPort: 53, ContainerPort: 53, Protocol: "udp"}, "53->53/udp"},
 	}
 	for _, tc := range cases {
 		if got := formatRemoteServicePort(tc.in); got != tc.want {
@@ -149,14 +162,14 @@ func TestGroupRemoteServices(t *testing.T) {
 	if rows[0].service != "Coding Agent" || rows[0].sandboxName != "sb-a" {
 		t.Fatalf("unexpected first row: %+v", rows[0])
 	}
-	if rows[0].ports != "4096/tcp" || rows[0].url != "https://agent.example.com" {
+	if rows[0].ports != "4096->4096/tcp" || rows[0].url != "https://agent.example.com" {
 		t.Fatalf("unexpected first row content: %+v", rows[0])
 	}
 	// The multi-port service collapses into one row with joined ports/URLs.
 	if rows[1].service != "frontend" {
 		t.Fatalf("unexpected second row: %+v", rows[1])
 	}
-	if rows[1].ports != "3000/tcp,3001/tcp" {
+	if rows[1].ports != "3000->3000/tcp,3001->3001/tcp" {
 		t.Fatalf("ports not joined: %q", rows[1].ports)
 	}
 	if rows[1].url != "https://fe.example.com https://fe-admin.example.com" {

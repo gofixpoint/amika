@@ -35,6 +35,13 @@ var serviceListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		sandboxName, _ := cmd.Flags().GetString("sandbox-name")
 
+		// Validate --remote-target up front, unconditionally, matching the
+		// sandbox command: a bad value fails the same way regardless of mode or
+		// auth state, rather than being silently ignored in local mode.
+		if _, err := getServiceRemoteTarget(cmd); err != nil {
+			return err
+		}
+
 		mode := runmode.Resolve(cmd)
 		if err := runmode.RequireAuth(mode, remoteAuthChecker); err != nil {
 			return err
@@ -43,7 +50,7 @@ var serviceListCmd = &cobra.Command{
 		var rows []serviceRow
 		var err error
 		if mode == runmode.Remote {
-			rows, err = remoteServiceRows(cmd, sandboxName)
+			rows, err = remoteServiceRows(sandboxName)
 		} else {
 			rows, err = localServiceRows(sandboxName)
 		}
@@ -110,10 +117,7 @@ func localServiceRows(sandboxName string) ([]serviceRow, error) {
 // remoteServiceRows fetches services from the remote API. The list endpoint
 // returns each sandbox's provisioned services (name, port, and generated URL),
 // so no local state is involved.
-func remoteServiceRows(cmd *cobra.Command, sandboxName string) ([]serviceRow, error) {
-	if _, err := getServiceRemoteTarget(cmd); err != nil {
-		return nil, err
-	}
+func remoteServiceRows(sandboxName string) ([]serviceRow, error) {
 	sandboxes, err := newRemoteClient().ListSandboxes()
 	if err != nil {
 		return nil, err
@@ -167,19 +171,16 @@ func groupRemoteServices(sandboxName string, services []apiclient.RemoteSandboxS
 	return rows
 }
 
-// formatRemoteServicePort renders a remote service's port binding. Remote
-// sandboxes publish through a generated URL rather than a host IP, so the host
-// IP is omitted. When the host and container ports differ, both are shown
-// (host->container); otherwise the single port is shown.
+// formatRemoteServicePort renders a remote service's published port binding as
+// hostPort->containerPort/protocol, matching how `sandbox list -l` renders the
+// same remote binding (see formatPortBindings). Remote sandboxes are reached
+// via a generated URL rather than a host IP, so no host IP is shown.
 func formatRemoteServicePort(svc apiclient.RemoteSandboxService) string {
 	protocol := svc.Protocol
 	if strings.TrimSpace(protocol) == "" {
 		protocol = "tcp"
 	}
-	if svc.HostPort != 0 && svc.HostPort != svc.ContainerPort {
-		return fmt.Sprintf("%d->%d/%s", svc.HostPort, svc.ContainerPort, protocol)
-	}
-	return fmt.Sprintf("%d/%s", svc.ContainerPort, protocol)
+	return fmt.Sprintf("%d->%d/%s", svc.HostPort, svc.ContainerPort, protocol)
 }
 
 // getServiceRemoteTarget mirrors the sandbox command's --remote-target
