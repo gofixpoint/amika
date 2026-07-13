@@ -43,11 +43,15 @@ Examples:
 			return err
 		}
 
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
-		client := runmode.NewRemoteClient()
+		client, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
 
 		revoke, _ := cmd.Flags().GetBool("revoke")
 		if revoke {
@@ -116,11 +120,15 @@ Examples:
 			return fmt.Errorf("cursor CLI is not installed or not in PATH; install it from Cursor > Settings > Extensions > cursor-cli")
 		}
 
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
-		client := runmode.NewRemoteClient()
+		client, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
 
 		cursorTarget, err := prepareCursorSSHTarget(client, basedir.New(""), name)
 		if err != nil {

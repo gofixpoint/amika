@@ -200,7 +200,8 @@ Use --no-wait to send the message and return immediately.`,
 			return err
 		}
 
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
@@ -234,7 +235,10 @@ Use --no-wait to send the message and return immediately.`,
 			return nil
 		}
 
-		client := runmode.NewRemoteClient()
+		client, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
 
 		sessionID, _ := cmd.Flags().GetString("session-id")
 		newSession, _ := cmd.Flags().GetBool("new-session")

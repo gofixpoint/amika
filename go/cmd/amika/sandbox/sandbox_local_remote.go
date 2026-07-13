@@ -1,10 +1,12 @@
 package sandboxcmd
 
-// sandbox_local_remote.go provides the shared remote-target helper.
+// sandbox_local_remote.go provides shared remote-target and client helpers.
 
 import (
 	"fmt"
 
+	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
 
@@ -19,4 +21,13 @@ func getRemoteTarget(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("--remote-target is not yet supported")
 	}
 	return target, nil
+}
+
+// getRemoteClient returns an API client for the given remote target. The client
+// construction is shared via runmode.NewRemoteClient; target is threaded through
+// (currently a no-op) so named-remote support can resolve a per-target endpoint
+// here without touching call sites.
+func getRemoteClient(target string) (*apiclient.Client, error) {
+	_ = target
+	return runmode.NewRemoteClient(), nil
 }

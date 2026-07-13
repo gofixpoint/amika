@@ -39,7 +39,8 @@ var sandboxDeleteCmd = &cobra.Command{
 			}
 		}
 
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
@@ -58,7 +59,10 @@ var sandboxDeleteCmd = &cobra.Command{
 
 		var errs []string
 		if mode == runmode.Remote {
-			remoteClient := runmode.NewRemoteClient()
+			remoteClient, err := getRemoteClient(target)
+			if err != nil {
+				return err
+			}
 			for _, name := range args {
 				if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))

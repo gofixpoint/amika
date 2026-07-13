@@ -34,7 +34,8 @@ var sandboxStartCmd = &cobra.Command{
 	Long:  `Start (resume) one or more stopped sandboxes.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
@@ -45,7 +46,10 @@ var sandboxStartCmd = &cobra.Command{
 
 		var errs []string
 		if mode == runmode.Remote {
-			remoteClient := runmode.NewRemoteClient()
+			remoteClient, err := getRemoteClient(target)
+			if err != nil {
+				return err
+			}
 			for _, name := range args {
 				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
@@ -92,7 +96,8 @@ var sandboxStopCmd = &cobra.Command{
 	Long:  `Stop one or more running sandboxes without removing them.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
@@ -103,7 +108,10 @@ var sandboxStopCmd = &cobra.Command{
 
 		var errs []string
 		if mode == runmode.Remote {
-			remoteClient := runmode.NewRemoteClient()
+			remoteClient, err := getRemoteClient(target)
+			if err != nil {
+				return err
+			}
 			for _, name := range args {
 				if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
@@ -150,7 +158,8 @@ var sandboxListCmd = &cobra.Command{
 	Short:   "List all sandboxes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
@@ -179,7 +188,10 @@ var sandboxListCmd = &cobra.Command{
 			}
 			allItems = append(allItems, result.Items...)
 		} else {
-			client := runmode.NewRemoteClient()
+			client, err := getRemoteClient(target)
+			if err != nil {
+				return err
+			}
 			remoteSandboxes, err := client.ListSandboxes()
 			if err != nil {
 				return err
@@ -319,7 +331,8 @@ var sandboxConnectCmd = &cobra.Command{
 			return err
 		}
 
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
@@ -347,7 +360,10 @@ var sandboxConnectCmd = &cobra.Command{
 			return nil
 		}
 
-		client := runmode.NewRemoteClient()
+		client, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
 		return ssh.ExecSSH(client, name, false, nil)
 	},
 }

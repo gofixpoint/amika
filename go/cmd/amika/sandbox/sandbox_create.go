@@ -55,7 +55,8 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), formatRepoBanner(identity))
 
-		if _, err := getRemoteTarget(cmd); err != nil {
+		target, err := getRemoteTarget(cmd)
+		if err != nil {
 			return err
 		}
 
@@ -66,7 +67,7 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 		if mode == runmode.Remote {
-			return createRemoteSandbox(cmd, identity)
+			return createRemoteSandbox(cmd, target, identity)
 		}
 
 		if secretFlags, _ := cmd.Flags().GetStringArray("secret"); len(secretFlags) > 0 {
@@ -283,7 +284,7 @@ var sandboxCreateCmd = &cobra.Command{
 	},
 }
 
-func createRemoteSandbox(cmd *cobra.Command, identity repoIdentity) error {
+func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentity) error {
 	name, _ := cmd.Flags().GetString("name")
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
@@ -349,7 +350,10 @@ func createRemoteSandbox(cmd *cobra.Command, identity repoIdentity) error {
 		return err
 	}
 
-	client := runmode.NewRemoteClient()
+	client, err := getRemoteClient(target)
+	if err != nil {
+		return err
+	}
 
 	noSetup, _ := cmd.Flags().GetBool("no-setup")
 	if noSetup && cmd.Flags().Changed("setup-script") {
