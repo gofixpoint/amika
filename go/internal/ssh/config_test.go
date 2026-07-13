@@ -3,6 +3,7 @@ package ssh
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -17,19 +18,25 @@ func TestAlias(t *testing.T) {
 
 func TestParseDestination(t *testing.T) {
 	tests := []struct {
-		name     string
-		in       string
-		wantUser string
-		wantHost string
-		wantPort int
-		wantErr  bool
+		name        string
+		in          string
+		wantUser    string
+		wantHost    string
+		wantPort    int
+		wantOptions []string
+		wantErr     bool
 	}{
 		{name: "user@host", in: "token@ssh.app.daytona.io", wantUser: "token", wantHost: "ssh.app.daytona.io"},
 		{name: "with port", in: "-p 2222 user@host", wantUser: "user", wantHost: "host", wantPort: 2222},
+		{name: "attached port", in: "-p2222 user@host", wantUser: "user", wantHost: "host", wantPort: 2222},
 		{name: "host only", in: "host", wantHost: "host"},
-		{name: "ignores unknown flags", in: "-4 token@host", wantUser: "token", wantHost: "host"},
+		{name: "boolean flag preserved", in: "-4 token@host", wantUser: "token", wantHost: "host", wantOptions: []string{"-4"}},
+		{name: "identity and option preserved", in: "-i /key -o Compression=yes user@host", wantUser: "user", wantHost: "host", wantOptions: []string{"-i", "/key", "-o", "Compression=yes"}},
+		{name: "port not counted as option", in: "-i /key -p 2222 user@host", wantUser: "user", wantHost: "host", wantPort: 2222, wantOptions: []string{"-i", "/key"}},
 		{name: "empty", in: "", wantErr: true},
 		{name: "bad port", in: "-p notanumber user@host", wantErr: true},
+		{name: "missing port value", in: "-p", wantErr: true},
+		{name: "more than one host", in: "a@host1 b@host2", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -45,6 +52,9 @@ func TestParseDestination(t *testing.T) {
 			}
 			if got.User != tt.wantUser || got.Host != tt.wantHost || got.Port != tt.wantPort {
 				t.Fatalf("got %+v, want user=%q host=%q port=%d", got, tt.wantUser, tt.wantHost, tt.wantPort)
+			}
+			if !reflect.DeepEqual(got.Options, tt.wantOptions) {
+				t.Fatalf("got options %#v, want %#v", got.Options, tt.wantOptions)
 			}
 		})
 	}

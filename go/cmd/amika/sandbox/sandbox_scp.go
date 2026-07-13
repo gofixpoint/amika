@@ -174,6 +174,7 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 
 	rewritten := make([]string, 0, len(plan.scpArgv))
 	usage := remoteUsage{ports: map[int]bool{}}
+	var sandboxOpts []string // ssh options carried by the sandbox destination
 
 	for i := 0; i < len(plan.scpArgv); i++ {
 		tok := plan.scpArgv[i]
@@ -203,7 +204,8 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 			}
 			rewritten = append(rewritten, remoteSpec(d, path))
 			usage.sandbox = true
-			usage.addPort(d.Port)
+			usage.addSandboxPort(d.Port)
+			sandboxOpts = d.Options
 
 		case strings.HasPrefix(tok, "scp://"):
 			spec, port, err := parseSCPURI(tok)
@@ -212,7 +214,7 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 			}
 			rewritten = append(rewritten, spec)
 			usage.external = true
-			usage.addPort(port)
+			usage.addExternalPort(port)
 
 		case isSandboxRef(tok, plan.sandbox):
 			d, err := getDest()
@@ -222,15 +224,17 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 			path := tok[len(plan.sandbox)+1:]
 			rewritten = append(rewritten, remoteSpec(d, path))
 			usage.sandbox = true
-			usage.addPort(d.Port)
+			usage.addSandboxPort(d.Port)
+			sandboxOpts = d.Options
 
 		default:
 			// A native "host:path" (not the sandbox) is a remote scp already
 			// understands; pass it through but count it so the guard below only
-			// trips when every source and target is local.
+			// trips when every source and target is local. Its port is unknown
+			// (it may come from the user's SSH config).
 			if looksLikeRemote(tok) {
 				usage.external = true
-				usage.addPort(0)
+				usage.unknownPort = true
 			}
 			rewritten = append(rewritten, tok)
 		}
@@ -244,24 +248,54 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// The sandbox's own ssh options (e.g. -i, -F, -o ProxyCommand) apply to the
+	// whole scp invocation, so they can be forwarded only when the sandbox is the
+	// sole remote. In a mixed copy they would also hit the external host, so the
+	// copy is rejected rather than misrouting it.
+	if len(sandboxOpts) > 0 {
+		if usage.external {
+			return nil, fmt.Errorf("the connection to sandbox %q requires ssh options %v, which scp applies to the whole copy and cannot scope to the sandbox when an external host is also involved; copy to or from the sandbox in a separate command", plan.sandbox, sandboxOpts)
+		}
+		opts = append(opts, sandboxOpts...)
+	}
+
 	return append(opts, rewritten...), nil
 }
 
 // remoteUsage summarizes the remotes referenced by an scp argv: whether the
 // sandbox and/or an external SSH host appears, which explicit ports the remotes
-// require, and whether any remote relies on scp's default port.
+// require, and whether any remote's port is left to scp/SSH to decide.
+//
+// A missing port is deliberately not lumped together. The sandbox connects to an
+// authoritative destination minted by the server, so no port there means scp's
+// default 22 (knownDefault). An external host with no port may instead resolve a
+// port from the user's SSH config (unknownPort), which a forced -P would
+// override.
 type remoteUsage struct {
 	sandbox      bool         // any sandbox reference
 	external     bool         // any non-sandbox remote (scp:// URI or native host:path)
-	implicitPort bool         // any remote without an explicit port
 	ports        map[int]bool // explicit ports required by remotes
+	knownDefault bool         // a remote known to use scp's default port (sandbox, no server port)
+	unknownPort  bool         // a remote whose port may resolve from the user's SSH config
 }
 
-// addPort records a remote's port requirement; 0 means the remote uses scp's
-// default port.
-func (u *remoteUsage) addPort(port int) {
+// addSandboxPort records the sandbox's port. A missing port (0) means the
+// server did not specify one, so the connection uses scp's default port 22.
+func (u *remoteUsage) addSandboxPort(port int) {
 	if port == 0 {
-		u.implicitPort = true
+		u.knownDefault = true
+		return
+	}
+	u.ports[port] = true
+}
+
+// addExternalPort records an external remote's port. A missing port (0) is
+// unknown rather than a definite default, since the host may set Port in the
+// user's SSH config.
+func (u *remoteUsage) addExternalPort(port int) {
+	if port == 0 {
+		u.unknownPort = true
 		return
 	}
 	u.ports[port] = true
@@ -277,14 +311,12 @@ func (u *remoteUsage) addPort(port int) {
 //
 //   - The relaxed host-key policy is injected only when the sandbox is the sole
 //     remote; an external host keeps the user's normal SSH config.
-//   - -P is emitted only for a non-default port, and only when no remote leaves
-//     its port implicit. A remote without an explicit port (a native "host:path"
-//     or a portless scp:// URI) may resolve its port from the user's SSH config,
-//     so a global -P could force it off that port. When the only explicit port
-//     required is scp's default (22) it is left implicit — scp already dials 22,
-//     so omitting -P lets every implicit-port remote keep its own port. When a
-//     non-default port is required alongside an implicit-port remote the copy is
-//     rejected, since a single scp invocation cannot honor both.
+//   - -P carries the single explicit port every remote agrees on — including 22,
+//     so an explicitly requested port overrides any SSH-config Port. It is
+//     rejected, rather than forced, when it cannot be honored for all remotes: a
+//     remote whose port is unknown (a native "host:path" or portless scp:// URI,
+//     which may resolve a port from the user's SSH config) or the sandbox on its
+//     default 22 cannot also be pinned to a different explicit port.
 func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([]string, error) {
 	var opts []string
 	if usage.sandbox && !usage.external && !userSetStrict {
@@ -299,11 +331,16 @@ func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([
 		if len(distinct) > 1 {
 			return nil, fmt.Errorf("cannot copy between remotes on different ports %v; scp uses a single port per invocation", distinct)
 		}
-		if len(distinct) == 1 && distinct[0] != sshDefaultPort {
-			if usage.implicitPort {
-				return nil, fmt.Errorf("cannot copy between remotes on different ports: one remote requires port %d while another remote's port is unspecified (it uses scp's default port or one from your SSH config); scp uses a single port per invocation", distinct[0])
+		if len(distinct) == 1 {
+			port := distinct[0]
+			switch {
+			case usage.unknownPort:
+				return nil, fmt.Errorf("cannot copy between remotes on different ports: one remote requires port %d while another remote's port is unspecified (it may resolve from your SSH config); scp uses a single port per invocation", port)
+			case port != sshDefaultPort && usage.knownDefault:
+				return nil, fmt.Errorf("cannot copy between remotes on different ports %d and %d; scp uses a single port per invocation", sshDefaultPort, port)
+			default:
+				opts = append(opts, "-P", strconv.Itoa(port))
 			}
-			opts = append(opts, "-P", strconv.Itoa(distinct[0]))
 		}
 	}
 	return opts, nil
@@ -462,18 +499,9 @@ func parseSCPURI(raw string) (spec string, port int, err error) {
 }
 
 // resolveSandboxDestination fetches fresh SSH connection details for a sandbox
-// and parses them into a destination.
-//
-// ParseDestination keeps only the user, host, and port, dropping every other
-// ssh option. That is fine today (all providers return a plain "[user@]host",
-// optionally with a "-p PORT") but if the server ever returned a required option
-// such as -i, -F, or -o ProxyCommand, silently dropping it would connect scp
-// with the wrong credentials or routing. scp cannot reliably carry those options
-// through: several map to a different letter than ssh, some take positional
-// arguments this layer would have to know the arity of, and any sandbox-specific
-// option is global to the scp invocation and so cannot be scoped away from an
-// external remote in a mixed copy. Rather than connect wrong, reject a
-// destination that carries anything beyond the pieces scp can honor.
+// and parses them into a destination. ParseDestination preserves any ssh options
+// the server includes (beyond user/host/port) in Destination.Options so the
+// caller can forward them to scp; see buildSCPInvocation for how they are scoped.
 func resolveSandboxDestination(client *apiclient.Client, name string) (ssh.Destination, error) {
 	info, err := client.GetSSH(name)
 	if err != nil {
@@ -482,37 +510,7 @@ func resolveSandboxDestination(client *apiclient.Client, name string) (ssh.Desti
 	if info.SSHDestination == "" {
 		return ssh.Destination{}, fmt.Errorf("server returned empty SSH destination for sandbox %q", name)
 	}
-	if extra := extraSSHOptions(info.SSHDestination); len(extra) > 0 {
-		return ssh.Destination{}, fmt.Errorf("sandbox %q SSH destination requires ssh options %v that scp cannot apply safely; use `amika sandbox ssh` or copy via an intermediate host instead", name, extra)
-	}
 	return ssh.ParseDestination(info.SSHDestination)
-}
-
-// extraSSHOptions returns the tokens in an ssh destination string that
-// ParseDestination silently discards: any flag other than the "-p PORT" pair,
-// and any bare token that is not the single trailing "[user@]host" target (such
-// a token is the positional argument to an option we did not recognize, e.g.
-// "Foo=bar" in "-o Foo=bar"). It mirrors ParseDestination's scan so the two stay
-// in agreement about what a plain destination looks like.
-func extraSSHOptions(dest string) []string {
-	var extra []string
-	var target string
-	fields := strings.Fields(dest)
-	for i := 0; i < len(fields); i++ {
-		f := fields[i]
-		switch {
-		case f == "-p" && i+1 < len(fields):
-			i++ // the port value is consumed by ParseDestination
-		case strings.HasPrefix(f, "-"):
-			extra = append(extra, f)
-		default:
-			if target != "" {
-				extra = append(extra, target)
-			}
-			target = f
-		}
-	}
-	return extra
 }
 
 // execSCP replaces the current process with the system scp binary.

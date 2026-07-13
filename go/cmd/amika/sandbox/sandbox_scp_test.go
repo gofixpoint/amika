@@ -144,13 +144,14 @@ func TestBuildSCPInvocation(t *testing.T) {
 			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-P", "2222", "./a.txt", "u@host.example:/x"},
 		},
 		{
-			// An external host is involved, so the sandbox host-key policy is
-			// not injected (scp -o options apply to every remote). Port 22 is
-			// scp's default, so no -P is forced onto the external remote either.
-			name: "scp uri external host with port",
+			// An external host is involved, so the sandbox host-key policy is not
+			// injected (scp -o options apply to every remote). The sandbox uses
+			// its default port and the URI explicitly requests 22, so -P 22 is
+			// emitted to honor the explicit request over any SSH-config Port.
+			name: "scp uri external host with explicit port 22",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data.csv", "scp://user@host:22/tmp/data.csv"}},
 			dest: daytona,
-			want: []string{"user-token@ssh.app.daytona.io:/data.csv", "user@host:/tmp/data.csv"},
+			want: []string{"-P", "22", "user-token@ssh.app.daytona.io:/data.csv", "user@host:/tmp/data.csv"},
 		},
 		{
 			name: "native host path passthrough with sandbox",
@@ -173,13 +174,14 @@ func TestBuildSCPInvocation(t *testing.T) {
 			wantErr: "different ports",
 		},
 		{
-			// The only explicit port is scp's default (22), which scp dials
-			// without -P. Forcing -P 22 would override a config-derived port on
-			// the implicit-port native remote, so no -P is emitted.
-			name: "explicit port 22 with implicit-port remote",
-			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:22/data", "other-host:/backup"}},
-			dest: daytona,
-			want: []string{"host:/data", "other-host:/backup"},
+			// One remote explicitly requests port 22 while a native remote's
+			// port is unknown (it may resolve from SSH config). A single global
+			// -P cannot honor both, so the copy is rejected rather than forcing
+			// the native host onto 22.
+			name:    "explicit port 22 with unknown-port native remote",
+			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:22/data", "other-host:/backup"}},
+			dest:    daytona,
+			wantErr: "unspecified",
 		},
 		{
 			// Both remotes explicitly agree on a non-default port, so -P is
@@ -210,6 +212,24 @@ func TestBuildSCPInvocation(t *testing.T) {
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"-J", "bastion:22", "./a", "mybox:/x"}},
 			dest: ported,
 			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-P", "2222", "-J", "bastion:22", "./a", "u@host.example:/x"},
+		},
+		{
+			// ssh options the server puts in the destination (identity, config,
+			// -o settings) are forwarded to scp when the sandbox is the sole
+			// remote, so scp connects with the same credentials/routing as ssh.
+			name: "sandbox ssh options are forwarded when sandbox is sole remote",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"./a", "mybox:/b"}},
+			dest: ssh.Destination{User: "u", Host: "h", Options: []string{"-i", "/tmp/key", "-o", "Compression=yes"}},
+			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-i", "/tmp/key", "-o", "Compression=yes", "./a", "u@h:/b"},
+		},
+		{
+			// Those options are global to the scp invocation, so a mixed copy
+			// that also touches an external host cannot scope them to the
+			// sandbox; the copy is rejected instead of misrouting the external.
+			name:    "sandbox ssh options cannot be scoped in a mixed copy",
+			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/b", "scp://host/c"}},
+			dest:    ssh.Destination{User: "u", Host: "h", Options: []string{"-i", "/tmp/key"}},
+			wantErr: "cannot scope",
 		},
 		{
 			name:    "no remote is an error",
@@ -343,29 +363,6 @@ func TestLooksLikeRemote(t *testing.T) {
 		if looksLikeRemote(tok) {
 			t.Errorf("looksLikeRemote(%q) = true, want false", tok)
 		}
-	}
-}
-
-func TestExtraSSHOptions(t *testing.T) {
-	tests := []struct {
-		name string
-		dest string
-		want []string
-	}{
-		{name: "plain host", dest: "token@ssh.app.daytona.io", want: nil},
-		{name: "host with port", dest: "-p 2222 user@host", want: nil},
-		{name: "identity file", dest: "-i /tmp/key user@host", want: []string{"-i", "/tmp/key"}},
-		{name: "config file", dest: "-F /tmp/cfg user@host", want: []string{"-F", "/tmp/cfg"}},
-		{name: "ssh option pair", dest: "-o ProxyCommand=nc user@host", want: []string{"-o", "ProxyCommand=nc"}},
-		{name: "port plus option", dest: "-p 2222 -i /k user@host", want: []string{"-i", "/k"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extraSSHOptions(tt.dest)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("extraSSHOptions(%q) = %#v, want %#v", tt.dest, got, tt.want)
-			}
-		})
 	}
 }
 
