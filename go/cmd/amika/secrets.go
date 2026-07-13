@@ -14,7 +14,6 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/arch"
 	"github.com/gofixpoint/amika/go/internal/auth"
-	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -362,7 +361,7 @@ func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, 
 // Credentials are resolved per request in the order: AMIKA_API_KEY env var,
 // stored API key file, then WorkOS session.
 func getSecretsClient() (*apiclient.Client, error) {
-	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewResolvedTokenSource(config.WorkOSClientID())), nil
+	return newRemoteClient(), nil
 }
 
 // parseOnlyFilter splits a comma-separated list of secret names into a set.

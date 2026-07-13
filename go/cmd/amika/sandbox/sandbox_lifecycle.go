@@ -205,6 +205,7 @@ var sandboxListCmd = &cobra.Command{
 					Location:  "remote",
 					Branch:    rs.Branch,
 					Repos:     repoNamesFromURL(rs.RepoURL),
+					Ports:     portBindingsFromRemoteServices(rs.Services),
 					CreatedBy: creatorFromRemote(rs.CreatedBy),
 				})
 			}
@@ -235,6 +236,26 @@ var sandboxListCmd = &cobra.Command{
 		w.Flush()
 		return nil
 	},
+}
+
+// portBindingsFromRemoteServices derives the published port bindings of a
+// remote sandbox from its provisioned services, so `sandbox list -l` can show a
+// PORTS column instead of "-". Remote sandboxes have no host IP (services are
+// reached via generated URLs), so HostIP is left empty and formatPortBindings
+// omits it.
+func portBindingsFromRemoteServices(services []apiclient.RemoteSandboxService) []amika.PortBinding {
+	if len(services) == 0 {
+		return nil
+	}
+	ports := make([]amika.PortBinding, 0, len(services))
+	for _, svc := range services {
+		ports = append(ports, amika.PortBinding{
+			HostPort:      svc.HostPort,
+			ContainerPort: svc.ContainerPort,
+			Protocol:      svc.Protocol,
+		})
+	}
+	return ports
 }
 
 func creatorFromRemote(c *apiclient.RemoteSandboxCreator) *amika.SandboxCreator {

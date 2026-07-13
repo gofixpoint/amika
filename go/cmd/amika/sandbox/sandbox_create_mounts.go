@@ -78,15 +78,18 @@ func formatPortBindings(bindings []amika.PortBinding) string {
 	}
 	out := make([]string, 0, len(bindings))
 	for _, p := range bindings {
-		hostIP := p.HostIP
-		if strings.TrimSpace(hostIP) == "" {
-			hostIP = "127.0.0.1"
-		}
 		protocol := p.Protocol
 		if strings.TrimSpace(protocol) == "" {
 			protocol = "tcp"
 		}
-		out = append(out, fmt.Sprintf("%s:%d->%d/%s", hostIP, p.HostPort, p.ContainerPort, protocol))
+		// Remote sandboxes have no host IP (services are reached via generated
+		// URLs), so omit the "host:" prefix rather than print a misleading
+		// localhost. Local sandboxes always carry an explicit HostIP.
+		if strings.TrimSpace(p.HostIP) == "" {
+			out = append(out, fmt.Sprintf("%d->%d/%s", p.HostPort, p.ContainerPort, protocol))
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s:%d->%d/%s", p.HostIP, p.HostPort, p.ContainerPort, protocol))
 	}
 	return strings.Join(out, ",")
 }

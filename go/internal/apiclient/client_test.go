@@ -229,6 +229,54 @@ func TestAgentSendAuthErrorMessage(t *testing.T) {
 	}
 }
 
+// TestListSandboxesParsesServices guards the field names/casing the server
+// uses for a sandbox's `services` array (name/url/hostPort/containerPort/
+// protocol). The CLI previously dropped these, so `service list` and the
+// `sandbox list -l` PORTS column came up empty for remote sandboxes.
+func TestListSandboxesParsesServices(t *testing.T) {
+	// Raw body shaped like the server's sandboxResponseSchema so a struct-tag
+	// drift is caught here rather than silently producing empty services.
+	const body = `[
+      {
+        "id": "sb_1",
+        "name": "dylan/release-test",
+        "provider": "daytona",
+        "repo_url": "https://github.com/gofixpoint/example-repo",
+        "state": "started",
+        "created_at": "2026-07-11T00:00:00Z",
+        "branch": "main",
+        "services": [
+          {"name": "Coding Agent", "url": "https://agent.example.com", "hostPort": 4096, "containerPort": 4096, "protocol": "tcp"},
+          {"name": "frontend", "url": "https://fe.example.com", "hostPort": 3000, "containerPort": 3000, "protocol": "tcp"}
+        ]
+      }
+    ]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token")
+	sandboxes, err := c.ListSandboxes()
+	if err != nil {
+		t.Fatalf("ListSandboxes: %v", err)
+	}
+	if len(sandboxes) != 1 {
+		t.Fatalf("got %d sandboxes, want 1", len(sandboxes))
+	}
+	svcs := sandboxes[0].Services
+	if len(svcs) != 2 {
+		t.Fatalf("got %d services, want 2: %+v", len(svcs), svcs)
+	}
+	if svcs[0].Name != "Coding Agent" || svcs[0].URL != "https://agent.example.com" {
+		t.Errorf("service[0] = %+v, want Coding Agent / agent URL", svcs[0])
+	}
+	if svcs[1].ContainerPort != 3000 || svcs[1].Protocol != "tcp" || svcs[1].URL != "https://fe.example.com" {
+		t.Errorf("service[1] = %+v, want frontend 3000/tcp with URL", svcs[1])
+	}
+}
+
 func mustJSON(t *testing.T, v interface{}) string {
 	t.Helper()
 	b, err := json.Marshal(v)
