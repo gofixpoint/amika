@@ -79,6 +79,19 @@ type ResolvedAgentCredential struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+// RemoteSandboxService is one named service exposed by a remote sandbox: a
+// published port with an optional generated URL. It mirrors the server's
+// sandbox `services` entries. For remote sandboxes HostPort and ContainerPort
+// are typically equal (the provider maps the container port through), and URL
+// is the externally reachable address.
+type RemoteSandboxService struct {
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	HostPort      int    `json:"hostPort"`
+	ContainerPort int    `json:"containerPort"`
+	Protocol      string `json:"protocol"`
+}
+
 // RemoteSandbox represents a sandbox returned by the remote API.
 type RemoteSandbox struct {
 	ID                       string                    `json:"id"`
@@ -89,6 +102,7 @@ type RemoteSandbox struct {
 	CreatedAt                string                    `json:"created_at"`
 	Branch                   string                    `json:"branch"`
 	ErrorMessage             string                    `json:"error_message"`
+	Services                 []RemoteSandboxService    `json:"services,omitempty"`
 	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
 	CreatedBy                *RemoteSandboxCreator     `json:"created_by,omitempty"`
 }

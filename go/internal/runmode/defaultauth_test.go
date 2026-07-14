@@ -1,4 +1,4 @@
-package sandboxcmd
+package runmode
 
 import (
 	"os"
@@ -13,8 +13,8 @@ func TestDefaultAuthChecker_EnvKeySatisfies(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "env_key")
 
-	if err := defaultAuthChecker(); err != nil {
-		t.Fatalf("defaultAuthChecker: %v", err)
+	if err := DefaultAuthChecker(); err != nil {
+		t.Fatalf("DefaultAuthChecker: %v", err)
 	}
 }
 
@@ -25,8 +25,8 @@ func TestDefaultAuthChecker_StoredAPIKeySatisfies(t *testing.T) {
 	if err := auth.SaveAPIKey(auth.APIKeyAuth{Key: "stored"}); err != nil {
 		t.Fatalf("SaveAPIKey: %v", err)
 	}
-	if err := defaultAuthChecker(); err != nil {
-		t.Fatalf("defaultAuthChecker: %v", err)
+	if err := DefaultAuthChecker(); err != nil {
+		t.Fatalf("DefaultAuthChecker: %v", err)
 	}
 }
 
@@ -40,8 +40,8 @@ func TestDefaultAuthChecker_SessionSatisfies(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
-	if err := defaultAuthChecker(); err != nil {
-		t.Fatalf("defaultAuthChecker: %v", err)
+	if err := DefaultAuthChecker(); err != nil {
+		t.Fatalf("DefaultAuthChecker: %v", err)
 	}
 }
 
@@ -61,8 +61,8 @@ func TestDefaultAuthChecker_CorruptAPIKeyFallsThroughToSession(t *testing.T) {
 		t.Fatalf("SaveSession: %v", err)
 	}
 
-	if err := defaultAuthChecker(); err != nil {
-		t.Fatalf("defaultAuthChecker should tolerate corrupt API key: %v", err)
+	if err := DefaultAuthChecker(); err != nil {
+		t.Fatalf("DefaultAuthChecker should tolerate corrupt API key: %v", err)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestDefaultAuthChecker_NoCredentials(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "")
 
-	if err := defaultAuthChecker(); err == nil {
+	if err := DefaultAuthChecker(); err == nil {
 		t.Fatal("expected error when no credentials present")
 	}
 }
