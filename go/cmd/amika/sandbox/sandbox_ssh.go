@@ -39,7 +39,7 @@ Examples:
 		if mode == runmode.Local {
 			return fmt.Errorf("SSH access requires a remote sandbox; omit --local")
 		}
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -112,7 +112,7 @@ Examples:
 		if mode == runmode.Local {
 			return fmt.Errorf("code command requires a remote sandbox; omit --local")
 		}
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 

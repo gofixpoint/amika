@@ -206,7 +206,7 @@ Use --no-wait to send the message and return immediately.`,
 		}
 
 		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, defaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 

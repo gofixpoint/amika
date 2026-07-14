@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/auth"
+	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -60,4 +63,28 @@ func RequireAuth(mode Mode, check AuthChecker) error {
 		return fmt.Errorf("not logged in; run \"amika auth login\" or use --local")
 	}
 	return nil
+}
+
+// DefaultAuthChecker is the AuthChecker most commands pass to RequireAuth. It
+// returns nil when any credential source is present: the AMIKA_API_KEY env var,
+// a stored API key file, or a valid WorkOS session. An unreadable API key file
+// is skipped (matching the request-time resolver) so a corrupt higher-priority
+// file does not block a valid lower-priority session. RequireAuth also checks
+// the env var, but this stays a complete standalone credential check.
+func DefaultAuthChecker() error {
+	if os.Getenv(config.EnvAPIKey) != "" {
+		return nil
+	}
+	if stored, err := auth.LoadAPIKey(); err == nil && stored != nil {
+		return nil
+	}
+	_, err := auth.GetValidSession(config.WorkOSClientID())
+	return err
+}
+
+// NewRemoteClient returns an API client for the remote Amika API, authenticated
+// with the current session. Credentials are resolved per request in the order:
+// AMIKA_API_KEY env var, stored API key file, then WorkOS session.
+func NewRemoteClient() *apiclient.Client {
+	return apiclient.NewClientWithTokenSource(config.APIURL(), apiclient.NewResolvedTokenSource(config.WorkOSClientID()))
 }

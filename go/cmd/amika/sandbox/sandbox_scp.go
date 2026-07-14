@@ -86,7 +86,7 @@ func runSCP(cmd *cobra.Command, rawArgs []string) error {
 
 	// scp always targets a remote host; the sandbox connection is minted from
 	// the remote API, so authentication is required just like `sandbox ssh`.
-	if err := runmode.RequireAuth(runmode.Remote, defaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 
