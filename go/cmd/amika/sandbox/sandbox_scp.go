@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -60,9 +59,6 @@ Examples:
 		return runSCP(cmd, args)
 	},
 }
-
-// sshDefaultPort is the port scp connects to when no -P/port is given.
-const sshDefaultPort = 22
 
 // destResolver resolves a sandbox name to its concrete SSH destination.
 type destResolver func(name string) (ssh.Destination, error)
@@ -173,7 +169,7 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 	userSetPort, userSetStrict := scanUserOptions(plan.scpArgv)
 
 	rewritten := make([]string, 0, len(plan.scpArgv))
-	usage := remoteUsage{ports: map[int]bool{}}
+	usage := remoteUsage{}
 	var sandboxOpts []string // ssh options carried by the sandbox destination
 
 	for i := 0; i < len(plan.scpArgv); i++ {
@@ -204,17 +200,23 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 			}
 			rewritten = append(rewritten, remoteSpec(d, path))
 			usage.sandbox = true
-			usage.addSandboxPort(d.Port)
+			usage.sandboxPort = d.Port
 			sandboxOpts = d.Options
 
 		case strings.HasPrefix(tok, "scp://"):
-			spec, port, err := parseSCPURI(tok)
+			operand, hasPort, err := parseSCPURI(tok)
 			if err != nil {
 				return nil, err
 			}
-			rewritten = append(rewritten, spec)
+			rewritten = append(rewritten, operand)
 			usage.external = true
-			usage.addExternalPort(port)
+			// A URI with an explicit port is self-porting (scp reads the port
+			// from the operand and ignores -P for that host), so it never needs
+			// the global -P. A portless URI, like a native "host:path", takes its
+			// port from -P or the user's SSH config, so the global -P applies.
+			if !hasPort {
+				usage.portDependentExternal = true
+			}
 
 		case isSandboxRef(tok, plan.sandbox):
 			d, err := getDest()
@@ -224,17 +226,18 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 			path := tok[len(plan.sandbox)+1:]
 			rewritten = append(rewritten, remoteSpec(d, path))
 			usage.sandbox = true
-			usage.addSandboxPort(d.Port)
+			usage.sandboxPort = d.Port
 			sandboxOpts = d.Options
 
 		default:
 			// A native "host:path" (not the sandbox) is a remote scp already
 			// understands; pass it through but count it so the guard below only
 			// trips when every source and target is local. Its port is unknown
-			// (it may come from the user's SSH config).
+			// (it may come from the user's SSH config), so a global -P would
+			// apply to it.
 			if looksLikeRemote(tok) {
 				usage.external = true
-				usage.unknownPort = true
+				usage.portDependentExternal = true
 			}
 			rewritten = append(rewritten, tok)
 		}
@@ -264,84 +267,50 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 }
 
 // remoteUsage summarizes the remotes referenced by an scp argv: whether the
-// sandbox and/or an external SSH host appears, which explicit ports the remotes
-// require, and whether any remote's port is left to scp/SSH to decide.
+// sandbox and/or an external SSH host appears, the sandbox's port, and whether
+// any external remote depends on the global -P for its port.
 //
-// A missing port is deliberately not lumped together. The sandbox connects to an
-// authoritative destination minted by the server, so no port there means scp's
-// default 22 (knownDefault). An external host with no port may instead resolve a
-// port from the user's SSH config (unknownPort), which a forced -P would
-// override.
+// scp carries per-endpoint ports two ways: an operand's own "scp://host:PORT/..."
+// URI (self-porting, overrides -P for that host) or a single global -P that
+// applies to every operand without a URI port. External remotes are emitted so
+// they self-port whenever they name a port, so the only remote left needing the
+// global -P is the sandbox (rendered as "host:path"). portDependentExternal
+// flags an external remote — a native "host:path" or a portless scp:// URI —
+// that would be swept up by a -P injected for the sandbox.
 type remoteUsage struct {
-	sandbox      bool         // any sandbox reference
-	external     bool         // any non-sandbox remote (scp:// URI or native host:path)
-	ports        map[int]bool // explicit ports required by remotes
-	knownDefault bool         // a remote known to use scp's default port (sandbox, no server port)
-	unknownPort  bool         // a remote whose port may resolve from the user's SSH config
-}
-
-// addSandboxPort records the sandbox's port. A missing port (0) means the
-// server did not specify one, so the connection uses scp's default port 22.
-func (u *remoteUsage) addSandboxPort(port int) {
-	if port == 0 {
-		u.knownDefault = true
-		return
-	}
-	u.ports[port] = true
-}
-
-// addExternalPort records an external remote's port. A missing port (0) is
-// unknown rather than a definite default, since the host may set Port in the
-// user's SSH config.
-func (u *remoteUsage) addExternalPort(port int) {
-	if port == 0 {
-		u.unknownPort = true
-		return
-	}
-	u.ports[port] = true
+	sandbox               bool // any sandbox reference
+	external              bool // any non-sandbox remote (scp:// URI or native host:path)
+	sandboxPort           int  // the sandbox's port (0 = implicit, i.e. scp's default 22)
+	portDependentExternal bool // an external remote whose port a global -P would apply to
 }
 
 // scpConnectionOptions builds the scp options implied by the resolved remotes:
-// an accept-new host-key policy for sandbox connections and a single -P port.
-// scp's getopt stops at the first non-option argument, so these must be
-// prepended ahead of the sources and target.
+// an accept-new host-key policy for sandbox connections and a single -P port for
+// the sandbox. scp's getopt stops at the first non-option argument, so these
+// must be prepended ahead of the sources and target.
 //
 // Both options are global to the whole scp invocation, so each is emitted only
 // when it cannot mis-apply to another remote:
 //
 //   - The relaxed host-key policy is injected only when the sandbox is the sole
 //     remote; an external host keeps the user's normal SSH config.
-//   - -P carries the single explicit port every remote agrees on — including 22,
-//     so an explicitly requested port overrides any SSH-config Port. It is
-//     rejected, rather than forced, when it cannot be honored for all remotes: a
-//     remote whose port is unknown (a native "host:path" or portless scp:// URI,
-//     which may resolve a port from the user's SSH config) or the sandbox on its
-//     default 22 cannot also be pinned to a different explicit port.
+//   - -P carries the sandbox's port. External remotes that name a port already
+//     self-port via their scp:// URI (overriding -P for that host), so -P only
+//     serves the sandbox. It is rejected, rather than forced, when a
+//     port-dependent external remote (a native "host:path" or portless scp://
+//     URI) would be swept onto the sandbox's port; that remote should name its
+//     port with an scp://host:PORT/path URI or be copied separately. An implicit
+//     sandbox port (scp's default 22) needs no -P at all.
 func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([]string, error) {
 	var opts []string
 	if usage.sandbox && !usage.external && !userSetStrict {
 		opts = append(opts, "-o", "StrictHostKeyChecking=accept-new")
 	}
-	if !userSetPort {
-		distinct := make([]int, 0, len(usage.ports))
-		for p := range usage.ports {
-			distinct = append(distinct, p)
+	if !userSetPort && usage.sandboxPort != 0 {
+		if usage.portDependentExternal {
+			return nil, fmt.Errorf("cannot copy between the sandbox on port %d and a remote whose port is unspecified: scp would apply a single -P to both. Give the other remote an explicit port with an scp://host:PORT/path URI, or copy to or from the sandbox in a separate command", usage.sandboxPort)
 		}
-		sort.Ints(distinct)
-		if len(distinct) > 1 {
-			return nil, fmt.Errorf("cannot copy between remotes on different ports %v; scp uses a single port per invocation", distinct)
-		}
-		if len(distinct) == 1 {
-			port := distinct[0]
-			switch {
-			case usage.unknownPort:
-				return nil, fmt.Errorf("cannot copy between remotes on different ports: one remote requires port %d while another remote's port is unspecified (it may resolve from your SSH config); scp uses a single port per invocation", port)
-			case port != sshDefaultPort && usage.knownDefault:
-				return nil, fmt.Errorf("cannot copy between remotes on different ports %d and %d; scp uses a single port per invocation", sshDefaultPort, port)
-			default:
-				opts = append(opts, "-P", strconv.Itoa(port))
-			}
-		}
+		opts = append(opts, "-P", strconv.Itoa(usage.sandboxPort))
 	}
 	return opts, nil
 }
@@ -476,15 +445,22 @@ func parseSboxURI(raw string) (name, path string, err error) {
 }
 
 // parseSCPURI parses an "scp://[user@]host[:port][/path]" URI into an scp
-// destination spec and, if present, the port.
-func parseSCPURI(raw string) (spec string, port int, err error) {
+// operand and reports whether the URI named an explicit port.
+//
+// A URI without a port becomes the plain "[user@]host:path" scp already
+// understands, taking its port from -P or the user's SSH config. A URI with a
+// port is emitted as a self-porting "scp://[user@]host:port//path" URI so scp
+// connects that host on the named port regardless of -P or SSH config. The path
+// is doubled behind the authority ("//path") because scp strips one leading
+// slash from a URI path; this preserves the absolute path the plain form conveys.
+func parseSCPURI(raw string) (operand string, hasPort bool, err error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid scp URI %q: %w", raw, err)
+		return "", false, fmt.Errorf("invalid scp URI %q: %w", raw, err)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return "", 0, fmt.Errorf("scp URI %q is missing a host", raw)
+		return "", false, fmt.Errorf("scp URI %q is missing a host", raw)
 	}
 	if u.User != nil {
 		if name := u.User.Username(); name != "" {
@@ -492,12 +468,13 @@ func parseSCPURI(raw string) (spec string, port int, err error) {
 		}
 	}
 	if p := u.Port(); p != "" {
-		port, err = strconv.Atoi(p)
+		port, err := strconv.Atoi(p)
 		if err != nil {
-			return "", 0, fmt.Errorf("invalid port in scp URI %q: %w", raw, err)
+			return "", false, fmt.Errorf("invalid port in scp URI %q: %w", raw, err)
 		}
+		return fmt.Sprintf("scp://%s:%d/%s", host, port, u.Path), true, nil
 	}
-	return host + ":" + u.Path, port, nil
+	return host + ":" + u.Path, false, nil
 }
 
 // resolveSandboxDestination fetches fresh SSH connection details for a sandbox

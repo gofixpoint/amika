@@ -145,13 +145,31 @@ func TestBuildSCPInvocation(t *testing.T) {
 		},
 		{
 			// An external host is involved, so the sandbox host-key policy is not
-			// injected (scp -o options apply to every remote). The sandbox uses
-			// its default port and the URI explicitly requests 22, so -P 22 is
-			// emitted to honor the explicit request over any SSH-config Port.
+			// injected (scp -o options apply to every remote). The URI names its
+			// own port, so it is emitted as a self-porting scp:// operand and no
+			// global -P is needed; the sandbox uses its implicit default port.
 			name: "scp uri external host with explicit port 22",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data.csv", "scp://user@host:22/tmp/data.csv"}},
 			dest: daytona,
-			want: []string{"-P", "22", "user-token@ssh.app.daytona.io:/data.csv", "user@host:/tmp/data.csv"},
+			want: []string{"user-token@ssh.app.daytona.io:/data.csv", "scp://user@host:22//tmp/data.csv"},
+		},
+		{
+			// Codex's case: a default-port sandbox copying to an external host on
+			// a non-default port. The URI self-ports, the sandbox uses its
+			// implicit default, and no global -P conflates the two.
+			name: "default sandbox to external non-default-port URI",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "scp://backup:2222/out"}},
+			dest: daytona,
+			want: []string{"user-token@ssh.app.daytona.io:/data", "scp://backup:2222//out"},
+		},
+		{
+			// Codex's example: a non-default sandbox port copying to an explicit
+			// port-22 URI. The sandbox takes the global -P; the URI self-ports to
+			// 22, overriding -P for that host.
+			name: "ported sandbox and external URI on different explicit ports",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "scp://user@host:22/tmp/out"}},
+			dest: ported,
+			want: []string{"-P", "2222", "u@host.example:/data", "scp://user@host:22//tmp/out"},
 		},
 		{
 			name: "native host path passthrough with sandbox",
@@ -160,36 +178,39 @@ func TestBuildSCPInvocation(t *testing.T) {
 			want: []string{"user-token@ssh.app.daytona.io:/data", "other-host:/backup"},
 		},
 		{
-			// A ported sandbox with an implicit-port external remote would force
+			// A ported sandbox with an implicit-port native remote would force
 			// the external host onto the sandbox's port via the global -P.
 			name:    "ported sandbox with implicit-port external remote",
 			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "other-host:/backup"}},
 			dest:    ported,
-			wantErr: "different ports",
-		},
-		{
-			name:    "ported sandbox with portless scp uri",
-			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "scp://host/backup"}},
-			dest:    ported,
-			wantErr: "different ports",
-		},
-		{
-			// One remote explicitly requests port 22 while a native remote's
-			// port is unknown (it may resolve from SSH config). A single global
-			// -P cannot honor both, so the copy is rejected rather than forcing
-			// the native host onto 22.
-			name:    "explicit port 22 with unknown-port native remote",
-			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:22/data", "other-host:/backup"}},
-			dest:    daytona,
 			wantErr: "unspecified",
 		},
 		{
-			// Both remotes explicitly agree on a non-default port, so -P is
-			// injected (no implicit-port remote it could mis-apply to).
-			name: "matching non-default ports inject -P",
+			// A portless scp:// URI is port-dependent like a native host:path, so
+			// a ported sandbox cannot share the global -P with it.
+			name:    "ported sandbox with portless scp uri",
+			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "scp://host/backup"}},
+			dest:    ported,
+			wantErr: "unspecified",
+		},
+		{
+			// The URI names its own port, so it self-ports and does not force the
+			// native remote (which resolves its port from SSH config) onto it. No
+			// sandbox is referenced, so no -P is injected and both remotes keep
+			// their own port.
+			name: "explicit-port URI does not force a native remote's port",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:22/data", "other-host:/backup"}},
+			dest: daytona,
+			want: []string{"scp://host:22//data", "other-host:/backup"},
+		},
+		{
+			// The external URI self-ports via its own scp:// operand; the sandbox
+			// still needs -P for its port. They agree here, but the URI keeps its
+			// own port even when they differ (see the case above).
+			name: "external URI self-ports alongside a ported sandbox",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"scp://host:2222/data", "mybox:/backup"}},
 			dest: ported,
-			want: []string{"-P", "2222", "host:/data", "u@host.example:/backup"},
+			want: []string{"-P", "2222", "scp://host:2222//data", "u@host.example:/backup"},
 		},
 		{
 			name: "user set port is not overridden",
@@ -264,12 +285,18 @@ func TestBuildSCPInvocation(t *testing.T) {
 	}
 }
 
-func TestBuildSCPInvocationConflictingPorts(t *testing.T) {
+func TestBuildSCPInvocationPerEndpointPorts(t *testing.T) {
+	// A sandbox and an external URI on different explicit ports no longer
+	// conflict: the sandbox takes the global -P and the URI self-ports.
 	plan := scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/a", "scp://host:2222/b"}}
 	dest := ssh.Destination{User: "u", Host: "h", Port: 22}
-	_, err := buildSCPInvocation(plan, fixedDest(dest))
-	if err == nil || !strings.Contains(err.Error(), "different ports") {
-		t.Fatalf("buildSCPInvocation() error = %v, want ports conflict", err)
+	got, err := buildSCPInvocation(plan, fixedDest(dest))
+	if err != nil {
+		t.Fatalf("buildSCPInvocation() unexpected error = %v", err)
+	}
+	want := []string{"-P", "22", "u@h:/a", "scp://host:2222//b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildSCPInvocation()\n got = %#v\nwant = %#v", got, want)
 	}
 }
 
@@ -322,19 +349,21 @@ func TestParseSboxURI(t *testing.T) {
 
 func TestParseSCPURI(t *testing.T) {
 	tests := []struct {
-		raw      string
-		wantSpec string
-		wantPort int
-		wantErr  bool
+		raw         string
+		wantOperand string
+		wantHasPort bool
+		wantErr     bool
 	}{
-		{raw: "scp://user@host:2222/tmp/x", wantSpec: "user@host:/tmp/x", wantPort: 2222},
-		{raw: "scp://host/tmp/x", wantSpec: "host:/tmp/x", wantPort: 0},
-		{raw: "scp://host", wantSpec: "host:", wantPort: 0},
+		// A ported URI becomes a self-porting scp:// operand; the path is
+		// doubled behind the authority so scp resolves the same absolute path.
+		{raw: "scp://user@host:2222/tmp/x", wantOperand: "scp://user@host:2222//tmp/x", wantHasPort: true},
+		{raw: "scp://host/tmp/x", wantOperand: "host:/tmp/x"},
+		{raw: "scp://host", wantOperand: "host:"},
 		{raw: "scp://host:notaport/x", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
-			spec, port, err := parseSCPURI(tt.raw)
+			operand, hasPort, err := parseSCPURI(tt.raw)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("parseSCPURI(%q) expected error", tt.raw)
@@ -344,8 +373,8 @@ func TestParseSCPURI(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseSCPURI(%q) error = %v", tt.raw, err)
 			}
-			if spec != tt.wantSpec || port != tt.wantPort {
-				t.Errorf("parseSCPURI(%q) = (%q, %d), want (%q, %d)", tt.raw, spec, port, tt.wantSpec, tt.wantPort)
+			if operand != tt.wantOperand || hasPort != tt.wantHasPort {
+				t.Errorf("parseSCPURI(%q) = (%q, %v), want (%q, %v)", tt.raw, operand, hasPort, tt.wantOperand, tt.wantHasPort)
 			}
 		})
 	}
