@@ -104,6 +104,7 @@ func fixedDest(d ssh.Destination) destResolver {
 
 func TestBuildSCPInvocation(t *testing.T) {
 	daytona := ssh.Destination{User: "user-token", Host: "ssh.app.daytona.io"}
+	daytona22 := ssh.Destination{User: "user-token", Host: "ssh.app.daytona.io", Port: 22}
 	ported := ssh.Destination{User: "u", Host: "host.example", Port: 2222}
 
 	tests := []struct {
@@ -142,6 +143,21 @@ func TestBuildSCPInvocation(t *testing.T) {
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"./a.txt", "mybox:/x"}},
 			dest: ported,
 			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-P", "2222", "./a.txt", "u@host.example:/x"},
+		},
+		{
+			// An explicit sandbox port 22 is scp's default, so no -P is injected.
+			name: "explicit sandbox port 22 needs no -P",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"./a.txt", "mybox:/x"}},
+			dest: daytona22,
+			want: []string{"-o", "StrictHostKeyChecking=accept-new", "./a.txt", "user-token@ssh.app.daytona.io:/x"},
+		},
+		{
+			// Because :22 needs no -P, it does not conflict with a port-dependent
+			// external remote (a native host:path) that also defaults to 22.
+			name: "explicit sandbox port 22 does not conflict with implicit-port remote",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/data", "other-host:/backup"}},
+			dest: daytona22,
+			want: []string{"user-token@ssh.app.daytona.io:/data", "other-host:/backup"},
 		},
 		{
 			// An external host is involved, so the sandbox host-key policy is not
@@ -331,12 +347,12 @@ func TestBuildSCPInvocationPerEndpointPorts(t *testing.T) {
 	// A sandbox and an external URI on different explicit ports no longer
 	// conflict: the sandbox takes the global -P and the URI self-ports.
 	plan := scpPlan{sandbox: "mybox", scpArgv: []string{"mybox:/a", "scp://host:2222/b"}}
-	dest := ssh.Destination{User: "u", Host: "h", Port: 22}
+	dest := ssh.Destination{User: "u", Host: "h", Port: 2200}
 	got, err := buildSCPInvocation(plan, fixedDest(dest))
 	if err != nil {
 		t.Fatalf("buildSCPInvocation() unexpected error = %v", err)
 	}
-	want := []string{"-P", "22", "u@h:/a", "scp://host:2222//b"}
+	want := []string{"-P", "2200", "u@h:/a", "scp://host:2222//b"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildSCPInvocation()\n got = %#v\nwant = %#v", got, want)
 	}
@@ -478,6 +494,29 @@ func TestConsumesNextArg(t *testing.T) {
 		t.Run(tt.tok, func(t *testing.T) {
 			if got := consumesNextArg(tt.tok); got != tt.want {
 				t.Errorf("consumesNextArg(%q) = %v, want %v", tt.tok, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasHelpFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "bare -h", args: []string{"-h"}, want: true},
+		{name: "bare --help", args: []string{"--help"}, want: true},
+		{name: "help after leading amika flag", args: []string{"--print", "-h"}, want: true},
+		{name: "no help", args: []string{"mybox", "./a", "mybox:/b"}},
+		{name: "-h as a file operand is not help", args: []string{"mybox", "-h", "mybox:/b"}},
+		{name: "--help after the sandbox name is not help", args: []string{"mybox", "./a", "--help"}},
+		{name: "-h after -- is a file operand", args: []string{"--", "-h"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasHelpFlag(tt.args); got != tt.want {
+				t.Errorf("hasHelpFlag(%#v) = %v, want %v", tt.args, got, tt.want)
 			}
 		})
 	}

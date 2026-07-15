@@ -325,14 +325,18 @@ type remoteUsage struct {
 //     serves the sandbox. It is rejected, rather than forced, when a
 //     port-dependent external remote (a native "host:path" or portless scp://
 //     URI) would be swept onto the sandbox's port; that remote should name its
-//     port with an scp://host:PORT/path URI or be copied separately. An implicit
-//     sandbox port (scp's default 22) needs no -P at all.
+//     port with an scp://host:PORT/path URI or be copied separately. A sandbox
+//     port that is scp's default 22 (whether implicit or stated explicitly)
+//     needs no -P at all.
 func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([]string, error) {
 	var opts []string
 	if usage.sandbox && !usage.external && !usage.jumpHost && !userSetStrict {
 		opts = append(opts, "-o", "StrictHostKeyChecking=accept-new")
 	}
-	if !userSetPort && usage.sandboxPort != 0 {
+	// Port 22 is scp's default, so an explicit :22 needs no -P — and injecting
+	// one would needlessly trip the mixed-port guard against a port-dependent
+	// external remote that also resolves to the default 22.
+	if !userSetPort && usage.sandboxPort != 0 && usage.sandboxPort != 22 {
 		if usage.portDependentExternal {
 			return nil, fmt.Errorf("cannot copy between the sandbox on port %d and a remote whose port is unspecified: scp would apply a single -P to both. Give the other remote an explicit port with an scp://host:PORT/path URI, or copy to or from the sandbox in a separate command", usage.sandboxPort)
 		}
@@ -619,9 +623,15 @@ func execSCP(args []string) error {
 	return syscall.Exec(scpBin, append([]string{"scp"}, args...), os.Environ())
 }
 
-// hasHelpFlag reports whether the raw args request help.
+// hasHelpFlag reports whether the raw args request help. Only a leading
+// "-h"/"--help" counts: once the first operand (the sandbox name) or a "--"
+// appears, scp treats later tokens as file operands, so a copy source literally
+// named "-h" is not mistaken for a help request.
 func hasHelpFlag(args []string) bool {
 	for _, a := range args {
+		if len(a) == 0 || a[0] != '-' || a == "--" {
+			break // first operand or end-of-options marker; options end here
+		}
 		if a == "-h" || a == "--help" {
 			return true
 		}
