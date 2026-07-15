@@ -456,10 +456,33 @@ func remoteSpec(d ssh.Destination, path string) string {
 	return host + ":" + path
 }
 
+// splitURIPath splits a "scheme://authority/path" string into its parsed
+// authority (for user/host/port) and the decoded remote path. The path is taken
+// verbatim from the first "/" onward and percent-decoded here, rather than read
+// from url.Parse's u.Path: url.Parse would split a "?" or "#" in the path into a
+// query or fragment and drop it, silently truncating a remote file name that
+// contains one. Only the authority (which has neither) is handed to url.Parse.
+func splitURIPath(raw, scheme string) (auth *url.URL, path string, err error) {
+	rest := strings.TrimPrefix(raw, scheme+"://")
+	authority, rawPath := rest, ""
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		authority, rawPath = rest[:i], rest[i:]
+	}
+	auth, err = url.Parse(scheme + "://" + authority)
+	if err != nil {
+		return nil, "", err
+	}
+	path, err = url.PathUnescape(rawPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return auth, path, nil
+}
+
 // parseSboxURI parses a "sbox://<name>/<path>" URI into the sandbox name and the
 // remote path.
 func parseSboxURI(raw string) (name, path string, err error) {
-	u, err := url.Parse(raw)
+	u, path, err := splitURIPath(raw, "sbox")
 	if err != nil {
 		return "", "", fmt.Errorf("invalid sandbox URI %q: %w", raw, err)
 	}
@@ -469,7 +492,7 @@ func parseSboxURI(raw string) (name, path string, err error) {
 	if u.Port() != "" {
 		return "", "", fmt.Errorf("sandbox URI %q must not contain a port (expected sbox://NAME/PATH)", raw)
 	}
-	return u.Hostname(), u.Path, nil
+	return u.Hostname(), path, nil
 }
 
 // parseSCPURI parses an "scp://[user@]host[:port][/path]" URI into an scp
@@ -485,7 +508,7 @@ func parseSboxURI(raw string) (name, path string, err error) {
 // path — a literal "%" survives as "%25", and "@" is encoded so scp's URI parser
 // does not read the path as userinfo.
 func parseSCPURI(raw string) (operand string, hasPort bool, err error) {
-	u, err := url.Parse(raw)
+	u, path, err := splitURIPath(raw, "scp")
 	if err != nil {
 		return "", false, fmt.Errorf("invalid scp URI %q: %w", raw, err)
 	}
@@ -503,10 +526,10 @@ func parseSCPURI(raw string) (operand string, hasPort bool, err error) {
 		if err != nil {
 			return "", false, fmt.Errorf("invalid port in scp URI %q: %w", raw, err)
 		}
-		escPath := strings.ReplaceAll((&url.URL{Path: u.Path}).EscapedPath(), "@", "%40")
+		escPath := strings.ReplaceAll((&url.URL{Path: path}).EscapedPath(), "@", "%40")
 		return fmt.Sprintf("scp://%s:%d/%s", host, port, escPath), true, nil
 	}
-	return host + ":" + u.Path, false, nil
+	return host + ":" + path, false, nil
 }
 
 // resolveSandboxDestination fetches fresh SSH connection details for a sandbox

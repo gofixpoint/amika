@@ -342,6 +342,8 @@ func TestParseSboxURI(t *testing.T) {
 	}{
 		{raw: "sbox://mybox/home/amika/a.txt", wantName: "mybox", wantPath: "/home/amika/a.txt"},
 		{raw: "sbox://mybox", wantName: "mybox", wantPath: ""},
+		// A "#" in the path is a literal path character, not a URL fragment.
+		{raw: "sbox://mybox/tmp/report#2.txt", wantName: "mybox", wantPath: "/tmp/report#2.txt"},
 		{raw: "sbox:///no-host", wantErr: true},
 		{raw: "sbox://mybox:2222/x", wantErr: true},
 	}
@@ -378,9 +380,15 @@ func TestParseSCPURI(t *testing.T) {
 		{raw: "scp://host:2222/tmp/50%25off.pdf", wantOperand: "scp://host:2222//tmp/50%25off.pdf", wantHasPort: true},
 		// "@" in the path is encoded so scp does not read it as userinfo.
 		{raw: "scp://user@host:2222/tmp/build@2", wantOperand: "scp://user@host:2222//tmp/build%402", wantHasPort: true},
+		// "?"/"#" are literal path characters, not query/fragment: preserved for
+		// the portless form and re-encoded for the self-porting form.
+		{raw: "scp://host/a?b", wantOperand: "host:/a?b"},
+		{raw: "scp://host:2222/a#b", wantOperand: "scp://host:2222//a%23b", wantHasPort: true},
 		{raw: "scp://host/tmp/x", wantOperand: "host:/tmp/x"},
 		{raw: "scp://host", wantOperand: "host:"},
 		{raw: "scp://host:notaport/x", wantErr: true},
+		// A malformed percent-escape in the path is rejected.
+		{raw: "scp://host/tmp/50%off", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
