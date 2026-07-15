@@ -263,6 +263,20 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 		return nil, fmt.Errorf("no remote source or target found; reference the sandbox as %s:PATH or sbox://%s/PATH, or use an scp:// URI", plan.sandbox, plan.sandbox)
 	}
 
+	// The resolved sandbox destination may itself carry ssh options set by the
+	// server. Fold any host-key policy or jump host it names into the same
+	// decision as the user's flags (both are forwarded verbatim below): otherwise
+	// the injected accept-new — prepended ahead of them, and ssh honors the first
+	// value of a keyword — would override a stricter server policy or silently
+	// relax a server-supplied jump host to trust-on-first-use. Ports are not
+	// folded: ParseDestination extracts them into d.Port, and a stray -P in the
+	// options is rejected by firstNonSCPOption below.
+	if len(sandboxOpts) > 0 {
+		_, destStrict, destJump := scanUserOptions(sandboxOpts)
+		userSetStrict = userSetStrict || destStrict
+		usage.jumpHost = usage.jumpHost || destJump
+	}
+
 	opts, err := scpConnectionOptions(usage, userSetStrict, userSetPort)
 	if err != nil {
 		return nil, err

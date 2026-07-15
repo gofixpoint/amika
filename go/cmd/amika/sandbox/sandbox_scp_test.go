@@ -269,6 +269,23 @@ func TestBuildSCPInvocation(t *testing.T) {
 			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-i", "/tmp/key", "-o", "Compression=yes", "./a", "u@h:/b"},
 		},
 		{
+			// A host-key policy set by the server must not be overridden by the
+			// injected accept-new (ssh honors the first value of a keyword), so
+			// accept-new is not prepended when the destination already sets one.
+			name: "sandbox destination host-key policy is not overridden",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"./a", "mybox:/b"}},
+			dest: ssh.Destination{User: "u", Host: "h", Options: []string{"-o", "StrictHostKeyChecking=yes"}},
+			want: []string{"-o", "StrictHostKeyChecking=yes", "./a", "u@h:/b"},
+		},
+		{
+			// A jump host supplied by the server suppresses accept-new too, so
+			// scp's global -o does not relax the bastion to trust-on-first-use.
+			name: "sandbox destination jump host suppresses accept-new",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"./a", "mybox:/b"}},
+			dest: ssh.Destination{User: "u", Host: "h", Options: []string{"-J", "bastion"}},
+			want: []string{"-J", "bastion", "./a", "u@h:/b"},
+		},
+		{
 			// Those options are global to the scp invocation, so a mixed copy
 			// that also touches an external host cannot scope them to the
 			// sandbox; the copy is rejected instead of misrouting the external.
