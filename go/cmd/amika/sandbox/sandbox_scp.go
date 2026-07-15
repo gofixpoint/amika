@@ -166,10 +166,10 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 		return dest, nil
 	}
 
-	userSetPort, userSetStrict := scanUserOptions(plan.scpArgv)
+	userSetPort, userSetStrict, userJumpHost := scanUserOptions(plan.scpArgv)
 
 	rewritten := make([]string, 0, len(plan.scpArgv))
-	usage := remoteUsage{}
+	usage := remoteUsage{jumpHost: userJumpHost}
 	var sandboxOpts []string // ssh options carried by the sandbox destination
 
 	optionsEnded := false
@@ -305,6 +305,7 @@ type remoteUsage struct {
 	external              bool // any non-sandbox remote (scp:// URI or native host:path)
 	sandboxPort           int  // the sandbox's port (0 = implicit, i.e. scp's default 22)
 	portDependentExternal bool // an external remote whose port a global -P would apply to
+	jumpHost              bool // a jump host (-J / -o ProxyJump) is in play
 }
 
 // scpConnectionOptions builds the scp options implied by the resolved remotes:
@@ -316,7 +317,9 @@ type remoteUsage struct {
 // when it cannot mis-apply to another remote:
 //
 //   - The relaxed host-key policy is injected only when the sandbox is the sole
-//     remote; an external host keeps the user's normal SSH config.
+//     remote; an external host — or a jump host (-J / -o ProxyJump), which scp's
+//     global -o would also relax to trust-on-first-use — keeps the user's normal
+//     SSH config.
 //   - -P carries the sandbox's port. External remotes that name a port already
 //     self-port via their scp:// URI (overriding -P for that host), so -P only
 //     serves the sandbox. It is rejected, rather than forced, when a
@@ -326,7 +329,7 @@ type remoteUsage struct {
 //     sandbox port (scp's default 22) needs no -P at all.
 func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([]string, error) {
 	var opts []string
-	if usage.sandbox && !usage.external && !userSetStrict {
+	if usage.sandbox && !usage.external && !usage.jumpHost && !userSetStrict {
 		opts = append(opts, "-o", "StrictHostKeyChecking=accept-new")
 	}
 	if !userSetPort && usage.sandboxPort != 0 {
@@ -339,12 +342,14 @@ func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([
 }
 
 // scanUserOptions reports whether the argv already sets an explicit port or
-// StrictHostKeyChecking, so the defaults injected for a sandbox do not override
-// a user's explicit choice. It matches the flags precisely so an operand that
-// merely contains the text "StrictHostKeyChecking" (e.g. a file path) or a "P"
-// does not trip it, and — mirroring scp's OpenBSD getopt — stops at the first
-// operand (or a "--"), so a dash-prefixed file operand is not read as an option.
-func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
+// StrictHostKeyChecking (so the defaults injected for a sandbox do not override
+// a user's explicit choice), and whether it routes through a jump host (-J or
+// -o ProxyJump), whose host key scp's global host-key policy would otherwise
+// also relax. It matches the flags precisely so an operand that merely contains
+// the text "StrictHostKeyChecking" (e.g. a file path) or a "P" does not trip it,
+// and — mirroring scp's OpenBSD getopt — stops at the first operand (or a "--"),
+// so a dash-prefixed file operand is not read as an option.
+func scanUserOptions(argv []string) (userSetPort, userSetStrict, userJumpHost bool) {
 	for i := 0; i < len(argv); i++ {
 		tok := argv[i]
 		// Option parsing stops at "--" or the first operand; scp treats every
@@ -366,6 +371,8 @@ func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
 				userSetStrict = true
 			case strings.EqualFold(key, "Port"):
 				userSetPort = true
+			case strings.EqualFold(key, "ProxyJump"):
+				userJumpHost = true
 			}
 			if tok == "-o" {
 				i++ // the value lived in the following token
@@ -384,6 +391,10 @@ func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
 		if strings.ContainsRune(letters, 'P') {
 			userSetPort = true
 		}
+		// scp's -J names a jump host (as "-J", "-Jhost", or bundled "-rJ").
+		if strings.ContainsRune(letters, 'J') {
+			userJumpHost = true
+		}
 
 		// Skip an option's argument in the following token so it is not read as
 		// the first operand (which would end option scanning prematurely).
@@ -391,7 +402,7 @@ func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
 			i++
 		}
 	}
-	return userSetPort, userSetStrict
+	return userSetPort, userSetStrict, userJumpHost
 }
 
 // oOptionValue returns the value of an "-o" ssh option written as either
@@ -561,6 +572,12 @@ func parseSCPURI(raw string) (operand string, hasPort bool, err error) {
 	host := u.Hostname()
 	if host == "" {
 		return "", false, fmt.Errorf("scp URI %q is missing a host", raw)
+	}
+	// url.Hostname strips the brackets Go requires around an IPv6 literal. scp
+	// needs them back in both output forms so a bare "::1" is not misread as a
+	// "host:port" (the portless "host:path") or left as an unbracketed URI host.
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
 	}
 	if u.User != nil {
 		if name := u.User.Username(); name != "" {

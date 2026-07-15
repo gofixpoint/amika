@@ -225,14 +225,23 @@ func TestBuildSCPInvocation(t *testing.T) {
 			want: []string{"-o", "StrictHostKeyChecking=yes", "./a", "user-token@ssh.app.daytona.io:/x"},
 		},
 		{
-			// -J takes a "[user@]host[:port]" jump-host argument; it must not be
-			// counted as an external remote (which would suppress the sandbox
-			// host-key policy and, on a non-default sandbox port, wrongly trip
-			// the mixed-port error).
-			name: "option argument with host syntax is not a remote",
+			// -J takes a "[user@]host[:port]" jump-host argument; it is not an scp
+			// copy endpoint, so it must not be counted as an external remote (which
+			// would wrongly trip the mixed-port error on a non-default sandbox
+			// port). But scp's -o host-key policy is global, so it would relax the
+			// jump host to trust-on-first-use too — hence accept-new is suppressed
+			// while -P (which the jump host self-ports past) is still injected.
+			name: "jump host suppresses host-key policy but keeps sandbox port",
 			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"-J", "bastion:22", "./a", "mybox:/x"}},
 			dest: ported,
-			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-P", "2222", "-J", "bastion:22", "./a", "u@host.example:/x"},
+			want: []string{"-P", "2222", "-J", "bastion:22", "./a", "u@host.example:/x"},
+		},
+		{
+			// The -o ProxyJump form is detected the same way as -J.
+			name: "proxyjump option suppresses host-key policy",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"-o", "ProxyJump=bastion", "./a", "mybox:/x"}},
+			dest: daytona,
+			want: []string{"-o", "ProxyJump=bastion", "./a", "user-token@ssh.app.daytona.io:/x"},
 		},
 		{
 			// ssh options the server puts in the destination (identity, config,
@@ -402,6 +411,11 @@ func TestParseSCPURI(t *testing.T) {
 		{raw: "scp://host:2222/a#b", wantOperand: "scp://host:2222//a%23b", wantHasPort: true},
 		{raw: "scp://host/tmp/x", wantOperand: "host:/tmp/x"},
 		{raw: "scp://host", wantOperand: "host:"},
+		// An IPv6 literal keeps its brackets in both forms so scp does not misread
+		// it as a "host:port" or an unbracketed URI host.
+		{raw: "scp://[::1]:2222/tmp/x", wantOperand: "scp://[::1]:2222//tmp/x", wantHasPort: true},
+		{raw: "scp://user@[2001:db8::1]:22/data", wantOperand: "scp://user@[2001:db8::1]:22//data", wantHasPort: true},
+		{raw: "scp://[::1]/tmp/x", wantOperand: "[::1]:/tmp/x"},
 		{raw: "scp://host:notaport/x", wantErr: true},
 		// A malformed percent-escape in the path is rejected.
 		{raw: "scp://host/tmp/50%off", wantErr: true},
@@ -475,6 +489,7 @@ func TestScanUserOptions(t *testing.T) {
 		argv       []string
 		wantPort   bool
 		wantStrict bool
+		wantJump   bool
 	}{
 		{name: "no options", argv: []string{"./a", "mybox:/b"}},
 		{name: "explicit -P", argv: []string{"-P", "2222", "./a", "mybox:/b"}, wantPort: true},
@@ -490,15 +505,21 @@ func TestScanUserOptions(t *testing.T) {
 		{name: "path containing P is not a port flag", argv: []string{"./PATH", "mybox:/b"}},
 		{name: "-P after an operand is a file, not the port flag", argv: []string{"file", "-P", "mybox:/b"}},
 		{name: "-P after -- is a file, not the port flag", argv: []string{"--", "-P", "mybox:/b"}},
-		{name: "option argument is not mistaken for an operand", argv: []string{"-J", "bastion:22", "-P", "2222", "./a", "mybox:/b"}, wantPort: true},
+		{name: "option argument is not mistaken for an operand", argv: []string{"-J", "bastion:22", "-P", "2222", "./a", "mybox:/b"}, wantPort: true, wantJump: true},
 		{name: "-o value is skipped before scanning continues", argv: []string{"-o", "Compression=yes", "-P", "2222", "./a"}, wantPort: true},
+		{name: "-J jump host detected", argv: []string{"-J", "bastion:22", "./a", "mybox:/b"}, wantJump: true},
+		{name: "attached -J jump host detected", argv: []string{"-Jbastion", "./a", "mybox:/b"}, wantJump: true},
+		{name: "bundled -rJ jump host detected", argv: []string{"-rJ", "bastion", "./a", "mybox:/b"}, wantJump: true},
+		{name: "-o ProxyJump detected", argv: []string{"-o", "ProxyJump=bastion", "./a", "mybox:/b"}, wantJump: true},
+		{name: "attached -oProxyJump detected", argv: []string{"-oProxyJump=bastion", "./a", "mybox:/b"}, wantJump: true},
+		{name: "-J after an operand is a file, not a jump host", argv: []string{"file", "-J", "mybox:/b"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotPort, gotStrict := scanUserOptions(tt.argv)
-			if gotPort != tt.wantPort || gotStrict != tt.wantStrict {
-				t.Errorf("scanUserOptions(%#v) = (port=%v, strict=%v), want (port=%v, strict=%v)",
-					tt.argv, gotPort, gotStrict, tt.wantPort, tt.wantStrict)
+			gotPort, gotStrict, gotJump := scanUserOptions(tt.argv)
+			if gotPort != tt.wantPort || gotStrict != tt.wantStrict || gotJump != tt.wantJump {
+				t.Errorf("scanUserOptions(%#v) = (port=%v, strict=%v, jump=%v), want (port=%v, strict=%v, jump=%v)",
+					tt.argv, gotPort, gotStrict, gotJump, tt.wantPort, tt.wantStrict, tt.wantJump)
 			}
 		})
 	}
