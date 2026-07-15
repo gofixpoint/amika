@@ -253,6 +253,22 @@ func TestBuildSCPInvocation(t *testing.T) {
 			wantErr: "cannot scope",
 		},
 		{
+			// ssh's -W has no scp equivalent, so forwarding it would fail; reject
+			// with a clear pointer to `sandbox ssh` instead.
+			name:    "ssh-only option is rejected before forwarding to scp",
+			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"./a", "mybox:/b"}},
+			dest:    ssh.Destination{User: "u", Host: "h", Options: []string{"-W", "jump:22"}},
+			wantErr: "scp does not support",
+		},
+		{
+			// ssh's -P (connection tag) collides with scp's -P (port), so it must
+			// not be forwarded even though the letter is shared.
+			name:    "ssh -P tag is not forwarded as an scp port",
+			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"./a", "mybox:/b"}},
+			dest:    ssh.Destination{User: "u", Host: "h", Options: []string{"-P", "connlabel"}},
+			wantErr: "scp does not support",
+		},
+		{
 			// scp stops treating dash tokens as options once operands begin, so a
 			// source named "-P" is a file, not the port flag, and the sandbox
 			// target after it is still rewritten.

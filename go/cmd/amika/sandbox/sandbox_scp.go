@@ -273,6 +273,13 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 	// sole remote. In a mixed copy they would also hit the external host, so the
 	// copy is rejected rather than misrouting it.
 	if len(sandboxOpts) > 0 {
+		// scp and ssh share many option letters but not their meanings (ssh's
+		// -P is a connection tag, scp's is a port; -W/-L/-R/-D have no scp
+		// equivalent). Forwarding such an option would fail or, worse, be
+		// silently reinterpreted, so reject it rather than misapply it.
+		if bad, ok := firstNonSCPOption(sandboxOpts); ok {
+			return nil, fmt.Errorf("the connection to sandbox %q needs ssh option %q, which scp does not support (or interprets differently); connect with `amika sandbox ssh` instead, or copy via an intermediate host", plan.sandbox, bad)
+		}
 		if usage.external {
 			return nil, fmt.Errorf("the connection to sandbox %q requires ssh options %v, which scp applies to the whole copy and cannot scope to the sandbox when an external host is also involved; copy to or from the sandbox in a separate command", plan.sandbox, sandboxOpts)
 		}
@@ -423,6 +430,45 @@ func consumesNextArg(tok string) bool {
 		}
 	}
 	return false
+}
+
+// ssh option letters whose meaning is identical in scp, so a preserved sandbox
+// ssh option carrying one may be forwarded to scp unchanged: the arg-taking
+// -c cipher, -F config, -i identity, -J jump host, -o ssh_option, and the
+// booleans -4/-6/-A/-C/-q/-v. Notably absent are letters scp reuses for a
+// different meaning (ssh -P is a connection tag vs scp's port; ssh -D/-S differ)
+// or does not define at all (-W, -L, -R, ...). -p and -l never appear here since
+// ParseDestination extracts them into Port and User.
+const (
+	scpSafeArgOptionLetters  = "cFiJo"
+	scpSafeBoolOptionLetters = "46ACqv"
+)
+
+// firstNonSCPOption returns the first ssh option token in opts whose flag letter
+// scp cannot accept unchanged, and true, or ("", false) if all are safe. opts is
+// a flat "[flag, arg, flag, ...]" list as ParseDestination preserves it, so a
+// safe option's separate argument token is skipped rather than inspected as a
+// flag. Bundled option clusters are not expected in a server-minted destination,
+// so only the leading flag letter of each token is examined.
+func firstNonSCPOption(opts []string) (string, bool) {
+	for i := 0; i < len(opts); i++ {
+		tok := opts[i]
+		if len(tok) < 2 || tok[0] != '-' {
+			continue // an option argument
+		}
+		letter := rune(tok[1])
+		switch {
+		case strings.ContainsRune(scpSafeArgOptionLetters, letter):
+			if len(tok) == 2 {
+				i++ // value is in the following token
+			}
+		case strings.ContainsRune(scpSafeBoolOptionLetters, letter):
+			// boolean; no argument to skip
+		default:
+			return tok, true
+		}
+	}
+	return "", false
 }
 
 // isSandboxRef reports whether tok is a bare scp-style reference to the named
