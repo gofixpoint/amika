@@ -481,6 +481,9 @@ func parseSboxURI(raw string) (name, path string, err error) {
 // connects that host on the named port regardless of -P or SSH config. The path
 // is doubled behind the authority ("//path") because scp strips one leading
 // slash from a URI path; this preserves the absolute path the plain form conveys.
+// The path is re-escaped (not left decoded) so scp decodes it back to the same
+// path — a literal "%" survives as "%25", and "@" is encoded so scp's URI parser
+// does not read the path as userinfo.
 func parseSCPURI(raw string) (operand string, hasPort bool, err error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -500,7 +503,8 @@ func parseSCPURI(raw string) (operand string, hasPort bool, err error) {
 		if err != nil {
 			return "", false, fmt.Errorf("invalid port in scp URI %q: %w", raw, err)
 		}
-		return fmt.Sprintf("scp://%s:%d/%s", host, port, u.Path), true, nil
+		escPath := strings.ReplaceAll((&url.URL{Path: u.Path}).EscapedPath(), "@", "%40")
+		return fmt.Sprintf("scp://%s:%d/%s", host, port, escPath), true, nil
 	}
 	return host + ":" + u.Path, false, nil
 }

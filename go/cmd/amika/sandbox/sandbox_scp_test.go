@@ -374,6 +374,10 @@ func TestParseSCPURI(t *testing.T) {
 		// A ported URI becomes a self-porting scp:// operand; the path is
 		// doubled behind the authority so scp resolves the same absolute path.
 		{raw: "scp://user@host:2222/tmp/x", wantOperand: "scp://user@host:2222//tmp/x", wantHasPort: true},
+		// A literal "%" (typed as %25) survives round-trip: scp re-decodes it once.
+		{raw: "scp://host:2222/tmp/50%25off.pdf", wantOperand: "scp://host:2222//tmp/50%25off.pdf", wantHasPort: true},
+		// "@" in the path is encoded so scp does not read it as userinfo.
+		{raw: "scp://user@host:2222/tmp/build@2", wantOperand: "scp://user@host:2222//tmp/build%402", wantHasPort: true},
 		{raw: "scp://host/tmp/x", wantOperand: "host:/tmp/x"},
 		{raw: "scp://host", wantOperand: "host:"},
 		{raw: "scp://host:notaport/x", wantErr: true},
