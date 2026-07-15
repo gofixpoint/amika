@@ -57,19 +57,21 @@ type Destination struct {
 }
 
 // argTakingOptions are the single-letter ssh options (per ssh(1)) that consume
-// the following token as their argument, excluding lowercase -p which is parsed
-// into Port. Uppercase -P (a connection tag) is included so its argument is not
-// mistaken for the "[user@]host" target. They are used to group an option with
-// its value while scanning a destination so the trailing target is identified
-// correctly.
-const argTakingOptions = "bBcDEeFIiJLlmOoPQRSWw"
+// the following token as their argument, excluding lowercase -p and -l, which
+// are parsed into Port and User respectively. Uppercase -P (a connection tag)
+// and -L are included so their arguments are not mistaken for the "[user@]host"
+// target. They are used to group an option with its value while scanning a
+// destination so the trailing target is identified correctly.
+const argTakingOptions = "bBcDEeFIiJLmOoPQRSWw"
 
 // ParseDestination decomposes an ssh destination string such as
 // "token@ssh.app.daytona.io", "-p 2222 user@host", or "-i /key -o Foo=bar host"
 // into its user, host, port, and remaining options. The port is returned via
-// Port (from "-p PORT" or "-pPORT"); every other option is preserved in Options
-// in its original order so a caller can forward it. It errors on a missing port
-// value or more than one host.
+// Port (from "-p PORT" or "-pPORT") and the login name via User (from "-l NAME"
+// or "-lNAME", which — like ssh — takes precedence over a "user@" in the target,
+// and is never forwarded as an option since scp's -l means a bandwidth limit);
+// every other option is preserved in Options in its original order so a caller
+// can forward it. It errors on a missing port/login value or more than one host.
 func ParseDestination(dest string) (Destination, error) {
 	var d Destination
 	var target string
@@ -93,6 +95,14 @@ func ParseDestination(dest string) (Destination, error) {
 				return d, fmt.Errorf("invalid ssh port %q: %w", f[2:], err)
 			}
 			d.Port = port
+		case f == "-l":
+			if i+1 >= len(fields) {
+				return d, fmt.Errorf("ssh destination %q: -l requires a login name", dest)
+			}
+			d.User = fields[i+1]
+			i++
+		case len(f) > 2 && strings.HasPrefix(f, "-l"):
+			d.User = f[2:]
 		case strings.HasPrefix(f, "-"):
 			d.Options = append(d.Options, f)
 			if consumesFollowingArg(f) && i+1 < len(fields) {
@@ -110,7 +120,11 @@ func ParseDestination(dest string) (Destination, error) {
 		return d, fmt.Errorf("no ssh destination found in %q", dest)
 	}
 	if at := strings.LastIndex(target, "@"); at >= 0 {
-		d.User = target[:at]
+		// A "-l NAME" already set the user and takes precedence over "user@",
+		// matching ssh; still take the host from the target.
+		if d.User == "" {
+			d.User = target[:at]
+		}
 		d.Host = target[at+1:]
 	} else {
 		d.Host = target
