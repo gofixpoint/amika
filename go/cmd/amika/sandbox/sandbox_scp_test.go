@@ -552,6 +552,12 @@ func TestScanUserOptions(t *testing.T) {
 		{name: "-o ProxyJump detected", argv: []string{"-o", "ProxyJump=bastion", "./a", "mybox:/b"}, wantJump: true},
 		{name: "attached -oProxyJump detected", argv: []string{"-oProxyJump=bastion", "./a", "mybox:/b"}, wantJump: true},
 		{name: "-J after an operand is a file, not a jump host", argv: []string{"file", "-J", "mybox:/b"}},
+		// An arg-taking option's attached value must not be scanned for P/J: a
+		// capital letter in an identity path is not the port or jump-host flag.
+		{name: "capital P in attached identity path is not a port", argv: []string{"-i/home/user/Projects/id", "./a", "mybox:/b"}},
+		{name: "capital J in attached identity path is not a jump host", argv: []string{"-i/home/me/Jump/key", "./a", "mybox:/b"}},
+		{name: "attached -Jhost is still a jump host", argv: []string{"-Jbastion", "./a", "mybox:/b"}, wantJump: true},
+		{name: "attached -P2222 is still a port", argv: []string{"-P2222", "./a", "mybox:/b"}, wantPort: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

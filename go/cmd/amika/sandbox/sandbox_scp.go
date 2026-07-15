@@ -384,20 +384,21 @@ func scanUserOptions(argv []string) (userSetPort, userSetStrict, userJumpHost bo
 			continue
 		}
 
-		// scp's explicit port flag is uppercase -P (lowercase -p is preserve).
-		// In a bundled group such as "-rP 2222" only the trailing letter takes
-		// the port argument, so look for P among the option letters, stopping at
-		// an attached value ("=" or the start of the port digits).
-		letters := tok[1:]
-		if cut := strings.IndexAny(letters, "=0123456789"); cut >= 0 {
-			letters = letters[:cut]
-		}
-		if strings.ContainsRune(letters, 'P') {
-			userSetPort = true
-		}
-		// scp's -J names a jump host (as "-J", "-Jhost", or bundled "-rJ").
-		if strings.ContainsRune(letters, 'J') {
-			userJumpHost = true
+		// Walk the option-letter cluster left to right looking for -P (port,
+		// uppercase; lowercase -p is preserve) and -J (jump host). The first
+		// arg-taking letter consumes the rest of the token as its attached value
+		// (e.g. "-rP2222", "-Jbastion", "-i/home/me/Projects/key"), so stop there:
+		// letters past it are a value, not options, and must not be scanned — a
+		// capital P or J in an identity path is not the port or jump-host flag.
+		for _, c := range tok[1:] {
+			if c == 'P' {
+				userSetPort = true
+			} else if c == 'J' {
+				userJumpHost = true
+			}
+			if strings.ContainsRune(scpArgOptions, c) {
+				break // c takes the token's remainder (or the next token) as its value
+			}
 		}
 
 		// Skip an option's argument in the following token so it is not read as
