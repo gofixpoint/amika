@@ -172,17 +172,33 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 	usage := remoteUsage{}
 	var sandboxOpts []string // ssh options carried by the sandbox destination
 
+	optionsEnded := false
 	for i := 0; i < len(plan.scpArgv); i++ {
 		tok := plan.scpArgv[i]
 
-		// An scp option that takes its argument in the following token (e.g.
-		// "-J bastion:22", "-o ProxyCommand=...", "-i key") passes both tokens
-		// through untouched: the argument may use "host:port" syntax that must
-		// not be mistaken for a copy endpoint.
-		if consumesNextArg(tok) && i+1 < len(plan.scpArgv) {
-			rewritten = append(rewritten, tok, plan.scpArgv[i+1])
-			i++
-			continue
+		// scp uses OpenBSD getopt: option parsing stops at the first operand (or
+		// an explicit "--"), after which every token — even a dash-prefixed one —
+		// is a file operand, not an option. Until then, forward scp's options
+		// (and their arguments) untouched; an option that takes its argument in
+		// the following token (e.g. "-J bastion:22", "-o ProxyCommand=...",
+		// "-i key") passes both tokens through, since the argument may use
+		// "host:port" syntax that must not be mistaken for a copy endpoint.
+		if !optionsEnded {
+			if tok == "--" {
+				optionsEnded = true
+				rewritten = append(rewritten, tok)
+				continue
+			}
+			if len(tok) >= 2 && tok[0] == '-' {
+				if consumesNextArg(tok) && i+1 < len(plan.scpArgv) {
+					rewritten = append(rewritten, tok, plan.scpArgv[i+1])
+					i++
+				} else {
+					rewritten = append(rewritten, tok)
+				}
+				continue
+			}
+			optionsEnded = true
 		}
 
 		switch {
@@ -317,14 +333,17 @@ func scpConnectionOptions(usage remoteUsage, userSetStrict, userSetPort bool) ([
 
 // scanUserOptions reports whether the argv already sets an explicit port or
 // StrictHostKeyChecking, so the defaults injected for a sandbox do not override
-// a user's explicit choice. It inspects only option tokens (those beginning with
-// "-") and matches the flags precisely so an operand that merely contains the
-// text "StrictHostKeyChecking" (e.g. a file path) or a "P" does not trip it.
+// a user's explicit choice. It matches the flags precisely so an operand that
+// merely contains the text "StrictHostKeyChecking" (e.g. a file path) or a "P"
+// does not trip it, and — mirroring scp's OpenBSD getopt — stops at the first
+// operand (or a "--"), so a dash-prefixed file operand is not read as an option.
 func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
 	for i := 0; i < len(argv); i++ {
 		tok := argv[i]
-		if len(tok) < 2 || tok[0] != '-' {
-			continue // an operand; scp options precede operands
+		// Option parsing stops at "--" or the first operand; scp treats every
+		// later token as a file operand even if it begins with "-".
+		if tok == "--" || len(tok) < 2 || tok[0] != '-' {
+			break
 		}
 
 		// ssh_config-style option, as "-o KEY=VAL" or "-oKEY=VAL". OpenSSH also
@@ -341,6 +360,9 @@ func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
 			case strings.EqualFold(key, "Port"):
 				userSetPort = true
 			}
+			if tok == "-o" {
+				i++ // the value lived in the following token
+			}
 			continue
 		}
 
@@ -354,6 +376,12 @@ func scanUserOptions(argv []string) (userSetPort, userSetStrict bool) {
 		}
 		if strings.ContainsRune(letters, 'P') {
 			userSetPort = true
+		}
+
+		// Skip an option's argument in the following token so it is not read as
+		// the first operand (which would end option scanning prematurely).
+		if consumesNextArg(tok) && i+1 < len(argv) {
+			i++
 		}
 	}
 	return userSetPort, userSetStrict

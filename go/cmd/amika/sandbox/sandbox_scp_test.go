@@ -253,6 +253,23 @@ func TestBuildSCPInvocation(t *testing.T) {
 			wantErr: "cannot scope",
 		},
 		{
+			// scp stops treating dash tokens as options once operands begin, so a
+			// source named "-P" is a file, not the port flag, and the sandbox
+			// target after it is still rewritten.
+			name: "dash operand after a source is not an option",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"file", "-P", "mybox:/dst"}},
+			dest: daytona,
+			want: []string{"-o", "StrictHostKeyChecking=accept-new", "file", "-P", "user-token@ssh.app.daytona.io:/dst"},
+		},
+		{
+			// "--" ends option parsing; it is forwarded so scp also stops there,
+			// and the following dash token is a file operand.
+			name: "double dash ends option parsing",
+			plan: scpPlan{sandbox: "mybox", scpArgv: []string{"--", "-P", "mybox:/dst"}},
+			dest: daytona,
+			want: []string{"-o", "StrictHostKeyChecking=accept-new", "--", "-P", "user-token@ssh.app.daytona.io:/dst"},
+		},
+		{
 			name:    "no remote is an error",
 			plan:    scpPlan{sandbox: "mybox", scpArgv: []string{"./a", "./b"}},
 			dest:    daytona,
@@ -443,6 +460,10 @@ func TestScanUserOptions(t *testing.T) {
 		{name: "lowercase -p is preserve not port", argv: []string{"-p", "./a", "mybox:/b"}},
 		{name: "path containing StrictHostKeyChecking is not an option", argv: []string{"./StrictHostKeyChecking.bak", "mybox:/b"}},
 		{name: "path containing P is not a port flag", argv: []string{"./PATH", "mybox:/b"}},
+		{name: "-P after an operand is a file, not the port flag", argv: []string{"file", "-P", "mybox:/b"}},
+		{name: "-P after -- is a file, not the port flag", argv: []string{"--", "-P", "mybox:/b"}},
+		{name: "option argument is not mistaken for an operand", argv: []string{"-J", "bastion:22", "-P", "2222", "./a", "mybox:/b"}, wantPort: true},
+		{name: "-o value is skipped before scanning continues", argv: []string{"-o", "Compression=yes", "-P", "2222", "./a"}, wantPort: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

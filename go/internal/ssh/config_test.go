@@ -33,6 +33,8 @@ func TestParseDestination(t *testing.T) {
 		{name: "boolean flag preserved", in: "-4 token@host", wantUser: "token", wantHost: "host", wantOptions: []string{"-4"}},
 		{name: "identity and option preserved", in: "-i /key -o Compression=yes user@host", wantUser: "user", wantHost: "host", wantOptions: []string{"-i", "/key", "-o", "Compression=yes"}},
 		{name: "port not counted as option", in: "-i /key -p 2222 user@host", wantUser: "user", wantHost: "host", wantPort: 2222, wantOptions: []string{"-i", "/key"}},
+		{name: "uppercase -P tag consumes its argument", in: "-P mytag user@host", wantUser: "user", wantHost: "host", wantOptions: []string{"-P", "mytag"}},
+		{name: "uppercase -P tag alongside lowercase -p port", in: "-P mytag -p 2222 user@host", wantUser: "user", wantHost: "host", wantPort: 2222, wantOptions: []string{"-P", "mytag"}},
 		{name: "empty", in: "", wantErr: true},
 		{name: "bad port", in: "-p notanumber user@host", wantErr: true},
 		{name: "missing port value", in: "-p", wantErr: true},

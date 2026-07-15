@@ -57,10 +57,12 @@ type Destination struct {
 }
 
 // argTakingOptions are the single-letter ssh options (per ssh(1)) that consume
-// the following token as their argument, excluding -p which is parsed into Port.
-// They are used to group an option with its value while scanning a destination
-// so the trailing "[user@]host" target is not mistaken for an option argument.
-const argTakingOptions = "bBcDEeFIiJLlmOoQRSWw"
+// the following token as their argument, excluding lowercase -p which is parsed
+// into Port. Uppercase -P (a connection tag) is included so its argument is not
+// mistaken for the "[user@]host" target. They are used to group an option with
+// its value while scanning a destination so the trailing target is identified
+// correctly.
+const argTakingOptions = "bBcDEeFIiJLlmOoPQRSWw"
 
 // ParseDestination decomposes an ssh destination string such as
 // "token@ssh.app.daytona.io", "-p 2222 user@host", or "-i /key -o Foo=bar host"
