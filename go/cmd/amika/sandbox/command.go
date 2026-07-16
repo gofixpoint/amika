@@ -44,6 +44,7 @@ func New() *cobra.Command {
 	sandboxCreateCmd.Flags().Bool("no-git", false, "Skip git repo auto-detection; create a sandbox without mounting any repo.")
 	sandboxCreateCmd.Flags().Bool("no-clean", false, "With a local-path git source, include untracked files from the working tree instead of a clean clone. Local sandboxes only.")
 	sandboxCreateCmd.Flags().String("size", "", "Sandbox size: \"xs\", \"m\", \"l\", or \"xl\" (default \"m\", remote only)")
+	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the sandbox from a captured snapshot slug (remote only)")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")
 	sandboxCreateCmd.Flags().StringArray("agent-credential", nil, "Pin an agent credential by name (KIND=NAME, e.g. claude=personal-oauth). Repeatable per kind.")

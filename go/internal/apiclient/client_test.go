@@ -102,6 +102,45 @@ func TestPathEscapesSandboxName(t *testing.T) {
 	}
 }
 
+func TestCreateSandboxSnapshotField(t *testing.T) {
+	slug := "amika-mono-base"
+	setPtr := &slug
+	tests := []struct {
+		name        string
+		snapshot    *string
+		wantPresent bool
+	}{
+		{name: "slug is sent", snapshot: setPtr, wantPresent: true},
+		{name: "nil is omitted", snapshot: nil, wantPresent: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{"id": "1", "name": "dev", "state": "active"})
+			}))
+			defer srv.Close()
+
+			c := NewClient(srv.URL, "test-token")
+			if _, err := c.CreateSandbox(CreateSandboxRequest{Name: "dev", Snapshot: tt.snapshot}); err != nil {
+				t.Fatalf("CreateSandbox: %v", err)
+			}
+
+			raw, present := body["snapshot"]
+			if present != tt.wantPresent {
+				t.Fatalf("snapshot present = %v, want %v (body=%v)", present, tt.wantPresent, body)
+			}
+			if tt.wantPresent {
+				if got, _ := raw.(string); got != slug {
+					t.Errorf("snapshot = %q, want %q", got, slug)
+				}
+			}
+		})
+	}
+}
+
 func TestGetSSHParsesResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

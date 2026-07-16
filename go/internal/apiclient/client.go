@@ -55,6 +55,13 @@ type CreateSandboxRequest struct {
 	Branch             string               `json:"branch,omitempty"`
 	NewBranchName      string               `json:"new_branch_name,omitempty"`
 	GithubAuthMode     string               `json:"github_auth_mode,omitempty"`
+	// Snapshot forks the new sandbox from a captured snapshot slug (remote
+	// only). nil omits the field so the server applies its default snapshot
+	// chain (repo default, else preset/size); a non-nil value boots from that
+	// snapshot. The server also accepts an explicit JSON null to opt out of the
+	// repo-level default, but a *string with omitempty cannot encode that (nil
+	// omits rather than nulls), so the opt-out is not reachable from here.
+	Snapshot *string `json:"snapshot,omitempty"`
 }
 
 // AgentCredentialRef selects which credential of a given kind the server

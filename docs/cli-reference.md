@@ -85,6 +85,9 @@ amika sandbox create --branch main --new-branch bugfix-1
 # Inject remote secrets (remote sandboxes only)
 amika sandbox create --name dev-sandbox --remote \
   --secret env:ANTHROPIC_API_KEY=my-claude-key
+
+# Fork from a captured snapshot (remote sandboxes only)
+amika sandbox create --name dev-sandbox --remote --snapshot amika-mono-base
 ```
 
 #### Flags
@@ -109,6 +112,7 @@ amika sandbox create --name dev-sandbox --remote \
 | `--branch <name>`       |                      | Check out this branch, or create it if it doesn't exist. Requires a git repo (auto-detected or via `--git`)                          |
 | `--new-branch <name>`  |                      | Create a new branch (errors if it already exists). Starts from `--branch` if set, otherwise from the base branch. Requires a git repo (auto-detected or via `--git`)  |
 | `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. Requires `--remote`. See [secrets.md](secrets.md)   |
+| `--snapshot <slug>`     |                      | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`). Requires `--remote`                       |
 
 #### Mount modes
 
