@@ -2,17 +2,20 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { AmikaClient } from "@/client";
 import { AmikaHTTPError } from "@/errors";
-import type { RemoteSandbox } from "@/types";
+import type { AgentCredentialRef, RemoteSandbox } from "@/types";
 
 import {
   describeFunctional,
-  ensureAgentCredential,
   ensureGitHubToken,
   LONG_TIMEOUT_MS,
   makeClient,
   provisionSandbox,
   TEST_AGENT_NAME,
 } from "@test/functional/helpers";
+
+const ENV_CRED_NAME = process.env["AMIKA_TEST_AGENT_CREDENTIAL_NAME"];
+const ENV_CRED_TYPE = (process.env["AMIKA_TEST_AGENT_CREDENTIAL_TYPE"] ??
+  "api_key") as "oauth" | "api_key";
 
 describeFunctional("sandbox functional tests", () => {
   let client: AmikaClient;
@@ -21,11 +24,35 @@ describeFunctional("sandbox functional tests", () => {
   beforeAll(async () => {
     client = makeClient();
     await ensureGitHubToken(client);
-    const credential = await ensureAgentCredential(client);
-    sandbox = await provisionSandbox(
-      client,
-      credential ? { agentCredentials: [credential] } : {},
-    );
+
+    let credential: AgentCredentialRef;
+    if (ENV_CRED_NAME) {
+      // Explicit env override takes precedence.
+      credential = {
+        kind: TEST_AGENT_NAME,
+        name: ENV_CRED_NAME,
+        type: ENV_CRED_TYPE,
+      };
+    } else {
+      // Default: require an existing api_key on the org; fail fast if none.
+      const secrets = await client.listProviderSecrets(TEST_AGENT_NAME);
+      const apiKeySecret = secrets.find((s) => s.type === "api_key");
+      if (!apiKeySecret) {
+        throw new Error(
+          `No api_key credential found for provider "${TEST_AGENT_NAME}". ` +
+            "Add one before running the functional suite.",
+        );
+      }
+      credential = {
+        kind: TEST_AGENT_NAME,
+        type: "api_key",
+        ...(apiKeySecret.name ? { name: apiKeySecret.name } : {}),
+      };
+    }
+
+    sandbox = await provisionSandbox(client, {
+      agentCredentials: [credential],
+    });
   }, LONG_TIMEOUT_MS);
 
   describe("provisioning", () => {

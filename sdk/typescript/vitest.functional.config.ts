@@ -8,7 +8,9 @@ import tsconfigPaths from "vite-tsconfig-paths";
 export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
-    include: ["test/functional/**/*.test.ts"],
+    include: ["test/functional/**/*.test.ts", "**/*.functional.test.ts"],
+    // Fail fast (before any test runs) if pointed at a production host.
+    globalSetup: ["./test/functional/global-setup.ts"],
     // Sandbox provisioning + agent-send can take several minutes.
     testTimeout: 15 * 60 * 1000,
     hookTimeout: 15 * 60 * 1000,
