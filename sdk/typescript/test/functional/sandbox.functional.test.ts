@@ -13,6 +13,10 @@ import {
   TEST_AGENT_NAME,
 } from "@test/functional/helpers";
 
+const ENV_CRED_NAME = process.env["AMIKA_TEST_AGENT_CREDENTIAL_NAME"];
+const ENV_CRED_TYPE = (process.env["AMIKA_TEST_AGENT_CREDENTIAL_TYPE"] ??
+  "api_key") as "oauth" | "api_key";
+
 describeFunctional("sandbox functional tests", () => {
   let client: AmikaClient;
   let sandbox: RemoteSandbox;
@@ -21,19 +25,30 @@ describeFunctional("sandbox functional tests", () => {
     client = makeClient();
     await ensureGitHubToken(client);
 
-    const secrets = await client.listProviderSecrets(TEST_AGENT_NAME);
-    const apiKeySecret = secrets.find((s) => s.type === "api_key");
-    if (!apiKeySecret) {
-      throw new Error(
-        `No api_key credential found for provider "${TEST_AGENT_NAME}". ` +
-          "Add one before running the functional suite.",
-      );
+    let credential: AgentCredentialRef;
+    if (ENV_CRED_NAME) {
+      // Explicit env override takes precedence.
+      credential = {
+        kind: TEST_AGENT_NAME,
+        name: ENV_CRED_NAME,
+        type: ENV_CRED_TYPE,
+      };
+    } else {
+      // Default: require an existing api_key on the org; fail fast if none.
+      const secrets = await client.listProviderSecrets(TEST_AGENT_NAME);
+      const apiKeySecret = secrets.find((s) => s.type === "api_key");
+      if (!apiKeySecret) {
+        throw new Error(
+          `No api_key credential found for provider "${TEST_AGENT_NAME}". ` +
+            "Add one before running the functional suite.",
+        );
+      }
+      credential = {
+        kind: TEST_AGENT_NAME,
+        type: "api_key",
+        ...(apiKeySecret.name ? { name: apiKeySecret.name } : {}),
+      };
     }
-    const credential: AgentCredentialRef = {
-      kind: TEST_AGENT_NAME,
-      type: "api_key",
-      ...(apiKeySecret.name ? { name: apiKeySecret.name } : {}),
-    };
 
     sandbox = await provisionSandbox(client, {
       agentCredentials: [credential],

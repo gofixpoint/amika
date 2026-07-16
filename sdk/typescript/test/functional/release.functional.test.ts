@@ -101,7 +101,8 @@ async function waitForSandboxGone(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const sandboxes = await client.listSandboxes();
-    if (!sandboxes.some((s) => s.name === name)) return;
+    if (!sandboxes.some((s) => s.name === name && !/delet/i.test(s.state)))
+      return;
     await new Promise((r) => setTimeout(r, 5_000));
   }
   throw new Error(`Sandbox "${name}" was not deleted within ${timeoutMs}ms`);
@@ -279,6 +280,13 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
       repoUrl: EXAMPLE_REPO,
       preset: "coder",
     });
+    afterAll(async () => {
+      try {
+        await client.deleteSandbox(created.name);
+      } catch {
+        // Already deleted by scrub-and-delete, or the server is unreachable; ignore.
+      }
+    });
     sourceSandbox = await client.waitForSandbox(created.name);
   }, LONG_TIMEOUT_MS);
 
@@ -304,10 +312,14 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
       // Wait for snapshot to go active
       await waitForSnapshot(client, snapshotSlug, "active");
 
-      // Source sandbox must be gone
+      // Source sandbox must be gone (or in a terminal deleted state).
       await waitForSandboxGone(client, sourceSandbox.name);
       const after = await client.listSandboxes();
-      expect(after.some((s) => s.name === sourceSandbox.name)).toBe(false);
+      expect(
+        after.some(
+          (s) => s.name === sourceSandbox.name && !/delet/i.test(s.state),
+        ),
+      ).toBe(false);
     },
     LONG_TIMEOUT_MS,
   );
@@ -319,13 +331,6 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
       } catch {
         // Already deleted, or the server is unreachable; ignore.
       }
-    }
-    // Belt-and-suspenders: delete source sandbox in case scrub-and-delete
-    // did not fire (e.g. the test was interrupted mid-run).
-    try {
-      await client.deleteSandbox(sourceSandbox.name);
-    } catch {
-      // Already deleted, or the server is unreachable; ignore.
     }
   });
 });
