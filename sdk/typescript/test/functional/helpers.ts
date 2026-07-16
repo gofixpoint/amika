@@ -1,6 +1,7 @@
 import { afterAll, describe } from "vitest";
 
 import { AmikaClient } from "@/client";
+import { assertNotProdUrl } from "./prod-guard";
 import type {
   AgentCredentialRef,
   CreateSandboxRequest,
@@ -9,7 +10,7 @@ import type {
 
 /**
  * Required env vars to enable functional tests:
- *   AMIKA_API_URL    — base URL of the Amika API (e.g. https://app.amika.dev)
+ *   AMIKA_API_URL    — base URL of the Amika API (e.g. https://app.staging-amika.dev)
  *
  * Optional:
  *   AMIKA_API_TOKEN                      — bearer token; defaults to a dummy
@@ -57,6 +58,8 @@ export function makeClient(): AmikaClient {
   if (!apiUrl) {
     throw new Error("makeClient(): AMIKA_API_URL must be set");
   }
+  // Defense in depth: also enforced by the functional runner's globalSetup.
+  assertNotProdUrl(apiUrl);
   return new AmikaClient({ baseUrl: apiUrl, accessToken: apiToken });
 }
 
