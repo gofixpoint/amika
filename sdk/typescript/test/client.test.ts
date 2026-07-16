@@ -452,6 +452,15 @@ describe("AmikaClient sandbox snapshots", () => {
     );
   });
 
+  it("listSandboxSnapshots sends only the filters that are set", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    const client = makeClient(fetch);
+    await client.listSandboxSnapshots({ repositoryId: "repo-1" });
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-snapshots?repository_id=repo-1`,
+    );
+  });
+
   it("returns an empty list when the envelope has no items", async () => {
     const { fetch } = mockFetch([{ status: 200, body: {} }]);
     const client = makeClient(fetch);
@@ -510,6 +519,17 @@ describe("AmikaClient sandbox snapshots", () => {
     );
     expect(preview.files).toEqual(["/root/.claude/.credentials.json"]);
     expect(preview.envVars).toEqual(["FOO"]);
+  });
+
+  it("getSandboxScrubPreview URL-encodes the sandbox ref", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: { files: [], env_vars: [] } },
+    ]);
+    const client = makeClient(fetch);
+    await client.getSandboxScrubPreview("org/dev");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-snapshots/scrub-preview?sandbox=org%2Fdev&by=ref`,
+    );
   });
 
   it("deleteSandboxSnapshot DELETEs by ref, URL-encoding the reference", async () => {
