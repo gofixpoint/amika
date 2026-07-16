@@ -51,6 +51,28 @@ func TestSandboxCreateHasConnectFlag(t *testing.T) {
 	}
 }
 
+func TestSandboxCreateHasSnapshotFlag(t *testing.T) {
+	sandboxCmd := findSubcommand(t, rootCmd, "sandbox")
+	createCmd := findSubcommand(t, sandboxCmd, "create")
+	flag := createCmd.Flags().Lookup("snapshot")
+	if flag == nil {
+		t.Fatal("sandbox create command must define --snapshot")
+	}
+	if flag.Value.Type() != "string" {
+		t.Fatalf("snapshot flag type = %q, want string", flag.Value.Type())
+	}
+}
+
+func TestSandboxCreateSnapshotRequiresRemote(t *testing.T) {
+	_, err := runRootCommand("sandbox", "create", "--local", "--snapshot", "amika-mono-base")
+	if err == nil {
+		t.Fatal("expected an error when --snapshot is used without --remote")
+	}
+	if !strings.Contains(err.Error(), "--snapshot requires --remote mode") {
+		t.Fatalf("error = %v, want it to mention --snapshot requires --remote mode", err)
+	}
+}
+
 func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AMIKA_STATE_DIRECTORY", dir)

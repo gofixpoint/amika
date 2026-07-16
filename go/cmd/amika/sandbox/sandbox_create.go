@@ -36,6 +36,9 @@ var sandboxCreateCmd = &cobra.Command{
 		if mode != runmode.Remote && cmd.Flags().Changed("github-auth-mode") {
 			return fmt.Errorf("--github-auth-mode requires --remote mode")
 		}
+		if mode != runmode.Remote && cmd.Flags().Changed("snapshot") {
+			return fmt.Errorf("--snapshot requires --remote mode")
+		}
 		// Validate before the remote auth gate below so a bad value fails
 		// fast even when the caller is not logged in; otherwise the login
 		// error masks the flag error (and the contract test, which runs
@@ -302,6 +305,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
 	newBranch, _ := cmd.Flags().GetString("new-branch")
+	snapshot, _ := cmd.Flags().GetString("snapshot")
 
 	if name == "" {
 		name = sandbox.GenerateName()
@@ -393,6 +397,11 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 		Branch:           branch,
 		NewBranchName:    newBranch,
 		GithubAuthMode:   githubAuthMode,
+	}
+	// Only set Snapshot when a slug was given; an unset flag leaves the field
+	// nil so the server applies its default snapshot chain.
+	if snapshot != "" {
+		req.Snapshot = &snapshot
 	}
 
 	sb, err := client.CreateSandbox(req)
