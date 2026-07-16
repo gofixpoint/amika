@@ -12,8 +12,8 @@ Two tiers, run by two separate commands:
 
 Functional tests use the `*.functional.test.ts` filename suffix. The two
 vitest configs are mirror images and must stay in sync: `vitest.config.ts`
-(unit) *excludes* both `test/functional/**/*.test.ts` and
-`**/*.functional.test.ts`, while `vitest.functional.config.ts` *includes*
+(unit) _excludes_ both `test/functional/**/*.test.ts` and
+`**/*.functional.test.ts`, while `vitest.functional.config.ts` _includes_
 both. When you add a functional test, the suffix is what routes it, so it
 can live anywhere.
 

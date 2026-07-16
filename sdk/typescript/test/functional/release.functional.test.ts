@@ -49,10 +49,14 @@ function sshRun(
       const delay = baseDelayMs * Math.pow(2, attempt - 1);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
     }
-    const result = spawnSync("ssh", [...args, "--", command], {
-      encoding: "utf8",
-      timeout: 30_000,
-    });
+    const result = spawnSync(
+      "ssh",
+      [...args, "-o", "StrictHostKeyChecking=accept-new", "--", command],
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
     if (result.error) throw result.error;
     if (result.status === 0) return result.stdout.trim();
     // SSH exit 255 = transport failure (connection refused / not yet ready).
@@ -244,10 +248,12 @@ describeFunctional("Release test: snapshot round-trip", () => {
   );
 
   afterAll(async () => {
-    try {
-      await client.deleteSandboxSnapshot(snapshotSlug);
-    } catch {
-      // Already deleted, or the server is unreachable; ignore.
+    if (snapshotSlug) {
+      try {
+        await client.deleteSandboxSnapshot(snapshotSlug);
+      } catch {
+        // Already deleted, or the server is unreachable; ignore.
+      }
     }
   });
 });
@@ -307,10 +313,12 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
   );
 
   afterAll(async () => {
-    try {
-      await client.deleteSandboxSnapshot(snapshotSlug);
-    } catch {
-      // Already deleted, or the server is unreachable; ignore.
+    if (snapshotSlug) {
+      try {
+        await client.deleteSandboxSnapshot(snapshotSlug);
+      } catch {
+        // Already deleted, or the server is unreachable; ignore.
+      }
     }
     // Belt-and-suspenders: delete source sandbox in case scrub-and-delete
     // did not fire (e.g. the test was interrupted mid-run).
