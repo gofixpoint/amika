@@ -86,8 +86,14 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 | `getLatestSession(name)`              | `GET /sandboxes/{name}/sessions/latest` (null on 404) |
 | `getSession(name, sessionId)`         | `GET /sandboxes/{name}/sessions/{sessionId}`          |
 | `updateSession(name, sessionId, req)` | `PATCH /sandboxes/{name}/sessions/{sessionId}`        |
+| `listSandboxSnapshots(filters?)`      | `GET /sandbox-snapshots`                              |
+| `createSandboxSnapshot(req)`          | `POST /sandbox-snapshots`                             |
+| `getSandboxScrubPreview(ref)`         | `GET /sandbox-snapshots/scrub-preview`                |
+| `deleteSandboxSnapshot(ref)`          | `DELETE /sandbox-snapshots/{ref}`                     |
 
-Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `SSHInfo`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, etc.
+Fork a new sandbox from a captured snapshot by passing its slug as `snapshot` to `createSandbox({ snapshot })`.
+
+Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `SSHInfo`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `CreateSandboxSnapshotRequest`, etc.
 
 ## Polling behavior
 

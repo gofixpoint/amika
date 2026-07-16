@@ -98,6 +98,27 @@ describe("AmikaClient.createSandbox", () => {
     const body = JSON.parse(calls[0]?.body ?? "");
     expect(Object.keys(body)).toEqual(["name"]);
   });
+
+  it("forks from a snapshot when `snapshot` is a slug", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 202, body: { id: "1", name: "dev" } },
+    ]);
+    const client = makeClient(fetch);
+    await client.createSandbox({ name: "dev", snapshot: "amika-mono-base" });
+    const body = JSON.parse(calls[0]?.body ?? "");
+    expect(body.snapshot).toBe("amika-mono-base");
+  });
+
+  it("sends an explicit null snapshot to opt out of the default", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 202, body: { id: "1", name: "dev" } },
+    ]);
+    const client = makeClient(fetch);
+    await client.createSandbox({ name: "dev", snapshot: null });
+    const body = JSON.parse(calls[0]?.body ?? "");
+    expect(Object.keys(body)).toEqual(["name", "snapshot"]);
+    expect(body.snapshot).toBeNull();
+  });
 });
 
 describe("AmikaClient sandbox lifecycle", () => {
@@ -386,5 +407,118 @@ describe("AmikaClient sessions", () => {
     await client.updateSession("dev", "s1", { status: "completed" });
     expect(calls[0]?.method).toBe("PATCH");
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes/dev/sessions/s1`);
+  });
+});
+
+describe("AmikaClient sandbox snapshots", () => {
+  it("listSandboxSnapshots GETs /sandbox-snapshots and unwraps {items} + maps fields", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: {
+          items: [
+            {
+              snapshot: "amika-mono-base",
+              provider: "daytona",
+              state: "active",
+              source_sandbox_name: "dev",
+              base_snapshot: null,
+              created_at: "2026-01-01T00:00:00Z",
+              updated_at: "2026-01-01T00:05:00Z",
+            },
+          ],
+        },
+      },
+    ]);
+    const client = makeClient(fetch);
+    const snapshots = await client.listSandboxSnapshots();
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandbox-snapshots`);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.snapshot).toBe("amika-mono-base");
+    expect(snapshots[0]?.sourceSandboxName).toBe("dev");
+    expect(snapshots[0]?.baseSnapshot).toBeNull();
+  });
+
+  it("listSandboxSnapshots encodes repository/source filters as query params", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    const client = makeClient(fetch);
+    await client.listSandboxSnapshots({
+      repositoryId: "repo-1",
+      sourceSandboxId: "sbx-2",
+    });
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-snapshots?repository_id=repo-1&source_sandbox_id=sbx-2`,
+    );
+  });
+
+  it("returns an empty list when the envelope has no items", async () => {
+    const { fetch } = mockFetch([{ status: 200, body: {} }]);
+    const client = makeClient(fetch);
+    expect(await client.listSandboxSnapshots()).toEqual([]);
+  });
+
+  it("createSandboxSnapshot POSTs camelCase → snake_case and parses response", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 202,
+        body: { snapshot: "my-snap", provider: "daytona", state: "capturing" },
+      },
+    ]);
+    const client = makeClient(fetch);
+    const snap = await client.createSandboxSnapshot({
+      sandboxRef: "dev",
+      name: "my-snap",
+      description: "before refactor",
+      mode: "full",
+    });
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandbox-snapshots`);
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      sandbox_ref: "dev",
+      name: "my-snap",
+      description: "before refactor",
+      mode: "full",
+    });
+    expect(snap.state).toBe("capturing");
+  });
+
+  it("createSandboxSnapshot omits optional fields when not given", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 202, body: { snapshot: "my-snap" } },
+    ]);
+    const client = makeClient(fetch);
+    await client.createSandboxSnapshot({ sandboxRef: "dev", name: "my-snap" });
+    expect(Object.keys(JSON.parse(calls[0]?.body ?? ""))).toEqual([
+      "sandbox_ref",
+      "name",
+    ]);
+  });
+
+  it("getSandboxScrubPreview GETs scrub-preview with sandbox+by params and maps env_vars", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: { files: ["/root/.claude/.credentials.json"], env_vars: ["FOO"] },
+      },
+    ]);
+    const client = makeClient(fetch);
+    const preview = await client.getSandboxScrubPreview("dev");
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-snapshots/scrub-preview?sandbox=dev&by=ref`,
+    );
+    expect(preview.files).toEqual(["/root/.claude/.credentials.json"]);
+    expect(preview.envVars).toEqual(["FOO"]);
+  });
+
+  it("deleteSandboxSnapshot DELETEs by ref, URL-encoding the reference", async () => {
+    const { fetch, calls } = mockFetch([{ status: 204, body: "" }]);
+    const client = makeClient(fetch);
+    await client.deleteSandboxSnapshot("org/my-snap");
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-snapshots/org%2Fmy-snap?by=ref`,
+    );
   });
 });

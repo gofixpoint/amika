@@ -78,6 +78,16 @@ export interface CreateSandboxRequest {
   secretEnvVars?: Record<string, string>;
   preset?: string;
   size?: string;
+  /**
+   * Snapshot to fork the new sandbox from, given as its org-stripped slug
+   * (e.g. `amika-mono-base`). Capture one with {@link AmikaClient.createSandboxSnapshot}.
+   *
+   * Tri-state, matching the server's `snapshot` param:
+   *   - a slug  -> boot from that snapshot
+   *   - `null`  -> explicitly opt out of the repo-level default snapshot
+   *   - omitted -> keep the full default chain (repo default, else preset/size)
+   */
+  snapshot?: string | null;
   setupScriptText?: string;
   agentCredentials?: AgentCredentialRef[];
   branch?: string;
@@ -97,6 +107,9 @@ export function createSandboxRequestToWire(
     secret_env_vars: r.secretEnvVars,
     preset: r.preset,
     size: r.size,
+    // omitUndefined keeps an explicit `null` (opt out of the default snapshot)
+    // and drops `undefined` (keep the default chain).
+    snapshot: r.snapshot,
     setup_script_text: r.setupScriptText,
     agent_credentials: r.agentCredentials,
     branch: r.branch,
@@ -305,6 +318,95 @@ export function updateSessionRequestToWire(
     status: r.status,
     metadata: r.metadata,
   });
+}
+
+// ---------- Sandbox snapshots ----------
+
+/**
+ * A snapshot captured from a running sandbox, as returned by the
+ * `/api/v0beta1/sandbox-snapshots` endpoints. `snapshot` is the slug used to
+ * fork new sandboxes (pass it as {@link CreateSandboxRequest.snapshot}).
+ */
+export interface SandboxSnapshot {
+  snapshot: string;
+  provider: string;
+  description: string | null;
+  sourceSandboxId: string | null;
+  sourceSandboxName: string | null;
+  repositoryId: string | null;
+  baseSnapshot: string | null;
+  sandboxPreset: string | null;
+  sandboxSize: string | null;
+  state: string;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function sandboxSnapshotFromWire(
+  w: Record<string, unknown>,
+): SandboxSnapshot {
+  return {
+    snapshot: String(w["snapshot"] ?? ""),
+    provider: String(w["provider"] ?? ""),
+    description: (w["description"] ?? null) as string | null,
+    sourceSandboxId: (w["source_sandbox_id"] ?? null) as string | null,
+    sourceSandboxName: (w["source_sandbox_name"] ?? null) as string | null,
+    repositoryId: (w["repository_id"] ?? null) as string | null,
+    baseSnapshot: (w["base_snapshot"] ?? null) as string | null,
+    sandboxPreset: (w["sandbox_preset"] ?? null) as string | null,
+    sandboxSize: (w["sandbox_size"] ?? null) as string | null,
+    state: String(w["state"] ?? ""),
+    errorMessage: (w["error_message"] ?? null) as string | null,
+    createdAt: String(w["created_at"] ?? ""),
+    updatedAt: String(w["updated_at"] ?? ""),
+  };
+}
+
+/** Request body for POST /api/v0beta1/sandbox-snapshots. */
+export interface CreateSandboxSnapshotRequest {
+  /** Source sandbox, by name or id (the server resolves id first, then name). */
+  sandboxRef: string;
+  /** Name for the new snapshot. */
+  name: string;
+  description?: string;
+  /**
+   * Capture mode (default `scrub_and_delete`):
+   *   - `scrub_and_delete`: strip Amika-injected secrets, capture the clean
+   *     filesystem, then delete the source sandbox.
+   *   - `full`: capture everything as-is (including secrets) and keep the
+   *     sandbox running.
+   */
+  mode?: "scrub_and_delete" | "full";
+}
+
+export function createSandboxSnapshotRequestToWire(
+  r: CreateSandboxSnapshotRequest,
+): Record<string, unknown> {
+  return omitUndefined({
+    sandbox_ref: r.sandboxRef,
+    name: r.name,
+    description: r.description,
+    mode: r.mode,
+  });
+}
+
+/**
+ * The injected secrets a scrub-and-delete snapshot would remove from a
+ * sandbox — file paths and env var names only, never values.
+ */
+export interface SandboxScrubPreview {
+  files: string[];
+  envVars: string[];
+}
+
+export function sandboxScrubPreviewFromWire(
+  w: Record<string, unknown>,
+): SandboxScrubPreview {
+  return {
+    files: (w["files"] ?? []) as string[],
+    envVars: (w["env_vars"] ?? []) as string[],
+  };
 }
 
 // ---------- helpers ----------

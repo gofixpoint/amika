@@ -8,6 +8,8 @@ import {
   agentSendResponseFromWire,
   type CreateProviderSecretRequest,
   type CreateSandboxRequest,
+  type CreateSandboxSnapshotRequest,
+  createSandboxSnapshotRequestToWire,
   type CreateSecretRequest,
   type CreateSessionRequest,
   createSandboxRequestToWire,
@@ -17,6 +19,10 @@ import {
   type RemoteSandbox,
   remoteSandboxFromWire,
   type RevokeSSHRequest,
+  type SandboxScrubPreview,
+  sandboxScrubPreviewFromWire,
+  type SandboxSnapshot,
+  sandboxSnapshotFromWire,
   type Secret,
   type Session,
   sessionFromWire,
@@ -298,6 +304,73 @@ export class AmikaClient {
       updateSessionRequestToWire(req),
     );
     return sessionFromWire(data ?? {});
+  }
+
+  // ---------- Sandbox snapshots ----------
+
+  /**
+   * List sandbox-captured snapshots for the caller's org. Both filters are
+   * optional; omit them to list every snapshot.
+   */
+  async listSandboxSnapshots(filters?: {
+    repositoryId?: string;
+    sourceSandboxId?: string;
+  }): Promise<SandboxSnapshot[]> {
+    const params = new URLSearchParams();
+    if (filters?.repositoryId)
+      params.set("repository_id", filters.repositoryId);
+    if (filters?.sourceSandboxId)
+      params.set("source_sandbox_id", filters.sourceSandboxId);
+    const qs = params.toString();
+    const path = `${API_BASE_PATH}/sandbox-snapshots${qs ? `?${qs}` : ""}`;
+    const envelope = await this.http.doJSON<{
+      items?: Record<string, unknown>[];
+    }>("GET", path);
+    const items = envelope?.items ?? [];
+    return items.map((item) => sandboxSnapshotFromWire(item));
+  }
+
+  /**
+   * Start capturing a snapshot from a running sandbox. The endpoint returns
+   * 202 Accepted with the snapshot in the `capturing` state; poll
+   * {@link listSandboxSnapshots} until it reaches `active` or `failed`.
+   */
+  async createSandboxSnapshot(
+    req: CreateSandboxSnapshotRequest,
+  ): Promise<SandboxSnapshot> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/sandbox-snapshots`,
+      createSandboxSnapshotRequestToWire(req),
+    );
+    return sandboxSnapshotFromWire(data ?? {});
+  }
+
+  /**
+   * Preview which injected secrets a scrub-and-delete snapshot would remove
+   * from a sandbox (file paths + env var names only, no values). `sandboxRef`
+   * is a name or id; the server resolves id first, then name.
+   */
+  async getSandboxScrubPreview(
+    sandboxRef: string,
+  ): Promise<SandboxScrubPreview> {
+    const params = new URLSearchParams({ sandbox: sandboxRef, by: "ref" });
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/sandbox-snapshots/scrub-preview?${params.toString()}`,
+    );
+    return sandboxScrubPreviewFromWire(data ?? {});
+  }
+
+  /**
+   * Delete a sandbox snapshot referenced by name or id (the server resolves
+   * id first, then name).
+   */
+  async deleteSandboxSnapshot(ref: string): Promise<void> {
+    await this.http.doJSON(
+      "DELETE",
+      `${API_BASE_PATH}/sandbox-snapshots/${encodeURIComponent(ref)}?by=ref`,
+    );
   }
 }
 
