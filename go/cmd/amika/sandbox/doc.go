@@ -11,7 +11,6 @@
 //   - connect
 //   - delete
 //   - ssh
-//   - scp
 //   - code
 //   - agent-send
 //

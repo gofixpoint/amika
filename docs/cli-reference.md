@@ -8,7 +8,7 @@ Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 ### Global sandbox flags
 
-These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `scp`, `code`, `agent-send`):
+These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `agent-send`):
 
 | Flag       | Default | Description                      |
 | ---------- | ------- | -------------------------------- |
@@ -216,43 +216,6 @@ amika sandbox ssh my-sandbox --revoke
 | `-t`        | `false` | Force pseudo-terminal allocation (useful for interactive remote programs)    |
 | `--revoke`  | `false` | Revoke SSH access for the sandbox                                           |
 
-### `amika sandbox scp`
-
-Copy files to or from a remote sandbox over SSH. This is a thin wrapper around the system `scp` binary: the first argument names the sandbox to connect to, and every other argument is forwarded to `scp` unchanged, so all the usual `scp` flags (`-r`, `-p`, `-C`, `-v`, ...) work.
-
-```bash
-amika sandbox scp <sbox_name> [flags] <source> ... <target>
-```
-
-Sources and targets may be a local path or, additionally, any of these remote forms:
-
-| Form                              | Meaning                                   |
-| --------------------------------- | ----------------------------------------- |
-| `PATH`                            | A local path                              |
-| `<sbox_name>:[PATH]`              | A path inside the sandbox (scp-style)     |
-| `sbox://<sbox_name>/PATH`         | A path inside the sandbox (URI form)      |
-| `scp://[user@]host[:port][/path]` | A path on an arbitrary SSH host           |
-
-A bare `<sbox_name>:PATH` is treated as a sandbox reference only when its host matches the sandbox named as the first argument; any other `host:path` is passed through for `scp` to interpret as a normal SSH host. The command resolves each sandbox reference to a fresh SSH destination. When the sandbox is the only remote, it connects with `StrictHostKeyChecking=accept-new`; when an external host is also involved, no host-key option is injected (scp applies `-o` options to every remote), so your normal SSH config governs. A port given in an `scp://host:PORT/path` remote is honored per host, so you can copy between a sandbox and an external host that listen on different ports.
-
-```bash
-# Upload a file into the sandbox
-amika sandbox scp my-sandbox ./local.txt my-sandbox:/home/amika/local.txt
-
-# Recursively download a directory from the sandbox
-amika sandbox scp my-sandbox -r my-sandbox:/home/amika/out ./out
-
-# Sandbox URI form
-amika sandbox scp my-sandbox ./a.txt sbox://my-sandbox/home/amika/a.txt
-
-# Copy from the sandbox to another SSH host
-amika sandbox scp my-sandbox my-sandbox:/data.csv scp://user@host:22/tmp/data.csv
-```
-
-| Flag       | Default | Description                                          |
-| ---------- | ------- | ---------------------------------------------------- |
-| `--print`  | `false` | Print the resolved `scp` command instead of running it |
-
 ### `amika sandbox code`
 
 Open a remote sandbox in an editor via SSH.
@@ -289,6 +252,45 @@ amika sandbox agent-send my-sandbox "Review this code" --agent codex
 | `--no-wait`           | `false`            | Send the instruction and return immediately without waiting  |
 | `--workdir <path>`    | `$AMIKA_AGENT_CWD` | Working directory inside the container                       |
 | `--agent <name>`      | `claude`           | Agent CLI to use                                             |
+
+---
+
+## `amika scp`
+
+Copy files between the local machine, sandboxes, and SSH hosts. This is a thin wrapper around the system `scp` binary: every argument is forwarded to `scp` unchanged, so all the usual `scp` flags (`-r`, `-p`, `-C`, `-v`, ...) work.
+
+```bash
+amika scp <source> ... <target>
+```
+
+Sandbox names are resolved wherever they appear, so a single command can copy between two sandboxes, or between a sandbox and an SSH host. Sources and targets may take any of these forms:
+
+| Form                              | Meaning                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| `PATH`                            | A local path                                                                   |
+| `NAME[:PATH]`                     | A path in sandbox `NAME` (scp-style); a relative `PATH` is under the sandbox home (`/home/amika`), an absolute `PATH` is used verbatim |
+| `sbox://NAME[/PATH]`              | A path in sandbox `NAME` (URI form); `PATH` is absolute and `~` is the home directory. A `/` in `NAME` must be percent-encoded as `%2F` |
+| `scp://[user@]host[:port][/path]` | A path on an arbitrary SSH host                                                |
+
+A bare `host:path` **always** names a sandbox; to reach an arbitrary SSH host, use an `scp://` URI. When every remote is a sandbox, the connection uses `StrictHostKeyChecking=accept-new`; when an external host or a jump host is involved, no host-key option is injected (scp applies `-o` options to every hop), so your normal SSH config governs. A non-default sandbox port is carried inline as a self-porting `scp://host:port//path` operand, so sandboxes and hosts on differing ports can be copied together. A password in an `scp://user:password@host` URI is rejected, since `scp` cannot use one non-interactively.
+
+```bash
+# Upload a file into the sandbox home
+amika scp ./local.txt my-sandbox:local.txt
+
+# Recursively download an absolute directory from the sandbox
+amika scp -r my-sandbox:/srv/out ./out
+
+# Sandbox URI form, relative to the home directory
+amika scp ./a.txt sbox://my-sandbox/~/a.txt
+
+# Copy from a sandbox to another SSH host
+amika scp my-sandbox:/data.csv scp://user@host:22/tmp/data.csv
+```
+
+| Flag       | Default | Description                                            |
+| ---------- | ------- | ------------------------------------------------------ |
+| `--print`  | `false` | Print the resolved `scp` command instead of running it |
 
 ---
 
