@@ -222,10 +222,14 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          expected="${VERSION#v}"
+          # Strip leading 'v' and extract only major.minor.patch (ignore pre-release suffix).
+          # This allows tagging sdk-typescript@v0.10.0-rc.1 against a package.json at 0.10.0.
+          full_version="${VERSION#v}"
+          tag_base=$(echo "$full_version" | cut -d'-' -f1)
           actual=$(node -p "require('./sdk/typescript/package.json').version")
-          if [ "$actual" != "$expected" ]; then
-            echo "sdk/typescript/package.json version ($actual) does not match tag version ($expected)." >&2
+          actual_base=$(echo "$actual" | cut -d'-' -f1)
+          if [ "$actual_base" != "$tag_base" ]; then
+            echo "sdk/typescript/package.json major.minor.patch ($actual_base) does not match tag version ($tag_base)." >&2
             echo "Bump the package.json version on main before cutting this tag." >&2
             exit 1
           fi
