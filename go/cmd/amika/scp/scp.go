@@ -60,6 +60,18 @@ func runSCP(cmd *cobra.Command, rawArgs []string) error {
 		return resolveSandboxDestination(client, name)
 	}
 
+	// A local<->sandbox copy is streamed over an ssh exec channel rather than run
+	// through scp: Daytona's linux-vm SSH gateway does not deliver channel-EOF to
+	// a non-interactive remote, so scp (and sftp) hang after the transfer
+	// completes. See stream.go. Every other shape keeps the scp path below.
+	sp, stream, err := planStreamTransfer(plan)
+	if err != nil {
+		return err
+	}
+	if stream {
+		return runStreamTransfer(cmd, sp, resolve, plan.printOnly)
+	}
+
 	scpArgs, err := buildSCPInvocation(plan, resolve)
 	if err != nil {
 		return err
