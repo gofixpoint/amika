@@ -75,7 +75,9 @@ func fixedDest(d ssh.Destination) destResolver {
 func TestBuildSCPInvocation(t *testing.T) {
 	daytona := ssh.Destination{User: "user-token", Host: "ssh.app.daytona.io"}
 	ported := ssh.Destination{User: "u", Host: "host.example", Port: 2222}
-	acceptNew := []string{"-o", "StrictHostKeyChecking=accept-new"}
+	// Sandbox copies force the legacy exec-channel protocol (-O) and, when the
+	// sandbox is the sole remote, the accept-new host-key policy.
+	sboxPfx := []string{"-O", "-o", "StrictHostKeyChecking=accept-new"}
 
 	tests := []struct {
 		name    string
@@ -89,41 +91,41 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "upload local to sandbox relative path",
 			argv: []string{"./a.txt", "mybox:my/path"},
 			dest: daytona,
-			want: append(acceptNew, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika/my/path"),
+			want: append(sboxPfx, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika/my/path"),
 		},
 		{
 			// An absolute sandbox path is used verbatim.
 			name: "upload local to sandbox absolute path",
 			argv: []string{"./a.txt", "mybox:/my/root/path"},
 			dest: daytona,
-			want: append(acceptNew, "./a.txt", "user-token@ssh.app.daytona.io:/my/root/path"),
+			want: append(sboxPfx, "./a.txt", "user-token@ssh.app.daytona.io:/my/root/path"),
 		},
 		{
 			name: "empty sandbox path is the home directory",
 			argv: []string{"./a.txt", "mybox:"},
 			dest: daytona,
-			want: append(acceptNew, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika"),
+			want: append(sboxPfx, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika"),
 		},
 		{
 			// sbox:// paths are absolute.
 			name: "sbox uri absolute path",
 			argv: []string{"./a.txt", "sbox://mybox/my/root/path"},
 			dest: daytona,
-			want: append(acceptNew, "./a.txt", "user-token@ssh.app.daytona.io:/my/root/path"),
+			want: append(sboxPfx, "./a.txt", "user-token@ssh.app.daytona.io:/my/root/path"),
 		},
 		{
 			// A leading "~" in an sbox:// path expands to the home directory.
 			name: "sbox uri tilde expands to home",
 			argv: []string{"./a.txt", "sbox://mybox/~/my-file"},
 			dest: daytona,
-			want: append(acceptNew, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika/my-file"),
+			want: append(sboxPfx, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika/my-file"),
 		},
 		{
 			// A percent-encoded "/" in the sbox:// name is decoded to the real name.
 			name: "sbox uri percent-encoded name",
 			argv: []string{"./a.txt", "sbox://dylan%2Fmy-sandbox/~/f"},
 			dest: daytona,
-			want: append(acceptNew, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika/f"),
+			want: append(sboxPfx, "./a.txt", "user-token@ssh.app.daytona.io:/home/amika/f"),
 		},
 		{
 			// A non-default sandbox port is carried inline as a self-porting
@@ -131,7 +133,7 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "ported sandbox becomes a self-porting uri",
 			argv: []string{"./a", "mybox:/x"},
 			dest: ported,
-			want: append(acceptNew, "./a", "scp://u@host.example:2222//x"),
+			want: append(sboxPfx, "./a", "scp://u@host.example:2222//x"),
 		},
 		{
 			// Sandbox names are resolved wherever they appear: two sandboxes in one
@@ -139,7 +141,7 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "two sandboxes in one copy",
 			argv: []string{"mybox:/a", "otherbox:/b"},
 			dest: daytona,
-			want: append(acceptNew, "user-token@ssh.app.daytona.io:/a", "user-token@ssh.app.daytona.io:/b"),
+			want: append(sboxPfx, "user-token@ssh.app.daytona.io:/a", "user-token@ssh.app.daytona.io:/b"),
 		},
 		{
 			// An external scp:// host suppresses the host-key policy (scp's global
@@ -148,7 +150,7 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "sandbox to external scp host",
 			argv: []string{"mybox:/data.csv", "scp://user@host:22/tmp/data.csv"},
 			dest: daytona,
-			want: []string{"user-token@ssh.app.daytona.io:/data.csv", "scp://user@host:22//tmp/data.csv"},
+			want: []string{"-O", "user-token@ssh.app.daytona.io:/data.csv", "scp://user@host:22//tmp/data.csv"},
 		},
 		{
 			name:    "all local is an error",
@@ -160,7 +162,7 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "user set StrictHostKeyChecking is not overridden",
 			argv: []string{"-o", "StrictHostKeyChecking=yes", "./a", "mybox:/x"},
 			dest: daytona,
-			want: []string{"-o", "StrictHostKeyChecking=yes", "./a", "user-token@ssh.app.daytona.io:/x"},
+			want: []string{"-O", "-o", "StrictHostKeyChecking=yes", "./a", "user-token@ssh.app.daytona.io:/x"},
 		},
 		{
 			// -J routes through a jump host, whose key scp's global -o would relax,
@@ -168,7 +170,7 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "user jump host suppresses host-key policy",
 			argv: []string{"-J", "bastion:22", "./a", "mybox:/x"},
 			dest: daytona,
-			want: []string{"-J", "bastion:22", "./a", "user-token@ssh.app.daytona.io:/x"},
+			want: []string{"-O", "-J", "bastion:22", "./a", "user-token@ssh.app.daytona.io:/x"},
 		},
 		{
 			// ssh options the server puts in the destination are forwarded when the
@@ -176,21 +178,21 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "sandbox ssh options forwarded when sole remote",
 			argv: []string{"./a", "mybox:/b"},
 			dest: ssh.Destination{User: "u", Host: "h", Options: []string{"-i", "/tmp/key", "-o", "Compression=yes"}},
-			want: []string{"-o", "StrictHostKeyChecking=accept-new", "-i", "/tmp/key", "-o", "Compression=yes", "./a", "u@h:/b"},
+			want: []string{"-O", "-o", "StrictHostKeyChecking=accept-new", "-i", "/tmp/key", "-o", "Compression=yes", "./a", "u@h:/b"},
 		},
 		{
 			// A host-key policy set by the server is not overridden by accept-new.
 			name: "sandbox destination host-key policy is not overridden",
 			argv: []string{"./a", "mybox:/b"},
 			dest: ssh.Destination{User: "u", Host: "h", Options: []string{"-o", "StrictHostKeyChecking=yes"}},
-			want: []string{"-o", "StrictHostKeyChecking=yes", "./a", "u@h:/b"},
+			want: []string{"-O", "-o", "StrictHostKeyChecking=yes", "./a", "u@h:/b"},
 		},
 		{
 			// A jump host supplied by the server suppresses accept-new too.
 			name: "sandbox destination jump host suppresses accept-new",
 			argv: []string{"./a", "mybox:/b"},
 			dest: ssh.Destination{User: "u", Host: "h", Options: []string{"-J", "bastion"}},
-			want: []string{"-J", "bastion", "./a", "u@h:/b"},
+			want: []string{"-O", "-J", "bastion", "./a", "u@h:/b"},
 		},
 		{
 			// Sandbox options are global, so a mixed copy that also touches an
@@ -226,13 +228,13 @@ func TestBuildSCPInvocation(t *testing.T) {
 			name: "dash operand after a source is not an option",
 			argv: []string{"file", "-P", "mybox:/dst"},
 			dest: daytona,
-			want: append(acceptNew, "file", "-P", "user-token@ssh.app.daytona.io:/dst"),
+			want: append(sboxPfx, "file", "-P", "user-token@ssh.app.daytona.io:/dst"),
 		},
 		{
 			name: "double dash ends option parsing",
 			argv: []string{"--", "-P", "mybox:/dst"},
 			dest: daytona,
-			want: append(acceptNew, "--", "-P", "user-token@ssh.app.daytona.io:/dst"),
+			want: append(sboxPfx, "--", "-P", "user-token@ssh.app.daytona.io:/dst"),
 		},
 		{
 			// An external IPv6 host keeps its brackets in the self-porting URI.

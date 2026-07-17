@@ -274,6 +274,8 @@ Sandbox names are resolved wherever they appear, so a single command can copy be
 
 A bare `host:path` **always** names a sandbox; to reach an arbitrary SSH host, use an `scp://` URI. When every remote is a sandbox, the connection uses `StrictHostKeyChecking=accept-new`; when an external host or a jump host is involved, no host-key option is injected (scp applies `-o` options to every hop), so your normal SSH config governs. A non-default sandbox port is carried inline as a self-porting `scp://host:port//path` operand, so sandboxes and hosts on differing ports can be copied together. A password in an `scp://user:password@host` URI is rejected, since `scp` cannot use one non-interactively.
 
+Any copy that touches a sandbox forces the legacy SCP protocol (`scp -O`), which transfers over a plain SSH exec channel instead of the SFTP subsystem — the SFTP session's teardown can hang against a sandbox's SSH gateway (the copy completes but `scp` never exits). External-only copies keep the modern SFTP protocol.
+
 ```bash
 # Upload a file into the sandbox home
 amika scp ./local.txt my-sandbox:local.txt

@@ -203,6 +203,16 @@ func buildSCPInvocation(plan scpPlan, resolve destResolver) ([]string, error) {
 	}
 
 	var opts []string
+	// Transfer to a sandbox over a plain ssh exec channel (the legacy SCP
+	// protocol, -O) rather than the SFTP subsystem. Modern scp defaults to SFTP,
+	// whose session teardown can hang against a sandbox's SSH gateway — the copy
+	// finishes but scp never exits. -O runs `scp -t` on the far side over an exec
+	// channel, the same kind `amika sandbox ssh` uses, which tears down cleanly.
+	// -O is global, so it is injected whenever any remote is a sandbox; an
+	// external-only copy keeps the modern SFTP protocol.
+	if len(sandboxNames) > 0 {
+		opts = append(opts, "-O")
+	}
 	// Relax host-key checking for first contact only when every remote is a
 	// sandbox: sandboxes are ephemeral, so their keys are unknown on first
 	// connect (accept-new still rejects a changed key). scp's -o is global, so an
