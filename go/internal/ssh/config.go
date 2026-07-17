@@ -45,16 +45,33 @@ func Alias(sandboxID string) string {
 	return aliasPrefix + sandboxID
 }
 
-// Destination is the user/host/port parsed out of an ssh destination string.
+// Destination is an ssh destination string decomposed into the parts a caller
+// needs to rebuild a connection: the user, host, port, and any other ssh options
+// (e.g. -i, -F, -o) preserved in their original order. Options excludes the port
+// (surfaced separately as Port) and the trailing "[user@]host" target.
 type Destination struct {
-	User string
-	Host string
-	Port int
+	User    string
+	Host    string
+	Port    int
+	Options []string
 }
 
-// ParseDestination extracts the user, host, and port from an ssh destination
-// such as "token@ssh.app.daytona.io" or "-p 2222 user@host". Unlike taking the
-// last whitespace token, this preserves an explicit port and tolerates flags.
+// argTakingOptions are the single-letter ssh options (per ssh(1)) that consume
+// the following token as their argument, excluding lowercase -p and -l, which
+// are parsed into Port and User respectively. Uppercase -P (a connection tag)
+// and -L are included so their arguments are not mistaken for the "[user@]host"
+// target. They are used to group an option with its value while scanning a
+// destination so the trailing target is identified correctly.
+const argTakingOptions = "bBcDEeFIiJLmOoPQRSWw"
+
+// ParseDestination decomposes an ssh destination string such as
+// "token@ssh.app.daytona.io", "-p 2222 user@host", or "-i /key -o Foo=bar host"
+// into its user, host, port, and remaining options. The port is returned via
+// Port (from "-p PORT" or "-pPORT") and the login name via User (from "-l NAME"
+// or "-lNAME", which — like ssh — takes precedence over a "user@" in the target,
+// and is never forwarded as an option since scp's -l means a bandwidth limit);
+// every other option is preserved in Options in its original order so a caller
+// can forward it. It errors on a missing port/login value or more than one host.
 func ParseDestination(dest string) (Destination, error) {
 	var d Destination
 	var target string
@@ -62,17 +79,40 @@ func ParseDestination(dest string) (Destination, error) {
 	for i := 0; i < len(fields); i++ {
 		f := fields[i]
 		switch {
-		case f == "-p" && i+1 < len(fields):
+		case f == "-p":
+			if i+1 >= len(fields) {
+				return d, fmt.Errorf("ssh destination %q: -p requires a port", dest)
+			}
 			port, err := strconv.Atoi(fields[i+1])
 			if err != nil {
 				return d, fmt.Errorf("invalid ssh port %q: %w", fields[i+1], err)
 			}
 			d.Port = port
 			i++
+		case len(f) > 2 && strings.HasPrefix(f, "-p") && isAllDigits(f[2:]):
+			port, err := strconv.Atoi(f[2:])
+			if err != nil {
+				return d, fmt.Errorf("invalid ssh port %q: %w", f[2:], err)
+			}
+			d.Port = port
+		case f == "-l":
+			if i+1 >= len(fields) {
+				return d, fmt.Errorf("ssh destination %q: -l requires a login name", dest)
+			}
+			d.User = fields[i+1]
+			i++
+		case len(f) > 2 && strings.HasPrefix(f, "-l"):
+			d.User = f[2:]
 		case strings.HasPrefix(f, "-"):
-			// Ignore other flags; the destination is a bare token.
-			continue
+			d.Options = append(d.Options, f)
+			if consumesFollowingArg(f) && i+1 < len(fields) {
+				d.Options = append(d.Options, fields[i+1])
+				i++
+			}
 		default:
+			if target != "" {
+				return d, fmt.Errorf("ssh destination %q has more than one host", dest)
+			}
 			target = f
 		}
 	}
@@ -80,7 +120,11 @@ func ParseDestination(dest string) (Destination, error) {
 		return d, fmt.Errorf("no ssh destination found in %q", dest)
 	}
 	if at := strings.LastIndex(target, "@"); at >= 0 {
-		d.User = target[:at]
+		// A "-l NAME" already set the user and takes precedence over "user@",
+		// matching ssh; still take the host from the target.
+		if d.User == "" {
+			d.User = target[:at]
+		}
 		d.Host = target[at+1:]
 	} else {
 		d.Host = target
@@ -89,6 +133,35 @@ func ParseDestination(dest string) (Destination, error) {
 		return d, fmt.Errorf("no ssh host found in %q", dest)
 	}
 	return d, nil
+}
+
+// consumesFollowingArg reports whether an ssh option token takes the next token
+// as its argument. It mirrors getopt: in a bundled cluster only the trailing
+// letter can take a value, and it takes the following token only when nothing is
+// attached after it ("-i" takes the next token; "-oFoo=bar" carries it inline).
+func consumesFollowingArg(tok string) bool {
+	if len(tok) < 2 || tok[0] != '-' || tok[1] == '-' {
+		return false
+	}
+	for i := 1; i < len(tok); i++ {
+		if strings.IndexByte(argTakingOptions, tok[i]) >= 0 {
+			return i == len(tok)-1
+		}
+	}
+	return false
+}
+
+// isAllDigits reports whether s is non-empty and all ASCII digits.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // NewHostEntry builds a managed host entry for a sandbox from its ssh

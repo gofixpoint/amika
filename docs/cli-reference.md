@@ -259,6 +259,47 @@ amika sandbox agent-send my-sandbox "Review this code" --agent codex
 
 ---
 
+## `amika scp`
+
+Copy files between the local machine, sandboxes, and SSH hosts. This is a thin wrapper around the system `scp` binary: every argument is forwarded to `scp` unchanged, so all the usual `scp` flags (`-r`, `-p`, `-C`, `-v`, ...) work.
+
+```bash
+amika scp <source> ... <target>
+```
+
+Sandbox names are resolved wherever they appear, so a single command can copy between two sandboxes, or between a sandbox and an SSH host. Sources and targets may take any of these forms:
+
+| Form                              | Meaning                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| `PATH`                            | A local path                                                                   |
+| `NAME[:PATH]`                     | A path in sandbox `NAME` (scp-style); a relative `PATH` is under the sandbox home (`/home/amika`), an absolute `PATH` is used verbatim |
+| `sbox://NAME[/PATH]`              | A path in sandbox `NAME` (URI form); `PATH` is absolute and `~` is the home directory. A `/` in `NAME` must be percent-encoded as `%2F` |
+| `scp://[user@]host[:port][/path]` | A path on an arbitrary SSH host                                                |
+
+A bare `host:path` **always** names a sandbox; to reach an arbitrary SSH host, use an `scp://` URI. When every remote is a sandbox, the connection uses `StrictHostKeyChecking=accept-new`; when an external host or a jump host is involved, no host-key option is injected (scp applies `-o` options to every hop), so your normal SSH config governs. A non-default sandbox port is carried inline as a self-porting `scp://host:port//path` operand, so sandboxes and hosts on differing ports can be copied together. A password in an `scp://user:password@host` URI is rejected, since `scp` cannot use one non-interactively.
+
+A copy between the local machine and a sandbox is **streamed over an SSH exec channel** rather than run through `scp`. Daytona's `linux-vm` SSH gateway does not deliver the client's channel-EOF to a non-interactive remote, so `scp` (and `sftp`) complete the transfer but then hang forever waiting to tear the session down. The stream instead uses remote commands that exit on their own — `cat` to download, `head -c <size>` (bounded so it never waits for EOF) to upload, with `tar` for directories (`-r`). External `scp://` copies and local-only copies keep the real `scp` binary, which has no such teardown problem. Sandbox↔sandbox and sandbox↔external copies are not yet supported over the stream (copy via the local machine in two steps).
+
+```bash
+# Upload a file into the sandbox home
+amika scp ./local.txt my-sandbox:local.txt
+
+# Recursively download an absolute directory from the sandbox
+amika scp -r my-sandbox:/srv/out ./out
+
+# Sandbox URI form, relative to the home directory
+amika scp ./a.txt sbox://my-sandbox/~/a.txt
+
+# Copy from a sandbox to another SSH host
+amika scp my-sandbox:/data.csv scp://user@host:22/tmp/data.csv
+```
+
+| Flag       | Default | Description                                            |
+| ---------- | ------- | ------------------------------------------------------ |
+| `--print`  | `false` | Print the resolved `scp` command instead of running it |
+
+---
+
 ## `amika volume`
 
 Manage tracked Docker volumes used by sandboxes.
