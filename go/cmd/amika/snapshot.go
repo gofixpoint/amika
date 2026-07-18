@@ -176,6 +176,9 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if format.IsJSON() {
+		// SandboxSnapshot already carries stable snake_case JSON tags, so the
+		// CLI intentionally emits the API type directly rather than defining a
+		// separate DTO like sandbox list does.
 		if snapshots == nil {
 			snapshots = []apiclient.SandboxSnapshot{}
 		}
