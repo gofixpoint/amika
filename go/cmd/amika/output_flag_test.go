@@ -12,14 +12,16 @@ import (
 
 // runRootCommandOutput runs the root command and always restores the --output
 // flag to its default afterward, so a JSON test does not leak the format into
-// other tests that share the global rootCmd.
+// other tests that share the global rootCmd. The reset is registered with
+// t.Cleanup so it runs regardless of how the test returns.
 func runRootCommandOutput(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	out, err := runRootCommand(args...)
-	if setErr := rootCmd.PersistentFlags().Set("output", "text"); setErr != nil {
-		t.Fatalf("reset output flag: %v", setErr)
-	}
-	return out, err
+	t.Cleanup(func() {
+		if err := rootCmd.PersistentFlags().Set("output", "text"); err != nil {
+			t.Errorf("reset output flag: %v", err)
+		}
+	})
+	return runRootCommand(args...)
 }
 
 func TestVolumeListJSON_EmptyIsEmptyArray(t *testing.T) {
