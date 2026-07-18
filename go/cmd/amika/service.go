@@ -13,7 +13,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// serviceListItem is the JSON representation of one `service list` row.
+// serviceListItem is the JSON representation of one `service list` row. Ports
+// and URL are display strings (comma/space-joined) matching the text columns
+// rather than structured arrays, since a service row aggregates several bindings
+// into a single cell.
 type serviceListItem struct {
 	Service string `json:"service"`
 	Sandbox string `json:"sandbox"`

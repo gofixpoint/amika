@@ -215,11 +215,12 @@ func buildAuthStatusJSON(
 		status.Warnings = append(status.Warnings, apiKeyAnnotation(storedKey, keyErr, apiKeyPath)...)
 	default:
 		status.Method = "none"
+		// Mirror the text output's recovery hint so the two formats stay in sync.
 		if keyErr != nil {
-			status.Warnings = append(status.Warnings, fmt.Sprintf("stored API key file is unreadable (%v)", keyErr))
+			status.Warnings = append(status.Warnings, fmt.Sprintf("stored API key file is unreadable (%v); run `amika auth logout` to clear it", keyErr))
 		}
 		if sessErr != nil {
-			status.Warnings = append(status.Warnings, fmt.Sprintf("stored session file is unreadable (%v)", sessErr))
+			status.Warnings = append(status.Warnings, fmt.Sprintf("stored session file is unreadable (%v); run `amika auth logout` to clear it", sessErr))
 		}
 	}
 	return status
