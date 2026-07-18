@@ -8,19 +8,31 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/auth"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
-// runRootCommandOutput runs the root command and always restores the --output
-// flag to its default afterward, so a JSON test does not leak the format into
-// other tests that share the global rootCmd. The reset is registered with
-// t.Cleanup so it runs regardless of how the test returns.
-func runRootCommandOutput(t *testing.T, args ...string) (string, error) {
-	t.Helper()
-	t.Cleanup(func() {
-		if err := rootCmd.PersistentFlags().Set("output", "text"); err != nil {
-			t.Errorf("reset output flag: %v", err)
+// resetChangedFlags restores every flag that a run mutated back to its default
+// across the whole command tree, so state (e.g. --output or --force) does not
+// leak between tests that share the global rootCmd.
+func resetChangedFlags(cmd *cobra.Command) {
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
 		}
 	})
+	for _, c := range cmd.Commands() {
+		resetChangedFlags(c)
+	}
+}
+
+// runRootCommandOutput runs the root command and always restores mutated flags
+// afterward. The reset is registered with t.Cleanup so it runs regardless of
+// how the test returns.
+func runRootCommandOutput(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	t.Cleanup(func() { resetChangedFlags(rootCmd) })
 	return runRootCommand(args...)
 }
 
@@ -64,6 +76,41 @@ func TestVolumeListJSON_ItemFields(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("volume list JSON missing %q, got:\n%s", want, out)
 		}
+	}
+}
+
+func TestVolumeDeleteJSON_MissingReportsError(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+
+	out, err := runRootCommandOutput(t, "volume", "delete", "ghost", "--force", "-o", "json")
+	if err == nil {
+		t.Fatal("expected a non-nil error when deletion fails")
+	}
+	for _, want := range []string{`"name":"ghost"`, `"status":"error"`, "no volume found"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("volume delete JSON missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestVolumeDeleteJSON_RequiresForce(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+
+	_, err := runRootCommandOutput(t, "volume", "delete", "ghost", "-o", "json")
+	if err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("expected a --force requirement error, got %v", err)
+	}
+}
+
+func TestAuthLogoutJSON_NothingStored(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+
+	out, err := runRootCommandOutput(t, "auth", "logout", "-o", "json")
+	if err != nil {
+		t.Fatalf("auth logout -o json failed: %v", err)
+	}
+	if !strings.Contains(out, `"cleared_api_key":false`) || !strings.Contains(out, `"cleared_session":false`) {
+		t.Fatalf("unexpected logout JSON: %s", out)
 	}
 }
 
