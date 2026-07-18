@@ -14,6 +14,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/arch"
 	"github.com/gofixpoint/amika/go/internal/auth"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -588,6 +589,17 @@ func newProviderListCmd(p providerConfig) *cobra.Command {
 			items, err := client.ListProviderSecrets(p.APIPath)
 			if err != nil {
 				return err
+			}
+
+			format, err := output.FormatFrom(cmd)
+			if err != nil {
+				return err
+			}
+			if format.IsJSON() {
+				if items == nil {
+					items = []apiclient.ProviderSecretListItem{}
+				}
+				return format.JSON(cmd.OutOrStdout(), items)
 			}
 
 			if len(items) == 0 {
