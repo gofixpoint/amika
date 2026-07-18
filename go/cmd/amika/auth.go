@@ -13,6 +13,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// logoutJSON is the JSON representation of `auth logout`, reporting which
+// stored credentials were cleared.
+type logoutJSON struct {
+	ClearedAPIKey  bool   `json:"cleared_api_key"`
+	ClearedSession bool   `json:"cleared_session"`
+	SessionEmail   string `json:"session_email,omitempty"`
+}
+
 // authStatusJSON is the JSON representation of `auth status`.
 type authStatusJSON struct {
 	Authenticated bool     `json:"authenticated"`
@@ -40,6 +48,14 @@ instead. Use "-" to read the key from stdin, which pairs well with secret
 managers in CI (for example: "vault kv get -field=key … | amika auth login --api-key-file -").`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		apiKeyFile, _ := cmd.Flags().GetString("api-key-file")
+
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if format.IsJSON() && apiKeyFile == "" {
+			return fmt.Errorf("interactive device login cannot be combined with --%s %s; use --api-key-file", output.FlagName, format)
+		}
 
 		existingSession, sessionErr := auth.LoadSession()
 		existingKey, keyErr := auth.LoadAPIKey()
@@ -72,7 +88,7 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 				}
 				return fmt.Errorf("already have %s stored, run `amika auth logout` first", who)
 			}
-			return loginWithAPIKeyFile(cmd, apiKeyFile)
+			return loginWithAPIKeyFile(cmd, apiKeyFile, format)
 		}
 
 		// Device-flow path. If GetValidSession (the same gate commands
@@ -115,7 +131,7 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 	},
 }
 
-func loginWithAPIKeyFile(cmd *cobra.Command, path string) error {
+func loginWithAPIKeyFile(cmd *cobra.Command, path string, format output.Format) error {
 	var src io.Reader
 	if path == "-" {
 		src = cmd.InOrStdin()
@@ -134,6 +150,9 @@ func loginWithAPIKeyFile(cmd *cobra.Command, path string) error {
 	if err := auth.SaveAPIKey(auth.APIKeyAuth{Key: key, StoredAt: time.Now().UTC()}); err != nil {
 		return fmt.Errorf("saving api key: %w", err)
 	}
+	if format.IsJSON() {
+		return format.JSON(cmd.OutOrStdout(), authStatusJSON{Authenticated: true, Method: "stored_api_key", Warnings: []string{}})
+	}
 	fmt.Fprintln(cmd.OutOrStdout(), "Stored API key")
 	return nil
 }
@@ -142,8 +161,12 @@ var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Log out of Amika",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		out := cmd.OutOrStdout()
-		clearedAny := false
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		out := format.Progress(cmd.OutOrStdout())
+		result := logoutJSON{}
 
 		// Parse errors must not block deletion: a corrupt credential file
 		// would otherwise trap the user, since `auth login` refuses to
@@ -154,13 +177,13 @@ var authLogoutCmd = &cobra.Command{
 			if err := auth.DeleteAPIKey(); err != nil {
 				return err
 			}
-			clearedAny = true
+			result.ClearedAPIKey = true
 		} else if existingKey != nil {
 			if err := auth.DeleteAPIKey(); err != nil {
 				return err
 			}
 			fmt.Fprintln(out, "Cleared stored API key")
-			clearedAny = true
+			result.ClearedAPIKey = true
 		}
 
 		sessionPath, _ := config.WorkOSAuthSessionFile()
@@ -169,17 +192,21 @@ var authLogoutCmd = &cobra.Command{
 			if err := auth.DeleteSession(); err != nil {
 				return err
 			}
-			clearedAny = true
+			result.ClearedSession = true
 		} else if existingSession != nil {
 			if err := auth.DeleteSession(); err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "Cleared logged-in session (%s)\n", existingSession.Email)
-			clearedAny = true
+			result.ClearedSession = true
+			result.SessionEmail = existingSession.Email
 		}
 
-		if !clearedAny {
-			fmt.Fprintln(out, "Already logged out")
+		if format.IsJSON() {
+			return format.JSON(cmd.OutOrStdout(), result)
+		}
+		if !result.ClearedAPIKey && !result.ClearedSession {
+			fmt.Fprintln(cmd.OutOrStdout(), "Already logged out")
 		}
 		return nil
 	},

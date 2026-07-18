@@ -138,7 +138,15 @@ var volumeDeleteCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+
 		if !force {
+			if format.IsJSON() {
+				return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
+			}
 			reader := bufio.NewReader(cmd.InOrStdin())
 			confirmed, err := confirmAction(
 				fmt.Sprintf("Delete volume(s) %s?", strings.Join(args, ", ")),
@@ -148,10 +156,12 @@ var volumeDeleteCmd = &cobra.Command{
 				return err
 			}
 			if !confirmed {
-				fmt.Println("Aborted.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
 				return nil
 			}
 		}
+
+		pw := format.Progress(cmd.OutOrStdout())
 
 		volumesFile, err := config.VolumesStateFile()
 		if err != nil {
@@ -166,26 +176,43 @@ var volumeDeleteCmd = &cobra.Command{
 		fmStore := sandbox.NewFileMountStore(fileMountsFile)
 
 		var errs []string
+		results := []output.ItemResult{}
 		for _, name := range args {
 			if _, err := store.Get(name); err == nil {
 				if err := deleteTrackedVolume(store, name, force, sandbox.RemoveDockerVolume); err != nil {
 					errs = append(errs, fmt.Sprintf("volume %q: %v", name, err))
+					results = append(results, output.ItemResult{Name: name, Status: "error", Error: err.Error()})
 					continue
 				}
-				fmt.Printf("Volume %q deleted\n", name)
+				fmt.Fprintf(pw, "Volume %q deleted\n", name)
+				results = append(results, output.ItemResult{Name: name, Status: "deleted"})
 				continue
 			}
 
 			if _, err := fmStore.Get(name); err == nil {
 				if err := deleteTrackedFileMount(fmStore, name, force); err != nil {
 					errs = append(errs, fmt.Sprintf("volume %q: %v", name, err))
+					results = append(results, output.ItemResult{Name: name, Status: "error", Error: err.Error()})
 					continue
 				}
-				fmt.Printf("Volume %q deleted\n", name)
+				fmt.Fprintf(pw, "Volume %q deleted\n", name)
+				results = append(results, output.ItemResult{Name: name, Status: "deleted"})
 				continue
 			}
 
-			errs = append(errs, fmt.Sprintf("no volume found with name: %s", name))
+			msg := fmt.Sprintf("no volume found with name: %s", name)
+			errs = append(errs, msg)
+			results = append(results, output.ItemResult{Name: name, Status: "error", Error: msg})
+		}
+
+		if format.IsJSON() {
+			if err := format.JSON(cmd.OutOrStdout(), results); err != nil {
+				return err
+			}
+			if len(errs) > 0 {
+				return fmt.Errorf("%d of %d volumes failed; see JSON output", len(errs), len(results))
+			}
+			return nil
 		}
 		if len(errs) > 0 {
 			return fmt.Errorf("%s", strings.Join(errs, "\n"))
