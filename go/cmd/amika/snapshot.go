@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -170,6 +171,17 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+	if format.IsJSON() {
+		if snapshots == nil {
+			snapshots = []apiclient.SandboxSnapshot{}
+		}
+		return format.JSON(cmd.OutOrStdout(), snapshots)
+	}
+
 	if len(snapshots) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No snapshots found.")
 		return nil

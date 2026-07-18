@@ -9,9 +9,36 @@ import (
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
 )
+
+// volumeListItem is the JSON representation of a tracked volume or file mount.
+type volumeListItem struct {
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	CreatedAt  string   `json:"created_at"`
+	InUse      bool     `json:"in_use"`
+	Sandboxes  []string `json:"sandboxes"`
+	SourcePath string   `json:"source_path"`
+}
+
+// newVolumeListItem builds a volumeListItem, ensuring sandboxes marshals as an
+// empty array rather than null when the volume is unreferenced.
+func newVolumeListItem(name, typ, createdAt string, sandboxRefs []string, sourcePath string) volumeListItem {
+	if sandboxRefs == nil {
+		sandboxRefs = []string{}
+	}
+	return volumeListItem{
+		Name:       name,
+		Type:       typ,
+		CreatedAt:  createdAt,
+		InUse:      len(sandboxRefs) > 0,
+		Sandboxes:  sandboxRefs,
+		SourcePath: sourcePath,
+	}
+}
 
 var volumeCmd = &cobra.Command{
 	Use:   "volume",
@@ -44,6 +71,21 @@ var volumeListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if format.IsJSON() {
+			items := []volumeListItem{}
+			for _, v := range volumes {
+				items = append(items, newVolumeListItem(v.Name, "directory", v.CreatedAt, v.SandboxRefs, v.SourcePath))
+			}
+			for _, fm := range fileMounts {
+				items = append(items, newVolumeListItem(fm.Name, "file", fm.CreatedAt, fm.SandboxRefs, fm.SourcePath))
+			}
+			return format.JSON(cmd.OutOrStdout(), items)
+		}
+
 		if len(volumes) == 0 && len(fileMounts) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No volumes found.")
 			return nil

@@ -7,10 +7,19 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
 )
+
+// serviceListItem is the JSON representation of one `service list` row.
+type serviceListItem struct {
+	Service string `json:"service"`
+	Sandbox string `json:"sandbox"`
+	Ports   string `json:"ports"`
+	URL     string `json:"url"`
+}
 
 var serviceCmd = &cobra.Command{
 	Use:   "service",
@@ -56,6 +65,23 @@ var serviceListCmd = &cobra.Command{
 		}
 		if err != nil {
 			return err
+		}
+
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if format.IsJSON() {
+			items := make([]serviceListItem, 0, len(rows))
+			for _, r := range rows {
+				items = append(items, serviceListItem{
+					Service: r.service,
+					Sandbox: r.sandboxName,
+					Ports:   r.ports,
+					URL:     r.url,
+				})
+			}
+			return format.JSON(cmd.OutOrStdout(), items)
 		}
 
 		if len(rows) == 0 {
