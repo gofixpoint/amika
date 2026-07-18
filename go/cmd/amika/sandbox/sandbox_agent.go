@@ -3,6 +3,7 @@ package sandboxcmd
 // sandbox_agent.go implements agent-send command wiring and agent CLI helpers.
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -12,11 +13,24 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
+
+// agentSendJSON is the JSON emitted by `agent-send`. Result and SessionID are
+// populated when the command waits for a response (not --no-wait) against a
+// remote sandbox; Status is "sent" for --no-wait and "completed" otherwise.
+type agentSendJSON struct {
+	Sandbox   string `json:"sandbox"`
+	Agent     string `json:"agent"`
+	Status    string `json:"status"`
+	Result    string `json:"result,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	IsError   bool   `json:"is_error"`
+}
 
 type agentConfig struct {
 	Binary         string
@@ -125,10 +139,13 @@ func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent
 	return cmd
 }
 
-func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, stdout io.Writer) error {
+// runRemoteAgentSend sends the message to a remote sandbox. For --no-wait it
+// dispatches over SSH and returns a nil response; otherwise it returns the
+// agent's structured response so the caller can render it as text or JSON.
+func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts) (*apiclient.AgentSendResponse, error) {
 	if noWait {
 		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
-		return ssh.ExecSSH(client, name, false, []string{shellCmd})
+		return nil, ssh.ExecSSH(client, name, false, []string{shellCmd})
 	}
 
 	req := apiclient.AgentSendRequest{
@@ -140,18 +157,9 @@ func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait b
 
 	resp, err := client.AgentSend(name, req)
 	if err != nil {
-		return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
+		return nil, fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
 	}
-
-	fmt.Fprint(stdout, resp.Result)
-	if resp.Result != "" && !strings.HasSuffix(resp.Result, "\n") {
-		fmt.Fprintln(stdout)
-	}
-
-	if resp.IsError {
-		return fmt.Errorf("agent returned an error in sandbox %q", name)
-	}
-	return nil
+	return resp, nil
 }
 
 func buildDockerAgentSendArgs(name, message string, noWait bool, workdir string, agent agentConfig) []string {
@@ -200,6 +208,11 @@ Use --no-wait to send the message and return immediately.`,
 			return err
 		}
 
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -223,11 +236,25 @@ Use --no-wait to send the message and return immediately.`,
 			if info.Provider != "docker" {
 				return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
 			}
-			if err := runDockerSandboxAgentSend(name, message, noWait, workdir, agent, os.Stdout, os.Stderr); err != nil {
+			// In JSON mode capture the streamed agent output so stdout carries
+			// only the JSON envelope; otherwise stream straight to stdout.
+			var captured bytes.Buffer
+			agentStdout := io.Writer(os.Stdout)
+			if format.IsJSON() && !noWait {
+				agentStdout = &captured
+			}
+			if err := runDockerSandboxAgentSend(name, message, noWait, workdir, agent, agentStdout, os.Stderr); err != nil {
 				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
 					return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
 				}
 				return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
+			}
+			if format.IsJSON() {
+				result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed", Result: captured.String()}
+				if noWait {
+					result.Status = "sent"
+				}
+				return format.JSON(cmd.OutOrStdout(), result)
 			}
 			if noWait {
 				fmt.Fprintf(os.Stderr, "Message sent to %s in sandbox %q\n", agent.Binary, name)
@@ -244,8 +271,36 @@ Use --no-wait to send the message and return immediately.`,
 		newSession, _ := cmd.Flags().GetBool("new-session")
 		opts := agentRunOpts{SessionID: sessionID, NewSession: newSession}
 
-		if err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts, os.Stdout); err != nil {
+		resp, err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts)
+		if err != nil {
 			return err
+		}
+
+		if format.IsJSON() {
+			result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "sent"}
+			if !noWait && resp != nil {
+				result.Status = "completed"
+				result.Result = resp.Result
+				result.SessionID = resp.SessionID
+				result.IsError = resp.IsError
+			}
+			if err := format.JSON(cmd.OutOrStdout(), result); err != nil {
+				return err
+			}
+			if resp != nil && resp.IsError {
+				return fmt.Errorf("agent returned an error in sandbox %q", name)
+			}
+			return nil
+		}
+
+		if !noWait && resp != nil {
+			fmt.Fprint(os.Stdout, resp.Result)
+			if resp.Result != "" && !strings.HasSuffix(resp.Result, "\n") {
+				fmt.Fprintln(os.Stdout)
+			}
+			if resp.IsError {
+				return fmt.Errorf("agent returned an error in sandbox %q", name)
+			}
 		}
 		if noWait {
 			fmt.Fprintf(os.Stderr, "Message sent to %s in sandbox %q\n", agent.Binary, name)

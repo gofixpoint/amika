@@ -11,12 +11,120 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/constants"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 	"github.com/spf13/cobra"
 )
+
+// sandboxDetailJSON is the JSON emitted by `sandbox create` for the created
+// sandbox. It carries structured ports and services (with generated URLs)
+// rather than the display strings the text output prints.
+type sandboxDetailJSON struct {
+	Name        string              `json:"name"`
+	Location    string              `json:"location"`
+	State       string              `json:"state,omitempty"`
+	Provider    string              `json:"provider,omitempty"`
+	Image       string              `json:"image,omitempty"`
+	ContainerID string              `json:"container_id,omitempty"`
+	Branch      string              `json:"branch,omitempty"`
+	Ports       []portJSON          `json:"ports"`
+	Services    []serviceDetailJSON `json:"services"`
+}
+
+// serviceDetailJSON is one named service with its resolved port bindings.
+type serviceDetailJSON struct {
+	Name  string            `json:"name"`
+	Ports []servicePortJSON `json:"ports"`
+}
+
+// servicePortJSON is a port binding with an optional generated URL.
+type servicePortJSON struct {
+	HostIP        string `json:"host_ip,omitempty"`
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol,omitempty"`
+	URL           string `json:"url,omitempty"`
+}
+
+// sandboxDetailFromInfo builds the create JSON for a local sandbox.
+func sandboxDetailFromInfo(info sandbox.Info) sandboxDetailJSON {
+	ports := make([]portJSON, 0, len(info.Ports))
+	for _, p := range info.Ports {
+		ports = append(ports, portJSON{
+			HostIP:        p.HostIP,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      p.Protocol,
+		})
+	}
+	services := make([]serviceDetailJSON, 0, len(info.Services))
+	for _, svc := range info.Services {
+		sp := make([]servicePortJSON, 0, len(svc.Ports))
+		for _, port := range svc.Ports {
+			sp = append(sp, servicePortJSON{
+				HostIP:        port.HostIP,
+				HostPort:      port.HostPort,
+				ContainerPort: port.ContainerPort,
+				Protocol:      port.Protocol,
+				URL:           port.URL,
+			})
+		}
+		services = append(services, serviceDetailJSON{Name: svc.Name, Ports: sp})
+	}
+	return sandboxDetailJSON{
+		Name:        info.Name,
+		Location:    "local",
+		Provider:    info.Provider,
+		Image:       info.Image,
+		ContainerID: info.ContainerID,
+		Branch:      info.Branch,
+		Ports:       ports,
+		Services:    services,
+	}
+}
+
+// sandboxDetailFromRemote builds the create JSON for a remote sandbox, grouping
+// the flat service list by service name the way the text output does.
+func sandboxDetailFromRemote(sb *apiclient.RemoteSandbox) sandboxDetailJSON {
+	var order []string
+	byName := make(map[string]*serviceDetailJSON, len(sb.Services))
+	ports := make([]portJSON, 0, len(sb.Services))
+	for _, svc := range sb.Services {
+		ports = append(ports, portJSON{
+			HostPort:      svc.HostPort,
+			ContainerPort: svc.ContainerPort,
+			Protocol:      svc.Protocol,
+		})
+		s, ok := byName[svc.Name]
+		if !ok {
+			order = append(order, svc.Name)
+			byName[svc.Name] = &serviceDetailJSON{Name: svc.Name}
+			s = byName[svc.Name]
+		}
+		s.Ports = append(s.Ports, servicePortJSON{
+			HostPort:      svc.HostPort,
+			ContainerPort: svc.ContainerPort,
+			Protocol:      svc.Protocol,
+			URL:           svc.URL,
+		})
+	}
+	services := make([]serviceDetailJSON, 0, len(order))
+	for _, name := range order {
+		services = append(services, *byName[name])
+	}
+	return sandboxDetailJSON{
+		Name:     sb.Name,
+		Location: "remote",
+		State:    sb.State,
+		Provider: sb.Provider,
+		Branch:   sb.Branch,
+		Ports:    ports,
+		Services: services,
+	}
+}
 
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create",
@@ -48,6 +156,15 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if connect, _ := cmd.Flags().GetBool("connect"); connect && format.IsJSON() {
+			return fmt.Errorf("--connect cannot be combined with --%s %s (it opens an interactive shell)", output.FlagName, format)
+		}
+		pw := format.Progress(cmd.OutOrStdout())
+
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("failed to determine working directory: %w", err)
@@ -56,7 +173,7 @@ var sandboxCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), formatRepoBanner(identity))
+		fmt.Fprintln(pw, formatRepoBanner(identity))
 
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
@@ -170,27 +287,30 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		if (len(mounts) > 0 || len(volumeMounts) > 0) && !yes {
+			if format.IsJSON() {
+				return fmt.Errorf("refusing to prompt for mount confirmation with --%s %s; pass --yes to proceed", output.FlagName, format)
+			}
 			if gitMountInfo != nil {
 				mode := "clean"
 				if gitMountInfo.NoClean {
 					mode = "no-clean"
 				}
-				fmt.Println("Git repo to mount:")
-				fmt.Printf("  repo: %s\n", gitMountInfo.RepoName)
-				fmt.Printf("  root: %s\n", gitMountInfo.RepoRoot)
-				fmt.Printf("  mode: %s\n", mode)
-				fmt.Printf("  target: %s\n", gitMountInfo.Mount.Target)
+				fmt.Fprintln(pw, "Git repo to mount:")
+				fmt.Fprintf(pw, "  repo: %s\n", gitMountInfo.RepoName)
+				fmt.Fprintf(pw, "  root: %s\n", gitMountInfo.RepoRoot)
+				fmt.Fprintf(pw, "  mode: %s\n", mode)
+				fmt.Fprintf(pw, "  target: %s\n", gitMountInfo.Mount.Target)
 			}
-			fmt.Println("You are about to mount:")
+			fmt.Fprintln(pw, "You are about to mount:")
 			for _, m := range mounts {
 				source := m.Source
 				if m.Mode == "rwcopy" && m.SnapshotFrom != "" {
 					source = m.SnapshotFrom
 				}
-				fmt.Printf("  %s -> %s:%s (%s)\n", source, name, m.Target, m.Mode)
+				fmt.Fprintf(pw, "  %s -> %s:%s (%s)\n", source, name, m.Target, m.Mode)
 			}
 			for _, v := range volumeMounts {
-				fmt.Printf("  volume %s -> %s:%s (%s)\n", v.Volume, name, v.Target, v.Mode)
+				fmt.Fprintf(pw, "  volume %s -> %s:%s (%s)\n", v.Volume, name, v.Target, v.Mode)
 			}
 			reader := bufio.NewReader(os.Stdin)
 			confirmed, err := promptForConfirmation(reader)
@@ -198,7 +318,7 @@ var sandboxCreateCmd = &cobra.Command{
 				return err
 			}
 			if !confirmed {
-				fmt.Println("Aborted.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
 				return nil
 			}
 		}
@@ -259,25 +379,30 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		rb.Disarm()
 
-		fmt.Printf("Sandbox %q created (container %s)\n", name, containerID[:12])
+		fmt.Fprintf(pw, "Sandbox %q created (container %s)\n", name, containerID[:12])
 		if len(publishedPorts) > 0 {
-			fmt.Println("Published ports:")
+			fmt.Fprintln(pw, "Published ports:")
 			for _, p := range publishedPorts {
-				fmt.Printf("  %s\n", formatPortBinding(p))
+				fmt.Fprintf(pw, "  %s\n", formatPortBinding(p))
 			}
 		}
 		if len(collected.Services) > 0 {
-			fmt.Println("Services:")
+			fmt.Fprintln(pw, "Services:")
 			for _, svc := range collected.Services {
 				for _, sp := range svc.Ports {
 					url := "-"
 					if sp.URL != "" {
 						url = sp.URL
 					}
-					fmt.Printf("  %s: %s (url: %s)\n", svc.Name, formatPortBinding(sp.PortBinding), url)
+					fmt.Fprintf(pw, "  %s: %s (url: %s)\n", svc.Name, formatPortBinding(sp.PortBinding), url)
 				}
 			}
 		}
+
+		if format.IsJSON() {
+			return format.JSON(cmd.OutOrStdout(), sandboxDetailFromInfo(info))
+		}
+
 		if connect {
 			if err := runSandboxConnect(name, "zsh", os.Stdin, os.Stdout, os.Stderr); err != nil {
 				return fmt.Errorf("sandbox %q created but failed to connect with shell %q: %w", name, "zsh", err)
@@ -404,6 +529,12 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 		req.Snapshot = &snapshot
 	}
 
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+	pw := format.Progress(cmd.OutOrStdout())
+
 	sb, err := client.CreateSandbox(req)
 	if err != nil {
 		return err
@@ -411,15 +542,19 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 
 	resolved := sb.ResolvedAgentCredentials
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q initializing...\n", sb.Name)
+	fmt.Fprintf(pw, "Sandbox %q initializing...\n", sb.Name)
 
 	sb, err = client.WaitForSandbox(sb.Name)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q created (remote)\n", sb.Name)
+	fmt.Fprintf(pw, "Sandbox %q created (remote)\n", sb.Name)
 	printResolvedAgentCredentials(cmd, resolved)
+
+	if format.IsJSON() {
+		return format.JSON(cmd.OutOrStdout(), sandboxDetailFromRemote(sb))
+	}
 
 	connect, _ := cmd.Flags().GetBool("connect")
 	if connect {

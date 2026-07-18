@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -53,6 +54,11 @@ Examples:
 			return err
 		}
 
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+
 		revoke, _ := cmd.Flags().GetBool("revoke")
 		if revoke {
 			info, err := client.GetSSH(name)
@@ -64,6 +70,9 @@ Examples:
 			}
 			if err := client.RevokeSSH(name, info.Token); err != nil {
 				return err
+			}
+			if format.IsJSON() {
+				return format.JSON(cmd.OutOrStdout(), map[string]string{"sandbox": name, "status": "revoked"})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "SSH access revoked for sandbox %q\n", name)
 			return nil
@@ -78,8 +87,15 @@ Examples:
 			if info.SSHDestination == "" {
 				return fmt.Errorf("server returned empty SSH destination")
 			}
+			if format.IsJSON() {
+				return format.JSON(cmd.OutOrStdout(), map[string]string{"sandbox": name, "ssh_destination": info.SSHDestination})
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), info.SSHDestination)
 			return nil
+		}
+
+		if format.IsJSON() {
+			return fmt.Errorf("interactive ssh cannot be combined with --%s %s; use --print or --revoke", output.FlagName, format)
 		}
 
 		forcePTY, _ := cmd.Flags().GetBool("t")

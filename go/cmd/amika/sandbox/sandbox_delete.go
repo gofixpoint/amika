@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
@@ -24,7 +25,15 @@ var sandboxDeleteCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+
 		if !force {
+			if format.IsJSON() {
+				return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
+			}
 			reader := bufio.NewReader(cmd.InOrStdin())
 			confirmed, err := confirmAction(
 				fmt.Sprintf("Delete sandbox(es) %s?", strings.Join(args, ", ")),
@@ -34,10 +43,12 @@ var sandboxDeleteCmd = &cobra.Command{
 				return err
 			}
 			if !confirmed {
-				fmt.Println("Aborted.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
 				return nil
 			}
 		}
+
+		pw := format.Progress(cmd.OutOrStdout())
 
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
@@ -58,6 +69,7 @@ var sandboxDeleteCmd = &cobra.Command{
 		}
 
 		var errs []string
+		var results []output.ItemResult
 		if mode == runmode.Remote {
 			remoteClient, err := getRemoteClient(target)
 			if err != nil {
@@ -66,8 +78,10 @@ var sandboxDeleteCmd = &cobra.Command{
 			for _, name := range args {
 				if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					results = append(results, batchError(name, remoteErr))
 				} else {
-					fmt.Printf("Sandbox %q deleted (remote)\n", name)
+					fmt.Fprintf(pw, "Sandbox %q deleted (remote)\n", name)
+					results = append(results, output.ItemResult{Name: name, Status: "deleted"})
 				}
 			}
 		} else {
@@ -91,25 +105,34 @@ var sandboxDeleteCmd = &cobra.Command{
 				info, localErr := store.Get(name)
 				if localErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
+					results = append(results, batchError(name, fmt.Errorf("sandbox %q not found", name)))
 					continue
 				}
 
+				// In JSON mode we cannot prompt about exclusively-owned volumes,
+				// so preserve them by default unless --delete-volumes is given.
+				effectiveKeepSet := keepVolumesSet
+				if format.IsJSON() && !deleteVolumesSet && !keepVolumesSet {
+					effectiveKeepSet = true
+				}
 				deleteVols, err := resolveDeleteVolumes(
 					volumeStore,
 					fileMountStore,
 					name,
 					deleteVolumesSet,
-					keepVolumesSet,
+					effectiveKeepSet,
 					bufio.NewReader(cmd.InOrStdin()),
 				)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+					results = append(results, batchError(name, err))
 					continue
 				}
 
 				if info.Provider == "docker" {
 					if err := sandbox.RemoveDockerSandbox(name); err != nil {
 						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+						results = append(results, batchError(name, err))
 						continue
 					}
 				}
@@ -119,16 +142,18 @@ var sandboxDeleteCmd = &cobra.Command{
 
 				if err := store.Remove(name); err != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: container removed but failed to update state: %v", name, err))
+					results = append(results, batchError(name, fmt.Errorf("container removed but failed to update state: %w", err)))
 					continue
 				}
 
-				fmt.Printf("Sandbox %q deleted\n", name)
+				fmt.Fprintf(pw, "Sandbox %q deleted\n", name)
 				for _, line := range volumeStatuses {
-					fmt.Println(line)
+					fmt.Fprintln(pw, line)
 				}
 				for _, line := range fileMountStatuses {
-					fmt.Println(line)
+					fmt.Fprintln(pw, line)
 				}
+				results = append(results, output.ItemResult{Name: name, Status: "deleted"})
 				if volumeErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, volumeErr))
 				}
@@ -136,6 +161,19 @@ var sandboxDeleteCmd = &cobra.Command{
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, fileMountErr))
 				}
 			}
+		}
+
+		if format.IsJSON() {
+			if results == nil {
+				results = []output.ItemResult{}
+			}
+			if err := format.JSON(cmd.OutOrStdout(), results); err != nil {
+				return err
+			}
+			if len(errs) > 0 {
+				return fmt.Errorf("deletion completed with errors; see JSON output")
+			}
+			return nil
 		}
 		if len(errs) > 0 {
 			return fmt.Errorf("%s", strings.Join(errs, "\n"))
