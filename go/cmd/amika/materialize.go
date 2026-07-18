@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/agentconfig"
 	"github.com/gofixpoint/amika/go/internal/constants"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -67,6 +68,20 @@ Examples:
 		envStrs, _ := cmd.Flags().GetStringArray("env")
 		interactive, _ := cmd.Flags().GetBool("interactive")
 		setupScript, _ := cmd.Flags().GetString("setup-script")
+
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if format.IsJSON() && interactive {
+			return fmt.Errorf("--interactive cannot be combined with --%s %s", output.FlagName, format)
+		}
+		// In JSON mode the container and rsync output must not pollute stdout,
+		// which carries only the final JSON summary; stream it to stderr.
+		streamOut := os.Stdout
+		if format.IsJSON() {
+			streamOut = os.Stderr
+		}
 
 		if err := validateScriptCmdFlags(script, cmdStr, args); err != nil {
 			return err
@@ -261,7 +276,7 @@ Examples:
 
 		// Run the container
 		dockerCmd := exec.Command("docker", dockerArgs...)
-		dockerCmd.Stdout = os.Stdout
+		dockerCmd.Stdout = streamOut
 		dockerCmd.Stderr = os.Stderr
 		if interactive {
 			dockerCmd.Stdin = os.Stdin
@@ -290,10 +305,13 @@ Examples:
 				return fmt.Errorf("failed to create destdir: %w", err)
 			}
 			rsyncCmd := exec.Command("rsync", "-a", tmpDir+"/", absDestdir+"/")
-			rsyncCmd.Stdout = os.Stdout
+			rsyncCmd.Stdout = streamOut
 			rsyncCmd.Stderr = os.Stderr
 			if err := rsyncCmd.Run(); err != nil {
 				return fmt.Errorf("failed to copy output files: %w", err)
+			}
+			if format.IsJSON() {
+				return format.JSON(cmd.OutOrStdout(), map[string]string{"destdir": absDestdir, "status": "materialized"})
 			}
 			fmt.Printf("Materialized output to %s\n", absDestdir)
 		}

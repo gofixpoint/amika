@@ -63,6 +63,14 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 	description, _ := cmd.Flags().GetString("description")
 	noInteractive, _ := cmd.Flags().GetBool("no-interactive")
 
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+	if format.IsJSON() && !noInteractive {
+		return fmt.Errorf("snapshot create with --%s %s requires --no-interactive together with --mode and --name", output.FlagName, format)
+	}
+
 	if strings.TrimSpace(sandboxRef) == "" {
 		return fmt.Errorf("--sandbox is required")
 	}
@@ -132,6 +140,10 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if format.IsJSON() {
+		return format.JSON(cmd.OutOrStdout(), snap)
 	}
 
 	fmt.Fprintf(
@@ -213,7 +225,15 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 func runSnapshotDelete(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+
 	if !force {
+		if format.IsJSON() {
+			return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
+		}
 		reader := bufio.NewReader(cmd.InOrStdin())
 		confirmed, err := confirmAction(
 			fmt.Sprintf("Delete snapshot(s) %s?", strings.Join(args, ", ")),
@@ -233,13 +253,27 @@ func runSnapshotDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	pw := format.Progress(cmd.OutOrStdout())
 	var errs []string
+	results := []output.ItemResult{}
 	for _, ref := range args {
 		if err := client.DeleteSandboxSnapshot(ref); err != nil {
 			errs = append(errs, fmt.Sprintf("snapshot %q: %v", ref, err))
+			results = append(results, output.ItemResult{Name: ref, Status: "error", Error: err.Error()})
 			continue
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Snapshot %q deleted\n", ref)
+		fmt.Fprintf(pw, "Snapshot %q deleted\n", ref)
+		results = append(results, output.ItemResult{Name: ref, Status: "deleted"})
+	}
+
+	if format.IsJSON() {
+		if err := format.JSON(cmd.OutOrStdout(), results); err != nil {
+			return err
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("%d of %d snapshots failed; see JSON output", len(errs), len(results))
+		}
+		return nil
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
