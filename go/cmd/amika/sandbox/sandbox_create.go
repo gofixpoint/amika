@@ -77,6 +77,7 @@ func sandboxDetailFromInfo(info sandbox.Info) sandboxDetailJSON {
 	return sandboxDetailJSON{
 		Name:        info.Name,
 		Location:    "local",
+		State:       "running",
 		Provider:    info.Provider,
 		Image:       info.Image,
 		ContainerID: info.ContainerID,

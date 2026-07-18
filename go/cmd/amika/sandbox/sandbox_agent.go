@@ -271,15 +271,23 @@ Use --no-wait to send the message and return immediately.`,
 		newSession, _ := cmd.Flags().GetBool("new-session")
 		opts := agentRunOpts{SessionID: sessionID, NewSession: newSession}
 
+		if format.IsJSON() && noWait {
+			// Remote --no-wait dispatches over an SSH exec that replaces this
+			// process and never returns, so emit the envelope before dispatching.
+			if err := format.JSON(cmd.OutOrStdout(), agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "sent"}); err != nil {
+				return err
+			}
+		}
+
 		resp, err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts)
 		if err != nil {
 			return err
 		}
 
 		if format.IsJSON() {
-			result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "sent"}
-			if !noWait && resp != nil {
-				result.Status = "completed"
+			// Only the wait path reaches here; the no-wait path exec'd away above.
+			result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed"}
+			if resp != nil {
 				result.Result = resp.Result
 				result.SessionID = resp.SessionID
 				result.IsError = resp.IsError

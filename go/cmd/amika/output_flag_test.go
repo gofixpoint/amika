@@ -27,11 +27,13 @@ func resetChangedFlags(cmd *cobra.Command) {
 	}
 }
 
-// runRootCommandOutput runs the root command and always restores mutated flags
-// afterward. The reset is registered with t.Cleanup so it runs regardless of
-// how the test returns.
+// runRootCommandOutput runs the root command with mutated-flag isolation: it
+// resets flags both before the run (in case a sibling test that used the plain
+// runRootCommand helper left state behind) and after (via t.Cleanup, so it runs
+// regardless of how the test returns).
 func runRootCommandOutput(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	resetChangedFlags(rootCmd)
 	t.Cleanup(func() { resetChangedFlags(rootCmd) })
 	return runRootCommand(args...)
 }
