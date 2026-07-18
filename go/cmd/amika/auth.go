@@ -9,8 +9,18 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/auth"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// authStatusJSON is the JSON representation of `auth status`.
+type authStatusJSON struct {
+	Authenticated bool     `json:"authenticated"`
+	Method        string   `json:"method"`
+	Email         string   `json:"email,omitempty"`
+	OrgID         string   `json:"org_id,omitempty"`
+	Warnings      []string `json:"warnings"`
+}
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -175,25 +185,83 @@ var authLogoutCmd = &cobra.Command{
 	},
 }
 
-func printAPIKeyAnnotation(out io.Writer, key *auth.APIKeyAuth, loadErr error, path string) {
+// buildAuthStatusJSON mirrors the text status logic: it picks the winning
+// credential source and collects the same shadow/unreadable notes as the text
+// annotations into a warnings list.
+func buildAuthStatusJSON(
+	envKeySet bool,
+	storedKey *auth.APIKeyAuth,
+	keyErr error,
+	session *auth.WorkOSSession,
+	sessErr error,
+	apiKeyPath, sessionPath string,
+) authStatusJSON {
+	status := authStatusJSON{Warnings: []string{}}
+	switch {
+	case envKeySet:
+		status.Authenticated = true
+		status.Method = "env_api_key"
+		status.Warnings = append(status.Warnings, apiKeyAnnotation(storedKey, keyErr, apiKeyPath)...)
+		status.Warnings = append(status.Warnings, sessionAnnotation(session, sessErr, sessionPath)...)
+	case storedKey != nil:
+		status.Authenticated = true
+		status.Method = "stored_api_key"
+		status.Warnings = append(status.Warnings, sessionAnnotation(session, sessErr, sessionPath)...)
+	case session != nil:
+		status.Authenticated = true
+		status.Method = "session"
+		status.Email = session.Email
+		status.OrgID = session.OrgID
+		status.Warnings = append(status.Warnings, apiKeyAnnotation(storedKey, keyErr, apiKeyPath)...)
+	default:
+		status.Method = "none"
+		if keyErr != nil {
+			status.Warnings = append(status.Warnings, fmt.Sprintf("stored API key file is unreadable (%v)", keyErr))
+		}
+		if sessErr != nil {
+			status.Warnings = append(status.Warnings, fmt.Sprintf("stored session file is unreadable (%v)", sessErr))
+		}
+	}
+	return status
+}
+
+// apiKeyAnnotation returns the warnings the text output would print for a
+// shadowed or unreadable stored API key.
+func apiKeyAnnotation(key *auth.APIKeyAuth, loadErr error, path string) []string {
 	switch {
 	case loadErr != nil:
-		fmt.Fprintf(out, "  ignoring unreadable API key file (%s: %v)\n", path, loadErr)
+		return []string{fmt.Sprintf("ignoring unreadable API key file (%s: %v)", path, loadErr)}
 	case key != nil:
-		fmt.Fprintf(out, "  shadows stored API key (%s)\n", path)
+		return []string{fmt.Sprintf("shadows stored API key (%s)", path)}
+	}
+	return nil
+}
+
+// sessionAnnotation returns the warnings the text output would print for a
+// shadowed or unreadable stored session.
+func sessionAnnotation(s *auth.WorkOSSession, loadErr error, path string) []string {
+	switch {
+	case loadErr != nil:
+		return []string{fmt.Sprintf("ignoring unreadable session file (%s: %v)", path, loadErr)}
+	case s != nil:
+		msg := fmt.Sprintf("shadows logged-in session: %s", s.Email)
+		if s.OrgID != "" {
+			msg += fmt.Sprintf(" (org: %s)", s.OrgID)
+		}
+		return []string{msg}
+	}
+	return nil
+}
+
+func printAPIKeyAnnotation(out io.Writer, key *auth.APIKeyAuth, loadErr error, path string) {
+	for _, w := range apiKeyAnnotation(key, loadErr, path) {
+		fmt.Fprintf(out, "  %s\n", w)
 	}
 }
 
 func printSessionAnnotation(out io.Writer, s *auth.WorkOSSession, loadErr error, path string) {
-	switch {
-	case loadErr != nil:
-		fmt.Fprintf(out, "  ignoring unreadable session file (%s: %v)\n", path, loadErr)
-	case s != nil:
-		fmt.Fprintf(out, "  shadows logged-in session: %s", s.Email)
-		if s.OrgID != "" {
-			fmt.Fprintf(out, " (org: %s)", s.OrgID)
-		}
-		fmt.Fprintln(out)
+	for _, w := range sessionAnnotation(s, loadErr, path) {
+		fmt.Fprintf(out, "  %s\n", w)
 	}
 }
 
@@ -213,6 +281,15 @@ var authStatusCmd = &cobra.Command{
 
 		apiKeyPath, _ := config.APIKeyFile()
 		sessionPath, _ := config.WorkOSAuthSessionFile()
+
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if format.IsJSON() {
+			return format.JSON(out, buildAuthStatusJSON(
+				envKeySet, storedKey, keyErr, session, sessErr, apiKeyPath, sessionPath))
+		}
 
 		switch {
 		case envKeySet:
