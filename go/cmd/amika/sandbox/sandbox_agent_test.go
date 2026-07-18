@@ -194,7 +194,7 @@ func TestWriteAgentSendResult(t *testing.T) {
 	t.Run("text mode writes response to stdout and session id to stderr", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		resp := &apiclient.AgentSendResponse{Result: "hello there", SessionID: "sess-42"}
-		if err := writeAgentSendResult(resp, output.Text, &stdout, &stderr); err != nil {
+		if err := writeAgentSendResult(resp, output.FormatText, &stdout, &stderr); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if stdout.String() != "hello there\n" {
@@ -208,7 +208,7 @@ func TestWriteAgentSendResult(t *testing.T) {
 	t.Run("text mode keeps stdout pure when session id absent", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		resp := &apiclient.AgentSendResponse{Result: "just text\n"}
-		if err := writeAgentSendResult(resp, output.Text, &stdout, &stderr); err != nil {
+		if err := writeAgentSendResult(resp, output.FormatText, &stdout, &stderr); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if stdout.String() != "just text\n" {
@@ -227,7 +227,7 @@ func TestWriteAgentSendResult(t *testing.T) {
 			AgentSessionID: "claude-abc",
 			IsError:        false,
 		}
-		if err := writeAgentSendResult(resp, output.JSON, &stdout, &stderr); err != nil {
+		if err := writeAgentSendResult(resp, output.FormatJSON, &stdout, &stderr); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if stderr.String() != "" {
@@ -251,7 +251,7 @@ func TestWriteAgentSendResult(t *testing.T) {
 	t.Run("json mode omits agent_session_id when empty", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		resp := &apiclient.AgentSendResponse{Result: "x", SessionID: "sess-1"}
-		if err := writeAgentSendResult(resp, output.JSON, &stdout, &stderr); err != nil {
+		if err := writeAgentSendResult(resp, output.FormatJSON, &stdout, &stderr); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if strings.Contains(stdout.String(), "agent_session_id") {
@@ -268,12 +268,12 @@ func TestCheckAgentSendOutputMode(t *testing.T) {
 		noWait  bool
 		wantErr bool
 	}{
-		{name: "text remote wait ok", format: output.Text, mode: runmode.Remote, noWait: false},
-		{name: "text local ok", format: output.Text, mode: runmode.Local, noWait: false},
-		{name: "text remote no-wait ok", format: output.Text, mode: runmode.Remote, noWait: true},
-		{name: "json remote wait ok", format: output.JSON, mode: runmode.Remote, noWait: false},
-		{name: "json local rejected", format: output.JSON, mode: runmode.Local, noWait: false, wantErr: true},
-		{name: "json remote no-wait rejected", format: output.JSON, mode: runmode.Remote, noWait: true, wantErr: true},
+		{name: "text remote wait ok", format: output.FormatText, mode: runmode.Remote, noWait: false},
+		{name: "text local ok", format: output.FormatText, mode: runmode.Local, noWait: false},
+		{name: "text remote no-wait ok", format: output.FormatText, mode: runmode.Remote, noWait: true},
+		{name: "json remote wait ok", format: output.FormatJSON, mode: runmode.Remote, noWait: false},
+		{name: "json local rejected", format: output.FormatJSON, mode: runmode.Local, noWait: false, wantErr: true},
+		{name: "json remote no-wait rejected", format: output.FormatJSON, mode: runmode.Remote, noWait: true, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/ssh"
@@ -152,6 +153,76 @@ var sandboxStopCmd = &cobra.Command{
 	},
 }
 
+// sandboxJSON is the stable JSON shape emitted by `sandbox list -o json`. It is
+// defined here, decoupled from the internal amika.Sandbox type, so the CLI's
+// JSON contract stays consistent (snake_case) with the other commands and does
+// not shift if the internal type gains or renames fields.
+type sandboxJSON struct {
+	Name      string       `json:"name"`
+	State     string       `json:"state"`
+	Location  string       `json:"location"`
+	Provider  string       `json:"provider,omitempty"`
+	Image     string       `json:"image,omitempty"`
+	Branch    string       `json:"branch,omitempty"`
+	Repos     []string     `json:"repos"`
+	Ports     []portJSON   `json:"ports"`
+	CreatedBy *creatorJSON `json:"created_by,omitempty"`
+	CreatedAt string       `json:"created_at"`
+}
+
+// portJSON is the JSON shape of a published port binding.
+type portJSON struct {
+	HostIP        string `json:"host_ip,omitempty"`
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol,omitempty"`
+}
+
+// creatorJSON identifies the human who created a sandbox.
+type creatorJSON struct {
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
+}
+
+// sandboxListJSON maps internal sandbox records to the stable JSON shape. It
+// always returns a non-nil slice so an empty result marshals as [] rather than
+// null.
+func sandboxListJSON(items []amika.Sandbox) []sandboxJSON {
+	out := make([]sandboxJSON, 0, len(items))
+	for _, sb := range items {
+		ports := make([]portJSON, 0, len(sb.Ports))
+		for _, p := range sb.Ports {
+			ports = append(ports, portJSON{
+				HostIP:        p.HostIP,
+				HostPort:      p.HostPort,
+				ContainerPort: p.ContainerPort,
+				Protocol:      p.Protocol,
+			})
+		}
+		var creator *creatorJSON
+		if sb.CreatedBy != nil {
+			creator = &creatorJSON{Name: sb.CreatedBy.Name, Email: sb.CreatedBy.Email}
+		}
+		repos := sb.Repos
+		if repos == nil {
+			repos = []string{}
+		}
+		out = append(out, sandboxJSON{
+			Name:      sb.Name,
+			State:     sb.State,
+			Location:  sb.Location,
+			Provider:  sb.Provider,
+			Image:     sb.Image,
+			Branch:    sb.Branch,
+			Repos:     repos,
+			Ports:     ports,
+			CreatedBy: creator,
+			CreatedAt: sb.CreatedAt,
+		})
+	}
+	return out
+}
+
 var sandboxListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
@@ -209,6 +280,14 @@ var sandboxListCmd = &cobra.Command{
 					CreatedBy: creatorFromRemote(rs.CreatedBy),
 				})
 			}
+		}
+
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if format.IsJSON() {
+			return format.JSON(cmd.OutOrStdout(), sandboxListJSON(allItems))
 		}
 
 		if len(allItems) == 0 {

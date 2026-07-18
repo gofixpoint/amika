@@ -3,7 +3,6 @@ package sandboxcmd
 // sandbox_agent.go implements agent-send command wiring and agent CLI helpers.
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -142,7 +141,7 @@ type agentSendJSON struct {
 // cannot honor --output json and must fail fast instead of silently emitting
 // non-JSON text.
 func checkAgentSendOutputMode(format output.Format, mode runmode.Mode, noWait bool) error {
-	if format != output.JSON {
+	if !format.IsJSON() {
 		return nil
 	}
 	if mode == runmode.Local {
@@ -187,10 +186,8 @@ func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait b
 // keeping stdout the pure agent output. In JSON mode a single object with the
 // session id, response, and error status is written to stdout.
 func writeAgentSendResult(resp *apiclient.AgentSendResponse, format output.Format, stdout, stderr io.Writer) error {
-	if format == output.JSON {
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(agentSendJSON{
+	if format.IsJSON() {
+		if err := format.JSON(stdout, agentSendJSON{
 			SessionID:      resp.SessionID,
 			AgentSessionID: resp.AgentSessionID,
 			Response:       resp.Result,
@@ -265,7 +262,7 @@ raw agent output and produce no structured result.`,
 			return err
 		}
 
-		format, err := output.Resolve(cmd)
+		format, err := output.FormatFrom(cmd)
 		if err != nil {
 			return err
 		}

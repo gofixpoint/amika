@@ -1,58 +1,87 @@
-// Package output resolves the --output flag that selects how a CLI command
-// renders its result: human-readable text or machine-readable JSON. The flag
-// is registered only on commands that actually implement it (via AddFlag), so
-// commands that do not support it reject --output with an unknown-flag error
-// rather than silently emitting text.
+// Package output centralizes CLI output formatting so commands can render
+// their results as human-readable text or as JSON in a consistent way across
+// the whole command tree.
 package output
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-// Format is the rendering format selected by the --output flag.
-type Format int
+// Format identifies how a command renders its result.
+type Format string
 
 const (
-	// Text renders human-readable output. It is the default.
-	Text Format = iota
-	// JSON renders machine-readable JSON.
-	JSON
+	// FormatText renders human-readable text and is the default.
+	FormatText Format = "text"
+	// FormatJSON renders compact, single-line JSON suitable for piping into
+	// tools like jq.
+	FormatJSON Format = "json"
+	// FormatJSONPretty renders indented, multi-line JSON for humans.
+	FormatJSONPretty Format = "json-pretty"
 )
 
-// String returns the flag value that selects the format.
-func (f Format) String() string {
-	switch f {
-	case Text:
-		return "text"
-	case JSON:
-		return "json"
-	default:
-		return "unknown"
-	}
-}
-
-// FlagName is the name of the output-format flag.
+// FlagName is the name of the persistent flag that selects the output format.
 const FlagName = "output"
 
-// AddFlag registers the --output/-o flag on a command that implements it.
-// Register it only on commands that honor the flag; leaving it off other
-// commands makes Cobra reject --output there automatically.
-func AddFlag(cmd *cobra.Command) {
-	cmd.Flags().StringP(FlagName, "o", "text", "Output format: \"text\" or \"json\"")
+// flagShorthand is the single-letter alias for FlagName.
+const flagShorthand = "o"
+
+// ValidValues returns the accepted --output values in display order.
+func ValidValues() []string {
+	return []string{string(FormatText), string(FormatJSON), string(FormatJSONPretty)}
 }
 
-// Resolve reads the --output flag from cmd and returns the selected Format.
-// An unrecognized value is an error.
-func Resolve(cmd *cobra.Command) (Format, error) {
-	value, _ := cmd.Flags().GetString(FlagName)
-	switch value {
-	case "", "text":
-		return Text, nil
-	case "json":
-		return JSON, nil
+// ParseFormat validates a raw flag value and returns the corresponding Format.
+func ParseFormat(raw string) (Format, error) {
+	switch Format(raw) {
+	case FormatText, FormatJSON, FormatJSONPretty:
+		return Format(raw), nil
 	default:
-		return Text, fmt.Errorf("invalid --output value %q: expected \"text\" or \"json\"", value)
+		return "", fmt.Errorf("invalid --%s value %q: must be one of %s", FlagName, raw, strings.Join(ValidValues(), ", "))
 	}
+}
+
+// AddFlag registers the persistent --output/-o flag on cmd. Registering it on
+// the root command makes every subcommand inherit it.
+func AddFlag(cmd *cobra.Command) {
+	cmd.PersistentFlags().StringP(
+		FlagName,
+		flagShorthand,
+		string(FormatText),
+		fmt.Sprintf("Output format: %s", strings.Join(ValidValues(), ", ")),
+	)
+}
+
+// FormatFrom reads and validates the output format from a command's flags. If
+// the flag is not registered (e.g. in a unit test that builds a bare command),
+// it returns FormatText.
+func FormatFrom(cmd *cobra.Command) (Format, error) {
+	raw, err := cmd.Flags().GetString(FlagName)
+	if err != nil {
+		return FormatText, nil
+	}
+	return ParseFormat(raw)
+}
+
+// IsJSON reports whether the format is one of the JSON variants.
+func (f Format) IsJSON() bool {
+	return f == FormatJSON || f == FormatJSONPretty
+}
+
+// JSON writes value as JSON to w according to the format: compact for
+// FormatJSON and indented for FormatJSONPretty. Output is terminated with a
+// trailing newline. HTML escaping is disabled so URLs and shell-friendly
+// characters render literally.
+func (f Format) JSON(w io.Writer, value any) error {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if f == FormatJSONPretty {
+		enc.SetIndent("", "  ")
+	}
+	return enc.Encode(value)
 }
