@@ -45,7 +45,13 @@ var sandboxStartCmd = &cobra.Command{
 			return err
 		}
 
-		var errs []string
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		pw := format.Progress(cmd.OutOrStdout())
+
+		var results []output.ItemResult
 		if mode == runmode.Remote {
 			remoteClient, err := getRemoteClient(target)
 			if err != nil {
@@ -53,14 +59,15 @@ var sandboxStartCmd = &cobra.Command{
 			}
 			for _, name := range args {
 				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					results = append(results, batchError(name, remoteErr))
 					continue
 				}
-				fmt.Printf("Sandbox %q starting...\n", name)
+				fmt.Fprintf(pw, "Sandbox %q starting...\n", name)
 				if _, remoteErr := remoteClient.WaitForSandboxStart(name); remoteErr != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					results = append(results, batchError(name, remoteErr))
 				} else {
-					fmt.Printf("Sandbox %q started (remote)\n", name)
+					fmt.Fprintf(pw, "Sandbox %q started (remote)\n", name)
+					results = append(results, output.ItemResult{Name: name, Status: "started"})
 				}
 			}
 		} else {
@@ -72,22 +79,20 @@ var sandboxStartCmd = &cobra.Command{
 			for _, name := range args {
 				info, localErr := store.Get(name)
 				if localErr != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
+					results = append(results, batchError(name, fmt.Errorf("sandbox %q not found", name)))
 					continue
 				}
 				if info.Provider == "docker" {
 					if err := sandbox.StartDockerSandbox(name); err != nil {
-						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+						results = append(results, batchError(name, err))
 						continue
 					}
 				}
-				fmt.Printf("Sandbox %q started\n", name)
+				fmt.Fprintf(pw, "Sandbox %q started\n", name)
+				results = append(results, output.ItemResult{Name: name, Status: "started"})
 			}
 		}
-		if len(errs) > 0 {
-			return fmt.Errorf("%s", strings.Join(errs, "\n"))
-		}
-		return nil
+		return finishBatch(cmd, format, results)
 	},
 }
 
@@ -107,7 +112,13 @@ var sandboxStopCmd = &cobra.Command{
 			return err
 		}
 
-		var errs []string
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		pw := format.Progress(cmd.OutOrStdout())
+
+		var results []output.ItemResult
 		if mode == runmode.Remote {
 			remoteClient, err := getRemoteClient(target)
 			if err != nil {
@@ -115,14 +126,15 @@ var sandboxStopCmd = &cobra.Command{
 			}
 			for _, name := range args {
 				if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					results = append(results, batchError(name, remoteErr))
 					continue
 				}
-				fmt.Printf("Sandbox %q stopping...\n", name)
+				fmt.Fprintf(pw, "Sandbox %q stopping...\n", name)
 				if _, remoteErr := remoteClient.WaitForSandboxStop(name); remoteErr != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
+					results = append(results, batchError(name, remoteErr))
 				} else {
-					fmt.Printf("Sandbox %q stopped (remote)\n", name)
+					fmt.Fprintf(pw, "Sandbox %q stopped (remote)\n", name)
+					results = append(results, output.ItemResult{Name: name, Status: "stopped"})
 				}
 			}
 		} else {
@@ -134,23 +146,55 @@ var sandboxStopCmd = &cobra.Command{
 			for _, name := range args {
 				info, localErr := store.Get(name)
 				if localErr != nil {
-					errs = append(errs, fmt.Sprintf("sandbox %q not found", name))
+					results = append(results, batchError(name, fmt.Errorf("sandbox %q not found", name)))
 					continue
 				}
 				if info.Provider == "docker" {
 					if err := sandbox.StopDockerSandbox(name); err != nil {
-						errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, err))
+						results = append(results, batchError(name, err))
 						continue
 					}
 				}
-				fmt.Printf("Sandbox %q stopped\n", name)
+				fmt.Fprintf(pw, "Sandbox %q stopped\n", name)
+				results = append(results, output.ItemResult{Name: name, Status: "stopped"})
 			}
 		}
-		if len(errs) > 0 {
-			return fmt.Errorf("%s", strings.Join(errs, "\n"))
+		return finishBatch(cmd, format, results)
+	},
+}
+
+// batchError builds a failed ItemResult for one item in a batch command.
+func batchError(name string, err error) output.ItemResult {
+	return output.ItemResult{Name: name, Status: "error", Error: err.Error()}
+}
+
+// finishBatch emits the batch results as JSON when requested and returns a
+// non-nil error (for a non-zero exit) if any item failed. In text mode the
+// per-item progress has already been printed, so it only needs to surface the
+// combined failure; in JSON mode the per-item errors are in the emitted array.
+func finishBatch(cmd *cobra.Command, format output.Format, results []output.ItemResult) error {
+	var failed []string
+	for _, r := range results {
+		if r.Status == "error" {
+			failed = append(failed, fmt.Sprintf("sandbox %q: %s", r.Name, r.Error))
+		}
+	}
+	if format.IsJSON() {
+		if results == nil {
+			results = []output.ItemResult{}
+		}
+		if err := format.JSON(cmd.OutOrStdout(), results); err != nil {
+			return err
+		}
+		if len(failed) > 0 {
+			return fmt.Errorf("%d of %d sandboxes failed; see JSON output", len(failed), len(results))
 		}
 		return nil
-	},
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("%s", strings.Join(failed, "\n"))
+	}
+	return nil
 }
 
 // sandboxJSON is the stable JSON shape emitted by `sandbox list -o json`. It is

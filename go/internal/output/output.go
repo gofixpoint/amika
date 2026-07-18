@@ -12,6 +12,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ItemResult is the JSON outcome of one item in a batch mutating command
+// (start, stop, delete). Status is a short verb like "started" or "deleted";
+// Error holds the failure message and is empty on success.
+type ItemResult struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
 // Format identifies how a command renders its result.
 type Format string
 
@@ -71,6 +80,17 @@ func FormatFrom(cmd *cobra.Command) (Format, error) {
 // IsJSON reports whether the format is one of the JSON variants.
 func (f Format) IsJSON() bool {
 	return f == FormatJSON || f == FormatJSONPretty
+}
+
+// Progress returns the writer to use for human-readable progress messages,
+// banners, and confirmation-free status lines. In JSON modes it returns
+// io.Discard so these never corrupt the single JSON value written to stdout;
+// in text mode it returns w unchanged (typically cmd.OutOrStdout()).
+func (f Format) Progress(w io.Writer) io.Writer {
+	if f.IsJSON() {
+		return io.Discard
+	}
+	return w
 }
 
 // JSON writes value as JSON to w according to the format: compact for
