@@ -153,13 +153,24 @@ var sandboxDeleteCmd = &cobra.Command{
 				for _, line := range fileMountStatuses {
 					fmt.Fprintln(pw, line)
 				}
-				results = append(results, output.ItemResult{Name: name, Status: "deleted"})
+				item := output.ItemResult{Name: name, Status: "deleted"}
+				var cleanupErrs []string
 				if volumeErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, volumeErr))
+					cleanupErrs = append(cleanupErrs, volumeErr.Error())
 				}
 				if fileMountErr != nil {
 					errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, fileMountErr))
+					cleanupErrs = append(cleanupErrs, fileMountErr.Error())
 				}
+				if len(cleanupErrs) > 0 {
+					// The sandbox itself was removed but cleaning up its volumes
+					// or file mounts failed; reflect that on the item so the JSON
+					// matches the non-zero exit code.
+					item.Status = "deleted_with_errors"
+					item.Error = strings.Join(cleanupErrs, "; ")
+				}
+				results = append(results, item)
 			}
 		}
 
