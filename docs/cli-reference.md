@@ -2,6 +2,29 @@
 
 Complete reference for all `amika` commands, flags, and environment variables.
 
+## Global flags
+
+Every command accepts `--output` (short `-o`) to control how it prints its result. This lets you read output at a terminal and pipe the same command into a script or `jq` without reformatting.
+
+| Value         | Description                                    |
+| ------------- | ---------------------------------------------- |
+| `text`        | Human-readable text (the default)              |
+| `json`        | Compact, single-line JSON, ideal for piping    |
+| `json-pretty` | Indented, multi-line JSON for reading          |
+
+```bash
+# Default human-readable table
+amika sandbox list
+
+# Compact JSON for a script or jq
+amika sandbox list --remote -o json | jq '.[].name'
+
+# Indented JSON for reading
+amika snapshot list -o json-pretty
+```
+
+List commands emit a JSON array (empty as `[]`, never `null`). The flag is currently honored by the read commands (`sandbox list`, `volume list`, `snapshot list`, `service list`, `secret <provider> list`, and `auth status`); other commands accept the flag but still print text.
+
 ## `amika sandbox`
 
 Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
