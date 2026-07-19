@@ -4,7 +4,49 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+// cmdWithFlag returns a command whose local flag set holds --output, mirroring
+// the merged state a subcommand sees at execution time. (AddFlag registers a
+// persistent flag, which is only merged into Flags() during Execute.)
+func cmdWithFlag() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Flags().StringP(FlagName, flagShorthand, string(FormatText), "")
+	return cmd
+}
+
+func TestRejectJSON(t *testing.T) {
+	cmd := cmdWithFlag()
+
+	if err := RejectJSON(cmd); err != nil {
+		t.Fatalf("default (text) should be allowed: %v", err)
+	}
+	for _, v := range []string{"json", "json-pretty"} {
+		if err := cmd.Flags().Set(FlagName, v); err != nil {
+			t.Fatal(err)
+		}
+		if err := RejectJSON(cmd); err == nil {
+			t.Fatalf("%s should be rejected", v)
+		}
+	}
+}
+
+func TestRejectFlag(t *testing.T) {
+	cmd := cmdWithFlag()
+
+	if err := RejectFlag(cmd); err != nil {
+		t.Fatalf("unset --output should be allowed: %v", err)
+	}
+	// Any explicit value, even the default text, is rejected.
+	if err := cmd.Flags().Set(FlagName, "text"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RejectFlag(cmd); err == nil {
+		t.Fatal("explicit --output should be rejected")
+	}
+}
 
 func TestParseFormat(t *testing.T) {
 	cases := map[string]struct {

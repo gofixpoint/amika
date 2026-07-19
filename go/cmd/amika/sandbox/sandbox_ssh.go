@@ -110,6 +110,10 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		// code opens an interactive editor, so it has no JSON result.
+		if err := output.RejectJSON(cmd); err != nil {
+			return err
+		}
 		editor, _ := cmd.Flags().GetString("editor")
 
 		if editor != "cursor" {
