@@ -41,7 +41,12 @@ Examples:
 
   # Print the resolved scp command instead of running it
   amika scp --print ./a.txt my-sandbox:a.txt`,
-		Args:               cobra.MinimumNArgs(1),
+		Args: cobra.MinimumNArgs(1),
+		// DisableFlagParsing forwards every argument to the system scp binary
+		// unchanged. As a result the global --output/-o flag is NOT accepted
+		// here: scp streams its own copy progress and cannot emit JSON, so an
+		// --output value is passed straight through to scp rather than parsed by
+		// amika. This is intentional; see docs/cli-reference.md.
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSCP(cmd, args)

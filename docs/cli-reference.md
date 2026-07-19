@@ -4,7 +4,9 @@ Complete reference for all `amika` commands, flags, and environment variables.
 
 ## Global flags
 
-Every command accepts `--output` (short `-o`) to control how it prints its result. This lets you read output at a terminal and pipe the same command into a script or `jq` without reformatting.
+Most commands accept `--output` (short `-o`) to control how they print their result. This lets you read output at a terminal and pipe the same command into a script or `jq` without reformatting.
+
+Two commands do **not** accept `--output` because they delegate to a system shell utility that streams its own output and cannot emit JSON: `amika sandbox ssh` (runs `ssh`) rejects the flag with an error, and `amika scp` (a thin wrapper around `scp`) forwards every argument to `scp` unchanged, so an `--output` value is passed straight through to `scp`.
 
 | Value         | Description                                    |
 | ------------- | ---------------------------------------------- |
@@ -33,7 +35,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands above plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `sandbox ssh --print`/`--revoke`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Purely interactive commands (`sandbox connect`, `sandbox code`) accept the flag but have no JSON result.
+Commands honoring `--output`: the read commands above plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Purely interactive commands (`sandbox connect`, `sandbox code`) accept the flag but have no JSON result. `sandbox ssh` and `scp` do not accept it (see above).
 
 ## `amika sandbox`
 

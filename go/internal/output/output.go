@@ -77,6 +77,17 @@ func FormatFrom(cmd *cobra.Command) (Format, error) {
 	return ParseFormat(raw)
 }
 
+// RejectFlag returns an error if --output was explicitly set. Use it for
+// commands that delegate to an underlying shell utility (ssh, scp) which
+// streams its own output and cannot emit a structured JSON result, so the flag
+// would be meaningless or misleading.
+func RejectFlag(cmd *cobra.Command) error {
+	if cmd.Flags().Changed(FlagName) {
+		return fmt.Errorf("the --%s flag is not supported by this command: it runs an underlying shell utility (ssh/scp) that streams its own output and cannot emit JSON", FlagName)
+	}
+	return nil
+}
+
 // IsJSON reports whether the format is one of the JSON variants.
 func (f Format) IsJSON() bool {
 	return f == FormatJSON || f == FormatJSONPretty

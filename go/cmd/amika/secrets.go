@@ -512,8 +512,12 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 				value, _ := cmd.Flags().GetString("value")
 				fromFile, _ := cmd.Flags().GetString("from-file")
 				nameFlag, _ := cmd.Flags().GetString("name")
-				if value == "" && fromFile == "" {
-					return fmt.Errorf("provide --value or --from-file with --%s %s (interactive discovery is disabled)", output.FlagName, format)
+				// parseProviderCreds is non-interactive when given --value,
+				// --from-file, or an explicit --type (which auto-resolves from
+				// env/local credential files). Any of those is enough for JSON
+				// mode; only bare interactive discovery is disallowed.
+				if value == "" && fromFile == "" && !cmd.Flags().Changed("type") {
+					return fmt.Errorf("provide --value, --from-file, or --type with --%s %s (interactive discovery is disabled)", output.FlagName, format)
 				}
 				if nameFlag == "" {
 					return fmt.Errorf("provide --name with --%s %s", output.FlagName, format)

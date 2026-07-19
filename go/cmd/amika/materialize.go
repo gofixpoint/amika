@@ -92,6 +92,9 @@ Examples:
 			Preset:             preset,
 			ImageFlagChanged:   cmd.Flags().Changed("image"),
 			DefaultBuildPreset: "coder",
+			// streamOut is stderr in JSON mode, stdout otherwise, keeping build
+			// logs off stdout when emitting the final JSON summary.
+			BuildOutput: streamOut,
 		})
 		if err != nil {
 			return err

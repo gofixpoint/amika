@@ -3,6 +3,7 @@ package sandbox
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,10 +32,13 @@ func DockerImageExists(name string) bool {
 // BuildDockerImage builds a Docker image from a Dockerfile within the given
 // build context directory.
 func BuildDockerImage(name string, contextDir string, dockerfileRelPath string) error {
-	return buildDockerImageWithArgs(name, contextDir, dockerfileRelPath, nil)
+	return buildDockerImageWithArgs(name, contextDir, dockerfileRelPath, nil, os.Stdout)
 }
 
-func buildDockerImageWithArgs(name string, contextDir string, dockerfileRelPath string, buildArgs map[string]string) error {
+func buildDockerImageWithArgs(name string, contextDir string, dockerfileRelPath string, buildArgs map[string]string, buildOutput io.Writer) error {
+	if buildOutput == nil {
+		buildOutput = os.Stdout
+	}
 	dockerfilePath := filepath.Join(contextDir, dockerfileRelPath)
 	args := []string{"build", "-t", name, "-f", dockerfilePath}
 	keys := make([]string, 0, len(buildArgs))
@@ -48,7 +52,7 @@ func buildDockerImageWithArgs(name string, contextDir string, dockerfileRelPath 
 	args = append(args, contextDir)
 
 	cmd := exec.Command("docker", args...)
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = buildOutput
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to build image %q: %w", name, err)
