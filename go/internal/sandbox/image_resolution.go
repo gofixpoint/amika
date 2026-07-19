@@ -50,6 +50,10 @@ type PresetImageOptions struct {
 	Preset             string
 	ImageFlagChanged   bool
 	DefaultBuildPreset string
+	// BuildOutput receives the auto-build banner and the streamed docker build
+	// output. When nil it defaults to os.Stdout. Callers emitting JSON on
+	// stdout should set this to os.Stderr so build logs do not corrupt the JSON.
+	BuildOutput io.Writer
 }
 
 // PresetImageResult is the resolved image and preset/build metadata.
@@ -96,8 +100,12 @@ func ResolveAndEnsureImage(opts PresetImageOptions) (PresetImageResult, error) {
 		}
 		defer cleanup()
 
-		fmt.Fprintf(buildMessageWriter, "Building %q preset image (this may take a few minutes)...\n", result.BuildPreset)
-		if err := buildPresetImageFn(result.BuildPreset, contextDir); err != nil {
+		buildOut := opts.BuildOutput
+		if buildOut == nil {
+			buildOut = buildMessageWriter
+		}
+		fmt.Fprintf(buildOut, "Building %q preset image (this may take a few minutes)...\n", result.BuildPreset)
+		if err := buildPresetImageFn(result.BuildPreset, contextDir, buildOut); err != nil {
 			return PresetImageResult{}, err
 		}
 	}

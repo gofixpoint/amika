@@ -1,14 +1,18 @@
 package sandbox
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
 var buildPresetImageFn = BuildPresetImage
 
 var buildDockerImageWithArgsFn = buildDockerImageWithArgs
 
 // BuildPresetImage builds a preset image and any prerequisite preset images
-// needed by its Dockerfile.
-func BuildPresetImage(preset string, contextDir string) error {
+// needed by its Dockerfile. buildOutput receives the streamed docker build
+// output.
+func BuildPresetImage(preset string, contextDir string, buildOutput io.Writer) error {
 	buildOrder, err := presetBuildOrder(preset)
 	if err != nil {
 		return err
@@ -19,7 +23,7 @@ func BuildPresetImage(preset string, contextDir string) error {
 		if dockerImageExistsFn(imageName) {
 			continue
 		}
-		if err := buildDockerImageWithArgsFn(imageName, contextDir, buildPreset+"/Dockerfile", presetBuildArgs(buildPreset)); err != nil {
+		if err := buildDockerImageWithArgsFn(imageName, contextDir, buildPreset+"/Dockerfile", presetBuildArgs(buildPreset), buildOutput); err != nil {
 			return err
 		}
 	}

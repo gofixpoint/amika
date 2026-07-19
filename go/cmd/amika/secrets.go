@@ -14,9 +14,18 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/arch"
 	"github.com/gofixpoint/amika/go/internal/auth"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
+
+// providerPushJSON is the JSON emitted by `secret <provider> push`.
+type providerPushJSON struct {
+	Status string `json:"status"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Scope  string `json:"scope"`
+}
 
 var secretCmd = &cobra.Command{
 	Use:   "secret",
@@ -495,6 +504,26 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 		Long:  p.PushLongHelp,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 
+			format, err := output.FormatFrom(cmd)
+			if err != nil {
+				return err
+			}
+			if format.IsJSON() {
+				value, _ := cmd.Flags().GetString("value")
+				fromFile, _ := cmd.Flags().GetString("from-file")
+				nameFlag, _ := cmd.Flags().GetString("name")
+				// parseProviderCreds is non-interactive when given --value,
+				// --from-file, or an explicit --type (which auto-resolves from
+				// env/local credential files). Any of those is enough for JSON
+				// mode; only bare interactive discovery is disallowed.
+				if value == "" && fromFile == "" && !cmd.Flags().Changed("type") {
+					return fmt.Errorf("provide --value, --from-file, or --type with --%s %s (interactive discovery is disabled)", output.FlagName, format)
+				}
+				if nameFlag == "" {
+					return fmt.Errorf("provide --name with --%s %s", output.FlagName, format)
+				}
+			}
+
 			credValue, credType, err := parseProviderCreds(cmd, p)
 			if err != nil {
 				return err
@@ -557,6 +586,18 @@ func newProviderPushCmd(p providerConfig) *cobra.Command {
 				return err
 			}
 
+			status := "created"
+			if replaced {
+				status = "updated"
+			}
+			if format.IsJSON() {
+				return format.JSON(cmd.OutOrStdout(), providerPushJSON{
+					Status: status,
+					ID:     summary.ID,
+					Name:   summary.Name,
+					Scope:  summary.Scope,
+				})
+			}
 			action := "Created"
 			if replaced {
 				action = "Updated"
@@ -590,6 +631,20 @@ func newProviderListCmd(p providerConfig) *cobra.Command {
 				return err
 			}
 
+			format, err := output.FormatFrom(cmd)
+			if err != nil {
+				return err
+			}
+			if format.IsJSON() {
+				// ProviderSecretListItem already carries stable snake_case JSON
+				// tags, so the CLI intentionally emits the API type directly
+				// rather than defining a separate DTO like sandbox list does.
+				if items == nil {
+					items = []apiclient.ProviderSecretListItem{}
+				}
+				return format.JSON(cmd.OutOrStdout(), items)
+			}
+
 			if len(items) == 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "No %s credentials found.\n", p.ShortName)
 				return nil
@@ -613,12 +668,20 @@ func newProviderDeleteCmd(p providerConfig) *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
+			format, err := output.FormatFrom(cmd)
+			if err != nil {
+				return err
+			}
+
 			client := runmode.NewRemoteClient()
 
 			if err := client.DeleteProviderSecret(p.APIPath, args[0]); err != nil {
 				return err
 			}
 
+			if format.IsJSON() {
+				return format.JSON(cmd.OutOrStdout(), output.ItemResult{Name: args[0], Status: "deleted"})
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deleted credential %s\n", args[0])
 			return nil
 		},

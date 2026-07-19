@@ -2,6 +2,41 @@
 
 Complete reference for all `amika` commands, flags, and environment variables.
 
+## Global flags
+
+Most commands accept `--output` (short `-o`) to control how they print their result. This lets you read output at a terminal and pipe the same command into a script or `jq` without reformatting.
+
+Two commands do **not** accept `--output` because they delegate to a system shell utility that streams its own output and cannot emit JSON: `amika sandbox ssh` (runs `ssh`) rejects the flag with an error, and `amika scp` (a thin wrapper around `scp`) forwards every argument to `scp` unchanged, so an `--output` value is passed straight through to `scp`.
+
+| Value         | Description                                    |
+| ------------- | ---------------------------------------------- |
+| `text`        | Human-readable text (the default)              |
+| `json`        | Compact, single-line JSON, ideal for piping    |
+| `json-pretty` | Indented, multi-line JSON for reading          |
+
+```bash
+# Default human-readable table
+amika sandbox list
+
+# Compact JSON for a script or jq
+amika sandbox list --remote -o json | jq '.[].name'
+
+# Indented JSON for reading
+amika snapshot list -o json-pretty
+```
+
+List commands emit a JSON array (empty as `[]`, never `null`), and mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
+
+```bash
+# Create a sandbox and capture its name for a script
+name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
+
+# Delete several sandboxes and inspect per-item results
+amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
+```
+
+Commands honoring `--output`: the read commands above plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Purely interactive commands (`sandbox connect`, `sandbox code`) reject `-o json`/`json-pretty` since they open a shell or editor with no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+
 ## `amika sandbox`
 
 Manage Docker-backed persistent sandboxes with bind mounts and named volumes.

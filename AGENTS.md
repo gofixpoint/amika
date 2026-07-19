@@ -78,6 +78,7 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 - `httpapi/` — HTTP handler for the REST API server
 - `app/` — Application service layer implementation
 - `ports/` — Port interfaces for Docker and store operations
+- `output/` — CLI output formatting for the `--output`/`-o` flag (`text`, `json`, `json-pretty`)
 - `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
 - `eventlog/` — amikalog's hook installer + capture: appends events (one JSON line each) to a per-session JSONL file `<state>/events/{claude,codex}/sessions/{ts}_{session_id}.jsonl`, annotated with git context. `push.go` uploads each changed session file in parallel via an `Uploader`, tracking each file's uploaded byte size in `<state>/events/.amikalog-push-state.json` so only sessions that grew are re-sent (object key = `<repo>/<source>/sessions/<ts>_<session_id>.jsonl`, repo from each session's `git.repo_root`; legacy per-event `event_*.json` files are still uploaded for backward compatibility)
 
@@ -98,6 +99,16 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 - `materialization-scripts/` — Example data materialization scripts
 - `go/internal/sandbox/presets/` — Dockerfiles for `coder` and `claude` presets
 - `sdk/typescript/` — TypeScript SDK
+
+## CLI Output Format (`--output`)
+
+`--output`/`-o` (`text` default, `json`, `json-pretty`) is a persistent root flag, validated once in the root `PersistentPreRunE`. When adding or changing a command, honor it:
+
+- Read the format with `output.FormatFrom(cmd)`, and when `format.IsJSON()` write the result via `format.JSON(w, v)`.
+- Emit snake_case JSON keys, empty lists as `[]` (never `null`), and per-item batch results as `output.ItemResult{name, status, error}`.
+- In JSON mode stdout carries only the JSON value: emit human progress through `format.Progress(w)` (which discards it in JSON mode) and send any subprocess or build output to stderr.
+- Do not prompt in JSON mode: destructive commands require their confirmation flag (`--force`, `--yes`, or `--no-interactive`).
+- Commands that open a shell or editor call `output.RejectJSON(cmd)`; commands that delegate to a shell utility (`ssh`, `scp`) call `output.RejectFlag(cmd)`.
 
 ## Development Notes
 
@@ -122,6 +133,7 @@ For user-facing docs (`docs/`, README):
 - Test targets: `make test-unit`, `make test-integration`, `make test-contract`, `make test-expensive`
 - Some tests are skipped by default. Run expensive Docker tests with: `AMIKA_RUN_EXPENSIVE_TESTS=1 make test-expensive`
 - See `docs/development/testing.md` for the full smoke test plan
+- Cobra does not reset `rootCmd` flag state between `Execute` calls, so CLI tests that set flags must reset them afterward (see `resetChangedFlags` in `cmd/amika`)
 
 ## Environment Variables
 

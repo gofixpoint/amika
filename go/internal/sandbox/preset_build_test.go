@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"io"
 	"reflect"
 	"testing"
 )
@@ -11,12 +12,12 @@ func TestBuildPresetImage_BuildsDependenciesInOrder(t *testing.T) {
 
 	var built []string
 	dockerImageExistsFn = func(_ string) bool { return false }
-	buildDockerImageWithArgsFn = func(name string, contextDir string, dockerfileRelPath string, buildArgs map[string]string) error {
+	buildDockerImageWithArgsFn = func(name string, contextDir string, dockerfileRelPath string, buildArgs map[string]string, _ io.Writer) error {
 		built = append(built, fmt.Sprintf("%s|%s|%s|%v", name, contextDir, dockerfileRelPath, buildArgs))
 		return nil
 	}
 
-	if err := BuildPresetImage("daytona-coder", "/tmp/context"); err != nil {
+	if err := BuildPresetImage("daytona-coder", "/tmp/context", io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -35,12 +36,12 @@ func TestBuildPresetImage_SkipsExistingDependencies(t *testing.T) {
 
 	var built []string
 	dockerImageExistsFn = func(name string) bool { return name == "amika/base:latest" }
-	buildDockerImageWithArgsFn = func(name string, _ string, _ string, _ map[string]string) error {
+	buildDockerImageWithArgsFn = func(name string, _ string, _ string, _ map[string]string, _ io.Writer) error {
 		built = append(built, name)
 		return nil
 	}
 
-	if err := BuildPresetImage("claude", "/tmp/context"); err != nil {
+	if err := BuildPresetImage("claude", "/tmp/context", io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -56,12 +57,12 @@ func TestBuildPresetImage_UsesPresetImagePrefixForDependencies(t *testing.T) {
 
 	var built []string
 	dockerImageExistsFn = func(_ string) bool { return false }
-	buildDockerImageWithArgsFn = func(name string, _ string, _ string, buildArgs map[string]string) error {
+	buildDockerImageWithArgsFn = func(name string, _ string, _ string, buildArgs map[string]string, _ io.Writer) error {
 		built = append(built, fmt.Sprintf("%s|%v", name, buildArgs))
 		return nil
 	}
 
-	if err := BuildPresetImage("daytona-claude", "/tmp/context"); err != nil {
+	if err := BuildPresetImage("daytona-claude", "/tmp/context", io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -78,7 +79,7 @@ func TestBuildPresetImage_UsesPresetImagePrefixForDependencies(t *testing.T) {
 func TestBuildPresetImage_UnknownPreset(t *testing.T) {
 	resetPresetBuildStubs(t)
 
-	if err := BuildPresetImage("missing", "/tmp/context"); err == nil {
+	if err := BuildPresetImage("missing", "/tmp/context", io.Discard); err == nil {
 		t.Fatal("expected error for unknown preset")
 	}
 }
