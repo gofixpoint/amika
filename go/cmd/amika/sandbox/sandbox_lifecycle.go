@@ -449,6 +449,10 @@ var sandboxConnectCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		// connect opens an interactive shell, so it has no JSON result.
+		if err := output.RejectJSON(cmd); err != nil {
+			return err
+		}
 		shell, _ := cmd.Flags().GetString("shell")
 		if err := validateShell(shell); err != nil {
 			return err

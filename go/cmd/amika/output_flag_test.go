@@ -116,6 +116,22 @@ func TestAuthLogoutJSON_NothingStored(t *testing.T) {
 	}
 }
 
+func TestInteractiveCommandsRejectJSON(t *testing.T) {
+	for _, args := range [][]string{
+		{"sandbox", "connect", "somebox", "-o", "json"},
+		{"sandbox", "code", "somebox", "-o", "json"},
+		{"sandbox", "connect", "somebox", "-o", "json-pretty"},
+	} {
+		_, err := runRootCommandOutput(t, args...)
+		if err == nil {
+			t.Fatalf("%v: expected error rejecting JSON output", args)
+		}
+		if !strings.Contains(err.Error(), "interactive session") {
+			t.Fatalf("%v: unexpected error: %v", args, err)
+		}
+	}
+}
+
 func TestInvalidOutputValue_FailsOnNonJSONCommand(t *testing.T) {
 	// version does not emit JSON, but the root PersistentPreRunE must still
 	// reject an invalid --output value.
