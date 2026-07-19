@@ -144,8 +144,14 @@ func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent
 // agent's structured response so the caller can render it as text or JSON.
 func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts) (*apiclient.AgentSendResponse, error) {
 	if noWait {
+		// Dispatch the detached tmux command over SSH as a child process
+		// (DispatchSSH, not ExecSSH) so control returns here on both success and
+		// failure. That lets the caller emit its result only after the dispatch
+		// actually succeeds, and keeps ssh's own output off stdout. There is no
+		// asynchronous agent-send API endpoint (AgentSend is synchronous and
+		// blocks until the agent finishes), which is why --no-wait uses SSH.
 		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
-		return nil, ssh.ExecSSH(client, name, false, []string{shellCmd})
+		return nil, ssh.DispatchSSH(client, name, []string{shellCmd}, os.Stderr, os.Stderr)
 	}
 
 	req := apiclient.AgentSendRequest{
@@ -271,23 +277,18 @@ Use --no-wait to send the message and return immediately.`,
 		newSession, _ := cmd.Flags().GetBool("new-session")
 		opts := agentRunOpts{SessionID: sessionID, NewSession: newSession}
 
-		if format.IsJSON() && noWait {
-			// Remote --no-wait dispatches over an SSH exec that replaces this
-			// process and never returns, so emit the envelope before dispatching.
-			if err := format.JSON(cmd.OutOrStdout(), agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "sent"}); err != nil {
-				return err
-			}
-		}
-
+		// The dispatch runs before any result is emitted: for --no-wait it now
+		// returns (rather than exec-replacing the process), so a failed dispatch
+		// surfaces as an error here instead of after a premature "sent" result.
 		resp, err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts)
 		if err != nil {
 			return err
 		}
 
 		if format.IsJSON() {
-			// Only the wait path reaches here; the no-wait path exec'd away above.
-			result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed"}
-			if resp != nil {
+			result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "sent"}
+			if !noWait && resp != nil {
+				result.Status = "completed"
 				result.Result = resp.Result
 				result.SessionID = resp.SessionID
 				result.IsError = resp.IsError

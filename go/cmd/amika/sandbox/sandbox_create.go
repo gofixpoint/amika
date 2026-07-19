@@ -5,6 +5,7 @@ package sandboxcmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -212,11 +213,18 @@ var sandboxCreateCmd = &cobra.Command{
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
 		}
 
+		// In JSON mode, route any preset auto-build logs to stderr so stdout
+		// carries only the final JSON object.
+		var buildOutput io.Writer
+		if format.IsJSON() {
+			buildOutput = os.Stderr
+		}
 		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
 			Image:              image,
 			Preset:             preset,
 			ImageFlagChanged:   cmd.Flags().Changed("image"),
 			DefaultBuildPreset: "coder",
+			BuildOutput:        buildOutput,
 		})
 		if err != nil {
 			return err

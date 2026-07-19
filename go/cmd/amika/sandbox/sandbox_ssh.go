@@ -54,8 +54,10 @@ Examples:
 			return err
 		}
 
-		format, err := output.FormatFrom(cmd)
-		if err != nil {
+		// ssh delegates to the system ssh binary (or, for --print/--revoke,
+		// prints a raw connection string / performs a one-off API call). None of
+		// these emit a structured result, so --output is not supported here.
+		if err := output.RejectFlag(cmd); err != nil {
 			return err
 		}
 
@@ -71,9 +73,6 @@ Examples:
 			if err := client.RevokeSSH(name, info.Token); err != nil {
 				return err
 			}
-			if format.IsJSON() {
-				return format.JSON(cmd.OutOrStdout(), map[string]string{"sandbox": name, "status": "revoked"})
-			}
 			fmt.Fprintf(cmd.OutOrStdout(), "SSH access revoked for sandbox %q\n", name)
 			return nil
 		}
@@ -87,15 +86,8 @@ Examples:
 			if info.SSHDestination == "" {
 				return fmt.Errorf("server returned empty SSH destination")
 			}
-			if format.IsJSON() {
-				return format.JSON(cmd.OutOrStdout(), map[string]string{"sandbox": name, "ssh_destination": info.SSHDestination})
-			}
 			fmt.Fprintln(cmd.OutOrStdout(), info.SSHDestination)
 			return nil
-		}
-
-		if format.IsJSON() {
-			return fmt.Errorf("interactive ssh cannot be combined with --%s %s; use --print or --revoke", output.FlagName, format)
 		}
 
 		forcePTY, _ := cmd.Flags().GetBool("t")
