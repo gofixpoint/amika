@@ -187,11 +187,11 @@ export async function provisionSandbox(
   client: AmikaClient,
   overrides: Partial<CreateSandboxRequest> = {},
 ): Promise<RemoteSandbox> {
-  const created = await client.createSandbox(
+  const created = await client.createSandboxAndWait(
     buildCreateSandboxRequest(overrides),
   );
-  // Register cleanup immediately so a failure in waitForSandbox still tears
-  // down the newly created sandbox.
+  // Register cleanup immediately so a failure after provisioning still tears
+  // down the sandbox.
   afterAll(async () => {
     try {
       await client.deleteSandbox(created.name);
@@ -199,7 +199,7 @@ export async function provisionSandbox(
       // Already deleted by the test, or the server is unreachable; ignore.
     }
   });
-  return await client.waitForSandbox(created.name);
+  return created;
 }
 
 // Most operations finish in <1s, but sandbox provisioning, stop, start, and
