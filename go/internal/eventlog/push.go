@@ -40,8 +40,8 @@ const pushManifestName = ".amikalog-push-state.json"
 // concurrent beta:push runs.
 const pushLockName = ".amikalog-push.lock"
 
-// unknownRepoSegment is the object-key prefix used for a session whose events
-// carry no git repository context.
+// unknownRepoSegment is the object-key repository path used for a session whose
+// events carry no git repository context.
 const unknownRepoSegment = "unknown-repo"
 
 // pushConcurrency bounds how many session files Push uploads at once.
@@ -104,14 +104,18 @@ func (m *pushManifest) UnmarshalJSON(data []byte) error {
 
 // uploadUnit is one file Push may upload.
 type uploadUnit struct {
-	// relKey is the file's path relative to <state>/events, slash-separated; it
-	// keys the manifest.
+	// relKey is the file's path relative to <state>/events, slash-separated
+	// ("<source>/sessions/<tail>"); it keys the manifest.
 	relKey string
-	// repoSeg is the object-key repository prefix for legacy per-event files,
+	// source is the event source (claude or codex). The object key places it
+	// after the repository path and "sessions/" segment, so it must be carried
+	// explicitly rather than left implicit in relKey's leading segment.
+	source Source
+	// repoPath is the object-key repository path for legacy per-event files,
 	// resolved at collection time (they are immutable). It is empty for session
-	// JSONL files, whose prefix is derived from the locked snapshot instead — see
+	// JSONL files, whose path is derived from the locked snapshot instead — see
 	// objectKeyFor.
-	repoSeg string
+	repoPath string
 	// filePath is the absolute on-disk path of the file.
 	filePath string
 	// lockPath is the advisory lock to hold while snapshotting filePath, or ""
@@ -122,27 +126,38 @@ type uploadUnit struct {
 	size int64
 }
 
-// objectKeyFor returns the destination object key for the snapshot bytes. For a
-// session JSONL file (repoSeg empty) the repository prefix is derived from the
-// snapshot, which was read under the lock, so a push racing the session's first
-// write cannot misfile a completed event under "unknown-repo".
+// objectKeyFor returns the destination object key for the snapshot bytes:
+// "<repo-path>/sessions/<source>/<tail>", where <tail> is the file's path after
+// the on-disk "<source>/sessions/" prefix (a session file name, or a legacy
+// session dir plus event file). <repo-path> is the session's repository
+// identity — its "origin" remote as "host/owner/repo" when captured, else the
+// repository basename, else "unknown-repo" — nested as bucket folders so two
+// checkouts sharing a basename do not collide. For a session JSONL file
+// (repoPath empty) it is derived from the snapshot, which was read under the
+// lock, so a push racing the session's first write cannot misfile a completed
+// event under "unknown-repo".
 func (u uploadUnit) objectKeyFor(data []byte) string {
-	repoSeg := u.repoSeg
-	if repoSeg == "" {
-		repoSeg = repoSegmentFromJSONL(data)
+	repoPath := u.repoPath
+	if repoPath == "" {
+		repoPath = repoPathFromJSONL(data)
 	}
-	return strings.ToLower(path.Join(repoSeg, u.relKey))
+	tail := strings.TrimPrefix(u.relKey, string(u.source)+"/sessions/")
+	return strings.ToLower(path.Join(repoPath, "sessions", string(u.source), tail))
 }
 
 // Push uploads every changed session file under stateDir to up, recording each
 // success in a local manifest so subsequent runs only send files that grew.
 //
 // New sessions are stored as one append-only JSONL file per session; its object
-// key is its path relative to <state>/events prefixed with the session's
-// repository, i.e. "<repo>/<source>/sessions/<ts>_<sess>.jsonl". Legacy
-// per-event JSON files (from before the JSONL format) are still uploaded so
-// already-captured events are not lost. The repo segment is resolved from the
-// captured git.repo_root (basename), falling back to "unknown-repo".
+// key is "<repo-path>/sessions/<source>/<ts>_<sess>.jsonl", where <repo-path>
+// is the session's repository identity: its captured "origin" remote as
+// "host/owner/repo", falling back to the git.repo_root basename, then to
+// "unknown-repo". Legacy per-event JSON files (from before the JSONL format)
+// are still uploaded so already-captured events are not lost.
+//
+// A session's key is pinned on first upload (see manifestEntry.ObjectKey), so
+// sessions already pushed under an older key layout keep it — the new layout
+// applies going forward, and no object is ever duplicated or orphaned.
 //
 // Uploads run in parallel (bounded by pushConcurrency). Per-file failures are
 // collected in the report and do not abort the run; a non-nil error is returned
@@ -333,7 +348,7 @@ func collectUploadUnits(stateDir, eventsBase string) ([]uploadUnit, error) {
 			name := e.Name()
 			if e.IsDir() {
 				dir := filepath.Join(sessionsRoot, name)
-				legacy, err := collectLegacyUnits(eventsBase, dir, resolveRepoSegment(dir))
+				legacy, err := collectLegacyUnits(eventsBase, dir, src, resolveRepoPath(dir))
 				if err != nil {
 					return nil, err
 				}
@@ -352,10 +367,11 @@ func collectUploadUnits(stateDir, eventsBase string) ([]uploadUnit, error) {
 			if err != nil {
 				return nil, err
 			}
-			// repoSeg is left empty: it is derived from the locked snapshot at
+			// repoPath is left empty: it is derived from the locked snapshot at
 			// upload time so a push racing the first write cannot misfile it.
 			units = append(units, uploadUnit{
 				relKey:   relKey,
+				source:   src,
 				filePath: filePath,
 				lockPath: lockPath,
 				size:     info.Size(),
@@ -368,7 +384,7 @@ func collectUploadUnits(stateDir, eventsBase string) ([]uploadUnit, error) {
 // collectLegacyUnits lists the per-event JSON files in one legacy session
 // directory. These files are immutable, so they upload once (size never
 // changes) and need no lock when read.
-func collectLegacyUnits(eventsBase, sessionDir, repoSeg string) ([]uploadUnit, error) {
+func collectLegacyUnits(eventsBase, sessionDir string, src Source, repoPath string) ([]uploadUnit, error) {
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
 		return nil, fmt.Errorf("reading session dir %s: %w", sessionDir, err)
@@ -394,7 +410,8 @@ func collectLegacyUnits(eventsBase, sessionDir, repoSeg string) ([]uploadUnit, e
 		}
 		units = append(units, uploadUnit{
 			relKey:   relKey,
-			repoSeg:  repoSeg,
+			source:   src,
+			repoPath: repoPath,
 			filePath: filePath,
 			size:     info.Size(),
 		})
@@ -412,36 +429,49 @@ func relSlash(base, target string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
-// repoSegmentFromJSONL returns the sanitized repository basename for a session,
-// read from the first line of its JSONL snapshot that carries git context. The
-// snapshot is taken under the lock (see snapshotOrSkip), so this never sees a
-// partial first line. It returns "unknown-repo" when no line records a git repo
-// root.
+// repoPathFromJSONL returns the repository path for a session, read from its
+// JSONL snapshot: the "origin" remote ("host/owner/repo") of the first event
+// that recorded one, else the basename of the first event with a repo root,
+// else "unknown-repo". Preferring the remote over the basename lets a session
+// that straddles the introduction of git.remote still be filed by remote once
+// any event carries it. The snapshot is taken under the lock (see
+// snapshotOrSkip), so this never sees a partial line.
 //
 // Lines are read with bufio.Reader.ReadBytes, which grows to fit each line, so
 // there is no cap on event size: a large hook payload (stored verbatim in the
 // event) still has its git context read rather than falling back to
 // "unknown-repo".
-func repoSegmentFromJSONL(data []byte) string {
+func repoPathFromJSONL(data []byte) string {
 	r := bufio.NewReader(bytes.NewReader(data))
+	basename := ""
 	for {
 		line, readErr := r.ReadBytes('\n')
 		if len(line) > 0 {
 			var ev Event
-			if json.Unmarshal(line, &ev) == nil && ev.Git != nil && ev.Git.RepoRoot != "" {
-				return sanitizeRepoSegment(filepath.Base(ev.Git.RepoRoot))
+			if json.Unmarshal(line, &ev) == nil && ev.Git != nil {
+				if ev.Git.Remote != "" {
+					return sanitizeRepoPath(ev.Git.Remote)
+				}
+				if basename == "" && ev.Git.RepoRoot != "" {
+					basename = sanitizeRepoSegment(filepath.Base(ev.Git.RepoRoot))
+				}
 			}
 		}
 		if readErr != nil {
-			return unknownRepoSegment
+			break
 		}
 	}
+	if basename != "" {
+		return basename
+	}
+	return unknownRepoSegment
 }
 
-// resolveRepoSegment returns the sanitized repository basename for a legacy
-// session directory, read from the first event file that carries git context.
-// It returns "unknown-repo" when the session has no event with a git repo root.
-func resolveRepoSegment(sessionDir string) string {
+// resolveRepoPath returns the repository path for a legacy session directory,
+// read from its event files. Like repoPathFromJSONL it prefers the "origin"
+// remote of the first event that recorded one, falling back to the basename of
+// the first event with a repo root, then to "unknown-repo".
+func resolveRepoPath(sessionDir string) string {
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
 		return unknownRepoSegment
@@ -453,6 +483,7 @@ func resolveRepoSegment(sessionDir string) string {
 		}
 	}
 	sort.Strings(names)
+	basename := ""
 	for _, name := range names {
 		data, err := os.ReadFile(filepath.Join(sessionDir, name))
 		if err != nil {
@@ -462,28 +493,65 @@ func resolveRepoSegment(sessionDir string) string {
 		if json.Unmarshal(data, &ev) != nil {
 			continue
 		}
-		if ev.Git != nil && ev.Git.RepoRoot != "" {
-			return sanitizeRepoSegment(filepath.Base(ev.Git.RepoRoot))
+		if ev.Git != nil {
+			if ev.Git.Remote != "" {
+				return sanitizeRepoPath(ev.Git.Remote)
+			}
+			if basename == "" && ev.Git.RepoRoot != "" {
+				basename = sanitizeRepoSegment(filepath.Base(ev.Git.RepoRoot))
+			}
 		}
+	}
+	if basename != "" {
+		return basename
 	}
 	return unknownRepoSegment
 }
 
-// sanitizeRepoSegment makes a repository name safe as a single object-key
-// segment, replacing path separators, whitespace, and the URL delimiters the
-// upload endpoint rejects. Empty input becomes "unknown-repo".
+// sanitizeRepoPath makes a normalized "host/owner/repo" remote identity safe as
+// a multi-segment object-key prefix: it splits on "/", sanitizes each segment
+// (dropping "."/".." and empty segments), and rejoins with "/". Slashes are
+// preserved so the identity nests as folders in the bucket. Empty input, or
+// input that sanitizes away entirely, becomes "unknown-repo".
+func sanitizeRepoPath(remote string) string {
+	parts := strings.Split(strings.TrimSpace(remote), "/")
+	clean := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || p == "." || p == ".." {
+			continue
+		}
+		clean = append(clean, sanitizeSegmentChars(p))
+	}
+	if len(clean) == 0 {
+		return unknownRepoSegment
+	}
+	return strings.Join(clean, "/")
+}
+
+// sanitizeRepoSegment makes a repository basename safe as a single object-key
+// segment. Empty input becomes "unknown-repo".
 func sanitizeRepoSegment(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" || name == "." || name == ".." {
 		return unknownRepoSegment
 	}
+	return sanitizeSegmentChars(name)
+}
+
+// sanitizeSegmentChars replaces, within a single object-key segment, the
+// characters that cannot safely appear there: path separators, a colon (a
+// legal object-key byte but an illegal filename byte on Windows, where
+// beta:fetch recreates the key tree on disk), whitespace, and the URL
+// delimiters the upload endpoint rejects.
+func sanitizeSegmentChars(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
-		case '/', '\\', ' ', '\t', '\n', '\r', '?', '#', '%':
+		case '/', '\\', ':', ' ', '\t', '\n', '\r', '?', '#', '%':
 			return '-'
 		}
 		return r
-	}, name)
+	}, s)
 }
 
 // loadPushManifest reads the manifest, returning an empty one when the file
