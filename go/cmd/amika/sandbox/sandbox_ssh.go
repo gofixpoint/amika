@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
@@ -130,7 +131,8 @@ Examples:
 			return err
 		}
 
-		cursorTarget, err := prepareCursorSSHTarget(client, basedir.New(""), name)
+		pathOverride, _ := cmd.Flags().GetString("path")
+		cursorTarget, err := prepareCursorSSHTarget(client, basedir.New(""), name, pathOverride)
 		if err != nil {
 			return err
 		}
@@ -155,7 +157,13 @@ type cursorSSHTarget struct {
 	remotePath string
 }
 
-func prepareCursorSSHTarget(client *apiclient.Client, paths basedir.Paths, name string) (cursorSSHTarget, error) {
+// sshInfoClient is the subset of apiclient.Client used by prepareCursorSSHTarget.
+type sshInfoClient interface {
+	GetSSH(name string) (*apiclient.SSHInfo, error)
+	GetSandbox(name string) (*apiclient.RemoteSandbox, error)
+}
+
+func prepareCursorSSHTarget(client sshInfoClient, paths basedir.Paths, name string, pathOverride string) (cursorSSHTarget, error) {
 	info, err := client.GetSSH(name)
 	if err != nil {
 		return cursorSSHTarget{}, err
@@ -187,10 +195,24 @@ func prepareCursorSSHTarget(client *apiclient.Client, paths basedir.Paths, name 
 		return cursorSSHTarget{}, fmt.Errorf("write managed SSH config: %w", err)
 	}
 
-	remotePath := "/home/amika/workspace"
-	if info.RepoName != "" {
-		remotePath = remotePath + "/" + info.RepoName
-	}
+	return cursorSSHTarget{alias: alias, remotePath: resolveCursorRemotePath(info.RepoName, pathOverride)}, nil
+}
 
-	return cursorSSHTarget{alias: alias, remotePath: remotePath}, nil
+// resolveCursorRemotePath computes the remote path to open in the editor.
+// An absolute pathOverride is used verbatim; a relative one is joined onto
+// /home/amika so that e.g. "workspace/biz" → "/home/amika/workspace/biz".
+// When pathOverride is empty the default workspace path is used, optionally
+// extended with the repo name.
+func resolveCursorRemotePath(repoName, pathOverride string) string {
+	if pathOverride != "" {
+		if path.IsAbs(pathOverride) {
+			return pathOverride
+		}
+		return path.Join("/home/amika", pathOverride)
+	}
+	remotePath := "/home/amika/workspace"
+	if repoName != "" {
+		remotePath = remotePath + "/" + repoName
+	}
+	return remotePath
 }
