@@ -3,6 +3,7 @@ package sandboxcmd
 // sandbox_agent.go implements agent-send command wiring and agent CLI helpers.
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/ssh"
@@ -125,7 +127,34 @@ func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent
 	return cmd
 }
 
-func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, stdout io.Writer) error {
+// agentSendJSON is the JSON rendering of a synchronous agent-send result,
+// emitted to stdout when --output json is set.
+type agentSendJSON struct {
+	SessionID      string `json:"session_id"`
+	AgentSessionID string `json:"agent_session_id,omitempty"`
+	Response       string `json:"response"`
+	IsError        bool   `json:"is_error"`
+}
+
+// checkAgentSendOutputMode rejects JSON output for agent-send modes that stream
+// raw agent output rather than a structured result. Only synchronous remote
+// sends buffer the response into the JSON object, so --local and --no-wait
+// cannot honor --output json and must fail fast instead of silently emitting
+// non-JSON text.
+func checkAgentSendOutputMode(format output.Format, mode runmode.Mode, noWait bool) error {
+	if format != output.JSON {
+		return nil
+	}
+	if mode == runmode.Local {
+		return fmt.Errorf("--output json is not supported with --local; only synchronous remote sends produce structured output")
+	}
+	if noWait {
+		return fmt.Errorf("--output json is not supported with --no-wait; only synchronous sends produce structured output")
+	}
+	return nil
+}
+
+func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, format output.Format, stdout, stderr io.Writer) error {
 	if noWait {
 		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
 		return ssh.ExecSSH(client, name, false, []string{shellCmd})
@@ -143,13 +172,41 @@ func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait b
 		return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
 	}
 
-	fmt.Fprint(stdout, resp.Result)
-	if resp.Result != "" && !strings.HasSuffix(resp.Result, "\n") {
-		fmt.Fprintln(stdout)
+	if err := writeAgentSendResult(resp, format, stdout, stderr); err != nil {
+		return err
 	}
 
 	if resp.IsError {
 		return fmt.Errorf("agent returned an error in sandbox %q", name)
+	}
+	return nil
+}
+
+// writeAgentSendResult renders a synchronous agent-send response. In text mode
+// the agent response goes to stdout and the session id (if any) to stderr,
+// keeping stdout the pure agent output. In JSON mode a single object with the
+// session id, response, and error status is written to stdout.
+func writeAgentSendResult(resp *apiclient.AgentSendResponse, format output.Format, stdout, stderr io.Writer) error {
+	if format == output.JSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(agentSendJSON{
+			SessionID:      resp.SessionID,
+			AgentSessionID: resp.AgentSessionID,
+			Response:       resp.Result,
+			IsError:        resp.IsError,
+		}); err != nil {
+			return fmt.Errorf("failed to encode agent-send response as JSON: %w", err)
+		}
+		return nil
+	}
+
+	fmt.Fprint(stdout, resp.Result)
+	if resp.Result != "" && !strings.HasSuffix(resp.Result, "\n") {
+		fmt.Fprintln(stdout)
+	}
+	if resp.SessionID != "" {
+		fmt.Fprintf(stderr, "session_id: %s\n", resp.SessionID)
 	}
 	return nil
 }
@@ -173,7 +230,15 @@ var sandboxAgentSendCmd = &cobra.Command{
 	Long: `Send a prompt to an AI agent CLI running inside a sandbox container.
 The message can be provided as a positional argument or piped via stdin.
 By default the command waits for the agent to finish and streams the response.
-Use --no-wait to send the message and return immediately.`,
+Use --no-wait to send the message and return immediately.
+
+For synchronous remote sends, the agent session id is surfaced so the session
+can be resumed with --session-id. In text output (the default) the response is
+written to stdout and "session_id: <id>" to stderr, keeping stdout the pure
+agent response. With --output json, the session id, response, and error status
+are written to stdout as a single JSON object instead. --output json requires a
+synchronous remote send; it is rejected with --local or --no-wait, which stream
+raw agent output and produce no structured result.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -200,12 +265,20 @@ Use --no-wait to send the message and return immediately.`,
 			return err
 		}
 
+		format, err := output.Resolve(cmd)
+		if err != nil {
+			return err
+		}
+
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
 		}
 
 		mode := runmode.Resolve(cmd)
+		if err := checkAgentSendOutputMode(format, mode, noWait); err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
@@ -244,7 +317,7 @@ Use --no-wait to send the message and return immediately.`,
 		newSession, _ := cmd.Flags().GetBool("new-session")
 		opts := agentRunOpts{SessionID: sessionID, NewSession: newSession}
 
-		if err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts, os.Stdout); err != nil {
+		if err := runRemoteAgentSend(client, name, message, noWait, workdir, agent, opts, format, os.Stdout, os.Stderr); err != nil {
 			return err
 		}
 		if noWait {
