@@ -1,6 +1,17 @@
 #!/bin/bash
 set -e
 
+# In the Amika lifecycle this script is not run in place from .amika/scripts:
+# it is uploaded and executed from elsewhere with AMIKA_AGENT_CWD set to the
+# repo root, so resolve the repo from there. Fall back to a $0-relative path
+# for manual runs where AMIKA_AGENT_CWD is unset.
+REPO_ROOT="${AMIKA_AGENT_CWD:-$(cd "$(dirname "$0")/../.." && pwd)}"
+
+# Run the repo setup script (configures git hooks, etc.). Amika sandboxes
+# invoke this setup script but never run setup-repo.sh on their own, so do
+# it here to ensure git hooks are active for commits made inside the sandbox.
+"$REPO_ROOT/setup-repo.sh"
+
 # Check if Go is already installed
 if command -v go &>/dev/null; then
     echo "Go is already installed: $(go version)"
