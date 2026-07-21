@@ -21,7 +21,7 @@ import (
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new sandbox",
-	Long:  `Create a new sandbox using the specified provider. Currently only "docker" is supported.`,
+	Long:  `Create a new sandbox.`,
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		noClean, _ := cmd.Flags().GetBool("no-clean")
