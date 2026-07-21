@@ -3,6 +3,7 @@ package sandboxcmd
 // command.go assembles the top-level sandbox command and its flags.
 
 import (
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -72,6 +73,7 @@ func New() *cobra.Command {
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
 	sandboxAgentSendCmd.Flags().String("session-id", "", "Resume an existing agent session by ID (remote sandboxes only)")
 	sandboxAgentSendCmd.Flags().Bool("new-session", false, "Start a new agent session (remote sandboxes only)")
+	output.AddFlag(sandboxAgentSendCmd)
 
 	return sandboxCmd
 }

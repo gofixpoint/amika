@@ -1,9 +1,15 @@
 package sandboxcmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/runmode"
 )
 
 func TestBuildSandboxConnectArgs(t *testing.T) {
@@ -182,6 +188,104 @@ func TestAgentCmdPartsWithOpts(t *testing.T) {
 			t.Fatalf("got %v, want %v", got, want)
 		}
 	})
+}
+
+func TestWriteAgentSendResult(t *testing.T) {
+	t.Run("text mode writes response to stdout and session id to stderr", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		resp := &apiclient.AgentSendResponse{Result: "hello there", SessionID: "sess-42"}
+		if err := writeAgentSendResult(resp, output.Text, &stdout, &stderr); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if stdout.String() != "hello there\n" {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), "hello there\n")
+		}
+		if stderr.String() != "session_id: sess-42\n" {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), "session_id: sess-42\n")
+		}
+	})
+
+	t.Run("text mode keeps stdout pure when session id absent", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		resp := &apiclient.AgentSendResponse{Result: "just text\n"}
+		if err := writeAgentSendResult(resp, output.Text, &stdout, &stderr); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if stdout.String() != "just text\n" {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), "just text\n")
+		}
+		if stderr.String() != "" {
+			t.Fatalf("stderr = %q, want empty", stderr.String())
+		}
+	})
+
+	t.Run("json mode writes structured object to stdout only", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		resp := &apiclient.AgentSendResponse{
+			Result:         "the answer",
+			SessionID:      "sess-42",
+			AgentSessionID: "claude-abc",
+			IsError:        false,
+		}
+		if err := writeAgentSendResult(resp, output.JSON, &stdout, &stderr); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if stderr.String() != "" {
+			t.Fatalf("stderr = %q, want empty in json mode", stderr.String())
+		}
+		var got agentSendJSON
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Fatalf("stdout is not valid JSON: %v (%q)", err, stdout.String())
+		}
+		want := agentSendJSON{
+			SessionID:      "sess-42",
+			AgentSessionID: "claude-abc",
+			Response:       "the answer",
+			IsError:        false,
+		}
+		if got != want {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("json mode omits agent_session_id when empty", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		resp := &apiclient.AgentSendResponse{Result: "x", SessionID: "sess-1"}
+		if err := writeAgentSendResult(resp, output.JSON, &stdout, &stderr); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(stdout.String(), "agent_session_id") {
+			t.Fatalf("stdout = %q, should omit agent_session_id when empty", stdout.String())
+		}
+	})
+}
+
+func TestCheckAgentSendOutputMode(t *testing.T) {
+	cases := []struct {
+		name    string
+		format  output.Format
+		mode    runmode.Mode
+		noWait  bool
+		wantErr bool
+	}{
+		{name: "text remote wait ok", format: output.Text, mode: runmode.Remote, noWait: false},
+		{name: "text local ok", format: output.Text, mode: runmode.Local, noWait: false},
+		{name: "text remote no-wait ok", format: output.Text, mode: runmode.Remote, noWait: true},
+		{name: "json remote wait ok", format: output.JSON, mode: runmode.Remote, noWait: false},
+		{name: "json local rejected", format: output.JSON, mode: runmode.Local, noWait: false, wantErr: true},
+		{name: "json remote no-wait rejected", format: output.JSON, mode: runmode.Remote, noWait: true, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkAgentSendOutputMode(tc.format, tc.mode, tc.noWait)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
 }
 
 func TestBuildRemoteAgentShellCmd(t *testing.T) {

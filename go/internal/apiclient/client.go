@@ -475,9 +475,10 @@ type AgentSendRequest struct {
 
 // AgentSendResponse is the response from POST /api/v0beta1/sandboxes/{id}/agent-send.
 type AgentSendResponse struct {
-	Result    string `json:"response"`
-	SessionID string `json:"session_id"`
-	IsError   bool   `json:"is_error"`
+	Result         string `json:"response"`
+	SessionID      string `json:"session_id"`
+	AgentSessionID string `json:"agent_session_id"`
+	IsError        bool   `json:"is_error"`
 }
 
 // AgentSend sends a message to an agent inside a remote sandbox.
