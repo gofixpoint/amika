@@ -92,8 +92,10 @@ jobs:
       - name: Upgrade npm for trusted publishing
         # OIDC trusted publishing requires npm CLI >= 11.5.1, newer than the
         # version bundled with Node 22. We publish with npm (not pnpm) because
-        # npm has documented, first-class OIDC support.
-        run: npm install -g npm@latest
+        # npm has documented, first-class OIDC support. Pin to npm@11: npm@latest
+        # now resolves to npm@12, which requires Node >= 22.22.2 and breaks the
+        # EBADENGINE check against the Node version pinned above.
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
