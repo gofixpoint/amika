@@ -98,6 +98,39 @@ func TestPaths_SSHPaths(t *testing.T) {
 	}
 }
 
+func TestNewWithStateDir(t *testing.T) {
+	home := t.TempDir()
+	stateOverride := filepath.Join(t.TempDir(), "custom-state")
+	// XDG_STATE_HOME must be ignored in favor of the explicit override.
+	setEnv(t, envXDGStateHome, filepath.Join(t.TempDir(), "xdg"))
+
+	p := NewWithStateDir(home, stateOverride)
+
+	if got, _ := p.AmikaStateDir(); got != stateOverride {
+		t.Fatalf("AmikaStateDir = %q, want %q", got, stateOverride)
+	}
+	if got, _ := p.SSHHostsStateFile(); got != filepath.Join(stateOverride, "ssh-hosts.json") {
+		t.Fatalf("SSHHostsStateFile = %q", got)
+	}
+	// Home-relative locations are unaffected by the state override.
+	if got, _ := p.SSHConfigFile(); got != filepath.Join(home, ".ssh", "config") {
+		t.Fatalf("SSHConfigFile = %q", got)
+	}
+}
+
+func TestNewWithStateDirEmptyMatchesNew(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
+	setEnv(t, envXDGStateHome, state)
+
+	// An empty override must resolve exactly like New.
+	got, _ := NewWithStateDir(home, "").SSHHostsStateFile()
+	want, _ := New(home).SSHHostsStateFile()
+	if got != want {
+		t.Fatalf("SSHHostsStateFile with empty override = %q, want %q", got, want)
+	}
+}
+
 func TestSSHAmikaConfigName(t *testing.T) {
 	if got := SSHAmikaConfigName(); got != "amika.conf" {
 		t.Fatalf("SSHAmikaConfigName = %q", got)

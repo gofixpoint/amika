@@ -67,7 +67,7 @@ func TestParseDestination(t *testing.T) {
 }
 
 func TestNewHostEntry(t *testing.T) {
-	entry, err := NewHostEntry("sb_1", "my-sandbox", "-p 2222 token@ssh.app.daytona.io", "2026-06-04T18:30:00.000Z")
+	entry, options, err := NewHostEntry("sb_1", "my-sandbox", "-i /key -o ProxyCommand=pc -p 2222 token@ssh.app.daytona.io", "2026-06-04T18:30:00.000Z")
 	if err != nil {
 		t.Fatalf("NewHostEntry: %v", err)
 	}
@@ -82,10 +82,16 @@ func TestNewHostEntry(t *testing.T) {
 	if entry != want {
 		t.Fatalf("entry = %+v, want %+v", entry, want)
 	}
+	// Options beyond user/host/port cannot live in the alias block, so they are
+	// surfaced separately for the caller to forward on the ssh command line.
+	wantOptions := []string{"-i", "/key", "-o", "ProxyCommand=pc"}
+	if !reflect.DeepEqual(options, wantOptions) {
+		t.Fatalf("options = %v, want %v", options, wantOptions)
+	}
 }
 
 func TestNewHostEntryRejectsEmptyDestination(t *testing.T) {
-	if _, err := NewHostEntry("sb_1", "n", "", ""); err == nil {
+	if _, _, err := NewHostEntry("sb_1", "n", "", ""); err == nil {
 		t.Fatal("expected error for empty destination")
 	}
 }
@@ -94,8 +100,12 @@ func TestRender(t *testing.T) {
 	state := HostsState{Hosts: []HostEntry{
 		{SandboxID: "sb_1", SandboxName: "my-sandbox", HostName: "ssh.app.daytona.io", User: "token"},
 	}}
-	want := managedHeader + "\n# my-sandbox\nHost amika-sb_1\n  HostName ssh.app.daytona.io\n  User token\n  StrictHostKeyChecking accept-new\n"
-	if got := Render(state); got != want {
+	want := managedHeader + "\n# my-sandbox\nHost amika-sb_1\n  HostName ssh.app.daytona.io\n  User token\n  HostKeyAlias amika-sb_1\n  StrictHostKeyChecking accept-new\n"
+	got, err := Render(state)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got != want {
 		t.Fatalf("Render mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
@@ -104,7 +114,10 @@ func TestRenderIncludesPortAndNameComment(t *testing.T) {
 	state := HostsState{Hosts: []HostEntry{
 		{SandboxID: "sb_2", SandboxName: "named", HostName: "h", User: "u", Port: 2222},
 	}}
-	got := Render(state)
+	got, err := Render(state)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
 	if !strings.Contains(got, "  Port 2222\n") {
 		t.Errorf("expected Port line, got:\n%s", got)
 	}
@@ -112,6 +125,28 @@ func TestRenderIncludesPortAndNameComment(t *testing.T) {
 	hostIdx := strings.Index(got, "Host amika-sb_2")
 	if nameIdx < 0 || hostIdx < 0 || nameIdx > hostIdx {
 		t.Errorf("name comment should precede the Host line, got:\n%s", got)
+	}
+}
+
+func TestRenderRejectsControlCharacters(t *testing.T) {
+	// A newline in any interpolated field must be refused: it could otherwise
+	// inject arbitrary ssh_config directives (e.g. ProxyCommand) into a file
+	// that ~/.ssh/config includes.
+	fields := []HostEntry{
+		{SandboxID: "sb_1", SandboxName: "ok\n  ProxyCommand touch /tmp/pwned", HostName: "h", User: "u"},
+		{SandboxID: "sb_1", HostName: "h\n  ProxyCommand evil", User: "u"},
+		{SandboxID: "sb_1", HostName: "h", User: "u\n  ProxyCommand evil"},
+		{SandboxID: "sb_1\n  ProxyCommand evil", HostName: "h", User: "u"},
+	}
+	for _, h := range fields {
+		state := HostsState{Hosts: []HostEntry{h}}
+		got, err := Render(state)
+		if err == nil {
+			t.Errorf("Render(%+v) = %q, want error", h, got)
+		}
+		if got != "" {
+			t.Errorf("Render(%+v) returned %q on error, want empty", h, got)
+		}
 	}
 }
 

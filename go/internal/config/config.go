@@ -50,6 +50,14 @@ func StateDir() (string, error) {
 	return basedir.New("").AmikaStateDir()
 }
 
+// SSHPaths returns a Paths resolver for the SSH commands that honors
+// AMIKA_STATE_DIRECTORY for state files (e.g. the managed SSH hosts state),
+// matching the other state-file helpers here. The managed ~/.ssh files
+// (config, amika.conf) stay at their home-relative locations.
+func SSHPaths() basedir.Paths {
+	return basedir.NewWithStateDir("", os.Getenv(EnvStateDirectory))
+}
+
 // MountsStateFile returns the resolved mounts state file path.
 func MountsStateFile() (string, error) {
 	if dir := os.Getenv(EnvStateDirectory); dir != "" {

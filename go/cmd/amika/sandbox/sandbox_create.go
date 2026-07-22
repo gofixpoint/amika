@@ -423,7 +423,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 
 	connect, _ := cmd.Flags().GetBool("connect")
 	if connect {
-		return ssh.ExecSSH(client, sb.Name, false, nil)
+		return ssh.ExecSSH(client, config.SSHPaths(), sb.Name, false, nil)
 	}
 
 	return nil

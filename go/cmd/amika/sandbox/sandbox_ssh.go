@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"path"
 
-	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -88,7 +88,7 @@ Examples:
 		if len(args) > 1 {
 			extraArgs = args[1:]
 		}
-		return ssh.ExecSSH(client, name, forcePTY, extraArgs)
+		return ssh.ExecSSH(client, config.SSHPaths(), name, forcePTY, extraArgs)
 	},
 }
 
@@ -132,7 +132,7 @@ Examples:
 		}
 
 		pathOverride, _ := cmd.Flags().GetString("path")
-		cursorTarget, err := prepareCursorSSHTarget(client, basedir.New(""), name, pathOverride)
+		cursorTarget, err := prepareCursorSSHTarget(client, config.SSHPaths(), name, pathOverride)
 		if err != nil {
 			return err
 		}
@@ -157,44 +157,21 @@ type cursorSSHTarget struct {
 	remotePath string
 }
 
-// sshInfoClient is the subset of apiclient.Client used by prepareCursorSSHTarget.
-type sshInfoClient interface {
-	GetSSH(name string) (*apiclient.SSHInfo, error)
-	GetSandbox(name string) (*apiclient.RemoteSandbox, error)
-}
-
-func prepareCursorSSHTarget(client sshInfoClient, paths basedir.Paths, name string, pathOverride string) (cursorSSHTarget, error) {
-	info, err := client.GetSSH(name)
+func prepareCursorSSHTarget(client ssh.InfoClient, paths basedir.Paths, name string, pathOverride string) (cursorSSHTarget, error) {
+	alias, info, options, err := ssh.ResolveHost(client, paths, name)
 	if err != nil {
 		return cursorSSHTarget{}, err
 	}
-	if info.SSHDestination == "" {
-		return cursorSSHTarget{}, fmt.Errorf("server returned empty SSH destination")
+	// Cursor connects via the alias through its own Remote-SSH machinery, which
+	// takes no extra ssh command-line options, and the managed Host block does
+	// not render arbitrary options. If the server requires any (e.g. -i or
+	// -o ProxyCommand), fail clearly instead of launching Cursor without them
+	// and letting it fail obscurely; `amika sandbox ssh` forwards them and
+	// still works. No current provider emits options, so this is unreachable
+	// today.
+	if len(options) > 0 {
+		return cursorSSHTarget{}, fmt.Errorf("sandbox %q requires ssh options %v that `amika sandbox code` cannot pass to Cursor; connect with `amika sandbox ssh %s` instead", name, options, name)
 	}
-
-	sandboxID := info.SandboxID
-	sandboxName := info.SandboxName
-	if sandboxID == "" {
-		sb, err := client.GetSandbox(name)
-		if err != nil {
-			return cursorSSHTarget{}, fmt.Errorf("look up sandbox id: %w", err)
-		}
-		sandboxID = sb.ID
-		sandboxName = sb.Name
-	}
-	if sandboxName == "" {
-		sandboxName = name
-	}
-
-	entry, err := ssh.NewHostEntry(sandboxID, sandboxName, info.SSHDestination, info.ExpiresAt)
-	if err != nil {
-		return cursorSSHTarget{}, err
-	}
-	alias, err := ssh.UpsertHost(paths, entry)
-	if err != nil {
-		return cursorSSHTarget{}, fmt.Errorf("write managed SSH config: %w", err)
-	}
-
 	return cursorSSHTarget{alias: alias, remotePath: resolveCursorRemotePath(info.RepoName, pathOverride)}, nil
 }
 

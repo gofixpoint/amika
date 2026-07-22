@@ -60,13 +60,22 @@ type Paths interface {
 }
 
 type xdgPaths struct {
-	homeOverride string
+	homeOverride     string
+	stateDirOverride string
 }
 
 // New returns a Paths resolver. If homeOverride is non-empty, XDG fallback
 // directories are resolved relative to that home directory.
 func New(homeOverride string) Paths {
 	return &xdgPaths{homeOverride: homeOverride}
+}
+
+// NewWithStateDir returns a Paths resolver like New but with the Amika state
+// directory forced to stateDirOverride when it is non-empty. Callers use this
+// to honor AMIKA_STATE_DIRECTORY (read by the config package) without teaching
+// this package about that env var; an empty stateDirOverride behaves like New.
+func NewWithStateDir(homeOverride, stateDirOverride string) Paths {
+	return &xdgPaths{homeOverride: homeOverride, stateDirOverride: stateDirOverride}
 }
 
 func (p *xdgPaths) HomeDir() (string, error) {
@@ -149,6 +158,9 @@ func (p *xdgPaths) AmikaCacheDir() (string, error) {
 }
 
 func (p *xdgPaths) AmikaStateDir() (string, error) {
+	if p.stateDirOverride != "" {
+		return p.stateDirOverride, nil
+	}
 	base, err := p.StateHome()
 	if err != nil {
 		return "", err

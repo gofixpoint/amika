@@ -364,7 +364,7 @@ var sandboxConnectCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return ssh.ExecSSH(client, name, false, nil)
+		return ssh.ExecSSH(client, config.SSHPaths(), name, false, nil)
 	},
 }
 
