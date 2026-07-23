@@ -85,6 +85,61 @@ func TestStateDir_XDGOverride(t *testing.T) {
 	}
 }
 
+func TestSSHPaths_Default(t *testing.T) {
+	orig := os.Getenv(EnvStateDirectory)
+	_ = os.Unsetenv(EnvStateDirectory)
+	defer func() {
+		if orig != "" {
+			_ = os.Setenv(EnvStateDirectory, orig)
+		}
+	}()
+
+	got, err := SSHPaths().SSHHostsStateFile()
+	if err != nil {
+		t.Fatalf("SSHHostsStateFile() error: %v", err)
+	}
+	want, err := basedir.New("").SSHHostsStateFile()
+	if err != nil {
+		t.Fatalf("basedir SSHHostsStateFile() error: %v", err)
+	}
+	if got != want {
+		t.Errorf("SSHPaths().SSHHostsStateFile() = %q, want %q", got, want)
+	}
+}
+
+func TestSSHPaths_EnvOverride(t *testing.T) {
+	override := t.TempDir()
+	orig := os.Getenv(EnvStateDirectory)
+	_ = os.Setenv(EnvStateDirectory, override)
+	defer func() {
+		if orig != "" {
+			_ = os.Setenv(EnvStateDirectory, orig)
+		} else {
+			_ = os.Unsetenv(EnvStateDirectory)
+		}
+	}()
+
+	p := SSHPaths()
+
+	// The SSH hosts state file follows the override...
+	got, err := p.SSHHostsStateFile()
+	if err != nil {
+		t.Fatalf("SSHHostsStateFile() error: %v", err)
+	}
+	if want := basedir.SSHHostsStateFileIn(override); got != want {
+		t.Errorf("SSHHostsStateFile() = %q, want %q", got, want)
+	}
+
+	// ...but the managed ~/.ssh files do not move under the state dir.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	if got, _ := p.SSHConfigFile(); got != filepath.Join(home, ".ssh", "config") {
+		t.Errorf("SSHConfigFile() = %q, want it under ~/.ssh", got)
+	}
+}
+
 func TestMountsStateFile_Default(t *testing.T) {
 	orig := os.Getenv(EnvStateDirectory)
 	_ = os.Unsetenv(EnvStateDirectory)

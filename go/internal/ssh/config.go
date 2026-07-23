@@ -167,10 +167,15 @@ func isAllDigits(s string) bool {
 // NewHostEntry builds a managed host entry for a sandbox from its ssh
 // destination string and identity. The destination is parsed (rather than
 // split on whitespace) so an explicit port survives into the rendered config.
-func NewHostEntry(sandboxID, sandboxName, destination, expiresAt string) (HostEntry, error) {
+// Any extra ssh options the server includes (beyond user/host/port, e.g. -i or
+// -o ProxyCommand) are returned separately: the alias block cannot express them
+// as ssh_config directives, so a caller execing ssh must forward them on the
+// command line (as scp does; see resolveSandboxDestination in
+// cmd/amika/scp/scp.go).
+func NewHostEntry(sandboxID, sandboxName, destination, expiresAt string) (HostEntry, []string, error) {
 	d, err := ParseDestination(destination)
 	if err != nil {
-		return HostEntry{}, err
+		return HostEntry{}, nil, err
 	}
 	return HostEntry{
 		SandboxID:   sandboxID,
@@ -179,7 +184,7 @@ func NewHostEntry(sandboxID, sandboxName, destination, expiresAt string) (HostEn
 		User:        d.User,
 		Port:        d.Port,
 		ExpiresAt:   expiresAt,
-	}, nil
+	}, d.Options, nil
 }
 
 // Upsert adds or replaces the entry for a sandbox id, keeping entries sorted by
@@ -200,15 +205,40 @@ func (s *HostsState) Upsert(entry HostEntry) {
 // Render produces the contents of ~/.ssh/amika.conf from the state. Each block
 // is a stable `Host amika-<id>` alias preceded by the sandbox name as a comment
 // so the file stays human-readable even though it is keyed by id.
-func Render(state HostsState) string {
+//
+// HostKeyAlias pins host-key lookup/storage to the stable alias rather than the
+// rotating HostName. Without it OpenSSH keys known_hosts by the real HostName,
+// so `accept-new` would silently accept a fresh key whenever the gateway
+// hostname rotates (no real verification) and would flag a changed key when
+// several sandboxes share one gateway hostname. Keying by the alias makes the
+// first connection record the sandbox's key and every reconnect verify it.
+//
+// Render fails closed if any interpolated field contains a control character:
+// an embedded newline would let a value inject arbitrary ssh_config directives
+// (e.g. ProxyCommand) into a file that ~/.ssh/config includes. Upstream schemas
+// already forbid such characters, so this only guards against a future
+// regression rather than any reachable input today.
+func Render(state HostsState) (string, error) {
 	var b strings.Builder
 	b.WriteString(managedHeader)
 	for _, h := range state.Hosts {
+		alias := Alias(h.SandboxID)
+		for _, f := range []struct{ name, value string }{
+			{"sandbox id", h.SandboxID},
+			{"sandbox name", h.SandboxName},
+			{"host name", h.HostName},
+			{"user", h.User},
+		} {
+			if i := strings.IndexFunc(f.value, isControlChar); i >= 0 {
+				return "", fmt.Errorf("refusing to render ssh config: %s %q for %s contains a control character at offset %d", f.name, f.value, alias, i)
+			}
+		}
+
 		b.WriteString("\n")
 		if h.SandboxName != "" {
 			fmt.Fprintf(&b, "# %s\n", h.SandboxName)
 		}
-		fmt.Fprintf(&b, "Host %s\n", Alias(h.SandboxID))
+		fmt.Fprintf(&b, "Host %s\n", alias)
 		fmt.Fprintf(&b, "  HostName %s\n", h.HostName)
 		if h.User != "" {
 			fmt.Fprintf(&b, "  User %s\n", h.User)
@@ -216,9 +246,17 @@ func Render(state HostsState) string {
 		if h.Port != 0 {
 			fmt.Fprintf(&b, "  Port %d\n", h.Port)
 		}
+		fmt.Fprintf(&b, "  HostKeyAlias %s\n", alias)
 		b.WriteString("  StrictHostKeyChecking accept-new\n")
 	}
-	return b.String()
+	return b.String(), nil
+}
+
+// isControlChar reports whether r is an ASCII/Unicode control character. Any of
+// these in a rendered field (most dangerously a newline) could break out of its
+// directive line in the generated ssh config.
+func isControlChar(r rune) bool {
+	return r == 0x7f || r < 0x20
 }
 
 // LoadState reads the SSH hosts state, returning an empty state if the file does
@@ -258,13 +296,15 @@ func SaveState(paths basedir.Paths, state HostsState) error {
 	return writeFileAtomic(path, append(data, '\n'), 0o600)
 }
 
-// WriteAmikaConfig renders the state to ~/.ssh/amika.conf atomically.
-func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
+// WriteAmikaConfig writes already-rendered amika.conf content to
+// ~/.ssh/amika.conf atomically. Callers Render first so an invalid state is
+// rejected before any file (or the state file) is touched.
+func WriteAmikaConfig(paths basedir.Paths, rendered string) error {
 	path, err := paths.SSHAmikaConfigFile()
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, []byte(Render(state)), 0o600)
+	return writeFileAtomic(path, []byte(rendered), 0o600)
 }
 
 // EnsureInclude makes sure ~/.ssh/config pulls in the managed amika.conf via an
@@ -320,10 +360,17 @@ func UpsertHost(paths basedir.Paths, entry HostEntry) (string, error) {
 		return "", err
 	}
 	state.Upsert(entry)
+	// Render (and thus validate) before persisting. If the new entry is
+	// unrenderable, failing here avoids writing it to the state file, where it
+	// would otherwise wedge every later regeneration for all sandboxes.
+	rendered, err := Render(state)
+	if err != nil {
+		return "", err
+	}
 	if err := SaveState(paths, state); err != nil {
 		return "", err
 	}
-	if err := WriteAmikaConfig(paths, state); err != nil {
+	if err := WriteAmikaConfig(paths, rendered); err != nil {
 		return "", err
 	}
 	if err := EnsureInclude(paths); err != nil {

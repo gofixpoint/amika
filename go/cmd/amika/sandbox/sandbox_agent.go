@@ -157,7 +157,7 @@ func checkAgentSendOutputMode(format output.Format, mode runmode.Mode, noWait bo
 func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts, format output.Format, stdout, stderr io.Writer) error {
 	if noWait {
 		shellCmd := buildRemoteAgentShellCmd(message, noWait, workdir, agent, opts)
-		return ssh.ExecSSH(client, name, false, []string{shellCmd})
+		return ssh.ExecSSH(client, config.SSHPaths(), name, false, []string{shellCmd})
 	}
 
 	req := apiclient.AgentSendRequest{

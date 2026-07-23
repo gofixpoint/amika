@@ -158,3 +158,17 @@ func TestPrepareCursorSSHTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareCursorSSHTargetRejectsOptions(t *testing.T) {
+	// Cursor cannot receive ssh command-line options and the managed block does
+	// not render them, so a destination that carries options must fail clearly
+	// rather than launch Cursor without them.
+	client := &stubSSHClient{info: &apiclient.SSHInfo{
+		SSHDestination: "-i /key -o ProxyCommand=pc tok@ssh.app.daytona.io",
+		SandboxID:      "sb_abc",
+		SandboxName:    "my-sandbox",
+	}}
+	if _, err := prepareCursorSSHTarget(client, testSSHPaths(t), "my-sandbox", ""); err == nil {
+		t.Fatal("expected error when the destination requires ssh options")
+	}
+}
