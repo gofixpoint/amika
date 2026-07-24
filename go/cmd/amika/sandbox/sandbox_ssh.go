@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
+	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/appcfg"
@@ -16,6 +17,31 @@ import (
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
+
+// claudeCodexSupportEnv gates the claude/codex editors. They stay off until it
+// is set to "true", mirroring the webapp's NEXT_PUBLIC_OPEN_CLAUDE_CODEX_SUPPORT
+// flag so the two roll out together.
+const claudeCodexSupportEnv = "AMIKA_OPEN_CLAUDE_CODEX_SUPPORT"
+
+func claudeCodexEditorsEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(claudeCodexSupportEnv)), "true")
+}
+
+// validateEditor checks that the requested editor is known and enabled. cursor
+// is always available; claude and codex require claudeCodexSupportEnv.
+func validateEditor(editor string) error {
+	switch editor {
+	case "cursor":
+		return nil
+	case "claude", "codex":
+		if !claudeCodexEditorsEnabled() {
+			return fmt.Errorf("editor %q is not enabled; set %s=true to enable it", editor, claudeCodexSupportEnv)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
+	}
+}
 
 var sandboxSSHCmd = &cobra.Command{
 	Use:   "ssh [flags] <name> [-- <command>...]",
@@ -109,6 +135,8 @@ Supported --editor values:
 
 For claude and codex, the command writes the local app config so the sandbox
 appears as a remote environment; select it in the app to start the session.
+These two editors are gated: set AMIKA_OPEN_CLAUDE_CODEX_SUPPORT=true to enable
+them.
 
 Examples:
   amika sandbox code my-sandbox
@@ -119,10 +147,8 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		editor, _ := cmd.Flags().GetString("editor")
-		switch editor {
-		case "cursor", "claude", "codex":
-		default:
-			return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
+		if err := validateEditor(editor); err != nil {
+			return err
 		}
 
 		mode := runmode.Resolve(cmd)

@@ -106,6 +106,43 @@ func testSSHPaths(t *testing.T) (basedir.Paths, string) {
 	return basedir.New(home), home
 }
 
+func TestValidateEditor(t *testing.T) {
+	t.Run("cursor is always allowed", func(t *testing.T) {
+		t.Setenv(claudeCodexSupportEnv, "")
+		if err := validateEditor("cursor"); err != nil {
+			t.Fatalf("cursor should be allowed: %v", err)
+		}
+	})
+
+	t.Run("unknown editor is rejected", func(t *testing.T) {
+		t.Setenv(claudeCodexSupportEnv, "true")
+		if err := validateEditor("vim"); err == nil {
+			t.Fatalf("expected unknown editor to be rejected")
+		}
+	})
+
+	for _, editor := range []string{"claude", "codex"} {
+		t.Run(editor+" gated off by default", func(t *testing.T) {
+			t.Setenv(claudeCodexSupportEnv, "")
+			if err := validateEditor(editor); err == nil {
+				t.Fatalf("expected %q to be gated when the flag is unset", editor)
+			}
+		})
+		t.Run(editor+" enabled when flag is true", func(t *testing.T) {
+			t.Setenv(claudeCodexSupportEnv, "true")
+			if err := validateEditor(editor); err != nil {
+				t.Fatalf("expected %q to be allowed when flag is set: %v", editor, err)
+			}
+		})
+		t.Run(editor+" gated when flag is a non-true value", func(t *testing.T) {
+			t.Setenv(claudeCodexSupportEnv, "1")
+			if err := validateEditor(editor); err == nil {
+				t.Fatalf("expected %q to be gated when flag is %q", editor, "1")
+			}
+		})
+	}
+}
+
 func daytonaInfo() *apiclient.SSHInfo {
 	return &apiclient.SSHInfo{
 		SSHDestination: "-p 2222 tok@ssh.app.daytona.io",

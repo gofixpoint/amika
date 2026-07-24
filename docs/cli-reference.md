@@ -234,6 +234,10 @@ through the same Amika-managed SSH host alias (`amika-<id>`, written to
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
 
+The `claude` and `codex` editors are gated behind a feature flag: set
+`AMIKA_OPEN_CLAUDE_CODEX_SUPPORT=true` to enable them (`cursor` is always
+available).
+
 ```bash
 amika sandbox code my-sandbox
 amika sandbox code my-sandbox --editor=cursor
