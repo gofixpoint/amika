@@ -1,14 +1,33 @@
 package sandboxcmd
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/spf13/cobra"
 )
 
-func TestResolveCursorRemotePath(t *testing.T) {
+// stubOpenApp replaces openApp with a recorder for the duration of a test so
+// no real desktop app is launched.
+func stubOpenApp(t *testing.T) *[]string {
+	t.Helper()
+	var opened []string
+	prev := openApp
+	openApp = func(url string) error {
+		opened = append(opened, url)
+		return nil
+	}
+	t.Cleanup(func() { openApp = prev })
+	return &opened
+}
+
+func TestResolveRemoteWorkspacePath(t *testing.T) {
 	tests := []struct {
 		name         string
 		repoName     string
@@ -57,9 +76,9 @@ func TestResolveCursorRemotePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveCursorRemotePath(tt.repoName, tt.pathOverride)
+			got := resolveRemoteWorkspacePath(tt.repoName, tt.pathOverride)
 			if got != tt.want {
-				t.Errorf("resolveCursorRemotePath(%q, %q) = %q, want %q",
+				t.Errorf("resolveRemoteWorkspacePath(%q, %q) = %q, want %q",
 					tt.repoName, tt.pathOverride, got, tt.want)
 			}
 		})
@@ -80,11 +99,110 @@ func (s *stubSSHClient) GetSandbox(_ string) (*apiclient.RemoteSandbox, error) {
 	return s.sandbox, nil
 }
 
-func testSSHPaths(t *testing.T) basedir.Paths {
+func testSSHPaths(t *testing.T) (basedir.Paths, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
-	return basedir.New(home)
+	return basedir.New(home), home
+}
+
+func daytonaInfo() *apiclient.SSHInfo {
+	return &apiclient.SSHInfo{
+		SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
+		SandboxID:      "sb_abc",
+		SandboxName:    "my-sandbox",
+		RepoName:       "biz",
+	}
+}
+
+func TestOpenSandboxInClaude(t *testing.T) {
+	opened := stubOpenApp(t)
+	paths, home := testSSHPaths(t)
+	client := &stubSSHClient{info: daytonaInfo()}
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := openSandboxInClaude(cmd, client, paths, "my-sandbox", ""); err != nil {
+		t.Fatalf("openSandboxInClaude: %v", err)
+	}
+
+	// The stable alias landed in the managed SSH config.
+	amikaConf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	if !bytes.Contains(amikaConf, []byte("Host amika-sb_abc")) {
+		t.Fatalf("amika.conf missing alias:\n%s", amikaConf)
+	}
+
+	// The Claude environment was registered against that alias.
+	var doc struct {
+		SSHConfigs []struct {
+			ID             string `json:"id"`
+			Name           string `json:"name"`
+			SSHHost        string `json:"sshHost"`
+			StartDirectory string `json:"startDirectory"`
+		} `json:"sshConfigs"`
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("read claude settings: %v", err)
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse claude settings: %v", err)
+	}
+	if len(doc.SSHConfigs) != 1 {
+		t.Fatalf("expected 1 sshConfigs entry, got %d", len(doc.SSHConfigs))
+	}
+	got := doc.SSHConfigs[0]
+	if got.ID != "amika-sb_abc" || got.SSHHost != "amika-sb_abc" || got.Name != "Amika: my-sandbox" {
+		t.Fatalf("unexpected entry: %+v", got)
+	}
+	if got.StartDirectory != "/home/amika/workspace/biz" {
+		t.Fatalf("startDirectory = %q, want /home/amika/workspace/biz", got.StartDirectory)
+	}
+	if len(*opened) != 1 || (*opened)[0] != "claude://code/new" {
+		t.Fatalf("expected claude deep link to be opened, got %v", *opened)
+	}
+}
+
+func TestOpenSandboxInCodex(t *testing.T) {
+	opened := stubOpenApp(t)
+	paths, home := testSSHPaths(t)
+	client := &stubSSHClient{info: daytonaInfo()}
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := openSandboxInCodex(cmd, client, paths, "my-sandbox", ""); err != nil {
+		t.Fatalf("openSandboxInCodex: %v", err)
+	}
+
+	amikaConf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	if !bytes.Contains(amikaConf, []byte("Host amika-sb_abc")) {
+		t.Fatalf("amika.conf missing alias:\n%s", amikaConf)
+	}
+
+	var cfg struct {
+		Features struct {
+			RemoteConnections bool `toml:"remote_connections"`
+		} `toml:"features"`
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read codex config: %v", err)
+	}
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse codex config: %v", err)
+	}
+	if !cfg.Features.RemoteConnections {
+		t.Fatalf("expected features.remote_connections=true, got %s", data)
+	}
+	if len(*opened) != 1 || (*opened)[0] != "codex://" {
+		t.Fatalf("expected codex deep link to be opened, got %v", *opened)
+	}
 }
 
 func TestPrepareCursorSSHTarget(t *testing.T) {
@@ -145,7 +263,8 @@ func TestPrepareCursorSSHTarget(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &stubSSHClient{info: tt.info}
-			got, err := prepareCursorSSHTarget(client, testSSHPaths(t), "my-sandbox", tt.pathOverride)
+			paths, _ := testSSHPaths(t)
+			got, err := prepareCursorSSHTarget(client, paths, "my-sandbox", tt.pathOverride)
 			if err != nil {
 				t.Fatalf("prepareCursorSSHTarget: %v", err)
 			}

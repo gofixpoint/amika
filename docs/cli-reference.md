@@ -222,16 +222,29 @@ amika sandbox ssh my-sandbox --revoke
 
 ### `amika sandbox code`
 
-Open a remote sandbox in an editor via SSH.
+Open a remote sandbox in an editor or coding agent via SSH. All editors connect
+through the same Amika-managed SSH host alias (`amika-<id>`, written to
+`~/.ssh/amika.conf` and included from `~/.ssh/config`):
+
+- `cursor` launches Cursor connected to the sandbox.
+- `claude` registers the sandbox as a Claude Desktop SSH environment (in
+  `~/.claude/settings.json`), then opens Claude Desktop; pick `Amika: <name>`
+  from the environment dropdown.
+- `codex` enables Codex's `remote_connections` feature (in
+  `~/.codex/config.toml`), then opens Codex; enable the host under
+  Settings > Connections.
 
 ```bash
 amika sandbox code my-sandbox
 amika sandbox code my-sandbox --editor=cursor
+amika sandbox code my-sandbox --editor=claude
+amika sandbox code my-sandbox --editor=codex
 ```
 
-| Flag               | Default  | Description                      |
-| ------------------ | -------- | -------------------------------- |
-| `--editor <name>`  | `cursor` | Editor to open (currently only `cursor` is supported) |
+| Flag              | Default  | Description                                              |
+| ----------------- | -------- | -------------------------------------------------------- |
+| `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `claude`, or `codex`  |
+| `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
 
 ### `amika sandbox agent-send`
 

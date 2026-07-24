@@ -23,6 +23,10 @@ const (
 	sshDirName          = ".ssh"
 	sshConfigFile       = "config"
 	sshAmikaConfigFile  = "amika.conf"
+	claudeDirName       = ".claude"
+	claudeSettingsFile  = "settings.json"
+	codexDirName        = ".codex"
+	codexConfigFile     = "config.toml"
 	envXDGConfigHome    = "XDG_CONFIG_HOME"
 	envXDGDataHome      = "XDG_DATA_HOME"
 	envXDGCacheHome     = "XDG_CACHE_HOME"
@@ -57,6 +61,9 @@ type Paths interface {
 	SSHDir() (string, error)
 	SSHConfigFile() (string, error)
 	SSHAmikaConfigFile() (string, error)
+
+	ClaudeSettingsFile() (string, error)
+	CodexConfigFile() (string, error)
 }
 
 type xdgPaths struct {
@@ -272,6 +279,26 @@ func (p *xdgPaths) SSHAmikaConfigFile() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, sshAmikaConfigFile), nil
+}
+
+// ClaudeSettingsFile returns the Claude Desktop / Claude Code settings file at
+// ~/.claude/settings.json, where SSH environments live under `sshConfigs`.
+func (p *xdgPaths) ClaudeSettingsFile() (string, error) {
+	home, err := p.HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, claudeDirName, claudeSettingsFile), nil
+}
+
+// CodexConfigFile returns the Codex config file at ~/.codex/config.toml, where
+// the `remote_connections` feature flag is set.
+func (p *xdgPaths) CodexConfigFile() (string, error) {
+	home, err := p.HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, codexDirName, codexConfigFile), nil
 }
 
 // MountsStateFileIn returns the mounts state file path under the given state directory.
