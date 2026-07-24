@@ -7,13 +7,41 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
+	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/appcfg"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
+
+// claudeCodexSupportEnv gates the claude/codex editors. They stay off until it
+// is set to "true", mirroring the webapp's NEXT_PUBLIC_OPEN_CLAUDE_CODEX_SUPPORT
+// flag so the two roll out together.
+const claudeCodexSupportEnv = "AMIKA_OPEN_CLAUDE_CODEX_SUPPORT"
+
+func claudeCodexEditorsEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(claudeCodexSupportEnv)), "true")
+}
+
+// validateEditor checks that the requested editor is known and enabled. cursor
+// is always available; claude and codex require claudeCodexSupportEnv.
+func validateEditor(editor string) error {
+	switch editor {
+	case "cursor":
+		return nil
+	case "claude", "codex":
+		if !claudeCodexEditorsEnabled() {
+			return fmt.Errorf("editor %q is not enabled; set %s=true to enable it", editor, claudeCodexSupportEnv)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
+	}
+}
 
 var sandboxSSHCmd = &cobra.Command{
 	Use:   "ssh [flags] <name> [-- <command>...]",
@@ -92,21 +120,35 @@ Examples:
 	},
 }
 
+// supportedEditors lists the values accepted by `sandbox code --editor`.
+var supportedEditors = []string{"cursor", "claude", "codex"}
+
 var sandboxCodeCmd = &cobra.Command{
 	Use:   "code <name>",
-	Short: "Open a remote sandbox in an editor via SSH",
-	Long: `Open a remote sandbox in an editor (e.g. Cursor) using SSH remote access.
+	Short: "Open a remote sandbox in an editor or agent via SSH",
+	Long: `Open a remote sandbox in an editor or coding agent using SSH remote access.
+
+Supported --editor values:
+  cursor   launch Cursor connected to the sandbox (default)
+  claude   register the sandbox as a Claude Desktop SSH environment
+  codex    expose the sandbox to Codex as an SSH connection
+
+For claude and codex, the command writes the local app config so the sandbox
+appears as a remote environment; select it in the app to start the session.
+These two editors are gated: set AMIKA_OPEN_CLAUDE_CODEX_SUPPORT=true to enable
+them.
 
 Examples:
   amika sandbox code my-sandbox
-  amika sandbox code my-sandbox --editor=cursor`,
+  amika sandbox code my-sandbox --editor=cursor
+  amika sandbox code my-sandbox --editor=claude
+  amika sandbox code my-sandbox --editor=codex`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		editor, _ := cmd.Flags().GetString("editor")
-
-		if editor != "cursor" {
-			return fmt.Errorf("unsupported editor %q; currently only \"cursor\" is supported", editor)
+		if err := validateEditor(editor); err != nil {
+			return err
 		}
 
 		mode := runmode.Resolve(cmd)
@@ -115,10 +157,6 @@ Examples:
 		}
 		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
-		}
-
-		if _, err := exec.LookPath("cursor"); err != nil {
-			return fmt.Errorf("cursor CLI is not installed or not in PATH; install it from Cursor > Settings > Extensions > cursor-cli")
 		}
 
 		target, err := getRemoteTarget(cmd)
@@ -132,44 +170,44 @@ Examples:
 		}
 
 		pathOverride, _ := cmd.Flags().GetString("path")
-		cursorTarget, err := prepareCursorSSHTarget(client, basedir.New(""), name, pathOverride)
-		if err != nil {
-			return err
-		}
+		paths := basedir.New("")
 
-		cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+cursorTarget.alias, cursorTarget.remotePath)
-		cursorCmd.Stdin = os.Stdin
-		cursorCmd.Stdout = os.Stdout
-		cursorCmd.Stderr = os.Stderr
-
-		fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", name, cursorTarget.alias)
-		fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", cursorTarget.alias, cursorTarget.remotePath)
-		fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in Cursor to open it.\n")
-		if err := cursorCmd.Run(); err != nil {
-			return fmt.Errorf("cursor failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in Cursor", err)
+		switch editor {
+		case "cursor":
+			return openSandboxInCursor(cmd, client, paths, name, pathOverride)
+		case "claude":
+			return openSandboxInClaude(cmd, client, paths, name, pathOverride)
+		case "codex":
+			return openSandboxInCodex(cmd, client, paths, name, pathOverride)
 		}
 		return nil
 	},
 }
 
-type cursorSSHTarget struct {
-	alias      string
-	remotePath string
+// sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the
+// identity needed to label and locate it, shared by every `code` editor.
+type sandboxSSHAlias struct {
+	alias       string
+	sandboxName string
+	repoName    string
 }
 
-// sshInfoClient is the subset of apiclient.Client used by prepareCursorSSHTarget.
+// sshInfoClient is the subset of apiclient.Client used to resolve SSH aliases.
 type sshInfoClient interface {
 	GetSSH(name string) (*apiclient.SSHInfo, error)
 	GetSandbox(name string) (*apiclient.RemoteSandbox, error)
 }
 
-func prepareCursorSSHTarget(client sshInfoClient, paths basedir.Paths, name string, pathOverride string) (cursorSSHTarget, error) {
+// resolveSandboxSSHAlias mints SSH access for the sandbox and upserts it into
+// the Amika-managed SSH config, returning the stable `amika-<id>` Host alias.
+// Every `code` editor connects through this single alias.
+func resolveSandboxSSHAlias(client sshInfoClient, paths basedir.Paths, name string) (sandboxSSHAlias, error) {
 	info, err := client.GetSSH(name)
 	if err != nil {
-		return cursorSSHTarget{}, err
+		return sandboxSSHAlias{}, err
 	}
 	if info.SSHDestination == "" {
-		return cursorSSHTarget{}, fmt.Errorf("server returned empty SSH destination")
+		return sandboxSSHAlias{}, fmt.Errorf("server returned empty SSH destination")
 	}
 
 	sandboxID := info.SandboxID
@@ -177,7 +215,7 @@ func prepareCursorSSHTarget(client sshInfoClient, paths basedir.Paths, name stri
 	if sandboxID == "" {
 		sb, err := client.GetSandbox(name)
 		if err != nil {
-			return cursorSSHTarget{}, fmt.Errorf("look up sandbox id: %w", err)
+			return sandboxSSHAlias{}, fmt.Errorf("look up sandbox id: %w", err)
 		}
 		sandboxID = sb.ID
 		sandboxName = sb.Name
@@ -188,22 +226,120 @@ func prepareCursorSSHTarget(client sshInfoClient, paths basedir.Paths, name stri
 
 	entry, err := ssh.NewHostEntry(sandboxID, sandboxName, info.SSHDestination, info.ExpiresAt)
 	if err != nil {
-		return cursorSSHTarget{}, err
+		return sandboxSSHAlias{}, err
 	}
 	alias, err := ssh.UpsertHost(paths, entry)
 	if err != nil {
-		return cursorSSHTarget{}, fmt.Errorf("write managed SSH config: %w", err)
+		return sandboxSSHAlias{}, fmt.Errorf("write managed SSH config: %w", err)
 	}
 
-	return cursorSSHTarget{alias: alias, remotePath: resolveCursorRemotePath(info.RepoName, pathOverride)}, nil
+	return sandboxSSHAlias{alias: alias, sandboxName: sandboxName, repoName: info.RepoName}, nil
 }
 
-// resolveCursorRemotePath computes the remote path to open in the editor.
+// openSandboxInCursor launches Cursor connected to the sandbox over SSH.
+func openSandboxInCursor(cmd *cobra.Command, client sshInfoClient, paths basedir.Paths, name, pathOverride string) error {
+	if _, err := exec.LookPath("cursor"); err != nil {
+		return fmt.Errorf("cursor CLI is not installed or not in PATH; install it from Cursor > Settings > Extensions > cursor-cli")
+	}
+
+	target, err := prepareCursorSSHTarget(client, paths, name, pathOverride)
+	if err != nil {
+		return err
+	}
+
+	cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+target.alias, target.remotePath)
+	cursorCmd.Stdin = os.Stdin
+	cursorCmd.Stdout = os.Stdout
+	cursorCmd.Stderr = os.Stderr
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", name, target.alias)
+	fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", target.alias, target.remotePath)
+	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in Cursor to open it.\n")
+	if err := cursorCmd.Run(); err != nil {
+		return fmt.Errorf("cursor failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in Cursor", err)
+	}
+	return nil
+}
+
+// openSandboxInClaude registers the sandbox as an SSH environment in Claude
+// Desktop's settings and opens the app so the user can select it. Claude
+// Desktop cannot be pointed at an SSH environment via a deep link, so the user
+// picks it from the environment dropdown to start the remote session.
+func openSandboxInClaude(cmd *cobra.Command, client sshInfoClient, paths basedir.Paths, name, pathOverride string) error {
+	target, err := resolveSandboxSSHAlias(client, paths, name)
+	if err != nil {
+		return err
+	}
+
+	host := appcfg.ClaudeSSHHost{
+		ID:             target.alias,
+		Name:           "Amika: " + target.sandboxName,
+		SSHHost:        target.alias,
+		StartDirectory: resolveRemoteWorkspacePath(target.repoName, pathOverride),
+	}
+	if _, err := appcfg.UpsertClaudeSSHConfig(paths, host); err != nil {
+		return fmt.Errorf("write Claude settings: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Registered SSH environment %q for sandbox %q in Claude Desktop.\n", host.Name, name)
+	if err := openApp("claude://code/new"); err != nil {
+		fmt.Fprintf(out, "Could not launch Claude Desktop automatically (%v); open it yourself.\n", err)
+	} else {
+		fmt.Fprintf(out, "Opening Claude Desktop...\n")
+	}
+	fmt.Fprintf(out, "In the Code tab, choose %q from the environment dropdown to start the remote session.\n", host.Name)
+	return nil
+}
+
+// openSandboxInCodex enables Codex's remote-connections feature (the SSH alias
+// is already in ~/.ssh/config via the Amika include) and opens the app. Codex
+// has no deep link to connect to a host, so the user enables the alias under
+// Settings > Connections.
+func openSandboxInCodex(cmd *cobra.Command, client sshInfoClient, paths basedir.Paths, name, pathOverride string) error {
+	target, err := resolveSandboxSSHAlias(client, paths, name)
+	if err != nil {
+		return err
+	}
+
+	if _, err := appcfg.EnableCodexRemoteConnections(paths); err != nil {
+		return fmt.Errorf("enable Codex remote connections: %w", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Enabled Codex remote connections; SSH host %q for sandbox %q is available from ~/.ssh/config.\n", target.alias, name)
+	if err := openApp("codex://"); err != nil {
+		fmt.Fprintf(out, "Could not launch Codex automatically (%v); open it yourself.\n", err)
+	} else {
+		fmt.Fprintf(out, "Opening Codex...\n")
+	}
+	fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder (e.g. %s).\n",
+		target.alias, resolveRemoteWorkspacePath(target.repoName, pathOverride))
+	return nil
+}
+
+type cursorSSHTarget struct {
+	alias      string
+	remotePath string
+}
+
+func prepareCursorSSHTarget(client sshInfoClient, paths basedir.Paths, name string, pathOverride string) (cursorSSHTarget, error) {
+	target, err := resolveSandboxSSHAlias(client, paths, name)
+	if err != nil {
+		return cursorSSHTarget{}, err
+	}
+	return cursorSSHTarget{
+		alias:      target.alias,
+		remotePath: resolveRemoteWorkspacePath(target.repoName, pathOverride),
+	}, nil
+}
+
+// resolveRemoteWorkspacePath computes the remote path to open in the editor.
 // An absolute pathOverride is used verbatim; a relative one is joined onto
 // /home/amika so that e.g. "workspace/biz" → "/home/amika/workspace/biz".
 // When pathOverride is empty the default workspace path is used, optionally
 // extended with the repo name.
-func resolveCursorRemotePath(repoName, pathOverride string) string {
+func resolveRemoteWorkspacePath(repoName, pathOverride string) string {
 	if pathOverride != "" {
 		if path.IsAbs(pathOverride) {
 			return pathOverride
@@ -215,4 +351,24 @@ func resolveCursorRemotePath(repoName, pathOverride string) string {
 		remotePath = remotePath + "/" + repoName
 	}
 	return remotePath
+}
+
+// openApp hands a URL scheme to the OS so the associated desktop app launches
+// (or focuses). Best-effort: it returns once the opener starts, not when the
+// app is ready. It is a var so tests can stub out the real launch.
+var openApp = func(url string) error {
+	var c *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		c = exec.Command("open", url)
+	case "linux":
+		c = exec.Command("xdg-open", url)
+	case "windows":
+		// `start` treats its first quoted argument as the window title, so pass
+		// an empty title before the URL.
+		c = exec.Command("cmd", "/c", "start", "", url)
+	default:
+		return fmt.Errorf("unsupported platform %q", runtime.GOOS)
+	}
+	return c.Start()
 }
