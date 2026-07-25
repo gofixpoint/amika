@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 - Docker (required for `materialize`, `sandbox`, and `volume` commands)
 - macOS (the only supported platform currently)
 - rsync (usually pre-installed on macOS)

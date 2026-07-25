@@ -41,7 +41,7 @@ Want it fully managed? [Amika Cloud](https://amika.dev) runs the same agents in 
 
 ## Quick Start
 
-**Prerequisites:** Docker, macOS or Linux (Go 1.21+ only needed to build from source)
+**Prerequisites:** Docker, macOS or Linux (Go 1.25+ only needed to build from source)
 
 ### Install
 
@@ -62,7 +62,7 @@ Once installed, the `amika` binary is on your `PATH` — run commands directly (
 <details>
 <summary>Build from source instead</summary>
 
-Requires Go 1.21+. Build outputs land in `dist/`:
+Requires Go 1.25+. Build outputs land in `dist/`:
 
 ```bash
 git clone https://github.com/gofixpoint/amika.git && cd amika
@@ -216,7 +216,7 @@ curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh | 
 <details>
 <summary>Build from source instead</summary>
 
-Requires Go 1.21+. Build outputs land in `dist/`:
+Requires Go 1.25+. Build outputs land in `dist/`:
 
 ```bash
 git clone https://github.com/gofixpoint/amika.git && cd amika
