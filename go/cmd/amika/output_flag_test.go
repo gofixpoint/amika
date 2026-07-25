@@ -132,6 +132,28 @@ func TestInteractiveCommandsRejectJSON(t *testing.T) {
 	}
 }
 
+func TestSecretCommandsRejectJSON(t *testing.T) {
+	// The legacy secret extract/push flows print a masked credential table and
+	// prompt for confirmation on stdout, so they cannot emit a JSON result and
+	// must reject -o json/json-pretty before doing any work (no prompt, no
+	// network call). This is distinct from the provider-scoped secret <provider>
+	// push/delete commands, which do honor --output.
+	for _, args := range [][]string{
+		{"secret", "extract", "-o", "json"},
+		{"secret", "extract", "--push", "-o", "json"},
+		{"secret", "push", "KEY=VALUE", "-o", "json"},
+		{"secret", "push", "KEY=VALUE", "-o", "json-pretty"},
+	} {
+		_, err := runRootCommandOutput(t, args...)
+		if err == nil {
+			t.Fatalf("%v: expected error rejecting JSON output", args)
+		}
+		if !strings.Contains(err.Error(), "not supported by this command") {
+			t.Fatalf("%v: unexpected error: %v", args, err)
+		}
+	}
+}
+
 func TestInvalidOutputValue_FailsOnNonJSONCommand(t *testing.T) {
 	// version does not emit JSON, but the root PersistentPreRunE must still
 	// reject an invalid --output value.

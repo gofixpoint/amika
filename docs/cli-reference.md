@@ -35,7 +35,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands above plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Purely interactive commands (`sandbox connect`, `sandbox code`) reject `-o json`/`json-pretty` since they open a shell or editor with no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands above plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika sandbox`
 

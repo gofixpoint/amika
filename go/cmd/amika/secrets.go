@@ -55,6 +55,9 @@ Examples:
   amika secret extract --push
   amika secret extract --push --only=ANTHROPIC_API_KEY,OPENAI_API_KEY`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := output.RejectJSON(cmd); err != nil {
+				return err
+			}
 
 			homeDir, _ := cmd.Flags().GetString("homedir")
 			noOAuth, _ := cmd.Flags().GetBool("no-oauth")
@@ -173,6 +176,9 @@ Examples:
   amika secret push --from-file=.env
   amika secret push --from-file=.env CUSTOM_KEY=val --from-env=ANTHROPIC_API_KEY`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := output.RejectJSON(cmd); err != nil {
+				return err
+			}
 
 			fromEnvFlag, _ := cmd.Flags().GetString("from-env")
 			fromFileFlag, _ := cmd.Flags().GetString("from-file")

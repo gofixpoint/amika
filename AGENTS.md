@@ -108,7 +108,7 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 - Emit snake_case JSON keys, empty lists as `[]` (never `null`), and per-item batch results as `output.ItemResult{name, status, error}`.
 - In JSON mode stdout carries only the JSON value: emit human progress through `format.Progress(w)` (which discards it in JSON mode) and send any subprocess or build output to stderr.
 - Do not prompt in JSON mode: destructive commands require their confirmation flag (`--force`, `--yes`, or `--no-interactive`).
-- Commands that open a shell or editor call `output.RejectJSON(cmd)`; commands that delegate to a shell utility (`ssh`, `scp`) call `output.RejectFlag(cmd)`.
+- Commands that open a shell or editor, or that prompt over a masked table with no structured result (`secret extract`, `secret push`), call `output.RejectJSON(cmd)`; commands that delegate to a shell utility (`ssh`, `scp`) call `output.RejectFlag(cmd)`.
 
 ## Development Notes
 
