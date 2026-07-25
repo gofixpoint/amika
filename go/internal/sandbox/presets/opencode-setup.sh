@@ -11,4 +11,4 @@ amika_agent_cwd="$1"
 opencode_web_port="$2"
 
 cd "$amika_agent_cwd"
-exec opencode web --port "$opencode_web_port" --mdns
+exec opencode web --port "$opencode_web_port" --hostname 0.0.0.0
