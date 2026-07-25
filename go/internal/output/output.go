@@ -89,17 +89,18 @@ func RejectFlag(cmd *cobra.Command) error {
 }
 
 // RejectJSON returns an error if a JSON output format is requested. Use it for
-// interactive commands that open a shell or editor and produce no structured
-// result, so -o json/json-pretty fails fast with a clear error instead of
-// leaving automation waiting on an interactive subprocess. A text format
-// (the default) is allowed.
+// commands that produce no structured result, such as those that open a shell
+// or editor or that print a human table and prompt for confirmation, so
+// -o json/json-pretty fails fast with a clear error instead of leaving
+// automation waiting or parsing non-JSON output. A text format (the default)
+// is allowed.
 func RejectJSON(cmd *cobra.Command) error {
 	format, err := FormatFrom(cmd)
 	if err != nil {
 		return err
 	}
 	if format.IsJSON() {
-		return fmt.Errorf("the --%s %s option is not supported by this command: it opens an interactive session and produces no JSON result", FlagName, format)
+		return fmt.Errorf("the --%s %s option is not supported by this command: it produces no structured JSON result", FlagName, format)
 	}
 	return nil
 }

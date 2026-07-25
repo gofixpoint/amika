@@ -126,7 +126,7 @@ func TestInteractiveCommandsRejectJSON(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%v: expected error rejecting JSON output", args)
 		}
-		if !strings.Contains(err.Error(), "interactive session") {
+		if !strings.Contains(err.Error(), "not supported by this command") {
 			t.Fatalf("%v: unexpected error: %v", args, err)
 		}
 	}
