@@ -18,7 +18,7 @@ RUN npm install -g pnpm typescript tsx
 # of postinstall behavior.
 ARG AGENT_CLI_CACHE_BUST=
 RUN echo "agent-cli-cache-bust: $AGENT_CLI_CACHE_BUST" \
-    && npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai \
+    && npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai@1.18.4 \
     && chown -R amika:amika /home/amika
 
 USER amika
