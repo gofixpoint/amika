@@ -751,6 +751,45 @@ func TestSchemaValidatorInlineSchema(t *testing.T) {
 	}
 }
 
+func TestSchemaValidatorHonorsNullable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "openapi.json")
+	// A 3.1 document that expresses nullability the OpenAPI-3.0 way, as the
+	// real Amika spec does: `{type: string, nullable: true}`.
+	writeFile(t, path, `{
+	  "openapi": "3.1.0",
+	  "info": {"title": "nullable", "version": "0"},
+	  "paths": {},
+	  "components": {
+	    "schemas": {
+	      "Thing": {
+	        "type": "object",
+	        "required": ["id", "branch"],
+	        "properties": {
+	          "id": {"type": "string"},
+	          "branch": {"type": "string", "nullable": true}
+	        }
+	      }
+	    }
+	  }
+	}`)
+
+	v := LoadOpenAPISchema(path)
+
+	// A required-but-nullable field present as null must validate.
+	if err := v.Validate("Thing", map[string]any{"id": "x", "branch": nil}); err != nil {
+		t.Fatalf("expected null branch to validate under nullable: %v", err)
+	}
+	// A concrete string still validates.
+	if err := v.Validate("Thing", map[string]any{"id": "x", "branch": "main"}); err != nil {
+		t.Fatalf("expected string branch to validate: %v", err)
+	}
+	// The wrong type is still rejected — nullable widens to null, not to anything.
+	if err := v.Validate("Thing", map[string]any{"id": "x", "branch": 7}); err == nil {
+		t.Fatalf("expected a number branch to fail validation")
+	}
+}
+
 func TestSchemaValidatorMissingDocument(t *testing.T) {
 	v := LoadOpenAPISchema(filepath.Join(t.TempDir(), "does-not-exist.json"))
 	err := v.Validate("Thing", map[string]any{})

@@ -53,6 +53,14 @@ func LoadOpenAPISchema(path string) *SchemaValidator {
 		return v
 	}
 
+	// The Amika spec declares openapi 3.1.0 but expresses nullability with the
+	// OpenAPI 3.0 keyword `nullable: true`, which is not part of JSON Schema
+	// 2020-12 (what jsonschema/v6 enforces): a `{type: string, nullable: true}`
+	// schema would reject a real `null` value the API legitimately returns.
+	// Rewrite those into `type: [..., "null"]` so validation honors the spec's
+	// intent instead of failing on every nullable field.
+	rewriteNullable(doc)
+
 	compiler := jsonschema.NewCompiler()
 	if err := compiler.AddResource(schemaDocURL, doc); err != nil {
 		v.loadErr = fmt.Errorf("register openapi document %s: %w", path, err)
@@ -79,6 +87,55 @@ func (v *SchemaValidator) Validate(name string, instance any) error {
 		return err
 	}
 	return nil
+}
+
+// rewriteNullable walks a decoded JSON Schema / OpenAPI document in place and
+// rewrites every `{"nullable": true}` object that also has a concrete `type`
+// into one whose `type` includes "null", so a JSON Schema 2020-12 validator
+// accepts the null values an OpenAPI-3.0-style `nullable` field allows. A
+// `nullable` schema with no `type` (e.g. one using anyOf, or a bare
+// `additionalProperties: {nullable: true}`) already accepts null, so it is
+// left as-is aside from dropping the now-meaningless keyword.
+func rewriteNullable(node any) {
+	switch n := node.(type) {
+	case map[string]any:
+		if isTrue(n["nullable"]) {
+			addNullType(n)
+		}
+		delete(n, "nullable")
+		for _, child := range n {
+			rewriteNullable(child)
+		}
+	case []any:
+		for _, child := range n {
+			rewriteNullable(child)
+		}
+	}
+}
+
+// addNullType adds "null" to a schema object's `type`, whether it is a single
+// string or a list. A schema with no `type` is left untouched (it already
+// permits null under JSON Schema).
+func addNullType(schema map[string]any) {
+	switch t := schema["type"].(type) {
+	case string:
+		if t != "null" {
+			schema["type"] = []any{t, "null"}
+		}
+	case []any:
+		for _, existing := range t {
+			if s, ok := existing.(string); ok && s == "null" {
+				return
+			}
+		}
+		schema["type"] = append(t, "null")
+	}
+}
+
+// isTrue reports whether v is the boolean true.
+func isTrue(v any) bool {
+	b, ok := v.(bool)
+	return ok && b
 }
 
 func (v *SchemaValidator) compiled(name string) (*jsonschema.Schema, error) {
