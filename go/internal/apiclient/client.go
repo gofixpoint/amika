@@ -112,7 +112,7 @@ type RemoteSandboxService struct {
 //
 // ContainerID and Image have no equivalent in the API schema. They are local
 // CLI extensions populated only for Docker sandboxes (see
-// sandboxcmd.remoteSandboxFromLocal); the schema's
+// sandboxcmd.remoteSandboxFromInfo / remoteSandboxFromPublic); the schema's
 // `additionalProperties: {nullable:true}` allows extra keys, so they still
 // validate against the documented shape.
 type RemoteSandbox struct {
