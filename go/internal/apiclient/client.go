@@ -99,19 +99,65 @@ type RemoteSandboxService struct {
 	Protocol      string `json:"protocol"`
 }
 
-// RemoteSandbox represents a sandbox returned by the remote API.
+// RemoteSandbox mirrors the API's Sandbox schema (see
+// /api/v0beta1/sandboxes and docs/openapi.json component schema "Sandbox").
+// It is the single decode/encode type: the CLI decodes API responses into it
+// and re-encodes the same value for `-o json`, so the two stay byte-for-byte
+// shaped the same (round-trip fidelity).
+//
+// Fields the schema marks `nullable: true` are Go pointers so JSON `null` is
+// emitted rather than the field being omitted; fields the schema marks
+// `required` are always present in the encoded output (no `omitempty`).
+// Non-required fields may use `omitempty`.
+//
+// ContainerID and Image have no equivalent in the API schema. They are local
+// CLI extensions populated only for Docker sandboxes (see
+// sandboxcmd.remoteSandboxFromLocal); the schema's
+// `additionalProperties: {nullable:true}` allows extra keys, so they still
+// validate against the documented shape.
 type RemoteSandbox struct {
-	ID                       string                    `json:"id"`
-	Name                     string                    `json:"name"`
-	Provider                 string                    `json:"provider"`
-	RepoURL                  string                    `json:"repo_url"`
-	State                    string                    `json:"state"`
-	CreatedAt                string                    `json:"created_at"`
-	Branch                   string                    `json:"branch"`
-	ErrorMessage             string                    `json:"error_message"`
-	Services                 []RemoteSandboxService    `json:"services,omitempty"`
+	// --- required fields (schema "required": always present, never omitted) ---
+
+	ID                string                 `json:"id"`
+	UserID            *string                `json:"user_id"`
+	OrgID             string                 `json:"org_id"`
+	Name              string                 `json:"name"`
+	Provider          *string                `json:"provider"`
+	ProviderSandboxID *string                `json:"provider_sandbox_id"`
+	ProviderURL       *string                `json:"provider_url"`
+	AmikaOpencodeWeb  *string                `json:"amika_opencode_web"`
+	RepoName          *string                `json:"repo_name"`
+	RepoProvider      *string                `json:"repo_provider"`
+	RepoID            *string                `json:"repo_id"`
+	RepoURL           *string                `json:"repo_url"`
+	Branch            *string                `json:"branch"`
+	CommitHash        *string                `json:"commit_hash"`
+	Snapshot          *string                `json:"snapshot"`
+	CurrentSessionID  *string                `json:"current_session_id"`
+	Services          []RemoteSandboxService `json:"services"`
+	CreatedAt         string                 `json:"created_at"`
+	UpdatedAt         string                 `json:"updated_at"`
+
+	// --- non-required fields (omitempty allowed) ---
+
+	SnapshotName             *string                   `json:"snapshot_name,omitempty"`
+	SandboxPreset            *string                   `json:"sandbox_preset,omitempty"`
+	SandboxSize              *string                   `json:"sandbox_size,omitempty"`
+	ErrorMessage             *string                   `json:"error_message,omitempty"`
+	State                    string                    `json:"state,omitempty"`
+	Status                   string                    `json:"status,omitempty"`
+	SetupStatus              *string                   `json:"setup_status,omitempty"`
+	URLsExpireAt             *string                   `json:"urls_expire_at,omitempty"`
+	SecretNames              []string                  `json:"secret_names,omitempty"`
+	HasWorkflow              bool                      `json:"has_workflow,omitempty"`
 	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
 	CreatedBy                *RemoteSandboxCreator     `json:"created_by,omitempty"`
+	Origin                   *string                   `json:"origin,omitempty"`
+
+	// --- local CLI extensions (no API equivalent; see doc comment above) ---
+
+	ContainerID string `json:"container_id,omitempty"`
+	Image       string `json:"image,omitempty"`
 }
 
 // RemoteSandboxCreator describes the human who created a remote sandbox, as
@@ -160,8 +206,8 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 			return nil, err
 		}
 		if sb.State == "failed" {
-			if sb.ErrorMessage != "" {
-				return sb, fmt.Errorf("%s", sb.ErrorMessage)
+			if sb.ErrorMessage != nil && *sb.ErrorMessage != "" {
+				return sb, fmt.Errorf("%s", *sb.ErrorMessage)
 			}
 			return sb, fmt.Errorf("%s", failMsg)
 		}
@@ -273,22 +319,52 @@ func (c *Client) ListRepositories() ([]RemoteRepository, error) {
 	return result, nil
 }
 
-// SandboxSnapshot represents a snapshot captured from a running sandbox, as
-// returned by the /api/v0beta1/sandbox-snapshots endpoints.
+// SandboxSnapshot mirrors the API's SandboxSnapshot schema, as returned by the
+// /api/v0beta1/sandbox-snapshots endpoints. All fields are required by the
+// schema, so none are `omitempty`; nullable fields are pointers so `null` is
+// emitted rather than omitted (see RemoteSandbox's doc comment for the same
+// round-trip-fidelity convention).
 type SandboxSnapshot struct {
-	Snapshot          string  `json:"snapshot"`
-	Provider          string  `json:"provider"`
-	Description       *string `json:"description"`
-	SourceSandboxID   *string `json:"source_sandbox_id"`
-	SourceSandboxName *string `json:"source_sandbox_name"`
-	RepositoryID      *string `json:"repository_id"`
-	BaseSnapshot      *string `json:"base_snapshot"`
-	SandboxPreset     *string `json:"sandbox_preset"`
-	SandboxSize       *string `json:"sandbox_size"`
-	State             string  `json:"state"`
-	ErrorMessage      *string `json:"error_message"`
-	CreatedAt         string  `json:"created_at"`
-	UpdatedAt         string  `json:"updated_at"`
+	ID                string                       `json:"id"`
+	Snapshot          string                       `json:"snapshot"`
+	Provider          string                       `json:"provider"`
+	Description       *string                      `json:"description"`
+	SourceSandboxID   *string                      `json:"source_sandbox_id"`
+	SourceSandboxName *string                      `json:"source_sandbox_name"`
+	RepositoryID      *string                      `json:"repository_id"`
+	RepositoryURL     *string                      `json:"repository_url"`
+	BaseSnapshot      *string                      `json:"base_snapshot"`
+	SandboxPreset     *string                      `json:"sandbox_preset"`
+	SandboxSize       *string                      `json:"sandbox_size"`
+	CaptureMode       *string                      `json:"capture_mode"`
+	State             string                       `json:"state"`
+	ErrorMessage      *string                      `json:"error_message"`
+	CreatedAt         string                       `json:"created_at"`
+	UpdatedAt         string                       `json:"updated_at"`
+	Daytona           *ExperimentalDaytonaSnapshot `json:"daytona"`
+}
+
+// ListSandboxSnapshotsResponse mirrors the API's ListSandboxSnapshotsResponse
+// schema, the response body of GET /api/v0beta1/sandbox-snapshots: an object
+// with a single required `items` array, not a bare array (unlike
+// ListSandboxesResponse/ListSecretsResponse). Items is never omitted so an
+// empty result still emits `{"items":[]}` rather than `{"items":null}`.
+type ListSandboxSnapshotsResponse struct {
+	Items []SandboxSnapshot `json:"items"`
+}
+
+// ExperimentalDaytonaSnapshot mirrors the API's ExperimentalDaytonaSnapshot
+// schema: provider-specific Daytona snapshot detail nested under
+// SandboxSnapshot.Daytona. Only Name is required by the schema.
+type ExperimentalDaytonaSnapshot struct {
+	Name      string  `json:"name"`
+	State     string  `json:"state,omitempty"`
+	ImageName string  `json:"imageName,omitempty"`
+	CPU       float64 `json:"cpu,omitempty"`
+	Memory    float64 `json:"memory,omitempty"`
+	Disk      float64 `json:"disk,omitempty"`
+	CreatedAt string  `json:"createdAt,omitempty"`
+	UpdatedAt string  `json:"updatedAt,omitempty"`
 }
 
 // CreateSandboxSnapshotRequest is the request body for
@@ -327,13 +403,45 @@ func (c *Client) ListSandboxSnapshots(repositoryID, sourceSandboxID string) ([]S
 
 // CreateSandboxSnapshot starts capturing a snapshot from a running sandbox.
 // The endpoint returns 202 Accepted with the snapshot in the "capturing"
-// state; poll ListSandboxSnapshots until it reaches "active" or "failed".
+// state; poll with WaitForSandboxSnapshot (or ListSandboxSnapshots) until it
+// reaches "active" or "failed".
 func (c *Client) CreateSandboxSnapshot(req CreateSandboxSnapshotRequest) (*SandboxSnapshot, error) {
 	var result SandboxSnapshot
 	if err := c.doJSON("POST", apiBasePath+"/sandbox-snapshots", req, &result); err != nil {
 		return nil, fmt.Errorf("remote create sandbox snapshot: %w", err)
 	}
 	return &result, nil
+}
+
+// GetSandboxSnapshot fetches a single sandbox snapshot by name or id. The
+// server resolves it (id first, then name), matching DeleteSandboxSnapshot.
+func (c *Client) GetSandboxSnapshot(ref string) (*SandboxSnapshot, error) {
+	var result SandboxSnapshot
+	if err := c.doJSON("GET", apiBasePath+"/sandbox-snapshots/"+url.PathEscape(ref)+"?by=ref", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote get sandbox snapshot: %w", err)
+	}
+	return &result, nil
+}
+
+// WaitForSandboxSnapshot polls GET /api/v0beta1/sandbox-snapshots/{ref} every 3
+// seconds until the snapshot reaches a terminal state ("active" or "failed").
+func (c *Client) WaitForSandboxSnapshot(ref string) (*SandboxSnapshot, error) {
+	for {
+		snap, err := c.GetSandboxSnapshot(ref)
+		if err != nil {
+			return nil, err
+		}
+		switch snap.State {
+		case "active":
+			return snap, nil
+		case "failed":
+			if snap.ErrorMessage != nil && *snap.ErrorMessage != "" {
+				return snap, fmt.Errorf("%s", *snap.ErrorMessage)
+			}
+			return snap, fmt.Errorf("sandbox snapshot capture failed")
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 // SandboxScrubPreview lists the injected secrets a "snapshot and delete" would
@@ -366,11 +474,19 @@ func (c *Client) DeleteSandboxSnapshot(ref string) error {
 	return nil
 }
 
-// Secret represents a secret returned by the remote API.
-type Secret struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Scope string `json:"scope"`
+// SecretSummary mirrors the API's SecretSummary schema, as returned by
+// GET /api/v0beta1/secrets (array) and POST /api/v0beta1/secrets (single,
+// 201). All fields are required by the schema (no omitempty); Description is
+// nullable so it is a pointer.
+type SecretSummary struct {
+	ID          string  `json:"id"`
+	OrgID       string  `json:"org_id"`
+	UserID      string  `json:"user_id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Scope       string  `json:"scope"` // "user" or "org"
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 // CreateSecretRequest is the request body for POST /api/v0beta1/secrets.
@@ -386,8 +502,8 @@ type UpdateSecretRequest struct {
 }
 
 // ListSecrets fetches user/org-scoped secrets from the remote API.
-func (c *Client) ListSecrets() ([]Secret, error) {
-	var result []Secret
+func (c *Client) ListSecrets() ([]SecretSummary, error) {
+	var result []SecretSummary
 	if err := c.doJSON("GET", apiBasePath+"/secrets", nil, &result); err != nil {
 		return nil, fmt.Errorf("remote list secrets: %w", err)
 	}
@@ -473,12 +589,34 @@ type AgentSendRequest struct {
 	Agent      string `json:"agent,omitempty"`
 }
 
-// AgentSendResponse is the response from POST /api/v0beta1/sandboxes/{id}/agent-send.
+// AgentSendResponse mirrors the API's AgentSendResponse schema, returned by
+// POST /api/v0beta1/sandboxes/{id}/agent-send. SessionID, Response, IsError,
+// and IsNewSession are required by the schema (no omitempty); AgentSessionID
+// and CostUSD are optional.
 type AgentSendResponse struct {
-	Result         string `json:"response"`
-	SessionID      string `json:"session_id"`
-	AgentSessionID string `json:"agent_session_id"`
-	IsError        bool   `json:"is_error"`
+	SessionID      string   `json:"session_id"`
+	Response       string   `json:"response"`
+	IsError        bool     `json:"is_error"`
+	IsNewSession   bool     `json:"is_new_session"`
+	AgentSessionID string   `json:"agent_session_id,omitempty"`
+	CostUSD        *float64 `json:"cost_usd,omitempty"`
+}
+
+// AgentSendJobResponse mirrors the API's AgentSendJobResponse schema,
+// returned by the asynchronous agent-send-jobs endpoints
+// (POST /api/v0beta1/sandboxes/{id}/agent-send-jobs and
+// GET .../agent-send-jobs/{job_id}). AgentSessionID and ResultText are
+// nullable (pointers); CostUSD is the only non-required field.
+type AgentSendJobResponse struct {
+	JobID          string   `json:"job_id"`
+	State          string   `json:"state"`
+	AgentSessionID *string  `json:"agent_session_id"`
+	IsNewSession   bool     `json:"is_new_session"`
+	IsError        bool     `json:"is_error"`
+	ResultText     *string  `json:"result_text"`
+	CostUSD        *float64 `json:"cost_usd,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
 }
 
 // AgentSend sends a message to an agent inside a remote sandbox.
