@@ -218,26 +218,34 @@ run's leftover `ledger.json`:
 results, err := runner.CleanupFromLedgerFile(binPath, "/path/to/.runs/<run-id>/<case>/ledger.json", nil)
 ```
 
-## Writing a real-API case (not included yet)
+## Offline cases vs. real-API cases
 
-The two sample cases under `cases/` (`offline-cli-basics.yaml`,
-`offline-output-flag.yaml`) are 100% offline: no Docker daemon, no
-network, no `AMIKA_API_URL` credentials. They prove the harness works
-without depending on any of that.
+Case files fall into two tiers, distinguished by filename:
 
-A case that talks to the real remote API or spins up a Docker sandbox
-needs credentials/Docker available in the environment the test runs in,
-so it should **not** live under `cases/` yet: a case file there is
-assumed runnable by anyone with `AMIKA_RUN_E2E=1` set, nothing else.
-When real-API cases are added (a later phase), name them so they are easy
-to filter out or gate separately, for example:
+- **Offline cases** (any name without the `api-` prefix) are 100% offline:
+  no Docker daemon, no network, no credentials. They cover flag validation,
+  `-o json` rejections, argument errors, and `--help`. They run with
+  `AMIKA_RUN_E2E=1` alone and are safe anywhere.
+- **Real-API cases** (`api-*.yaml`) talk to the real remote API at
+  `AMIKA_API_URL` and may create billable resources. The Go test entry point
+  **skips** them unless `AMIKA_RUN_E2E_API=1` is *also* set, so plain
+  `AMIKA_RUN_E2E=1` never reaches the network or spends money.
+
+```bash
+make test-e2e       # offline cases only (api-*.yaml are skipped)
+make test-e2e-api   # offline + real-API cases (needs AMIKA_API_KEY/AMIKA_API_URL)
+```
+
+Real-API cases that create something must declare a `resource` block so the
+ledger can delete it afterward (see "Resources and cleanup" above). A
+read-only real-API case (e.g. `sandbox list`) needs no `resource`. Example:
 
 ```yaml
-# cases/api-sandbox-lifecycle.yaml  (NOT included — illustrative only)
+# cases/api-sandbox-lifecycle.yaml
 name: create and delete a remote sandbox via the real API
 steps:
   - name: create remote sandbox
-    cmd: [sandbox, create, --preset, claude, -o, json]
+    cmd: [sandbox, create, --remote, --preset, claude, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -247,14 +255,4 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [sandbox, delete, "{{sandbox_name}}", --force, -o, json]
-
-  - name: delete it explicitly to check the response shape
-    cmd: [sandbox, delete, "{{sandbox_name}}", --force, -o, json]
-    expect:
-      exit: 0
 ```
-
-A convention worth adopting once that phase starts: prefix such files
-(`api-*.yaml`) and have the Go test entry point skip that prefix unless
-another env var (e.g. `AMIKA_RUN_E2E_API=1`) is also set, so `AMIKA_RUN_E2E=1`
-alone stays safe to run anywhere.

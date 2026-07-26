@@ -28,6 +28,15 @@ const openAPIURLEnv = "AMIKA_E2E_OPENAPI_URL"
 // defaultOpenAPIURL is the OpenAPI document used when openAPIURLEnv is unset.
 const defaultOpenAPIURL = "https://app.amika.dev/api/openapi.json"
 
+// runAPIEnv additionally gates case files named "api-*.yaml": those talk to a
+// real remote API and may create billable resources, so they need explicit
+// opt-in beyond AMIKA_RUN_E2E. Offline cases (flag validation, rejections,
+// --help) run with AMIKA_RUN_E2E alone and are safe anywhere.
+const runAPIEnv = "AMIKA_RUN_E2E_API"
+
+// apiCasePrefix marks a case file as reaching the real remote API.
+const apiCasePrefix = "api-"
+
 // TestE2ECases discovers every case file under cases/, runs each as a
 // subtest against a freshly built amika binary, and cleans up any
 // resources the case registered — even if the case failed or panicked.
@@ -64,6 +73,10 @@ func TestE2ECases(t *testing.T) {
 		caseName := strings.TrimSuffix(filepath.Base(caseFile), ".yaml")
 
 		t.Run(caseName, func(t *testing.T) {
+			if strings.HasPrefix(caseName, apiCasePrefix) && os.Getenv(runAPIEnv) != "1" {
+				t.Skipf("set %s=1 to run real-API case %q (may create billable resources)", runAPIEnv, caseName)
+			}
+
 			c, err := runner.LoadCase(caseFile)
 			if err != nil {
 				t.Fatalf("load case: %v", err)
