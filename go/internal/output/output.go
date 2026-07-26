@@ -77,13 +77,37 @@ func FormatFrom(cmd *cobra.Command) (Format, error) {
 	return ParseFormat(raw)
 }
 
+// unsupportedFlagError is the shared error for shell-delegating commands
+// (ssh, scp) that cannot honor --output. Both the parsed-flag path
+// (RejectFlag) and the raw-argv path (RejectFlagInArgs) return it so the
+// message stays identical regardless of how the flag was detected.
+func unsupportedFlagError() error {
+	return fmt.Errorf("the --%s flag is not supported by this command: it runs an underlying shell utility (ssh/scp) that streams its own output and cannot emit JSON", FlagName)
+}
+
 // RejectFlag returns an error if --output was explicitly set. Use it for
 // commands that delegate to an underlying shell utility (ssh, scp) which
 // streams its own output and cannot emit a structured JSON result, so the flag
 // would be meaningless or misleading.
 func RejectFlag(cmd *cobra.Command) error {
 	if cmd.Flags().Changed(FlagName) {
-		return fmt.Errorf("the --%s flag is not supported by this command: it runs an underlying shell utility (ssh/scp) that streams its own output and cannot emit JSON", FlagName)
+		return unsupportedFlagError()
+	}
+	return nil
+}
+
+// RejectFlagInArgs is the RejectFlag counterpart for commands that set
+// DisableFlagParsing (e.g. scp), where the flag never reaches cobra to be
+// marked Changed. It scans the raw argv and rejects only the unambiguous
+// long form --output / --output=VALUE. The short form -o is intentionally
+// NOT rejected: scp defines its own -o option (ssh_config overrides), so a
+// bare -o must keep forwarding to the underlying utility.
+func RejectFlagInArgs(rawArgs []string) error {
+	long := "--" + FlagName
+	for _, arg := range rawArgs {
+		if arg == long || strings.HasPrefix(arg, long+"=") {
+			return unsupportedFlagError()
+		}
 	}
 	return nil
 }

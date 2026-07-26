@@ -564,6 +564,20 @@ func TestHasHelpFlag(t *testing.T) {
 	}
 }
 
+func TestRunSCPRejectsOutputLongFlag(t *testing.T) {
+	cmd := New()
+	// The long-form --output is rejected before any resolution/exec, so this
+	// makes no network call. The short -o is scp's own option and must NOT be
+	// rejected here (it is exercised as pass-through elsewhere).
+	err := runSCP(cmd, []string{"--output", "json", "a", "b"})
+	if err == nil {
+		t.Fatal("expected --output to be rejected for scp")
+	}
+	if !strings.Contains(err.Error(), "--output flag is not supported") {
+		t.Fatalf("expected unsupported-flag error, got: %v", err)
+	}
+}
+
 func TestSCPCommandRegistered(t *testing.T) {
 	cmd := New()
 	if cmd.Name() != "scp" {

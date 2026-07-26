@@ -43,10 +43,11 @@ Examples:
   amika scp --print ./a.txt my-sandbox:a.txt`,
 		Args: cobra.MinimumNArgs(1),
 		// DisableFlagParsing forwards every argument to the system scp binary
-		// unchanged. As a result the global --output/-o flag is NOT accepted
-		// here: scp streams its own copy progress and cannot emit JSON, so an
-		// --output value is passed straight through to scp rather than parsed by
-		// amika. This is intentional; see docs/cli-reference.md.
+		// unchanged, so scp's own single-dash options (including -o for
+		// ssh_config overrides) pass through. scp streams its own copy progress
+		// and cannot emit JSON, so runSCP rejects the long-form global --output
+		// flag explicitly (see output.RejectFlagInArgs); the short -o is left
+		// to forward, since it is scp's own option. See docs/cli-reference.md.
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSCP(cmd, args)

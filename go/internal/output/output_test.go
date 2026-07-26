@@ -48,6 +48,35 @@ func TestRejectFlag(t *testing.T) {
 	}
 }
 
+func TestRejectFlagInArgs(t *testing.T) {
+	rejected := [][]string{
+		{"--output", "json", "a", "b"},
+		{"a", "b", "--output", "json"},
+		{"--output=json", "a", "b"},
+		{"--output"},
+	}
+	for _, args := range rejected {
+		if err := RejectFlagInArgs(args); err == nil {
+			t.Errorf("expected --output to be rejected in %v", args)
+		}
+	}
+
+	// The short -o is scp's own option and must NOT be rejected; nor should
+	// unrelated args or a look-alike long flag.
+	allowed := [][]string{
+		{"-o", "StrictHostKeyChecking=no", "a", "b"},
+		{"-o", "json", "a", "b"},
+		{"--outputx", "a"},
+		{"a", "b"},
+		nil,
+	}
+	for _, args := range allowed {
+		if err := RejectFlagInArgs(args); err != nil {
+			t.Errorf("did not expect rejection for %v: %v", args, err)
+		}
+	}
+}
+
 func TestParseFormat(t *testing.T) {
 	cases := map[string]struct {
 		want    Format
