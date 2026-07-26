@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server build-amikalog build-akfs clean test test-unit test-integration test-contract test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
+.PHONY: goenv build build-cli build-server build-amikalog build-akfs clean test test-unit test-integration test-contract test-e2e test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
 
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
@@ -47,6 +47,9 @@ test-integration: goenv
 
 test-contract: goenv
 	go -C $(GO_DIR) test ./test/contract/...
+
+test-e2e: goenv
+	AMIKA_RUN_E2E=1 go -C $(GO_DIR) test ./test/e2e/...
 
 test-expensive: goenv
 	AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 $(MAKE) test-all

@@ -1,0 +1,32 @@
+# Offline sample case: exercises the --output/-o flag's validation and
+# rejection paths. Every step here is fully deterministic and needs no
+# Docker, no network, and no API credentials, so it runs the same way in
+# any environment.
+name: output flag validation is enforced without a network or Docker
+steps:
+  - name: amika --help works and lists top-level commands
+    cmd: [--help]
+    expect:
+      exit: 0
+      stdout_contains: "Available Commands"
+
+  - name: an invalid --output value is rejected before doing any work
+    cmd: [sandbox, agent-send, some-sandbox, hello, --local, --output, bogus]
+    expect:
+      exit: 1
+      stderr_contains: 'invalid --output value "bogus"'
+
+  - name: --output json is rejected for a --local agent-send
+    # --local agent-send streams raw agent output rather than a structured
+    # result, so it cannot honor --output json; this must fail fast without
+    # touching Docker or any sandbox state.
+    cmd: [sandbox, agent-send, some-sandbox, hello, --local, --output, json]
+    expect:
+      exit: 1
+      stderr_contains: "--output json is not supported with --local"
+
+  - name: --output json is rejected for a --no-wait agent-send
+    cmd: [sandbox, agent-send, some-sandbox, hello, --no-wait, --output, json, --remote]
+    expect:
+      exit: 1
+      stderr_contains: "--output json is not supported with --no-wait"

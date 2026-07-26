@@ -1,0 +1,42 @@
+# Offline sample case: exercises basic CLI plumbing (unknown commands,
+# flags that aren't registered on a given command, stdin, and a --local
+# sandbox lookup that fails fast against an empty, isolated state
+# directory). No Docker, network, or API credentials required — the
+# e2e_test.go entry point points AMIKA_STATE_DIRECTORY at a fresh empty
+# directory for each run, so "sandbox connect" below always sees an empty
+# local sandbox store.
+name: CLI basics work offline against an isolated, empty state directory
+steps:
+  - name: an unknown top-level command is rejected
+    cmd: [bogus-command]
+    expect:
+      exit: 1
+      stderr_contains: 'unknown command "bogus-command"'
+
+  - name: version does not register --output, so -o json is rejected as an unknown flag
+    cmd: [version, -o, json]
+    expect:
+      exit: 1
+      stderr_contains: "unknown shorthand flag"
+
+  - name: sandbox connect --local fails fast against an empty sandbox store
+    cmd: [sandbox, connect, does-not-exist, --local]
+    expect:
+      exit: 1
+      stderr_contains: 'sandbox "does-not-exist" not found'
+
+  - name: agent-send requires a message from args or stdin
+    cmd: [sandbox, agent-send, some-sandbox, --local]
+    expect:
+      exit: 1
+      stderr_contains: "message is required as an argument or via stdin"
+
+  - name: agent-send reads the message from stdin when no positional message is given
+    # Confirms stdin plumbing: with a message on stdin, the command gets
+    # past the "message is required" check and fails later, at sandbox
+    # lookup, instead — proving the piped message was read.
+    cmd: [sandbox, agent-send, does-not-exist, --local]
+    stdin: "hello from stdin"
+    expect:
+      exit: 1
+      stderr_contains: 'sandbox "does-not-exist" not found'

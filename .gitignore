@@ -5,6 +5,7 @@ scratch/
 .gocache/
 .gotmp/
 .gomodcache/
+go/test/e2e/.runs/
 
 .env
 .env.*
