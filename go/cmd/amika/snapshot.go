@@ -142,15 +142,26 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	pw := format.Progress(cmd.OutOrStdout())
+	fmt.Fprintf(pw, "Snapshot %q capturing...\n", snap.Snapshot)
+
+	// The create endpoint returns 202 Accepted with the snapshot still
+	// "capturing"; poll until it reaches a terminal state so both text and
+	// JSON output report the final resource rather than the in-progress stub.
+	final, err := client.WaitForSandboxSnapshot(snap.ID)
+	if err != nil {
+		return err
+	}
+
 	if format.IsJSON() {
-		return format.JSON(cmd.OutOrStdout(), snap)
+		return format.JSON(cmd.OutOrStdout(), final)
 	}
 
 	fmt.Fprintf(
 		cmd.OutOrStdout(),
-		"Snapshot %q is %s. Capture runs in the background; check `amika snapshot list`.\n",
-		snap.Snapshot,
-		snap.State,
+		"Snapshot %q is %s.\n",
+		final.Snapshot,
+		final.State,
 	)
 	return nil
 }
@@ -188,13 +199,13 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if format.IsJSON() {
-		// SandboxSnapshot already carries stable snake_case JSON tags, so the
-		// CLI intentionally emits the API type directly rather than defining a
-		// separate DTO like sandbox list does.
+		// The API wraps the list in an {"items": [...]} envelope
+		// (ListSandboxSnapshotsResponse), unlike ListSandboxesResponse/
+		// ListSecretsResponse which are bare arrays.
 		if snapshots == nil {
 			snapshots = []apiclient.SandboxSnapshot{}
 		}
-		return format.JSON(cmd.OutOrStdout(), snapshots)
+		return format.JSON(cmd.OutOrStdout(), apiclient.ListSandboxSnapshotsResponse{Items: snapshots})
 	}
 
 	if len(snapshots) == 0 {

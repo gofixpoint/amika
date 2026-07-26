@@ -125,7 +125,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("listing remote secrets: %w", err)
 			}
-			existingByName := make(map[string]apiclient.Secret)
+			existingByName := make(map[string]apiclient.SecretSummary)
 			for _, s := range existing {
 				existingByName[s.Name] = s
 			}
@@ -264,7 +264,7 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("listing remote secrets: %w", err)
 			}
-			existingByName := make(map[string]apiclient.Secret)
+			existingByName := make(map[string]apiclient.SecretSummary)
 			for _, s := range existing {
 				existingByName[s.Name] = s
 			}
@@ -336,7 +336,7 @@ func parseEnvFile(path string) (map[string]string, []string, error) {
 
 // pushSecret creates or updates a single secret. It returns the action taken ("Created" or "Updated").
 // If the secret already exists with a different scope, it returns an error.
-func pushSecret(client *apiclient.Client, existing map[string]apiclient.Secret, name, value, scope string) (string, error) {
+func pushSecret(client *apiclient.Client, existing map[string]apiclient.SecretSummary, name, value, scope string) (string, error) {
 	remote, exists := existing[name]
 	if !exists {
 		err := client.CreateSecret(apiclient.CreateSecretRequest{

@@ -20,17 +20,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// agentSendJSON is the JSON emitted by `agent-send`. Result and SessionID are
-// populated when the command waits for a response (not --no-wait) against a
-// remote sandbox; Status is "sent" for --no-wait and "completed" otherwise.
+// agentSendJSON is the JSON emitted by `agent-send`. Response and SessionID
+// are populated when the command waits for a response (not --no-wait) against
+// a remote sandbox; Status is "sent" for --no-wait and "completed" otherwise.
+// The response-carrying fields (session_id, response, is_error,
+// is_new_session, agent_session_id, cost_usd) use the same names as the API's
+// AgentSendResponse schema; Sandbox/Agent/Status are CLI-only wrapper fields
+// with no schema equivalent (agent-send has no polled resource, and the local
+// Docker path has no API-backed response at all).
 type agentSendJSON struct {
-	Sandbox        string `json:"sandbox"`
-	Agent          string `json:"agent"`
-	Status         string `json:"status"`
-	Result         string `json:"result,omitempty"`
-	SessionID      string `json:"session_id,omitempty"`
-	AgentSessionID string `json:"agent_session_id,omitempty"`
-	IsError        bool   `json:"is_error"`
+	Sandbox        string   `json:"sandbox"`
+	Agent          string   `json:"agent"`
+	Status         string   `json:"status"`
+	Response       string   `json:"response,omitempty"`
+	SessionID      string   `json:"session_id,omitempty"`
+	AgentSessionID string   `json:"agent_session_id,omitempty"`
+	IsError        bool     `json:"is_error"`
+	IsNewSession   bool     `json:"is_new_session,omitempty"`
+	CostUSD        *float64 `json:"cost_usd,omitempty"`
 }
 
 type agentConfig struct {
@@ -264,7 +271,7 @@ sends) and the response, session id, and error status included once known.`,
 				return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
 			}
 			if format.IsJSON() {
-				result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed", Result: captured.String()}
+				result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed", Response: captured.String()}
 				if noWait {
 					result.Status = "sent"
 				}
@@ -297,10 +304,12 @@ sends) and the response, session id, and error status included once known.`,
 			result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "sent"}
 			if !noWait && resp != nil {
 				result.Status = "completed"
-				result.Result = resp.Result
+				result.Response = resp.Response
 				result.SessionID = resp.SessionID
 				result.AgentSessionID = resp.AgentSessionID
 				result.IsError = resp.IsError
+				result.IsNewSession = resp.IsNewSession
+				result.CostUSD = resp.CostUSD
 			}
 			if err := format.JSON(cmd.OutOrStdout(), result); err != nil {
 				return err
@@ -312,8 +321,8 @@ sends) and the response, session id, and error status included once known.`,
 		}
 
 		if !noWait && resp != nil {
-			fmt.Fprint(os.Stdout, resp.Result)
-			if resp.Result != "" && !strings.HasSuffix(resp.Result, "\n") {
+			fmt.Fprint(os.Stdout, resp.Response)
+			if resp.Response != "" && !strings.HasSuffix(resp.Response, "\n") {
 				fmt.Fprintln(os.Stdout)
 			}
 			if resp.SessionID != "" {
