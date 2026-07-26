@@ -389,19 +389,35 @@ func (r *Runner) captureVars(step Step, parsed any) error {
 	return nil
 }
 
+// registerResource templates the step's resource block and appends it to the
+// ledger. Templating happens here, not in substituteStep, so a resource whose
+// name or cleanup argv references a variable captured from this same step's
+// output resolves correctly (r.vars has already been updated by captureVars).
 func (r *Runner) registerResource(step Step) error {
 	if step.Resource == nil {
 		return nil
 	}
+	name, err := substituteString(step.Resource.Name, r.vars)
+	if err != nil {
+		return fmt.Errorf("resource.name: %w", err)
+	}
+	cleanup := make([]string, len(step.Resource.Cleanup))
+	for i, arg := range step.Resource.Cleanup {
+		v, err := substituteString(arg, r.vars)
+		if err != nil {
+			return fmt.Errorf("resource.cleanup[%d]: %w", i, err)
+		}
+		cleanup[i] = v
+	}
 	entry := Entry{
 		Type:          step.Resource.Type,
-		Name:          step.Resource.Name,
+		Name:          name,
 		CreatedByStep: step.Name,
-		CleanupArgv:   step.Resource.Cleanup,
+		CleanupArgv:   cleanup,
 		CreatedAt:     time.Now().UTC(),
 	}
 	if err := r.ledger.Append(entry); err != nil {
-		return fmt.Errorf("register resource %q: %w", step.Resource.Name, err)
+		return fmt.Errorf("register resource %q: %w", name, err)
 	}
 	return nil
 }
@@ -463,8 +479,9 @@ func substituteAny(v any, vars map[string]string) (any, error) {
 	}
 }
 
-// substituteStep returns a copy of step with "{{var}}" templates resolved
-// in cmd, stdin, env, resource, and expectation strings.
+// substituteStep returns a copy of step with "{{var}}" templates resolved in
+// cmd, stdin, env, and expectation strings. The resource block is templated
+// later, by registerResource, so it can reference this step's own captures.
 func (r *Runner) substituteStep(step Step) (Step, error) {
 	out := step
 
@@ -496,25 +513,11 @@ func (r *Runner) substituteStep(step Step) (Step, error) {
 		out.Env = env
 	}
 
-	if step.Resource != nil {
-		res := *step.Resource
-		name, err := substituteString(res.Name, r.vars)
-		if err != nil {
-			return Step{}, fmt.Errorf("resource.name: %w", err)
-		}
-		res.Name = name
-
-		cleanup := make([]string, len(res.Cleanup))
-		for i, arg := range res.Cleanup {
-			v, err := substituteString(arg, r.vars)
-			if err != nil {
-				return Step{}, fmt.Errorf("resource.cleanup[%d]: %w", i, err)
-			}
-			cleanup[i] = v
-		}
-		res.Cleanup = cleanup
-		out.Resource = &res
-	}
+	// step.Resource is intentionally NOT templated here. Its Name/Cleanup
+	// often reference a variable this same step captures from its own output
+	// (e.g. the id of the resource just created), which is only known after
+	// the command runs and captureVars populates r.vars. registerResource
+	// templates the resource block afterward, once those vars exist.
 
 	stdoutContains, err := substituteString(step.Expect.StdoutContains, r.vars)
 	if err != nil {

@@ -627,6 +627,52 @@ func TestRunnerRunCaseCapturesTemplatesAndRegistersResource(t *testing.T) {
 	}
 }
 
+// TestRunnerRegistersResourceFromSameStepCapture covers the common real-world
+// shape: a single step creates a resource, captures its id/name from that same
+// command's own output, and registers cleanup referencing that capture. The
+// resource block must be templated AFTER the step's capture runs.
+func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "same-step capture into resource",
+		Steps: []Step{
+			{
+				Name:    "create and register in one step",
+				Cmd:     []string{"0", `{"name":"sb-xyz"}`, ""},
+				Expect:  Expectation{Exit: intPtr(0)},
+				Capture: map[string]string{"sandbox_name": "$.name"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "{{sandbox_name}}",
+					Cleanup: []string{"0", "deleted {{sandbox_name}}", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err != nil {
+		t.Fatalf("RunCase: %v", err)
+	}
+
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one registered resource, got %+v", entries)
+	}
+	if entries[0].Name != "sb-xyz" {
+		t.Fatalf("expected resource name templated to sb-xyz, got %q", entries[0].Name)
+	}
+	if len(entries[0].CleanupArgv) != 3 || entries[0].CleanupArgv[1] != "deleted sb-xyz" {
+		t.Fatalf("expected cleanup argv templated with the same-step capture, got %#v", entries[0].CleanupArgv)
+	}
+}
+
 func TestRunnerRunCaseStopsAtFirstFailure(t *testing.T) {
 	bin := stubScript(t)
 	runDir := t.TempDir()
