@@ -1,10 +1,15 @@
-name: remote sandbox full lifecycle (create, list, agent-send, stop, start, snapshot, delete)
+name: remote sandbox lifecycle (create, list, agent-send, stop, start, delete)
 # A single real remote sandbox is created and reused across every
-# resource-dependent command, then deleted. The `resource` blocks register
-# the sandbox and snapshot for reverse-order ledger cleanup, so they are
-# removed even if a later step fails. The final explicit delete steps also
-# exercise the delete commands; on the happy path the ledger's redundant
-# delete is a harmless no-op that is logged and skipped.
+# resource-dependent command, then deleted. The `resource` block registers
+# the sandbox for reverse-order ledger cleanup, so it is removed even if a
+# later step fails. The final explicit delete step also exercises the delete
+# command; on the happy path the ledger's redundant delete is a harmless
+# no-op that is logged and skipped.
+#
+# Snapshot create/list/delete are intentionally NOT here: snapshot deletion
+# depends on the sandbox provider and can fail transiently (HTTP 502), which
+# would redden this core lifecycle and orphan a snapshot. They live in
+# api-snapshot-lifecycle.yaml so that flakiness stays isolated.
 steps:
   - name: create a remote sandbox and wait until it is provisioned
     cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
@@ -51,32 +56,6 @@ steps:
     expect:
       exit: 0
       stdout_contains: "{{sandbox_name}}"
-
-  - name: capture a full snapshot and wait until it settles
-    cmd: [snapshot, create, --no-interactive, --mode, full, --name, "e2e-{{sandbox_name}}", --sandbox, "{{sandbox_name}}", -o, json]
-    expect:
-      exit: 0
-      schema: SandboxSnapshot
-      stdout_json:
-        snapshot: "@string"
-    capture:
-      snapshot_ref: $.snapshot
-    resource:
-      type: snapshot
-      name: "{{snapshot_ref}}"
-      cleanup: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
-
-  - name: list snapshots as json and confirm ours is present
-    cmd: [snapshot, list, -o, json]
-    expect:
-      exit: 0
-      schema: ListSandboxSnapshotsResponse
-      stdout_contains: "{{snapshot_ref}}"
-
-  - name: delete the snapshot
-    cmd: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
-    expect:
-      exit: 0
 
   - name: delete the sandbox
     cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]

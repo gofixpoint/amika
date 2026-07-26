@@ -67,17 +67,26 @@ steps:
       exit: 1
       stderr_contains: 'not logged in; run "amika auth login" or use --local'
 
-  - name: scp --output json is NOT rejected; it is forwarded into scp's own argv parsing
-    # No RejectFlag call exists for scp. "--output json a b" is parsed as
-    # scp's own argv: neither "a" nor "b" (nor the forwarded "--output"/
-    # "json" tokens) reference a sandbox or scp:// host, so scp's own
-    # source/target resolution fails first.
+  - name: scp --output json is rejected (long form is unambiguously amika's flag)
+    # scp sets DisableFlagParsing, so the global --output never reaches cobra
+    # to be marked Changed. runSCP rejects the long form explicitly via
+    # output.RejectFlagInArgs before any resolution or exec.
     cmd: [scp, --output, json, a, b]
     expect:
       exit: 1
-      stderr_contains: "no remote source or target found"
+      stderr_contains: "the --output flag is not supported by this command"
 
-  - name: "scp -o json a b: -o is scp's own option syntax, consuming \"json\" as its argument"
+  - name: scp --output=json is rejected too
+    cmd: [scp, --output=json, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: "scp -o json a b: -o is scp's OWN option and is NOT rejected; it forwards"
+    # The short -o is scp's ssh_config-override option, not amika's --output
+    # shorthand here, so it is left to forward to the system scp. "-o" consumes
+    # "json" as its argument; neither "a" nor "b" names a sandbox or scp:// host,
+    # so scp's own source/target resolution fails first (no rejection).
     cmd: [scp, -o, json, a, b]
     expect:
       exit: 1

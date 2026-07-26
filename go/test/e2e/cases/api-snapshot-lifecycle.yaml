@@ -1,0 +1,59 @@
+name: remote snapshot lifecycle (create source sandbox, capture, list, delete)
+# Snapshots need a source sandbox, so this case creates its own throwaway
+# sandbox, captures a "full" snapshot from it, confirms the snapshot in the
+# list, then deletes the snapshot and the sandbox.
+#
+# NOTE: snapshot deletion goes through the sandbox provider and has been seen
+# to fail transiently with HTTP 502 (a provider-side error, not a CLI bug).
+# When that happens this case will fail at the delete step and the snapshot
+# is left orphaned provider-side; the sandbox is still cleaned up by the
+# ledger (reverse order continues past the failed snapshot delete). This case
+# is isolated from api-sandbox-lifecycle.yaml precisely so that flakiness
+# does not redden the core sandbox lifecycle. Both `resource` blocks register
+# their targets so cleanup runs regardless of which step fails.
+steps:
+  - name: create a source sandbox and wait until it is provisioned
+    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+
+  - name: capture a full snapshot and wait until it settles
+    cmd: [snapshot, create, --no-interactive, --mode, full, --name, "e2e-{{sandbox_name}}", --sandbox, "{{sandbox_name}}", -o, json]
+    expect:
+      exit: 0
+      schema: SandboxSnapshot
+      stdout_json:
+        snapshot: "@string"
+        state: "@string"
+    capture:
+      snapshot_ref: $.snapshot
+    resource:
+      type: snapshot
+      name: "{{snapshot_ref}}"
+      cleanup: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
+
+  - name: list snapshots as json and confirm ours is present
+    cmd: [snapshot, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListSandboxSnapshotsResponse
+      stdout_contains: "{{snapshot_ref}}"
+
+  - name: delete the snapshot (may 502 on provider-side failures)
+    cmd: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
+    expect:
+      exit: 0
+
+  - name: delete the source sandbox
+    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    expect:
+      exit: 0
