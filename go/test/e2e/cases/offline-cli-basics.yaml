@@ -1,5 +1,5 @@
 # Offline sample case: exercises basic CLI plumbing (unknown commands,
-# flags that aren't registered on a given command, stdin, and a --local
+# flags that aren't registered anywhere in the tree, stdin, and a --local
 # sandbox lookup that fails fast against an empty, isolated state
 # directory). No Docker, network, or API credentials required — the
 # e2e_test.go entry point points AMIKA_STATE_DIRECTORY at a fresh empty
@@ -13,11 +13,17 @@ steps:
       exit: 1
       stderr_contains: 'unknown command "bogus-command"'
 
-  - name: version does not register --output, so -o json is rejected as an unknown flag
-    cmd: [version, -o, json]
+  - name: a flag not registered anywhere in the command tree is rejected
+    # --output/-o used to be the go-to "unregistered flag" example, but it is
+    # now a persistent flag on the root command (see offline-output-flag.yaml
+    # for its own validation), so every command inherits it and it no longer
+    # demonstrates an unknown-flag rejection. A flag with no registration on
+    # this command (or the root) still fails fast, before RunE, via cobra's
+    # own flag parser.
+    cmd: [sandbox, connect, somebox, --bogus-flag]
     expect:
       exit: 1
-      stderr_contains: "unknown shorthand flag"
+      stderr_contains: "unknown flag: --bogus-flag"
 
   - name: sandbox connect --local fails fast against an empty sandbox store
     cmd: [sandbox, connect, does-not-exist, --local]

@@ -1,0 +1,24 @@
+# Real-API case: read-only, does not create/mutate any resource.
+# Lists sandbox snapshots in the authenticated org via
+# GET /api/v0beta1/sandboxes/snapshots.
+name: snapshot list against the real API is read-only and well-formed
+steps:
+  - name: snapshot list -o json returns the {items:[...]} envelope matching ListSandboxSnapshotsResponse
+    cmd: [snapshot, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListSandboxSnapshotsResponse
+      stdout_json:
+        items: "@array"
+
+  - name: snapshot list -o json-pretty is valid pretty-printed JSON of the same shape
+    cmd: [snapshot, list, -o, json-pretty]
+    expect:
+      exit: 0
+      schema: ListSandboxSnapshotsResponse
+
+  - name: snapshot list (text) prints a NAME/STATE table
+    cmd: [snapshot, list]
+    expect:
+      exit: 0
+      stdout_contains: "NAME"

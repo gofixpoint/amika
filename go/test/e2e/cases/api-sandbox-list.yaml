@@ -1,0 +1,21 @@
+# Real-API case: read-only, does not create/mutate any resource.
+# Lists sandboxes in the authenticated org via GET /api/v0beta1/sandboxes.
+name: sandbox list against the real API is read-only and well-formed
+steps:
+  - name: sandbox list -o json returns an array matching ListSandboxesResponse
+    cmd: [sandbox, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListSandboxesResponse
+
+  - name: sandbox list -o json-pretty is valid pretty-printed JSON of the same shape
+    cmd: [sandbox, list, -o, json-pretty]
+    expect:
+      exit: 0
+      schema: ListSandboxesResponse
+
+  - name: sandbox list (text) prints a NAME/STATE table
+    cmd: [sandbox, list]
+    expect:
+      exit: 0
+      stdout_contains: "NAME"

@@ -1,0 +1,43 @@
+# Offline case: argument/usage validation errors and --help, none of which
+# need Docker, network, or credentials.
+name: argument and usage errors are reported clearly offline
+steps:
+  - name: a missing required positional argument fails with cobra's arg-count error
+    cmd: [sandbox, delete]
+    expect:
+      exit: 1
+      stderr_contains: "requires at least 1 arg(s), only received 0"
+
+  - name: an unrecognized subcommand under a command GROUP does not error
+    # This is a real, verified cobra quirk (not an Amika bug): cobra's
+    # "unknown command" check (legacyArgs) only fires for the ROOT command.
+    # For any non-root command that has subcommands but no Run/RunE of its
+    # own (every "amika <group>" command here), an unrecognized trailing
+    # word like "bogus" is treated as leftover args to a non-runnable
+    # command, which cobra resolves by printing that group's help and
+    # exiting 0 — no error, no stderr output. Contrast with the root-level
+    # case just below.
+    cmd: [sandbox, bogus]
+    expect:
+      exit: 0
+      stdout_contains: "Available Commands"
+
+  - name: an unrecognized subcommand at the ROOT is rejected
+    # Unlike the nested-group case above, the root command (which has no
+    # parent) does run cobra's legacyArgs "unknown command" check.
+    cmd: [bogus-command]
+    expect:
+      exit: 1
+      stderr_contains: 'unknown command "bogus-command" for "amika"'
+
+  - name: amika --help exits 0 and lists top-level commands
+    cmd: [--help]
+    expect:
+      exit: 0
+      stdout_contains: "Available Commands"
+
+  - name: amika sandbox code --help exits 0 and shows its own usage line
+    cmd: [sandbox, code, --help]
+    expect:
+      exit: 0
+      stdout_contains: "amika sandbox code <name> [flags]"

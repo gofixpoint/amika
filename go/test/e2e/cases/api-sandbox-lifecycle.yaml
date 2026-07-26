@@ -1,0 +1,84 @@
+name: remote sandbox full lifecycle (create, list, agent-send, stop, start, snapshot, delete)
+# A single real remote sandbox is created and reused across every
+# resource-dependent command, then deleted. The `resource` blocks register
+# the sandbox and snapshot for reverse-order ledger cleanup, so they are
+# removed even if a later step fails. The final explicit delete steps also
+# exercise the delete commands; on the happy path the ledger's redundant
+# delete is a harmless no-op that is logged and skipped.
+steps:
+  - name: create a remote sandbox and wait until it is provisioned
+    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+        id: "@string"
+        services: "@array"
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+
+  - name: list sandboxes as json and confirm ours is present
+    cmd: [sandbox, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListSandboxesResponse
+      stdout_contains: "{{sandbox_name}}"
+
+  - name: send one message to the agent and get a synchronous response
+    cmd: [sandbox, agent-send, "{{sandbox_name}}", "Reply with exactly the word: pong", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_json:
+        sandbox: "{{sandbox_name}}"
+        agent: claude
+        status: completed
+        response: "@string"
+        is_error: false
+
+  - name: stop the sandbox
+    cmd: [sandbox, stop, "{{sandbox_name}}", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_contains: "{{sandbox_name}}"
+
+  - name: start the sandbox again
+    cmd: [sandbox, start, "{{sandbox_name}}", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_contains: "{{sandbox_name}}"
+
+  - name: capture a full snapshot and wait until it settles
+    cmd: [snapshot, create, --no-interactive, --mode, full, --name, "e2e-{{sandbox_name}}", --sandbox, "{{sandbox_name}}", -o, json]
+    expect:
+      exit: 0
+      schema: SandboxSnapshot
+      stdout_json:
+        snapshot: "@string"
+    capture:
+      snapshot_ref: $.snapshot
+    resource:
+      type: snapshot
+      name: "{{snapshot_ref}}"
+      cleanup: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
+
+  - name: list snapshots as json and confirm ours is present
+    cmd: [snapshot, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListSandboxSnapshotsResponse
+      stdout_contains: "{{snapshot_ref}}"
+
+  - name: delete the snapshot
+    cmd: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
+    expect:
+      exit: 0
+
+  - name: delete the sandbox
+    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    expect:
+      exit: 0
