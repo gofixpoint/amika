@@ -51,7 +51,13 @@ var sandboxStartCmd = &cobra.Command{
 		}
 		pw := format.Progress(cmd.OutOrStdout())
 
-		var results []output.ItemResult
+		// items carries the JSON payload for -o json: the target's final Sandbox
+		// (API shape) on success, or an output.ItemResult{status:"error",...} on
+		// failure (there is no resource to report for a target that never
+		// started) — see finishBatch and decision 3 in the output-format work
+		// ("batch start/stop emit an array of final resources").
+		var items []any
+		var failed []string
 		if mode == runmode.Remote {
 			remoteClient, err := getRemoteClient(target)
 			if err != nil {
@@ -59,16 +65,17 @@ var sandboxStartCmd = &cobra.Command{
 			}
 			for _, name := range args {
 				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
-					results = append(results, batchError(name, remoteErr))
+					appendBatchFailure(&items, &failed, name, remoteErr)
 					continue
 				}
 				fmt.Fprintf(pw, "Sandbox %q starting...\n", name)
-				if _, remoteErr := remoteClient.WaitForSandboxStart(name); remoteErr != nil {
-					results = append(results, batchError(name, remoteErr))
-				} else {
-					fmt.Fprintf(pw, "Sandbox %q started (remote)\n", name)
-					results = append(results, output.ItemResult{Name: name, Status: "started"})
+				polled, remoteErr := remoteClient.WaitForSandboxStart(name)
+				if remoteErr != nil {
+					appendBatchFailure(&items, &failed, name, remoteErr)
+					continue
 				}
+				fmt.Fprintf(pw, "Sandbox %q started (remote)\n", name)
+				items = append(items, normalizeSandboxJSON(*polled))
 			}
 		} else {
 			sandboxesFile, err := config.SandboxesStateFile()
@@ -79,20 +86,22 @@ var sandboxStartCmd = &cobra.Command{
 			for _, name := range args {
 				info, localErr := store.Get(name)
 				if localErr != nil {
-					results = append(results, batchError(name, fmt.Errorf("sandbox %q not found", name)))
+					appendBatchFailure(&items, &failed, name, fmt.Errorf("sandbox %q not found", name))
 					continue
 				}
+				state := "running"
 				if info.Provider == "docker" {
 					if err := sandbox.StartDockerSandbox(name); err != nil {
-						results = append(results, batchError(name, err))
+						appendBatchFailure(&items, &failed, name, err)
 						continue
 					}
+					state = localDockerState(name)
 				}
 				fmt.Fprintf(pw, "Sandbox %q started\n", name)
-				results = append(results, output.ItemResult{Name: name, Status: "started"})
+				items = append(items, normalizeSandboxJSON(remoteSandboxFromInfo(info, state)))
 			}
 		}
-		return finishBatch(cmd, format, results)
+		return finishBatch(cmd, format, items, failed)
 	},
 }
 
@@ -118,7 +127,10 @@ var sandboxStopCmd = &cobra.Command{
 		}
 		pw := format.Progress(cmd.OutOrStdout())
 
-		var results []output.ItemResult
+		// items carries the JSON payload for -o json: see the matching comment
+		// in sandboxStartCmd.
+		var items []any
+		var failed []string
 		if mode == runmode.Remote {
 			remoteClient, err := getRemoteClient(target)
 			if err != nil {
@@ -126,16 +138,17 @@ var sandboxStopCmd = &cobra.Command{
 			}
 			for _, name := range args {
 				if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
-					results = append(results, batchError(name, remoteErr))
+					appendBatchFailure(&items, &failed, name, remoteErr)
 					continue
 				}
 				fmt.Fprintf(pw, "Sandbox %q stopping...\n", name)
-				if _, remoteErr := remoteClient.WaitForSandboxStop(name); remoteErr != nil {
-					results = append(results, batchError(name, remoteErr))
-				} else {
-					fmt.Fprintf(pw, "Sandbox %q stopped (remote)\n", name)
-					results = append(results, output.ItemResult{Name: name, Status: "stopped"})
+				polled, remoteErr := remoteClient.WaitForSandboxStop(name)
+				if remoteErr != nil {
+					appendBatchFailure(&items, &failed, name, remoteErr)
+					continue
 				}
+				fmt.Fprintf(pw, "Sandbox %q stopped (remote)\n", name)
+				items = append(items, normalizeSandboxJSON(*polled))
 			}
 		} else {
 			sandboxesFile, err := config.SandboxesStateFile()
@@ -146,20 +159,22 @@ var sandboxStopCmd = &cobra.Command{
 			for _, name := range args {
 				info, localErr := store.Get(name)
 				if localErr != nil {
-					results = append(results, batchError(name, fmt.Errorf("sandbox %q not found", name)))
+					appendBatchFailure(&items, &failed, name, fmt.Errorf("sandbox %q not found", name))
 					continue
 				}
+				state := "stopped"
 				if info.Provider == "docker" {
 					if err := sandbox.StopDockerSandbox(name); err != nil {
-						results = append(results, batchError(name, err))
+						appendBatchFailure(&items, &failed, name, err)
 						continue
 					}
+					state = localDockerState(name)
 				}
 				fmt.Fprintf(pw, "Sandbox %q stopped\n", name)
-				results = append(results, output.ItemResult{Name: name, Status: "stopped"})
+				items = append(items, normalizeSandboxJSON(remoteSandboxFromInfo(info, state)))
 			}
 		}
-		return finishBatch(cmd, format, results)
+		return finishBatch(cmd, format, items, failed)
 	},
 }
 
@@ -168,26 +183,44 @@ func batchError(name string, err error) output.ItemResult {
 	return output.ItemResult{Name: name, Status: "error", Error: err.Error()}
 }
 
-// finishBatch emits the batch results as JSON when requested and returns a
-// non-nil error (for a non-zero exit) if any item failed. In text mode the
-// per-item progress has already been printed, so it only needs to surface the
-// combined failure; in JSON mode the per-item errors are in the emitted array.
-func finishBatch(cmd *cobra.Command, format output.Format, results []output.ItemResult) error {
-	var failed []string
-	for _, r := range results {
-		if r.Status == "error" {
-			failed = append(failed, fmt.Sprintf("sandbox %q: %s", r.Name, r.Error))
-		}
+// localDockerState reads a local Docker sandbox's live container state (e.g.
+// "running", "exited"), falling back to "unknown" if the state cannot be
+// determined (matching `sandbox list`'s treatment of the same failure).
+func localDockerState(name string) string {
+	state, err := sandbox.GetDockerContainerState(name)
+	if err != nil {
+		return "unknown"
 	}
+	return state
+}
+
+// appendBatchFailure records one failed batch item both in items (the JSON
+// payload, as an output.ItemResult) and in failed (the text-mode combined
+// error message), keeping the two in sync as sandbox start/stop build up
+// their mixed-shape result array.
+func appendBatchFailure(items *[]any, failed *[]string, name string, err error) {
+	*items = append(*items, batchError(name, err))
+	*failed = append(*failed, fmt.Sprintf("sandbox %q: %s", name, err.Error()))
+}
+
+// finishBatch emits items as the JSON array for `-o json`/`-o json-pretty` and
+// returns a non-nil error (for a non-zero exit) if any item failed; failed
+// carries the human-readable per-item failure messages used to build the
+// text-mode combined error. In text mode the per-item progress has already
+// been printed, so it only needs to surface the combined failure; in JSON
+// mode each element of items carries its own per-item detail (see
+// appendBatchFailure and the sandbox start/stop RunE bodies for the mixed
+// success/failure shape).
+func finishBatch(cmd *cobra.Command, format output.Format, items []any, failed []string) error {
 	if format.IsJSON() {
-		if results == nil {
-			results = []output.ItemResult{}
+		if items == nil {
+			items = []any{}
 		}
-		if err := format.JSON(cmd.OutOrStdout(), results); err != nil {
+		if err := format.JSON(cmd.OutOrStdout(), items); err != nil {
 			return err
 		}
 		if len(failed) > 0 {
-			return fmt.Errorf("%d of %d sandboxes failed; see JSON output", len(failed), len(results))
+			return fmt.Errorf("%d of %d sandboxes failed; see JSON output", len(failed), len(items))
 		}
 		return nil
 	}
@@ -195,76 +228,6 @@ func finishBatch(cmd *cobra.Command, format output.Format, results []output.Item
 		return fmt.Errorf("%s", strings.Join(failed, "\n"))
 	}
 	return nil
-}
-
-// sandboxJSON is the stable JSON shape emitted by `sandbox list -o json`. It is
-// defined here, decoupled from the internal amika.Sandbox type, so the CLI's
-// JSON contract stays consistent (snake_case) with the other commands and does
-// not shift if the internal type gains or renames fields.
-type sandboxJSON struct {
-	Name      string       `json:"name"`
-	State     string       `json:"state"`
-	Location  string       `json:"location"`
-	Provider  string       `json:"provider,omitempty"`
-	Image     string       `json:"image,omitempty"`
-	Branch    string       `json:"branch,omitempty"`
-	Repos     []string     `json:"repos"`
-	Ports     []portJSON   `json:"ports"`
-	CreatedBy *creatorJSON `json:"created_by,omitempty"`
-	CreatedAt string       `json:"created_at"`
-}
-
-// portJSON is the JSON shape of a published port binding.
-type portJSON struct {
-	HostIP        string `json:"host_ip,omitempty"`
-	HostPort      int    `json:"host_port"`
-	ContainerPort int    `json:"container_port"`
-	Protocol      string `json:"protocol,omitempty"`
-}
-
-// creatorJSON identifies the human who created a sandbox.
-type creatorJSON struct {
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
-}
-
-// sandboxListJSON maps internal sandbox records to the stable JSON shape. It
-// always returns a non-nil slice so an empty result marshals as [] rather than
-// null.
-func sandboxListJSON(items []amika.Sandbox) []sandboxJSON {
-	out := make([]sandboxJSON, 0, len(items))
-	for _, sb := range items {
-		ports := make([]portJSON, 0, len(sb.Ports))
-		for _, p := range sb.Ports {
-			ports = append(ports, portJSON{
-				HostIP:        p.HostIP,
-				HostPort:      p.HostPort,
-				ContainerPort: p.ContainerPort,
-				Protocol:      p.Protocol,
-			})
-		}
-		var creator *creatorJSON
-		if sb.CreatedBy != nil {
-			creator = &creatorJSON{Name: sb.CreatedBy.Name, Email: sb.CreatedBy.Email}
-		}
-		repos := sb.Repos
-		if repos == nil {
-			repos = []string{}
-		}
-		out = append(out, sandboxJSON{
-			Name:      sb.Name,
-			State:     sb.State,
-			Location:  sb.Location,
-			Provider:  sb.Provider,
-			Image:     sb.Image,
-			Branch:    sb.Branch,
-			Repos:     repos,
-			Ports:     ports,
-			CreatedBy: creator,
-			CreatedAt: sb.CreatedAt,
-		})
-	}
-	return out
 }
 
 var sandboxListCmd = &cobra.Command{
@@ -284,6 +247,11 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		var allItems []amika.Sandbox
+		// jsonItems mirrors the API's ListSandboxesResponse shape (an array of
+		// Sandbox) for -o json, per the unification decision: local sandboxes are
+		// emitted in the same shape as remote ones (see remoteSandboxFromPublic),
+		// rather than the CLI-only DTO previously used here.
+		var jsonItems []apiclient.RemoteSandbox
 
 		if mode == runmode.Local {
 			result, err := amika.NewService(amika.Options{}).ListSandboxes(cmd.Context(), amika.ListSandboxesRequest{})
@@ -293,15 +261,13 @@ var sandboxListCmd = &cobra.Command{
 			for i := range result.Items {
 				result.Items[i].Location = "local"
 				if result.Items[i].Provider == "docker" {
-					state, err := sandbox.GetDockerContainerState(result.Items[i].Name)
-					if err != nil {
-						result.Items[i].State = "unknown"
-					} else {
-						result.Items[i].State = state
-					}
+					result.Items[i].State = localDockerState(result.Items[i].Name)
 				}
 			}
 			allItems = append(allItems, result.Items...)
+			for _, sb := range result.Items {
+				jsonItems = append(jsonItems, remoteSandboxFromPublic(sb))
+			}
 		} else {
 			client, err := getRemoteClient(target)
 			if err != nil {
@@ -311,15 +277,16 @@ var sandboxListCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			jsonItems = remoteSandboxes
 			for _, rs := range remoteSandboxes {
 				allItems = append(allItems, amika.Sandbox{
 					Name:      rs.Name,
 					State:     rs.State,
-					Provider:  rs.Provider,
+					Provider:  deref(rs.Provider),
 					CreatedAt: rs.CreatedAt,
 					Location:  "remote",
-					Branch:    rs.Branch,
-					Repos:     repoNamesFromURL(rs.RepoURL),
+					Branch:    deref(rs.Branch),
+					Repos:     repoNamesFromURL(deref(rs.RepoURL)),
 					Ports:     portBindingsFromRemoteServices(rs.Services),
 					CreatedBy: creatorFromRemote(rs.CreatedBy),
 				})
@@ -331,7 +298,10 @@ var sandboxListCmd = &cobra.Command{
 			return err
 		}
 		if format.IsJSON() {
-			return format.JSON(cmd.OutOrStdout(), sandboxListJSON(allItems))
+			if jsonItems == nil {
+				jsonItems = []apiclient.RemoteSandbox{}
+			}
+			return format.JSON(cmd.OutOrStdout(), jsonItems)
 		}
 
 		if len(allItems) == 0 {

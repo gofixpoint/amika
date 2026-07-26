@@ -20,114 +20,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// sandboxDetailJSON is the JSON emitted by `sandbox create` for the created
-// sandbox. It carries structured ports and services (with generated URLs)
-// rather than the display strings the text output prints.
-type sandboxDetailJSON struct {
-	Name        string              `json:"name"`
-	Location    string              `json:"location"`
-	State       string              `json:"state,omitempty"`
-	Provider    string              `json:"provider,omitempty"`
-	Image       string              `json:"image,omitempty"`
-	ContainerID string              `json:"container_id,omitempty"`
-	Branch      string              `json:"branch,omitempty"`
-	Ports       []portJSON          `json:"ports"`
-	Services    []serviceDetailJSON `json:"services"`
-}
-
-// serviceDetailJSON is one named service with its resolved port bindings.
-type serviceDetailJSON struct {
-	Name  string            `json:"name"`
-	Ports []servicePortJSON `json:"ports"`
-}
-
-// servicePortJSON is a port binding with an optional generated URL.
-type servicePortJSON struct {
-	HostIP        string `json:"host_ip,omitempty"`
-	HostPort      int    `json:"host_port"`
-	ContainerPort int    `json:"container_port"`
-	Protocol      string `json:"protocol,omitempty"`
-	URL           string `json:"url,omitempty"`
-}
-
-// sandboxDetailFromInfo builds the create JSON for a local sandbox.
-func sandboxDetailFromInfo(info sandbox.Info) sandboxDetailJSON {
-	ports := make([]portJSON, 0, len(info.Ports))
-	for _, p := range info.Ports {
-		ports = append(ports, portJSON{
-			HostIP:        p.HostIP,
-			HostPort:      p.HostPort,
-			ContainerPort: p.ContainerPort,
-			Protocol:      p.Protocol,
-		})
-	}
-	services := make([]serviceDetailJSON, 0, len(info.Services))
-	for _, svc := range info.Services {
-		sp := make([]servicePortJSON, 0, len(svc.Ports))
-		for _, port := range svc.Ports {
-			sp = append(sp, servicePortJSON{
-				HostIP:        port.HostIP,
-				HostPort:      port.HostPort,
-				ContainerPort: port.ContainerPort,
-				Protocol:      port.Protocol,
-				URL:           port.URL,
-			})
-		}
-		services = append(services, serviceDetailJSON{Name: svc.Name, Ports: sp})
-	}
-	return sandboxDetailJSON{
-		Name:        info.Name,
-		Location:    "local",
-		State:       "running",
-		Provider:    info.Provider,
-		Image:       info.Image,
-		ContainerID: info.ContainerID,
-		Branch:      info.Branch,
-		Ports:       ports,
-		Services:    services,
-	}
-}
-
-// sandboxDetailFromRemote builds the create JSON for a remote sandbox, grouping
-// the flat service list by service name the way the text output does.
-func sandboxDetailFromRemote(sb *apiclient.RemoteSandbox) sandboxDetailJSON {
-	var order []string
-	byName := make(map[string]*serviceDetailJSON, len(sb.Services))
-	ports := make([]portJSON, 0, len(sb.Services))
-	for _, svc := range sb.Services {
-		ports = append(ports, portJSON{
-			HostPort:      svc.HostPort,
-			ContainerPort: svc.ContainerPort,
-			Protocol:      svc.Protocol,
-		})
-		s, ok := byName[svc.Name]
-		if !ok {
-			order = append(order, svc.Name)
-			byName[svc.Name] = &serviceDetailJSON{Name: svc.Name}
-			s = byName[svc.Name]
-		}
-		s.Ports = append(s.Ports, servicePortJSON{
-			HostPort:      svc.HostPort,
-			ContainerPort: svc.ContainerPort,
-			Protocol:      svc.Protocol,
-			URL:           svc.URL,
-		})
-	}
-	services := make([]serviceDetailJSON, 0, len(order))
-	for _, name := range order {
-		services = append(services, *byName[name])
-	}
-	return sandboxDetailJSON{
-		Name:     sb.Name,
-		Location: "remote",
-		State:    sb.State,
-		Provider: sb.Provider,
-		Branch:   sb.Branch,
-		Ports:    ports,
-		Services: services,
-	}
-}
-
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new sandbox",
@@ -409,7 +301,7 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		if format.IsJSON() {
-			return format.JSON(cmd.OutOrStdout(), sandboxDetailFromInfo(info))
+			return format.JSON(cmd.OutOrStdout(), normalizeSandboxJSON(remoteSandboxFromInfo(info, localDockerState(name))))
 		}
 
 		if connect {
@@ -562,7 +454,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	printResolvedAgentCredentials(cmd, resolved)
 
 	if format.IsJSON() {
-		return format.JSON(cmd.OutOrStdout(), sandboxDetailFromRemote(sb))
+		return format.JSON(cmd.OutOrStdout(), normalizeSandboxJSON(*sb))
 	}
 
 	connect, _ := cmd.Flags().GetBool("connect")
