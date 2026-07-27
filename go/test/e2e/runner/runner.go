@@ -120,14 +120,16 @@ func LoadCase(path string) (*Case, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse case %s: %w", path, err)
 	}
-	// A case file must hold exactly one YAML document. A stray "---" followed
-	// by more content would otherwise be silently ignored, bypassing the
-	// known-field validation above and letting a weaker first document pass.
+	// A case file must hold exactly one content-bearing YAML document. A stray
+	// "---" followed by more content would otherwise be silently ignored,
+	// bypassing the known-field validation above and letting a weaker first
+	// document pass. A bare trailing "---" (an empty/null second document) is
+	// harmless and allowed.
 	var extra yaml.Node
 	switch err := dec.Decode(&extra); {
-	case err == nil:
+	case err == nil && documentHasContent(&extra):
 		return nil, fmt.Errorf("parse case %s: only one YAML document is allowed per case file", path)
-	case !errors.Is(err, io.EOF):
+	case err != nil && !errors.Is(err, io.EOF):
 		return nil, fmt.Errorf("parse case %s: %w", path, err)
 	}
 	// A second, lightweight pass records whether each step actually spelled
@@ -166,6 +168,22 @@ func LoadCase(path string) (*Case, error) {
 	}
 	c.SourcePath = path
 	return &c, nil
+}
+
+// documentHasContent reports whether a decoded YAML document carries a
+// non-null value. A bare trailing "---" or an explicit null second document
+// decodes to a document node whose content is a null scalar; those are
+// harmless, so only a document with real content counts as a disallowed
+// second document.
+func documentHasContent(doc *yaml.Node) bool {
+	content := doc
+	if doc.Kind == yaml.DocumentNode {
+		if len(doc.Content) == 0 {
+			return false
+		}
+		content = doc.Content[0]
+	}
+	return content.Kind != 0 && content.Tag != "!!null"
 }
 
 // markStdoutJSONPresence decodes data a second time into a structure that
@@ -582,9 +600,10 @@ func (r *Runner) registerResource(step Step) error {
 // ledger entry so a standalone reaper replaying the ledger with no base env of
 // its own (CleanupFromLedgerFile) still deletes the resource from the same
 // place it was created, even when the value came only from the run's base
-// Options.Env. Credentials are deliberately excluded: they must not be written
-// to the on-disk ledger, so standalone recovery must run in an environment
-// that already provides them.
+// Options.Env. These are the ONLY keys pulled from the base environment, so
+// ambient base-env credentials are not written to the on-disk ledger;
+// standalone recovery must run where those are already set. (A credential set
+// in a step's own env block is still persisted verbatim; see Entry.Env.)
 var cleanupTargetEnvKeys = []string{"AMIKA_STATE_DIRECTORY", "AMIKA_API_URL"}
 
 // resourceEnv returns the env overrides to persist on a ledger entry so

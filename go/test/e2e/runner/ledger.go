@@ -25,15 +25,18 @@ type Entry struct {
 	// deletes the resource.
 	CleanupArgv []string `json:"cleanup_argv"`
 	// Env holds the environment overrides to apply when cleaning up this
-	// resource: the creating step's own env overrides plus the resolved values
-	// of the cleanup target variables (AMIKA_STATE_DIRECTORY and
-	// AMIKA_API_URL), whether those came from the step, the injected state
-	// directory, or the run's base Options.Env. Cleanup applies them on top of
-	// its base environment so the resource is deleted against the same state
-	// and API it was created in, even when a standalone reaper replays the
-	// ledger with no base environment of its own (see CleanupFromLedgerFile).
-	// Credentials are deliberately not recorded here (they must not be written
-	// to disk), so standalone recovery must run where they are already set.
+	// resource: the creating step's own env overrides (persisted verbatim)
+	// plus the resolved values of the cleanup target variables
+	// (AMIKA_STATE_DIRECTORY and AMIKA_API_URL), whether those came from the
+	// step, the injected state directory, or the run's base Options.Env.
+	// Cleanup applies them on top of its base environment so the resource is
+	// deleted against the same state and API it was created in, even when a
+	// standalone reaper replays the ledger with no base environment of its own
+	// (see CleanupFromLedgerFile). From the run's base Options.Env only those
+	// two target variables are recorded, so ambient base-env credentials are
+	// not written to disk; standalone recovery must run where those are already
+	// set. A credential placed directly in a step's own env block IS persisted
+	// verbatim, so avoid putting long-lived secrets there.
 	Env map[string]string `json:"env,omitempty"`
 	// CreatedAt is when the resource was registered.
 	CreatedAt time.Time `json:"created_at"`

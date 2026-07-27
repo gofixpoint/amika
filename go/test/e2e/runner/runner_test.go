@@ -1165,6 +1165,18 @@ steps:
 	if _, err := LoadCase(path); err == nil {
 		t.Fatal("expected LoadCase to reject a file with multiple YAML documents")
 	}
+
+	// A bare trailing "---" (an empty second document) is harmless and loads.
+	trailing := filepath.Join(dir, "trailing.yaml")
+	writeFile(t, trailing, `name: only doc
+steps:
+  - name: s
+    cmd: [version]
+---
+`)
+	if _, err := LoadCase(trailing); err != nil {
+		t.Fatalf("expected a bare trailing --- to load, got: %v", err)
+	}
 }
 
 // TestRunnerExplicitNullStdoutJSON covers the presence-vs-null ambiguity: an
