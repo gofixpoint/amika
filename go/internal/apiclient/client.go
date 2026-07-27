@@ -198,8 +198,13 @@ func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
 	return &result, nil
 }
 
-// waitForSandboxState polls GET /api/v0beta1/sandboxes/{name} every 3 seconds until
-// the sandbox state matches one of readyStates or "failed".
+// pollInterval is the delay between polls in the WaitForSandbox* loops.
+// It is a package var (not a constant) so tests can shrink it to keep the
+// suite fast; production always uses the 3 second default.
+var pollInterval = 3 * time.Second
+
+// waitForSandboxState polls GET /api/v0beta1/sandboxes/{name} every pollInterval
+// until the sandbox state matches one of readyStates or "failed".
 func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg string) (*RemoteSandbox, error) {
 	for {
 		sb, err := c.GetSandbox(name)
@@ -217,7 +222,7 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 				return sb, nil
 			}
 		}
-		time.Sleep(3 * time.Second)
+		time.Sleep(pollInterval)
 	}
 }
 
@@ -424,8 +429,9 @@ func (c *Client) GetSandboxSnapshot(ref string) (*SandboxSnapshot, error) {
 	return &result, nil
 }
 
-// WaitForSandboxSnapshot polls GET /api/v0beta1/sandbox-snapshots/{ref} every 3
-// seconds until the snapshot reaches a terminal state ("active" or "failed").
+// WaitForSandboxSnapshot polls GET /api/v0beta1/sandbox-snapshots/{ref} every
+// pollInterval until the snapshot reaches a terminal state ("active" or
+// "failed").
 func (c *Client) WaitForSandboxSnapshot(ref string) (*SandboxSnapshot, error) {
 	for {
 		snap, err := c.GetSandboxSnapshot(ref)
@@ -441,7 +447,7 @@ func (c *Client) WaitForSandboxSnapshot(ref string) (*SandboxSnapshot, error) {
 			}
 			return snap, fmt.Errorf("sandbox snapshot capture failed")
 		}
-		time.Sleep(3 * time.Second)
+		time.Sleep(pollInterval)
 	}
 }
 

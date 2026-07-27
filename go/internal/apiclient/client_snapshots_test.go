@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSandboxSnapshotRequestPaths(t *testing.T) {
@@ -193,6 +194,10 @@ func TestGetSandboxSnapshot_UsesRefQuery(t *testing.T) {
 // TestWaitForSandboxSnapshot_PollsUntilTerminal checks that polling continues
 // through non-terminal states and stops at "active".
 func TestWaitForSandboxSnapshot_PollsUntilTerminal(t *testing.T) {
+	saved := pollInterval
+	pollInterval = time.Millisecond
+	defer func() { pollInterval = saved }()
+
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
