@@ -88,6 +88,20 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid --url-scheme %q: must be \"http\" or \"https\"", urlScheme)
 	}
 
+	// Validate --remote-target up front, unconditionally, matching `service
+	// list`: a bad value fails the same way regardless of mode or auth state.
+	if _, err := getServiceRemoteTarget(cmd); err != nil {
+		return err
+	}
+
+	mode := runmode.Resolve(cmd)
+	if mode == runmode.Local {
+		return fmt.Errorf("service create is only supported for remote sandboxes; omit --local (local sandbox services are declared in the repo config at creation time)")
+	}
+	if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		return err
+	}
+
 	svc, err := runmode.NewRemoteClient().CreateSandboxService(sandboxRef, apiclient.SandboxServiceRequest{
 		Name:      name,
 		Port:      port,
@@ -110,6 +124,20 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 	}
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("--name is required")
+	}
+
+	// Validate --remote-target up front, unconditionally, matching `service
+	// list`: a bad value fails the same way regardless of mode or auth state.
+	if _, err := getServiceRemoteTarget(cmd); err != nil {
+		return err
+	}
+
+	mode := runmode.Resolve(cmd)
+	if mode == runmode.Local {
+		return fmt.Errorf("service delete is only supported for remote sandboxes; omit --local (local sandbox services are declared in the repo config at creation time)")
+	}
+	if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		return err
 	}
 
 	if !force {

@@ -215,8 +215,12 @@ func TestServiceDeleteCommand_Validation(t *testing.T) {
 }
 
 // Declining the confirmation prompt aborts without deleting (no network call).
+// A credential is provided so the default remote mode passes the auth check and
+// reaches the prompt.
 func TestServiceDeleteCommand_DeclineAborts(t *testing.T) {
 	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
 	rootCmd.SetIn(strings.NewReader("n\n"))
 	defer rootCmd.SetIn(nil)
 
@@ -232,6 +236,8 @@ func TestServiceDeleteCommand_DeclineAborts(t *testing.T) {
 // The delete alias `rm` resolves to the same command.
 func TestServiceDeleteCommand_RmAlias(t *testing.T) {
 	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
 	rootCmd.SetIn(strings.NewReader("n\n"))
 	defer rootCmd.SetIn(nil)
 
@@ -241,6 +247,75 @@ func TestServiceDeleteCommand_RmAlias(t *testing.T) {
 	}
 	if !strings.Contains(out, "Aborted.") {
 		t.Fatalf("expected 'Aborted.', got:\n%s", out)
+	}
+}
+
+// create and delete are remote-only: --local must be rejected rather than
+// silently routed to the remote API (which would mutate the wrong service when
+// a same-named local and remote sandbox coexist).
+func TestServiceCreateCommand_LocalRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "create", "--local", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err == nil {
+		t.Fatal("expected --local to be rejected for create")
+	}
+	if !strings.Contains(err.Error(), "only supported for remote sandboxes") {
+		t.Fatalf("expected remote-only error, got: %v", err)
+	}
+}
+
+func TestServiceDeleteCommand_LocalRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "delete", "--local", "--force", "--sandbox", "box", "--name", "web")
+	if err == nil {
+		t.Fatal("expected --local to be rejected for delete")
+	}
+	if !strings.Contains(err.Error(), "only supported for remote sandboxes") {
+		t.Fatalf("expected remote-only error, got: %v", err)
+	}
+}
+
+// --remote-target is unsupported and must be rejected up front for the mutating
+// commands too, not silently ignored.
+func TestServiceCreateCommand_RemoteTargetRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "create", "--remote-target", "staging", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err == nil {
+		t.Fatal("expected --remote-target to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not yet supported") {
+		t.Fatalf("expected 'not yet supported' error, got: %v", err)
+	}
+}
+
+func TestServiceDeleteCommand_RemoteTargetRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "delete", "--remote-target", "staging", "--force", "--sandbox", "box", "--name", "web")
+	if err == nil {
+		t.Fatal("expected --remote-target to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not yet supported") {
+		t.Fatalf("expected 'not yet supported' error, got: %v", err)
+	}
+}
+
+// The default mode is remote, so mutating without credentials must fail with a
+// login hint rather than silently attempting a request.
+func TestServiceDeleteCommand_DefaultRemote_RequiresAuth(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+
+	_, err := runRootCommand("service", "delete", "--force", "--sandbox", "box", "--name", "web")
+	if err == nil {
+		t.Fatal("expected an auth error in remote mode without credentials")
+	}
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("expected 'not logged in' error, got: %v", err)
 	}
 }
 
