@@ -257,6 +257,11 @@ type Options struct {
 // Runner executes case files against a built amika binary, tracking
 // resources the steps create in a ledger so they can be cleaned up in
 // reverse order once the run ends (see Cleanup).
+//
+// A Runner is intended to be used by a single goroutine, one per case:
+// RunCase runs a case's steps sequentially. Its captured variables (Vars) are
+// not guarded by a lock, so a Runner must not be shared across goroutines. The
+// Ledger it exposes is independently goroutine-safe.
 type Runner struct {
 	opts   Options
 	ledger *Ledger

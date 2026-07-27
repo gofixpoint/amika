@@ -127,19 +127,20 @@ func (v *SchemaValidator) Validate(name string, instance any) error {
 }
 
 // rewriteNullable walks a decoded JSON Schema / OpenAPI document in place and
-// rewrites every `{"nullable": true}` object that also has a concrete `type`
-// into one whose `type` includes "null", so a JSON Schema 2020-12 validator
-// accepts the null values an OpenAPI-3.0-style `nullable` field allows. A
-// `nullable` schema with no `type` (e.g. one using anyOf, or a bare
-// `additionalProperties: {nullable: true}`) already accepts null, so it is
-// left as-is aside from dropping the now-meaningless keyword.
+// rewrites every `{"nullable": true}` object so a JSON Schema 2020-12
+// validator accepts the null values an OpenAPI-3.0-style `nullable` field
+// allows. The `nullable` keyword itself (meaningless under 2020-12) is always
+// dropped; addNullType then widens the schema to admit null. It deletes the
+// keyword BEFORE rewriting so a composition rewrite does not carry a stale
+// `nullable` into the nested copy and re-trigger on the recursive descent.
 func rewriteNullable(node any) {
 	switch n := node.(type) {
 	case map[string]any:
-		if isTrue(n["nullable"]) {
+		nullable := isTrue(n["nullable"])
+		delete(n, "nullable")
+		if nullable {
 			addNullType(n)
 		}
-		delete(n, "nullable")
 		for _, child := range n {
 			rewriteNullable(child)
 		}
@@ -150,15 +151,21 @@ func rewriteNullable(node any) {
 	}
 }
 
-// addNullType adds "null" to a schema object's `type`, whether it is a single
-// string or a list. A schema with no `type` is left untouched (it already
-// permits null under JSON Schema).
+// addNullType widens a schema (whose `nullable` keyword has already been
+// removed) so it also accepts null:
+//   - A concrete `type` (string or list) gains "null".
+//   - A schema with no `type` but constraining keywords ($ref, allOf, anyOf,
+//     oneOf, ...) is wrapped as `{"anyOf": [<original>, {"type": "null"}]}`,
+//     since adding a bare `type: null` would instead forbid the non-null
+//     value the constraints describe.
+//   - An empty schema already accepts null, so it is left untouched.
 func addNullType(schema map[string]any) {
 	switch t := schema["type"].(type) {
 	case string:
 		if t != "null" {
 			schema["type"] = []any{t, "null"}
 		}
+		return
 	case []any:
 		for _, existing := range t {
 			if s, ok := existing.(string); ok && s == "null" {
@@ -166,7 +173,17 @@ func addNullType(schema map[string]any) {
 			}
 		}
 		schema["type"] = append(t, "null")
+		return
 	}
+	if len(schema) == 0 {
+		return
+	}
+	original := make(map[string]any, len(schema))
+	for k, v := range schema {
+		original[k] = v
+		delete(schema, k)
+	}
+	schema["anyOf"] = []any{original, map[string]any{"type": "null"}}
 }
 
 // isTrue reports whether v is the boolean true.

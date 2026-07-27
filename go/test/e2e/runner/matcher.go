@@ -47,6 +47,9 @@ import (
 //   - "@regex: <pattern>" — actual must be a string matching the Go
 //     regexp <pattern>.
 //
+// A literal expected string that must itself begin with "@" is written with a
+// doubled leading "@": "@@foo" asserts the literal value "@foo".
+//
 // On mismatch, Match returns a single error listing every mismatching
 // path, one per line, in the form "$.a.b[0]: expected X, got Y".
 func Match(expected, actual any) error {
@@ -59,11 +62,17 @@ func Match(expected, actual any) error {
 }
 
 func matchAt(path string, expected, actual any, problems *[]string) {
-	if spec, ok := expected.(string); ok && isMatcher(spec) {
-		if err := applyMatcher(spec, actual); err != nil {
-			*problems = append(*problems, fmt.Sprintf("%s: %s", path, err))
+	if spec, ok := expected.(string); ok {
+		if strings.HasPrefix(spec, "@@") {
+			// Escaped literal: "@@foo" asserts the literal string "@foo", the
+			// way to match a value that really starts with "@".
+			expected = spec[1:]
+		} else if isMatcher(spec) {
+			if err := applyMatcher(spec, actual); err != nil {
+				*problems = append(*problems, fmt.Sprintf("%s: %s", path, err))
+			}
+			return
 		}
-		return
 	}
 
 	switch exp := expected.(type) {

@@ -292,6 +292,31 @@ func TestMatchUnknownMatcherIsAnError(t *testing.T) {
 	}
 }
 
+func TestMatchLiteralAtEscape(t *testing.T) {
+	// "@@foo" asserts the literal string "@foo", the escape for a value that
+	// really starts with "@".
+	if err := Match("@@foo", "@foo"); err != nil {
+		t.Fatalf("expected @@foo to match literal @foo: %v", err)
+	}
+	if err := Match("@@foo", "foo"); err == nil {
+		t.Fatal("expected @@foo not to match foo")
+	}
+	// Works nested in object values and array elements.
+	if err := Match(map[string]any{"k": "@@everyone"}, map[string]any{"k": "@everyone"}); err != nil {
+		t.Fatalf("expected escaped literal object value to match: %v", err)
+	}
+	if err := Match([]any{"@@x"}, []any{"@x"}); err != nil {
+		t.Fatalf("expected escaped literal array element to match: %v", err)
+	}
+}
+
+func TestMatchRegexInvalidPattern(t *testing.T) {
+	// A malformed @regex pattern is a clear error, not a silent pass.
+	if err := Match("@regex: (", "anything"); err == nil {
+		t.Fatal("expected an invalid @regex pattern to error")
+	}
+}
+
 // -----------------------------------------------------------------------
 // jsonpath.go
 // -----------------------------------------------------------------------
@@ -447,6 +472,42 @@ func TestSubstituteString(t *testing.T) {
 
 	if _, err := substituteString("{{undefined_var}}", vars); err == nil {
 		t.Fatalf("expected error for undefined var")
+	}
+}
+
+// TestSubstituteStepResolvesNestedStdoutJSONVar covers substituteAny recursing
+// into a nested stdout_json map/list to resolve a "{{var}}" template, so a
+// case can template values inside a structural JSON assertion.
+func TestSubstituteStepResolvesNestedStdoutJSONVar(t *testing.T) {
+	r, err := New(Options{BinPath: "unused", RunDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	r.vars["name"] = "sb-1"
+
+	step := Step{
+		Name: "nested template",
+		Cmd:  []string{"version"},
+		Expect: Expectation{
+			StdoutJSON: map[string]any{
+				"outer": map[string]any{"inner": "{{name}}"},
+				"list":  []any{"{{name}}", "literal"},
+			},
+		},
+	}
+	out, err := r.substituteStep(step)
+	if err != nil {
+		t.Fatalf("substituteStep: %v", err)
+	}
+	got, ok := out.Expect.StdoutJSON.(map[string]any)
+	if !ok {
+		t.Fatalf("expected StdoutJSON to remain a map, got %T", out.Expect.StdoutJSON)
+	}
+	if inner := got["outer"].(map[string]any)["inner"]; inner != "sb-1" {
+		t.Fatalf("expected nested map var resolved to sb-1, got %v", inner)
+	}
+	if first := got["list"].([]any)[0]; first != "sb-1" {
+		t.Fatalf("expected nested list var resolved to sb-1, got %v", first)
 	}
 }
 
@@ -1442,6 +1503,47 @@ func TestSchemaValidatorHonorsNullable(t *testing.T) {
 	// The wrong type is still rejected — nullable widens to null, not to anything.
 	if err := v.Validate("Thing", map[string]any{"id": "x", "branch": 7}); err == nil {
 		t.Fatalf("expected a number branch to fail validation")
+	}
+}
+
+// TestSchemaValidatorHonorsNullableComposition covers a nullable schema that
+// has no top-level type but constrains its value with allOf/$ref (a shape an
+// OpenAPI generator can emit). Dropping "nullable" alone would leave it
+// rejecting null, so the rewrite must widen it to accept null via composition.
+func TestSchemaValidatorHonorsNullableComposition(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "openapi.json")
+	writeFile(t, path, `{
+	  "openapi": "3.1.0",
+	  "info": {"title": "nullable-composition", "version": "0"},
+	  "paths": {},
+	  "components": {
+	    "schemas": {
+	      "Inner": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}},
+	      "Thing": {
+	        "type": "object",
+	        "required": ["child"],
+	        "properties": {
+	          "child": {"allOf": [{"$ref": "#/components/schemas/Inner"}], "nullable": true}
+	        }
+	      }
+	    }
+	  }
+	}`)
+
+	v := LoadOpenAPISchema(path)
+	// A null child validates because the field is nullable.
+	if err := v.Validate("Thing", map[string]any{"child": nil}); err != nil {
+		t.Fatalf("expected null child to validate under composed nullable: %v", err)
+	}
+	// A valid inner object validates.
+	if err := v.Validate("Thing", map[string]any{"child": map[string]any{"id": "x"}}); err != nil {
+		t.Fatalf("expected a valid inner object to validate: %v", err)
+	}
+	// An inner object missing its required field still fails: nullable widens
+	// to null, not to anything.
+	if err := v.Validate("Thing", map[string]any{"child": map[string]any{}}); err == nil {
+		t.Fatalf("expected an invalid inner object to fail validation")
 	}
 }
 

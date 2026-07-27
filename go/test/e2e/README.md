@@ -3,7 +3,7 @@
 A black-box test runner for the `amika` CLI. It runs the compiled
 `dist/amika` binary as a subprocess and asserts on
 `argv + stdin + env -> stdout + stderr + exit code`. Nothing here calls
-into Go packages that implement `amika` — every case is exactly what a
+into Go packages that implement `amika`; every case is exactly what a
 user typing commands at a shell would see.
 
 ## Running it
@@ -90,7 +90,7 @@ Any `{{var}}` placeholder in `cmd`, `stdin`, `env` values, `resource.name`,
 `resource.cleanup`, `expect.stdout_contains`, `expect.stderr_contains`, and
 (recursively, through nested maps/lists) `expect.stdout_json` is replaced
 with a previously `capture`d value. Referencing a variable that was never
-captured is an error — the step fails immediately rather than sending a
+captured is an error: the step fails immediately rather than sending a
 literal `{{typo}}` to the CLI.
 
 ### Capture: a minimal JSONPath
@@ -188,7 +188,7 @@ unreachable doc doesn't take down every case that doesn't use
 A step that creates something persistent (a sandbox, a volume, ...)
 declares a `resource` block naming the resource and the argv that deletes
 it. The runner appends this to the run's ledger (`ledger.json`) and
-**flushes it to disk immediately** — so if a later step in the same case
+**flushes it to disk immediately**, so if a later step in the same case
 crashes the test process outright, the resource is still recorded on
 disk and can be cleaned up by hand or by a future run.
 
@@ -216,7 +216,7 @@ without depending on any of that.
 
 A case that talks to the real remote API or spins up a Docker sandbox
 needs credentials/Docker available in the environment the test runs in,
-so it should **not** live under `cases/` yet — a case file there is
+so it should **not** live under `cases/` yet: a case file there is
 assumed runnable by anyone with `AMIKA_RUN_E2E=1` set, nothing else.
 When real-API cases are added (a later phase), name them so they are easy
 to filter out or gate separately, for example:
