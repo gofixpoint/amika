@@ -454,6 +454,13 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	printResolvedAgentCredentials(cmd, resolved)
 
 	if format.IsJSON() {
+		// The resolved agent credentials come back on the create (202)
+		// response, not the later GET poll, so carry them onto the polled
+		// sandbox before encoding. Otherwise -o json would drop the field
+		// that text mode prints (printResolvedAgentCredentials above).
+		if len(sb.ResolvedAgentCredentials) == 0 {
+			sb.ResolvedAgentCredentials = resolved
+		}
 		return format.JSON(cmd.OutOrStdout(), normalizeSandboxJSON(*sb))
 	}
 

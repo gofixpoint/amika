@@ -100,7 +100,8 @@ type RemoteSandboxService struct {
 }
 
 // RemoteSandbox mirrors the API's Sandbox schema (see
-// /api/v0beta1/sandboxes and docs/openapi.json component schema "Sandbox").
+// /api/v0beta1/sandboxes and the "Sandbox" component schema in the API's
+// OpenAPI document, served at /api/openapi.json).
 // It is the single decode/encode type: the CLI decodes API responses into it
 // and re-encodes the same value for `-o json`, so the two stay byte-for-byte
 // shaped the same (round-trip fidelity).
