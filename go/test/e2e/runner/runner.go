@@ -91,8 +91,14 @@ func LoadCase(path string) (*Case, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read case %s: %w", path, err)
 	}
+	// Decode with KnownFields so a misspelled key (e.g. "stdout_josn" for
+	// "stdout_json") fails at load time instead of being silently dropped,
+	// which would leave a step with no structural assertion and let it pass
+	// on the default exit-code check alone (a false-positive E2E result).
 	var c Case
-	if err := yaml.Unmarshal(data, &c); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse case %s: %w", path, err)
 	}
 	if c.Name == "" {
@@ -224,20 +230,31 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 		return err
 	}
 
-	if err := checkExitAndSubstrings(step, stdout, stderr, exitCode); err != nil {
+	// Check the exit code first: a mismatch means the command did not do what
+	// the step expected (e.g. creation failed), so there is nothing to
+	// capture, register, or assert further.
+	if err := checkExit(step, stdout, stderr, exitCode); err != nil {
 		return err
 	}
 
-	parsed, err := r.checkJSONExpectations(step, stdout)
+	parsed, err := parseStdout(step, stdout)
 	if err != nil {
 		return err
 	}
 
+	// Capture variables and register any created resource BEFORE the content
+	// assertions below. The command already exited as expected (creation
+	// succeeded), so a resource it created must reach the ledger even if a
+	// stdout_contains / stdout_json / schema assertion then fails; otherwise
+	// t.Cleanup can never delete it and it leaks.
 	if err := r.captureVars(step, parsed); err != nil {
 		return err
 	}
+	if err := r.registerResource(step); err != nil {
+		return err
+	}
 
-	return r.registerResource(step)
+	return r.checkContent(step, parsed, stdout, stderr)
 }
 
 // execStep runs step.Cmd through the binary under test and returns its
@@ -263,6 +280,15 @@ func (r *Runner) execStep(step Step) (stdout, stderr []byte, exitCode int, err e
 		return outBuf.Bytes(), errBuf.Bytes(), exitErr.ExitCode(), nil
 	}
 	return outBuf.Bytes(), errBuf.Bytes(), -1, fmt.Errorf("exec %v: %w", step.Cmd, runErr)
+}
+
+// CleanupEnv returns the environment that cleanup commands should run with:
+// the same base environment and injected AMIKA_STATE_DIRECTORY the run's
+// steps used (with no per-step overrides). Passing this to Cleanup ensures a
+// resource created under the run's isolated state directory is deleted from
+// that same state rather than the invoking user's default state.
+func (r *Runner) CleanupEnv() []string {
+	return r.stepEnv(nil)
 }
 
 // stepEnv builds the environment for one step: the runner's base
@@ -327,9 +353,10 @@ func (r *Runner) writeTranscript(index int, name string, stdout, stderr []byte, 
 	return nil
 }
 
-// checkExitAndSubstrings asserts the exit code and any substring
-// expectations, which do not require stdout to be JSON.
-func checkExitAndSubstrings(step Step, stdout, stderr []byte, exitCode int) error {
+// checkExit asserts the step's exit code. It runs before capture, resource
+// registration, and the content assertions: a mismatch means the command did
+// not behave as the step expected, so there is nothing further to do.
+func checkExit(step Step, stdout, stderr []byte, exitCode int) error {
 	wantExit := 0
 	if step.Expect.Exit != nil {
 		wantExit = *step.Expect.Exit
@@ -337,45 +364,48 @@ func checkExitAndSubstrings(step Step, stdout, stderr []byte, exitCode int) erro
 	if exitCode != wantExit {
 		return fmt.Errorf("exit code: expected %d, got %d\nstdout:\n%s\nstderr:\n%s", wantExit, exitCode, stdout, stderr)
 	}
+	return nil
+}
+
+// parseStdout decodes stdout as JSON when the step has a JSON-based check
+// (stdout_json or schema) or a capture that needs it. It returns nil when no
+// such need exists.
+func parseStdout(step Step, stdout []byte) (any, error) {
+	if step.Expect.StdoutJSON == nil && step.Expect.Schema == "" && len(step.Capture) == 0 {
+		return nil, nil
+	}
+	var parsed any
+	if err := json.Unmarshal(stdout, &parsed); err != nil {
+		return nil, fmt.Errorf("stdout is not valid JSON: %w\nstdout:\n%s", err, stdout)
+	}
+	return parsed, nil
+}
+
+// checkContent runs the value assertions: substring checks, structural
+// stdout_json matching, and OpenAPI schema validation. It runs AFTER capture
+// and resource registration so that a resource the step created is tracked
+// for cleanup even when one of these assertions fails.
+func (r *Runner) checkContent(step Step, parsed any, stdout, stderr []byte) error {
 	if step.Expect.StdoutContains != "" && !strings.Contains(string(stdout), step.Expect.StdoutContains) {
 		return fmt.Errorf("stdout_contains: %q not found in stdout:\n%s", step.Expect.StdoutContains, stdout)
 	}
 	if step.Expect.StderrContains != "" && !strings.Contains(string(stderr), step.Expect.StderrContains) {
 		return fmt.Errorf("stderr_contains: %q not found in stderr:\n%s", step.Expect.StderrContains, stderr)
 	}
-	return nil
-}
-
-// checkJSONExpectations parses stdout as JSON if the step needs it (for
-// stdout_json, schema, or capture) and applies those checks. It returns
-// the parsed value (nil if none of those were needed) for capturing.
-func (r *Runner) checkJSONExpectations(step Step, stdout []byte) (any, error) {
-	needsJSON := step.Expect.StdoutJSON != nil || step.Expect.Schema != "" || len(step.Capture) > 0
-	if !needsJSON {
-		return nil, nil
-	}
-
-	var parsed any
-	if err := json.Unmarshal(stdout, &parsed); err != nil {
-		return nil, fmt.Errorf("stdout is not valid JSON: %w\nstdout:\n%s", err, stdout)
-	}
-
 	if step.Expect.StdoutJSON != nil {
 		if err := Match(step.Expect.StdoutJSON, parsed); err != nil {
-			return nil, fmt.Errorf("stdout_json mismatch:\n%s", err)
+			return fmt.Errorf("stdout_json mismatch:\n%s", err)
 		}
 	}
-
 	if step.Expect.Schema != "" {
 		if r.schema == nil {
-			return nil, fmt.Errorf("expect.schema %q requested but no OpenAPI document was loaded (Options.SchemaDoc empty)", step.Expect.Schema)
+			return fmt.Errorf("expect.schema %q requested but no OpenAPI document was loaded (Options.SchemaDoc empty)", step.Expect.Schema)
 		}
 		if err := r.schema.Validate(step.Expect.Schema, parsed); err != nil {
-			return nil, fmt.Errorf("schema %q: %w", step.Expect.Schema, err)
+			return fmt.Errorf("schema %q: %w", step.Expect.Schema, err)
 		}
 	}
-
-	return parsed, nil
+	return nil
 }
 
 func (r *Runner) captureVars(step Step, parsed any) error {

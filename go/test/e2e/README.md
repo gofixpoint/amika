@@ -178,7 +178,7 @@ the test process was killed), point `runner.CleanupFromLedgerFile` at that
 run's leftover `ledger.json`:
 
 ```go
-results, err := runner.CleanupFromLedgerFile(binPath, "/path/to/.runs/<run-id>/<case>/ledger.json")
+results, err := runner.CleanupFromLedgerFile(binPath, "/path/to/.runs/<run-id>/<case>/ledger.json", nil)
 ```
 
 ## Writing a real-API case (not included yet)

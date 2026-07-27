@@ -77,7 +77,7 @@ func TestE2ECases(t *testing.T) {
 			// for any resource a case managed to register before a later
 			// step failed or the test panicked.
 			t.Cleanup(func() {
-				results := runner.Cleanup(bin, r.Ledger().Entries())
+				results := runner.Cleanup(bin, r.Ledger().Entries(), r.CleanupEnv())
 				if err := runner.WriteCleanupResults(runDir, results); err != nil {
 					t.Logf("write cleanup results: %v", err)
 				}

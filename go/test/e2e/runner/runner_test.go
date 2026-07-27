@@ -492,7 +492,7 @@ func TestCleanupRunsInReverseOrderAndContinuesOnFailure(t *testing.T) {
 		{Type: "sandbox", Name: "third", CleanupArgv: []string{"0", "", ""}},
 	}
 
-	results := Cleanup(bin, entries)
+	results := Cleanup(bin, entries, nil)
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
 	}
@@ -529,7 +529,7 @@ func TestCleanupFromLedgerFile(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	results, err := CleanupFromLedgerFile(bin, ledgerPath)
+	results, err := CleanupFromLedgerFile(bin, ledgerPath, nil)
 	if err != nil {
 		t.Fatalf("CleanupFromLedgerFile: %v", err)
 	}
@@ -670,6 +670,67 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 	}
 	if len(entries[0].CleanupArgv) != 3 || entries[0].CleanupArgv[1] != "deleted sb-xyz" {
 		t.Fatalf("expected cleanup argv templated with the same-step capture, got %#v", entries[0].CleanupArgv)
+	}
+}
+
+// TestRunnerRegistersResourceEvenWhenAssertionFails covers the leak the
+// reviewer flagged: a create command that exits successfully but then trips a
+// content assertion (stdout_contains here) must still register its resource
+// for cleanup, since the resource was really created.
+func TestRunnerRegistersResourceEvenWhenAssertionFails(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "assertion fails after a successful create",
+		Steps: []Step{
+			{
+				Name: "create then fail a content assertion",
+				Cmd:  []string{"0", `{"name":"sb-leak"}`, ""},
+				Expect: Expectation{
+					Exit:           intPtr(0),
+					StdoutContains: "this-substring-is-not-present",
+				},
+				Capture: map[string]string{"sandbox_name": "$.name"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "{{sandbox_name}}",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err == nil {
+		t.Fatal("expected the stdout_contains assertion to fail the case")
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-leak" {
+		t.Fatalf("expected resource sb-leak registered despite the assertion failure, got %+v", entries)
+	}
+}
+
+// TestLoadCaseRejectsUnknownFields covers the false-positive the reviewer
+// flagged: a misspelled assertion key must fail at load rather than being
+// silently dropped (which would leave the step asserting nothing).
+func TestLoadCaseRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "typo.yaml")
+	writeFile(t, path, `name: typo case
+steps:
+  - name: step with a misspelled assertion field
+    cmd: [version]
+    expect:
+      stdout_josn:
+        foo: bar
+`)
+	if _, err := LoadCase(path); err == nil {
+		t.Fatal("expected LoadCase to reject the unknown field 'stdout_josn'")
 	}
 }
 

@@ -118,12 +118,19 @@ type CleanupResult struct {
 // matters when later resources depend on earlier ones). A failing cleanup
 // command is recorded in the returned result but does not stop cleanup of
 // the remaining entries.
-func Cleanup(binPath string, entries []Entry) []CleanupResult {
+//
+// env is the environment each cleanup command runs with; pass the run's step
+// environment (see Runner.CleanupEnv) so a resource created under the run's
+// isolated AMIKA_STATE_DIRECTORY (and any credential/URL overrides) is
+// deleted from that same state rather than the invoking user's default
+// state. A nil env falls back to the current process environment.
+func Cleanup(binPath string, entries []Entry, env []string) []CleanupResult {
 	results := make([]CleanupResult, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
 		var stdout, stderr bytes.Buffer
 		cmd := exec.Command(binPath, entry.CleanupArgv...)
+		cmd.Env = env
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		err := cmd.Run()
@@ -143,15 +150,16 @@ func Cleanup(binPath string, entries []Entry) []CleanupResult {
 }
 
 // CleanupFromLedgerFile loads a ledger.json file at ledgerPath and runs
-// Cleanup against its entries. This supports standalone reaping of a run
-// that crashed before it could clean up after itself: point it at the
-// crashed run's ledger.json and it replays every recorded cleanup.
-func CleanupFromLedgerFile(binPath, ledgerPath string) ([]CleanupResult, error) {
+// Cleanup against its entries with the given env (see Cleanup). This supports
+// standalone reaping of a run that crashed before it could clean up after
+// itself: point it at the crashed run's ledger.json and it replays every
+// recorded cleanup. Pass nil env to use the current process environment.
+func CleanupFromLedgerFile(binPath, ledgerPath string, env []string) ([]CleanupResult, error) {
 	entries, err := LoadLedgerEntries(ledgerPath)
 	if err != nil {
 		return nil, err
 	}
-	return Cleanup(binPath, entries), nil
+	return Cleanup(binPath, entries, env), nil
 }
 
 // WriteCleanupResults writes results as JSON to cleanup-results.json under
