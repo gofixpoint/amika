@@ -1177,6 +1177,32 @@ steps:
 	if _, err := LoadCase(trailing); err != nil {
 		t.Fatalf("expected a bare trailing --- to load, got: %v", err)
 	}
+
+	// A real document must not hide behind empty separators: the scan runs to
+	// EOF rather than stopping at the first extra document.
+	hidden := filepath.Join(dir, "hidden.yaml")
+	writeFile(t, hidden, `name: first doc
+steps:
+  - name: s
+    cmd: [version]
+---
+---
+name: hidden second doc
+steps:
+  - name: s2
+    cmd: [version]
+`)
+	if _, err := LoadCase(hidden); err == nil {
+		t.Fatal("expected LoadCase to reject a content-bearing document hidden behind empty separators")
+	}
+
+	// A syntax error in a later document is surfaced, not swallowed by the
+	// scan loop.
+	badLater := filepath.Join(dir, "bad-later.yaml")
+	writeFile(t, badLater, "name: ok doc\nsteps:\n  - name: s\n    cmd: [version]\n---\n:\n  - broken: [\n")
+	if _, err := LoadCase(badLater); err == nil {
+		t.Fatal("expected LoadCase to surface a parse error in a later document")
+	}
 }
 
 // TestRunnerExplicitNullStdoutJSON covers the presence-vs-null ambiguity: an

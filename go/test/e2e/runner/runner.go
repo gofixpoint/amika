@@ -123,14 +123,22 @@ func LoadCase(path string) (*Case, error) {
 	// A case file must hold exactly one content-bearing YAML document. A stray
 	// "---" followed by more content would otherwise be silently ignored,
 	// bypassing the known-field validation above and letting a weaker first
-	// document pass. A bare trailing "---" (an empty/null second document) is
-	// harmless and allowed.
-	var extra yaml.Node
-	switch err := dec.Decode(&extra); {
-	case err == nil && documentHasContent(&extra):
-		return nil, fmt.Errorf("parse case %s: only one YAML document is allowed per case file", path)
-	case err != nil && !errors.Is(err, io.EOF):
-		return nil, fmt.Errorf("parse case %s: %w", path, err)
+	// document pass. Bare trailing "---" separators (empty/null documents) are
+	// harmless and allowed, so scan every remaining document to EOF rather than
+	// stopping at the first, which could let a real document hide behind an
+	// empty one.
+	for {
+		var extra yaml.Node
+		err := dec.Decode(&extra)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse case %s: %w", path, err)
+		}
+		if documentHasContent(&extra) {
+			return nil, fmt.Errorf("parse case %s: only one YAML document is allowed per case file", path)
+		}
 	}
 	// A second, lightweight pass records whether each step actually spelled
 	// out a "stdout_json" key. YAML decodes both an omitted field and an
