@@ -114,6 +114,18 @@ func LoadCase(path string) (*Case, error) {
 		if len(step.Cmd) == 0 {
 			return nil, fmt.Errorf("case %s: step %d (%s): \"cmd\" is required", path, i+1, step.Name)
 		}
+		if step.Resource != nil {
+			// A resource with no cleanup argv would record an entry whose
+			// cleanup runs a bare "amika" (which exits 0 without deleting
+			// anything), so cleanup looks successful while the real resource
+			// leaks. Require both a name and a non-empty cleanup argv.
+			if step.Resource.Name == "" {
+				return nil, fmt.Errorf("case %s: step %d (%s): resource requires a \"name\"", path, i+1, step.Name)
+			}
+			if len(step.Resource.Cleanup) == 0 {
+				return nil, fmt.Errorf("case %s: step %d (%s): resource requires a non-empty \"cleanup\" argv", path, i+1, step.Name)
+			}
+		}
 	}
 	c.SourcePath = path
 	return &c, nil
@@ -415,15 +427,29 @@ func (r *Runner) checkContent(step Step, parsed any, stdout, stderr []byte) erro
 	return nil
 }
 
+// captureVars extracts every capture into r.vars. It does NOT stop at the
+// first bad path: a valid capture is saved even when a sibling capture fails,
+// so a resource block that references a valid capture can still be templated
+// and registered for cleanup. Captures are processed in sorted name order so
+// the outcome does not depend on Go's randomized map iteration, and all path
+// errors are joined into the returned error.
 func (r *Runner) captureVars(step Step, parsed any) error {
-	for name, path := range step.Capture {
-		val, err := ExtractJSONPath(path, parsed)
+	names := make([]string, 0, len(step.Capture))
+	for name := range step.Capture {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var errs []error
+	for _, name := range names {
+		val, err := ExtractJSONPath(step.Capture[name], parsed)
 		if err != nil {
-			return fmt.Errorf("capture %q: %w", name, err)
+			errs = append(errs, fmt.Errorf("capture %q: %w", name, err))
+			continue
 		}
 		r.vars[name] = toVarString(val)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // registerResource templates the step's resource block and appends it to the
@@ -451,6 +477,7 @@ func (r *Runner) registerResource(step Step) error {
 		Name:          name,
 		CreatedByStep: step.Name,
 		CleanupArgv:   cleanup,
+		Env:           step.Env,
 		CreatedAt:     time.Now().UTC(),
 	}
 	if err := r.ledger.Append(entry); err != nil {

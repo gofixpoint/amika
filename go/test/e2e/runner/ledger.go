@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,6 +24,11 @@ type Entry struct {
 	// CleanupArgv is the amika argv (not including the binary itself) that
 	// deletes the resource.
 	CleanupArgv []string `json:"cleanup_argv"`
+	// Env holds the creating step's own env overrides. Cleanup applies them
+	// on top of the base cleanup environment so a resource created with, say,
+	// an overridden AMIKA_STATE_DIRECTORY or AMIKA_API_URL is deleted against
+	// that same target rather than the run defaults.
+	Env map[string]string `json:"env,omitempty"`
 	// CreatedAt is when the resource was registered.
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -130,7 +136,7 @@ func Cleanup(binPath string, entries []Entry, env []string) []CleanupResult {
 		entry := entries[i]
 		var stdout, stderr bytes.Buffer
 		cmd := exec.Command(binPath, entry.CleanupArgv...)
-		cmd.Env = env
+		cmd.Env = mergeEnv(env, entry.Env)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		err := cmd.Run()
@@ -147,6 +153,41 @@ func Cleanup(binPath string, entries []Entry, env []string) []CleanupResult {
 		results = append(results, result)
 	}
 	return results
+}
+
+// mergeEnv returns base with overrides applied on top, deduplicating keys so
+// each name appears once (last write wins). It returns base unchanged when
+// there are no overrides. When base is nil (meaning "inherit the process
+// environment") and there are overrides, it starts from os.Environ() so the
+// overrides layer onto the inherited environment rather than replacing it.
+func mergeEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+	if base == nil {
+		base = os.Environ()
+	}
+	values := make(map[string]string, len(base)+len(overrides))
+	order := make([]string, 0, len(base)+len(overrides))
+	set := func(key, val string) {
+		if _, ok := values[key]; !ok {
+			order = append(order, key)
+		}
+		values[key] = val
+	}
+	for _, kv := range base {
+		if key, val, ok := strings.Cut(kv, "="); ok {
+			set(key, val)
+		}
+	}
+	for key, val := range overrides {
+		set(key, val)
+	}
+	out := make([]string, 0, len(order))
+	for _, key := range order {
+		out = append(out, key+"="+values[key])
+	}
+	return out
 }
 
 // CleanupFromLedgerFile loads a ledger.json file at ledgerPath and runs

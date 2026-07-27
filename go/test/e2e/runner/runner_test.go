@@ -754,6 +754,88 @@ func TestRunnerRegistersResourceWhenCaptureFails(t *testing.T) {
 	}
 }
 
+// TestRunnerRegistersResourceFromValidSiblingCapture covers the randomized-map
+// leak: when a step has one valid and one invalid capture, the valid one is
+// still saved (regardless of iteration order), so a resource templated from it
+// registers for cleanup even though the case fails on the bad capture.
+func TestRunnerRegistersResourceFromValidSiblingCapture(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "one capture fails, resource uses the valid sibling",
+		Steps: []Step{
+			{
+				Name:   "create with one good and one bad capture",
+				Cmd:    []string{"0", `{"name":"sb-good"}`, ""},
+				Expect: Expectation{Exit: intPtr(0)},
+				Capture: map[string]string{
+					"good": "$.name",
+					"bad":  "$.does_not_exist",
+				},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "{{good}}",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err == nil {
+		t.Fatal("expected the bad capture to fail the case")
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-good" {
+		t.Fatalf("expected resource templated from the valid sibling capture, got %+v", entries)
+	}
+}
+
+// TestLoadCaseRejectsResourceWithoutCleanup covers the silent-leak the
+// reviewer flagged: a resource block with no cleanup argv would record an
+// entry whose cleanup runs a bare binary and appears to succeed.
+func TestLoadCaseRejectsResourceWithoutCleanup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "no-cleanup.yaml")
+	writeFile(t, path, `name: resource without cleanup
+steps:
+  - name: create something with no cleanup argv
+    cmd: [sandbox, create]
+    resource:
+      type: sandbox
+      name: sb-1
+`)
+	if _, err := LoadCase(path); err == nil {
+		t.Fatal("expected LoadCase to reject a resource with no cleanup argv")
+	}
+}
+
+// TestMergeEnv covers the per-entry cleanup environment: a creating step's env
+// overrides win over the base cleanup env, keys are deduplicated, and an empty
+// override set returns the base unchanged.
+func TestMergeEnv(t *testing.T) {
+	got := mergeEnv([]string{"A=1", "B=2"}, map[string]string{"B": "override", "C": "3"})
+	seen := map[string]string{}
+	for _, kv := range got {
+		k, v, _ := strings.Cut(kv, "=")
+		if _, dup := seen[k]; dup {
+			t.Fatalf("duplicate key %q in %v", k, got)
+		}
+		seen[k] = v
+	}
+	if seen["A"] != "1" || seen["B"] != "override" || seen["C"] != "3" {
+		t.Fatalf("unexpected merge result: %v", got)
+	}
+	if out := mergeEnv([]string{"X=1"}, nil); len(out) != 1 || out[0] != "X=1" {
+		t.Fatalf("expected base returned unchanged with no overrides, got %v", out)
+	}
+}
+
 // TestLoadCaseRejectsUnknownFields covers the false-positive the reviewer
 // flagged: a misspelled assertion key must fail at load rather than being
 // silently dropped (which would leave the step asserting nothing).
