@@ -24,10 +24,13 @@ type Entry struct {
 	// CleanupArgv is the amika argv (not including the binary itself) that
 	// deletes the resource.
 	CleanupArgv []string `json:"cleanup_argv"`
-	// Env holds the creating step's own env overrides. Cleanup applies them
-	// on top of the base cleanup environment so a resource created with, say,
-	// an overridden AMIKA_STATE_DIRECTORY or AMIKA_API_URL is deleted against
-	// that same target rather than the run defaults.
+	// Env holds the environment overrides to apply when cleaning up this
+	// resource: the creating step's own env overrides plus the run's injected
+	// AMIKA_STATE_DIRECTORY (unless the step overrode it). Cleanup applies them
+	// on top of its base environment so a resource created with, say, an
+	// overridden AMIKA_STATE_DIRECTORY or AMIKA_API_URL is deleted against that
+	// same target, even when a standalone reaper replays the ledger with no
+	// base environment of its own (see CleanupFromLedgerFile).
 	Env map[string]string `json:"env,omitempty"`
 	// CreatedAt is when the resource was registered.
 	CreatedAt time.Time `json:"created_at"`

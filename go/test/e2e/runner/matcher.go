@@ -22,9 +22,12 @@ import (
 //     in expected are asserted, and extra keys in actual are ignored. This
 //     is what lets a case assert only the fields it cares about instead of
 //     enumerating every field a command happens to return.
-//   - When expected is a slice, elements are matched positionally in
-//     order; actual must have at least len(expected) items, and any extra
-//     trailing items in actual are ignored.
+//   - When expected is a slice, elements are matched positionally in order
+//     and, by default, the lengths must match EXACTLY. A trailing "@..."
+//     element relaxes this to a prefix match: the elements before it are
+//     matched positionally and any number of further items in actual are
+//     allowed and left unchecked. Use "@any" as an element to assert a
+//     position is present without constraining its value.
 //
 // Matcher placeholder strings (used in place of a literal expected value):
 //   - "@string", "@number", "@bool", "@array", "@object" — assert actual's
@@ -32,6 +35,10 @@ import (
 //   - "@string?" (or any of the above with a trailing "?") — same type
 //     assertion, but also accepts the key being entirely absent from the
 //     actual object, or present with a JSON null value.
+//   - "@any" — matches any value in that position (any type, including
+//     null). Useful as an array placeholder to skip a single element.
+//   - "@..." — valid only as the final element of an expected array; allows
+//     any number of further unchecked elements after the matched prefix.
 //   - "@oneof: a, b, c" — actual, stringified, must equal one of the
 //     comma-separated tokens (tokens and actual are compared as trimmed
 //     strings).
@@ -81,7 +88,13 @@ func matchObjectAt(path string, expected map[string]any, actual any, problems *[
 		childPath := path + "." + key
 		actualVal, present := am[key]
 		if !present {
-			if matcherAllowsAbsent(expectedVal) {
+			// An optional matcher ("@string?") lets the key be absent, but
+			// only if its base name is a real matcher: a typo like "@strng?"
+			// must be reported rather than silently accepting an absent key.
+			if optional, known := optionalMatcher(expectedVal); optional {
+				if !known {
+					*problems = append(*problems, fmt.Sprintf("%s: unknown matcher %s", childPath, formatValue(expectedVal)))
+				}
 				continue
 			}
 			*problems = append(*problems, fmt.Sprintf("%s: missing key %q", path, key))
@@ -91,17 +104,42 @@ func matchObjectAt(path string, expected map[string]any, actual any, problems *[
 	}
 }
 
+// arrayRestMatcher, as the final element of an expected array, switches array
+// matching from exact-length to prefix: elements before it are matched
+// positionally and any further elements in actual are allowed and unchecked.
+const arrayRestMatcher = "@..."
+
 func matchArrayAt(path string, expected []any, actual any, problems *[]string) {
 	aa, ok := actual.([]any)
 	if !ok {
 		*problems = append(*problems, fmt.Sprintf("%s: expected @array, got %s", path, typeName(actual)))
 		return
 	}
-	if len(aa) < len(expected) {
-		*problems = append(*problems, fmt.Sprintf("%s: expected at least %d item(s), got %d", path, len(expected), len(aa)))
+
+	// A trailing "@..." element means "match the elements before it
+	// positionally, then allow any number of further unchecked elements".
+	// Without it the match is exact: actual must have exactly as many
+	// elements as expected.
+	prefix := false
+	exp := expected
+	if n := len(exp); n > 0 {
+		if s, ok := exp[n-1].(string); ok && s == arrayRestMatcher {
+			prefix = true
+			exp = exp[:n-1]
+		}
+	}
+
+	if prefix {
+		if len(aa) < len(exp) {
+			*problems = append(*problems, fmt.Sprintf("%s: expected at least %d item(s), got %d", path, len(exp), len(aa)))
+			return
+		}
+	} else if len(aa) != len(exp) {
+		*problems = append(*problems, fmt.Sprintf("%s: expected exactly %d item(s), got %d", path, len(exp), len(aa)))
 		return
 	}
-	for i, expectedVal := range expected {
+
+	for i, expectedVal := range exp {
 		matchAt(fmt.Sprintf("%s[%d]", path, i), expectedVal, aa[i], problems)
 	}
 }
@@ -112,16 +150,34 @@ func isMatcher(s string) bool {
 	return strings.HasPrefix(s, "@")
 }
 
-// matcherAllowsAbsent reports whether expectedVal is an optional matcher
-// placeholder (one ending in "?", e.g. "@string?"), which permits the key
-// to be missing entirely from the actual object.
-func matcherAllowsAbsent(expectedVal any) bool {
+// optionalMatcher reports whether expectedVal is an optional matcher
+// placeholder (name ending in "?", e.g. "@string?"), and whether that
+// matcher's base name is one the runner actually supports. A "?"-suffixed
+// placeholder whose base is unsupported (e.g. "@strng?") returns
+// optional=true, known=false so the caller rejects it rather than silently
+// accepting an absent key.
+func optionalMatcher(expectedVal any) (optional, known bool) {
 	s, ok := expectedVal.(string)
-	if !ok {
-		return false
+	if !ok || !isMatcher(s) {
+		return false, false
 	}
 	name, _ := splitMatcher(s)
-	return strings.HasSuffix(name, "?")
+	if !strings.HasSuffix(name, "?") {
+		return false, false
+	}
+	return true, isKnownMatcher(strings.TrimSuffix(name, "?"))
+}
+
+// isKnownMatcher reports whether base (a matcher name with any trailing "?"
+// already stripped) is a supported matcher. It mirrors the cases handled in
+// applyMatcher; keep the two in sync when adding a matcher.
+func isKnownMatcher(base string) bool {
+	switch base {
+	case "@string", "@number", "@bool", "@array", "@object", "@any", "@oneof", "@timestamp", "@regex":
+		return true
+	default:
+		return false
+	}
 }
 
 // splitMatcher splits a matcher placeholder like "@oneof: a, b, c" into its
@@ -145,6 +201,10 @@ func applyMatcher(spec string, actual any) error {
 	}
 
 	switch base {
+	case "@any":
+		// Matches any value (any type, including null). Used as a placeholder
+		// to assert a position or key is present without checking its value.
+		return nil
 	case "@string":
 		if _, ok := actual.(string); !ok {
 			return fmt.Errorf("expected @string, got %s", typeName(actual))

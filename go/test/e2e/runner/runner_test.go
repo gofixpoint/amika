@@ -2,6 +2,9 @@ package runner
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -95,6 +98,23 @@ func TestMatchOptionalPlaceholder(t *testing.T) {
 	}
 }
 
+func TestMatchOptionalUnknownMatcherFails(t *testing.T) {
+	// "@strng?" is a typo, not a real optional matcher: it must fail whether
+	// the key is absent or present, never silently pass by treating the key
+	// as optional.
+	expected := map[string]any{"name": "@strng?"}
+	if err := Match(expected, map[string]any{}); err == nil {
+		t.Fatal("expected an unknown optional matcher to fail on an absent key")
+	}
+	if err := Match(expected, map[string]any{"name": "x"}); err == nil {
+		t.Fatal("expected an unknown optional matcher to fail on a present key")
+	}
+	// A real optional matcher still permits the key to be absent.
+	if err := Match(map[string]any{"name": "@string?"}, map[string]any{}); err != nil {
+		t.Fatalf("expected a known optional matcher to allow absence: %v", err)
+	}
+}
+
 func TestMatchOneOf(t *testing.T) {
 	expected := "@oneof: active, running, started"
 
@@ -170,16 +190,57 @@ func TestMatchObjectMissingKey(t *testing.T) {
 	}
 }
 
-func TestMatchArrayPositionalWithExtras(t *testing.T) {
+func TestMatchArrayExactLength(t *testing.T) {
+	// Array matching requires an exact element count by default.
+	if err := Match([]any{"a", "b"}, []any{"a", "b"}); err != nil {
+		t.Fatalf("exact-length array should match: %v", err)
+	}
+	if err := Match([]any{"a"}, []any{"a", "b"}); err == nil {
+		t.Fatalf("expected exact-length mismatch on an extra trailing element")
+	}
+}
+
+func TestMatchArrayPrefixWithRest(t *testing.T) {
+	// A trailing "@..." matches the leading elements positionally and ignores
+	// any further items (checking the first m of n).
 	expected := []any{
 		map[string]any{"name": "first"},
+		"@...",
 	}
 	actual := []any{
 		map[string]any{"name": "first", "extra": true},
 		map[string]any{"name": "second"},
 	}
 	if err := Match(expected, actual); err != nil {
-		t.Fatalf("expected positional match ignoring extra trailing items: %v", err)
+		t.Fatalf("expected prefix match with @... to ignore trailing items: %v", err)
+	}
+	// "@..." also permits exactly the prefix and nothing more.
+	if err := Match([]any{"a", "@..."}, []any{"a"}); err != nil {
+		t.Fatalf("expected prefix match to allow no trailing items: %v", err)
+	}
+	// But the prefix itself must still be present.
+	if err := Match([]any{"a", "b", "@..."}, []any{"a"}); err == nil {
+		t.Fatalf("expected error when the matched prefix is longer than actual")
+	}
+}
+
+func TestMatchArrayAnyPlaceholder(t *testing.T) {
+	// "@any" asserts a position is present without checking its value.
+	expected := []any{"2", "3", "@any", "5"}
+	if err := Match(expected, []any{"2", "3", "anything", "5"}); err != nil {
+		t.Fatalf("@any placeholder should match any element value: %v", err)
+	}
+	// A null in the placeholder position is still accepted.
+	if err := Match(expected, []any{"2", "3", nil, "5"}); err != nil {
+		t.Fatalf("@any should accept a null element: %v", err)
+	}
+	// Positions around the placeholder are still checked.
+	if err := Match(expected, []any{"2", "3", "x", "9"}); err == nil {
+		t.Fatalf("expected mismatch when a non-placeholder element differs")
+	}
+	// @any still requires the element to be present (exact length).
+	if err := Match(expected, []any{"2", "3", "x"}); err == nil {
+		t.Fatalf("expected length mismatch when the placeholder element is absent")
 	}
 }
 
@@ -796,6 +857,93 @@ func TestRunnerRegistersResourceFromValidSiblingCapture(t *testing.T) {
 	}
 }
 
+// TestRunnerResourceEnvPersistsStateDir covers the standalone-reaper leak: a
+// resource entry must record the run's injected AMIKA_STATE_DIRECTORY (plus any
+// step overrides) so CleanupFromLedgerFile with a nil base env still deletes it
+// from the run's isolated state, not the invoking user's default state.
+func TestRunnerResourceEnvPersistsStateDir(t *testing.T) {
+	bin := stubScript(t)
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "state")
+
+	r, err := New(Options{BinPath: bin, RunDir: filepath.Join(dir, "run"), StateDir: stateDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "resource records the injected state dir",
+		Steps: []Step{
+			{
+				Name:   "create",
+				Cmd:    []string{"0", `{"name":"sb-1"}`, ""},
+				Expect: Expectation{Exit: intPtr(0)},
+				Env:    map[string]string{"AMIKA_API_URL": "https://example.test"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "sb-1",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+	if err := r.RunCase(c); err != nil {
+		t.Fatalf("RunCase: %v", err)
+	}
+
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one entry, got %+v", entries)
+	}
+	if got := entries[0].Env["AMIKA_STATE_DIRECTORY"]; got != stateDir {
+		t.Fatalf("expected entry to record AMIKA_STATE_DIRECTORY=%q, got %q", stateDir, got)
+	}
+	if got := entries[0].Env["AMIKA_API_URL"]; got != "https://example.test" {
+		t.Fatalf("expected step env override preserved, got %q", got)
+	}
+}
+
+// TestRunnerResourceEnvHonorsStepStateOverride covers a step that overrides
+// AMIKA_STATE_DIRECTORY itself: the entry must record the step's value, not the
+// run default, so cleanup targets the same state creation used.
+func TestRunnerResourceEnvHonorsStepStateOverride(t *testing.T) {
+	bin := stubScript(t)
+	dir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "run-default")})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "step overrides the state dir",
+		Steps: []Step{
+			{
+				Name:   "create",
+				Cmd:    []string{"0", `{"name":"sb-1"}`, ""},
+				Expect: Expectation{Exit: intPtr(0)},
+				Env:    map[string]string{"AMIKA_STATE_DIRECTORY": "/tmp/step-state"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "sb-1",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+	if err := r.RunCase(c); err != nil {
+		t.Fatalf("RunCase: %v", err)
+	}
+
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one entry, got %+v", entries)
+	}
+	if got := entries[0].Env["AMIKA_STATE_DIRECTORY"]; got != "/tmp/step-state" {
+		t.Fatalf("expected the step's state-dir override recorded, got %q", got)
+	}
+}
+
 // TestLoadCaseRejectsResourceWithoutCleanup covers the silent-leak the
 // reviewer flagged: a resource block with no cleanup argv would record an
 // entry whose cleanup runs a bare binary and appears to succeed.
@@ -852,6 +1000,83 @@ steps:
 `)
 	if _, err := LoadCase(path); err == nil {
 		t.Fatal("expected LoadCase to reject the unknown field 'stdout_josn'")
+	}
+}
+
+// TestRunnerExplicitNullStdoutJSON covers the presence-vs-null ambiguity: an
+// explicit "stdout_json: null" asserts the command printed JSON null, whereas
+// omitting the field makes no JSON assertion at all.
+func TestRunnerExplicitNullStdoutJSON(t *testing.T) {
+	bin := stubScript(t)
+	dir := t.TempDir()
+
+	// stubScript prints its second argv ($2) to stdout, so cmd[1] is stdout.
+	pass := filepath.Join(dir, "pass.yaml")
+	writeFile(t, pass, `name: explicit null matches null stdout
+steps:
+  - name: prints null
+    cmd: ["0", "null", ""]
+    expect:
+      stdout_json: null
+`)
+	cPass, err := LoadCase(pass)
+	if err != nil {
+		t.Fatalf("LoadCase(pass): %v", err)
+	}
+	if !cPass.Steps[0].Expect.stdoutJSONSet {
+		t.Fatal("expected stdoutJSONSet to be true for an explicit null")
+	}
+	rPass, err := New(Options{BinPath: bin, RunDir: filepath.Join(dir, "run-pass")})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := rPass.RunCase(cPass); err != nil {
+		t.Fatalf("expected null stdout to satisfy stdout_json: null, got: %v", err)
+	}
+
+	fail := filepath.Join(dir, "fail.yaml")
+	writeFile(t, fail, `name: explicit null rejects non-null stdout
+steps:
+  - name: prints an object
+    cmd: ["0", "{\"a\":1}", ""]
+    expect:
+      stdout_json: null
+`)
+	cFail, err := LoadCase(fail)
+	if err != nil {
+		t.Fatalf("LoadCase(fail): %v", err)
+	}
+	rFail, err := New(Options{BinPath: bin, RunDir: filepath.Join(dir, "run-fail")})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := rFail.RunCase(cFail); err == nil {
+		t.Fatal("expected non-null stdout to fail stdout_json: null")
+	}
+
+	// A case that omits stdout_json makes no JSON assertion, so even
+	// non-JSON stdout passes.
+	omit := filepath.Join(dir, "omit.yaml")
+	writeFile(t, omit, `name: omitted stdout_json makes no assertion
+steps:
+  - name: prints non-json
+    cmd: ["0", "not json at all", ""]
+    expect:
+      exit: 0
+`)
+	cOmit, err := LoadCase(omit)
+	if err != nil {
+		t.Fatalf("LoadCase(omit): %v", err)
+	}
+	if cOmit.Steps[0].Expect.stdoutJSONSet {
+		t.Fatal("expected stdoutJSONSet to be false when the field is omitted")
+	}
+	rOmit, err := New(Options{BinPath: bin, RunDir: filepath.Join(dir, "run-omit")})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := rOmit.RunCase(cOmit); err != nil {
+		t.Fatalf("expected omitted stdout_json to make no assertion, got: %v", err)
 	}
 }
 
@@ -1029,14 +1254,42 @@ func TestSchemaValidatorMissingDocument(t *testing.T) {
 	}
 }
 
-func TestSchemaValidatorRealOpenAPIDocument(t *testing.T) {
-	path := filepath.Join("..", "testdata", "openapi.json")
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("testdata openapi.json not present: %v", err)
+// TestSchemaValidatorLoadsFromURL covers loading the OpenAPI document from an
+// http(s) URL rather than a checked-in file. It serves a tiny doc from a
+// localhost test server (so the unit test stays offline) and confirms the
+// validator fetches and compiles it.
+func TestSchemaValidatorLoadsFromURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, tinyOpenAPIDoc)
+	}))
+	defer srv.Close()
+
+	v := LoadOpenAPISchema(srv.URL + "/openapi.json")
+	if err := v.Validate("Thing", map[string]any{"ok": true, "name": "widget"}); err != nil {
+		t.Fatalf("expected valid instance fetched from URL to pass: %v", err)
 	}
-	v := LoadOpenAPISchema(path)
-	if err := v.Validate("OkStatus", map[string]any{"ok": true}); err != nil {
-		t.Fatalf("expected OkStatus to validate against the real doc: %v", err)
+	if err := v.Validate("Thing", map[string]any{"ok": "not-a-bool"}); err == nil {
+		t.Fatalf("expected invalid instance to fail")
+	}
+}
+
+// TestSchemaValidatorURLFetchFailure covers a URL that returns a non-200
+// status: loading is best-effort, so Validate fails with a clear error rather
+// than panicking.
+func TestSchemaValidatorURLFetchFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	v := LoadOpenAPISchema(srv.URL + "/missing.json")
+	err := v.Validate("Thing", map[string]any{})
+	if err == nil {
+		t.Fatalf("expected error when the document could not be fetched")
+	}
+	if !strings.Contains(err.Error(), "openapi document unavailable") {
+		t.Fatalf("expected clear unavailable-document error, got: %v", err)
 	}
 }
 

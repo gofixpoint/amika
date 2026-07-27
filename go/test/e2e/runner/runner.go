@@ -59,9 +59,11 @@ type Step struct {
 type Expectation struct {
 	// Exit is the expected process exit code. Defaults to 0 when nil.
 	Exit *int `yaml:"exit"`
-	// StdoutJSON, if set, is matched structurally against stdout parsed as
-	// JSON. See Match for matching semantics. May contain "{{var}}"
-	// templates and matcher placeholder strings.
+	// StdoutJSON, if present, is matched structurally against stdout parsed
+	// as JSON. See Match for matching semantics. May contain "{{var}}"
+	// templates and matcher placeholder strings. Presence is tracked
+	// separately (stdoutJSONSet) so an explicit "stdout_json: null" (assert
+	// stdout is JSON null) is distinguished from omitting the field.
 	StdoutJSON any `yaml:"stdout_json"`
 	// StdoutContains, if set, must be a substring of stdout.
 	StdoutContains string `yaml:"stdout_contains"`
@@ -71,6 +73,21 @@ type Expectation struct {
 	// the OpenAPI document that stdout, parsed as JSON, must validate
 	// against.
 	Schema string `yaml:"schema"`
+
+	// stdoutJSONSet records whether the case file actually contained a
+	// "stdout_json" key, so an explicit null value is not confused with the
+	// field being omitted. It is populated by LoadCase, not by YAML decoding
+	// (an unexported field is ignored by the decoder).
+	stdoutJSONSet bool
+}
+
+// hasStdoutJSON reports whether a stdout_json assertion should run for this
+// expectation. It is true when the case file spelled out the key (including
+// an explicit null, recorded in stdoutJSONSet by LoadCase) or when a non-nil
+// value was set programmatically, so a caller building an Expectation in Go
+// still gets its stdout_json matched.
+func (e Expectation) hasStdoutJSON() bool {
+	return e.stdoutJSONSet || e.StdoutJSON != nil
 }
 
 // Resource describes a resource a step created that must be cleaned up
@@ -99,6 +116,14 @@ func LoadCase(path string) (*Case, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("parse case %s: %w", path, err)
+	}
+	// A second, lightweight pass records whether each step actually spelled
+	// out a "stdout_json" key. YAML decodes both an omitted field and an
+	// explicit "stdout_json: null" to a nil any, so this is the only way to
+	// tell "assert stdout is JSON null" apart from "no JSON assertion". A
+	// populated yaml.Node has a non-zero Kind; an absent key leaves it zero.
+	if err := markStdoutJSONPresence(data, &c); err != nil {
 		return nil, fmt.Errorf("parse case %s: %w", path, err)
 	}
 	if c.Name == "" {
@@ -131,6 +156,34 @@ func LoadCase(path string) (*Case, error) {
 	return &c, nil
 }
 
+// markStdoutJSONPresence decodes data a second time into a structure that
+// captures each step's expect.stdout_json as a raw yaml.Node, then sets
+// stdoutJSONSet on the matching step in c. A node whose Kind is non-zero was
+// present in the source (even if its value is null); a zero node means the
+// key was omitted. The two decodes see the same document, so the step slices
+// line up by index.
+func markStdoutJSONPresence(data []byte, c *Case) error {
+	var raw struct {
+		Steps []struct {
+			Expect struct {
+				StdoutJSON yaml.Node `yaml:"stdout_json"`
+			} `yaml:"expect"`
+		} `yaml:"steps"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for i := range raw.Steps {
+		if i >= len(c.Steps) {
+			break
+		}
+		if raw.Steps[i].Expect.StdoutJSON.Kind != 0 {
+			c.Steps[i].Expect.stdoutJSONSet = true
+		}
+	}
+	return nil
+}
+
 // DiscoverCases returns every "*.yaml" file directly under dir, sorted by
 // filename for deterministic ordering.
 func DiscoverCases(dir string) ([]string, error) {
@@ -156,9 +209,10 @@ type Options struct {
 	// Env is the base environment for every step. Defaults to
 	// os.Environ() when nil.
 	Env []string
-	// SchemaDoc, if set, is the path to an OpenAPI document used to
-	// resolve expect.schema names. Steps using expect.schema fail clearly
-	// if this is empty.
+	// SchemaDoc, if set, locates the OpenAPI document used to resolve
+	// expect.schema names. It is either an http(s) URL (fetched over the
+	// network) or a local filesystem path. Steps using expect.schema fail
+	// clearly if this is empty.
 	SchemaDoc string
 }
 
@@ -390,7 +444,7 @@ func checkExit(step Step, stdout, stderr []byte, exitCode int) error {
 // (stdout_json or schema) or a capture that needs it. It returns nil when no
 // such need exists.
 func parseStdout(step Step, stdout []byte) (any, error) {
-	if step.Expect.StdoutJSON == nil && step.Expect.Schema == "" && len(step.Capture) == 0 {
+	if !step.Expect.hasStdoutJSON() && step.Expect.Schema == "" && len(step.Capture) == 0 {
 		return nil, nil
 	}
 	var parsed any
@@ -411,7 +465,7 @@ func (r *Runner) checkContent(step Step, parsed any, stdout, stderr []byte) erro
 	if step.Expect.StderrContains != "" && !strings.Contains(string(stderr), step.Expect.StderrContains) {
 		return fmt.Errorf("stderr_contains: %q not found in stderr:\n%s", step.Expect.StderrContains, stderr)
 	}
-	if step.Expect.StdoutJSON != nil {
+	if step.Expect.hasStdoutJSON() {
 		if err := Match(step.Expect.StdoutJSON, parsed); err != nil {
 			return fmt.Errorf("stdout_json mismatch:\n%s", err)
 		}
@@ -477,13 +531,34 @@ func (r *Runner) registerResource(step Step) error {
 		Name:          name,
 		CreatedByStep: step.Name,
 		CleanupArgv:   cleanup,
-		Env:           step.Env,
+		Env:           r.resourceEnv(step),
 		CreatedAt:     time.Now().UTC(),
 	}
 	if err := r.ledger.Append(entry); err != nil {
 		return fmt.Errorf("register resource %q: %w", name, err)
 	}
 	return nil
+}
+
+// resourceEnv returns the env overrides to persist on a ledger entry so
+// cleanup targets the same amika state the resource was created against. It is
+// the creating step's own env overrides plus the run's injected
+// AMIKA_STATE_DIRECTORY (unless the step overrode that key). Persisting the
+// state directory here means a standalone reaper replaying the ledger with a
+// nil base env (see CleanupFromLedgerFile) still deletes the resource from the
+// run's isolated state rather than the invoking user's default state.
+func (r *Runner) resourceEnv(step Step) map[string]string {
+	if r.opts.StateDir == "" && len(step.Env) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(step.Env)+1)
+	if r.opts.StateDir != "" {
+		out["AMIKA_STATE_DIRECTORY"] = r.opts.StateDir
+	}
+	for k, v := range step.Env {
+		out[k] = v
+	}
+	return out
 }
 
 // templateVarPattern matches "{{name}}" placeholders. Names may contain

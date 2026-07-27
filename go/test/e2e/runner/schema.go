@@ -7,11 +7,20 @@ package runner
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
+
+// schemaFetchTimeout bounds how long LoadOpenAPISchema waits when the source
+// is an http(s) URL, so a slow or unreachable host fails the schema load
+// cleanly instead of hanging the run.
+const schemaFetchTimeout = 30 * time.Second
 
 // schemaDocURL is the synthetic base URI the OpenAPI document is registered
 // under with the jsonschema compiler. It never needs to resolve over the
@@ -35,21 +44,25 @@ type SchemaValidator struct {
 	cache map[string]*jsonschema.Schema
 }
 
-// LoadOpenAPISchema loads an OpenAPI document from path for later
-// validation against its components.schemas definitions.
-func LoadOpenAPISchema(path string) *SchemaValidator {
+// LoadOpenAPISchema loads an OpenAPI document from source for later
+// validation against its components.schemas definitions. source is either an
+// http(s) URL (fetched over the network) or a local filesystem path. The
+// document is not checked into the repo: e2e runs fetch it from the live API
+// (see the runner's default OpenAPI URL) so schema checks track the deployed
+// spec.
+func LoadOpenAPISchema(source string) *SchemaValidator {
 	v := &SchemaValidator{cache: map[string]*jsonschema.Schema{}}
 
-	f, err := os.Open(path)
+	rc, err := openSchemaSource(source)
 	if err != nil {
-		v.loadErr = fmt.Errorf("open openapi document %s: %w", path, err)
+		v.loadErr = err
 		return v
 	}
-	defer f.Close()
+	defer rc.Close()
 
-	doc, err := jsonschema.UnmarshalJSON(f)
+	doc, err := jsonschema.UnmarshalJSON(rc)
 	if err != nil {
-		v.loadErr = fmt.Errorf("parse openapi document %s: %w", path, err)
+		v.loadErr = fmt.Errorf("parse openapi document %s: %w", source, err)
 		return v
 	}
 
@@ -63,11 +76,35 @@ func LoadOpenAPISchema(path string) *SchemaValidator {
 
 	compiler := jsonschema.NewCompiler()
 	if err := compiler.AddResource(schemaDocURL, doc); err != nil {
-		v.loadErr = fmt.Errorf("register openapi document %s: %w", path, err)
+		v.loadErr = fmt.Errorf("register openapi document %s: %w", source, err)
 		return v
 	}
 	v.compiler = compiler
 	return v
+}
+
+// openSchemaSource returns a reader over the OpenAPI document named by source.
+// When source is an http(s) URL it is fetched over the network (bounded by
+// schemaFetchTimeout); otherwise it is opened as a local file. The caller must
+// Close the returned reader.
+func openSchemaSource(source string) (io.ReadCloser, error) {
+	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		client := &http.Client{Timeout: schemaFetchTimeout}
+		resp, err := client.Get(source)
+		if err != nil {
+			return nil, fmt.Errorf("fetch openapi document %s: %w", source, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("fetch openapi document %s: unexpected status %s", source, resp.Status)
+		}
+		return resp.Body, nil
+	}
+	f, err := os.Open(source)
+	if err != nil {
+		return nil, fmt.Errorf("open openapi document %s: %w", source, err)
+	}
+	return f, nil
 }
 
 // Validate validates instance (a value decoded from JSON, e.g. via

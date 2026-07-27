@@ -32,10 +32,13 @@ go/test/e2e/
   runner/         the runner package (case loading, matching, ledger, schema)
   e2e_test.go     Go test entry point, gated by AMIKA_RUN_E2E=1
   cases/          case files, one YAML document per file
-  testdata/
-    openapi.json  OpenAPI doc used to resolve expect.schema names
   .runs/          per-invocation run directories (gitignored, created at test time)
 ```
+
+The OpenAPI document used to resolve `expect.schema` names is not checked in.
+It is fetched at run time from `AMIKA_E2E_OPENAPI_URL`, defaulting to
+`https://app.amika.dev/api/openapi.json`, so schema assertions track the
+deployed API spec (see the schema section below).
 
 Each run writes to `go/test/e2e/.runs/<run-id>/<case-name>/`:
 
@@ -120,10 +123,15 @@ cleverer in one path expression.
   the keys present in `expected` are asserted; any other keys in `actual`
   are ignored. This is what lets a case assert just the fields it cares
   about instead of enumerating a command's entire response shape.
-- An **array** in the expected value matches **positionally**: actual
-  must have at least as many elements as expected, and only the first
-  `len(expected)` elements are compared (extra trailing elements in
-  actual are ignored).
+- An **array** in the expected value matches **positionally**, and by
+  default the lengths must match **exactly**: actual must have the same
+  number of elements as expected. Two opt-ins relax or fill this:
+  - End the expected array with `"@..."` to match only a **prefix**: the
+    elements before it are matched positionally and any number of further
+    elements in actual are allowed and left unchecked. Use this to assert
+    the first `m` elements of a longer array.
+  - Use `"@any"` as an element to assert a position is **present** without
+    checking its value, e.g. `["2", "3", "@any", "5"]`.
 - A string in the expected value that starts with `@` is a matcher
   placeholder instead of a literal value:
 
@@ -131,9 +139,15 @@ cleverer in one path expression.
   |---|---|
   | `@string`, `@number`, `@bool`, `@array`, `@object` | actual must be that JSON type |
   | `@string?` (any of the above `+ "?"`) | same type check, but also accepts the key being **absent** from the object entirely, or present with JSON `null` |
+  | `@any` | matches any value in that position (any type, including `null`); a placeholder to skip a single array element or key |
+  | `@...` | final element of an expected array only: allows any number of further unchecked elements after the matched prefix |
   | `` `@oneof: a, b, c` `` | actual, stringified, must equal one of the comma-separated tokens (trimmed, compared as strings) |
   | `@timestamp` | actual must be an RFC3339 string (with or without fractional seconds) |
   | `` `@regex: ^sb-[a-z0-9]+$` `` | actual must be a string matching the Go regexp |
+
+  An optional placeholder (`@string?`) whose base name is not a real
+  matcher (e.g. a typo like `@strng?`) is rejected rather than silently
+  treated as "absent is fine", so a misspelling cannot mask a missing key.
 
 On mismatch, `Match` returns one error listing every mismatching path, one
 per line, e.g.:
@@ -146,16 +160,23 @@ $.name: missing key "name"
 ## `expect.schema`: validating against the OpenAPI doc
 
 `expect.schema: SandboxResponse` validates stdout (parsed as JSON) against
-`components.schemas.SandboxResponse` in `testdata/openapi.json`, using
+`components.schemas.SandboxResponse` in the OpenAPI document, using
 `github.com/santhosh-tekuri/jsonschema/v6`. Internal `$ref`s within the
 document resolve normally.
 
+The OpenAPI document is **not checked into the repo**. It is fetched at run
+time from the URL in `AMIKA_E2E_OPENAPI_URL`, defaulting to
+`https://app.amika.dev/api/openapi.json`, so schema assertions validate
+against the currently deployed spec rather than a copy that can drift. The
+value may also be a local filesystem path if you want to validate against a
+spec you have on disk.
+
 Loading the OpenAPI document is deliberately best-effort: if the document
-fails to parse, `Validate` returns a clear "openapi document unavailable"
-error rather than panicking, so a broken or stale doc doesn't take down
-every case that doesn't use `expect.schema`. If a named schema doesn't
-exist under `components.schemas`, `Validate` says so explicitly rather
-than silently passing.
+cannot be fetched or fails to parse, `Validate` returns a clear "openapi
+document unavailable" error rather than panicking, so a broken, stale, or
+unreachable doc doesn't take down every case that doesn't use
+`expect.schema`. If a named schema doesn't exist under `components.schemas`,
+`Validate` says so explicitly rather than silently passing.
 
 ## Resources and cleanup
 

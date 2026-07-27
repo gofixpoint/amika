@@ -19,6 +19,15 @@ import (
 // `go test ./...`.
 const runE2EEnv = "AMIKA_RUN_E2E"
 
+// openAPIURLEnv overrides the OpenAPI document that expect.schema names are
+// validated against. It is a URL (or local path); when unset it defaults to
+// defaultOpenAPIURL. The document is fetched at run time rather than checked
+// into the repo, so schema assertions track the deployed API spec.
+const openAPIURLEnv = "AMIKA_E2E_OPENAPI_URL"
+
+// defaultOpenAPIURL is the OpenAPI document used when openAPIURLEnv is unset.
+const defaultOpenAPIURL = "https://app.amika.dev/api/openapi.json"
+
 // TestE2ECases discovers every case file under cases/, runs each as a
 // subtest against a freshly built amika binary, and cleans up any
 // resources the case registered — even if the case failed or panicked.
@@ -30,7 +39,10 @@ func TestE2ECases(t *testing.T) {
 	bin := testutil.BuildAmikaBinary(t)
 	moduleRoot := testutil.FindModuleRoot(t)
 	casesDir := filepath.Join(moduleRoot, "test", "e2e", "cases")
-	schemaDoc := filepath.Join(moduleRoot, "test", "e2e", "testdata", "openapi.json")
+	schemaDoc := os.Getenv(openAPIURLEnv)
+	if schemaDoc == "" {
+		schemaDoc = defaultOpenAPIURL
+	}
 
 	files, err := runner.DiscoverCases(casesDir)
 	if err != nil {
