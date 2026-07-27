@@ -715,6 +715,45 @@ func TestRunnerRegistersResourceEvenWhenAssertionFails(t *testing.T) {
 	}
 }
 
+// TestRunnerRegistersResourceWhenCaptureFails covers the follow-on leak: a
+// create that exits 0 but whose same-step capture path does not match still
+// registers a resource whose name/cleanup do not depend on that capture, so
+// it is not orphaned when the capture error fails the case.
+func TestRunnerRegistersResourceWhenCaptureFails(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "capture fails but a static resource still registers",
+		Steps: []Step{
+			{
+				Name:    "create with a broken capture path",
+				Cmd:     []string{"0", `{"name":"sb-static"}`, ""},
+				Expect:  Expectation{Exit: intPtr(0)},
+				Capture: map[string]string{"missing": "$.does_not_exist"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "sb-static",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err == nil {
+		t.Fatal("expected the failed capture to fail the case")
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-static" {
+		t.Fatalf("expected static resource registered despite capture failure, got %+v", entries)
+	}
+}
+
 // TestLoadCaseRejectsUnknownFields covers the false-positive the reviewer
 // flagged: a misspelled assertion key must fail at load rather than being
 // silently dropped (which would leave the step asserting nothing).

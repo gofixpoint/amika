@@ -237,21 +237,28 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 		return err
 	}
 
-	parsed, err := parseStdout(step, stdout)
-	if err != nil {
-		return err
+	// The command exited as expected, so any resource it created must be
+	// registered for cleanup even if parsing, capture, or a later assertion
+	// then fails. Hold parse/capture errors and attempt registerResource
+	// first (best effort): a resource whose name and cleanup argv do not
+	// depend on a failed same-step capture still gets tracked, while one that
+	// does depend on it cannot be identified and registerResource reports so.
+	// The parse/capture error is the root cause and is surfaced first.
+	parsed, parseErr := parseStdout(step, stdout)
+	var captureErr error
+	if parseErr == nil {
+		captureErr = r.captureVars(step, parsed)
 	}
+	regErr := r.registerResource(step)
 
-	// Capture variables and register any created resource BEFORE the content
-	// assertions below. The command already exited as expected (creation
-	// succeeded), so a resource it created must reach the ledger even if a
-	// stdout_contains / stdout_json / schema assertion then fails; otherwise
-	// t.Cleanup can never delete it and it leaks.
-	if err := r.captureVars(step, parsed); err != nil {
-		return err
+	if parseErr != nil {
+		return parseErr
 	}
-	if err := r.registerResource(step); err != nil {
-		return err
+	if captureErr != nil {
+		return captureErr
+	}
+	if regErr != nil {
+		return regErr
 	}
 
 	return r.checkContent(step, parsed, stdout, stderr)
