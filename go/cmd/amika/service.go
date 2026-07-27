@@ -78,6 +78,9 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	if port == 0 {
 		return fmt.Errorf("--port is required")
 	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("invalid --port %d: must be between 1 and 65535", port)
+	}
 	if strings.TrimSpace(urlScheme) == "" {
 		return fmt.Errorf("--url-scheme is required")
 	}

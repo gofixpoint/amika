@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -316,6 +319,63 @@ func TestServiceDeleteCommand_DefaultRemote_RequiresAuth(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("expected 'not logged in' error, got: %v", err)
+	}
+}
+
+// A successful create prints the returned service as a one-row table. The
+// client is pointed at a fake API server via AMIKA_API_URL.
+func TestServiceCreateCommand_PrintsCreatedService(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v0beta1/sandboxes/box/services" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		svcURL := "https://web.example.com"
+		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			Name:      "web",
+			Port:      3000,
+			URLScheme: "https",
+			URL:       &svcURL,
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	for _, needle := range []string{"NAME", "PORT", "SCHEME", "URL", "web", "3000", "https://web.example.com"} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("output missing %q:\n%s", needle, out)
+		}
+	}
+}
+
+// A successful delete prints the confirmation line after the API call.
+func TestServiceDeleteCommand_PrintsDeleted(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v0beta1/sandboxes/box/services/web" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "delete", "--force", "--sandbox", "box", "--name", "web")
+	if err != nil {
+		t.Fatalf("service delete failed: %v", err)
+	}
+	if !strings.Contains(out, `Service "web" deleted`) {
+		t.Fatalf("expected deleted message, got:\n%s", out)
 	}
 }
 
