@@ -26,6 +26,22 @@ func resetServiceFlags(t *testing.T) {
 	if err := serviceListCmd.Flags().Set("sandbox-name", ""); err != nil {
 		t.Fatal(err)
 	}
+	for _, f := range []string{"sandbox", "name", "url-scheme"} {
+		if err := serviceCreateCmd.Flags().Set(f, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := serviceCreateCmd.Flags().Set("port", "0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"sandbox", "name"} {
+		if err := serviceDeleteCmd.Flags().Set(f, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := serviceDeleteCmd.Flags().Set("force", "false"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestServiceListCommand_Local_PrintsRows(t *testing.T) {
@@ -128,6 +144,103 @@ func TestServiceListCommand_DefaultRemote_RequiresAuth(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("expected 'not logged in' error, got: %v", err)
+	}
+}
+
+func TestValidateServiceName(t *testing.T) {
+	valid := []string{"web", "a", "web-1", "0", "my-service-name", strings.Repeat("a", 63)}
+	for _, n := range valid {
+		if err := validateServiceName(n); err != nil {
+			t.Errorf("validateServiceName(%q) = %v, want nil", n, err)
+		}
+	}
+	invalid := []string{"", "Web", "web_1", "-web", "web-", "web.api", "a b", strings.Repeat("a", 64)}
+	for _, n := range invalid {
+		if err := validateServiceName(n); err == nil {
+			t.Errorf("validateServiceName(%q) = nil, want error", n)
+		}
+	}
+}
+
+// The create command validates its inputs client-side before any network call,
+// so these cases fail without a server.
+func TestServiceCreateCommand_Validation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"missing sandbox", []string{"service", "create", "--name", "web", "--port", "3000", "--url-scheme", "https"}, "--sandbox is required"},
+		{"missing name", []string{"service", "create", "--sandbox", "box", "--port", "3000", "--url-scheme", "https"}, "--name is required"},
+		{"missing port", []string{"service", "create", "--sandbox", "box", "--name", "web", "--url-scheme", "https"}, "--port is required"},
+		{"missing url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000"}, "--url-scheme is required"},
+		{"bad name", []string{"service", "create", "--sandbox", "box", "--name", "Web_1", "--port", "3000", "--url-scheme", "https"}, "must be a single DNS label"},
+		{"bad url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "ftp"}, `must be "http" or "https"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetServiceFlags(t)
+			_, err := runRootCommand(tc.args...)
+			if err == nil {
+				t.Fatalf("expected error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestServiceDeleteCommand_Validation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"missing sandbox", []string{"service", "delete", "--force", "--name", "web"}, "--sandbox is required"},
+		{"missing name", []string{"service", "delete", "--force", "--sandbox", "box"}, "--name is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetServiceFlags(t)
+			_, err := runRootCommand(tc.args...)
+			if err == nil {
+				t.Fatalf("expected error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// Declining the confirmation prompt aborts without deleting (no network call).
+func TestServiceDeleteCommand_DeclineAborts(t *testing.T) {
+	resetServiceFlags(t)
+	rootCmd.SetIn(strings.NewReader("n\n"))
+	defer rootCmd.SetIn(nil)
+
+	out, err := runRootCommand("service", "delete", "--sandbox", "box", "--name", "web")
+	if err != nil {
+		t.Fatalf("delete declined should not error: %v", err)
+	}
+	if !strings.Contains(out, "Aborted.") {
+		t.Fatalf("expected 'Aborted.', got:\n%s", out)
+	}
+}
+
+// The delete alias `rm` resolves to the same command.
+func TestServiceDeleteCommand_RmAlias(t *testing.T) {
+	resetServiceFlags(t)
+	rootCmd.SetIn(strings.NewReader("n\n"))
+	defer rootCmd.SetIn(nil)
+
+	out, err := runRootCommand("service", "rm", "--sandbox", "box", "--name", "web")
+	if err != nil {
+		t.Fatalf("service rm should resolve: %v", err)
+	}
+	if !strings.Contains(out, "Aborted.") {
+		t.Fatalf("expected 'Aborted.', got:\n%s", out)
 	}
 }
 
