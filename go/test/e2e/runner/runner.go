@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -118,6 +120,16 @@ func LoadCase(path string) (*Case, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse case %s: %w", path, err)
 	}
+	// A case file must hold exactly one YAML document. A stray "---" followed
+	// by more content would otherwise be silently ignored, bypassing the
+	// known-field validation above and letting a weaker first document pass.
+	var extra yaml.Node
+	switch err := dec.Decode(&extra); {
+	case err == nil:
+		return nil, fmt.Errorf("parse case %s: only one YAML document is allowed per case file", path)
+	case !errors.Is(err, io.EOF):
+		return nil, fmt.Errorf("parse case %s: %w", path, err)
+	}
 	// A second, lightweight pass records whether each step actually spelled
 	// out a "stdout_json" key. YAML decodes both an omitted field and an
 	// explicit "stdout_json: null" to a nil any, so this is the only way to
@@ -222,8 +234,13 @@ type Options struct {
 type Runner struct {
 	opts   Options
 	ledger *Ledger
-	schema *SchemaValidator
 	vars   map[string]string
+
+	// schema is loaded lazily, the first time a step actually uses
+	// expect.schema, so a run whose cases never request schema validation
+	// (e.g. the offline sample cases) never fetches the OpenAPI document.
+	schemaOnce sync.Once
+	schema     *SchemaValidator
 }
 
 // New creates a Runner backed by a fresh ledger.json under opts.RunDir.
@@ -242,17 +259,25 @@ func New(opts Options) (*Runner, error) {
 		return nil, err
 	}
 
-	var schema *SchemaValidator
-	if opts.SchemaDoc != "" {
-		schema = LoadOpenAPISchema(opts.SchemaDoc)
-	}
-
 	return &Runner{
 		opts:   opts,
 		ledger: ledger,
-		schema: schema,
 		vars:   map[string]string{},
 	}, nil
+}
+
+// schemaValidator returns the OpenAPI schema validator, loading (and, for a
+// URL source, fetching) the document on first use so a run whose steps never
+// request expect.schema does no schema I/O at all. It returns nil when no
+// SchemaDoc was configured.
+func (r *Runner) schemaValidator() *SchemaValidator {
+	if r.opts.SchemaDoc == "" {
+		return nil
+	}
+	r.schemaOnce.Do(func() {
+		r.schema = LoadOpenAPISchema(r.opts.SchemaDoc)
+	})
+	return r.schema
 }
 
 // Ledger returns the run's ledger of registered resources.
@@ -296,20 +321,15 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 		return err
 	}
 
-	// Check the exit code first: a mismatch means the command did not do what
-	// the step expected (e.g. creation failed), so there is nothing to
-	// capture, register, or assert further.
-	if err := checkExit(step, stdout, stderr, exitCode); err != nil {
-		return err
-	}
-
-	// The command exited as expected, so any resource it created must be
-	// registered for cleanup even if parsing, capture, or a later assertion
-	// then fails. Hold parse/capture errors and attempt registerResource
-	// first (best effort): a resource whose name and cleanup argv do not
-	// depend on a failed same-step capture still gets tracked, while one that
-	// does depend on it cannot be identified and registerResource reports so.
-	// The parse/capture error is the root cause and is surfaced first.
+	// A resource the command created must reach the ledger even when the step
+	// then fails, so capture and registration run before any failure is
+	// returned. This holds even for an unexpected exit code: a create command
+	// can succeed and still exit nonzero afterward (e.g. the sandbox is
+	// created but a follow-up wait fails), leaving a live resource. Everything
+	// here is best effort; a resource whose name/cleanup argv do not depend on
+	// a failed same-step capture is still tracked, while one that does cannot
+	// be identified and registerResource reports so.
+	exitErr := checkExit(step, stdout, stderr, exitCode)
 	parsed, parseErr := parseStdout(step, stdout)
 	var captureErr error
 	if parseErr == nil {
@@ -317,6 +337,12 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 	}
 	regErr := r.registerResource(step)
 
+	// Surface failures in cause order: an unexpected exit is the most
+	// informative (the command did not behave as the step expected), then a
+	// parse/capture/registration failure, then the content assertions.
+	if exitErr != nil {
+		return exitErr
+	}
 	if parseErr != nil {
 		return parseErr
 	}
@@ -371,6 +397,20 @@ func (r *Runner) CleanupEnv() []string {
 // slice, since the C library that resolves getenv() for the child process
 // is free to return the first match rather than the last.
 func (r *Runner) stepEnv(overrides map[string]string) []string {
+	values, order := r.resolvedEnv(overrides)
+	env := make([]string, 0, len(order))
+	for _, key := range order {
+		env = append(env, key+"="+values[key])
+	}
+	return env
+}
+
+// resolvedEnv computes the fully resolved environment for a step as a map plus
+// the insertion order of its keys: the runner's base environment (or
+// os.Environ() if unset), an injected AMIKA_STATE_DIRECTORY when configured,
+// then the step's own overrides (last write wins). stepEnv renders this into a
+// "KEY=VALUE" slice; resourceEnv reads specific resolved values from it.
+func (r *Runner) resolvedEnv(overrides map[string]string) (map[string]string, []string) {
 	base := r.opts.Env
 	if base == nil {
 		base = os.Environ()
@@ -400,12 +440,7 @@ func (r *Runner) stepEnv(overrides map[string]string) []string {
 	for key, val := range overrides {
 		set(key, val)
 	}
-
-	env := make([]string, 0, len(order))
-	for _, key := range order {
-		env = append(env, key+"="+values[key])
-	}
-	return env
+	return values, order
 }
 
 func (r *Runner) writeTranscript(index int, name string, stdout, stderr []byte, exitCode int) error {
@@ -471,10 +506,11 @@ func (r *Runner) checkContent(step Step, parsed any, stdout, stderr []byte) erro
 		}
 	}
 	if step.Expect.Schema != "" {
-		if r.schema == nil {
-			return fmt.Errorf("expect.schema %q requested but no OpenAPI document was loaded (Options.SchemaDoc empty)", step.Expect.Schema)
+		v := r.schemaValidator()
+		if v == nil {
+			return fmt.Errorf("expect.schema %q requested but no OpenAPI document was configured (Options.SchemaDoc empty)", step.Expect.Schema)
 		}
-		if err := r.schema.Validate(step.Expect.Schema, parsed); err != nil {
+		if err := v.Validate(step.Expect.Schema, parsed); err != nil {
 			return fmt.Errorf("schema %q: %w", step.Expect.Schema, err)
 		}
 	}
@@ -540,23 +576,37 @@ func (r *Runner) registerResource(step Step) error {
 	return nil
 }
 
+// cleanupTargetEnvKeys are the environment variables that determine which
+// amika deployment and state a cleanup command targets. Their resolved values
+// (base env + injected state dir + step overrides) are persisted on each
+// ledger entry so a standalone reaper replaying the ledger with no base env of
+// its own (CleanupFromLedgerFile) still deletes the resource from the same
+// place it was created, even when the value came only from the run's base
+// Options.Env. Credentials are deliberately excluded: they must not be written
+// to the on-disk ledger, so standalone recovery must run in an environment
+// that already provides them.
+var cleanupTargetEnvKeys = []string{"AMIKA_STATE_DIRECTORY", "AMIKA_API_URL"}
+
 // resourceEnv returns the env overrides to persist on a ledger entry so
-// cleanup targets the same amika state the resource was created against. It is
-// the creating step's own env overrides plus the run's injected
-// AMIKA_STATE_DIRECTORY (unless the step overrode that key). Persisting the
-// state directory here means a standalone reaper replaying the ledger with a
-// nil base env (see CleanupFromLedgerFile) still deletes the resource from the
-// run's isolated state rather than the invoking user's default state.
+// cleanup targets the same amika deployment and state the resource was created
+// against. It carries the creating step's own env overrides plus the resolved
+// values of the cleanup target vars (see cleanupTargetEnvKeys), so a standalone
+// reaper (CleanupFromLedgerFile with a nil base env) deletes the resource from
+// the run's isolated state and correct API rather than the invoking user's
+// defaults.
 func (r *Runner) resourceEnv(step Step) map[string]string {
-	if r.opts.StateDir == "" && len(step.Env) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(step.Env)+1)
-	if r.opts.StateDir != "" {
-		out["AMIKA_STATE_DIRECTORY"] = r.opts.StateDir
+	resolved, _ := r.resolvedEnv(step.Env)
+	out := make(map[string]string, len(step.Env)+len(cleanupTargetEnvKeys))
+	for _, key := range cleanupTargetEnvKeys {
+		if v, ok := resolved[key]; ok {
+			out[key] = v
+		}
 	}
 	for k, v := range step.Env {
 		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

@@ -171,6 +171,11 @@ against the currently deployed spec rather than a copy that can drift. The
 value may also be a local filesystem path if you want to validate against a
 spec you have on disk.
 
+The document is fetched **lazily**, the first time a case actually uses
+`expect.schema`. A run whose cases never request schema validation (such as
+the offline sample cases) does no network I/O for the schema at all, so the
+default URL never forces a run to touch the network.
+
 Loading the OpenAPI document is deliberately best-effort: if the document
 cannot be fetched or fails to parse, `Validate` returns a clear "openapi
 document unavailable" error rather than panicking, so a broken, stale, or

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -956,6 +957,136 @@ func TestRunnerResourceEnvHonorsStepStateOverride(t *testing.T) {
 	}
 }
 
+// TestRunnerResourceEnvPersistsBaseAPIURL covers the crash-cleanup gap: a
+// target-setting override that lives only in the run's base Options.Env (here
+// AMIKA_API_URL) must be recorded on the ledger entry so a standalone reaper
+// deletes against the right API. Non-target base vars (PATH) are not persisted.
+func TestRunnerResourceEnvPersistsBaseAPIURL(t *testing.T) {
+	bin := stubScript(t)
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "state")
+
+	r, err := New(Options{
+		BinPath:  bin,
+		RunDir:   filepath.Join(dir, "run"),
+		StateDir: stateDir,
+		Env:      []string{"AMIKA_API_URL=https://api.example.test", "PATH=/usr/bin"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "base env api url persisted",
+		Steps: []Step{
+			{
+				Name:     "create",
+				Cmd:      []string{"0", "", ""},
+				Resource: &Resource{Type: "sandbox", Name: "sb-1", Cleanup: []string{"0", "", ""}},
+			},
+		},
+	}
+	if err := r.RunCase(c); err != nil {
+		t.Fatalf("RunCase: %v", err)
+	}
+
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one entry, got %+v", entries)
+	}
+	if got := entries[0].Env["AMIKA_API_URL"]; got != "https://api.example.test" {
+		t.Fatalf("expected base AMIKA_API_URL persisted, got %q", got)
+	}
+	if got := entries[0].Env["AMIKA_STATE_DIRECTORY"]; got != stateDir {
+		t.Fatalf("expected state dir persisted, got %q", got)
+	}
+	if _, ok := entries[0].Env["PATH"]; ok {
+		t.Fatalf("did not expect a non-target base var (PATH) persisted: %+v", entries[0].Env)
+	}
+}
+
+// TestRunnerRegistersResourceOnUnexpectedExit covers the partial-success leak:
+// a create command that succeeds in creating the resource but then exits with
+// an unexpected nonzero status (e.g. a follow-up wait fails) must still
+// register a resource with a resolvable name so it is cleaned up.
+func TestRunnerRegistersResourceOnUnexpectedExit(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "create succeeds then command exits nonzero",
+		Steps: []Step{
+			{
+				Name:   "create then exit nonzero",
+				Cmd:    []string{"1", `{"name":"sb-leak"}`, "boom"}, // exits 1, but the step expects 0
+				Expect: Expectation{Exit: intPtr(0)},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "sb-leak",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err == nil {
+		t.Fatal("expected the unexpected exit code to fail the case")
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-leak" {
+		t.Fatalf("expected resource sb-leak registered despite the unexpected exit, got %+v", entries)
+	}
+}
+
+// TestRunnerSchemaLoadedLazily covers the offline-guarantee: a run whose cases
+// never use expect.schema must not fetch the OpenAPI document at all, and one
+// that does fetches it exactly once.
+func TestRunnerSchemaLoadedLazily(t *testing.T) {
+	bin := stubScript(t)
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, tinyOpenAPIDoc)
+	}))
+	defer srv.Close()
+
+	rNoSchema, err := New(Options{BinPath: bin, RunDir: filepath.Join(t.TempDir(), "run"), SchemaDoc: srv.URL})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := rNoSchema.RunCase(&Case{Name: "no schema", Steps: []Step{{Name: "ok", Cmd: []string{"0", "", ""}}}}); err != nil {
+		t.Fatalf("RunCase: %v", err)
+	}
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("expected no schema fetch for a case without expect.schema, got %d", got)
+	}
+
+	rSchema, err := New(Options{BinPath: bin, RunDir: filepath.Join(t.TempDir(), "run2"), SchemaDoc: srv.URL})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cSchema := &Case{
+		Name: "schema step",
+		Steps: []Step{{
+			Name:   "validate",
+			Cmd:    []string{"0", `{"ok":true}`, ""},
+			Expect: Expectation{Schema: "Thing"},
+		}},
+	}
+	if err := rSchema.RunCase(cSchema); err != nil {
+		t.Fatalf("RunCase with schema: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("expected exactly one schema fetch, got %d", got)
+	}
+}
+
 // TestLoadCaseRejectsResourceWithoutCleanup covers the silent-leak the
 // reviewer flagged: a resource block with no cleanup argv would record an
 // entry whose cleanup runs a bare binary and appears to succeed.
@@ -1012,6 +1143,27 @@ steps:
 `)
 	if _, err := LoadCase(path); err == nil {
 		t.Fatal("expected LoadCase to reject the unknown field 'stdout_josn'")
+	}
+}
+
+// TestLoadCaseRejectsMultipleDocuments covers the silent-drop the reviewer
+// flagged: a stray second YAML document (after "---") would otherwise be
+// ignored, bypassing the known-field validation on the first.
+func TestLoadCaseRejectsMultipleDocuments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "multi.yaml")
+	writeFile(t, path, `name: first doc
+steps:
+  - name: s
+    cmd: [version]
+---
+name: second doc
+steps:
+  - name: s2
+    cmd: [version]
+`)
+	if _, err := LoadCase(path); err == nil {
+		t.Fatal("expected LoadCase to reject a file with multiple YAML documents")
 	}
 }
 
