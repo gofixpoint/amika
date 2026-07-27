@@ -1066,11 +1066,11 @@ func TestRunnerResourceEnvPersistsBaseAPIURL(t *testing.T) {
 	}
 }
 
-// TestRunnerRegistersResourceOnUnexpectedExit covers the partial-success leak:
-// a create command that succeeds in creating the resource but then exits with
-// an unexpected nonzero status (e.g. a follow-up wait fails) must still
-// register a resource with a resolvable name so it is cleaned up.
-func TestRunnerRegistersResourceOnUnexpectedExit(t *testing.T) {
+// TestRunnerRegistersResourceOnUnexpectedExitWithOptIn covers the
+// partial-success case: a create command that creates the resource but then
+// exits with an unexpected status registers for cleanup ONLY when the case
+// opts in via resource.register_on_failure.
+func TestRunnerRegistersResourceOnUnexpectedExitWithOptIn(t *testing.T) {
 	bin := stubScript(t)
 	runDir := t.TempDir()
 
@@ -1087,9 +1087,10 @@ func TestRunnerRegistersResourceOnUnexpectedExit(t *testing.T) {
 				Cmd:    []string{"1", `{"name":"sb-leak"}`, "boom"}, // exits 1, but the step expects 0
 				Expect: Expectation{Exit: intPtr(0)},
 				Resource: &Resource{
-					Type:    "sandbox",
-					Name:    "sb-leak",
-					Cleanup: []string{"0", "", ""},
+					Type:              "sandbox",
+					Name:              "sb-leak",
+					Cleanup:           []string{"0", "", ""},
+					RegisterOnFailure: true,
 				},
 			},
 		},
@@ -1100,7 +1101,92 @@ func TestRunnerRegistersResourceOnUnexpectedExit(t *testing.T) {
 	}
 	entries := r.Ledger().Entries()
 	if len(entries) != 1 || entries[0].Name != "sb-leak" {
-		t.Fatalf("expected resource sb-leak registered despite the unexpected exit, got %+v", entries)
+		t.Fatalf("expected opt-in resource sb-leak registered despite the unexpected exit, got %+v", entries)
+	}
+}
+
+// TestRunnerDoesNotRegisterOnUnexpectedExitByDefault covers the safe default:
+// without register_on_failure, an unexpected exit does NOT register the
+// resource, so cleanup cannot delete a resource this run may not have created
+// (e.g. when the create failed on a name collision).
+func TestRunnerDoesNotRegisterOnUnexpectedExitByDefault(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "create fails, no opt-in",
+		Steps: []Step{
+			{
+				Name:   "create that exits nonzero",
+				Cmd:    []string{"1", "", "already exists"},
+				Expect: Expectation{Exit: intPtr(0)},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "sb-preexisting",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err == nil {
+		t.Fatal("expected the unexpected exit code to fail the case")
+	}
+	if entries := r.Ledger().Entries(); len(entries) != 0 {
+		t.Fatalf("expected no resource registered on unexpected exit without opt-in, got %+v", entries)
+	}
+}
+
+// TestRunnerCaptureClearsStaleValueOnReuse covers the stale-capture leak: a
+// later step that reuses a capture name whose path now fails must not leave the
+// earlier step's value in place, or registerResource would template cleanup
+// with the stale identifier and delete the wrong resource.
+func TestRunnerCaptureClearsStaleValueOnReuse(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "reused capture name with a now-failing path",
+		Steps: []Step{
+			{
+				Name:    "create first",
+				Cmd:     []string{"0", `{"name":"sb-1"}`, ""},
+				Capture: map[string]string{"sandbox_name": "$.name"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "{{sandbox_name}}",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+			{
+				Name:    "create second, capture path now fails",
+				Cmd:     []string{"0", `{"name":"sb-2"}`, ""},
+				Capture: map[string]string{"sandbox_name": "$.does_not_exist"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "{{sandbox_name}}",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err == nil {
+		t.Fatal("expected the failed re-capture to fail the case")
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-1" {
+		t.Fatalf("expected only the first resource registered (no stale duplicate), got %+v", entries)
 	}
 }
 
@@ -1204,6 +1290,24 @@ steps:
 `)
 	if _, err := LoadCase(path); err == nil {
 		t.Fatal("expected LoadCase to reject the unknown field 'stdout_josn'")
+	}
+}
+
+// TestLoadCaseRejectsInvalidCaptureName covers the capture-grammar gap: a
+// capture name that "{{...}}" cannot reference (e.g. "sandbox/name") must fail
+// at load rather than storing a value no template can ever use.
+func TestLoadCaseRejectsInvalidCaptureName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad-capture.yaml")
+	writeFile(t, path, `name: bad capture name
+steps:
+  - name: s
+    cmd: [version]
+    capture:
+      "sandbox/name": $.name
+`)
+	if _, err := LoadCase(path); err == nil {
+		t.Fatal("expected LoadCase to reject a capture name outside the template grammar")
 	}
 }
 

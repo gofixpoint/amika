@@ -102,6 +102,13 @@ type Resource struct {
 	// Cleanup is the amika argv (not including the binary itself) that
 	// deletes the resource. Elements may contain "{{var}}" templates.
 	Cleanup []string `yaml:"cleanup"`
+	// RegisterOnFailure, when true, registers the resource for cleanup even if
+	// the creating step exits with an unexpected status. Off by default: an
+	// unexpected exit is ambiguous (the command may have failed before
+	// creating anything, e.g. a name collision), so cleaning up a resource this
+	// run may not have created could delete one owned by another run. Enable it
+	// only for a command known to create the resource before it can fail.
+	RegisterOnFailure bool `yaml:"register_on_failure"`
 }
 
 // LoadCase reads and parses a case file at path.
@@ -160,6 +167,21 @@ func LoadCase(path string) (*Case, error) {
 		}
 		if len(step.Cmd) == 0 {
 			return nil, fmt.Errorf("case %s: step %d (%s): \"cmd\" is required", path, i+1, step.Name)
+		}
+		// A capture name must match the "{{var}}" template grammar; otherwise
+		// its value is stored but can never be referenced (e.g. "{{a/b}}" is
+		// not recognized as a placeholder and passes through verbatim), which
+		// can silently untrack a resource or produce a false assertion. Reject
+		// such names at load time, in sorted order for a deterministic error.
+		captureNames := make([]string, 0, len(step.Capture))
+		for name := range step.Capture {
+			captureNames = append(captureNames, name)
+		}
+		sort.Strings(captureNames)
+		for _, name := range captureNames {
+			if !validVarNamePattern.MatchString(name) {
+				return nil, fmt.Errorf("case %s: step %d (%s): capture name %q must match %s", path, i+1, step.Name, name, validVarNameGrammar)
+			}
 		}
 		if step.Resource != nil {
 			// A resource with no cleanup argv would record an entry whose
@@ -348,29 +370,36 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 		return err
 	}
 
-	if err := r.writeTranscript(index, step.Name, stdout, stderr, exitCode); err != nil {
-		return err
-	}
-
 	// A resource the command created must reach the ledger even when the step
 	// then fails, so capture and registration run before any failure is
-	// returned. This holds even for an unexpected exit code: a create command
-	// can succeed and still exit nonzero afterward (e.g. the sandbox is
-	// created but a follow-up wait fails), leaving a live resource. Everything
-	// here is best effort; a resource whose name/cleanup argv do not depend on
-	// a failed same-step capture is still tracked, while one that does cannot
-	// be identified and registerResource reports so.
+	// returned (including before the transcript is written, so a transcript
+	// I/O error does not strand a just-created resource).
 	exitErr := checkExit(step, stdout, stderr, exitCode)
 	parsed, parseErr := parseStdout(step, stdout)
 	var captureErr error
 	if parseErr == nil {
 		captureErr = r.captureVars(step, parsed)
 	}
-	regErr := r.registerResource(step)
+
+	// When the exit code matched, the command did what the step expected, so a
+	// resource it declared exists and is registered unconditionally (even if a
+	// later capture/assertion then fails). An UNEXPECTED exit is ambiguous: the
+	// command may have created the resource and then failed, or it may have
+	// failed before creating anything (e.g. a name collision, where cleanup
+	// would delete a pre-existing resource this run does not own). So on an
+	// unexpected exit a resource is registered only when the case explicitly
+	// opts in via resource.register_on_failure.
+	var regErr error
+	if exitErr == nil || (step.Resource != nil && step.Resource.RegisterOnFailure) {
+		regErr = r.registerResource(step)
+	}
+
+	transcriptErr := r.writeTranscript(index, step.Name, stdout, stderr, exitCode)
 
 	// Surface failures in cause order: an unexpected exit is the most
 	// informative (the command did not behave as the step expected), then a
-	// parse/capture/registration failure, then the content assertions.
+	// parse/capture/registration failure, then a transcript I/O failure, then
+	// the content assertions.
 	if exitErr != nil {
 		return exitErr
 	}
@@ -382,6 +411,9 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 	}
 	if regErr != nil {
 		return regErr
+	}
+	if transcriptErr != nil {
+		return transcriptErr
 	}
 
 	return r.checkContent(step, parsed, stdout, stderr)
@@ -554,6 +586,13 @@ func (r *Runner) checkContent(step Step, parsed any, stdout, stderr []byte) erro
 // and registered for cleanup. Captures are processed in sorted name order so
 // the outcome does not depend on Go's randomized map iteration, and all path
 // errors are joined into the returned error.
+//
+// Each capture's prior value is invalidated (removed from r.vars) before
+// extraction. Otherwise a later step that reuses a capture name whose path now
+// fails would leave the previous step's value in place, and registerResource
+// could then template cleanup with that stale identifier, deleting the wrong
+// resource. Clearing it first makes a failed capture leave the name undefined,
+// so any template referencing it fails loudly instead.
 func (r *Runner) captureVars(step Step, parsed any) error {
 	names := make([]string, 0, len(step.Capture))
 	for name := range step.Capture {
@@ -563,6 +602,7 @@ func (r *Runner) captureVars(step Step, parsed any) error {
 
 	var errs []error
 	for _, name := range names {
+		delete(r.vars, name)
 		val, err := ExtractJSONPath(step.Capture[name], parsed)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("capture %q: %w", name, err))
@@ -646,6 +686,14 @@ func (r *Runner) resourceEnv(step Step) map[string]string {
 // templateVarPattern matches "{{name}}" placeholders. Names may contain
 // letters, digits, underscore, dot, and hyphen.
 var templateVarPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
+
+// validVarNameGrammar describes the characters a capture/template variable
+// name may contain; validVarNamePattern matches a whole name against it. They
+// mirror the name class inside templateVarPattern, so any accepted capture
+// name is one "{{name}}" can actually reference.
+const validVarNameGrammar = "[A-Za-z0-9_.-]+"
+
+var validVarNamePattern = regexp.MustCompile("^" + validVarNameGrammar + "$")
 
 // substituteString replaces every "{{var}}" placeholder in s with the
 // corresponding entry from vars. It returns an error naming any

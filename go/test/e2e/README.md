@@ -78,6 +78,7 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [sandbox, delete, "{{sandbox_name}}", --force, -o, json]
+      register_on_failure: false                            # optional: register even on an unexpected exit
 ```
 
 Every field except `name` and `cmd` is optional on a step. `name` is
@@ -191,6 +192,16 @@ it. The runner appends this to the run's ledger (`ledger.json`) and
 **flushes it to disk immediately**, so if a later step in the same case
 crashes the test process outright, the resource is still recorded on
 disk and can be cleaned up by hand or by a future run.
+
+A resource is registered when its step exits as expected, even if a later
+capture or content assertion in that same step then fails, so a resource
+that was really created is never orphaned. When the step exits with an
+**unexpected** status the outcome is ambiguous (the command may have failed
+before creating anything, such as a name collision), so the resource is
+registered only if the block sets `register_on_failure: true`. Leave that
+off unless the command is known to create the resource before it can fail;
+otherwise cleanup could delete a pre-existing resource this run does not
+own.
 
 `e2e_test.go` registers `t.Cleanup` for every case *before* running it, so
 cleanup always fires, even if the case fails partway through. Cleanup
