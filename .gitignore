@@ -5,6 +5,10 @@ scratch/
 .gocache/
 .gotmp/
 .gomodcache/
+go/test/e2e/.runs/
+# The OpenAPI document is fetched from the live API at run time, not checked
+# in; ignore a locally fetched/cached copy so it is never committed.
+go/test/e2e/testdata/openapi.json
 
 .env
 .env.*

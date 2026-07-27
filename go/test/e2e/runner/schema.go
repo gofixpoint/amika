@@ -1,0 +1,208 @@
+// Package runner implements a black-box test runner that drives a compiled
+// amika binary as a subprocess: it loads YAML case files, runs each step's
+// argv/stdin/env against the binary, asserts on stdout/stderr/exit code,
+// and tracks any resources the steps create so they can be cleaned up in
+// reverse order afterward.
+package runner
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+)
+
+// schemaFetchTimeout bounds how long LoadOpenAPISchema waits when the source
+// is an http(s) URL, so a slow or unreachable host fails the schema load
+// cleanly instead of hanging the run.
+const schemaFetchTimeout = 30 * time.Second
+
+// schemaDocURL is the synthetic base URI the OpenAPI document is registered
+// under with the jsonschema compiler. It never needs to resolve over the
+// network; it only anchors "#/components/schemas/<Name>" fragment lookups.
+const schemaDocURL = "amika-e2e://openapi.json"
+
+// SchemaValidator validates decoded JSON values against named schemas under
+// components.schemas in an OpenAPI document.
+//
+// Loading is best-effort by design: OpenAPI documents can use dialect
+// features that trip up a strict JSON Schema loader, and a case author
+// asking for schema validation shouldn't be blocked by that. LoadOpenAPI
+// always returns a usable, non-nil validator; if the document failed to
+// load, every Validate call fails with a clear, specific error instead of
+// panicking or silently skipping the check.
+type SchemaValidator struct {
+	compiler *jsonschema.Compiler
+	loadErr  error
+
+	mu    sync.Mutex
+	cache map[string]*jsonschema.Schema
+}
+
+// LoadOpenAPISchema loads an OpenAPI document from source for later
+// validation against its components.schemas definitions. source is either an
+// http(s) URL (fetched over the network) or a local filesystem path. The
+// document is not checked into the repo: e2e runs fetch it from the live API
+// (see the runner's default OpenAPI URL) so schema checks track the deployed
+// spec.
+func LoadOpenAPISchema(source string) *SchemaValidator {
+	v := &SchemaValidator{cache: map[string]*jsonschema.Schema{}}
+
+	rc, err := openSchemaSource(source)
+	if err != nil {
+		v.loadErr = err
+		return v
+	}
+	defer rc.Close()
+
+	doc, err := jsonschema.UnmarshalJSON(rc)
+	if err != nil {
+		v.loadErr = fmt.Errorf("parse openapi document %s: %w", source, err)
+		return v
+	}
+
+	// The Amika spec declares openapi 3.1.0 but expresses nullability with the
+	// OpenAPI 3.0 keyword `nullable: true`, which is not part of JSON Schema
+	// 2020-12 (what jsonschema/v6 enforces): a `{type: string, nullable: true}`
+	// schema would reject a real `null` value the API legitimately returns.
+	// Rewrite those into `type: [..., "null"]` so validation honors the spec's
+	// intent instead of failing on every nullable field.
+	rewriteNullable(doc)
+
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource(schemaDocURL, doc); err != nil {
+		v.loadErr = fmt.Errorf("register openapi document %s: %w", source, err)
+		return v
+	}
+	v.compiler = compiler
+	return v
+}
+
+// openSchemaSource returns a reader over the OpenAPI document named by source.
+// When source is an http(s) URL it is fetched over the network (bounded by
+// schemaFetchTimeout); otherwise it is opened as a local file. The caller must
+// Close the returned reader.
+func openSchemaSource(source string) (io.ReadCloser, error) {
+	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		client := &http.Client{Timeout: schemaFetchTimeout}
+		resp, err := client.Get(source)
+		if err != nil {
+			return nil, fmt.Errorf("fetch openapi document %s: %w", source, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("fetch openapi document %s: unexpected status %s", source, resp.Status)
+		}
+		return resp.Body, nil
+	}
+	f, err := os.Open(source)
+	if err != nil {
+		return nil, fmt.Errorf("open openapi document %s: %w", source, err)
+	}
+	return f, nil
+}
+
+// Validate validates instance (a value decoded from JSON, e.g. via
+// encoding/json into any) against components.schemas.<name> in the loaded
+// OpenAPI document. It returns a clear error if the document never loaded,
+// the named schema doesn't exist, or instance does not conform.
+func (v *SchemaValidator) Validate(name string, instance any) error {
+	if v.loadErr != nil {
+		return fmt.Errorf("openapi document unavailable: %w", v.loadErr)
+	}
+
+	schema, err := v.compiled(name)
+	if err != nil {
+		return err
+	}
+	if err := schema.Validate(instance); err != nil {
+		return err
+	}
+	return nil
+}
+
+// rewriteNullable walks a decoded JSON Schema / OpenAPI document in place and
+// rewrites every `{"nullable": true}` object so a JSON Schema 2020-12
+// validator accepts the null values an OpenAPI-3.0-style `nullable` field
+// allows. The `nullable` keyword itself (meaningless under 2020-12) is always
+// dropped; addNullType then widens the schema to admit null. It deletes the
+// keyword BEFORE rewriting so a composition rewrite does not carry a stale
+// `nullable` into the nested copy and re-trigger on the recursive descent.
+func rewriteNullable(node any) {
+	switch n := node.(type) {
+	case map[string]any:
+		nullable := isTrue(n["nullable"])
+		delete(n, "nullable")
+		if nullable {
+			addNullType(n)
+		}
+		for _, child := range n {
+			rewriteNullable(child)
+		}
+	case []any:
+		for _, child := range n {
+			rewriteNullable(child)
+		}
+	}
+}
+
+// addNullType widens a schema (whose `nullable` keyword has already been
+// removed) so it also accepts null:
+//   - A concrete `type` (string or list) gains "null".
+//   - A schema with no `type` but constraining keywords ($ref, allOf, anyOf,
+//     oneOf, ...) is wrapped as `{"anyOf": [<original>, {"type": "null"}]}`,
+//     since adding a bare `type: null` would instead forbid the non-null
+//     value the constraints describe.
+//   - An empty schema already accepts null, so it is left untouched.
+func addNullType(schema map[string]any) {
+	switch t := schema["type"].(type) {
+	case string:
+		if t != "null" {
+			schema["type"] = []any{t, "null"}
+		}
+		return
+	case []any:
+		for _, existing := range t {
+			if s, ok := existing.(string); ok && s == "null" {
+				return
+			}
+		}
+		schema["type"] = append(t, "null")
+		return
+	}
+	if len(schema) == 0 {
+		return
+	}
+	original := make(map[string]any, len(schema))
+	for k, v := range schema {
+		original[k] = v
+		delete(schema, k)
+	}
+	schema["anyOf"] = []any{original, map[string]any{"type": "null"}}
+}
+
+// isTrue reports whether v is the boolean true.
+func isTrue(v any) bool {
+	b, ok := v.(bool)
+	return ok && b
+}
+
+func (v *SchemaValidator) compiled(name string) (*jsonschema.Schema, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if schema, ok := v.cache[name]; ok {
+		return schema, nil
+	}
+	schema, err := v.compiler.Compile(schemaDocURL + "#/components/schemas/" + name)
+	if err != nil {
+		return nil, fmt.Errorf("schema %q not found under components.schemas: %w", name, err)
+	}
+	v.cache[name] = schema
+	return schema, nil
+}
