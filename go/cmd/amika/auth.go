@@ -168,6 +168,17 @@ var authLogoutCmd = &cobra.Command{
 		out := format.Progress(cmd.OutOrStdout())
 		result := logoutJSON{}
 
+		// A delete can fail after an earlier one already changed auth state
+		// (e.g. the API key was cleared but the session delete then fails).
+		// Emit the JSON result first so -o json reports what was cleared
+		// before the error surfaces, instead of exiting with empty stdout.
+		failJSON := func(e error) error {
+			if format.IsJSON() {
+				_ = format.JSON(cmd.OutOrStdout(), result)
+			}
+			return e
+		}
+
 		// Parse errors must not block deletion: a corrupt credential file
 		// would otherwise trap the user, since `auth login` refuses to
 		// proceed while any stored credential is present.
@@ -175,12 +186,12 @@ var authLogoutCmd = &cobra.Command{
 		if existingKey, loadErr := auth.LoadAPIKey(); loadErr != nil {
 			fmt.Fprintf(out, "Warning: stored API key file is unreadable (%v); removing %s\n", loadErr, apiKeyPath)
 			if err := auth.DeleteAPIKey(); err != nil {
-				return err
+				return failJSON(err)
 			}
 			result.ClearedAPIKey = true
 		} else if existingKey != nil {
 			if err := auth.DeleteAPIKey(); err != nil {
-				return err
+				return failJSON(err)
 			}
 			fmt.Fprintln(out, "Cleared stored API key")
 			result.ClearedAPIKey = true
@@ -190,12 +201,12 @@ var authLogoutCmd = &cobra.Command{
 		if existingSession, loadErr := auth.LoadSession(); loadErr != nil {
 			fmt.Fprintf(out, "Warning: stored session file is unreadable (%v); removing %s\n", loadErr, sessionPath)
 			if err := auth.DeleteSession(); err != nil {
-				return err
+				return failJSON(err)
 			}
 			result.ClearedSession = true
 		} else if existingSession != nil {
 			if err := auth.DeleteSession(); err != nil {
-				return err
+				return failJSON(err)
 			}
 			fmt.Fprintf(out, "Cleared logged-in session (%s)\n", existingSession.Email)
 			result.ClearedSession = true

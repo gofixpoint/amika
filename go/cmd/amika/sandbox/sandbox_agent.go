@@ -36,7 +36,7 @@ type agentSendJSON struct {
 	SessionID      string   `json:"session_id,omitempty"`
 	AgentSessionID string   `json:"agent_session_id,omitempty"`
 	IsError        bool     `json:"is_error"`
-	IsNewSession   bool     `json:"is_new_session,omitempty"`
+	IsNewSession   bool     `json:"is_new_session"`
 	CostUSD        *float64 `json:"cost_usd,omitempty"`
 }
 

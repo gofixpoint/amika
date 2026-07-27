@@ -42,10 +42,13 @@ func runSCP(cmd *cobra.Command, rawArgs []string) error {
 		return cmd.Help()
 	}
 
-	// DisableFlagParsing also means the global --output flag never reaches
-	// cobra to be marked Changed, so RejectFlag can't see it. Reject the
-	// long form explicitly. The short -o is left alone: it is scp's own
-	// ssh_config option and must forward to the system scp.
+	// DisableFlagParsing means the global --output flag is never parsed by
+	// cobra (so RejectFlag, which keys off Changed, can't see it) no matter
+	// where it appears. Scan the raw argv instead and reject the unambiguous
+	// long form --output / --output=VALUE wherever it sits. The short -o is
+	// deliberately left to forward: it is scp's own ssh_config option, and
+	// once flag parsing is disabled a leading "-o json" is indistinguishable
+	// from scp's own "-o", so it cannot be rejected without breaking that.
 	if err := output.RejectFlagInArgs(rawArgs); err != nil {
 		return err
 	}

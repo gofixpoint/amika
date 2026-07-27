@@ -6,7 +6,7 @@ Complete reference for all `amika` commands, flags, and environment variables.
 
 Most commands accept `--output` (short `-o`) to control how they print their result. This lets you read output at a terminal and pipe the same command into a script or `jq` without reformatting.
 
-Two commands do **not** accept `--output` because they delegate to a system shell utility that streams its own output and cannot emit JSON: `amika sandbox ssh` (runs `ssh`) rejects the flag with an error, and `amika scp` (a thin wrapper around `scp`) forwards every argument to `scp` unchanged, so an `--output` value is passed straight through to `scp`.
+Two commands do **not** produce JSON because they delegate to a system shell utility that streams its own output: `amika sandbox ssh` (runs `ssh`) rejects `--output` with an error, and `amika scp` (a thin wrapper around `scp`) rejects the unambiguous long form `--output`/`--output=VALUE` but forwards `scp`'s own short `-o` option (used for `ssh_config` overrides) to the system `scp`.
 
 | Value         | Description                                    |
 | ------------- | ---------------------------------------------- |
@@ -25,7 +25,7 @@ amika sandbox list --remote -o json | jq '.[].name'
 amika snapshot list -o json-pretty
 ```
 
-List commands emit a JSON array (empty as `[]`, never `null`), and mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
+Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
 
 ```bash
 # Create a sandbox and capture its name for a script
@@ -313,7 +313,7 @@ amika sandbox agent-send my-sandbox "Review this code" --agent codex
 
 ## `amika scp`
 
-Copy files between the local machine, sandboxes, and SSH hosts. This is a thin wrapper around the system `scp` binary: every argument is forwarded to `scp` unchanged, so all the usual `scp` flags (`-r`, `-p`, `-C`, `-v`, ...) work.
+Copy files between the local machine, sandboxes, and SSH hosts. This is a thin wrapper around the system `scp` binary: every argument is forwarded to `scp` unchanged, so all the usual `scp` flags (`-r`, `-p`, `-C`, `-v`, `-o Option=value`, ...) work. The one exception is the long-form global `--output`/`--output=VALUE`, which is rejected (scp streams its own output and cannot emit JSON); `scp`'s own short `-o` is forwarded normally.
 
 ```bash
 amika scp <source> ... <target>

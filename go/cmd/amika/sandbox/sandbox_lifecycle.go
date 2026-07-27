@@ -277,6 +277,12 @@ var sandboxListCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			// Normalize each sandbox the same way create/start/stop do, so a
+			// remote sandbox whose services the API returns as null emits
+			// "services":[] rather than "services":null in the list too.
+			for i := range remoteSandboxes {
+				remoteSandboxes[i] = normalizeSandboxJSON(remoteSandboxes[i])
+			}
 			jsonItems = remoteSandboxes
 			for _, rs := range remoteSandboxes {
 				allItems = append(allItems, amika.Sandbox{

@@ -1,10 +1,27 @@
 package sandboxcmd
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestAgentSendJSONAlwaysEmitsRequiredBools verifies that is_error and
+// is_new_session are always present in the JSON, even when false. The API's
+// AgentSendResponse marks both required, so a resumed session (is_new_session
+// false) must still carry the field rather than dropping it via omitempty.
+func TestAgentSendJSONAlwaysEmitsRequiredBools(t *testing.T) {
+	data, err := json.Marshal(agentSendJSON{Sandbox: "sb", Agent: "claude", Status: "completed"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{`"is_error"`, `"is_new_session"`} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("expected %s to be present even when false, got: %s", key, data)
+		}
+	}
+}
 
 func TestBuildSandboxConnectArgs(t *testing.T) {
 	got := buildSandboxConnectArgs("sb-1", "zsh")

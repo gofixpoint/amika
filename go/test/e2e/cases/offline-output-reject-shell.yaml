@@ -82,6 +82,23 @@ steps:
       exit: 1
       stderr_contains: "the --output flag is not supported by this command"
 
+  - name: the long form is rejected in the global-prefix position too (amika --output json scp ...)
+    # RejectFlagInArgs scans the raw argv, so the unambiguous long --output is
+    # rejected wherever it sits, before or after the scp subcommand.
+    cmd: [--output, json, scp, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: a leading short -o is NOT rejected; it is indistinguishable from scp's own -o
+    # Once scp disables flag parsing, "-o json" before the subcommand cannot be
+    # told apart from scp's own -o ssh_config option, so it forwards. Here it is
+    # consumed as scp's -o and the copy fails for lack of a real remote operand.
+    cmd: [-o, json, scp, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "no remote source or target found"
+
   - name: "scp -o json a b: -o is scp's OWN option and is NOT rejected; it forwards"
     # The short -o is scp's ssh_config-override option, not amika's --output
     # shorthand here, so it is left to forward to the system scp. "-o" consumes
