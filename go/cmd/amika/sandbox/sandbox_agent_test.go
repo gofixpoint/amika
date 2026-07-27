@@ -23,6 +23,30 @@ func TestAgentSendJSONAlwaysEmitsRequiredBools(t *testing.T) {
 	}
 }
 
+// TestAgentSendJSONResponsePresence verifies that a completed send emits the
+// required "response" field even when the agent produced no text, while the
+// async "sent" shape omits it (nil pointer). The API's AgentSendResponse marks
+// response required, so a completed send with empty output must not drop it.
+func TestAgentSendJSONResponsePresence(t *testing.T) {
+	empty := ""
+
+	completed, err := json.Marshal(agentSendJSON{Sandbox: "sb", Agent: "claude", Status: "completed", Response: &empty})
+	if err != nil {
+		t.Fatalf("marshal completed: %v", err)
+	}
+	if !strings.Contains(string(completed), `"response":""`) {
+		t.Errorf("completed send must emit empty response, got: %s", completed)
+	}
+
+	sent, err := json.Marshal(agentSendJSON{Sandbox: "sb", Agent: "claude", Status: "sent"})
+	if err != nil {
+		t.Fatalf("marshal sent: %v", err)
+	}
+	if strings.Contains(string(sent), `"response"`) {
+		t.Errorf("async sent shape must omit response, got: %s", sent)
+	}
+}
+
 func TestBuildSandboxConnectArgs(t *testing.T) {
 	got := buildSandboxConnectArgs("sb-1", "zsh")
 	want := []string{"exec", "-it", "-w", "/home/amika", "sb-1", "zsh"}

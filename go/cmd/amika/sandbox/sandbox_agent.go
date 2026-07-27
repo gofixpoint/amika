@@ -21,18 +21,22 @@ import (
 )
 
 // agentSendJSON is the JSON emitted by `agent-send`. Response and SessionID
-// are populated when the command waits for a response (not --no-wait) against
-// a remote sandbox; Status is "sent" for --no-wait and "completed" otherwise.
+// are populated when the command waits for a response (not --no-wait);
+// Status is "sent" for --no-wait and "completed" otherwise.
 // The response-carrying fields (session_id, response, is_error,
 // is_new_session, agent_session_id, cost_usd) use the same names as the API's
 // AgentSendResponse schema; Sandbox/Agent/Status are CLI-only wrapper fields
 // with no schema equivalent (agent-send has no polled resource, and the local
 // Docker path has no API-backed response at all).
+//
+// Response is a pointer so a completed send always emits the field, even when
+// the agent produced no text (""), matching the schema where response is
+// required; the async "sent" shape leaves it nil so omitempty drops it.
 type agentSendJSON struct {
 	Sandbox        string   `json:"sandbox"`
 	Agent          string   `json:"agent"`
 	Status         string   `json:"status"`
-	Response       string   `json:"response,omitempty"`
+	Response       *string  `json:"response,omitempty"`
 	SessionID      string   `json:"session_id,omitempty"`
 	AgentSessionID string   `json:"agent_session_id,omitempty"`
 	IsError        bool     `json:"is_error"`
@@ -271,9 +275,12 @@ sends) and the response, session id, and error status included once known.`,
 				return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
 			}
 			if format.IsJSON() {
-				result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed", Response: captured.String()}
+				result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed"}
 				if noWait {
 					result.Status = "sent"
+				} else {
+					resp := captured.String()
+					result.Response = &resp
 				}
 				return format.JSON(cmd.OutOrStdout(), result)
 			}
@@ -304,7 +311,7 @@ sends) and the response, session id, and error status included once known.`,
 			result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "sent"}
 			if !noWait && resp != nil {
 				result.Status = "completed"
-				result.Response = resp.Response
+				result.Response = &resp.Response
 				result.SessionID = resp.SessionID
 				result.AgentSessionID = resp.AgentSessionID
 				result.IsError = resp.IsError
