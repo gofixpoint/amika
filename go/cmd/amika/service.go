@@ -170,7 +170,11 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tPORT\tSCHEME\tURL")
-	fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", svc.Name, svc.Port, svc.URLScheme, deref(svc.URL))
+	url := deref(svc.URL)
+	if url == "" {
+		url = "-"
+	}
+	fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", svc.Name, svc.Port, svc.URLScheme, url)
 	w.Flush()
 }
 

@@ -355,6 +355,33 @@ func TestServiceCreateCommand_PrintsCreatedService(t *testing.T) {
 	}
 }
 
+// A created service with no provisioned URL renders the URL column as "-",
+// matching how `service list` renders a missing URL.
+func TestServiceCreateCommand_NoURLRendersDash(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			Name:      "web",
+			Port:      3000,
+			URLScheme: "https",
+			URL:       nil,
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	if !strings.Contains(out, "-") {
+		t.Fatalf("expected '-' for missing URL, got:\n%s", out)
+	}
+}
+
 // A successful delete prints the confirmation line after the API call.
 func TestServiceDeleteCommand_PrintsDeleted(t *testing.T) {
 	resetServiceFlags(t)
