@@ -78,7 +78,7 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [sandbox, delete, "{{sandbox_name}}", --force, -o, json]
-      register_on_failure: false                            # optional: register even on an unexpected exit
+      register_on_failure: false                            # optional: set true to register even on an unexpected exit (default false)
 ```
 
 Every field except `name` and `cmd` is optional on a step. `name` is

@@ -1190,6 +1190,54 @@ func TestRunnerCaptureClearsStaleValueOnReuse(t *testing.T) {
 	}
 }
 
+// TestRunnerCaptureClearedWhenReusedStepStdoutUnparseable covers the same
+// stale-capture hazard when the reusing step's stdout is not valid JSON:
+// captureVars is skipped in that case, so the invalidation must happen in
+// runStep, not inside captureVars, or the previous step's value would survive.
+func TestRunnerCaptureClearedWhenReusedStepStdoutUnparseable(t *testing.T) {
+	bin := stubScript(t)
+	runDir := t.TempDir()
+
+	r, err := New(Options{BinPath: bin, RunDir: runDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	c := &Case{
+		Name: "reused capture name, second step stdout is not JSON",
+		Steps: []Step{
+			{
+				Name:    "create first",
+				Cmd:     []string{"0", `{"name":"sb-1"}`, ""},
+				Capture: map[string]string{"sandbox_name": "$.name"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "{{sandbox_name}}",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+			{
+				Name:    "second step prints non-json but reuses the capture",
+				Cmd:     []string{"0", "not json at all", ""},
+				Capture: map[string]string{"sandbox_name": "$.name"},
+				Resource: &Resource{
+					Type:    "sandbox",
+					Name:    "{{sandbox_name}}",
+					Cleanup: []string{"0", "", ""},
+				},
+			},
+		},
+	}
+
+	if err := r.RunCase(c); err == nil {
+		t.Fatal("expected the unparseable stdout to fail the second step")
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-1" {
+		t.Fatalf("expected no stale duplicate when the reusing step's stdout is unparseable, got %+v", entries)
+	}
+}
+
 // TestRunnerSchemaLoadedLazily covers the offline-guarantee: a run whose cases
 // never use expect.schema must not fetch the OpenAPI document at all, and one
 // that does fetches it exactly once.

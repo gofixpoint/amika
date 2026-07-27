@@ -375,6 +375,18 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 	// returned (including before the transcript is written, so a transcript
 	// I/O error does not strand a just-created resource).
 	exitErr := checkExit(step, stdout, stderr, exitCode)
+
+	// Invalidate any prior values for this step's capture names before
+	// extracting them. A reused capture name whose capture fails this step, for
+	// ANY reason (a bad path, or stdout that is not valid JSON so captureVars
+	// is skipped below), must become undefined rather than retain an earlier
+	// step's value that registerResource could template into the wrong
+	// resource. Doing it here, not inside captureVars, covers the parse-failure
+	// case where captureVars never runs.
+	for name := range step.Capture {
+		delete(r.vars, name)
+	}
+
 	parsed, parseErr := parseStdout(step, stdout)
 	var captureErr error
 	if parseErr == nil {
@@ -587,12 +599,9 @@ func (r *Runner) checkContent(step Step, parsed any, stdout, stderr []byte) erro
 // the outcome does not depend on Go's randomized map iteration, and all path
 // errors are joined into the returned error.
 //
-// Each capture's prior value is invalidated (removed from r.vars) before
-// extraction. Otherwise a later step that reuses a capture name whose path now
-// fails would leave the previous step's value in place, and registerResource
-// could then template cleanup with that stale identifier, deleting the wrong
-// resource. Clearing it first makes a failed capture leave the name undefined,
-// so any template referencing it fails loudly instead.
+// The caller (runStep) invalidates this step's capture names in r.vars before
+// calling captureVars, so a name whose extraction fails here is left undefined
+// rather than retaining an earlier step's value.
 func (r *Runner) captureVars(step Step, parsed any) error {
 	names := make([]string, 0, len(step.Capture))
 	for name := range step.Capture {
@@ -602,7 +611,6 @@ func (r *Runner) captureVars(step Step, parsed any) error {
 
 	var errs []error
 	for _, name := range names {
-		delete(r.vars, name)
 		val, err := ExtractJSONPath(step.Capture[name], parsed)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("capture %q: %w", name, err))
