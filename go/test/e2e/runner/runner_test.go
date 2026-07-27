@@ -109,6 +109,10 @@ func TestMatchOptionalUnknownMatcherFails(t *testing.T) {
 	if err := Match(expected, map[string]any{"name": "x"}); err == nil {
 		t.Fatal("expected an unknown optional matcher to fail on a present key")
 	}
+	// A present null value must not slip past via the optional/nil path.
+	if err := Match(expected, map[string]any{"name": nil}); err == nil {
+		t.Fatal("expected an unknown optional matcher to fail on a present null value")
+	}
 	// A real optional matcher still permits the key to be absent.
 	if err := Match(map[string]any{"name": "@string?"}, map[string]any{}); err != nil {
 		t.Fatalf("expected a known optional matcher to allow absence: %v", err)
@@ -221,6 +225,14 @@ func TestMatchArrayPrefixWithRest(t *testing.T) {
 	// But the prefix itself must still be present.
 	if err := Match([]any{"a", "b", "@..."}, []any{"a"}); err == nil {
 		t.Fatalf("expected error when the matched prefix is longer than actual")
+	}
+	// "@..." anywhere but the last position is a clear error.
+	err := Match([]any{"@...", "a"}, []any{"x", "a"})
+	if err == nil {
+		t.Fatal("expected a non-final @... to be rejected")
+	}
+	if !strings.Contains(err.Error(), "only valid as the last array element") {
+		t.Fatalf("expected a clear non-final @... message, got: %v", err)
 	}
 }
 

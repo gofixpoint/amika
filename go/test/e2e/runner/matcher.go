@@ -129,6 +129,16 @@ func matchArrayAt(path string, expected []any, actual any, problems *[]string) {
 		}
 	}
 
+	// "@..." is only meaningful as the final element. Reject it anywhere else
+	// with a clear message rather than letting it fall through to matchAt,
+	// which would report the less helpful "unknown matcher".
+	for i, expectedVal := range exp {
+		if s, ok := expectedVal.(string); ok && s == arrayRestMatcher {
+			*problems = append(*problems, fmt.Sprintf("%s[%d]: %q is only valid as the last array element", path, i, arrayRestMatcher))
+			return
+		}
+	}
+
 	if prefix {
 		if len(aa) < len(exp) {
 			*problems = append(*problems, fmt.Sprintf("%s: expected at least %d item(s), got %d", path, len(exp), len(aa)))
@@ -195,6 +205,14 @@ func applyMatcher(spec string, actual any) error {
 	name, arg := splitMatcher(spec)
 	optional := strings.HasSuffix(name, "?")
 	base := strings.TrimSuffix(name, "?")
+
+	// Validate the matcher name BEFORE the optional/nil short-circuit below:
+	// otherwise a typo like "@strng?" matched against a present null value
+	// would pass, the same class of silent false-positive the absent-key
+	// path already rejects.
+	if !isKnownMatcher(base) {
+		return fmt.Errorf("unknown matcher %q", spec)
+	}
 
 	if optional && actual == nil {
 		return nil
