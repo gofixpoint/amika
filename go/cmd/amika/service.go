@@ -165,8 +165,9 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// printService renders a single created/updated service as a one-row table,
-// matching the columns of `service list`.
+// printService renders a single created service as a one-row table
+// (NAME/PORT/SCHEME/URL), using the same "-" placeholder as `service list`
+// when no URL has been provisioned.
 func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tPORT\tSCHEME\tURL")
