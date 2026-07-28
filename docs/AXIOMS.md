@@ -1,8 +1,7 @@
-# Axioms
-
-> Axioms for the operating system for agents
->
-> Why we need a new operating system and how it should work
+<p align="center">
+  <h1 align="center">Axioms</h1>
+  <p align="center">Why we need a new operating system and how it should work</p>
+</p>
 
 1. **Agents on computers will outnumber humans on computers.**
 
