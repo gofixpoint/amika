@@ -13,6 +13,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/appcfg"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -82,6 +83,13 @@ Examples:
 			return err
 		}
 
+		// ssh delegates to the system ssh binary (or, for --print/--revoke,
+		// prints a raw connection string / performs a one-off API call). None of
+		// these emit a structured result, so --output is not supported here.
+		if err := output.RejectFlag(cmd); err != nil {
+			return err
+		}
+
 		revoke, _ := cmd.Flags().GetBool("revoke")
 		if revoke {
 			info, err := client.GetSSH(name)
@@ -146,6 +154,10 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		// code opens an interactive editor, so it has no JSON result.
+		if err := output.RejectJSON(cmd); err != nil {
+			return err
+		}
 		editor, _ := cmd.Flags().GetString("editor")
 		if err := validateEditor(editor); err != nil {
 			return err

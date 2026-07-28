@@ -1,0 +1,27 @@
+# Real-API case: read-only, does not create/mutate any resource.
+# Lists sandbox snapshots in the authenticated org via
+# GET /api/v0beta1/sandbox-snapshots.
+name: snapshot list against the real API is read-only and well-formed
+steps:
+  - name: snapshot list -o json returns the {items:[...]} envelope matching ListSandboxSnapshotsResponse
+    cmd: [snapshot, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListSandboxSnapshotsResponse
+      stdout_json:
+        items: "@array"
+
+  - name: snapshot list -o json-pretty is valid pretty-printed JSON of the same shape
+    cmd: [snapshot, list, -o, json-pretty]
+    expect:
+      exit: 0
+      schema: ListSandboxSnapshotsResponse
+
+  # No stdout assertion here: against a clean org `snapshot list` prints
+  # "No snapshots found." instead of the NAME/STATE header, so asserting the
+  # header would fail on an empty account. Assert only that the text path
+  # exits cleanly, which holds for both empty and populated lists.
+  - name: snapshot list (text) exits cleanly regardless of account state
+    cmd: [snapshot, list]
+    expect:
+      exit: 0

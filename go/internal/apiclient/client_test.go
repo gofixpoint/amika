@@ -316,6 +316,170 @@ func TestListSandboxesParsesServices(t *testing.T) {
 	}
 }
 
+// TestRemoteSandboxRoundTrip guards decision 1 of the output-format work: the
+// decoded RemoteSandbox re-encodes to the same shape (required fields always
+// present, nullable fields emitting `null` rather than being omitted).
+func TestRemoteSandboxRoundTrip(t *testing.T) {
+	const body = `{
+      "id": "sb_1",
+      "user_id": null,
+      "org_id": "org_1",
+      "name": "dylan/release-test",
+      "provider": "daytona",
+      "provider_sandbox_id": "prov_1",
+      "provider_url": null,
+      "amika_opencode_web": null,
+      "repo_name": "example-repo",
+      "repo_provider": "github",
+      "repo_id": null,
+      "repo_url": "https://github.com/gofixpoint/example-repo",
+      "branch": "main",
+      "commit_hash": null,
+      "snapshot": null,
+      "current_session_id": null,
+      "services": [],
+      "created_at": "2026-07-11T00:00:00Z",
+      "updated_at": "2026-07-11T00:00:00Z"
+    }`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token")
+	sb, err := c.GetSandbox("dylan/release-test")
+	if err != nil {
+		t.Fatalf("GetSandbox: %v", err)
+	}
+	if sb.UserID != nil {
+		t.Errorf("UserID = %v, want nil", sb.UserID)
+	}
+	if sb.Provider == nil || *sb.Provider != "daytona" {
+		t.Errorf("Provider = %v, want daytona", sb.Provider)
+	}
+
+	data, err := json.Marshal(sb)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	got := string(data)
+	// Required-but-nullable fields must round-trip as explicit null, not be
+	// omitted, so a caller re-encoding a decoded RemoteSandbox reproduces the
+	// same shape the server sent.
+	for _, want := range []string{
+		`"user_id":null`,
+		`"provider_url":null`,
+		`"repo_id":null`,
+		`"commit_hash":null`,
+		`"snapshot":null`,
+		`"current_session_id":null`,
+		`"services":[]`,
+		`"org_id":"org_1"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("re-encoded JSON missing %q, got: %s", want, got)
+		}
+	}
+}
+
+// TestSecretSummaryParsesFullSchema guards ListSecrets against the thin
+// {id,name,scope} shape it used to decode into; GET /secrets returns the full
+// SecretSummary object.
+func TestSecretSummaryParsesFullSchema(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "sec_1", "org_id": "org_1", "user_id": "user_1",
+			"name": "ANTHROPIC_API_KEY", "description": nil, "scope": "user",
+			"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+		}})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token")
+	secrets, err := c.ListSecrets()
+	if err != nil {
+		t.Fatalf("ListSecrets: %v", err)
+	}
+	if len(secrets) != 1 {
+		t.Fatalf("got %d secrets, want 1", len(secrets))
+	}
+	s := secrets[0]
+	if s.OrgID != "org_1" || s.UserID != "user_1" || s.CreatedAt != "2026-01-01T00:00:00Z" {
+		t.Errorf("secret = %+v", s)
+	}
+	if s.Description != nil {
+		t.Errorf("Description = %v, want nil", s.Description)
+	}
+}
+
+// TestAgentSendResponseParsesAllFields guards the full AgentSendResponse
+// schema, including the fields the CLI-only Result/legacy shape used to drop
+// (is_new_session, cost_usd).
+func TestAgentSendResponseParsesAllFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"session_id": "sess_1", "agent_session_id": "agent_sess_1",
+			"response": "done", "is_error": false, "is_new_session": true, "cost_usd": 0.42,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token")
+	resp, err := c.AgentSend("box", AgentSendRequest{Message: "hi"})
+	if err != nil {
+		t.Fatalf("AgentSend: %v", err)
+	}
+	if resp.Response != "done" || resp.SessionID != "sess_1" || resp.AgentSessionID != "agent_sess_1" {
+		t.Errorf("resp = %+v", resp)
+	}
+	if !resp.IsNewSession {
+		t.Error("IsNewSession = false, want true")
+	}
+	if resp.CostUSD == nil || *resp.CostUSD != 0.42 {
+		t.Errorf("CostUSD = %v, want 0.42", resp.CostUSD)
+	}
+}
+
+// TestAgentSendJobResponse_RoundTrip guards the AgentSendJobResponse mirror
+// type against the async agent-send-jobs schema (job_id/state/
+// agent_session_id/is_new_session/is_error/result_text/created_at/
+// updated_at), including its nullable fields.
+func TestAgentSendJobResponse_RoundTrip(t *testing.T) {
+	const body = `{
+      "job_id": "job_1",
+      "state": "running",
+      "agent_session_id": null,
+      "is_new_session": true,
+      "is_error": false,
+      "result_text": null,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }`
+	var job AgentSendJobResponse
+	if err := json.Unmarshal([]byte(body), &job); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if job.JobID != "job_1" || job.State != "running" {
+		t.Errorf("job = %+v", job)
+	}
+	if job.AgentSessionID != nil || job.ResultText != nil {
+		t.Errorf("nullable fields should be nil: %+v", job)
+	}
+	data, err := json.Marshal(job)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{`"agent_session_id":null`, `"result_text":null`, `"job_id":"job_1"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("re-encoded JSON missing %q, got: %s", want, got)
+		}
+	}
+}
+
 func mustJSON(t *testing.T, v interface{}) string {
 	t.Helper()
 	b, err := json.Marshal(v)

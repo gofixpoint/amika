@@ -9,9 +9,36 @@ import (
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
 )
+
+// volumeListItem is the JSON representation of a tracked volume or file mount.
+type volumeListItem struct {
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	CreatedAt  string   `json:"created_at"`
+	InUse      bool     `json:"in_use"`
+	Sandboxes  []string `json:"sandboxes"`
+	SourcePath string   `json:"source_path"`
+}
+
+// newVolumeListItem builds a volumeListItem, ensuring sandboxes marshals as an
+// empty array rather than null when the volume is unreferenced.
+func newVolumeListItem(name, typ, createdAt string, sandboxRefs []string, sourcePath string) volumeListItem {
+	if sandboxRefs == nil {
+		sandboxRefs = []string{}
+	}
+	return volumeListItem{
+		Name:       name,
+		Type:       typ,
+		CreatedAt:  createdAt,
+		InUse:      len(sandboxRefs) > 0,
+		Sandboxes:  sandboxRefs,
+		SourcePath: sourcePath,
+	}
+}
 
 var volumeCmd = &cobra.Command{
 	Use:   "volume",
@@ -44,6 +71,21 @@ var volumeListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if format.IsJSON() {
+			items := []volumeListItem{}
+			for _, v := range volumes {
+				items = append(items, newVolumeListItem(v.Name, "directory", v.CreatedAt, v.SandboxRefs, v.SourcePath))
+			}
+			for _, fm := range fileMounts {
+				items = append(items, newVolumeListItem(fm.Name, "file", fm.CreatedAt, fm.SandboxRefs, fm.SourcePath))
+			}
+			return format.JSON(cmd.OutOrStdout(), items)
+		}
+
 		if len(volumes) == 0 && len(fileMounts) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No volumes found.")
 			return nil
@@ -96,7 +138,15 @@ var volumeDeleteCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+
 		if !force {
+			if format.IsJSON() {
+				return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
+			}
 			reader := bufio.NewReader(cmd.InOrStdin())
 			confirmed, err := confirmAction(
 				fmt.Sprintf("Delete volume(s) %s?", strings.Join(args, ", ")),
@@ -106,10 +156,12 @@ var volumeDeleteCmd = &cobra.Command{
 				return err
 			}
 			if !confirmed {
-				fmt.Println("Aborted.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
 				return nil
 			}
 		}
+
+		pw := format.Progress(cmd.OutOrStdout())
 
 		volumesFile, err := config.VolumesStateFile()
 		if err != nil {
@@ -124,26 +176,43 @@ var volumeDeleteCmd = &cobra.Command{
 		fmStore := sandbox.NewFileMountStore(fileMountsFile)
 
 		var errs []string
+		results := []output.ItemResult{}
 		for _, name := range args {
 			if _, err := store.Get(name); err == nil {
 				if err := deleteTrackedVolume(store, name, force, sandbox.RemoveDockerVolume); err != nil {
 					errs = append(errs, fmt.Sprintf("volume %q: %v", name, err))
+					results = append(results, output.ItemResult{Name: name, Status: "error", Error: err.Error()})
 					continue
 				}
-				fmt.Printf("Volume %q deleted\n", name)
+				fmt.Fprintf(pw, "Volume %q deleted\n", name)
+				results = append(results, output.ItemResult{Name: name, Status: "deleted"})
 				continue
 			}
 
 			if _, err := fmStore.Get(name); err == nil {
 				if err := deleteTrackedFileMount(fmStore, name, force); err != nil {
 					errs = append(errs, fmt.Sprintf("volume %q: %v", name, err))
+					results = append(results, output.ItemResult{Name: name, Status: "error", Error: err.Error()})
 					continue
 				}
-				fmt.Printf("Volume %q deleted\n", name)
+				fmt.Fprintf(pw, "Volume %q deleted\n", name)
+				results = append(results, output.ItemResult{Name: name, Status: "deleted"})
 				continue
 			}
 
-			errs = append(errs, fmt.Sprintf("no volume found with name: %s", name))
+			msg := fmt.Sprintf("no volume found with name: %s", name)
+			errs = append(errs, msg)
+			results = append(results, output.ItemResult{Name: name, Status: "error", Error: msg})
+		}
+
+		if format.IsJSON() {
+			if err := format.JSON(cmd.OutOrStdout(), results); err != nil {
+				return err
+			}
+			if len(errs) > 0 {
+				return fmt.Errorf("%d of %d volumes failed; see JSON output", len(errs), len(results))
+			}
+			return nil
 		}
 		if len(errs) > 0 {
 			return fmt.Errorf("%s", strings.Join(errs, "\n"))

@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -39,6 +40,17 @@ func runSCP(cmd *cobra.Command, rawArgs []string) error {
 	// DisableFlagParsing bypasses cobra's built-in help flag, so handle it here.
 	if hasHelpFlag(rawArgs) {
 		return cmd.Help()
+	}
+
+	// DisableFlagParsing means the global --output flag is never parsed by
+	// cobra (so RejectFlag, which keys off Changed, can't see it) no matter
+	// where it appears. Scan the raw argv instead and reject the unambiguous
+	// long form --output / --output=VALUE wherever it sits. The short -o is
+	// deliberately left to forward: it is scp's own ssh_config option, and
+	// once flag parsing is disabled a leading "-o json" is indistinguishable
+	// from scp's own "-o", so it cannot be rejected without breaking that.
+	if err := output.RejectFlagInArgs(rawArgs); err != nil {
+		return err
 	}
 
 	plan, err := parseSCPArgs(rawArgs)

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"errors"
+	"io"
 	"testing"
 )
 
@@ -11,7 +12,7 @@ func TestResolveAndEnsureImage_PresetAndImageTogetherImageWins(t *testing.T) {
 
 	buildCalled := false
 	dockerImageExistsFn = func(_ string) bool { return true }
-	buildPresetImageFn = func(_ string, _ string) error {
+	buildPresetImageFn = func(_ string, _ string, _ io.Writer) error {
 		buildCalled = true
 		return nil
 	}
@@ -46,7 +47,7 @@ func TestResolveAndEnsureImage_PresetAndImageTogetherNoAutoBuild(t *testing.T) {
 		t.Fatal("writePresetBuildContextFn should not be called")
 		return "", nil, nil
 	}
-	buildPresetImageFn = func(_ string, _ string) error {
+	buildPresetImageFn = func(_ string, _ string, _ io.Writer) error {
 		t.Fatal("buildPresetImageFn should not be called")
 		return nil
 	}
@@ -79,7 +80,7 @@ func TestResolveAndEnsureImage_ExplicitCoderDindPresetBuildsWhenMissing(t *testi
 	writePresetBuildContextFn = func(_ string) (string, func(), error) {
 		return "/fake/context", func() {}, nil
 	}
-	buildPresetImageFn = func(preset string, contextDir string) error {
+	buildPresetImageFn = func(preset string, contextDir string, _ io.Writer) error {
 		builtPreset = preset
 		builtContextDir = contextDir
 		return nil
@@ -118,7 +119,7 @@ func TestResolveAndEnsureImage_ExplicitCoderPresetBuildsWhenMissing(t *testing.T
 	writePresetBuildContextFn = func(_ string) (string, func(), error) {
 		return "/fake/context", func() {}, nil
 	}
-	buildPresetImageFn = func(preset string, _ string) error {
+	buildPresetImageFn = func(preset string, _ string, _ io.Writer) error {
 		builtPreset = preset
 		return nil
 	}
@@ -153,7 +154,7 @@ func TestResolveAndEnsureImage_DefaultBuildPresetWhenImageNotChanged(t *testing.
 	writePresetBuildContextFn = func(_ string) (string, func(), error) {
 		return "/fake/context", func() {}, nil
 	}
-	buildPresetImageFn = func(_ string, _ string) error {
+	buildPresetImageFn = func(_ string, _ string, _ io.Writer) error {
 		built = true
 		return nil
 	}
@@ -185,7 +186,7 @@ func TestResolveAndEnsureImage_NoDefaultBuildWhenImageChanged(t *testing.T) {
 	writePresetBuildContextFn = func(_ string) (string, func(), error) {
 		return "/fake/context", func() {}, nil
 	}
-	buildPresetImageFn = func(_ string, _ string) error {
+	buildPresetImageFn = func(_ string, _ string, _ io.Writer) error {
 		buildCalled = true
 		return nil
 	}
@@ -214,7 +215,7 @@ func TestResolveAndEnsureImage_CustomImageNoPresetSkipsPresetBuildAndNormalizati
 		t.Fatal("writePresetBuildContextFn should not be called")
 		return "", nil, nil
 	}
-	buildPresetImageFn = func(_ string, _ string) error {
+	buildPresetImageFn = func(_ string, _ string, _ io.Writer) error {
 		t.Fatal("buildPresetImageFn should not be called")
 		return nil
 	}
@@ -260,7 +261,7 @@ func TestResolveAndEnsureImage_SkipsBuildWhenImageExists(t *testing.T) {
 
 	buildCalled := false
 	dockerImageExistsFn = func(_ string) bool { return true }
-	buildPresetImageFn = func(_ string, _ string) error {
+	buildPresetImageFn = func(_ string, _ string, _ io.Writer) error {
 		buildCalled = true
 		return nil
 	}

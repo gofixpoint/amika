@@ -1,7 +1,13 @@
-# Offline sample case: exercises the --output/-o flag's validation and
-# rejection paths. Every step here is fully deterministic and needs no
-# Docker, no network, and no API credentials, so it runs the same way in
-# any environment.
+# Offline sample case: exercises the --output/-o flag's validation and its
+# interaction with `sandbox agent-send`. Every step here is fully
+# deterministic and needs no Docker, no network, and no real API
+# credentials, so it runs the same way in any environment — including this
+# repo's own dev sandbox, which happens to export a real AMIKA_API_KEY into
+# every shell. Steps that reach an auth check pin AMIKA_API_KEY to an empty
+# string so the case's offline behavior does not depend on that ambient
+# credential (see the runner README: the base env for a step defaults to
+# the process's own os.Environ(), so an ambient credential is inherited
+# unless a step overrides it).
 name: output flag validation is enforced without a network or Docker
 steps:
   - name: amika --help works and lists top-level commands
@@ -14,19 +20,31 @@ steps:
     cmd: [sandbox, agent-send, some-sandbox, hello, --local, --output, bogus]
     expect:
       exit: 1
-      stderr_contains: 'invalid --output value "bogus"'
+      stderr_contains: 'invalid --output value "bogus": must be one of text, json, json-pretty'
 
-  - name: --output json is rejected for a --local agent-send
-    # --local agent-send streams raw agent output rather than a structured
-    # result, so it cannot honor --output json; this must fail fast without
-    # touching Docker or any sandbox state.
+  - name: --output json is now honored (not rejected) for --local agent-send
+    # On main this used to reject --output json for --local agent-send
+    # ("--output json is not supported with --local"). That rejection no
+    # longer exists: --local agent-send now accepts --output json like any
+    # other command and simply proceeds — here failing at sandbox lookup,
+    # same as it would in text mode. cobra/main.go prints RunE errors as
+    # plain text regardless of --output, so the error text below is
+    # unchanged from the text-mode message.
     cmd: [sandbox, agent-send, some-sandbox, hello, --local, --output, json]
+    env:
+      AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: "--output json is not supported with --local"
+      stderr_contains: 'sandbox "some-sandbox" not found'
 
-  - name: --output json is rejected for a --no-wait agent-send
+  - name: --output json is now honored (not rejected) for --no-wait agent-send
+    # Likewise, the old "--output json is not supported with --no-wait"
+    # rejection is gone. A --remote --no-wait send with no stored
+    # credentials and no AMIKA_API_KEY now fails at the auth check instead,
+    # before any network call is attempted.
     cmd: [sandbox, agent-send, some-sandbox, hello, --no-wait, --output, json, --remote]
+    env:
+      AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: "--output json is not supported with --no-wait"
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'

@@ -1,0 +1,63 @@
+name: remote sandbox lifecycle (create, list, agent-send, stop, start, delete)
+# A single real remote sandbox is created and reused across every
+# resource-dependent command, then deleted. The `resource` block registers
+# the sandbox for reverse-order ledger cleanup, so it is removed even if a
+# later step fails. The final explicit delete step also exercises the delete
+# command; on the happy path the ledger's redundant delete is a harmless
+# no-op that is logged and skipped.
+#
+# Snapshot create/list/delete are intentionally NOT here: snapshot deletion
+# depends on the sandbox provider and can fail transiently (HTTP 502), which
+# would redden this core lifecycle and orphan a snapshot. They live in
+# api-snapshot-lifecycle.yaml so that flakiness stays isolated.
+steps:
+  - name: create a remote sandbox and wait until it is provisioned
+    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+        id: "@string"
+        services: "@array"
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+
+  - name: list sandboxes as json and confirm ours is present
+    cmd: [sandbox, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListSandboxesResponse
+      stdout_contains: "{{sandbox_name}}"
+
+  - name: send one message to the agent and get a synchronous response
+    cmd: [sandbox, agent-send, "{{sandbox_name}}", "Reply with exactly the word: pong", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_json:
+        sandbox: "{{sandbox_name}}"
+        agent: claude
+        status: completed
+        response: "@string"
+        is_error: false
+
+  - name: stop the sandbox
+    cmd: [sandbox, stop, "{{sandbox_name}}", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_contains: "{{sandbox_name}}"
+
+  - name: start the sandbox again
+    cmd: [sandbox, start, "{{sandbox_name}}", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_contains: "{{sandbox_name}}"
+
+  - name: delete the sandbox
+    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    expect:
+      exit: 0

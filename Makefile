@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server build-amikalog build-akfs clean test test-unit test-integration test-contract test-e2e test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
+.PHONY: goenv build build-cli build-server build-amikalog build-akfs clean test test-unit test-integration test-contract test-e2e test-e2e-api test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
 
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
@@ -50,6 +50,12 @@ test-contract: goenv
 
 test-e2e: goenv
 	AMIKA_RUN_E2E=1 go -C $(GO_DIR) test ./test/e2e/...
+
+# Runs the offline E2E cases AND the api-*.yaml cases that hit the real
+# remote API (which may create billable resources). Requires credentials
+# (AMIKA_API_KEY / AMIKA_API_URL) in the environment.
+test-e2e-api: goenv
+	AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test ./test/e2e/...
 
 test-expensive: goenv
 	AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 $(MAKE) test-all

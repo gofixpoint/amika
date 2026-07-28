@@ -28,6 +28,42 @@ const openAPIURLEnv = "AMIKA_E2E_OPENAPI_URL"
 // defaultOpenAPIURL is the OpenAPI document used when openAPIURLEnv is unset.
 const defaultOpenAPIURL = "https://app.amika.dev/api/openapi.json"
 
+// runAPIEnv additionally gates case files named "api-*.yaml": those talk to a
+// real remote API and may create billable resources, so they need explicit
+// opt-in beyond AMIKA_RUN_E2E. Offline cases (flag validation, rejections,
+// --help) run with AMIKA_RUN_E2E alone and are safe anywhere.
+const runAPIEnv = "AMIKA_RUN_E2E_API"
+
+// apiCasePrefix marks a case file as reaching the real remote API.
+const apiCasePrefix = "api-"
+
+// credentialEnvVars are stripped from the base environment of offline cases
+// so they cannot reach the real remote API on a host with ambient
+// credentials. A step may still set them explicitly via its own env.
+var credentialEnvVars = map[string]bool{
+	"AMIKA_API_KEY": true,
+	"AMIKA_API_URL": true,
+}
+
+// baseEnvFor returns the base environment for a case's steps. API cases get
+// the process environment unchanged (nil defers to os.Environ() in the
+// runner). Offline cases get os.Environ() with credential vars removed.
+func baseEnvFor(isAPICase bool) []string {
+	if isAPICase {
+		return nil
+	}
+	full := os.Environ()
+	scrubbed := make([]string, 0, len(full))
+	for _, kv := range full {
+		key, _, _ := strings.Cut(kv, "=")
+		if credentialEnvVars[key] {
+			continue
+		}
+		scrubbed = append(scrubbed, kv)
+	}
+	return scrubbed
+}
+
 // TestE2ECases discovers every case file under cases/, runs each as a
 // subtest against a freshly built amika binary, and cleans up any
 // resources the case registered — even if the case failed or panicked.
@@ -64,6 +100,11 @@ func TestE2ECases(t *testing.T) {
 		caseName := strings.TrimSuffix(filepath.Base(caseFile), ".yaml")
 
 		t.Run(caseName, func(t *testing.T) {
+			isAPICase := strings.HasPrefix(caseName, apiCasePrefix)
+			if isAPICase && os.Getenv(runAPIEnv) != "1" {
+				t.Skipf("set %s=1 to run real-API case %q (may create billable resources)", runAPIEnv, caseName)
+			}
+
 			c, err := runner.LoadCase(caseFile)
 			if err != nil {
 				t.Fatalf("load case: %v", err)
@@ -80,6 +121,14 @@ func TestE2ECases(t *testing.T) {
 				RunDir:    runDir,
 				StateDir:  stateDir,
 				SchemaDoc: schemaDoc,
+				// Offline cases (not api-*) must never reach the real API,
+				// even on a host that exports AMIKA_API_KEY/AMIKA_API_URL
+				// ambiently (this dev environment does). Scrub those from the
+				// base env so an offline case that accidentally invokes a
+				// remote code path fails at the auth gate instead of silently
+				// hitting production. api-* cases keep the ambient env (nil =
+				// os.Environ()) so they can authenticate.
+				Env: baseEnvFor(isAPICase),
 			})
 			if err != nil {
 				t.Fatalf("create runner: %v", err)

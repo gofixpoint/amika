@@ -1,0 +1,30 @@
+# Real-API case: read-only, does not create/mutate any resource.
+#
+# `auth status` returns a CLI-native shape (not documented as an OpenAPI
+# component schema), so this asserts the actual fields with matchers instead
+# of `expect.schema`.
+name: auth status reports the authenticated env-var API key
+steps:
+  - name: auth status -o json reports authenticated via env API key
+    cmd: [auth, status, -o, json]
+    expect:
+      exit: 0
+      stdout_json:
+        authenticated: true
+        method: "@string"
+        warnings: "@array"
+
+  - name: auth status -o json-pretty is valid pretty-printed JSON of the same shape
+    cmd: [auth, status, -o, json-pretty]
+    expect:
+      exit: 0
+      stdout_json:
+        authenticated: true
+        method: "@string"
+        warnings: "@array"
+
+  - name: auth status (text) reports authenticated
+    cmd: [auth, status]
+    expect:
+      exit: 0
+      stdout_contains: "Authenticated"

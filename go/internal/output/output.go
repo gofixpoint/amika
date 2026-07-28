@@ -1,58 +1,159 @@
-// Package output resolves the --output flag that selects how a CLI command
-// renders its result: human-readable text or machine-readable JSON. The flag
-// is registered only on commands that actually implement it (via AddFlag), so
-// commands that do not support it reject --output with an unknown-flag error
-// rather than silently emitting text.
+// Package output centralizes CLI output formatting so commands can render
+// their results as human-readable text or as JSON in a consistent way across
+// the whole command tree.
 package output
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-// Format is the rendering format selected by the --output flag.
-type Format int
+// ItemResult is the JSON outcome of one item in a batch mutating command
+// (start, stop, delete). Status is a short verb like "started" or "deleted";
+// Error holds the failure message and is empty on success.
+type ItemResult struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// Format identifies how a command renders its result.
+type Format string
 
 const (
-	// Text renders human-readable output. It is the default.
-	Text Format = iota
-	// JSON renders machine-readable JSON.
-	JSON
+	// FormatText renders human-readable text and is the default.
+	FormatText Format = "text"
+	// FormatJSON renders compact, single-line JSON suitable for piping into
+	// tools like jq.
+	FormatJSON Format = "json"
+	// FormatJSONPretty renders indented, multi-line JSON for humans.
+	FormatJSONPretty Format = "json-pretty"
 )
 
-// String returns the flag value that selects the format.
-func (f Format) String() string {
-	switch f {
-	case Text:
-		return "text"
-	case JSON:
-		return "json"
-	default:
-		return "unknown"
-	}
-}
-
-// FlagName is the name of the output-format flag.
+// FlagName is the name of the persistent flag that selects the output format.
 const FlagName = "output"
 
-// AddFlag registers the --output/-o flag on a command that implements it.
-// Register it only on commands that honor the flag; leaving it off other
-// commands makes Cobra reject --output there automatically.
-func AddFlag(cmd *cobra.Command) {
-	cmd.Flags().StringP(FlagName, "o", "text", "Output format: \"text\" or \"json\"")
+// flagShorthand is the single-letter alias for FlagName.
+const flagShorthand = "o"
+
+// ValidValues returns the accepted --output values in display order.
+func ValidValues() []string {
+	return []string{string(FormatText), string(FormatJSON), string(FormatJSONPretty)}
 }
 
-// Resolve reads the --output flag from cmd and returns the selected Format.
-// An unrecognized value is an error.
-func Resolve(cmd *cobra.Command) (Format, error) {
-	value, _ := cmd.Flags().GetString(FlagName)
-	switch value {
-	case "", "text":
-		return Text, nil
-	case "json":
-		return JSON, nil
+// ParseFormat validates a raw flag value and returns the corresponding Format.
+func ParseFormat(raw string) (Format, error) {
+	switch Format(raw) {
+	case FormatText, FormatJSON, FormatJSONPretty:
+		return Format(raw), nil
 	default:
-		return Text, fmt.Errorf("invalid --output value %q: expected \"text\" or \"json\"", value)
+		return "", fmt.Errorf("invalid --%s value %q: must be one of %s", FlagName, raw, strings.Join(ValidValues(), ", "))
 	}
+}
+
+// AddFlag registers the persistent --output/-o flag on cmd. Registering it on
+// the root command makes every subcommand inherit it.
+func AddFlag(cmd *cobra.Command) {
+	cmd.PersistentFlags().StringP(
+		FlagName,
+		flagShorthand,
+		string(FormatText),
+		fmt.Sprintf("Output format: %s", strings.Join(ValidValues(), ", ")),
+	)
+}
+
+// FormatFrom reads and validates the output format from a command's flags. If
+// the flag is not registered (e.g. in a unit test that builds a bare command),
+// it returns FormatText.
+func FormatFrom(cmd *cobra.Command) (Format, error) {
+	raw, err := cmd.Flags().GetString(FlagName)
+	if err != nil {
+		return FormatText, nil
+	}
+	return ParseFormat(raw)
+}
+
+// unsupportedFlagError is the shared error for shell-delegating commands
+// (ssh, scp) that cannot honor --output. Both the parsed-flag path
+// (RejectFlag) and the raw-argv path (RejectFlagInArgs) return it so the
+// message stays identical regardless of how the flag was detected.
+func unsupportedFlagError() error {
+	return fmt.Errorf("the --%s flag is not supported by this command: it runs an underlying shell utility (ssh/scp) that streams its own output and cannot emit JSON", FlagName)
+}
+
+// RejectFlag returns an error if --output was explicitly set. Use it for
+// commands that delegate to an underlying shell utility (ssh, scp) which
+// streams its own output and cannot emit a structured JSON result, so the flag
+// would be meaningless or misleading.
+func RejectFlag(cmd *cobra.Command) error {
+	if cmd.Flags().Changed(FlagName) {
+		return unsupportedFlagError()
+	}
+	return nil
+}
+
+// RejectFlagInArgs is the RejectFlag counterpart for commands that set
+// DisableFlagParsing (e.g. scp), where the flag never reaches cobra to be
+// marked Changed. It scans the raw argv and rejects only the unambiguous
+// long form --output / --output=VALUE. The short form -o is intentionally
+// NOT rejected: scp defines its own -o option (ssh_config overrides), so a
+// bare -o must keep forwarding to the underlying utility.
+func RejectFlagInArgs(rawArgs []string) error {
+	long := "--" + FlagName
+	for _, arg := range rawArgs {
+		if arg == long || strings.HasPrefix(arg, long+"=") {
+			return unsupportedFlagError()
+		}
+	}
+	return nil
+}
+
+// RejectJSON returns an error if a JSON output format is requested. Use it for
+// commands that produce no structured result, such as those that open a shell
+// or editor or that print a human table and prompt for confirmation, so
+// -o json/json-pretty fails fast with a clear error instead of leaving
+// automation waiting or parsing non-JSON output. A text format (the default)
+// is allowed.
+func RejectJSON(cmd *cobra.Command) error {
+	format, err := FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+	if format.IsJSON() {
+		return fmt.Errorf("the --%s %s option is not supported by this command: it produces no structured JSON result", FlagName, format)
+	}
+	return nil
+}
+
+// IsJSON reports whether the format is one of the JSON variants.
+func (f Format) IsJSON() bool {
+	return f == FormatJSON || f == FormatJSONPretty
+}
+
+// Progress returns the writer to use for human-readable progress messages,
+// banners, and confirmation-free status lines. In JSON modes it returns
+// io.Discard so these never corrupt the single JSON value written to stdout;
+// in text mode it returns w unchanged (typically cmd.OutOrStdout()).
+func (f Format) Progress(w io.Writer) io.Writer {
+	if f.IsJSON() {
+		return io.Discard
+	}
+	return w
+}
+
+// JSON writes value as JSON to w according to the format: compact for
+// FormatJSON and indented for FormatJSONPretty. Output is terminated with a
+// trailing newline. HTML escaping is disabled so URLs and shell-friendly
+// characters render literally.
+func (f Format) JSON(w io.Writer, value any) error {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if f == FormatJSONPretty {
+		enc.SetIndent("", "  ")
+	}
+	return enc.Encode(value)
 }

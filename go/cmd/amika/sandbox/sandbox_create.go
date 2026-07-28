@@ -5,12 +5,14 @@ package sandboxcmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/constants"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/ssh"
@@ -48,6 +50,15 @@ var sandboxCreateCmd = &cobra.Command{
 			return err
 		}
 
+		format, err := output.FormatFrom(cmd)
+		if err != nil {
+			return err
+		}
+		if connect, _ := cmd.Flags().GetBool("connect"); connect && format.IsJSON() {
+			return fmt.Errorf("--connect cannot be combined with --%s %s (it opens an interactive shell)", output.FlagName, format)
+		}
+		pw := format.Progress(cmd.OutOrStdout())
+
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("failed to determine working directory: %w", err)
@@ -56,7 +67,7 @@ var sandboxCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), formatRepoBanner(identity))
+		fmt.Fprintln(pw, formatRepoBanner(identity))
 
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
@@ -94,11 +105,18 @@ var sandboxCreateCmd = &cobra.Command{
 			return fmt.Errorf("unsupported provider %q: only \"docker\" is supported", provider)
 		}
 
+		// In JSON mode, route any preset auto-build logs to stderr so stdout
+		// carries only the final JSON object.
+		var buildOutput io.Writer
+		if format.IsJSON() {
+			buildOutput = os.Stderr
+		}
 		resolvedImage, err := sandbox.ResolveAndEnsureImage(sandbox.PresetImageOptions{
 			Image:              image,
 			Preset:             preset,
 			ImageFlagChanged:   cmd.Flags().Changed("image"),
 			DefaultBuildPreset: "coder",
+			BuildOutput:        buildOutput,
 		})
 		if err != nil {
 			return err
@@ -170,27 +188,30 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		if (len(mounts) > 0 || len(volumeMounts) > 0) && !yes {
+			if format.IsJSON() {
+				return fmt.Errorf("refusing to prompt for mount confirmation with --%s %s; pass --yes to proceed", output.FlagName, format)
+			}
 			if gitMountInfo != nil {
 				mode := "clean"
 				if gitMountInfo.NoClean {
 					mode = "no-clean"
 				}
-				fmt.Println("Git repo to mount:")
-				fmt.Printf("  repo: %s\n", gitMountInfo.RepoName)
-				fmt.Printf("  root: %s\n", gitMountInfo.RepoRoot)
-				fmt.Printf("  mode: %s\n", mode)
-				fmt.Printf("  target: %s\n", gitMountInfo.Mount.Target)
+				fmt.Fprintln(pw, "Git repo to mount:")
+				fmt.Fprintf(pw, "  repo: %s\n", gitMountInfo.RepoName)
+				fmt.Fprintf(pw, "  root: %s\n", gitMountInfo.RepoRoot)
+				fmt.Fprintf(pw, "  mode: %s\n", mode)
+				fmt.Fprintf(pw, "  target: %s\n", gitMountInfo.Mount.Target)
 			}
-			fmt.Println("You are about to mount:")
+			fmt.Fprintln(pw, "You are about to mount:")
 			for _, m := range mounts {
 				source := m.Source
 				if m.Mode == "rwcopy" && m.SnapshotFrom != "" {
 					source = m.SnapshotFrom
 				}
-				fmt.Printf("  %s -> %s:%s (%s)\n", source, name, m.Target, m.Mode)
+				fmt.Fprintf(pw, "  %s -> %s:%s (%s)\n", source, name, m.Target, m.Mode)
 			}
 			for _, v := range volumeMounts {
-				fmt.Printf("  volume %s -> %s:%s (%s)\n", v.Volume, name, v.Target, v.Mode)
+				fmt.Fprintf(pw, "  volume %s -> %s:%s (%s)\n", v.Volume, name, v.Target, v.Mode)
 			}
 			reader := bufio.NewReader(os.Stdin)
 			confirmed, err := promptForConfirmation(reader)
@@ -198,7 +219,7 @@ var sandboxCreateCmd = &cobra.Command{
 				return err
 			}
 			if !confirmed {
-				fmt.Println("Aborted.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
 				return nil
 			}
 		}
@@ -259,25 +280,30 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		rb.Disarm()
 
-		fmt.Printf("Sandbox %q created (container %s)\n", name, containerID[:12])
+		fmt.Fprintf(pw, "Sandbox %q created (container %s)\n", name, containerID[:12])
 		if len(publishedPorts) > 0 {
-			fmt.Println("Published ports:")
+			fmt.Fprintln(pw, "Published ports:")
 			for _, p := range publishedPorts {
-				fmt.Printf("  %s\n", formatPortBinding(p))
+				fmt.Fprintf(pw, "  %s\n", formatPortBinding(p))
 			}
 		}
 		if len(collected.Services) > 0 {
-			fmt.Println("Services:")
+			fmt.Fprintln(pw, "Services:")
 			for _, svc := range collected.Services {
 				for _, sp := range svc.Ports {
 					url := "-"
 					if sp.URL != "" {
 						url = sp.URL
 					}
-					fmt.Printf("  %s: %s (url: %s)\n", svc.Name, formatPortBinding(sp.PortBinding), url)
+					fmt.Fprintf(pw, "  %s: %s (url: %s)\n", svc.Name, formatPortBinding(sp.PortBinding), url)
 				}
 			}
 		}
+
+		if format.IsJSON() {
+			return format.JSON(cmd.OutOrStdout(), normalizeSandboxJSON(remoteSandboxFromInfo(info, localDockerState(name))))
+		}
+
 		if connect {
 			if err := runSandboxConnect(name, "zsh", os.Stdin, os.Stdout, os.Stderr); err != nil {
 				return fmt.Errorf("sandbox %q created but failed to connect with shell %q: %w", name, "zsh", err)
@@ -404,6 +430,12 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 		req.Snapshot = &snapshot
 	}
 
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+	pw := format.Progress(cmd.OutOrStdout())
+
 	sb, err := client.CreateSandbox(req)
 	if err != nil {
 		return err
@@ -411,15 +443,26 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 
 	resolved := sb.ResolvedAgentCredentials
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q initializing...\n", sb.Name)
+	fmt.Fprintf(pw, "Sandbox %q initializing...\n", sb.Name)
 
 	sb, err = client.WaitForSandbox(sb.Name)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sandbox %q created (remote)\n", sb.Name)
+	fmt.Fprintf(pw, "Sandbox %q created (remote)\n", sb.Name)
 	printResolvedAgentCredentials(cmd, resolved)
+
+	if format.IsJSON() {
+		// The resolved agent credentials come back on the create (202)
+		// response, not the later GET poll, so carry them onto the polled
+		// sandbox before encoding. Otherwise -o json would drop the field
+		// that text mode prints (printResolvedAgentCredentials above).
+		if len(sb.ResolvedAgentCredentials) == 0 {
+			sb.ResolvedAgentCredentials = resolved
+		}
+		return format.JSON(cmd.OutOrStdout(), normalizeSandboxJSON(*sb))
+	}
 
 	connect, _ := cmd.Flags().GetBool("connect")
 	if connect {

@@ -1,0 +1,65 @@
+# Offline case: commands that open an interactive shell/editor, or that
+# print a masked table and prompt for confirmation, have no structured JSON
+# result and so call internal/output.RejectJSON(cmd) to fail fast on
+# --output json/json-pretty before doing any work. All four commands below
+# check this before touching Docker, the network, or any credential, so no
+# env isolation is needed beyond the runner's own isolated
+# AMIKA_STATE_DIRECTORY.
+#
+# `sandbox connect` and `sandbox code` both require a positional <name>
+# (cobra's Args validator runs before RunE), so the JSON rejection is only
+# reachable once a name is supplied; omitting it instead fails with cobra's
+# own "accepts 1 arg(s)" error before RejectJSON ever runs (see
+# offline-usage-errors.yaml for that case).
+name: interactive commands reject -o json/json-pretty before doing any work
+steps:
+  - name: sandbox connect -o json is rejected
+    cmd: [sandbox, connect, somebox, -o, json]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json option is not supported by this command: it produces no structured JSON result"
+
+  - name: sandbox connect -o json-pretty is rejected
+    cmd: [sandbox, connect, somebox, -o, json-pretty]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json-pretty option is not supported by this command: it produces no structured JSON result"
+
+  - name: sandbox connect --local -o json is still rejected before any local sandbox lookup
+    cmd: [sandbox, connect, somebox, --local, -o, json]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json option is not supported by this command"
+
+  - name: sandbox code -o json is rejected before editor validation
+    cmd: [sandbox, code, somebox, -o, json]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json option is not supported by this command: it produces no structured JSON result"
+
+  - name: legacy secret extract -o json is rejected
+    cmd: [secret, extract, -o, json]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json option is not supported by this command: it produces no structured JSON result"
+
+  - name: legacy secret extract --push -o json is rejected before any confirmation prompt
+    cmd: [secret, extract, --push, -o, json]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json option is not supported by this command: it produces no structured JSON result"
+
+  - name: legacy secret push -o json is rejected before checking for KEY=VALUE args
+    # RejectJSON runs before secret push's own "no secrets provided" argument
+    # check, so this fails on the output format even with a well-formed
+    # KEY=VALUE pair and even with no positional args at all.
+    cmd: [secret, push, "KEY=VALUE", -o, json]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json option is not supported by this command: it produces no structured JSON result"
+
+  - name: legacy secret push -o json-pretty is rejected
+    cmd: [secret, push, "KEY=VALUE", -o, json-pretty]
+    expect:
+      exit: 1
+      stderr_contains: "the --output json-pretty option is not supported by this command: it produces no structured JSON result"

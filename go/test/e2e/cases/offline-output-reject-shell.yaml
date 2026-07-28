@@ -1,0 +1,116 @@
+# Offline case: `sandbox ssh` and `scp` both delegate to a system shell
+# utility that streams its own output, so neither can honor --output. They
+# turn out to enforce that in two different ways, discovered by reading
+# internal/output/output.go and go/cmd/amika/sandbox/sandbox_ssh.go and
+# go/cmd/amika/scp/command.go directly (do not assume — verify against the
+# real binary):
+#
+#   - `sandbox ssh` registers --output normally and explicitly calls
+#     output.RejectFlag(cmd), which fires whenever the flag was Changed()
+#     (i.e. passed at all, regardless of its value — even "-o text" trips
+#     it). In sandbox_ssh.go that check runs *after* the auth check and
+#     remote-client construction but *before* any network call, so reaching
+#     it offline requires a non-empty AMIKA_API_KEY (to clear the "not
+#     logged in" auth gate) while still never dialing out. This case points
+#     AMIKA_API_URL at a reserved, non-routable TEST-NET address
+#     (192.0.2.1, RFC 5737) as a second guard: if RejectFlag's position
+#     ever moved after an actual network call, hitting that address would
+#     hang/fail loudly instead of silently succeeding against a real host.
+#
+#   - `scp`'s cobra command sets DisableFlagParsing: true (its whole argv is
+#     forwarded to the system scp binary), so --output/-o is never parsed
+#     as amika's global flag at all — RejectFlag is never called, and there
+#     is no "not supported" rejection for scp. Passing --output/-o simply
+#     becomes part of the argv scp's own parsing sees, which for `-o` in
+#     particular (an scp option that takes a value) consumes the next token
+#     as its argument. The case below demonstrates the actual resulting
+#     error instead of a rejection that does not exist for this command.
+name: ssh and scp cannot honor --output, but enforce that differently
+steps:
+  - name: sandbox ssh --output json is rejected
+    cmd: [sandbox, ssh, somebox, --output, json]
+    env:
+      AMIKA_API_KEY: fake-test-key
+      AMIKA_API_URL: http://192.0.2.1:81
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command: it runs an underlying shell utility (ssh/scp) that streams its own output and cannot emit JSON"
+
+  - name: sandbox ssh -o json-pretty is rejected
+    cmd: [sandbox, ssh, somebox, -o, json-pretty]
+    env:
+      AMIKA_API_KEY: fake-test-key
+      AMIKA_API_URL: http://192.0.2.1:81
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: sandbox ssh -o text (explicit default value) is still rejected
+    # RejectFlag keys off Changed(), not the value, so explicitly passing
+    # the default "text" trips it exactly like "json" does.
+    cmd: [sandbox, ssh, somebox, -o, text]
+    env:
+      AMIKA_API_KEY: fake-test-key
+      AMIKA_API_URL: http://192.0.2.1:81
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: sandbox ssh with no --output at all reaches the ordinary auth check instead
+    # Contrast case: omitting --output entirely means Changed() is false, so
+    # RejectFlag never fires, and (with no credentials at all) the command
+    # fails at the normal "not logged in" auth gate instead.
+    cmd: [sandbox, ssh, somebox]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: scp --output json is rejected (long form is unambiguously amika's flag)
+    # scp sets DisableFlagParsing, so the global --output never reaches cobra
+    # to be marked Changed. runSCP rejects the long form explicitly via
+    # output.RejectFlagInArgs before any resolution or exec.
+    cmd: [scp, --output, json, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: scp --output=json is rejected too
+    cmd: [scp, --output=json, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: the long form is rejected in the global-prefix position too (amika --output json scp ...)
+    # RejectFlagInArgs scans the raw argv, so the unambiguous long --output is
+    # rejected wherever it sits, before or after the scp subcommand.
+    cmd: [--output, json, scp, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: a leading short -o is NOT rejected; it is indistinguishable from scp's own -o
+    # Once scp disables flag parsing, "-o json" before the subcommand cannot be
+    # told apart from scp's own -o ssh_config option, so it forwards. Here it is
+    # consumed as scp's -o and the copy fails for lack of a real remote operand.
+    cmd: [-o, json, scp, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "no remote source or target found"
+
+  - name: "scp -o json a b: -o is scp's OWN option and is NOT rejected; it forwards"
+    # The short -o is scp's ssh_config-override option, not amika's --output
+    # shorthand here, so it is left to forward to the system scp. "-o" consumes
+    # "json" as its argument; neither "a" nor "b" names a sandbox or scp:// host,
+    # so scp's own source/target resolution fails first (no rejection).
+    cmd: [scp, -o, json, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "no remote source or target found"
+
+  - name: scp with no operands at all fails cobra's arg-count check first
+    cmd: [scp]
+    expect:
+      exit: 1
+      stderr_contains: "requires at least 1 arg(s)"
