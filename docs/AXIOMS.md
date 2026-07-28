@@ -1,6 +1,7 @@
 <p align="center">
   <h1 align="center"><strong>Axioms</strong></h1>
   <p align="center"><strong>Why we need a new operating system and how it should work</strong></p>
+  <br />
 </p>
 
 1. **Agents on computers will outnumber humans on computers.**
