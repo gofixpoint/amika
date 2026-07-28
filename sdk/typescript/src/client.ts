@@ -1,6 +1,7 @@
 import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
 import { HTTPClient } from "@/http";
 import { StaticTokenSource, type TokenSource } from "@/token";
+import { observe } from "@traceroot-ai/traceroot";
 import {
   type AgentSendRequest,
   type AgentSendResponse,
@@ -81,12 +82,26 @@ export class AmikaClient {
   }
 
   async createSandbox(req: CreateSandboxRequest): Promise<RemoteSandbox> {
-    const data = await this.http.doJSON<Record<string, unknown>>(
-      "POST",
-      `${API_BASE_PATH}/sandboxes`,
-      createSandboxRequestToWire(req),
+    return observe(
+      {
+        name: "amika.createSandbox",
+        type: "tool",
+        metadata: {
+          name: req.name,
+          preset: req.preset,
+          provider: req.provider,
+          branch: req.branch,
+        },
+      },
+      async () => {
+        const data = await this.http.doJSON<Record<string, unknown>>(
+          "POST",
+          `${API_BASE_PATH}/sandboxes`,
+          createSandboxRequestToWire(req),
+        );
+        return remoteSandboxFromWire(data ?? {});
+      },
     );
-    return remoteSandboxFromWire(data ?? {});
   }
 
   async getSandbox(name: string): Promise<RemoteSandbox> {
@@ -227,23 +242,32 @@ export class AmikaClient {
     sandboxName: string,
     req: AgentSendRequest,
   ): Promise<AgentSendResponse> {
-    try {
-      const data = await this.http.doJSON<Record<string, unknown>>(
-        "POST",
-        `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/agent-send`,
-        agentSendRequestToWire(req),
-        { timeoutMs: AGENT_SEND_TIMEOUT_MS },
-      );
-      return agentSendResponseFromWire(data ?? {});
-    } catch (err) {
-      const authErr = extractAgentAuthError(err);
-      if (authErr) {
-        throw new AmikaError(
-          `remote agent-send: agent failed to authenticate with its AI provider: ${authErr}\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access`,
-        );
-      }
-      throw err;
-    }
+    return observe(
+      {
+        name: "amika.agentSend",
+        type: "agent",
+        metadata: { sandboxName, agent: req.agent },
+      },
+      async () => {
+        try {
+          const data = await this.http.doJSON<Record<string, unknown>>(
+            "POST",
+            `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/agent-send`,
+            agentSendRequestToWire(req),
+            { timeoutMs: AGENT_SEND_TIMEOUT_MS },
+          );
+          return agentSendResponseFromWire(data ?? {});
+        } catch (err) {
+          const authErr = extractAgentAuthError(err);
+          if (authErr) {
+            throw new AmikaError(
+              `remote agent-send: agent failed to authenticate with its AI provider: ${authErr}\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access`,
+            );
+          }
+          throw err;
+        }
+      },
+    );
   }
 
   // ---------- Sessions ----------
@@ -252,12 +276,21 @@ export class AmikaClient {
     sandboxName: string,
     req: CreateSessionRequest,
   ): Promise<Session> {
-    const data = await this.http.doJSON<Record<string, unknown>>(
-      "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions`,
-      createSessionRequestToWire(req),
+    return observe(
+      {
+        name: "amika.createSession",
+        type: "tool",
+        metadata: { sandboxName, agentName: req.agentName },
+      },
+      async () => {
+        const data = await this.http.doJSON<Record<string, unknown>>(
+          "POST",
+          `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions`,
+          createSessionRequestToWire(req),
+        );
+        return sessionFromWire(data ?? {});
+      },
     );
-    return sessionFromWire(data ?? {});
   }
 
   async listSessions(sandboxName: string): Promise<Session[]> {

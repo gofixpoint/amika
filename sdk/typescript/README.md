@@ -120,6 +120,45 @@ try {
 
 `agentSend` automatically detects agent-side auth failures (e.g., Anthropic 401) and rewrites them to a friendlier `AmikaError` explaining how to recover.
 
+## Tracing with TraceRoot
+
+The SDK ships with [TraceRoot](https://traceroot.ai) observability built in. Three operations are instrumented automatically once TraceRoot is initialized:
+
+| Operation                  | Span type | Metadata                               |
+| -------------------------- | --------- | -------------------------------------- |
+| `agentSend(name, req)`     | `agent`   | `sandboxName`, `agent`                 |
+| `createSandbox(req)`       | `tool`    | `name`, `preset`, `provider`, `branch` |
+| `createSession(name, req)` | `tool`    | `sandboxName`, `agentName`             |
+
+**Set up tracing in your application entry point** (before other imports):
+
+```ts
+import "dotenv/config";
+import { TraceRoot } from "@amika/sdk";
+
+TraceRoot.initialize(); // reads TRACEROOT_API_KEY from the environment
+```
+
+Get your API key from the TraceRoot UI's project settings. Without it, all span recording degrades to a no-op — no crashes, no data.
+
+To attach user and session context to all spans in a request:
+
+```ts
+import { usingAttributes } from "@amika/sdk";
+
+await usingAttributes({ userId: "u-123", sessionId: "sess-456" }, async () => {
+  const resp = await amika.agentSend(sandboxName, { message });
+});
+```
+
+For scripts or serverless functions, flush buffered spans before exit:
+
+```ts
+await TraceRoot.flush();
+```
+
+Set `TRACEROOT_HOST_URL` to point at a self-hosted TraceRoot instance.
+
 ## Development
 
 ```bash

@@ -1,6 +1,14 @@
 export { AmikaClient } from "@/client";
 export type { AmikaClientOptions } from "@/client";
 
+export {
+  TraceRoot,
+  observe,
+  usingAttributes,
+  updateCurrentSpan,
+  updateCurrentTrace,
+} from "@/tracing";
+
 export { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
 
 export { StaticTokenSource } from "@/token";
