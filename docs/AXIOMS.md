@@ -42,4 +42,3 @@
 10. **The UNIX Philosophy and Worse Is Better will win.**
 
     The [UNIX Philosophy](https://en.wikipedia.org/wiki/Unix_philosophy) and [Worse Is Better](https://en.wikipedia.org/wiki/Worse_is_better) share a core insight: simple and composable beats "technically better." Do the simplest thing that works, and make sure your pieces fit together through a universal interface.
-</content>
