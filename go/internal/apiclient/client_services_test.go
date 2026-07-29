@@ -125,7 +125,7 @@ func TestCreateSandboxServiceSendsBody(t *testing.T) {
 	if svc.ID == nil || *svc.ID != "sbsvc_1" {
 		t.Errorf("ID = %v", svc.ID)
 	}
-	if svc.Name != "web" || svc.Port != 3000 || svc.URLScheme != "https" || svc.Source != "table" {
+	if svc.Name != "web" || svc.Port != 3000 || svc.URLScheme == nil || *svc.URLScheme != "https" || svc.Source != "table" {
 		t.Errorf("service = %+v", svc)
 	}
 }

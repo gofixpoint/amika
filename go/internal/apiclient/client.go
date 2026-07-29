@@ -481,21 +481,25 @@ func (c *Client) DeleteSandboxSnapshot(ref string) error {
 	return nil
 }
 
-// SandboxServiceResource is a live service on a running sandbox, as returned by
-// the /api/v0beta1/sandbox-services endpoints. It unifies rows from the
+// SandboxServiceResource mirrors the API's SandboxService schema, as returned
+// by the /api/v0beta1/sandbox-services endpoints. It unifies rows from the
 // sandbox_services table with legacy jsonb entries; Source discriminates
-// ("table" or "legacy"). Nullable fields are pointers because legacy entries
-// and not-yet-provisioned services omit them.
+// ("table" or "legacy") and Kind is "system" or "user". Every schema field is
+// present (no omitempty) and every nullable field is a pointer, so the value
+// decodes and re-encodes losslessly: a nullable field emits an explicit null
+// (e.g. a legacy or not-yet-provisioned service's url/url_scheme) rather than
+// being dropped or coerced to an empty string.
 type SandboxServiceResource struct {
 	ID        *string `json:"id"`
 	SandboxID string  `json:"sandbox_id"`
 	Name      string  `json:"name"`
 	Port      int     `json:"port"`
-	URLScheme string  `json:"url_scheme"`
+	URLScheme *string `json:"url_scheme"`
 	Protocol  string  `json:"protocol"`
 	URL       *string `json:"url"`
 	HostPort  *int    `json:"host_port"`
 	Source    string  `json:"source"`
+	Kind      string  `json:"kind"`
 	CreatedAt *string `json:"created_at"`
 	UpdatedAt *string `json:"updated_at"`
 }

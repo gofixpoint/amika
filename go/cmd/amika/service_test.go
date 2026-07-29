@@ -13,6 +13,10 @@ import (
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 )
 
+// strptr returns a pointer to s, for populating the nullable pointer fields of
+// apiclient.SandboxServiceResource in test fixtures.
+func strptr(s string) *string { return &s }
+
 // resetServiceFlags clears flag state that cobra otherwise carries across
 // Execute calls on the shared command objects, so each test starts from the
 // command's declared defaults regardless of test order.
@@ -341,7 +345,7 @@ func TestServiceCreateCommand_PrintsCreatedService(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
 			Name:      "web",
 			Port:      3000,
-			URLScheme: "https",
+			URLScheme: strptr("https"),
 			URL:       &svcURL,
 		})
 	}))
@@ -370,7 +374,7 @@ func TestServiceCreateCommand_NoURLRendersDash(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
 			Name:      "web",
 			Port:      3000,
-			URLScheme: "https",
+			URLScheme: strptr("https"),
 			URL:       nil,
 		})
 	}))
@@ -410,20 +414,26 @@ func TestServiceDeleteCommand_PrintsDeleted(t *testing.T) {
 	}
 }
 
-// With -o json, create emits the created service as a single JSON object with
-// snake_case keys rather than the text table.
+// With -o json, create emits the API's SandboxServiceResource schema verbatim
+// (not a lossy display struct), so every field round-trips: the id survives and
+// a not-yet-provisioned URL stays an explicit null rather than "".
 func TestServiceCreateCommand_JSONOutput(t *testing.T) {
 	resetServiceFlags(t)
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "test-key")
 
+	id := "svc-123"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		svcURL := "https://web.example.com"
 		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			ID:        &id,
+			SandboxID: "sb-1",
 			Name:      "web",
 			Port:      3000,
-			URLScheme: "https",
-			URL:       &svcURL,
+			URLScheme: strptr("https"),
+			Protocol:  "tcp",
+			URL:       nil, // pending: must serialize as null, not ""
+			Source:    "table",
+			Kind:      "user",
 		})
 	}))
 	defer srv.Close()
@@ -433,13 +443,22 @@ func TestServiceCreateCommand_JSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("service create failed: %v", err)
 	}
-	var got serviceCreateResult
+	var got apiclient.SandboxServiceResource
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
 	}
-	want := serviceCreateResult{Name: "web", Port: 3000, URLScheme: "https", URL: "https://web.example.com"}
-	if got != want {
-		t.Fatalf("got %+v, want %+v", got, want)
+	if got.ID == nil || *got.ID != id {
+		t.Fatalf("id did not round-trip: got %v, want %q", got.ID, id)
+	}
+	if got.SandboxID != "sb-1" || got.Protocol != "tcp" || got.Source != "table" || got.Kind != "user" {
+		t.Fatalf("API fields dropped: %+v", got)
+	}
+	if got.URL != nil {
+		t.Fatalf("pending URL should stay null, got %q", *got.URL)
+	}
+	// A pending URL must appear as an explicit JSON null, never omitted or "".
+	if !strings.Contains(out, `"url":null`) {
+		t.Fatalf("expected explicit null url in JSON:\n%s", out)
 	}
 	if strings.Contains(out, "NAME") {
 		t.Fatalf("JSON output unexpectedly contains the text table header:\n%s", out)

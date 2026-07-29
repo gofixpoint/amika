@@ -27,16 +27,6 @@ type serviceListItem struct {
 	URL     string `json:"url"`
 }
 
-// serviceCreateResult is the JSON representation of a newly created service,
-// mirroring the NAME/PORT/SCHEME/URL columns printService renders in text mode.
-// URL is empty (not the "-" text placeholder) when no URL has been provisioned.
-type serviceCreateResult struct {
-	Name      string `json:"name"`
-	Port      int    `json:"port"`
-	URLScheme string `json:"url_scheme"`
-	URL       string `json:"url"`
-}
-
 var serviceCmd = &cobra.Command{
 	Use:     "service",
 	Aliases: []string{"services"},
@@ -130,12 +120,10 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if format.IsJSON() {
-		return format.JSON(cmd.OutOrStdout(), serviceCreateResult{
-			Name:      svc.Name,
-			Port:      svc.Port,
-			URLScheme: svc.URLScheme,
-			URL:       deref(svc.URL),
-		})
+		// Remote-backed command: emit the API's response schema verbatim (see
+		// AGENTS.md "Remote-backed commands emit the API's response schema") so
+		// every field round-trips, including the id and a pending url as null.
+		return format.JSON(cmd.OutOrStdout(), svc)
 	}
 	printService(cmd, svc)
 	return nil
@@ -206,11 +194,15 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tPORT\tSCHEME\tURL")
+	scheme := deref(svc.URLScheme)
+	if scheme == "" {
+		scheme = "-"
+	}
 	url := deref(svc.URL)
 	if url == "" {
 		url = "-"
 	}
-	fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", svc.Name, svc.Port, svc.URLScheme, url)
+	fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", svc.Name, svc.Port, scheme, url)
 	w.Flush()
 }
 
