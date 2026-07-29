@@ -202,9 +202,9 @@ By default the command waits for the agent to finish and streams the response.
 Use --no-wait to send the message and return immediately.
 
 For synchronous remote sends, the agent session id is surfaced so the session
-can be resumed with --session-id. In text output (the default) the response is
-written to stdout and "session_id: <id>" to stderr, keeping stdout the pure
-agent response. With --output json, a single JSON object is written to stdout
+can be resumed with --session-id. In text output (the default) "session_id: <id>"
+is written to stderr first, before the response is written to stdout, keeping
+stdout the pure agent response. With --output json, a single JSON object is written to stdout
 instead, with "status" set to "sent" (--no-wait) or "completed" (synchronous
 sends) and the response, session id, and error status included once known.`,
 	Args: cobra.MinimumNArgs(1),
@@ -328,12 +328,17 @@ sends) and the response, session id, and error status included once known.`,
 		}
 
 		if !noWait && resp != nil {
+			// Emit the session id to stderr first, before the stdout response, so
+			// it is the first line a caller sees. The synchronous AgentSend call
+			// returns the whole response at once, so the id is already known here;
+			// a future streaming conversion must surface the session id as an early
+			// event to preserve this ordering (see agent-send help text).
+			if resp.SessionID != "" {
+				fmt.Fprintf(os.Stderr, "session_id: %s\n", resp.SessionID)
+			}
 			fmt.Fprint(os.Stdout, resp.Response)
 			if resp.Response != "" && !strings.HasSuffix(resp.Response, "\n") {
 				fmt.Fprintln(os.Stdout)
-			}
-			if resp.SessionID != "" {
-				fmt.Fprintf(os.Stderr, "session_id: %s\n", resp.SessionID)
 			}
 			if resp.IsError {
 				return fmt.Errorf("agent returned an error in sandbox %q", name)
