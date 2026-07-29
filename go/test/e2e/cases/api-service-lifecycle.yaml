@@ -1,0 +1,58 @@
+name: remote service lifecycle (create source sandbox, create service, list, delete)
+# Exercises `service create`, `service list`, and `service delete` against a
+# real remote sandbox. Like api-snapshot-lifecycle.yaml, this case owns its own
+# source sandbox rather than sharing the core sandbox-lifecycle case, so a
+# service-provisioning failure stays isolated and does not redden the core
+# lifecycle. Both the service and the sandbox are registered as resources for
+# reverse-order ledger cleanup: the service (registered last) is deleted first,
+# then the sandbox.
+steps:
+  - name: create a source sandbox and wait until it is provisioned
+    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+        id: "@string"
+        services: "@array"
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+
+  - name: create a service on the running sandbox
+    cmd: [service, create, --sandbox, "{{sandbox_name}}", --name, e2e-svc, --port, "3000", --url-scheme, http, -o, json]
+    expect:
+      exit: 0
+      stdout_json:
+        name: e2e-svc
+        port: "@number"
+        url_scheme: "@string?"
+        sandbox_id: "@string"
+        url: "@string?"
+    resource:
+      type: service
+      name: e2e-svc
+      cleanup: [service, delete, --sandbox, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
+
+  - name: list services and confirm ours is present
+    cmd: [service, list, --sandbox-name, "{{sandbox_name}}", -o, json]
+    expect:
+      exit: 0
+      stdout_contains: e2e-svc
+
+  - name: delete the service
+    cmd: [service, delete, --sandbox, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
+    expect:
+      exit: 0
+      stdout_json:
+        name: e2e-svc
+        status: deleted
+
+  - name: delete the source sandbox
+    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    expect:
+      exit: 0
