@@ -79,6 +79,7 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 - `app/` — Application service layer implementation
 - `ports/` — Port interfaces for Docker and store operations
 - `output/` — CLI output formatting for the `--output`/`-o` flag (`text`, `json`, `json-pretty`)
+- `services/` — Shared sandbox-service logic used by CLI and API, e.g. `ValidatePort` (rejects out-of-range and reserved container ports)
 - `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
 - `eventlog/` — amikalog's hook installer + capture: appends events (one JSON line each) to a per-session JSONL file `<state>/events/{claude,codex}/sessions/{ts}_{session_id}.jsonl`, annotated with git context. `push.go` uploads each changed session file in parallel via an `Uploader`, tracking each file's uploaded byte size in `<state>/events/.amikalog-push-state.json` so only sessions that grew are re-sent (object key = `<repo>/<source>/sessions/<ts>_<session_id>.jsonl`, repo from each session's `git.repo_root`; legacy per-event `event_*.json` files are still uploaded for backward compatibility)
 
@@ -118,7 +119,7 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 - Linting uses [revive](https://github.com/mgechev/revive) — config in `go/revive.toml`
 - All exported symbols must have doc comments (enforced by the `exported` rule)
 - No external dependencies need to be installed for linting; `make lint` uses `go run`
-- Ports 60899–60999 are reserved inside sandbox containers for Amika services. See `docs/sandbox-configuration.md` for the allocation table.
+- Ports 60899–60999 are reserved inside sandbox containers for Amika services. See `docs/sandbox-configuration.md` for the allocation table. Any command or API that accepts a user-specified container port must reject this range by calling `services.ValidatePort` (`go/internal/services`); keep client-side and server-side validation in sync.
 
 ## Documentation Style
 

@@ -481,6 +481,97 @@ func (c *Client) DeleteSandboxSnapshot(ref string) error {
 	return nil
 }
 
+// SandboxServiceResource mirrors the API's SandboxService schema, as returned
+// by the /api/v0beta1/sandbox-services endpoints. It unifies rows from the
+// sandbox_services table with legacy jsonb entries; Source discriminates
+// ("table" or "legacy") and Kind is "system" or "user". Every schema field is
+// present (no omitempty) and every nullable field is a pointer, so the value
+// decodes and re-encodes losslessly: a nullable field emits an explicit null
+// (e.g. a legacy or not-yet-provisioned service's url/url_scheme) rather than
+// being dropped or coerced to an empty string.
+type SandboxServiceResource struct {
+	ID        *string `json:"id"`
+	SandboxID string  `json:"sandbox_id"`
+	Name      string  `json:"name"`
+	Port      int     `json:"port"`
+	URLScheme *string `json:"url_scheme"`
+	Protocol  string  `json:"protocol"`
+	URL       *string `json:"url"`
+	HostPort  *int    `json:"host_port"`
+	Source    string  `json:"source"`
+	Kind      string  `json:"kind"`
+	CreatedAt *string `json:"created_at"`
+	UpdatedAt *string `json:"updated_at"`
+}
+
+// SandboxServiceRequest is the request body for creating or replacing a sandbox
+// service (POST/PUT). url_scheme is "http" or "https".
+type SandboxServiceRequest struct {
+	Name      string `json:"name"`
+	Port      int    `json:"port"`
+	URLScheme string `json:"url_scheme"`
+}
+
+// ListSandboxServices lists live services for the caller's org. sandboxRef is
+// an optional name-or-id filter forwarded as the sandbox_ref query param; pass
+// "" to list all services in the org.
+func (c *Client) ListSandboxServices(sandboxRef string) ([]SandboxServiceResource, error) {
+	q := url.Values{}
+	if sandboxRef != "" {
+		q.Set("sandbox_ref", sandboxRef)
+	}
+	path := apiBasePath + "/sandbox-services"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var envelope struct {
+		Items []SandboxServiceResource `json:"items"`
+	}
+	if err := c.doJSON("GET", path, nil, &envelope); err != nil {
+		return nil, fmt.Errorf("remote list sandbox services: %w", err)
+	}
+	return envelope.Items, nil
+}
+
+// CreateSandboxService creates a service on the sandbox referenced by name or
+// id. The server resolves sandboxRef (id first, then name) and returns the
+// created SandboxServiceResource.
+func (c *Client) CreateSandboxService(sandboxRef string, req SandboxServiceRequest) (*SandboxServiceResource, error) {
+	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/services"
+	var result SandboxServiceResource
+	if err := c.doJSON("POST", path, req, &result); err != nil {
+		return nil, fmt.Errorf("remote create sandbox service: %w", err)
+	}
+	return &result, nil
+}
+
+// PutSandboxService fully replaces the service identified by serviceRef within
+// the given sandbox. by selects how serviceRef is resolved ("name", "id", or
+// "ref"); pass "" to default to "name". Returns the new SandboxServiceResource.
+func (c *Client) PutSandboxService(sandboxRef, serviceRef, by string, req SandboxServiceRequest) (*SandboxServiceResource, error) {
+	if by == "" {
+		by = "name"
+	}
+	q := url.Values{}
+	q.Set("by", by)
+	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/services/" + url.PathEscape(serviceRef) + "?" + q.Encode()
+	var result SandboxServiceResource
+	if err := c.doJSON("PUT", path, req, &result); err != nil {
+		return nil, fmt.Errorf("remote put sandbox service: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteSandboxService deletes the service identified by serviceRef (resolved
+// by name) within the given sandbox.
+func (c *Client) DeleteSandboxService(sandboxRef, serviceRef string) error {
+	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/services/" + url.PathEscape(serviceRef) + "?by=name"
+	if err := c.doJSON("DELETE", path, nil, nil); err != nil {
+		return fmt.Errorf("remote delete sandbox service: %w", err)
+	}
+	return nil
+}
+
 // SecretSummary mirrors the API's SecretSummary schema, as returned by
 // GET /api/v0beta1/secrets (array) and POST /api/v0beta1/secrets (single,
 // 201). All fields are required by the schema (no omitempty); Description is

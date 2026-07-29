@@ -1,13 +1,21 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 )
+
+// strptr returns a pointer to s, for populating the nullable pointer fields of
+// apiclient.SandboxServiceResource in test fixtures.
+func strptr(s string) *string { return &s }
 
 // resetServiceFlags clears flag state that cobra otherwise carries across
 // Execute calls on the shared command objects, so each test starts from the
@@ -24,6 +32,22 @@ func resetServiceFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := serviceListCmd.Flags().Set("sandbox-name", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"sandbox", "name", "url-scheme"} {
+		if err := serviceCreateCmd.Flags().Set(f, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := serviceCreateCmd.Flags().Set("port", "0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"sandbox", "name"} {
+		if err := serviceDeleteCmd.Flags().Set(f, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := serviceDeleteCmd.Flags().Set("force", "false"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -128,6 +152,357 @@ func TestServiceListCommand_DefaultRemote_RequiresAuth(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("expected 'not logged in' error, got: %v", err)
+	}
+}
+
+func TestValidateServiceName(t *testing.T) {
+	valid := []string{"web", "a", "web-1", "0", "my-service-name", strings.Repeat("a", 63)}
+	for _, n := range valid {
+		if err := validateServiceName(n); err != nil {
+			t.Errorf("validateServiceName(%q) = %v, want nil", n, err)
+		}
+	}
+	invalid := []string{"", "Web", "web_1", "-web", "web-", "web.api", "a b", strings.Repeat("a", 64)}
+	for _, n := range invalid {
+		if err := validateServiceName(n); err == nil {
+			t.Errorf("validateServiceName(%q) = nil, want error", n)
+		}
+	}
+}
+
+// The create command validates its inputs client-side before any network call,
+// so these cases fail without a server.
+func TestServiceCreateCommand_Validation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"missing sandbox", []string{"service", "create", "--name", "web", "--port", "3000", "--url-scheme", "https"}, "--sandbox is required"},
+		{"missing name", []string{"service", "create", "--sandbox", "box", "--port", "3000", "--url-scheme", "https"}, "--name is required"},
+		{"missing port", []string{"service", "create", "--sandbox", "box", "--name", "web", "--url-scheme", "https"}, "--port is required"},
+		{"missing url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000"}, "--url-scheme is required"},
+		{"bad name", []string{"service", "create", "--sandbox", "box", "--name", "Web_1", "--port", "3000", "--url-scheme", "https"}, "must be a single DNS label"},
+		{"bad url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "ftp"}, `must be "http" or "https"`},
+		{"port too large", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "70000", "--url-scheme", "https"}, "must be between 1 and 65535"},
+		{"reserved port low", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "60899", "--url-scheme", "https"}, "reserved for internal Amika services"},
+		{"reserved port high", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "60999", "--url-scheme", "https"}, "reserved for internal Amika services"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetServiceFlags(t)
+			_, err := runRootCommand(tc.args...)
+			if err == nil {
+				t.Fatalf("expected error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestServiceDeleteCommand_Validation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"missing sandbox", []string{"service", "delete", "--force", "--name", "web"}, "--sandbox is required"},
+		{"missing name", []string{"service", "delete", "--force", "--sandbox", "box"}, "--name is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetServiceFlags(t)
+			_, err := runRootCommand(tc.args...)
+			if err == nil {
+				t.Fatalf("expected error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// Declining the confirmation prompt aborts without deleting (no network call).
+// A credential is provided so the default remote mode passes the auth check and
+// reaches the prompt.
+func TestServiceDeleteCommand_DeclineAborts(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+	rootCmd.SetIn(strings.NewReader("n\n"))
+	defer rootCmd.SetIn(nil)
+
+	out, err := runRootCommand("service", "delete", "--sandbox", "box", "--name", "web")
+	if err != nil {
+		t.Fatalf("delete declined should not error: %v", err)
+	}
+	if !strings.Contains(out, "Aborted.") {
+		t.Fatalf("expected 'Aborted.', got:\n%s", out)
+	}
+}
+
+// The delete alias `rm` resolves to the same command.
+func TestServiceDeleteCommand_RmAlias(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+	rootCmd.SetIn(strings.NewReader("n\n"))
+	defer rootCmd.SetIn(nil)
+
+	out, err := runRootCommand("service", "rm", "--sandbox", "box", "--name", "web")
+	if err != nil {
+		t.Fatalf("service rm should resolve: %v", err)
+	}
+	if !strings.Contains(out, "Aborted.") {
+		t.Fatalf("expected 'Aborted.', got:\n%s", out)
+	}
+}
+
+// create and delete are remote-only: --local must be rejected rather than
+// silently routed to the remote API (which would mutate the wrong service when
+// a same-named local and remote sandbox coexist).
+func TestServiceCreateCommand_LocalRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "create", "--local", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err == nil {
+		t.Fatal("expected --local to be rejected for create")
+	}
+	if !strings.Contains(err.Error(), "only supported for remote sandboxes") {
+		t.Fatalf("expected remote-only error, got: %v", err)
+	}
+}
+
+func TestServiceDeleteCommand_LocalRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "delete", "--local", "--force", "--sandbox", "box", "--name", "web")
+	if err == nil {
+		t.Fatal("expected --local to be rejected for delete")
+	}
+	if !strings.Contains(err.Error(), "only supported for remote sandboxes") {
+		t.Fatalf("expected remote-only error, got: %v", err)
+	}
+}
+
+// --remote-target is unsupported and must be rejected up front for the mutating
+// commands too, not silently ignored.
+func TestServiceCreateCommand_RemoteTargetRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "create", "--remote-target", "staging", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err == nil {
+		t.Fatal("expected --remote-target to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not yet supported") {
+		t.Fatalf("expected 'not yet supported' error, got: %v", err)
+	}
+}
+
+func TestServiceDeleteCommand_RemoteTargetRejected(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommand("service", "delete", "--remote-target", "staging", "--force", "--sandbox", "box", "--name", "web")
+	if err == nil {
+		t.Fatal("expected --remote-target to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not yet supported") {
+		t.Fatalf("expected 'not yet supported' error, got: %v", err)
+	}
+}
+
+// The default mode is remote, so mutating without credentials must fail with a
+// login hint rather than silently attempting a request.
+func TestServiceDeleteCommand_DefaultRemote_RequiresAuth(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+
+	_, err := runRootCommand("service", "delete", "--force", "--sandbox", "box", "--name", "web")
+	if err == nil {
+		t.Fatal("expected an auth error in remote mode without credentials")
+	}
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("expected 'not logged in' error, got: %v", err)
+	}
+}
+
+// A successful create prints the returned service as a one-row table. The
+// client is pointed at a fake API server via AMIKA_API_URL.
+func TestServiceCreateCommand_PrintsCreatedService(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v0beta1/sandboxes/box/services" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		svcURL := "https://web.example.com"
+		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			Name:      "web",
+			Port:      3000,
+			URLScheme: strptr("https"),
+			URL:       &svcURL,
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	for _, needle := range []string{"NAME", "PORT", "SCHEME", "URL", "web", "3000", "https://web.example.com"} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("output missing %q:\n%s", needle, out)
+		}
+	}
+}
+
+// A created service with no provisioned URL renders the URL column as "-",
+// matching how `service list` renders a missing URL.
+func TestServiceCreateCommand_NoURLRendersDash(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			Name:      "web",
+			Port:      3000,
+			URLScheme: strptr("https"),
+			URL:       nil,
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	if !strings.Contains(out, "-") {
+		t.Fatalf("expected '-' for missing URL, got:\n%s", out)
+	}
+}
+
+// A successful delete prints the confirmation line after the API call.
+func TestServiceDeleteCommand_PrintsDeleted(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v0beta1/sandboxes/box/services/web" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "delete", "--force", "--sandbox", "box", "--name", "web")
+	if err != nil {
+		t.Fatalf("service delete failed: %v", err)
+	}
+	if !strings.Contains(out, `Service "web" deleted`) {
+		t.Fatalf("expected deleted message, got:\n%s", out)
+	}
+}
+
+// With -o json, create emits the API's SandboxServiceResource schema verbatim
+// (not a lossy display struct), so every field round-trips: the id survives and
+// a not-yet-provisioned URL stays an explicit null rather than "".
+func TestServiceCreateCommand_JSONOutput(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	id := "svc-123"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			ID:        &id,
+			SandboxID: "sb-1",
+			Name:      "web",
+			Port:      3000,
+			URLScheme: strptr("https"),
+			Protocol:  "tcp",
+			URL:       nil, // pending: must serialize as null, not ""
+			Source:    "table",
+			Kind:      "user",
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommandOutput(t, "service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "-o", "json")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	var got apiclient.SandboxServiceResource
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if got.ID == nil || *got.ID != id {
+		t.Fatalf("id did not round-trip: got %v, want %q", got.ID, id)
+	}
+	if got.SandboxID != "sb-1" || got.Protocol != "tcp" || got.Source != "table" || got.Kind != "user" {
+		t.Fatalf("API fields dropped: %+v", got)
+	}
+	if got.URL != nil {
+		t.Fatalf("pending URL should stay null, got %q", *got.URL)
+	}
+	// A pending URL must appear as an explicit JSON null, never omitted or "".
+	if !strings.Contains(out, `"url":null`) {
+		t.Fatalf("expected explicit null url in JSON:\n%s", out)
+	}
+	if strings.Contains(out, "NAME") {
+		t.Fatalf("JSON output unexpectedly contains the text table header:\n%s", out)
+	}
+}
+
+// With -o json --force, delete emits an ItemResult JSON object.
+func TestServiceDeleteCommand_JSONOutput(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommandOutput(t, "service", "delete", "--force", "--sandbox", "box", "--name", "web", "-o", "json")
+	if err != nil {
+		t.Fatalf("service delete failed: %v", err)
+	}
+	var got output.ItemResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if got.Name != "web" || got.Status != "deleted" {
+		t.Fatalf("got %+v, want name=web status=deleted", got)
+	}
+}
+
+// In JSON mode, delete refuses to prompt and requires --force, so it errors
+// before making any request when --force is absent.
+func TestServiceDeleteCommand_JSONRequiresForce(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	_, err := runRootCommandOutput(t, "service", "delete", "--sandbox", "box", "--name", "web", "-o", "json")
+	if err == nil {
+		t.Fatal("expected an error requiring --force in JSON mode")
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("expected error mentioning --force, got: %v", err)
 	}
 }
 

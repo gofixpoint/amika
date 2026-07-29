@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/gofixpoint/amika/go/internal/services"
 	"github.com/spf13/cobra"
 )
 
@@ -25,9 +28,182 @@ type serviceListItem struct {
 }
 
 var serviceCmd = &cobra.Command{
-	Use:   "service",
-	Short: "Manage sandbox services",
-	Long:  `View and manage declared services and their port bindings across sandboxes.`,
+	Use:     "service",
+	Aliases: []string{"services"},
+	Short:   "Manage sandbox services",
+	Long:    `View and manage declared services and their port bindings across sandboxes.`,
+}
+
+// dnsLabelRe matches a single RFC 1123 DNS label (a sandbox service name):
+// lowercase letters, digits, and hyphens, not starting or ending with a hyphen.
+// Length (1-63) is enforced separately. The server is the source of truth; this
+// is a fast client-side check so obviously invalid names fail before a round
+// trip.
+var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// validateServiceName checks name against the single-DNS-label rules.
+func validateServiceName(name string) error {
+	if len(name) > 63 || !dnsLabelRe.MatchString(name) {
+		return fmt.Errorf("invalid --name %q: must be a single DNS label (lowercase letters, digits, and hyphens; 1-63 chars; no leading or trailing hyphen)", name)
+	}
+	return nil
+}
+
+var serviceCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a service on a running sandbox",
+	Args:  cobra.NoArgs,
+	RunE:  runServiceCreate,
+}
+
+var serviceDeleteCmd = &cobra.Command{
+	Use:     "delete",
+	Aliases: []string{"rm", "remove"},
+	Short:   "Delete a service from a sandbox",
+	Args:    cobra.NoArgs,
+	RunE:    runServiceDelete,
+}
+
+func runServiceCreate(cmd *cobra.Command, _ []string) error {
+	sandboxRef, _ := cmd.Flags().GetString("sandbox")
+	name, _ := cmd.Flags().GetString("name")
+	port, _ := cmd.Flags().GetInt("port")
+	urlScheme, _ := cmd.Flags().GetString("url-scheme")
+
+	if strings.TrimSpace(sandboxRef) == "" {
+		return fmt.Errorf("--sandbox is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("--name is required")
+	}
+	if port == 0 {
+		return fmt.Errorf("--port is required")
+	}
+	if err := services.ValidatePort(port); err != nil {
+		return err
+	}
+	if strings.TrimSpace(urlScheme) == "" {
+		return fmt.Errorf("--url-scheme is required")
+	}
+	if err := validateServiceName(name); err != nil {
+		return err
+	}
+	if urlScheme != "http" && urlScheme != "https" {
+		return fmt.Errorf("invalid --url-scheme %q: must be \"http\" or \"https\"", urlScheme)
+	}
+
+	// Validate --remote-target up front, unconditionally, matching `service
+	// list`: a bad value fails the same way regardless of mode or auth state.
+	if _, err := getServiceRemoteTarget(cmd); err != nil {
+		return err
+	}
+
+	mode := runmode.Resolve(cmd)
+	if mode == runmode.Local {
+		return fmt.Errorf("service create is only supported for remote sandboxes; omit --local (local sandbox services are declared in the repo config at creation time)")
+	}
+	if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		return err
+	}
+
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+
+	svc, err := runmode.NewRemoteClient().CreateSandboxService(sandboxRef, apiclient.SandboxServiceRequest{
+		Name:      name,
+		Port:      port,
+		URLScheme: urlScheme,
+	})
+	if err != nil {
+		return err
+	}
+	if format.IsJSON() {
+		// Remote-backed command: emit the API's response schema verbatim (see
+		// AGENTS.md "Remote-backed commands emit the API's response schema") so
+		// every field round-trips, including the id and a pending url as null.
+		return format.JSON(cmd.OutOrStdout(), svc)
+	}
+	printService(cmd, svc)
+	return nil
+}
+
+func runServiceDelete(cmd *cobra.Command, _ []string) error {
+	sandboxRef, _ := cmd.Flags().GetString("sandbox")
+	name, _ := cmd.Flags().GetString("name")
+	force, _ := cmd.Flags().GetBool("force")
+
+	if strings.TrimSpace(sandboxRef) == "" {
+		return fmt.Errorf("--sandbox is required")
+	}
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("--name is required")
+	}
+
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Validate --remote-target up front, unconditionally, matching `service
+	// list`: a bad value fails the same way regardless of mode or auth state.
+	if _, err := getServiceRemoteTarget(cmd); err != nil {
+		return err
+	}
+
+	mode := runmode.Resolve(cmd)
+	if mode == runmode.Local {
+		return fmt.Errorf("service delete is only supported for remote sandboxes; omit --local (local sandbox services are declared in the repo config at creation time)")
+	}
+	if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		return err
+	}
+
+	if !force {
+		if format.IsJSON() {
+			return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
+		}
+		reader := bufio.NewReader(cmd.InOrStdin())
+		confirmed, err := confirmAction(
+			fmt.Sprintf("Delete service %q from sandbox %q?", name, sandboxRef),
+			reader,
+		)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+			return nil
+		}
+	}
+
+	if err := runmode.NewRemoteClient().DeleteSandboxService(sandboxRef, name); err != nil {
+		return err
+	}
+	if format.IsJSON() {
+		return format.JSON(cmd.OutOrStdout(), output.ItemResult{Name: name, Status: "deleted"})
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Service %q deleted\n", name)
+	return nil
+}
+
+// printService renders a single created service as a one-row table
+// (NAME/PORT/SCHEME/URL), using the same "-" placeholder as `service list`
+// when no URL has been provisioned.
+func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tPORT\tSCHEME\tURL")
+	scheme := deref(svc.URLScheme)
+	if scheme == "" {
+		scheme = "-"
+	}
+	url := deref(svc.URL)
+	if url == "" {
+		url = "-"
+	}
+	fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", svc.Name, svc.Port, scheme, url)
+	w.Flush()
 }
 
 // serviceRow is one line of the `service list` table: a named service, the
@@ -225,9 +401,20 @@ func getServiceRemoteTarget(cmd *cobra.Command) (string, error) {
 func init() {
 	rootCmd.AddCommand(serviceCmd)
 	serviceCmd.AddCommand(serviceListCmd)
+	serviceCmd.AddCommand(serviceCreateCmd)
+	serviceCmd.AddCommand(serviceDeleteCmd)
 	serviceCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	serviceCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
 	serviceCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	serviceCmd.PersistentFlags().MarkHidden("remote-target")
 	serviceListCmd.Flags().String("sandbox-name", "", "Filter services to a specific sandbox")
+
+	serviceCreateCmd.Flags().String("sandbox", "", "Sandbox to create the service on (name or id)")
+	serviceCreateCmd.Flags().String("name", "", "Service name (a single DNS label)")
+	serviceCreateCmd.Flags().Int("port", 0, "Container port the service listens on")
+	serviceCreateCmd.Flags().String("url-scheme", "", "URL scheme for the generated URL: http or https")
+
+	serviceDeleteCmd.Flags().String("sandbox", "", "Sandbox the service belongs to (name or id)")
+	serviceDeleteCmd.Flags().String("name", "", "Name of the service to delete")
+	serviceDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 }
