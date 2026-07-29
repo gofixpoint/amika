@@ -40,6 +40,65 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Determine git version tag
 VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
+# ---- helpers -------------------------------------------------------------
+# Defined up front so the config/validation below can use them. They read the
+# globals (CI_AUTH, VM_* tables, $vm_excluded_sizes) at call time, not now.
+
+# True when $1 is a whitespace-separated member of the list $2. Used all over
+# for the org/size matrices (bash 3.2 has no associative arrays or set type).
+in_list() {
+  case " $2 " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# Map a Daytona org to its --ci API key (single source of truth). Prints the key
+# on success; returns non-zero (no output) for an org with no mapping.
+daytona_org_api_key() {
+  case "$1" in
+    amika-prod) printf '%s' "$DAYTONA_PROD_API_KEY" ;;
+    Fixpoint)   printf '%s' "$DAYTONA_STAGING_API_KEY" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Switch the active Daytona org: with --ci authenticate via the org's API key,
+# otherwise rely on existing login state via `organization use`. Emits its own
+# error and returns non-zero on failure. Callers decide whether that aborts (the
+# VM block runs with errexit disabled and checks the return explicitly; the
+# container path relies on errexit).
+daytona_select_org() {
+  local org="$1" api_key
+  if [ "$CI_AUTH" = true ]; then
+    if ! api_key="$(daytona_org_api_key "$org")"; then
+      echo "Error: --ci has no API key mapping for org '${org}'." >&2
+      return 1
+    fi
+    if ! daytona login --api-key "$api_key"; then
+      echo "Error: 'daytona login' failed for org ${org}; aborting to avoid publishing to the wrong org." >&2
+      return 1
+    fi
+  else
+    if ! daytona organization use "$org"; then
+      echo "Error: 'daytona organization use ${org}' failed; aborting to avoid publishing to the wrong org." >&2
+      return 1
+    fi
+  fi
+}
+
+# Single predicate for whether VM size index $1 is published to org $2, given
+# the preset's excluded sizes in $vm_excluded_sizes. Combines all three rules —
+# preset exclusion, the DAYTONA_VM_SIZES subset, and the per-size VM_SIZE_ORGS
+# matrix — so the org pre-check and the create loop stay in lockstep. Returns
+# non-zero when the size should be skipped for that org.
+vm_size_for_org() {
+  local size="${VM_SIZES[$1]}" org="$2"
+  in_list "$size" "$vm_excluded_sizes" && return 1
+  [ -n "$VM_SIZES_FILTER" ] && ! in_list "$size" "$VM_SIZES_FILTER" && return 1
+  in_list "$org" "${VM_SIZE_ORGS[$1]}" || return 1
+  return 0
+}
+# --------------------------------------------------------------------------
+
 # Daytona snapshot size configurations (parallel arrays for Bash 3 compat).
 # SIZE_ORGS limits which Daytona orgs each size is pushed to.
 SIZES=("xs" "m" "l" "xl")
@@ -91,11 +150,7 @@ VM_SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" 
 VM_SIZES_FILTER="${DAYTONA_VM_SIZES:-}"
 if [ -n "$VM_SIZES_FILTER" ]; then
   for requested in $VM_SIZES_FILTER; do
-    known=false
-    for size in "${VM_SIZES[@]}"; do
-      [ "$requested" = "$size" ] && { known=true; break; }
-    done
-    if [ "$known" = false ]; then
+    if ! in_list "$requested" "${VM_SIZES[*]}"; then
       echo "Error: DAYTONA_VM_SIZES contains unknown size '${requested}'. Valid sizes: ${VM_SIZES[*]}" >&2
       exit 1
     fi
@@ -305,15 +360,7 @@ for preset in "${PRESETS[@]}"; do
       disk="${SIZE_DISK[$i]}"
       snapshot_name="amika/${preset}-${size}:${VERSION}"
       for org in ${SIZE_ORGS[$i]}; do
-        if [ "$CI_AUTH" = true ]; then
-          case "$org" in
-            amika-prod) api_key="$DAYTONA_PROD_API_KEY" ;;
-            Fixpoint)   api_key="$DAYTONA_STAGING_API_KEY" ;;
-          esac
-          daytona login --api-key "$api_key"
-        else
-          daytona organization use "$org"
-        fi
+        daytona_select_org "$org"
         echo "Pushing ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) to Daytona org ${org}..."
         push_output=""
         push_rc=0
@@ -379,12 +426,7 @@ for preset in "${PRESETS[@]}"; do
       # exclusions and the DAYTONA_VM_SIZES filter are also applied.
       org_has_size=false
       for i in "${!VM_SIZES[@]}"; do
-        vm_size="${VM_SIZES[$i]}"
-        case " $vm_excluded_sizes " in *" $vm_size "*) continue ;; esac
-        if [ -n "$VM_SIZES_FILTER" ]; then
-          case " $VM_SIZES_FILTER " in *" $vm_size "*) ;; *) continue ;; esac
-        fi
-        case " ${VM_SIZE_ORGS[$i]} " in *" $org "*) org_has_size=true; break ;; esac
+        if vm_size_for_org "$i" "$org"; then org_has_size=true; break; fi
       done
       if [ "$org_has_size" = false ]; then
         echo "Skipping org ${org} for ${preset}: no VM sizes assigned to it."
@@ -393,27 +435,9 @@ for preset in "${PRESETS[@]}"; do
 
       # errexit is off here, so a failed auth/org switch would NOT abort on its
       # own — and the later push/create/delete would then run against whatever
-      # org was already active, publishing to the wrong org. Check these
-      # explicitly and bail on failure.
-      if [ "$CI_AUTH" = true ]; then
-        case "$org" in
-          amika-prod) api_key="$DAYTONA_PROD_API_KEY" ;;
-          Fixpoint)   api_key="$DAYTONA_STAGING_API_KEY" ;;
-          *)
-            echo "Error: --ci has no API key mapping for org '${org}' (from DAYTONA_VM_ORGS)." >&2
-            exit 1
-            ;;
-        esac
-        if ! daytona login --api-key "$api_key"; then
-          echo "Error: 'daytona login' failed for org ${org}; aborting to avoid publishing to the wrong org." >&2
-          exit 1
-        fi
-      else
-        if ! daytona organization use "$org"; then
-          echo "Error: 'daytona organization use ${org}' failed; aborting to avoid publishing to the wrong org." >&2
-          exit 1
-        fi
-      fi
+      # org was already active, publishing to the wrong org. daytona_select_org
+      # reports the specific failure; abort explicitly on its non-zero return.
+      daytona_select_org "$org" || exit 1
 
       # Step 1: upload the coder image into Daytona's registry IN THE VM REGION.
       # `snapshot push` only makes container snapshots, and the VM region has no
@@ -462,27 +486,20 @@ for preset in "${PRESETS[@]}"; do
       # Step 2: create a linux-vm snapshot per size from the uploaded image.
       for i in "${!VM_SIZES[@]}"; do
         vm_size="${VM_SIZES[$i]}"
-        # Skip sizes this preset does not support (see vm_excluded_sizes).
-        case " $vm_excluded_sizes " in
-          *" $vm_size "*)
-            echo "Skipping ${vm_name_base}-${vm_size}: ${preset} has no ${vm_size} size."
-            continue ;;
-        esac
-        # Honor the optional DAYTONA_VM_SIZES subset: skip sizes not requested.
-        if [ -n "$VM_SIZES_FILTER" ]; then
-          case " $VM_SIZES_FILTER " in
-            *" $vm_size "*) ;;
-            *) continue ;;
-          esac
+        # Same three skip rules as vm_size_for_org (kept inline here to emit a
+        # reason per skip): preset exclusion, the DAYTONA_VM_SIZES subset (silent
+        # skip), and the per-size VM_SIZE_ORGS matrix for the current org.
+        if in_list "$vm_size" "$vm_excluded_sizes"; then
+          echo "Skipping ${vm_name_base}-${vm_size}: ${preset} has no ${vm_size} size."
+          continue
         fi
-        # Honor the per-size org matrix: skip this size for the current org when
-        # its VM_SIZE_ORGS cell does not list that org.
-        case " ${VM_SIZE_ORGS[$i]} " in
-          *" $org "*) ;;
-          *)
-            echo "Skipping ${vm_name_base}-${vm_size} for org ${org}: not in this size's VM_SIZE_ORGS."
-            continue ;;
-        esac
+        if [ -n "$VM_SIZES_FILTER" ] && ! in_list "$vm_size" "$VM_SIZES_FILTER"; then
+          continue
+        fi
+        if ! in_list "$org" "${VM_SIZE_ORGS[$i]}"; then
+          echo "Skipping ${vm_name_base}-${vm_size} for org ${org}: not in this size's VM_SIZE_ORGS."
+          continue
+        fi
         cpu="${VM_CPUS[$i]}"
         mem="${VM_MEMORY[$i]}"
         disk="${VM_DISK[$i]}"
@@ -513,13 +530,38 @@ for preset in "${PRESETS[@]}"; do
         # Capture output and the REAL exit code directly. Do NOT pipe to `tee`:
         # with pipefail disabled (above) a pipe returns tee's status (0) and would
         # mask a failed create, silently recording it as pushed.
-        create_output=$(daytona snapshot create "$snapshot_name" \
-          --image "$vm_image" \
-          --sandbox-class linux-vm \
-          --region "$VM_REGION" \
-          --cpu "$cpu" --memory "$mem" --disk "$disk" 2>&1)
-        create_rc=$?
-        printf '%s\n' "$create_output"
+        #
+        # Retry on Daytona's transient resource-contention error. Every size for
+        # this preset+org is created from the SAME uploaded base image (vm_image),
+        # and Daytona serializes the async OCI→qcow2 conversion per source image,
+        # so a create fired while the previous size is still processing is rejected
+        # with "An operation is already in progress for this resource". That is
+        # transient: wait for the in-flight conversion to drain and try again
+        # (waiting longer each attempt, capped). ONLY this specific error is
+        # retried; "already exists" and every other failure break out immediately
+        # and are handled by the branches below.
+        create_max_attempts=6
+        create_attempt=0
+        while :; do
+          create_attempt=$((create_attempt + 1))
+          create_output=$(daytona snapshot create "$snapshot_name" \
+            --image "$vm_image" \
+            --sandbox-class linux-vm \
+            --region "$VM_REGION" \
+            --cpu "$cpu" --memory "$mem" --disk "$disk" 2>&1)
+          create_rc=$?
+          printf '%s\n' "$create_output"
+          [ "$create_rc" -eq 0 ] && break
+          echo "$create_output" | grep -qi "operation is already in progress" || break
+          if [ "$create_attempt" -ge "$create_max_attempts" ]; then
+            echo "Error: ${snapshot_name} in ${org} still reports 'operation already in progress' after ${create_max_attempts} attempts; the shared base image never drained." >&2
+            break
+          fi
+          create_wait=$((create_attempt * 60))
+          [ "$create_wait" -gt 240 ] && create_wait=240
+          echo "Resource busy for ${snapshot_name} in ${org} (attempt ${create_attempt}/${create_max_attempts}); the shared base image is still being processed. Waiting ${create_wait}s before retrying..." >&2
+          sleep "$create_wait"
+        done
         if [ "$create_rc" -eq 0 ]; then
           PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
         elif echo "$create_output" | grep -q "Conflict:.*already exists"; then
