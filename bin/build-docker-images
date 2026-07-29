@@ -46,7 +46,9 @@ SIZES=("xs" "m" "l" "xl")
 SIZE_CPUS=("1" "2" "2" "4")
 SIZE_MEMORY=("1" "8" "12" "16")
 SIZE_DISK=("3" "10" "24" "32")
-SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint")
+# NOTE: xl is pushed to amika-prod only — the Fixpoint (staging) org has lower
+# resource limits and cannot build the xl snapshot.
+SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod")
 
 # Daytona *VM* (linux-vm) snapshot sizes, published by --push-daytona-vm as
 # `amika-daytona-vm-<size>-<version>` (VERSION = the git short hash, same tag the
@@ -71,6 +73,15 @@ VM_MEMORY=("1" "8" "12" "16")
 VM_DISK=("3" "10" "24" "32")
 VM_REGION="${DAYTONA_VM_REGION:-us-west-2}"
 VM_ORGS="${DAYTONA_VM_ORGS:-amika-prod Fixpoint}"
+
+# Per-size org targeting for the linux-vm snapshots, mirroring SIZE_ORGS on the
+# container path: VM_SIZE_ORGS[i] lists the orgs that size VM_SIZES[i] is
+# published to. A size is published to an org only when that org appears BOTH in
+# VM_ORGS (the orgs this run visits) and in the size's VM_SIZE_ORGS cell. Keep
+# the indices aligned with VM_SIZES. Every size currently goes to every org;
+# narrow a single cell (e.g. drop "Fixpoint" from the xl entry) to skip that
+# size on an org that can't build it.
+VM_SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint")
 
 # Optional space-separated subset of VM sizes to publish (e.g. "l xl"), for
 # retrying a partial run without touching sizes that already succeeded. Empty
@@ -363,6 +374,23 @@ for preset in "${PRESETS[@]}"; do
     set +e
     set +o pipefail
     for org in $VM_ORGS; do
+      # Skip this org entirely (before auth and the expensive image upload) if
+      # the per-size org matrix assigns none of the sizes to it, once the preset
+      # exclusions and the DAYTONA_VM_SIZES filter are also applied.
+      org_has_size=false
+      for i in "${!VM_SIZES[@]}"; do
+        vm_size="${VM_SIZES[$i]}"
+        case " $vm_excluded_sizes " in *" $vm_size "*) continue ;; esac
+        if [ -n "$VM_SIZES_FILTER" ]; then
+          case " $VM_SIZES_FILTER " in *" $vm_size "*) ;; *) continue ;; esac
+        fi
+        case " ${VM_SIZE_ORGS[$i]} " in *" $org "*) org_has_size=true; break ;; esac
+      done
+      if [ "$org_has_size" = false ]; then
+        echo "Skipping org ${org} for ${preset}: no VM sizes assigned to it."
+        continue
+      fi
+
       # errexit is off here, so a failed auth/org switch would NOT abort on its
       # own — and the later push/create/delete would then run against whatever
       # org was already active, publishing to the wrong org. Check these
@@ -447,6 +475,14 @@ for preset in "${PRESETS[@]}"; do
             *) continue ;;
           esac
         fi
+        # Honor the per-size org matrix: skip this size for the current org when
+        # its VM_SIZE_ORGS cell does not list that org.
+        case " ${VM_SIZE_ORGS[$i]} " in
+          *" $org "*) ;;
+          *)
+            echo "Skipping ${vm_name_base}-${vm_size} for org ${org}: not in this size's VM_SIZE_ORGS."
+            continue ;;
+        esac
         cpu="${VM_CPUS[$i]}"
         mem="${VM_MEMORY[$i]}"
         disk="${VM_DISK[$i]}"
