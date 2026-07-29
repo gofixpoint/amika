@@ -12,6 +12,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/gofixpoint/amika/go/internal/services"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +25,16 @@ type serviceListItem struct {
 	Sandbox string `json:"sandbox"`
 	Ports   string `json:"ports"`
 	URL     string `json:"url"`
+}
+
+// serviceCreateResult is the JSON representation of a newly created service,
+// mirroring the NAME/PORT/SCHEME/URL columns printService renders in text mode.
+// URL is empty (not the "-" text placeholder) when no URL has been provisioned.
+type serviceCreateResult struct {
+	Name      string `json:"name"`
+	Port      int    `json:"port"`
+	URLScheme string `json:"url_scheme"`
+	URL       string `json:"url"`
 }
 
 var serviceCmd = &cobra.Command{
@@ -78,8 +89,8 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	if port == 0 {
 		return fmt.Errorf("--port is required")
 	}
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("invalid --port %d: must be between 1 and 65535", port)
+	if err := services.ValidatePort(port); err != nil {
+		return err
 	}
 	if strings.TrimSpace(urlScheme) == "" {
 		return fmt.Errorf("--url-scheme is required")
@@ -105,6 +116,11 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+
 	svc, err := runmode.NewRemoteClient().CreateSandboxService(sandboxRef, apiclient.SandboxServiceRequest{
 		Name:      name,
 		Port:      port,
@@ -112,6 +128,14 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	})
 	if err != nil {
 		return err
+	}
+	if format.IsJSON() {
+		return format.JSON(cmd.OutOrStdout(), serviceCreateResult{
+			Name:      svc.Name,
+			Port:      svc.Port,
+			URLScheme: svc.URLScheme,
+			URL:       deref(svc.URL),
+		})
 	}
 	printService(cmd, svc)
 	return nil
@@ -129,6 +153,11 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--name is required")
 	}
 
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+
 	// Validate --remote-target up front, unconditionally, matching `service
 	// list`: a bad value fails the same way regardless of mode or auth state.
 	if _, err := getServiceRemoteTarget(cmd); err != nil {
@@ -144,6 +173,9 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 	}
 
 	if !force {
+		if format.IsJSON() {
+			return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
+		}
 		reader := bufio.NewReader(cmd.InOrStdin())
 		confirmed, err := confirmAction(
 			fmt.Sprintf("Delete service %q from sandbox %q?", name, sandboxRef),
@@ -160,6 +192,9 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 
 	if err := runmode.NewRemoteClient().DeleteSandboxService(sandboxRef, name); err != nil {
 		return err
+	}
+	if format.IsJSON() {
+		return format.JSON(cmd.OutOrStdout(), output.ItemResult{Name: name, Status: "deleted"})
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Service %q deleted\n", name)
 	return nil

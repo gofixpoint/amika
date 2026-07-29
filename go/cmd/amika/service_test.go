@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 )
 
@@ -179,6 +180,9 @@ func TestServiceCreateCommand_Validation(t *testing.T) {
 		{"missing url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000"}, "--url-scheme is required"},
 		{"bad name", []string{"service", "create", "--sandbox", "box", "--name", "Web_1", "--port", "3000", "--url-scheme", "https"}, "must be a single DNS label"},
 		{"bad url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "ftp"}, `must be "http" or "https"`},
+		{"port too large", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "70000", "--url-scheme", "https"}, "must be between 1 and 65535"},
+		{"reserved port low", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "60899", "--url-scheme", "https"}, "reserved for internal Amika services"},
+		{"reserved port high", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "60999", "--url-scheme", "https"}, "reserved for internal Amika services"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -403,6 +407,83 @@ func TestServiceDeleteCommand_PrintsDeleted(t *testing.T) {
 	}
 	if !strings.Contains(out, `Service "web" deleted`) {
 		t.Fatalf("expected deleted message, got:\n%s", out)
+	}
+}
+
+// With -o json, create emits the created service as a single JSON object with
+// snake_case keys rather than the text table.
+func TestServiceCreateCommand_JSONOutput(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		svcURL := "https://web.example.com"
+		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			Name:      "web",
+			Port:      3000,
+			URLScheme: "https",
+			URL:       &svcURL,
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommandOutput(t, "service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "-o", "json")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	var got serviceCreateResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	want := serviceCreateResult{Name: "web", Port: 3000, URLScheme: "https", URL: "https://web.example.com"}
+	if got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if strings.Contains(out, "NAME") {
+		t.Fatalf("JSON output unexpectedly contains the text table header:\n%s", out)
+	}
+}
+
+// With -o json --force, delete emits an ItemResult JSON object.
+func TestServiceDeleteCommand_JSONOutput(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommandOutput(t, "service", "delete", "--force", "--sandbox", "box", "--name", "web", "-o", "json")
+	if err != nil {
+		t.Fatalf("service delete failed: %v", err)
+	}
+	var got output.ItemResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if got.Name != "web" || got.Status != "deleted" {
+		t.Fatalf("got %+v, want name=web status=deleted", got)
+	}
+}
+
+// In JSON mode, delete refuses to prompt and requires --force, so it errors
+// before making any request when --force is absent.
+func TestServiceDeleteCommand_JSONRequiresForce(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	_, err := runRootCommandOutput(t, "service", "delete", "--sandbox", "box", "--name", "web", "-o", "json")
+	if err == nil {
+		t.Fatal("expected an error requiring --force in JSON mode")
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("expected error mentioning --force, got: %v", err)
 	}
 }
 
