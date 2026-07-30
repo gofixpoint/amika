@@ -17,6 +17,13 @@ import (
 type GitInfo struct {
 	// RepoRoot is the absolute path to the repository's top-level directory.
 	RepoRoot string `json:"repo_root"`
+	// Remote is the identity of the repository's "origin" remote, normalized to
+	// "host/owner/repo" (e.g. "github.com/acme/api") with the scheme, any
+	// credentials, a port, and a trailing ".git" removed. It is "" when the
+	// repository has no "origin" remote. It disambiguates repositories that
+	// share a directory basename (two different checkouts both named "api") when
+	// sessions are filed in the org storage bucket.
+	Remote string `json:"remote"`
 	// Commit is the full SHA of HEAD, or "" in a repository with no commits.
 	Commit string `json:"commit"`
 	// Branch is the abbreviated ref name of HEAD, or "HEAD" when detached.

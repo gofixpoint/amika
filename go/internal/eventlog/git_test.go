@@ -48,6 +48,58 @@ func TestGatherGit_CommitBranchDirty(t *testing.T) {
 	}
 }
 
+func TestGatherGit_Remote(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	initRepo(t, dir)
+	runGit(t, dir, "remote", "add", "origin", "git@github.com:fixpoint/amika.git")
+
+	got := GatherGit(dir)
+	if got == nil {
+		t.Fatal("GatherGit(repo) = nil, want info")
+	}
+	if got.Remote != "github.com/fixpoint/amika" {
+		t.Errorf("Remote = %q, want github.com/fixpoint/amika", got.Remote)
+	}
+}
+
+func TestGatherGit_NoRemote(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	initRepo(t, dir)
+	if got := GatherGit(dir); got == nil || got.Remote != "" {
+		t.Errorf("Remote = %v, want empty for a repo with no origin remote", got)
+	}
+}
+
+func TestNormalizeRemoteURL(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"https://github.com/fixpoint/amika.git", "github.com/fixpoint/amika"},
+		{"https://github.com/fixpoint/amika", "github.com/fixpoint/amika"},
+		{"http://github.com/fixpoint/amika.git", "github.com/fixpoint/amika"},
+		{"git@github.com:fixpoint/amika.git", "github.com/fixpoint/amika"},
+		{"git@github.com:fixpoint/amika", "github.com/fixpoint/amika"},
+		{"ssh://git@github.com/fixpoint/amika.git", "github.com/fixpoint/amika"},
+		{"ssh://git@github.com:22/fixpoint/amika.git", "github.com/fixpoint/amika"},
+		{"git://github.com/fixpoint/amika.git", "github.com/fixpoint/amika"},
+		{"https://user:token@gitlab.example.com/group/sub/proj.git", "gitlab.example.com/group/sub/proj"},
+		{"https://github.com/Fixpoint/Amika.git", "github.com/Fixpoint/Amika"}, // case preserved; lowercased at key-build time
+		{"  https://github.com/fixpoint/amika.git  ", "github.com/fixpoint/amika"},
+		{"", ""},
+		{"file:///home/u/work/amika", ""}, // local remote has no host/owner/repo identity
+		{"/home/u/work/amika", ""},        // bare local path
+		{"https://github.com", ""},        // host only, no path
+	}
+	for _, c := range cases {
+		if got := normalizeRemoteURL(c.in); got != c.want {
+			t.Errorf("normalizeRemoteURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func requireGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
