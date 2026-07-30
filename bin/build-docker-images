@@ -97,6 +97,34 @@ vm_size_for_org() {
   in_list "$org" "${VM_SIZE_ORGS[$1]}" || return 1
   return 0
 }
+
+# Print the state of the snapshot named $1 in the active org (nothing if it does
+# not exist). `daytona snapshot list` spans regions and has no name filter, and
+# the API caps --limit at 200 (values above that are a hard "Bad Request"), so
+# page through 200 at a time and pick the name out with jq. Versioned snapshots
+# accumulate (size × preset × version), so a single page is not enough once an
+# org crosses 200. Returns non-zero ONLY if a list page call itself fails, so a
+# caller can tell "not found" (empty output, rc 0) from "couldn't verify" (rc
+# non-zero). The recursive-descent select tolerates a bare array or a wrapper.
+daytona_snapshot_state() {
+  local target="$1" page=1 limit=200 json state count
+  while :; do
+    json=$(daytona snapshot list --format json --limit "$limit" --page "$page" 2>/dev/null) || return 1
+    [ -z "$json" ] && return 1
+    state=$(printf '%s' "$json" \
+      | jq -r --arg n "$target" '[.. | objects | select(.name? == $n)] | .[0].state // empty' 2>/dev/null)
+    if [ -n "$state" ]; then
+      printf '%s' "$state"
+      return 0
+    fi
+    # No match on this page. A page holding fewer than $limit snapshot records
+    # (or an unparseable count) is the last page, so the name does not exist.
+    count=$(printf '%s' "$json" | jq '[.. | objects | select(.name? and .state?)] | length' 2>/dev/null)
+    { [ -z "$count" ] || [ "$count" -lt "$limit" ]; } && return 0
+    page=$((page + 1))
+    [ "$page" -gt 100 ] && return 0   # safety cap (~20k snapshots)
+  done
+}
 # --------------------------------------------------------------------------
 
 # Daytona snapshot size configurations (parallel arrays for Bash 3 compat).
@@ -565,19 +593,15 @@ for preset in "${PRESETS[@]}"; do
         if [ "$create_rc" -eq 0 ]; then
           PUSHED_SNAPSHOTS+=("${snapshot_name} -> ${org}")
         elif echo "$create_output" | grep -q "Conflict:.*already exists"; then
-          # Look up the existing snapshot's state (org-scoped to the org we just
-          # switched to). `snapshot list` has no name filter, so pull JSON and
-          # pick this name out with jq; raise --limit well above the default 100
-          # since versioned snapshots accumulate (size × preset × version). The
-          # recursive-descent select tolerates a bare array or a paginated wrapper.
-          list_json=$(daytona snapshot list --format json --limit 1000 2>/dev/null)
-          list_rc=$?
-          if [ "$list_rc" -ne 0 ] || [ -z "$list_json" ]; then
+          # The name is version-pinned, so a conflict means this snapshot already
+          # exists (in the active org). Verify it is actually bootable before
+          # skipping. daytona_snapshot_state pages the region-spanning list and
+          # returns the state (empty if not found; non-zero only if a list call
+          # fails, which we must not treat as a safe skip).
+          if ! snapshot_state=$(daytona_snapshot_state "$snapshot_name"); then
             echo "Error: ${snapshot_name} already exists in ${org}, but 'daytona snapshot list' failed so its state could not be verified. Refusing to report success on an unverified snapshot; check it manually and re-run." >&2
             exit 1
           fi
-          snapshot_state=$(printf '%s' "$list_json" \
-            | jq -r --arg n "$snapshot_name" '[.. | objects | select(.name? == $n)] | .[0].state // empty' 2>/dev/null)
           case "$snapshot_state" in
             active)
               # Only `active` snapshots are directly bootable, so only `active` is
