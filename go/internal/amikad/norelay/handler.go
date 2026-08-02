@@ -37,10 +37,19 @@ type Dialer interface {
 	DialContext(context.Context, string, string) (Stream, error)
 }
 
-// Logger records metadata-only bridge events.
+// Event is the complete metadata-only log shape. It cannot carry request
+// headers, credentials, or SSH payload bytes.
+type Event struct {
+	SessionID       string
+	Outcome         string
+	CloseReason     string
+	BytesFromClient int64
+	BytesFromSSHD   int64
+}
+
+// Logger records typed metadata-only bridge events.
 type Logger interface {
-	Info(string, ...any)
-	Error(string, ...any)
+	Record(Event)
 }
 
 // Config contains bounded bridge settings.

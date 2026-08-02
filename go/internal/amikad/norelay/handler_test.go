@@ -57,8 +57,7 @@ func (d *fakeDialer) DialContext(_ context.Context, network, address string) (St
 
 type discardLogger struct{}
 
-func (discardLogger) Info(string, ...any)  {}
-func (discardLogger) Error(string, ...any) {}
+func (discardLogger) Record(Event) {}
 
 func TestHandlerRejectsMissingTokenBeforeUpgradeOrDial(t *testing.T) {
 	verifier := &fakeVerifier{want: "secret-token"}

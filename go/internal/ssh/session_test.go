@@ -61,6 +61,39 @@ type fakeCreator struct {
 	calls int
 }
 
+type fakePinStore struct {
+	alias string
+	key   string
+	calls int
+}
+
+func (s *fakePinStore) Pin(alias, key string) error {
+	s.calls++
+	s.alias = alias
+	s.key = key
+	return nil
+}
+
+func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
+	creator := &fakeCreator{}
+	pins := &fakePinStore{}
+	session, err := PrepareSessionHost(
+		creator,
+		pins,
+		"sbx_123",
+		"my.team.sbx-123.amika",
+	)
+	if err != nil {
+		t.Fatalf("PrepareSessionHost: %v", err)
+	}
+	if session.SandboxID != "sbx_123" || creator.calls != 1 {
+		t.Fatalf("session = %#v, creator calls = %d", session, creator.calls)
+	}
+	if pins.calls != 1 || pins.alias != "my.team.sbx-123.amika" || pins.key != "ssh-ed25519 AAAAtest" {
+		t.Fatalf("pin calls = %d alias = %q key = %q", pins.calls, pins.alias, pins.key)
+	}
+}
+
 func (c *fakeCreator) CreateSSHSession(name string) (*apiclient.SSHSession, error) {
 	c.calls++
 	return &apiclient.SSHSession{

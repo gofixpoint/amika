@@ -41,6 +41,12 @@ type SessionDialer interface {
 	Dial(context.Context, string, string) (Stream, error)
 }
 
+// HostKeyPinStore atomically creates or verifies an alias-keyed known-host pin.
+// An existing different key must fail closed.
+type HostKeyPinStore interface {
+	Pin(string, string) error
+}
+
 // BuildSessionAlias fails closed until the v2 alias rules are implemented.
 func BuildSessionAlias(_, _ string) (string, error) {
 	return "", ErrSessionTransportNotImplemented
@@ -59,6 +65,17 @@ func RenderSessionConfig(_ SessionConfig) (string, error) {
 // KnownHostLine fails closed until alias-keyed host pinning lands.
 func KnownHostLine(_, _ string) (string, error) {
 	return "", ErrSessionTransportNotImplemented
+}
+
+// PrepareSessionHost fetches and validates a descriptor, then pins its host key
+// before OpenSSH is started.
+func PrepareSessionHost(
+	_ SessionCreator,
+	_ HostKeyPinStore,
+	_ string,
+	_ string,
+) (*apiclient.SSHSession, error) {
+	return nil, ErrSessionTransportNotImplemented
 }
 
 // ProxySession fails before creating a session, dialing, or copying standard IO.

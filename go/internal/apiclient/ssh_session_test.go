@@ -22,7 +22,7 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(SSHSession{
 			SessionID:         "sshs_1",
-			Transport:         "direct_ws",
+			Transport:         SSHSessionTransportDirectWS,
 			ConnectURL:        "wss://sandbox.example/v1/ssh-sessions",
 			ConnectCredential: "connect-token",
 			SandboxID:         "sbx_123",
@@ -44,5 +44,42 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("API calls = %d, want 2", calls)
+	}
+}
+
+func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
+	valid := SSHSession{
+		SessionID:         "sshs_1",
+		Transport:         SSHSessionTransportDirectWS,
+		ConnectURL:        "wss://sandbox.example/v1/ssh-sessions",
+		ConnectCredential: "connect-token",
+		SandboxID:         "sbx_123",
+		SSHUser:           "amika",
+		HostPublicKey:     "ssh-ed25519 AAAAtest",
+	}
+	if err := valid.Validate("sbx_123"); err != nil {
+		t.Fatalf("Validate valid session: %v", err)
+	}
+
+	tests := map[string]SSHSession{
+		"unknown transport": func() SSHSession { s := valid; s.Transport = "other"; return s }(),
+		"wrong sandbox":     func() SSHSession { s := valid; s.SandboxID = "sbx_other"; return s }(),
+		"non-wss URL":       func() SSHSession { s := valid; s.ConnectURL = "https://sandbox.example/v1/ssh-sessions"; return s }(),
+		"URL credential": func() SSHSession {
+			s := valid
+			s.ConnectURL = "wss://user:secret@sandbox.example/v1/ssh-sessions"
+			return s
+		}(),
+		"wrong URL path":        func() SSHSession { s := valid; s.ConnectURL = "wss://sandbox.example/other"; return s }(),
+		"empty credential":      func() SSHSession { s := valid; s.ConnectCredential = ""; return s }(),
+		"invalid host key":      func() SSHSession { s := valid; s.HostPublicKey = "ssh-rsa AAAA"; return s }(),
+		"host key with newline": func() SSHSession { s := valid; s.HostPublicKey = "ssh-ed25519 AAAA\nInjected"; return s }(),
+	}
+	for name, session := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := session.Validate("sbx_123"); err == nil {
+				t.Fatal("Validate returned nil")
+			}
+		})
 	}
 }
