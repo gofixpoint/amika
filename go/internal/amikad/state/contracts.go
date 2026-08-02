@@ -17,6 +17,28 @@ type SensitiveStore interface {
 	WriteAndRegister(context.Context, string, io.Reader, fs.FileMode) error
 }
 
+// Store is the manifest-backed sensitive writer. Its implementation remains
+// fail-closed until atomic file and manifest replacement land.
+type Store struct {
+	manifestPath string
+}
+
+// NewStore creates a sensitive writer for an explicit manifest path.
+func NewStore(manifestPath string) *Store {
+	return &Store{manifestPath: manifestPath}
+}
+
+// WriteAndRegister returns ErrNotImplemented without reading input or touching disk.
+func (s *Store) WriteAndRegister(
+	context.Context,
+	string,
+	io.Reader,
+	fs.FileMode,
+) error {
+	_ = s.manifestPath
+	return ErrNotImplemented
+}
+
 // UnimplementedStore rejects writes without reading input or touching disk.
 type UnimplementedStore struct{}
 
