@@ -231,7 +231,7 @@ func (m *Manager) SetAuthorizedKeys(ctx context.Context, input io.Reader) error 
 	); err != nil {
 		return err
 	}
-	return os.Chown(
+	return os.Lchown(
 		m.paths.AuthorizedKeys,
 		m.paths.AuthorizedKeysUID,
 		m.paths.AuthorizedKeysGID,
@@ -240,13 +240,23 @@ func (m *Manager) SetAuthorizedKeys(ctx context.Context, input io.Reader) error 
 
 func (m *Manager) prepareAuthorizedKeysDirectory() error {
 	directory := filepath.Dir(m.paths.AuthorizedKeys)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
+	info, err := m.files.Lstat(directory)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("authorized-keys directory missing: %w", state.ErrInvalidPath)
+	}
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
-		return err
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return state.ErrSymlinkPath
 	}
-	return os.Chown(
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("unsafe authorized-keys directory: %w", state.ErrInvalidPath)
+	}
+	// Lchown cannot follow a final-component symlink if the sandbox user
+	// races this check. A replacement real directory can only be assigned to
+	// that same unprivileged user and is never chmodded by root here.
+	return os.Lchown(
 		directory,
 		m.paths.AuthorizedKeysUID,
 		m.paths.AuthorizedKeysGID,

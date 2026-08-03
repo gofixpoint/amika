@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -96,13 +97,15 @@ func TestGetPresetDockerfile_BaseBuildsPinnedAmikad(t *testing.T) {
 	contents := string(data)
 	for _, want := range []string{
 		"FROM golang:1.25.3-bookworm AS amikad-builder",
-		"ARG AMIKAD_SOURCE_REF=b5652138fc28504ab0532bd1ec3fd5fa5027fbb5",
 		"go install \"github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}\"",
 		"COPY --from=amikad-builder /out/amikad /usr/local/bin/amikad",
 	} {
 		if !strings.Contains(contents, want) {
 			t.Fatalf("base Dockerfile missing pinned amikad build %q", want)
 		}
+	}
+	if !regexp.MustCompile(`(?m)^ARG AMIKAD_SOURCE_REF=[0-9a-f]{40}$`).MatchString(contents) {
+		t.Fatal("base Dockerfile must pin amikad to a full source commit")
 	}
 }
 

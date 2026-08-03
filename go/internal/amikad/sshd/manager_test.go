@@ -62,11 +62,43 @@ func testManager(t *testing.T) (*Manager, Paths, *fakeKeyGenerator, *fakeProcess
 		AuthorizedKeysUID: os.Getuid(),
 		AuthorizedKeysGID: os.Getgid(),
 	}
+	if err := os.MkdirAll(filepath.Dir(paths.AuthorizedKeys), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(paths.AuthorizedKeys), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	files := state.OSFiles{}
 	store := state.NewStore(filepath.Join(directory, "injected-paths.json"), files)
 	keygen := &fakeKeyGenerator{}
 	processes := &fakeProcessRunner{}
 	return NewManager(paths, store, files, keygen, processes), paths, keygen, processes
+}
+
+func TestSetupRejectsSymlinkedAuthorizedKeysDirectoryWithoutChangingTarget(t *testing.T) {
+	manager, paths, _, _ := testManager(t)
+	directory := filepath.Dir(paths.AuthorizedKeys)
+	if err := os.Remove(directory); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, directory); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.Setup(context.Background(), SetupOptions{}); !errors.Is(err, state.ErrSymlinkPath) {
+		t.Fatalf("Setup error = %v, want ErrSymlinkPath", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("symlink target mode = %o, want unchanged 755", info.Mode().Perm())
+	}
 }
 
 func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
