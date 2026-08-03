@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     nano \
     tmux \
     ncurses-term \
+    openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ghostty terminfo so SSH sessions from Ghostty render correctly.
@@ -59,10 +60,14 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 # piped curl failure would exit 0 and silently skip the install.
 ARG AMIKA_VERSION=0.13.0
 ARG AMIKALOG_VERSION=0.2.0
+ARG AMIKAD_VERSION=0.1.0
 RUN curl -fsSL "https://raw.githubusercontent.com/gofixpoint/amika/amika%40v${AMIKA_VERSION}/install.sh" -o /tmp/amika-install.sh \
     && sh /tmp/amika-install.sh --install-version "${AMIKA_VERSION}" \
     && sh /tmp/amika-install.sh --component amikalog --install-version "${AMIKALOG_VERSION}" \
     && rm /tmp/amika-install.sh
+RUN curl -fsSL "https://raw.githubusercontent.com/gofixpoint/amika/amikad%40v${AMIKAD_VERSION}/install.sh" -o /tmp/amikad-install.sh \
+    && sh /tmp/amikad-install.sh --component amikad --install-version "${AMIKAD_VERSION}" \
+    && rm /tmp/amikad-install.sh
 
 # Default no-op user-facing hooks; callers can shadow them via
 # --setup-script / --start-script or by uploading their own.
@@ -99,6 +104,7 @@ RUN chmod +x /usr/lib/amikad/pre-setup.sh /usr/lib/amikad/post-setup.sh /usr/lib
 
 # Create user with home directory.
 RUN useradd -m -s /usr/bin/zsh amika
+RUN install -d -m 0700 -o amika -g amika /home/amika/.ssh
 RUN usermod -aG sudo amika
 # Let amika user run sudo without a password.
 RUN echo "amika ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

@@ -16,10 +16,16 @@ func (panicReader) Read([]byte) (int, error) {
 type recordingOperations struct {
 	UnimplementedOperations
 	setupOptions SetupSSHDOptions
+	serveOptions ServeOptions
 }
 
 func (o *recordingOperations) SetupSSHD(_ context.Context, options SetupSSHDOptions) error {
 	o.setupOptions = options
+	return nil
+}
+
+func (o *recordingOperations) Serve(_ context.Context, options ServeOptions) error {
+	o.serveOptions = options
 	return nil
 }
 
@@ -67,5 +73,20 @@ func TestSetupSSHDForceOverwriteFlag(t *testing.T) {
 	}
 	if !operations.setupOptions.ForceOverwrite {
 		t.Fatal("ForceOverwrite = false, want true")
+	}
+}
+
+func TestServeBackgroundFlag(t *testing.T) {
+	operations := &recordingOperations{}
+	cmd := NewCommand(operations)
+	cmd.SetArgs([]string{"serve", "--beta-no-relay", "--bg", "--port", "61000"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !operations.serveOptions.Background || !operations.serveOptions.BetaNoRelay || operations.serveOptions.Port != 61000 {
+		t.Fatalf("serve options = %+v", operations.serveOptions)
 	}
 }

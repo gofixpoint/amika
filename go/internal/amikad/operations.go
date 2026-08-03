@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 const (
 	defaultManifestPath = "/var/lib/amikad/injected-paths.json"
 	defaultTokenPath    = "/var/lib/amikad/connect-token"
+	defaultServeLogPath = "/var/log/amikad/no-relay.log"
 )
 
 // ErrNoServeMode marks a serve invocation with no explicitly enabled
@@ -128,6 +130,9 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	if !o.verifier.Ready() {
 		return ErrUnsafeConnectToken
 	}
+	if options.Background {
+		return o.serveBackground(ctx, options)
+	}
 
 	handler := norelay.NewHandler(
 		norelay.Config{MaxConnections: 64, SSHDAddress: "127.0.0.1:22"},
@@ -189,4 +194,83 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 		return fmt.Errorf("%s stopped unexpectedly", first.component)
 	}
 	return fmt.Errorf("%s failed: %w", first.component, first.err)
+}
+
+func (o *DaemonOperations) serveBackground(ctx context.Context, options ServeOptions) error {
+	if serveReady(ctx, options.Port) {
+		return nil
+	}
+	if err := os.MkdirAll("/var/log/amikad", 0o755); err != nil {
+		return fmt.Errorf("prepare daemon log directory: %w", err)
+	}
+	logFile, err := os.OpenFile(defaultServeLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open daemon log: %w", err)
+	}
+	defer logFile.Close()
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate amikad executable: %w", err)
+	}
+	args := []string{"serve", "--port", strconv.Itoa(options.Port)}
+	if options.BetaNoRelay {
+		args = append(args, "--beta-no-relay")
+	}
+	command := exec.Command(executable, args...)
+	command.Stdout = logFile
+	command.Stderr = logFile
+	configureBackgroundProcess(command)
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("start background amikad: %w", err)
+	}
+	if err := command.Process.Release(); err != nil {
+		return fmt.Errorf("release background amikad: %w", err)
+	}
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("background amikad did not become healthy")
+		case <-ticker.C:
+			if serveReady(ctx, options.Port) {
+				return nil
+			}
+		}
+	}
+}
+
+func serveReady(ctx context.Context, port int) bool {
+	requestCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(
+		requestCtx,
+		http.MethodGet,
+		"http://127.0.0.1:"+strconv.Itoa(port)+"/v1/status",
+		nil,
+	)
+	if err != nil {
+		return false
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return false
+	}
+	var status struct {
+		Mode string `json:"mode"`
+		Port int    `json:"port"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&status); err != nil {
+		return false
+	}
+	return status.Mode == "beta_no_relay" && status.Port == port
 }

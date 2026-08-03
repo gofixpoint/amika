@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,5 +114,26 @@ func TestSetupSSHDForwardsOverwriteAuthorization(t *testing.T) {
 	}
 	if !manager.setupOptions.ForceOverwrite {
 		t.Fatal("force-overwrite authorization was not forwarded")
+	}
+}
+
+func TestServeReadyRequiresNoRelayStatusOnExactPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/status" {
+			http.NotFound(w, request)
+			return
+		}
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"mode":"beta_no_relay","port":%d}`, port))
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	if !serveReady(context.Background(), port) {
+		t.Fatal("no-relay status was not considered ready")
 	}
 }

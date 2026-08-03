@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/gofixpoint/amika/go/internal/buildmeta"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +21,7 @@ var ErrNotImplemented = errors.New("amikad operation is not implemented")
 type ServeOptions struct {
 	Port        int
 	BetaNoRelay bool
+	Background  bool
 }
 
 // SetupSSHDOptions controls whether managed setup may replace an existing
@@ -74,6 +76,7 @@ func NewCommand(operations Operations) *cobra.Command {
 		Short:         "Run the Amika sandbox daemon",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Version:       buildmeta.New("amikad", buildmeta.AmikadVersion).String(),
 	}
 
 	setup := &cobra.Command{Use: "setup", Short: "Configure sandbox services"}
@@ -145,6 +148,12 @@ func NewCommand(operations Operations) *cobra.Command {
 		"beta-no-relay",
 		false,
 		"enable the unstable no-relay WebSocket SSH transport",
+	)
+	serve.Flags().BoolVar(
+		&serveOptions.Background,
+		"bg",
+		false,
+		"start in the background and wait until healthy",
 	)
 
 	root.AddCommand(setup, hostKey, authorizedKeys, connectToken, serve)
