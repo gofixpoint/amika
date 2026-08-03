@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	cmd := amikad.NewCommand(amikad.UnimplementedOperations{})
+	cmd := amikad.NewCommand(amikad.NewProductionOperations())
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

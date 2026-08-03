@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -69,6 +71,10 @@ func (f *memoryFiles) WriteFileAtomic(path string, data []byte, mode fs.FileMode
 	f.contents[path] = append([]byte(nil), data...)
 	f.modes[path] = mode
 	return nil
+}
+
+func (f *memoryFiles) WithLock(_ context.Context, _ string, operation func() error) error {
+	return operation()
 }
 
 type fakeFileInfo struct {
@@ -232,6 +238,38 @@ func TestStoreSerializesConcurrentManifestUpdates(t *testing.T) {
 		}
 	}
 	assertManifestPathSet(t, files.contents[manifestPath], paths)
+}
+
+func TestOSStoresSerializeManifestAcrossInstances(t *testing.T) {
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "injected-paths.json")
+	files := OSFiles{}
+	stores := []*Store{NewStore(manifestPath, files), NewStore(manifestPath, files)}
+	paths := make([]string, 40)
+	var wg sync.WaitGroup
+	errs := make(chan error, len(paths))
+	for index := range paths {
+		paths[index] = filepath.Join(directory, fmt.Sprintf("secret-%d", index))
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			errs <- stores[index%len(stores)].WriteAndRegister(
+				context.Background(), paths[index], strings.NewReader("secret"), 0o600,
+			)
+		}(index)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("WriteAndRegister: %v", err)
+		}
+	}
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertManifestPathSet(t, manifest, paths)
 }
 
 func assertManifestPaths(t *testing.T, data []byte, want []string) {

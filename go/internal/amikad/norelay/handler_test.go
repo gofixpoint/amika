@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type fakeVerifier struct {
@@ -116,5 +119,100 @@ func TestHandlerBridgesAuthenticatedBytesToLoopbackSSHD(t *testing.T) {
 	}
 	if got := websocket.writes.String(); got != "ssh-from-server" {
 		t.Fatalf("websocket received %q, want server bytes", got)
+	}
+}
+
+type blockingStream struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newBlockingStream() *blockingStream { return &blockingStream{closed: make(chan struct{})} }
+func (s *blockingStream) Read([]byte) (int, error) {
+	<-s.closed
+	return 0, io.EOF
+}
+func (s *blockingStream) Write(buffer []byte) (int, error) { return len(buffer), nil }
+func (s *blockingStream) Close() error {
+	s.once.Do(func() { close(s.closed) })
+	return nil
+}
+
+func TestHandlerEnforcesCapacityBeforeUpgrade(t *testing.T) {
+	websocket := newBlockingStream()
+	loopback := newBlockingStream()
+	handler := NewHandler(Config{MaxConnections: 1}, Dependencies{
+		Verifier: &fakeVerifier{want: "secret-token"},
+		Upgrader: &fakeUpgrader{stream: websocket},
+		Dialer:   &fakeDialer{stream: loopback},
+		Logger:   testLogger(),
+	})
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		request := httptest.NewRequest(http.MethodGet, SSHSessionsPath, nil)
+		request.Header.Set("Authorization", "Bearer secret-token")
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for handler.ActiveConnections() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if handler.ActiveConnections() != 1 {
+		t.Fatal("first connection did not acquire capacity")
+	}
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, SSHSessionsPath, nil)
+	request.Header.Set("Authorization", "Bearer secret-token")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusTooManyRequests)
+	}
+	websocket.Close()
+	loopback.Close()
+	<-firstDone
+}
+
+func TestHandlerNeverLogsAuthorizationMaterial(t *testing.T) {
+	secret := "secret-authorization-material"
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := NewHandler(Config{}, Dependencies{
+		Verifier: &fakeVerifier{want: "different"},
+		Upgrader: &fakeUpgrader{stream: newFakeStream("")},
+		Dialer:   &fakeDialer{stream: newFakeStream("")},
+		Logger:   logger,
+	})
+	request := httptest.NewRequest(http.MethodGet, SSHSessionsPath, nil)
+	request.Header.Set("Authorization", "Bearer "+secret)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	if strings.Contains(logs.String(), secret) || strings.Contains(logs.String(), "Authorization") {
+		t.Fatalf("logs exposed credentials: %s", logs.String())
+	}
+}
+
+func TestHandlerRejectsMalformedAuthorizationBeforeUpgrade(t *testing.T) {
+	for _, header := range []string{
+		"secret-token",
+		"Bearer",
+		"Bearer secret-token trailing",
+		"Basic secret-token",
+	} {
+		upgrader := &fakeUpgrader{stream: newFakeStream("")}
+		dialer := &fakeDialer{stream: newFakeStream("")}
+		handler := NewHandler(Config{}, Dependencies{
+			Verifier: &fakeVerifier{want: "secret-token"},
+			Upgrader: upgrader,
+			Dialer:   dialer,
+			Logger:   testLogger(),
+		})
+		request := httptest.NewRequest(http.MethodGet, SSHSessionsPath, nil)
+		request.Header.Set("Authorization", header)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized || upgrader.calls != 0 || dialer.calls != 0 {
+			t.Fatalf("header %q reached status=%d upgrade=%d dial=%d", header, response.Code, upgrader.calls, dialer.calls)
+		}
 	}
 }

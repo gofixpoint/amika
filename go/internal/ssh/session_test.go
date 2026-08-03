@@ -3,10 +3,14 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 func TestParseSessionAliasUsesRightmostSandboxID(t *testing.T) {
@@ -45,20 +49,22 @@ func TestRenderSessionConfigPinsHostKeysAndFetchesEveryDial(t *testing.T) {
 }
 
 func TestKnownHostLinePinsTheAliasToTheExactHostKey(t *testing.T) {
+	hostKey := testHostKey(t)
 	line, err := KnownHostLine(
 		"my.team.sbx-123.amika",
-		"ssh-ed25519 AAAAtest host-comment",
+		hostKey+" host-comment",
 	)
 	if err != nil {
 		t.Fatalf("KnownHostLine: %v", err)
 	}
-	if line != "my.team.sbx-123.amika ssh-ed25519 AAAAtest\n" {
+	if line != "my.team.sbx-123.amika "+hostKey+"\n" {
 		t.Fatalf("known-host line = %q", line)
 	}
 }
 
 type fakeCreator struct {
-	calls int
+	calls   int
+	hostKey string
 }
 
 type fakePinStore struct {
@@ -75,13 +81,13 @@ func (s *fakePinStore) Pin(alias, key string) error {
 }
 
 func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
-	creator := &fakeCreator{}
+	creator := &fakeCreator{hostKey: testHostKey(t)}
 	pins := &fakePinStore{}
 	session, err := PrepareSessionHost(
 		creator,
 		pins,
 		"sbx_123",
-		"my.team.sbx-123.amika",
+		"my.team.sbx_123.amika",
 	)
 	if err != nil {
 		t.Fatalf("PrepareSessionHost: %v", err)
@@ -89,7 +95,7 @@ func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
 	if session.SandboxID != "sbx_123" || creator.calls != 1 {
 		t.Fatalf("session = %#v, creator calls = %d", session, creator.calls)
 	}
-	if pins.calls != 1 || pins.alias != "my.team.sbx-123.amika" || pins.key != "ssh-ed25519 AAAAtest" {
+	if pins.calls != 1 || pins.alias != "my.team.sbx_123.amika" || pins.key != creator.hostKey {
 		t.Fatalf("pin calls = %d alias = %q key = %q", pins.calls, pins.alias, pins.key)
 	}
 }
@@ -100,10 +106,10 @@ func (c *fakeCreator) CreateSSHSession(name string) (*apiclient.SSHSession, erro
 		SessionID:         "sshs_1",
 		Transport:         "direct_ws",
 		ConnectURL:        "wss://sandbox.example/v1/ssh-sessions",
-		ConnectCredential: "connect-token",
+		ConnectCredential: testConnectToken(),
 		SandboxID:         name,
 		SSHUser:           "amika",
-		HostPublicKey:     "ssh-ed25519 AAAAtest",
+		HostPublicKey:     c.hostKey,
 	}, nil
 }
 
@@ -131,7 +137,7 @@ func (d *fakeSessionDialer) Dial(_ context.Context, url, credential string) (Str
 }
 
 func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
-	creator := &fakeCreator{}
+	creator := &fakeCreator{hostKey: testHostKey(t)}
 	stream := &proxyStream{read: bytes.NewReader([]byte("from-sshd"))}
 	dialer := &fakeSessionDialer{stream: stream}
 	var stdout bytes.Buffer
@@ -140,7 +146,7 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 		context.Background(),
 		creator,
 		dialer,
-		"sbx_123",
+		"my.team.sbx_123.amika",
 		strings.NewReader("from-openssh"),
 		&stdout,
 	)
@@ -150,7 +156,7 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	if creator.calls != 1 || dialer.calls != 1 {
 		t.Fatalf("creator calls = %d, dialer calls = %d", creator.calls, dialer.calls)
 	}
-	if dialer.url != "wss://sandbox.example/v1/ssh-sessions" || dialer.credential != "connect-token" {
+	if dialer.url != "wss://sandbox.example/v1/ssh-sessions" || dialer.credential != testConnectToken() {
 		t.Fatalf("dial = %q credential %q", dialer.url, dialer.credential)
 	}
 	if got := stream.writes.String(); got != "from-openssh" {
@@ -159,4 +165,21 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	if got := stdout.String(); got != "from-sshd" {
 		t.Fatalf("stdout received %q", got)
 	}
+}
+
+func testConnectToken() string {
+	return base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+}
+
+func testHostKey(t *testing.T) string {
+	t.Helper()
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := cryptossh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(key)))
 }

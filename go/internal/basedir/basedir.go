@@ -23,6 +23,8 @@ const (
 	sshDirName          = ".ssh"
 	sshConfigFile       = "config"
 	sshAmikaConfigFile  = "amika.conf"
+	sshKnownHostsFile   = "amika_known_hosts"
+	sshIdentityFile     = "amika_id_ed25519"
 	claudeDirName       = ".claude"
 	claudeSettingsFile  = "settings.json"
 	codexDirName        = ".codex"
@@ -61,6 +63,8 @@ type Paths interface {
 	SSHDir() (string, error)
 	SSHConfigFile() (string, error)
 	SSHAmikaConfigFile() (string, error)
+	SSHKnownHostsFile() (string, error)
+	SSHIdentityFile() (string, error)
 
 	ClaudeSettingsFile() (string, error)
 	CodexConfigFile() (string, error)
@@ -279,6 +283,24 @@ func (p *xdgPaths) SSHAmikaConfigFile() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, sshAmikaConfigFile), nil
+}
+
+// SSHKnownHostsFile returns the dedicated strict host-key pin file.
+func (p *xdgPaths) SSHKnownHostsFile() (string, error) {
+	dir, err := p.SSHDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, sshKnownHostsFile), nil
+}
+
+// SSHIdentityFile returns the default user-owned Ed25519 private key path.
+func (p *xdgPaths) SSHIdentityFile() (string, error) {
+	dir, err := p.SSHDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, sshIdentityFile), nil
 }
 
 // ClaudeSettingsFile returns the Claude Desktop / Claude Code settings file at

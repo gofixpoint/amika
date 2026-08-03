@@ -96,6 +96,12 @@ func TestPaths_SSHPaths(t *testing.T) {
 	if got, _ := p.SSHAmikaConfigFile(); got != filepath.Join(home, ".ssh", "amika.conf") {
 		t.Fatalf("SSHAmikaConfigFile = %q", got)
 	}
+	if got, _ := p.SSHKnownHostsFile(); got != filepath.Join(home, ".ssh", "amika_known_hosts") {
+		t.Fatalf("SSHKnownHostsFile = %q", got)
+	}
+	if got, _ := p.SSHIdentityFile(); got != filepath.Join(home, ".ssh", "amika_id_ed25519") {
+		t.Fatalf("SSHIdentityFile = %q", got)
+	}
 }
 
 func TestSSHAmikaConfigName(t *testing.T) {

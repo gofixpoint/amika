@@ -3,19 +3,29 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
+	"path/filepath"
+	"slices"
+	"sync"
 )
-
-// ErrNotImplemented marks the fail-closed state stub.
-var ErrNotImplemented = errors.New("amikad state store is not implemented")
 
 // ErrInvalidPath marks a sensitive target that is not an absolute clean path.
 var ErrInvalidPath = errors.New("invalid sensitive file path")
 
 // ErrSymlinkPath marks a sensitive target that resolves through a symlink.
 var ErrSymlinkPath = errors.New("sensitive file path contains a symlink")
+
+// ErrInvalidManifest marks a scrub manifest that cannot be safely extended.
+var ErrInvalidManifest = errors.New("invalid injected-paths manifest")
+
+// ErrSensitiveFileTooLarge marks input that exceeds the bounded in-memory
+// secret size accepted by the atomic writer.
+var ErrSensitiveFileTooLarge = errors.New("sensitive file exceeds size limit")
+
+const maxSensitiveFileBytes = 1 << 20
 
 // SensitiveStore first registers an absolute path by atomically replacing the
 // scrub manifest, then atomically replaces the sensitive file. A stale manifest
@@ -33,6 +43,7 @@ type FileSystem interface {
 	ReadFile(string) ([]byte, error)
 	Lstat(string) (fs.FileInfo, error)
 	WriteFileAtomic(string, []byte, fs.FileMode) error
+	WithLock(context.Context, string, func() error) error
 }
 
 // Store is the manifest-backed sensitive writer. Its implementation remains
@@ -40,6 +51,7 @@ type FileSystem interface {
 type Store struct {
 	manifestPath string
 	files        FileSystem
+	mu           sync.Mutex
 }
 
 // NewStore creates a sensitive writer for an explicit manifest path.
@@ -47,35 +59,113 @@ func NewStore(manifestPath string, files FileSystem) *Store {
 	return &Store{manifestPath: manifestPath, files: files}
 }
 
-// WriteAndRegister returns ErrNotImplemented without reading input or touching disk.
+// WriteAndRegister registers the target before atomically replacing it.
 func (s *Store) WriteAndRegister(
 	ctx context.Context,
 	absolutePath string,
 	contents io.Reader,
 	mode fs.FileMode,
 ) error {
-	_ = ctx
-	_ = absolutePath
-	_ = contents
-	_ = mode
-	_ = s.manifestPath
-	_ = s.files
-	return ErrNotImplemented
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !isCleanAbsolutePath(absolutePath) || absolutePath == s.manifestPath {
+		return ErrInvalidPath
+	}
+	if mode != mode.Perm() {
+		return ErrInvalidPath
+	}
+
+	data, err := io.ReadAll(io.LimitReader(contents, maxSensitiveFileBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxSensitiveFileBytes {
+		return ErrSensitiveFileTooLarge
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := rejectSymlinkComponents(s.files, s.manifestPath); err != nil {
+		return err
+	}
+	if err := rejectSymlinkComponents(s.files, absolutePath); err != nil {
+		return err
+	}
+
+	return s.files.WithLock(ctx, s.manifestPath+".lock", func() error {
+		paths, err := readManifest(s.files, s.manifestPath)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(paths, absolutePath) {
+			paths = append(paths, absolutePath)
+		}
+		manifest, err := json.Marshal(paths)
+		if err != nil {
+			return errors.Join(ErrInvalidManifest, err)
+		}
+		manifest = append(manifest, '\n')
+
+		if err := s.files.WriteFileAtomic(s.manifestPath, manifest, 0o600); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return s.files.WriteFileAtomic(absolutePath, data, mode)
+	})
 }
 
-// UnimplementedStore rejects writes without reading input or touching disk.
-type UnimplementedStore struct{}
+func readManifest(files FileSystem, manifestPath string) ([]string, error) {
+	data, err := files.ReadFile(manifestPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 
-// WriteAndRegister returns ErrNotImplemented without mutating state.
-func (UnimplementedStore) WriteAndRegister(
-	ctx context.Context,
-	absolutePath string,
-	contents io.Reader,
-	mode fs.FileMode,
-) error {
-	_ = ctx
-	_ = absolutePath
-	_ = contents
-	_ = mode
-	return ErrNotImplemented
+	var paths []string
+	if err := json.Unmarshal(data, &paths); err != nil || paths == nil {
+		return nil, errors.Join(ErrInvalidManifest, err)
+	}
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if !isCleanAbsolutePath(path) || path == manifestPath {
+			return nil, ErrInvalidManifest
+		}
+		if _, duplicate := seen[path]; duplicate {
+			return nil, ErrInvalidManifest
+		}
+		seen[path] = struct{}{}
+	}
+	return paths, nil
+}
+
+func isCleanAbsolutePath(path string) bool {
+	return filepath.IsAbs(path) && filepath.Clean(path) == path
+}
+
+func rejectSymlinkComponents(files FileSystem, path string) error {
+	if !isCleanAbsolutePath(path) {
+		return ErrInvalidPath
+	}
+	for current := path; ; current = filepath.Dir(current) {
+		info, err := files.Lstat(current)
+		if err == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return ErrSymlinkPath
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+	}
 }

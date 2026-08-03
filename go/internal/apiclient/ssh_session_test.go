@@ -1,6 +1,7 @@
 package apiclient
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 )
 
 func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	key := base64.StdEncoding.EncodeToString([]byte("valid fake ed25519 public key material"))
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -24,10 +27,10 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 			SessionID:         "sshs_1",
 			Transport:         SSHSessionTransportDirectWS,
 			ConnectURL:        "wss://sandbox.example/v1/ssh-sessions",
-			ConnectCredential: "connect-token",
+			ConnectCredential: token,
 			SandboxID:         "sbx_123",
 			SSHUser:           "amika",
-			HostPublicKey:     "ssh-ed25519 AAAAtest",
+			HostPublicKey:     "ssh-ed25519 " + key,
 		})
 	}))
 	defer server.Close()
@@ -48,14 +51,16 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 }
 
 func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	key := base64.StdEncoding.EncodeToString([]byte("valid fake ed25519 public key material"))
 	valid := SSHSession{
 		SessionID:         "sshs_1",
 		Transport:         SSHSessionTransportDirectWS,
 		ConnectURL:        "wss://sandbox.example/v1/ssh-sessions",
-		ConnectCredential: "connect-token",
+		ConnectCredential: token,
 		SandboxID:         "sbx_123",
 		SSHUser:           "amika",
-		HostPublicKey:     "ssh-ed25519 AAAAtest",
+		HostPublicKey:     "ssh-ed25519 " + key,
 	}
 	if err := valid.Validate("sbx_123"); err != nil {
 		t.Fatalf("Validate valid session: %v", err)
