@@ -1,6 +1,16 @@
 # Locally, this image is called "amika/base"
 
+FROM golang:1.25.3-bookworm AS amikad-builder
+
+# Build from an immutable reviewed commit until the first standalone amikad
+# release exists. The final image receives only the binary, not the toolchain.
+ARG AMIKAD_SOURCE_REF=b5652138fc28504ab0532bd1ec3fd5fa5027fbb5
+ENV GOBIN=/out
+RUN go install "github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}"
+
 FROM ubuntu:24.04
+
+COPY --from=amikad-builder /out/amikad /usr/local/bin/amikad
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -60,14 +70,10 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 # piped curl failure would exit 0 and silently skip the install.
 ARG AMIKA_VERSION=0.13.0
 ARG AMIKALOG_VERSION=0.2.0
-ARG AMIKAD_VERSION=0.1.0
 RUN curl -fsSL "https://raw.githubusercontent.com/gofixpoint/amika/amika%40v${AMIKA_VERSION}/install.sh" -o /tmp/amika-install.sh \
     && sh /tmp/amika-install.sh --install-version "${AMIKA_VERSION}" \
     && sh /tmp/amika-install.sh --component amikalog --install-version "${AMIKALOG_VERSION}" \
     && rm /tmp/amika-install.sh
-RUN curl -fsSL "https://raw.githubusercontent.com/gofixpoint/amika/amikad%40v${AMIKAD_VERSION}/install.sh" -o /tmp/amikad-install.sh \
-    && sh /tmp/amikad-install.sh --component amikad --install-version "${AMIKAD_VERSION}" \
-    && rm /tmp/amikad-install.sh
 
 # Default no-op user-facing hooks; callers can shadow them via
 # --setup-script / --start-script or by uploading their own.

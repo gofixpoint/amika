@@ -88,6 +88,24 @@ func TestGetPresetDockerfile_BaseCreatesAmikaAndAmikadDirectories(t *testing.T) 
 	}
 }
 
+func TestGetPresetDockerfile_BaseBuildsPinnedAmikad(t *testing.T) {
+	data, err := GetPresetDockerfile("base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := string(data)
+	for _, want := range []string{
+		"FROM golang:1.25.3-bookworm AS amikad-builder",
+		"ARG AMIKAD_SOURCE_REF=b5652138fc28504ab0532bd1ec3fd5fa5027fbb5",
+		"go install \"github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}\"",
+		"COPY --from=amikad-builder /out/amikad /usr/local/bin/amikad",
+	} {
+		if !strings.Contains(contents, want) {
+			t.Fatalf("base Dockerfile missing pinned amikad build %q", want)
+		}
+	}
+}
+
 func TestGetPresetDockerfile_BaseChownsUserManagedAmikaDirectories(t *testing.T) {
 	data, err := GetPresetDockerfile("base")
 	if err != nil {
