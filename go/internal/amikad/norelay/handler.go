@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 )
 
@@ -33,8 +34,12 @@ type Upgrader interface {
 }
 
 // Dialer opens the loopback sshd stream after authentication and upgrade.
+// The context carries the request cancellation and deadline, network must be
+// "tcp", and address is the configured loopback sshd endpoint. A successful
+// call returns the connected bidirectional stream; a failure returns an error
+// and no usable stream.
 type Dialer interface {
-	DialContext(context.Context, string, string) (Stream, error)
+	DialContext(ctx context.Context, network, address string) (Stream, error)
 }
 
 // Event is the complete metadata-only log shape. It cannot carry request
@@ -45,11 +50,6 @@ type Event struct {
 	CloseReason     string
 	BytesFromClient int64
 	BytesFromSSHD   int64
-}
-
-// Logger records typed metadata-only bridge events.
-type Logger interface {
-	Record(Event)
 }
 
 // Config contains bounded bridge settings.
@@ -63,7 +63,7 @@ type Dependencies struct {
 	Verifier TokenVerifier
 	Upgrader Upgrader
 	Dialer   Dialer
-	Logger   Logger
+	Logger   *slog.Logger
 }
 
 // Handler is a fail-closed placeholder for the no-relay route.

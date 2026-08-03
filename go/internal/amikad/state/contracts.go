@@ -21,7 +21,10 @@ var ErrSymlinkPath = errors.New("sensitive file path contains a symlink")
 // scrub manifest, then atomically replaces the sensitive file. A stale manifest
 // entry is safe; an unregistered sensitive file is not.
 type SensitiveStore interface {
-	WriteAndRegister(context.Context, string, io.Reader, fs.FileMode) error
+	// WriteAndRegister uses ctx for cancellation, registers absolutePath in the
+	// scrub manifest, reads the replacement contents from contents, and installs
+	// the sensitive file with mode after the registration is durable.
+	WriteAndRegister(ctx context.Context, absolutePath string, contents io.Reader, mode fs.FileMode) error
 }
 
 // FileSystem is the minimum filesystem boundary needed for ordered, atomic
@@ -46,11 +49,15 @@ func NewStore(manifestPath string, files FileSystem) *Store {
 
 // WriteAndRegister returns ErrNotImplemented without reading input or touching disk.
 func (s *Store) WriteAndRegister(
-	context.Context,
-	string,
-	io.Reader,
-	fs.FileMode,
+	ctx context.Context,
+	absolutePath string,
+	contents io.Reader,
+	mode fs.FileMode,
 ) error {
+	_ = ctx
+	_ = absolutePath
+	_ = contents
+	_ = mode
 	_ = s.manifestPath
 	_ = s.files
 	return ErrNotImplemented
@@ -61,10 +68,14 @@ type UnimplementedStore struct{}
 
 // WriteAndRegister returns ErrNotImplemented without mutating state.
 func (UnimplementedStore) WriteAndRegister(
-	context.Context,
-	string,
-	io.Reader,
-	fs.FileMode,
+	ctx context.Context,
+	absolutePath string,
+	contents io.Reader,
+	mode fs.FileMode,
 ) error {
+	_ = ctx
+	_ = absolutePath
+	_ = contents
+	_ = mode
 	return ErrNotImplemented
 }

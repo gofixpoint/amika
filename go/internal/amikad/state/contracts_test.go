@@ -165,6 +165,18 @@ func TestStoreRejectsUnsafePaths(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, "injected-paths.json")
 
+	t.Run("manifest itself", func(t *testing.T) {
+		files := newMemoryFiles()
+		store := NewStore(manifestPath, files)
+		err := store.WriteAndRegister(context.Background(), manifestPath, strings.NewReader("replacement"), 0o600)
+		if !errors.Is(err, ErrInvalidPath) {
+			t.Fatalf("error = %v, want ErrInvalidPath", err)
+		}
+		if len(files.writes) != 0 {
+			t.Fatalf("manifest overwrite caused writes: %#v", files.writes)
+		}
+	})
+
 	t.Run("relative", func(t *testing.T) {
 		files := newMemoryFiles()
 		store := NewStore(manifestPath, files)

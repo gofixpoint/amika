@@ -3,6 +3,8 @@ package norelay
 import (
 	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -55,9 +57,9 @@ func (d *fakeDialer) DialContext(_ context.Context, network, address string) (St
 	return d.stream, nil
 }
 
-type discardLogger struct{}
-
-func (discardLogger) Record(Event) {}
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestHandlerRejectsMissingTokenBeforeUpgradeOrDial(t *testing.T) {
 	verifier := &fakeVerifier{want: "secret-token"}
@@ -67,7 +69,7 @@ func TestHandlerRejectsMissingTokenBeforeUpgradeOrDial(t *testing.T) {
 		Verifier: verifier,
 		Upgrader: upgrader,
 		Dialer:   dialer,
-		Logger:   discardLogger{},
+		Logger:   testLogger(),
 	})
 
 	response := httptest.NewRecorder()
@@ -92,7 +94,7 @@ func TestHandlerBridgesAuthenticatedBytesToLoopbackSSHD(t *testing.T) {
 		Verifier: verifier,
 		Upgrader: upgrader,
 		Dialer:   dialer,
-		Logger:   discardLogger{},
+		Logger:   testLogger(),
 	})
 
 	response := httptest.NewRecorder()

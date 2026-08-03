@@ -22,9 +22,15 @@ type ServeOptions struct {
 	BetaNoRelay bool
 }
 
+// SetupSSHDOptions controls whether managed setup may replace an existing
+// user-defined sshd configuration.
+type SetupSSHDOptions struct {
+	ForceOverwrite bool
+}
+
 // Operations is the command layer's sandbox-interior boundary.
 type Operations interface {
-	SetupSSHD(context.Context) error
+	SetupSSHD(context.Context, SetupSSHDOptions) error
 	ShowHostKey(context.Context, io.Writer) error
 	SetAuthorizedKeys(context.Context, io.Reader) error
 	SetConnectToken(context.Context, io.Reader) error
@@ -36,7 +42,7 @@ type Operations interface {
 type UnimplementedOperations struct{}
 
 // SetupSSHD returns ErrNotImplemented without changing sshd state.
-func (UnimplementedOperations) SetupSSHD(context.Context) error {
+func (UnimplementedOperations) SetupSSHD(context.Context, SetupSSHDOptions) error {
 	return ErrNotImplemented
 }
 
@@ -71,14 +77,22 @@ func NewCommand(operations Operations) *cobra.Command {
 	}
 
 	setup := &cobra.Command{Use: "setup", Short: "Configure sandbox services"}
-	setup.AddCommand(&cobra.Command{
+	setupSSHDOptions := SetupSSHDOptions{}
+	setupSSHD := &cobra.Command{
 		Use:   "sshd",
 		Short: "Configure loopback-only OpenSSH",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return operations.SetupSSHD(cmd.Context())
+			return operations.SetupSSHD(cmd.Context(), setupSSHDOptions)
 		},
-	})
+	}
+	setupSSHD.Flags().BoolVar(
+		&setupSSHDOptions.ForceOverwrite,
+		"force-overwrite",
+		false,
+		"replace an existing user-defined sshd configuration",
+	)
+	setup.AddCommand(setupSSHD)
 
 	hostKey := &cobra.Command{Use: "host-key", Short: "Manage the SSH host key"}
 	hostKey.AddCommand(&cobra.Command{

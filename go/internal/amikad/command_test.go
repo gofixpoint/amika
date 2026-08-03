@@ -1,6 +1,7 @@
 package amikad
 
 import (
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -10,6 +11,16 @@ type panicReader struct{}
 
 func (panicReader) Read([]byte) (int, error) {
 	panic("fail-closed stub read secret input")
+}
+
+type recordingOperations struct {
+	UnimplementedOperations
+	setupOptions SetupSSHDOptions
+}
+
+func (o *recordingOperations) SetupSSHD(_ context.Context, options SetupSSHDOptions) error {
+	o.setupOptions = options
+	return nil
 }
 
 func TestCommandTopology(t *testing.T) {
@@ -41,5 +52,20 @@ func TestUnimplementedConnectTokenDoesNotReadSecret(t *testing.T) {
 	err := cmd.Execute()
 	if !errors.Is(err, ErrNotImplemented) {
 		t.Fatalf("execute error = %v, want ErrNotImplemented", err)
+	}
+}
+
+func TestSetupSSHDForceOverwriteFlag(t *testing.T) {
+	operations := &recordingOperations{}
+	cmd := NewCommand(operations)
+	cmd.SetArgs([]string{"setup", "sshd", "--force-overwrite"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !operations.setupOptions.ForceOverwrite {
+		t.Fatal("ForceOverwrite = false, want true")
 	}
 }
