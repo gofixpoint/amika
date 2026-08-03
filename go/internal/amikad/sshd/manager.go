@@ -13,7 +13,9 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
@@ -30,21 +32,32 @@ var ErrInvalidPublicKey = errors.New("invalid SSH public key")
 
 // Paths contains every filesystem location owned by the managed sshd.
 type Paths struct {
-	Config         string
-	HostPrivateKey string
-	HostPublicKey  string
-	AuthorizedKeys string
-	PID            string
+	Config            string
+	HostPrivateKey    string
+	HostPublicKey     string
+	AuthorizedKeys    string
+	PID               string
+	RuntimeDirectory  string
+	AuthorizedKeysUID int
+	AuthorizedKeysGID int
 }
 
 // DefaultPaths returns the production paths owned by amikad.
 func DefaultPaths() Paths {
+	uid, gid := -1, -1
+	if account, err := user.Lookup("amika"); err == nil {
+		uid, _ = strconv.Atoi(account.Uid)
+		gid, _ = strconv.Atoi(account.Gid)
+	}
 	return Paths{
-		Config:         "/var/lib/amikad/sshd_config",
-		HostPrivateKey: "/var/lib/amikad/ssh_host_ed25519_key",
-		HostPublicKey:  "/var/lib/amikad/ssh_host_ed25519_key.pub",
-		AuthorizedKeys: "/home/amika/.ssh/authorized_keys",
-		PID:            "/var/lib/amikad/sshd.pid",
+		Config:            "/var/lib/amikad/sshd_config",
+		HostPrivateKey:    "/var/lib/amikad/ssh_host_ed25519_key",
+		HostPublicKey:     "/var/lib/amikad/ssh_host_ed25519_key.pub",
+		AuthorizedKeys:    "/home/amika/.ssh/authorized_keys",
+		PID:               "/var/lib/amikad/sshd.pid",
+		RuntimeDirectory:  "/run/sshd",
+		AuthorizedKeysUID: uid,
+		AuthorizedKeysGID: gid,
 	}
 }
 
@@ -103,13 +116,17 @@ func (m *Manager) Setup(ctx context.Context, options SetupOptions) error {
 	if err := validatePaths(m.paths); err != nil {
 		return err
 	}
-	for _, directory := range []string{
-		filepath.Dir(m.paths.Config),
-		filepath.Dir(m.paths.AuthorizedKeys),
-	} {
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(filepath.Dir(m.paths.Config), 0o700); err != nil {
+		return err
+	}
+	if err := m.prepareAuthorizedKeysDirectory(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(m.paths.RuntimeDirectory, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(m.paths.RuntimeDirectory, 0o755); err != nil {
+		return err
 	}
 
 	desiredConfig := []byte(RenderConfig(m.paths))
@@ -169,7 +186,7 @@ func (m *Manager) ShowHostKey(ctx context.Context, output io.Writer) error {
 // SetAuthorizedKeys validates and atomically replaces the complete authorized
 // key set through the scrub-registered sensitive store.
 func (m *Manager) SetAuthorizedKeys(ctx context.Context, input io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(m.paths.AuthorizedKeys), 0o700); err != nil {
+	if err := m.prepareAuthorizedKeysDirectory(); err != nil {
 		return err
 	}
 	contents, err := io.ReadAll(io.LimitReader(input, (1<<20)+1))
@@ -206,11 +223,33 @@ func (m *Manager) SetAuthorizedKeys(ctx context.Context, input io.Reader) error 
 	if len(keys) == 0 {
 		return ErrInvalidPublicKey
 	}
-	return m.store.WriteAndRegister(
+	if err := m.store.WriteAndRegister(
 		ctx,
 		m.paths.AuthorizedKeys,
 		strings.NewReader(strings.Join(keys, "\n")+"\n"),
 		0o600,
+	); err != nil {
+		return err
+	}
+	return os.Chown(
+		m.paths.AuthorizedKeys,
+		m.paths.AuthorizedKeysUID,
+		m.paths.AuthorizedKeysGID,
+	)
+}
+
+func (m *Manager) prepareAuthorizedKeysDirectory() error {
+	directory := filepath.Dir(m.paths.AuthorizedKeys)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return err
+	}
+	return os.Chown(
+		directory,
+		m.paths.AuthorizedKeysUID,
+		m.paths.AuthorizedKeysGID,
 	)
 }
 
@@ -287,10 +326,14 @@ func validatePaths(paths Paths) error {
 		paths.HostPublicKey,
 		paths.AuthorizedKeys,
 		paths.PID,
+		paths.RuntimeDirectory,
 	} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return fmt.Errorf("invalid sshd path: %w", state.ErrInvalidPath)
 		}
+	}
+	if paths.AuthorizedKeysUID < 0 || paths.AuthorizedKeysGID < 0 {
+		return fmt.Errorf("invalid authorized-keys owner: %w", state.ErrInvalidPath)
 	}
 	return nil
 }
@@ -353,7 +396,11 @@ type ExecProcessRunner struct{}
 
 // Run executes one process without a shell or environment interpolation.
 func (ExecProcessRunner) Run(ctx context.Context, name string, args ...string) error {
-	command := exec.CommandContext(ctx, name, args...)
+	resolved, err := exec.LookPath(name)
+	if err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx, resolved, args...)
 	command.Stdout = os.Stderr
 	command.Stderr = os.Stderr
 	return command.Run()

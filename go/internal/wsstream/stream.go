@@ -73,12 +73,12 @@ func (s *Stream) Write(buffer []byte) (int, error) {
 	return len(buffer), nil
 }
 
-// Close cancels active I/O and closes the underlying socket immediately.
+// Close cancels active I/O and performs a normal WebSocket close handshake.
 func (s *Stream) Close() error {
 	var closeErr error
 	s.closeOnce.Do(func() {
+		closeErr = s.connection.Close(websocket.StatusNormalClosure, "")
 		s.cancel()
-		closeErr = s.connection.CloseNow()
 	})
 	return closeErr
 }

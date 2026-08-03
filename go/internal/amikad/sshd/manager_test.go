@@ -53,11 +53,14 @@ func testManager(t *testing.T) (*Manager, Paths, *fakeKeyGenerator, *fakeProcess
 	t.Helper()
 	directory := t.TempDir()
 	paths := Paths{
-		Config:         filepath.Join(directory, "state", "sshd_config"),
-		HostPrivateKey: filepath.Join(directory, "state", "ssh_host_ed25519_key"),
-		HostPublicKey:  filepath.Join(directory, "state", "ssh_host_ed25519_key.pub"),
-		AuthorizedKeys: filepath.Join(directory, "home", ".ssh", "authorized_keys"),
-		PID:            filepath.Join(directory, "state", "sshd.pid"),
+		Config:            filepath.Join(directory, "state", "sshd_config"),
+		HostPrivateKey:    filepath.Join(directory, "state", "ssh_host_ed25519_key"),
+		HostPublicKey:     filepath.Join(directory, "state", "ssh_host_ed25519_key.pub"),
+		AuthorizedKeys:    filepath.Join(directory, "home", ".ssh", "authorized_keys"),
+		PID:               filepath.Join(directory, "state", "sshd.pid"),
+		RuntimeDirectory:  filepath.Join(directory, "run", "sshd"),
+		AuthorizedKeysUID: os.Getuid(),
+		AuthorizedKeysGID: os.Getgid(),
 	}
 	files := state.OSFiles{}
 	store := state.NewStore(filepath.Join(directory, "injected-paths.json"), files)
@@ -103,6 +106,13 @@ func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
 	}
 	if privateInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("private key mode = %o, want 600", privateInfo.Mode().Perm())
+	}
+	runtimeInfo, err := os.Stat(paths.RuntimeDirectory)
+	if err != nil {
+		t.Fatalf("stat runtime directory: %v", err)
+	}
+	if runtimeInfo.Mode().Perm() != 0o755 {
+		t.Fatalf("runtime directory mode = %o, want 755", runtimeInfo.Mode().Perm())
 	}
 	manifestPath := filepath.Join(filepath.Dir(filepath.Dir(paths.Config)), "injected-paths.json")
 	manifestBytes, err := os.ReadFile(manifestPath)

@@ -56,7 +56,7 @@ func (s *SSHSession) Validate(expectedSandboxID string) error {
 		return ErrInvalidSSHSession
 	}
 	connectURL, err := url.Parse(s.ConnectURL)
-	if err != nil || connectURL.Scheme != "wss" || connectURL.Host == "" || connectURL.User != nil || connectURL.Fragment != "" {
+	if err != nil || connectURL.Scheme != "wss" || connectURL.Host == "" || connectURL.User != nil || connectURL.RawQuery != "" || connectURL.Fragment != "" {
 		return ErrInvalidSSHSession
 	}
 	if !strings.HasSuffix(connectURL.EscapedPath(), "/v1/ssh-sessions") {

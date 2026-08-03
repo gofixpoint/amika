@@ -196,13 +196,21 @@ func ProxySession(
 	first := <-results
 	_ = stream.Close()
 	second := <-results
-	if first.err != nil && !errors.Is(first.err, io.EOF) {
+	if !expectedStreamClose(first.err) {
 		return errors.New("direct SSH transport closed unexpectedly")
 	}
-	if second.err != nil && !errors.Is(second.err, io.EOF) {
+	if !expectedStreamClose(second.err) {
 		return errors.New("direct SSH transport closed unexpectedly")
 	}
 	return nil
+}
+
+func expectedStreamClose(err error) bool {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	status := websocket.CloseStatus(err)
+	return status == websocket.StatusNormalClosure || status == websocket.StatusGoingAway
 }
 
 // WebSocketDialer sends the connect credential only in the Authorization

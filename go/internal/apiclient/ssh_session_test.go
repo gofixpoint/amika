@@ -88,6 +88,11 @@ func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 			s.ConnectURL = "wss://user:secret@sandbox.example/v1/ssh-sessions"
 			return s
 		}(),
+		"URL query": func() SSHSession {
+			s := valid
+			s.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?token=secret"
+			return s
+		}(),
 		"wrong URL path":        func() SSHSession { s := valid; s.ConnectURL = "wss://sandbox.example/other"; return s }(),
 		"empty credential":      func() SSHSession { s := valid; s.ConnectCredential = ""; return s }(),
 		"invalid host key":      func() SSHSession { s := valid; s.HostPublicKey = "ssh-rsa AAAA"; return s }(),

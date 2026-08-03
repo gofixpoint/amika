@@ -6,9 +6,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/coder/websocket"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	cryptossh "golang.org/x/crypto/ssh"
 )
@@ -114,11 +117,18 @@ func (c *fakeCreator) CreateSSHSession(name string) (*apiclient.SSHSession, erro
 }
 
 type proxyStream struct {
-	read   *bytes.Reader
-	writes bytes.Buffer
+	read    *bytes.Reader
+	readErr error
+	writes  bytes.Buffer
 }
 
-func (s *proxyStream) Read(p []byte) (int, error)  { return s.read.Read(p) }
+func (s *proxyStream) Read(p []byte) (int, error) {
+	read, err := s.read.Read(p)
+	if errors.Is(err, io.EOF) && s.readErr != nil {
+		return read, s.readErr
+	}
+	return read, err
+}
 func (s *proxyStream) Write(p []byte) (int, error) { return s.writes.Write(p) }
 func (s *proxyStream) Close() error                { return nil }
 
@@ -164,6 +174,26 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	}
 	if got := stdout.String(); got != "from-sshd" {
 		t.Fatalf("stdout received %q", got)
+	}
+}
+
+func TestProxySessionAcceptsNormalWebSocketClosure(t *testing.T) {
+	creator := &fakeCreator{hostKey: testHostKey(t)}
+	stream := &proxyStream{
+		read:    bytes.NewReader(nil),
+		readErr: websocket.CloseError{Code: websocket.StatusNormalClosure},
+	}
+	dialer := &fakeSessionDialer{stream: stream}
+
+	if err := ProxySession(
+		context.Background(),
+		creator,
+		dialer,
+		"my.team.sbx_123.amika",
+		strings.NewReader(""),
+		io.Discard,
+	); err != nil {
+		t.Fatalf("ProxySession normal close: %v", err)
 	}
 }
 

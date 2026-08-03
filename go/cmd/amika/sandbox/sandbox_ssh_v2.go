@@ -42,28 +42,38 @@ var sandboxSSHV2Cmd = &cobra.Command{
 			return err
 		}
 		paths := basedir.New("")
-		identityFile, err := paths.SSHIdentityFile()
+		state, err := ssh.LoadState(paths)
 		if err != nil {
 			return err
 		}
-		identityInfo, err := os.Stat(identityFile)
-		if err != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm() != 0o600 {
+		var sessionConfig ssh.SessionConfig
+		if state.SessionConfig != nil {
+			sessionConfig = *state.SessionConfig
+		} else {
+			identityFile, err := paths.SSHIdentityFile()
+			if err != nil {
+				return err
+			}
+			knownHostsFile, err := paths.SSHKnownHostsFile()
+			if err != nil {
+				return err
+			}
+			sessionConfig = ssh.SessionConfig{
+				IdentityFile:   identityFile,
+				KnownHostsFile: knownHostsFile,
+				ProxyCommand:   "amika plumbing ssh-stdio-proxy %h",
+			}
+		}
+		identityInfo, err := os.Stat(sessionConfig.IdentityFile)
+		if err != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
 			return fmt.Errorf("SSH identity is missing or unsafe; run \"amika secret ssh-keygen\"")
 		}
-		knownHostsFile, err := paths.SSHKnownHostsFile()
-		if err != nil {
-			return err
-		}
-		if err := ssh.ConfigureSession(paths, ssh.SessionConfig{
-			IdentityFile:   identityFile,
-			KnownHostsFile: knownHostsFile,
-			ProxyCommand:   "amika plumbing ssh-stdio-proxy %h",
-		}); err != nil {
+		if err := ssh.ConfigureSession(paths, sessionConfig); err != nil {
 			return err
 		}
 		if _, err := ssh.PrepareSessionHost(
 			client,
-			ssh.FileHostKeyPinStore{Path: knownHostsFile},
+			ssh.FileHostKeyPinStore{Path: sessionConfig.KnownHostsFile},
 			sandbox.ID,
 			alias,
 		); err != nil {

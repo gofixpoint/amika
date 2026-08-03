@@ -110,6 +110,11 @@ RUN chmod +x /usr/lib/amikad/pre-setup.sh /usr/lib/amikad/post-setup.sh /usr/lib
 
 # Create user with home directory.
 RUN useradd -m -s /usr/bin/zsh amika
+# OpenSSH refuses every login, including public-key auth, for a shadow-locked
+# account. Give the account a discarded random password hash so it is unlocked
+# without creating a usable password; the managed sshd also disables all
+# password and keyboard-interactive authentication.
+RUN usermod --password '$6$pdjtCb0QP/guq5xn$iwYNhGlawvdfJqqAeGINjgtq.2yFgcFCvRItN.ly3astbptigtMioqI/opqrgmEdHdDQ.sg0/LOWW5vyp9tHz0' amika
 RUN install -d -m 0700 -o amika -g amika /home/amika/.ssh
 RUN usermod -aG sudo amika
 # Let amika user run sudo without a password.
