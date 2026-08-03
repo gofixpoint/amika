@@ -15,9 +15,10 @@ import (
 )
 
 type writeCall struct {
-	path string
-	data []byte
-	mode fs.FileMode
+	path      string
+	data      []byte
+	mode      fs.FileMode
+	ownership *Ownership
 }
 
 type memoryFiles struct {
@@ -62,15 +63,63 @@ func (f *memoryFiles) Lstat(path string) (fs.FileInfo, error) {
 }
 
 func (f *memoryFiles) WriteFileAtomic(path string, data []byte, mode fs.FileMode) error {
+	return f.writeFileAtomic(path, data, mode, nil)
+}
+
+func (f *memoryFiles) WriteFileAtomicOwned(
+	path string,
+	data []byte,
+	mode fs.FileMode,
+	ownership Ownership,
+) error {
+	return f.writeFileAtomic(path, data, mode, &ownership)
+}
+
+func (f *memoryFiles) writeFileAtomic(
+	path string,
+	data []byte,
+	mode fs.FileMode,
+	ownership *Ownership,
+) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.writes = append(f.writes, writeCall{path: path, data: append([]byte(nil), data...), mode: mode})
+	f.writes = append(f.writes, writeCall{
+		path:      path,
+		data:      append([]byte(nil), data...),
+		mode:      mode,
+		ownership: ownership,
+	})
 	if err := f.failWrites[path]; err != nil {
 		return err
 	}
 	f.contents[path] = append([]byte(nil), data...)
 	f.modes[path] = mode
 	return nil
+}
+
+func TestStoreAppliesOwnershipAsPartOfSensitiveReplacement(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "injected-paths.json")
+	tokenPath := filepath.Join(dir, "authorized_keys")
+	files := newMemoryFiles()
+	store := NewStore(manifestPath, files)
+	ownership := Ownership{UID: 123, GID: 456}
+
+	if err := store.WriteAndRegisterOwned(
+		context.Background(),
+		tokenPath,
+		strings.NewReader("ssh-ed25519 key\n"),
+		0o600,
+		ownership,
+	); err != nil {
+		t.Fatalf("WriteAndRegisterOwned: %v", err)
+	}
+	if len(files.writes) != 2 || files.writes[0].ownership != nil {
+		t.Fatalf("writes = %#v, want unowned manifest then owned sensitive file", files.writes)
+	}
+	if files.writes[1].ownership == nil || *files.writes[1].ownership != ownership {
+		t.Fatalf("sensitive ownership = %#v, want %#v", files.writes[1].ownership, ownership)
+	}
 }
 
 func (f *memoryFiles) WithLock(_ context.Context, _ string, operation func() error) error {

@@ -223,18 +223,15 @@ func (m *Manager) SetAuthorizedKeys(ctx context.Context, input io.Reader) error 
 	if len(keys) == 0 {
 		return ErrInvalidPublicKey
 	}
-	if err := m.store.WriteAndRegister(
+	return m.store.WriteAndRegisterOwned(
 		ctx,
 		m.paths.AuthorizedKeys,
 		strings.NewReader(strings.Join(keys, "\n")+"\n"),
 		0o600,
-	); err != nil {
-		return err
-	}
-	return os.Lchown(
-		m.paths.AuthorizedKeys,
-		m.paths.AuthorizedKeysUID,
-		m.paths.AuthorizedKeysGID,
+		state.Ownership{
+			UID: m.paths.AuthorizedKeysUID,
+			GID: m.paths.AuthorizedKeysGID,
+		},
 	)
 }
 

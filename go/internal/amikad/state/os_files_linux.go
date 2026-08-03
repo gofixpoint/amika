@@ -18,6 +18,26 @@ import (
 // WriteFileAtomic writes and renames relative to a no-symlink directory file
 // descriptor, preventing path-component swaps between validation and commit.
 func (OSFiles) WriteFileAtomic(path string, data []byte, mode fs.FileMode) (returnErr error) {
+	return writeFileAtomic(path, data, mode, nil)
+}
+
+// WriteFileAtomicOwned assigns ownership through the temporary file descriptor
+// before installing it, so no attacker-controlled pathname is chowned.
+func (OSFiles) WriteFileAtomicOwned(
+	path string,
+	data []byte,
+	mode fs.FileMode,
+	ownership Ownership,
+) error {
+	return writeFileAtomic(path, data, mode, &ownership)
+}
+
+func writeFileAtomic(
+	path string,
+	data []byte,
+	mode fs.FileMode,
+	ownership *Ownership,
+) (returnErr error) {
 	directoryFD, err := openDirectoryNoSymlinks(filepath.Dir(path))
 	if err != nil {
 		return err
@@ -46,11 +66,17 @@ func (OSFiles) WriteFileAtomic(path string, data []byte, mode fs.FileMode) (retu
 		_ = temporary.Close()
 		return err
 	}
-	if err := temporary.Sync(); err != nil {
+	if err := temporary.Chmod(mode); err != nil {
 		_ = temporary.Close()
 		return err
 	}
-	if err := temporary.Chmod(mode); err != nil {
+	if ownership != nil {
+		if err := temporary.Chown(ownership.UID, ownership.GID); err != nil {
+			_ = temporary.Close()
+			return err
+		}
+	}
+	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
 		return err
 	}

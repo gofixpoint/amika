@@ -16,6 +16,12 @@ func (OSFiles) WriteFileAtomic(string, []byte, fs.FileMode) error {
 	return errSecureAtomicWritesUnsupported
 }
 
+// WriteFileAtomicOwned fails closed where secure fd-relative writes are not
+// implemented.
+func (OSFiles) WriteFileAtomicOwned(string, []byte, fs.FileMode, Ownership) error {
+	return errSecureAtomicWritesUnsupported
+}
+
 // WithLock fails closed where interprocess manifest locking is not implemented.
 func (OSFiles) WithLock(context.Context, string, func() error) error {
 	return errSecureAtomicWritesUnsupported

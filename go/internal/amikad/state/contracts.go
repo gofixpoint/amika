@@ -35,6 +35,21 @@ type SensitiveStore interface {
 	// scrub manifest, reads the replacement contents from contents, and installs
 	// the sensitive file with mode after the registration is durable.
 	WriteAndRegister(ctx context.Context, absolutePath string, contents io.Reader, mode fs.FileMode) error
+	// WriteAndRegisterOwned performs the same ordered replacement while assigning
+	// ownership through the temporary file descriptor before the final rename.
+	WriteAndRegisterOwned(
+		ctx context.Context,
+		absolutePath string,
+		contents io.Reader,
+		mode fs.FileMode,
+		ownership Ownership,
+	) error
+}
+
+// Ownership is the numeric owner applied to a sensitive file before install.
+type Ownership struct {
+	UID int
+	GID int
 }
 
 // FileSystem is the minimum filesystem boundary needed for ordered, atomic
@@ -43,6 +58,7 @@ type FileSystem interface {
 	ReadFile(string) ([]byte, error)
 	Lstat(string) (fs.FileInfo, error)
 	WriteFileAtomic(string, []byte, fs.FileMode) error
+	WriteFileAtomicOwned(string, []byte, fs.FileMode, Ownership) error
 	WithLock(context.Context, string, func() error) error
 }
 
@@ -65,6 +81,31 @@ func (s *Store) WriteAndRegister(
 	absolutePath string,
 	contents io.Reader,
 	mode fs.FileMode,
+) error {
+	return s.writeAndRegister(ctx, absolutePath, contents, mode, nil)
+}
+
+// WriteAndRegisterOwned registers and replaces a sensitive file while setting
+// ownership on the still-private temporary file descriptor.
+func (s *Store) WriteAndRegisterOwned(
+	ctx context.Context,
+	absolutePath string,
+	contents io.Reader,
+	mode fs.FileMode,
+	ownership Ownership,
+) error {
+	if ownership.UID < -1 || ownership.GID < -1 {
+		return ErrInvalidPath
+	}
+	return s.writeAndRegister(ctx, absolutePath, contents, mode, &ownership)
+}
+
+func (s *Store) writeAndRegister(
+	ctx context.Context,
+	absolutePath string,
+	contents io.Reader,
+	mode fs.FileMode,
+	ownership *Ownership,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -116,6 +157,9 @@ func (s *Store) WriteAndRegister(
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if ownership != nil {
+			return s.files.WriteFileAtomicOwned(absolutePath, data, mode, *ownership)
 		}
 		return s.files.WriteFileAtomic(absolutePath, data, mode)
 	})
