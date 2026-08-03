@@ -27,3 +27,31 @@ func TestGenerateIdentityIsOwnerOnlyAndIdempotent(t *testing.T) {
 		t.Fatalf("private mode = %o, want 600", info.Mode().Perm())
 	}
 }
+
+func TestImportIdentityRequiresMatchingPrivateKey(t *testing.T) {
+	directory := t.TempDir()
+	firstPath := filepath.Join(directory, "first")
+	firstPublic, err := GenerateIdentity(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPath := filepath.Join(directory, "second")
+	secondPublic, err := GenerateIdentity(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	identityPath, imported, err := ImportIdentity(firstPath + ".pub")
+	if err != nil {
+		t.Fatalf("ImportIdentity: %v", err)
+	}
+	if identityPath != firstPath || imported != firstPublic {
+		t.Fatalf("import = %q, %q", identityPath, imported)
+	}
+	if err := os.WriteFile(firstPath+".pub", []byte(secondPublic+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ImportIdentity(firstPath + ".pub"); err == nil {
+		t.Fatal("ImportIdentity accepted a mismatched keypair")
+	}
+}

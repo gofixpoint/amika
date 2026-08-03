@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	cryptossh "golang.org/x/crypto/ssh"
 )
 
 // ErrInvalidSSHSession marks an unsafe or internally inconsistent descriptor.
@@ -91,13 +93,9 @@ func isCanonicalConnectToken(value string) bool {
 }
 
 func canonicalEd25519Key(value string) string {
-	fields := strings.Fields(value)
-	if len(fields) < 2 || fields[0] != "ssh-ed25519" || strings.ContainsAny(value, "\r\n") {
+	key, _, options, rest, err := cryptossh.ParseAuthorizedKey([]byte(value))
+	if err != nil || len(options) != 0 || strings.TrimSpace(string(rest)) != "" || key.Type() != cryptossh.KeyAlgoED25519 {
 		return ""
 	}
-	decoded, err := base64.StdEncoding.DecodeString(fields[1])
-	if err != nil || len(decoded) < 16 {
-		return ""
-	}
-	return fields[0] + " " + fields[1]
+	return strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(key)))
 }

@@ -83,6 +83,17 @@ func ImportIdentity(publicPath string) (identityPath, canonicalPublicKey string,
 	if err != nil || !privateInfo.Mode().IsRegular() || privateInfo.Mode().Perm()&0o077 != 0 {
 		return "", "", fmt.Errorf("matching private key is missing or not owner-only")
 	}
+	privateData, err := os.ReadFile(privatePath)
+	if err != nil {
+		return "", "", err
+	}
+	signer, err := cryptossh.ParsePrivateKey(privateData)
+	if err != nil || signer.PublicKey().Type() != cryptossh.KeyAlgoED25519 {
+		return "", "", fmt.Errorf("matching private key is not an unencrypted Ed25519 key")
+	}
+	if !bytes.Equal(signer.PublicKey().Marshal(), mustParsePublicKey(canonical).Marshal()) {
+		return "", "", fmt.Errorf("imported SSH keypair does not match")
+	}
 	return privatePath, canonical, nil
 }
 

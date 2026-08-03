@@ -72,7 +72,7 @@ func NewProductionOperations() *DaemonOperations {
 		sshd.DefaultPaths(),
 		store,
 		files,
-		sshd.ExecKeyGenerator{},
+		sshd.Ed25519KeyGenerator{},
 		sshd.ExecProcessRunner{},
 	)
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))

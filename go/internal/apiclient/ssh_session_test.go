@@ -1,16 +1,29 @@
 package apiclient
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	cryptossh "golang.org/x/crypto/ssh"
 )
+
+func testEd25519PublicKey(t *testing.T) string {
+	t.Helper()
+	privateKey := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	publicKey, err := cryptossh.NewPublicKey(privateKey.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(cryptossh.MarshalAuthorizedKey(publicKey))
+}
 
 func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 	token := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	key := base64.StdEncoding.EncodeToString([]byte("valid fake ed25519 public key material"))
+	key := testEd25519PublicKey(t)
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -30,7 +43,7 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 			ConnectCredential: token,
 			SandboxID:         "sbx_123",
 			SSHUser:           "amika",
-			HostPublicKey:     "ssh-ed25519 " + key,
+			HostPublicKey:     key,
 		})
 	}))
 	defer server.Close()
@@ -52,7 +65,7 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 
 func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 	token := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	key := base64.StdEncoding.EncodeToString([]byte("valid fake ed25519 public key material"))
+	key := testEd25519PublicKey(t)
 	valid := SSHSession{
 		SessionID:         "sshs_1",
 		Transport:         SSHSessionTransportDirectWS,
@@ -60,7 +73,7 @@ func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 		ConnectCredential: token,
 		SandboxID:         "sbx_123",
 		SSHUser:           "amika",
-		HostPublicKey:     "ssh-ed25519 " + key,
+		HostPublicKey:     key,
 	}
 	if err := valid.Validate("sbx_123"); err != nil {
 		t.Fatalf("Validate valid session: %v", err)

@@ -4,6 +4,9 @@ package sshd
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -50,10 +53,16 @@ type SetupOptions struct {
 	ForceOverwrite bool
 }
 
-// KeyGenerator creates an Ed25519 OpenSSH host keypair at privatePath and
-// privatePath+".pub".
+// GeneratedHostKey holds one in-memory Ed25519 OpenSSH host keypair.
+type GeneratedHostKey struct {
+	Private []byte
+	Public  []byte
+}
+
+// KeyGenerator creates an Ed25519 OpenSSH host keypair without staging it on
+// disk. Only the final scrub-registered paths ever contain private material.
 type KeyGenerator interface {
-	Generate(ctx context.Context, privatePath string) error
+	Generate(context.Context) (GeneratedHostKey, error)
 }
 
 // ProcessRunner runs the foreground OpenSSH daemon until ctx is cancelled or
@@ -211,44 +220,17 @@ func (m *Manager) Serve(ctx context.Context) error {
 }
 
 func (m *Manager) generateHostKey(ctx context.Context) error {
-	temporaryDirectory, err := os.MkdirTemp(filepath.Dir(m.paths.HostPrivateKey), ".amikad-keygen-*")
+	generated, err := m.keygen.Generate(ctx)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(temporaryDirectory)
-	temporaryPrivate := filepath.Join(temporaryDirectory, "host-key")
-	for _, temporary := range []struct {
-		path string
-		mode fs.FileMode
-	}{
-		{path: temporaryPrivate, mode: 0o600},
-		{path: temporaryPrivate + ".pub", mode: 0o644},
-	} {
-		if err := m.store.WriteAndRegister(ctx, temporary.path, strings.NewReader(""), temporary.mode); err != nil {
-			return err
-		}
-		if err := os.Remove(temporary.path); err != nil {
-			return err
-		}
-	}
-	if err := m.keygen.Generate(ctx, temporaryPrivate); err != nil {
+	if _, err := canonicalPublicKey(string(generated.Public), map[string]bool{"ssh-ed25519": true}); err != nil {
 		return err
 	}
-	privateKey, err := os.ReadFile(temporaryPrivate)
-	if err != nil {
+	if err := m.store.WriteAndRegister(ctx, m.paths.HostPrivateKey, bytes.NewReader(generated.Private), 0o600); err != nil {
 		return err
 	}
-	publicKey, err := os.ReadFile(temporaryPrivate + ".pub")
-	if err != nil {
-		return err
-	}
-	if _, err := canonicalPublicKey(string(publicKey), map[string]bool{"ssh-ed25519": true}); err != nil {
-		return err
-	}
-	if err := m.store.WriteAndRegister(ctx, m.paths.HostPrivateKey, bytes.NewReader(privateKey), 0o600); err != nil {
-		return err
-	}
-	return m.store.WriteAndRegister(ctx, m.paths.HostPublicKey, bytes.NewReader(publicKey), 0o644)
+	return m.store.WriteAndRegister(ctx, m.paths.HostPublicKey, bytes.NewReader(generated.Public), 0o644)
 }
 
 func canonicalPublicKey(line string, allowedTypes map[string]bool) (string, error) {
@@ -340,14 +322,30 @@ Subsystem sftp internal-sftp
 `, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys)
 }
 
-// ExecKeyGenerator invokes the image-provided OpenSSH key generator.
-type ExecKeyGenerator struct{}
+// Ed25519KeyGenerator creates a passwordless OpenSSH keypair in memory.
+type Ed25519KeyGenerator struct{}
 
 // Generate creates a passwordless Ed25519 keypair.
-func (ExecKeyGenerator) Generate(ctx context.Context, privatePath string) error {
-	command := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", privatePath)
-	command.Stderr = os.Stderr
-	return command.Run()
+func (Ed25519KeyGenerator) Generate(ctx context.Context) (GeneratedHostKey, error) {
+	if err := ctx.Err(); err != nil {
+		return GeneratedHostKey{}, err
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return GeneratedHostKey{}, err
+	}
+	privateBlock, err := ssh.MarshalPrivateKey(private, "amikad SSH host key")
+	if err != nil {
+		return GeneratedHostKey{}, err
+	}
+	publicKey, err := ssh.NewPublicKey(public)
+	if err != nil {
+		return GeneratedHostKey{}, err
+	}
+	return GeneratedHostKey{
+		Private: pem.EncodeToMemory(privateBlock),
+		Public:  ssh.MarshalAuthorizedKey(publicKey),
+	}, nil
 }
 
 // ExecProcessRunner runs foreground processes with daemon output on stderr.

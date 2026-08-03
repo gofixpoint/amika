@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // SSHSessionsPath is the no-relay WebSocket upgrade route.
@@ -167,12 +168,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	defer sshdStream.Close()
 
 	sessionID := newSessionID()
+	startedAt := time.Now()
 	h.log("ssh_bridge_open", slog.String("session_id", sessionID))
 	fromClient, fromSSHD, closeReason := bridge(websocketStream, sshdStream)
 	h.log(
 		"ssh_bridge_close",
 		slog.String("session_id", sessionID),
 		slog.String("reason", closeReason),
+		slog.Int64("duration_ms", time.Since(startedAt).Milliseconds()),
 		slog.Int64("bytes_from_client", fromClient),
 		slog.Int64("bytes_from_sshd", fromSSHD),
 	)

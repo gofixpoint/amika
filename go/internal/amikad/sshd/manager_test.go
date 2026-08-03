@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"os"
@@ -17,24 +18,24 @@ import (
 
 type fakeKeyGenerator struct{ calls int }
 
-func (g *fakeKeyGenerator) Generate(_ context.Context, privatePath string) error {
+func (g *fakeKeyGenerator) Generate(_ context.Context) (GeneratedHostKey, error) {
 	g.calls++
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return err
+		return GeneratedHostKey{}, err
 	}
 	privateBlock, err := ssh.MarshalPrivateKey(private, "amikad test host key")
 	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(privatePath, pem.EncodeToMemory(privateBlock), 0o600); err != nil {
-		return err
+		return GeneratedHostKey{}, err
 	}
 	publicKey, err := ssh.NewPublicKey(public)
 	if err != nil {
-		return err
+		return GeneratedHostKey{}, err
 	}
-	return os.WriteFile(privatePath+".pub", ssh.MarshalAuthorizedKey(publicKey), 0o644)
+	return GeneratedHostKey{
+		Private: pem.EncodeToMemory(privateBlock),
+		Public:  ssh.MarshalAuthorizedKey(publicKey),
+	}, nil
 }
 
 type fakeProcessRunner struct {
@@ -102,6 +103,20 @@ func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
 	}
 	if privateInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("private key mode = %o, want 600", privateInfo.Mode().Perm())
+	}
+	manifestPath := filepath.Join(filepath.Dir(filepath.Dir(paths.Config)), "injected-paths.json")
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest []string
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range manifest {
+		if strings.Contains(path, ".amikad-keygen-") {
+			t.Fatalf("temporary host key escaped into scrub manifest: %q", path)
+		}
 	}
 }
 
