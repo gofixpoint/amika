@@ -5,6 +5,7 @@ INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
 DEFAULT_VERSION="0.13.0"
 DEFAULT_AMIKALOG_VERSION="0.2.0"
+DEFAULT_AMIKAD_VERSION="0.1.0"
 COMPONENT="amika"
 INSTALL_VERSION=""
 DRY_RUN=false
@@ -14,15 +15,15 @@ usage() {
 install.sh — install an amika release binary
 
 Downloads a specific release binary from GitHub and installs it. Installs the
-amika CLI by default, or the separately-versioned amikalog CLI with --component.
+amika CLI by default, or a separately-versioned component with --component.
 
 Usage:
   sh install.sh [--help] [--component NAME] [--install-version VERSION] [--dry-run]
 
 Flags:
-  --component           Component to install: amika (default) or amikalog
+  --component           Component to install: amika (default), amikad, or amikalog
   --install-version     Install a specific version
-                        (amika default: ${DEFAULT_VERSION}; amikalog default: ${DEFAULT_AMIKALOG_VERSION})
+                        (amika: ${DEFAULT_VERSION}; amikad: ${DEFAULT_AMIKAD_VERSION}; amikalog: ${DEFAULT_AMIKALOG_VERSION})
   --dry-run             Show what would be done without downloading or installing
 
 Environment variables:
@@ -32,6 +33,7 @@ Examples:
   curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh | sh
   sh install.sh --install-version 0.1.0-rc.1
   sh install.sh --component amikalog --install-version 0.2.0
+  sh install.sh --component amikad --install-version 0.1.0
   AMIKA_INSTALL_DIR=~/.local/bin sh install.sh
 EOF
 }
@@ -125,9 +127,10 @@ detect_platform() {
 set_install_version() {
   case "$COMPONENT" in
     amika) ;;
+    amikad) ;;
     amikalog) ;;
     *)
-      echo "Error: unsupported component: $COMPONENT (want amika or amikalog)" >&2
+      echo "Error: unsupported component: $COMPONENT (want amika, amikad, or amikalog)" >&2
       exit 1
       ;;
   esac
@@ -135,6 +138,7 @@ set_install_version() {
   if [ -z "$INSTALL_VERSION" ]; then
     case "$COMPONENT" in
       amika)    INSTALL_VERSION="$DEFAULT_VERSION" ;;
+      amikad)   INSTALL_VERSION="$DEFAULT_AMIKAD_VERSION" ;;
       amikalog) INSTALL_VERSION="$DEFAULT_AMIKALOG_VERSION" ;;
     esac
   fi

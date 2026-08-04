@@ -35,7 +35,8 @@ type HostEntry struct {
 
 // HostsState is the source of truth from which ~/.ssh/amika.conf is rendered.
 type HostsState struct {
-	Hosts []HostEntry `json:"hosts"`
+	Hosts         []HostEntry    `json:"hosts"`
+	SessionConfig *SessionConfig `json:"session_config,omitempty"`
 }
 
 // Alias returns the stable SSH host alias for a sandbox id. Cursor keys its
@@ -218,6 +219,13 @@ func Render(state HostsState) string {
 		}
 		b.WriteString("  StrictHostKeyChecking accept-new\n")
 	}
+	if state.SessionConfig != nil {
+		block, err := RenderSessionConfig(*state.SessionConfig)
+		if err == nil {
+			b.WriteString("\n# No-relay WebSocket SSH aliases.\n")
+			b.WriteString(block)
+		}
+	}
 	return b.String()
 }
 
@@ -247,6 +255,11 @@ func LoadState(paths basedir.Paths) (HostsState, error) {
 
 // SaveState writes the SSH hosts state atomically with owner-only permissions.
 func SaveState(paths basedir.Paths, state HostsState) error {
+	if state.SessionConfig != nil {
+		if _, err := RenderSessionConfig(*state.SessionConfig); err != nil {
+			return err
+		}
+	}
 	path, err := paths.SSHHostsStateFile()
 	if err != nil {
 		return err
@@ -260,11 +273,36 @@ func SaveState(paths basedir.Paths, state HostsState) error {
 
 // WriteAmikaConfig renders the state to ~/.ssh/amika.conf atomically.
 func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
+	if state.SessionConfig != nil {
+		if _, err := RenderSessionConfig(*state.SessionConfig); err != nil {
+			return err
+		}
+	}
 	path, err := paths.SSHAmikaConfigFile()
 	if err != nil {
 		return err
 	}
 	return writeFileAtomic(path, []byte(Render(state)), 0o600)
+}
+
+// ConfigureSession persists and renders the strict wildcard session block
+// without disturbing legacy provider-native host entries.
+func ConfigureSession(paths basedir.Paths, config SessionConfig) error {
+	if _, err := RenderSessionConfig(config); err != nil {
+		return err
+	}
+	state, err := LoadState(paths)
+	if err != nil {
+		return err
+	}
+	state.SessionConfig = &config
+	if err := SaveState(paths, state); err != nil {
+		return err
+	}
+	if err := WriteAmikaConfig(paths, state); err != nil {
+		return err
+	}
+	return EnsureInclude(paths)
 }
 
 // EnsureInclude makes sure ~/.ssh/config pulls in the managed amika.conf via an
