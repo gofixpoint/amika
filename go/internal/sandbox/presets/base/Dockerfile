@@ -4,7 +4,7 @@ FROM golang:1.25.3-bookworm AS amikad-builder
 
 # Build from an immutable reviewed commit until the first standalone amikad
 # release exists. The final image receives only the binary, not the toolchain.
-ARG AMIKAD_SOURCE_REF=3fde13c92ff8c3e43a393138459945f7b641cb09
+ARG AMIKAD_SOURCE_REF=9dccbfd32f90834e962cb4070d920a5df3096d7d
 ENV GOBIN=/out
 RUN go install "github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}"
 
