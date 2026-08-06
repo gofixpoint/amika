@@ -813,6 +813,108 @@ func (c *Client) UpdateSession(sandboxName, sessionID string, req UpdateSessionR
 	return &result, nil
 }
 
+// AgentSessionSendRequest is the request body for POST /api/v0beta1/agent-sessions.
+// Message is required; the rest are optional. SessionID continues an existing
+// chat, SandboxID routes into a specific sandbox, and RepoURL is only used when
+// a sandbox is created behind the scenes.
+type AgentSessionSendRequest struct {
+	Message    string `json:"message"`
+	Agent      string `json:"agent,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	SandboxID  string `json:"sandbox_id,omitempty"`
+	NewSession bool   `json:"new_session,omitempty"`
+	RepoURL    string `json:"repo_url,omitempty"`
+}
+
+// AgentSessionSendResponse mirrors the API's AgentSessionSendResponse schema
+// (POST /api/v0beta1/agent-sessions). SessionID is the durable chat id to pass
+// back as --session-id to continue the chat; CostUSD is the only optional field.
+type AgentSessionSendResponse struct {
+	SessionID      string   `json:"session_id"`
+	SandboxID      string   `json:"sandbox_id"`
+	Agent          string   `json:"agent"`
+	Response       string   `json:"response"`
+	IsError        bool     `json:"is_error"`
+	IsNewSession   bool     `json:"is_new_session"`
+	CreatedSandbox bool     `json:"created_sandbox"`
+	CostUSD        *float64 `json:"cost_usd,omitempty"`
+}
+
+// AgentSessionSummary is one row of the agent-sessions list. SandboxID and
+// Agent are nullable in the schema (a chat can outlive its sandbox), as is
+// LastError.
+type AgentSessionSummary struct {
+	SessionID string  `json:"session_id"`
+	SandboxID *string `json:"sandbox_id"`
+	Agent     *string `json:"agent"`
+	Status    string  `json:"status"`
+	LastError *string `json:"last_error"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
+// AgentSessionMessage is one message in an agent-session chat's history.
+type AgentSessionMessage struct {
+	ID         string `json:"id"`
+	Direction  string `json:"direction"`
+	Author     string `json:"author"`
+	Contents   string `json:"contents"`
+	IsError    bool   `json:"is_error"`
+	OccurredAt string `json:"occurred_at"`
+}
+
+// AgentSessionDetail mirrors the API's AgentSessionDetail schema: one
+// agent-session chat with its full message history.
+type AgentSessionDetail struct {
+	SessionID string                `json:"session_id"`
+	SandboxID *string               `json:"sandbox_id"`
+	Agent     *string               `json:"agent"`
+	Status    string                `json:"status"`
+	CreatedAt string                `json:"created_at"`
+	UpdatedAt string                `json:"updated_at"`
+	Messages  []AgentSessionMessage `json:"messages"`
+}
+
+// SendAgentSession sends a message to a coding agent, creating a sandbox behind
+// the scenes when the chat has none, or routing to an existing sandbox/session.
+// The endpoint is synchronous (it blocks until the agent finishes), so a longer
+// HTTP timeout (10 minutes) is used instead of the default 30 seconds.
+func (c *Client) SendAgentSession(req AgentSessionSendRequest) (*AgentSessionSendResponse, error) {
+	saved := c.HTTP.Timeout
+	c.HTTP.Timeout = 10 * time.Minute
+	defer func() { c.HTTP.Timeout = saved }()
+
+	var result AgentSessionSendResponse
+	if err := c.doJSON("POST", apiBasePath+"/agent-sessions", req, &result); err != nil {
+		if authErr := extractAgentAuthError(err); authErr != "" {
+			return nil, fmt.Errorf("remote agent-session send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
+		}
+		return nil, fmt.Errorf("remote agent-session send: %w", err)
+	}
+	return &result, nil
+}
+
+// ListAgentSessions lists the org's agent-session chats, newest first.
+func (c *Client) ListAgentSessions() ([]AgentSessionSummary, error) {
+	var envelope struct {
+		Sessions []AgentSessionSummary `json:"sessions"`
+		Total    int                   `json:"total"`
+	}
+	if err := c.doJSON("GET", apiBasePath+"/agent-sessions", nil, &envelope); err != nil {
+		return nil, fmt.Errorf("remote list agent-sessions: %w", err)
+	}
+	return envelope.Sessions, nil
+}
+
+// GetAgentSession returns one agent-session chat with its message history.
+func (c *Client) GetAgentSession(sessionID string) (*AgentSessionDetail, error) {
+	var result AgentSessionDetail
+	if err := c.doJSON("GET", apiBasePath+"/agent-sessions/"+url.PathEscape(sessionID), nil, &result); err != nil {
+		return nil, fmt.Errorf("remote get agent-session: %w", err)
+	}
+	return &result, nil
+}
+
 // UploadFile is one requested file in a CreateUploadBatchRequest.
 type UploadFile struct {
 	// Filename is the object key within the org bucket. Relative paths only;
