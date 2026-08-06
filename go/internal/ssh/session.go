@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/wsstream"
 	cryptossh "golang.org/x/crypto/ssh"
 )
@@ -20,6 +22,11 @@ import (
 const proxyCopyBufferBytes = 32 * 1024
 
 var safeAliasPart = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
+
+// DefaultProxyCommand is the only ProxyCommand the managed session config
+// accepts. It is a fixed string so a session config read back from disk can
+// never smuggle an arbitrary command into the user's SSH config.
+const DefaultProxyCommand = "amika plumbing ssh-stdio-proxy %h"
 
 // ErrInvalidSessionAlias marks a host value that is not a safe v2 Amika
 // alias.
@@ -98,7 +105,7 @@ func ParseSessionAlias(alias string) (SandboxAlias, error) {
 // RenderSessionConfig renders the strict wildcard block used only by v2
 // aliases.
 func RenderSessionConfig(config SessionConfig) (string, error) {
-	if !safeConfigPath(config.IdentityFile) || !safeConfigPath(config.KnownHostsFile) || config.ProxyCommand != "amika plumbing ssh-stdio-proxy %h" {
+	if !safeConfigPath(config.IdentityFile) || !safeConfigPath(config.KnownHostsFile) || config.ProxyCommand != DefaultProxyCommand {
 		return "", ErrInvalidSessionAlias
 	}
 	return fmt.Sprintf(`Host *.amika
@@ -246,4 +253,70 @@ func canonicalHostPublicKey(value string) (string, error) {
 		return "", ErrHostKeyMismatch
 	}
 	return strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(key))), nil
+}
+
+// PrepareSessionTarget readies one sandbox for a v2 dial and returns its host
+// alias: it builds the alias, writes the strict wildcard session config, and
+// pins the sandbox's host key.
+//
+// Shared by every command that hands a `*.amika` alias to system OpenSSH
+// (`sandbox sshv2`, `scpv2`), so they cannot drift in how the identity is
+// checked or the host key is pinned.
+func PrepareSessionTarget(
+	paths basedir.Paths,
+	creator SessionCreator,
+	sandboxName string,
+	sandboxID string,
+) (string, error) {
+	alias, err := BuildSessionAlias(sandboxName, sandboxID)
+	if err != nil {
+		return "", err
+	}
+	sessionConfig, err := resolveSessionConfig(paths)
+	if err != nil {
+		return "", err
+	}
+	// A world- or group-readable private key is refused rather than used:
+	// OpenSSH would reject it anyway, and the clearer error names the fix.
+	identityInfo, statErr := os.Stat(sessionConfig.IdentityFile)
+	if statErr != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("SSH identity is missing or unsafe; run %q", "amika secret ssh-keygen")
+	}
+	if err := ConfigureSession(paths, sessionConfig); err != nil {
+		return "", err
+	}
+	if _, err := PrepareSessionHost(
+		creator,
+		FileHostKeyPinStore{Path: sessionConfig.KnownHostsFile},
+		sandboxID,
+		alias,
+	); err != nil {
+		return "", err
+	}
+	return alias, nil
+}
+
+// resolveSessionConfig returns the persisted session config, or the default
+// one built from the standard identity and known-hosts paths.
+func resolveSessionConfig(paths basedir.Paths) (SessionConfig, error) {
+	state, err := LoadState(paths)
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	if state.SessionConfig != nil {
+		return *state.SessionConfig, nil
+	}
+	identityFile, err := paths.SSHIdentityFile()
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	knownHostsFile, err := paths.SSHKnownHostsFile()
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	return SessionConfig{
+		IdentityFile:   identityFile,
+		KnownHostsFile: knownHostsFile,
+		ProxyCommand:   DefaultProxyCommand,
+	}, nil
 }

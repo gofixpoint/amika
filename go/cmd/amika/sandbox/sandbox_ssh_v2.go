@@ -2,7 +2,6 @@ package sandboxcmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/output"
@@ -37,46 +36,13 @@ var sandboxSSHV2Cmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		alias, err := ssh.BuildSessionAlias(sandbox.Name, sandbox.ID)
-		if err != nil {
-			return err
-		}
-		paths := basedir.New("")
-		state, err := ssh.LoadState(paths)
-		if err != nil {
-			return err
-		}
-		var sessionConfig ssh.SessionConfig
-		if state.SessionConfig != nil {
-			sessionConfig = *state.SessionConfig
-		} else {
-			identityFile, err := paths.SSHIdentityFile()
-			if err != nil {
-				return err
-			}
-			knownHostsFile, err := paths.SSHKnownHostsFile()
-			if err != nil {
-				return err
-			}
-			sessionConfig = ssh.SessionConfig{
-				IdentityFile:   identityFile,
-				KnownHostsFile: knownHostsFile,
-				ProxyCommand:   "amika plumbing ssh-stdio-proxy %h",
-			}
-		}
-		identityInfo, err := os.Stat(sessionConfig.IdentityFile)
-		if err != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
-			return fmt.Errorf("SSH identity is missing or unsafe; run \"amika secret ssh-keygen\"")
-		}
-		if err := ssh.ConfigureSession(paths, sessionConfig); err != nil {
-			return err
-		}
-		if _, err := ssh.PrepareSessionHost(
+		alias, err := ssh.PrepareSessionTarget(
+			basedir.New(""),
 			client,
-			ssh.FileHostKeyPinStore{Path: sessionConfig.KnownHostsFile},
+			sandbox.Name,
 			sandbox.ID,
-			alias,
-		); err != nil {
+		)
+		if err != nil {
 			return err
 		}
 		forcePTY, _ := cmd.Flags().GetBool("t")
