@@ -37,6 +37,7 @@ type SSHDManager interface {
 	Setup(context.Context, sshd.SetupOptions) error
 	ShowHostKey(context.Context, io.Writer) error
 	SetAuthorizedKeys(context.Context, io.Reader) error
+	ClearAuthorizedKeys(context.Context) error
 	Serve(context.Context) error
 }
 
@@ -98,6 +99,12 @@ func (o *DaemonOperations) ShowHostKey(ctx context.Context, output io.Writer) er
 // SetAuthorizedKeys validates and replaces the complete authorized key set.
 func (o *DaemonOperations) SetAuthorizedKeys(ctx context.Context, input io.Reader) error {
 	return o.sshd.SetAuthorizedKeys(ctx, input)
+}
+
+// ClearAuthorizedKeys installs an empty authorized-key set so sshd can serve
+// while authorizing no logins.
+func (o *DaemonOperations) ClearAuthorizedKeys(ctx context.Context) error {
+	return o.sshd.ClearAuthorizedKeys(ctx)
 }
 
 // SetConnectToken validates canonical base64url input and stores it without a

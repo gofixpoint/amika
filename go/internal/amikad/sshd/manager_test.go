@@ -228,6 +228,24 @@ func TestAuthorizedKeysRejectsOptionsAndWritesCanonicalKeys(t *testing.T) {
 	}
 }
 
+func TestClearAuthorizedKeysOverwritesPriorKeysWithEmptySet(t *testing.T) {
+	manager, paths, _, _ := testManager(t)
+	key := newTestAuthorizedKey(t)
+	if err := manager.SetAuthorizedKeys(context.Background(), strings.NewReader(key+"\n")); err != nil {
+		t.Fatalf("SetAuthorizedKeys: %v", err)
+	}
+	if err := manager.ClearAuthorizedKeys(context.Background()); err != nil {
+		t.Fatalf("ClearAuthorizedKeys: %v", err)
+	}
+	got, err := os.ReadFile(paths.AuthorizedKeys)
+	if err != nil {
+		t.Fatalf("read authorized keys: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("authorized keys = %q, want empty", got)
+	}
+}
+
 func newTestAuthorizedKey(t *testing.T) string {
 	t.Helper()
 	public, _, err := ed25519.GenerateKey(rand.Reader)

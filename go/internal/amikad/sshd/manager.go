@@ -223,10 +223,28 @@ func (m *Manager) SetAuthorizedKeys(ctx context.Context, input io.Reader) error 
 	if len(keys) == 0 {
 		return ErrInvalidPublicKey
 	}
+	return m.writeAuthorizedKeys(ctx, strings.Join(keys, "\n")+"\n")
+}
+
+// ClearAuthorizedKeys atomically installs an empty authorized-key set,
+// authorizing no logins while keeping sshd runnable. This is the deliberate
+// zero-key state: unlike SetAuthorizedKeys, which fail-closes on empty input to
+// catch a caller that meant to pass keys, Clear is the explicit way to say
+// "no keys". It overwrites any prior generation's keys through the same
+// scrub-registered store, so a re-provisioned sandbox never inherits stale
+// authorizations.
+func (m *Manager) ClearAuthorizedKeys(ctx context.Context) error {
+	if err := m.prepareAuthorizedKeysDirectory(); err != nil {
+		return err
+	}
+	return m.writeAuthorizedKeys(ctx, "")
+}
+
+func (m *Manager) writeAuthorizedKeys(ctx context.Context, contents string) error {
 	return m.store.WriteAndRegisterOwned(
 		ctx,
 		m.paths.AuthorizedKeys,
-		strings.NewReader(strings.Join(keys, "\n")+"\n"),
+		strings.NewReader(contents),
 		0o600,
 		state.Ownership{
 			UID: m.paths.AuthorizedKeysUID,
