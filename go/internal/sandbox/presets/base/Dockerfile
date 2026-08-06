@@ -30,7 +30,15 @@ RUN apt-get update && apt-get install -y \
     tmux \
     ncurses-term \
     openssh-server \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # openssh-server is installed for amikad to configure and supervise as a
+    # loopback-only sshd — never as a system service. On the systemd-backed VM
+    # snapshots the package would otherwise leave socket-activated `ssh.socket`
+    # listening on the wildcard *:22, an inbound SSH surface Amika never
+    # intended. Masking is a symlink to /dev/null, so it applies at build time
+    # without systemd running, and is inert on the plain container presets.
+    && ln -sf /dev/null /etc/systemd/system/ssh.socket \
+    && ln -sf /dev/null /etc/systemd/system/ssh.service
 
 # Install Ghostty terminfo so SSH sessions from Ghostty render correctly.
 # (Alacritty, kitty, foot, etc. come from the ncurses-term package above;

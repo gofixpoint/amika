@@ -36,6 +36,7 @@ func (m *fakeSSHDManager) Serve(context.Context) error {
 	m.serveCalls++
 	return nil
 }
+func (*fakeSSHDManager) LoopbackAddress() string { return "127.0.0.1:60997" }
 
 func testOperations(t *testing.T) (*DaemonOperations, string, *fakeSSHDManager) {
 	t.Helper()
