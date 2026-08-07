@@ -15,38 +15,63 @@ import (
 	"github.com/coder/websocket"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/wsstream"
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
 const proxyCopyBufferBytes = 32 * 1024
 
+// safeAliasPart matches a sandbox name, which may itself contain dots.
 var safeAliasPart = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
 
-// DefaultProxyCommand is the only ProxyCommand the managed session config
-// accepts. It is a fixed string so a session config read back from disk can
-// never smuggle an arbitrary command into the user's SSH config.
-const DefaultProxyCommand = "amika plumbing ssh-stdio-proxy %h"
+// safeAliasSegment matches exactly one dot-free alias segment, used for the
+// parts an alias is split on: the sandbox id and the environment slug.
+var safeAliasSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// proxyCommandSuffix is the fixed argv tail every managed ProxyCommand carries.
+// Only the leading executable path may vary, so a session config read back from
+// disk can never smuggle a different command into the user's SSH config.
+const proxyCommandSuffix = " plumbing ssh-stdio-proxy %h"
+
+// proxyPathUnsafeRunes must never appear in a ProxyCommand executable path.
+// OpenSSH runs the line through a shell, so a metacharacter in the path would
+// be executed rather than treated as part of it, and OpenSSH expands %-tokens
+// in the line before running it.
+const proxyPathUnsafeRunes = "%\"'`$&;|<>()[]{}*?!#~\\\r\n\t "
 
 // ErrInvalidSessionAlias marks a host value that is not a safe v2 Amika
 // alias.
 var ErrInvalidSessionAlias = errors.New("invalid Amika SSH host alias")
 
+// ErrUnsafeBinaryPath marks an amika executable path that cannot be safely
+// embedded in a ProxyCommand line.
+var ErrUnsafeBinaryPath = errors.New("unsafe amika executable path for ProxyCommand")
+
 // ErrHostKeyMismatch marks a descriptor whose immutable identity does not
 // match the requested host.
 var ErrHostKeyMismatch = errors.New("SSH host identity mismatch")
 
-// SandboxAlias identifies the immutable sandbox id parsed from a v2 host alias.
+// SandboxAlias identifies the immutable sandbox id and the control-plane
+// environment parsed from a v2 host alias.
 type SandboxAlias struct {
-	Name string
-	ID   string
+	Name        string
+	ID          string
+	Environment string
 }
 
-// SessionConfig describes the strict wildcard SSH configuration.
+// SessionConfig describes the local key material shared by every environment's
+// session block: the private key OpenSSH authenticates with and the file its
+// host-key pins live in.
+//
+// Neither is per-environment. One private key authenticates to every control
+// plane, each of which holds its own uploaded copy of the public key, so an
+// identity imported while pointed at one environment stays in effect for all of
+// them. Only the ProxyCommand varies per environment, and it is stored
+// separately in HostsState.
 type SessionConfig struct {
 	IdentityFile   string
 	KnownHostsFile string
-	ProxyCommand   string
 }
 
 // SessionCreator creates a fresh transport descriptor for each SSH dial.
@@ -72,43 +97,105 @@ type HostKeyPinStore interface {
 	Pin(string, string) error
 }
 
-// BuildSessionAlias combines a safe human name and immutable sandbox id.
-func BuildSessionAlias(name, id string) (string, error) {
-	if name == "" || id == "" || !safeAliasPart.MatchString(name) || !safeAliasPart.MatchString(id) || strings.Contains(id, ".") {
+// BuildSessionAlias combines a safe human name, immutable sandbox id, and the
+// control-plane environment slug into a v2 host alias.
+//
+// The environment goes second-to-last rather than first because the sandbox
+// name may itself contain dots: parsing has to pop fixed-position segments off
+// the right and let the name absorb whatever remains.
+func BuildSessionAlias(name, id, environment string) (string, error) {
+	if name == "" || id == "" || environment == "" ||
+		!safeAliasPart.MatchString(name) ||
+		!safeAliasSegment.MatchString(id) ||
+		!safeAliasSegment.MatchString(environment) {
 		return "", ErrInvalidSessionAlias
 	}
-	alias := name + "." + id + ".amika"
+	alias := name + "." + id + "." + environment + ".amika"
 	if len(alias) > 253 {
 		return "", ErrInvalidSessionAlias
 	}
 	return alias, nil
 }
 
-// ParseSessionAlias splits from the right so dotted sandbox names remain
-// intact.
+// ParseSessionAlias pops the environment and sandbox id off the right so dotted
+// sandbox names remain intact.
 func ParseSessionAlias(alias string) (SandboxAlias, error) {
 	if len(alias) > 253 || !strings.HasSuffix(alias, ".amika") || strings.ContainsAny(alias, "\r\n\t *?![]\\") {
 		return SandboxAlias{}, ErrInvalidSessionAlias
 	}
-	withoutSuffix := strings.TrimSuffix(alias, ".amika")
-	separator := strings.LastIndexByte(withoutSuffix, '.')
-	if separator <= 0 || separator == len(withoutSuffix)-1 {
+	rest, environment, ok := cutLastSegment(strings.TrimSuffix(alias, ".amika"))
+	if !ok {
 		return SandboxAlias{}, ErrInvalidSessionAlias
 	}
-	parsed := SandboxAlias{Name: withoutSuffix[:separator], ID: withoutSuffix[separator+1:]}
-	if !safeAliasPart.MatchString(parsed.Name) || !safeAliasPart.MatchString(parsed.ID) || strings.Contains(parsed.ID, ".") {
+	name, id, ok := cutLastSegment(rest)
+	if !ok {
+		return SandboxAlias{}, ErrInvalidSessionAlias
+	}
+	parsed := SandboxAlias{Name: name, ID: id, Environment: environment}
+	if !safeAliasPart.MatchString(parsed.Name) ||
+		!safeAliasSegment.MatchString(parsed.ID) ||
+		!safeAliasSegment.MatchString(parsed.Environment) {
 		return SandboxAlias{}, ErrInvalidSessionAlias
 	}
 	return parsed, nil
 }
 
-// RenderSessionConfig renders the strict wildcard block used only by v2
-// aliases.
-func RenderSessionConfig(config SessionConfig) (string, error) {
-	if !safeConfigPath(config.IdentityFile) || !safeConfigPath(config.KnownHostsFile) || config.ProxyCommand != DefaultProxyCommand {
+// cutLastSegment splits value at its final dot into the text before it and the
+// segment after it, reporting false when there is no dot or either side is
+// empty.
+func cutLastSegment(value string) (string, string, bool) {
+	separator := strings.LastIndexByte(value, '.')
+	if separator <= 0 || separator == len(value)-1 {
+		return "", "", false
+	}
+	return value[:separator], value[separator+1:], true
+}
+
+// BuildProxyCommand renders the ProxyCommand line that reaches amika through
+// the given executable path.
+func BuildProxyCommand(binaryPath string) (string, error) {
+	if !safeProxyBinaryPath(binaryPath) {
+		return "", ErrUnsafeBinaryPath
+	}
+	return binaryPath + proxyCommandSuffix, nil
+}
+
+// ParseProxyCommand returns the executable path from a managed ProxyCommand
+// line, rejecting any line whose argv tail is not the fixed proxy invocation or
+// whose path is not shell-safe.
+func ParseProxyCommand(proxyCommand string) (string, error) {
+	binaryPath, ok := strings.CutSuffix(proxyCommand, proxyCommandSuffix)
+	if !ok || !safeProxyBinaryPath(binaryPath) {
+		return "", ErrUnsafeBinaryPath
+	}
+	return binaryPath, nil
+}
+
+// ResolveProxyCommand builds the ProxyCommand for the amika executable the
+// current process should be reached through.
+func ResolveProxyCommand() (string, error) {
+	binaryPath, err := config.BinaryPath()
+	if err != nil {
+		return "", err
+	}
+	return BuildProxyCommand(binaryPath)
+}
+
+// RenderSessionConfig renders one environment's wildcard block. The pattern is
+// scoped to `*.<environment>.amika` rather than `*.amika` so each control plane
+// gets its own ProxyCommand: a bare `*.amika` would also match every other
+// environment's aliases, and OpenSSH takes the first value it finds for an
+// option.
+func RenderSessionConfig(environment, proxyCommand string, session SessionConfig) (string, error) {
+	if !safeAliasSegment.MatchString(environment) ||
+		!safeConfigPath(session.IdentityFile) ||
+		!safeConfigPath(session.KnownHostsFile) {
 		return "", ErrInvalidSessionAlias
 	}
-	return fmt.Sprintf(`Host *.amika
+	if _, err := ParseProxyCommand(proxyCommand); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`Host *.%s.amika
   User amika
   IdentityFile %s
   IdentitiesOnly yes
@@ -117,7 +204,7 @@ func RenderSessionConfig(config SessionConfig) (string, error) {
   ProxyCommand %s
   ServerAliveInterval 15
   ServerAliveCountMax 3
-`, config.IdentityFile, config.KnownHostsFile, config.ProxyCommand), nil
+`, environment, session.IdentityFile, session.KnownHostsFile, proxyCommand), nil
 }
 
 // KnownHostLine returns one canonical alias-keyed Ed25519 pin.
@@ -247,6 +334,13 @@ func safeConfigPath(path string) bool {
 	return filepath.IsAbs(path) && filepath.Clean(path) == path && !strings.ContainsAny(path, "\r\n\t ")
 }
 
+// safeProxyBinaryPath holds a ProxyCommand executable to a stricter standard
+// than safeConfigPath: OpenSSH treats IdentityFile as a filename but hands the
+// ProxyCommand line to a shell, so anything a shell would interpret is refused.
+func safeProxyBinaryPath(path string) bool {
+	return safeConfigPath(path) && !strings.ContainsAny(path, proxyPathUnsafeRunes)
+}
+
 func canonicalHostPublicKey(value string) (string, error) {
 	key, _, options, rest, err := cryptossh.ParseAuthorizedKey([]byte(value))
 	if err != nil || len(options) != 0 || strings.TrimSpace(string(rest)) != "" || key.Type() != cryptossh.KeyAlgoED25519 {
@@ -268,7 +362,11 @@ func PrepareSessionTarget(
 	sandboxName string,
 	sandboxID string,
 ) (string, error) {
-	alias, err := BuildSessionAlias(sandboxName, sandboxID)
+	environment, err := config.EnvironmentSlug()
+	if err != nil {
+		return "", err
+	}
+	alias, err := BuildSessionAlias(sandboxName, sandboxID, environment)
 	if err != nil {
 		return "", err
 	}
@@ -296,8 +394,10 @@ func PrepareSessionTarget(
 	return alias, nil
 }
 
-// resolveSessionConfig returns the persisted session config, or the default
-// one built from the standard identity and known-hosts paths.
+// resolveSessionConfig returns the persisted session identity, or the default
+// one built from the standard identity and known-hosts paths. The persisted
+// value is honored so an identity imported by `amika ssh-keygen --import` keeps
+// being used.
 func resolveSessionConfig(paths basedir.Paths) (SessionConfig, error) {
 	state, err := LoadState(paths)
 	if err != nil {
@@ -317,6 +417,5 @@ func resolveSessionConfig(paths basedir.Paths) (SessionConfig, error) {
 	return SessionConfig{
 		IdentityFile:   identityFile,
 		KnownHostsFile: knownHostsFile,
-		ProxyCommand:   DefaultProxyCommand,
 	}, nil
 }

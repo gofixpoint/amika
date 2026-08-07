@@ -51,7 +51,6 @@ func newSSHKeygenCmd() *cobra.Command {
 			if err := ssh.ConfigureSession(paths, ssh.SessionConfig{
 				IdentityFile:   identityPath,
 				KnownHostsFile: knownHostsPath,
-				ProxyCommand:   "amika plumbing ssh-stdio-proxy %h",
 			}); err != nil {
 				return err
 			}
