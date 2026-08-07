@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/config"
 )
 
 // aliasPrefix is prepended to a sandbox id to form its stable SSH host alias.
@@ -35,8 +36,16 @@ type HostEntry struct {
 
 // HostsState is the source of truth from which ~/.ssh/amika.conf is rendered.
 type HostsState struct {
-	Hosts         []HostEntry    `json:"hosts"`
+	Hosts []HostEntry `json:"hosts"`
+	// SessionConfig holds the key material shared by every environment. State
+	// written before session blocks became per-environment also carried a
+	// ProxyCommand here; that field no longer exists, so decoding drops it and
+	// the next write regenerates the blocks from SessionProxyCommands.
 	SessionConfig *SessionConfig `json:"session_config,omitempty"`
+	// SessionProxyCommands maps an environment slug to the amika invocation
+	// that proxies its aliases, one entry per control plane this machine has
+	// opened a v2 session against.
+	SessionProxyCommands map[string]string `json:"session_proxy_commands,omitempty"`
 }
 
 // Alias returns the stable SSH host alias for a sandbox id. Cursor keys its
@@ -219,14 +228,55 @@ func Render(state HostsState) string {
 		}
 		b.WriteString("  StrictHostKeyChecking accept-new\n")
 	}
-	if state.SessionConfig != nil {
-		block, err := RenderSessionConfig(*state.SessionConfig)
-		if err == nil {
-			b.WriteString("\n# No-relay WebSocket SSH aliases.\n")
+	if blocks := renderSessionBlocks(state); len(blocks) > 0 {
+		b.WriteString("\n# No-relay WebSocket SSH aliases, one block per control plane.\n")
+		for i, block := range blocks {
+			if i > 0 {
+				b.WriteString("\n")
+			}
 			b.WriteString(block)
 		}
 	}
 	return b.String()
+}
+
+// renderSessionBlocks renders one wildcard block per configured environment, in
+// sorted order so the generated file does not churn between runs. Blocks that
+// fail validation are skipped rather than fatal, matching how Render treats the
+// rest of the state: a bad entry must not make the whole config unwritable.
+func renderSessionBlocks(state HostsState) []string {
+	if state.SessionConfig == nil {
+		return nil
+	}
+	environments := make([]string, 0, len(state.SessionProxyCommands))
+	for environment := range state.SessionProxyCommands {
+		environments = append(environments, environment)
+	}
+	sort.Strings(environments)
+
+	blocks := make([]string, 0, len(environments))
+	for _, environment := range environments {
+		block, err := RenderSessionConfig(environment, state.SessionProxyCommands[environment], *state.SessionConfig)
+		if err == nil {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks
+}
+
+// validateSessionState rejects a state whose session blocks would not render,
+// so a bad value fails at the call that introduced it rather than silently
+// vanishing from the generated config.
+func validateSessionState(state HostsState) error {
+	if state.SessionConfig == nil {
+		return nil
+	}
+	for environment, proxyCommand := range state.SessionProxyCommands {
+		if _, err := RenderSessionConfig(environment, proxyCommand, *state.SessionConfig); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // LoadState reads the SSH hosts state, returning an empty state if the file does
@@ -255,10 +305,8 @@ func LoadState(paths basedir.Paths) (HostsState, error) {
 
 // SaveState writes the SSH hosts state atomically with owner-only permissions.
 func SaveState(paths basedir.Paths, state HostsState) error {
-	if state.SessionConfig != nil {
-		if _, err := RenderSessionConfig(*state.SessionConfig); err != nil {
-			return err
-		}
+	if err := validateSessionState(state); err != nil {
+		return err
 	}
 	path, err := paths.SSHHostsStateFile()
 	if err != nil {
@@ -273,10 +321,8 @@ func SaveState(paths basedir.Paths, state HostsState) error {
 
 // WriteAmikaConfig renders the state to ~/.ssh/amika.conf atomically.
 func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
-	if state.SessionConfig != nil {
-		if _, err := RenderSessionConfig(*state.SessionConfig); err != nil {
-			return err
-		}
+	if err := validateSessionState(state); err != nil {
+		return err
 	}
 	path, err := paths.SSHAmikaConfigFile()
 	if err != nil {
@@ -285,17 +331,36 @@ func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
 	return writeFileAtomic(path, []byte(Render(state)), 0o600)
 }
 
-// ConfigureSession persists and renders the strict wildcard session block
-// without disturbing legacy provider-native host entries.
-func ConfigureSession(paths basedir.Paths, config SessionConfig) error {
-	if _, err := RenderSessionConfig(config); err != nil {
+// ConfigureSession persists the shared session identity plus the ProxyCommand
+// for the environment this process points at, then regenerates
+// ~/.ssh/amika.conf without disturbing legacy provider-native host entries.
+//
+// The environment and the executable path are resolved here rather than passed
+// in so every caller records the same thing, and so the ProxyCommand is rebuilt
+// from the live process on each run. A path persisted by an earlier run may name
+// a binary that has since moved or been replaced by one that cannot serve as a
+// proxy.
+func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
+	environment, err := config.EnvironmentSlug()
+	if err != nil {
+		return err
+	}
+	proxyCommand, err := ResolveProxyCommand()
+	if err != nil {
+		return err
+	}
+	if _, err := RenderSessionConfig(environment, proxyCommand, session); err != nil {
 		return err
 	}
 	state, err := LoadState(paths)
 	if err != nil {
 		return err
 	}
-	state.SessionConfig = &config
+	state.SessionConfig = &session
+	if state.SessionProxyCommands == nil {
+		state.SessionProxyCommands = make(map[string]string)
+	}
+	state.SessionProxyCommands[environment] = proxyCommand
 	if err := SaveState(paths, state); err != nil {
 		return err
 	}

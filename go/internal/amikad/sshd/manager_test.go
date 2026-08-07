@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
+	"github.com/gofixpoint/amika/go/internal/constants"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -61,6 +63,7 @@ func testManager(t *testing.T) (*Manager, Paths, *fakeKeyGenerator, *fakeProcess
 		RuntimeDirectory:  filepath.Join(directory, "run", "sshd"),
 		AuthorizedKeysUID: os.Getuid(),
 		AuthorizedKeysGID: os.Getgid(),
+		Port:              constants.ManagedSSHDPort,
 	}
 	if err := os.MkdirAll(filepath.Dir(paths.AuthorizedKeys), 0o700); err != nil {
 		t.Fatal(err)
@@ -228,6 +231,24 @@ func TestAuthorizedKeysRejectsOptionsAndWritesCanonicalKeys(t *testing.T) {
 	}
 }
 
+func TestClearAuthorizedKeysOverwritesPriorKeysWithEmptySet(t *testing.T) {
+	manager, paths, _, _ := testManager(t)
+	key := newTestAuthorizedKey(t)
+	if err := manager.SetAuthorizedKeys(context.Background(), strings.NewReader(key+"\n")); err != nil {
+		t.Fatalf("SetAuthorizedKeys: %v", err)
+	}
+	if err := manager.ClearAuthorizedKeys(context.Background()); err != nil {
+		t.Fatalf("ClearAuthorizedKeys: %v", err)
+	}
+	got, err := os.ReadFile(paths.AuthorizedKeys)
+	if err != nil {
+		t.Fatalf("read authorized keys: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("authorized keys = %q, want empty", got)
+	}
+}
+
 func newTestAuthorizedKey(t *testing.T) string {
 	t.Helper()
 	public, _, err := ed25519.GenerateKey(rand.Reader)
@@ -258,5 +279,29 @@ func TestShowHostKeyAndServeUseOnlyPublicManagedState(t *testing.T) {
 	}
 	if processes.name != "sshd" || strings.Join(processes.args, " ") != "-D -e -f "+manager.paths.Config {
 		t.Fatalf("process = %q %#v", processes.name, processes.args)
+	}
+}
+
+func TestManagedPortIsOffSystemSSHAndMatchesTheDialTarget(t *testing.T) {
+	manager, _, _, _ := testManager(t)
+
+	// Port 22 is the bug: base images can ship a socket-activated system sshd
+	// on the wildcard *:22, which also covers 127.0.0.1:22, so the managed
+	// sshd cannot bind and `serve --beta-no-relay` dies.
+	if manager.paths.Port == 22 {
+		t.Fatal("managed sshd must not bind port 22")
+	}
+	if manager.paths.Port < constants.ReservedPortStart || manager.paths.Port > constants.ReservedPortEnd {
+		t.Fatalf("port %d is outside the Amika reserved range", manager.paths.Port)
+	}
+
+	// The rendered listener and the address the no-relay bridge dials come
+	// from one field, so they cannot drift apart.
+	config := RenderConfig(manager.paths)
+	if !strings.Contains(config, fmt.Sprintf("Port %d\n", manager.paths.Port)) {
+		t.Fatalf("config does not listen on the managed port:\n%s", config)
+	}
+	if got, want := manager.LoopbackAddress(), fmt.Sprintf("127.0.0.1:%d", manager.paths.Port); got != want {
+		t.Fatalf("LoopbackAddress = %q, want %q", got, want)
 	}
 }

@@ -35,6 +35,7 @@ type Operations interface {
 	SetupSSHD(context.Context, SetupSSHDOptions) error
 	ShowHostKey(context.Context, io.Writer) error
 	SetAuthorizedKeys(context.Context, io.Reader) error
+	ClearAuthorizedKeys(context.Context) error
 	SetConnectToken(context.Context, io.Reader) error
 	Serve(context.Context, ServeOptions) error
 }
@@ -55,6 +56,11 @@ func (UnimplementedOperations) ShowHostKey(context.Context, io.Writer) error {
 
 // SetAuthorizedKeys returns ErrNotImplemented without reading or writing keys.
 func (UnimplementedOperations) SetAuthorizedKeys(context.Context, io.Reader) error {
+	return ErrNotImplemented
+}
+
+// ClearAuthorizedKeys returns ErrNotImplemented without writing keys.
+func (UnimplementedOperations) ClearAuthorizedKeys(context.Context) error {
 	return ErrNotImplemented
 }
 
@@ -117,6 +123,14 @@ func NewCommand(operations Operations) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return operations.SetAuthorizedKeys(cmd.Context(), cmd.InOrStdin())
+		},
+	})
+	authorizedKeys.AddCommand(&cobra.Command{
+		Use:   "clear",
+		Short: "Install an empty authorized-key set (authorize no logins)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return operations.ClearAuthorizedKeys(cmd.Context())
 		},
 	})
 

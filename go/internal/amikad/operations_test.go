@@ -31,10 +31,12 @@ func (m *fakeSSHDManager) Setup(_ context.Context, options sshd.SetupOptions) er
 }
 func (*fakeSSHDManager) ShowHostKey(context.Context, io.Writer) error       { return nil }
 func (*fakeSSHDManager) SetAuthorizedKeys(context.Context, io.Reader) error { return nil }
+func (*fakeSSHDManager) ClearAuthorizedKeys(context.Context) error          { return nil }
 func (m *fakeSSHDManager) Serve(context.Context) error {
 	m.serveCalls++
 	return nil
 }
+func (*fakeSSHDManager) LoopbackAddress() string { return "127.0.0.1:60997" }
 
 func testOperations(t *testing.T) (*DaemonOperations, string, *fakeSSHDManager) {
 	t.Helper()

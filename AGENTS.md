@@ -145,6 +145,7 @@ For user-facing docs (`docs/`, README):
 | `AMIKA_STATE_DIRECTORY` | Override default state directory (`~/.local/state/amika`) |
 | `AMIKA_PRESET_IMAGE_PREFIX` | Override Docker image name prefix for presets |
 | `AMIKA_API_URL` | Override remote API base URL (default: `https://app.amika.dev`) |
+| `AMIKA_BINARY_PATH` | Absolute path to the `amika` executable recorded in generated config (the SSH `ProxyCommand`). Defaults to the running binary; set it inside a wrapper script so the wrapper names itself and the environment it exports survives |
 | `AMIKA_WORKOS_CLIENT_ID` | Override default WorkOS client ID for `amika auth login` |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker integration tests |
 | `PORT` | Override listen address for `amika-server` (mutually exclusive with `-addr` flag) |

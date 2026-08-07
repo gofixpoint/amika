@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -19,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
+	"github.com/gofixpoint/amika/go/internal/constants"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -30,7 +32,8 @@ var ErrExistingConfiguration = errors.New("existing sshd configuration requires 
 // input.
 var ErrInvalidPublicKey = errors.New("invalid SSH public key")
 
-// Paths contains every filesystem location owned by the managed sshd.
+// Paths contains every filesystem location owned by the managed sshd, plus
+// the loopback port it listens on.
 type Paths struct {
 	Config            string
 	HostPrivateKey    string
@@ -40,6 +43,10 @@ type Paths struct {
 	RuntimeDirectory  string
 	AuthorizedKeysUID int
 	AuthorizedKeysGID int
+	// Port the managed sshd binds on 127.0.0.1. This is the single source of
+	// truth for the loopback address: the rendered config listens on it and
+	// the no-relay bridge dials it, so the two can never drift apart.
+	Port int
 }
 
 // DefaultPaths returns the production paths owned by amikad.
@@ -58,6 +65,7 @@ func DefaultPaths() Paths {
 		RuntimeDirectory:  "/run/sshd",
 		AuthorizedKeysUID: uid,
 		AuthorizedKeysGID: gid,
+		Port:              constants.ManagedSSHDPort,
 	}
 }
 
@@ -223,10 +231,28 @@ func (m *Manager) SetAuthorizedKeys(ctx context.Context, input io.Reader) error 
 	if len(keys) == 0 {
 		return ErrInvalidPublicKey
 	}
+	return m.writeAuthorizedKeys(ctx, strings.Join(keys, "\n")+"\n")
+}
+
+// ClearAuthorizedKeys atomically installs an empty authorized-key set,
+// authorizing no logins while keeping sshd runnable. This is the deliberate
+// zero-key state: unlike SetAuthorizedKeys, which fail-closes on empty input to
+// catch a caller that meant to pass keys, Clear is the explicit way to say
+// "no keys". It overwrites any prior generation's keys through the same
+// scrub-registered store, so a re-provisioned sandbox never inherits stale
+// authorizations.
+func (m *Manager) ClearAuthorizedKeys(ctx context.Context) error {
+	if err := m.prepareAuthorizedKeysDirectory(); err != nil {
+		return err
+	}
+	return m.writeAuthorizedKeys(ctx, "")
+}
+
+func (m *Manager) writeAuthorizedKeys(ctx context.Context, contents string) error {
 	return m.store.WriteAndRegisterOwned(
 		ctx,
 		m.paths.AuthorizedKeys,
-		strings.NewReader(strings.Join(keys, "\n")+"\n"),
+		strings.NewReader(contents),
 		0o600,
 		state.Ownership{
 			UID: m.paths.AuthorizedKeysUID,
@@ -263,6 +289,13 @@ func (m *Manager) prepareAuthorizedKeysDirectory() error {
 // Serve runs sshd in the foreground with only the managed configuration.
 func (m *Manager) Serve(ctx context.Context) error {
 	return m.processes.Run(ctx, "sshd", "-D", "-e", "-f", m.paths.Config)
+}
+
+// LoopbackAddress is where the managed sshd accepts connections. The no-relay
+// bridge dials this rather than hardcoding a port, so the listener and the
+// dial target are always the same value.
+func (m *Manager) LoopbackAddress() string {
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(m.paths.Port))
 }
 
 func (m *Manager) generateHostKey(ctx context.Context) error {
@@ -342,12 +375,15 @@ func validatePaths(paths Paths) error {
 	if paths.AuthorizedKeysUID < 0 || paths.AuthorizedKeysGID < 0 {
 		return fmt.Errorf("invalid authorized-keys owner: %w", state.ErrInvalidPath)
 	}
+	if paths.Port < 1 || paths.Port > 65535 {
+		return fmt.Errorf("invalid sshd port %d", paths.Port)
+	}
 	return nil
 }
 
 // RenderConfig returns the complete loopback-only sshd policy.
 func RenderConfig(paths Paths) string {
-	return fmt.Sprintf(`Port 22
+	return fmt.Sprintf(`Port %d
 ListenAddress 127.0.0.1
 Protocol 2
 HostKey %s
@@ -369,7 +405,7 @@ PermitTunnel no
 PermitUserEnvironment no
 UsePAM no
 Subsystem sftp internal-sftp
-`, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys)
+`, paths.Port, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys)
 }
 
 // Ed25519KeyGenerator creates a passwordless OpenSSH keypair in memory.

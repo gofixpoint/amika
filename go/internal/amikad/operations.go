@@ -37,7 +37,11 @@ type SSHDManager interface {
 	Setup(context.Context, sshd.SetupOptions) error
 	ShowHostKey(context.Context, io.Writer) error
 	SetAuthorizedKeys(context.Context, io.Reader) error
+	ClearAuthorizedKeys(context.Context) error
 	Serve(context.Context) error
+	// LoopbackAddress is the managed sshd's listen address, which the bridge
+	// dials. Sourced from the manager so the two can never disagree.
+	LoopbackAddress() string
 }
 
 // DaemonOperations implements the amikad command surface.
@@ -100,6 +104,12 @@ func (o *DaemonOperations) SetAuthorizedKeys(ctx context.Context, input io.Reade
 	return o.sshd.SetAuthorizedKeys(ctx, input)
 }
 
+// ClearAuthorizedKeys installs an empty authorized-key set so sshd can serve
+// while authorizing no logins.
+func (o *DaemonOperations) ClearAuthorizedKeys(ctx context.Context) error {
+	return o.sshd.ClearAuthorizedKeys(ctx)
+}
+
 // SetConnectToken validates canonical base64url input and stores it without a
 // trailing newline through the scrub-registered sensitive store.
 func (o *DaemonOperations) SetConnectToken(ctx context.Context, input io.Reader) error {
@@ -135,7 +145,7 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	}
 
 	handler := norelay.NewHandler(
-		norelay.Config{MaxConnections: 64, SSHDAddress: "127.0.0.1:22"},
+		norelay.Config{MaxConnections: 64, SSHDAddress: o.sshd.LoopbackAddress()},
 		norelay.Dependencies{
 			Verifier: o.verifier,
 			Upgrader: norelay.WebSocketUpgrader{},

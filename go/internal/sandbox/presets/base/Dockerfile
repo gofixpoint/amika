@@ -4,7 +4,7 @@ FROM golang:1.25.3-bookworm AS amikad-builder
 
 # Build from an immutable reviewed commit until the first standalone amikad
 # release exists. The final image receives only the binary, not the toolchain.
-ARG AMIKAD_SOURCE_REF=3fde13c92ff8c3e43a393138459945f7b641cb09
+ARG AMIKAD_SOURCE_REF=9dccbfd32f90834e962cb4070d920a5df3096d7d
 ENV GOBIN=/out
 RUN go install "github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}"
 
@@ -30,7 +30,15 @@ RUN apt-get update && apt-get install -y \
     tmux \
     ncurses-term \
     openssh-server \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # openssh-server is installed for amikad to configure and supervise as a
+    # loopback-only sshd — never as a system service. On the systemd-backed VM
+    # snapshots the package would otherwise leave socket-activated `ssh.socket`
+    # listening on the wildcard *:22, an inbound SSH surface Amika never
+    # intended. Masking is a symlink to /dev/null, so it applies at build time
+    # without systemd running, and is inert on the plain container presets.
+    && ln -sf /dev/null /etc/systemd/system/ssh.socket \
+    && ln -sf /dev/null /etc/systemd/system/ssh.service
 
 # Install Ghostty terminfo so SSH sessions from Ghostty render correctly.
 # (Alacritty, kitty, foot, etc. come from the ncurses-term package above;
