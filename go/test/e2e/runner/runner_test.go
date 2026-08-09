@@ -511,6 +511,33 @@ func TestSubstituteStepResolvesNestedStdoutJSONVar(t *testing.T) {
 	}
 }
 
+func TestSubstituteStepResolvesNegativeContentVars(t *testing.T) {
+	r, err := New(Options{BinPath: "unused", RunDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	r.vars["name"] = "sb-1"
+
+	step := Step{
+		Name: "negative templates",
+		Cmd:  []string{"version"},
+		Expect: Expectation{
+			StdoutNotContains: "{{name}}",
+			StderrNotContains: "error for {{name}}",
+		},
+	}
+	out, err := r.substituteStep(step)
+	if err != nil {
+		t.Fatalf("substituteStep: %v", err)
+	}
+	if out.Expect.StdoutNotContains != "sb-1" {
+		t.Fatalf("stdout_not_contains = %q, want sb-1", out.Expect.StdoutNotContains)
+	}
+	if out.Expect.StderrNotContains != "error for sb-1" {
+		t.Fatalf("stderr_not_contains = %q, want error for sb-1", out.Expect.StderrNotContains)
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
 		"create remote sandbox": "create-remote-sandbox",
@@ -557,6 +584,42 @@ func TestLedgerAppendPersistsToDisk(t *testing.T) {
 	}
 	if len(onDisk) != 2 || onDisk[1].Type != "volume" {
 		t.Fatalf("unexpected on-disk entries: %+v", onDisk)
+	}
+}
+
+func TestLedgerRemovePersistsToDisk(t *testing.T) {
+	dir := t.TempDir()
+	ledgerPath := filepath.Join(dir, "ledger.json")
+	l, err := NewLedger(ledgerPath)
+	if err != nil {
+		t.Fatalf("NewLedger: %v", err)
+	}
+	for _, entry := range []Entry{
+		{Type: "sandbox", Name: "sb-1"},
+		{Type: "snapshot", Name: "snap-1"},
+	} {
+		if err := l.Append(entry); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	removed, err := l.Remove("sandbox", "sb-1")
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if !removed {
+		t.Fatal("expected matching resource to be removed")
+	}
+	if removed, err := l.Remove("sandbox", "missing"); err != nil || removed {
+		t.Fatalf("remove missing resource = %v, %v; want false, nil", removed, err)
+	}
+
+	onDisk, err := LoadLedgerEntries(ledgerPath)
+	if err != nil {
+		t.Fatalf("LoadLedgerEntries: %v", err)
+	}
+	if len(onDisk) != 1 || onDisk[0].Name != "snap-1" {
+		t.Fatalf("unexpected on-disk entries after remove: %+v", onDisk)
 	}
 }
 
@@ -760,6 +823,83 @@ func TestRunnerRunCaseCapturesTemplatesAndRegistersResource(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(runDir, "steps", "02-use-captured-var.stdout")); err != nil {
 		t.Fatalf("expected step 2 transcript: %v", err)
 	}
+}
+
+func TestRunnerReleasesResourceOnlyAfterAssertionsPass(t *testing.T) {
+	bin := stubScript(t)
+
+	t.Run("successful assertion releases resource", func(t *testing.T) {
+		r, err := New(Options{BinPath: bin, RunDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{
+			Name: "release consumed resource",
+			Steps: []Step{
+				{
+					Name:    "create",
+					Cmd:     []string{"0", `{"name":"sb-1"}`, ""},
+					Capture: map[string]string{"sandbox_name": "$.name"},
+					Resource: &Resource{
+						Type:    "sandbox",
+						Name:    "{{sandbox_name}}",
+						Cleanup: []string{"0", "", ""},
+					},
+				},
+				{
+					Name:   "confirm deletion",
+					Cmd:    []string{"0", "[]", ""},
+					Expect: Expectation{StdoutNotContains: "{{sandbox_name}}"},
+					ReleaseResource: &ResourceRef{
+						Type: "sandbox",
+						Name: "{{sandbox_name}}",
+					},
+				},
+			},
+		}
+		if err := r.RunCase(c); err != nil {
+			t.Fatalf("RunCase: %v", err)
+		}
+		if entries := r.Ledger().Entries(); len(entries) != 0 {
+			t.Fatalf("expected released resource to leave the ledger, got %+v", entries)
+		}
+	})
+
+	t.Run("failed assertion retains resource", func(t *testing.T) {
+		r, err := New(Options{BinPath: bin, RunDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{
+			Name: "retain resource on failure",
+			Steps: []Step{
+				{
+					Name: "create",
+					Cmd:  []string{"0", "", ""},
+					Resource: &Resource{
+						Type:    "sandbox",
+						Name:    "sb-1",
+						Cleanup: []string{"0", "", ""},
+					},
+				},
+				{
+					Name:   "failed deletion check",
+					Cmd:    []string{"0", "sb-1", ""},
+					Expect: Expectation{StdoutNotContains: "sb-1"},
+					ReleaseResource: &ResourceRef{
+						Type: "sandbox",
+						Name: "sb-1",
+					},
+				},
+			},
+		}
+		if err := r.RunCase(c); err == nil {
+			t.Fatal("expected deletion assertion to fail")
+		}
+		if entries := r.Ledger().Entries(); len(entries) != 1 || entries[0].Name != "sb-1" {
+			t.Fatalf("expected failed assertion to retain cleanup resource, got %+v", entries)
+		}
+	})
 }
 
 // TestRunnerRegistersResourceFromSameStepCapture covers the common real-world
@@ -1549,6 +1689,69 @@ func TestRunnerStdinIsPassedToStep(t *testing.T) {
 	if err := r.RunCase(c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
+}
+
+func TestRunnerNegativeContentAssertions(t *testing.T) {
+	bin := stubScript(t)
+
+	t.Run("pass when forbidden content is absent", func(t *testing.T) {
+		r, err := New(Options{BinPath: bin, RunDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{
+			Name: "negative content passes",
+			Steps: []Step{{
+				Name: "clean output",
+				Cmd:  []string{"0", "safe stdout", "safe stderr"},
+				Expect: Expectation{
+					StdoutNotContains: "secret",
+					StderrNotContains: "secret",
+				},
+			}},
+		}
+		if err := r.RunCase(c); err != nil {
+			t.Fatalf("RunCase: %v", err)
+		}
+	})
+
+	t.Run("fail when forbidden stdout is present", func(t *testing.T) {
+		r, err := New(Options{BinPath: bin, RunDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{
+			Name: "negative stdout fails",
+			Steps: []Step{{
+				Name:   "leaked stdout",
+				Cmd:    []string{"0", "contains secret", ""},
+				Expect: Expectation{StdoutNotContains: "secret"},
+			}},
+		}
+		err = r.RunCase(c)
+		if err == nil || !strings.Contains(err.Error(), "stdout_not_contains") {
+			t.Fatalf("expected stdout_not_contains failure, got %v", err)
+		}
+	})
+
+	t.Run("fail when forbidden stderr is present", func(t *testing.T) {
+		r, err := New(Options{BinPath: bin, RunDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{
+			Name: "negative stderr fails",
+			Steps: []Step{{
+				Name:   "leaked stderr",
+				Cmd:    []string{"0", "", "contains secret"},
+				Expect: Expectation{StderrNotContains: "secret"},
+			}},
+		}
+		err = r.RunCase(c)
+		if err == nil || !strings.Contains(err.Error(), "stderr_not_contains") {
+			t.Fatalf("expected stderr_not_contains failure, got %v", err)
+		}
+	})
 }
 
 func TestRunnerStateDirInjectedIntoEnv(t *testing.T) {

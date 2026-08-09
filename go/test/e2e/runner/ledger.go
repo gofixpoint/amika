@@ -74,6 +74,31 @@ func (l *Ledger) Append(entry Entry) error {
 	return l.flushLocked()
 }
 
+// Remove deletes the most recently registered resource matching resourceType
+// and name, then flushes the updated ledger. It is used after a case verifies
+// that an operation consumed a previously registered resource. If the flush
+// fails, the in-memory ledger is restored so cleanup protection is retained.
+func (l *Ledger) Remove(resourceType, name string) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		if l.entries[i].Type != resourceType || l.entries[i].Name != name {
+			continue
+		}
+		original := l.entries
+		updated := make([]Entry, 0, len(original)-1)
+		updated = append(updated, original[:i]...)
+		updated = append(updated, original[i+1:]...)
+		l.entries = updated
+		if err := l.flushLocked(); err != nil {
+			l.entries = original
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // Entries returns a copy of the entries recorded so far, in registration
 // order.
 func (l *Ledger) Entries() []Entry {
