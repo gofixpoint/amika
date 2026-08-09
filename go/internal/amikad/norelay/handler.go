@@ -71,10 +71,14 @@ type Handler struct {
 	streams   map[Stream]struct{}
 }
 
+// DefaultMaxConnections is the connection cap used when Config.MaxConnections
+// is left unset.
+const DefaultMaxConnections = 64
+
 // NewHandler creates a no-relay handler without opening any listener.
 func NewHandler(config Config, deps Dependencies) *Handler {
 	if config.MaxConnections <= 0 {
-		config.MaxConnections = 64
+		config.MaxConnections = DefaultMaxConnections
 	}
 	if config.SSHDAddress == "" {
 		config.SSHDAddress = "127.0.0.1:22"

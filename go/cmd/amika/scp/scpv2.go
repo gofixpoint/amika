@@ -7,10 +7,11 @@ package scpcmd
 // The transport difference is entirely in how a sandbox reference becomes an
 // scp operand. v1 resolves a sandbox to a concrete host/port/user and spells
 // out connection options on the command line; v2 resolves it to its
-// `<name>.<id>.amika` alias, whose User, IdentityFile, host-key policy, and
-// ProxyCommand all come from the managed `Host *.amika` block in
-// ~/.ssh/amika.conf. So there are no connection options to prepend here — the
-// operands are rewritten and system scp is handed the rest unchanged.
+// `<name>.<id>.<environment>.amika` alias (ssh.BuildSessionAlias), whose
+// User, IdentityFile, host-key policy, and ProxyCommand all come from the
+// managed `Host *.amika` block in ~/.ssh/amika.conf. So there are no
+// connection options to prepend here — the operands are rewritten and system
+// scp is handed the rest unchanged.
 
 import (
 	"fmt"
@@ -160,10 +161,10 @@ Operands take the same forms as "amika scp":
                                     "/" in NAME must be percent-encoded as %2F
   scp://[user@]host[:port][/path]   a path on an arbitrary SSH host
 
-Each sandbox resolves to its "<name>.<id>.amika" alias, and the connection
-settings come from the managed block in ~/.ssh/amika.conf, so a fresh session
-is created and the host key re-pinned per dial. Requires an SSH identity from
-"amika secret ssh-keygen".
+Each sandbox resolves to its "<name>.<id>.<environment>.amika" alias, and the
+connection settings come from the managed block in ~/.ssh/amika.conf, so a
+fresh session is created and the host key re-pinned per dial. Requires an SSH
+identity from "amika secret ssh-keygen".
 
 Examples:
   # Upload a file into the sandbox home

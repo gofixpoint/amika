@@ -7,7 +7,14 @@ import (
 )
 
 // stubResolver resolves any sandbox name to a deterministic v2 alias and
-// records the names it was asked for.
+// records the names it was asked for. The fixture alias below is a stand-in
+// for exercising buildSCPV2Invocation's operand rewriting in isolation, not a
+// copy of the real format: production aliases are
+// "<name>.<id>.<environment>.amika" (ssh.BuildSessionAlias), where
+// <environment> is the AMIKA_API_URL host reformatted to [a-z0-9-]
+// (config.EnvironmentSlug). That third segment landed after this test was
+// written; it doesn't need to be reflected here since nothing in this file
+// depends on the resolver's output shape, only on where it gets substituted.
 func stubResolver(seen *[]string) aliasResolver {
 	return func(name string) (string, error) {
 		if name == "missing" {

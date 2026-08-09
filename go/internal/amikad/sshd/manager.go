@@ -49,10 +49,22 @@ type Paths struct {
 	Port int
 }
 
-// DefaultPaths returns the production paths owned by amikad.
+// EnvManagedUser overrides the account whose UID/GID own the managed sshd's
+// authorized_keys file, and whose home directory it lives under. Empty (the
+// default) uses "amika". This is a single-user override, not multi-user
+// support: everything under DefaultPaths still assumes exactly one managed
+// account.
+const EnvManagedUser = "AMIKA_SSHD_USER"
+
+// DefaultPaths returns the production paths owned by amikad, for the managed
+// user named by EnvManagedUser (default "amika").
 func DefaultPaths() Paths {
+	username := os.Getenv(EnvManagedUser)
+	if username == "" {
+		username = "amika"
+	}
 	uid, gid := -1, -1
-	if account, err := user.Lookup("amika"); err == nil {
+	if account, err := user.Lookup(username); err == nil {
 		uid, _ = strconv.Atoi(account.Uid)
 		gid, _ = strconv.Atoi(account.Gid)
 	}
@@ -60,7 +72,7 @@ func DefaultPaths() Paths {
 		Config:            "/var/lib/amikad/sshd_config",
 		HostPrivateKey:    "/var/lib/amikad/ssh_host_ed25519_key",
 		HostPublicKey:     "/var/lib/amikad/ssh_host_ed25519_key.pub",
-		AuthorizedKeys:    "/home/amika/.ssh/authorized_keys",
+		AuthorizedKeys:    "/home/" + username + "/.ssh/authorized_keys",
 		PID:               "/var/lib/amikad/sshd.pid",
 		RuntimeDirectory:  "/run/sshd",
 		AuthorizedKeysUID: uid,

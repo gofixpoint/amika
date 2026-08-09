@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/gofixpoint/amika/go/internal/amikad/norelay"
 	"github.com/gofixpoint/amika/go/internal/buildmeta"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +23,9 @@ type ServeOptions struct {
 	Port        int
 	BetaNoRelay bool
 	Background  bool
+	// MaxConnections bounds concurrent no-relay bridge sessions. Values <= 0
+	// fall back to norelay.DefaultMaxConnections (see norelay.NewHandler).
+	MaxConnections int
 }
 
 // SetupSSHDOptions controls whether managed setup may replace an existing
@@ -168,6 +172,12 @@ func NewCommand(operations Operations) *cobra.Command {
 		"bg",
 		false,
 		"start in the background and wait until healthy",
+	)
+	serve.Flags().IntVar(
+		&serveOptions.MaxConnections,
+		"max-connections",
+		norelay.DefaultMaxConnections,
+		"maximum concurrent no-relay bridge sessions",
 	)
 
 	root.AddCommand(setup, hostKey, authorizedKeys, connectToken, serve)

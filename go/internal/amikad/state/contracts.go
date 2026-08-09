@@ -1,4 +1,30 @@
 // Package state owns amikad's sensitive files and scrub manifest.
+//
+// The contract with the amika-mono control plane is register-before-write:
+// WriteAndRegister and WriteAndRegisterOwned durably append a sensitive
+// file's absolute path to the manifest before installing the file itself, so
+// a consumer that reads the manifest and removes every path it lists can
+// never miss a file this package has fully written. Worst case the consumer
+// deletes a path that turned out not to be needed; it can never skip one
+// that is.
+//
+// The manifest is a JSON array of absolute file path strings, e.g.
+// `["/home/amika/.ssh/authorized_keys", "/var/lib/amikad/connect-token"]`,
+// at a fixed path (production: /var/lib/amikad/injected-paths.json — under
+// /var/lib per the Filesystem Hierarchy Standard, since this is variable
+// runtime state rather than config). Entries must be clean, absolute,
+// non-duplicate, and never equal to the manifest path itself; readManifest
+// rejects a manifest violating any of those (ErrInvalidManifest).
+//
+// Before capturing a sandbox into a snapshot, the amika-mono control plane
+// scrubs every path the manifest lists — running as root, since some
+// registered paths (e.g. the SSH host key) are root-owned — then scrubs the
+// manifest file itself last. Scrub verification fails closed: if the control
+// plane cannot confirm a listed path is gone, snapshot capture aborts rather
+// than let a credential ride along into the snapshot. See the ssh-relay
+// repo's specs/019-sandbox-ssh-stream-relay.d/no-relay-websocket-ssh.md
+// ("Injection must register its own cleanup") and amika-mono's
+// devdocs/sandbox-secret-scrubbing.md for the full mechanism.
 package state
 
 import (

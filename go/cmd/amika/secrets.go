@@ -1,5 +1,8 @@
 package main
 
+// TODO(KAPRO-747): this file is too big; split it up under go/cmd/amika/secrets/...
+// as a standalone commit unrelated to other in-flight work.
+
 import (
 	"bufio"
 	"encoding/json"

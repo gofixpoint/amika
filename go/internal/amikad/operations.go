@@ -146,6 +146,11 @@ func (o *DaemonOperations) SetConnectToken(ctx context.Context, input io.Reader)
 	if !norelay.IsCanonicalToken(token) {
 		return ErrUnsafeConnectToken
 	}
+	// Registration here is the "find" half of scrubbing: the control plane's
+	// snapshot-capture scrub reads the manifest this call appends to, removes
+	// every absolute path it lists, and fails snapshot capture closed if it
+	// can't confirm a path is gone. See package state's doc comment for the
+	// manifest format and the full mechanism.
 	return o.store.WriteAndRegister(ctx, o.tokenPath, strings.NewReader(token), 0o600)
 }
 
@@ -166,7 +171,7 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	}
 
 	handler := norelay.NewHandler(
-		norelay.Config{MaxConnections: 64, SSHDAddress: o.sshd.LoopbackAddress()},
+		norelay.Config{MaxConnections: options.MaxConnections, SSHDAddress: o.sshd.LoopbackAddress()},
 		norelay.Dependencies{
 			Verifier: o.verifier,
 			Upgrader: norelay.WebSocketUpgrader{},
@@ -176,6 +181,10 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	)
 	mux := http.NewServeMux()
 	mux.Handle(norelay.SSHSessionsPath, handler)
+	// "healthz" follows the Kubernetes/Google convention for a liveness
+	// endpoint (distinct from an app-level "/health" that might carry richer
+	// status); the control plane's own e2e checks already probe this exact
+	// path, so renaming it would be a breaking change for no functional gain.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")

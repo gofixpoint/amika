@@ -1,3 +1,15 @@
+// This file's coverage of Store's fail-closed guarantees: registration
+// ordering (TestStoreRegistersBeforeWritingSensitiveFile,
+// TestStoreDoesNotWriteSecretWhenManifestWriteFails,
+// TestStoreLeavesRegistrationWhenSensitiveWriteFails), unsafe target paths
+// (TestStoreRejectsUnsafePaths), and concurrent manifest updates
+// (TestStoreSerializesConcurrentManifestUpdates,
+// TestOSStoresSerializeManifestAcrossInstances). Everything below adds
+// adversarial cases against a corrupt or hostile on-disk manifest, a
+// symlinked ancestor directory, and the write-parameter bounds
+// (TestStoreRejectsCorruptManifest, TestStoreRejectsUnsafeWriteParameters,
+// TestStoreFailsClosedOnCancelledContext, plus a symlinked-parent subtest in
+// TestStoreRejectsUnsafePaths).
 package state
 
 import (
@@ -257,6 +269,131 @@ func TestStoreRejectsUnsafePaths(t *testing.T) {
 			t.Fatalf("symlink path caused writes: %#v", files.writes)
 		}
 	})
+
+	t.Run("symlinked ancestor directory", func(t *testing.T) {
+		// rejectSymlinkComponents walks every ancestor, not just the leaf, so
+		// a symlinked parent (e.g. an attacker-controlled directory swapped
+		// in ahead of the write) must be rejected too, not just a symlinked
+		// leaf file.
+		files := newMemoryFiles()
+		linkedParent := filepath.Join(dir, "linked-dir")
+		files.symlinks[linkedParent] = true
+		tokenPath := filepath.Join(linkedParent, "token")
+		store := NewStore(manifestPath, files)
+		err := store.WriteAndRegister(context.Background(), tokenPath, strings.NewReader("token"), 0o600)
+		if !errors.Is(err, ErrSymlinkPath) {
+			t.Fatalf("error = %v, want ErrSymlinkPath", err)
+		}
+		if len(files.writes) != 0 {
+			t.Fatalf("symlinked ancestor caused writes: %#v", files.writes)
+		}
+	})
+}
+
+func TestStoreRejectsCorruptManifest(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "injected-paths.json")
+	tokenPath := filepath.Join(dir, "connect-token")
+
+	// Each case seeds an on-disk manifest a hostile or corrupted write could
+	// have produced, then confirms WriteAndRegister fails closed (no writes
+	// at all) instead of trusting or silently repairing it.
+	cases := map[string][]byte{
+		"invalid json":          []byte("not json"),
+		"json null":             []byte("null"),
+		"duplicate entries":     mustMarshal(t, []string{tokenPath, tokenPath}),
+		"relative entry":        mustMarshal(t, []string{"relative/secret"}),
+		"entry equals manifest": mustMarshal(t, []string{manifestPath}),
+	}
+	for name, seed := range cases {
+		t.Run(name, func(t *testing.T) {
+			files := newMemoryFiles()
+			files.contents[manifestPath] = seed
+			store := NewStore(manifestPath, files)
+			err := store.WriteAndRegister(context.Background(), tokenPath, strings.NewReader("token"), 0o600)
+			if !errors.Is(err, ErrInvalidManifest) {
+				t.Fatalf("error = %v, want ErrInvalidManifest", err)
+			}
+			if len(files.writes) != 0 {
+				t.Fatalf("corrupt manifest caused writes: %#v", files.writes)
+			}
+		})
+	}
+}
+
+func TestStoreRejectsUnsafeWriteParameters(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "injected-paths.json")
+	tokenPath := filepath.Join(dir, "connect-token")
+
+	t.Run("mode carries non-permission bits", func(t *testing.T) {
+		files := newMemoryFiles()
+		store := NewStore(manifestPath, files)
+		err := store.WriteAndRegister(
+			context.Background(), tokenPath, strings.NewReader("token"), 0o600|fs.ModeSetuid,
+		)
+		if !errors.Is(err, ErrInvalidPath) {
+			t.Fatalf("error = %v, want ErrInvalidPath", err)
+		}
+		if len(files.writes) != 0 {
+			t.Fatalf("unsafe mode caused writes: %#v", files.writes)
+		}
+	})
+
+	t.Run("ownership below sentinel", func(t *testing.T) {
+		files := newMemoryFiles()
+		store := NewStore(manifestPath, files)
+		err := store.WriteAndRegisterOwned(
+			context.Background(), tokenPath, strings.NewReader("token"), 0o600, Ownership{UID: -2, GID: 0},
+		)
+		if !errors.Is(err, ErrInvalidPath) {
+			t.Fatalf("error = %v, want ErrInvalidPath", err)
+		}
+		if len(files.writes) != 0 {
+			t.Fatalf("unsafe ownership caused writes: %#v", files.writes)
+		}
+	})
+
+	t.Run("content exceeds size limit", func(t *testing.T) {
+		files := newMemoryFiles()
+		store := NewStore(manifestPath, files)
+		oversized := strings.NewReader(strings.Repeat("a", maxSensitiveFileBytes+1))
+		err := store.WriteAndRegister(context.Background(), tokenPath, oversized, 0o600)
+		if !errors.Is(err, ErrSensitiveFileTooLarge) {
+			t.Fatalf("error = %v, want ErrSensitiveFileTooLarge", err)
+		}
+		if len(files.writes) != 0 {
+			t.Fatalf("oversized content caused writes: %#v", files.writes)
+		}
+	})
+}
+
+func TestStoreFailsClosedOnCancelledContext(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "injected-paths.json")
+	tokenPath := filepath.Join(dir, "connect-token")
+	files := newMemoryFiles()
+	store := NewStore(manifestPath, files)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := store.WriteAndRegister(ctx, tokenPath, strings.NewReader("token"), 0o600)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if len(files.writes) != 0 {
+		t.Fatalf("cancelled context caused writes: %#v", files.writes)
+	}
+}
+
+func mustMarshal(t *testing.T, paths []string) []byte {
+	t.Helper()
+	data, err := json.Marshal(paths)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return data
 }
 
 func TestStoreSerializesConcurrentManifestUpdates(t *testing.T) {

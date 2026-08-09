@@ -13,10 +13,9 @@ var plumbingCmd = &cobra.Command{
 }
 
 var sshStdioProxyCmd = &cobra.Command{
-	Use:    "ssh-stdio-proxy <host>",
-	Short:  "Proxy standard IO to one SSH transport",
-	Hidden: true,
-	Args:   cobra.ExactArgs(1),
+	Use:   "ssh-stdio-proxy <host>",
+	Short: "Proxy standard IO to one SSH transport",
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return ssh.ProxySession(
 			cmd.Context(),
