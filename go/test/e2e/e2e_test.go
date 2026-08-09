@@ -45,6 +45,28 @@ var credentialEnvVars = map[string]bool{
 	"AMIKA_API_URL": true,
 }
 
+// TestE2ECaseFilesLoad validates every case file without executing commands.
+// It stays outside the E2E environment gates so ordinary CI catches malformed
+// YAML and unknown fields even in real-API cases that are normally skipped.
+func TestE2ECaseFilesLoad(t *testing.T) {
+	moduleRoot := testutil.FindModuleRoot(t)
+	caseFiles, err := runner.DiscoverCases(filepath.Join(moduleRoot, "test", "e2e", "cases"))
+	if err != nil {
+		t.Fatalf("discover cases: %v", err)
+	}
+	if len(caseFiles) == 0 {
+		t.Fatal("no E2E case files found")
+	}
+	for _, caseFile := range caseFiles {
+		caseFile := caseFile
+		t.Run(filepath.Base(caseFile), func(t *testing.T) {
+			if _, err := runner.LoadCase(caseFile); err != nil {
+				t.Fatalf("load case: %v", err)
+			}
+		})
+	}
+}
+
 // baseEnvFor returns the base environment for a case's steps. API cases get
 // the process environment unchanged (nil defers to os.Environ() in the
 // runner). Offline cases get os.Environ() with credential vars removed.

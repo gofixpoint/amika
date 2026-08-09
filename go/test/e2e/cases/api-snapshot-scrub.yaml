@@ -1,0 +1,146 @@
+name: scrub a snapshot without breaking the restored environment
+# This real-API case writes only test sentinels into a throwaway sandbox. It
+# covers every declared credential target, service environment metadata, git
+# remote token removal, and restoration of `/etc/environment` from its clean
+# baseline. Assertions look for the old sentinels rather than requiring paths
+# to stay absent, because fresh provisioning may legitimately recreate them.
+steps:
+  - name: create a source sandbox
+    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+    capture:
+      source_sandbox: $.name
+    resource:
+      type: sandbox
+      name: "{{source_sandbox}}"
+      cleanup: [sandbox, delete, "{{source_sandbox}}", --remote, --force, -o, json]
+
+  - name: inject scrub sentinels into the source sandbox
+    cmd:
+      - sandbox
+      - ssh
+      - "{{source_sandbox}}"
+      - --
+      - sh
+      - -lc
+      - |
+        set -eu
+        sentinel='snapshot-scrub-e2e-secret'
+        baseline='SNAPSHOT_SCRUB_E2E_BASELINE=preserved'
+
+        mkdir -p \
+          "$HOME/.config/gh" \
+          "$HOME/.cache/amika" \
+          "$HOME/.claude" \
+          "$HOME/.codex" \
+          "$HOME/.local/share/opencode" \
+          "$HOME/workspace/snapshot-scrub-e2e/.git"
+        printf '%s\n' "https://${sentinel}@github.com" > "$HOME/.git-credentials"
+        printf '%s\n' "$sentinel" > "$HOME/.config/gh/hosts.yml"
+        printf '%s\n' "$sentinel" > "$HOME/.cache/amika/github-token"
+        printf '%s\n' "$sentinel" > "$HOME/.claude/snapshot-scrub-e2e-sentinel"
+        printf '%s\n' "$sentinel" > "$HOME/.codex/snapshot-scrub-e2e-sentinel"
+        printf '%s\n' "$sentinel" > "$HOME/.local/share/opencode/snapshot-scrub-e2e-sentinel"
+        printf '%s\n' \
+          '[remote "origin"]' \
+          "  url = https://x-access-token:${sentinel}@github.com/gofixpoint/amika.git" \
+          > "$HOME/workspace/snapshot-scrub-e2e/.git/config"
+
+        printf '%s\n' "$baseline" | sudo tee -a /usr/local/etc/amikad/environment.base >/dev/null
+        printf '%s\n' "$baseline" | sudo tee -a /etc/environment >/dev/null
+        sudo tee -a /etc/environment >/dev/null <<'EOF'
+        # >>> AMIKA INJECTED ENV >>>
+        SNAPSHOT_SCRUB_E2E_TOKEN='snapshot-scrub-e2e-secret'
+        # <<< AMIKA INJECTED ENV <<<
+        EOF
+        printf '{"sentinel":"%s"}\n' "$sentinel" \
+          | sudo tee /usr/local/etc/amikad/service-env-vars.json >/dev/null
+
+        grep -q "$sentinel" "$HOME/.git-credentials"
+        grep -q "$sentinel" "$HOME/.config/gh/hosts.yml"
+        grep -q "$sentinel" "$HOME/.cache/amika/github-token"
+        grep -q "$sentinel" "$HOME/.claude/snapshot-scrub-e2e-sentinel"
+        grep -q "$sentinel" "$HOME/.codex/snapshot-scrub-e2e-sentinel"
+        grep -q "$sentinel" "$HOME/.local/share/opencode/snapshot-scrub-e2e-sentinel"
+        grep -q "$sentinel" "$HOME/workspace/snapshot-scrub-e2e/.git/config"
+        sudo grep -q "$sentinel" /usr/local/etc/amikad/service-env-vars.json
+        grep -q 'SNAPSHOT_SCRUB_E2E_TOKEN' /etc/environment
+        grep -q "$baseline" /etc/environment
+    expect:
+      exit: 0
+
+  - name: capture a scrubbed snapshot
+    cmd: [snapshot, create, --no-interactive, --mode, scrub_and_delete, --name, "e2e-scrub-{{source_sandbox}}", --sandbox, "{{source_sandbox}}", -o, json]
+    expect:
+      exit: 0
+      schema: SandboxSnapshot
+      stdout_json:
+        snapshot: "@string"
+        state: active
+    capture:
+      snapshot_ref: $.snapshot
+    resource:
+      type: snapshot
+      name: "{{snapshot_ref}}"
+      cleanup: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
+
+  - name: confirm scrub and delete removed the source sandbox
+    cmd: [sandbox, list, --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_not_contains: "{{source_sandbox}}"
+    release_resource:
+      type: sandbox
+      name: "{{source_sandbox}}"
+
+  - name: fork a sandbox from the scrubbed snapshot
+    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --snapshot, "{{snapshot_ref}}", --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+    capture:
+      restored_sandbox: $.name
+    resource:
+      type: sandbox
+      name: "{{restored_sandbox}}"
+      cleanup: [sandbox, delete, "{{restored_sandbox}}", --remote, --force, -o, json]
+
+  - name: verify the scrubbed snapshot restores a clean usable environment
+    cmd:
+      - sandbox
+      - ssh
+      - "{{restored_sandbox}}"
+      - --
+      - sh
+      - -lc
+      - |
+        set -eu
+        sentinel='snapshot-scrub-e2e-secret'
+        baseline='SNAPSHOT_SCRUB_E2E_BASELINE=preserved'
+
+        if test -e "$HOME/.git-credentials"; then ! grep -q "$sentinel" "$HOME/.git-credentials"; fi
+        if test -e "$HOME/.config/gh/hosts.yml"; then ! grep -q "$sentinel" "$HOME/.config/gh/hosts.yml"; fi
+        if test -e "$HOME/.cache/amika/github-token"; then ! grep -q "$sentinel" "$HOME/.cache/amika/github-token"; fi
+        test ! -e "$HOME/.claude/snapshot-scrub-e2e-sentinel"
+        test ! -e "$HOME/.codex/snapshot-scrub-e2e-sentinel"
+        test ! -e "$HOME/.local/share/opencode/snapshot-scrub-e2e-sentinel"
+
+        test -f "$HOME/workspace/snapshot-scrub-e2e/.git/config"
+        ! grep -q "$sentinel" "$HOME/workspace/snapshot-scrub-e2e/.git/config"
+        test -f /etc/environment
+        test -f /usr/local/etc/amikad/environment.base
+        grep -q "$baseline" /etc/environment
+        sudo grep -q "$baseline" /usr/local/etc/amikad/environment.base
+        ! grep -q 'SNAPSHOT_SCRUB_E2E_TOKEN' /etc/environment
+        if sudo test -e /usr/local/etc/amikad/service-env-vars.json; then
+          ! sudo grep -q "$sentinel" /usr/local/etc/amikad/service-env-vars.json
+        fi
+        zsh -lc true
+    expect:
+      exit: 0

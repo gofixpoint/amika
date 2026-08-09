@@ -54,6 +54,9 @@ type Step struct {
 	// Resource, if set, registers a resource the step created so it is
 	// cleaned up after the run.
 	Resource *Resource `yaml:"resource"`
+	// ReleaseResource, if set, removes a previously registered resource from
+	// the cleanup ledger after this step and all of its assertions succeed.
+	ReleaseResource *ResourceRef `yaml:"release_resource"`
 }
 
 // Expectation describes the assertions to make about a step's result. All
@@ -69,8 +72,12 @@ type Expectation struct {
 	StdoutJSON any `yaml:"stdout_json"`
 	// StdoutContains, if set, must be a substring of stdout.
 	StdoutContains string `yaml:"stdout_contains"`
+	// StdoutNotContains, if set, must not be a substring of stdout.
+	StdoutNotContains string `yaml:"stdout_not_contains"`
 	// StderrContains, if set, must be a substring of stderr.
 	StderrContains string `yaml:"stderr_contains"`
+	// StderrNotContains, if set, must not be a substring of stderr.
+	StderrNotContains string `yaml:"stderr_not_contains"`
 	// Schema, if set, names a components.schemas.<Schema> definition in
 	// the OpenAPI document that stdout, parsed as JSON, must validate
 	// against.
@@ -109,6 +116,13 @@ type Resource struct {
 	// run may not have created could delete one owned by another run. Enable it
 	// only for a command known to create the resource before it can fail.
 	RegisterOnFailure bool `yaml:"register_on_failure"`
+}
+
+// ResourceRef identifies a previously registered resource that a successful
+// step has verified no longer exists.
+type ResourceRef struct {
+	Type string `yaml:"type"`
+	Name string `yaml:"name"`
 }
 
 // LoadCase reads and parses a case file at path.
@@ -193,6 +207,14 @@ func LoadCase(path string) (*Case, error) {
 			}
 			if len(step.Resource.Cleanup) == 0 {
 				return nil, fmt.Errorf("case %s: step %d (%s): resource requires a non-empty \"cleanup\" argv", path, i+1, step.Name)
+			}
+		}
+		if step.ReleaseResource != nil {
+			if step.ReleaseResource.Type == "" {
+				return nil, fmt.Errorf("case %s: step %d (%s): release_resource requires a \"type\"", path, i+1, step.Name)
+			}
+			if step.ReleaseResource.Name == "" {
+				return nil, fmt.Errorf("case %s: step %d (%s): release_resource requires a \"name\"", path, i+1, step.Name)
 			}
 		}
 	}
@@ -428,7 +450,10 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 		return transcriptErr
 	}
 
-	return r.checkContent(step, parsed, stdout, stderr)
+	if err := r.checkContent(step, parsed, stdout, stderr); err != nil {
+		return err
+	}
+	return r.releaseResource(step)
 }
 
 // execStep runs step.Cmd through the binary under test and returns its
@@ -572,8 +597,14 @@ func (r *Runner) checkContent(step Step, parsed any, stdout, stderr []byte) erro
 	if step.Expect.StdoutContains != "" && !strings.Contains(string(stdout), step.Expect.StdoutContains) {
 		return fmt.Errorf("stdout_contains: %q not found in stdout:\n%s", step.Expect.StdoutContains, stdout)
 	}
+	if step.Expect.StdoutNotContains != "" && strings.Contains(string(stdout), step.Expect.StdoutNotContains) {
+		return fmt.Errorf("stdout_not_contains: %q unexpectedly found in stdout:\n%s", step.Expect.StdoutNotContains, stdout)
+	}
 	if step.Expect.StderrContains != "" && !strings.Contains(string(stderr), step.Expect.StderrContains) {
 		return fmt.Errorf("stderr_contains: %q not found in stderr:\n%s", step.Expect.StderrContains, stderr)
+	}
+	if step.Expect.StderrNotContains != "" && strings.Contains(string(stderr), step.Expect.StderrNotContains) {
+		return fmt.Errorf("stderr_not_contains: %q unexpectedly found in stderr:\n%s", step.Expect.StderrNotContains, stderr)
 	}
 	if step.Expect.hasStdoutJSON() {
 		if err := Match(step.Expect.StdoutJSON, parsed); err != nil {
@@ -651,6 +682,20 @@ func (r *Runner) registerResource(step Step) error {
 	}
 	if err := r.ledger.Append(entry); err != nil {
 		return fmt.Errorf("register resource %q: %w", name, err)
+	}
+	return nil
+}
+
+func (r *Runner) releaseResource(step Step) error {
+	if step.ReleaseResource == nil {
+		return nil
+	}
+	removed, err := r.ledger.Remove(step.ReleaseResource.Type, step.ReleaseResource.Name)
+	if err != nil {
+		return fmt.Errorf("release resource %s %q: %w", step.ReleaseResource.Type, step.ReleaseResource.Name, err)
+	}
+	if !removed {
+		return fmt.Errorf("release resource %s %q: no matching resource is registered", step.ReleaseResource.Type, step.ReleaseResource.Name)
 	}
 	return nil
 }
@@ -795,6 +840,18 @@ func (r *Runner) substituteStep(step Step) (Step, error) {
 	// (e.g. the id of the resource just created), which is only known after
 	// the command runs and captureVars populates r.vars. registerResource
 	// templates the resource block afterward, once those vars exist.
+	if step.ReleaseResource != nil {
+		release := *step.ReleaseResource
+		release.Type, err = substituteString(release.Type, r.vars)
+		if err != nil {
+			return Step{}, fmt.Errorf("release_resource.type: %w", err)
+		}
+		release.Name, err = substituteString(release.Name, r.vars)
+		if err != nil {
+			return Step{}, fmt.Errorf("release_resource.name: %w", err)
+		}
+		out.ReleaseResource = &release
+	}
 
 	stdoutContains, err := substituteString(step.Expect.StdoutContains, r.vars)
 	if err != nil {
@@ -802,11 +859,23 @@ func (r *Runner) substituteStep(step Step) (Step, error) {
 	}
 	out.Expect.StdoutContains = stdoutContains
 
+	stdoutNotContains, err := substituteString(step.Expect.StdoutNotContains, r.vars)
+	if err != nil {
+		return Step{}, fmt.Errorf("expect.stdout_not_contains: %w", err)
+	}
+	out.Expect.StdoutNotContains = stdoutNotContains
+
 	stderrContains, err := substituteString(step.Expect.StderrContains, r.vars)
 	if err != nil {
 		return Step{}, fmt.Errorf("expect.stderr_contains: %w", err)
 	}
 	out.Expect.StderrContains = stderrContains
+
+	stderrNotContains, err := substituteString(step.Expect.StderrNotContains, r.vars)
+	if err != nil {
+		return Step{}, fmt.Errorf("expect.stderr_not_contains: %w", err)
+	}
+	out.Expect.StderrNotContains = stderrNotContains
 
 	if step.Expect.StdoutJSON != nil {
 		v, err := substituteAny(step.Expect.StdoutJSON, r.vars)

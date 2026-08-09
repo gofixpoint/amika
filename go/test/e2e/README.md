@@ -70,7 +70,9 @@ steps:
         name: "@string"
         state: "@oneof: active, running, started"
       stdout_contains: "substring"                          # optional
+      stdout_not_contains: "substring"                      # optional
       stderr_contains: "substring"                          # optional
+      stderr_not_contains: "substring"                      # optional
       schema: "SandboxResponse"                             # optional: components.schemas.<name>
     capture:                                                # optional: extract vars for later steps
       sandbox_name: $.name
@@ -79,16 +81,27 @@ steps:
       name: "{{sandbox_name}}"
       cleanup: [sandbox, delete, "{{sandbox_name}}", --force, -o, json]
       register_on_failure: false                            # optional: set true to register even on an unexpected exit (default false)
+    release_resource:                                      # optional: retire a consumed resource after this step passes
+      type: sandbox
+      name: "{{sandbox_name}}"
 ```
 
 Every field except `name` and `cmd` is optional on a step. `name` is
 required at both the case and step level; every step needs a non-empty
 `cmd`. `LoadCase` validates this before running anything.
 
+`release_resource` removes a matching prior `resource` entry from the cleanup
+ledger only after the command and every assertion succeed. Use it when the
+operation under test consumes a resource, such as `snapshot create --mode
+scrub_and_delete` deleting its source sandbox. If the step fails, the ledger
+entry remains available for best-effort cleanup.
+
 ### Variable substitution
 
 Any `{{var}}` placeholder in `cmd`, `stdin`, `env` values, `resource.name`,
-`resource.cleanup`, `expect.stdout_contains`, `expect.stderr_contains`, and
+`resource.cleanup`, `release_resource.type`, `release_resource.name`,
+`expect.stdout_contains`, `expect.stdout_not_contains`,
+`expect.stderr_contains`, `expect.stderr_not_contains`, and
 (recursively, through nested maps/lists) `expect.stdout_json` is replaced
 with a previously `capture`d value. Referencing a variable that was never
 captured is an error: the step fails immediately rather than sending a
