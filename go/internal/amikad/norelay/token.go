@@ -1,5 +1,28 @@
 package norelay
 
+// This file implements only the sandbox-side verification half of the
+// no-relay connect-token system. The full round trip:
+//
+//  1. The control plane (js/coding-agents in the ssh-relay repo) generates a
+//     random 32-byte token per rotation, base64url-encodes it, and delivers
+//     the plaintext to this sandbox over the provider's exec/stdin channel by
+//     invoking `amikad connect-token set` — never a CLI argument, so it never
+//     appears in `ps` or shell history. See operations.go's SetConnectToken
+//     for the write side.
+//  2. The control plane keeps only a SHA-256 hash of the token (plus a
+//     Vault-encrypted copy) in its own database, and hands the plaintext back
+//     to an authorized CLI caller as a bearer credential scoped to one SSH
+//     session.
+//  3. FileTokenVerifier below re-reads the on-disk token on every WebSocket
+//     upgrade (see handler.go), so a control-plane rotation takes effect
+//     immediately without restarting `amikad serve`. It fails closed on
+//     anything but an owner-only, exact-size, canonically-encoded token file,
+//     and never returns the stored value to callers — only whether a
+//     candidate matches.
+//
+// This file has no knowledge of Vault, orgs, or rotation history; it only
+// answers "does this candidate match what's currently on disk."
+
 import (
 	"crypto/sha256"
 	"crypto/subtle"

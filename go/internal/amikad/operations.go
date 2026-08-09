@@ -1,5 +1,26 @@
 package amikad
 
+// SetConnectToken (below) is the sandbox-side write half of the no-relay
+// connect-token system that norelay.FileTokenVerifier (norelay/token.go)
+// verifies. Round trip, briefly:
+//
+//   - The control plane generates a fresh 32-byte token on every
+//     start/resume, keeps a SHA-256 hash of it (plus a Vault-encrypted copy)
+//     in its own database, and delivers the plaintext here over the
+//     provider's exec/stdin channel by running `amikad connect-token set`.
+//   - SetConnectToken validates the token is canonical (see
+//     norelay.IsCanonicalToken) and writes it at 0600 through the
+//     scrub-registered SensitiveStore, so it is both fail-closed on bad input
+//     and covered by the snapshot-scrubbing manifest.
+//   - Serve refuses to start the bridge at all unless a valid token is
+//     already on disk (verifier.Ready()); once serving, every WebSocket
+//     upgrade re-reads the file, so a later rotation takes effect without a
+//     restart.
+//
+// See the ssh-relay repo's specs/019-sandbox-ssh-stream-relay.d/
+// no-relay-websocket-ssh.md ("Connection flow" / "Resolved decisions") for
+// the control-plane side: generation, hashing, and per-start rotation.
+
 import (
 	"context"
 	"encoding/json"
