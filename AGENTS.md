@@ -45,6 +45,13 @@ The repo also ships `amikalog`, a separate, separately-installed CLI that captur
 This repository is an OSS monorepo. Go sources live under `go/`. Other
 language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
 
+Comments and docstrings here sometimes point at `amika-mono`, Amika's private
+control-plane monorepo, for protocol details owned by that side (e.g. "the
+ssh-relay repo's specs/019-sandbox-ssh-stream-relay.d/...",
+`devdocs/sandbox-secret-scrubbing.md`). This repo's own `specs/` directory is
+numbered separately and covers only OSS-specific specs. Look for `amika-mono`
+checked out as a sibling worktree rather than searching for those paths in this repo.
+
 ## Runtime Dependencies
 
 - **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `claude`) are auto-built on first use from Dockerfiles in `go/internal/sandbox/presets/`.
