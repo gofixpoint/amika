@@ -75,3 +75,21 @@ func DispatchSSH(client *apiclient.Client, name string, extraArgs []string, stdo
 	cmd.Stderr = stderr
 	return cmd.Run()
 }
+
+// ExecSessionSSH replaces the current process with OpenSSH targeting a strict
+// v2 alias whose ProxyCommand fetches a fresh session per dial.
+func ExecSessionSSH(alias string, forcePTY bool, extraArgs []string) error {
+	if _, err := ParseSessionAlias(alias); err != nil {
+		return err
+	}
+	sshArgs := []string{alias}
+	if forcePTY {
+		sshArgs = append([]string{"-t"}, sshArgs...)
+	}
+	sshArgs = append(sshArgs, extraArgs...)
+	sshBin, err := exec.LookPath("ssh")
+	if err != nil {
+		return fmt.Errorf("ssh not found: %w", err)
+	}
+	return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
+}

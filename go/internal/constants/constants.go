@@ -19,4 +19,13 @@ const (
 
 	// OpenCodeWebPort is the container port reserved for the OpenCode web UI.
 	OpenCodeWebPort = 60998
+
+	// ManagedSSHDPort is the loopback port amikad's managed sshd binds.
+	//
+	// Deliberately not 22: base images may ship a socket-activated system
+	// `ssh.socket` bound to the wildcard `*:22`, which also covers
+	// `127.0.0.1:22` and makes the managed sshd fail with EADDRINUSE. Living
+	// in the Amika reserved range keeps it clear of both the system sshd and
+	// the random port allocator, which skips the whole range.
+	ManagedSSHDPort = 60997
 )

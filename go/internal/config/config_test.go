@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
@@ -217,5 +218,101 @@ func TestVolumesStateFile_EnvOverride(t *testing.T) {
 	want := basedir.VolumesStateFileIn(override)
 	if got != want {
 		t.Errorf("VolumesStateFile() = %q, want %q", got, want)
+	}
+}
+
+func TestEnvironmentSlugFoldsHostAndPortIntoOneAliasSegment(t *testing.T) {
+	for _, tc := range []struct {
+		apiURL string
+		want   string
+	}{
+		{"http://localhost:3011", "localhost-3011"},
+		{"https://app.staging-amika.dev", "app-staging-amika-dev"},
+		{"https://app.amika.dev", "app-amika-dev"},
+		{"https://APP.Amika.Dev", "app-amika-dev"},
+		{"http://127.0.0.1:8080/some/path", "127-0-0-1-8080"},
+	} {
+		got, err := environmentSlugFor(tc.apiURL)
+		if err != nil {
+			t.Errorf("environmentSlugFor(%q): %v", tc.apiURL, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("environmentSlugFor(%q) = %q, want %q", tc.apiURL, got, tc.want)
+		}
+	}
+}
+
+// The slug becomes one dot-separated segment of an SSH host alias, so it must
+// never itself contain a dot or the alias would parse with shifted fields.
+func TestEnvironmentSlugNeverContainsADot(t *testing.T) {
+	slug, err := environmentSlugFor("https://a.b.c.d.example.com:9999")
+	if err != nil {
+		t.Fatalf("environmentSlugFor: %v", err)
+	}
+	if strings.Contains(slug, ".") {
+		t.Fatalf("slug %q contains a dot", slug)
+	}
+}
+
+func TestEnvironmentSlugRejectsURLsWithoutAHost(t *testing.T) {
+	for _, apiURL := range []string{"", "not-a-url", "/just/a/path"} {
+		if _, err := environmentSlugFor(apiURL); err == nil {
+			t.Errorf("environmentSlugFor(%q) was accepted", apiURL)
+		}
+	}
+}
+
+func TestBinaryPathDefaultsToTheRunningExecutable(t *testing.T) {
+	t.Setenv(EnvBinaryPath, "")
+
+	got, err := BinaryPath()
+	if err != nil {
+		t.Fatalf("BinaryPath: %v", err)
+	}
+	want, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	if got != want {
+		t.Errorf("BinaryPath() = %q, want %q", got, want)
+	}
+}
+
+// The override exists so a wrapper script can name itself: os.Executable
+// resolves to the real binary and cannot see the wrapper that exported the
+// environment amika needs.
+func TestBinaryPathHonorsTheOverride(t *testing.T) {
+	wrapper := filepath.Join(t.TempDir(), "amika-local")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/bash\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvBinaryPath, wrapper)
+
+	got, err := BinaryPath()
+	if err != nil {
+		t.Fatalf("BinaryPath: %v", err)
+	}
+	if got != wrapper {
+		t.Errorf("BinaryPath() = %q, want %q", got, wrapper)
+	}
+}
+
+// An unusable override is an error rather than a silent fallback: the value is
+// written into a config file that has to work later, so a typo must surface at
+// the command that set it, not as an opaque connection failure.
+func TestBinaryPathRejectsAnUnusableOverride(t *testing.T) {
+	dir := t.TempDir()
+	for name, override := range map[string]string{
+		"relative": "bin/amika",
+		"missing":  filepath.Join(dir, "does-not-exist"),
+		"director": dir,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(EnvBinaryPath, override)
+			if _, err := BinaryPath(); err == nil {
+				t.Errorf("BinaryPath() accepted %q", override)
+			}
+		})
 	}
 }

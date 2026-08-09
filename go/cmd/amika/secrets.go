@@ -1,5 +1,8 @@
 package main
 
+// TODO(KAPRO-747): this file is too big; split it up under go/cmd/amika/secrets/...
+// as a standalone commit unrelated to other in-flight work.
+
 import (
 	"bufio"
 	"encoding/json"
@@ -1011,12 +1014,16 @@ func init() {
 	rootCmd.AddCommand(secretCmd)
 	secretCmd.AddCommand(newSecretExtractCmd())
 	secretCmd.AddCommand(newSecretPushCmd())
+	secretCmd.AddCommand(newSSHKeygenCmd())
 	addProviderCommands(secretCmd, claudeProvider, false)
 	addProviderCommands(secretCmd, codexProvider, false)
 
 	rootCmd.AddCommand(secretsAliasCmd)
 	secretsAliasCmd.AddCommand(newSecretExtractCmd())
 	secretsAliasCmd.AddCommand(newSecretPushCmd())
+	sshKeygenAlias := newSSHKeygenCmd()
+	sshKeygenAlias.Hidden = true
+	secretsAliasCmd.AddCommand(sshKeygenAlias)
 	addProviderCommands(secretsAliasCmd, claudeProvider, true)
 	addProviderCommands(secretsAliasCmd, codexProvider, true)
 }

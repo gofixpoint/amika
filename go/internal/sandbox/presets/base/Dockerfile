@@ -1,6 +1,16 @@
 # Locally, this image is called "amika/base"
 
+FROM golang:1.25.3-bookworm AS amikad-builder
+
+# Build from an immutable reviewed commit until the first standalone amikad
+# release exists. The final image receives only the binary, not the toolchain.
+ARG AMIKAD_SOURCE_REF=9dccbfd32f90834e962cb4070d920a5df3096d7d
+ENV GOBIN=/out
+RUN go install "github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}"
+
 FROM ubuntu:24.04
+
+COPY --from=amikad-builder /out/amikad /usr/local/bin/amikad
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -19,7 +29,16 @@ RUN apt-get update && apt-get install -y \
     nano \
     tmux \
     ncurses-term \
-    && rm -rf /var/lib/apt/lists/*
+    openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    # openssh-server is installed for amikad to configure and supervise as a
+    # loopback-only sshd — never as a system service. On the systemd-backed VM
+    # snapshots the package would otherwise leave socket-activated `ssh.socket`
+    # listening on the wildcard *:22, an inbound SSH surface Amika never
+    # intended. Masking is a symlink to /dev/null, so it applies at build time
+    # without systemd running, and is inert on the plain container presets.
+    && ln -sf /dev/null /etc/systemd/system/ssh.socket \
+    && ln -sf /dev/null /etc/systemd/system/ssh.service
 
 # Install Ghostty terminfo so SSH sessions from Ghostty render correctly.
 # (Alacritty, kitty, foot, etc. come from the ncurses-term package above;
@@ -99,6 +118,12 @@ RUN chmod +x /usr/lib/amikad/pre-setup.sh /usr/lib/amikad/post-setup.sh /usr/lib
 
 # Create user with home directory.
 RUN useradd -m -s /usr/bin/zsh amika
+# OpenSSH refuses every login, including public-key auth, for a shadow-locked
+# account. Give the account a discarded random password hash so it is unlocked
+# without creating a usable password; the managed sshd also disables all
+# password and keyboard-interactive authentication.
+RUN usermod --password '$6$pdjtCb0QP/guq5xn$iwYNhGlawvdfJqqAeGINjgtq.2yFgcFCvRItN.ly3astbptigtMioqI/opqrgmEdHdDQ.sg0/LOWW5vyp9tHz0' amika
+RUN install -d -m 0700 -o amika -g amika /home/amika/.ssh
 RUN usermod -aG sudo amika
 # Let amika user run sudo without a password.
 RUN echo "amika ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

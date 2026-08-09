@@ -2,7 +2,11 @@
 package config
 
 import (
+	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 )
@@ -17,6 +21,9 @@ const (
 	// EnvAPIKey is the environment variable that provides a WorkOS organization API key
 	// for bearer-token authentication. When set, it takes precedence over stored credentials.
 	EnvAPIKey = "AMIKA_API_KEY"
+	// EnvBinaryPath is the environment variable that overrides the amika executable
+	// path recorded in generated configuration that re-invokes amika later.
+	EnvBinaryPath = "AMIKA_BINARY_PATH"
 
 	// DefaultAPIURL is the default remote API base URL.
 	DefaultAPIURL = "https://app.amika.dev"
@@ -38,6 +45,86 @@ func WorkOSClientID() string {
 		return id
 	}
 	return DefaultWorkOSClientID
+}
+
+// BinaryPath returns the absolute path of the amika executable to record in
+// generated configuration that re-invokes amika later, such as the SSH
+// ProxyCommand in ~/.ssh/amika.conf.
+//
+// It defaults to the running executable. AMIKA_BINARY_PATH overrides that,
+// because os.Executable resolves to the real binary and can never see that it
+// was invoked through a wrapper script. A wrapper that exports AMIKA_API_URL
+// (and friends) must name itself here, or the generated config would point at
+// the bare binary and lose the wrapper's environment.
+//
+// An override that is not a usable absolute path is an error rather than a
+// silent fallback: the value ends up in a config file that has to work later,
+// and a typo would otherwise surface as an opaque connection failure.
+func BinaryPath() (string, error) {
+	override := os.Getenv(EnvBinaryPath)
+	if override == "" {
+		path, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("resolve amika executable: %w", err)
+		}
+		return path, nil
+	}
+	if !filepath.IsAbs(override) {
+		return "", fmt.Errorf("%s must be an absolute path, got %q", EnvBinaryPath, override)
+	}
+	path := filepath.Clean(override)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("%s %q: %w", EnvBinaryPath, path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s %q is not a regular file", EnvBinaryPath, path)
+	}
+	return path, nil
+}
+
+// EnvironmentSlug returns a stable identifier for the control plane named by
+// AMIKA_API_URL, safe to embed as one segment of an SSH host alias.
+//
+// Sandboxes only exist on the control plane that created them, so anything
+// keyed by sandbox — host-key pins, session config blocks — has to be keyed by
+// environment too, or a local and a staging sandbox sharing a name would
+// collide. Deriving the slug from the URL rather than a user-supplied label
+// means it cannot drift from the control plane it actually names.
+func EnvironmentSlug() (string, error) {
+	return environmentSlugFor(APIURL())
+}
+
+// environmentSlugFor reduces an API base URL to its host and port, lowercased
+// with every character outside [a-z0-9-] folded to a single dash. Dots included:
+// the slug is one alias segment, and a dot in it would break the parse.
+func environmentSlugFor(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parse %s %q: %w", EnvAPIURL, rawURL, err)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("%s %q has no host", EnvAPIURL, rawURL)
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(parsed.Host) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-':
+			b.WriteRune(r)
+		case b.Len() > 0 && b.String()[b.Len()-1] != '-':
+			b.WriteByte('-')
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		return "", fmt.Errorf("%s %q has no usable host characters", EnvAPIURL, rawURL)
+	}
+	// 63 is the DNS label limit. Real control-plane hosts are far shorter, and
+	// truncating instead would let two environments collapse onto one slug.
+	if len(slug) > 63 {
+		return "", fmt.Errorf("%s %q host is too long for an SSH alias segment", EnvAPIURL, rawURL)
+	}
+	return slug, nil
 }
 
 // StateDir returns the resolved amika state directory path.

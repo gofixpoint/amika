@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/config"
 )
 
 func TestAlias(t *testing.T) {
@@ -330,5 +331,173 @@ func assertPerm(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("perm of %q = %o, want %o", path, got, want)
+	}
+}
+
+// testBinary creates a stand-in amika executable and points AMIKA_BINARY_PATH
+// at it, mirroring how a wrapper script names itself.
+func testBinary(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte("#!/bin/bash\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvBinaryPath, path)
+	return path
+}
+
+func TestConfigureSessionWritesTheCurrentEnvironmentsBlock(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	binary := testBinary(t, "amika-local")
+
+	if err := ConfigureSession(paths, SessionConfig{
+		IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+		KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+	}); err != nil {
+		t.Fatalf("ConfigureSession: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	for _, want := range []string{
+		"Host *.localhost-3011.amika",
+		"ProxyCommand " + binary + " plumbing ssh-stdio-proxy %h",
+	} {
+		if !strings.Contains(string(conf), want) {
+			t.Errorf("amika.conf missing %q:\n%s", want, conf)
+		}
+	}
+}
+
+// Each control plane owns its own sandboxes, so connecting to a second one adds
+// a block rather than replacing the first: aliases for both must keep working.
+func TestConfigureSessionKeepsOneBlockPerEnvironment(t *testing.T) {
+	paths := testPaths(t)
+	session := SessionConfig{
+		IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+		KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+	}
+
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	localBinary := testBinary(t, "amika-local")
+	if err := ConfigureSession(paths, session); err != nil {
+		t.Fatalf("ConfigureSession local: %v", err)
+	}
+
+	t.Setenv(config.EnvAPIURL, "https://app.staging-amika.dev")
+	stagingBinary := testBinary(t, "amika-staging")
+	if err := ConfigureSession(paths, session); err != nil {
+		t.Fatalf("ConfigureSession staging: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	for _, want := range []string{
+		"Host *.localhost-3011.amika",
+		"ProxyCommand " + localBinary + " plumbing ssh-stdio-proxy %h",
+		"Host *.app-staging-amika-dev.amika",
+		"ProxyCommand " + stagingBinary + " plumbing ssh-stdio-proxy %h",
+	} {
+		if !strings.Contains(string(conf), want) {
+			t.Errorf("amika.conf missing %q:\n%s", want, conf)
+		}
+	}
+	// Sorted rendering keeps the file from churning between runs.
+	if strings.Index(string(conf), "*.app-staging-amika-dev.amika") > strings.Index(string(conf), "*.localhost-3011.amika") {
+		t.Errorf("environment blocks are not in sorted order:\n%s", conf)
+	}
+}
+
+// Re-running against the same environment with a different binary replaces that
+// environment's ProxyCommand instead of accumulating a stale one.
+func TestConfigureSessionReplacesAnEnvironmentsStaleProxyCommand(t *testing.T) {
+	paths := testPaths(t)
+	session := SessionConfig{
+		IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+		KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+	}
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+
+	oldBinary := testBinary(t, "amika-old")
+	if err := ConfigureSession(paths, session); err != nil {
+		t.Fatalf("ConfigureSession first: %v", err)
+	}
+	newBinary := testBinary(t, "amika-new")
+	if err := ConfigureSession(paths, session); err != nil {
+		t.Fatalf("ConfigureSession second: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	if strings.Contains(string(conf), oldBinary) {
+		t.Errorf("amika.conf kept the stale ProxyCommand:\n%s", conf)
+	}
+	if !strings.Contains(string(conf), newBinary) {
+		t.Errorf("amika.conf missing the new ProxyCommand:\n%s", conf)
+	}
+	if got := strings.Count(string(conf), "Host *.localhost-3011.amika"); got != 1 {
+		t.Errorf("expected exactly one block for the environment, got %d:\n%s", got, conf)
+	}
+}
+
+// State written before session blocks became per-environment carries a
+// ProxyCommand inside session_config and no session_proxy_commands. Its
+// environment-agnostic `Host *.amika` block would still match every new alias
+// and win the ProxyCommand for it, so regeneration must drop it.
+func TestLegacySessionStateLosesItsEnvironmentAgnosticWildcard(t *testing.T) {
+	paths := testPaths(t)
+	statePath, err := paths.SSHHostsStateFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "hosts": [],
+  "session_config": {
+    "IdentityFile": "/home/user/.ssh/amika_id_ed25519",
+    "KnownHostsFile": "/home/user/.ssh/amika_known_hosts",
+    "ProxyCommand": "amika plumbing ssh-stdio-proxy %h"
+  }
+}`
+	if err := writeFileAtomic(statePath, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := LoadState(paths)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	// The imported identity survives; only the environment-less block is lost.
+	if state.SessionConfig == nil || state.SessionConfig.IdentityFile != "/home/user/.ssh/amika_id_ed25519" {
+		t.Fatalf("session identity not preserved: %#v", state.SessionConfig)
+	}
+	if rendered := Render(state); strings.Contains(rendered, "Host *.amika") {
+		t.Errorf("legacy wildcard survived regeneration:\n%s", rendered)
+	}
+
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	binary := testBinary(t, "amika-local")
+	if err := ConfigureSession(paths, *state.SessionConfig); err != nil {
+		t.Fatalf("ConfigureSession: %v", err)
+	}
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	if strings.Contains(string(conf), "Host *.amika\n") {
+		t.Errorf("amika.conf still has the environment-agnostic wildcard:\n%s", conf)
+	}
+	if !strings.Contains(string(conf), "ProxyCommand "+binary+" plumbing ssh-stdio-proxy %h") {
+		t.Errorf("amika.conf missing the resolved ProxyCommand:\n%s", conf)
 	}
 }

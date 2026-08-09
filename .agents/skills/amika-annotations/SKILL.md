@@ -95,6 +95,7 @@ trample what they protect.
 | `review-change` | XML | The wrapped content was changed by the author and is flagged for review. Evaluate the change against the surrounding context. If it's an improvement, accept it (unwrap). If it should be reverted, note it as a conflict and leave the tags for the user to handle — you cannot recover the original automatically. | unwrap if accepted; leave tagged if rejected |
 | `todo` | EDN or XML | Perform the described task on/around the target. | delete |
 | `note` | EDN | A standing label or informational marker. Incorporate its content into the surrounding prose or action context, then delete. If it marks something that should remain (e.g. a label the user explicitly wants to keep), leave it — use judgment. | delete |
+| `annotate` | EDN or XML | A free-form question or request left for the agent (e.g. "is this still right?" or "can you make X configurable?"). Investigate the question or make the requested change, then record the result at the target. | delete |
 
 > The imperative set above is a **starter**. It's safe to extend this table as new types
 > appear; until then, unknown types are handled by inference (below).
