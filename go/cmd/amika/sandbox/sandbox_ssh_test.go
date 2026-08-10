@@ -10,6 +10,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -91,6 +92,21 @@ type stubSSHClient struct {
 	sandbox *apiclient.RemoteSandbox
 }
 
+// stubV2SSHClient implements the APIs codev2 uses before it hands the prepared
+// alias to an editor. Its session method is not reached by this test because
+// prepareSessionTarget is replaced with a recorder.
+type stubV2SSHClient struct {
+	sandbox *apiclient.RemoteSandbox
+}
+
+func (s *stubV2SSHClient) GetSandbox(_ string) (*apiclient.RemoteSandbox, error) {
+	return s.sandbox, nil
+}
+
+func (s *stubV2SSHClient) CreateSSHSession(_ string) (*apiclient.SSHSession, error) {
+	return nil, nil
+}
+
 func (s *stubSSHClient) GetSSH(_ string) (*apiclient.SSHInfo, error) {
 	return s.info, nil
 }
@@ -107,39 +123,16 @@ func testSSHPaths(t *testing.T) (basedir.Paths, string) {
 }
 
 func TestValidateEditor(t *testing.T) {
-	t.Run("cursor is always allowed", func(t *testing.T) {
-		t.Setenv(claudeCodexSupportEnv, "")
-		if err := validateEditor("cursor"); err != nil {
-			t.Fatalf("cursor should be allowed: %v", err)
-		}
-	})
-
-	t.Run("unknown editor is rejected", func(t *testing.T) {
-		t.Setenv(claudeCodexSupportEnv, "true")
-		if err := validateEditor("vim"); err == nil {
-			t.Fatalf("expected unknown editor to be rejected")
-		}
-	})
-
-	for _, editor := range []string{"claude", "codex"} {
-		t.Run(editor+" gated off by default", func(t *testing.T) {
-			t.Setenv(claudeCodexSupportEnv, "")
-			if err := validateEditor(editor); err == nil {
-				t.Fatalf("expected %q to be gated when the flag is unset", editor)
-			}
-		})
-		t.Run(editor+" enabled when flag is true", func(t *testing.T) {
-			t.Setenv(claudeCodexSupportEnv, "true")
+	for _, editor := range supportedEditors {
+		t.Run(editor+" is allowed", func(t *testing.T) {
 			if err := validateEditor(editor); err != nil {
-				t.Fatalf("expected %q to be allowed when flag is set: %v", editor, err)
+				t.Fatalf("%q should be allowed: %v", editor, err)
 			}
 		})
-		t.Run(editor+" gated when flag is a non-true value", func(t *testing.T) {
-			t.Setenv(claudeCodexSupportEnv, "1")
-			if err := validateEditor(editor); err == nil {
-				t.Fatalf("expected %q to be gated when flag is %q", editor, "1")
-			}
-		})
+	}
+
+	if err := validateEditor("vim"); err == nil {
+		t.Fatal("expected unknown editor to be rejected")
 	}
 }
 
@@ -242,75 +235,49 @@ func TestOpenSandboxInCodex(t *testing.T) {
 	}
 }
 
-func TestPrepareCursorSSHTarget(t *testing.T) {
-	tests := []struct {
-		name         string
-		info         *apiclient.SSHInfo
-		pathOverride string
-		wantAlias    string
-		wantPath     string
-	}{
-		{
-			name: "default path with repo",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-				RepoName:       "biz",
-			},
-			wantAlias: "amika-sb_abc",
-			wantPath:  "/home/amika/workspace/biz",
-		},
-		{
-			name: "default path without repo",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-			},
-			wantAlias: "amika-sb_abc",
-			wantPath:  "/home/amika/workspace",
-		},
-		{
-			name: "relative path override",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-				RepoName:       "biz",
-			},
-			pathOverride: "workspace/biz",
-			wantAlias:    "amika-sb_abc",
-			wantPath:     "/home/amika/workspace/biz",
-		},
-		{
-			name: "absolute path override",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-				RepoName:       "biz",
-			},
-			pathOverride: "/custom/path",
-			wantAlias:    "amika-sb_abc",
-			wantPath:     "/custom/path",
-		},
-	}
+func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
+	paths, _ := testSSHPaths(t)
+	repoName := "biz"
+	client := &stubV2SSHClient{sandbox: &apiclient.RemoteSandbox{
+		ID:       "sb_abc",
+		Name:     "my-sandbox",
+		RepoName: &repoName,
+	}}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &stubSSHClient{info: tt.info}
-			paths, _ := testSSHPaths(t)
-			got, err := prepareCursorSSHTarget(client, paths, "my-sandbox", tt.pathOverride)
-			if err != nil {
-				t.Fatalf("prepareCursorSSHTarget: %v", err)
-			}
-			if got.alias != tt.wantAlias {
-				t.Errorf("alias = %q, want %q", got.alias, tt.wantAlias)
-			}
-			if got.remotePath != tt.wantPath {
-				t.Errorf("remotePath = %q, want %q", got.remotePath, tt.wantPath)
-			}
-		})
+	previous := prepareSessionTarget
+	previousUpsert := upsertSessionHost
+	var gotName, gotID string
+	var gotAlias string
+	prepareSessionTarget = func(gotPaths basedir.Paths, _ ssh.SessionCreator, name, id string) (string, error) {
+		if gotPaths != paths {
+			t.Fatalf("paths = %#v, want %#v", gotPaths, paths)
+		}
+		gotName, gotID = name, id
+		return "my-sandbox.sb_abc.app-amika-dev.amika", nil
+	}
+	upsertSessionHost = func(gotPaths basedir.Paths, alias string) error {
+		if gotPaths != paths {
+			t.Fatalf("paths = %#v, want %#v", gotPaths, paths)
+		}
+		gotAlias = alias
+		return nil
+	}
+	t.Cleanup(func() {
+		prepareSessionTarget = previous
+		upsertSessionHost = previousUpsert
+	})
+
+	target, err := resolveSandboxV2SSHAlias(client, paths, "lookup-name")
+	if err != nil {
+		t.Fatalf("resolveSandboxV2SSHAlias: %v", err)
+	}
+	if gotName != "my-sandbox" || gotID != "sb_abc" {
+		t.Fatalf("PrepareSessionTarget(%q, %q), want sandbox identity", gotName, gotID)
+	}
+	if gotAlias != "my-sandbox.sb_abc.app-amika-dev.amika" {
+		t.Fatalf("UpsertSessionHost(%q), want prepared alias", gotAlias)
+	}
+	if target.alias != "my-sandbox.sb_abc.app-amika-dev.amika" || target.sandboxName != "my-sandbox" || target.repoName != "biz" {
+		t.Fatalf("target = %#v", target)
 	}
 }
