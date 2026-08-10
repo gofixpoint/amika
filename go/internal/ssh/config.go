@@ -20,7 +20,7 @@ const aliasPrefix = "amika-"
 // managedHeader marks the generated config as owned by amika. The file is fully
 // regenerated from the JSON state on every change, so manual edits are lost.
 const managedHeader = `# This file is managed by amika. Do not edit by hand.
-# It is regenerated from the SSH hosts state on every ` + "`amika sandbox code`" + ` run.
+# It is regenerated whenever Amika prepares an SSH target.
 `
 
 // HostEntry is one managed SSH host: a stable alias for a sandbox plus the
@@ -46,6 +46,17 @@ type HostsState struct {
 	// that proxies its aliases, one entry per control plane this machine has
 	// opened a v2 session against.
 	SessionProxyCommands map[string]string `json:"session_proxy_commands,omitempty"`
+	// SessionHosts lists concrete v2 aliases for editors that discover SSH
+	// connections by enumerating Host entries, rather than accepting an alias
+	// supplied directly. Their connection settings come from the wildcard
+	// session blocks below, not these intentionally empty entries.
+	SessionHosts []SessionHostEntry `json:"session_hosts,omitempty"`
+}
+
+// SessionHostEntry is a concrete direct-WebSocket SSH alias advertised to
+// editors. The alias is self-describing and validated with ParseSessionAlias.
+type SessionHostEntry struct {
+	Alias string `json:"alias"`
 }
 
 // Alias returns the stable SSH host alias for a sandbox id. Cursor keys its
@@ -207,6 +218,20 @@ func (s *HostsState) Upsert(entry HostEntry) {
 	})
 }
 
+// UpsertSessionHost adds a concrete v2 host alias if it is not already
+// present, keeping entries sorted so the rendered config is deterministic.
+func (s *HostsState) UpsertSessionHost(alias string) {
+	for _, host := range s.SessionHosts {
+		if host.Alias == alias {
+			return
+		}
+	}
+	s.SessionHosts = append(s.SessionHosts, SessionHostEntry{Alias: alias})
+	sort.Slice(s.SessionHosts, func(i, j int) bool {
+		return s.SessionHosts[i].Alias < s.SessionHosts[j].Alias
+	})
+}
+
 // Render produces the contents of ~/.ssh/amika.conf from the state. Each block
 // is a stable `Host amika-<id>` alias preceded by the sandbox name as a comment
 // so the file stays human-readable even though it is keyed by id.
@@ -228,6 +253,15 @@ func Render(state HostsState) string {
 		}
 		b.WriteString("  StrictHostKeyChecking accept-new\n")
 	}
+	if hosts := renderSessionHosts(state); len(hosts) > 0 {
+		b.WriteString("\n# Direct WebSocket SSH aliases for editor discovery.\n")
+		for i, host := range hosts {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(host)
+		}
+	}
 	if blocks := renderSessionBlocks(state); len(blocks) > 0 {
 		b.WriteString("\n# No-relay WebSocket SSH aliases, one block per control plane.\n")
 		for i, block := range blocks {
@@ -238,6 +272,21 @@ func Render(state HostsState) string {
 		}
 	}
 	return b.String()
+}
+
+// renderSessionHosts emits intentionally empty concrete Host stanzas before
+// the wildcard session blocks. This makes aliases discoverable to apps such as
+// Codex while letting the later wildcard stanza provide every SSH option.
+func renderSessionHosts(state HostsState) []string {
+	hosts := make([]string, 0, len(state.SessionHosts))
+	for _, entry := range state.SessionHosts {
+		parsed, err := ParseSessionAlias(entry.Alias)
+		if err != nil {
+			continue
+		}
+		hosts = append(hosts, fmt.Sprintf("# %s\nHost %s\n", parsed.Name, entry.Alias))
+	}
+	return hosts
 }
 
 // renderSessionBlocks renders one wildcard block per configured environment, in
@@ -268,7 +317,15 @@ func renderSessionBlocks(state HostsState) []string {
 // so a bad value fails at the call that introduced it rather than silently
 // vanishing from the generated config.
 func validateSessionState(state HostsState) error {
+	for _, entry := range state.SessionHosts {
+		if _, err := ParseSessionAlias(entry.Alias); err != nil {
+			return err
+		}
+	}
 	if state.SessionConfig == nil {
+		if len(state.SessionHosts) > 0 {
+			return ErrInvalidSessionAlias
+		}
 		return nil
 	}
 	for environment, proxyCommand := range state.SessionProxyCommands {
@@ -458,6 +515,27 @@ func UpsertHost(paths basedir.Paths, entry HostEntry) (string, error) {
 		return "", err
 	}
 	return Alias(entry.SandboxID), nil
+}
+
+// UpsertSessionHost records a concrete direct-WebSocket SSH alias for editor
+// discovery while its wildcard session block continues to provide the actual
+// connection settings.
+func UpsertSessionHost(paths basedir.Paths, alias string) error {
+	state, err := LoadState(paths)
+	if err != nil {
+		return err
+	}
+	state.UpsertSessionHost(alias)
+	if err := SaveState(paths, state); err != nil {
+		return err
+	}
+	if err := WriteAmikaConfig(paths, state); err != nil {
+		return err
+	}
+	if err := EnsureInclude(paths); err != nil {
+		return err
+	}
+	return nil
 }
 
 // writeFileAtomic writes data to path via a temp file + rename so a concurrent

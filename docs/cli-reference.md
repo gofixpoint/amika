@@ -25,7 +25,7 @@ amika sandbox list --remote -o json | jq '.[].name'
 amika snapshot list -o json-pretty
 ```
 
-Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
+Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, `sandbox codev2`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
 
 ```bash
 # Create a sandbox and capture its name for a script
@@ -35,7 +35,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`, `sandbox codev2`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika sandbox`
 
@@ -43,7 +43,7 @@ Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 ### Global sandbox flags
 
-These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `agent-send`):
+These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `codev2`, `agent-send`):
 
 | Flag       | Default | Description                      |
 | ---------- | ------- | -------------------------------- |
@@ -269,9 +269,7 @@ through the same Amika-managed SSH host alias (`amika-<id>`, written to
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
 
-The `claude` and `codex` editors are gated behind a feature flag: set
-`AMIKA_OPEN_CLAUDE_CODEX_SUPPORT=true` to enable them (`cursor` is always
-available).
+This command requires a signed-in Amika account and a remote sandbox.
 
 ```bash
 amika sandbox code my-sandbox
@@ -284,6 +282,37 @@ amika sandbox code my-sandbox --editor=codex
 | ----------------- | -------- | -------------------------------------------------------- |
 | `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `claude`, or `codex`  |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
+
+### `amika sandbox codev2`
+
+Open a sandbox in the same supported editors as `sandbox code`, but use the
+beta direct WebSocket SSH transport instead of the provider's SSH route. Use
+it when normal `sandbox code` cannot reach the provider SSH route. It works
+with remote sandboxes only and requires a signed-in Amika account.
+
+`codev2` adds a named SSH connection to Amika's managed config so Codex can
+find it, then starts or configures Cursor, Claude Desktop, or Codex as
+`sandbox code` does. The connection routes through Amika's direct transport;
+you do not need to configure that transport yourself.
+
+Before first use, create and upload an SSH key:
+
+```bash
+amika secret ssh-keygen
+```
+
+To use an existing key, pass `--import <public-key-file>` instead. Cursor is
+the default editor; Claude Desktop and Codex are also available without an
+environment-variable feature gate.
+
+```bash
+amika sandbox codev2 my-sandbox
+amika sandbox codev2 my-sandbox --editor=cursor
+amika sandbox codev2 my-sandbox --editor=claude
+amika sandbox codev2 my-sandbox --editor=codex
+```
+
+`--editor` and `--path` have the same values and defaults as `sandbox code`.
 
 ### `amika sandbox agent-send`
 
