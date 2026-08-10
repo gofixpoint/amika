@@ -1015,6 +1015,7 @@ func init() {
 	secretCmd.AddCommand(newSecretExtractCmd())
 	secretCmd.AddCommand(newSecretPushCmd())
 	secretCmd.AddCommand(newSSHKeygenCmd())
+	secretCmd.AddCommand(newSSHKeyCmd())
 	addProviderCommands(secretCmd, claudeProvider, false)
 	addProviderCommands(secretCmd, codexProvider, false)
 
@@ -1024,6 +1025,9 @@ func init() {
 	sshKeygenAlias := newSSHKeygenCmd()
 	sshKeygenAlias.Hidden = true
 	secretsAliasCmd.AddCommand(sshKeygenAlias)
+	sshKeyAlias := newSSHKeyCmd()
+	sshKeyAlias.Hidden = true
+	secretsAliasCmd.AddCommand(sshKeyAlias)
 	addProviderCommands(secretsAliasCmd, claudeProvider, true)
 	addProviderCommands(secretsAliasCmd, codexProvider, true)
 }

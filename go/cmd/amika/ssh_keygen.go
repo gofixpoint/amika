@@ -13,8 +13,16 @@ import (
 )
 
 func newSSHKeygenCmd() *cobra.Command {
+	return newSSHKeygenCmdAs("ssh-keygen")
+}
+
+// newSSHKeygenCmdAs builds the keygen command under a caller-chosen verb, so
+// `secret ssh-keygen` and `secret ssh-key create` share one implementation.
+// Cobra commands cannot be attached to two parents, so each call site needs
+// its own instance.
+func newSSHKeygenCmdAs(use string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "ssh-keygen",
+		Use:   use,
 		Short: "Create or import a user-owned SSH key",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

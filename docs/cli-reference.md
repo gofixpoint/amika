@@ -35,7 +35,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key push`/`list`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika sandbox`
 
@@ -536,6 +536,78 @@ Delete a Claude credential by ID.
 ```bash
 amika secret claude delete <id>
 ```
+
+### `amika secret ssh-keygen`
+
+Generate a user-owned ed25519 keypair and upload only its public half. The private key is written to `~/.ssh/amika_id_ed25519` and never leaves the machine.
+
+```bash
+# Generate a keypair and upload the public key
+amika secret ssh-keygen
+
+# Upload an existing public key instead of generating one
+amika secret ssh-keygen --import ~/.ssh/id_ed25519.pub
+```
+
+| Flag              | Default   | Description                                                   |
+| ----------------- | --------- | ------------------------------------------------------------- |
+| `--name <label>`  | `default` | Name for the uploaded public key                              |
+| `--import <path>` |           | Upload an existing `.pub` file instead of generating a keypair |
+
+`amika secret ssh-key create` is an alias for this command.
+
+### `amika secret ssh-key`
+
+Manage the SSH public keys that authorize access to your sandboxes. Only public keys are uploaded; private key material stays on your machine.
+
+Keys are identified by name, and a name is unique per user.
+
+#### `amika secret ssh-key create`
+
+Alias for [`amika secret ssh-keygen`](#amika-secret-ssh-keygen); same flags and behavior.
+
+#### `amika secret ssh-key push`
+
+Upload a public key that already exists on this machine. Reads `~/.ssh/amika_id_ed25519.pub` unless `--from-file` names another file.
+
+```bash
+# Upload the default Amika public key
+amika secret ssh-key push
+
+# Upload a different key under a custom name
+amika secret ssh-key push --name laptop --from-file ~/.ssh/id_ed25519.pub
+
+# Replace the key currently stored under that name
+amika secret ssh-key push --name laptop --force
+```
+
+| Flag                 | Default                        | Description                                      |
+| -------------------- | ------------------------------ | ------------------------------------------------ |
+| `--name <label>`     | `default`                      | Name for the uploaded public key                 |
+| `--from-file <path>` | `~/.ssh/amika_id_ed25519.pub`  | Public key file to upload                        |
+| `--force`            | `false`                        | Replace an existing key with the same name       |
+
+Pushing a name that already exists fails unless `--force` is passed. Only ed25519 keys are accepted, and the key's trailing comment is stripped before upload.
+
+#### `amika secret ssh-key list`
+
+List uploaded SSH public keys.
+
+```bash
+amika secret ssh-key list
+```
+
+Output columns: `ID`, `NAME`, `KEY`. Aliased as `ls`.
+
+#### `amika secret ssh-key delete`
+
+Delete an SSH public key by ID. Aliased as `rm`.
+
+```bash
+amika secret ssh-key delete <id>
+```
+
+Deleting a key does not revoke access on sandboxes that are already running; the removal applies the next time a sandbox is provisioned.
 
 ---
 

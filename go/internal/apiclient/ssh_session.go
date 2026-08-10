@@ -87,9 +87,36 @@ func (c *Client) CreateSSHPublicKey(request CreateSSHPublicKeyRequest) (*SSHPubl
 	return &result, nil
 }
 
+// ListSSHPublicKeys returns the caller's user-scoped SSH public keys.
+func (c *Client) ListSSHPublicKeys() ([]SSHPublicKeySummary, error) {
+	var result []SSHPublicKeySummary
+	if err := c.doJSON("GET", apiBasePath+"/secrets/ssh-public-keys", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list SSH public keys: %w", err)
+	}
+	return result, nil
+}
+
+// DeleteSSHPublicKey removes one of the caller's SSH public keys by id.
+func (c *Client) DeleteSSHPublicKey(id string) error {
+	path := apiBasePath + "/secrets/ssh-public-keys/" + url.PathEscape(id)
+	if err := c.doJSON("DELETE", path, nil, nil); err != nil {
+		return fmt.Errorf("remote delete SSH public key: %w", err)
+	}
+	return nil
+}
+
 func isCanonicalConnectToken(value string) bool {
 	decoded, err := base64.RawURLEncoding.DecodeString(value)
 	return err == nil && len(decoded) == 32 && base64.RawURLEncoding.EncodeToString(decoded) == value
+}
+
+// CanonicalEd25519PublicKey validates one OpenSSH ed25519 public key line and
+// returns it in canonical form with any comment stripped, or "" if the value
+// is not a well-formed ed25519 key. The control plane canonicalizes the same
+// way, so uploading this form keeps a locally read key byte-identical to what
+// the server stores.
+func CanonicalEd25519PublicKey(value string) string {
+	return canonicalEd25519Key(value)
 }
 
 func canonicalEd25519Key(value string) string {
