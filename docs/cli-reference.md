@@ -269,9 +269,7 @@ through the same Amika-managed SSH host alias (`amika-<id>`, written to
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
 
-The `claude` and `codex` editors are gated behind a feature flag: set
-`AMIKA_OPEN_CLAUDE_CODEX_SUPPORT=true` to enable them (`cursor` is always
-available).
+This command requires a signed-in Amika account and a remote sandbox.
 
 ```bash
 amika sandbox code my-sandbox
@@ -288,18 +286,24 @@ amika sandbox code my-sandbox --editor=codex
 ### `amika sandbox codev2`
 
 Open a sandbox in the same supported editors as `sandbox code`, but use the
-beta direct WebSocket SSH transport instead of provider-native SSH. Use it when
-the provider route is unavailable or when you want the direct transport used by
-`sandbox sshv2` and `amika scpv2`. It works with remote sandboxes only and
-requires Amika authentication.
+beta direct WebSocket SSH transport instead of the provider's SSH route. Use
+it when normal `sandbox code` cannot reach the provider SSH route. It works
+with remote sandboxes only and requires a signed-in Amika account.
 
-`codev2` writes a concrete managed SSH alias so Codex can discover it, while
-its connection settings use an Amika `ProxyCommand`. It then starts or
-configures Cursor, Claude Desktop, or Codex exactly as `sandbox code` does.
-Before first use, run `amika secret ssh-keygen` to generate and upload an SSH
-key, or pass `--import <public-key-file>` to use an existing key. As with
-`sandbox code`, Claude and Codex require
-`AMIKA_OPEN_CLAUDE_CODEX_SUPPORT=true`; Cursor is available by default.
+`codev2` adds a named SSH connection to Amika's managed config so Codex can
+find it, then starts or configures Cursor, Claude Desktop, or Codex as
+`sandbox code` does. The connection routes through Amika's direct transport;
+you do not need to configure that transport yourself.
+
+Before first use, create and upload an SSH key:
+
+```bash
+amika secret ssh-keygen
+```
+
+To use an existing key, pass `--import <public-key-file>` instead. Cursor is
+the default editor; Claude Desktop and Codex are also available without an
+environment-variable feature gate.
 
 ```bash
 amika sandbox codev2 my-sandbox
