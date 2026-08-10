@@ -63,10 +63,8 @@ func TestHelpShowsAliasesForSubcommands(t *testing.T) {
 			name: "secret ssh-key subcommands show aliases",
 			args: []string{"secret", "ssh-key", "--help"},
 			wantLines: [][]string{
-				{"create"},
 				{"delete", "(aliases: rm)"},
 				{"list", "(aliases: ls)"},
-				{"push"},
 			},
 		},
 	}

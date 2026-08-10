@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/spf13/cobra"
 )
 
 // sshKeyAPI records what the CLI sent so a test can assert on the request, not
@@ -50,10 +53,30 @@ func setupMockSSHKeyAPI(t *testing.T, api *sshKeyAPI) []string {
 			json.NewDecoder(r.Body).Decode(&body)
 			api.mu.Lock()
 			api.created = append(api.created, body)
+			// Model the real endpoint: it upserts by name, so an existing
+			// name keeps its id and has its material replaced. Without this
+			// the --force tests would pass even if the server 409'd or
+			// created a duplicate row.
+			id := "specsec_new"
+			replaced := false
+			for i, item := range api.existing {
+				if item["name"] == body["name"] {
+					id = item["id"]
+					api.existing[i]["public_key"] = body["public_key"]
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				api.existing = append(api.existing, map[string]string{
+					"id": id, "name": body["name"],
+					"public_key": body["public_key"], "scope": "user",
+				})
+			}
 			api.mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]string{
-				"id":         "specsec_new",
+				"id":         id,
 				"name":       body["name"],
 				"public_key": body["public_key"],
 				"scope":      "user",
@@ -148,7 +171,7 @@ func TestSecretSSHKeyPush_ConflictWithoutForce(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected a non-zero exit, got success:\n%s", out)
 	}
-	if !strings.Contains(string(out), "already exists; pass --force") {
+	if !strings.Contains(string(out), "already exists with different key material; pass --force") {
 		t.Errorf("unexpected output: %s", out)
 	}
 	// Nothing may be uploaded when the push is refused.
@@ -180,6 +203,14 @@ func TestSecretSSHKeyPush_Force(t *testing.T) {
 	// The create endpoint upserts, so --force must not delete first.
 	if len(api.deleted) != 0 {
 		t.Errorf("expected no deletes, got %v", api.deleted)
+	}
+	// The stub models the upsert, so the row must have been replaced in
+	// place rather than duplicated.
+	if len(api.existing) != 1 || api.existing[0]["id"] != "specsec_old" {
+		t.Errorf("expected the existing row to be replaced in place, got %+v", api.existing)
+	}
+	if api.existing[0]["public_key"] != canonical {
+		t.Errorf("stored key was not replaced: %+v", api.existing[0])
 	}
 }
 
@@ -292,7 +323,7 @@ func TestSecretSSHKeyDelete(t *testing.T) {
 	api := &sshKeyAPI{}
 	env := setupMockSSHKeyAPI(t, api)
 
-	cmd := exec.Command(bin, "secret", "ssh-key", "delete", "specsec_1")
+	cmd := exec.Command(bin, "secret", "ssh-key", "delete", "specsec_1", "--force")
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -310,7 +341,7 @@ func TestSecretSSHKeyDelete_JSON(t *testing.T) {
 	bin := buildAmika(t)
 	env := setupMockSSHKeyAPI(t, &sshKeyAPI{})
 
-	cmd := exec.Command(bin, "secret", "ssh-key", "rm", "specsec_1", "-o", "json")
+	cmd := exec.Command(bin, "secret", "ssh-key", "rm", "specsec_1", "--force", "-o", "json")
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -333,7 +364,7 @@ func TestSecretSSHKeyDelete_NotFound(t *testing.T) {
 	api := &sshKeyAPI{deleteStatus: http.StatusNotFound}
 	env := setupMockSSHKeyAPI(t, api)
 
-	cmd := exec.Command(bin, "secret", "ssh-key", "delete", "specsec_missing")
+	cmd := exec.Command(bin, "secret", "ssh-key", "delete", "specsec_missing", "--force")
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err == nil {
@@ -413,7 +444,7 @@ func TestSSHKeyDeleteInProcess(t *testing.T) {
 	api := &sshKeyAPI{}
 	setupInProcessSSHKeyAPI(t, api)
 
-	out, err := runRootCommandOutput(t, "secret", "ssh-key", "delete", "specsec_1")
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "delete", "specsec_1", "--force")
 	if err != nil {
 		t.Fatalf("delete failed: %v\n%s", err, out)
 	}
@@ -428,7 +459,7 @@ func TestSSHKeyDeleteInProcess(t *testing.T) {
 func TestSSHKeyDeleteInProcess_JSON(t *testing.T) {
 	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
 
-	out, err := runRootCommandOutput(t, "secret", "ssh-key", "rm", "specsec_1", "-o", "json")
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "rm", "specsec_1", "--force", "-o", "json")
 	if err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
@@ -447,7 +478,7 @@ func TestSSHKeyDeleteInProcess_JSON(t *testing.T) {
 func TestSSHKeyDeleteInProcess_NotFound(t *testing.T) {
 	setupInProcessSSHKeyAPI(t, &sshKeyAPI{deleteStatus: http.StatusNotFound})
 
-	_, err := runRootCommandOutput(t, "secret", "ssh-key", "delete", "specsec_missing")
+	_, err := runRootCommandOutput(t, "secret", "ssh-key", "delete", "specsec_missing", "--force")
 	if err == nil {
 		t.Fatal("expected an error for a missing key")
 	}
@@ -484,7 +515,7 @@ func TestSSHKeyPushInProcess_ConflictWithoutForce(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when the name already exists")
 	}
-	if !strings.Contains(err.Error(), "already exists; pass --force") {
+	if !strings.Contains(err.Error(), "already exists with different key material; pass --force") {
 		t.Errorf("unexpected error: %v", err)
 	}
 	if len(api.created) != 0 {
@@ -562,6 +593,179 @@ func TestAbbreviateSSHKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := abbreviateSSHKey(tt.input); got != tt.want {
 				t.Errorf("abbreviateSSHKey(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSSHKeyPushInProcess_SameMaterialIsNoOpWithoutForce(t *testing.T) {
+	pubPath, canonical := writeTestPubKey(t, t.TempDir(), "me@host")
+	api := &sshKeyAPI{existing: []map[string]string{
+		{"id": "specsec_old", "name": "laptop", "public_key": canonical, "scope": "user"},
+	}}
+	setupInProcessSSHKeyAPI(t, api)
+
+	// Re-pushing identical material is idempotent, so it must not demand
+	// --force. This is what keeps `ssh-keygen` re-runs working.
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push", "--name", "laptop", "--from-file", pubPath)
+	if err != nil {
+		t.Fatalf("re-push of identical material failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Reuploaded") {
+		t.Errorf("unexpected output: %s", out)
+	}
+}
+
+func TestSSHKeyPushInProcess_DefaultFromFile(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pubPath, canonical := writeTestPubKey(t, t.TempDir(), "me@host")
+	raw, err := os.ReadFile(pubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The documented default is ~/.ssh/amika_id_ed25519.pub; nothing else
+	// exercises that derivation.
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "amika_id_ed25519.pub"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+
+	api := &sshKeyAPI{}
+	setupInProcessSSHKeyAPI(t, api)
+
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push", "--name", "laptop")
+	if err != nil {
+		t.Fatalf("push with the default path failed: %v\n%s", err, out)
+	}
+	if len(api.created) != 1 || api.created[0]["public_key"] != canonical {
+		t.Errorf("expected the default key to be uploaded, got %+v", api.created)
+	}
+	if !strings.Contains(out, "amika_id_ed25519.pub") {
+		t.Errorf("output should name the file it read: %s", out)
+	}
+}
+
+func TestSSHKeyDeleteInProcess_PromptsWithoutForce(t *testing.T) {
+	api := &sshKeyAPI{}
+	setupInProcessSSHKeyAPI(t, api)
+
+	// Declining at the prompt must leave the key alone.
+	rootCmd.SetIn(strings.NewReader("n\n"))
+	t.Cleanup(func() { rootCmd.SetIn(nil) })
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "delete", "specsec_1")
+	if err != nil {
+		t.Fatalf("declining the prompt should not error: %v\n%s", err, out)
+	}
+	if len(api.deleted) != 0 {
+		t.Errorf("declining the prompt still deleted: %v", api.deleted)
+	}
+}
+
+func TestSSHKeyDeleteInProcess_JSONRequiresForce(t *testing.T) {
+	api := &sshKeyAPI{}
+	setupInProcessSSHKeyAPI(t, api)
+
+	// Never prompt in JSON mode: without --force this must refuse outright
+	// rather than block on stdin.
+	_, err := runRootCommandOutput(t, "secret", "ssh-key", "delete", "specsec_1", "-o", "json")
+	if err == nil {
+		t.Fatal("expected an error when deleting in JSON mode without --force")
+	}
+	if !strings.Contains(err.Error(), "pass --force") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(api.deleted) != 0 {
+		t.Errorf("expected no delete, got %v", api.deleted)
+	}
+}
+
+func TestSSHKeyDeleteInProcess_RejectsBlankID(t *testing.T) {
+	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
+
+	_, err := runRootCommandOutput(t, "secret", "ssh-key", "delete", "   ", "--force")
+	if err == nil {
+		t.Fatal("expected an error for a blank id")
+	}
+	if !strings.Contains(err.Error(), "SSH key ID is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSSHKeyAliasTreeIsIndependent(t *testing.T) {
+	// The tree is built twice; a shared *cobra.Command would make the hidden
+	// alias and the real command the same instance, leaking flag state.
+	find := func(parent string) *cobra.Command {
+		for _, top := range rootCmd.Commands() {
+			if top.Name() != parent {
+				continue
+			}
+			for _, sub := range top.Commands() {
+				if sub.Name() == "ssh-key" {
+					return sub
+				}
+			}
+		}
+		return nil
+	}
+	primary, alias := find("secret"), find("secrets")
+	if primary == nil || alias == nil {
+		t.Fatalf("ssh-key missing from a tree: secret=%v secrets=%v", primary != nil, alias != nil)
+	}
+	if primary == alias {
+		t.Fatal("the secret and secrets trees share one ssh-key command instance")
+	}
+	if !alias.Hidden {
+		t.Error("the secrets alias tree should stay hidden")
+	}
+	for _, name := range []string{"push", "create", "list", "delete"} {
+		if primary.Commands() == nil {
+			t.Fatalf("no subcommands under secret ssh-key")
+		}
+		var a, b *cobra.Command
+		for _, c := range primary.Commands() {
+			if c.Name() == name {
+				a = c
+			}
+		}
+		for _, c := range alias.Commands() {
+			if c.Name() == name {
+				b = c
+			}
+		}
+		if a == nil || b == nil {
+			t.Errorf("%q missing: primary=%v alias=%v", name, a != nil, b != nil)
+			continue
+		}
+		if a == b {
+			t.Errorf("%q is shared between the two trees", name)
+		}
+		if a.Flags() == b.Flags() {
+			t.Errorf("%q shares a flag set between the two trees", name)
+		}
+	}
+}
+
+func TestClassifyUpload(t *testing.T) {
+	existing := []apiclient.SSHPublicKeySummary{
+		{ID: "specsec_1", Name: "laptop", PublicKey: "ssh-ed25519 AAAA", Scope: "user"},
+	}
+	tests := []struct {
+		name, keyName, publicKey, wantStatus string
+		wantConflict                         bool
+	}{
+		{"new name creates", "desktop", "ssh-ed25519 BBBB", "created", false},
+		{"same name same material is a no-op", "laptop", "ssh-ed25519 AAAA", "unchanged", false},
+		{"same name new material conflicts", "laptop", "ssh-ed25519 BBBB", "updated", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyUpload(existing, tt.keyName, tt.publicKey)
+			if got.status != tt.wantStatus || got.conflict != tt.wantConflict {
+				t.Errorf("classifyUpload = %+v, want status=%q conflict=%v",
+					got, tt.wantStatus, tt.wantConflict)
 			}
 		})
 	}

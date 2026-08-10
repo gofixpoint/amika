@@ -120,8 +120,10 @@ the private key stays on your machine.
 amika secret ssh-key create
 ```
 
-This writes the private key to `~/.ssh/amika_id_ed25519` and uploads only
-`~/.ssh/amika_id_ed25519.pub`.
+This generates a keypair at `~/.ssh/amika_id_ed25519` if one is not already
+there (an existing pair is reused, not overwritten) and uploads only the public
+half. With `--import` no private key is written at all; the existing one is
+pointed at instead.
 
 2. **Upload a public key you already have:**
 
@@ -129,8 +131,9 @@ This writes the private key to `~/.ssh/amika_id_ed25519` and uploads only
 amika secret ssh-key push --name laptop --from-file ~/.ssh/id_ed25519.pub
 ```
 
-Keys are named, and a name is unique per user. Pushing a name that already
-exists requires `--force`, which replaces that key's material.
+Keys are named, and a name is unique per user. Re-pushing the same key material
+under an existing name is a no-op; replacing a name with different material
+requires `--force`.
 
 3. **List your keys:**
 
@@ -143,6 +146,9 @@ amika secret ssh-key list
 ```bash
 amika secret ssh-key delete <id>
 ```
+
+This prompts for confirmation; pass `--force` to skip it (required with
+`-o json`, which never prompts).
 
 Deleting a key does not revoke access on sandboxes that are already running.
 Keys are read when a sandbox is provisioned, so the removal takes effect the

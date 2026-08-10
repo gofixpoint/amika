@@ -52,7 +52,7 @@ func (s *SSHSession) Validate(expectedSandboxID string) error {
 	if s.Transport != SSHSessionTransportDirectWS || s.SandboxID != expectedSandboxID || s.SSHUser != "amika" {
 		return ErrInvalidSSHSession
 	}
-	if !isCanonicalConnectToken(s.ConnectCredential) || canonicalEd25519Key(s.HostPublicKey) == "" {
+	if !isCanonicalConnectToken(s.ConnectCredential) || CanonicalEd25519PublicKey(s.HostPublicKey) == "" {
 		return ErrInvalidSSHSession
 	}
 	connectURL, err := url.Parse(s.ConnectURL)
@@ -116,10 +116,6 @@ func isCanonicalConnectToken(value string) bool {
 // way, so uploading this form keeps a locally read key byte-identical to what
 // the server stores.
 func CanonicalEd25519PublicKey(value string) string {
-	return canonicalEd25519Key(value)
-}
-
-func canonicalEd25519Key(value string) string {
 	key, _, options, rest, err := cryptossh.ParseAuthorizedKey([]byte(value))
 	if err != nil || len(options) != 0 || strings.TrimSpace(string(rest)) != "" || key.Type() != cryptossh.KeyAlgoED25519 {
 		return ""

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
@@ -62,20 +61,28 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			summary, err := runmode.NewRemoteClient().CreateSSHPublicKey(
-				apiclient.CreateSSHPublicKeyRequest{Name: name, PublicKey: publicKey},
-			)
+			// Same guard as `ssh-key push`, so the two paths cannot disagree
+			// about whether replacing a name needs authorizing. Regenerating
+			// reuses an existing keypair, so the common re-run uploads
+			// identical material and stays a no-op without --force.
+			force, _ := cmd.Flags().GetBool("force")
+			summary, status, err := uploadSSHPublicKey(name, publicKey, force)
 			if err != nil {
 				return err
 			}
 			if format.IsJSON() {
-				return format.JSON(cmd.OutOrStdout(), summary)
+				return format.JSON(cmd.OutOrStdout(), sshKeyUploadJSON{
+					SSHPublicKeySummary: *summary,
+					Status:              status,
+				})
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "SSH public key %q uploaded; private key remains at %s.\n", summary.Name, identityPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "SSH public key %q uploaded (%s); private key remains at %s.\n",
+				summary.Name, status, identityPath)
 			return nil
 		},
 	}
 	cmd.Flags().String("import", "", "Import an existing .pub file instead of generating a key")
 	cmd.Flags().String("name", "default", "Name for the uploaded public key")
+	cmd.Flags().Bool("force", false, "Replace an existing SSH key with the same name")
 	return cmd
 }
