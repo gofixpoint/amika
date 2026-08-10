@@ -341,15 +341,8 @@ func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
 // a binary that has since moved or been replaced by one that cannot serve as a
 // proxy.
 func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
-	environment, err := config.EnvironmentSlug()
+	environment, proxyCommand, err := resolveSessionRendering(session)
 	if err != nil {
-		return err
-	}
-	proxyCommand, err := ResolveProxyCommand()
-	if err != nil {
-		return err
-	}
-	if _, err := RenderSessionConfig(environment, proxyCommand, session); err != nil {
 		return err
 	}
 	state, err := LoadState(paths)
@@ -368,6 +361,38 @@ func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
 		return err
 	}
 	return EnsureInclude(paths)
+}
+
+// ValidateSessionConfig reports whether ConfigureSession would accept this
+// session, without writing anything.
+//
+// It exists so a caller can reject a bad configuration before taking an action
+// it cannot undo elsewhere. `secret ssh-keygen` uploads the public key and only
+// then persists the session, so without this check a config ConfigureSession
+// refuses (an identity path containing whitespace, say) would surface only
+// after the remote key had already been replaced, leaving the stored key and
+// the local identity out of step. Both share resolveSessionRendering, so the
+// check and the write cannot drift apart.
+func ValidateSessionConfig(session SessionConfig) error {
+	_, _, err := resolveSessionRendering(session)
+	return err
+}
+
+// resolveSessionRendering runs every check ConfigureSession makes before it
+// touches the filesystem, returning the values the write path needs.
+func resolveSessionRendering(session SessionConfig) (string, string, error) {
+	environment, err := config.EnvironmentSlug()
+	if err != nil {
+		return "", "", err
+	}
+	proxyCommand, err := ResolveProxyCommand()
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := RenderSessionConfig(environment, proxyCommand, session); err != nil {
+		return "", "", err
+	}
+	return environment, proxyCommand, nil
 }
 
 // EnsureInclude makes sure ~/.ssh/config pulls in the managed amika.conf via an

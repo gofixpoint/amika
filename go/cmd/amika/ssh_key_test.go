@@ -836,3 +836,39 @@ func TestSSHKeygenInProcess_DoesNotPersistSessionWhenUploadRefused(t *testing.T)
 		}
 	}
 }
+
+func TestSSHKeygenInProcess_DoesNotUploadWhenSessionConfigIsInvalid(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// An --import path containing whitespace is a perfectly valid file but a
+	// config `ConfigureSession` refuses, because OpenSSH cannot express it.
+	dir := filepath.Join(home, "keys with spaces")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(dir, "id_ed25519")
+	if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", "imported",
+		"-f", keyPath).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v\n%s", err, out)
+	}
+
+	// A different key is already stored under this name, so --force would
+	// replace it. If validation ran after the upload, the remote key would be
+	// gone while the local config still selected the old identity.
+	api := &sshKeyAPI{existing: []map[string]string{
+		{"id": "specsec_old", "name": "default",
+			"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijkl", "scope": "user"},
+	}}
+	setupInProcessSSHKeyAPI(t, api)
+
+	_, err := runRootCommandOutput(t, "secret", "ssh-keygen",
+		"--import", keyPath+".pub", "--force")
+	if err == nil {
+		t.Fatal("expected the invalid session config to be rejected")
+	}
+	// The whole point: nothing may have been uploaded.
+	if len(api.created) != 0 {
+		t.Errorf("the remote key was replaced despite an unusable local config: %+v", api.created)
+	}
+}
