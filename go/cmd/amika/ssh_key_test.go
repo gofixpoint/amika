@@ -228,17 +228,26 @@ func TestSecretSSHKeyPush_ForceJSONStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push failed: %v\n%s", err, out)
 	}
-	var got struct {
-		Status string `json:"status"`
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Scope  string `json:"scope"`
-	}
-	if err := json.Unmarshal(out, &got); err != nil {
+	// Remote-backed commands emit the API response schema unchanged, so the
+	// payload must be exactly SSHPublicKeySummary: no synthetic `status`, and
+	// no dropped `public_key`.
+	var raw map[string]any
+	if err := json.Unmarshal(out, &raw); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
-	if got.Status != "updated" || got.Name != "laptop" || got.Scope != "user" {
-		t.Errorf("unexpected JSON: %+v", got)
+	wantKeys := map[string]bool{"id": true, "name": true, "public_key": true, "scope": true}
+	for k := range raw {
+		if !wantKeys[k] {
+			t.Errorf("unexpected key %q in push JSON: %v", k, raw)
+		}
+	}
+	for k := range wantKeys {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("missing key %q in push JSON: %v", k, raw)
+		}
+	}
+	if raw["name"] != "laptop" || raw["scope"] != "user" {
+		t.Errorf("unexpected JSON: %v", raw)
 	}
 }
 
@@ -768,5 +777,62 @@ func TestClassifyUpload(t *testing.T) {
 					got, tt.wantStatus, tt.wantConflict)
 			}
 		})
+	}
+}
+
+func TestSSHKeyPushInProcess_JSONIsTheAPIResponse(t *testing.T) {
+	api := &sshKeyAPI{}
+	setupInProcessSSHKeyAPI(t, api)
+	pubPath, canonical := writeTestPubKey(t, t.TempDir(), "me@host")
+
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", pubPath, "-o", "json")
+	if err != nil {
+		t.Fatalf("push failed: %v\n%s", err, out)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	// Exactly the API's SSHPublicKeySummary: no synthetic `status` key, and
+	// `public_key` preserved.
+	if _, ok := raw["status"]; ok {
+		t.Errorf("push JSON must not add a status field: %v", raw)
+	}
+	if raw["public_key"] != canonical {
+		t.Errorf("public_key = %v, want %q", raw["public_key"], canonical)
+	}
+	if len(raw) != 4 {
+		t.Errorf("expected exactly the 4 schema fields, got %v", raw)
+	}
+}
+
+func TestSSHKeygenInProcess_DoesNotPersistSessionWhenUploadRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// A key already stored under this name, with different material, so the
+	// upload is refused without --force.
+	api := &sshKeyAPI{existing: []map[string]string{
+		{"id": "specsec_old", "name": "default",
+			"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijkl", "scope": "user"},
+	}}
+	setupInProcessSSHKeyAPI(t, api)
+
+	_, err := runRootCommandOutput(t, "secret", "ssh-keygen")
+	if err == nil {
+		t.Fatal("expected the upload to be refused")
+	}
+	if !strings.Contains(err.Error(), "already exists with different key material") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The SSH config must not have been touched: leaving it pointing at a
+	// private key whose public half was never uploaded would silently break
+	// every later connection.
+	for _, name := range []string{"amika.conf", "config"} {
+		if _, statErr := os.Stat(filepath.Join(home, ".ssh", name)); statErr == nil {
+			t.Errorf("~/.ssh/%s was written despite the upload being refused", name)
+		}
 	}
 }

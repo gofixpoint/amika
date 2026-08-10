@@ -55,26 +55,30 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Same guard as `ssh-key push`, so the two paths cannot disagree
+			// about whether replacing a name needs authorizing. Regenerating
+			// reuses an existing keypair, so the common re-run uploads
+			// identical material and stays a no-op without --force.
+			//
+			// Upload before touching the SSH config. If the upload is refused
+			// (a name already holds different material and --force was not
+			// passed), persisting the session first would leave every later
+			// connection using a private key whose public half was never
+			// uploaded, silently breaking sandbox access.
+			force, _ := cmd.Flags().GetBool("force")
+			summary, status, err := uploadSSHPublicKey(name, publicKey, force)
+			if err != nil {
+				return err
+			}
 			if err := ssh.ConfigureSession(paths, ssh.SessionConfig{
 				IdentityFile:   identityPath,
 				KnownHostsFile: knownHostsPath,
 			}); err != nil {
 				return err
 			}
-			// Same guard as `ssh-key push`, so the two paths cannot disagree
-			// about whether replacing a name needs authorizing. Regenerating
-			// reuses an existing keypair, so the common re-run uploads
-			// identical material and stays a no-op without --force.
-			force, _ := cmd.Flags().GetBool("force")
-			summary, status, err := uploadSSHPublicKey(name, publicKey, force)
-			if err != nil {
-				return err
-			}
 			if format.IsJSON() {
-				return format.JSON(cmd.OutOrStdout(), sshKeyUploadJSON{
-					SSHPublicKeySummary: *summary,
-					Status:              status,
-				})
+				return format.JSON(cmd.OutOrStdout(), summary)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "SSH public key %q uploaded (%s); private key remains at %s.\n",
 				summary.Name, status, identityPath)

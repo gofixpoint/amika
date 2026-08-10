@@ -592,6 +592,8 @@ amika secret ssh-key push --name laptop --force
 
 Re-pushing the *same* key material under an existing name is a no-op. Pushing *different* material under an existing name fails unless `--force` is passed. Only ed25519 keys are accepted, and the key's trailing comment is stripped before upload.
 
+With `-o json` this emits the API's `SshPublicKeySummary` response unchanged (`id`, `name`, `public_key`, `scope`). Whether the push created or replaced a key is reported only in the text output.
+
 #### `amika secret ssh-key list`
 
 List uploaded SSH public keys.

@@ -14,15 +14,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// sshKeyUploadJSON is the JSON emitted by `secret ssh-key push` and
-// `secret ssh-key create`. It embeds the API's own response shape so the
-// output stays a superset of SSHPublicKeySummary rather than a reshaping of
-// it, and adds `status` so a caller can tell a create from a replacement.
-type sshKeyUploadJSON struct {
-	apiclient.SSHPublicKeySummary
-	Status string `json:"status"`
-}
-
 // uploadStatus reports what an upload did, given the keys already stored.
 // The create endpoint upserts by name, so re-uploading the same material
 // under the same name is a no-op rather than a conflict; only material that
@@ -126,10 +117,10 @@ Examples:
 				return err
 			}
 			if format.IsJSON() {
-				return format.JSON(cmd.OutOrStdout(), sshKeyUploadJSON{
-					SSHPublicKeySummary: *summary,
-					Status:              status,
-				})
+				// Remote-backed commands emit the API's response schema
+				// unchanged (AGENTS.md "CLI Output Format"), so the
+				// created/updated distinction stays in the text output only.
+				return format.JSON(cmd.OutOrStdout(), summary)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s SSH public key %q from %s\n",
 				uploadVerb(status), summary.Name, fromFile)
