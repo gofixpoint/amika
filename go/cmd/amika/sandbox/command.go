@@ -26,6 +26,7 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxSSHCmd)
 	sandboxCmd.AddCommand(sandboxSSHV2Cmd)
 	sandboxCmd.AddCommand(sandboxCodeCmd)
+	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
 	sandboxCmd.AddCommand(sandboxAgentSendCmd)
 
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
@@ -69,6 +70,8 @@ func New() *cobra.Command {
 	sandboxSSHV2Cmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
 	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"claude\", or \"codex\"")
 	sandboxCodeCmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
+	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"claude\", or \"codex\"")
+	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
 	sandboxAgentSendCmd.Flags().Bool("no-wait", false, "Send the instruction and return immediately without waiting for a response")
 	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")

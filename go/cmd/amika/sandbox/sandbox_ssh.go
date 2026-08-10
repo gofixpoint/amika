@@ -184,15 +184,11 @@ Examples:
 		pathOverride, _ := cmd.Flags().GetString("path")
 		paths := basedir.New("")
 
-		switch editor {
-		case "cursor":
-			return openSandboxInCursor(cmd, client, paths, name, pathOverride)
-		case "claude":
-			return openSandboxInClaude(cmd, client, paths, name, pathOverride)
-		case "codex":
-			return openSandboxInCodex(cmd, client, paths, name, pathOverride)
+		sshTarget, err := resolveSandboxSSHAlias(client, paths, name)
+		if err != nil {
+			return err
 		}
-		return nil
+		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
 	},
 }
 
@@ -248,24 +244,35 @@ func resolveSandboxSSHAlias(client sshInfoClient, paths basedir.Paths, name stri
 	return sandboxSSHAlias{alias: alias, sandboxName: sandboxName, repoName: info.RepoName}, nil
 }
 
-// openSandboxInCursor launches Cursor connected to the sandbox over SSH.
-func openSandboxInCursor(cmd *cobra.Command, client sshInfoClient, paths basedir.Paths, name, pathOverride string) error {
+// openSandboxInEditor starts the selected editor with a prepared SSH target.
+func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+	switch editor {
+	case "cursor":
+		return openSandboxInCursorTarget(cmd, target, pathOverride)
+	case "claude":
+		return openSandboxInClaudeTarget(cmd, paths, target, pathOverride)
+	case "codex":
+		return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
+	default:
+		return fmt.Errorf("unsupported editor %q", editor)
+	}
+}
+
+// openSandboxInCursor launches Cursor connected to a prepared SSH target.
+func openSandboxInCursorTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
 	if _, err := exec.LookPath("cursor"); err != nil {
 		return fmt.Errorf("cursor CLI is not installed or not in PATH; install it from Cursor > Settings > Extensions > cursor-cli")
 	}
 
-	target, err := prepareCursorSSHTarget(client, paths, name, pathOverride)
-	if err != nil {
-		return err
-	}
+	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
 
-	cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+target.alias, target.remotePath)
+	cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+target.alias, remotePath)
 	cursorCmd.Stdin = os.Stdin
 	cursorCmd.Stdout = os.Stdout
 	cursorCmd.Stderr = os.Stderr
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", name, target.alias)
-	fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", target.alias, target.remotePath)
+	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", target.sandboxName, target.alias)
+	fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", target.alias, remotePath)
 	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in Cursor to open it.\n")
 	if err := cursorCmd.Run(); err != nil {
 		return fmt.Errorf("cursor failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in Cursor", err)
@@ -282,7 +289,11 @@ func openSandboxInClaude(cmd *cobra.Command, client sshInfoClient, paths basedir
 	if err != nil {
 		return err
 	}
+	return openSandboxInClaudeTarget(cmd, paths, target, pathOverride)
+}
 
+// openSandboxInClaudeTarget registers a prepared SSH target in Claude Desktop.
+func openSandboxInClaudeTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	host := appcfg.ClaudeSSHHost{
 		ID:             target.alias,
 		Name:           "Amika: " + target.sandboxName,
@@ -294,7 +305,7 @@ func openSandboxInClaude(cmd *cobra.Command, client sshInfoClient, paths basedir
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Registered SSH environment %q for sandbox %q in Claude Desktop.\n", host.Name, name)
+	fmt.Fprintf(out, "Registered SSH environment %q for sandbox %q in Claude Desktop.\n", host.Name, target.sandboxName)
 	if err := openApp("claude://code/new"); err != nil {
 		fmt.Fprintf(out, "Could not launch Claude Desktop automatically (%v); open it yourself.\n", err)
 	} else {
@@ -313,13 +324,17 @@ func openSandboxInCodex(cmd *cobra.Command, client sshInfoClient, paths basedir.
 	if err != nil {
 		return err
 	}
+	return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
+}
 
+// openSandboxInCodexTarget enables Codex remote connections for a prepared SSH target.
+func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	if _, err := appcfg.EnableCodexRemoteConnections(paths); err != nil {
 		return fmt.Errorf("enable Codex remote connections: %w", err)
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Enabled Codex remote connections; SSH host %q for sandbox %q is available from ~/.ssh/config.\n", target.alias, name)
+	fmt.Fprintf(out, "Enabled Codex remote connections; SSH host %q for sandbox %q is available from ~/.ssh/config.\n", target.alias, target.sandboxName)
 	if err := openApp("codex://"); err != nil {
 		fmt.Fprintf(out, "Could not launch Codex automatically (%v); open it yourself.\n", err)
 	} else {
@@ -328,22 +343,6 @@ func openSandboxInCodex(cmd *cobra.Command, client sshInfoClient, paths basedir.
 	fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder (e.g. %s).\n",
 		target.alias, resolveRemoteWorkspacePath(target.repoName, pathOverride))
 	return nil
-}
-
-type cursorSSHTarget struct {
-	alias      string
-	remotePath string
-}
-
-func prepareCursorSSHTarget(client sshInfoClient, paths basedir.Paths, name string, pathOverride string) (cursorSSHTarget, error) {
-	target, err := resolveSandboxSSHAlias(client, paths, name)
-	if err != nil {
-		return cursorSSHTarget{}, err
-	}
-	return cursorSSHTarget{
-		alias:      target.alias,
-		remotePath: resolveRemoteWorkspacePath(target.repoName, pathOverride),
-	}, nil
 }
 
 // resolveRemoteWorkspacePath computes the remote path to open in the editor.

@@ -12,6 +12,7 @@
 //   - delete
 //   - ssh
 //   - code
+//   - codev2
 //   - agent-send
 //
 // It also owns sandbox-specific flag parsing, local and remote execution

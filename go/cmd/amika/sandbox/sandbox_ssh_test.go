@@ -10,6 +10,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -89,6 +90,21 @@ func TestResolveRemoteWorkspacePath(t *testing.T) {
 type stubSSHClient struct {
 	info    *apiclient.SSHInfo
 	sandbox *apiclient.RemoteSandbox
+}
+
+// stubV2SSHClient implements the APIs codev2 uses before it hands the prepared
+// alias to an editor. Its session method is not reached by this test because
+// prepareSessionTarget is replaced with a recorder.
+type stubV2SSHClient struct {
+	sandbox *apiclient.RemoteSandbox
+}
+
+func (s *stubV2SSHClient) GetSandbox(_ string) (*apiclient.RemoteSandbox, error) {
+	return s.sandbox, nil
+}
+
+func (s *stubV2SSHClient) CreateSSHSession(_ string) (*apiclient.SSHSession, error) {
+	return nil, nil
 }
 
 func (s *stubSSHClient) GetSSH(_ string) (*apiclient.SSHInfo, error) {
@@ -242,75 +258,34 @@ func TestOpenSandboxInCodex(t *testing.T) {
 	}
 }
 
-func TestPrepareCursorSSHTarget(t *testing.T) {
-	tests := []struct {
-		name         string
-		info         *apiclient.SSHInfo
-		pathOverride string
-		wantAlias    string
-		wantPath     string
-	}{
-		{
-			name: "default path with repo",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-				RepoName:       "biz",
-			},
-			wantAlias: "amika-sb_abc",
-			wantPath:  "/home/amika/workspace/biz",
-		},
-		{
-			name: "default path without repo",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-			},
-			wantAlias: "amika-sb_abc",
-			wantPath:  "/home/amika/workspace",
-		},
-		{
-			name: "relative path override",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-				RepoName:       "biz",
-			},
-			pathOverride: "workspace/biz",
-			wantAlias:    "amika-sb_abc",
-			wantPath:     "/home/amika/workspace/biz",
-		},
-		{
-			name: "absolute path override",
-			info: &apiclient.SSHInfo{
-				SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-				SandboxID:      "sb_abc",
-				SandboxName:    "my-sandbox",
-				RepoName:       "biz",
-			},
-			pathOverride: "/custom/path",
-			wantAlias:    "amika-sb_abc",
-			wantPath:     "/custom/path",
-		},
-	}
+func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
+	paths, _ := testSSHPaths(t)
+	repoName := "biz"
+	client := &stubV2SSHClient{sandbox: &apiclient.RemoteSandbox{
+		ID:       "sb_abc",
+		Name:     "my-sandbox",
+		RepoName: &repoName,
+	}}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &stubSSHClient{info: tt.info}
-			paths, _ := testSSHPaths(t)
-			got, err := prepareCursorSSHTarget(client, paths, "my-sandbox", tt.pathOverride)
-			if err != nil {
-				t.Fatalf("prepareCursorSSHTarget: %v", err)
-			}
-			if got.alias != tt.wantAlias {
-				t.Errorf("alias = %q, want %q", got.alias, tt.wantAlias)
-			}
-			if got.remotePath != tt.wantPath {
-				t.Errorf("remotePath = %q, want %q", got.remotePath, tt.wantPath)
-			}
-		})
+	previous := prepareSessionTarget
+	var gotName, gotID string
+	prepareSessionTarget = func(gotPaths basedir.Paths, _ ssh.SessionCreator, name, id string) (string, error) {
+		if gotPaths != paths {
+			t.Fatalf("paths = %#v, want %#v", gotPaths, paths)
+		}
+		gotName, gotID = name, id
+		return "my-sandbox.sb_abc.app-amika-dev.amika", nil
+	}
+	t.Cleanup(func() { prepareSessionTarget = previous })
+
+	target, err := resolveSandboxV2SSHAlias(client, paths, "lookup-name")
+	if err != nil {
+		t.Fatalf("resolveSandboxV2SSHAlias: %v", err)
+	}
+	if gotName != "my-sandbox" || gotID != "sb_abc" {
+		t.Fatalf("PrepareSessionTarget(%q, %q), want sandbox identity", gotName, gotID)
+	}
+	if target.alias != "my-sandbox.sb_abc.app-amika-dev.amika" || target.sandboxName != "my-sandbox" || target.repoName != "biz" {
+		t.Fatalf("target = %#v", target)
 	}
 }
