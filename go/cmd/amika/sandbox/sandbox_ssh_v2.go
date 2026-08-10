@@ -113,6 +113,11 @@ type sshV2Client interface {
 // alias handoff without re-testing the session package's key and pinning logic.
 var prepareSessionTarget = ssh.PrepareSessionTarget
 
+// upsertSessionHost makes a concrete v2 alias discoverable to editors that
+// enumerate SSH Host entries, notably Codex. Cursor and Claude receive their
+// aliases directly, so this extra persistent entry is specific to codev2.
+var upsertSessionHost = ssh.UpsertSessionHost
+
 // resolveSandboxV2SSHAlias prepares the same direct-session alias used by
 // sshv2 and scpv2. Editors subsequently use system OpenSSH, which invokes the
 // managed alias's ProxyCommand once it dials the host.
@@ -124,6 +129,9 @@ func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, name stri
 	alias, err := prepareSessionTarget(paths, client, sandbox.Name, sandbox.ID)
 	if err != nil {
 		return sandboxSSHAlias{}, err
+	}
+	if err := upsertSessionHost(paths, alias); err != nil {
+		return sandboxSSHAlias{}, fmt.Errorf("write direct SSH host alias: %w", err)
 	}
 	repoName := ""
 	if sandbox.RepoName != nil {

@@ -290,11 +290,16 @@ amika sandbox code my-sandbox --editor=codex
 Open a sandbox in the same supported editors as `sandbox code`, but use the
 beta direct WebSocket SSH transport instead of provider-native SSH. Use it when
 the provider route is unavailable or when you want the direct transport used by
-`sandbox sshv2` and `amika scpv2`.
+`sandbox sshv2` and `amika scpv2`. It works with remote sandboxes only and
+requires Amika authentication.
 
-`codev2` creates a managed SSH alias with an Amika `ProxyCommand`, then starts
-or configures Cursor, Claude Desktop, or Codex exactly as `sandbox code` does.
-It requires an SSH identity created or imported with `amika secret ssh-keygen`.
+`codev2` writes a concrete managed SSH alias so Codex can discover it, while
+its connection settings use an Amika `ProxyCommand`. It then starts or
+configures Cursor, Claude Desktop, or Codex exactly as `sandbox code` does.
+Before first use, run `amika secret ssh-keygen` to generate and upload an SSH
+key, or pass `--import <public-key-file>` to use an existing key. As with
+`sandbox code`, Claude and Codex require
+`AMIKA_OPEN_CLAUDE_CODEX_SUPPORT=true`; Cursor is available by default.
 
 ```bash
 amika sandbox codev2 my-sandbox

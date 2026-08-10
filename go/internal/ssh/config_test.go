@@ -156,6 +156,51 @@ func TestUpsertReplacesAndSorts(t *testing.T) {
 	}
 }
 
+func TestUpsertSessionHostRendersConcreteAliasBeforeWildcardSettings(t *testing.T) {
+	paths := testPaths(t)
+	alias := "my-sandbox.sb_1.app-amika-dev.amika"
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+			KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+		},
+		SessionProxyCommands: map[string]string{
+			"app-amika-dev": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+	}
+	if err := SaveState(paths, state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if err := UpsertSessionHost(paths, alias); err != nil {
+		t.Fatalf("UpsertSessionHost: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	data, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika config: %v", err)
+	}
+	content := string(data)
+	concreteHost := "Host " + alias
+	wildcardHost := "Host *.app-amika-dev.amika"
+	concreteIndex := strings.Index(content, concreteHost)
+	wildcardIndex := strings.Index(content, wildcardHost)
+	if concreteIndex < 0 || wildcardIndex < 0 || concreteIndex > wildcardIndex {
+		t.Fatalf("concrete alias must precede its wildcard settings:\n%s", content)
+	}
+	if strings.Contains(content[concreteIndex:wildcardIndex], "HostName") {
+		t.Fatalf("concrete alias must not override wildcard connection settings:\n%s", content)
+	}
+
+	loaded, err := LoadState(paths)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if len(loaded.SessionHosts) != 1 || loaded.SessionHosts[0].Alias != alias {
+		t.Fatalf("session hosts = %#v", loaded.SessionHosts)
+	}
+}
+
 func TestEnsureIncludeCreatesAndIsIdempotent(t *testing.T) {
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()

@@ -268,7 +268,9 @@ func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 	}}
 
 	previous := prepareSessionTarget
+	previousUpsert := upsertSessionHost
 	var gotName, gotID string
+	var gotAlias string
 	prepareSessionTarget = func(gotPaths basedir.Paths, _ ssh.SessionCreator, name, id string) (string, error) {
 		if gotPaths != paths {
 			t.Fatalf("paths = %#v, want %#v", gotPaths, paths)
@@ -276,7 +278,17 @@ func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 		gotName, gotID = name, id
 		return "my-sandbox.sb_abc.app-amika-dev.amika", nil
 	}
-	t.Cleanup(func() { prepareSessionTarget = previous })
+	upsertSessionHost = func(gotPaths basedir.Paths, alias string) error {
+		if gotPaths != paths {
+			t.Fatalf("paths = %#v, want %#v", gotPaths, paths)
+		}
+		gotAlias = alias
+		return nil
+	}
+	t.Cleanup(func() {
+		prepareSessionTarget = previous
+		upsertSessionHost = previousUpsert
+	})
 
 	target, err := resolveSandboxV2SSHAlias(client, paths, "lookup-name")
 	if err != nil {
@@ -284,6 +296,9 @@ func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 	}
 	if gotName != "my-sandbox" || gotID != "sb_abc" {
 		t.Fatalf("PrepareSessionTarget(%q, %q), want sandbox identity", gotName, gotID)
+	}
+	if gotAlias != "my-sandbox.sb_abc.app-amika-dev.amika" {
+		t.Fatalf("UpsertSessionHost(%q), want prepared alias", gotAlias)
 	}
 	if target.alias != "my-sandbox.sb_abc.app-amika-dev.amika" || target.sandboxName != "my-sandbox" || target.repoName != "biz" {
 		t.Fatalf("target = %#v", target)
