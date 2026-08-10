@@ -726,8 +726,12 @@ func TestSSHKeyAliasTreeIsIndependent(t *testing.T) {
 	if primary == alias {
 		t.Fatal("the secret and secrets trees share one ssh-key command instance")
 	}
-	if !alias.Hidden {
-		t.Error("the secrets alias tree should stay hidden")
+	// The SSH commands are discoverable under both spellings.
+	if alias.Hidden {
+		t.Error("secrets ssh-key must not be hidden")
+	}
+	if primary.Hidden {
+		t.Error("secret ssh-key must not be hidden")
 	}
 	for _, name := range []string{"push", "create", "list", "delete"} {
 		if primary.Commands() == nil {
@@ -870,5 +874,41 @@ func TestSSHKeygenInProcess_DoesNotUploadWhenSessionConfigIsInvalid(t *testing.T
 	// The whole point: nothing may have been uploaded.
 	if len(api.created) != 0 {
 		t.Errorf("the remote key was replaced despite an unusable local config: %+v", api.created)
+	}
+}
+
+func TestSSHCommandsAreNotHidden(t *testing.T) {
+	// Every SSH-related command a person is meant to run should show up in
+	// help, under either spelling of the secret(s) parent.
+	for _, parent := range []string{"secret", "secrets"} {
+		var top *cobra.Command
+		for _, c := range rootCmd.Commands() {
+			if c.Name() == parent {
+				top = c
+			}
+		}
+		if top == nil {
+			t.Fatalf("%q command missing", parent)
+		}
+		for _, name := range []string{"ssh-keygen", "ssh-key"} {
+			var found *cobra.Command
+			for _, c := range top.Commands() {
+				if c.Name() == name {
+					found = c
+				}
+			}
+			if found == nil {
+				t.Errorf("%s %s is missing", parent, name)
+				continue
+			}
+			if found.Hidden {
+				t.Errorf("%s %s is hidden", parent, name)
+			}
+			for _, sub := range found.Commands() {
+				if sub.Hidden {
+					t.Errorf("%s %s %s is hidden", parent, name, sub.Name())
+				}
+			}
+		}
 	}
 }

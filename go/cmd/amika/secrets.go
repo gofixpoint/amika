@@ -1022,12 +1022,12 @@ func init() {
 	rootCmd.AddCommand(secretsAliasCmd)
 	secretsAliasCmd.AddCommand(newSecretExtractCmd())
 	secretsAliasCmd.AddCommand(newSecretPushCmd())
-	sshKeygenAlias := newSSHKeygenCmd()
-	sshKeygenAlias.Hidden = true
-	secretsAliasCmd.AddCommand(sshKeygenAlias)
-	sshKeyAlias := newSSHKeyCmd()
-	sshKeyAlias.Hidden = true
-	secretsAliasCmd.AddCommand(sshKeyAlias)
+	// The SSH commands stay visible under the plural alias too. They are the
+	// documented way to manage sandbox access, so anyone who reaches for
+	// `amika secrets` should find them in its help rather than having to know
+	// the singular spelling.
+	secretsAliasCmd.AddCommand(newSSHKeygenCmd())
+	secretsAliasCmd.AddCommand(newSSHKeyCmd())
 	addProviderCommands(secretsAliasCmd, claudeProvider, true)
 	addProviderCommands(secretsAliasCmd, codexProvider, true)
 }
