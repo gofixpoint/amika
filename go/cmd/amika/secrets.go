@@ -30,18 +30,15 @@ type providerPushJSON struct {
 	Scope  string `json:"scope"`
 }
 
+// secretCmd answers to both "secret" and "secrets". This is a real cobra
+// alias rather than a second command tree, so every subcommand is registered
+// once and cannot drift between the two spellings, matching how
+// `service`/`services` is done.
 var secretCmd = &cobra.Command{
-	Use:   "secret",
-	Short: "Manage secrets",
-	Long:  `Discover local credentials and push them to the Amika remote secrets store.`,
-}
-
-// secretsAliasCmd is a hidden alias so that "amika secrets" still works.
-var secretsAliasCmd = &cobra.Command{
-	Use:    "secrets",
-	Short:  "Manage secrets",
-	Long:   `Discover local credentials and push them to the Amika remote secrets store.`,
-	Hidden: true,
+	Use:     "secret",
+	Aliases: []string{"secrets"},
+	Short:   "Manage secrets",
+	Long:    `Discover local credentials and push them to the Amika remote secrets store.`,
 }
 
 func newSecretExtractCmd() *cobra.Command {
@@ -1001,9 +998,8 @@ func autoResolveCodexCredential(credType string) (string, error) {
 // addProviderCommands attaches the push/list/delete subcommands for a
 // provider under a shared parent on `parent`. When hidden is true, the
 // provider's own subcommand is hidden (used under the `secrets` alias).
-func addProviderCommands(parent *cobra.Command, p providerConfig, hidden bool) {
+func addProviderCommands(parent *cobra.Command, p providerConfig) {
 	cmd := newProviderCmd(p)
-	cmd.Hidden = hidden
 	cmd.AddCommand(newProviderPushCmd(p))
 	cmd.AddCommand(newProviderListCmd(p))
 	cmd.AddCommand(newProviderDeleteCmd(p))
@@ -1015,15 +1011,7 @@ func init() {
 	secretCmd.AddCommand(newSecretExtractCmd())
 	secretCmd.AddCommand(newSecretPushCmd())
 	secretCmd.AddCommand(newSSHKeygenCmd())
-	addProviderCommands(secretCmd, claudeProvider, false)
-	addProviderCommands(secretCmd, codexProvider, false)
-
-	rootCmd.AddCommand(secretsAliasCmd)
-	secretsAliasCmd.AddCommand(newSecretExtractCmd())
-	secretsAliasCmd.AddCommand(newSecretPushCmd())
-	sshKeygenAlias := newSSHKeygenCmd()
-	sshKeygenAlias.Hidden = true
-	secretsAliasCmd.AddCommand(sshKeygenAlias)
-	addProviderCommands(secretsAliasCmd, claudeProvider, true)
-	addProviderCommands(secretsAliasCmd, codexProvider, true)
+	secretCmd.AddCommand(newSSHKeyCmd())
+	addProviderCommands(secretCmd, claudeProvider)
+	addProviderCommands(secretCmd, codexProvider)
 }

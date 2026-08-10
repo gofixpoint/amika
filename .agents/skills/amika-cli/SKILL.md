@@ -107,6 +107,7 @@ Errors go to stderr and exit non-zero (`1`).
 | `scp`                                 | Copy files to/from sandboxes; wraps the system `scp`                                         |
 | `secret push` / `extract`             | Push arbitrary secrets, or discover local credentials                                        |
 | `secret claude` / `secret codex`      | `push` / `list` / `delete` agent credentials for injection                                   |
+| `secret ssh-key`                      | `create` / `push` / `list` / `delete` the SSH public keys authorizing sandbox access         |
 | `service create` / `list` / `delete`  | Manage named port-backed services on a sandbox                                               |
 | `snapshot create` / `list` / `delete` | Capture a running sandbox to fork later                                                      |
 | `auth login` / `status` / `logout`    | Authentication                                                                               |

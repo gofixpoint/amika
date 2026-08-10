@@ -108,4 +108,50 @@ amika secret claude list
 amika secret claude delete <id>
 ```
 
+## SSH public keys
+
+`amika secret ssh-key` manages the SSH public keys that authorize you to
+connect to your sandboxes. Only the public half of a keypair is ever uploaded;
+the private key stays on your machine.
+
+1. **Generate a keypair and upload the public key:**
+
+```bash
+amika secret ssh-key create
+```
+
+This generates a keypair at `~/.ssh/amika_id_ed25519` if one is not already
+there (an existing pair is reused, not overwritten) and uploads only the public
+half. With `--import` no private key is written at all; the existing one is
+pointed at instead.
+
+2. **Upload a public key you already have:**
+
+```bash
+amika secret ssh-key push --name laptop --from-file ~/.ssh/id_ed25519.pub
+```
+
+Keys are named, and a name is unique per user. Re-pushing the same key material
+under an existing name is a no-op; replacing a name with different material
+requires `--force`.
+
+3. **List your keys:**
+
+```bash
+amika secret ssh-key list
+```
+
+4. **Delete a key:**
+
+```bash
+amika secret ssh-key delete <id>
+```
+
+This prompts for confirmation; pass `--force` to skip it (required with
+`-o json`, which never prompts).
+
+Deleting a key does not revoke access on sandboxes that are already running.
+Keys are read when a sandbox is provisioned, so the removal takes effect the
+next time one is provisioned.
+
 See [cli-reference.md](cli-reference.md) for the full flag reference.

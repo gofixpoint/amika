@@ -143,6 +143,9 @@ func TestE2ECases(t *testing.T) {
 				RunDir:    runDir,
 				StateDir:  stateDir,
 				SchemaDoc: schemaDoc,
+				// Exposed to cases as {{run_id}} so a case that names a
+				// remote resource can make the name unique to this run.
+				RunID: runID,
 				// Offline cases (not api-*) must never reach the real API,
 				// even on a host that exports AMIKA_API_KEY/AMIKA_API_URL
 				// ambiently (this dev environment does). Scrub those from the

@@ -98,6 +98,13 @@ entry remains available for best-effort cleanup.
 
 ### Variable substitution
 
+One variable is predefined: `{{run_id}}`, a timestamp unique to the whole
+run. A case that creates a **named** remote resource should build the name
+from it (`--name e2e-ssh-key-{{run_id}}`). Names are frequently upserted
+rather than rejected, so a fixed name lets a case adopt, mutate, and then
+delete a resource the account already had, and lets two concurrent runs
+sharing an account clobber each other.
+
 Any `{{var}}` placeholder in `cmd`, `stdin`, `env` values, `resource.name`,
 `resource.cleanup`, `release_resource.type`, `release_resource.name`,
 `expect.stdout_contains`, `expect.stdout_not_contains`,
