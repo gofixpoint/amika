@@ -296,6 +296,11 @@ type Options struct {
 	// network) or a local filesystem path. Steps using expect.schema fail
 	// clearly if this is empty.
 	SchemaDoc string
+	// RunID, if set, is exposed to every case as the `{{run_id}}` template
+	// variable. Cases that name a remote resource should build the name from
+	// it, so two runs sharing an account cannot collide with each other or
+	// adopt a same-named resource the account already had.
+	RunID string
 }
 
 // Runner executes case files against a built amika binary, tracking
@@ -334,10 +339,14 @@ func New(opts Options) (*Runner, error) {
 		return nil, err
 	}
 
+	vars := map[string]string{}
+	if opts.RunID != "" {
+		vars["run_id"] = opts.RunID
+	}
 	return &Runner{
 		opts:   opts,
 		ledger: ledger,
-		vars:   map[string]string{},
+		vars:   vars,
 	}, nil
 }
 
