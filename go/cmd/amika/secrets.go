@@ -30,18 +30,15 @@ type providerPushJSON struct {
 	Scope  string `json:"scope"`
 }
 
+// secretCmd answers to both "secret" and "secrets". This is a real cobra
+// alias rather than a second command tree, so every subcommand is registered
+// once and cannot drift between the two spellings, matching how
+// `service`/`services` is done.
 var secretCmd = &cobra.Command{
-	Use:   "secret",
-	Short: "Manage secrets",
-	Long:  `Discover local credentials and push them to the Amika remote secrets store.`,
-}
-
-// secretsAliasCmd is a hidden alias so that "amika secrets" still works.
-var secretsAliasCmd = &cobra.Command{
-	Use:    "secrets",
-	Short:  "Manage secrets",
-	Long:   `Discover local credentials and push them to the Amika remote secrets store.`,
-	Hidden: true,
+	Use:     "secret",
+	Aliases: []string{"secrets"},
+	Short:   "Manage secrets",
+	Long:    `Discover local credentials and push them to the Amika remote secrets store.`,
 }
 
 func newSecretExtractCmd() *cobra.Command {
@@ -1001,9 +998,8 @@ func autoResolveCodexCredential(credType string) (string, error) {
 // addProviderCommands attaches the push/list/delete subcommands for a
 // provider under a shared parent on `parent`. When hidden is true, the
 // provider's own subcommand is hidden (used under the `secrets` alias).
-func addProviderCommands(parent *cobra.Command, p providerConfig, hidden bool) {
+func addProviderCommands(parent *cobra.Command, p providerConfig) {
 	cmd := newProviderCmd(p)
-	cmd.Hidden = hidden
 	cmd.AddCommand(newProviderPushCmd(p))
 	cmd.AddCommand(newProviderListCmd(p))
 	cmd.AddCommand(newProviderDeleteCmd(p))
@@ -1016,18 +1012,6 @@ func init() {
 	secretCmd.AddCommand(newSecretPushCmd())
 	secretCmd.AddCommand(newSSHKeygenCmd())
 	secretCmd.AddCommand(newSSHKeyCmd())
-	addProviderCommands(secretCmd, claudeProvider, false)
-	addProviderCommands(secretCmd, codexProvider, false)
-
-	rootCmd.AddCommand(secretsAliasCmd)
-	secretsAliasCmd.AddCommand(newSecretExtractCmd())
-	secretsAliasCmd.AddCommand(newSecretPushCmd())
-	// The SSH commands stay visible under the plural alias too. They are the
-	// documented way to manage sandbox access, so anyone who reaches for
-	// `amika secrets` should find them in its help rather than having to know
-	// the singular spelling.
-	secretsAliasCmd.AddCommand(newSSHKeygenCmd())
-	secretsAliasCmd.AddCommand(newSSHKeyCmd())
-	addProviderCommands(secretsAliasCmd, claudeProvider, true)
-	addProviderCommands(secretsAliasCmd, codexProvider, true)
+	addProviderCommands(secretCmd, claudeProvider)
+	addProviderCommands(secretCmd, codexProvider)
 }
