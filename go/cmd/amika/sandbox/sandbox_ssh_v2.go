@@ -2,42 +2,122 @@ package sandboxcmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/cliargs"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
+// osArgs is a seam over the process argv, which the positional split needs to
+// tell an amika flag written before "sshv2" from an ssh option written after
+// it. Tests supply a synthetic argv instead of mutating the real one.
+var osArgs = func() []string { return os.Args }
+
+// execSessionSSH is a seam around the exec of the system ssh binary, so tests
+// can assert the argv the command would run without replacing the process.
+var execSessionSSH = ssh.ExecSessionSSH
+
+// newSSHV2Client is a seam over the API client sshv2 resolves a sandbox
+// through, narrowed to the two calls the command makes so tests can supply a
+// stub instead of reaching the network.
+var newSSHV2Client = func(target string) (sshV2Client, error) {
+	return getRemoteClient(target)
+}
+
+// sshV2OwnValueFlags are the amika flags reaching sshv2 that take their value
+// as a separate token. commandIndex skips those values so a sandbox named for
+// the subcommand ("--remote-target sshv2") is not read as the subcommand.
+var sshV2OwnValueFlags = map[string]bool{
+	"--output":        true,
+	"-o":              true,
+	"--remote-target": true,
+}
+
 var sandboxSSHV2Cmd = &cobra.Command{
-	Use:   "sshv2 [flags] <name> [-- <command>...]",
+	Use:   "sshv2 [ssh-options] <name> [command...]",
 	Short: "SSH through the beta direct WebSocket transport",
-	Args:  cobra.MinimumNArgs(1),
+	Long: `Open an SSH session to a remote sandbox over the beta direct WebSocket
+transport. Requires an SSH identity from "amika secret ssh-keygen".
+
+Use it like ssh: options go before the sandbox name, an optional command
+after it. Every ssh option works, including port forwarding.
+
+Amika's own flags go before "sshv2":
+
+  amika sandbox --remote sshv2 -N -L 8080:localhost:80 my-sandbox
+
+Local (-L) and dynamic (-D) forwarding are supported. Remote forwarding (-R),
+agent forwarding (-A), and X11 forwarding are not.
+
+Examples:
+  # Interactive shell
+  amika sandbox sshv2 my-sandbox
+
+  # Run a command instead of opening a shell
+  amika sandbox sshv2 my-sandbox uptime
+
+  # Forward local port 6789 to port 3010 inside the sandbox, no shell
+  amika sandbox sshv2 -N -L 6789:localhost:3010 my-sandbox
+
+  # SOCKS proxy on local port 1080
+  amika sandbox sshv2 -N -D 1080 my-sandbox`,
+	// Arguments after "sshv2" belong to ssh, so Cobra must not parse them: it
+	// would reject "-L" and friends as unknown flags. RunE therefore parses the
+	// amika-owned portion itself, after splitting the two apart by position.
+	DisableFlagParsing: true,
+	// The usage line already spells out where options go, and the trailing
+	// "[flags]" Cobra appends would suggest amika flags belong after the
+	// subcommand, which is exactly what they must not do.
+	DisableFlagsInUseLine: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if runmode.Resolve(cmd) == runmode.Local {
-			return fmt.Errorf("direct WebSocket SSH requires a remote sandbox")
+		own, forward := cliargs.Split(osArgs(), args, cmd.Name(), sshV2OwnValueFlags)
+		// DisableFlagParsing bypasses Cobra's built-in help flag, so honor it
+		// here before anything else can fail on an incomplete command line.
+		if cliargs.HasHelpFlag(forward) || cliargs.HasHelpFlag(own) {
+			return cmd.Help()
 		}
-		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+		// Cobra merges the parents' persistent flags into a command's own set
+		// inside ParseFlags, which DisableFlagParsing skips. Reading
+		// InheritedFlags forces that merge, so --local, --remote,
+		// --remote-target, and --output resolve as they do elsewhere.
+		_ = cmd.InheritedFlags()
+		if err := cmd.Flags().Parse(own); err != nil {
 			return err
 		}
 		if err := output.RejectFlag(cmd); err != nil {
+			return err
+		}
+		if runmode.Resolve(cmd) == runmode.Local {
+			return fmt.Errorf("direct WebSocket SSH requires a remote sandbox")
+		}
+		// Locate the sandbox name before requiring auth, so an unusable command
+		// line is reported as the usage error it is rather than as a login
+		// prompt.
+		nameIdx := cliargs.FirstOperand(forward, cliargs.SSHArgLetters)
+		if nameIdx < 0 {
+			return fmt.Errorf("missing sandbox name; usage: amika sandbox sshv2 [ssh-options] <name> [command...]")
+		}
+		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
 		}
-		client, err := getRemoteClient(target)
+		client, err := newSSHV2Client(target)
 		if err != nil {
 			return err
 		}
-		sandbox, err := client.GetSandbox(args[0])
+		sandbox, err := client.GetSandbox(forward[nameIdx])
 		if err != nil {
 			return err
 		}
-		alias, err := ssh.PrepareSessionTarget(
+		alias, err := prepareSessionTarget(
 			basedir.New(""),
 			client,
 			sandbox.Name,
@@ -46,8 +126,7 @@ var sandboxSSHV2Cmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		forcePTY, _ := cmd.Flags().GetBool("t")
-		return ssh.ExecSessionSSH(alias, forcePTY, args[1:])
+		return execSessionSSH(alias, ssh.BuildSessionSSHArgv(forward, nameIdx, alias))
 	},
 }
 
