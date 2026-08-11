@@ -67,7 +67,9 @@ func New() *cobra.Command {
 	sandboxSSHCmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
 	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
 	sandboxSSHCmd.Flags().Bool("print", false, "Print the SSH connection string instead of connecting")
-	sandboxSSHV2Cmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
+	// sshv2 registers no flags of its own: it forwards everything after the
+	// subcommand to ssh, so ssh's own -t (and every other option) passes
+	// through untouched.
 	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"claude\", or \"codex\"")
 	sandboxCodeCmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
 	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"claude\", or \"codex\"")

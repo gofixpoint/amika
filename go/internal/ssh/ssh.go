@@ -76,20 +76,31 @@ func DispatchSSH(client *apiclient.Client, name string, extraArgs []string, stdo
 	return cmd.Run()
 }
 
+// BuildSessionSSHArgv assembles the argv for the system ssh binary from the
+// arguments forwarded to it, swapping the sandbox name at nameIdx for the
+// managed v2 alias. Substituting in place rather than prepending the alias
+// preserves ssh's own grammar, "ssh [options] destination [command]": options
+// written before the sandbox name stay before the destination, where ssh reads
+// them as client options, and anything after it stays after, where ssh reads it
+// as the remote command.
+func BuildSessionSSHArgv(forward []string, nameIdx int, alias string) []string {
+	argv := make([]string, 0, len(forward))
+	argv = append(argv, forward[:nameIdx]...)
+	argv = append(argv, alias)
+	argv = append(argv, forward[nameIdx+1:]...)
+	return argv
+}
+
 // ExecSessionSSH replaces the current process with OpenSSH targeting a strict
-// v2 alias whose ProxyCommand fetches a fresh session per dial.
-func ExecSessionSSH(alias string, forcePTY bool, extraArgs []string) error {
+// v2 alias whose ProxyCommand fetches a fresh session per dial. argv is the
+// complete ssh argument list, as built by BuildSessionSSHArgv.
+func ExecSessionSSH(alias string, argv []string) error {
 	if _, err := ParseSessionAlias(alias); err != nil {
 		return err
 	}
-	sshArgs := []string{alias}
-	if forcePTY {
-		sshArgs = append([]string{"-t"}, sshArgs...)
-	}
-	sshArgs = append(sshArgs, extraArgs...)
 	sshBin, err := exec.LookPath("ssh")
 	if err != nil {
 		return fmt.Errorf("ssh not found: %w", err)
 	}
-	return syscall.Exec(sshBin, append([]string{"ssh"}, sshArgs...), os.Environ())
+	return syscall.Exec(sshBin, append([]string{"ssh"}, argv...), os.Environ())
 }

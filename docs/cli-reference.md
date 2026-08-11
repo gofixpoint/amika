@@ -43,7 +43,7 @@ Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
 ### Global sandbox flags
 
-These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `codev2`, `agent-send`):
+These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `sshv2`, `code`, `codev2`, `agent-send`). For `sshv2` they must be written before the subcommand, since everything after it is forwarded to `ssh`:
 
 | Flag       | Default | Description                      |
 | ---------- | ------- | -------------------------------- |
@@ -313,6 +313,57 @@ amika sandbox codev2 my-sandbox --editor=codex
 ```
 
 `--editor` and `--path` have the same values and defaults as `sandbox code`.
+
+### `amika sandbox sshv2`
+
+Open an SSH session to a remote sandbox over the beta direct WebSocket
+transport, bypassing the provider's SSH route. Remote sandboxes only; requires
+an SSH identity from `amika secret ssh-keygen`.
+
+```
+amika sandbox sshv2 [ssh-options] <name> [command...]
+```
+
+Every argument written after `sshv2` is handed to the system `ssh` binary
+unchanged, so ssh's own options behave exactly as they do with `ssh`. The
+sandbox name takes the place of ssh's destination, which gives the same
+grammar ssh uses: options before the name, an optional remote command after
+it. `sshv2` defines no flags of its own, so ssh's `-t` (and every other
+option) reaches ssh directly.
+
+Because arguments after the subcommand belong to ssh, amika's own flags must
+be written **before** it:
+
+```bash
+amika sandbox --remote sshv2 -N -L 8080:localhost:80 my-sandbox
+```
+
+Here `--remote` is amika's, while `-N -L 8080:localhost:80` and the sandbox
+name go to ssh. `--help` is the one exception: `amika sandbox sshv2 --help`
+prints amika's help rather than reaching ssh, as does `amika help sandbox
+sshv2`.
+
+```bash
+# Interactive shell
+amika sandbox sshv2 my-sandbox
+
+# Run a command instead of opening a shell
+amika sandbox sshv2 my-sandbox uptime
+
+# Forward local port 6789 to port 3010 inside the sandbox, without a shell
+amika sandbox sshv2 -N -L 6789:localhost:3010 my-sandbox
+
+# SOCKS proxy on local port 1080
+amika sandbox sshv2 -N -D 1080 my-sandbox
+```
+
+The sandbox's SSH server permits local (`-L`) and dynamic (`-D`) port
+forwarding. Remote forwarding (`-R`), agent forwarding (`-A`), and X11
+forwarding are refused by the server.
+
+Because `-o` is ssh's own ssh_config option, `sshv2` does not accept amika's
+`-o`/`--output` after the subcommand; written before it, `--output` is
+rejected like it is for `sandbox ssh` (see above).
 
 ### `amika sandbox agent-send`
 
