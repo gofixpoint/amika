@@ -317,31 +317,25 @@ amika sandbox codev2 my-sandbox --editor=codex
 ### `amika sandbox sshv2`
 
 Open an SSH session to a remote sandbox over the beta direct WebSocket
-transport, bypassing the provider's SSH route. Remote sandboxes only; requires
-an SSH identity from `amika secret ssh-keygen`.
+transport. Remote sandboxes only; requires an SSH identity from
+`amika secret ssh-keygen`.
 
 ```
 amika sandbox sshv2 [ssh-options] <name> [command...]
 ```
 
-Every argument written after `sshv2` is handed to the system `ssh` binary
-unchanged, so ssh's own options behave exactly as they do with `ssh`. The
-sandbox name takes the place of ssh's destination, which gives the same
-grammar ssh uses: options before the name, an optional remote command after
-it. `sshv2` defines no flags of its own, so ssh's `-t` (and every other
-option) reaches ssh directly.
+Use it like `ssh`: options go before the sandbox name, an optional command
+after it. Every ssh option works, including port forwarding, and `sshv2`
+defines no flags of its own.
 
-Because arguments after the subcommand belong to ssh, amika's own flags must
-be written **before** it:
+Amika's own flags go **before** `sshv2`:
 
 ```bash
 amika sandbox --remote sshv2 -N -L 8080:localhost:80 my-sandbox
 ```
 
-Here `--remote` is amika's, while `-N -L 8080:localhost:80` and the sandbox
-name go to ssh. `--help` is the one exception: `amika sandbox sshv2 --help`
-prints amika's help rather than reaching ssh, as does `amika help sandbox
-sshv2`.
+`--help` is the one exception: `amika sandbox sshv2 --help` prints amika's
+help, as does `amika help sandbox sshv2`.
 
 ```bash
 # Interactive shell
@@ -357,13 +351,12 @@ amika sandbox sshv2 -N -L 6789:localhost:3010 my-sandbox
 amika sandbox sshv2 -N -D 1080 my-sandbox
 ```
 
-The sandbox's SSH server permits local (`-L`) and dynamic (`-D`) port
-forwarding. Remote forwarding (`-R`), agent forwarding (`-A`), and X11
-forwarding are refused by the server.
+Local (`-L`) and dynamic (`-D`) forwarding are supported. Remote forwarding
+(`-R`), agent forwarding (`-A`), and X11 forwarding are not.
 
-Because `-o` is ssh's own ssh_config option, `sshv2` does not accept amika's
-`-o`/`--output` after the subcommand; written before it, `--output` is
-rejected like it is for `sandbox ssh` (see above).
+`-o` after the subcommand is ssh's ssh_config option, so amika's
+`-o`/`--output` is not available there; written before `sshv2` it is rejected,
+as it is for `sandbox ssh` (see above).
 
 ### `amika sandbox agent-send`
 

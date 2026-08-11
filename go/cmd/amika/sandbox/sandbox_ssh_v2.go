@@ -42,25 +42,17 @@ var sandboxSSHV2Cmd = &cobra.Command{
 	Use:   "sshv2 [ssh-options] <name> [command...]",
 	Short: "SSH through the beta direct WebSocket transport",
 	Long: `Open an SSH session to a remote sandbox over the beta direct WebSocket
-transport, bypassing provider-native SSH access. Requires an SSH identity from
-"amika secret ssh-keygen".
+transport. Requires an SSH identity from "amika secret ssh-keygen".
 
-Every argument after "sshv2" is handed to the system ssh binary unchanged, so
-ssh's own options behave exactly as they do with ssh itself. The sandbox name
-takes the place of ssh's destination, giving the same grammar ssh uses:
-options before the name, an optional remote command after it.
+Use it like ssh: options go before the sandbox name, an optional command
+after it. Every ssh option works, including port forwarding.
 
-Because those arguments belong to ssh, amika's own flags go before the
-subcommand name and ssh's options go after it. In
+Amika's own flags go before "sshv2":
 
   amika sandbox --remote sshv2 -N -L 8080:localhost:80 my-sandbox
 
-"--remote" is amika's, while "-N -L 8080:localhost:80" and the sandbox name
-are handed to ssh. "--help" is the exception: it always prints this text.
-
-The sandbox permits local (-L) and dynamic (-D) port forwarding. Remote
-forwarding (-R), agent forwarding (-A), and X11 forwarding are refused by the
-sandbox's SSH server.
+Local (-L) and dynamic (-D) forwarding are supported. Remote forwarding (-R),
+agent forwarding (-A), and X11 forwarding are not.
 
 Examples:
   # Interactive shell
@@ -73,10 +65,7 @@ Examples:
   amika sandbox sshv2 -N -L 6789:localhost:3010 my-sandbox
 
   # SOCKS proxy on local port 1080
-  amika sandbox sshv2 -N -D 1080 my-sandbox
-
-  # Force a PTY with ssh's own -t
-  amika sandbox sshv2 -t my-sandbox top`,
+  amika sandbox sshv2 -N -D 1080 my-sandbox`,
 	// Arguments after "sshv2" belong to ssh, so Cobra must not parse them: it
 	// would reject "-L" and friends as unknown flags. RunE therefore parses the
 	// amika-owned portion itself, after splitting the two apart by position.

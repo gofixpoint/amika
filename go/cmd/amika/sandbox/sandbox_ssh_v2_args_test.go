@@ -254,7 +254,7 @@ func TestSSHV2Help(t *testing.T) {
 			got := out.String()
 			for _, want := range []string{
 				"amika sandbox sshv2",
-				"handed to the system ssh binary unchanged",
+				"Use it like ssh",
 				"-L 6789:localhost:3010",
 			} {
 				if !strings.Contains(got, want) {
