@@ -5,6 +5,26 @@ name: scrub a snapshot without breaking the restored environment
 # baseline. Assertions look for the old sentinels rather than requiring paths
 # to stay absent, because fresh provisioning may legitimately recreate them.
 steps:
+  # sshv2 authenticates with the caller's user-owned SSH key, so the local
+  # identity's public half has to be registered before any sshv2 step runs.
+  # `create` reuses an existing local keypair rather than regenerating one (see
+  # ssh.GenerateIdentity), so this uploads the key already at
+  # ~/.ssh/amika_id_ed25519 and never overwrites it. The run-unique name means
+  # the key this case deletes is always one it registered.
+  - name: register the local SSH public key for sshv2
+    cmd: [secret, ssh-key, create, --name, "e2e-scrub-{{run_id}}", -o, json]
+    expect:
+      exit: 0
+      schema: SshPublicKeySummary
+      stdout_json:
+        id: "@string"
+    capture:
+      ssh_key_id: $.id
+    resource:
+      type: ssh-key
+      name: "{{ssh_key_id}}"
+      cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
+
   - name: create a source sandbox
     cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
     expect:
@@ -22,7 +42,7 @@ steps:
   - name: inject scrub sentinels into the source sandbox
     cmd:
       - sandbox
-      - ssh
+      - sshv2
       - "{{source_sandbox}}"
       - --
       - sh
@@ -114,7 +134,7 @@ steps:
   - name: verify the scrubbed snapshot restores a clean usable environment
     cmd:
       - sandbox
-      - ssh
+      - sshv2
       - "{{restored_sandbox}}"
       - --
       - sh
