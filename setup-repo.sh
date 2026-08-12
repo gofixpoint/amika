@@ -34,3 +34,10 @@ cp "$(cmd_mainpath)/.env.local" "$REPO_ROOT/" 2>/dev/null || true
 git config core.hooksPath "$REPO_ROOT/githooks"
 
 echo "Git hooks path configured to: $REPO_ROOT/githooks"
+
+# Install the JS workspace (js/*, eslint-rules). The pre-commit hook shells out
+# to the workspace's pinned prettier, eslint, and tsc, so the hook is only
+# useful once this has run. `sdk/typescript` is a separate workspace with its
+# own lockfile and is not installed here.
+echo "Installing JS workspace dependencies..."
+pnpm -C "$REPO_ROOT" install

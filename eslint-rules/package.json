@@ -1,0 +1,12 @@
+{
+  "name": "eslint-rules",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local ESLint rules shared across the js/ workspace packages",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "eslint": "^9"
+  }
+}

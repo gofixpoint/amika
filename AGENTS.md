@@ -43,7 +43,24 @@ Amika is a Go module that lets people control sandboxed AI agents, focused on us
 The repo also ships `amikalog`, a separate, separately-installed CLI that captures Claude Code and Codex hook activity (with the git state of each hook's working directory) as raw append-only events under the amika state directory. Run `amikalog start` once to install the hooks. It is versioned and released independently of `amika` (tags `amikalog@v*`).
 
 This repository is an OSS monorepo. Go sources live under `go/`. Other
-language SDKs live under `sdk/` (e.g. `sdk/typescript/`).
+language SDKs live under `sdk/` (e.g. `sdk/typescript/`). TypeScript packages
+that are consumed as source rather than published live under `js/` — currently
+`js/sandbox` (`@amika/sandbox`), the sandbox provider abstraction. See
+[`js/AGENTS.md`](./js/AGENTS.md) for the conventions every `js/` package
+follows.
+
+There are two independent pnpm workspaces here, on purpose. The repo root
+governs `js/*` and `eslint-rules` (root `pnpm-workspace.yaml` and
+`pnpm-lock.yaml`); `sdk/typescript` governs itself, with its own workspace file,
+lockfile, and `packageManager` pin, because it is a published npm package with
+its own release pipeline. Run `pnpm install` at the root for the former and
+from `sdk/typescript/` for the latter.
+
+`js/sandbox` is consumed by `amika-mono` as a git submodule pinned to an exact
+commit, so this repo is the single source of truth for that package: changes
+land here and reach amika-mono through a pointer bump. That also means this
+repo's CI and pre-commit hook own the package's source quality — amika-mono
+sees only a gitlink for the submodule and so cannot lint or format it.
 
 Comments and docstrings here sometimes point at `amika-mono`, Amika's private
 control-plane monorepo, for protocol details owned by that side (e.g. "the

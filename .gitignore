@@ -1,6 +1,8 @@
 /amika
 dist/
 scratch/
+node_modules/
+*.tsbuildinfo
 .DS_Store
 .gocache/
 .gotmp/
