@@ -2,6 +2,7 @@
 package apiclient
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -892,6 +893,182 @@ func (c *Client) SendAgentSession(req AgentSessionSendRequest) (*AgentSessionSen
 		return nil, fmt.Errorf("remote agent-session send: %w", err)
 	}
 	return &result, nil
+}
+
+// AgentSessionStreamHandlers receives progress while SendAgentSessionStream
+// reads the SSE stream. Both callbacks are optional and are invoked from the
+// calling goroutine as frames arrive. OnStatus reports lifecycle milestones
+// (`creating_sandbox`/`sandbox_ready`, the latter carrying the sandbox id);
+// OnDelta receives agent reply text as it is produced.
+type AgentSessionStreamHandlers struct {
+	OnStatus func(phase, sandboxID string)
+	OnDelta  func(text string)
+}
+
+// SendAgentSessionStream is the streaming counterpart to SendAgentSession: it
+// POSTs to the `/agent-sessions/stream` SSE endpoint and forwards `status` and
+// `delta` frames to the handlers as they arrive, returning the terminal `done`
+// frame — the same AgentSessionSendResponse the buffered endpoint returns. A
+// mid-stream `error` frame (or a stream that ends without a `done`) becomes an
+// error. Auth/validation failures arrive as a normal JSON error BEFORE the
+// stream opens and are surfaced like the buffered path.
+//
+// As with SendAgentSession the turn can run for minutes, so a 10-minute timeout
+// replaces the client default. Note the server caps its own run well under
+// that; the longer client bound just avoids cutting a valid stream short.
+func (c *Client) SendAgentSessionStream(
+	req AgentSessionSendRequest,
+	h AgentSessionStreamHandlers,
+) (*AgentSessionSendResponse, error) {
+	saved := c.HTTP.Timeout
+	c.HTTP.Timeout = 10 * time.Minute
+	defer func() { c.HTTP.Timeout = saved }()
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling request: %w", err)
+	}
+	httpReq, err := http.NewRequest(
+		"POST",
+		c.BaseURL+apiBasePath+"/agent-sessions/stream",
+		bytes.NewReader(data),
+	)
+	if err != nil {
+		return nil, err
+	}
+	token, err := c.TokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("obtaining auth token: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("remote agent-session send: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// A rejection (auth/validation) is a normal JSON error emitted before the
+	// stream opens; surface it like the buffered path, including the agent-auth
+	// hint when applicable.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		herr := &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
+		if authErr := extractAgentAuthError(herr); authErr != "" {
+			return nil, fmt.Errorf("remote agent-session send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
+		}
+		return nil, fmt.Errorf("remote agent-session send: %w", herr)
+	}
+
+	result, streamErr, err := readAgentSessionStream(resp.Body, h)
+	if err != nil {
+		return nil, fmt.Errorf("remote agent-session send: %w", err)
+	}
+	if streamErr != "" {
+		return nil, fmt.Errorf("remote agent-session send: %s", streamErr)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("remote agent-session send: stream ended without a result")
+	}
+	return result, nil
+}
+
+// readAgentSessionStream parses the send SSE stream. It returns the parsed
+// `done` result (nil if none arrived), the message from an `error` frame (""
+// if none), or a read/parse error. `status`/`delta` frames are dispatched to
+// the handlers as they are seen.
+func readAgentSessionStream(
+	body io.Reader,
+	h AgentSessionStreamHandlers,
+) (*AgentSessionSendResponse, string, error) {
+	scanner := bufio.NewScanner(body)
+	// A single `data:` line can carry the whole AgentSessionSendResponse; allow
+	// well beyond the default 64 KiB line cap.
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	var event string
+	var dataBuf strings.Builder
+	var result *AgentSessionSendResponse
+	var streamErr string
+
+	// dispatch handles one complete frame (terminated by a blank line).
+	dispatch := func() error {
+		ev, payload := event, dataBuf.String()
+		event = ""
+		dataBuf.Reset()
+		switch ev {
+		case "status":
+			if h.OnStatus != nil {
+				var s struct {
+					Phase     string `json:"phase"`
+					SandboxID string `json:"sandbox_id"`
+				}
+				if json.Unmarshal([]byte(payload), &s) == nil {
+					h.OnStatus(s.Phase, s.SandboxID)
+				}
+			}
+		case "delta":
+			if h.OnDelta != nil {
+				var d struct {
+					Text string `json:"text"`
+				}
+				if json.Unmarshal([]byte(payload), &d) == nil && d.Text != "" {
+					h.OnDelta(d.Text)
+				}
+			}
+		case "done":
+			var r AgentSessionSendResponse
+			if err := json.Unmarshal([]byte(payload), &r); err != nil {
+				return fmt.Errorf("parsing done frame: %w", err)
+			}
+			result = &r
+		case "error":
+			var e struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal([]byte(payload), &e)
+			if e.Error != "" {
+				streamErr = e.Error
+			} else {
+				streamErr = "stream error"
+			}
+		}
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "":
+			// Blank line terminates a frame.
+			if event != "" {
+				if err := dispatch(); err != nil {
+					return nil, "", err
+				}
+			}
+		case strings.HasPrefix(line, "event: "):
+			event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			// SSE joins multiple data lines with \n; the server emits one line.
+			if dataBuf.Len() > 0 {
+				dataBuf.WriteByte('\n')
+			}
+			dataBuf.WriteString(strings.TrimPrefix(line, "data: "))
+		}
+		// Other lines (`:` comments, `id:`) are ignored.
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, "", fmt.Errorf("reading stream: %w", err)
+	}
+	// Flush a trailing frame not followed by a blank line (defensive).
+	if event != "" {
+		if err := dispatch(); err != nil {
+			return nil, "", err
+		}
+	}
+	return result, streamErr, nil
 }
 
 // ListAgentSessions lists the org's agent-session chats, newest first.

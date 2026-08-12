@@ -22,7 +22,7 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	if send == nil {
 		t.Fatal("send command not registered on rootCmd")
 	}
-	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo"} {
+	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo", "stream"} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
 		}
