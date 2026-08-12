@@ -424,6 +424,22 @@ export interface CloneRepoInput {
   repoName?: string | null;
   githubToken?: string | null;
   branch?: string;
+  /**
+   * Whether to check out the repo's git submodules as well. Defaults to `true`
+   * when omitted: a repo that declares submodules is not usable without them,
+   * and silently landing an empty submodule directory fails later, further
+   * away, and far more confusingly than a slow clone does.
+   *
+   * Set this `false` only when the caller knows the extra fetch is wasted (no
+   * submodules) or unauthorized (private submodules the sandbox's credential
+   * cannot reach).
+   *
+   * Note that no provider SDK exposes a submodule option on its native clone
+   * primitive, so honoring `true` means cloning over the exec port instead of
+   * through {@link SandboxGitNamespace.clone}. See `resolveCloneRepo` in
+   * amika-mono's `@amika/sandbox-provisioning`, which makes that choice.
+   */
+  recurseSubmodules?: boolean;
 }
 
 // ---------------------------------------------------------------------------

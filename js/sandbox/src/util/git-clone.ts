@@ -138,10 +138,17 @@ export function buildGitSetPlainRemoteCmd(url: string): string {
  * `origin` at `cloneUrl`, restores the full-history refspec, fetches, then
  * checks out the same end state a fresh clone-with-branch-fallback would
  * produce. `branch` is validated; it and `cloneUrl` are shell-quoted.
+ *
+ * When `recurseSubmodules` is true (the default), the script also syncs and
+ * checks out submodules after the branch checkout. `sync --recursive` is what
+ * picks up a `.gitmodules` URL that changed between the snapshot's baked-in
+ * commit and the one being checked out; `update --init` alone would keep using
+ * the stale URL recorded in `.git/config`.
  */
 export function buildRefreshClonedRepoScript(
   cloneUrl: string,
   branch?: string,
+  recurseSubmodules: boolean = true,
 ): string {
   const quotedUrl = shellQuote(cloneUrl);
   const checkoutDefaultBranch = [
@@ -177,6 +184,12 @@ export function buildRefreshClonedRepoScript(
     "git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'",
     "git fetch --prune origin",
     checkout,
+    ...(recurseSubmodules
+      ? [
+          "git submodule sync --recursive",
+          "git submodule update --init --recursive",
+        ]
+      : []),
   ].join("\n");
 }
 
