@@ -1,24 +1,58 @@
-name: remote sandbox lifecycle (create, list, agent-send, stop, start, delete)
+name: remote sandbox lifecycle preserves provisioning semantics across restart
 # A single real remote sandbox is created and reused across every
-# resource-dependent command, then deleted. The `resource` block registers
-# the sandbox for reverse-order ledger cleanup, so it is removed even if a
-# later step fails. The final explicit delete step also exercises the delete
-# command; on the happy path the ledger's redundant delete is a harmless
-# no-op that is logged and skipped.
+# resource-dependent command, then deleted. In addition to the CLI response,
+# sshv2 assertions verify the observable contract inside the sandbox: setup
+# runs once, repository state survives, start uses the repository hook, root
+# hooks rerun, and the agent is usable after restart. The `resource` block
+# registers the sandbox for reverse-order ledger cleanup if any assertion
+# fails before the explicit delete.
 #
 # Snapshot create/list/delete are intentionally NOT here: snapshot deletion
 # depends on the sandbox provider and can fail transiently (HTTP 502), which
 # would redden this core lifecycle and orphan a snapshot. They live in
 # api-snapshot-lifecycle.yaml so that flakiness stays isolated.
 steps:
-  - name: create a remote sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+  # sshv2 authenticates with the caller's user-owned SSH key. This registers
+  # the public half of the existing local identity under a run-unique name.
+  - name: register the local SSH public key for lifecycle assertions
+    cmd: [secret, ssh-key, create, --name, "e2e-lifecycle-{{run_id}}", -o, json]
+    expect:
+      exit: 0
+      schema: SshPublicKeySummary
+      stdout_json:
+        id: "@string"
+    capture:
+      ssh_key_id: $.id
+    resource:
+      type: ssh-key
+      name: "{{ssh_key_id}}"
+      cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
+
+  - name: create a remote repository sandbox and wait for setup
+    cmd:
+      - sandbox
+      - create
+      - --remote
+      - --git
+      - https://github.com/gofixpoint/example-repo.git
+      - --branch
+      - examples/no-config
+      - --setup-script
+      - testdata/lifecycle-setup.sh
+      - --preset
+      - coder
+      - --size
+      - xs
+      - --yes
+      - -o
+      - json
     expect:
       exit: 0
       schema: Sandbox
       stdout_json:
         name: "@string"
         id: "@string"
+        branch: examples/no-config
         services: "@array"
     capture:
       sandbox_name: $.name
@@ -27,6 +61,34 @@ steps:
       name: "{{sandbox_name}}"
       cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
+  - name: verify create semantics and record the initial hook logs
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - |
+        set -eu
+        cd "${AMIKA_AGENT_CWD:?}"
+
+        test "$(git rev-parse HEAD)" = 500250138bcc34c0a60d457fd498505eca3caf3c
+        test "$(cat .amika/e2e-setup-sentinel)" = 'repository-setup-hook-ran'
+        test -x .amika/scripts/start.sh
+        grep -q '^start_script = ".amika/scripts/start.sh"$' .amika/config.toml
+        test ! -e .amika/e2e-start-runs
+
+        for hook in pre-setup setup post-setup; do
+          test -s "/var/log/amikad/${hook}.log"
+          grep -Eq "^\\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^]]+(Z|[+-][0-9]{2}:[0-9]{2})\\] starting ${hook}\\.sh$" "/var/log/amikad/${hook}.log"
+          grep -Eq "^\\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^]]+(Z|[+-][0-9]{2}:[0-9]{2})\\] finished ${hook}\\.sh exit=0$" "/var/log/amikad/${hook}.log"
+          wc -c < "/var/log/amikad/${hook}.log" > ".amika/e2e-${hook}-log-size"
+        done
+        cmp /var/log/amika/setup.log /var/log/amikad/setup.log
+        printf '%s\n' 0 > .amika/e2e-start-log-size
+
+        printf '%s\n' 'survives-restart' > .amika/e2e-workspace-sentinel
+    expect:
+      exit: 0
+
   - name: list sandboxes as json and confirm ours is present
     cmd: [sandbox, list, -o, json]
     expect:
@@ -34,7 +96,52 @@ steps:
       schema: ListSandboxesResponse
       stdout_contains: "{{sandbox_name}}"
 
-  - name: send one message to the agent and get a synchronous response
+  - name: stop the sandbox and observe the final stopped state
+    cmd: [sandbox, stop, "{{sandbox_name}}", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_json:
+        - name: "{{sandbox_name}}"
+          state: stopped
+
+  - name: start the sandbox and observe the final running state
+    cmd: [sandbox, start, "{{sandbox_name}}", --remote, -o, json]
+    expect:
+      exit: 0
+      stdout_json:
+        - name: "{{sandbox_name}}"
+          state: "@oneof: active, running, started"
+          setup_status: ok
+
+  - name: verify repository state and lifecycle hook semantics after restart
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - |
+        set -eu
+        cd "${AMIKA_AGENT_CWD:?}"
+
+        test "$(cat .amika/e2e-workspace-sentinel)" = 'survives-restart'
+        test "$(cat .amika/e2e-setup-sentinel)" = 'repository-setup-hook-ran'
+        test "$(wc -l < .amika/e2e-start-runs)" -eq 1
+        test "$(cat .amika/e2e-start-runs)" = 'repository-start-hook-ran'
+
+        # Restart reruns the root hooks and repository start hook, but setup is
+        # create-only. Byte counts avoid depending on any timestamp value.
+        test "$(wc -c < /var/log/amikad/setup.log)" -eq "$(cat .amika/e2e-setup-log-size)"
+        test "$(wc -c < /var/log/amikad/pre-setup.log)" -gt "$(cat .amika/e2e-pre-setup-log-size)"
+        test "$(wc -c < /var/log/amikad/post-setup.log)" -gt "$(cat .amika/e2e-post-setup-log-size)"
+        test -s /var/log/amikad/start.log
+        test "$(wc -c < /var/log/amikad/start.log)" -gt "$(cat .amika/e2e-start-log-size)"
+        grep -q 'repository-start-hook-ran' /var/log/amikad/start.log
+        grep -Eq '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^]]+(Z|[+-][0-9]{2}:[0-9]{2})\] starting start\.sh$' /var/log/amikad/start.log
+        grep -Eq '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[^]]+(Z|[+-][0-9]{2}:[0-9]{2})\] finished start\.sh exit=0$' /var/log/amikad/start.log
+        cmp /var/log/amika/start.log /var/log/amikad/start.log
+    expect:
+      exit: 0
+
+  - name: confirm the agent is usable after lifecycle restart
     cmd: [sandbox, agent-send, "{{sandbox_name}}", "Reply with exactly the word: pong", --remote, -o, json]
     expect:
       exit: 0
@@ -45,19 +152,10 @@ steps:
         response: "@string"
         is_error: false
 
-  - name: stop the sandbox
-    cmd: [sandbox, stop, "{{sandbox_name}}", --remote, -o, json]
-    expect:
-      exit: 0
-      stdout_contains: "{{sandbox_name}}"
-
-  - name: start the sandbox again
-    cmd: [sandbox, start, "{{sandbox_name}}", --remote, -o, json]
-    expect:
-      exit: 0
-      stdout_contains: "{{sandbox_name}}"
-
   - name: delete the sandbox
     cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
     expect:
       exit: 0
+    release_resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
