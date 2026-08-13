@@ -59,7 +59,8 @@ steps:
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      cleanup:
+        [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: verify create semantics and record the initial hook logs
     cmd:
@@ -142,7 +143,16 @@ steps:
       exit: 0
 
   - name: confirm the agent is usable after lifecycle restart
-    cmd: [sandbox, agent-send, "{{sandbox_name}}", "Reply with exactly the word: pong", --remote, -o, json]
+    cmd:
+      [
+        sandbox,
+        agent-send,
+        "{{sandbox_name}}",
+        "Reply with exactly the word: pong",
+        --remote,
+        -o,
+        json,
+      ]
     expect:
       exit: 0
       stdout_json:
