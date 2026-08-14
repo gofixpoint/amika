@@ -1,0 +1,11 @@
+packages:
+  - "js/*"
+  - "eslint-rules"
+
+# `sdk/typescript` is deliberately NOT a member. It is a self-contained pnpm
+# workspace with its own pnpm-workspace.yaml, its own pnpm-lock.yaml, and its
+# own `packageManager` pin, and both `sdk-typescript.yml` and the OIDC publish
+# workflow install from that lockfile. Absorbing it here would orphan it.
+
+onlyBuiltDependencies:
+  - esbuild

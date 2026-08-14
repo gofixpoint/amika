@@ -6,3 +6,20 @@ echo "Running pre-commit checks..."
 make fmtcheck
 make vet
 make lint
+
+# JS workspace checks. Gated on staged JS-workspace paths so a Go-only commit
+# does not pay for a pnpm resolution, and so this hook keeps working in a clone
+# where `pnpm install` has not been run.
+#
+# lint-staged (config in .lintstagedrc.mjs) formats staged files with the
+# pinned prettier and runs `lint` + `typecheck` for each touched package. This
+# repo owns that responsibility outright: amika-mono consumes js/sandbox as a
+# git submodule, and a superproject only ever stages a single gitlink entry for
+# a submodule, so it cannot see — let alone lint or format — this source.
+staged_js=$(git diff --cached --name-only --diff-filter=ACMR \
+    -- 'js/' 'eslint-rules/' 'package.json' 'pnpm-workspace.yaml' '.lintstagedrc.mjs')
+
+if [ -n "$staged_js" ]; then
+    echo "Running JS checks..."
+    pnpm dlx lint-staged --relative
+fi
