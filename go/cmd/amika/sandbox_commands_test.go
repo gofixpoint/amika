@@ -119,11 +119,15 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sandbox list failed: %v", err)
 	}
-	if !strings.Contains(out, "NAME") || !strings.Contains(out, "CREATOR") {
-		t.Fatalf("missing header: %s", out)
+	for _, col := range []string{"NAME", "STATE", "REPO", "BRANCH", "CREATOR"} {
+		if !strings.Contains(out, col) {
+			t.Fatalf("missing default column %q: %s", col, out)
+		}
 	}
-	if strings.Contains(out, "PROVIDER") || strings.Contains(out, "PORTS") || strings.Contains(out, "IMAGE") {
-		t.Fatalf("unexpected wide-only column in default output: %s", out)
+	for _, col := range []string{"PROVIDER", "PORTS", "IMAGE", "LOCATION", "CREATED"} {
+		if strings.Contains(out, col) {
+			t.Fatalf("unexpected long-only column %q in default output: %s", col, out)
+		}
 	}
 	if !strings.Contains(out, "sb-a") {
 		t.Fatalf("missing sandbox row: %s", out)

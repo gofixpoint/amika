@@ -322,14 +322,14 @@ var sandboxListCmd = &cobra.Command{
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		if long {
-			fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tIMAGE\tBRANCH\tREPO\tCREATOR\tPORTS\tCREATED")
+			fmt.Fprintln(w, "NAME\tSTATE\tREPO\tBRANCH\tCREATOR\tLOCATION\tIMAGE\tPORTS\tCREATED")
 			for _, sb := range allItems {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Image, sb.Branch, formatRepos(sb.Repos), formatCreatedBy(sb.CreatedBy), formatPortBindings(sb.Ports), sb.CreatedAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy), sb.Location, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
 			}
 		} else {
-			fmt.Fprintln(w, "NAME\tSTATE\tLOCATION\tBRANCH\tREPO\tCREATOR\tCREATED")
+			fmt.Fprintln(w, "NAME\tSTATE\tREPO\tBRANCH\tCREATOR")
 			for _, sb := range allItems {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, sb.Location, sb.Branch, formatRepos(sb.Repos), formatCreatedBy(sb.CreatedBy), sb.CreatedAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy))
 			}
 		}
 		w.Flush()
