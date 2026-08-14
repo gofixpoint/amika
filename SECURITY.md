@@ -119,11 +119,10 @@ A few things worth knowing when assessing Amika's security posture:
 - Ports 60899–60999 are reserved inside sandbox containers for Amika services.
   Both the CLI and the API reject user-specified ports in that range. See
   [`docs/sandbox-configuration.md`](docs/sandbox-configuration.md).
-- Sandboxes run as Docker containers on the host Docker daemon, so they inherit
-  that daemon's isolation properties and are not a hard security boundary
-  against untrusted code.
-- `AMIKA_API_KEY` authenticates `amikalog beta:push` and `beta:fetch` against
-  org storage.
+- Local sandboxes run as Docker containers on the host Docker daemon, so they
+  inherit that daemon's isolation properties and are not a hard security
+  boundary against untrusted code.
+- Hosted sandboxes run in true VMs.
 
 ## Non-Security Bugs
 
