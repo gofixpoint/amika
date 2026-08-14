@@ -2,8 +2,10 @@
 package apiclient
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -809,6 +811,365 @@ func (c *Client) UpdateSession(sandboxName, sessionID string, req UpdateSessionR
 	var result Session
 	if err := c.doJSON("PATCH", apiBasePath+"/sandboxes/"+url.PathEscape(sandboxName)+"/sessions/"+url.PathEscape(sessionID), req, &result); err != nil {
 		return nil, fmt.Errorf("remote update session: %w", err)
+	}
+	return &result, nil
+}
+
+// AgentSessionSendRequest is the request body for POST /api/v0beta1/agent-sessions.
+// Message is required; the rest are optional. SessionID continues an existing
+// chat, SandboxID routes into a specific sandbox, and RepoURL is only used when
+// a sandbox is created behind the scenes.
+type AgentSessionSendRequest struct {
+	Message    string `json:"message"`
+	Agent      string `json:"agent,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	SandboxID  string `json:"sandbox_id,omitempty"`
+	NewSession bool   `json:"new_session,omitempty"`
+	RepoURL    string `json:"repo_url,omitempty"`
+}
+
+// AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and
+// cost accounting for one turn. Every field is optional — Claude reports the
+// full set, Codex currently reports none — so all are pointers and a missing
+// one stays absent when the response is re-emitted as JSON.
+type AgentSessionUsage struct {
+	CostUSD             *float64 `json:"cost_usd,omitempty"`
+	InputTokens         *int64   `json:"input_tokens,omitempty"`
+	OutputTokens        *int64   `json:"output_tokens,omitempty"`
+	CacheReadTokens     *int64   `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens *int64   `json:"cache_creation_tokens,omitempty"`
+	DurationMS          *int64   `json:"duration_ms,omitempty"`
+	NumTurns            *int64   `json:"num_turns,omitempty"`
+}
+
+// AgentSessionSendResponse mirrors the API's AgentSessionSendResponse schema
+// (POST /api/v0beta1/agent-sessions). SessionID is the durable chat id to pass
+// back as --session-id to continue the chat; Usage is the only optional field
+// (absent for a provider that reports no accounting).
+type AgentSessionSendResponse struct {
+	SessionID      string             `json:"session_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Agent          string             `json:"agent"`
+	Response       string             `json:"response"`
+	IsError        bool               `json:"is_error"`
+	IsNewSession   bool               `json:"is_new_session"`
+	CreatedSandbox bool               `json:"created_sandbox"`
+	Usage          *AgentSessionUsage `json:"usage,omitempty"`
+}
+
+// AgentSessionSummary is one row of the agent-sessions list. SandboxName,
+// Preview, and EndedAt are nullable in the schema — a chat can outlive the
+// sandbox whose name it shows, carry no user message to preview, and still be
+// running.
+type AgentSessionSummary struct {
+	SessionID   string  `json:"session_id"`
+	SandboxID   string  `json:"sandbox_id"`
+	SandboxName *string `json:"sandbox_name"`
+	Agent       string  `json:"agent"`
+	Status      string  `json:"status"`
+	Preview     *string `json:"preview"`
+	StartedAt   string  `json:"started_at"`
+	EndedAt     *string `json:"ended_at"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+}
+
+// AgentSessionMessage is one turn in an agent-session chat's transcript,
+// mirroring the API's AgentSessionMessage schema. Role is a plain string (the
+// API deliberately does not enum it) and IsError marks an assistant turn the
+// agent reported as failed; it is absent for user turns and for transcripts
+// that predate per-turn error tracking.
+type AgentSessionMessage struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp"`
+	// A pointer, not a bool: the field is genuinely absent on user turns and
+	// on transcripts predating per-turn error tracking, and an explicit
+	// `false` must survive being re-emitted under --output json.
+	IsError *bool `json:"is_error,omitempty"`
+}
+
+// AgentSessionDetail mirrors the API's AgentSessionDetail schema: an
+// AgentSessionSummary plus the chat's full transcript.
+type AgentSessionDetail struct {
+	AgentSessionSummary
+	Messages []AgentSessionMessage `json:"messages"`
+}
+
+// SendAgentSession sends a message to a coding agent, creating a sandbox behind
+// the scenes when the chat has none, or routing to an existing sandbox/session.
+// The endpoint is synchronous (it blocks until the agent finishes), so a longer
+// HTTP timeout (10 minutes) is used instead of the default 30 seconds.
+func (c *Client) SendAgentSession(req AgentSessionSendRequest) (*AgentSessionSendResponse, error) {
+	saved := c.HTTP.Timeout
+	c.HTTP.Timeout = 10 * time.Minute
+	defer func() { c.HTTP.Timeout = saved }()
+
+	var result AgentSessionSendResponse
+	// Note: no extractAgentAuthError branch here, unlike the older
+	// /sandboxes/{}/agent/send route. This endpoint reports a provider auth
+	// failure as a 200 with is_error set and the agent CLI's own message in
+	// `response` — not as an HTTP error — so there is no error body to inspect.
+	if err := c.doJSON("POST", apiBasePath+"/agent-sessions", req, &result); err != nil {
+		return nil, fmt.Errorf("remote agent-session send: %w", err)
+	}
+	return &result, nil
+}
+
+// AgentSessionStreamHandlers receives progress while SendAgentSessionStream
+// reads the SSE stream. Both callbacks are optional and are invoked from the
+// calling goroutine as frames arrive. OnStatus reports lifecycle milestones
+// (`creating_sandbox`/`sandbox_ready`, the latter carrying the sandbox id);
+// OnDelta receives agent reply text as it is produced.
+type AgentSessionStreamHandlers struct {
+	OnStatus func(phase, sandboxID string)
+	OnDelta  func(text string)
+}
+
+// SendAgentSessionStream is the streaming counterpart to SendAgentSession: it
+// POSTs to the `/agent-sessions/stream` SSE endpoint and forwards `status` and
+// `delta` frames to the handlers as they arrive, returning the terminal `done`
+// frame — the same AgentSessionSendResponse the buffered endpoint returns. A
+// mid-stream `error` frame (or a stream that ends without a `done`) becomes an
+// error. Auth/validation failures arrive as a normal JSON error BEFORE the
+// stream opens and are surfaced like the buffered path.
+//
+// As with SendAgentSession the turn can run for minutes, so a 10-minute timeout
+// replaces the client default. The effective bound is the server's, which is
+// lower (a 300s request ceiling): it ends the stream first, without a `done`
+// frame, and the client timeout only guards against a connection that hangs
+// past even that.
+func (c *Client) SendAgentSessionStream(
+	req AgentSessionSendRequest,
+	h AgentSessionStreamHandlers,
+) (*AgentSessionSendResponse, error) {
+	saved := c.HTTP.Timeout
+	c.HTTP.Timeout = 10 * time.Minute
+	defer func() { c.HTTP.Timeout = saved }()
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling request: %w", err)
+	}
+	httpReq, err := http.NewRequest(
+		"POST",
+		c.BaseURL+apiBasePath+"/agent-sessions/stream",
+		bytes.NewReader(data),
+	)
+	if err != nil {
+		return nil, err
+	}
+	token, err := c.TokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("obtaining auth token: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("remote agent-session send: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// A rejection (auth/validation) is a normal JSON error emitted before the
+	// stream opens; surface it like the buffered path.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("remote agent-session send: %w",
+			&HTTPError{StatusCode: resp.StatusCode, Body: string(body)})
+	}
+
+	result, streamErr, err := readAgentSessionStream(resp.Body, h)
+	if err != nil {
+		return nil, fmt.Errorf("remote agent-session send: %w", err)
+	}
+	// A completed turn wins over an error frame: `done` carries the persisted
+	// result, so if both somehow arrive the send succeeded and reporting the
+	// error would discard a real session id.
+	if result != nil {
+		return result, nil
+	}
+	if streamErr != "" {
+		return nil, fmt.Errorf("remote agent-session send: %s", streamErr)
+	}
+	// No terminal frame. The most likely cause is the server's own request
+	// ceiling (300s) cutting the stream mid-turn — the turn may well have
+	// completed and persisted, so point at `amika sessions list` rather than
+	// implying the work was lost.
+	return nil, fmt.Errorf(
+		"remote agent-session send: stream ended without a result " +
+			"(the server may have hit its request time limit; " +
+			"check `amika sessions list` for the session)")
+}
+
+// readAgentSessionStream parses the send SSE stream. It returns the parsed
+// `done` result (nil if none arrived), the message from an `error` frame (""
+// if none), or a read/parse error. `status`/`delta` frames are dispatched to
+// the handlers as they are seen.
+func readAgentSessionStream(
+	body io.Reader,
+	h AgentSessionStreamHandlers,
+) (*AgentSessionSendResponse, string, error) {
+	// A single `data:` line carries the whole AgentSessionSendResponse, whose
+	// `response` field is an entire agent turn. bufio.Scanner would impose a
+	// fixed line cap and fail a large-but-valid turn *after* it had run and
+	// been billed; bufio.Reader has no such bound, so the streaming and
+	// buffered transports accept the same responses.
+	reader := bufio.NewReader(body)
+
+	var event string
+	var dataBuf strings.Builder
+	var result *AgentSessionSendResponse
+	var streamErr string
+
+	// dispatch handles one complete frame (terminated by a blank line).
+	dispatch := func() error {
+		ev, payload := event, dataBuf.String()
+		event = ""
+		dataBuf.Reset()
+		switch ev {
+		case "status":
+			if h.OnStatus != nil {
+				var s struct {
+					Phase     string `json:"phase"`
+					SandboxID string `json:"sandbox_id"`
+				}
+				if json.Unmarshal([]byte(payload), &s) == nil {
+					h.OnStatus(s.Phase, s.SandboxID)
+				}
+			}
+		case "delta":
+			// A delta carries reply text, so an unparseable one is lost output.
+			// Fail loudly rather than silently printing a truncated reply and
+			// exiting 0. (`status` above is only cosmetic progress and carries
+			// no response text, so it stays lenient.)
+			var d struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal([]byte(payload), &d); err != nil {
+				return fmt.Errorf("parsing delta frame: %w", err)
+			}
+			if d.Text != "" && h.OnDelta != nil {
+				h.OnDelta(d.Text)
+			}
+		case "done":
+			var r AgentSessionSendResponse
+			if err := json.Unmarshal([]byte(payload), &r); err != nil {
+				return fmt.Errorf("parsing done frame: %w", err)
+			}
+			result = &r
+		case "error":
+			var e struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal([]byte(payload), &e)
+			if e.Error != "" {
+				streamErr = e.Error
+			} else {
+				streamErr = "stream error"
+			}
+		}
+		return nil
+	}
+
+	// handleLine processes one already-newline-stripped line.
+	handleLine := func(line string) error {
+		switch {
+		case line == "":
+			// A blank line terminates a frame. Dispatch it when it is one we
+			// act on; otherwise drop it — but clear the buffered data either
+			// way. An SSE frame with no `event:` is a `message` event this
+			// protocol never sends, and leaving its payload in the buffer
+			// would glue it onto the front of the next frame and corrupt it.
+			if event != "" {
+				return dispatch()
+			}
+			dataBuf.Reset()
+		case strings.HasPrefix(line, "event:"):
+			// The space after the colon is optional in SSE; exactly one is
+			// stripped when present.
+			event = strings.TrimPrefix(strings.TrimPrefix(line, "event:"), " ")
+		case strings.HasPrefix(line, "data:"):
+			// SSE joins multiple data lines with \n; the server emits one line.
+			if dataBuf.Len() > 0 {
+				dataBuf.WriteByte('\n')
+			}
+			dataBuf.WriteString(
+				strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
+		}
+		// Other lines (`:` comments, `id:`) are ignored.
+		return nil
+	}
+
+	for {
+		raw, readErr := reader.ReadString('\n')
+		// A final line need not be newline-terminated, so process whatever was
+		// read before acting on the error. Trailing \r is stripped so CRLF
+		// streams parse identically.
+		if len(raw) > 0 {
+			if err := handleLine(strings.TrimRight(raw, "\r\n")); err != nil {
+				return nil, "", err
+			}
+			// `done` is terminal: stop reading so a later frame cannot discard
+			// a completed turn's result.
+			if result != nil {
+				return result, streamErr, nil
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return nil, "", fmt.Errorf("reading stream: %w", readErr)
+		}
+	}
+	// Flush a trailing frame not followed by a blank line (defensive).
+	if event != "" {
+		if err := dispatch(); err != nil {
+			return nil, "", err
+		}
+	}
+	return result, streamErr, nil
+}
+
+// ListAgentSessionsResponse mirrors the API's ListAgentSessionsResponse schema
+// (GET /api/v0beta1/agent-sessions): one page of chats plus the total matching
+// the query. Like ListSandboxSnapshotsResponse, the API wraps the list in an
+// envelope rather than returning a bare array, so this is the single
+// decode/encode type — `sessions list -o json` re-emits it verbatim. Sessions
+// is never omitted, so an empty page encodes as [] rather than null.
+type ListAgentSessionsResponse struct {
+	Sessions []AgentSessionSummary `json:"sessions"`
+	Total    int                   `json:"total"`
+}
+
+// ListAgentSessions lists the org's agent-session chats, newest first. A limit
+// of 0 leaves the server's default page size (50) in place. The response's
+// Total exceeds len(Sessions) when the page cuts the list short — callers
+// should report that rather than presenting a truncated list as the whole of it.
+func (c *Client) ListAgentSessions(limit int) (*ListAgentSessionsResponse, error) {
+	path := apiBasePath + "/agent-sessions"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var result ListAgentSessionsResponse
+	if err := c.doJSON("GET", path, nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list agent-sessions: %w", err)
+	}
+	// Normalize here so the one encode type always emits [], never null.
+	if result.Sessions == nil {
+		result.Sessions = []AgentSessionSummary{}
+	}
+	return &result, nil
+}
+
+// GetAgentSession returns one agent-session chat with its message history.
+func (c *Client) GetAgentSession(sessionID string) (*AgentSessionDetail, error) {
+	var result AgentSessionDetail
+	if err := c.doJSON("GET", apiBasePath+"/agent-sessions/"+url.PathEscape(sessionID), nil, &result); err != nil {
+		return nil, fmt.Errorf("remote get agent-session: %w", err)
 	}
 	return &result, nil
 }
