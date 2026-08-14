@@ -113,7 +113,7 @@ func TestSendAgentSessionStream_NoDoneFrame(t *testing.T) {
 // TestSendAgentSessionStream_PreStreamHTTPError checks that a rejection before
 // the stream opens (a normal JSON 4xx) surfaces as an error, not a parsed stream.
 func TestSendAgentSessionStream_PreStreamHTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprint(w, `{"code":"validation_failed","message":"Agent session not found"}`)

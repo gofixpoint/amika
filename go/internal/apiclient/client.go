@@ -827,53 +827,69 @@ type AgentSessionSendRequest struct {
 	RepoURL    string `json:"repo_url,omitempty"`
 }
 
+// AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and
+// cost accounting for one turn. Every field is optional — Claude reports the
+// full set, Codex currently reports none — so all are pointers and a missing
+// one stays absent when the response is re-emitted as JSON.
+type AgentSessionUsage struct {
+	CostUSD             *float64 `json:"cost_usd,omitempty"`
+	InputTokens         *int64   `json:"input_tokens,omitempty"`
+	OutputTokens        *int64   `json:"output_tokens,omitempty"`
+	CacheReadTokens     *int64   `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens *int64   `json:"cache_creation_tokens,omitempty"`
+	DurationMS          *int64   `json:"duration_ms,omitempty"`
+	NumTurns            *int64   `json:"num_turns,omitempty"`
+}
+
 // AgentSessionSendResponse mirrors the API's AgentSessionSendResponse schema
 // (POST /api/v0beta1/agent-sessions). SessionID is the durable chat id to pass
-// back as --session-id to continue the chat; CostUSD is the only optional field.
+// back as --session-id to continue the chat; Usage is the only optional field
+// (absent for a provider that reports no accounting).
 type AgentSessionSendResponse struct {
-	SessionID      string   `json:"session_id"`
-	SandboxID      string   `json:"sandbox_id"`
-	Agent          string   `json:"agent"`
-	Response       string   `json:"response"`
-	IsError        bool     `json:"is_error"`
-	IsNewSession   bool     `json:"is_new_session"`
-	CreatedSandbox bool     `json:"created_sandbox"`
-	CostUSD        *float64 `json:"cost_usd,omitempty"`
+	SessionID      string             `json:"session_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Agent          string             `json:"agent"`
+	Response       string             `json:"response"`
+	IsError        bool               `json:"is_error"`
+	IsNewSession   bool               `json:"is_new_session"`
+	CreatedSandbox bool               `json:"created_sandbox"`
+	Usage          *AgentSessionUsage `json:"usage,omitempty"`
 }
 
-// AgentSessionSummary is one row of the agent-sessions list. SandboxID and
-// Agent are nullable in the schema (a chat can outlive its sandbox), as is
-// LastError.
+// AgentSessionSummary is one row of the agent-sessions list. SandboxName,
+// Preview, and EndedAt are nullable in the schema — a chat can outlive the
+// sandbox whose name it shows, carry no user message to preview, and still be
+// running.
 type AgentSessionSummary struct {
-	SessionID string  `json:"session_id"`
-	SandboxID *string `json:"sandbox_id"`
-	Agent     *string `json:"agent"`
-	Status    string  `json:"status"`
-	LastError *string `json:"last_error"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	SessionID   string  `json:"session_id"`
+	SandboxID   string  `json:"sandbox_id"`
+	SandboxName *string `json:"sandbox_name"`
+	Agent       string  `json:"agent"`
+	Status      string  `json:"status"`
+	Preview     *string `json:"preview"`
+	StartedAt   string  `json:"started_at"`
+	EndedAt     *string `json:"ended_at"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
-// AgentSessionMessage is one message in an agent-session chat's history.
+// AgentSessionMessage is one turn in an agent-session chat's transcript,
+// mirroring the API's AgentSessionMessage schema. Role is a plain string (the
+// API deliberately does not enum it) and IsError marks an assistant turn the
+// agent reported as failed; it is absent for user turns and for transcripts
+// that predate per-turn error tracking.
 type AgentSessionMessage struct {
-	ID         string `json:"id"`
-	Direction  string `json:"direction"`
-	Author     string `json:"author"`
-	Contents   string `json:"contents"`
-	IsError    bool   `json:"is_error"`
-	OccurredAt string `json:"occurred_at"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp"`
+	IsError   bool   `json:"is_error,omitempty"`
 }
 
-// AgentSessionDetail mirrors the API's AgentSessionDetail schema: one
-// agent-session chat with its full message history.
+// AgentSessionDetail mirrors the API's AgentSessionDetail schema: an
+// AgentSessionSummary plus the chat's full transcript.
 type AgentSessionDetail struct {
-	SessionID string                `json:"session_id"`
-	SandboxID *string               `json:"sandbox_id"`
-	Agent     *string               `json:"agent"`
-	Status    string                `json:"status"`
-	CreatedAt string                `json:"created_at"`
-	UpdatedAt string                `json:"updated_at"`
-	Messages  []AgentSessionMessage `json:"messages"`
+	AgentSessionSummary
+	Messages []AgentSessionMessage `json:"messages"`
 }
 
 // SendAgentSession sends a message to a coding agent, creating a sandbox behind

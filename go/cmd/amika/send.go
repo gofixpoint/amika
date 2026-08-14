@@ -261,9 +261,11 @@ func runSessionsList(cmd *cobra.Command, _ []string) error {
 	for _, s := range sessions {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			s.SessionID,
-			strOrDash(s.Agent),
+			s.Agent,
 			s.Status,
-			strOrDash(s.SandboxID),
+			// Prefer the human-readable sandbox name, falling back to the id
+			// when the sandbox has been deleted and the name can't be resolved.
+			strOrDash(s.SandboxName, s.SandboxID),
 			s.UpdatedAt,
 		)
 	}
@@ -296,8 +298,8 @@ func runSessionsShow(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "session:  %s\n", detail.SessionID)
-	fmt.Fprintf(out, "agent:    %s\n", strOrDash(detail.Agent))
-	fmt.Fprintf(out, "sandbox:  %s\n", strOrDash(detail.SandboxID))
+	fmt.Fprintf(out, "agent:    %s\n", detail.Agent)
+	fmt.Fprintf(out, "sandbox:  %s\n", strOrDash(detail.SandboxName, detail.SandboxID))
 	fmt.Fprintf(out, "status:   %s\n", detail.Status)
 	fmt.Fprintln(out)
 	for _, m := range detail.Messages {
@@ -305,18 +307,24 @@ func runSessionsShow(cmd *cobra.Command, args []string) error {
 		if m.IsError {
 			marker = " (error)"
 		}
-		fmt.Fprintf(out, "[%s] %s%s:\n%s\n\n", m.Direction, m.Author, marker, m.Contents)
+		fmt.Fprintf(out, "[%s]%s %s\n%s\n\n", m.Role, marker, m.Timestamp, m.Content)
 	}
 	return nil
 }
 
-// strOrDash renders a nullable string field as "-" when unset, so text tables
-// don't print an empty cell for a chat whose sandbox has been cleaned up.
-func strOrDash(s *string) string {
-	if s == nil || *s == "" {
-		return "-"
+// strOrDash renders a nullable string field, falling back through the given
+// alternatives and finally to "-", so a text table never prints an empty cell
+// for a chat whose sandbox name could not be resolved.
+func strOrDash(s *string, fallbacks ...string) string {
+	if s != nil && *s != "" {
+		return *s
 	}
-	return *s
+	for _, f := range fallbacks {
+		if f != "" {
+			return f
+		}
+	}
+	return "-"
 }
 
 func init() {
