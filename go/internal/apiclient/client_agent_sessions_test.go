@@ -123,12 +123,15 @@ func TestListAgentSessions_ParsesEnvelope(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	sessions, err := c.ListAgentSessions()
+	sessions, total, err := c.ListAgentSessions(0)
 	if err != nil {
 		t.Fatalf("ListAgentSessions: %v", err)
 	}
 	if len(sessions) != 2 {
 		t.Fatalf("len = %d, want 2", len(sessions))
+	}
+	if total != 2 {
+		t.Errorf("total = %d, want 2", total)
 	}
 	if sessions[0].SandboxID != "sbx_1" || sessions[0].Agent != "claude" {
 		t.Errorf("sessions[0] = %+v", sessions[0])
@@ -162,7 +165,7 @@ func TestGetAgentSession_EscapesIDAndParsesMessages(t *testing.T) {
           "agent":"claude","status":"active","preview":null,"started_at":"t0","ended_at":null,
           "created_at":"t0","updated_at":"t1","messages":[
           {"role":"user","content":"hi","timestamp":"t0"},
-          {"role":"assistant","content":"hello","timestamp":"t1"},
+          {"role":"assistant","content":"hello","timestamp":"t1","is_error":false},
           {"role":"assistant","content":"Not logged in","timestamp":"t2","is_error":true}
         ]}`)
 	}))
@@ -190,10 +193,24 @@ func TestGetAgentSession_EscapesIDAndParsesMessages(t *testing.T) {
 		detail.Messages[0].Timestamp != "t0" {
 		t.Errorf("messages[0] = %+v", detail.Messages[0])
 	}
-	if detail.Messages[1].IsError {
-		t.Errorf("messages[1].IsError = true, want false")
+	// Absent on a user turn, explicitly false on a successful assistant turn,
+	// true on a failed one — three states the pointer must keep distinct so
+	// `--output json` re-emits what the API actually sent.
+	if detail.Messages[0].IsError != nil {
+		t.Errorf("messages[0].IsError = %v, want nil (absent)", *detail.Messages[0].IsError)
 	}
-	if !detail.Messages[2].IsError {
-		t.Errorf("messages[2].IsError = false, want true")
+	if detail.Messages[1].IsError == nil || *detail.Messages[1].IsError {
+		t.Errorf("messages[1].IsError = %v, want an explicit false", detail.Messages[1].IsError)
+	}
+	if detail.Messages[2].IsError == nil || !*detail.Messages[2].IsError {
+		t.Errorf("messages[2].IsError = %v, want true", detail.Messages[2].IsError)
+	}
+	// An explicit false must survive the round trip, not vanish via omitempty.
+	out, err := json.Marshal(detail.Messages[1])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(out), `"is_error":false`) {
+		t.Errorf("re-emitted message = %s, want an explicit is_error:false", out)
 	}
 }

@@ -1,6 +1,7 @@
 package apiclient
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -127,5 +128,154 @@ func TestSendAgentSessionStream_PreStreamHTTPError(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "Agent session not found") {
 		t.Fatalf("err = %v, want the 404 message", err)
+	}
+}
+
+// TestSendAgentSessionStream_EventlessDataFrameDoesNotCorruptNext checks that a
+// frame carrying data but no `event:` line (a legal SSE `message` event, and a
+// common keepalive idiom) is discarded cleanly. Its payload must not survive in
+// the buffer to be glued onto the front of the following frame, which would
+// fail a send whose turn had already completed and been persisted.
+func TestSendAgentSessionStream_EventlessDataFrameDoesNotCorruptNext(t *testing.T) {
+	var rec struct{ method, path, accept string }
+	body := "data: {\"stray\":1}\n\n" +
+		"event: done\ndata: {\"session_id\":\"chat_1\",\"sandbox_id\":\"sbx_1\"," +
+		"\"agent\":\"claude\",\"response\":\"ok\",\"is_error\":false," +
+		"\"is_new_session\":true,\"created_sandbox\":false}\n\n"
+	srv := sseServer(t, body, &rec)
+	defer srv.Close()
+
+	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
+		AgentSessionSendRequest{Message: "hi"},
+		AgentSessionStreamHandlers{},
+	)
+	if err != nil {
+		t.Fatalf("SendAgentSessionStream: %v", err)
+	}
+	if resp.SessionID != "chat_1" || resp.Response != "ok" {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+// TestSendAgentSessionStream_MalformedDeltaIsAnError checks that an unparseable
+// delta fails the send rather than being dropped. Silently skipping it would
+// print a truncated reply and still exit 0.
+func TestSendAgentSessionStream_MalformedDeltaIsAnError(t *testing.T) {
+	var rec struct{ method, path, accept string }
+	body := "event: delta\ndata: {\"text\":\"good\"}\n\n" +
+		"event: delta\ndata: not-json\n\n" +
+		"event: done\ndata: {\"session_id\":\"chat_1\",\"sandbox_id\":\"sbx_1\"," +
+		"\"agent\":\"claude\",\"response\":\"goodLOST\",\"is_error\":false," +
+		"\"is_new_session\":true,\"created_sandbox\":false}\n\n"
+	srv := sseServer(t, body, &rec)
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
+		AgentSessionSendRequest{Message: "hi"},
+		AgentSessionStreamHandlers{OnDelta: func(string) {}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "parsing delta frame") {
+		t.Fatalf("err = %v, want a delta parse error", err)
+	}
+}
+
+// TestSendAgentSessionStream_DataWithoutSpace checks the optional space after
+// `data:` is not required, per the SSE spec.
+func TestSendAgentSessionStream_DataWithoutSpace(t *testing.T) {
+	var rec struct{ method, path, accept string }
+	body := "event:delta\ndata:{\"text\":\"hi\"}\n\n" +
+		"event:done\ndata:{\"session_id\":\"chat_1\",\"sandbox_id\":\"sbx_1\"," +
+		"\"agent\":\"claude\",\"response\":\"hi\",\"is_error\":false," +
+		"\"is_new_session\":true,\"created_sandbox\":false}\n\n"
+	srv := sseServer(t, body, &rec)
+	defer srv.Close()
+
+	var deltas strings.Builder
+	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
+		AgentSessionSendRequest{Message: "hi"},
+		AgentSessionStreamHandlers{OnDelta: func(s string) { deltas.WriteString(s) }},
+	)
+	if err != nil {
+		t.Fatalf("SendAgentSessionStream: %v", err)
+	}
+	if deltas.String() != "hi" || resp.SessionID != "chat_1" {
+		t.Errorf("deltas = %q, resp = %+v", deltas.String(), resp)
+	}
+}
+
+// TestSendAgentSessionStream_DoneWinsOverLaterErrorFrame checks that a
+// completed turn's result is returned even if an error frame follows: `done`
+// is terminal, and discarding it would throw away a real session id.
+func TestSendAgentSessionStream_DoneWinsOverLaterErrorFrame(t *testing.T) {
+	var rec struct{ method, path, accept string }
+	body := "event: done\ndata: {\"session_id\":\"chat_1\",\"sandbox_id\":\"sbx_1\"," +
+		"\"agent\":\"claude\",\"response\":\"ok\",\"is_error\":false," +
+		"\"is_new_session\":true,\"created_sandbox\":false}\n\n" +
+		"event: error\ndata: {\"error\":\"late failure\"}\n\n"
+	srv := sseServer(t, body, &rec)
+	defer srv.Close()
+
+	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
+		AgentSessionSendRequest{Message: "hi"},
+		AgentSessionStreamHandlers{},
+	)
+	if err != nil {
+		t.Fatalf("SendAgentSessionStream: %v", err)
+	}
+	if resp.SessionID != "chat_1" {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+// TestSendAgentSessionStream_LargeResponse checks a response well past the old
+// 4 MiB scanner cap parses, so a large-but-valid turn does not fail after it
+// has already run and been billed.
+func TestSendAgentSessionStream_LargeResponse(t *testing.T) {
+	var rec struct{ method, path, accept string }
+	big := strings.Repeat("x", 8*1024*1024)
+	done, err := json.Marshal(AgentSessionSendResponse{
+		SessionID: "chat_1", SandboxID: "sbx_1", Agent: "claude", Response: big,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	srv := sseServer(t, "event: done\ndata: "+string(done)+"\n\n", &rec)
+	defer srv.Close()
+
+	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
+		AgentSessionSendRequest{Message: "hi"},
+		AgentSessionStreamHandlers{},
+	)
+	if err != nil {
+		t.Fatalf("SendAgentSessionStream: %v", err)
+	}
+	if len(resp.Response) != len(big) {
+		t.Errorf("response len = %d, want %d", len(resp.Response), len(big))
+	}
+}
+
+// TestSendAgentSessionStream_CRLFAndHeartbeats checks CRLF framing and `:`
+// comment keepalives, which the server emits to hold an idle connection open.
+func TestSendAgentSessionStream_CRLFAndHeartbeats(t *testing.T) {
+	var rec struct{ method, path, accept string }
+	body := ": heartbeat\r\n\r\n" +
+		"event: delta\r\ndata: {\"text\":\"hi\"}\r\n\r\n" +
+		": heartbeat\r\n\r\n" +
+		"event: done\r\ndata: {\"session_id\":\"chat_1\",\"sandbox_id\":\"sbx_1\"," +
+		"\"agent\":\"claude\",\"response\":\"hi\",\"is_error\":false," +
+		"\"is_new_session\":true,\"created_sandbox\":false}\r\n\r\n"
+	srv := sseServer(t, body, &rec)
+	defer srv.Close()
+
+	var deltas strings.Builder
+	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
+		AgentSessionSendRequest{Message: "hi"},
+		AgentSessionStreamHandlers{OnDelta: func(s string) { deltas.WriteString(s) }},
+	)
+	if err != nil {
+		t.Fatalf("SendAgentSessionStream: %v", err)
+	}
+	if deltas.String() != "hi" || resp.SessionID != "chat_1" {
+		t.Errorf("deltas = %q, resp = %+v", deltas.String(), resp)
 	}
 }

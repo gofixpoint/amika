@@ -171,8 +171,7 @@ func runSendStreaming(
 	client *apiclient.Client,
 	req apiclient.AgentSessionSendRequest,
 ) error {
-	printedDelta := false
-	var lastByte byte = '\n'
+	var streamed strings.Builder
 
 	resp, err := client.SendAgentSessionStream(req, apiclient.AgentSessionStreamHandlers{
 		OnStatus: func(phase, sandboxID string) {
@@ -186,27 +185,42 @@ func runSendStreaming(
 			}
 		},
 		OnDelta: func(text string) {
-			printedDelta = true
+			streamed.WriteString(text)
 			fmt.Fprint(os.Stdout, text)
-			lastByte = text[len(text)-1]
 		},
 	})
-	// End a partial streamed line so a following error / prompt starts fresh.
-	if printedDelta && lastByte != '\n' {
-		fmt.Fprintln(os.Stdout)
+	// End a partial streamed line so anything that follows starts fresh.
+	endStreamedLine := func() {
+		if s := streamed.String(); s != "" && !strings.HasSuffix(s, "\n") {
+			fmt.Fprintln(os.Stdout)
+		}
 	}
 	if err != nil {
+		endStreamedLine()
 		return err
 	}
 
-	// No deltas arrived (e.g. an empty reply, or a non-streaming provider that
-	// only yielded the final result) — print the buffered reply so stdout is
-	// never empty for a non-empty response.
-	if !printedDelta && resp.Response != "" {
+	// The buffered `resp.Response` is authoritative: the server builds it from
+	// the agent's final result object, while deltas come from a separate
+	// incremental parser over the same output, so the two need not agree.
+	// Print it when it would otherwise be lost:
+	//   - nothing streamed (an empty reply, or a provider that only yields a
+	//     final result), so stdout would be empty for a non-empty response;
+	//   - the turn failed, where `response` carries the agent CLI's own message
+	//     (e.g. "Not logged in · Please run /login"), which is derived from the
+	//     result object and so typically never arrived as a delta.
+	// The is-error case is skipped when that text did stream, so a failure is
+	// explained exactly once — and as well as it is on the buffered path.
+	missing := streamed.Len() == 0 ||
+		(resp.IsError && !strings.Contains(streamed.String(), resp.Response))
+	if missing && resp.Response != "" {
+		endStreamedLine()
 		fmt.Fprint(os.Stdout, resp.Response)
 		if !strings.HasSuffix(resp.Response, "\n") {
 			fmt.Fprintln(os.Stdout)
 		}
+	} else {
+		endStreamedLine()
 	}
 	if resp.SessionID != "" {
 		fmt.Fprintf(os.Stderr, "session_id: %s\n", resp.SessionID)
@@ -239,7 +253,8 @@ func runSessionsList(cmd *cobra.Command, _ []string) error {
 	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
-	sessions, err := runmode.NewRemoteClient().ListAgentSessions()
+	limit, _ := cmd.Flags().GetInt("limit")
+	sessions, total, err := runmode.NewRemoteClient().ListAgentSessions(limit)
 	if err != nil {
 		return err
 	}
@@ -269,7 +284,17 @@ func runSessionsList(cmd *cobra.Command, _ []string) error {
 			s.UpdatedAt,
 		)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	// Never present a page as the whole list: the server caps the page size, so
+	// say what was withheld and how to see it.
+	if total > len(sessions) {
+		fmt.Fprintf(format.Progress(cmd.OutOrStdout()),
+			"\nShowing %d of %d chats; use --limit to see more.\n",
+			len(sessions), total)
+	}
+	return nil
 }
 
 var sessionsShowCmd = &cobra.Command{
@@ -304,7 +329,7 @@ func runSessionsShow(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(out)
 	for _, m := range detail.Messages {
 		marker := ""
-		if m.IsError {
+		if m.IsError != nil && *m.IsError {
 			marker = " (error)"
 		}
 		fmt.Fprintf(out, "[%s]%s %s\n%s\n\n", m.Role, marker, m.Timestamp, m.Content)
@@ -336,6 +361,7 @@ func init() {
 	sendCmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
 	rootCmd.AddCommand(sendCmd)
 
+	sessionsListCmd.Flags().Int("limit", 0, "Maximum chats to list (default: the server's page size, 50)")
 	sessionsCmd.AddCommand(sessionsListCmd)
 	sessionsCmd.AddCommand(sessionsShowCmd)
 	rootCmd.AddCommand(sessionsCmd)

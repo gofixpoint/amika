@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -882,7 +883,10 @@ type AgentSessionMessage struct {
 	Role      string `json:"role"`
 	Content   string `json:"content"`
 	Timestamp string `json:"timestamp"`
-	IsError   bool   `json:"is_error,omitempty"`
+	// A pointer, not a bool: the field is genuinely absent on user turns and
+	// on transcripts predating per-turn error tracking, and an explicit
+	// `false` must survive being re-emitted under --output json.
+	IsError *bool `json:"is_error,omitempty"`
 }
 
 // AgentSessionDetail mirrors the API's AgentSessionDetail schema: an
@@ -902,10 +906,11 @@ func (c *Client) SendAgentSession(req AgentSessionSendRequest) (*AgentSessionSen
 	defer func() { c.HTTP.Timeout = saved }()
 
 	var result AgentSessionSendResponse
+	// Note: no extractAgentAuthError branch here, unlike the older
+	// /sandboxes/{}/agent/send route. This endpoint reports a provider auth
+	// failure as a 200 with is_error set and the agent CLI's own message in
+	// `response` — not as an HTTP error — so there is no error body to inspect.
 	if err := c.doJSON("POST", apiBasePath+"/agent-sessions", req, &result); err != nil {
-		if authErr := extractAgentAuthError(err); authErr != "" {
-			return nil, fmt.Errorf("remote agent-session send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
-		}
 		return nil, fmt.Errorf("remote agent-session send: %w", err)
 	}
 	return &result, nil
@@ -930,8 +935,10 @@ type AgentSessionStreamHandlers struct {
 // stream opens and are surfaced like the buffered path.
 //
 // As with SendAgentSession the turn can run for minutes, so a 10-minute timeout
-// replaces the client default. Note the server caps its own run well under
-// that; the longer client bound just avoids cutting a valid stream short.
+// replaces the client default. The effective bound is the server's, which is
+// lower (a 300s request ceiling): it ends the stream first, without a `done`
+// frame, and the client timeout only guards against a connection that hangs
+// past even that.
 func (c *Client) SendAgentSessionStream(
 	req AgentSessionSendRequest,
 	h AgentSessionStreamHandlers,
@@ -967,28 +974,34 @@ func (c *Client) SendAgentSessionStream(
 	defer resp.Body.Close()
 
 	// A rejection (auth/validation) is a normal JSON error emitted before the
-	// stream opens; surface it like the buffered path, including the agent-auth
-	// hint when applicable.
+	// stream opens; surface it like the buffered path.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		herr := &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
-		if authErr := extractAgentAuthError(herr); authErr != "" {
-			return nil, fmt.Errorf("remote agent-session send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
-		}
-		return nil, fmt.Errorf("remote agent-session send: %w", herr)
+		return nil, fmt.Errorf("remote agent-session send: %w",
+			&HTTPError{StatusCode: resp.StatusCode, Body: string(body)})
 	}
 
 	result, streamErr, err := readAgentSessionStream(resp.Body, h)
 	if err != nil {
 		return nil, fmt.Errorf("remote agent-session send: %w", err)
 	}
+	// A completed turn wins over an error frame: `done` carries the persisted
+	// result, so if both somehow arrive the send succeeded and reporting the
+	// error would discard a real session id.
+	if result != nil {
+		return result, nil
+	}
 	if streamErr != "" {
 		return nil, fmt.Errorf("remote agent-session send: %s", streamErr)
 	}
-	if result == nil {
-		return nil, fmt.Errorf("remote agent-session send: stream ended without a result")
-	}
-	return result, nil
+	// No terminal frame. The most likely cause is the server's own request
+	// ceiling (300s) cutting the stream mid-turn — the turn may well have
+	// completed and persisted, so point at `amika sessions list` rather than
+	// implying the work was lost.
+	return nil, fmt.Errorf(
+		"remote agent-session send: stream ended without a result " +
+			"(the server may have hit its request time limit; " +
+			"check `amika sessions list` for the session)")
 }
 
 // readAgentSessionStream parses the send SSE stream. It returns the parsed
@@ -999,10 +1012,12 @@ func readAgentSessionStream(
 	body io.Reader,
 	h AgentSessionStreamHandlers,
 ) (*AgentSessionSendResponse, string, error) {
-	scanner := bufio.NewScanner(body)
-	// A single `data:` line can carry the whole AgentSessionSendResponse; allow
-	// well beyond the default 64 KiB line cap.
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	// A single `data:` line carries the whole AgentSessionSendResponse, whose
+	// `response` field is an entire agent turn. bufio.Scanner would impose a
+	// fixed line cap and fail a large-but-valid turn *after* it had run and
+	// been billed; bufio.Reader has no such bound, so the streaming and
+	// buffered transports accept the same responses.
+	reader := bufio.NewReader(body)
 
 	var event string
 	var dataBuf strings.Builder
@@ -1026,13 +1041,18 @@ func readAgentSessionStream(
 				}
 			}
 		case "delta":
-			if h.OnDelta != nil {
-				var d struct {
-					Text string `json:"text"`
-				}
-				if json.Unmarshal([]byte(payload), &d) == nil && d.Text != "" {
-					h.OnDelta(d.Text)
-				}
+			// A delta carries reply text, so an unparseable one is lost output.
+			// Fail loudly rather than silently printing a truncated reply and
+			// exiting 0. (`status` above is only cosmetic progress and carries
+			// no response text, so it stays lenient.)
+			var d struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal([]byte(payload), &d); err != nil {
+				return fmt.Errorf("parsing delta frame: %w", err)
+			}
+			if d.Text != "" && h.OnDelta != nil {
+				h.OnDelta(d.Text)
 			}
 		case "done":
 			var r AgentSessionSendResponse
@@ -1054,29 +1074,56 @@ func readAgentSessionStream(
 		return nil
 	}
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	// handleLine processes one already-newline-stripped line.
+	handleLine := func(line string) error {
 		switch {
 		case line == "":
-			// Blank line terminates a frame.
+			// A blank line terminates a frame. Dispatch it when it is one we
+			// act on; otherwise drop it — but clear the buffered data either
+			// way. An SSE frame with no `event:` is a `message` event this
+			// protocol never sends, and leaving its payload in the buffer
+			// would glue it onto the front of the next frame and corrupt it.
 			if event != "" {
-				if err := dispatch(); err != nil {
-					return nil, "", err
-				}
+				return dispatch()
 			}
-		case strings.HasPrefix(line, "event: "):
-			event = strings.TrimPrefix(line, "event: ")
-		case strings.HasPrefix(line, "data: "):
+			dataBuf.Reset()
+		case strings.HasPrefix(line, "event:"):
+			// The space after the colon is optional in SSE; exactly one is
+			// stripped when present.
+			event = strings.TrimPrefix(strings.TrimPrefix(line, "event:"), " ")
+		case strings.HasPrefix(line, "data:"):
 			// SSE joins multiple data lines with \n; the server emits one line.
 			if dataBuf.Len() > 0 {
 				dataBuf.WriteByte('\n')
 			}
-			dataBuf.WriteString(strings.TrimPrefix(line, "data: "))
+			dataBuf.WriteString(
+				strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		}
 		// Other lines (`:` comments, `id:`) are ignored.
+		return nil
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, "", fmt.Errorf("reading stream: %w", err)
+
+	for {
+		raw, readErr := reader.ReadString('\n')
+		// A final line need not be newline-terminated, so process whatever was
+		// read before acting on the error. Trailing \r is stripped so CRLF
+		// streams parse identically.
+		if len(raw) > 0 {
+			if err := handleLine(strings.TrimRight(raw, "\r\n")); err != nil {
+				return nil, "", err
+			}
+			// `done` is terminal: stop reading so a later frame cannot discard
+			// a completed turn's result.
+			if result != nil {
+				return result, streamErr, nil
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return nil, "", fmt.Errorf("reading stream: %w", readErr)
+		}
 	}
 	// Flush a trailing frame not followed by a blank line (defensive).
 	if event != "" {
@@ -1087,16 +1134,24 @@ func readAgentSessionStream(
 	return result, streamErr, nil
 }
 
-// ListAgentSessions lists the org's agent-session chats, newest first.
-func (c *Client) ListAgentSessions() ([]AgentSessionSummary, error) {
+// ListAgentSessions lists the org's agent-session chats, newest first. A limit
+// of 0 leaves the server's default page size (50) in place. Total is the count
+// of chats matching the query, which exceeds len(sessions) when the page cuts
+// the list short — callers should report that rather than presenting a
+// truncated list as the whole of it.
+func (c *Client) ListAgentSessions(limit int) (sessions []AgentSessionSummary, total int, err error) {
+	path := apiBasePath + "/agent-sessions"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
 	var envelope struct {
 		Sessions []AgentSessionSummary `json:"sessions"`
 		Total    int                   `json:"total"`
 	}
-	if err := c.doJSON("GET", apiBasePath+"/agent-sessions", nil, &envelope); err != nil {
-		return nil, fmt.Errorf("remote list agent-sessions: %w", err)
+	if err := c.doJSON("GET", path, nil, &envelope); err != nil {
+		return nil, 0, fmt.Errorf("remote list agent-sessions: %w", err)
 	}
-	return envelope.Sessions, nil
+	return envelope.Sessions, envelope.Total, nil
 }
 
 // GetAgentSession returns one agent-session chat with its message history.
