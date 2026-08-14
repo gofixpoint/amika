@@ -1134,24 +1134,35 @@ func readAgentSessionStream(
 	return result, streamErr, nil
 }
 
+// ListAgentSessionsResponse mirrors the API's ListAgentSessionsResponse schema
+// (GET /api/v0beta1/agent-sessions): one page of chats plus the total matching
+// the query. Like ListSandboxSnapshotsResponse, the API wraps the list in an
+// envelope rather than returning a bare array, so this is the single
+// decode/encode type — `sessions list -o json` re-emits it verbatim. Sessions
+// is never omitted, so an empty page encodes as [] rather than null.
+type ListAgentSessionsResponse struct {
+	Sessions []AgentSessionSummary `json:"sessions"`
+	Total    int                   `json:"total"`
+}
+
 // ListAgentSessions lists the org's agent-session chats, newest first. A limit
-// of 0 leaves the server's default page size (50) in place. Total is the count
-// of chats matching the query, which exceeds len(sessions) when the page cuts
-// the list short — callers should report that rather than presenting a
-// truncated list as the whole of it.
-func (c *Client) ListAgentSessions(limit int) (sessions []AgentSessionSummary, total int, err error) {
+// of 0 leaves the server's default page size (50) in place. The response's
+// Total exceeds len(Sessions) when the page cuts the list short — callers
+// should report that rather than presenting a truncated list as the whole of it.
+func (c *Client) ListAgentSessions(limit int) (*ListAgentSessionsResponse, error) {
 	path := apiBasePath + "/agent-sessions"
 	if limit > 0 {
 		path += "?limit=" + strconv.Itoa(limit)
 	}
-	var envelope struct {
-		Sessions []AgentSessionSummary `json:"sessions"`
-		Total    int                   `json:"total"`
+	var result ListAgentSessionsResponse
+	if err := c.doJSON("GET", path, nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list agent-sessions: %w", err)
 	}
-	if err := c.doJSON("GET", path, nil, &envelope); err != nil {
-		return nil, 0, fmt.Errorf("remote list agent-sessions: %w", err)
+	// Normalize here so the one encode type always emits [], never null.
+	if result.Sessions == nil {
+		result.Sessions = []AgentSessionSummary{}
 	}
-	return envelope.Sessions, envelope.Total, nil
+	return &result, nil
 }
 
 // GetAgentSession returns one agent-session chat with its message history.

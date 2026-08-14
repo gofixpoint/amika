@@ -123,15 +123,16 @@ func TestListAgentSessions_ParsesEnvelope(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	sessions, total, err := c.ListAgentSessions(0)
+	resp, err := c.ListAgentSessions(0)
 	if err != nil {
 		t.Fatalf("ListAgentSessions: %v", err)
 	}
+	sessions := resp.Sessions
 	if len(sessions) != 2 {
 		t.Fatalf("len = %d, want 2", len(sessions))
 	}
-	if total != 2 {
-		t.Errorf("total = %d, want 2", total)
+	if resp.Total != 2 {
+		t.Errorf("total = %d, want 2", resp.Total)
 	}
 	if sessions[0].SandboxID != "sbx_1" || sessions[0].Agent != "claude" {
 		t.Errorf("sessions[0] = %+v", sessions[0])
@@ -212,5 +213,58 @@ func TestGetAgentSession_EscapesIDAndParsesMessages(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `"is_error":false`) {
 		t.Errorf("re-emitted message = %s, want an explicit is_error:false", out)
+	}
+}
+
+// TestListAgentSessions_ReEmitsEnvelope checks the response round-trips as the
+// API's {sessions,total} envelope, which `sessions list -o json` emits verbatim
+// (remote-backed commands mirror the API response schema). An empty page must
+// encode as [] rather than null.
+func TestListAgentSessions_ReEmitsEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"sessions":[],"total":7}`)
+	}))
+	defer srv.Close()
+
+	resp, err := NewClient(srv.URL, "test-token").ListAgentSessions(0)
+	if err != nil {
+		t.Fatalf("ListAgentSessions: %v", err)
+	}
+	if resp.Total != 7 {
+		t.Errorf("total = %d, want 7", resp.Total)
+	}
+	out, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != `{"sessions":[],"total":7}` {
+		t.Errorf("re-emitted = %s, want the {sessions,total} envelope with []", out)
+	}
+}
+
+// TestListAgentSessions_SendsLimit checks a non-zero limit reaches the query
+// string and zero leaves the server's default page size in place.
+func TestListAgentSessions_SendsLimit(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"sessions":[],"total":0}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token")
+	if _, err := c.ListAgentSessions(5); err != nil {
+		t.Fatalf("ListAgentSessions(5): %v", err)
+	}
+	if gotQuery != "limit=5" {
+		t.Errorf("query = %q, want limit=5", gotQuery)
+	}
+	if _, err := c.ListAgentSessions(0); err != nil {
+		t.Fatalf("ListAgentSessions(0): %v", err)
+	}
+	if gotQuery != "" {
+		t.Errorf("query = %q, want no limit param", gotQuery)
 	}
 }

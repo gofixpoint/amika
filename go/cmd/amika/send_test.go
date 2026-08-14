@@ -70,3 +70,52 @@ func TestSendRejectsInvalidOutput(t *testing.T) {
 		t.Fatalf("err = %v, want an invalid --output error", err)
 	}
 }
+
+// TestUnstreamedRemainder covers what `amika send --stream` still has to print
+// after the deltas, given that the streamed text and the authoritative
+// `response` come from two different server-side parsers and need not agree.
+func TestUnstreamedRemainder(t *testing.T) {
+	cases := []struct {
+		name         string
+		streamed     string
+		response     string
+		extra        string
+		continuation bool
+	}{{
+		name: "identical adds nothing",
+		// The overwhelmingly common case: every byte already reached stdout.
+		streamed: "Hello", response: "Hello", extra: "", continuation: false,
+	}, {
+		name: "nothing streamed prints the whole response",
+		// An empty reply, or a provider that only yields a final result.
+		streamed: "", response: "Hello", extra: "Hello", continuation: false,
+	}, {
+		name: "truncated stream appends only the missing tail",
+		// A dropped delta must not cost the user the rest of the reply, and
+		// the tail resumes the text mid-word rather than on a new line.
+		streamed: "Hel", response: "Hello", extra: "lo", continuation: true,
+	}, {
+		name: "response already contained in a longer stream adds nothing",
+		// Intermediate text across tool calls streams more than the final
+		// message; appending it again would duplicate the tail.
+		streamed: "thinking...\nHello", response: "Hello", extra: "", continuation: false,
+	}, {
+		name: "divergent response wins",
+		// The failed-turn case: `response` carries the agent CLI's own error,
+		// which never arrives as a delta.
+		streamed: "partial output", response: "Not logged in", extra: "Not logged in", continuation: false,
+	}, {
+		name:     "empty response adds nothing",
+		streamed: "Hello", response: "", extra: "", continuation: false,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			extra, continuation := unstreamedRemainder(tc.streamed, tc.response)
+			if extra != tc.extra || continuation != tc.continuation {
+				t.Errorf("unstreamedRemainder(%q, %q) = (%q, %v), want (%q, %v)",
+					tc.streamed, tc.response, extra, continuation, tc.extra, tc.continuation)
+			}
+		})
+	}
+}

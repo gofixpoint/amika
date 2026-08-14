@@ -189,39 +189,32 @@ func runSendStreaming(
 			fmt.Fprint(os.Stdout, text)
 		},
 	})
-	// End a partial streamed line so anything that follows starts fresh.
-	endStreamedLine := func() {
-		if s := streamed.String(); s != "" && !strings.HasSuffix(s, "\n") {
+	// written tracks everything that has reached stdout, so a partial line can
+	// be closed off exactly once at the end.
+	written := streamed.String()
+	endLine := func() {
+		if written != "" && !strings.HasSuffix(written, "\n") {
 			fmt.Fprintln(os.Stdout)
 		}
 	}
 	if err != nil {
-		endStreamedLine()
+		endLine()
 		return err
 	}
 
-	// The buffered `resp.Response` is authoritative: the server builds it from
-	// the agent's final result object, while deltas come from a separate
-	// incremental parser over the same output, so the two need not agree.
-	// Print it when it would otherwise be lost:
-	//   - nothing streamed (an empty reply, or a provider that only yields a
-	//     final result), so stdout would be empty for a non-empty response;
-	//   - the turn failed, where `response` carries the agent CLI's own message
-	//     (e.g. "Not logged in · Please run /login"), which is derived from the
-	//     result object and so typically never arrived as a delta.
-	// The is-error case is skipped when that text did stream, so a failure is
-	// explained exactly once — and as well as it is on the buffered path.
-	missing := streamed.Len() == 0 ||
-		(resp.IsError && !strings.Contains(streamed.String(), resp.Response))
-	if missing && resp.Response != "" {
-		endStreamedLine()
-		fmt.Fprint(os.Stdout, resp.Response)
-		if !strings.HasSuffix(resp.Response, "\n") {
-			fmt.Fprintln(os.Stdout)
+	extra, continuation := unstreamedRemainder(written, resp.Response)
+	if extra != "" {
+		// A continuation resumes the streamed text mid-word, so it must not be
+		// pushed onto a new line; anything else is separate output and starts
+		// on its own line.
+		if !continuation {
+			endLine()
 		}
-	} else {
-		endStreamedLine()
+		fmt.Fprint(os.Stdout, extra)
+		written += extra
 	}
+	endLine()
+
 	if resp.SessionID != "" {
 		fmt.Fprintf(os.Stderr, "session_id: %s\n", resp.SessionID)
 	}
@@ -229,6 +222,39 @@ func runSendStreaming(
 		return fmt.Errorf("agent returned an error")
 	}
 	return nil
+}
+
+// unstreamedRemainder decides how much of the authoritative response still has
+// to be printed once `streamed` has already gone to stdout, and whether that
+// text continues the streamed run directly rather than starting fresh.
+//
+// The two strings come from different server-side parsers over the same agent
+// output — deltas from the incremental event stream, `response` from the final
+// result object — so they are not guaranteed to match. Showing only the stream
+// can silently drop the authoritative result (most visibly on a failed turn,
+// where `response` carries the agent CLI's own message and no delta ever does);
+// always appending it would duplicate text on the common runs where they agree.
+func unstreamedRemainder(streamed, response string) (extra string, continuation bool) {
+	switch {
+	case streamed == "":
+		// An empty reply, or a provider that only yields a final result;
+		// stdout would otherwise be empty for a non-empty response.
+		return response, false
+	case strings.HasPrefix(response, streamed):
+		// The common case. A stream cut short contributes exactly its missing
+		// tail; identical texts leave nothing to add, and then there is no
+		// run to continue either.
+		remainder := response[len(streamed):]
+		return remainder, remainder != ""
+	case strings.Contains(streamed, response):
+		// The stream carried more than the final message (intermediate text
+		// across tool calls) and already included it — appending would repeat.
+		return "", false
+	default:
+		// Genuinely divergent: the authoritative result wins over showing only
+		// the stream.
+		return response, false
+	}
 }
 
 var sessionsCmd = &cobra.Command{
@@ -254,19 +280,20 @@ func runSessionsList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	limit, _ := cmd.Flags().GetInt("limit")
-	sessions, total, err := runmode.NewRemoteClient().ListAgentSessions(limit)
+	resp, err := runmode.NewRemoteClient().ListAgentSessions(limit)
 	if err != nil {
 		return err
 	}
 
 	if format.IsJSON() {
-		// Emit the API schema verbatim; a nil slice becomes `[]`, not `null`.
-		if sessions == nil {
-			sessions = []apiclient.AgentSessionSummary{}
-		}
-		return format.JSON(cmd.OutOrStdout(), sessions)
+		// Emit the API's {sessions,total} envelope verbatim, as a remote-backed
+		// command must — the same reason `snapshot list` re-emits its
+		// {"items": [...]}. Dropping to a bare array here would both diverge
+		// from the documented schema and discard `total`.
+		return format.JSON(cmd.OutOrStdout(), resp)
 	}
 
+	sessions := resp.Sessions
 	if len(sessions) == 0 {
 		fmt.Fprintln(format.Progress(cmd.OutOrStdout()), "No agent-session chats yet.")
 		return nil
@@ -289,10 +316,10 @@ func runSessionsList(cmd *cobra.Command, _ []string) error {
 	}
 	// Never present a page as the whole list: the server caps the page size, so
 	// say what was withheld and how to see it.
-	if total > len(sessions) {
+	if resp.Total > len(sessions) {
 		fmt.Fprintf(format.Progress(cmd.OutOrStdout()),
 			"\nShowing %d of %d chats; use --limit to see more.\n",
-			len(sessions), total)
+			len(sessions), resp.Total)
 	}
 	return nil
 }
