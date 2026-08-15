@@ -1,0 +1,212 @@
+[image]
+runtime_user = "amika"
+runtime_group = "amika"
+runtime_home = "/home/amika"
+runtime_shell = "/usr/bin/zsh"
+standard_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+workspace = "/home/amika/workspace"
+dotfiles = [".zshrc", ".bashrc", ".tmux.conf"]
+setup_hooks = [
+  "/usr/local/etc/amikad/setup/setup.sh",
+  "/usr/local/etc/amikad/setup/start.sh",
+]
+hook_scripts = [
+  "/usr/lib/amikad/pre-setup.sh",
+  "/usr/lib/amikad/post-setup.sh",
+  "/usr/lib/amikad/run-hook.sh",
+  "/usr/lib/amikad/opencode-setup.sh",
+  "/usr/lib/amikad/docker-setup.sh",
+  "/usr/lib/amikad/restore-setuid.sh",
+]
+package_cache_paths = [
+  "/var/lib/apt/lists",
+  "/var/cache/apt/archives",
+  "/root/.npm",
+]
+agent_hook_paths = [
+  ".claude/settings.json",
+  ".codex/hooks.json",
+]
+
+[[image.directories]]
+path = "/home/amika/.ssh"
+owner = "amika"
+group = "amika"
+mode = "700"
+
+[[image.directories]]
+path = "/home/amika/workspace"
+owner = "amika"
+group = "amika"
+mode = "755"
+
+[[image.directories]]
+path = "/var/log/amika"
+owner = "amika"
+group = "amika"
+mode = "755"
+
+[[image.directories]]
+path = "/usr/lib/amika"
+owner = "amika"
+group = "amika"
+mode = "755"
+
+[[image.directories]]
+path = "/run/amika"
+owner = "amika"
+group = "amika"
+mode = "755"
+
+[[image.directories]]
+path = "/usr/local/etc/amika"
+owner = "amika"
+group = "amika"
+mode = "755"
+
+[[image.directories]]
+path = "/var/lib/amika"
+owner = "amika"
+group = "amika"
+mode = "755"
+
+[[image.directories]]
+path = "/tmp/amika"
+owner = "amika"
+group = "amika"
+mode = "755"
+
+[presets.coder]
+steps = [
+  "os-packages",
+  "static-config",
+  "node-gh",
+  "npm-toolchain",
+  "runtime-user",
+  "dotfiles",
+  "hook-assets",
+  "agent-clis",
+  "amika-clis",
+  "setuid-manifest",
+  "verify",
+]
+binaries = [
+  "node",
+  "npm",
+  "pnpm",
+  "tsc",
+  "tsx",
+  "gh",
+  "git",
+  "claude",
+  "codex",
+  "opencode",
+  "pi",
+  "amika",
+  "amikalog",
+  "amikad",
+]
+
+[presets.coder-dind]
+steps = [
+  "os-packages",
+  "static-config",
+  "node-gh",
+  "npm-toolchain",
+  "runtime-user",
+  "dotfiles",
+  "hook-assets",
+  "agent-clis",
+  "amika-clis",
+  "dind",
+  "setuid-manifest",
+  "verify",
+]
+binaries = [
+  "node",
+  "npm",
+  "pnpm",
+  "tsc",
+  "tsx",
+  "gh",
+  "git",
+  "claude",
+  "codex",
+  "opencode",
+  "pi",
+  "amika",
+  "amikalog",
+  "amikad",
+  "docker",
+]
+
+[[version_checks]]
+id = "node"
+env = "NODE_VERSION"
+command = ["node", "--version"]
+
+[[version_checks]]
+id = "pnpm"
+env = "PNPM_VERSION"
+command = ["pnpm", "--version"]
+
+[[version_checks]]
+id = "typescript"
+env = "TYPESCRIPT_VERSION"
+command = ["tsc", "--version"]
+
+[[version_checks]]
+id = "tsx"
+env = "TSX_VERSION"
+command = ["tsx", "--version"]
+
+[[version_checks]]
+id = "gh"
+env = "GH_VERSION"
+command = ["gh", "--version"]
+
+[[version_checks]]
+id = "git"
+env = "GIT_VERSION"
+command = ["git", "--version"]
+
+[[version_checks]]
+id = "claude"
+env = "CLAUDE_CODE_VERSION"
+command = ["claude", "--version"]
+
+[[version_checks]]
+id = "codex"
+env = "CODEX_VERSION"
+command = ["codex", "--version"]
+
+[[version_checks]]
+id = "opencode"
+env = "OPENCODE_VERSION"
+command = ["opencode", "--version"]
+
+[[version_checks]]
+id = "pi"
+env = "PI_VERSION"
+command = ["pi", "--version"]
+
+[[version_checks]]
+id = "amika"
+env = "AMIKA_VERSION"
+command = ["amika", "--version"]
+
+[[version_checks]]
+id = "amikalog"
+env = "AMIKALOG_VERSION"
+command = ["amikalog", "--version"]
+
+[[version_checks]]
+id = "amikad"
+env = "AMIKAD_VERSION"
+command = ["amikad", "--version"]
+
+[[version_checks]]
+id = "docker"
+env = "DOCKER_VERSION"
+command = ["docker", "--version"]
+presets = ["coder-dind"]
