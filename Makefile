@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server build-amikad build-amikalog build-akfs clean test test-unit test-integration test-contract test-e2e test-e2e-api test-expensive test-all coverage vet fmt fmtcheck lint shellcheck ci setup
+.PHONY: goenv build build-cli build-server build-amikad build-amikalog build-akfs clean test test-unit test-integration test-contract test-e2e test-e2e-api test-expensive test-all test-sandbox-image coverage vet fmt fmtcheck lint shellcheck ci setup
 
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
@@ -37,9 +37,9 @@ clean:
 	rm -rf dist .gocache .gotmp .gomodcache
 
 clean-docker:
-	docker image rm amika/coder:latest amika/base:latest amika/dind:latest amika/coder-dind:latest amika/daytona-coder-dind:latest
+	docker image rm amika/coder:latest amika/coder-dind:latest
 
-test: goenv
+test: test-sandbox-image goenv
 	go -C $(GO_DIR) test ./...
 
 test-unit: goenv
@@ -66,6 +66,9 @@ test-expensive: goenv
 
 test-all: test-unit test-integration test-contract
 
+test-sandbox-image:
+	./sandbox-image/tests/run-tests.sh
+
 coverage: goenv
 	./scripts/test/check_coverage.sh
 
@@ -87,9 +90,9 @@ lint: goenv
 	go -C $(GO_DIR) run github.com/mgechev/revive@v1.14.0 -set_exit_status -config revive.toml ./...
 
 shellcheck:
-	shellcheck bin/* go/internal/sandbox/presets/*.sh scripts/test/*.sh install.sh setup-repo.sh materialization-scripts/*.sh
+	shellcheck bin/* sandbox-image/build.sh sandbox-image/steps/*.sh sandbox-image/assets/hooks/*.sh sandbox-image/verify/run.sh sandbox-image/verify/checks/*.sh sandbox-image/verify/lib/check.sh scripts/test/*.sh install.sh setup-repo.sh materialization-scripts/*.sh
 
-ci: shellcheck fmtcheck vet lint build test-unit test-integration test-contract coverage
+ci: test-sandbox-image shellcheck fmtcheck vet lint build test-unit test-integration test-contract coverage
 
 setup:
 	./setup-repo.sh

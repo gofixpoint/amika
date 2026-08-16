@@ -76,7 +76,7 @@ In scope:
 - The `amika` CLI, `amika-server`, and `amikalog`
 - The Go package `go/pkg/amika` and the internal packages it depends on
 - The TypeScript SDK (`sdk/typescript/`) and `@amika/sandbox` (`js/sandbox/`)
-- The sandbox preset images in `go/internal/sandbox/presets/`
+- The sandbox image bundle in `sandbox-image/`
 - The installer (`install.sh`)
 - our hosted cloud services
 
