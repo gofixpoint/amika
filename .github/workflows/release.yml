@@ -9,14 +9,15 @@ name: Release
 # 5. Marks the GitHub Release as a prerelease when the tag contains a semver
 #    prerelease suffix
 #
-# This workflow intentionally uses component-prefixed tags so amika and
-# amika-server can be versioned independently.
+# This workflow intentionally uses component-prefixed tags so each binary can
+# be versioned independently.
 
 on:
   push:
     tags:
       - "amika@v*"
       - "amika-server@v*"
+      - "amikad@v*"
       - "amikalog@v*"
 
 permissions:
@@ -33,6 +34,7 @@ jobs:
       commit: ${{ steps.parse.outputs.commit }}
       build_date: ${{ steps.parse.outputs.build_date }}
       binary_name: ${{ steps.parse.outputs.binary_name }}
+      build_matrix: ${{ steps.parse.outputs.build_matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,6 +52,10 @@ jobs:
             amika-server@*)
               component="amika-server"
               binary_name="amika-server"
+              ;;
+            amikad@*)
+              component="amikad"
+              binary_name="amikad"
               ;;
             amikalog@*)
               component="amikalog"
@@ -74,6 +80,15 @@ jobs:
             prerelease=true
           fi
 
+          if [ "$component" = "amikad" ]; then
+            # amikad's secure state operations are Linux-only. Do not publish
+            # Darwin archives that cannot configure a usable daemon.
+            # TODO(KAPRO-812): Re-enable Darwin after macOS secure state support.
+            build_matrix='{"include":[{"goos":"linux","goarch":"amd64"},{"goos":"linux","goarch":"arm64"}]}'
+          else
+            build_matrix='{"include":[{"goos":"linux","goarch":"amd64"},{"goos":"linux","goarch":"arm64"},{"goos":"darwin","goarch":"amd64"},{"goos":"darwin","goarch":"arm64"}]}'
+          fi
+
           {
             echo "component=$component"
             echo "version=$version"
@@ -82,6 +97,7 @@ jobs:
             echo "commit=$commit"
             echo "build_date=$build_date"
             echo "binary_name=$binary_name"
+            echo "build_matrix=$build_matrix"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -89,16 +105,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
+      matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -127,6 +134,10 @@ jobs:
             amika-server)
               package_path="./cmd/amika-server"
               ld_version="github.com/gofixpoint/amika/go/internal/buildmeta.amikaServerVersionValue=$VERSION"
+              ;;
+            amikad)
+              package_path="./cmd/amikad"
+              ld_version="github.com/gofixpoint/amika/go/internal/buildmeta.amikadVersionValue=$VERSION"
               ;;
             amikalog)
               package_path="./cmd/amikalog"
