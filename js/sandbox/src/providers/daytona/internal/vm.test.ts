@@ -31,7 +31,7 @@ import { captureVmSandboxSnapshot, createVmSandbox } from "./vm";
 const config: DaytonaConfig = {
   apiKey: "key",
   apiUrl: "https://daytona.example",
-  target: "experimental",
+  target: "us-west-2",
   organizationId: undefined,
   useVm: true,
 };
