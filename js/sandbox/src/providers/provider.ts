@@ -620,10 +620,9 @@ export interface SnapshotCapability {
   /**
    * Capture a snapshot of the sandbox as it stands — the one raw capture
    * primitive; scrubbing is layered above in core. All capture
-   * mechanics stay inside: Daytona picks cold-VM vs container capture
-   * (through its experimental client, whose target alone exposes the capture
-   * endpoint) and quiesces/restarts dind; Vercel calls `sandbox.snapshot()`;
-   * Freestyle snapshots the running VM.
+   * mechanics stay inside: Daytona picks cold-VM vs container capture and
+   * quiesces/restarts dind; Vercel calls `sandbox.snapshot()`; Freestyle
+   * snapshots the running VM.
    *
    * `keepSourceRunning: false` declares the caller's INTENT to delete the
    * source afterwards — deletion is not guaranteed (activation can time out,

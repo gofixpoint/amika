@@ -10,7 +10,7 @@ import {
   SANDBOX_ENV_SECRETS_EXCLUDED_VALUE,
 } from "../../../constants";
 import type { DaytonaConfig } from "../config";
-import { createDaytonaClient, createExperimentalDaytonaClient } from "./client";
+import { createDaytonaClient } from "./client";
 import { captureVmSandboxSnapshot, isVmSandbox } from "./vm";
 import { startDockerForSnapshot, stopDockerForSnapshot } from "./configure";
 
@@ -97,7 +97,7 @@ export async function activateDaytonaSnapshot(
 }
 
 /**
- * Per-call timeout for `_experimental_createSnapshot`, in seconds.
+ * Per-call timeout for `sandbox.createSnapshot`, in seconds.
  * The SDK default is 60s, which is far too tight for real sandboxes —
  * snapshotting a coder-sized image with node_modules / build caches
  * regularly takes several minutes, and captures exceeding 5 minutes
@@ -117,11 +117,19 @@ const SANDBOX_SNAPSHOT_TIMEOUT_S = 15 * 60;
  * inherits the source's `linux-vm` class, so a sandbox later booted from it is
  * itself a VM. Branch on the sandbox's real class, not `useVm`: a container
  * created before the flag was enabled is still a container and takes the
- * experimental-snapshot path below.
+ * container-snapshot path below.
  *
- * Container captures go through the experimental client's
- * `_experimental_createSnapshot` — the method and the resulting snapshot exist
- * only on that target (the underscore is the SDK's own unstable marker).
+ * Container captures go through `sandbox.createSnapshot` on the ordinary
+ * client. This used to require a client pinned to the `experimental` target,
+ * the only one exposing the capture endpoint while
+ * `_experimental_createSnapshot` was the sole entry point; the SDK graduated
+ * the method in 0.202.0 and it is now served on the regular targets.
+ *
+ * Dropping that pinned client is safe because the capture request never
+ * carried a target to begin with: it addresses the sandbox by id, and the
+ * snapshot lands in the source sandbox's own region. `DaytonaConfig.target`
+ * reaches only `daytona.create()` and the `regionId` default for
+ * image-derived snapshots, neither of which is on this path.
  *
  * `keepSourceRunning: false` is delete-INTENT, not a guarantee: activation can
  * time out or the delete can fail, after which the source is retained and
@@ -150,14 +158,10 @@ export async function captureDaytonaSandboxSnapshot(
     return;
   }
 
-  const capture = async (): Promise<void> => {
-    const daytona = createExperimentalDaytonaClient(config);
-    const sandbox = await daytona.get(providerSandboxId);
-    await sandbox._experimental_createSnapshot(
-      snapshotName,
-      SANDBOX_SNAPSHOT_TIMEOUT_S,
-    );
-  };
+  const daytona = createDaytonaClient(config);
+  const sandbox = await daytona.get(providerSandboxId);
+  const capture = () =>
+    sandbox.createSnapshot(snapshotName, SANDBOX_SNAPSHOT_TIMEOUT_S);
 
   if (opts.keepSourceRunning) {
     await capture();
@@ -168,11 +172,7 @@ export async function captureDaytonaSandboxSnapshot(
   // /var/lib/docker just before capture. A dind snapshot taken with dockerd
   // live bakes in mid-flight overlay mounts / network state that stall dockerd
   // recovery on restore, tripping the image hook's 30s readiness wait when a
-  // sandbox boots from this snapshot. No-op on non-dind sandboxes. The
-  // quiesce/restore run through the NORMAL client — exec/filesystem operations
-  // through the experimental client can silently no-op.
-  const daytona = createDaytonaClient(config);
-  const sandbox = await daytona.get(providerSandboxId);
+  // sandbox boots from this snapshot. No-op on non-dind sandboxes.
   await stopDockerForSnapshot(sandbox);
   try {
     await capture();
@@ -190,9 +190,9 @@ export async function captureDaytonaSandboxSnapshot(
 
 /**
  * How long to wait for a freshly captured sandbox snapshot to become
- * `active`, in seconds. `_experimental_createSnapshot` resolves when the
+ * `active`, in seconds. `sandbox.createSnapshot` resolves when the
  * *sandbox* finishes its capture phase; the snapshot itself registers and
- * activates asynchronously in the default region afterward (image push +
+ * activates asynchronously in the configured region afterward (image push +
  * validation), which for large filesystems takes minutes more — and the
  * snapshot may not even be addressable by name until that completes, so
  * the window has to cover the full push, not just a state transition.
@@ -245,10 +245,10 @@ async function findDaytonaSnapshotByName(
 }
 
 /**
- * Block until `snapshotName` reaches the `active` state in the default
+ * Block until `snapshotName` reaches the `active` state in the configured
  * region. Tolerates the snapshot being missing while polling — a snapshot
  * captured from a sandbox surfaces only some time after
- * `_experimental_createSnapshot` returns. Throws as soon as Daytona
+ * `sandbox.createSnapshot` returns. Throws as soon as Daytona
  * reports a terminal failure (`error` / `build_failed`), or when the
  * timeout elapses without activation.
  *

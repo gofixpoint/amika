@@ -11,15 +11,13 @@ const getSnapshot = vi.fn();
 const listSnapshots = vi.fn();
 const activateSnapshot = vi.fn();
 const getSandbox = vi.fn();
-const getExperimentalSandbox = vi.fn();
 const stopDockerMock = vi.fn();
 const startDockerMock = vi.fn();
 const captureVmSnapshotMock = vi.fn();
 const isVmSandboxMock = vi.fn();
 
-// The experimental client exposes only sandbox `get` — anything touching
-// `snapshot.*` on it (e.g. waitForDaytonaSnapshotActive, which must use
-// the default target) blows up instead of silently working.
+// One client for everything: the capture, the docker quiesce/restore, and
+// the snapshot reads all run against the configured target.
 vi.mock("./client", () => ({
   createDaytonaClient: () => ({
     get: (id: string) => getSandbox(id),
@@ -28,9 +26,6 @@ vi.mock("./client", () => ({
       list: (page: number, limit: number) => listSnapshots(page, limit),
       activate: (snapshot: unknown) => activateSnapshot(snapshot),
     },
-  }),
-  createExperimentalDaytonaClient: () => ({
-    get: (id: string) => getExperimentalSandbox(id),
   }),
 }));
 
@@ -178,7 +173,6 @@ describe("waitForDaytonaSnapshotActive", () => {
 describe("captureDaytonaSandboxSnapshot", () => {
   beforeEach(() => {
     getSandbox.mockReset();
-    getExperimentalSandbox.mockReset();
     stopDockerMock.mockReset();
     startDockerMock.mockReset();
     captureVmSnapshotMock.mockReset();
@@ -193,8 +187,8 @@ describe("captureDaytonaSandboxSnapshot", () => {
     // whole VM (which also quiesces the inner Docker daemon) and takes a
     // memory-excluded snapshot, so the container Docker stop/start dance is
     // neither needed nor used, and the capture goes through the VM helper
-    // rather than the SDK's experimental snapshot.
-    getSandbox.mockResolvedValue({ id: "normal-handle" });
+    // rather than the container snapshot call.
+    getSandbox.mockResolvedValue({ id: "sandbox-handle" });
     isVmSandboxMock.mockResolvedValue(true);
     captureVmSnapshotMock.mockResolvedValue(undefined);
 
@@ -215,7 +209,7 @@ describe("captureDaytonaSandboxSnapshot", () => {
     );
     expect(stopDockerMock).not.toHaveBeenCalled();
     expect(startDockerMock).not.toHaveBeenCalled();
-    expect(getExperimentalSandbox).not.toHaveBeenCalled();
+    expect(getSandbox).not.toHaveBeenCalled();
 
     await captureDaytonaSandboxSnapshot(
       { ...config, useVm: true },
@@ -236,12 +230,11 @@ describe("captureDaytonaSandboxSnapshot", () => {
   it("uses the container path when useVm is set but the sandbox is a container", async () => {
     // A container created before the flag was enabled must not hit the VM
     // snapshot call (Daytona rejects it); the real class governs the branch.
-    const sandbox = { id: "normal-handle" };
-    const experimentalSandbox = {
-      _experimental_createSnapshot: vi.fn().mockResolvedValue(undefined),
+    const sandbox = {
+      id: "sandbox-handle",
+      createSnapshot: vi.fn().mockResolvedValue(undefined),
     };
     getSandbox.mockResolvedValue(sandbox);
-    getExperimentalSandbox.mockResolvedValue(experimentalSandbox);
     isVmSandboxMock.mockResolvedValue(false);
     stopDockerMock.mockResolvedValue(undefined);
     startDockerMock.mockResolvedValue(undefined);
@@ -254,9 +247,10 @@ describe("captureDaytonaSandboxSnapshot", () => {
     );
 
     expect(captureVmSnapshotMock).not.toHaveBeenCalled();
-    expect(
-      experimentalSandbox._experimental_createSnapshot,
-    ).toHaveBeenCalledWith("org/sandbox/snap", expect.any(Number));
+    expect(sandbox.createSnapshot).toHaveBeenCalledWith(
+      "org/sandbox/snap",
+      expect.any(Number),
+    );
     expect(startDockerMock).toHaveBeenCalledWith(sandbox);
   });
 
@@ -264,10 +258,11 @@ describe("captureDaytonaSandboxSnapshot", () => {
     // Today's full-capture behavior: a kept-alive container is snapshotted
     // without stopping dockerd (the quiesce exists to protect a snapshot that
     // will be booted as the org base, and the destructive path covers that).
-    const experimentalSandbox = {
-      _experimental_createSnapshot: vi.fn().mockResolvedValue(undefined),
+    const sandbox = {
+      id: "sandbox-handle",
+      createSnapshot: vi.fn().mockResolvedValue(undefined),
     };
-    getExperimentalSandbox.mockResolvedValue(experimentalSandbox);
+    getSandbox.mockResolvedValue(sandbox);
 
     await captureDaytonaSandboxSnapshot(config, "sbx-1", "org/sandbox/snap", {
       keepSourceRunning: true,
@@ -275,26 +270,24 @@ describe("captureDaytonaSandboxSnapshot", () => {
 
     expect(stopDockerMock).not.toHaveBeenCalled();
     expect(startDockerMock).not.toHaveBeenCalled();
-    expect(getSandbox).not.toHaveBeenCalled();
-    expect(
-      experimentalSandbox._experimental_createSnapshot,
-    ).toHaveBeenCalledWith("org/sandbox/snap", expect.any(Number));
+    expect(sandbox.createSnapshot).toHaveBeenCalledWith(
+      "org/sandbox/snap",
+      expect.any(Number),
+    );
   });
 
   it("delete-intent container capture stops docker before and restarts after", async () => {
     // Docker stops right before capture so /var/lib/docker is frozen at rest,
     // then restarts right after so a kept (delete-failed) source isn't left
-    // down. The quiesce/restore run against the normal (non-experimental)
-    // handle — fs/exec through the experimental client can silently no-op.
+    // down.
     const calls: string[] = [];
-    const sandbox = { id: "normal-handle" };
-    const experimentalSandbox = {
-      _experimental_createSnapshot: vi.fn(async () => {
+    const sandbox = {
+      id: "sandbox-handle",
+      createSnapshot: vi.fn(async () => {
         calls.push("capture");
       }),
     };
     getSandbox.mockResolvedValue(sandbox);
-    getExperimentalSandbox.mockResolvedValue(experimentalSandbox);
     stopDockerMock.mockImplementation(async () => {
       calls.push("stop-docker");
     });
@@ -315,14 +308,11 @@ describe("captureDaytonaSandboxSnapshot", () => {
     // A failed capture leaves the source sandbox alive (restored to `active`
     // by the caller), so Docker must come back up rather than stay stopped
     // from the pre-capture quiesce.
-    const sandbox = { id: "normal-handle" };
-    const experimentalSandbox = {
-      _experimental_createSnapshot: vi
-        .fn()
-        .mockRejectedValue(new Error("boom")),
+    const sandbox = {
+      id: "sandbox-handle",
+      createSnapshot: vi.fn().mockRejectedValue(new Error("boom")),
     };
     getSandbox.mockResolvedValue(sandbox);
-    getExperimentalSandbox.mockResolvedValue(experimentalSandbox);
     stopDockerMock.mockResolvedValue(undefined);
     startDockerMock.mockResolvedValue(undefined);
 
@@ -334,22 +324,18 @@ describe("captureDaytonaSandboxSnapshot", () => {
     expect(startDockerMock).toHaveBeenCalledWith(sandbox);
   });
 
-  it("restarts docker even when resolving the experimental handle fails", async () => {
-    // The experimental `get` runs after docker is stopped; a failure there
-    // must still hit the restart, or a kept source sandbox is left down.
-    const sandbox = { id: "normal-handle" };
-    getSandbox.mockResolvedValue(sandbox);
-    getExperimentalSandbox.mockRejectedValue(new Error("target down"));
-    stopDockerMock.mockResolvedValue(undefined);
-    startDockerMock.mockResolvedValue(undefined);
+  it("never touches docker when the sandbox handle cannot be resolved", async () => {
+    // The `get` runs before the quiesce, so a failure to resolve the handle
+    // leaves the source exactly as it was — nothing to restore.
+    getSandbox.mockRejectedValue(new Error("target down"));
 
     await expect(
       captureDaytonaSandboxSnapshot(config, "sbx-1", "org/sandbox/snap", {
         keepSourceRunning: false,
       }),
     ).rejects.toThrow("target down");
-    expect(stopDockerMock).toHaveBeenCalledWith(sandbox);
-    expect(startDockerMock).toHaveBeenCalledWith(sandbox);
+    expect(stopDockerMock).not.toHaveBeenCalled();
+    expect(startDockerMock).not.toHaveBeenCalled();
   });
 });
 

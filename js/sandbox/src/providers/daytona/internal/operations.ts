@@ -294,7 +294,7 @@ export async function createDaytonaSandbox(
 
   // Only NON-SECRET operational vars go into the container env. Anything
   // passed to `daytona.create({ envVars })` becomes part of the container's
-  // spec, which `_experimental_createSnapshot` bakes into the snapshot image
+  // spec, which `sandbox.createSnapshot` bakes into the snapshot image
   // — and no Daytona API can scrub a sandbox's env afterward. So secrets
   // (OPENCODE_SERVER_PASSWORD + injected user env) are deliberately NOT set
   // here; they are delivered via /etc/environment (configureSshEnvironment)
