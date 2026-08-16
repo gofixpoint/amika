@@ -1,0 +1,350 @@
+{
+  "image": {
+    "agent_hook_paths": [
+      ".claude/settings.json",
+      ".codex/hooks.json"
+    ],
+    "base_image": "ubuntu",
+    "base_version": "UBUNTU_TAG",
+    "directories": [
+      {
+        "group": "amika",
+        "mode": "700",
+        "owner": "amika",
+        "path": "/home/amika/.ssh"
+      },
+      {
+        "group": "amika",
+        "mode": "755",
+        "owner": "amika",
+        "path": "/home/amika/workspace"
+      },
+      {
+        "group": "amika",
+        "mode": "755",
+        "owner": "amika",
+        "path": "/var/log/amika"
+      },
+      {
+        "group": "amika",
+        "mode": "755",
+        "owner": "amika",
+        "path": "/usr/lib/amika"
+      },
+      {
+        "group": "amika",
+        "mode": "755",
+        "owner": "amika",
+        "path": "/run/amika"
+      },
+      {
+        "group": "amika",
+        "mode": "755",
+        "owner": "amika",
+        "path": "/usr/local/etc/amika"
+      },
+      {
+        "group": "amika",
+        "mode": "755",
+        "owner": "amika",
+        "path": "/var/lib/amika"
+      },
+      {
+        "group": "amika",
+        "mode": "755",
+        "owner": "amika",
+        "path": "/tmp/amika"
+      }
+    ],
+    "dotfiles": [
+      ".zshrc",
+      ".bashrc",
+      ".tmux.conf"
+    ],
+    "hook_scripts": [
+      "/usr/lib/amikad/pre-setup.sh",
+      "/usr/lib/amikad/post-setup.sh",
+      "/usr/lib/amikad/run-hook.sh",
+      "/usr/lib/amikad/opencode-setup.sh",
+      "/usr/lib/amikad/docker-setup.sh",
+      "/usr/lib/amikad/restore-setuid.sh"
+    ],
+    "package_cache_paths": [
+      "/var/lib/apt/lists",
+      "/var/cache/apt/archives",
+      "/root/.npm"
+    ],
+    "runtime_group": "amika",
+    "runtime_home": "/home/amika",
+    "runtime_shell": "/usr/bin/zsh",
+    "runtime_user": "amika",
+    "setup_hooks": [
+      "/usr/local/etc/amikad/setup/setup.sh",
+      "/usr/local/etc/amikad/setup/start.sh"
+    ],
+    "standard_path": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "workspace": "/home/amika/workspace"
+  },
+  "presets": {
+    "coder": {
+      "binaries": [
+        "node",
+        "npm",
+        "pnpm",
+        "tsc",
+        "tsx",
+        "gh",
+        "git",
+        "claude",
+        "codex",
+        "opencode",
+        "pi",
+        "amika",
+        "amikalog",
+        "amikad"
+      ],
+      "steps": [
+        {
+          "assets": [],
+          "id": "os-packages",
+          "script": "steps/10-os-packages.sh",
+          "versions": {}
+        },
+        {
+          "asset_argument": "assets/stable",
+          "assets": [
+            "assets/stable/ghostty.terminfo"
+          ],
+          "id": "static-config",
+          "script": "steps/20-static-config.sh",
+          "versions": {}
+        },
+        {
+          "assets": [],
+          "id": "node-gh",
+          "script": "steps/30-node-gh.sh",
+          "versions": {
+            "GH_VERSION": "2.76.2",
+            "NODE_VERSION": "22.19.0"
+          }
+        },
+        {
+          "assets": [],
+          "id": "npm-toolchain",
+          "script": "steps/40-npm-toolchain.sh",
+          "versions": {
+            "PNPM_VERSION": "10.15.1",
+            "TSX_VERSION": "4.20.3",
+            "TYPESCRIPT_VERSION": "5.9.2"
+          }
+        },
+        {
+          "assets": [],
+          "id": "runtime-user",
+          "script": "steps/50-runtime-user.sh",
+          "versions": {}
+        },
+        {
+          "asset_argument": "assets/stable",
+          "assets": [
+            "assets/stable/.bashrc",
+            "assets/stable/.tmux.conf",
+            "assets/stable/.zshrc"
+          ],
+          "id": "dotfiles",
+          "script": "steps/60-dotfiles.sh",
+          "versions": {}
+        },
+        {
+          "asset_argument": "assets/hooks",
+          "assets": [
+            "assets/hooks/amika-restore-setuid.service",
+            "assets/hooks/bash-error-prelude.sh",
+            "assets/hooks/docker-setup.sh",
+            "assets/hooks/opencode-setup.sh",
+            "assets/hooks/post-setup.sh",
+            "assets/hooks/pre-setup.sh",
+            "assets/hooks/restore-setuid.sh",
+            "assets/hooks/run-hook.sh"
+          ],
+          "id": "hook-assets",
+          "script": "steps/70-hook-assets.sh",
+          "versions": {}
+        },
+        {
+          "assets": [],
+          "id": "agent-clis",
+          "script": "steps/80-agent-clis.sh",
+          "versions": {
+            "CLAUDE_CODE_VERSION": "2.1.224",
+            "CODEX_VERSION": "0.147.0",
+            "OPENCODE_VERSION": "1.18.4",
+            "PI_VERSION": "0.84.1"
+          }
+        },
+        {
+          "assets": [],
+          "id": "amika-clis",
+          "script": "steps/85-amika-clis.sh",
+          "versions": {
+            "AMIKAD_VERSION": "0.1.0",
+            "AMIKALOG_VERSION": "0.2.0",
+            "AMIKA_VERSION": "0.14.1"
+          }
+        },
+        {
+          "assets": [],
+          "id": "setuid-manifest",
+          "script": "steps/94-setuid-manifest.sh",
+          "versions": {}
+        },
+        {
+          "assets": [
+            "manifest.toml",
+            "versions.env",
+            "verify"
+          ],
+          "id": "verify",
+          "preset_environment": "AMIKA_PRESET",
+          "script": "steps/95-verify.sh",
+          "versions": {}
+        }
+      ]
+    },
+    "coder-dind": {
+      "binaries": [
+        "node",
+        "npm",
+        "pnpm",
+        "tsc",
+        "tsx",
+        "gh",
+        "git",
+        "claude",
+        "codex",
+        "opencode",
+        "pi",
+        "amika",
+        "amikalog",
+        "amikad",
+        "docker"
+      ],
+      "steps": [
+        {
+          "assets": [],
+          "id": "os-packages",
+          "script": "steps/10-os-packages.sh",
+          "versions": {}
+        },
+        {
+          "asset_argument": "assets/stable",
+          "assets": [
+            "assets/stable/ghostty.terminfo"
+          ],
+          "id": "static-config",
+          "script": "steps/20-static-config.sh",
+          "versions": {}
+        },
+        {
+          "assets": [],
+          "id": "node-gh",
+          "script": "steps/30-node-gh.sh",
+          "versions": {
+            "GH_VERSION": "2.76.2",
+            "NODE_VERSION": "22.19.0"
+          }
+        },
+        {
+          "assets": [],
+          "id": "npm-toolchain",
+          "script": "steps/40-npm-toolchain.sh",
+          "versions": {
+            "PNPM_VERSION": "10.15.1",
+            "TSX_VERSION": "4.20.3",
+            "TYPESCRIPT_VERSION": "5.9.2"
+          }
+        },
+        {
+          "assets": [],
+          "id": "runtime-user",
+          "script": "steps/50-runtime-user.sh",
+          "versions": {}
+        },
+        {
+          "asset_argument": "assets/stable",
+          "assets": [
+            "assets/stable/.bashrc",
+            "assets/stable/.tmux.conf",
+            "assets/stable/.zshrc"
+          ],
+          "id": "dotfiles",
+          "script": "steps/60-dotfiles.sh",
+          "versions": {}
+        },
+        {
+          "asset_argument": "assets/hooks",
+          "assets": [
+            "assets/hooks/amika-restore-setuid.service",
+            "assets/hooks/bash-error-prelude.sh",
+            "assets/hooks/docker-setup.sh",
+            "assets/hooks/opencode-setup.sh",
+            "assets/hooks/post-setup.sh",
+            "assets/hooks/pre-setup.sh",
+            "assets/hooks/restore-setuid.sh",
+            "assets/hooks/run-hook.sh"
+          ],
+          "id": "hook-assets",
+          "script": "steps/70-hook-assets.sh",
+          "versions": {}
+        },
+        {
+          "assets": [],
+          "id": "agent-clis",
+          "script": "steps/80-agent-clis.sh",
+          "versions": {
+            "CLAUDE_CODE_VERSION": "2.1.224",
+            "CODEX_VERSION": "0.147.0",
+            "OPENCODE_VERSION": "1.18.4",
+            "PI_VERSION": "0.84.1"
+          }
+        },
+        {
+          "assets": [],
+          "id": "amika-clis",
+          "script": "steps/85-amika-clis.sh",
+          "versions": {
+            "AMIKAD_VERSION": "0.1.0",
+            "AMIKALOG_VERSION": "0.2.0",
+            "AMIKA_VERSION": "0.14.1"
+          }
+        },
+        {
+          "assets": [],
+          "id": "dind",
+          "script": "steps/90-dind.sh",
+          "versions": {
+            "DOCKER_VERSION": "28.3.3"
+          }
+        },
+        {
+          "assets": [],
+          "id": "setuid-manifest",
+          "script": "steps/94-setuid-manifest.sh",
+          "versions": {}
+        },
+        {
+          "assets": [
+            "manifest.toml",
+            "versions.env",
+            "verify"
+          ],
+          "id": "verify",
+          "preset_environment": "AMIKA_PRESET",
+          "script": "steps/95-verify.sh",
+          "versions": {}
+        }
+      ]
+    }
+  },
+  "schemaVersion": 1
+}

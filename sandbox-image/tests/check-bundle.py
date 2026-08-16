@@ -16,6 +16,7 @@ def main() -> int:
     errors = validate_manifest_files(bundle, manifest, versions)
     errors.extend(validate_step_version_literals(bundle))
     errors.extend(validate_generated_dockerfiles(bundle, manifest, versions))
+    errors.extend(validate_regeneration(bundle))
 
     if errors:
         for error in errors:
@@ -112,6 +113,17 @@ def validate_generated_dockerfiles(
         if positions != sorted(positions):
             errors.append(f"{preset_name}: steps differ from manifest order")
     return errors
+
+
+def validate_regeneration(bundle: Path) -> list[str]:
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, str(bundle / "generate.py"), "--check"], check=False
+    )
+    if result.returncode == 0:
+        return []
+    return ["run sandbox-image/generate.py to refresh generated artifacts"]
 
 
 if __name__ == "__main__":

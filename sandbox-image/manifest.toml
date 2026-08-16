@@ -1,4 +1,6 @@
 [image]
+base_image = "ubuntu"
+base_version = "UBUNTU_TAG"
 runtime_user = "amika"
 runtime_group = "amika"
 runtime_home = "/home/amika"
@@ -37,6 +39,7 @@ assets = []
 script = "steps/20-static-config.sh"
 versions = []
 assets = ["assets/stable/ghostty.terminfo"]
+asset_argument = "assets/stable"
 
 [steps.node-gh]
 script = "steps/30-node-gh.sh"
@@ -61,6 +64,7 @@ assets = [
   "assets/stable/.tmux.conf",
   "assets/stable/.zshrc",
 ]
+asset_argument = "assets/stable"
 
 [steps.hook-assets]
 script = "steps/70-hook-assets.sh"
@@ -75,6 +79,7 @@ assets = [
   "assets/hooks/restore-setuid.sh",
   "assets/hooks/run-hook.sh",
 ]
+asset_argument = "assets/hooks"
 
 [steps.agent-clis]
 script = "steps/80-agent-clis.sh"
@@ -105,6 +110,12 @@ assets = []
 script = "steps/95-verify.sh"
 versions = []
 assets = ["manifest.toml", "versions.env", "verify"]
+preset_environment = "AMIKA_PRESET"
+docker_copies = [
+  { source = "manifest.toml", destination = "/usr/lib/amika-image/manifest.toml" },
+  { source = "versions.env", destination = "/usr/lib/amika-image/versions.env" },
+  { source = "verify", destination = "/usr/lib/amika-image/verify" },
+]
 
 [[image.directories]]
 path = "/home/amika/.ssh"
