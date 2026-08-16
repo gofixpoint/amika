@@ -254,20 +254,31 @@ wedged. Only `SIGKILL` and power loss still leak.
 
 ### Reclaiming a killed run
 
-`t.Cleanup` does not survive a run that is killed outright: a `go test`
-timeout panic, a SIGKILL, a crashed machine. The ledger on disk is all that
-is left. `runner.SweepStaleRuns` finds those leftovers — case directories
-holding a ledger with entries and no `cleanup-results.json` beside it,
-exactly the state a killed run leaves — and replays each one's cleanup
-argv. Each entry carries the state directory and API URL it was created
-with, so the delete targets the deployment that created it.
+Only a process that dies outright — SIGKILL, a crashed machine — still
+skips cleanup, leaving resources recorded in a ledger but never deleted.
+`make sweep-e2e` reclaims those:
 
-Sweeping is never automatic. A run must not delete resources it did not
-create: a case directory being swept is indistinguishable from one whose
-run is still in flight, so an automatic sweep would delete a concurrent
-run's live sandbox out from under it.
+```bash
+make sweep-e2e SWEEP_ARGS=-dry-run    # show what would be deleted
+make sweep-e2e                        # delete it
+```
 
-To reap one specific leftover ledger:
+It replays the cleanup argv of every case directory holding a ledger with
+entries and no `cleanup-results.json` beside it. Each entry carries the
+state directory and API URL it was created with, so the delete targets the
+deployment that created it.
+
+**Sweeping is never automatic**, because an unreclaimed ledger looks
+exactly like one belonging to a case still in flight. Doing it on every run
+would race a concurrent run and delete the sandbox it is still using. For
+the same reason the sweeper skips any run directory whose owning process is
+still alive (each run records its pid in `run.json`), and `-min-age` can
+require a run to have been abandoned for some time before it is touched.
+
+A reclaimed directory gets a `cleanup-results.json` even when a delete
+failed, so it is swept at most once: re-deleting a resource that may
+already be gone is worse than reporting it. A failure is printed with the
+argv needed to finish by hand. To reap one specific ledger directly:
 
 ```go
 results, err := runner.CleanupFromLedgerFile(binPath, "/path/to/.runs/<run-id>/<case>/ledger.json", nil)

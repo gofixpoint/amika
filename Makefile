@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server build-amikad build-amikalog build-akfs clean test test-unit test-integration test-contract test-e2e test-e2e-api test-expensive test-all test-sandbox-image coverage vet fmt fmtcheck lint shellcheck ci setup
+.PHONY: goenv build build-cli build-server build-amikad build-amikalog build-akfs clean test test-unit test-integration test-contract test-e2e test-e2e-api sweep-e2e test-expensive test-all test-sandbox-image coverage vet fmt fmtcheck lint shellcheck ci setup
 
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
@@ -67,6 +67,17 @@ test-e2e: goenv
 # with `make test-e2e-api E2E_API_TIMEOUT=1h` when adding more cases.
 test-e2e-api: goenv
 	AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test -timeout $(E2E_API_TIMEOUT) ./test/e2e/...
+
+# Reclaims remote resources left behind by an E2E run that was killed before
+# its own cleanup could run (SIGKILL, a dead machine). Deliberately manual:
+# an unreclaimed ledger looks just like one belonging to a run still in
+# flight, so look before you delete.
+#   make sweep-e2e SWEEP_ARGS=-dry-run    # show what would be deleted
+#   make sweep-e2e                        # delete it
+sweep-e2e: build-cli
+	go -C $(GO_DIR) run ./test/e2e/cmd/e2e-sweep \
+		-bin $(CURDIR)/dist/amika \
+		-runs $(CURDIR)/$(GO_DIR)/test/e2e/.runs $(SWEEP_ARGS)
 
 test-expensive: goenv
 	AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 $(MAKE) test-all

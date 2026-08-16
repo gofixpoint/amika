@@ -134,6 +134,12 @@ func TestE2ECases(t *testing.T) {
 	runID := time.Now().UTC().Format("20060102T150405.000000000Z")
 	runsRoot := filepath.Join(moduleRoot, "test", "e2e", ".runs", runID)
 
+	// Claim this run directory, so a sweep looking for leftovers can tell
+	// these in-flight cases from ones a dead run abandoned (see e2e-sweep).
+	if err := runner.WriteRunMeta(runsRoot, runner.RunMeta{PID: os.Getpid(), StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("claim run directory: %v", err)
+	}
+
 	// An interrupt must fail the case in flight rather than kill the process,
 	// so cleanup still runs for what that case created. Cancelling this
 	// context kills the running step and takes the normal failure path.
