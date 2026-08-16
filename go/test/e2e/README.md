@@ -230,6 +230,28 @@ resources are deleted first) and keeps going even if one cleanup command
 fails, logging the failure via `t.Log` and recording it in
 `cleanup-results.json`.
 
+### Finishing before `go test` kills the run
+
+Cleanup only works if the process lives long enough to run it, and `go test`
+gives no warning: when its `-timeout` elapses it panics the binary from its
+own goroutine, which no deferred cleanup survives. The suite therefore stays
+ahead of that deadline rather than being surprised by it.
+
+`e2e_test.go` reads the real deadline from `t.Deadline()` and holds back a
+2m `cleanupReserve`. No step may run into that window, and no new case starts
+without a further 5m of runway, so the run stops with a clear message naming
+how many cases went unrun instead of dying mid-step. Raise `-timeout` (see
+`E2E_API_TIMEOUT`) when that happens.
+
+Independently, every step is bounded by `Options.StepTimeout` (10m by
+default), so one wedged command fails its own step instead of consuming the
+whole run's budget.
+
+SIGINT and SIGTERM are handled the same way: the interrupt cancels the
+running step, the case fails normally, and cleanup runs. A second interrupt
+gets the default behavior and kills the binary, in case cleanup is itself
+wedged. Only `SIGKILL` and power loss still leak.
+
 ### Reclaiming a killed run
 
 `t.Cleanup` does not survive a run that is killed outright: a `go test`

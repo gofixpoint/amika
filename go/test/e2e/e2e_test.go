@@ -4,9 +4,12 @@
 package e2e_test
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -36,6 +39,20 @@ const runAPIEnv = "AMIKA_RUN_E2E_API"
 
 // apiCasePrefix marks a case file as reaching the real remote API.
 const apiCasePrefix = "api-"
+
+// cleanupReserve is how much of the `go test` -timeout budget is held back
+// for cleanup. Nothing recovers a run that hits that timeout: it panics the
+// binary from its own goroutine, skipping every deferred cleanup and
+// orphaning whatever the in-flight case created. So no step is allowed to
+// run inside this window; it belongs to deleting what has been created.
+// Cleanup is per-case, so this only has to cover one case's resources.
+const cleanupReserve = 2 * time.Minute
+
+// minCaseRunway is the minimum time that must remain, on top of
+// cleanupReserve, for starting another case to be worth it. Without it a case
+// could start with seconds to spare and fail on the deadline rather than on
+// its own merits.
+const minCaseRunway = 5 * time.Minute
 
 // credentialEnvVars are stripped from the base environment of offline cases
 // so they cannot reach the real remote API on a host with ambient
@@ -117,9 +134,46 @@ func TestE2ECases(t *testing.T) {
 	runID := time.Now().UTC().Format("20060102T150405.000000000Z")
 	runsRoot := filepath.Join(moduleRoot, "test", "e2e", ".runs", runID)
 
-	for _, caseFile := range files {
+	// An interrupt must fail the case in flight rather than kill the process,
+	// so cleanup still runs for what that case created. Cancelling this
+	// context kills the running step and takes the normal failure path.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	interruptHandled := make(chan struct{})
+	defer close(interruptHandled)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Restore default signal handling, so a second interrupt kills
+			// the binary outright even if cleanup itself is wedged.
+			stopSignals()
+		case <-interruptHandled:
+		}
+	}()
+
+	// The reserve exists to protect the deletion of real remote resources, so
+	// it is only enforced for a run that can create them. Offline cases finish
+	// in milliseconds and clean up nothing, and holding them to a multi-minute
+	// runway would break a perfectly reasonable `go test -timeout 1m`.
+	var stepDeadline time.Time
+	if deadline, ok := t.Deadline(); ok && os.Getenv(runAPIEnv) == "1" {
+		stepDeadline = deadline.Add(-cleanupReserve)
+	}
+
+	for i, caseFile := range files {
 		caseFile := caseFile
 		caseName := strings.TrimSuffix(filepath.Base(caseFile), ".yaml")
+
+		if err := ctx.Err(); err != nil {
+			t.Errorf("interrupted with %d case(s) unrun", len(files)-i)
+			break
+		}
+		if !stepDeadline.IsZero() && time.Now().Add(minCaseRunway).After(stepDeadline) {
+			t.Errorf("stopping with %d case(s) unrun: less than %s left before the -timeout deadline, "+
+				"not enough to run another case and still clean up after it. Raise -timeout "+
+				"(make test-e2e-api E2E_API_TIMEOUT=...)", len(files)-i, minCaseRunway+cleanupReserve)
+			break
+		}
 
 		t.Run(caseName, func(t *testing.T) {
 			isAPICase := strings.HasPrefix(caseName, apiCasePrefix)
@@ -154,6 +208,8 @@ func TestE2ECases(t *testing.T) {
 				// hitting production. api-* cases keep the ambient env (nil =
 				// os.Environ()) so they can authenticate.
 				Env: baseEnvFor(isAPICase),
+				// No step may run into the window reserved for cleanup.
+				Deadline: stepDeadline,
 			})
 			if err != nil {
 				t.Fatalf("create runner: %v", err)
@@ -175,7 +231,7 @@ func TestE2ECases(t *testing.T) {
 				}
 			})
 
-			if err := r.RunCase(c); err != nil {
+			if err := r.RunCase(ctx, c); err != nil {
 				t.Fatalf("%v", err)
 			}
 		})

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -803,7 +804,7 @@ func TestRunnerRunCaseCapturesTemplatesAndRegistersResource(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err != nil {
+	if err := r.RunCase(context.Background(), c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 
@@ -857,7 +858,7 @@ func TestRunnerReleasesResourceOnlyAfterAssertionsPass(t *testing.T) {
 				},
 			},
 		}
-		if err := r.RunCase(c); err != nil {
+		if err := r.RunCase(context.Background(), c); err != nil {
 			t.Fatalf("RunCase: %v", err)
 		}
 		if entries := r.Ledger().Entries(); len(entries) != 0 {
@@ -893,7 +894,7 @@ func TestRunnerReleasesResourceOnlyAfterAssertionsPass(t *testing.T) {
 				},
 			},
 		}
-		if err := r.RunCase(c); err == nil {
+		if err := r.RunCase(context.Background(), c); err == nil {
 			t.Fatal("expected deletion assertion to fail")
 		}
 		if entries := r.Ledger().Entries(); len(entries) != 1 || entries[0].Name != "sb-1" {
@@ -932,7 +933,7 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err != nil {
+	if err := r.RunCase(context.Background(), c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 
@@ -981,7 +982,7 @@ func TestRunnerRegistersResourceEvenWhenAssertionFails(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err == nil {
+	if err := r.RunCase(context.Background(), c); err == nil {
 		t.Fatal("expected the stdout_contains assertion to fail the case")
 	}
 	entries := r.Ledger().Entries()
@@ -1020,7 +1021,7 @@ func TestRunnerRegistersResourceWhenCaptureFails(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err == nil {
+	if err := r.RunCase(context.Background(), c); err == nil {
 		t.Fatal("expected the failed capture to fail the case")
 	}
 	entries := r.Ledger().Entries()
@@ -1062,7 +1063,7 @@ func TestRunnerRegistersResourceFromValidSiblingCapture(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err == nil {
+	if err := r.RunCase(context.Background(), c); err == nil {
 		t.Fatal("expected the bad capture to fail the case")
 	}
 	entries := r.Ledger().Entries()
@@ -1101,7 +1102,7 @@ func TestRunnerResourceEnvPersistsStateDir(t *testing.T) {
 			},
 		},
 	}
-	if err := r.RunCase(c); err != nil {
+	if err := r.RunCase(context.Background(), c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 
@@ -1145,7 +1146,7 @@ func TestRunnerResourceEnvHonorsStepStateOverride(t *testing.T) {
 			},
 		},
 	}
-	if err := r.RunCase(c); err != nil {
+	if err := r.RunCase(context.Background(), c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 
@@ -1187,7 +1188,7 @@ func TestRunnerResourceEnvPersistsBaseAPIURL(t *testing.T) {
 			},
 		},
 	}
-	if err := r.RunCase(c); err != nil {
+	if err := r.RunCase(context.Background(), c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 
@@ -1236,7 +1237,7 @@ func TestRunnerRegistersResourceOnUnexpectedExitWithOptIn(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err == nil {
+	if err := r.RunCase(context.Background(), c); err == nil {
 		t.Fatal("expected the unexpected exit code to fail the case")
 	}
 	entries := r.Ledger().Entries()
@@ -1274,7 +1275,7 @@ func TestRunnerDoesNotRegisterOnUnexpectedExitByDefault(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err == nil {
+	if err := r.RunCase(context.Background(), c); err == nil {
 		t.Fatal("expected the unexpected exit code to fail the case")
 	}
 	if entries := r.Ledger().Entries(); len(entries) != 0 {
@@ -1321,7 +1322,7 @@ func TestRunnerCaptureClearsStaleValueOnReuse(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err == nil {
+	if err := r.RunCase(context.Background(), c); err == nil {
 		t.Fatal("expected the failed re-capture to fail the case")
 	}
 	entries := r.Ledger().Entries()
@@ -1369,7 +1370,7 @@ func TestRunnerCaptureClearedWhenReusedStepStdoutUnparseable(t *testing.T) {
 		},
 	}
 
-	if err := r.RunCase(c); err == nil {
+	if err := r.RunCase(context.Background(), c); err == nil {
 		t.Fatal("expected the unparseable stdout to fail the second step")
 	}
 	entries := r.Ledger().Entries()
@@ -1395,7 +1396,7 @@ func TestRunnerSchemaLoadedLazily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := rNoSchema.RunCase(&Case{Name: "no schema", Steps: []Step{{Name: "ok", Cmd: []string{"0", "", ""}}}}); err != nil {
+	if err := rNoSchema.RunCase(context.Background(), &Case{Name: "no schema", Steps: []Step{{Name: "ok", Cmd: []string{"0", "", ""}}}}); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 	if got := hits.Load(); got != 0 {
@@ -1414,7 +1415,7 @@ func TestRunnerSchemaLoadedLazily(t *testing.T) {
 			Expect: Expectation{Schema: "Thing"},
 		}},
 	}
-	if err := rSchema.RunCase(cSchema); err != nil {
+	if err := rSchema.RunCase(context.Background(), cSchema); err != nil {
 		t.Fatalf("RunCase with schema: %v", err)
 	}
 	if got := hits.Load(); got != 1 {
@@ -1585,7 +1586,7 @@ steps:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := rPass.RunCase(cPass); err != nil {
+	if err := rPass.RunCase(context.Background(), cPass); err != nil {
 		t.Fatalf("expected null stdout to satisfy stdout_json: null, got: %v", err)
 	}
 
@@ -1605,7 +1606,7 @@ steps:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := rFail.RunCase(cFail); err == nil {
+	if err := rFail.RunCase(context.Background(), cFail); err == nil {
 		t.Fatal("expected non-null stdout to fail stdout_json: null")
 	}
 
@@ -1630,7 +1631,7 @@ steps:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := rOmit.RunCase(cOmit); err != nil {
+	if err := rOmit.RunCase(context.Background(), cOmit); err != nil {
 		t.Fatalf("expected omitted stdout_json to make no assertion, got: %v", err)
 	}
 }
@@ -1653,7 +1654,7 @@ func TestRunnerRunCaseStopsAtFirstFailure(t *testing.T) {
 		},
 	}
 
-	err = r.RunCase(c)
+	err = r.RunCase(context.Background(), c)
 	if err == nil {
 		t.Fatalf("expected RunCase to fail")
 	}
@@ -1686,7 +1687,7 @@ func TestRunnerStdinIsPassedToStep(t *testing.T) {
 			},
 		},
 	}
-	if err := r.RunCase(c); err != nil {
+	if err := r.RunCase(context.Background(), c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 }
@@ -1710,7 +1711,7 @@ func TestRunnerNegativeContentAssertions(t *testing.T) {
 				},
 			}},
 		}
-		if err := r.RunCase(c); err != nil {
+		if err := r.RunCase(context.Background(), c); err != nil {
 			t.Fatalf("RunCase: %v", err)
 		}
 	})
@@ -1728,7 +1729,7 @@ func TestRunnerNegativeContentAssertions(t *testing.T) {
 				Expect: Expectation{StdoutNotContains: "secret"},
 			}},
 		}
-		err = r.RunCase(c)
+		err = r.RunCase(context.Background(), c)
 		if err == nil || !strings.Contains(err.Error(), "stdout_not_contains") {
 			t.Fatalf("expected stdout_not_contains failure, got %v", err)
 		}
@@ -1747,7 +1748,7 @@ func TestRunnerNegativeContentAssertions(t *testing.T) {
 				Expect: Expectation{StderrNotContains: "secret"},
 			}},
 		}
-		err = r.RunCase(c)
+		err = r.RunCase(context.Background(), c)
 		if err == nil || !strings.Contains(err.Error(), "stderr_not_contains") {
 			t.Fatalf("expected stderr_not_contains failure, got %v", err)
 		}
@@ -1774,7 +1775,7 @@ func TestRunnerStateDirInjectedIntoEnv(t *testing.T) {
 			{Name: "print", Cmd: []string{}, Expect: Expectation{StdoutContains: stateDir}},
 		},
 	}
-	if err := r.RunCase(c); err != nil {
+	if err := r.RunCase(context.Background(), c); err != nil {
 		t.Fatalf("RunCase: %v", err)
 	}
 }

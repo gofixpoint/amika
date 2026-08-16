@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -301,7 +302,27 @@ type Options struct {
 	// it, so two runs sharing an account cannot collide with each other or
 	// adopt a same-named resource the account already had.
 	RunID string
+	// StepTimeout bounds how long any single step may run before it is
+	// killed and the step fails. It stops one wedged command from consuming
+	// a whole run's budget. Defaults to DefaultStepTimeout when zero.
+	StepTimeout time.Duration
+	// Deadline, if set, is the wall-clock time by which every step must be
+	// finished: no step is allowed to run past it, however much of its own
+	// StepTimeout remains. Callers set this far enough before `go test`'s
+	// own -timeout that cleanup still has room to run, since that timeout
+	// panics the process and skips cleanup entirely.
+	Deadline time.Time
 }
+
+// DefaultStepTimeout bounds a single step when Options.StepTimeout is unset.
+// It is generous because a real-API step may legitimately provision a remote
+// sandbox; it exists to catch a wedged command, not to pace a healthy one.
+const DefaultStepTimeout = 10 * time.Minute
+
+// stepKillGrace is how long a killed step's I/O may take to drain before the
+// runner stops waiting. Without it a grandchild process holding the pipes
+// open could hang the run even after the step itself was killed.
+const stepKillGrace = 10 * time.Second
 
 // Runner executes case files against a built amika binary, tracking
 // resources the steps create in a ledger so they can be cleaned up in
@@ -337,6 +358,10 @@ func New(opts Options) (*Runner, error) {
 	ledger, err := NewLedger(filepath.Join(opts.RunDir, ledgerFileName))
 	if err != nil {
 		return nil, err
+	}
+
+	if opts.StepTimeout <= 0 {
+		opts.StepTimeout = DefaultStepTimeout
 	}
 
 	vars := map[string]string{}
@@ -381,22 +406,27 @@ func (r *Runner) Vars() map[string]string {
 // RunCase executes every step of c in order against the binary, stopping
 // at the first failing step. Resources registered by steps before a
 // failure remain in the ledger regardless, so cleanup still runs for them.
-func (r *Runner) RunCase(c *Case) error {
+//
+// Cancelling ctx kills the running step and fails the case, which is what
+// lets an interrupted run still clean up after itself: the caller's cleanup
+// runs on the normal failure path rather than being skipped by a killed
+// process.
+func (r *Runner) RunCase(ctx context.Context, c *Case) error {
 	for i, step := range c.Steps {
-		if err := r.runStep(i, step); err != nil {
+		if err := r.runStep(ctx, i, step); err != nil {
 			return fmt.Errorf("case %q step %d (%s): %w", c.Name, i+1, step.Name, err)
 		}
 	}
 	return nil
 }
 
-func (r *Runner) runStep(index int, rawStep Step) error {
+func (r *Runner) runStep(ctx context.Context, index int, rawStep Step) error {
 	step, err := r.substituteStep(rawStep)
 	if err != nil {
 		return fmt.Errorf("template substitution: %w", err)
 	}
 
-	stdout, stderr, exitCode, err := r.execStep(step)
+	stdout, stderr, exitCode, err := r.execStep(ctx, step)
 	if err != nil {
 		return err
 	}
@@ -466,13 +496,18 @@ func (r *Runner) runStep(index int, rawStep Step) error {
 }
 
 // execStep runs step.Cmd through the binary under test and returns its
-// captured stdout, stderr, and exit code.
-func (r *Runner) execStep(step Step) (stdout, stderr []byte, exitCode int, err error) {
-	cmd := exec.Command(r.opts.BinPath, step.Cmd...) //nolint:gosec // argv comes from trusted case files under version control
+// captured stdout, stderr, and exit code. The step is killed if it outlives
+// its timeout or the run's deadline, or if ctx is cancelled.
+func (r *Runner) execStep(ctx context.Context, step Step) (stdout, stderr []byte, exitCode int, err error) {
+	stepCtx, cancel := r.stepContext(ctx)
+	defer cancel()
+
+	cmd := exec.CommandContext(stepCtx, r.opts.BinPath, step.Cmd...) //nolint:gosec // argv comes from trusted case files under version control
 	cmd.Env = r.stepEnv(step.Env)
 	if step.Stdin != "" {
 		cmd.Stdin = strings.NewReader(step.Stdin)
 	}
+	cmd.WaitDelay = stepKillGrace
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -483,11 +518,40 @@ func (r *Runner) execStep(step Step) (stdout, stderr []byte, exitCode int, err e
 		return outBuf.Bytes(), errBuf.Bytes(), 0, nil
 	}
 
+	// A killed step reports a plain exit error, which would otherwise be
+	// mistaken for the command deciding to exit nonzero. Report why it died.
+	if stepCtx.Err() != nil {
+		return outBuf.Bytes(), errBuf.Bytes(), -1, r.stepAbortError(ctx, stepCtx, step)
+	}
+
 	var exitErr *exec.ExitError
 	if errors.As(runErr, &exitErr) {
 		return outBuf.Bytes(), errBuf.Bytes(), exitErr.ExitCode(), nil
 	}
 	return outBuf.Bytes(), errBuf.Bytes(), -1, fmt.Errorf("exec %v: %w", step.Cmd, runErr)
+}
+
+// stepContext bounds one step: it may run for at most StepTimeout, and never
+// past the run's Deadline.
+func (r *Runner) stepContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(r.opts.StepTimeout)
+	if !r.opts.Deadline.IsZero() && r.opts.Deadline.Before(deadline) {
+		deadline = r.opts.Deadline
+	}
+	return context.WithDeadline(ctx, deadline)
+}
+
+// stepAbortError explains why a step was killed. The caller's cancellation
+// (an interrupt) is reported differently from the runner's own bounds, since
+// only the latter points at a wedged command or a too-short timeout.
+func (r *Runner) stepAbortError(ctx, stepCtx context.Context, step Step) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("exec %v: interrupted: %w", step.Cmd, ctx.Err())
+	}
+	if !r.opts.Deadline.IsZero() && !time.Now().Before(r.opts.Deadline) {
+		return fmt.Errorf("exec %v: killed at the run deadline, leaving time to clean up: %w", step.Cmd, stepCtx.Err())
+	}
+	return fmt.Errorf("exec %v: timed out after %s: %w", step.Cmd, r.opts.StepTimeout, stepCtx.Err())
 }
 
 // CleanupEnv returns the environment that cleanup commands should run with:
