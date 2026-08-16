@@ -67,6 +67,22 @@ describe("getDaytonaClient", () => {
     );
   });
 
+  it("polls by default, so no WebSocket is opened", () => {
+    getDaytonaClient(config());
+
+    expect(Daytona).toHaveBeenCalledWith(
+      expect.objectContaining({ useDeprecatedPolling: true }),
+    );
+  });
+
+  it("uses the event stream only when explicitly opted in", () => {
+    getDaytonaClient({ ...config(), useWebSocket: true });
+
+    expect(Daytona).toHaveBeenCalledWith(
+      expect.objectContaining({ useDeprecatedPolling: false }),
+    );
+  });
+
   it("scopes to the organization when one is configured", () => {
     getDaytonaClient({ ...config(), organizationId: "org-1" });
 

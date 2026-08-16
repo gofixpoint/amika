@@ -15,4 +15,12 @@ export interface DaytonaConfig extends SandboxConfigBase {
    * `./internal/vm`).
    */
   useVm?: boolean;
+  /**
+   * Observe sandbox state over the SDK's event stream, which holds a
+   * persistent WebSocket per client (`ENABLE_DAYTONA_WEBSOCKET`). Off by
+   * default: state waits poll instead, so nothing opens a socket unless a
+   * caller asks for one. Streaming trades a connection for fewer polls —
+   * see `./internal/client`.
+   */
+  useWebSocket?: boolean;
 }

@@ -62,8 +62,9 @@ function required(env: Env, name: string): string {
  *
  * Daytona is always configured (the baseline provider). Freestyle/Vercel are
  * gated on `FREESTYLE_ENABLED` / `VERCEL_ENABLED` being exactly `true` and are
- * `null` otherwise. `ENABLE_DAYTONA_VM` (lenient `1`/`true`/`on`) sets
- * `daytona.useVm`; `FREESTYLE_STAGING_SNAPSHOTS` toggles Freestyle's
+ * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
+ * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
+ * `FREESTYLE_STAGING_SNAPSHOTS` toggles Freestyle's
  * `snapshotPersistence` between `sticky` and `persistent`. Throws if a required
  * credential for an enabled provider is missing.
  */
@@ -77,6 +78,9 @@ export function sandboxProviderConfigsFromEnv(
     organizationId: env.DAYTONA_ORGANIZATION_ID,
     // Opt-in: run Daytona resources as VMs (`linux-vm`) rather than containers.
     useVm: parseBooleanLike(env.ENABLE_DAYTONA_VM),
+    // Opt-in: observe sandbox state over the SDK's event stream (a persistent
+    // WebSocket per client). Unset means polling, so no socket is opened.
+    useWebSocket: parseBooleanLike(env.ENABLE_DAYTONA_WEBSOCKET),
   };
 
   const freestyle: FreestyleConfig | null = isEnabled(env.FREESTYLE_ENABLED)
