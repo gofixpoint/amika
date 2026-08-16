@@ -1,0 +1,81 @@
+name: Daytona coder base snapshot contract
+# This real-API case explicitly selects Daytona and verifies its medium coder
+# base snapshot after the complete sandbox boot lifecycle.
+steps:
+  - name: register the local SSH public key for sshv2
+    cmd: [secret, ssh-key, create, --name, "e2e-daytona-coder-{{run_id}}", -o, json]
+    expect:
+      exit: 0
+      schema: SshPublicKeySummary
+      stdout_json:
+        id: "@string"
+    capture:
+      ssh_key_id: $.id
+    resource:
+      type: ssh-key
+      name: "{{ssh_key_id}}"
+      cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
+
+  - name: create a medium coder sandbox from the Daytona base snapshot
+    cmd: [sandbox, create, --remote, --provider, daytona, --no-git, --preset, coder, --size, m, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+        provider: daytona
+        snapshot: "@string"
+        sandbox_preset: coder
+        sandbox_size: m
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+
+  - name: verify the booted base snapshot contract
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - --
+      - sh
+      - -lc
+      - sudo env AMIKA_PRESET=coder /usr/lib/amika-image/verify/run.sh boot
+    expect:
+      exit: 0
+
+  - name: verify the default amikad and OpenCode services are running
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - --
+      - sh
+      - -lc
+      - |
+        set -eu
+
+        wait_for_http() {
+          port="$1"
+          path="$2"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error "http://127.0.0.1:${port}${path}"; then
+              return 0
+            fi
+            sleep 1
+          done
+          echo "service on port ${port} did not become ready" >&2
+          return 1
+        }
+
+        wait_for_http 60999 /healthz | grep -qx '{"status":"ok"}'
+        test "$(cat /run/amikad/opencode-web.port)" = 60998
+        opencode_pid="$(cat /run/amikad/opencode-web.pid)"
+        kill -0 "$opencode_pid"
+        wait_for_http 60998 / >/dev/null
+        printf '%s\n' 'default sandbox services are ready'
+    expect:
+      exit: 0
+      stdout_contains: default sandbox services are ready
