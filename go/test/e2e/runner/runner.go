@@ -334,7 +334,7 @@ func New(opts Options) (*Runner, error) {
 	if err := os.MkdirAll(opts.RunDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create run directory %s: %w", opts.RunDir, err)
 	}
-	ledger, err := NewLedger(filepath.Join(opts.RunDir, "ledger.json"))
+	ledger, err := NewLedger(filepath.Join(opts.RunDir, ledgerFileName))
 	if err != nil {
 		return nil, err
 	}
