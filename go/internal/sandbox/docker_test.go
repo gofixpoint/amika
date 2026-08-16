@@ -16,7 +16,7 @@ func TestBuildDockerRunArgs_MixedMounts(t *testing.T) {
 		{HostPort: 5353, ContainerPort: 5353, Protocol: "udp"},
 	}
 
-	got := buildDockerRunArgs("sb1", "ubuntu:latest", mounts, env, ports)
+	got := buildDockerRunArgs("sb1", "ubuntu:latest", mounts, env, ports, true)
 	want := []string{
 		"run", "-d", "--name", "sb1",
 		"-v", "/host/src:/workspace/src:ro",
@@ -28,6 +28,17 @@ func TestBuildDockerRunArgs_MixedMounts(t *testing.T) {
 		"ubuntu:latest",
 		"/bin/bash", "-c", localSandboxLifecycleCommand, "--",
 		"tail", "-f", "/dev/null",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildDockerRunArgs_CustomImageUsesDirectCommand(t *testing.T) {
+	got := buildDockerRunArgs("sb1", "custom:latest", nil, nil, nil, false)
+	want := []string{
+		"run", "-d", "--name", "sb1",
+		"custom:latest", "tail", "-f", "/dev/null",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)

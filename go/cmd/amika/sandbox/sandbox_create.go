@@ -250,7 +250,14 @@ var sandboxCreateCmd = &cobra.Command{
 			runtimeMounts = append(runtimeMounts, v)
 		}
 
-		containerID, err := sandbox.CreateDockerSandbox(name, image, runtimeMounts, envStrs, publishedPorts)
+		containerID, err := sandbox.CreateDockerSandbox(
+			name,
+			image,
+			runtimeMounts,
+			envStrs,
+			publishedPorts,
+			resolvedImage.BuildPreset != "",
+		)
 		if err != nil {
 			rollbackVolumes()
 			return err

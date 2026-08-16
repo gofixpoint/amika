@@ -154,7 +154,14 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 	serviceInfos = append(serviceInfos, provSvcInfos...)
 	sandboxPorts = append(sandboxPorts, provPorts...)
 
-	containerID, err := sandbox.CreateDockerSandbox(name, req.Image, mounts, req.Env, sandboxPorts)
+	containerID, err := sandbox.CreateDockerSandbox(
+		name,
+		req.Image,
+		mounts,
+		req.Env,
+		sandboxPorts,
+		resolvedImage.BuildPreset != "",
+	)
 	if err != nil {
 		cleanupSetupScript()
 		cleanupGitRepo()

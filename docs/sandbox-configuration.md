@@ -16,7 +16,8 @@ amika materialize --setup-script ./my-setup.sh --cmd "echo done" --destdir /tmp/
 
 ### Writing a setup script
 
-Your script just needs to do its setup work and exit 0. You do **not** need to chain into the next command — the container's ENTRYPOINT handles that automatically.
+Your script just needs to do its setup work and exit 0. You do **not** need to
+chain into the next command. Amika's local runtime handles that automatically.
 
 ```bash
 #!/bin/bash
@@ -30,16 +31,16 @@ The script is mounted read-only, so it cannot be modified from inside the contai
 
 ### How it works
 
-Preset images (coder, claude) bake a no-op `/usr/local/etc/amikad/setup/setup.sh` into the image and declare an ENTRYPOINT that runs it before execing into CMD:
+Preset images (`coder` and `coder-dind`) bake a no-op
+`/usr/local/etc/amikad/setup/setup.sh` into the image. At container creation,
+the local runtime wraps the requested command with the shared lifecycle hooks:
 
-```dockerfile
-RUN mkdir -p /usr/local/etc/amikad/setup \
-    && printf '#!/bin/bash\nexit 0\n' > /usr/local/etc/amikad/setup/setup.sh \
-    && chmod +x /usr/local/etc/amikad/setup/setup.sh
-ENTRYPOINT ["/bin/bash", "-c", "/usr/local/etc/amikad/setup/setup.sh && exec \"$@\"", "--"]
+```text
+pre-setup.sh -> setup.sh -> post-setup.sh -> requested command
 ```
 
-When you pass `--setup-script`, your script is bind-mounted over the no-op, so the ENTRYPOINT runs your script instead.
+When you pass `--setup-script`, your script is bind-mounted over the no-op, so
+the lifecycle wrapper runs your script instead.
 
 ### Notes
 
@@ -128,7 +129,9 @@ MY_SECRET = { secret = "my-secret-name" }
 
 #### `[lifecycle].setup_script`
 
-Works exactly like `--setup-script`: the script is bind-mounted read-only at `/usr/local/etc/amikad/setup/setup.sh` and the container's ENTRYPOINT runs it before the main command.
+Works exactly like `--setup-script`: the script is bind-mounted read-only at
+`/usr/local/etc/amikad/setup/setup.sh`, and the local lifecycle wrapper runs it
+before the main command.
 
 **Path resolution:** if the value is a relative path it is resolved from the repository root (the directory containing `.git`). Absolute paths are used as-is.
 
