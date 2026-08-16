@@ -115,14 +115,7 @@ func TestE2ECases(t *testing.T) {
 	// testable without a clock, while this Go test entry point owns the
 	// one place that needs real time.
 	runID := time.Now().UTC().Format("20060102T150405.000000000Z")
-	runsDir := filepath.Join(moduleRoot, "test", "e2e", ".runs")
-	runsRoot := filepath.Join(runsDir, runID)
-
-	// A killed run leaves resources its ledger recorded but never deleted:
-	// `go test`'s own timeout panic (the most common cause) skips every
-	// deferred cleanup below. Reclaim those before starting, so a crash costs
-	// one run rather than an orphaned remote resource per case.
-	sweepStaleRuns(t, bin, runsDir, runID)
+	runsRoot := filepath.Join(moduleRoot, "test", "e2e", ".runs", runID)
 
 	for _, caseFile := range files {
 		caseFile := caseFile
@@ -186,49 +179,5 @@ func TestE2ECases(t *testing.T) {
 				t.Fatalf("%v", err)
 			}
 		})
-	}
-}
-
-// sweepStaleRuns reclaims resources orphaned by earlier runs that were killed
-// before their cleanup could run. It is gated on runAPIEnv for the same reason
-// the api-* cases are: every recorded cleanup argv deletes a real remote
-// resource, so an offline-only run must not fire them.
-//
-// A sweep never fails the test. It reclaims what it can and reports the rest:
-// the run that leaked is already over, and blocking a fresh run on a stale
-// resource that may already be gone helps nobody.
-func sweepStaleRuns(t *testing.T, bin, runsDir, currentRunID string) {
-	t.Helper()
-	if os.Getenv(runAPIEnv) != "1" {
-		return
-	}
-
-	// A nil base env inherits this process's environment, which is where the
-	// credentials live; each entry's recorded state directory and API URL
-	// layer on top so the delete targets the deployment that created it.
-	results, err := runner.SweepStaleRuns(bin, runsDir, currentRunID, nil)
-	if err != nil {
-		t.Logf("could not sweep orphaned resources from earlier runs: %v", err)
-		return
-	}
-
-	for _, res := range results {
-		if !res.Failed() {
-			t.Logf("reclaimed %d orphaned resource(s) from %s", len(res.Results), res.CaseDir)
-			continue
-		}
-		if res.Err != nil {
-			t.Logf("sweep of %s did not complete: %v", res.CaseDir, res.Err)
-		}
-		for _, cleanup := range res.Results {
-			if cleanup.Err == nil {
-				continue
-			}
-			// This directory is now marked swept and will not be retried, so
-			// print what a human needs to finish the job by hand.
-			t.Logf("orphaned %s %q from %s still needs deleting (cleanup failed: %v)\n\tretry with: amika %s\n\tstderr:\n%s",
-				cleanup.Entry.Type, cleanup.Entry.Name, res.CaseDir, cleanup.Err,
-				strings.Join(cleanup.Entry.CleanupArgv, " "), cleanup.Stderr)
-		}
 	}
 }

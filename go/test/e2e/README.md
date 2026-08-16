@@ -234,23 +234,18 @@ fails, logging the failure via `t.Log` and recording it in
 
 `t.Cleanup` does not survive a run that is killed outright: a `go test`
 timeout panic, a SIGKILL, a crashed machine. The ledger on disk is all that
-is left, so **the next real-API run sweeps it up before starting**.
-`runner.SweepStaleRuns` scans `.runs/` for case directories holding a
-ledger with entries and no `cleanup-results.json` beside it (exactly the
-state a killed run leaves) and replays each one's cleanup argv. Each entry
-carries the state directory and API URL it was created with, so the delete
-targets the deployment that created it.
+is left. `runner.SweepStaleRuns` finds those leftovers — case directories
+holding a ledger with entries and no `cleanup-results.json` beside it,
+exactly the state a killed run leaves — and replays each one's cleanup
+argv. Each entry carries the state directory and API URL it was created
+with, so the delete targets the deployment that created it.
 
-The sweep is gated on `AMIKA_RUN_E2E_API=1` for the same reason the `api-*`
-cases are: every replayed argv deletes a real remote resource, so an
-offline-only run never fires them. It never fails the test — the run that
-leaked is already over.
+Sweeping is never automatic. A run must not delete resources it did not
+create: a case directory being swept is indistinguishable from one whose
+run is still in flight, so an automatic sweep would delete a concurrent
+run's live sandbox out from under it.
 
-A swept directory gets a `cleanup-results.json` even when a delete failed,
-so it is swept at most once. That trades an automatic retry for not
-re-deleting a resource that may already be gone; a failure is logged with
-the argv needed to finish by hand. To reap a specific leftover ledger
-yourself:
+To reap one specific leftover ledger:
 
 ```go
 results, err := runner.CleanupFromLedgerFile(binPath, "/path/to/.runs/<run-id>/<case>/ledger.json", nil)
@@ -288,8 +283,8 @@ AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C go test -timeout 45m ./test/e2e/...
 Do not leave the default in place and let the run hit it. A `go test` timeout
 panics the test binary mid-step rather than failing the subtest, so the
 deferred ledger cleanup never runs and whatever the in-flight case already
-created stays alive until the next real-API run sweeps it up (see
-"Reclaiming a killed run").
+created stays alive until someone reclaims it (see "Reclaiming a killed
+run").
 
 Real-API cases that create something must declare a `resource` block so the
 ledger can delete it afterward (see "Resources and cleanup" above). A
