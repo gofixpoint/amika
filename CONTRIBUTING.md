@@ -108,7 +108,9 @@ docs/                    In-depth documentation
 
 The `coder` and `coder-dind` preset Docker images are auto-built on first use
 from the shared bundle in `sandbox-image/`. See
-[docs/presets.md](docs/presets.md) for details.
+[docs/presets.md](docs/presets.md) for usage and
+[sandbox-image/README.md](sandbox-image/README.md) for the image change
+workflow.
 
 ## Releasing
 
