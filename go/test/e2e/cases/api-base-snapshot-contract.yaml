@@ -1,0 +1,87 @@
+name: default base snapshot filesystem and services contract
+# This real-API case creates an unmodified `coder` sandbox from the control
+# plane's default base snapshot. It checks the image's declared filesystem
+# contract after boot and both of the default services which make a remote
+# sandbox usable: amikad for direct SSH and OpenCode web for the browser UI.
+steps:
+  # sshv2 uses the caller's registered public key. The run-unique name keeps
+  # this case from adopting or deleting a key created by another test run.
+  - name: register the local SSH public key for sshv2
+    cmd: [secret, ssh-key, create, --name, "e2e-base-snapshot-{{run_id}}", -o, json]
+    expect:
+      exit: 0
+      schema: SshPublicKeySummary
+      stdout_json:
+        id: "@string"
+    capture:
+      ssh_key_id: $.id
+    resource:
+      type: ssh-key
+      name: "{{ssh_key_id}}"
+      cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
+
+  - name: create a sandbox from the default coder base snapshot
+    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+
+  # The boot verifier reads the manifest installed with the snapshot, so it
+  # covers its declared directories, dotfiles, hooks, binaries, versions, and
+  # ownership rather than maintaining a second file list in this E2E case.
+  - name: verify the booted base snapshot filesystem contract
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - --
+      - sh
+      - -lc
+      - sudo env AMIKA_PRESET=coder /usr/lib/amika-image/verify/run.sh boot
+    expect:
+      exit: 0
+
+  - name: verify the default amikad and OpenCode services are running
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - --
+      - sh
+      - -lc
+      - |
+        set -eu
+
+        wait_for_http() {
+          port="$1"
+          path="$2"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error "http://127.0.0.1:${port}${path}"; then
+              return 0
+            fi
+            sleep 1
+          done
+          echo "service on port ${port} did not become ready" >&2
+          return 1
+        }
+
+        # `sshv2` reached this command through amikad; the status endpoint
+        # additionally confirms its local HTTP daemon is healthy on 60999.
+        wait_for_http 60999 /healthz | grep -qx '{"status":"ok"}'
+
+        test "$(cat /run/amikad/opencode-web.port)" = 60998
+        opencode_pid="$(cat /run/amikad/opencode-web.pid)"
+        kill -0 "$opencode_pid"
+        wait_for_http 60998 / >/dev/null
+        printf '%s\n' 'default sandbox services are ready'
+    expect:
+      exit: 0
+      stdout_contains: default sandbox services are ready
