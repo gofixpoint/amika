@@ -51,29 +51,48 @@ steps:
       - sshv2
       - "{{sandbox_name}}"
       - --
-      - |
-        set -eu
+      - /bin/sh
+    stdin: |
+      set -eu
 
-        wait_for_http() {
-          port="$1"
-          path="$2"
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error "http://127.0.0.1:${port}${path}"; then
-              return 0
-            fi
-            sleep 1
-          done
-          echo "service on port ${port} did not become ready" >&2
-          return 1
-        }
+      wait_for_http() {
+        port="$1"
+        path="$2"
+        attempt=0
+        while [ "$attempt" -lt 30 ]; do
+          attempt=$((attempt + 1))
+          if curl --fail --silent --show-error "http://127.0.0.1:${port}${path}"; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "service on port ${port} did not become ready" >&2
+        return 1
+      }
 
-        wait_for_http 60999 /healthz | grep -qx '{"status":"ok"}'
-        test "$(cat /run/amikad/opencode-web.port)" = 60998
-        opencode_pid="$(cat /run/amikad/opencode-web.pid)"
-        kill -0 "$opencode_pid"
-        wait_for_http 60998 / >/dev/null
-        docker info >/dev/null
-        printf '%s\n' 'default sandbox services are ready'
+      wait_for_service() {
+        # Ready once it answers HTTP at all. The OpenCode web UI sits behind
+        # basic auth, so a 401 still proves the server is up and serving.
+        port="$1"
+        attempt=0
+        while [ "$attempt" -lt 30 ]; do
+          attempt=$((attempt + 1))
+          if curl --silent --output /dev/null "http://127.0.0.1:${port}/"; then
+            return 0
+          fi
+          sleep 1
+        done
+        echo "service on port ${port} did not answer" >&2
+        return 1
+      }
+
+      wait_for_http 60999 /healthz | grep -qx '{"status":"ok"}'
+      test "$(cat /run/amikad/opencode-web.port)" = 60998
+      opencode_pid="$(cat /run/amikad/opencode-web.pid)"
+      test -d "/proc/$opencode_pid"
+      wait_for_service 60998
+      docker info >/dev/null
+      printf '%s\n' 'default sandbox services are ready'
     expect:
       exit: 0
       stdout_contains: default sandbox services are ready
