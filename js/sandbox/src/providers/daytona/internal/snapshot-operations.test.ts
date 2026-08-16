@@ -19,7 +19,7 @@ const isVmSandboxMock = vi.fn();
 // One client for everything: the capture, the docker quiesce/restore, and
 // the snapshot reads all run against the configured target.
 vi.mock("./client", () => ({
-  createDaytonaClient: () => ({
+  getDaytonaClient: () => ({
     get: (id: string) => getSandbox(id),
     snapshot: {
       get: (name: string) => getSnapshot(name),

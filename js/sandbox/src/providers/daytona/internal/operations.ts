@@ -16,7 +16,7 @@ import {
 import { DEFAULT_HOME_DIR } from "../../../constants";
 import type { DaytonaConfig } from "../config";
 import type { SandboxCtx } from "../../../logger";
-import { createDaytonaClient } from "./client";
+import { getDaytonaClient } from "./client";
 import { createVmSandbox } from "./vm";
 import { ensureDaytonaSnapshotActive } from "./snapshot-operations";
 import { DaytonaAdapter } from "./adapter";
@@ -43,7 +43,7 @@ export async function refreshDaytonaUrls(
   providerSandboxId: string,
   services: SandboxService[],
 ): Promise<{ providerUrl: string | null; services: SandboxService[] }> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   return refreshServiceUrls(sandbox, services);
 }
@@ -77,7 +77,7 @@ export async function getDaytonaSandboxState(
   config: DaytonaConfig,
   providerSandboxId: string,
 ): Promise<string> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   try {
     const sandbox = await daytona.get(providerSandboxId);
     return sandbox.state ?? "unknown";
@@ -142,14 +142,14 @@ const DAYTONA_LIST_PAGE_SIZE = 100;
  * walks every page; `limit` is only the per-page fetch size, not a cap on the
  * total. Errored/deleted sandboxes are excluded by the API default. Daytona
  * reports sizing already in billing units (`cpu`/`memory`/`disk` =
- * vCPUs/GiB/GiB), so no MiB→GiB conversion is needed. `createDaytonaClient`
+ * vCPUs/GiB/GiB), so no MiB→GiB conversion is needed. `getDaytonaClient`
  * scopes to the configured organization, so the listing is account-wide within
  * it.
  */
 export async function listDaytonaSandboxes(
   config: DaytonaConfig,
 ): Promise<ProviderSandboxListing[]> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const listings: ProviderSandboxListing[] = [];
   for await (const sandbox of daytona.list({ limit: DAYTONA_LIST_PAGE_SIZE })) {
     listings.push({
@@ -170,7 +170,7 @@ export async function startDaytonaSandbox(
   config: DaytonaConfig,
   providerSandboxId: string,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   await sandbox.start();
 }
@@ -179,7 +179,7 @@ export async function stopDaytonaSandbox(
   config: DaytonaConfig,
   providerSandboxId: string,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   await sandbox.stop();
 }
@@ -188,7 +188,7 @@ export async function deleteDaytonaSandbox(
   config: DaytonaConfig,
   providerSandboxId: string,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
 
   await pRetry(() => sandbox.delete(), {
@@ -236,7 +236,7 @@ export async function createDaytonaSshAccess(
   sshDestination: string;
   expiresAt: Date;
 }> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   const sshAccess = await sandbox.createSshAccess(expiresInMinutes);
   return {
@@ -262,7 +262,7 @@ export async function revokeDaytonaSshAccess(
   providerSandboxId: string,
   token: string,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   await sandbox.revokeSshAccess(token);
 }
@@ -289,7 +289,7 @@ export async function createDaytonaSandbox(
   services: SandboxService[];
   envVars: Record<string, string>;
 }> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const cwd = getRepoDir(DEFAULT_HOME_DIR, input.repoName);
 
   // Only NON-SECRET operational vars go into the container env. Anything
@@ -399,7 +399,7 @@ export async function readSandboxFile(
   filePath: string,
 ): Promise<string | null> {
   try {
-    const daytona = createDaytonaClient(config);
+    const daytona = getDaytonaClient(config);
     const sandbox = await daytona.get(providerSandboxId);
     const content = await sandbox.fs.downloadFile(filePath);
     return content.toString("utf8");
@@ -414,7 +414,7 @@ export async function writeSandboxFile(
   filePath: string,
   content: Buffer | string,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   await new DaytonaAdapter(sandbox, daytona).uploadFile(content, filePath);
 }
@@ -428,7 +428,7 @@ export async function openDaytonaAdapter(
   config: DaytonaConfig,
   providerSandboxId: string,
 ): Promise<SandboxAdapter> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   return new DaytonaAdapter(await daytona.get(providerSandboxId), daytona);
 }
 
@@ -439,7 +439,7 @@ export async function executeDaytonaCommand(
   command: string,
   opts?: ExecCommandOptions,
 ): Promise<SandboxExecResult> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   return executeCommand(sandbox, command, opts);
 }
@@ -455,7 +455,7 @@ export async function streamDaytonaCommandLogs(
   command: string,
   handlers: StreamCommandHandlers,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   const sessionId = `agent-stream-${Date.now()}`;
   await sandbox.process.createSession(sessionId);
@@ -482,7 +482,7 @@ export async function cloneDaytonaRepo(
   providerSandboxId: string,
   input: CloneRepoInput,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   await cloneRepository(
     sandbox,

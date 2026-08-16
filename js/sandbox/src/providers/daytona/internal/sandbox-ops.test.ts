@@ -37,20 +37,23 @@ function setupMockDaytona(deleteFn: () => Promise<void>) {
   });
 }
 
-const testConfig = {
+// A fresh config object per test: the Daytona client is memoized per config
+// (see `./client`), so sharing one object across tests would hand every test
+// the first test's mocked client and defeat `setupMockDaytona`.
+const testConfig = () => ({
   apiKey: "test-key",
   apiUrl: "https://test.daytona.io",
   target: "test-target",
   organizationId: undefined,
   useVm: false,
-};
+});
 
 describe("deleteDaytonaSandbox", () => {
   it("succeeds on first attempt", async () => {
     const deleteFn = vi.fn().mockResolvedValue(undefined);
     setupMockDaytona(deleteFn);
 
-    await deleteDaytonaSandbox(testConfig, "sandbox-1");
+    await deleteDaytonaSandbox(testConfig(), "sandbox-1");
 
     expect(deleteFn).toHaveBeenCalledTimes(1);
   });
@@ -66,7 +69,7 @@ describe("deleteDaytonaSandbox", () => {
       .mockResolvedValueOnce(undefined);
     setupMockDaytona(deleteFn);
 
-    await deleteDaytonaSandbox(testConfig, "sandbox-1");
+    await deleteDaytonaSandbox(testConfig(), "sandbox-1");
 
     expect(deleteFn).toHaveBeenCalledTimes(2);
   }, 15_000);
@@ -79,9 +82,9 @@ describe("deleteDaytonaSandbox", () => {
     const deleteFn = vi.fn().mockRejectedValue(stateChangeError);
     setupMockDaytona(deleteFn);
 
-    await expect(deleteDaytonaSandbox(testConfig, "sandbox-1")).rejects.toThrow(
-      "state change in progress",
-    );
+    await expect(
+      deleteDaytonaSandbox(testConfig(), "sandbox-1"),
+    ).rejects.toThrow("state change in progress");
 
     // 1 initial + 3 retries = 4
     expect(deleteFn).toHaveBeenCalledTimes(4);
@@ -92,9 +95,9 @@ describe("deleteDaytonaSandbox", () => {
     const deleteFn = vi.fn().mockRejectedValue(otherError);
     setupMockDaytona(deleteFn);
 
-    await expect(deleteDaytonaSandbox(testConfig, "sandbox-1")).rejects.toThrow(
-      "Sandbox not found",
-    );
+    await expect(
+      deleteDaytonaSandbox(testConfig(), "sandbox-1"),
+    ).rejects.toThrow("Sandbox not found");
 
     expect(deleteFn).toHaveBeenCalledTimes(1);
   });
@@ -116,7 +119,7 @@ describe("createDaytonaSandbox", () => {
       typeof createDaytonaSandbox
     >[0];
 
-    await createDaytonaSandbox(ctx, testConfig, {
+    await createDaytonaSandbox(ctx, testConfig(), {
       name: "sb",
       snapshot: "snap",
       services: [],
@@ -166,7 +169,7 @@ describe("createDaytonaSandbox", () => {
       typeof createDaytonaSandbox
     >[0];
 
-    await createDaytonaSandbox(ctx, testConfig, {
+    await createDaytonaSandbox(ctx, testConfig(), {
       name: "sb",
       snapshot: "user-snapshot",
       services: [],
@@ -211,7 +214,7 @@ describe("createDaytonaSandbox", () => {
       typeof createDaytonaSandbox
     >[0];
 
-    await createDaytonaSandbox(ctx, testConfig, {
+    await createDaytonaSandbox(ctx, testConfig(), {
       name: "sb",
       snapshot: "snap",
       services: [],
@@ -257,7 +260,7 @@ describe("createDaytonaSandbox", () => {
 
     const result = await createDaytonaSandbox(
       ctx,
-      { ...testConfig, useVm: true },
+      { ...testConfig(), useVm: true },
       {
         name: "sb",
         snapshot: "snap",

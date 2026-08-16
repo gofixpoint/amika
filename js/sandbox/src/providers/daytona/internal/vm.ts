@@ -38,20 +38,30 @@ const VM_POLL_REQUEST_TIMEOUT_MS = 30_000;
  */
 const VM_STATE_TRANSITION_TIMEOUT_S = 5 * 60;
 
+const sandboxApis = new WeakMap<DaytonaConfig, SandboxApi>();
+
 /**
- * Build the low-level generated `SandboxApi`, mirroring the SDK's auth: the
- * Daytona API key as a Bearer token in the default request headers. The
+ * The low-level generated `SandboxApi` for `config`, mirroring the SDK's auth:
+ * the Daytona API key as a Bearer token in the default request headers. The
  * region/target is sent per-request in the create body (not on the client), and
  * the snapshot-capture endpoint operates on an existing sandbox by id, so a
  * single client serves both VM calls.
+ *
+ * Memoized per config, like the SDK client in `./client`.
  */
-function createSandboxApi(config: DaytonaConfig): SandboxApi {
-  return new SandboxApi(
+function getSandboxApi(config: DaytonaConfig): SandboxApi {
+  const cached = sandboxApis.get(config);
+  if (cached) {
+    return cached;
+  }
+  const api = new SandboxApi(
     new Configuration({
       basePath: config.apiUrl,
       baseOptions: { headers: { Authorization: `Bearer ${config.apiKey}` } },
     }),
   );
+  sandboxApis.set(config, api);
+  return api;
 }
 
 export interface CreateVmSandboxParams {
@@ -99,7 +109,7 @@ export async function createVmSandbox(
     autoDeleteInterval: params.autoDeleteInterval,
     class: SandboxClass.LINUX_VM,
   };
-  const api = createSandboxApi(config);
+  const api = getSandboxApi(config);
   const response = await api.createSandbox(body, undefined, {
     timeout: params.timeoutSeconds * 1000,
   });
@@ -184,7 +194,7 @@ export async function isVmSandbox(
   providerSandboxId: string,
 ): Promise<boolean> {
   const { data: sandbox } =
-    await createSandboxApi(config).getSandbox(providerSandboxId);
+    await getSandboxApi(config).getSandbox(providerSandboxId);
   return sandbox.sandboxClass === SandboxClass.LINUX_VM;
 }
 
@@ -281,7 +291,7 @@ export async function captureVmSandboxSnapshot(
   timeoutSeconds: number,
   restartAfterCapture: boolean,
 ): Promise<void> {
-  const api = createSandboxApi(config);
+  const api = getSandboxApi(config);
 
   // The stop + snapshot are inside the try so the `finally`'s keep-path restart
   // runs on EVERY failure after we begin stopping — otherwise a failed stop or

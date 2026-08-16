@@ -1,8 +1,10 @@
 /**
  * Freestyle SDK client construction.
  *
- * A fresh client per operation, mirroring the per-call pattern the Daytona
- * provider uses. The `Freestyle` class reads its API key from the constructor
+ * A fresh client per operation. Unlike Daytona's, whose client holds a
+ * Socket.IO connection and so is memoized per config, a `Freestyle` holds no
+ * connection — building one per call costs nothing worth caching. The
+ * `Freestyle` class reads its API key from the constructor
  * (we pass the configured key explicitly rather than relying on the
  * `FREESTYLE_API_KEY` env-var singleton).
  */
