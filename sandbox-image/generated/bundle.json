@@ -108,7 +108,9 @@
           "assets": [],
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
-          "versions": {}
+          "versions": {
+            "GIT_VERSION": "2.43.0"
+          }
         },
         {
           "asset_argument": "assets/stable",
@@ -234,7 +236,9 @@
           "assets": [],
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
-          "versions": {}
+          "versions": {
+            "GIT_VERSION": "2.43.0"
+          }
         },
         {
           "asset_argument": "assets/stable",

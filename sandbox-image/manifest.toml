@@ -32,7 +32,7 @@ agent_hook_paths = [
 
 [steps.os-packages]
 script = "steps/10-os-packages.sh"
-versions = []
+versions = ["GIT_VERSION"]
 assets = []
 
 [steps.static-config]
