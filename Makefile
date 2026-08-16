@@ -3,6 +3,7 @@
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 GOFMT_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
+E2E_API_TIMEOUT ?= 45m
 
 export GOCACHE := $(CURDIR)/.gocache
 export GOTMPDIR := $(CURDIR)/.gotmp
@@ -58,8 +59,14 @@ test-e2e: goenv
 # Runs the offline E2E cases AND the api-*.yaml cases that hit the real
 # remote API (which may create billable resources). Requires credentials
 # (AMIKA_API_KEY / AMIKA_API_URL) in the environment.
+#
+# Each api-* case provisions and tears down real remote resources and takes
+# minutes, so the suite runs well past `go test`'s default 10m timeout. That
+# default does not fail the run cleanly: it panics the test binary mid-step,
+# skipping the ledger cleanup that deletes what the case created. Override
+# with `make test-e2e-api E2E_API_TIMEOUT=1h` when adding more cases.
 test-e2e-api: goenv
-	AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test ./test/e2e/...
+	AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test -timeout $(E2E_API_TIMEOUT) ./test/e2e/...
 
 test-expensive: goenv
 	AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 $(MAKE) test-all

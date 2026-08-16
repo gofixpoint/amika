@@ -256,6 +256,22 @@ make test-e2e       # offline cases only (api-*.yaml are skipped)
 make test-e2e-api   # offline + real-API cases (needs AMIKA_API_KEY/AMIKA_API_URL)
 ```
 
+Every api-* case provisions and tears down real remote resources and the
+cases run serially, so a full real-API run takes tens of minutes: far longer
+than `go test`'s default 10m binary timeout. `make test-e2e-api` therefore
+passes `-timeout $(E2E_API_TIMEOUT)` (45m by default, overridable:
+`make test-e2e-api E2E_API_TIMEOUT=1h`). Pass the same flag when invoking
+`go test` directly:
+
+```bash
+AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C go test -timeout 45m ./test/e2e/...
+```
+
+Do not leave the default in place and let the run hit it. A `go test` timeout
+panics the test binary mid-step rather than failing the subtest, so the
+deferred ledger cleanup never runs and whatever the in-flight case already
+created is orphaned (see "Resources and cleanup").
+
 Real-API cases that create something must declare a `resource` block so the
 ledger can delete it afterward (see "Resources and cleanup" above). A
 read-only real-API case (e.g. `sandbox list`) needs no `resource`. Example:
