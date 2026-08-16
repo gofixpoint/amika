@@ -6,8 +6,14 @@ CHECK_CONTEXTS="build,boot"
 source "$(dirname "$0")/../lib/check.sh" "$@"
 
 present=()
-for path in /root/go /root/.cache; do
-  [[ ! -e "$path" ]] || present+=("$path")
-done
+[[ ! -e /root/go ]] || present+=("/root/go")
+
+# Docker Desktop creates this empty marker while Rosetta emulates Linux AMD64
+# on Apple Silicon. It is removed after verification and is not an image cache.
+if [[ -d /root/.cache ]]; then
+  while IFS= read -r path; do
+    present+=("$path")
+  done < <(find /root/.cache -mindepth 1 ! -path /root/.cache/rosetta -print)
+fi
 [[ ${#present[@]} -eq 0 ]] && pass "root Go and general build caches absent" "caches absent"
 fail "root Go and general build caches absent" "present: ${present[*]}"
