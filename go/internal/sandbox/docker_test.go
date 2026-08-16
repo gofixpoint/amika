@@ -25,7 +25,9 @@ func TestBuildDockerRunArgs_MixedMounts(t *testing.T) {
 		"-p", "5353:5353/udp",
 		"-e", "A=1",
 		"-e", "B=2",
-		"ubuntu:latest", "tail", "-f", "/dev/null",
+		"ubuntu:latest",
+		"/bin/bash", "-c", localSandboxLifecycleCommand, "--",
+		"tail", "-f", "/dev/null",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)

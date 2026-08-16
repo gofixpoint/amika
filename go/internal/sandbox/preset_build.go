@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"fmt"
 	"io"
 )
 
@@ -9,66 +8,17 @@ var buildPresetImageFn = BuildPresetImage
 
 var buildDockerImageWithArgsFn = buildDockerImageWithArgs
 
-// BuildPresetImage builds a preset image and any prerequisite preset images
-// needed by its Dockerfile. buildOutput receives the streamed docker build
-// output.
+// BuildPresetImage builds a generated preset image from the shared bundle.
+// buildOutput receives the streamed docker build output.
 func BuildPresetImage(preset string, contextDir string, buildOutput io.Writer) error {
-	buildOrder, err := presetBuildOrder(preset)
-	if err != nil {
+	if _, err := GetPresetDockerfile(preset); err != nil {
 		return err
 	}
-
-	for _, buildPreset := range buildOrder {
-		imageName := presetImageName(buildPreset)
-		if dockerImageExistsFn(imageName) {
-			continue
-		}
-		if err := buildDockerImageWithArgsFn(imageName, contextDir, buildPreset+"/Dockerfile", presetBuildArgs(buildPreset), buildOutput); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func presetBuildOrder(preset string) ([]string, error) {
-	switch preset {
-	case "base":
-		return []string{"base"}, nil
-	case "coder":
-		return []string{"base", "coder"}, nil
-	case "claude":
-		return []string{"base", "claude"}, nil
-	case "daytona-coder":
-		return []string{"base", "coder", "daytona-coder"}, nil
-	case "daytona-claude":
-		return []string{"base", "claude", "daytona-claude"}, nil
-	case "dind":
-		return []string{"base", "dind"}, nil
-	case "coder-dind":
-		return []string{"base", "dind", "coder-dind"}, nil
-	case "daytona-coder-dind":
-		return []string{"base", "dind", "coder-dind", "daytona-coder-dind"}, nil
-	default:
-		return nil, fmt.Errorf("unknown preset %q", preset)
-	}
-}
-
-func presetBuildArgs(preset string) map[string]string {
-	switch preset {
-	case "coder", "claude":
-		return map[string]string{"BASE_IMAGE": presetImageName("base")}
-	case "daytona-coder":
-		return map[string]string{"CODER_IMAGE": presetImageName("coder")}
-	case "daytona-claude":
-		return map[string]string{"CLAUDE_IMAGE": presetImageName("claude")}
-	case "dind":
-		return map[string]string{"BASE_IMAGE": presetImageName("base")}
-	case "coder-dind":
-		return map[string]string{"DIND_IMAGE": presetImageName("dind")}
-	case "daytona-coder-dind":
-		return map[string]string{"CODER_DIND_IMAGE": presetImageName("coder-dind")}
-	default:
-		return nil
-	}
+	return buildDockerImageWithArgsFn(
+		presetImageName(preset),
+		contextDir,
+		"sandbox-image/generated/"+preset+".Dockerfile",
+		nil,
+		buildOutput,
+	)
 }

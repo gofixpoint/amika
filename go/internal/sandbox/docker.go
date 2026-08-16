@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+const localSandboxLifecycleCommand = `sudo AMIKA_AGENT_CWD="$AMIKA_AGENT_CWD" AMIKA_OPENCODE_WEB="$AMIKA_OPENCODE_WEB" OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" /usr/lib/amikad/run-hook.sh /usr/lib/amikad/pre-setup.sh && /usr/lib/amikad/run-hook.sh /usr/local/etc/amikad/setup/setup.sh && sudo /usr/lib/amikad/run-hook.sh /usr/lib/amikad/post-setup.sh && exec "$@"`
+
 // CreateDockerSandbox creates a long-running Docker container with the given
 // name, image, and optional bind mounts. Returns the container ID.
 func CreateDockerSandbox(name, image string, mounts []MountBinding, env []string, ports []PortBinding) (string, error) {
@@ -175,7 +177,12 @@ func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string,
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
-	args = append(args, image, "tail", "-f", "/dev/null")
+	args = append(
+		args,
+		image,
+		"/bin/bash", "-c", localSandboxLifecycleCommand, "--",
+		"tail", "-f", "/dev/null",
+	)
 	return args
 }
 

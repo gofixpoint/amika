@@ -6,27 +6,26 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-//go:embed all:presets
-var presetFS embed.FS
+//go:embed all:sandbox-image
+var sandboxImageFS embed.FS
 
 // GetPresetDockerfile returns the Dockerfile content for the given preset name.
 func GetPresetDockerfile(name string) ([]byte, error) {
-	data, err := presetFS.ReadFile("presets/" + name + "/Dockerfile")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/generated/" + name + ".Dockerfile")
 	if err != nil {
 		return nil, fmt.Errorf("unknown preset %q", name)
 	}
 	return data, nil
 }
 
-// WritePresetBuildContext extracts the embedded presets/ tree to a temp directory
-// and returns the path along with a cleanup function. The temp dir layout mirrors
-// the embed tree (e.g. .zshrc, claude/Dockerfile, coder/Dockerfile).
+// WritePresetBuildContext extracts the embedded sandbox image bundle to a temp
+// directory and returns the path along with a cleanup function. The context
+// contains sandbox-image/ at its root, matching the generated Dockerfiles.
 func WritePresetBuildContext(preset string) (contextDir string, cleanup func(), err error) {
-	// Verify the preset exists before creating temp dir.
-	_, readErr := presetFS.ReadFile("presets/" + preset + "/Dockerfile")
-	if readErr != nil {
+	if _, readErr := GetPresetDockerfile(preset); readErr != nil {
 		return "", nil, fmt.Errorf("unknown preset %q", preset)
 	}
 
@@ -36,27 +35,21 @@ func WritePresetBuildContext(preset string) (contextDir string, cleanup func(), 
 	}
 	cleanup = func() { os.RemoveAll(tmpDir) }
 
-	// Walk the embedded presets/ tree and write all files to tmpDir.
-	err = fs.WalkDir(presetFS, "presets", func(path string, d fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(sandboxImageFS, "sandbox-image", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		// Strip the "presets/" prefix to get the relative path within the context dir.
-		rel, relErr := filepath.Rel("presets", path)
-		if relErr != nil {
-			return relErr
-		}
-		dest := filepath.Join(tmpDir, rel)
+		dest := filepath.Join(tmpDir, filepath.FromSlash(path))
 
 		if d.IsDir() {
 			return os.MkdirAll(dest, 0755)
 		}
 
-		data, readErr := presetFS.ReadFile(path)
+		data, readErr := sandboxImageFS.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		return os.WriteFile(dest, data, 0644)
+		return os.WriteFile(dest, data, embeddedBuildContextMode(path))
 	})
 	if err != nil {
 		cleanup()
@@ -64,4 +57,11 @@ func WritePresetBuildContext(preset string) (contextDir string, cleanup func(), 
 	}
 
 	return tmpDir, cleanup, nil
+}
+
+func embeddedBuildContextMode(path string) fs.FileMode {
+	if strings.HasSuffix(path, ".sh") || strings.HasSuffix(path, ".py") {
+		return 0755
+	}
+	return 0644
 }

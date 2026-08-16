@@ -6,7 +6,7 @@ import (
 )
 
 func TestPresetPreSetup_UsesFixedAmikaInternalPaths(t *testing.T) {
-	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestPresetPreSetup_UsesFixedAmikaInternalPaths(t *testing.T) {
 }
 
 func TestPresetPreSetup_CreatesAmikaAndAmikadDirectories(t *testing.T) {
-	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestPresetPreSetup_CreatesAmikaAndAmikadDirectories(t *testing.T) {
 }
 
 func TestPresetPreSetup_ChownsUserManagedAmikaDirectories(t *testing.T) {
-	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestPresetPreSetup_ChownsUserManagedAmikaDirectories(t *testing.T) {
 }
 
 func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
-	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
 }
 
 func TestPresetPreSetup_RegistersAmikalogHooksAsRuntimeUser(t *testing.T) {
-	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestPresetPreSetup_RegistersAmikalogHooksAsRuntimeUser(t *testing.T) {
 }
 
 func TestPresetRunHook_UsesAmikaForUserHooksAndMirrorsThemToAmikad(t *testing.T) {
-	data, err := presetFS.ReadFile("presets/run-hook.sh")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/run-hook.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestPresetRunHook_UsesAmikaForUserHooksAndMirrorsThemToAmikad(t *testing.T)
 }
 
 func TestPresetBashErrorPrelude_LogsErrTrapDetails(t *testing.T) {
-	data, err := presetFS.ReadFile("presets/bash-error-prelude.sh")
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/bash-error-prelude.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
