@@ -34,7 +34,7 @@ func New() *cobra.Command {
 	sandboxCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	sandboxCmd.PersistentFlags().MarkHidden("remote-target")
 
-	sandboxCreateCmd.Flags().String("provider", "docker", "Sandbox provider")
+	addProviderFlag(sandboxCreateCmd)
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
 	sandboxCreateCmd.Flags().String("image", sandbox.DefaultCoderImage, "Docker image to use")
 	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-dind")`)
@@ -81,4 +81,11 @@ func New() *cobra.Command {
 	sandboxAgentSendCmd.Flags().Bool("new-session", false, "Start a new agent session (remote sandboxes only)")
 
 	return sandboxCmd
+}
+
+func addProviderFlag(command *cobra.Command) {
+	command.Flags().String("provider", "docker", "Sandbox provider")
+	// Provider selection is an internal/testing override for remote sandboxes.
+	// Normal users should let the control plane choose its configured default.
+	command.Flags().MarkHidden("provider")
 }
