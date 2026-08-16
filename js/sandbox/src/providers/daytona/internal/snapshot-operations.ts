@@ -1,8 +1,9 @@
 /**
  * Snapshot management operations wrapping the Daytona SDK's snapshot service.
  *
- * Each function creates a fresh Daytona client, consistent with the
- * per-operation pattern used in operations.ts.
+ * Each function resolves the client through {@link getDaytonaClient}, which
+ * hands back the one instance bound to this config rather than building a new
+ * one per call.
  */
 import { DaytonaError, type Daytona } from "@daytonaio/sdk";
 import {
@@ -10,7 +11,7 @@ import {
   SANDBOX_ENV_SECRETS_EXCLUDED_VALUE,
 } from "../../../constants";
 import type { DaytonaConfig } from "../config";
-import { createDaytonaClient } from "./client";
+import { getDaytonaClient } from "./client";
 import { captureVmSandboxSnapshot, isVmSandbox } from "./vm";
 import { startDockerForSnapshot, stopDockerForSnapshot } from "./configure";
 
@@ -29,7 +30,7 @@ export async function createDaytonaSnapshot(
   config: DaytonaConfig,
   input: CreateSnapshotInput,
 ): Promise<DaytonaSnapshot> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   return daytona.snapshot.create({
     name: input.name,
     image: input.image,
@@ -43,7 +44,7 @@ export async function listDaytonaSnapshots(
   page?: number,
   limit?: number,
 ): Promise<PaginatedDaytonaSnapshots> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   return daytona.snapshot.list(page, limit);
 }
 
@@ -51,7 +52,7 @@ export async function getDaytonaSnapshot(
   config: DaytonaConfig,
   snapshotName: string,
 ): Promise<DaytonaSnapshot> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   return daytona.snapshot.get(snapshotName);
 }
 
@@ -66,7 +67,7 @@ export async function findDaytonaSnapshot(
   config: DaytonaConfig,
   snapshotName: string,
 ): Promise<DaytonaSnapshot | null> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   return (await findDaytonaSnapshotByName(daytona, snapshotName)) ?? null;
 }
 
@@ -74,7 +75,7 @@ export async function deleteDaytonaSnapshot(
   config: DaytonaConfig,
   snapshotName: string,
 ): Promise<void> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   // Locate via the list-scan fallback rather than a bare get: a snapshot that
   // is still registering (e.g. a large capture that activated after our wait
   // timed out, leaving the row `failed`) can be absent from the by-name
@@ -91,7 +92,7 @@ export async function activateDaytonaSnapshot(
   config: DaytonaConfig,
   snapshotName: string,
 ): Promise<DaytonaSnapshot> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const snapshot = await daytona.snapshot.get(snapshotName);
   return daytona.snapshot.activate(snapshot);
 }
@@ -158,7 +159,7 @@ export async function captureDaytonaSandboxSnapshot(
     return;
   }
 
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   const capture = () =>
     sandbox.createSnapshot(snapshotName, SANDBOX_SNAPSHOT_TIMEOUT_S);
@@ -261,7 +262,7 @@ export async function waitForDaytonaSnapshotActive(
   snapshotName: string,
   timeoutS: number = SANDBOX_SNAPSHOT_ACTIVE_TIMEOUT_S,
 ): Promise<DaytonaSnapshot> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const deadline = Date.now() + timeoutS * 1000;
   for (;;) {
     const snapshot = await findDaytonaSnapshotByName(daytona, snapshotName);
@@ -315,7 +316,7 @@ export async function ensureDaytonaSnapshotActive(
   config: DaytonaConfig,
   snapshotName: string,
 ): Promise<boolean> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   let snapshot: DaytonaSnapshot;
   try {
     snapshot = await daytona.snapshot.get(snapshotName);
@@ -353,7 +354,7 @@ export async function isSandboxEnvScrubbable(
   config: DaytonaConfig,
   providerSandboxId: string,
 ): Promise<boolean> {
-  const daytona = createDaytonaClient(config);
+  const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   return (
     sandbox.labels?.[SANDBOX_ENV_SECRETS_EXCLUDED_LABEL] ===

@@ -9,7 +9,7 @@ import {
 
 const daytonaList = vi.fn();
 vi.mock("./client", () => ({
-  createDaytonaClient: () => ({
+  getDaytonaClient: () => ({
     list: (...args: unknown[]) => daytonaList(...args),
   }),
 }));
