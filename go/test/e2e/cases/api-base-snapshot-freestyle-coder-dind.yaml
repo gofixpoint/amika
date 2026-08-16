@@ -40,8 +40,6 @@ steps:
       - sshv2
       - "{{sandbox_name}}"
       - --
-      - sh
-      - -lc
       - sudo env AMIKA_PRESET=coder-dind /usr/lib/amika-image/verify/run.sh boot
     expect:
       exit: 0
@@ -53,8 +51,6 @@ steps:
       - sshv2
       - "{{sandbox_name}}"
       - --
-      - sh
-      - -lc
       - |
         set -eu
 

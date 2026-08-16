@@ -45,8 +45,6 @@ steps:
       - sshv2
       - "{{source_sandbox}}"
       - --
-      - sh
-      - -lc
       - |
         set -eu
         sentinel='snapshot-scrub-e2e-secret'
@@ -137,8 +135,6 @@ steps:
       - sshv2
       - "{{restored_sandbox}}"
       - --
-      - sh
-      - -lc
       - |
         set -eu
         sentinel='snapshot-scrub-e2e-secret'

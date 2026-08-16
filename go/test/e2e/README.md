@@ -96,6 +96,36 @@ operation under test consumes a resource, such as `snapshot create --mode
 scrub_and_delete` deleting its source sandbox. If the step fails, the ledger
 entry remains available for best-effort cleanup.
 
+### Remote commands (`sandbox sshv2`)
+
+A command to run inside a sandbox must be **one** `cmd` element, holding the
+whole script:
+
+```yaml
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - --
+      - |                                  # the entire remote command, one element
+        set -eu
+        printf '%s\n' 'hello'
+```
+
+Splitting it across elements does not work, and fails in ways that look
+unrelated to quoting. `amika` passes argv straight through to the system
+`ssh`, which joins everything after the destination with spaces into a single
+string; the remote shell then re-splits it. Any grouping the elements had is
+gone by the time it runs.
+
+That is why a wrapper like `[sh, -lc, <script>]` breaks: the remote receives
+`sh -lc <first-word-of-script> <rest...>`, so `sh -lc` takes only that first
+word as its command and the rest become `$0`, `$1`, and so on. A step written
+that way once failed with nothing but a bare `sudo` usage dump.
+
+No wrapper is needed anyway: `sshd` already runs the command string through
+the login user's shell. Write the script directly, as above.
+
 ### Variable substitution
 
 One variable is predefined: `{{run_id}}`, a timestamp unique to the whole
