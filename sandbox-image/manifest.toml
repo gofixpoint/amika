@@ -98,7 +98,7 @@ assets = []
 
 [steps.dind]
 script = "steps/90-dind.sh"
-versions = ["DOCKER_VERSION"]
+versions = ["DOCKER_VERSION", "BUILDX_VERSION"]
 assets = []
 
 [steps.setuid-manifest]
@@ -298,4 +298,10 @@ command = ["amikad", "--version"]
 id = "docker"
 env = "DOCKER_VERSION"
 command = ["docker", "--version"]
+presets = ["coder-dind"]
+
+[[version_checks]]
+id = "buildx"
+env = "BUILDX_VERSION"
+command = ["docker", "buildx", "version"]
 presets = ["coder-dind"]

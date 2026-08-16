@@ -53,6 +53,7 @@ COPY sandbox-image/steps/85-amika-clis.sh /tmp/amika-step.sh
 RUN /tmp/amika-step.sh && rm -rf /tmp/amika-step.sh
 
 ARG DOCKER_VERSION=28.3.3
+ARG BUILDX_VERSION=0.25.0
 COPY sandbox-image/steps/90-dind.sh /tmp/amika-step.sh
 RUN /tmp/amika-step.sh && rm -rf /tmp/amika-step.sh
 

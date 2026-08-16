@@ -327,6 +327,7 @@
           "id": "dind",
           "script": "steps/90-dind.sh",
           "versions": {
+            "BUILDX_VERSION": "0.25.0",
             "DOCKER_VERSION": "28.3.3"
           }
         },
