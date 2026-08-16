@@ -16,11 +16,14 @@ func TestSandboxCreateProviderFlagIsHidden(t *testing.T) {
 	if !flag.Hidden {
 		t.Fatal("provider flag should be hidden")
 	}
+	if flag.DefValue != "" {
+		t.Fatalf("provider flag default = %q, want empty", flag.DefValue)
+	}
 }
 
 func TestRequestedRemoteProvider(t *testing.T) {
 	cmd := &cobra.Command{}
-	cmd.Flags().String("provider", "docker", "")
+	addProviderFlag(cmd)
 
 	if got := requestedRemoteProvider(cmd); got != "" {
 		t.Fatalf("unchanged provider = %q, want omitted", got)

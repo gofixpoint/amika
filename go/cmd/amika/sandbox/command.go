@@ -84,7 +84,7 @@ func New() *cobra.Command {
 }
 
 func addProviderFlag(command *cobra.Command) {
-	command.Flags().String("provider", "docker", "Sandbox provider")
+	command.Flags().String("provider", "", "Sandbox provider")
 	// Provider selection is an internal/testing override for remote sandboxes.
 	// Normal users should let the control plane choose its configured default.
 	command.Flags().MarkHidden("provider")

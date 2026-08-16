@@ -89,6 +89,11 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		provider, _ := cmd.Flags().GetString("provider")
+		// The provider flag defaults to empty so remote creates defer to the
+		// control plane. Local creates continue to use their only provider.
+		if provider == "" {
+			provider = "docker"
+		}
 		name, _ := cmd.Flags().GetString("name")
 		image, _ := cmd.Flags().GetString("image")
 		preset, _ := cmd.Flags().GetString("preset")
