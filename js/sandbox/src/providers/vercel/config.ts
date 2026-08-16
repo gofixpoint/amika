@@ -3,10 +3,10 @@ import type { SandboxConfigBase } from "../../config";
 // Vercel Sandbox (Firecracker microVM) credentials. Access-token auth is used
 // because amika runs off-Vercel (the recommended OIDC-token path only applies to
 // code deployed on Vercel): the team-scoped access token is `apiKey`, plus the
-// team and project the sandboxes are created under. New sandboxes always boot
-// from a prepared snapshot; there is no runtime fallback, because a plain Vercel
-// runtime lacks the baked-in amikad hooks and agent tooling an Amika sandbox
-// needs.
+// team and project the sandboxes are created under. New sandboxes boot from a
+// prepared VCR image or a captured snapshot; there is no runtime fallback,
+// because a plain Vercel runtime lacks the baked-in amikad hooks and agent
+// tooling an Amika sandbox needs.
 export interface VercelConfig extends SandboxConfigBase {
   apiKey: string;
   teamId: string;

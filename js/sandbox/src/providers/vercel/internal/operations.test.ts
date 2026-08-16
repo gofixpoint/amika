@@ -10,7 +10,7 @@ import {
   createVercelSandbox,
   executeVercelCommand,
   listVercelSandboxes,
-  resolveVercelSnapshotId,
+  resolveVercelBootSource,
   resolveVercelPorts,
   portsForDesiredServices,
   vercelTimeoutMs,
@@ -91,33 +91,40 @@ function service(name: string, containerPort: number): SandboxService {
   };
 }
 
-describe("resolveVercelSnapshotId", () => {
-  it("returns the snapshot id when the value looks like one", () => {
-    expect(resolveVercelSnapshotId("snap_abc123")).toBe("snap_abc123");
+describe("resolveVercelBootSource", () => {
+  it("returns a captured snapshot source for a snapshot id", () => {
+    expect(resolveVercelBootSource("snap_abc123")).toEqual({
+      source: { type: "snapshot", snapshotId: "snap_abc123" },
+    });
   });
 
-  it("throws when no snapshot is configured (empty / undefined)", () => {
-    expect(() => resolveVercelSnapshotId("")).toThrow(
-      /require a prepared snapshot/,
+  it("returns an image source for a fully qualified VCR reference", () => {
+    const image = "vcr.vercel.com/fixpoint/amika/sandbox-coder:v1";
+    expect(resolveVercelBootSource(image)).toEqual({ image });
+  });
+
+  it("throws when no prepared source is configured", () => {
+    expect(() => resolveVercelBootSource("")).toThrow(
+      /require a prepared VCR image or captured snapshot/,
     );
-    expect(() => resolveVercelSnapshotId(undefined)).toThrow(
-      /require a prepared snapshot/,
+    expect(() => resolveVercelBootSource(undefined)).toThrow(
+      /require a prepared VCR image or captured snapshot/,
     );
   });
 
   it("throws for a runtime name rather than booting a plain runtime", () => {
     // A plain runtime lacks the baked-in amikad hooks + agent tooling, so it
     // cannot boot an Amika sandbox — reject rather than degrade.
-    expect(() => resolveVercelSnapshotId("python3.13")).toThrow(
-      /require a prepared snapshot/,
+    expect(() => resolveVercelBootSource("python3.13")).toThrow(
+      /require a prepared VCR image or captured snapshot/,
     );
   });
 
   it("throws for a foreign snapshot value (e.g. a Daytona image tag)", () => {
     // A Daytona-style image tag sent after switching providers is not a Vercel
     // snapshot id.
-    expect(() => resolveVercelSnapshotId("amika/daytona-coder-m:abc")).toThrow(
-      /require a prepared snapshot/,
+    expect(() => resolveVercelBootSource("amika/daytona-coder-m:abc")).toThrow(
+      /require a prepared VCR image or captured snapshot/,
     );
   });
 });
@@ -255,10 +262,15 @@ describe("createVercelSandbox", () => {
 
   beforeEach(() => sandboxCreate.mockReset());
 
-  it("boots a persistent sandbox with a flat, non-expiring snapshot retention policy", async () => {
+  it("boots a persistent sandbox from a VCR image", async () => {
     sandboxCreate.mockResolvedValue({ name: "vercel-generated" });
 
-    const result = await createVercelSandbox(ctx(), config, createInput());
+    const image = "vcr.vercel.com/fixpoint/amika/sandbox-coder:v1";
+    const result = await createVercelSandbox(
+      ctx(),
+      config,
+      createInput({ snapshot: image }),
+    );
 
     expect(sandboxCreate).toHaveBeenCalledTimes(1);
     // Persistence auto-snapshots on stop; without a retention policy the
@@ -268,10 +280,20 @@ describe("createVercelSandbox", () => {
       persistent: true,
       keepLastSnapshots: { count: 1 },
       snapshotExpiration: 0,
-      source: { type: "snapshot", snapshotId: "snap_test" },
+      image,
     });
     expect(result.provider).toBe("vercel");
     expect(result.providerSandboxId).toBe("vercel-generated");
+  });
+
+  it("boots a captured user snapshot by id", async () => {
+    sandboxCreate.mockResolvedValue({ name: "vercel-generated" });
+
+    await createVercelSandbox(ctx(), config, createInput());
+
+    expect(sandboxCreate.mock.calls[0][0]).toMatchObject({
+      source: { type: "snapshot", snapshotId: "snap_test" },
+    });
   });
 });
 

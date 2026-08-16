@@ -1,6 +1,7 @@
 /**
  * Sandbox-level operations against the Vercel Sandbox API: create (from a
- * prepared snapshot), start/stop/delete, preview-URL resolution, exec, log
+ * prepared VCR image or captured snapshot), start/stop/delete, preview-URL
+ * resolution, exec, log
  * streaming, and file reads, plus the cold-resume service restart. The
  * provisioning lifecycle lives in `@amika/sandbox-provisioning`; this module
  * keeps the generic provider mechanics, including {@link openVercelAdapter} and
@@ -82,29 +83,34 @@ export function vercelTimeoutMs(autoStopInterval?: number | null): number {
 }
 
 /**
- * Resolve the snapshot a new sandbox boots from. Vercel sandboxes MUST boot from
- * a prepared snapshot (`snap_...`) that has the amikad lifecycle hook bundle
+ * Resolve the prepared source a new sandbox boots from. Default sandboxes use a
+ * VCR image that has the amikad lifecycle hook bundle
  * (`/usr/lib/amikad/*`) and agent tooling (OpenCode, the agent CLIs) baked in —
  * the same prepared-image dependency Daytona and Freestyle have. A plain Vercel
  * runtime (`node24`, `python3.13`, …) has none of that, so the Vercel
  * provisioning flow would fail at the very first lifecycle step
  * (`run-hook.sh … pre-setup.sh`) before the user's setup script could run.
  *
- * So rather than silently booting a runtime that cannot initialize, require a
- * configured snapshot and fail loudly at create when one is missing (set the
- * `VERCEL_SNAPSHOT_*` env vars for the preset/size). Mirrors the sizing guard,
- * which likewise rejects an unsupported request at create instead of degrading.
+ * Captured user snapshots remain bootable through their `snap_...` ids. Rather
+ * than silently booting a runtime that cannot initialize, require one of those
+ * two prepared sources and fail loudly at create when it is missing.
  */
-export function resolveVercelSnapshotId(snapshot: string | undefined): string {
-  if (snapshot && snapshot.startsWith("snap_")) {
-    return snapshot;
+export function resolveVercelBootSource(
+  snapshot: string | undefined,
+): { source: { type: "snapshot"; snapshotId: string } } | { image: string } {
+  if (snapshot?.startsWith("snap_")) {
+    return { source: { type: "snapshot", snapshotId: snapshot } };
+  }
+  if (snapshot?.startsWith("vcr.vercel.com/")) {
+    return { image: snapshot };
   }
   throw new Error(
-    "Vercel sandboxes require a prepared snapshot with the amikad hook bundle " +
-      "and agent tooling baked in, but none is configured for this preset/size " +
+    "Vercel sandboxes require a prepared VCR image or captured snapshot with " +
+      "the amikad hook bundle and agent tooling baked in, but none is " +
+      "configured for this preset/size " +
       `(got ${snapshot ? `"${snapshot}"` : "no snapshot"}). Set the ` +
-      "VERCEL_SNAPSHOT_* env vars to a snap_… id; a plain Vercel runtime cannot " +
-      "boot an Amika sandbox.",
+      "Vercel image configuration to a vcr.vercel.com/… reference; a plain " +
+      "Vercel runtime cannot boot an Amika sandbox.",
   );
 }
 
@@ -143,7 +149,7 @@ export async function createVercelSandbox(
 ): Promise<CreatedProviderSandbox> {
   const services = input.services;
   const ports = resolveVercelPorts(services);
-  const snapshotId = resolveVercelSnapshotId(input.snapshot);
+  const bootSource = resolveVercelBootSource(input.snapshot);
   const timeoutMs = vercelTimeoutMs(input.autoStopInterval);
   // Map the requested size to Vercel's `resources` (vCPU count, memory derived
   // at 2 GB/vCPU). Daytona/Freestyle bake size into the image/snapshot; Vercel
@@ -154,7 +160,7 @@ export async function createVercelSandbox(
     : undefined;
 
   ctx.logger.info(
-    { snapshotId, ports, timeoutMs, resources },
+    { bootSource, ports, timeoutMs, resources },
     "Creating Vercel sandbox",
   );
 
@@ -162,7 +168,7 @@ export async function createVercelSandbox(
   // labels); the name is left for Vercel to generate, since the generated name
   // is the stable handle we reconnect by. The repo is cloned inside the sandbox
   // during initialization (like Freestyle), not via Vercel's git `source`, so
-  // create only needs the snapshot, ports, timeout, resources, and tags.
+  // create only needs the prepared source, ports, timeout, resources, and tags.
   const sandbox = await withStepContext("vercel create: create sandbox", () =>
     Sandbox.create({
       ...vercelCredentials(config),
@@ -179,7 +185,7 @@ export async function createVercelSandbox(
       snapshotExpiration: 0,
       tags: vercelTags(input.labels),
       ...(resources ? { resources } : {}),
-      source: { type: "snapshot", snapshotId },
+      ...bootSource,
     }),
   );
 
