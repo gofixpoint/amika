@@ -12,6 +12,7 @@ describe("sandboxProviderConfigsFromEnv", () => {
       target: undefined,
       organizationId: undefined,
       useVm: false,
+      useWebSocket: false,
     });
     expect(freestyle).toBeNull();
     expect(vercel).toBeNull();
@@ -35,6 +36,16 @@ describe("sandboxProviderConfigsFromEnv", () => {
       organizationId: "org_1",
       useVm: true,
     });
+  });
+
+  it("leaves the Daytona event stream off unless ENABLE_DAYTONA_WEBSOCKET is set", () => {
+    expect(sandboxProviderConfigsFromEnv(BASE).daytona.useWebSocket).toBe(
+      false,
+    );
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, ENABLE_DAYTONA_WEBSOCKET: "on" })
+        .daytona.useWebSocket,
+    ).toBe(true);
   });
 
   it("gates Freestyle on FREESTYLE_ENABLED=true and toggles snapshotPersistence", () => {

@@ -9,8 +9,8 @@ const clients = new WeakMap<DaytonaConfig, Daytona>();
 /**
  * The Daytona client for `config`, built once and reused.
  *
- * The SDK client is a connection holder — it opens a socket for sandbox state
- * events — so one client per operation means one socket per operation.
+ * The SDK client is a connection holder and is not cheap to build, so it is
+ * made once per config rather than per operation.
  *
  * Keyed on the config object's identity, not its fields: callers hold one
  * config per process and pass that same object to every operation. A config
@@ -29,6 +29,14 @@ export function getDaytonaClient(config: DaytonaConfig): Daytona {
     apiKey: config.apiKey,
     apiUrl: config.apiUrl,
     target: config.target,
+    // Poll for sandbox state unless the caller opts into the event stream
+    // (`ENABLE_DAYTONA_WEBSOCKET`), which holds a persistent WebSocket per
+    // client. State waits poll either way; this only changes the cadence —
+    // 100ms easing to 1s when polling, a flat 1s behind pushed events when
+    // streaming. Passed explicitly rather than left to the SDK's own
+    // `DAYTONA_USE_DEPRECATED_POLLING` lookup, so the decision lives with the
+    // rest of the config and no environment acquires a socket by accident.
+    useDeprecatedPolling: !config.useWebSocket,
     // Scope every operation to the configured Daytona organization when one is
     // set (`DAYTONA_ORGANIZATION_ID`). Without it the SDK targets the account's
     // default org, so a `daytona.get`/`list` for a sandbox created under a
