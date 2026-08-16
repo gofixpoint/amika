@@ -28,6 +28,84 @@ agent_hook_paths = [
   ".codex/hooks.json",
 ]
 
+[steps.os-packages]
+script = "steps/10-os-packages.sh"
+versions = []
+assets = []
+
+[steps.static-config]
+script = "steps/20-static-config.sh"
+versions = []
+assets = ["assets/stable/ghostty.terminfo"]
+
+[steps.node-gh]
+script = "steps/30-node-gh.sh"
+versions = ["NODE_VERSION", "GH_VERSION"]
+assets = []
+
+[steps.npm-toolchain]
+script = "steps/40-npm-toolchain.sh"
+versions = ["PNPM_VERSION", "TYPESCRIPT_VERSION", "TSX_VERSION"]
+assets = []
+
+[steps.runtime-user]
+script = "steps/50-runtime-user.sh"
+versions = []
+assets = []
+
+[steps.dotfiles]
+script = "steps/60-dotfiles.sh"
+versions = []
+assets = [
+  "assets/stable/.bashrc",
+  "assets/stable/.tmux.conf",
+  "assets/stable/.zshrc",
+]
+
+[steps.hook-assets]
+script = "steps/70-hook-assets.sh"
+versions = []
+assets = [
+  "assets/hooks/amika-restore-setuid.service",
+  "assets/hooks/bash-error-prelude.sh",
+  "assets/hooks/docker-setup.sh",
+  "assets/hooks/opencode-setup.sh",
+  "assets/hooks/post-setup.sh",
+  "assets/hooks/pre-setup.sh",
+  "assets/hooks/restore-setuid.sh",
+  "assets/hooks/run-hook.sh",
+]
+
+[steps.agent-clis]
+script = "steps/80-agent-clis.sh"
+versions = [
+  "CLAUDE_CODE_VERSION",
+  "CODEX_VERSION",
+  "OPENCODE_VERSION",
+  "PI_VERSION",
+]
+assets = []
+
+[steps.amika-clis]
+script = "steps/85-amika-clis.sh"
+versions = ["AMIKA_VERSION", "AMIKALOG_VERSION", "AMIKAD_VERSION"]
+assets = []
+
+[steps.dind]
+script = "steps/90-dind.sh"
+versions = ["DOCKER_VERSION"]
+assets = []
+
+[steps.setuid-manifest]
+script = "steps/94-setuid-manifest.sh"
+versions = []
+assets = []
+
+[steps.verify]
+script = "steps/95-verify.sh"
+versions = []
+assets = ["manifest.toml", "versions.env", "verify"]
+
 [[image.directories]]
 path = "/home/amika/.ssh"
 owner = "amika"
