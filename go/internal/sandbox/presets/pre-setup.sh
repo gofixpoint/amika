@@ -46,6 +46,11 @@ echo "$amika_agent_cwd" > "$AMIKA_CWD_FILE"
 
 cd "$amika_agent_cwd"
 
+# Agent hook registration is runtime user state. Reinstall it on every boot so
+# mounted or restored homes remain self-healing without baking config into the
+# image.
+sudo -H -u amika /usr/local/bin/amikalog start
+
 # Start opencode web server in the background by default when opencode is
 # installed, unless Amika explicitly disables it. Output is redirected to
 # /var/log/amikad/opencode-web.log because the server outlives this hook.

@@ -3,7 +3,6 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -89,23 +88,46 @@ func TestGetPresetDockerfile_BaseCreatesAmikaAndAmikadDirectories(t *testing.T) 
 	}
 }
 
-func TestGetPresetDockerfile_BaseBuildsPinnedAmikad(t *testing.T) {
+func TestGetPresetDockerfile_BaseInstallsReleasedAmikad(t *testing.T) {
 	data, err := GetPresetDockerfile("base")
 	if err != nil {
 		t.Fatal(err)
 	}
 	contents := string(data)
 	for _, want := range []string{
-		"FROM golang:1.25.3-bookworm AS amikad-builder",
-		"go install \"github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}\"",
-		"COPY --from=amikad-builder /out/amikad /usr/local/bin/amikad",
+		"ARG AMIKAD_VERSION=0.1.0",
+		"--component amikad --install-version \"${AMIKAD_VERSION}\"",
 	} {
 		if !strings.Contains(contents, want) {
-			t.Fatalf("base Dockerfile missing pinned amikad build %q", want)
+			t.Fatalf("base Dockerfile missing released amikad install %q", want)
 		}
 	}
-	if !regexp.MustCompile(`(?m)^ARG AMIKAD_SOURCE_REF=[0-9a-f]{40}$`).MatchString(contents) {
-		t.Fatal("base Dockerfile must pin amikad to a full source commit")
+	for _, forbidden := range []string{"FROM golang:", "go install"} {
+		if strings.Contains(contents, forbidden) {
+			t.Fatalf("base Dockerfile should not include Go toolchain build %q", forbidden)
+		}
+	}
+}
+
+func TestGetPresetDockerfile_DoesNotBakeAgentHooks(t *testing.T) {
+	data, err := GetPresetDockerfile("base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "RUN amikalog start") {
+		t.Fatal("base Dockerfile should register amikalog hooks at runtime")
+	}
+}
+
+func TestGetPresetDockerfile_CoderInstallsPi(t *testing.T) {
+	for _, preset := range []string{"coder", "coder-dind"} {
+		data, err := GetPresetDockerfile(preset)
+		if err != nil {
+			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
+		}
+		if !strings.Contains(string(data), "@earendil-works/pi-coding-agent@${PI_VERSION}") {
+			t.Fatalf("%s Dockerfile should install the pinned pi CLI", preset)
+		}
 	}
 }
 

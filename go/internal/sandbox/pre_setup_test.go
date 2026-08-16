@@ -98,6 +98,17 @@ func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
 	}
 }
 
+func TestPresetPreSetup_RegistersAmikalogHooksAsRuntimeUser(t *testing.T) {
+	data, err := presetFS.ReadFile("presets/pre-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	if !strings.Contains(string(data), "sudo -H -u amika /usr/local/bin/amikalog start") {
+		t.Fatal("pre-setup.sh should register amikalog hooks as the runtime user")
+	}
+}
+
 func TestPresetRunHook_UsesAmikaForUserHooksAndMirrorsThemToAmikad(t *testing.T) {
 	data, err := presetFS.ReadFile("presets/run-hook.sh")
 	if err != nil {

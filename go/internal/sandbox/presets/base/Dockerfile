@@ -1,16 +1,4 @@
-# Locally, this image is called "amika/base"
-
-FROM golang:1.25.3-bookworm AS amikad-builder
-
-# Build from an immutable reviewed commit until the first standalone amikad
-# release exists. The final image receives only the binary, not the toolchain.
-ARG AMIKAD_SOURCE_REF=4c7b647bbeb8f3295da7ee837cd481eee2fb719d
-ENV GOBIN=/out
-RUN go install "github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}"
-
 FROM ubuntu:24.04
-
-COPY --from=amikad-builder /out/amikad /usr/local/bin/amikad
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -76,11 +64,13 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 # URL-encoded `@` in the release tag `amika@v<version>`. Fetch the script to a
 # file rather than `curl | sh`: Docker's /bin/sh is dash (no pipefail), so a
 # piped curl failure would exit 0 and silently skip the install.
-ARG AMIKA_VERSION=0.14.0
+ARG AMIKA_VERSION=0.14.1
 ARG AMIKALOG_VERSION=0.2.0
+ARG AMIKAD_VERSION=0.1.0
 RUN curl -fsSL "https://raw.githubusercontent.com/gofixpoint/amika/amika%40v${AMIKA_VERSION}/install.sh" -o /tmp/amika-install.sh \
     && sh /tmp/amika-install.sh --install-version "${AMIKA_VERSION}" \
     && sh /tmp/amika-install.sh --component amikalog --install-version "${AMIKALOG_VERSION}" \
+    && sh /tmp/amika-install.sh --component amikad --install-version "${AMIKAD_VERSION}" \
     && rm /tmp/amika-install.sh
 
 # Default no-op user-facing hooks; callers can shadow them via
@@ -165,13 +155,3 @@ RUN mkdir -p /home/amika/workspace
 COPY --chown=amika:amika .zshrc /home/amika/.zshrc
 COPY --chown=amika:amika .bashrc /home/amika/.bashrc
 COPY --chown=amika:amika .tmux.conf /home/amika/.tmux.conf
-
-# Pre-register the amikalog hooks so every sandbox records Claude Code and Codex
-# activity from first boot, without the user having to run `amikalog start`.
-# This runs as the amika user (see USER above) so it writes the per-user hook
-# configs into this home -- ~/.claude/settings.json and ~/.codex/hooks.json --
-# owned by amika, with the hook command pinned to the absolute installed binary
-# path (/usr/local/bin/amikalog). It only writes those config files (no network),
-# and is idempotent, so it is safe across rebuilds. All presets derive from this
-# base, so installing here covers container and Daytona VM sandboxes alike.
-RUN amikalog start

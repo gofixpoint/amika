@@ -17,8 +17,11 @@ RUN npm install -g pnpm typescript tsx
 # Reset ownership before switching users so the image is consistent regardless
 # of postinstall behavior.
 ARG AGENT_CLI_CACHE_BUST=
+ARG PI_VERSION=0.84.1
 RUN echo "agent-cli-cache-bust: $AGENT_CLI_CACHE_BUST" \
     && npm install -g @anthropic-ai/claude-code @openai/codex opencode-ai@1.18.4 \
+    && npm install -g --engine-strict --ignore-scripts \
+       "@earendil-works/pi-coding-agent@${PI_VERSION}" \
     && chown -R amika:amika /home/amika
 
 USER amika
