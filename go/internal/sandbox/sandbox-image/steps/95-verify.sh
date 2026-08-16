@@ -1,4 +1,5 @@
 #!/bin/bash
+# Runs the build-time verification contract for the selected image preset.
 
 set -euo pipefail
 

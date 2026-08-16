@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies declared image directories have the required owners and permissions.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="filesystem-contract"
 CHECK_CONTEXTS="build,boot"

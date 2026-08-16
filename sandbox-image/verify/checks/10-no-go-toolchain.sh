@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies the final image does not ship the Go build toolchain.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="no-go-toolchain"
 CHECK_CONTEXTS="build,boot"

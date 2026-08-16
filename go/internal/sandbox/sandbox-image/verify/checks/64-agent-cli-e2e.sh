@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies a provider-supplied agent CLI command completes successfully.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="agent-cli-e2e"
 CHECK_CONTEXTS="boot"

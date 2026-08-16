@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies SSH daemon configuration disables password and keyboard-interactive auth.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="sshd-contract"
 CHECK_CONTEXTS="build,boot"

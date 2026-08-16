@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Reads selected manifest values for shell verification checks."""
 
 import json
 import sys

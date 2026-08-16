@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs pinned system packages and Git for the base Ubuntu image layer.
 
 set -euo pipefail
 

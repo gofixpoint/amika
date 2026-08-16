@@ -1,4 +1,5 @@
 #!/bin/bash
+# Records final setuid binaries so the boot hook can restore their permissions.
 
 set -euo pipefail
 

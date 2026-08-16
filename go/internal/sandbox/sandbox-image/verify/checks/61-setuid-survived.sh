@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies boot restored setuid permissions required by the runtime.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="setuid-survived"
 CHECK_CONTEXTS="boot"

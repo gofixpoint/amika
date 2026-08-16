@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs static terminal configuration, including the Ghostty terminfo entry.
 
 set -euo pipefail
 

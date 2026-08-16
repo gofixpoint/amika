@@ -1,4 +1,5 @@
 #!/bin/bash
+# Runs every applicable verification check and enforces its JSON record contract.
 
 set -u
 

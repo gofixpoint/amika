@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies the Ghostty terminal definition resolves in the final image.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="ghostty-terminfo"
 CHECK_CONTEXTS="build,boot"

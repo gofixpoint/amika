@@ -1,4 +1,5 @@
 #!/bin/bash
+# Adds the Docker-in-Docker runtime and marks the image for daemon startup.
 
 set -euo pipefail
 

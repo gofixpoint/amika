@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs the pinned Node.js runtime and GitHub CLI release.
 
 set -euo pipefail
 

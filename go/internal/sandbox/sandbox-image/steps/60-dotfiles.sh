@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs shell and terminal dotfiles for current and future runtime users.
 
 set -euo pipefail
 

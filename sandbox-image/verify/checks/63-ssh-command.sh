@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies a provider-supplied SSH command reaches the sandbox through amikad.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="ssh-command"
 CHECK_CONTEXTS="boot"

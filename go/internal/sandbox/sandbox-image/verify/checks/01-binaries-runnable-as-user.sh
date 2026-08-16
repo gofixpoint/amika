@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies every declared binary is runnable by the unprivileged runtime user.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="binaries-runnable-as-user"
 CHECK_CONTEXTS="build,boot"

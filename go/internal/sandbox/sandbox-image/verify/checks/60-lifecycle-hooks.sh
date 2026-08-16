@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies boot lifecycle hooks completed and recorded their expected state.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="lifecycle-hooks"
 CHECK_CONTEXTS="boot"

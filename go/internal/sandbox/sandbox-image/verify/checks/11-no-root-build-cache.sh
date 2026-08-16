@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies root-owned Go and build caches were removed from the final image.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="no-root-build-cache"
 CHECK_CONTEXTS="build,boot"

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs pinned Amika, amikalog, and amikad release binaries.
 
 set -euo pipefail
 

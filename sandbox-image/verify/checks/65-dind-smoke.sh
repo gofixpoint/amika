@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies Docker can run a container in the coder-dind image.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="dind-smoke"
 CHECK_CONTEXTS="boot"

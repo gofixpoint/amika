@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies the runtime user, shell, groups, and passwordless sudo contract.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="runtime-user-contract"
 CHECK_CONTEXTS="build,boot"

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies per-user agent hook configuration is not baked into the image.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="no-baked-agent-hooks"
 CHECK_CONTEXTS="build"

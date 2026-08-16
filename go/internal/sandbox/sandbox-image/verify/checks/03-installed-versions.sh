@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies installed tool versions match the pins declared in versions.env.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="installed-versions"
 CHECK_CONTEXTS="build,boot"

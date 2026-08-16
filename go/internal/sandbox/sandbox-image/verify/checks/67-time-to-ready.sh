@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies a provider reports its measured sandbox readiness time.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="time-to-ready"
 CHECK_CONTEXTS="boot"

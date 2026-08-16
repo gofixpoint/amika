@@ -1,4 +1,5 @@
 #!/bin/bash
+# Tests metadata filtering and result accounting in the verification harness.
 
 set -euo pipefail
 

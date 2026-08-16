@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies declared binaries resolve to system-owned executable locations.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="binary-target-location"
 CHECK_CONTEXTS="build,boot"

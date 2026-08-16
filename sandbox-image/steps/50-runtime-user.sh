@@ -1,4 +1,5 @@
 #!/bin/bash
+# Creates and configures the unprivileged runtime user and its system paths.
 
 set -euo pipefail
 

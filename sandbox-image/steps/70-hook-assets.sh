@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs lifecycle hooks and the setuid-restoration service assets.
 
 set -euo pipefail
 

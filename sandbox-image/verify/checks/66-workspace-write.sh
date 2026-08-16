@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies the runtime user can write to the configured workspace.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="workspace-write"
 CHECK_CONTEXTS="boot"

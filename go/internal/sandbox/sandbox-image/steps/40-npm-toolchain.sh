@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs the pinned global npm development toolchain.
 
 set -euo pipefail
 

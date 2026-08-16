@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies runtime-user dotfiles exist and are owned by that user.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="runtime-dotfiles"
 CHECK_CONTEXTS="build,boot"

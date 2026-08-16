@@ -1,4 +1,5 @@
 #!/bin/bash
+# Installs pinned coding-agent CLIs and repairs runtime-home ownership.
 
 set -euo pipefail
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies system binary directories contain no dangling symbolic links.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="no-dangling-system-symlinks"
 CHECK_CONTEXTS="build,boot"

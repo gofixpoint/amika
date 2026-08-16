@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies package-manager caches are absent from the final image filesystem.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="no-package-cache"
 CHECK_CONTEXTS="build,boot"

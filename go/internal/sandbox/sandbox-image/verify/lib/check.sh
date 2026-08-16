@@ -1,4 +1,5 @@
 #!/bin/bash
+# Provides common metadata, manifest, and JSON-record helpers for checks.
 # shellcheck disable=SC2034
 
 set -u

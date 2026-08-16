@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies lifecycle hooks and setup hooks have safe ownership and modes.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="hook-files"
 CHECK_CONTEXTS="build,boot"

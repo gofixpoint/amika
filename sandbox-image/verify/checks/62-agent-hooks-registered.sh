@@ -1,4 +1,5 @@
 #!/bin/bash
+# Verifies boot registered Claude and Codex hooks for the runtime user.
 # shellcheck disable=SC1091,SC2034
 CHECK_ID="agent-hooks-registered"
 CHECK_CONTEXTS="boot"
