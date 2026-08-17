@@ -5,12 +5,15 @@ import {
   _parseSshDestination,
   listDaytonaSandboxes,
   mapDaytonaSandboxState,
+  streamDaytonaCommandLogs,
 } from "./operations";
 
 const daytonaList = vi.fn();
+const daytonaGet = vi.fn();
 vi.mock("./client", () => ({
   getDaytonaClient: () => ({
     list: (...args: unknown[]) => daytonaList(...args),
+    get: (...args: unknown[]) => daytonaGet(...args),
   }),
 }));
 
@@ -147,5 +150,38 @@ describe("listDaytonaSandboxes", () => {
       (l) => l.providerSandboxId,
     );
     expect(ids).toEqual(["sb_1", "sb_2"]);
+  });
+});
+
+describe("streamDaytonaCommandLogs", () => {
+  it("gives every stream its own session, even within one millisecond", () => {
+    // Session ids are per-sandbox and the stream deletes its session when it
+    // ends, so two concurrent streams sharing an id would mean the first to
+    // finish reaps the other's still-running command. A timestamp-derived id
+    // collides at exactly the concurrency this has to survive.
+    const created: string[] = [];
+    daytonaGet.mockResolvedValue({
+      process: {
+        createSession: (id: string) => {
+          created.push(id);
+          return Promise.resolve();
+        },
+        executeSessionCommand: () => Promise.resolve({ cmdId: "cmd-1" }),
+        getSessionCommandLogs: () => Promise.resolve(),
+        deleteSession: () => Promise.resolve(),
+      },
+    });
+
+    const config = {} as DaytonaConfig;
+    const handlers = { onStdout: () => {}, onStderr: () => {} };
+    // Started in the same tick, so any clock-derived id would be identical.
+    return Promise.all([
+      streamDaytonaCommandLogs(config, "sbx-1", "echo a", handlers),
+      streamDaytonaCommandLogs(config, "sbx-1", "echo b", handlers),
+    ]).then(() => {
+      expect(created).toHaveLength(2);
+      expect(created[0]).not.toBe(created[1]);
+      expect(created[0]!.startsWith("stream-")).toBe(true);
+    });
   });
 });
