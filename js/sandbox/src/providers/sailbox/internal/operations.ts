@@ -82,9 +82,9 @@ export async function createSailboxSandbox(
     await Promise.all(ports.map((port) => box.expose(port)));
   }
 
-  await configureSailboxAutoSleep(
+  await configureSailboxAutoSleepOrTerminate(
     config,
-    box.sailboxId,
+    box,
     input.autoStopInterval,
   );
   return {
@@ -325,6 +325,26 @@ export async function configureSailboxAutoSleep(
   }
 }
 
+export async function configureSailboxAutoSleepOrTerminate(
+  config: SailboxConfig,
+  box: Pick<Sailbox, "sailboxId" | "terminate">,
+  autoStopInterval?: number | null,
+): Promise<void> {
+  try {
+    await configureSailboxAutoSleep(config, box.sailboxId, autoStopInterval);
+  } catch (configureError) {
+    try {
+      await box.terminate();
+    } catch (terminateError) {
+      throw new AggregateError(
+        [configureError, terminateError],
+        `Sailbox ${box.sailboxId} auto-sleep configuration and cleanup failed`,
+      );
+    }
+    throw configureError;
+  }
+}
+
 class SailboxAdapter implements SandboxAdapter {
   constructor(private readonly box: Sailbox) {}
 
@@ -394,12 +414,21 @@ function httpListenerUrl(listener: Listener): string {
   return listener.endpoint.url;
 }
 
-function asAmikaCommand(command: string, env?: Record<string, string>): string {
+export function asAmikaCommand(
+  command: string,
+  env?: Record<string, string>,
+): string {
   const assignments = Object.entries(env ?? {})
     .map(([name, value]) => `${name}=${shellQuote(value)}`)
     .join(" ");
-  const envCommand = assignments ? `env ${assignments} ` : "";
-  return `sudo -H -u amika -- ${envCommand}bash -lc ${shellQuote(command)}`;
+  const runCommand = assignments
+    ? `exec env ${assignments} bash -lc ${shellQuote(command)}`
+    : `exec bash -lc ${shellQuote(command)}`;
+  const loadManagedEnvironment =
+    "if [ -r /etc/environment ]; then set -a; . /etc/environment; set +a; fi";
+  return `sudo -H -u amika -- bash -lc ${shellQuote(
+    `${loadManagedEnvironment}; ${runCommand}`,
+  )}`;
 }
 
 async function consume(

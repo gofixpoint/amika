@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { decodeSailboxImageRef, encodeSailboxImageRef } from "./image-ref";
 import {
+  asAmikaCommand,
   configureSailboxAutoSleep,
+  configureSailboxAutoSleepOrTerminate,
   mapSailboxSandboxState,
   sailboxAppName,
   sailboxAppOrgId,
@@ -25,6 +27,23 @@ describe("Sailbox provider", () => {
     expect(decodeSailboxImageRef("checkpoint_123")).toBeNull();
   });
 
+  it("rejects malformed encoded image specs", () => {
+    const encodeUnknown = (value: unknown) =>
+      `sail-image:${Buffer.from(JSON.stringify(value)).toString("base64url")}`;
+
+    expect(() => decodeSailboxImageRef(encodeUnknown({}))).toThrow(
+      "Invalid Sailbox image reference",
+    );
+    expect(() =>
+      decodeSailboxImageRef(
+        encodeUnknown({
+          base: "debian",
+          buildSteps: [{ runCommand: { command: "" } }],
+        }),
+      ),
+    ).toThrow("Invalid Sailbox image reference");
+  });
+
   it("maps Amika sizes onto valid Sailbox allocations", () => {
     expect(sailboxSizingForSize("xs")).toEqual({
       size: "s",
@@ -44,6 +63,19 @@ describe("Sailbox provider", () => {
     expect(mapSailboxSandboxState("terminating")).toBe("stopping");
     expect(mapSailboxSandboxState("failed")).toBe("failed");
     expect(mapSailboxSandboxState("future_state")).toBe("unknown");
+  });
+
+  it("loads managed environment before applying command overrides", () => {
+    const command = asAmikaCommand("printf '%s' \"$TOKEN:$MANAGED\"", {
+      TOKEN: "per call",
+    });
+
+    expect(command).toContain("/etc/environment");
+    expect(command.indexOf("/etc/environment")).toBeLessThan(
+      command.indexOf("TOKEN="),
+    );
+    expect(command).toContain("TOKEN=");
+    expect(command).toContain("per call");
   });
 
   it("round-trips org attribution through Sail App names", () => {
@@ -93,6 +125,23 @@ describe("Sailbox provider", () => {
     expect(fetchMock.mock.calls.at(-1)?.[1]?.body).toBe(
       JSON.stringify({ automatic: false }),
     );
+    fetchMock.mockRestore();
+  });
+
+  it("terminates a new Sailbox when auto-sleep configuration fails", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 500 }));
+    const terminate = vi.fn(async () => undefined);
+
+    await expect(
+      configureSailboxAutoSleepOrTerminate(
+        { apiKey: "secret", sailboxApiUrl: "https://boxes.example" },
+        { sailboxId: "sb_orphan", terminate },
+        15,
+      ),
+    ).rejects.toThrow("Sailbox auto-sleep update failed");
+    expect(terminate).toHaveBeenCalledOnce();
     fetchMock.mockRestore();
   });
 
