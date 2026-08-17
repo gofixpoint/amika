@@ -27,15 +27,38 @@ PY
 )"
   [[ "$applies" == "yes" ]] || continue
 
-  record="$($check 2>&1)"
-  if [[ "$(printf '%s\n' "$record" | wc -l | tr -d ' ')" != "1" ]]; then
-    id="$(python3 - "$metadata" <<'PY' 2>/dev/null || basename "$check" .sh
+  # A check's verdict is its stdout, and only its stdout. Its stderr is
+  # diagnostics: sudo warnings, tool chatter, and anything else the
+  # environment prints must never be able to overturn a verdict, which is
+  # exactly what reading the two streams as one used to do. A check that
+  # cannot reach a verdict at all says so by exiting nonzero, since pass,
+  # fail, and skip all exit 0.
+  diagnostics_file="$(mktemp)"
+  record="$($check 2>"$diagnostics_file")"
+  check_exit=$?
+  diagnostics="$(cat "$diagnostics_file")"
+  rm -f "$diagnostics_file"
+
+  id="$(python3 - "$metadata" <<'PY' 2>/dev/null || basename "$check" .sh
 import json
 import sys
 
 print(json.loads(sys.argv[1])["id"])
 PY
 )"
+
+  if [[ "$check_exit" -ne 0 ]]; then
+    record="$(python3 - "$id" "$check_exit" "$diagnostics" <<'PY'
+import json
+import sys
+
+actual = f"check exited {sys.argv[2]}"
+if sys.argv[3]:
+    actual = f"{actual}: {sys.argv[3]}"
+print(json.dumps({"id": sys.argv[1], "status": "failed", "expected": "check runs to a verdict", "actual": actual}, separators=(",", ":")))
+PY
+)"
+  elif [[ "$(printf '%s\n' "$record" | wc -l | tr -d ' ')" != "1" ]]; then
     record="$(python3 - "$id" "$record" <<'PY'
 import json
 import sys
@@ -43,6 +66,13 @@ import sys
 print(json.dumps({"id": sys.argv[1], "status": "failed", "expected": "one JSON record", "actual": sys.argv[2]}, separators=(",", ":")))
 PY
 )"
+  fi
+
+  # Diagnostics are reported, not discarded: they are the most useful material
+  # when a check fails, and keeping them on stderr keeps them out of the
+  # verdict on stdout.
+  if [[ -n "$diagnostics" ]]; then
+    printf '%s: %s\n' "$id" "$diagnostics" >&2
   fi
 
   status="$(python3 - "$record" <<'PY'

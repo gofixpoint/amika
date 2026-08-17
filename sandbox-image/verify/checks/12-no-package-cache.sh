@@ -7,9 +7,14 @@ source "$(dirname "$0")/../lib/check.sh" "$@"
 
 nonempty=()
 while IFS= read -r path; do
-  if [[ -d "$path" ]] && find "$path" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+  # What matters is whether cached package payloads survived, not whether the
+  # directory has any entry at all: apt keeps a zero-byte "lock" and an empty
+  # "partial" directory even directly after `apt-get clean`, so requiring an
+  # empty directory failed images whose caches were in fact clean. Only a
+  # non-empty regular file is cached payload.
+  if [[ -d "$path" ]] && find "$path" -mindepth 1 -type f ! -empty -print -quit 2>/dev/null | grep -q .; then
     nonempty+=("$path")
   fi
 done < <(manifest_lines image.package_cache_paths)
-[[ ${#nonempty[@]} -eq 0 ]] && pass "manifest package cache paths empty or absent" "all caches clean"
-fail "manifest package cache paths empty or absent" "nonempty: ${nonempty[*]}"
+[[ ${#nonempty[@]} -eq 0 ]] && pass "manifest package cache paths hold no cached payload" "all caches clean"
+fail "manifest package cache paths hold no cached payload" "nonempty: ${nonempty[*]}"
