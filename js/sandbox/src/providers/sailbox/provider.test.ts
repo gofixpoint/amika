@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { App } from "@sailresearch/sdk";
 import { decodeSailboxImageRef, encodeSailboxImageRef } from "./image-ref";
 import {
   asAmikaCommand,
@@ -146,6 +147,13 @@ describe("Sailbox provider", () => {
   });
 
   it("normalizes provider-reported observed spend", async () => {
+    const appListMock = vi.spyOn(App, "list").mockResolvedValue([
+      {
+        id: "app_123",
+        name: "amika-org_123",
+        createdAt: new Date("2026-08-16T00:00:00.000Z"),
+      } as App,
+    ]);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         rates: {
@@ -156,6 +164,7 @@ describe("Sailbox provider", () => {
         sailboxes: [
           {
             sailbox_id: "sb_123",
+            app_id: "app_123",
             finalized_cost_usd_nanos: 800,
             estimated_active_cost_usd_nanos: 100,
             estimated_total_cost_usd_nanos: 900,
@@ -180,6 +189,7 @@ describe("Sailbox provider", () => {
     ).resolves.toEqual([
       {
         providerSandboxId: "sb_123",
+        orgId: "org_123",
         state: "active",
         durationSeconds: 60,
         vcpuSeconds: 4,
@@ -195,6 +205,7 @@ describe("Sailbox provider", () => {
       "https://boxes.example/sailboxes/spend?from=2026-08-16T12%3A00%3A00.000Z&to=2026-08-16T12%3A01%3A00.000Z",
       { headers: { Authorization: "Bearer secret" } },
     );
+    appListMock.mockRestore();
     fetchMock.mockRestore();
   });
 });

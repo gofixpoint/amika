@@ -373,6 +373,8 @@ export interface ProviderSpendWindow {
  */
 export interface ProviderSpendItem {
   providerSandboxId: string;
+  /** Org attribution derived from provider-owned billing metadata, when known. */
+  orgId: string | null;
   state: string;
   durationSeconds: number;
   vcpuSeconds: number;

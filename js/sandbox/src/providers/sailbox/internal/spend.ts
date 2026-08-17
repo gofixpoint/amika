@@ -1,12 +1,15 @@
 import { z } from "zod";
+import { App } from "@sailresearch/sdk";
 import type { ProviderSpendItem, ProviderSpendWindow } from "../../provider";
 import type { SailboxConfig } from "../config";
-import { sailboxApiUrl } from "./client";
+import { createSailClient, sailboxApiUrl } from "./client";
+import { sailboxAppOrgId } from "./operations";
 
 const USD_NANOS = 1_000_000_000;
 
 const spendItemSchema = z.object({
   sailbox_id: z.string().min(1),
+  app_id: z.string().min(1),
   finalized_cost_usd_nanos: z.number().int().nonnegative(),
   estimated_active_cost_usd_nanos: z.number().int().nonnegative(),
   estimated_total_cost_usd_nanos: z.number().int().nonnegative(),
@@ -43,8 +46,13 @@ export async function reportSailboxSpend(
   }
 
   const report = spendResponseSchema.parse(await response.json());
+  const apps = await App.list({ client: createSailClient(config) });
+  const orgIdByAppId = new Map(
+    apps.map((app) => [app.id, sailboxAppOrgId(config, app.name)]),
+  );
   return report.sailboxes.map((item) => ({
     providerSandboxId: item.sailbox_id,
+    orgId: orgIdByAppId.get(item.app_id) ?? null,
     state: item.active ? "active" : "finalized",
     durationSeconds: item.duration_seconds,
     vcpuSeconds: item.vcpu_seconds,
