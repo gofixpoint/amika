@@ -17,16 +17,24 @@ const SUDO_PRESERVE_ENV_BASE = [
 ] as const;
 
 /**
- * Build the on-box command string for Daytona's `process.executeCommand`.
- * Non-sudo commands run verbatim (Daytona execs them through a shell, so
- * compound commands already work). For `sudo: true` we:
+ * Build the on-box command string for a Daytona session exec. Both paths run
+ * the *entire* command as the argument of a `bash -c`, never as bare text.
  *
- *   - run the *entire* command in a root shell (`bash -c '<command>'`) so a
- *     compound command / pipeline / redirection runs fully elevated, not just
- *     its first simple command; and
- *   - extend `--preserve-env` with the caller's explicit `env` keys (on top of
- *     the Amika hook vars) so `sudo`'s environment reset doesn't strip the
- *     variables the public `ExecCommandOptions.env` promises to expose.
+ * A session is a long-lived shell that the agent feeds commands through on
+ * stdin, so bare text executes *in that shell* and any shell state it sets
+ * outlives the command. `set -e` is the case that bites: the session shell
+ * inherits it and then exits before the agent records the command's exit
+ * status, so no `exit_code` is written and the synchronous exec call waits on a
+ * result that never comes. Wrapping confines that state to a child shell, and
+ * a script that fails under its own `set -e` still reports a non-zero exit
+ * normally.
+ *
+ * For `sudo: true` the same wrapper additionally means a compound command,
+ * pipeline, or redirection runs fully elevated rather than just its first
+ * simple command, and `--preserve-env` is extended with the caller's explicit
+ * `env` keys (on top of the Amika hook vars) so `sudo`'s environment reset
+ * doesn't strip the variables the public `ExecCommandOptions.env` promises to
+ * expose.
  *
  * `sudo -n` is non-interactive so it fails fast instead of hanging on a
  * password prompt. Exported for unit testing.
@@ -35,7 +43,7 @@ export function buildDaytonaCommand(
   command: string,
   opts?: { env?: Record<string, string>; sudo?: boolean },
 ): string {
-  if (!opts?.sudo) return command;
+  if (!opts?.sudo) return `bash -c ${shellQuote(command)}`;
   const preserve = [...SUDO_PRESERVE_ENV_BASE, ...Object.keys(opts.env ?? {})];
   return `sudo -n --preserve-env=${preserve.join(",")} bash -c ${shellQuote(command)}`;
 }
@@ -48,9 +56,10 @@ const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
  * one-shot `process.executeCommand` used to apply for us.
  *
  * Sessions carry no cwd/env parameters (`SessionExecuteRequest` is just a
- * command string), so both are applied in the outer shell, before `sudo`,
- * so that `--preserve-env` actually has something to preserve. Exported for
- * unit testing.
+ * command string), so both are applied in the session shell, ahead of the
+ * `bash -c` wrapper: the child inherits the working directory and the exported
+ * variables, and on the sudo path `--preserve-env` then has something to
+ * preserve. Exported for unit testing.
  */
 export function buildDaytonaSessionCommand(
   command: string,
