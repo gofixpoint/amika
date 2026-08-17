@@ -32,9 +32,10 @@ export class DaytonaAdapter implements SandboxAdapter {
 
   async exec(command: string, opts?: ExecOptions): Promise<ExecResult> {
     // Delegates to the provider's public exec path so both share one command
-    // builder (sudo → root shell + `--preserve-env`) and one stream-separating
-    // session runner. The SDK's `process.executeCommand` is deliberately not
-    // used: it returns a single combined string, with stderr folded in.
+    // builder (sudo → root shell + `--preserve-env`) and one runner. That
+    // runner calls the SDK's `process.executeCommand`, whose single combined
+    // string it splits back into two streams on-box; see `commands.ts` for why
+    // a process session is the wrong transport for an ordinary command.
     return executeCommand(this.sandbox, command, opts);
   }
 
