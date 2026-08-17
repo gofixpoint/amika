@@ -17,6 +17,7 @@
  */
 import type { DaytonaConfig } from "./daytona/config";
 import type { FreestyleConfig } from "./freestyle/config";
+import type { SailboxConfig } from "./sailbox/config";
 import type { VercelConfig } from "./vercel/config";
 import type { SandboxProvider, SnapshotIdResolver } from "./provider";
 import { SandboxProviderUnsupportedError } from "./provider";
@@ -25,8 +26,10 @@ import type { SandboxAdapter } from "./shared/adapter";
 import daytonaProvider from "./daytona/provider";
 import vercelProvider from "./vercel/provider";
 import freestyleProvider from "./freestyle/provider";
+import sailboxProvider from "./sailbox/provider";
 import { openDaytonaAdapter } from "./daytona/provider";
 import { openFreestyleAdapter } from "./freestyle/provider";
+import { openSailboxAdapter } from "./sailbox/provider";
 import { openVercelAdapter } from "./vercel/provider";
 
 /**
@@ -37,6 +40,7 @@ import { openVercelAdapter } from "./vercel/provider";
 export interface SandboxProviderDeps {
   daytona: DaytonaConfig;
   freestyle: FreestyleConfig | null;
+  sailbox: SailboxConfig | null;
   vercel: VercelConfig | null;
   /** Resolves an org-scoped snapshot name to its bootable provider id (Vercel). */
   resolveSnapshotId: SnapshotIdResolver;
@@ -61,6 +65,8 @@ const FREESTYLE_HINT =
   "Freestyle provider is not configured (set FREESTYLE_ENABLED=true and FREESTYLE_API_KEY)";
 const VERCEL_HINT =
   "Vercel provider is not configured (set VERCEL_ENABLED=true and VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID)";
+const SAILBOX_HINT =
+  "Sailbox provider is not configured (set SAILBOX_ENABLED=true and SAIL_API_KEY)";
 
 /**
  * The provider table — the one registration point. A `null` entry keeps a
@@ -80,6 +86,15 @@ const PROVIDERS = {
       Promise.resolve(
         openFreestyleAdapter(requireConfig(deps.freestyle, FREESTYLE_HINT), id),
       ),
+  },
+  sailbox: {
+    create: (deps) =>
+      sailboxProvider({
+        config: requireConfig(deps.sailbox, SAILBOX_HINT),
+        resolveSnapshotId: deps.resolveSnapshotId,
+      }),
+    openAdapter: (deps, id) =>
+      openSailboxAdapter(requireConfig(deps.sailbox, SAILBOX_HINT), id),
   },
   vercel: {
     // The Vercel snapshot capability resolves the org-scoped snapshot

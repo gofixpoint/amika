@@ -2,9 +2,10 @@
  * Build the per-provider config slices from environment variables.
  *
  * The single source of the sandbox provider ENV-VAR CONTRACT
- * (`DAYTONA_API_KEY`, `FREESTYLE_ENABLED`, `VERCEL_TOKEN`, …). The server
+ * (`DAYTONA_API_KEY`, `FREESTYLE_ENABLED`, `SAIL_API_KEY`,
+ * `VERCEL_TOKEN`, …). The server
  * callers each used to hand-parse the identical set of vars into
- * `{ daytona, freestyle, vercel }`;
+ * `{ daytona, freestyle, sailbox, vercel }`;
  * they now share this so the credential/enable contract lives in one place and
  * the two can't drift.
  *
@@ -20,12 +21,14 @@
  */
 import type { DaytonaConfig } from "./providers/daytona/config";
 import type { FreestyleConfig } from "./providers/freestyle/config";
+import type { SailboxConfig } from "./providers/sailbox/config";
 import type { VercelConfig } from "./providers/vercel/config";
 
 /** The three provider config slices a caller supplies to the registry. */
 export interface SandboxProviderConfigs {
   daytona: DaytonaConfig;
   freestyle: FreestyleConfig | null;
+  sailbox: SailboxConfig | null;
   vercel: VercelConfig | null;
 }
 
@@ -55,6 +58,16 @@ function required(env: Env, name: string): string {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+function optionalPositiveInt(env: Env, name: string): number | undefined {
+  const value = env[name];
+  if (value == null || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
 }
 
 /**
@@ -101,5 +114,18 @@ export function sandboxProviderConfigsFromEnv(
       }
     : null;
 
-  return { daytona, freestyle, vercel };
+  const sailbox: SailboxConfig | null = isEnabled(env.SAILBOX_ENABLED)
+    ? {
+        apiKey: required(env, "SAIL_API_KEY"),
+        apiUrl: env.SAIL_API_URL,
+        sailboxApiUrl: env.SAILBOX_API_URL,
+        appPrefix: env.SAILBOX_APP_PREFIX,
+        checkpointTtlSeconds: optionalPositiveInt(
+          env,
+          "SAILBOX_CHECKPOINT_TTL_SECONDS",
+        ),
+      }
+    : null;
+
+  return { daytona, freestyle, sailbox, vercel };
 }

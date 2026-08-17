@@ -13,6 +13,10 @@ export {
   type FreestyleSizing,
 } from "./providers/freestyle/sizing";
 export {
+  sailboxSizingForSize,
+  type SailboxSizing,
+} from "./providers/sailbox/sizing";
+export {
   vercelSizingForSize,
   vercelVcpusForSize,
   type VercelSizing,

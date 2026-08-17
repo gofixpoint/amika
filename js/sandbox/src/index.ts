@@ -36,6 +36,7 @@ export {
 export * from "./config";
 export type { DaytonaConfig } from "./providers/daytona/config";
 export type { FreestyleConfig } from "./providers/freestyle/config";
+export type { SailboxConfig } from "./providers/sailbox/config";
 export type { VercelConfig } from "./providers/vercel/config";
 // Server-only env → config-slice factory (the single provider env-var contract).
 export {
@@ -53,6 +54,14 @@ export {
   freestyleSizingForSize,
   type FreestyleSizing,
 } from "./providers/freestyle/sizing";
+export {
+  sailboxSizingForSize,
+  type SailboxSizing,
+} from "./providers/sailbox/sizing";
+export {
+  encodeSailboxImageRef,
+  decodeSailboxImageRef,
+} from "./providers/sailbox/image-ref";
 export {
   vercelSizingForSize,
   vercelVcpusForSize,
