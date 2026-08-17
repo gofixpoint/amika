@@ -9,9 +9,27 @@ import { fakeDaytonaSandbox } from "./test-support";
 type DaytonaSandbox = Parameters<typeof executeCommand>[0];
 
 describe("buildDaytonaCommand", () => {
-  it("runs a non-sudo command verbatim", () => {
-    expect(buildDaytonaCommand("echo hi")).toBe("echo hi");
-    expect(buildDaytonaCommand("echo hi", { sudo: false })).toBe("echo hi");
+  it("runs a non-sudo command inside its own bash -c", () => {
+    expect(buildDaytonaCommand("echo hi")).toBe("bash -c 'echo hi'");
+    expect(buildDaytonaCommand("echo hi", { sudo: false })).toBe(
+      "bash -c 'echo hi'",
+    );
+  });
+
+  it("confines a command's shell state to a child shell", () => {
+    // A session is a long-lived shell fed commands on stdin, so bare text
+    // would run `set -e` in *that* shell. It then exits before the agent
+    // records an exit status, and the synchronous exec never returns --
+    // `buildRefreshClonedRepoScript` opens with `set -e`, so every
+    // from-snapshot create hung.
+    const cmd = buildDaytonaCommand("set -e\ngit fetch --prune origin");
+    expect(cmd).toBe("bash -c 'set -e\ngit fetch --prune origin'");
+  });
+
+  it("quotes a command containing single quotes", () => {
+    expect(buildDaytonaCommand("git config x 'a b'")).toBe(
+      `bash -c 'git config x '"'"'a b'"'"''`,
+    );
   });
 
   it("wraps a sudo command in a root bash -c so a compound command runs fully elevated", () => {
@@ -48,6 +66,16 @@ describe("buildDaytonaSessionCommand", () => {
     expect(
       cmd.startsWith("cd '/home/amika' && export FOO='bar' && sudo -n"),
     ).toBe(true);
+  });
+
+  it("applies cwd and env ahead of the wrapper on the non-sudo path", () => {
+    // The wrapped child inherits both, so they still reach the command.
+    expect(
+      buildDaytonaSessionCommand("printenv FOO", {
+        cwd: "/home/amika",
+        env: { FOO: "bar" },
+      }),
+    ).toBe("cd '/home/amika' && export FOO='bar' && bash -c 'printenv FOO'");
   });
 
   it("rejects an environment variable name that is not shell-legal", () => {
