@@ -2,9 +2,9 @@
  * Build the per-provider config slices from environment variables.
  *
  * The single source of the sandbox provider ENV-VAR CONTRACT
- * (`DAYTONA_API_KEY`, `FREESTYLE_ENABLED`, `VERCEL_TOKEN`, …). The server
+ * (`DAYTONA_API_KEY`, `E2B_ENABLED`, `FREESTYLE_ENABLED`, `VERCEL_TOKEN`, …). The server
  * callers each used to hand-parse the identical set of vars into
- * `{ daytona, freestyle, vercel }`;
+ * `{ daytona, e2b, freestyle, vercel }`;
  * they now share this so the credential/enable contract lives in one place and
  * the two can't drift.
  *
@@ -19,12 +19,14 @@
  * registry; this is an opt-in convenience for building it.
  */
 import type { DaytonaConfig } from "./providers/daytona/config";
+import type { E2bConfig } from "./providers/e2b/config";
 import type { FreestyleConfig } from "./providers/freestyle/config";
 import type { VercelConfig } from "./providers/vercel/config";
 
-/** The three provider config slices a caller supplies to the registry. */
+/** The provider config slices a caller supplies to the registry. */
 export interface SandboxProviderConfigs {
   daytona: DaytonaConfig;
+  e2b: E2bConfig | null;
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
 }
@@ -60,8 +62,8 @@ function required(env: Env, name: string): string {
 /**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
- * Daytona is always configured (the baseline provider). Freestyle/Vercel are
- * gated on `FREESTYLE_ENABLED` / `VERCEL_ENABLED` being exactly `true` and are
+ * Daytona is always configured (the baseline provider). E2B/Freestyle/Vercel are
+ * gated on their `*_ENABLED` variables being exactly `true` and are
  * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
  * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
  * `FREESTYLE_STAGING_SNAPSHOTS` toggles Freestyle's
@@ -93,6 +95,10 @@ export function sandboxProviderConfigsFromEnv(
       }
     : null;
 
+  const e2b: E2bConfig | null = isEnabled(env.E2B_ENABLED)
+    ? { apiKey: required(env, "E2B_API_KEY") }
+    : null;
+
   const vercel: VercelConfig | null = isEnabled(env.VERCEL_ENABLED)
     ? {
         apiKey: required(env, "VERCEL_TOKEN"),
@@ -101,5 +107,5 @@ export function sandboxProviderConfigsFromEnv(
       }
     : null;
 
-  return { daytona, freestyle, vercel };
+  return { daytona, e2b, freestyle, vercel };
 }

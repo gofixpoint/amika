@@ -12,6 +12,7 @@ import type {
   SandboxProviderName,
 } from "./provider";
 import { daytonaCapabilities } from "./daytona/capabilities";
+import { e2bCapabilities } from "./e2b/capabilities";
 import { freestyleCapabilities } from "./freestyle/capabilities";
 import { vercelCapabilities } from "./vercel/capabilities";
 
@@ -23,6 +24,7 @@ export const SANDBOX_PROVIDER_CAPABILITIES: Record<
   SandboxProviderCapabilities
 > = {
   daytona: daytonaCapabilities,
+  e2b: e2bCapabilities,
   freestyle: freestyleCapabilities,
   vercel: vercelCapabilities,
 };
@@ -39,6 +41,7 @@ export const SANDBOX_PROVIDER_DISPLAY: Record<
   SandboxProviderDisplay
 > = {
   daytona: { label: "Daytona", badgeClassName: "bg-gray-900 text-white" },
+  e2b: { label: "E2B", badgeClassName: "bg-orange-600 text-white" },
   freestyle: {
     label: "Freestyle",
     badgeClassName: "bg-purple-600 text-white",
@@ -54,7 +57,12 @@ const UNKNOWN_BADGE_CLASS = "bg-gray-200 text-gray-700";
 function isKnownProvider(
   name: string | null | undefined,
 ): name is SandboxProviderName {
-  return name === "daytona" || name === "freestyle" || name === "vercel";
+  return (
+    name === "daytona" ||
+    name === "e2b" ||
+    name === "freestyle" ||
+    name === "vercel"
+  );
 }
 
 /** Capability flags for `name`, or null when the provider is unknown. */

@@ -35,6 +35,7 @@ export {
 // on-box constants, logging contract.
 export * from "./config";
 export type { DaytonaConfig } from "./providers/daytona/config";
+export type { E2bConfig } from "./providers/e2b/config";
 export type { FreestyleConfig } from "./providers/freestyle/config";
 export type { VercelConfig } from "./providers/vercel/config";
 // Server-only env → config-slice factory (the single provider env-var contract).
