@@ -26,12 +26,13 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a source sandbox
-    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
       stdout_json:
         name: "@string"
+        provider: "{{sandbox_provider}}"
     capture:
       source_sandbox: $.name
     resource:
@@ -117,12 +118,13 @@ steps:
       name: "{{source_sandbox}}"
 
   - name: fork a sandbox from the scrubbed snapshot
-    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --snapshot, "{{snapshot_ref}}", --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --snapshot, "{{snapshot_ref}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
       stdout_json:
         name: "@string"
+        provider: "{{sandbox_provider}}"
     capture:
       restored_sandbox: $.name
     resource:

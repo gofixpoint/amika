@@ -1,9 +1,9 @@
-name: Freestyle coder-dind base snapshot contract
-# This real-API case explicitly selects Freestyle and verifies its medium DinD
-# base snapshot, including a Docker container smoke test in the boot verifier.
+name: selected provider coder base snapshot contract
+# This real-API case verifies the selected provider's medium coder
+# base snapshot after the complete sandbox boot lifecycle.
 steps:
   - name: register the local SSH public key for sshv2
-    cmd: [secret, ssh-key, create, --name, "e2e-freestyle-dind-{{run_id}}", -o, json]
+    cmd: [secret, ssh-key, create, --name, "e2e-{{sandbox_provider}}-coder-{{run_id}}", -o, json]
     expect:
       exit: 0
       schema: SshPublicKeySummary
@@ -16,16 +16,16 @@ steps:
       name: "{{ssh_key_id}}"
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
-  - name: create a medium coder-dind sandbox from the Freestyle base snapshot
-    cmd: [sandbox, create, --remote, --provider, freestyle, --no-git, --preset, coder-dind, --size, m, --yes, -o, json]
+  - name: create a medium coder sandbox from the selected provider base snapshot
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, m, --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
       stdout_json:
         name: "@string"
-        provider: freestyle
+        provider: "{{sandbox_provider}}"
         snapshot: "@string"
-        sandbox_preset: coder-dind
+        sandbox_preset: coder
         sandbox_size: m
     capture:
       sandbox_name: $.name
@@ -34,7 +34,7 @@ steps:
       name: "{{sandbox_name}}"
       cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
-  - name: verify the booted DinD base snapshot contract
+  - name: verify the booted base snapshot contract
     cmd:
       - sandbox
       - sshv2
@@ -59,13 +59,12 @@ steps:
       sudo rm -f /tmp/verify/checks/11-no-root-build-cache.sh \
         /tmp/verify/checks/12-no-package-cache.sh
 
-      sudo env AMIKA_PRESET=coder-dind AMIKA_VERIFY_CHECKS_DIR=/tmp/verify/checks \
+      sudo env AMIKA_PRESET=coder AMIKA_VERIFY_CHECKS_DIR=/tmp/verify/checks \
         /usr/lib/amika-image/verify/run.sh boot
     expect:
       exit: 0
-      stdout_contains: '"id":"dind-smoke","status":"passed"'
 
-  - name: verify the default amikad OpenCode and Docker services are running
+  - name: verify the default amikad and OpenCode services are running
     cmd:
       - sandbox
       - sshv2
@@ -125,10 +124,6 @@ steps:
       }
 
       wait_for_service 60998
-      docker info >/dev/null || {
-        printf 'docker is not usable in the dind preset\n' >&2
-        exit 1
-      }
       printf '%s\n' 'default sandbox services are ready'
     expect:
       exit: 0

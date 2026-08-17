@@ -12,13 +12,14 @@ name: remote sandbox lifecycle (create, list, agent-send, stop, start, delete)
 # api-snapshot-lifecycle.yaml so that flakiness stays isolated.
 steps:
   - name: create a remote sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
       stdout_json:
         name: "@string"
         id: "@string"
+        provider: "{{sandbox_provider}}"
         services: "@array"
     capture:
       sandbox_name: $.name

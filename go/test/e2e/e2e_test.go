@@ -5,6 +5,7 @@ package e2e_test
 
 import (
 	"context"
+	"flag"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -39,6 +40,28 @@ const runAPIEnv = "AMIKA_RUN_E2E_API"
 
 // apiCasePrefix marks a case file as reaching the real remote API.
 const apiCasePrefix = "api-"
+
+var sandboxProvider = flag.String(
+	"sandbox-provider",
+	providerFromEnv(),
+	"sandbox provider used by every remote E2E sandbox creation",
+)
+
+func providerFromEnv() string {
+	if provider := strings.TrimSpace(os.Getenv("E2E_SANDBOX_PROVIDER")); provider != "" {
+		return provider
+	}
+	return "daytona"
+}
+
+func validSandboxProvider(provider string) bool {
+	switch provider {
+	case "daytona", "e2b", "freestyle", "vercel":
+		return true
+	default:
+		return false
+	}
+}
 
 // cleanupReserve is how much of the `go test` -timeout budget is held back
 // for cleanup. Nothing recovers a run that hits that timeout: it panics the
@@ -109,6 +132,9 @@ func baseEnvFor(isAPICase bool) []string {
 func TestE2ECases(t *testing.T) {
 	if os.Getenv(runE2EEnv) != "1" {
 		t.Skipf("set %s=1 to run black-box E2E CLI cases", runE2EEnv)
+	}
+	if !validSandboxProvider(*sandboxProvider) {
+		t.Fatalf("invalid -sandbox-provider %q (want daytona, e2b, freestyle, or vercel)", *sandboxProvider)
 	}
 
 	bin := testutil.BuildAmikaBinary(t)
@@ -205,7 +231,8 @@ func TestE2ECases(t *testing.T) {
 				SchemaDoc: schemaDoc,
 				// Exposed to cases as {{run_id}} so a case that names a
 				// remote resource can make the name unique to this run.
-				RunID: runID,
+				RunID:           runID,
+				SandboxProvider: *sandboxProvider,
 				// Offline cases (not api-*) must never reach the real API,
 				// even on a host that exports AMIKA_API_KEY/AMIKA_API_URL
 				// ambiently (this dev environment does). Scrub those from the

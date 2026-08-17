@@ -302,6 +302,10 @@ type Options struct {
 	// it, so two runs sharing an account cannot collide with each other or
 	// adopt a same-named resource the account already had.
 	RunID string
+	// SandboxProvider, if set, is exposed to every case as the
+	// `{{sandbox_provider}}` template variable. The E2E entry point sets it once
+	// for the run so every remote sandbox operation targets the same provider.
+	SandboxProvider string
 	// StepTimeout bounds how long any single step may run before it is
 	// killed and the step fails. It stops one wedged command from consuming
 	// a whole run's budget. Defaults to DefaultStepTimeout when zero.
@@ -367,6 +371,9 @@ func New(opts Options) (*Runner, error) {
 	vars := map[string]string{}
 	if opts.RunID != "" {
 		vars["run_id"] = opts.RunID
+	}
+	if opts.SandboxProvider != "" {
+		vars["sandbox_provider"] = opts.SandboxProvider
 	}
 	return &Runner{
 		opts:   opts,
