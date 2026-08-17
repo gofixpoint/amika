@@ -89,6 +89,11 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 
 		provider, _ := cmd.Flags().GetString("provider")
+		// The provider flag defaults to empty so remote creates defer to the
+		// control plane. Local creates continue to use their only provider.
+		if provider == "" {
+			provider = "docker"
+		}
 		name, _ := cmd.Flags().GetString("name")
 		image, _ := cmd.Flags().GetString("image")
 		preset, _ := cmd.Flags().GetString("preset")
@@ -250,7 +255,14 @@ var sandboxCreateCmd = &cobra.Command{
 			runtimeMounts = append(runtimeMounts, v)
 		}
 
-		containerID, err := sandbox.CreateDockerSandbox(name, image, runtimeMounts, envStrs, publishedPorts)
+		containerID, err := sandbox.CreateDockerSandbox(
+			name,
+			image,
+			runtimeMounts,
+			envStrs,
+			publishedPorts,
+			resolvedImage.BuildPreset != "",
+		)
 		if err != nil {
 			rollbackVolumes()
 			return err
@@ -315,6 +327,7 @@ var sandboxCreateCmd = &cobra.Command{
 
 func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentity) error {
 	name, _ := cmd.Flags().GetString("name")
+	provider := requestedRemoteProvider(cmd)
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
 	preset, _ := cmd.Flags().GetString("preset")
@@ -411,8 +424,10 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 
 	req := apiclient.CreateSandboxRequest{
 		Name: name,
-		// Provider is intentionally left unset: the remote API falls back to its
-		// configured default provider (SANDBOX_PROVIDER) when none is specified.
+		// An unchanged hidden --provider flag produces an empty value, which JSON
+		// omits so the API still applies SANDBOX_PROVIDER. Explicit values are
+		// forwarded for provider-specific operational and E2E checks.
+		Provider:         provider,
 		RepoURL:          gitURL,
 		EnvVars:          envVars,
 		SecretEnvVars:    secretEnvVars,
@@ -470,6 +485,14 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	}
 
 	return nil
+}
+
+func requestedRemoteProvider(cmd *cobra.Command) string {
+	if !cmd.Flags().Changed("provider") {
+		return ""
+	}
+	provider, _ := cmd.Flags().GetString("provider")
+	return provider
 }
 
 func printResolvedAgentCredentials(cmd *cobra.Command, resolved []apiclient.ResolvedAgentCredential) {

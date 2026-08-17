@@ -71,7 +71,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 
 ## Runtime Dependencies
 
-- **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `claude`) are auto-built on first use from Dockerfiles in `go/internal/sandbox/presets/`.
+- **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `coder-dind`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
 - **rsync** is required by the `materialize` command to copy output files.
 
 ## Code Structure
@@ -122,7 +122,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - `bin/amika-server` — Wrapper script that auto-builds and runs `dist/amika-server`
 - `bin/amikalog` — Wrapper script that auto-builds and runs `dist/amikalog`
 - `materialization-scripts/` — Example data materialization scripts
-- `go/internal/sandbox/presets/` — Dockerfiles for `coder` and `claude` presets
+- `sandbox-image/` — Shared manifest, build steps, assets, verification suite, and generated Dockerfiles
 - `sdk/typescript/` — TypeScript SDK
 
 ## CLI Output Format (`--output`)

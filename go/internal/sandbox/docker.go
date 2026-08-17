@@ -11,10 +11,13 @@ import (
 	"strings"
 )
 
+const localSandboxLifecycleCommand = `sudo AMIKA_AGENT_CWD="$AMIKA_AGENT_CWD" AMIKA_OPENCODE_WEB="$AMIKA_OPENCODE_WEB" OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" /usr/lib/amikad/run-hook.sh /usr/lib/amikad/pre-setup.sh && /usr/lib/amikad/run-hook.sh /usr/local/etc/amikad/setup/setup.sh && sudo /usr/lib/amikad/run-hook.sh /usr/lib/amikad/post-setup.sh && exec "$@"`
+
 // CreateDockerSandbox creates a long-running Docker container with the given
-// name, image, and optional bind mounts. Returns the container ID.
-func CreateDockerSandbox(name, image string, mounts []MountBinding, env []string, ports []PortBinding) (string, error) {
-	args := buildDockerRunArgs(name, image, mounts, env, ports)
+// name, image, and optional bind mounts. presetLifecycle runs the Amika hooks
+// before the long-lived sandbox command. Returns the container ID.
+func CreateDockerSandbox(name, image string, mounts []MountBinding, env []string, ports []PortBinding, presetLifecycle bool) (string, error) {
+	args := buildDockerRunArgs(name, image, mounts, env, ports, presetLifecycle)
 	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -156,7 +159,7 @@ func CopyHostDirToVolume(volumeName, hostDir string) error {
 	return nil
 }
 
-func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string, ports []PortBinding) []string {
+func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string, ports []PortBinding, presetLifecycle bool) []string {
 	args := []string{"run", "-d", "--name", name}
 	for _, m := range mounts {
 		vol := mountVolumeSpec(m)
@@ -175,8 +178,18 @@ func buildDockerRunArgs(name, image string, mounts []MountBinding, env []string,
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
+	if presetLifecycle {
+		return AppendPresetLifecycleCommand(args, image, "tail", "-f", "/dev/null")
+	}
 	args = append(args, image, "tail", "-f", "/dev/null")
 	return args
+}
+
+// AppendPresetLifecycleCommand appends a generated preset image and a command
+// wrapped by the local Amika lifecycle hooks to docker run arguments.
+func AppendPresetLifecycleCommand(args []string, image string, command ...string) []string {
+	args = append(args, image, "/bin/bash", "-c", localSandboxLifecycleCommand, "--")
+	return append(args, command...)
 }
 
 func portPublishSpec(p PortBinding) string {

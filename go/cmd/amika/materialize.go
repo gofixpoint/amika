@@ -258,23 +258,28 @@ Examples:
 		}
 
 		// Script auto-mount and command
+		var containerCommand []string
 		if script != "" {
 			absScript, err := filepath.Abs(script)
 			if err != nil {
 				return fmt.Errorf("failed to resolve script path: %w", err)
 			}
 			dockerArgs = append(dockerArgs, "-v", absScript+":/.amika/script:ro")
-			dockerArgs = append(dockerArgs, image, "/.amika/script")
-			dockerArgs = append(dockerArgs, args...)
+			containerCommand = append([]string{"/.amika/script"}, args...)
 		} else {
 			if interactive {
 				// In interactive mode, run the command directly (not via bash -c)
 				// so the TTY works properly with programs like claude
-				dockerArgs = append(dockerArgs, image)
-				dockerArgs = append(dockerArgs, strings.Fields(cmdStr)...)
+				containerCommand = strings.Fields(cmdStr)
 			} else {
-				dockerArgs = append(dockerArgs, image, "bash", "-c", cmdStr)
+				containerCommand = []string{"bash", "-c", cmdStr}
 			}
+		}
+		if resolvedImage.BuildPreset != "" {
+			dockerArgs = sandbox.AppendPresetLifecycleCommand(dockerArgs, image, containerCommand...)
+		} else {
+			dockerArgs = append(dockerArgs, image)
+			dockerArgs = append(dockerArgs, containerCommand...)
 		}
 
 		// Run the container

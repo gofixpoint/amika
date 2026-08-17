@@ -57,7 +57,7 @@ jobs:
           DAYTONA_STAGING_API_KEY: ${{ secrets.DAYTONA_STAGING_API_KEY }}
         run: |
           ./bin/build-docker-images \
-            amika/daytona-coder \
-            amika/daytona-coder-dind \
+            amika/coder \
+            amika/coder-dind \
             --push-daytona-vm \
             --ci

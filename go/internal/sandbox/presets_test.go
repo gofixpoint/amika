@@ -3,148 +3,22 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestGetPresetDockerfile_ReturnsDockerfilesForKnownPresets(t *testing.T) {
-	for _, preset := range []string{"base", "coder", "claude", "daytona-coder", "daytona-claude", "dind", "coder-dind", "daytona-coder-dind"} {
+func TestGetPresetDockerfile_ReturnsGeneratedPresets(t *testing.T) {
+	for _, preset := range AllowedPresets {
 		data, err := GetPresetDockerfile(preset)
 		if err != nil {
 			t.Fatalf("unexpected error for %s: %v", preset, err)
 		}
-		if len(data) == 0 {
-			t.Fatalf("expected non-empty Dockerfile for %s", preset)
-		}
-	}
-}
-
-func TestGetPresetDockerfile_PreservesAgentCWDForPreSetup(t *testing.T) {
-	for _, preset := range []string{"coder", "claude", "coder-dind"} {
-		data, err := GetPresetDockerfile(preset)
-		if err != nil {
-			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
-		}
 		content := string(data)
-		if !strings.Contains(content, `sudo AMIKA_AGENT_CWD=`) || !strings.Contains(content, `/usr/lib/amikad/run-hook.sh /usr/lib/amikad/pre-setup.sh`) {
-			t.Fatalf("%s Dockerfile does not preserve AMIKA_AGENT_CWD for pre-setup", preset)
+		if !strings.Contains(content, "COPY sandbox-image/steps/") {
+			t.Fatalf("%s does not use the shared bundle", preset)
 		}
-	}
-}
-
-func TestGetPresetDockerfile_PreservesOpenCodeEnvForPreSetup(t *testing.T) {
-	for _, preset := range []string{"coder", "claude", "coder-dind"} {
-		data, err := GetPresetDockerfile(preset)
-		if err != nil {
-			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
-		}
-		content := string(data)
-		if !strings.Contains(content, `AMIKA_OPENCODE_WEB=\"$AMIKA_OPENCODE_WEB\"`) {
-			t.Fatalf("%s Dockerfile does not preserve AMIKA_OPENCODE_WEB for pre-setup", preset)
-		}
-		if !strings.Contains(content, `OPENCODE_SERVER_PASSWORD=\"$OPENCODE_SERVER_PASSWORD\"`) {
-			t.Fatalf("%s Dockerfile does not preserve OPENCODE_SERVER_PASSWORD for pre-setup", preset)
-		}
-	}
-}
-
-func TestGetPresetDockerfile_RunsAllHooksThroughLogger(t *testing.T) {
-	for _, preset := range []string{"coder", "claude", "coder-dind"} {
-		data, err := GetPresetDockerfile(preset)
-		if err != nil {
-			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
-		}
-		content := string(data)
-		for _, want := range []string{
-			`/usr/lib/amikad/run-hook.sh /usr/lib/amikad/pre-setup.sh`,
-			`/usr/lib/amikad/run-hook.sh /usr/local/etc/amikad/setup/setup.sh`,
-			`/usr/lib/amikad/run-hook.sh /usr/lib/amikad/post-setup.sh`,
-		} {
-			if !strings.Contains(content, want) {
-				t.Fatalf("%s Dockerfile missing hook logger invocation %q", preset, want)
-			}
-		}
-	}
-}
-
-func TestGetPresetDockerfile_BaseCreatesAmikaAndAmikadDirectories(t *testing.T) {
-	data, err := GetPresetDockerfile("base")
-	if err != nil {
-		t.Fatalf("unexpected error loading base preset: %v", err)
-	}
-
-	content := string(data)
-	for _, want := range []string{
-		"/var/log/amikad /var/log/amika",
-		"/usr/lib/amikad /usr/lib/amika",
-		"/run/amikad /run/amika",
-		"/usr/local/etc/amikad /usr/local/etc/amika",
-		"/var/lib/amikad /var/lib/amika",
-		"/tmp/amikad /tmp/amika",
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("base Dockerfile missing paired amika/amikad directories %q", want)
-		}
-	}
-}
-
-func TestGetPresetDockerfile_BaseBuildsPinnedAmikad(t *testing.T) {
-	data, err := GetPresetDockerfile("base")
-	if err != nil {
-		t.Fatal(err)
-	}
-	contents := string(data)
-	for _, want := range []string{
-		"FROM golang:1.25.3-bookworm AS amikad-builder",
-		"go install \"github.com/gofixpoint/amika/go/cmd/amikad@${AMIKAD_SOURCE_REF}\"",
-		"COPY --from=amikad-builder /out/amikad /usr/local/bin/amikad",
-	} {
-		if !strings.Contains(contents, want) {
-			t.Fatalf("base Dockerfile missing pinned amikad build %q", want)
-		}
-	}
-	if !regexp.MustCompile(`(?m)^ARG AMIKAD_SOURCE_REF=[0-9a-f]{40}$`).MatchString(contents) {
-		t.Fatal("base Dockerfile must pin amikad to a full source commit")
-	}
-}
-
-func TestGetPresetDockerfile_BaseChownsUserManagedAmikaDirectories(t *testing.T) {
-	data, err := GetPresetDockerfile("base")
-	if err != nil {
-		t.Fatalf("unexpected error loading base preset: %v", err)
-	}
-
-	content := string(data)
-	if !strings.Contains(content, "RUN chown -R amika:amika") {
-		t.Fatal("base Dockerfile should chown user-managed amika directories to the amika user")
-	}
-	for _, want := range []string{
-		"/var/log/amika",
-		"/usr/lib/amika",
-		"/run/amika",
-		"/usr/local/etc/amika",
-		"/var/lib/amika",
-		"/tmp/amika",
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("base Dockerfile missing amika directory ownership handoff for %q", want)
-		}
-	}
-}
-
-func TestGetPresetDockerfile_DaytonaVariantsClearEntrypoint(t *testing.T) {
-	for _, preset := range []string{"daytona-coder", "daytona-claude", "daytona-coder-dind"} {
-		data, err := GetPresetDockerfile(preset)
-		if err != nil {
-			t.Fatalf("unexpected error loading %s preset: %v", preset, err)
-		}
-		content := string(data)
-		if !strings.Contains(content, "ENTRYPOINT []") {
-			t.Fatalf("%s Dockerfile does not clear the inherited entrypoint", preset)
-		}
-		if strings.Contains(content, "/usr/local/etc/amikad/setup/setup.sh") || strings.Contains(content, "/usr/lib/amikad/pre-setup.sh") {
-			t.Fatalf("%s Dockerfile should not invoke Amika setup hooks", preset)
+		if strings.Contains(content, "ENTRYPOINT") || strings.Contains(content, "CMD") {
+			t.Fatalf("%s should leave lifecycle metadata to the runtime", preset)
 		}
 	}
 }
@@ -159,34 +33,23 @@ func TestGetPresetDockerfile_UnknownPresetErrors(t *testing.T) {
 	}
 }
 
-func TestWritePresetBuildContext_ExtractsZshrc(t *testing.T) {
+func TestWritePresetBuildContext_ExtractsBundle(t *testing.T) {
 	contextDir, cleanup, err := WritePresetBuildContext("coder")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer cleanup()
 
-	// Verify .zshrc exists at the root of the context dir.
-	zshrcPath := filepath.Join(contextDir, ".zshrc")
-	data, err := os.ReadFile(zshrcPath)
-	if err != nil {
-		t.Fatalf("failed to read .zshrc from context dir: %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("expected non-empty .zshrc")
-	}
-
 	for _, relPath := range []string{
-		filepath.Join("base", "Dockerfile"),
-		filepath.Join("coder", "Dockerfile"),
-		filepath.Join("claude", "Dockerfile"),
-		filepath.Join("daytona-coder", "Dockerfile"),
-		filepath.Join("daytona-claude", "Dockerfile"),
-		filepath.Join("dind", "Dockerfile"),
-		filepath.Join("coder-dind", "Dockerfile"),
-		filepath.Join("daytona-coder-dind", "Dockerfile"),
+		filepath.Join("sandbox-image", "manifest.toml"),
+		filepath.Join("sandbox-image", "versions.env"),
+		filepath.Join("sandbox-image", "assets", "stable", ".zshrc"),
+		filepath.Join("sandbox-image", "generated", "coder.Dockerfile"),
+		filepath.Join("sandbox-image", "generated", "coder-dind.Dockerfile"),
+		filepath.Join("sandbox-image", "steps", "10-os-packages.sh"),
+		filepath.Join("sandbox-image", "verify", "run.sh"),
 	} {
-		data, err = os.ReadFile(filepath.Join(contextDir, relPath))
+		data, err := os.ReadFile(filepath.Join(contextDir, relPath))
 		if err != nil {
 			t.Fatalf("failed to read %s from context dir: %v", relPath, err)
 		}
@@ -196,20 +59,20 @@ func TestWritePresetBuildContext_ExtractsZshrc(t *testing.T) {
 	}
 }
 
-func TestWritePresetBuildContext_ExtractsBashrc(t *testing.T) {
+func TestWritePresetBuildContext_MakesScriptsExecutable(t *testing.T) {
 	contextDir, cleanup, err := WritePresetBuildContext("coder")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer cleanup()
 
-	bashrcPath := filepath.Join(contextDir, ".bashrc")
-	data, err := os.ReadFile(bashrcPath)
+	path := filepath.Join(contextDir, "sandbox-image", "steps", "10-os-packages.sh")
+	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("failed to read .bashrc from context dir: %v", err)
+		t.Fatal(err)
 	}
-	if len(data) == 0 {
-		t.Fatal("expected non-empty .bashrc")
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("script mode = %o, want 755", info.Mode().Perm())
 	}
 }
 

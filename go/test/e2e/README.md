@@ -96,6 +96,36 @@ operation under test consumes a resource, such as `snapshot create --mode
 scrub_and_delete` deleting its source sandbox. If the step fails, the ledger
 entry remains available for best-effort cleanup.
 
+### Remote commands (`sandbox sshv2`)
+
+A command to run inside a sandbox must be **one** `cmd` element, holding the
+whole script:
+
+```yaml
+    cmd:
+      - sandbox
+      - sshv2
+      - "{{sandbox_name}}"
+      - --
+      - |                                  # the entire remote command, one element
+        set -eu
+        printf '%s\n' 'hello'
+```
+
+Splitting it across elements does not work, and fails in ways that look
+unrelated to quoting. `amika` passes argv straight through to the system
+`ssh`, which joins everything after the destination with spaces into a single
+string; the remote shell then re-splits it. Any grouping the elements had is
+gone by the time it runs.
+
+That is why a wrapper like `[sh, -lc, <script>]` breaks: the remote receives
+`sh -lc <first-word-of-script> <rest...>`, so `sh -lc` takes only that first
+word as its command and the rest become `$0`, `$1`, and so on. A step written
+that way once failed with nothing but a bare `sudo` usage dump.
+
+No wrapper is needed anyway: `sshd` already runs the command string through
+the login user's shell. Write the script directly, as above.
+
 ### Variable substitution
 
 One variable is predefined: `{{run_id}}`, a timestamp unique to the whole
@@ -230,9 +260,55 @@ resources are deleted first) and keeps going even if one cleanup command
 fails, logging the failure via `t.Log` and recording it in
 `cleanup-results.json`.
 
-To reap a run that crashed hard enough to skip `t.Cleanup` entirely (e.g.
-the test process was killed), point `runner.CleanupFromLedgerFile` at that
-run's leftover `ledger.json`:
+### Finishing before `go test` kills the run
+
+Cleanup only works if the process lives long enough to run it, and `go test`
+gives no warning: when its `-timeout` elapses it panics the binary from its
+own goroutine, which no deferred cleanup survives. The suite therefore stays
+ahead of that deadline rather than being surprised by it.
+
+`e2e_test.go` reads the real deadline from `t.Deadline()` and holds back a
+2m `cleanupReserve`. No step may run into that window, and no new case starts
+without a further 5m of runway, so the run stops with a clear message naming
+how many cases went unrun instead of dying mid-step. Raise `-timeout` (see
+`E2E_API_TIMEOUT`) when that happens.
+
+Independently, every step is bounded by `Options.StepTimeout` (10m by
+default), so one wedged command fails its own step instead of consuming the
+whole run's budget.
+
+SIGINT and SIGTERM are handled the same way: the interrupt cancels the
+running step, the case fails normally, and cleanup runs. A second interrupt
+gets the default behavior and kills the binary, in case cleanup is itself
+wedged. Only `SIGKILL` and power loss still leak.
+
+### Reclaiming a killed run
+
+Only a process that dies outright — SIGKILL, a crashed machine — still
+skips cleanup, leaving resources recorded in a ledger but never deleted.
+`make sweep-e2e` reclaims those:
+
+```bash
+make sweep-e2e SWEEP_ARGS=-dry-run    # show what would be deleted
+make sweep-e2e                        # delete it
+```
+
+It replays the cleanup argv of every case directory holding a ledger with
+entries and no `cleanup-results.json` beside it. Each entry carries the
+state directory and API URL it was created with, so the delete targets the
+deployment that created it.
+
+**Sweeping is never automatic**, because an unreclaimed ledger looks
+exactly like one belonging to a case still in flight. Doing it on every run
+would race a concurrent run and delete the sandbox it is still using. For
+the same reason the sweeper skips any run directory whose owning process is
+still alive (each run records its pid in `run.json`), and `-min-age` can
+require a run to have been abandoned for some time before it is touched.
+
+A reclaimed directory gets a `cleanup-results.json` even when a delete
+failed, so it is swept at most once: re-deleting a resource that may
+already be gone is worse than reporting it. A failure is printed with the
+argv needed to finish by hand. To reap one specific ledger directly:
 
 ```go
 results, err := runner.CleanupFromLedgerFile(binPath, "/path/to/.runs/<run-id>/<case>/ledger.json", nil)
@@ -255,6 +331,23 @@ Case files fall into two tiers, distinguished by filename:
 make test-e2e       # offline cases only (api-*.yaml are skipped)
 make test-e2e-api   # offline + real-API cases (needs AMIKA_API_KEY/AMIKA_API_URL)
 ```
+
+Every api-* case provisions and tears down real remote resources and the
+cases run serially, so a full real-API run takes tens of minutes: far longer
+than `go test`'s default 10m binary timeout. `make test-e2e-api` therefore
+passes `-timeout $(E2E_API_TIMEOUT)` (45m by default, overridable:
+`make test-e2e-api E2E_API_TIMEOUT=1h`). Pass the same flag when invoking
+`go test` directly:
+
+```bash
+AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C go test -timeout 45m ./test/e2e/...
+```
+
+Do not leave the default in place and let the run hit it. A `go test` timeout
+panics the test binary mid-step rather than failing the subtest, so the
+deferred ledger cleanup never runs and whatever the in-flight case already
+created stays alive until someone reclaims it (see "Reclaiming a killed
+run").
 
 Real-API cases that create something must declare a `resource` block so the
 ledger can delete it afterward (see "Resources and cleanup" above). A

@@ -83,8 +83,8 @@ amika sandbox create --name dev-sandbox --git https://github.com/octocat/Hello-W
 # Skip git auto-detection and create a bare sandbox
 amika sandbox create --name dev-sandbox --no-git
 
-# Use the claude preset image
-amika sandbox create --name claude-box --preset claude
+# Use the Docker-in-Docker preset image
+amika sandbox create --name docker-box --preset coder-dind
 
 # Use a custom Docker image
 amika sandbox create --name custom-box --image myimage:latest
@@ -724,7 +724,7 @@ amika materialize --script ./transform.sh --outdir /app/results --destdir ./outp
 amika materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...
 
 # Use a preset image
-amika materialize --preset claude --cmd "claude --help" --destdir /tmp/out
+amika materialize --preset coder --cmd "claude --help" --destdir /tmp/out
 
 # Run a setup script before the main command
 amika materialize --setup-script ./install-deps.sh --cmd "echo done" --destdir /tmp/out

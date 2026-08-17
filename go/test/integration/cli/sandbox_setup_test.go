@@ -3,7 +3,7 @@
 // user-provided setup.sh hook.
 //
 // Background:
-// When a sandbox starts, the ENTRYPOINT runs three hooks in order:
+// When a sandbox starts, the local runtime runs three hooks in order:
 //   1. pre-setup.sh  — root-owned initialization; writes the agent working
 //      directory to /var/lib/amikad/agent-cwd.
 //   2. setup.sh      — user-provided hook; should see AMIKA_AGENT_CWD in the
@@ -54,7 +54,7 @@ func TestSetupScript_CWDAndEnv(t *testing.T) {
 	expectedCWD := "/home/amika/workspace"
 
 	// Run materialize with a preset image so the full lifecycle
-	// (pre-setup -> setup -> post-setup) executes via the ENTRYPOINT.
+	// (pre-setup -> setup -> post-setup) executes via the runtime wrapper.
 	// AMIKA_OPENCODE_WEB=0 disables the opencode web server which
 	// would otherwise require OPENCODE_SERVER_PASSWORD.
 	cmd := exec.Command(bin,

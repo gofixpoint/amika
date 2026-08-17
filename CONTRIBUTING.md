@@ -106,7 +106,11 @@ docs/                    In-depth documentation
 
 ## Preset Images
 
-The `coder` and `claude` preset Docker images are auto-built on first use from Dockerfiles in `go/internal/sandbox/presets/`. See [docs/presets.md](docs/presets.md) for details.
+The `coder` and `coder-dind` preset Docker images are auto-built on first use
+from the shared bundle in `sandbox-image/`. See
+[docs/presets.md](docs/presets.md) for usage and
+[sandbox-image/README.md](sandbox-image/README.md) for the image change
+workflow.
 
 ## Releasing
 

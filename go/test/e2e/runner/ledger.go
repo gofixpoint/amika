@@ -12,6 +12,17 @@ import (
 	"time"
 )
 
+const (
+	// ledgerFileName is the per-case record of created resources, flushed
+	// after every registration so a crash still leaves it on disk.
+	ledgerFileName = "ledger.json"
+	// cleanupResultsFileName is the per-case record of what cleanup deleted.
+	// Its presence beside a ledger also marks that case directory as already
+	// reclaimed, which is how SweepStaleRuns tells a finished run from a
+	// killed one.
+	cleanupResultsFileName = "cleanup-results.json"
+)
+
 // Entry records one resource created during a run that must be cleaned up
 // afterward, and the argv that cleans it up.
 type Entry struct {
@@ -247,7 +258,7 @@ func WriteCleanupResults(dir string, results []CleanupResult) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create run directory: %w", err)
 	}
-	path := filepath.Join(dir, "cleanup-results.json")
+	path := filepath.Join(dir, cleanupResultsFileName)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write cleanup results: %w", err)
 	}

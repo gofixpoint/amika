@@ -1,6 +1,8 @@
 # Preset Images
 
-Amika includes preset Docker images that come pre-configured with common development tools and coding agent CLIs. Presets are used by both `sandbox create` and `materialize`.
+Amika includes preset Docker images that come pre-configured with common
+development tools and coding agent CLIs. Presets are used by both
+`sandbox create` and `materialize`.
 
 ## Available Presets
 
@@ -21,44 +23,43 @@ The default preset, used when no `--image` or `--preset` flag is provided.
 - Claude Code (`@anthropic-ai/claude-code`)
 - Codex (`@openai/codex`)
 - OpenCode (`opencode-ai`)
-- amika CLI, amikalog CLI
+- Pi (`@earendil-works/pi-coding-agent`)
+- amika, amikalog, and amikad CLIs
 
-### `claude`
+### `coder-dind`
 
-A lighter preset focused on Claude Code only.
+A variant of `coder` that also includes Docker-in-Docker support.
 
-**Image name:** `amika/claude:latest`
+**Image name:** `amika/coder-dind:latest`
 
 **Base:** Ubuntu 24.04
 
 **Included tools:**
 
-- git, curl, zsh, build-essential
-- Python 3 + pip
-- Node.js 22, pnpm
-- TypeScript, tsx
-- Claude Code (`@anthropic-ai/claude-code`)
-- amika CLI, amikalog CLI
+- Everything in `coder`
+- Docker Engine and Buildx
 
 ## Usage
 
 ```bash
 # Explicit preset selection
 amika sandbox create --preset coder
-amika sandbox create --preset claude
+amika sandbox create --preset coder-dind
 
 # Default behavior (uses coder preset automatically)
 amika sandbox create
 
 # Materialize with a preset
-amika materialize --preset claude --cmd "claude --help" --destdir /tmp/out
+amika materialize --preset coder --cmd "claude --help" --destdir /tmp/out
 ```
 
 The `--preset` and `--image` flags are mutually exclusive. Use `--image` to specify a custom Docker image instead.
 
 ## Auto-Build
 
-Preset images are built automatically on first use. When you run a command that needs a preset image and it doesn't exist locally, Amika builds it from the bundled Dockerfile and tags it. This one-time build may take a few minutes.
+Preset images are built automatically on first use. When you run a command that
+needs a preset image and it does not exist locally, Amika builds it from the
+embedded shared bundle and tags it. This one-time build may take a few minutes.
 
 To force a rebuild (e.g. after updating Amika), remove the existing image:
 
@@ -70,7 +71,9 @@ The next command that uses the preset will rebuild it.
 
 ## Setup Scripts
 
-Both presets include an ENTRYPOINT that runs `/usr/local/etc/amikad/setup/setup.sh` before the main command. By default this is a no-op script. When creating a sandbox, use `--setup-script` to inject your own setup logic:
+The local Docker runtime runs `/usr/local/etc/amikad/setup/setup.sh` before the
+sandbox command. By default this is a no-op script. When creating a sandbox,
+use `--setup-script` to inject your own setup logic:
 
 ```bash
 amika sandbox create --setup-script ./install-deps.sh
