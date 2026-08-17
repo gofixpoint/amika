@@ -5,6 +5,7 @@ package e2e_test
 
 import (
 	"context"
+	"flag"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,6 +16,12 @@ import (
 
 	"github.com/gofixpoint/amika/go/test/e2e/runner"
 	"github.com/gofixpoint/amika/go/test/testutil"
+)
+
+var sandboxProvider = flag.String(
+	"sandbox-provider",
+	"daytona",
+	"sandbox provider for remote API cases (daytona, freestyle, sailbox, or vercel)",
 )
 
 // runE2EEnv gates this test: it drives a real subprocess CLI and, per
@@ -84,6 +91,33 @@ func TestE2ECaseFilesLoad(t *testing.T) {
 	}
 }
 
+// TestRemoteCreatesSelectTheSuiteProvider prevents a new real-API create step
+// from silently falling back to the deployment's default provider.
+func TestRemoteCreatesSelectTheSuiteProvider(t *testing.T) {
+	moduleRoot := testutil.FindModuleRoot(t)
+	caseFiles, err := runner.DiscoverCases(filepath.Join(moduleRoot, "test", "e2e", "cases"))
+	if err != nil {
+		t.Fatalf("discover cases: %v", err)
+	}
+	for _, caseFile := range caseFiles {
+		if !strings.HasPrefix(filepath.Base(caseFile), apiCasePrefix) {
+			continue
+		}
+		c, err := runner.LoadCase(caseFile)
+		if err != nil {
+			t.Fatalf("load case %s: %v", caseFile, err)
+		}
+		for _, step := range c.Steps {
+			if !isRemoteSandboxCreate(step.Cmd) {
+				continue
+			}
+			if !hasArgPair(step.Cmd, "--provider", "{{sandbox_provider}}") {
+				t.Errorf("%s step %q: remote sandbox create must select {{sandbox_provider}}", filepath.Base(caseFile), step.Name)
+			}
+		}
+	}
+}
+
 // baseEnvFor returns the base environment for a case's steps. API cases get
 // the process environment unchanged (nil defers to os.Environ() in the
 // runner). Offline cases get os.Environ() with credential vars removed.
@@ -125,6 +159,9 @@ func TestE2ECases(t *testing.T) {
 	}
 	if len(files) == 0 {
 		t.Fatalf("no case files found in %s", casesDir)
+	}
+	if err := runner.ValidateSandboxProvider(*sandboxProvider); err != nil {
+		t.Fatal(err)
 	}
 
 	// The run ID is generated here, from the OS clock, rather than inside
@@ -206,6 +243,8 @@ func TestE2ECases(t *testing.T) {
 				// Exposed to cases as {{run_id}} so a case that names a
 				// remote resource can make the name unique to this run.
 				RunID: runID,
+				// Every remote create command selects the same provider.
+				SandboxProvider: *sandboxProvider,
 				// Offline cases (not api-*) must never reach the real API,
 				// even on a host that exports AMIKA_API_KEY/AMIKA_API_URL
 				// ambiently (this dev environment does). Scrub those from the
@@ -242,4 +281,26 @@ func TestE2ECases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func isRemoteSandboxCreate(args []string) bool {
+	return len(args) >= 2 && args[0] == "sandbox" && args[1] == "create" && hasArg(args, "--remote")
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArgPair(args []string, first, second string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == first && args[i+1] == second {
+			return true
+		}
+	}
+	return false
 }

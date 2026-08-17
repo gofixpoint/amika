@@ -4,6 +4,7 @@ GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 GOFMT_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
 E2E_API_TIMEOUT ?= 45m
+E2E_SANDBOX_PROVIDER ?= daytona
 
 export GOCACHE := $(CURDIR)/.gocache
 export GOTMPDIR := $(CURDIR)/.gotmp
@@ -54,11 +55,13 @@ test-contract: goenv
 	go -C $(GO_DIR) test ./test/contract/...
 
 test-e2e: goenv
-	AMIKA_RUN_E2E=1 go -C $(GO_DIR) test ./test/e2e/...
+	go -C $(GO_DIR) test ./test/e2e/runner/...
+	AMIKA_RUN_E2E=1 go -C $(GO_DIR) test ./test/e2e -sandbox-provider $(E2E_SANDBOX_PROVIDER)
 
 # Runs the offline E2E cases AND the api-*.yaml cases that hit the real
 # remote API (which may create billable resources). Requires credentials
-# (AMIKA_API_KEY / AMIKA_API_URL) in the environment.
+# (AMIKA_API_KEY / AMIKA_API_URL) in the environment. Select a non-default
+# provider with `E2E_SANDBOX_PROVIDER=sailbox`.
 #
 # Each api-* case provisions and tears down real remote resources and takes
 # minutes, so the suite runs well past `go test`'s default 10m timeout. That
@@ -66,7 +69,8 @@ test-e2e: goenv
 # skipping the ledger cleanup that deletes what the case created. Override
 # with `make test-e2e-api E2E_API_TIMEOUT=1h` when adding more cases.
 test-e2e-api: goenv
-	AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test -timeout $(E2E_API_TIMEOUT) ./test/e2e/...
+	go -C $(GO_DIR) test ./test/e2e/runner/...
+	AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test -timeout $(E2E_API_TIMEOUT) ./test/e2e -sandbox-provider $(E2E_SANDBOX_PROVIDER)
 
 # Reclaims remote resources left behind by an E2E run that was killed before
 # its own cleanup could run (SIGKILL, a dead machine). Deliberately manual:
