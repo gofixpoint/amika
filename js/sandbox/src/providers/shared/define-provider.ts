@@ -54,6 +54,7 @@ import type {
   ServiceCapability,
   ServiceRestartContext,
   SnapshotCapability,
+  SpendCapability,
   SshCapability,
 } from "../provider";
 import { SandboxProviderUnsupportedError } from "../provider";
@@ -157,6 +158,7 @@ export interface ProviderDefinition {
   ssh?: SshCapability | null;
   services?: ServiceCapability | null;
   listing?: ListingCapability | null;
+  spend?: SpendCapability | null;
   snapshots?: SnapshotDefinition | null;
   dockerRegistries?: DockerRegistryCapability | null;
 }
@@ -284,6 +286,7 @@ function buildProvider(
   const ssh = def.ssh ?? null;
   const services = def.services ?? null;
   const listing = def.listing ?? null;
+  const spend = def.spend ?? null;
   // Snapshot defaults (see {@link SnapshotDefinition}): unsupported image
   // snapshots, `find` falling back to `get`, and a no-op provider-secret
   // removal — authored only by the providers that genuinely differ.
@@ -337,6 +340,7 @@ function buildProvider(
     sandboxes: makeSandboxNamespace(backend),
     snapshots: snapshots ? makeSnapshotNamespace(snapshots) : null,
     docker: dockerRegistries ? makeDockerNamespace(dockerRegistries) : null,
+    spend,
   };
 }
 

@@ -34,6 +34,9 @@ importers:
       p-retry:
         specifier: ^7.1.1
         version: 7.1.1
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@eslint/js':
         specifier: ^9.39.2

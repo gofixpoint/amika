@@ -25,6 +25,7 @@ import {
   getSailboxCheckpoint,
   waitForSailboxCheckpointActive,
 } from "./internal/snapshots";
+import { reportSailboxSpend } from "./internal/spend";
 
 export { openSailboxAdapter } from "./internal/operations";
 
@@ -64,6 +65,7 @@ export default defineProvider(
       syncRoutes: (id, desired) => syncSailboxRoutes(config, id, desired),
     },
     listing: { list: () => listSailboxSandboxes(config) },
+    spend: { report: (window) => reportSailboxSpend(config, window) },
     snapshots: {
       getSnapshot: (name) => getSailboxCheckpoint(resolveSnapshotId, name),
       deleteSnapshot: () => deleteSailboxCheckpoint(),

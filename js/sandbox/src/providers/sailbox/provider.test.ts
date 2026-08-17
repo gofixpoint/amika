@@ -11,6 +11,7 @@ import {
   getSailboxCheckpoint,
   waitForSailboxCheckpointActive,
 } from "./internal/snapshots";
+import { reportSailboxSpend } from "./internal/spend";
 import { sailboxSizingForSize } from "./sizing";
 
 describe("Sailbox provider", () => {
@@ -91,6 +92,59 @@ describe("Sailbox provider", () => {
     await configureSailboxAutoSleep(config, "box", 0);
     expect(fetchMock.mock.calls.at(-1)?.[1]?.body).toBe(
       JSON.stringify({ automatic: false }),
+    );
+    fetchMock.mockRestore();
+  });
+
+  it("normalizes provider-reported observed spend", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        rates: {
+          vcpu_second_usd_nanos: 10,
+          memory_gib_second_usd_nanos: 20,
+          state_disk_gib_second_usd_nanos: 30,
+        },
+        sailboxes: [
+          {
+            sailbox_id: "sb_123",
+            finalized_cost_usd_nanos: 800,
+            estimated_active_cost_usd_nanos: 100,
+            estimated_total_cost_usd_nanos: 900,
+            duration_seconds: 60,
+            vcpu_seconds: 4,
+            memory_gib_seconds: 5,
+            state_disk_gib_seconds: 6,
+            active: true,
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      reportSailboxSpend(
+        { apiKey: "secret", sailboxApiUrl: "https://boxes.example/" },
+        {
+          from: new Date("2026-08-16T12:00:00.000Z"),
+          to: new Date("2026-08-16T12:01:00.000Z"),
+        },
+      ),
+    ).resolves.toEqual([
+      {
+        providerSandboxId: "sb_123",
+        state: "active",
+        durationSeconds: 60,
+        vcpuSeconds: 4,
+        memoryGibSeconds: 5,
+        diskGibSeconds: 6,
+        cpuDollars: 40 / 1_000_000_000,
+        memoryDollars: 100 / 1_000_000_000,
+        diskDollars: 180 / 1_000_000_000,
+        amountDollars: 900 / 1_000_000_000,
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://boxes.example/sailboxes/spend?from=2026-08-16T12%3A00%3A00.000Z&to=2026-08-16T12%3A01%3A00.000Z",
+      { headers: { Authorization: "Bearer secret" } },
     );
     fetchMock.mockRestore();
   });
