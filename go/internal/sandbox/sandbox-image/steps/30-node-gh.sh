@@ -26,8 +26,13 @@ curl -fsSL \
   "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${gh_archive}" \
   -o "$temporary_dir/$gh_archive"
 tar -xzf "$temporary_dir/$gh_archive" -C "$temporary_dir"
+# /usr/bin, not /usr/local/bin: the app_token gh shim installs itself at
+# /usr/local/bin/gh and resolves the real binary by scanning PATH for a gh
+# that is not itself. /usr/local/bin precedes /usr/bin in the standard PATH,
+# so the shim shadows this binary and still finds it. Installing here too
+# would leave the shim overwriting the binary it wraps.
 install -m 0755 \
   "$temporary_dir/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" \
-  /usr/local/bin/gh
+  /usr/bin/gh
 
 rm -rf /root/.cache
