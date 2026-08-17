@@ -36,6 +36,11 @@ export async function createSailboxSandbox(
   config: SailboxConfig,
   input: CreateSandboxProviderInput,
 ): Promise<CreatedProviderSandbox> {
+  if (input.snapshot.trim() === "") {
+    throw new Error(
+      "Sailbox sandboxes require a published SAILBOX_IMAGE_* value or a captured checkpoint id",
+    );
+  }
   const client = createSailClient(config);
   const image = decodeSailboxImageRef(input.snapshot);
   const ports = uniqueServicePorts(input.services);
