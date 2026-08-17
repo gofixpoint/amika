@@ -43,6 +43,82 @@ console.log(`Deleting sandbox "${sb.name}"`);
 await amika.deleteSandbox(sb.name);
 ```
 
+## Workflow helpers
+
+These methods compose the existing sandbox APIs into common patterns. They are optional — the step-by-step flow above still works the same way.
+
+### `createSandboxAndWait(req, wait?)`
+
+Creates a sandbox and polls until it is ready. Equivalent to `createSandbox()` followed by `waitForSandbox()`.
+
+```ts
+const sandbox = await amika.createSandboxAndWait(
+  {
+    name: "dev-box",
+    repoUrl: "git@github.com:org/proj.git",
+    preset: "coder",
+  },
+  { timeoutMs: 10 * 60_000 },
+);
+```
+
+### `withSandbox(req, fn, options?)`
+
+Creates a sandbox, waits until it is ready, runs your callback, then deletes the sandbox. Cleanup runs even if the callback throws.
+
+```ts
+const sshDestination = await amika.withSandbox(
+  {
+    name: "dev-box",
+    repoUrl: "git@github.com:org/proj.git",
+    preset: "coder",
+  },
+  async (sandbox) => {
+    const ssh = await amika.getSSH(sandbox.name);
+    return ssh.sshDestination;
+  },
+);
+```
+
+Keep the sandbox after the callback:
+
+```ts
+await amika.withSandbox(
+  { name: "dev-box", repoUrl: "git@github.com:org/proj.git" },
+  async (sandbox) => {
+    await amika.agentSend(sandbox.name, {
+      message: "Set up the project",
+      agent: "claude",
+    });
+  },
+  { deleteOnExit: false },
+);
+```
+
+### `runAgent(req, options?)`
+
+Creates a sandbox, sends one agent message, and deletes the sandbox when finished.
+
+```ts
+const { result, sessionId } = await amika.runAgent({
+  name: "dev-box",
+  repoUrl: "git@github.com:org/proj.git",
+  preset: "coder",
+  message: "Refactor the auth module",
+  agent: "claude",
+  newSession: true,
+});
+
+console.log(result);
+console.log(sessionId);
+```
+
+The same helpers are also exported as standalone functions:
+
+```ts
+import { createSandboxAndWait, withSandbox, runAgent } from "@amika/sdk";
+```
+
 ## Configuration
 
 ```ts
@@ -98,6 +174,38 @@ Types are camelCased and translated to/from snake_case on the wire. See `src/typ
 ## Polling behavior
 
 `waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present.
+
+### Wait options
+
+Each wait method also accepts an optional second argument:
+
+```ts
+await amika.waitForSandbox(sb.name, {
+  timeoutMs: 10 * 60_000, // optional client-side timeout
+  pollIntervalMs: 5_000, // optional, default 3_000
+  signal: abortController.signal, // optional cancellation
+  onPoll: (sandbox) => {
+    console.log(`sandbox is ${sandbox.state}`);
+  },
+});
+```
+
+The same options can be passed to workflow helpers through `wait` in `WorkflowOptions`:
+
+```ts
+await amika.withSandbox(
+  { name: "dev-box", repoUrl: "git@github.com:org/proj.git" },
+  async (sandbox) => {
+    /* ... */
+  },
+  {
+    wait: { timeoutMs: 10 * 60_000 },
+    deleteOnExit: true,
+  },
+);
+```
+
+When `timeoutMs` is set, the wait methods throw `AmikaError` if the target state is not reached in time. When `signal` is aborted, they throw `AmikaError` with a cancellation message.
 
 ## Errors
 
