@@ -79,12 +79,12 @@ export async function createSailboxSandbox(
       checkpointId: input.snapshot,
       name: input.name,
     });
-    await Promise.all(ports.map((port) => box.expose(port)));
   }
 
-  await configureSailboxAutoSleepOrTerminate(
+  await configureSailboxAfterCreateOrTerminate(
     config,
     box,
+    image ? [] : ports,
     input.autoStopInterval,
   );
   return {
@@ -325,23 +325,29 @@ export async function configureSailboxAutoSleep(
   }
 }
 
-export async function configureSailboxAutoSleepOrTerminate(
+export async function configureSailboxAfterCreateOrTerminate(
   config: SailboxConfig,
-  box: Pick<Sailbox, "sailboxId" | "terminate">,
+  box: {
+    sailboxId: string;
+    expose(port: number): Promise<unknown>;
+    terminate(): Promise<unknown>;
+  },
+  exposePorts: number[],
   autoStopInterval?: number | null,
 ): Promise<void> {
   try {
+    await Promise.all(exposePorts.map((port) => box.expose(port)));
     await configureSailboxAutoSleep(config, box.sailboxId, autoStopInterval);
-  } catch (configureError) {
+  } catch (setupError) {
     try {
       await box.terminate();
     } catch (terminateError) {
       throw new AggregateError(
-        [configureError, terminateError],
-        `Sailbox ${box.sailboxId} auto-sleep configuration and cleanup failed`,
+        [setupError, terminateError],
+        `Sailbox ${box.sailboxId} post-create setup and cleanup failed`,
       );
     }
-    throw configureError;
+    throw setupError;
   }
 }
 

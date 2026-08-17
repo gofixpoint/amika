@@ -3,8 +3,8 @@ import { App } from "@sailresearch/sdk";
 import { decodeSailboxImageRef, encodeSailboxImageRef } from "./image-ref";
 import {
   asAmikaCommand,
+  configureSailboxAfterCreateOrTerminate,
   configureSailboxAutoSleep,
-  configureSailboxAutoSleepOrTerminate,
   mapSailboxSandboxState,
   sailboxAppName,
   sailboxAppOrgId,
@@ -129,6 +129,31 @@ describe("Sailbox provider", () => {
     fetchMock.mockRestore();
   });
 
+  it("terminates a new Sailbox when port exposure fails", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 500 }));
+    const terminate = vi.fn(async () => undefined);
+
+    await expect(
+      configureSailboxAfterCreateOrTerminate(
+        { apiKey: "secret", sailboxApiUrl: "https://boxes.example" },
+        {
+          sailboxId: "sb_orphan",
+          expose: vi.fn(async () => {
+            throw new Error("expose failed");
+          }),
+          terminate,
+        },
+        [8080],
+        15,
+      ),
+    ).rejects.toThrow("expose failed");
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
   it("terminates a new Sailbox when auto-sleep configuration fails", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -136,9 +161,14 @@ describe("Sailbox provider", () => {
     const terminate = vi.fn(async () => undefined);
 
     await expect(
-      configureSailboxAutoSleepOrTerminate(
+      configureSailboxAfterCreateOrTerminate(
         { apiKey: "secret", sailboxApiUrl: "https://boxes.example" },
-        { sailboxId: "sb_orphan", terminate },
+        {
+          sailboxId: "sb_orphan",
+          expose: vi.fn(async () => undefined),
+          terminate,
+        },
+        [],
         15,
       ),
     ).rejects.toThrow("Sailbox auto-sleep update failed");
