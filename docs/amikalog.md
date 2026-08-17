@@ -115,7 +115,7 @@ records:
 | `timestamp`  | Capture time (RFC3339 with nanoseconds, UTC)                             |
 | `seq`        | The event's position within its session, starting at 0                   |
 | `cwd`        | The working directory the hook reported                                  |
-| `git`        | Git state of `cwd` (`repo_root`, `commit`, `branch`, `dirty`), or `null` |
+| `git`        | Git state of `cwd` (`repo_root`, `remote`, `commit`, `branch`, `dirty`), or `null` |
 | `payload`    | The raw hook payload exactly as the agent provided it                    |
 
 ## Sharing sessions with your org (beta)
@@ -133,11 +133,18 @@ amikalog beta:fetch <dir>   # download the org bucket into <dir>
 ```
 
 `beta:push` uploads each session file under the object key
-`<repo>/<source>/sessions/<ts>_<session-id>.jsonl`, where `<repo>` comes from the
-session's `git.repo_root`. Uploads run in parallel. Pushed files are tracked by
-size in `<state>/events/.amikalog-push-state.json`, so repeated runs re-upload
-only sessions that grew new events since the last push, and re-pushing is
-idempotent.
+`<repo-path>/sessions/<source>/<ts>_<session-id>.jsonl`. `<repo-path>` is the
+repository's `origin` remote normalized to `host/owner/repo` (e.g.
+`github.com/acme/api`) and nested as folders, taken from each event's
+`git.remote`. Using the full remote path keeps two different checkouts that
+share a directory name (two repos both cloned as `api`) from colliding in the
+bucket. A repository with no `origin` remote falls back to its directory
+basename, and a session with no git context at all to `unknown-repo`. A
+session's key is pinned on its first push, so sessions already uploaded under an
+older key layout keep it; the new layout applies to sessions pushed from here
+on. Uploads run in parallel. Pushed files are tracked by size in
+`<state>/events/.amikalog-push-state.json`, so repeated runs re-upload only
+sessions that grew new events since the last push, and re-pushing is idempotent.
 
 `beta:fetch` downloads every object in the org bucket into a local directory (in
 parallel), recreating the bucket's key tree on disk: your whole org's sessions,
