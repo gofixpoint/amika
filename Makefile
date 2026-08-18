@@ -54,6 +54,9 @@ test-integration: goenv
 test-contract: goenv
 	go -C $(GO_DIR) test ./test/contract/...
 
+# Set E2E_SANDBOX_PROVIDER=sailbox to select the provider used by
+# provider-generic cases. This target runs offline cases only; use
+# test-e2e-api to run the real provider-backed cases.
 test-e2e: goenv
 	go -C $(GO_DIR) test ./test/e2e/runner/...
 	E2E_SANDBOX_PROVIDER=$(E2E_SANDBOX_PROVIDER) AMIKA_RUN_E2E=1 go -C $(GO_DIR) test ./test/e2e
