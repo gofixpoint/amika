@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -159,14 +166,10 @@ describe("buildStreamSplitCommand", () => {
   });
 
   it("cleans up on a signal by exiting, not by falling through", () => {
-    // A POSIX trap handler resumes where the shell was, so a cleanup-only
-    // handler on INT/TERM/HUP would delete the capture file and then run on to
-    // `cat` it — replacing the command's real stderr with a `No such file`
-    // error and reporting its status for a wrapper that was told to stop.
+    // A POSIX trap handler resumes where the shell was, so a handler that fell
+    // through would report the command's own status for a wrapper that was told
+    // to stop.
     const script = buildStreamSplitCommand("true", "M");
-    // The buggy form was `… EXIT INT TERM HUP`, of which this is a prefix, so
-    // pin that EXIT stands alone.
-    expect(script).toContain("trap 'rm -f -- \"$__amika_err\"' EXIT\n");
     for (const [signal, code] of [
       ["INT", 130],
       ["TERM", 143],
@@ -183,11 +186,53 @@ describe("buildStreamSplitCommand", () => {
     expect(script).toContain("__amika_emit() { __amika_emitted=1;");
   });
 
+  it("unlinks the capture before running the command, and fails closed", () => {
+    // The security property: no path resolves to the captured stderr while the
+    // command runs, so an untrappable kill can leave nothing behind.
+    const script = buildStreamSplitCommand("true", "M");
+    expect(script).toContain('rm -f -- "$__amika_err" || exit 125');
+    expect(script.indexOf('rm -f -- "$__amika_err" || exit 125')).toBeLessThan(
+      script.indexOf("( true )"),
+    );
+    // Redirected while the name still resolves, since that is the only moment it
+    // can be opened at all.
+    expect(script.indexOf('exec 2>"$__amika_err"')).toBeLessThan(
+      script.indexOf('rm -f -- "$__amika_err" || exit 125'),
+    );
+    // Bash treats a failed redirection on a bare `exec` as non-fatal, so without
+    // this it would run the command and emit its marker with no usable capture,
+    // reporting a clean success carrying no stderr. Asserted structurally rather
+    // than executed: redirecting fd 2 onto a descriptor that already exists, over
+    // a file `mktemp` just created, has no reachable failure to drive from a test.
+    expect(script).toContain('exec 2>"$__amika_err" || exit 125');
+    // Nothing may read it by path afterwards — that is what the unlink breaks.
+    expect(script).not.toContain('cat -- "$__amika_err"');
+    expect(script).toContain("cat /proc/self/fd/2");
+    // No second descriptor: one would need a free high fd and would be inherited
+    // by every process the command leaves running.
+    expect(script).not.toContain("9<");
+  });
+
+  it("arms cleanup for the window where the capture still has a name", () => {
+    // dash and `sh` treat a redirection error on `exec` as fatal and kill the
+    // script before any `||` branch runs, so the guard alone cannot clean up.
+    // The trap has to be armed before that `exec` to cover it.
+    const script = buildStreamSplitCommand("true", "M");
+    expect(script).toContain(`trap 'rm -f -- "$__amika_err"' EXIT`);
+    expect(script.indexOf("trap 'rm -f")).toBeLessThan(
+      script.indexOf('exec 2>"$__amika_err"'),
+    );
+    // And it is armed only after there is something to remove.
+    expect(script.indexOf("__amika_err=$(mktemp)")).toBeLessThan(
+      script.indexOf("trap 'rm -f"),
+    );
+  });
+
   it("guards the capture path against being read as flags", () => {
     // `mktemp` honors TMPDIR, so a value starting with `-` would otherwise make
-    // `cat` parse the path as an option bundle.
+    // `rm` parse the path as an option bundle.
     expect(buildStreamSplitCommand("true", "M")).toContain(
-      'cat -- "$__amika_err"',
+      'rm -f -- "$__amika_err"',
     );
   });
 });
@@ -285,6 +330,162 @@ describe.skipIf(process.platform !== "linux")(
       expect(stdout).toBe("out\n");
       expect(stderr).toBe("err\n");
     }, 20_000);
+
+    it("leaves nothing on disk even when killed untrappably", async () => {
+      // The regression this guards. Cleanup used to be an `EXIT` trap, which a
+      // `SIGKILL` never runs, so the capture file survived with the command's
+      // stderr in it — and stderr carries secrets (a failed tokenized `git
+      // clone` prints its URL there). A snapshot taken afterwards bakes that in
+      // and is forkable. Unlinking up front means there is no name to leave.
+      const dir = mkdtempSync(join(tmpdir(), "amika-kill-"));
+      try {
+        const script = buildStreamSplitCommand(
+          buildDaytonaCommand("echo SECRET_TOKEN_abc123 >&2; sleep 10"),
+          "--M--",
+        );
+        // TMPDIR must reach `mktemp` as an *environment* variable: it is a child
+        // process, so an unexported shell assignment inside the script would be
+        // invisible to it and this test would watch an empty directory and pass
+        // no matter what the wrapper did.
+        const child = spawn("sh", {
+          stdio: ["pipe", "ignore", "ignore"],
+          env: { ...process.env, TMPDIR: dir },
+        });
+        child.stdin.end(script);
+        const exited = new Promise<void>((resolve) => {
+          child.on("close", () => resolve());
+        });
+        // Let the wrapper get past its `mktemp`/unlink and into the command.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        // Unlinked while the command is still running, so nothing is visible
+        // even mid-flight — not merely cleaned up afterwards.
+        expect(readdirSync(dir)).toEqual([]);
+        child.kill("SIGKILL");
+        await exited;
+
+        expect(readdirSync(dir)).toEqual([]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 20_000);
+
+    it("does not leak the capture handle to a process the command leaves running", async () => {
+      // This path exists to leave daemons running, so any descriptor the wrapper
+      // holds open is inherited and kept for the daemon's whole life — pinning the
+      // unlinked inode, its bytes unreclaimable. An earlier revision opened a
+      // second handle on fd 9 for reading the capture back, and redirecting was no
+      // defense against it: that replaces fd 1 and 2 and never touches fd 9, so
+      // even this well-behaved daemon held it. Reading via `/proc/self/fd/2`
+      // needs no such handle; this pins that none comes back.
+      const dir = mkdtempSync(join(tmpdir(), "amika-fd-"));
+      // Unique per run, so a concurrent job on the same machine can't be found
+      // instead of this test's own daemon.
+      const tag = `sleep 9${100000 + (process.pid % 100000)}`;
+      try {
+        const script = buildStreamSplitCommand(
+          // Redirects both its own streams, so any deleted-inode handle it holds
+          // came from the wrapper rather than from its own stderr.
+          buildDaytonaCommand(`nohup ${tag} >/dev/null 2>&1 &`),
+          "--M--",
+        );
+        spawnSync("sh", {
+          input: script,
+          encoding: "utf8",
+          env: { ...process.env, TMPDIR: dir },
+        });
+
+        // Find the daemon by its exact argv rather than a pattern match, so the
+        // asking process can't be mistaken for it. Polled rather than read once:
+        // the wrapper exits as soon as it has forked, so a single scan races the
+        // child becoming visible in /proc — which is exactly how this test first
+        // failed in CI while passing locally.
+        const findDaemon = (): string | undefined =>
+          readdirSync("/proc")
+            .filter((name) => /^\d+$/u.test(name))
+            .find((pid) => {
+              try {
+                const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+                return argv.replace(/\0/gu, " ").trim() === tag;
+              } catch {
+                return false;
+              }
+            });
+        let daemon = findDaemon();
+        const deadline = Date.now() + 10_000;
+        while (!daemon && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          daemon = findDaemon();
+        }
+        expect(daemon).toBeDefined();
+
+        try {
+          const fds = readdirSync(`/proc/${daemon!}/fd`).map((fd) => {
+            try {
+              return readlinkSync(`/proc/${daemon!}/fd/${fd}`);
+            } catch {
+              return "";
+            }
+          });
+          expect(fds.filter((target) => target.includes("(deleted)"))).toEqual(
+            [],
+          );
+        } finally {
+          try {
+            process.kill(Number(daemon), "SIGKILL");
+          } catch {
+            // Already gone; nothing to clean up.
+          }
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 20_000);
+
+    it("leaves no capture behind under descriptor exhaustion, on any shell", () => {
+      // The invariant is residue, not a particular exit status: under a tight
+      // `RLIMIT_NOFILE` some shells complete normally, bash bails via the `||`
+      // guard, and dash and `sh` die on the `exec` before any branch can run.
+      // Whichever happens, nothing may be left with a name — that last case is
+      // why the cleanup is a trap and not only a `||` branch.
+      //
+      // Each shell is checked, because the failure is shell-specific and an
+      // earlier version of this test watched only bash. Three runs each, since a
+      // single leak is easy to miss but accumulation is not.
+      const shells = ["bash", "dash", "sh", "zsh"];
+      for (const shell of shells) {
+        if (spawnSync("sh", ["-c", `command -v ${shell}`]).status !== 0)
+          continue;
+        const dir = mkdtempSync(join(tmpdir(), "amika-nofile-"));
+        try {
+          // Script kept outside TMPDIR, so the assertion sees only residue.
+          const scriptPath = join(tmpdir(), `amika-wrapper-${process.pid}.sh`);
+          writeFileSync(
+            scriptPath,
+            buildStreamSplitCommand(
+              buildDaytonaCommand("echo OUT; echo IMPORTANT_STDERR >&2"),
+              "--M--",
+            ),
+          );
+          try {
+            for (let run = 0; run < 3; run += 1) {
+              spawnSync(
+                "sh",
+                ["-c", `ulimit -n 9; exec ${shell} "$1"`, "_", scriptPath],
+                { encoding: "utf8", env: { ...process.env, TMPDIR: dir } },
+              );
+            }
+            expect({ shell, residue: readdirSync(dir) }).toEqual({
+              shell,
+              residue: [],
+            });
+          } finally {
+            rmSync(scriptPath, { force: true });
+          }
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+    });
 
     it("leaves no capture file behind", () => {
       const dir = mkdtempSync(join(tmpdir(), "amika-split-"));
