@@ -18,6 +18,7 @@ apt-get install -y --no-install-recommends \
   gnupg \
   gettext \
   iproute2 \
+  less \
   libcurl4-openssl-dev \
   libexpat1-dev \
   libssl-dev \
