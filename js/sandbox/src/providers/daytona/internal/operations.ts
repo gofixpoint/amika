@@ -6,6 +6,7 @@
  * package drives.
  */
 import { Daytona, DaytonaError } from "@daytonaio/sdk";
+import { randomUUID } from "node:crypto";
 import pRetry from "p-retry";
 import {
   SANDBOX_DELETE_INTERVAL_KEEP_ON_STOP,
@@ -448,6 +449,10 @@ export async function executeDaytonaCommand(
  * Stream a command's output over a Daytona process session. The
  * WebSocket-based callback overload resolves when the command finishes and the
  * socket closes; the session is best-effort deleted afterwards.
+ *
+ * A session is needed here for the same reason the stdin path needs one:
+ * subscribing to a running command's logs requires its id, which only an async
+ * run hands back before the command finishes.
  */
 export async function streamDaytonaCommandLogs(
   config: DaytonaConfig,
@@ -457,7 +462,11 @@ export async function streamDaytonaCommandLogs(
 ): Promise<void> {
   const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
-  const sessionId = `agent-stream-${Date.now()}`;
+  // Random, not a timestamp: session ids are per-sandbox, and the teardown
+  // below deletes the session — so two streams against one sandbox in the same
+  // millisecond would share an id and the first to finish would reap the
+  // other's still-running command.
+  const sessionId = `stream-${randomUUID()}`;
   await sandbox.process.createSession(sessionId);
   try {
     const execResult = await sandbox.process.executeSessionCommand(sessionId, {
