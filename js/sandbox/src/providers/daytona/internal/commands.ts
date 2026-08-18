@@ -163,6 +163,9 @@ async function executeOneShotCommand(
  * `marker` must be unique per command, so that no legitimate output can
  * contain it and split at the wrong place.
  *
+ * That capture file is unlinked as soon as it exists and is read back through a
+ * surviving descriptor, so stderr is never reachable on disk under any name.
+ *
  * `command` arrives from {@link buildDaytonaCommand} as a single `bash -c '…'`
  * word, so nothing in it can interact with this script's syntax. Exported for
  * unit testing.
@@ -180,23 +183,58 @@ export function buildStreamSplitCommand(
     // marker, so `splitStreamsAtMarker` reports the failure text as stderr.
     "__amika_err=$(mktemp) || exit 125",
     '[ -n "$__amika_err" ] || exit 125',
+    // Cleanup for the one window where the capture has a name: between `mktemp`
+    // and the `rm` two lines below. A redirection error on `exec` — a special
+    // built-in — is fatal to a non-interactive shell in dash and `sh`, which kill
+    // the script before any `||` branch can run, so that branch alone cannot
+    // clean up and this trap is what does. After the `rm` it is a no-op on a path
+    // that no longer exists, which is why an untrappable kill past that point
+    // still leaves nothing: there is no file, not merely no handler.
+    `trap 'rm -f -- "$__amika_err"' EXIT`,
     // Everything from here writes stderr to the capture file, this script
     // included. Redirecting only the command would leave the wrapper's own
     // diagnostics — a `Terminated` on a group kill, an OOM notice — in the
     // response *ahead* of the marker, i.e. reported as stdout, which is the
     // one thing `ExecResult.stdout` promises never to carry.
-    'exec 2>"$__amika_err"',
-    // Covers the normal exit as well as a killed wrapper, which a trailing
-    // `rm` would miss — the file holds captured stderr.
-    "trap 'rm -f -- \"$__amika_err\"' EXIT",
+    //
+    // Guarded because bash, unlike dash, treats a failed redirection on a bare
+    // `exec` as non-fatal and carries on. Unguarded there, it would run the
+    // command and print its marker with no usable capture, reporting a clean
+    // success carrying no stderr at all — the silently-wrong answer this framing
+    // exists to prevent.
+    //
+    // Only fd 2 is redirected, and only onto a descriptor that already exists.
+    // An earlier revision also opened a second descriptor to read the capture
+    // back; that needed a free high fd, so `RLIMIT_NOFILE` below 10 broke it, and
+    // it was inherited by every process the command left running — pinning the
+    // unlinked inode for a daemon's whole life even when the daemon redirected
+    // its own streams, since that replaces fd 1 and 2 and never touches fd 9.
+    // Reading through `/proc/self/fd/2` needs no second descriptor and so has
+    // neither problem.
+    'exec 2>"$__amika_err" || exit 125',
+    // Unlink the name immediately. From here the capture exists only as an open
+    // inode: writes still land through fd 2, and it still reads back through
+    // `/proc/self/fd/2`, but no path resolves to it.
+    //
+    // Cleanup used to be an `EXIT` trap, which a `SIGKILL`, an OOM kill, or a
+    // sandbox force-stopped mid-command never runs — leaving the file on disk
+    // with the command's stderr in it. Stderr is not reliably non-sensitive: a
+    // failed `git clone https://x-access-token:<token>@…` prints the tokenized
+    // URL there. Snapshots capture the filesystem opaquely and are forkable, so
+    // that residue would be baked in and travel. Unlinking up front removes the
+    // window rather than cleaning up after it — there is no name to leak, and
+    // the kernel frees the inode when the process dies however it dies.
+    //
+    // Fails closed: proceeding with a still-named capture file would reinstate
+    // exactly the exposure this prevents. `--` so a `TMPDIR` beginning with `-`
+    // can't make the path read as flags.
+    'rm -f -- "$__amika_err" || exit 125',
     // Emit whatever the command produced, then leave with the signal's
     // conventional status. A POSIX trap handler resumes where the shell was
-    // rather than exiting, so a cleanup-only handler would delete the capture
-    // file and let the script run on to `cat` it — losing the real stderr and
-    // reporting the command's own status for a wrapper told to stop. Exiting
-    // without emitting first is no better: the response would carry no marker,
-    // and the whole of stdout would be reported as failure text. Exiting here
-    // still runs the EXIT trap, so cleanup happens exactly once.
+    // rather than exiting, so a handler that fell through would report the
+    // command's own status for a wrapper that was told to stop. Exiting without
+    // emitting first is no better: the response would carry no marker, and the
+    // whole of stdout would be reported as failure text.
     // `__amika_emitted` keeps a signal that lands *during* the normal emit
     // below from emitting a second time: two markers in one response would
     // leave the split reporting the captured stderr twice with a raw marker
@@ -205,14 +243,17 @@ export function buildStreamSplitCommand(
     // an inherited `__amika_emitted` would otherwise suppress the bail emit.
     "__amika_emitted=",
     `__amika_bail() { if [ -z "$__amika_emitted" ]; then __amika_emit; fi; exit "$1"; }`,
-    `__amika_emit() { __amika_emitted=1; printf '%s' ${shellQuote(marker)}; cat -- "$__amika_err"; }`,
+    // Reads the capture through the kernel's own handle on fd 2 rather than by
+    // path, since the path is already gone. A fresh open, so it starts at offset
+    // 0 regardless of how much stderr has been written. `self` is `cat`, whose
+    // fd 2 it inherited from this shell, so it reopens the same inode; the
+    // command ran in a subshell, so nothing it did to its own copy applies here.
+    `__amika_emit() { __amika_emitted=1; printf '%s' ${shellQuote(marker)}; cat /proc/self/fd/2; }`,
     "trap '__amika_bail 130' INT",
     "trap '__amika_bail 143' TERM",
     "trap '__amika_bail 129' HUP",
     `( ${command} )`,
     "__amika_rc=$?",
-    // `--` inside `__amika_emit` so a TMPDIR beginning with `-` can't make the
-    // capture path read as flags.
     "__amika_emit",
     `exit "$__amika_rc"`,
   ].join("\n");
