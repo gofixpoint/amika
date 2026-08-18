@@ -360,6 +360,32 @@ export interface ProviderSandboxListing {
   sizing: ProviderSandboxSizing;
 }
 
+/** A closed time window for provider-reported spend. */
+export interface ProviderSpendWindow {
+  from: Date;
+  to: Date;
+}
+
+/**
+ * One provider-billed sandbox's observed usage and cost for a time window.
+ * Amounts are normalized to dollars at the provider boundary; resource usage
+ * remains in seconds so consumers can retain the provider's observed shape.
+ */
+export interface ProviderSpendItem {
+  providerSandboxId: string;
+  /** Org attribution derived from provider-owned billing metadata, when known. */
+  orgId: string | null;
+  state: string;
+  durationSeconds: number;
+  vcpuSeconds: number;
+  memoryGibSeconds: number;
+  diskGibSeconds: number;
+  cpuDollars: number;
+  memoryDollars: number;
+  diskDollars: number;
+  amountDollars: number;
+}
+
 /**
  * Resolves an org-scoped snapshot name to the provider's bootable handle
  * (`provider_snapshot_id`), or `null` when no handle is recorded yet or the name
@@ -861,6 +887,11 @@ export interface ListingCapability {
   list(): Promise<ProviderSandboxListing[]>;
 }
 
+/** Read the provider's own observed-usage bill for a closed time window. */
+export interface SpendCapability {
+  report(window: ProviderSpendWindow): Promise<ProviderSpendItem[]>;
+}
+
 // ---------------------------------------------------------------------------
 // Resource-object surface
 // ---------------------------------------------------------------------------
@@ -1167,4 +1198,6 @@ export interface SandboxProvider {
   readonly snapshots: SnapshotNamespace | null;
   /** Docker registry objects, or null when unsupported. */
   readonly docker: DockerNamespace | null;
+  /** Provider-reported observed spend, or null when consumers price locally. */
+  readonly spend: SpendCapability | null;
 }

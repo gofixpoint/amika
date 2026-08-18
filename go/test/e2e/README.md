@@ -12,8 +12,11 @@ user typing commands at a shell would see.
 # From the repo root:
 make test-e2e
 
+# Run the real API suite against Sailbox (billable; requires credentials):
+make test-e2e-api E2E_SANDBOX_PROVIDER=sailbox
+
 # Or directly:
-AMIKA_RUN_E2E=1 go -C go test ./test/e2e/...
+AMIKA_RUN_E2E=1 go -C go test ./test/e2e -sandbox-provider daytona
 
 # Unit tests for the runner itself (matcher, ledger, JSONPath, templating)
 # need no env var, no CLI build, no network, and no Docker:
@@ -128,12 +131,13 @@ the login user's shell. Write the script directly, as above.
 
 ### Variable substitution
 
-One variable is predefined: `{{run_id}}`, a timestamp unique to the whole
-run. A case that creates a **named** remote resource should build the name
-from it (`--name e2e-ssh-key-{{run_id}}`). Names are frequently upserted
-rather than rejected, so a fixed name lets a case adopt, mutate, and then
-delete a resource the account already had, and lets two concurrent runs
-sharing an account clobber each other.
+Two variables are predefined: `{{run_id}}`, a timestamp unique to the whole
+run, and `{{sandbox_provider}}`, the validated `-sandbox-provider` selection
+(`daytona` by default). A case that creates a **named** remote resource should
+build the name from the run ID (`--name e2e-ssh-key-{{run_id}}`). Names are
+frequently upserted rather than rejected, so a fixed name lets a case adopt,
+mutate, and then delete a resource the account already had, and lets two
+concurrent runs sharing an account clobber each other.
 
 Any `{{var}}` placeholder in `cmd`, `stdin`, `env` values, `resource.name`,
 `resource.cleanup`, `release_resource.type`, `release_resource.name`,

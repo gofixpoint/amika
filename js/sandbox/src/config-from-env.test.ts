@@ -5,7 +5,8 @@ const BASE = { DAYTONA_API_KEY: "dk" };
 
 describe("sandboxProviderConfigsFromEnv", () => {
   it("builds the Daytona slice with defaults and leaves the others null", () => {
-    const { daytona, freestyle, vercel } = sandboxProviderConfigsFromEnv(BASE);
+    const { daytona, freestyle, sailbox, vercel } =
+      sandboxProviderConfigsFromEnv(BASE);
     expect(daytona).toEqual({
       apiKey: "dk",
       apiUrl: "https://app.daytona.io/api",
@@ -15,6 +16,7 @@ describe("sandboxProviderConfigsFromEnv", () => {
       useWebSocket: false,
     });
     expect(freestyle).toBeNull();
+    expect(sailbox).toBeNull();
     expect(vercel).toBeNull();
   });
 
@@ -88,5 +90,32 @@ describe("sandboxProviderConfigsFromEnv", () => {
       VERCEL_PROJECT_ID: "proj",
     }).vercel;
     expect(vercel).toEqual({ apiKey: "vt", teamId: "team", projectId: "proj" });
+  });
+
+  it("gates Sailbox and reads its endpoint and retention overrides", () => {
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, SAILBOX_ENABLED: "1" }).sailbox,
+    ).toBeNull();
+    expect(() =>
+      sandboxProviderConfigsFromEnv({ ...BASE, SAILBOX_ENABLED: "true" }),
+    ).toThrow(/SAIL_API_KEY/);
+
+    expect(
+      sandboxProviderConfigsFromEnv({
+        ...BASE,
+        SAILBOX_ENABLED: "true",
+        SAIL_API_KEY: "sk",
+        SAIL_API_URL: "https://sail.example",
+        SAILBOX_API_URL: "https://boxes.example",
+        SAILBOX_APP_PREFIX: "test",
+        SAILBOX_CHECKPOINT_TTL_SECONDS: "86400",
+      }).sailbox,
+    ).toEqual({
+      apiKey: "sk",
+      apiUrl: "https://sail.example",
+      sailboxApiUrl: "https://boxes.example",
+      appPrefix: "test",
+      checkpointTtlSeconds: 86400,
+    });
   });
 });

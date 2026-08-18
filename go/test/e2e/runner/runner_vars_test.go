@@ -40,3 +40,32 @@ func TestNewWithoutRunIDLeavesTheVarUndefined(t *testing.T) {
 		t.Error("expected an error for an undefined run_id")
 	}
 }
+
+func TestNewExposesValidatedSandboxProviderAsTemplateVar(t *testing.T) {
+	r, err := New(Options{
+		BinPath:         "/bin/true",
+		RunDir:          filepath.Join(t.TempDir(), "run"),
+		SandboxProvider: "sailbox",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, err := substituteString("--provider={{sandbox_provider}}", r.vars)
+	if err != nil {
+		t.Fatalf("substituteVars: %v", err)
+	}
+	if want := "--provider=sailbox"; got != want {
+		t.Errorf("substituted = %q, want %q", got, want)
+	}
+}
+
+func TestNewRejectsUnknownSandboxProvider(t *testing.T) {
+	_, err := New(Options{
+		BinPath:         "/bin/true",
+		RunDir:          filepath.Join(t.TempDir(), "run"),
+		SandboxProvider: "unknown",
+	})
+	if err == nil {
+		t.Fatal("expected unsupported provider error")
+	}
+}

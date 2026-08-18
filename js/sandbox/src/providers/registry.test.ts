@@ -16,12 +16,18 @@ import type { SandboxProviderName } from "../types";
 const DEPS: SandboxProviderDeps = {
   daytona: { apiKey: "k", apiUrl: "https://app.daytona.io/api" },
   freestyle: { apiKey: "k" },
+  sailbox: { apiKey: "k" },
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
   resolveSnapshotId: async () => null,
 };
 
 describe("createSandboxProvider construction", () => {
-  const names: SandboxProviderName[] = ["daytona", "freestyle", "vercel"];
+  const names: SandboxProviderName[] = [
+    "daytona",
+    "freestyle",
+    "sailbox",
+    "vercel",
+  ];
 
   it.each(names)("constructs %s with a coherent object surface", (name) => {
     const p = createSandboxProvider(name, DEPS);
@@ -35,7 +41,7 @@ describe("createSandboxProvider construction", () => {
   });
 
   it("gives the three real providers the full capability set", () => {
-    for (const name of ["daytona", "freestyle", "vercel"] as const) {
+    for (const name of ["daytona", "freestyle", "sailbox", "vercel"] as const) {
       const p = createSandboxProvider(name, DEPS);
       expect(p.capabilities.lifecycle, name).toBe(true);
       expect(p.capabilities.exec, name).toBe(true);
@@ -44,7 +50,7 @@ describe("createSandboxProvider construction", () => {
       expect(sbox.services, name).not.toBeNull();
       // Vercel uses no-relay SSH (services-based) and exposes no legacy `ssh`
       // namespace; Daytona and Freestyle keep the short-lived SSH capability.
-      if (name === "vercel") {
+      if (name === "vercel" || name === "sailbox") {
         expect(sbox.ssh, name).toBeNull();
       } else {
         expect(sbox.ssh, name).not.toBeNull();
