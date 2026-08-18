@@ -19,6 +19,7 @@
     "@daytona/api-client": "0.203.0",
     "@daytonaio/sdk": "0.203.0",
     "@vercel/sandbox": "^3.0.0",
+    "e2b": "2.38.2",
     "freestyle": "^0.1.63",
     "p-retry": "^7.1.1"
   },

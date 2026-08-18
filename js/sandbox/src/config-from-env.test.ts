@@ -5,7 +5,8 @@ const BASE = { DAYTONA_API_KEY: "dk" };
 
 describe("sandboxProviderConfigsFromEnv", () => {
   it("builds the Daytona slice with defaults and leaves the others null", () => {
-    const { daytona, freestyle, vercel } = sandboxProviderConfigsFromEnv(BASE);
+    const { daytona, e2b, freestyle, vercel } =
+      sandboxProviderConfigsFromEnv(BASE);
     expect(daytona).toEqual({
       apiKey: "dk",
       apiUrl: "https://app.daytona.io/api",
@@ -15,6 +16,7 @@ describe("sandboxProviderConfigsFromEnv", () => {
       useWebSocket: false,
     });
     expect(freestyle).toBeNull();
+    expect(e2b).toBeNull();
     expect(vercel).toBeNull();
   });
 
@@ -72,6 +74,22 @@ describe("sandboxProviderConfigsFromEnv", () => {
       FREESTYLE_API_KEY: "fk",
     }).freestyle;
     expect(persistent?.snapshotPersistence).toBe("persistent");
+  });
+
+  it("gates E2B on E2B_ENABLED=true and requires its API key", () => {
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, E2B_ENABLED: "1" }).e2b,
+    ).toBeNull();
+    expect(() =>
+      sandboxProviderConfigsFromEnv({ ...BASE, E2B_ENABLED: "true" }),
+    ).toThrow(/E2B_API_KEY/);
+    expect(
+      sandboxProviderConfigsFromEnv({
+        ...BASE,
+        E2B_ENABLED: "true",
+        E2B_API_KEY: "e2b_test",
+      }).e2b,
+    ).toEqual({ apiKey: "e2b_test" });
   });
 
   it("gates Vercel on VERCEL_ENABLED=true and requires its credentials", () => {

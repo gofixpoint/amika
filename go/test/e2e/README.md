@@ -12,8 +12,15 @@ user typing commands at a shell would see.
 # From the repo root:
 make test-e2e
 
+# Run every real-API sandbox case against E2B:
+make test-e2e-api E2E_SANDBOX_PROVIDER=e2b
+
 # Or directly:
 AMIKA_RUN_E2E=1 go -C go test ./test/e2e/...
+
+# The entry package also exposes an explicit Go test flag:
+AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 \
+  go -C go test ./test/e2e -sandbox-provider=e2b
 
 # Unit tests for the runner itself (matcher, ledger, JSONPath, templating)
 # need no env var, no CLI build, no network, and no Docker:
@@ -39,6 +46,11 @@ The OpenAPI document used to resolve `expect.schema` names is not checked in.
 It is fetched at run time from `AMIKA_E2E_OPENAPI_URL`, defaulting to
 `https://app.amika.dev/api/openapi.json`, so schema assertions track the
 deployed API spec (see the schema section below).
+
+Every remote sandbox creation uses the same provider. It defaults to Daytona;
+set `E2E_SANDBOX_PROVIDER` through the Make target or pass
+`-sandbox-provider` to the entry package to select `e2b`, `freestyle`, or
+`vercel`. Cases receive the selection as `{{sandbox_provider}}`.
 
 Each run writes to `go/test/e2e/.runs/<run-id>/<case-name>/`:
 
@@ -128,8 +140,8 @@ the login user's shell. Write the script directly, as above.
 
 ### Variable substitution
 
-One variable is predefined: `{{run_id}}`, a timestamp unique to the whole
-run. A case that creates a **named** remote resource should build the name
+Two variables are predefined: `{{run_id}}`, a timestamp unique to the whole
+run, and `{{sandbox_provider}}`, the provider selected for the run. A case that creates a **named** remote resource should build the name
 from it (`--name e2e-ssh-key-{{run_id}}`). Names are frequently upserted
 rather than rejected, so a fixed name lets a case adopt, mutate, and then
 delete a resource the account already had, and lets two concurrent runs

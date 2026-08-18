@@ -16,6 +16,7 @@
  * stays env-agnostic and takes the resolved slices.
  */
 import type { DaytonaConfig } from "./daytona/config";
+import type { E2bConfig } from "./e2b/config";
 import type { FreestyleConfig } from "./freestyle/config";
 import type { VercelConfig } from "./vercel/config";
 import type { SandboxProvider, SnapshotIdResolver } from "./provider";
@@ -23,6 +24,7 @@ import { SandboxProviderUnsupportedError } from "./provider";
 import type { SandboxProviderName } from "../types";
 import type { SandboxAdapter } from "./shared/adapter";
 import daytonaProvider from "./daytona/provider";
+import e2bProvider, { openE2bAdapter } from "./e2b/provider";
 import vercelProvider from "./vercel/provider";
 import freestyleProvider from "./freestyle/provider";
 import { openDaytonaAdapter } from "./daytona/provider";
@@ -32,13 +34,14 @@ import { openVercelAdapter } from "./vercel/provider";
 /**
  * Everything the registry needs to build any provider: the config slices (null
  * when a provider isn't configured in this environment) and the snapshot
- * name↔id resolver the Vercel snapshot capability uses.
+ * name↔id resolver the opaque-id snapshot capabilities use.
  */
 export interface SandboxProviderDeps {
   daytona: DaytonaConfig;
+  e2b: E2bConfig | null;
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
-  /** Resolves an org-scoped snapshot name to its bootable provider id (Vercel). */
+  /** Resolves an org-scoped snapshot name to its bootable opaque provider id. */
   resolveSnapshotId: SnapshotIdResolver;
 }
 
@@ -61,6 +64,8 @@ const FREESTYLE_HINT =
   "Freestyle provider is not configured (set FREESTYLE_ENABLED=true and FREESTYLE_API_KEY)";
 const VERCEL_HINT =
   "Vercel provider is not configured (set VERCEL_ENABLED=true and VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID)";
+const E2B_HINT =
+  "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
 
 /**
  * The provider table — the one registration point. A `null` entry keeps a
@@ -72,6 +77,15 @@ const PROVIDERS = {
   daytona: {
     create: (deps) => daytonaProvider(deps.daytona),
     openAdapter: (deps, id) => openDaytonaAdapter(deps.daytona, id),
+  },
+  e2b: {
+    create: (deps) =>
+      e2bProvider({
+        config: requireConfig(deps.e2b, E2B_HINT),
+        resolveSnapshotId: deps.resolveSnapshotId,
+      }),
+    openAdapter: (deps, id) =>
+      openE2bAdapter(requireConfig(deps.e2b, E2B_HINT), id),
   },
   freestyle: {
     create: (deps) =>

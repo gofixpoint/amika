@@ -13,12 +13,13 @@ name: remote snapshot lifecycle (create source sandbox, capture, list, delete)
 # their targets so cleanup runs regardless of which step fails.
 steps:
   - name: create a source sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
       stdout_json:
         name: "@string"
+        provider: "{{sandbox_provider}}"
     capture:
       sandbox_name: $.name
     resource:

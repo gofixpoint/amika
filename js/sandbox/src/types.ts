@@ -2,7 +2,7 @@
  * Provider-facing shared types owned by the provider layer.
  */
 
-export type SandboxProviderName = "daytona" | "freestyle" | "vercel";
+export type SandboxProviderName = "daytona" | "e2b" | "freestyle" | "vercel";
 
 export type ServiceProtocol = "tcp" | "udp";
 export type ServiceUrlScheme = "http" | "https";
