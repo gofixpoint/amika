@@ -35,18 +35,18 @@ const SENTINEL_VALUE = "hello-snapshot";
 /**
  * Run a command inside a sandbox via SSH, return trimmed stdout.
  * Retries on exit 255 (transport-level failure: SSH daemon not yet ready)
- * with exponential backoff.
+ * with capped exponential backoff (2s, 4s, 8s, 10s — ~24s total over 5 attempts).
  */
 function sshRun(
   sshDestination: string,
   command: string,
-  { maxAttempts = 6, baseDelayMs = 5_000 } = {},
+  { maxAttempts = 5, baseDelayMs = 2_000, maxDelayMs = 10_000 } = {},
 ): string {
   const args = sshDestination.trim().split(/\s+/);
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt > 0) {
-      const delay = baseDelayMs * Math.pow(2, attempt - 1);
+      const delay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
     }
     const result = spawnSync(
@@ -78,7 +78,7 @@ async function waitForSnapshot(
   client: AmikaClient,
   slug: string,
   targetState = "active",
-  timeoutMs = 5 * 60 * 1000,
+  timeoutMs = 2 * 60 * 1000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
