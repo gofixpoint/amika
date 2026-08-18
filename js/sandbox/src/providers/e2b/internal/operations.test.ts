@@ -1,28 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const sdk = vi.hoisted(() => ({
-  create: vi.fn(),
-  connect: vi.fn(),
-  pause: vi.fn(),
-  kill: vi.fn(),
-  getInfo: vi.fn(),
-  getMetrics: vi.fn(),
-  list: vi.fn(),
+const { sdk, FakeSandboxNotFoundError } = vi.hoisted(() => ({
+  sdk: {
+    create: vi.fn(),
+    connect: vi.fn(),
+    pause: vi.fn(),
+    kill: vi.fn(),
+    getInfo: vi.fn(),
+    getMetrics: vi.fn(),
+    list: vi.fn(),
+  },
+  FakeSandboxNotFoundError: class SandboxNotFoundError extends Error {},
 }));
 
 vi.mock("e2b", () => ({
   Sandbox: sdk,
   CommandExitError: class CommandExitError extends Error {},
   FileNotFoundError: class FileNotFoundError extends Error {},
+  SandboxNotFoundError: FakeSandboxNotFoundError,
 }));
 
 import {
   createE2bSandbox,
   deleteE2bSandbox,
+  e2bRouteRestoreCommand,
+  e2bRouteSyncCommand,
+  getE2bSandboxState,
   listE2bSandboxes,
   refreshE2bUrls,
   startE2bSandbox,
   stopE2bSandbox,
+  syncE2bRoutes,
 } from "./operations";
 
 const CONFIG = { apiKey: "e2b_test" };
@@ -54,7 +62,10 @@ describe("E2B lifecycle operations", () => {
         "amika-sandbox-name": "demo",
       },
       timeoutMs: 15 * 60_000,
-      lifecycle: { onTimeout: "pause", autoResume: false },
+      lifecycle: {
+        onTimeout: { action: "pause", keepMemory: false },
+        autoResume: false,
+      },
       network: { allowPublicTraffic: true },
     });
     expect(result).toMatchObject({
@@ -74,7 +85,8 @@ describe("E2B lifecycle operations", () => {
   });
 
   it("resumes, pauses with memory, and kills the same sandbox id", async () => {
-    sdk.connect.mockResolvedValue({});
+    const run = vi.fn().mockResolvedValue({});
+    sdk.connect.mockResolvedValue({ commands: { run } });
     await startE2bSandbox(CONFIG, "sbx_1", 10);
     await stopE2bSandbox(CONFIG, "sbx_1");
     await deleteE2bSandbox(CONFIG, "sbx_1");
@@ -82,6 +94,9 @@ describe("E2B lifecycle operations", () => {
     expect(sdk.connect).toHaveBeenCalledWith("sbx_1", {
       apiKey: "e2b_test",
       timeoutMs: 10 * 60_000,
+    });
+    expect(run).toHaveBeenCalledWith(e2bRouteRestoreCommand(), {
+      user: "root",
     });
     expect(sdk.pause).toHaveBeenCalledWith("sbx_1", {
       apiKey: "e2b_test",
@@ -91,24 +106,85 @@ describe("E2B lifecycle operations", () => {
       apiKey: "e2b_test",
     });
   });
+
+  it("returns unknown only when E2B reports a missing sandbox", async () => {
+    sdk.getInfo.mockRejectedValueOnce(new FakeSandboxNotFoundError("missing"));
+    await expect(getE2bSandboxState(CONFIG, "sbx_gone")).resolves.toBe(
+      "unknown",
+    );
+
+    sdk.getInfo.mockRejectedValueOnce(new Error("network unavailable"));
+    await expect(getE2bSandboxState(CONFIG, "sbx_1")).rejects.toThrow(
+      "network unavailable",
+    );
+  });
 });
 
 describe("E2B services and listing", () => {
   it("refreshes every service to its stable HTTPS host", async () => {
+    const run = vi.fn().mockResolvedValue({});
     sdk.connect.mockResolvedValue({
+      commands: { run },
       getHost: (port: number) => `${port}-sbx_1.e2b.app`,
     });
 
-    const result = await refreshE2bUrls(CONFIG, "sbx_1", [
+    const services = [
       { name: "Coding Agent", containerPort: 3000, url: null },
       { name: "Preview", containerPort: 5173, url: null },
-    ] as never);
+    ] as never;
+    const result = await refreshE2bUrls(CONFIG, "sbx_1", services);
 
+    expect(run).toHaveBeenCalledWith(e2bRouteSyncCommand(services), {
+      user: "root",
+    });
     expect(result.providerUrl).toBe("https://3000-sbx_1.e2b.app");
     expect(result.services.map((service) => service.url)).toEqual([
       "https://3000-sbx_1.e2b.app",
       "https://5173-sbx_1.e2b.app",
     ]);
+  });
+
+  it("reconciles removed service ports through a persistent firewall chain", async () => {
+    const run = vi.fn().mockResolvedValue({});
+    sdk.connect.mockResolvedValue({ commands: { run } });
+    const services = [
+      { name: "Preview", containerPort: 5173, url: null },
+      { name: "Agent", containerPort: 3000, url: null },
+      { name: "Preview duplicate", containerPort: 5173, url: null },
+    ] as never;
+
+    await syncE2bRoutes(CONFIG, "sbx_1", services);
+
+    expect(sdk.connect).toHaveBeenCalledWith("sbx_1", {
+      apiKey: "e2b_test",
+    });
+    expect(run).toHaveBeenCalledWith(e2bRouteSyncCommand(services), {
+      user: "root",
+    });
+    const command = run.mock.calls[0]![0] as string;
+    expect(command).toContain("chain=AMIKA_E2B_ROUTES");
+    expect(command).toContain("desired_ports='3000 5173'");
+    expect(command).toContain("e2b-route-ports");
+    expect(command).toContain("e2b-route-desired-ports");
+    expect(command).toContain("firewall_count");
+    expect(command).toContain("-j REJECT --reject-with tcp-reset");
+  });
+
+  it("restores the persisted desired routes after a cold resume", () => {
+    const command = e2bRouteRestoreCommand();
+
+    expect(command).toContain('if [ ! -f "$desired_state_file" ]');
+    expect(command).toContain('desired_ports="$(cat "$desired_state_file")"');
+    expect(command).not.toContain('> "$desired_state_file.tmp"');
+  });
+
+  it("rejects an invalid desired service port before connecting", async () => {
+    await expect(
+      syncE2bRoutes(CONFIG, "sbx_1", [
+        { name: "bad", containerPort: 70_000, url: null },
+      ] as never),
+    ).rejects.toThrow("Invalid E2B service port");
+    expect(sdk.connect).not.toHaveBeenCalled();
   });
 
   it("paginates listings and omits sandboxes without usable disk metrics", async () => {

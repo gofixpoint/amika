@@ -1,4 +1,5 @@
-import { E2B_HOME_DIR, type E2bConfig } from "./config";
+import { DEFAULT_HOME_DIR } from "../../constants";
+import type { E2bConfig } from "./config";
 import { e2bCapabilities } from "./capabilities";
 import type { SnapshotIdResolver } from "../provider";
 import { defineProvider } from "../shared/define-provider";
@@ -37,7 +38,7 @@ export default defineProvider(
   ({ config, resolveSnapshotId }: E2bProviderConfig) => ({
     name: "e2b",
     signedUrlTtlSeconds: E2B_URL_TTL_S,
-    userHomeDir: E2B_HOME_DIR,
+    userHomeDir: DEFAULT_HOME_DIR,
     sandbox: {
       create: (ctx, input) => createE2bSandbox(ctx, config, input),
       delete: (id) => deleteE2bSandbox(config, id),
@@ -58,7 +59,7 @@ export default defineProvider(
     },
     services: {
       refreshUrls: (id, services) => refreshE2bUrls(config, id, services),
-      syncRoutes: syncE2bRoutes,
+      syncRoutes: (id, desired) => syncE2bRoutes(config, id, desired),
     },
     listing: { list: () => listE2bSandboxes(config) },
     snapshots: {
