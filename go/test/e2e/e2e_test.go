@@ -20,14 +20,21 @@ import (
 
 var sandboxProvider = flag.String(
 	"sandbox-provider",
-	"daytona",
-	"sandbox provider for remote API cases (daytona, freestyle, sailbox, or vercel)",
+	"",
+	"override E2E_SANDBOX_PROVIDER for remote API cases (daytona, freestyle, sailbox, or vercel)",
 )
 
 // runE2EEnv gates this test: it drives a real subprocess CLI and, per
 // case, may reach out over the network, so it does not run under a plain
 // `go test ./...`.
 const runE2EEnv = "AMIKA_RUN_E2E"
+
+// sandboxProviderEnv selects the provider used by provider-generic remote API
+// cases. The -sandbox-provider flag overrides it when a caller needs to
+// select a provider without changing its environment.
+const sandboxProviderEnv = "E2E_SANDBOX_PROVIDER"
+
+const defaultSandboxProvider = "daytona"
 
 // openAPIURLEnv overrides the OpenAPI document that expect.schema names are
 // validated against. It is a URL (or local path); when unset it defaults to
@@ -91,9 +98,11 @@ func TestE2ECaseFilesLoad(t *testing.T) {
 	}
 }
 
-// TestRemoteCreatesSelectTheSuiteProvider prevents a new real-API create step
-// from silently falling back to the deployment's default provider.
-func TestRemoteCreatesSelectTheSuiteProvider(t *testing.T) {
+// TestRemoteCreatesSelectAnExplicitProvider prevents a new real-API create
+// step from silently falling back to the deployment's default provider. Cases
+// may either follow the suite-wide provider selection or intentionally name a
+// supported provider for a provider-specific contract.
+func TestRemoteCreatesSelectAnExplicitProvider(t *testing.T) {
 	moduleRoot := testutil.FindModuleRoot(t)
 	caseFiles, err := runner.DiscoverCases(filepath.Join(moduleRoot, "test", "e2e", "cases"))
 	if err != nil {
@@ -111,8 +120,8 @@ func TestRemoteCreatesSelectTheSuiteProvider(t *testing.T) {
 			if !isRemoteSandboxCreate(step.Cmd) {
 				continue
 			}
-			if !hasArgPair(step.Cmd, "--provider", "{{sandbox_provider}}") {
-				t.Errorf("%s step %q: remote sandbox create must select {{sandbox_provider}}", filepath.Base(caseFile), step.Name)
+			if !selectsSandboxProvider(step.Cmd) {
+				t.Errorf("%s step %q: remote sandbox create must select {{sandbox_provider}} or a supported literal provider", filepath.Base(caseFile), step.Name)
 			}
 		}
 	}
@@ -160,7 +169,8 @@ func TestE2ECases(t *testing.T) {
 	if len(files) == 0 {
 		t.Fatalf("no case files found in %s", casesDir)
 	}
-	if err := runner.ValidateSandboxProvider(*sandboxProvider); err != nil {
+	suiteProvider, err := resolveSandboxProvider(*sandboxProvider, os.Getenv(sandboxProviderEnv))
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -244,7 +254,7 @@ func TestE2ECases(t *testing.T) {
 				// remote resource can make the name unique to this run.
 				RunID: runID,
 				// Every remote create command selects the same provider.
-				SandboxProvider: *sandboxProvider,
+				SandboxProvider: suiteProvider,
 				// Offline cases (not api-*) must never reach the real API,
 				// even on a host that exports AMIKA_API_KEY/AMIKA_API_URL
 				// ambiently (this dev environment does). Scrub those from the
@@ -296,11 +306,38 @@ func hasArg(args []string, want string) bool {
 	return false
 }
 
-func hasArgPair(args []string, first, second string) bool {
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == first && args[i+1] == second {
-			return true
+func resolveSandboxProvider(flagProvider, environmentProvider string) (string, error) {
+	provider := flagProvider
+	if provider == "" {
+		provider = environmentProvider
+	}
+	if provider == "" {
+		provider = defaultSandboxProvider
+	}
+	if err := runner.ValidateSandboxProvider(provider); err != nil {
+		return "", err
+	}
+	return provider, nil
+}
+
+func selectsSandboxProvider(args []string) bool {
+	provider, ok := lastProviderArgument(args)
+	if !ok {
+		return false
+	}
+	return provider == "{{sandbox_provider}}" || runner.ValidateSandboxProvider(provider) == nil
+}
+
+func lastProviderArgument(args []string) (string, bool) {
+	var provider string
+	found := false
+	for i, arg := range args {
+		switch {
+		case arg == "--provider" && i+1 < len(args):
+			provider, found = args[i+1], true
+		case strings.HasPrefix(arg, "--provider="):
+			provider, found = strings.TrimPrefix(arg, "--provider="), true
 		}
 	}
-	return false
+	return provider, found
 }
