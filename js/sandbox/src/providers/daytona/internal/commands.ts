@@ -154,6 +154,21 @@ async function executeOneShotCommand(
 }
 
 /**
+ * Filename prefix for the stderr capture files {@link buildStreamSplitCommand}
+ * creates, inside `$TMPDIR` (default `/tmp`).
+ *
+ * Named rather than left to `mktemp`'s generic `tmp.XXXXXXXXXX` so the residue
+ * is identifiable. A wrapper killed by an untrappable signal leaves its capture
+ * file behind, and that file holds the command's stderr — which can carry a
+ * secret, a tokenized clone URL being the obvious one. Removing it before a
+ * snapshot means matching it *without* matching every other tool's temp file,
+ * which a generic prefix makes impossible.
+ *
+ * @see removeStderrCaptureFiles
+ */
+export const STDERR_CAPTURE_PREFIX = "amika-exec-stderr.";
+
+/**
  * Wrap a command so its two streams survive a transport that carries only one.
  *
  * `command`'s stderr is captured to a temp file; once it has exited, the
@@ -178,7 +193,10 @@ export function buildStreamSplitCommand(
     // and hand the caller shell diagnostics that look like command output. A
     // full or read-only /tmp is enough to trigger it. Exiting here leaves no
     // marker, so `splitStreamsAtMarker` reports the failure text as stderr.
-    "__amika_err=$(mktemp) || exit 125",
+    // Templated rather than a bare `mktemp` so the file is identifiable as ours
+    // when a killed wrapper leaves it behind (see {@link STDERR_CAPTURE_PREFIX}).
+    // `$TMPDIR` is still honored, so the failure path below is unchanged.
+    `__amika_err=$(mktemp "\${TMPDIR:-/tmp}/${STDERR_CAPTURE_PREFIX}XXXXXXXXXX") || exit 125`,
     '[ -n "$__amika_err" ] || exit 125',
     // Everything from here writes stderr to the capture file, this script
     // included. Redirecting only the command would leave the wrapper's own

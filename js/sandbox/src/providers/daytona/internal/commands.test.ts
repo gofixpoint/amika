@@ -4,6 +4,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  STDERR_CAPTURE_PREFIX,
   buildDaytonaCommand,
   buildDaytonaSessionCommand,
   buildStreamSplitCommand,
@@ -285,6 +286,39 @@ describe.skipIf(process.platform !== "linux")(
       expect(stdout).toBe("out\n");
       expect(stderr).toBe("err\n");
     }, 20_000);
+
+    it("names the capture file so the pre-snapshot sweep can find it", () => {
+      // The sweep globs on this prefix. A killed wrapper runs no trap, so the
+      // file survives with the command's stderr in it — and a snapshot taken
+      // afterwards would bake that in. `mktemp`'s default `tmp.XXXXXXXXXX`
+      // could only be swept by a `tmp.*` glob, which would take unrelated
+      // tools' temp files with it.
+      const dir = mkdtempSync(join(tmpdir(), "amika-prefix-"));
+      try {
+        // `sleep` holds the wrapper open; SIGKILL runs no trap, so whatever it
+        // created is still there to inspect.
+        const script = buildStreamSplitCommand(
+          buildDaytonaCommand("echo SENSITIVE >&2; sleep 30"),
+          "--M--",
+        );
+        const child = spawn("sh", { stdio: ["pipe", "ignore", "ignore"] });
+        child.stdin.end(`TMPDIR=${dir}\n${script}`);
+        // Give the wrapper time to reach its `mktemp` before killing it.
+        const deadline = Date.now() + 5000;
+        let names: string[] = [];
+        while (Date.now() < deadline) {
+          names = readdirSync(dir);
+          if (names.length > 0) break;
+          spawnSync("sleep", ["0.05"]);
+        }
+        child.kill("SIGKILL");
+
+        expect(names).toHaveLength(1);
+        expect(names[0]!.startsWith(STDERR_CAPTURE_PREFIX)).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
 
     it("leaves no capture file behind", () => {
       const dir = mkdtempSync(join(tmpdir(), "amika-split-"));

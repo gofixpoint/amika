@@ -42,6 +42,7 @@ import {
   getDaytonaDockerRegistry,
   listDaytonaDockerRegistries,
 } from "./internal/docker-registry";
+import { removeStderrCaptureFiles } from "./internal/stderr-captures";
 
 // Provider-root re-exports of the server-side surface the registry wires up.
 // The implementations live in `internal/`; routing them through `provider.ts`
@@ -122,6 +123,11 @@ export default defineProvider(daytonaCapabilities, (config: DaytonaConfig) => ({
       return { providerSnapshotId: null };
     },
     isEnvScrubbable: (id) => isSandboxEnvScrubbable(config, id),
+    // Runs after the core credential scrub and before `capture`. Daytona's
+    // one-shot exec leaves a stderr capture file behind when its wrapper is
+    // killed untrappably, and that file can hold a secret, so it must not be
+    // frozen into a forkable snapshot.
+    removeInjectedSecrets: (id) => removeStderrCaptureFiles(config, id),
   },
 
   dockerRegistries: {
