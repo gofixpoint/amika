@@ -17,63 +17,85 @@ const SUDO_PRESERVE_ENV_BASE = [
 ] as const;
 
 /**
- * Build the on-box command string for a Daytona session exec. Both paths run
- * the *entire* command as the argument of a `bash -c`, never as bare text.
+ * Build the on-box command string for a Daytona exec, one-shot or session.
+ * Both paths run the *entire* command as the single quoted argument of a
+ * `bash -c`, which buys three things:
  *
- * A session is a long-lived shell that the agent feeds commands through on
- * stdin, so bare text executes *in that shell* and any shell state it sets
- * outlives the command. `set -e` is the case that bites: the session shell
- * inherits it and then exits before the agent records the command's exit
- * status, so no `exit_code` is written and the synchronous exec call waits on a
- * result that never comes. Wrapping confines that state to a child shell, and
- * a script that fails under its own `set -e` still reports a non-zero exit
- * normally.
+ *   - **Syntactic isolation.** Every caller embeds this inside a larger script
+ *     — a subshell for the stream split, a pipeline for stdin. As one word the
+ *     command cannot interact with that script's syntax: a trailing comment
+ *     can't swallow the closing paren, a trailing `&` can't strand it, and a
+ *     multi-line command can't escape a preceding `&&`.
+ *   - **A known interpreter.** Daytona runs the outer script under `zsh`
+ *     (verified on a live sandbox), which is close to but not `bash` — word
+ *     splitting differs most notably. Callers write bash, so run bash.
+ *   - **Shell-state containment**, which matters on the session path: a session
+ *     is a long-lived shell, and a script's `set -e` sent as bare text would
+ *     take it down before the agent recorded an exit status.
  *
- * For `sudo: true` the same wrapper additionally means a compound command,
- * pipeline, or redirection runs fully elevated rather than just its first
- * simple command, and `--preserve-env` is extended with the caller's explicit
+ * `sudo: true` additionally elevates the whole command rather than just its
+ * first simple command, and extends `--preserve-env` with the caller's explicit
  * `env` keys (on top of the Amika hook vars) so `sudo`'s environment reset
- * doesn't strip the variables the public `ExecCommandOptions.env` promises to
- * expose.
- *
- * `sudo -n` is non-interactive so it fails fast instead of hanging on a
+ * doesn't strip the variables `ExecCommandOptions.env` promises to expose.
+ * `sudo -n` is non-interactive so it fails fast rather than hanging on a
  * password prompt. Exported for unit testing.
  */
 export function buildDaytonaCommand(
   command: string,
   opts?: { env?: Record<string, string>; sudo?: boolean },
 ): string {
-  if (!opts?.sudo) return `bash -c ${shellQuote(command)}`;
+  assertEnvNames(opts?.env);
+  const inner = `bash -c ${shellQuote(command)}`;
+  if (!opts?.sudo) return inner;
   const preserve = [...SUDO_PRESERVE_ENV_BASE, ...Object.keys(opts.env ?? {})];
-  return `sudo -n --preserve-env=${preserve.join(",")} bash -c ${shellQuote(command)}`;
+  return `sudo -n --preserve-env=${preserve.join(",")} ${inner}`;
 }
 
 /** Shell-legal environment variable name; anything else is rejected. */
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 /**
- * Wrap {@link buildDaytonaCommand} with the `cwd` and `env` that Daytona's
- * one-shot `process.executeCommand` used to apply for us.
+ * Reject any environment variable name that isn't shell-legal.
  *
- * Sessions carry no cwd/env parameters (`SessionExecuteRequest` is just a
- * command string), so both are applied in the session shell, ahead of the
- * `bash -c` wrapper: the child inherits the working directory and the exported
+ * Both builders interpolate these names into a command string unquoted — into
+ * `sudo --preserve-env=` here, and into an `export` on the session path — so a
+ * name is never safe to take on trust. Checked in {@link buildDaytonaCommand}
+ * rather than only at the call sites because every exec path funnels through
+ * it, which is what makes the guard unbypassable.
+ */
+function assertEnvNames(env?: Record<string, string>): void {
+  for (const name of Object.keys(env ?? {})) {
+    if (!ENV_NAME_RE.test(name)) {
+      throw new Error(`Invalid environment variable name: ${name}`);
+    }
+  }
+}
+
+/**
+ * Wrap {@link buildDaytonaCommand} with the `cwd` and `env` that Daytona's
+ * one-shot `process.executeCommand` takes as parameters.
+ *
+ * Only the stdin path needs this: a `SessionExecuteRequest` is just a command
+ * string, with nowhere to put either. Both are applied in the session shell,
+ * ahead of the command, so it inherits the working directory and the exported
  * variables, and on the sudo path `--preserve-env` then has something to
- * preserve. Exported for unit testing.
+ * preserve.
+ *
+ * A plain `&&` chain is enough because {@link buildDaytonaCommand} hands back a
+ * single `bash -c '…'` word: there is no second line for the `&&` to miss, so a
+ * failed `cd` stops everything. Exported for unit testing.
  */
 export function buildDaytonaSessionCommand(
   command: string,
   opts?: { cwd?: string; env?: Record<string, string>; sudo?: boolean },
 ): string {
-  const prefix: string[] = [];
-  if (opts?.cwd) prefix.push(`cd ${shellQuote(opts.cwd)}`);
+  assertEnvNames(opts?.env);
+  const setup: string[] = [];
+  if (opts?.cwd) setup.push(`cd ${shellQuote(opts.cwd)}`);
   for (const [name, value] of Object.entries(opts?.env ?? {})) {
-    if (!ENV_NAME_RE.test(name)) {
-      throw new Error(`Invalid environment variable name: ${name}`);
-    }
-    prefix.push(`export ${name}=${shellQuote(value)}`);
+    setup.push(`export ${name}=${shellQuote(value)}`);
   }
-  return [...prefix, buildDaytonaCommand(command, opts)].join(" && ");
+  return [...setup, buildDaytonaCommand(command, opts)].join(" && ");
 }
 
 export async function executeCommand(
@@ -90,12 +112,134 @@ export async function executeCommand(
   // stdin wiring already sees, so it takes the same path as the no-input case.
   return opts?.input
     ? executeSessionCommandWithInput(sandbox, command, opts.input, opts)
-    : executeSessionCommand(sandbox, command, opts);
+    : executeOneShotCommand(sandbox, command, opts);
 }
 
 const MAX_COMMAND_INPUT_BYTES = 1024 * 1024;
 
 type DaytonaSandbox = Awaited<ReturnType<Daytona["get"]>>;
+
+/**
+ * Run one command through Daytona's one-shot `process.executeCommand`.
+ *
+ * Deliberately *not* a process session. Daytona owns a session's processes and
+ * kills them when the session is deleted, `nohup` and `setsid` included, so a
+ * command whose point is the daemon it leaves behind loses it the moment the
+ * command returns. The one-shot API has no owning session, so it survives.
+ *
+ * Sessions were reached for because this API reports a single combined
+ * `result`, with stderr folded into the value stream, corrupting any caller
+ * that parses stdout. {@link buildStreamSplitCommand} recovers the two streams
+ * on-box instead, so both properties hold at one round-trip per command.
+ */
+async function executeOneShotCommand(
+  sandbox: DaytonaSandbox,
+  command: string,
+  opts?: { cwd?: string; env?: Record<string, string>; sudo?: boolean },
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const marker = `--amika-stderr-${randomUUID()}--`;
+  const response = await sandbox.process.executeCommand(
+    buildStreamSplitCommand(buildDaytonaCommand(command, opts), marker),
+    opts?.cwd,
+    opts?.env,
+  );
+  // `ExecuteResponse.exitCode` is typed `number` but the wire model has it
+  // optional, so TypeScript cannot catch an omitted value; the stdin path has
+  // carried the same fallback all along.
+  const exitCode = response.exitCode ?? 1;
+  return {
+    exitCode,
+    ...splitStreamsAtMarker(response.result, marker, exitCode),
+  };
+}
+
+/**
+ * Wrap a command so its two streams survive a transport that carries only one.
+ *
+ * `command`'s stderr is captured to a temp file; once it has exited, the
+ * response body is its stdout, then `marker`, then the captured stderr, so
+ * {@link splitStreamsAtMarker} can cut the two apart. The command's own exit
+ * status is re-raised at the end, so the wrapper is invisible to the caller.
+ * `marker` must be unique per command, so that no legitimate output can
+ * contain it and split at the wrong place.
+ *
+ * `command` arrives from {@link buildDaytonaCommand} as a single `bash -c '…'`
+ * word, so nothing in it can interact with this script's syntax. Exported for
+ * unit testing.
+ */
+export function buildStreamSplitCommand(
+  command: string,
+  marker: string,
+): string {
+  return [
+    // Bail if the capture file can't be made. Without this the redirect below
+    // becomes `2>""`, which fails, which means the subshell never runs at all —
+    // and the wrapper would still print its marker, so the split would succeed
+    // and hand the caller shell diagnostics that look like command output. A
+    // full or read-only /tmp is enough to trigger it. Exiting here leaves no
+    // marker, so `splitStreamsAtMarker` reports the failure text as stderr.
+    "__amika_err=$(mktemp) || exit 125",
+    '[ -n "$__amika_err" ] || exit 125',
+    // Everything from here writes stderr to the capture file, this script
+    // included. Redirecting only the command would leave the wrapper's own
+    // diagnostics — a `Terminated` on a group kill, an OOM notice — in the
+    // response *ahead* of the marker, i.e. reported as stdout, which is the
+    // one thing `ExecResult.stdout` promises never to carry.
+    'exec 2>"$__amika_err"',
+    // Covers the normal exit as well as a killed wrapper, which a trailing
+    // `rm` would miss — the file holds captured stderr.
+    "trap 'rm -f -- \"$__amika_err\"' EXIT",
+    // Emit whatever the command produced, then leave with the signal's
+    // conventional status. A POSIX trap handler resumes where the shell was
+    // rather than exiting, so a cleanup-only handler would delete the capture
+    // file and let the script run on to `cat` it — losing the real stderr and
+    // reporting the command's own status for a wrapper told to stop. Exiting
+    // without emitting first is no better: the response would carry no marker,
+    // and the whole of stdout would be reported as failure text. Exiting here
+    // still runs the EXIT trap, so cleanup happens exactly once.
+    // `__amika_emitted` keeps a signal that lands *during* the normal emit
+    // below from emitting a second time: two markers in one response would
+    // leave the split reporting the captured stderr twice with a raw marker
+    // between the copies.
+    // Cleared explicitly: `env` may legally carry a leading-underscore name, so
+    // an inherited `__amika_emitted` would otherwise suppress the bail emit.
+    "__amika_emitted=",
+    `__amika_bail() { if [ -z "$__amika_emitted" ]; then __amika_emit; fi; exit "$1"; }`,
+    `__amika_emit() { __amika_emitted=1; printf '%s' ${shellQuote(marker)}; cat -- "$__amika_err"; }`,
+    "trap '__amika_bail 130' INT",
+    "trap '__amika_bail 143' TERM",
+    "trap '__amika_bail 129' HUP",
+    `( ${command} )`,
+    "__amika_rc=$?",
+    // `--` inside `__amika_emit` so a TMPDIR beginning with `-` can't make the
+    // capture path read as flags.
+    "__amika_emit",
+    `exit "$__amika_rc"`,
+  ].join("\n");
+}
+
+/** Cut a {@link buildStreamSplitCommand} response back into its two streams. */
+function splitStreamsAtMarker(
+  combined: string,
+  marker: string,
+  exitCode: number,
+): { stdout: string; stderr: string } {
+  const at = combined.indexOf(marker);
+  if (at === -1) {
+    // The wrapper never reached its `printf`, so this is not command output at
+    // all — the shell itself failed to start, or the command took the process
+    // down with it. On a failure that text is the only diagnostic there is, so
+    // route it where `execFailureText` will find it rather than leaving it to
+    // be parsed as a value.
+    return exitCode === 0
+      ? { stdout: combined, stderr: "" }
+      : { stdout: "", stderr: combined };
+  }
+  return {
+    stdout: combined.slice(0, at),
+    stderr: combined.slice(at + marker.length),
+  };
+}
 
 /** Run `body` against a throwaway session, always tearing the session down. */
 async function withSession<T>(
@@ -112,37 +256,13 @@ async function withSession<T>(
 }
 
 /**
- * Run one command in a session and read back its two streams.
+ * As {@link executeOneShotCommand}, but with `input` on the command's stdin.
  *
- * Sessions rather than `process.executeCommand`, which returns only a single
- * combined `result` string: stderr folded into the value stream corrupts
- * every caller that parses stdout (host keys, JSON, PIDs). A synchronous
- * session command reports `stdout`, `stderr`, and the exit code directly, so
- * this costs one extra round-trip over the one-shot API, not several.
- */
-async function executeSessionCommand(
-  sandbox: DaytonaSandbox,
-  command: string,
-  opts?: { cwd?: string; env?: Record<string, string>; sudo?: boolean },
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return withSession(sandbox, async (sessionId) => {
-    const response = await sandbox.process.executeSessionCommand(sessionId, {
-      command: buildDaytonaSessionCommand(command, opts),
-    });
-    return {
-      exitCode: response.exitCode ?? 1,
-      stdout: response.stdout ?? "",
-      stderr: response.stderr ?? "",
-    };
-  });
-}
-
-/**
- * As {@link executeSessionCommand}, but with `input` on the command's stdin.
- *
- * Sending stdin needs the command's id, which only an async run hands back
- * before the command finishes, so this variant runs detached and collects the
- * streams from the log callbacks instead.
+ * Sending stdin needs the command's id, which only a session's async run hands
+ * back before the command finishes, so this variant alone still pays for a
+ * session — and gets the two streams from the log callbacks for free. Deleting
+ * that session reaps whatever the command left running, which is safe here: a
+ * command fed bytes on stdin consumes them and exits rather than daemonizing.
  */
 async function executeSessionCommandWithInput(
   sandbox: DaytonaSandbox,
@@ -157,6 +277,12 @@ async function executeSessionCommandWithInput(
   return withSession(sandbox, async (sessionId) => {
     // Daytona does not expose a close-stdin operation. Bound the reader to the
     // exact byte count so the command sees EOF without putting input in argv.
+    //
+    // The parens are load-bearing beyond grouping the pipe's right-hand side: a
+    // session is a long-lived shell, and bare text would run *in* it, so a
+    // script's `set -e` would take the shell down before the agent recorded an
+    // exit code and this call would wait on a result that never comes. Both the
+    // pipeline and the explicit subshell confine that state to a child.
     const onBox = buildDaytonaSessionCommand(command, opts);
     const response = await sandbox.process.executeSessionCommand(sessionId, {
       command: `head -c ${byteLength} | (${onBox})`,

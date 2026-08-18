@@ -58,7 +58,7 @@ describe("startDockerForSnapshot", () => {
     // failure must not surface and mask the capture's success.
     const sandbox = {
       process: {
-        createSession: () => Promise.reject(new Error("exec down")),
+        executeCommand: () => Promise.reject(new Error("exec down")),
       },
     } as unknown as Parameters<typeof startDockerForSnapshot>[0];
 
