@@ -56,7 +56,7 @@ test-contract: goenv
 
 test-e2e: goenv
 	go -C $(GO_DIR) test ./test/e2e/runner/...
-	AMIKA_RUN_E2E=1 go -C $(GO_DIR) test ./test/e2e -sandbox-provider $(E2E_SANDBOX_PROVIDER)
+	E2E_SANDBOX_PROVIDER=$(E2E_SANDBOX_PROVIDER) AMIKA_RUN_E2E=1 go -C $(GO_DIR) test ./test/e2e
 
 # Runs the offline E2E cases AND the api-*.yaml cases that hit the real
 # remote API (which may create billable resources). Requires credentials
@@ -70,7 +70,7 @@ test-e2e: goenv
 # with `make test-e2e-api E2E_API_TIMEOUT=1h` when adding more cases.
 test-e2e-api: goenv
 	go -C $(GO_DIR) test ./test/e2e/runner/...
-	AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test -timeout $(E2E_API_TIMEOUT) ./test/e2e -sandbox-provider $(E2E_SANDBOX_PROVIDER)
+	E2E_SANDBOX_PROVIDER=$(E2E_SANDBOX_PROVIDER) AMIKA_RUN_E2E=1 AMIKA_RUN_E2E_API=1 go -C $(GO_DIR) test -timeout $(E2E_API_TIMEOUT) ./test/e2e
 
 # Reclaims remote resources left behind by an E2E run that was killed before
 # its own cleanup could run (SIGKILL, a dead machine). Deliberately manual:
