@@ -16,7 +16,10 @@ make test-e2e
 make test-e2e-api E2E_SANDBOX_PROVIDER=sailbox
 
 # Or directly:
-AMIKA_RUN_E2E=1 go -C go test ./test/e2e -sandbox-provider daytona
+E2E_SANDBOX_PROVIDER=sailbox AMIKA_RUN_E2E=1 go -C go test ./test/e2e
+
+# The flag takes precedence over the environment variable:
+E2E_SANDBOX_PROVIDER=sailbox AMIKA_RUN_E2E=1 go -C go test ./test/e2e -sandbox-provider vercel
 
 # Unit tests for the runner itself (matcher, ledger, JSONPath, templating)
 # need no env var, no CLI build, no network, and no Docker:
@@ -132,8 +135,11 @@ the login user's shell. Write the script directly, as above.
 ### Variable substitution
 
 Two variables are predefined: `{{run_id}}`, a timestamp unique to the whole
-run, and `{{sandbox_provider}}`, the validated `-sandbox-provider` selection
-(`daytona` by default). A case that creates a **named** remote resource should
+run, and `{{sandbox_provider}}`, the validated `E2E_SANDBOX_PROVIDER`
+selection (`daytona` by default). The `-sandbox-provider` flag overrides the
+environment variable for a single invocation. Provider-generic remote creates
+must use `{{sandbox_provider}}`; a provider-specific case may instead name a
+supported literal `--provider`. A case that creates a **named** remote resource should
 build the name from the run ID (`--name e2e-ssh-key-{{run_id}}`). Names are
 frequently upserted rather than rejected, so a fixed name lets a case adopt,
 mutate, and then delete a resource the account already had, and lets two
