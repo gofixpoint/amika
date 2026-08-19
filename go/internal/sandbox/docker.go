@@ -11,6 +11,11 @@ import (
 	"strings"
 )
 
+// TODO(KAPRO-842): forward AMIKA_PI_WEB / AMIKA_PI_WEB_PASSWORD too. sudo
+// resets the environment, so the Pi web terminal's gate never reaches
+// pre-setup.sh and ttyd cannot start in a local Docker sandbox. Pair it with
+// publishing constants.PiWebPort in ResolveProvisionedServices — forwarding
+// the variables alone would leave ttyd running but unreachable.
 const localSandboxLifecycleCommand = `sudo AMIKA_AGENT_CWD="$AMIKA_AGENT_CWD" AMIKA_OPENCODE_WEB="$AMIKA_OPENCODE_WEB" OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" /usr/lib/amikad/run-hook.sh /usr/lib/amikad/pre-setup.sh && /usr/lib/amikad/run-hook.sh /usr/local/etc/amikad/setup/setup.sh && sudo /usr/lib/amikad/run-hook.sh /usr/lib/amikad/post-setup.sh && exec "$@"`
 
 // CreateDockerSandbox creates a long-running Docker container with the given
