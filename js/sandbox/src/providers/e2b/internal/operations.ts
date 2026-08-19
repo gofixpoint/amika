@@ -314,9 +314,11 @@ export async function listE2bSandboxes(
   while (paginator.hasNext) {
     const page = await paginator.nextItems();
     for (const info of page) {
-      const metrics = await Sandbox.getMetrics(info.sandboxId, apiOptions);
+      const metrics = await Sandbox.getMetrics(
+        info.sandboxId,
+        apiOptions,
+      ).catch(() => []);
       const latest = metrics.at(-1);
-      if (!latest || latest.diskTotal <= 0) continue;
       listings.push({
         providerSandboxId: info.sandboxId,
         orgId: info.metadata[SANDBOX_ORG_ID_LABEL] ?? null,
@@ -324,7 +326,8 @@ export async function listE2bSandboxes(
         sizing: {
           vcpus: info.cpuCount,
           memoryGib: info.memoryMB / 1024,
-          diskGib: latest.diskTotal / 1024 ** 3,
+          diskGib:
+            latest && latest.diskTotal > 0 ? latest.diskTotal / 1024 ** 3 : 0,
         },
       });
     }

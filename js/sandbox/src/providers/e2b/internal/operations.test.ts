@@ -187,7 +187,7 @@ describe("E2B services and listing", () => {
     expect(sdk.connect).not.toHaveBeenCalled();
   });
 
-  it("paginates listings and omits sandboxes without usable disk metrics", async () => {
+  it("paginates listings without dropping sandboxes missing disk metrics", async () => {
     const pages = [
       [
         {
@@ -222,6 +222,12 @@ describe("E2B services and listing", () => {
         orgId: "org_1",
         state: "running",
         sizing: { vcpus: 2, memoryGib: 8, diskGib: 10 },
+      },
+      {
+        providerSandboxId: "sbx_new",
+        orgId: null,
+        state: "paused",
+        sizing: { vcpus: 1, memoryGib: 1, diskGib: 0 },
       },
     ]);
   });
