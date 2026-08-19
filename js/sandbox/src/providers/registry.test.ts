@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  createSandboxProvider,
-  isSandboxProviderName,
-  type SandboxProviderDeps,
-} from "./registry";
+import { createSandboxProvider, type SandboxProviderDeps } from "./registry";
+import { isSandboxProviderName } from "./capabilities";
 import { SandboxProviderUnsupportedError } from "./provider";
 import type { SandboxProviderName } from "../types";
 
@@ -69,10 +66,11 @@ describe("createSandboxProvider construction", () => {
   });
 
   it("rejects Object.prototype keys as provider names", () => {
-    // The registry table is a plain object literal; the name guard must check
-    // OWN keys only, or "constructor" would resolve `Object` off the prototype
-    // chain and `createSandboxProvider` would return garbage instead of
-    // throwing.
+    // The guard matches against the canonical name list, so these are rejected
+    // like any other unknown name. Kept as a regression test because a guard
+    // written against the registry table instead (with `in`, or any lookup that
+    // walks the prototype chain) would resolve "constructor" to `Object` and
+    // make `createSandboxProvider` return garbage instead of throwing.
     for (const name of ["toString", "constructor", "valueOf", "__proto__"]) {
       expect(isSandboxProviderName(name), name).toBe(false);
       expect(() => createSandboxProvider(name, DEPS), name).toThrow(

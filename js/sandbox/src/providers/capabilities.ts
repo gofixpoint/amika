@@ -11,6 +11,7 @@ import type {
   SandboxProviderCapabilities,
   SandboxProviderName,
 } from "./provider";
+import { SANDBOX_PROVIDER_NAMES } from "../types";
 import { daytonaCapabilities } from "./daytona/capabilities";
 import { e2bCapabilities } from "./e2b/capabilities";
 import { freestyleCapabilities } from "./freestyle/capabilities";
@@ -54,14 +55,19 @@ export const SANDBOX_PROVIDER_DISPLAY: Record<
 
 const UNKNOWN_BADGE_CLASS = "bg-gray-200 text-gray-700";
 
-function isKnownProvider(
+/**
+ * Whether `name` is a known provider name.
+ *
+ * Lives here, in the client-safe layer, rather than next to the provider table
+ * in `registry.ts`: client components need this guard, and importing it from
+ * `registry.ts` drags every provider SDK (and the `node:` built-ins they use)
+ * into the browser bundle. `registry.ts` re-imports it from here.
+ */
+export function isSandboxProviderName(
   name: string | null | undefined,
 ): name is SandboxProviderName {
   return (
-    name === "daytona" ||
-    name === "e2b" ||
-    name === "freestyle" ||
-    name === "vercel"
+    name != null && (SANDBOX_PROVIDER_NAMES as readonly string[]).includes(name)
   );
 }
 
@@ -69,12 +75,14 @@ function isKnownProvider(
 export function getProviderCapabilities(
   name: string | null | undefined,
 ): SandboxProviderCapabilities | null {
-  return isKnownProvider(name) ? SANDBOX_PROVIDER_CAPABILITIES[name] : null;
+  return isSandboxProviderName(name)
+    ? SANDBOX_PROVIDER_CAPABILITIES[name]
+    : null;
 }
 
 /** Display label for `name`, falling back to the raw name. */
 export function getProviderLabel(name: string | null | undefined): string {
-  return isKnownProvider(name)
+  return isSandboxProviderName(name)
     ? SANDBOX_PROVIDER_DISPLAY[name].label
     : (name ?? "Unknown");
 }
@@ -83,7 +91,7 @@ export function getProviderLabel(name: string | null | undefined): string {
 export function getProviderBadgeClassName(
   name: string | null | undefined,
 ): string {
-  return isKnownProvider(name)
+  return isSandboxProviderName(name)
     ? SANDBOX_PROVIDER_DISPLAY[name].badgeClassName
     : UNKNOWN_BADGE_CLASS;
 }
