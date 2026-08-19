@@ -28,10 +28,12 @@ vi.mock("e2b", () => ({
 import {
   createE2bSandbox,
   deleteE2bSandbox,
+  e2bImagePermissionRestoreCommand,
   e2bRouteRestoreCommand,
   e2bRouteSyncCommand,
   getE2bSandboxState,
   listE2bSandboxes,
+  openE2bAdapter,
   refreshE2bUrls,
   startE2bSandbox,
   stopE2bSandbox,
@@ -87,6 +89,17 @@ describe("E2B lifecycle operations", () => {
       } as never),
     ).rejects.toThrow(/E2B_TEMPLATE/);
     expect(sdk.create).not.toHaveBeenCalled();
+  });
+
+  it("restores image permissions before opening the adapter", async () => {
+    const run = vi.fn().mockResolvedValue({});
+    sdk.connect.mockResolvedValue({ commands: { run } });
+
+    await openE2bAdapter(CONFIG, "sbx_1");
+
+    expect(run).toHaveBeenCalledWith(e2bImagePermissionRestoreCommand(), {
+      user: "root",
+    });
   });
 
   it("resumes, pauses with only filesystem state, and kills the sandbox", async () => {

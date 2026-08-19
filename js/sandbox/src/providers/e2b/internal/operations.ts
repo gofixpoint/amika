@@ -346,7 +346,16 @@ export async function openE2bAdapter(
   config: E2bConfig,
   providerSandboxId: string,
 ): Promise<SandboxAdapter> {
-  return new E2bAdapter(await connectE2bSandbox(config, providerSandboxId));
+  const sandbox = await connectE2bSandbox(config, providerSandboxId);
+  await sandbox.commands.run(e2bImagePermissionRestoreCommand(), {
+    user: "root",
+  });
+  return new E2bAdapter(sandbox);
+}
+
+/** Restore the image contract after E2B's finalizer broadens `/usr/local`. */
+export function e2bImagePermissionRestoreCommand(): string {
+  return "chmod 0755 /usr/local/etc/amika";
 }
 
 function commandOptions(opts?: ExecCommandOptions) {
