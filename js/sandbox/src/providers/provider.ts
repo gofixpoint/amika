@@ -1011,7 +1011,7 @@ export interface ServiceRestartContext {
   repoDir: string;
   // TODO(KAPRO-840): carry `AMIKA_PI_WEB` / `AMIKA_PI_WEB_PASSWORD` too. Without
   // them a resumed sandbox re-runs `pre-setup.sh` with the Pi gate unset, so the
-  // Pi web terminal (port 60997) never restarts while its service URL lives on.
+  // Pi web terminal (port 60996) never restarts while its service URL lives on.
   // Left out deliberately: only the Vercel resume path reads this context, and
   // we don't run that provider today.
 }
