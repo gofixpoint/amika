@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Sandbox, type SnapshotInfo } from "e2b";
 import type {
   CapturedSnapshot,
@@ -11,8 +12,11 @@ export async function getE2bSnapshotByName(
   config: E2bConfig,
   name: string,
 ): Promise<ProviderSnapshot | null> {
-  const snapshots = await listE2bSnapshots(config, name);
-  const snapshot = snapshots.find((item) => snapshotHasName(item, name));
+  const providerName = e2bSnapshotName(name);
+  const snapshots = await listE2bSnapshots(config, providerName);
+  const snapshot = snapshots.find((item) =>
+    snapshotHasName(item, providerName),
+  );
   return snapshot ? toProviderSnapshot(name, snapshot) : null;
 }
 
@@ -50,7 +54,7 @@ export async function captureE2bSnapshot(
 ): Promise<CapturedSnapshot> {
   const snapshot = await Sandbox.createSnapshot(providerSandboxId, {
     ...e2bApiOptions(config),
-    name,
+    name: e2bSnapshotName(name),
   });
   return { providerSnapshotId: snapshot.snapshotId };
 }
@@ -69,9 +73,20 @@ async function listE2bSnapshots(
 }
 
 function snapshotHasName(snapshot: SnapshotInfo, name: string): boolean {
-  return snapshot.names.some(
-    (candidate) => candidate === name || candidate.startsWith(`${name}:`),
-  );
+  return snapshot.names.some((candidate) => {
+    const withoutTag = candidate.split(":", 1)[0]!;
+    return withoutTag === name || withoutTag.endsWith(`/${name}`);
+  });
+}
+
+function e2bSnapshotName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  const hash = createHash("sha256").update(name).digest("hex").slice(0, 12);
+  return `amika-${slug || "snapshot"}-${hash}`;
 }
 
 function toProviderSnapshot(

@@ -8,13 +8,18 @@ const { sdk, FakeSandboxNotFoundError } = vi.hoisted(() => ({
     kill: vi.fn(),
     getInfo: vi.fn(),
     getMetrics: vi.fn(),
+    getSandboxDetail: vi.fn(),
     list: vi.fn(),
   },
   FakeSandboxNotFoundError: class SandboxNotFoundError extends Error {},
 }));
 
 vi.mock("e2b", () => ({
+  ApiClient: class ApiClient {
+    api = { GET: sdk.getSandboxDetail };
+  },
   Sandbox: sdk,
+  ConnectionConfig: class ConnectionConfig {},
   CommandExitError: class CommandExitError extends Error {},
   FileNotFoundError: class FileNotFoundError extends Error {},
   SandboxNotFoundError: FakeSandboxNotFoundError,
@@ -84,7 +89,7 @@ describe("E2B lifecycle operations", () => {
     expect(sdk.create).not.toHaveBeenCalled();
   });
 
-  it("resumes, pauses with memory, and kills the same sandbox id", async () => {
+  it("resumes, pauses with only filesystem state, and kills the sandbox", async () => {
     const run = vi.fn().mockResolvedValue({});
     sdk.connect.mockResolvedValue({ commands: { run } });
     await startE2bSandbox(CONFIG, "sbx_1", 10);
@@ -100,7 +105,7 @@ describe("E2B lifecycle operations", () => {
     });
     expect(sdk.pause).toHaveBeenCalledWith("sbx_1", {
       apiKey: "e2b_test",
-      keepMemory: true,
+      keepMemory: false,
     });
     expect(sdk.kill).toHaveBeenCalledWith("sbx_1", {
       apiKey: "e2b_test",
@@ -187,7 +192,7 @@ describe("E2B services and listing", () => {
     expect(sdk.connect).not.toHaveBeenCalled();
   });
 
-  it("paginates listings and omits sandboxes without usable disk metrics", async () => {
+  it("paginates listings without dropping sandboxes missing disk metrics", async () => {
     const pages = [
       [
         {
@@ -215,6 +220,9 @@ describe("E2B services and listing", () => {
     sdk.getMetrics.mockImplementation(async (id: string) =>
       id === "sbx_1" ? [{ diskTotal: 10 * 1024 ** 3 }] : [],
     );
+    sdk.getSandboxDetail.mockResolvedValue({
+      data: { diskSizeMB: 20 * 1024 },
+    });
 
     await expect(listE2bSandboxes(CONFIG)).resolves.toEqual([
       {
@@ -223,6 +231,16 @@ describe("E2B services and listing", () => {
         state: "running",
         sizing: { vcpus: 2, memoryGib: 8, diskGib: 10 },
       },
+      {
+        providerSandboxId: "sbx_new",
+        orgId: null,
+        state: "paused",
+        sizing: { vcpus: 1, memoryGib: 1, diskGib: 20 },
+      },
     ]);
+    expect(sdk.getSandboxDetail).toHaveBeenCalledWith(
+      "/sandboxes/{sandboxID}",
+      { params: { path: { sandboxID: "sbx_new" } } },
+    );
   });
 });

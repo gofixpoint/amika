@@ -21,7 +21,11 @@ import type {
 import type { SandboxAdapter } from "../../shared/adapter";
 import type { E2bConfig } from "../config";
 import { E2bAdapter } from "./adapter";
-import { connectE2bSandbox, e2bApiOptions } from "./client";
+import {
+  connectE2bSandbox,
+  e2bApiOptions,
+  getE2bSandboxDiskSizeMib,
+} from "./client";
 
 export const E2B_URL_TTL_S = 24 * 60 * 60;
 export const E2B_MAX_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
@@ -90,7 +94,7 @@ export async function stopE2bSandbox(
 ): Promise<void> {
   await Sandbox.pause(providerSandboxId, {
     ...e2bApiOptions(config),
-    keepMemory: true,
+    keepMemory: false,
   });
 }
 
@@ -314,9 +318,15 @@ export async function listE2bSandboxes(
   while (paginator.hasNext) {
     const page = await paginator.nextItems();
     for (const info of page) {
-      const metrics = await Sandbox.getMetrics(info.sandboxId, apiOptions);
+      const metrics = await Sandbox.getMetrics(
+        info.sandboxId,
+        apiOptions,
+      ).catch(() => []);
       const latest = metrics.at(-1);
-      if (!latest || latest.diskTotal <= 0) continue;
+      const diskGib =
+        latest && latest.diskTotal > 0
+          ? latest.diskTotal / 1024 ** 3
+          : (await getE2bSandboxDiskSizeMib(config, info.sandboxId)) / 1024;
       listings.push({
         providerSandboxId: info.sandboxId,
         orgId: info.metadata[SANDBOX_ORG_ID_LABEL] ?? null,
@@ -324,7 +334,7 @@ export async function listE2bSandboxes(
         sizing: {
           vcpus: info.cpuCount,
           memoryGib: info.memoryMB / 1024,
-          diskGib: latest.diskTotal / 1024 ** 3,
+          diskGib,
         },
       });
     }
