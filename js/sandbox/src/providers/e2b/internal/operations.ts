@@ -90,7 +90,7 @@ export async function stopE2bSandbox(
 ): Promise<void> {
   await Sandbox.pause(providerSandboxId, {
     ...e2bApiOptions(config),
-    keepMemory: true,
+    keepMemory: false,
   });
 }
 

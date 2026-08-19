@@ -84,7 +84,7 @@ describe("E2B lifecycle operations", () => {
     expect(sdk.create).not.toHaveBeenCalled();
   });
 
-  it("resumes, pauses with memory, and kills the same sandbox id", async () => {
+  it("resumes, pauses with only filesystem state, and kills the sandbox", async () => {
     const run = vi.fn().mockResolvedValue({});
     sdk.connect.mockResolvedValue({ commands: { run } });
     await startE2bSandbox(CONFIG, "sbx_1", 10);
@@ -100,7 +100,7 @@ describe("E2B lifecycle operations", () => {
     });
     expect(sdk.pause).toHaveBeenCalledWith("sbx_1", {
       apiKey: "e2b_test",
-      keepMemory: true,
+      keepMemory: false,
     });
     expect(sdk.kill).toHaveBeenCalledWith("sbx_1", {
       apiKey: "e2b_test",
