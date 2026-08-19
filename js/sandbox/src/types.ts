@@ -2,7 +2,20 @@
  * Provider-facing shared types owned by the provider layer.
  */
 
-export type SandboxProviderName = "daytona" | "e2b" | "freestyle" | "vercel";
+/**
+ * Canonical provider-name list. A runtime value (not just a type union) so the
+ * client-safe `isSandboxProviderName` guard can be derived from it rather than
+ * from the provider table in `providers/registry.ts`, which pulls every
+ * provider SDK — and with it `node:` built-ins — into any importing bundle.
+ */
+export const SANDBOX_PROVIDER_NAMES = [
+  "daytona",
+  "e2b",
+  "freestyle",
+  "vercel",
+] as const;
+
+export type SandboxProviderName = (typeof SANDBOX_PROVIDER_NAMES)[number];
 
 export type ServiceProtocol = "tcp" | "udp";
 export type ServiceUrlScheme = "http" | "https";

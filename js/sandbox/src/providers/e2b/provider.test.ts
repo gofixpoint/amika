@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   getProviderLabel,
+  isSandboxProviderName,
   SANDBOX_PROVIDER_CAPABILITIES,
 } from "../capabilities";
-import {
-  createSandboxProvider,
-  isSandboxProviderName,
-  type SandboxProviderDeps,
-} from "../registry";
+import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 import {
   E2B_DEFAULT_TIMEOUT_MS,
   E2B_MAX_TIMEOUT_MS,

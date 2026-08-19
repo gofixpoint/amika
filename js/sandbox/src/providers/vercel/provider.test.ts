@@ -2,13 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { VercelConfig } from "./config";
 import {
   getProviderLabel,
+  isSandboxProviderName,
   SANDBOX_PROVIDER_CAPABILITIES,
 } from "../capabilities";
-import {
-  createSandboxProvider,
-  isSandboxProviderName,
-  type SandboxProviderDeps,
-} from "../registry";
+import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 
 const VERCEL_CONFIG: VercelConfig = {
   apiKey: "test-token",

@@ -22,6 +22,9 @@ import type { VercelConfig } from "./vercel/config";
 import type { SandboxProvider, SnapshotIdResolver } from "./provider";
 import { SandboxProviderUnsupportedError } from "./provider";
 import type { SandboxProviderName } from "../types";
+// Defined in the client-safe capabilities module, not here: importing it from
+// this module would pull the provider SDKs below into client bundles.
+import { isSandboxProviderName } from "./capabilities";
 import type { SandboxAdapter } from "./shared/adapter";
 import daytonaProvider from "./daytona/provider";
 import e2bProvider, { openE2bAdapter } from "./e2b/provider";
@@ -109,15 +112,6 @@ const PROVIDERS = {
       openVercelAdapter(requireConfig(deps.vercel, VERCEL_HINT), id),
   },
 } satisfies Record<SandboxProviderName, ProviderEntry | null>;
-
-export function isSandboxProviderName(
-  name: string | null | undefined,
-): name is SandboxProviderName {
-  // `Object.hasOwn`, NOT `in`: `in` walks the prototype chain, so a garbage
-  // name like "toString" or "constructor" would pass the guard and resolve an
-  // inherited Object.prototype member instead of a provider entry.
-  return name != null && Object.hasOwn(PROVIDERS, name);
-}
 
 /** The table entry for `name`, or null for unknown/unbacked names. */
 function providerEntry(name: string | null): ProviderEntry | null {

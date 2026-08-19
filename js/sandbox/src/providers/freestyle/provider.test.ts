@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   getProviderLabel,
+  isSandboxProviderName,
   SANDBOX_PROVIDER_CAPABILITIES,
 } from "../capabilities";
-import {
-  createSandboxProvider,
-  isSandboxProviderName,
-  type SandboxProviderDeps,
-} from "../registry";
+import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 
 function deps(overrides: Partial<SandboxProviderDeps>): SandboxProviderDeps {
   return {
