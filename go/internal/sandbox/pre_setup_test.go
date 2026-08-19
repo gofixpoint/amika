@@ -113,8 +113,10 @@ func TestPresetPreSetup_PiWebGatingContract(t *testing.T) {
 	if !strings.Contains(content, `AMIKA_PI_WEB_PASSWORD must be set`) {
 		t.Fatal("pre-setup.sh should require AMIKA_PI_WEB_PASSWORD when the Pi web terminal is enabled")
 	}
-	if !strings.Contains(content, "PI_WEB_PORT=60997") {
-		t.Fatal("pre-setup.sh should serve the Pi web terminal on the reserved port 60997")
+	// Must not be 60997: amikad's managed sshd binds that loopback port, and a
+	// sandbox with no-relay SSH enabled would leave ttyd unable to listen.
+	if !strings.Contains(content, "PI_WEB_PORT=60996") {
+		t.Fatal("pre-setup.sh should serve the Pi web terminal on the reserved port 60996")
 	}
 }
 

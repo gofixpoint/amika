@@ -20,6 +20,10 @@ const (
 	// OpenCodeWebPort is the container port reserved for the OpenCode web UI.
 	OpenCodeWebPort = 60998
 
+	// PiWebPort is the container port reserved for the Pi web terminal (ttyd
+	// fronting `pi`, started by pre-setup.sh when AMIKA_PI_WEB=1).
+	PiWebPort = 60996
+
 	// ManagedSSHDPort is the loopback port amikad's managed sshd binds.
 	//
 	// Deliberately not 22: base images may ship a socket-activated system

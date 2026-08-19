@@ -11,10 +11,11 @@ set -euo pipefail
 # See docs/sandbox-configuration.md for the full port allocation table.
 #   60999 — amikad daemon
 #   60998 — OpenCode web UI
-#   60997 — Pi web terminal
-#   60899-60996 — unassigned (reserved for future use)
+#   60997 — amikad's managed sshd (loopback; go/internal/constants)
+#   60996 — Pi web terminal
+#   60899-60995 — unassigned (reserved for future use)
 OPENCODE_WEB_PORT=60998
-PI_WEB_PORT=60997
+PI_WEB_PORT=60996
 
 AMIKA_STATE_DIR="/var/lib/amikad"
 AMIKA_USER_STATE_DIR="/var/lib/amika"
