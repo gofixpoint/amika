@@ -205,6 +205,9 @@ func localServiceScheme(scheme, hostIP string) string {
 // Amika-managed internal services (e.g. OpenCode web UI) that run inside
 // sandbox containers on reserved ports. The env slice is the set of
 // environment variables that will be passed to the container.
+// TODO(KAPRO-842): also resolve the Pi web terminal (constants.PiWebPort),
+// which this only handles for OpenCode, so a local Docker sandbox never
+// publishes or reports port 60996.
 func ResolveProvisionedServices(
 	env []string,
 	existingPorts []sandbox.PortBinding,

@@ -98,6 +98,56 @@ func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
 	}
 }
 
+func TestPresetPreSetup_PiWebGatingContract(t *testing.T) {
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	// Opt-in, unlike opencode web: the endpoint is an interactive shell on a
+	// public URL, so a sandbox gets one only when Amika asks for it.
+	if !strings.Contains(content, `[[ "${AMIKA_PI_WEB:-0}" == "1" ]]`) {
+		t.Fatal("pre-setup.sh should start the Pi web terminal only when AMIKA_PI_WEB=1")
+	}
+	if !strings.Contains(content, `AMIKA_PI_WEB_PASSWORD must be set`) {
+		t.Fatal("pre-setup.sh should require AMIKA_PI_WEB_PASSWORD when Pi Web is enabled")
+	}
+	// Pi Web 403s every request whose Host it was not told to trust, and takes
+	// no wildcard, so starting without one would serve an endpoint that works
+	// for nobody.
+	if !strings.Contains(content, `AMIKA_PI_WEB_ALLOWED_HOSTS must be set`) {
+		t.Fatal("pre-setup.sh should require AMIKA_PI_WEB_ALLOWED_HOSTS when Pi Web is enabled")
+	}
+	// Must not be 60997: amikad's managed sshd binds that loopback port, and a
+	// sandbox with no-relay SSH enabled would leave ttyd unable to listen.
+	if !strings.Contains(content, "PI_WEB_PORT=60996") {
+		t.Fatal("pre-setup.sh should serve the Pi web terminal on the reserved port 60996")
+	}
+}
+
+func TestPresetPiSetup_ServesPiWebAuthenticatedOnEveryInterface(t *testing.T) {
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pi-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	for _, want := range []string{
+		// The password rides in the environment, not argv, so it is not
+		// visible in `ps` to anything else in the sandbox.
+		`export PI_WEB_PASSWORD="$AMIKA_PI_WEB_PASSWORD"`,
+		`export PI_WEB_ALLOWED_HOSTS="$AMIKA_PI_WEB_ALLOWED_HOSTS"`,
+		"exec pi-web",
+		"--hostname 0.0.0.0",
+		"--no-open",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("pi-setup.sh should contain %q", want)
+		}
+	}
+}
+
 func TestPresetPreSetup_RegistersAmikalogHooksAsRuntimeUser(t *testing.T) {
 	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {

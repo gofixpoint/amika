@@ -12,6 +12,7 @@ for script in \
   bash-error-prelude.sh \
   docker-setup.sh \
   opencode-setup.sh \
+  pi-setup.sh \
   post-setup.sh \
   pre-setup.sh \
   restore-setuid.sh \
