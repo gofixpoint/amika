@@ -177,7 +177,7 @@ export async function getFreestyleSnapshotByName(
 /**
  * Resolve a snapshot reference to a bootable snapshot id. Freestyle preset
  * references are deterministic **names** (`amika-<preset>-<size>`, see
- * {@link buildFreestyleSnapshotName}); captured-snapshot references arrive
+ * configured by the caller); captured-snapshot references arrive
  * already resolved to ids by `create.ts`. If a snapshot carries `ref` as its
  * name (preferring `ready`), return that snapshot's id; otherwise return `ref`
  * unchanged — it is already an id, or a name with no built snapshot (the caller

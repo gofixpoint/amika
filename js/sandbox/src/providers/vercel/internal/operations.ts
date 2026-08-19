@@ -31,7 +31,10 @@ import { execWithStagedInput } from "../../shared/exec-input";
 import { buildLifecycleCommands } from "../../shared/lifecycle-commands";
 import { buildVercelCommand, VercelAdapter } from "./adapter";
 import { getVercelSandbox, vercelCredentials } from "./client";
-import { vercelSizingForVcpus, vercelVcpusForSize } from "../sizing";
+
+/** Vercel allocates 2 GiB of memory per vCPU and a fixed 32 GiB disk. */
+const VERCEL_MEMORY_GIB_PER_VCPU = 2;
+const VERCEL_DISK_GIB = 32;
 
 /**
  * Vercel preview URLs are backed by per-port subdomains that are stable for the
@@ -151,12 +154,11 @@ export async function createVercelSandbox(
   const ports = resolveVercelPorts(services);
   const bootSource = resolveVercelBootSource(input.snapshot);
   const timeoutMs = vercelTimeoutMs(input.autoStopInterval);
-  // Map the requested size to Vercel's `resources` (vCPU count, memory derived
-  // at 2 GB/vCPU). Daytona/Freestyle bake size into the image/snapshot; Vercel
-  // takes it at create time, so without this every size would boot at Vercel's
-  // default 2 vCPUs. Omitted when no size is requested (keeps Vercel's default).
-  const resources = input.size
-    ? { vcpus: vercelVcpusForSize(input.size) }
+  // The caller resolves its product tier to literal resources. Vercel's only
+  // configurable resource is vCPU; memory follows at 2 GiB/vCPU and disk is
+  // fixed. Omit resources when the caller wants the platform default.
+  const resources = input.resources
+    ? { vcpus: input.resources.vcpus }
     : undefined;
 
   ctx.logger.info(
@@ -317,7 +319,7 @@ export async function getVercelSandboxState(
  * status, and provisioned sizing. `Sandbox.list().toArray()` auto-paginates and
  * flattens to the individual sandboxes. Vercel exposes only the vCPU count on a
  * listed sandbox; memory and disk are recovered from its fixed 2 GB-per-vCPU /
- * 32 GB-disk coupling (see {@link vercelSizingForVcpus}). Sandboxes with no
+ * 32 GiB-disk coupling. Sandboxes with no
  * reported vCPU count are excluded — they can't be sized or priced.
  */
 export async function listVercelSandboxes(
@@ -328,15 +330,14 @@ export async function listVercelSandboxes(
   const listings: ProviderSandboxListing[] = [];
   for (const sandbox of sandboxes) {
     if (sandbox.vcpus == null) continue;
-    const sizing = vercelSizingForVcpus(sandbox.vcpus);
     listings.push({
       providerSandboxId: sandbox.name,
       orgId: sandbox.tags?.[SANDBOX_ORG_ID_LABEL] ?? null,
       state: sandbox.status,
       sizing: {
-        vcpus: sizing.vcpus,
-        memoryGib: sizing.memoryGb,
-        diskGib: sizing.diskGb,
+        vcpus: sandbox.vcpus,
+        memoryGib: sandbox.vcpus * VERCEL_MEMORY_GIB_PER_VCPU,
+        diskGib: VERCEL_DISK_GIB,
       },
     });
   }

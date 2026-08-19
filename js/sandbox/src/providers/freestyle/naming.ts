@@ -12,30 +12,8 @@
  * The stored `org_id` remains the security boundary; this name is the
  * provider-side stamp, not the access-control gate.
  */
-import type { SandboxPreset, SandboxSize } from "../../enums";
-
 /** Separator between the org id and the user-facing sandbox name. */
 const ORG_NAME_SEPARATOR = "/";
-
-/**
- * Canonical name of the pre-built Freestyle preset snapshot for a (preset, size),
- * e.g. `amika-coder-m`, `amika-coder-dind-xl`. This is the single source of truth
- * for the scheme: `server-env.ts` resolves `freestyleSnapshots[preset][size]` to
- * these names, and `bin/freestyle-build-snapshots` snapshots each VM under the
- * matching name (the script mirrors this template — keep them in sync).
- *
- * Freestyle bakes the requested size into the snapshot itself (the build script
- * resizes the VM before snapshotting), mirroring Daytona's per-size image tags
- * (`amika/daytona-coder-m`). At create time the name is resolved to a bootable
- * snapshot id via the snapshot list (see `resolveFreestyleSnapshotRef`), so no
- * post-create `vm.resize` is needed.
- */
-export function buildFreestyleSnapshotName(
-  preset: SandboxPreset,
-  size: SandboxSize,
-): string {
-  return `amika-${preset}-${size}`;
-}
 
 /**
  * Build an org-scoped VM name by prefixing the org id. Mirrors Daytona's

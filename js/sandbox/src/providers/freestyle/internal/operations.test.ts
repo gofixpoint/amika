@@ -101,7 +101,13 @@ describe("createFreestyleSandbox org gating", () => {
   });
 
   it("never resizes the VM (size is baked into the snapshot)", async () => {
-    await createFreestyleSandbox(ctx(), config, createInput({ size: "l" }));
+    await createFreestyleSandbox(
+      ctx(),
+      config,
+      createInput({
+        resources: { vcpus: 2, memoryGib: 16, diskGib: 24 },
+      }),
+    );
 
     expect(refVm).not.toHaveBeenCalled();
   });

@@ -33,15 +33,14 @@ entries:
   independent of the SDK-bearing `provider.ts`. It is **SDK-free** — a plain
   interface extending `SandboxConfigBase` — so importing it pulls in no vendor
   SDK.
-- `capabilities.ts` — SDK-free capability flags, plus `sizing.ts` / `naming.ts`
-  when a provider has them. These are re-exported from the package's `./client`
+- `capabilities.ts` — SDK-free capability flags. These are re-exported from the package's `./client`
   entry (`src/client.ts`) and imported by browser code, so they must never reach
   a vendor SDK: routing them through `provider.ts` would pull the SDK into the
   browser bundle, and moving them into `internal/` would put them out of the
   client entry's reach.
 
-The fully grown Daytona provider shows the split; other providers additionally
-keep `sizing.ts` (Vercel, Freestyle) and `naming.ts` (Freestyle) at the root:
+The fully grown Daytona provider shows the split; Freestyle additionally keeps
+its provider-resource `naming.ts` helper at the root:
 
 ```
 daytona/

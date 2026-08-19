@@ -180,7 +180,7 @@ done
 # Sizes mirror the container `SIZE_*` table (same tiers, same dimensions) so a
 # `linux-vm` sandbox is provisioned identically to its container equivalent —
 # the app advertises one size table for both. Keep these in sync with `SIZE_*`
-# above (and with `SANDBOX_SIZE_SPECS` in amika-mono). Note that not every size
+# above (and with `SANDBOX_SIZE_MAPPINGS` in amika-mono). Note that not every size
 # is published for every preset — see `vm_excluded_sizes` below (coder-dind has
 # no xs tier).
 VM_SIZES=("xs" "m" "l" "xl")

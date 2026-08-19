@@ -1,7 +1,7 @@
 /**
  * Sandbox-runtime constants the provider layer stamps into VMs and reads back:
  * reserved ports, lifecycle script paths, the amikad etc dir, provider ownership
- * labels, and size specs. Owned here so the provider package is self-contained
+ * labels. Owned here so the provider package is self-contained
  * and callers can re-export them from the SDK-free `@amika/sandbox/client` entry
  * as one source of truth for these on-box contracts.
  */
@@ -61,20 +61,3 @@ export const SANDBOX_ORG_ID_LABEL = "amika-org-id";
 export const SANDBOX_USER_ID_LABEL = "amika-user-id";
 
 export const DEFAULT_HOME_DIR = "/home/amika";
-
-export interface SandboxSizeSpec {
-  label: string;
-  vcpus: number;
-  memoryGb: number;
-  diskGb: number;
-}
-
-export const SANDBOX_SIZE_SPECS: Record<
-  "xs" | "m" | "l" | "xl",
-  SandboxSizeSpec
-> = {
-  xs: { label: "XS (Extra Small)", vcpus: 1, memoryGb: 1, diskGb: 3 },
-  m: { label: "M (Medium)", vcpus: 2, memoryGb: 8, diskGb: 10 },
-  l: { label: "L (Large)", vcpus: 2, memoryGb: 12, diskGb: 24 },
-  xl: { label: "XL (Extra Large)", vcpus: 4, memoryGb: 16, diskGb: 32 },
-};

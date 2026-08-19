@@ -295,6 +295,22 @@ describe("createVercelSandbox", () => {
       source: { type: "snapshot", snapshotId: "snap_test" },
     });
   });
+
+  it("passes literal caller resources to Vercel", async () => {
+    sandboxCreate.mockResolvedValue({ name: "vercel-generated" });
+
+    await createVercelSandbox(
+      ctx(),
+      config,
+      createInput({
+        resources: { vcpus: 6, memoryGib: 12, diskGib: 32 },
+      }),
+    );
+
+    expect(sandboxCreate.mock.calls[0][0]).toMatchObject({
+      resources: { vcpus: 6 },
+    });
+  });
 });
 
 describe("mapVercelSandboxState", () => {
