@@ -98,6 +98,44 @@ func TestPresetPreSetup_OpenCodeGatingContract(t *testing.T) {
 	}
 }
 
+func TestPresetPreSetup_PiWebGatingContract(t *testing.T) {
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	// Opt-in, unlike opencode web: the endpoint is an interactive shell on a
+	// public URL, so a sandbox gets one only when Amika asks for it.
+	if !strings.Contains(content, `[[ "${AMIKA_PI_WEB:-0}" == "1" ]]`) {
+		t.Fatal("pre-setup.sh should start the Pi web terminal only when AMIKA_PI_WEB=1")
+	}
+	if !strings.Contains(content, `AMIKA_PI_WEB_PASSWORD must be set`) {
+		t.Fatal("pre-setup.sh should require AMIKA_PI_WEB_PASSWORD when the Pi web terminal is enabled")
+	}
+	if !strings.Contains(content, "PI_WEB_PORT=60997") {
+		t.Fatal("pre-setup.sh should serve the Pi web terminal on the reserved port 60997")
+	}
+}
+
+func TestPresetPiSetup_ServesPiWithAuthenticatedWritableTerminal(t *testing.T) {
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pi-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	for _, want := range []string{
+		`--credential "amika:${AMIKA_PI_WEB_PASSWORD}"`,
+		"--writable",
+		"exec ttyd",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("pi-setup.sh should contain %q", want)
+		}
+	}
+}
+
 func TestPresetPreSetup_RegistersAmikalogHooksAsRuntimeUser(t *testing.T) {
 	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {

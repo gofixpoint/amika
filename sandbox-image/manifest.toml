@@ -17,6 +17,7 @@ hook_scripts = [
   "/usr/lib/amikad/post-setup.sh",
   "/usr/lib/amikad/run-hook.sh",
   "/usr/lib/amikad/opencode-setup.sh",
+  "/usr/lib/amikad/pi-setup.sh",
   "/usr/lib/amikad/docker-setup.sh",
   "/usr/lib/amikad/restore-setuid.sh",
 ]
@@ -74,6 +75,7 @@ assets = [
   "assets/hooks/bash-error-prelude.sh",
   "assets/hooks/docker-setup.sh",
   "assets/hooks/opencode-setup.sh",
+  "assets/hooks/pi-setup.sh",
   "assets/hooks/post-setup.sh",
   "assets/hooks/pre-setup.sh",
   "assets/hooks/restore-setuid.sh",
@@ -89,6 +91,11 @@ versions = [
   "OPENCODE_VERSION",
   "PI_VERSION",
 ]
+assets = []
+
+[steps.web-terminal]
+script = "steps/82-web-terminal.sh"
+versions = ["TTYD_VERSION"]
 assets = []
 
 [steps.amika-clis]
@@ -175,6 +182,7 @@ steps = [
   "dotfiles",
   "hook-assets",
   "agent-clis",
+  "web-terminal",
   "amika-clis",
   "setuid-manifest",
   "verify",
@@ -191,6 +199,7 @@ binaries = [
   "codex",
   "opencode",
   "pi",
+  "ttyd",
   "amika",
   "amikalog",
   "amikad",
@@ -206,6 +215,7 @@ steps = [
   "dotfiles",
   "hook-assets",
   "agent-clis",
+  "web-terminal",
   "amika-clis",
   "dind",
   "setuid-manifest",
@@ -223,6 +233,7 @@ binaries = [
   "codex",
   "opencode",
   "pi",
+  "ttyd",
   "amika",
   "amikalog",
   "amikad",
@@ -278,6 +289,11 @@ command = ["opencode", "--version"]
 id = "pi"
 env = "PI_VERSION"
 command = ["pi", "--version"]
+
+[[version_checks]]
+id = "ttyd"
+env = "TTYD_VERSION"
+command = ["ttyd", "--version"]
 
 [[version_checks]]
 id = "amika"

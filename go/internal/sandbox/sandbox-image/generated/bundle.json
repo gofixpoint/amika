@@ -66,6 +66,7 @@
       "/usr/lib/amikad/post-setup.sh",
       "/usr/lib/amikad/run-hook.sh",
       "/usr/lib/amikad/opencode-setup.sh",
+      "/usr/lib/amikad/pi-setup.sh",
       "/usr/lib/amikad/docker-setup.sh",
       "/usr/lib/amikad/restore-setuid.sh"
     ],
@@ -99,6 +100,7 @@
         "codex",
         "opencode",
         "pi",
+        "ttyd",
         "amika",
         "amikalog",
         "amikad"
@@ -164,6 +166,7 @@
             "assets/hooks/bash-error-prelude.sh",
             "assets/hooks/docker-setup.sh",
             "assets/hooks/opencode-setup.sh",
+            "assets/hooks/pi-setup.sh",
             "assets/hooks/post-setup.sh",
             "assets/hooks/pre-setup.sh",
             "assets/hooks/restore-setuid.sh",
@@ -182,6 +185,14 @@
             "CODEX_VERSION": "0.147.0",
             "OPENCODE_VERSION": "1.18.4",
             "PI_VERSION": "0.84.1"
+          }
+        },
+        {
+          "assets": [],
+          "id": "web-terminal",
+          "script": "steps/82-web-terminal.sh",
+          "versions": {
+            "TTYD_VERSION": "1.7.7"
           }
         },
         {
@@ -226,6 +237,7 @@
         "codex",
         "opencode",
         "pi",
+        "ttyd",
         "amika",
         "amikalog",
         "amikad",
@@ -292,6 +304,7 @@
             "assets/hooks/bash-error-prelude.sh",
             "assets/hooks/docker-setup.sh",
             "assets/hooks/opencode-setup.sh",
+            "assets/hooks/pi-setup.sh",
             "assets/hooks/post-setup.sh",
             "assets/hooks/pre-setup.sh",
             "assets/hooks/restore-setuid.sh",
@@ -310,6 +323,14 @@
             "CODEX_VERSION": "0.147.0",
             "OPENCODE_VERSION": "1.18.4",
             "PI_VERSION": "0.84.1"
+          }
+        },
+        {
+          "assets": [],
+          "id": "web-terminal",
+          "script": "steps/82-web-terminal.sh",
+          "versions": {
+            "TTYD_VERSION": "1.7.7"
           }
         },
         {

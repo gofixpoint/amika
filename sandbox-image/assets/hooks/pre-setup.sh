@@ -11,8 +11,10 @@ set -euo pipefail
 # See docs/sandbox-configuration.md for the full port allocation table.
 #   60999 — amikad daemon
 #   60998 — OpenCode web UI
-#   60899-60997 — unassigned (reserved for future use)
+#   60997 — Pi web terminal
+#   60899-60996 — unassigned (reserved for future use)
 OPENCODE_WEB_PORT=60998
+PI_WEB_PORT=60997
 
 AMIKA_STATE_DIR="/var/lib/amikad"
 AMIKA_USER_STATE_DIR="/var/lib/amika"
@@ -68,6 +70,27 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
 
   echo "$!" > "$AMIKA_RUN_DIR/opencode-web.pid"
   echo "$OPENCODE_WEB_PORT" > "$AMIKA_RUN_DIR/opencode-web.port"
+fi
+
+# Start the Pi web terminal in the background when Amika asks for it. Unlike
+# opencode web this is opt-in (`AMIKA_PI_WEB=1`): the endpoint is an
+# interactive shell served over a public URL, so it only exists when the
+# control plane has a password to put in front of it. Output is redirected to
+# /var/log/amikad/pi-web.log because the server outlives this hook.
+if command -v pi &> /dev/null && [[ "${AMIKA_PI_WEB:-0}" == "1" ]]; then
+  if [[ -z "${AMIKA_PI_WEB_PASSWORD:-}" ]]; then
+    echo "ERROR: AMIKA_PI_WEB_PASSWORD must be set when the Pi web terminal is enabled" >&2
+    exit 1
+  fi
+
+  # shellcheck disable=SC2024  # redirect is by root shell (intended); sudo switches the process user
+  sudo -H -u amika \
+    nohup env AMIKA_PI_WEB_PASSWORD="$AMIKA_PI_WEB_PASSWORD" \
+    /usr/lib/amikad/pi-setup.sh "$amika_agent_cwd" "$PI_WEB_PORT" \
+    > "$AMIKA_LOG_DIR/pi-web.log" 2>&1 &
+
+  echo "$!" > "$AMIKA_RUN_DIR/pi-web.pid"
+  echo "$PI_WEB_PORT" > "$AMIKA_RUN_DIR/pi-web.port"
 fi
 
 # Start Docker daemon if this is a DinD image (marker file baked into the image).
