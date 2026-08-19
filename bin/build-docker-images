@@ -16,13 +16,16 @@ set -euo pipefail
 #/   --ignore-unstaged       Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
 #/   --push-daytona-vm    Also publish linux-vm snapshots
-#/                        (amika-daytona-vm-<size>-<version>): uploads the coder
+#/                        (`a0.<size>.amika-<preset>-<revision>`): uploads the coder
 #/                        image into Daytona's registry, then
 #/                        `daytona snapshot create --image … --sandbox-class linux-vm`
 #/                        in the VM region (DAYTONA_VM_REGION, default "us-west-2").
 #/                        Pair with amika/coder. Requires linux/amd64.
 #/                        DAYTONA_VM_ORGS limits target orgs (space-separated);
 #/                        DAYTONA_VM_SIZES limits sizes (e.g. "l xl").
+#/                        DAYTONA_ORGS and DAYTONA_SIZES similarly limit the
+#/                        container snapshot path. DAYTONA_CLI can pin the CLI
+#/                        executable used by either path.
 #/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
 #/                        before each org switch instead of relying on existing daytona login state.
 #/                        Requires --push-daytona.
@@ -30,8 +33,20 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Determine git version tag
-VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+# Determine the immutable sandbox-image revision used in release identifiers.
+VERSION="${AMIKA_SANDBOX_IMAGE_REVISION:-$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)}"
+if ! [[ "$VERSION" =~ ^[0-9a-f]{7,40}$ ]]; then
+  echo "Error: AMIKA_SANDBOX_IMAGE_REVISION must be a 7-40 character Git SHA." >&2
+  exit 1
+fi
+VERSION="${VERSION:0:12}"
+DAYTONA_CLI="${DAYTONA_CLI:-daytona}"
+
+# Allow release jobs and canaries to pin an explicit CLI binary without
+# depending on a login shell preserving PATH.
+daytona() {
+  "$DAYTONA_CLI" "$@"
+}
 
 # ---- helpers -------------------------------------------------------------
 # Defined up front so the config/validation below can use them. They read the
@@ -42,6 +57,18 @@ VERSION="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 in_list() {
   case " $2 " in *" $1 "*) return 0 ;; esac
   return 1
+}
+
+# Stable logical release id shared with the control plane and other publishers.
+snapshot_release_id() {
+  local preset="$1" size="$2"
+  printf 'a0.%s.amika-%s:%s' "$size" "$preset" "$VERSION"
+}
+
+# Daytona linux-vm snapshot names reject colons. Encode only that provider
+# boundary while retaining the complete profile and revision.
+daytona_vm_snapshot_name() {
+  snapshot_release_id "$1" "$2" | tr ':' '-'
 }
 
 # Map a Daytona org to its --ci API key (single source of truth). Prints the key
@@ -129,14 +156,21 @@ SIZE_DISK=("3" "10" "24" "32")
 # NOTE: xl is pushed to amika-prod only — the Fixpoint (staging) org has lower
 # resource limits and cannot build the xl snapshot.
 SIZE_ORGS=("amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod Fixpoint" "amika-prod")
+DAYTONA_ORGS_FILTER="${DAYTONA_ORGS:-}"
+DAYTONA_SIZES_FILTER="${DAYTONA_SIZES:-}"
+for requested in $DAYTONA_SIZES_FILTER; do
+  if ! in_list "$requested" "${SIZES[*]}"; then
+    echo "Error: DAYTONA_SIZES contains unknown size '${requested}'. Valid sizes: ${SIZES[*]}" >&2
+    exit 1
+  fi
+done
 
 # Daytona *VM* (linux-vm) snapshot sizes, published by --push-daytona-vm as
-# `amika-daytona-vm-<size>-<version>` (VERSION = the git short hash, same tag the
-# container snapshots carry). The coder image is uploaded into Daytona's registry
+# `a0.<size>.amika-<preset>-<revision>` (the provider-safe encoding of the
+# canonical `<profile>:<revision>` id). The coder image is uploaded into Daytona's registry
 # with `snapshot push`, then turned into linux-vm snapshots with `snapshot create
 # --image … --sandbox-class linux-vm`. Built for `coder`
-# (amika-daytona-vm-<size>-<version>) and `coder-dind`
-# (amika-daytona-vm-dind-<size>-<version>).
+# and used for both `coder` and `coder-dind` releases.
 # VM snapshots must live in a region with linux-vm runners
 # (DAYTONA_VM_REGION, default "us-west-2"); Daytona's default region has only
 # container runners.
@@ -264,8 +298,14 @@ if [ "$CI_AUTH" = true ]; then
     exit 1
   fi
   missing=()
-  [ -z "${DAYTONA_PROD_API_KEY:-}" ]    && missing+=(DAYTONA_PROD_API_KEY)
-  [ -z "${DAYTONA_STAGING_API_KEY:-}" ] && missing+=(DAYTONA_STAGING_API_KEY)
+  if { [ -z "$DAYTONA_ORGS_FILTER" ] || in_list "amika-prod" "$DAYTONA_ORGS_FILTER"; } &&
+    [ -z "${DAYTONA_PROD_API_KEY:-}" ]; then
+    missing+=(DAYTONA_PROD_API_KEY)
+  fi
+  if { [ -z "$DAYTONA_ORGS_FILTER" ] || in_list "Fixpoint" "$DAYTONA_ORGS_FILTER"; } &&
+    [ -z "${DAYTONA_STAGING_API_KEY:-}" ]; then
+    missing+=(DAYTONA_STAGING_API_KEY)
+  fi
   if [ ${#missing[@]} -gt 0 ]; then
     echo "Error: --ci requires the following environment variables to be set: ${missing[*]}" >&2
     exit 1
@@ -335,11 +375,17 @@ for preset in "${PRESETS[@]}"; do
   if [ "$PUSH_DAYTONA" = true ]; then
     for i in "${!SIZES[@]}"; do
       size="${SIZES[$i]}"
+      if [ -n "$DAYTONA_SIZES_FILTER" ] && ! in_list "$size" "$DAYTONA_SIZES_FILTER"; then
+        continue
+      fi
       cpu="${SIZE_CPUS[$i]}"
       mem="${SIZE_MEMORY[$i]}"
       disk="${SIZE_DISK[$i]}"
-      snapshot_name="amika/daytona-${preset}-${size}:${VERSION}"
+      snapshot_name="$(snapshot_release_id "$preset" "$size")"
       for org in ${SIZE_ORGS[$i]}; do
+        if [ -n "$DAYTONA_ORGS_FILTER" ] && ! in_list "$org" "$DAYTONA_ORGS_FILTER"; then
+          continue
+        fi
         daytona_select_org "$org"
         echo "Pushing ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) to Daytona org ${org}..."
         push_output=""
@@ -359,8 +405,7 @@ for preset in "${PRESETS[@]}"; do
     done
   fi
 
-  # Publish the coder / coder-dind environment as linux-vm snapshots
-  # (amika-daytona-vm-<size> / amika-daytona-vm-dind-<size>).
+  # Publish the coder / coder-dind environment as linux-vm snapshots.
   #
   # A VM snapshot requires `--sandbox-class linux-vm`, which only `daytona
   # snapshot create` sets. But `create --image` PULLS its image from a registry
@@ -488,12 +533,11 @@ for preset in "${PRESETS[@]}"; do
         # slashed name like `amika/daytona-vm-xs` is rejected, while a plain one
         # is accepted). So the version is appended as a `-`-delimited suffix
         # instead of a `:tag`: `<vm_name_base>-<size>-<VERSION>`
-        # (amika-daytona-vm-<size>-<version> or
-        # amika-daytona-vm-dind-<size>-<version>). The web app pins this exact
-        # name (with `DAYTONA_VM_SNAPSHOT_*` overrides) in amika-mono's
-        # `daytonaVmSnapshots`, mirroring how it pins the container `:<version>`
-        # tags — keep the two in sync when bumping the version.
-        snapshot_name="${vm_name_base}-${vm_size}-${VERSION}"
+        # The adapter encodes the canonical release separator as `-`, yielding
+        # `a0.<size>.amika-<preset>-<revision>`. The web app pins this exact name
+        # with `DAYTONA_VM_SNAPSHOT_*` overrides; keep it synchronized with the
+        # corresponding container release.
+        snapshot_name="$(daytona_vm_snapshot_name "$preset" "$vm_size")"
         echo "Creating VM ${snapshot_name} (${cpu} vCPU, ${mem}GB RAM, ${disk}GB disk) in org ${org}, region ${VM_REGION}..."
         # The name is version-pinned, so a conflict means a snapshot already
         # exists under this exact name. Skipping is only safe if that snapshot is
