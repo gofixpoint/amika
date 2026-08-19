@@ -1,22 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildFreestyleSnapshotName,
   buildFreestyleVmName,
   freestyleVmBelongsToOrg,
   freestyleVmNameOrgId,
 } from "./naming";
-
-describe("buildFreestyleSnapshotName", () => {
-  it("builds an `amika-<preset>-<size>` name", () => {
-    expect(buildFreestyleSnapshotName("coder", "m")).toBe("amika-coder-m");
-  });
-
-  it("preserves a hyphenated preset", () => {
-    expect(buildFreestyleSnapshotName("coder-dind", "xl")).toBe(
-      "amika-coder-dind-xl",
-    );
-  });
-});
 
 describe("buildFreestyleVmName", () => {
   it("prefixes the org id onto the sandbox name", () => {

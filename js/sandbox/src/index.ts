@@ -48,19 +48,9 @@ export * from "./types";
 export * from "./constants";
 export * from "./logger";
 
-// Deep helpers consumed by the control plane (provider sizing, Freestyle
-// naming, the adapter port + fake, github-auth script builders).
+// Deep helpers consumed by the control plane (Freestyle naming, the adapter
+// port + fake, github-auth script builders).
 export {
-  freestyleSizingForSize,
-  type FreestyleSizing,
-} from "./providers/freestyle/sizing";
-export {
-  vercelSizingForSize,
-  vercelVcpusForSize,
-  type VercelSizing,
-} from "./providers/vercel/sizing";
-export {
-  buildFreestyleSnapshotName,
   buildFreestyleVmName,
   freestyleVmNameOrgId,
   freestyleVmBelongsToOrg,

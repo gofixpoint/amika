@@ -15,7 +15,7 @@
 import type { SandboxCtx } from "../logger";
 import type { SandboxProviderName, SandboxService } from "../types";
 import type { SandboxStatus } from "../sandbox-status";
-import type { GithubAuthMode, SandboxSize } from "../enums";
+import type { GithubAuthMode } from "../enums";
 
 export type { SandboxProviderName, SandboxService } from "../types";
 
@@ -141,13 +141,12 @@ export interface CreateSandboxProviderInput {
   name: string;
   snapshot: string;
   /**
-   * Requested size (xs/m/l/xl). Informational for both providers that bake size
-   * into the chosen `snapshot`: Daytona via per-size image tags, Freestyle via
-   * per-size snapshots (`amika-<preset>-<size>`, built by
-   * `bin/freestyle-build-snapshots`). The size is selected upstream when
-   * resolving `snapshot`; providers do not resize at create time.
+   * Literal resources selected by the caller. Providers that size at create
+   * consume the supported dimensions directly; providers with pre-sized boot
+   * sources receive the same allocation alongside the selected `snapshot`.
+   * Product tier names and their resource mappings belong to the caller.
    */
-  size?: SandboxSize;
+  resources?: SandboxResources;
   githubUrl?: string;
   repoName?: string | null;
   amikaOpenCodeWeb?: string | null;
@@ -328,13 +327,12 @@ export interface ExecCommandOptions {
 }
 
 /**
- * Provisioned sizing of a sandbox, normalized to the units the spend meter
- * bills in — GiB for memory and disk. Providers convert from their native SDK
- * units so the consumer prices every provider off one shape: Daytona already
- * reports GiB, Freestyle reports MiB (÷1024), and Vercel exposes only the vCPU
- * count and derives the rest from its fixed 2 GB-per-vCPU / 32 GB-disk coupling.
+ * Literal sandbox resources, normalized to vCPUs and GiB. Create callers use
+ * this shape to request an allocation without exposing product tier names to
+ * the provider package; provider listings use it to report the allocation that
+ * was actually provisioned.
  */
-export interface ProviderSandboxSizing {
+export interface SandboxResources {
   /** Provisioned vCPU count. */
   vcpus: number;
   /** Provisioned memory, gibibytes. */
@@ -342,6 +340,8 @@ export interface ProviderSandboxSizing {
   /** Provisioned disk, gibibytes. */
   diskGib: number;
 }
+
+export type ProviderSandboxSizing = SandboxResources;
 
 /**
  * One account-wide sandbox as reported by {@link SandboxProvider.listSandboxes}.
