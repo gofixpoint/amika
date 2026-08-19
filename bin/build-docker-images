@@ -43,9 +43,11 @@ VERSION="${VERSION:0:12}"
 DAYTONA_CLI="${DAYTONA_CLI:-daytona}"
 
 # Allow release jobs and canaries to pin an explicit CLI binary without
-# depending on a login shell preserving PATH.
+# depending on a login shell preserving PATH. `command` is required: the default
+# DAYTONA_CLI is "daytona", which resolves back to this function without it, and
+# the resulting infinite recursion segfaults bash (exit 139).
 daytona() {
-  "$DAYTONA_CLI" "$@"
+  command "$DAYTONA_CLI" "$@"
 }
 
 # ---- helpers -------------------------------------------------------------
