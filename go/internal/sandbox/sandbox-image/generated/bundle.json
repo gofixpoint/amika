@@ -100,7 +100,7 @@
         "codex",
         "opencode",
         "pi",
-        "ttyd",
+        "pi-web",
         "amika",
         "amikalog",
         "amikad"
@@ -189,10 +189,10 @@
         },
         {
           "assets": [],
-          "id": "web-terminal",
-          "script": "steps/82-web-terminal.sh",
+          "id": "pi-web",
+          "script": "steps/82-pi-web.sh",
           "versions": {
-            "TTYD_VERSION": "1.7.7"
+            "PI_WEB_VERSION": "0.8.9"
           }
         },
         {
@@ -237,7 +237,7 @@
         "codex",
         "opencode",
         "pi",
-        "ttyd",
+        "pi-web",
         "amika",
         "amikalog",
         "amikad",
@@ -327,10 +327,10 @@
         },
         {
           "assets": [],
-          "id": "web-terminal",
-          "script": "steps/82-web-terminal.sh",
+          "id": "pi-web",
+          "script": "steps/82-pi-web.sh",
           "versions": {
-            "TTYD_VERSION": "1.7.7"
+            "PI_WEB_VERSION": "0.8.9"
           }
         },
         {

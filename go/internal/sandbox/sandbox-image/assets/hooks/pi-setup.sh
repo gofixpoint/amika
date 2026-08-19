@@ -15,19 +15,21 @@ if [[ -z "${AMIKA_PI_WEB_PASSWORD:-}" ]]; then
   exit 1
 fi
 
+# Pi Web rejects any request whose Host header it was not told to trust
+# ("Untrusted request", HTTP 403), and it accepts no wildcard — so without the
+# sandbox's public hostname the server would answer nothing but 403s. Amika
+# passes the host it minted for this service; refusing to start without it
+# beats serving an endpoint that cannot work.
+if [[ -z "${AMIKA_PI_WEB_ALLOWED_HOSTS:-}" ]]; then
+  echo "ERROR: AMIKA_PI_WEB_ALLOWED_HOSTS must be set" >&2
+  exit 1
+fi
+
 cd "$amika_agent_cwd"
-# Pi has no web server, so ttyd serves its terminal UI over HTTP. `--writable`
-# is what makes the session interactive rather than a read-only mirror, and the
-# credential is what keeps the sandbox's shell off the open internet: the
-# service URL is publicly routable.
-#
-# ttyd 1.7 takes the credential only as an argument, so it is visible in `ps`
-# inside this sandbox. That is not a leak of anything new — every process here
-# already runs as the user the terminal would hand out — but it is why the
-# password is per-sandbox rather than an org-wide secret.
-exec ttyd \
-  --port "$pi_web_port" \
-  --interface 0.0.0.0 \
-  --credential "amika:${AMIKA_PI_WEB_PASSWORD}" \
-  --writable \
-  pi
+# `--no-open` because there is no browser to launch here, and 0.0.0.0 so the
+# provider's port mapping can reach it. `PI_WEB_PASSWORD` turns on HTTP Basic
+# Auth with the fixed username `pi`; it travels in the environment rather than
+# argv, so it is not visible in `ps` to anything else in the sandbox.
+export PI_WEB_PASSWORD="$AMIKA_PI_WEB_PASSWORD"
+export PI_WEB_ALLOWED_HOSTS="$AMIKA_PI_WEB_ALLOWED_HOSTS"
+exec pi-web --port "$pi_web_port" --hostname 0.0.0.0 --no-open

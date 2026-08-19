@@ -93,9 +93,9 @@ versions = [
 ]
 assets = []
 
-[steps.web-terminal]
-script = "steps/82-web-terminal.sh"
-versions = ["TTYD_VERSION"]
+[steps.pi-web]
+script = "steps/82-pi-web.sh"
+versions = ["PI_WEB_VERSION"]
 assets = []
 
 [steps.amika-clis]
@@ -182,7 +182,7 @@ steps = [
   "dotfiles",
   "hook-assets",
   "agent-clis",
-  "web-terminal",
+  "pi-web",
   "amika-clis",
   "setuid-manifest",
   "verify",
@@ -199,7 +199,7 @@ binaries = [
   "codex",
   "opencode",
   "pi",
-  "ttyd",
+  "pi-web",
   "amika",
   "amikalog",
   "amikad",
@@ -215,7 +215,7 @@ steps = [
   "dotfiles",
   "hook-assets",
   "agent-clis",
-  "web-terminal",
+  "pi-web",
   "amika-clis",
   "dind",
   "setuid-manifest",
@@ -233,7 +233,7 @@ binaries = [
   "codex",
   "opencode",
   "pi",
-  "ttyd",
+  "pi-web",
   "amika",
   "amikalog",
   "amikad",
@@ -290,10 +290,12 @@ id = "pi"
 env = "PI_VERSION"
 command = ["pi", "--version"]
 
+# Pi Web has no --version flag (any argument still starts the server), so the
+# pin is checked through npm's global listing instead.
 [[version_checks]]
-id = "ttyd"
-env = "TTYD_VERSION"
-command = ["ttyd", "--version"]
+id = "pi-web"
+env = "PI_WEB_VERSION"
+command = ["npm", "ls", "-g", "--depth=0", "@agegr/pi-web"]
 
 [[version_checks]]
 id = "amika"

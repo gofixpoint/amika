@@ -218,15 +218,20 @@ avoid binding to ports in this range.
 | 60999       | amikad daemon                    | Reserved |
 | 60998       | OpenCode web UI                  | Active   |
 | 60997       | amikad managed sshd (loopback)   | Active   |
-| 60996       | Pi web terminal                  | Active   |
+| 60996       | Pi Web UI                        | Active   |
 | 60899–60995 | _(unassigned, reserved for use)_ | Reserved |
 
 The OpenCode web server starts automatically on port 60998 when OpenCode is
 installed in the container and `AMIKA_OPENCODE_WEB` is not set to `0`. The
 port number is written to `/run/amikad/opencode-web.port` at startup.
 
-The Pi web terminal serves Pi's terminal UI over HTTP on port 60996 via
-`ttyd`. Pi has no web server of its own, so this endpoint is a real terminal:
-it is opt-in (`AMIKA_PI_WEB=1`) and refuses to start without
-`AMIKA_PI_WEB_PASSWORD`, which it enforces as HTTP basic auth. The port number
-is written to `/run/amikad/pi-web.port` at startup.
+[Pi Web](https://github.com/agegr/pi-web) serves a browser UI for the `pi`
+agent on port 60996, over the same `~/.pi/agent` state the CLI uses. Pi's own
+CLI has no web server, so this is the equivalent of `opencode web`.
+
+It is opt-in (`AMIKA_PI_WEB=1`) and refuses to start without two things:
+`AMIKA_PI_WEB_PASSWORD`, enforced as HTTP basic auth under the fixed username
+`pi`, and `AMIKA_PI_WEB_ALLOWED_HOSTS`, the public hostname the sandbox is
+reached through. Pi Web answers `403 Untrusted request` to any other Host
+header and accepts no wildcard, so an endpoint without it could serve nothing.
+The port number is written to `/run/amikad/pi-web.port` at startup.

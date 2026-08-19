@@ -99,7 +99,7 @@ The user-supplied setup hook remains at `/usr/local/etc/amikad/setup/setup.sh`.
 ## Reserved Ports
 
 Preset images reserve container ports 60899–60999 for Amika internal services
-(e.g. OpenCode web on 60998, Pi web terminal on 60996, amikad daemon on 60999). See
+(e.g. OpenCode web on 60998, Pi Web on 60996, amikad daemon on 60999). See
 [sandbox-configuration.md](sandbox-configuration.md#reserved-ports) for the
 full allocation table.
 
