@@ -8,13 +8,18 @@ const { sdk, FakeSandboxNotFoundError } = vi.hoisted(() => ({
     kill: vi.fn(),
     getInfo: vi.fn(),
     getMetrics: vi.fn(),
+    getSandboxDetail: vi.fn(),
     list: vi.fn(),
   },
   FakeSandboxNotFoundError: class SandboxNotFoundError extends Error {},
 }));
 
 vi.mock("e2b", () => ({
+  ApiClient: class ApiClient {
+    api = { GET: sdk.getSandboxDetail };
+  },
   Sandbox: sdk,
+  ConnectionConfig: class ConnectionConfig {},
   CommandExitError: class CommandExitError extends Error {},
   FileNotFoundError: class FileNotFoundError extends Error {},
   SandboxNotFoundError: FakeSandboxNotFoundError,
@@ -215,6 +220,9 @@ describe("E2B services and listing", () => {
     sdk.getMetrics.mockImplementation(async (id: string) =>
       id === "sbx_1" ? [{ diskTotal: 10 * 1024 ** 3 }] : [],
     );
+    sdk.getSandboxDetail.mockResolvedValue({
+      data: { diskSizeMB: 20 * 1024 },
+    });
 
     await expect(listE2bSandboxes(CONFIG)).resolves.toEqual([
       {
@@ -227,8 +235,12 @@ describe("E2B services and listing", () => {
         providerSandboxId: "sbx_new",
         orgId: null,
         state: "paused",
-        sizing: { vcpus: 1, memoryGib: 1, diskGib: 0 },
+        sizing: { vcpus: 1, memoryGib: 1, diskGib: 20 },
       },
     ]);
+    expect(sdk.getSandboxDetail).toHaveBeenCalledWith(
+      "/sandboxes/{sandboxID}",
+      { params: { path: { sandboxID: "sbx_new" } } },
+    );
   });
 });
