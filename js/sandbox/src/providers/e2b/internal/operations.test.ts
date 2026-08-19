@@ -33,7 +33,6 @@ import {
   e2bRouteSyncCommand,
   getE2bSandboxState,
   listE2bSandboxes,
-  openE2bAdapter,
   refreshE2bUrls,
   startE2bSandbox,
   stopE2bSandbox,
@@ -48,7 +47,8 @@ beforeEach(() => {
 
 describe("E2B lifecycle operations", () => {
   it("creates from the prepared template with pause-on-timeout lifecycle", async () => {
-    sdk.create.mockResolvedValue({ sandboxId: "sbx_1" });
+    const run = vi.fn().mockResolvedValue({});
+    sdk.create.mockResolvedValue({ sandboxId: "sbx_1", commands: { run } });
 
     const result = await createE2bSandbox(
       { logger: { info: vi.fn() } } as never,
@@ -75,6 +75,9 @@ describe("E2B lifecycle operations", () => {
       },
       network: { allowPublicTraffic: true },
     });
+    expect(run).toHaveBeenCalledWith(e2bImagePermissionRestoreCommand(), {
+      user: "root",
+    });
     expect(result).toMatchObject({
       provider: "e2b",
       providerSandboxId: "sbx_1",
@@ -91,14 +94,27 @@ describe("E2B lifecycle operations", () => {
     expect(sdk.create).not.toHaveBeenCalled();
   });
 
-  it("restores image permissions before opening the adapter", async () => {
-    const run = vi.fn().mockResolvedValue({});
-    sdk.connect.mockResolvedValue({ commands: { run } });
+  it("kills a new sandbox when restoring image permissions fails", async () => {
+    const restoreError = new Error("chmod failed");
+    const run = vi.fn().mockRejectedValue(restoreError);
+    sdk.create.mockResolvedValue({ sandboxId: "sbx_1", commands: { run } });
+    sdk.kill.mockResolvedValue(undefined);
 
-    await openE2bAdapter(CONFIG, "sbx_1");
+    await expect(
+      createE2bSandbox(
+        { logger: { info: vi.fn(), error: vi.fn() } } as never,
+        CONFIG,
+        {
+          name: "demo",
+          snapshot: "tpl_coder_xs",
+          labels: {},
+          services: [],
+        } as never,
+      ),
+    ).rejects.toBe(restoreError);
 
-    expect(run).toHaveBeenCalledWith(e2bImagePermissionRestoreCommand(), {
-      user: "root",
+    expect(sdk.kill).toHaveBeenCalledWith("sbx_1", {
+      apiKey: "e2b_test",
     });
   });
 

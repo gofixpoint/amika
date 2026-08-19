@@ -66,6 +66,21 @@ export async function createE2bSandbox(
     },
     network: { allowPublicTraffic: true },
   });
+  try {
+    await sandbox.commands.run(e2bImagePermissionRestoreCommand(), {
+      user: "root",
+    });
+  } catch (error) {
+    try {
+      await Sandbox.kill(sandbox.sandboxId, e2bApiOptions(config));
+    } catch (cleanupError) {
+      ctx.logger.error(
+        { cleanupError, providerSandboxId: sandbox.sandboxId },
+        "Failed to clean up E2B sandbox after image permission restore",
+      );
+    }
+    throw error;
+  }
   return {
     provider: "e2b",
     providerSandboxId: sandbox.sandboxId,
@@ -73,6 +88,11 @@ export async function createE2bSandbox(
     services: input.services,
     envVars: {},
   };
+}
+
+/** Restore the image contract after E2B's finalizer broadens `/usr/local`. */
+export function e2bImagePermissionRestoreCommand(): string {
+  return "chmod 0755 /usr/local/etc/amika";
 }
 
 export async function startE2bSandbox(
@@ -346,16 +366,7 @@ export async function openE2bAdapter(
   config: E2bConfig,
   providerSandboxId: string,
 ): Promise<SandboxAdapter> {
-  const sandbox = await connectE2bSandbox(config, providerSandboxId);
-  await sandbox.commands.run(e2bImagePermissionRestoreCommand(), {
-    user: "root",
-  });
-  return new E2bAdapter(sandbox);
-}
-
-/** Restore the image contract after E2B's finalizer broadens `/usr/local`. */
-export function e2bImagePermissionRestoreCommand(): string {
-  return "chmod 0755 /usr/local/etc/amika";
+  return new E2bAdapter(await connectE2bSandbox(config, providerSandboxId));
 }
 
 function commandOptions(opts?: ExecCommandOptions) {
