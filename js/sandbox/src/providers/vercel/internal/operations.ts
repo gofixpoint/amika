@@ -490,6 +490,11 @@ async function restartVercelServicesOnResume(sandbox: Sandbox): Promise<void> {
     if (!context) {
       return;
     }
+    // TODO(KAPRO-840): the Pi web terminal is not relaunched here. `pre-setup.sh`
+    // gates it on `AMIKA_PI_WEB` / `AMIKA_PI_WEB_PASSWORD`, which the resume
+    // context does not carry, so a resumed sandbox keeps its Pi service URL
+    // while nothing listens on port 60997 until an explicit restart. Known
+    // limitation: this path is Vercel-only and that provider is not in use.
     const hookEnv: Record<string, string> = {
       AMIKA_AGENT_CWD: context.repoDir,
       OPENCODE_SERVER_PASSWORD: context.openCodePassword,
