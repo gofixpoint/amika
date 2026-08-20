@@ -83,12 +83,17 @@ See [sandbox-configuration.md](sandbox-configuration.md) for details.
 
 ## Container Directory Layout
 
-Preset images provision parallel `amikad` and `amika` directories inside the container:
+Every container has parallel `amikad` and `amika` directories. Preset images
+provision the persistent ones:
 
 - `/usr/lib/amikad` and `/usr/lib/amika`
 - `/usr/local/etc/amikad` and `/usr/local/etc/amika`
 - `/var/lib/amikad` and `/var/lib/amika`
 - `/var/log/amikad` and `/var/log/amika`
+
+The `/run` and `/tmp` pairs are created at container start instead, because both
+filesystems are wiped on every boot and no image can carry them:
+
 - `/run/amikad` and `/run/amika`
 - `/tmp/amikad` and `/tmp/amika`
 

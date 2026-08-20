@@ -124,6 +124,10 @@ docker_copies = [
   { source = "verify", destination = "/usr/lib/amika-image/verify" },
 ]
 
+# Only directories that are real image content belong here. The paired
+# /run/amika, /run/amikad, /tmp/amika, and /tmp/amikad are deliberately absent:
+# /run and /tmp are wiped on every boot, so no image can carry them. pre-setup.sh
+# creates all four at boot instead, and pre_setup_test.go asserts that it does.
 [[image.directories]]
 path = "/home/amika/.ssh"
 owner = "amika"
@@ -149,12 +153,6 @@ group = "amika"
 mode = "755"
 
 [[image.directories]]
-path = "/run/amika"
-owner = "amika"
-group = "amika"
-mode = "755"
-
-[[image.directories]]
 path = "/usr/local/etc/amika"
 owner = "amika"
 group = "amika"
@@ -162,12 +160,6 @@ mode = "755"
 
 [[image.directories]]
 path = "/var/lib/amika"
-owner = "amika"
-group = "amika"
-mode = "755"
-
-[[image.directories]]
-path = "/tmp/amika"
 owner = "amika"
 group = "amika"
 mode = "755"
