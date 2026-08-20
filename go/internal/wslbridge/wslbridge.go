@@ -150,7 +150,7 @@ func EditorExe(cli string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("no Windows %s found; install the editor on Windows, or install its Linux build inside WSL", install.exe)
+	return "", fmt.Errorf("no Windows %s found; install the editor on Windows", install.exe)
 }
 
 // execDetached is a seam over the detached spawn, so tests observe the argv
