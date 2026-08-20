@@ -1,0 +1,114 @@
+# Offline case for the top-level `send` command and the `sessions` command
+# group. Everything here is argument/flag/stdin plumbing that resolves before
+# any network call, so the case needs no Docker, no network, and no
+# credentials.
+#
+# `send` and `sessions` are remote-only (the agent-sessions API provisions
+# sandboxes in the control plane, so there is no --local equivalent). That
+# makes the "not logged in" auth check the natural offline backstop: a step
+# that reaches it has proven everything ahead of it parsed and dispatched
+# correctly, without a request ever leaving the machine.
+#
+# Steps that reach that check pin AMIKA_API_KEY to an empty string, because
+# this repo's own dev sandbox exports a real key into every shell and the
+# runner's base env is the process's own os.Environ() (see the runner README).
+name: send and sessions argument handling works offline
+steps:
+  - name: send with no message and no stdin is rejected
+    # The message check runs before the auth check, so this fails on the
+    # message even with credentials available — no AMIKA_API_KEY override
+    # needed, and the ordering is what the step asserts.
+    cmd: [send]
+    expect:
+      exit: 1
+      stderr_contains: "message is required as an argument or via stdin"
+
+  - name: send reads the message from stdin when no positional message is given
+    # With a message on stdin the command gets past the "message is required"
+    # check and fails later, at the auth check, proving the piped message was
+    # read.
+    cmd: [send]
+    stdin: "hello from stdin"
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: send with empty stdin is still rejected as a missing message
+    # A piped-but-empty stdin must not count as a message; it trims to "" and
+    # fails the same way as no stdin at all rather than sending an empty turn.
+    cmd: [send]
+    stdin: ""
+    expect:
+      exit: 1
+      stderr_contains: "message is required as an argument or via stdin"
+
+  - name: send rejects an invalid --output value before doing any work
+    cmd: [send, hello, --output, bogus]
+    expect:
+      exit: 1
+      stderr_contains: 'invalid --output value "bogus": must be one of text, json, json-pretty'
+
+  - name: send is remote-only and requires credentials
+    cmd: [send, hello]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: send --stream reaches the same auth check as the buffered path
+    # --stream selects the SSE transport, but only after auth. Asserting the
+    # same failure here proves the flag is registered and does not change the
+    # order of the checks ahead of the request.
+    cmd: [send, hello, --stream]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: sessions list requires credentials
+    cmd: [sessions, list]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: the singular "session" alias resolves to the same command group
+    cmd: [session, list]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: sessions show requires exactly one session id
+    cmd: [sessions, show]
+    expect:
+      exit: 1
+      stderr_contains: "accepts 1 arg(s), received 0"
+
+  - name: sessions show with an id requires credentials
+    cmd: [sessions, show, some-session-id]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: sessions list rejects an invalid --output value
+    cmd: [sessions, list, --output, bogus]
+    expect:
+      exit: 1
+      stderr_contains: 'invalid --output value "bogus": must be one of text, json, json-pretty'
+
+  - name: sessions help lists its subcommands without needing credentials
+    cmd: [sessions, --help]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 0
+      stdout_contains: "List the organization's agent-session chats"

@@ -1,0 +1,140 @@
+name: agent-session chats via send and sessions (send, continue, stream, list, show)
+# `send` and `sessions` are two halves of one feature: `send` creates the
+# durable chat that `sessions list` / `sessions show` then read back. Splitting
+# them would mean paying for a second sandbox and a second agent turn just to
+# produce a session for the read side, so they share one case.
+#
+# This is distinct from api-sandbox-lifecycle.yaml's `sandbox agent-send` step,
+# which is deliberately kept as its own coverage of the older per-sandbox
+# command. `send` drives the newer agent-sessions API instead: durable session
+# ids, continuation across turns, and an SSE streaming transport.
+#
+# The sandbox is created explicitly up front and passed via `--sandbox`, rather
+# than letting `send` provision one behind the scenes. `send`'s auto-create path
+# is the safer thing to leave uncovered here: the sandbox id comes back only in
+# the command's own output, so a turn that creates a sandbox and then fails
+# before printing (an agent turn can run for minutes) would leave a billable
+# sandbox with nothing for the ledger to delete. Creating it explicitly means
+# the `resource` block below owns cleanup from the first step onward. The cost
+# is that `created_sandbox` is asserted false throughout; the auto-create path
+# is not exercised.
+#
+# Each `send` step is a real, billable agent turn, so the case spends exactly
+# three: a new chat, a buffered continuation, and a streamed continuation. Not
+# covered for that reason: `--stream` combined with `-o json` (which must stay
+# buffered so the emitted object remains valid) — that decision is local flag
+# logic inlined in runSend, reachable only with a live client.
+steps:
+  - name: create the sandbox the chat will run in
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    expect:
+      exit: 0
+      schema: Sandbox
+      stdout_json:
+        name: "@string"
+        id: "@string"
+        provider: "{{sandbox_provider}}"
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+
+  - name: send the first message and start a durable chat
+    # --agent is pinned rather than left to the org default so `agent` below is
+    # a deterministic assertion. The agent's reply text is deliberately NOT
+    # asserted: model output is nondeterministic, so the case checks the
+    # envelope (a string response, no error) and not the words in it.
+    cmd: [send, "Reply with exactly the word: pong", --sandbox, "{{sandbox_name}}", --agent, claude, -o, json]
+    expect:
+      exit: 0
+      schema: AgentSessionSendResponse
+      stdout_json:
+        session_id: "@string"
+        sandbox_id: "@string"
+        agent: claude
+        response: "@string"
+        is_error: false
+        is_new_session: true
+        created_sandbox: false
+    capture:
+      session_id: $.session_id
+
+  - name: continue the same chat with --session-id
+    # is_new_session flipping to false against the same session_id is the whole
+    # point of the durable-session API: the second turn joins the first chat
+    # instead of silently starting another one.
+    cmd: [send, "Reply with exactly the word: pong", --session-id, "{{session_id}}", --agent, claude, -o, json]
+    expect:
+      exit: 0
+      schema: AgentSessionSendResponse
+      stdout_json:
+        session_id: "{{session_id}}"
+        agent: claude
+        is_error: false
+        is_new_session: false
+        created_sandbox: false
+
+  - name: stream a reply over SSE into the same chat
+    # Text output with --stream forces the SSE transport (the runner's stdout is
+    # a pipe, so streaming would otherwise default off). A parse failure in the
+    # event stream surfaces as a non-zero exit here, which is the transport
+    # coverage this step exists for. In text mode stdout carries only the
+    # agent's reply and identifying metadata goes to stderr, so the session id
+    # is asserted on stderr.
+    cmd: [send, "Reply with exactly the word: pong", --session-id, "{{session_id}}", --agent, claude, --stream]
+    expect:
+      exit: 0
+      stderr_contains: "session_id: {{session_id}}"
+
+  - name: sessions list as json includes the chat
+    cmd: [sessions, list, -o, json]
+    expect:
+      exit: 0
+      schema: ListAgentSessionsResponse
+      stdout_json:
+        sessions: "@array"
+        total: "@number"
+      stdout_contains: "{{session_id}}"
+
+  - name: sessions list honors --limit
+    cmd: [sessions, list, --limit, "1", -o, json]
+    expect:
+      exit: 0
+      schema: ListAgentSessionsResponse
+      stdout_json:
+        sessions: ["@object"]
+
+  - name: sessions list renders a text table
+    cmd: [sessions, list]
+    expect:
+      exit: 0
+      stdout_contains: "SESSION ID"
+
+  - name: sessions show returns the chat and its transcript as json
+    cmd: [sessions, show, "{{session_id}}", -o, json]
+    expect:
+      exit: 0
+      schema: AgentSessionDetail
+      stdout_json:
+        session_id: "{{session_id}}"
+        agent: claude
+        sandbox_name: "{{sandbox_name}}"
+        messages: "@array"
+
+  - name: sessions show renders the chat as text
+    cmd: [sessions, show, "{{session_id}}"]
+    expect:
+      exit: 0
+      stdout_contains: "session:  {{session_id}}"
+
+  - name: sessions show rejects an unknown session id
+    cmd: [sessions, show, "no-such-session-{{run_id}}"]
+    expect:
+      exit: 1
+
+  - name: delete the sandbox
+    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    expect:
+      exit: 0
