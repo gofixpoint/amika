@@ -372,7 +372,7 @@ func TestOpenSandboxInEditorSkipsWindowsWhenNotWSL(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a local editor CLI requirement")
 	}
-	if !strings.Contains(err.Error(), "install") {
+	if !strings.Contains(err.Error(), `install it from the VS Code Command Palette`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(*mirrored) != 0 || len(*launched) != 0 {

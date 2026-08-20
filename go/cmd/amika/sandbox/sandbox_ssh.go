@@ -247,12 +247,14 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 
 // openSandboxInCursorTarget launches Cursor connected to a prepared SSH target.
 func openSandboxInCursorTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
-	return launchRemoteSSHEditor(cmd, "cursor", "Cursor", paths, target, pathOverride)
+	return launchRemoteSSHEditor(cmd, "cursor", "Cursor",
+		"Cursor > Settings > Extensions > cursor-cli", paths, target, pathOverride)
 }
 
 // openSandboxInVSCodeTarget launches VS Code connected to a prepared SSH target.
 func openSandboxInVSCodeTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
-	return launchRemoteSSHEditor(cmd, "code", "VS Code", paths, target, pathOverride)
+	return launchRemoteSSHEditor(cmd, "code", "VS Code",
+		"the VS Code Command Palette: \"Shell Command: Install 'code' command in PATH\"", paths, target, pathOverride)
 }
 
 // The WSL seams isolate the editor launch from the Windows side, so tests
@@ -268,56 +270,60 @@ var (
 // launchRemoteSSHEditor launches a VS Code-family editor (Cursor, VS Code)
 // against a prepared SSH target. Both share VS Code's Remote-SSH CLI contract:
 // <cli> --remote ssh-remote+<host> <path>.
-func launchRemoteSSHEditor(cmd *cobra.Command, cli, name string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
-	if wslIsWSL() {
-		return launchWindowsEditorFromWSL(cmd, cli, name, paths, target, pathOverride)
-	}
-	if _, err := exec.LookPath(cli); err != nil {
-		return fmt.Errorf("%s CLI is not installed or not in PATH: %w", cli, err)
-	}
-
-	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
-
-	editorCmd := exec.Command(cli, "--remote", "ssh-remote+"+target.alias, remotePath)
-	editorCmd.Stdin = os.Stdin
-	editorCmd.Stdout = os.Stdout
-	editorCmd.Stderr = os.Stderr
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in %s via SSH (%s)...\n", target.sandboxName, name, target.alias)
-	fmt.Fprintf(cmd.OutOrStdout(), "Running: %s --remote ssh-remote+%s %s\n", cli, target.alias, remotePath)
-	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
-	if err := editorCmd.Run(); err != nil {
-		return fmt.Errorf("%s failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", cli, err, name)
-	}
-	return nil
-}
-
-// launchWindowsEditorFromWSL is launchRemoteSSHEditor's counterpart when the
-// editor is a Windows application: it mirrors the SSH config to the Windows
-// user's .ssh directory so the editor's OpenSSH can reach the sandbox, then
-// opens the editor on the Windows desktop.
-func launchWindowsEditorFromWSL(cmd *cobra.Command, cli, name string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
-	windowsTarget, err := wslResolveTarget()
-	if err != nil {
-		return fmt.Errorf("resolve the Windows side: %w", err)
-	}
-	if err := mirrorSSHToWindows(paths, windowsTarget); err != nil {
-		return fmt.Errorf("mirror SSH config to Windows: %w", err)
-	}
-	exe, err := wslEditorExe(cli)
+func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+	launch, err := resolveEditorLauncher(cli, installHint, paths)
 	if err != nil {
 		return err
 	}
 
 	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Opening sandbox %q in %s (Windows) via SSH (%s)...\n", target.sandboxName, name, target.alias)
-	fmt.Fprintf(out, "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
 
-	if err := wslLaunchWindows(exe, "--remote", "ssh-remote+"+target.alias, remotePath); err != nil {
-		return fmt.Errorf("launch Windows %s: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", name, err, name)
+	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in %s via SSH (%s)...\n", target.sandboxName, name, target.alias)
+	fmt.Fprintf(cmd.OutOrStdout(), "Running: %s --remote ssh-remote+%s %s\n", cli, target.alias, remotePath)
+	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
+	if err := launch("--remote", "ssh-remote+"+target.alias, remotePath); err != nil {
+		return fmt.Errorf("%s failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", cli, err, name)
 	}
 	return nil
+}
+
+// resolveEditorLauncher returns the function that starts the editor CLI with
+// the Remote-SSH arguments. Normally that is the local CLI, run in the
+// foreground; under WSL the editor is a Windows application instead, so the
+// launch crosses the WSL boundary.
+func resolveEditorLauncher(cli, installHint string, paths basedir.Paths) (func(args ...string) error, error) {
+	if wslIsWSL() {
+		return resolveWindowsEditorLauncher(cli, paths)
+	}
+	if _, err := exec.LookPath(cli); err != nil {
+		return nil, fmt.Errorf("%s CLI is not installed or not in PATH; install it from %s", cli, installHint)
+	}
+	return func(args ...string) error {
+		editorCmd := exec.Command(cli, args...)
+		editorCmd.Stdin = os.Stdin
+		editorCmd.Stdout = os.Stdout
+		editorCmd.Stderr = os.Stderr
+		return editorCmd.Run()
+	}, nil
+}
+
+// resolveWindowsEditorLauncher prepares the Windows side of a WSL launch: it
+// mirrors the SSH config, identity, and host-key pins to the Windows user's
+// .ssh directory so the editor's own OpenSSH can reach the sandbox, then
+// returns a launcher that opens the Windows editor on the desktop.
+func resolveWindowsEditorLauncher(cli string, paths basedir.Paths) (func(args ...string) error, error) {
+	windowsTarget, err := wslResolveTarget()
+	if err != nil {
+		return nil, fmt.Errorf("resolve the Windows side: %w", err)
+	}
+	if err := mirrorSSHToWindows(paths, windowsTarget); err != nil {
+		return nil, fmt.Errorf("mirror SSH config to Windows: %w", err)
+	}
+	exe, err := wslEditorExe(cli)
+	if err != nil {
+		return nil, err
+	}
+	return func(args ...string) error { return wslLaunchWindows(exe, args...) }, nil
 }
 
 // openSandboxInClaude registers the sandbox as an SSH environment in Claude

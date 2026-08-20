@@ -1,6 +1,6 @@
 package ssh
 
-// mirror.go renders and writes the Windows-side copy of the managed SSH
+// wslmirror.go renders and writes the Windows-side copy of the managed SSH
 // config for WSL setups, where amika runs in WSL but the editors that need
 // the connection state run as Windows applications.
 
