@@ -248,7 +248,7 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 // openSandboxInCursorTarget launches Cursor connected to a prepared SSH target.
 func openSandboxInCursorTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	return launchRemoteSSHEditor(cmd, "cursor", "Cursor",
-		"Cursor > Settings > Extensions > cursor-cli", paths, target, pathOverride)
+		"Run this from Cursor's command palette: \">Shell Command: Install 'cursor' command\"", paths, target, pathOverride)
 }
 
 // openSandboxInVSCodeTarget launches VS Code connected to a prepared SSH target.
