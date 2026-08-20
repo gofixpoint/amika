@@ -42,6 +42,14 @@ def main() -> int:
             path = generated / name
             if not path.is_file() or path.read_text(encoding="utf-8") != expected:
                 stale.append(name)
+        actual = {
+            str(path.relative_to(generated))
+            for path in generated.rglob("*")
+            if path.is_file()
+        }
+        stale.extend(
+            f"unexpected:{name}" for name in sorted(actual - outputs.keys())
+        )
         if stale:
             print(
                 "generated sandbox image artifacts are stale: "
@@ -59,23 +67,28 @@ def main() -> int:
             return 1
         return 0
 
-    for name, content in outputs.items():
-        (generated / name).write_text(content, encoding="utf-8")
+    write_outputs(generated, outputs)
     write_embed_outputs(embed_root, embed_outputs)
     return 0
 
 
 def build_outputs(manifest: dict, versions: dict[str, str]) -> dict[str, str]:
+    image = manifest["image"]
     execution_plan = {
         "schemaVersion": 1,
-        "image": manifest["image"],
+        "image": {
+            key: value
+            for key, value in image.items()
+            if key != "provider_variants"
+        },
         "presets": {},
     }
     outputs = {}
     for preset_name, preset in manifest["presets"].items():
+        shared_step_ids = preset_step_ids(preset)
         steps = [
             execution_step(step_id, manifest["steps"][step_id], versions)
-            for step_id in preset["steps"]
+            for step_id in shared_step_ids
         ]
         execution_plan["presets"][preset_name] = {
             "steps": steps,
@@ -83,17 +96,53 @@ def build_outputs(manifest: dict, versions: dict[str, str]) -> dict[str, str]:
         }
         dockerfile = render_dockerfile(
             preset_name,
-            preset,
-            manifest["image"],
+            shared_step_ids,
+            image,
             manifest["steps"],
             versions,
         )
         outputs[f"{preset_name}.Dockerfile"] = dockerfile
+        for provider in image.get("provider_variants", []):
+            provider_step_ids = preset_step_ids(preset, provider)
+            outputs[f"{provider}/{preset_name}.Dockerfile"] = (
+                render_dockerfile(
+                    preset_name,
+                    provider_step_ids,
+                    image,
+                    manifest["steps"],
+                    versions,
+                    provider,
+                )
+            )
 
     outputs["bundle.json"] = (
         json.dumps(execution_plan, indent=2, sort_keys=True) + "\n"
     )
     return outputs
+
+
+def preset_step_ids(preset: dict, provider: str | None = None) -> list[str]:
+    """Resolve ordered preset steps for the shared or selected provider build."""
+    selected = []
+    for entry in preset["steps"]:
+        if isinstance(entry, str):
+            selected.append(entry)
+        elif provider is not None and provider in entry["providers"]:
+            selected.append(entry["step"])
+    return selected
+
+
+def write_outputs(root: Path, outputs: dict[str, str]) -> None:
+    expected = set(outputs)
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_file() and str(path.relative_to(root)) not in expected:
+            path.unlink()
+        elif path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+    for name, content in outputs.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
 
 
 def build_embed_outputs(
@@ -180,10 +229,11 @@ def execution_step(
 
 def render_dockerfile(
     preset_name: str,
-    preset: dict,
+    step_ids: list[str],
     image: dict,
     steps: dict,
     versions: dict[str, str],
+    provider: str | None = None,
 ) -> str:
     base_version = image["base_version"]
     lines = [
@@ -196,7 +246,7 @@ def render_dockerfile(
         "ENV LANG=C.UTF-8",
     ]
 
-    for step_id in preset["steps"]:
+    for step_id in step_ids:
         step = steps[step_id]
         lines.append("")
         for version in step["versions"]:
@@ -214,6 +264,8 @@ def render_dockerfile(
 
         lines.append(f"COPY sandbox-image/{step['script']} {STAGING_SCRIPT}")
         command = []
+        if provider is not None and step_id == "verify":
+            command.append(f"AMIKA_IMAGE_PROVIDER={provider}")
         preset_environment = step.get("preset_environment")
         if preset_environment:
             command.append(f"{preset_environment}={preset_name}")

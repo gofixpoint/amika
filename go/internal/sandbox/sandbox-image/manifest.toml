@@ -30,6 +30,7 @@ agent_hook_paths = [
   ".claude/settings.json",
   ".codex/hooks.json",
 ]
+provider_variants = ["daytona", "e2b"]
 
 [steps.os-packages]
 script = "steps/10-os-packages.sh"

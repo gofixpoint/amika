@@ -38,11 +38,33 @@ The generator writes these provider-facing artifacts:
 
 - `generated/coder.Dockerfile`
 - `generated/coder-dind.Dockerfile`
+- `generated/daytona/{coder,coder-dind}.Dockerfile`
+- `generated/e2b/{coder,coder-dind}.Dockerfile`
 - `generated/bundle.json`
 
-The Dockerfiles are the OCI build inputs for local Docker, Daytona, and Vercel.
-`bundle.json` is the ordered execution plan consumed by Freestyle's shared-step
-fallback.
+The top-level Dockerfiles contain the shared preset steps and remain the OCI
+build inputs for local Docker and consumers without an explicit provider
+variant. Provider directories contain the same preset after filtering its
+provider-qualified entries. `bundle.json` contains only shared steps and is the
+ordered execution plan consumed by Freestyle's shared-step fallback.
+
+Preset step entries are either a string, which applies to every output, or an
+inline table restricted to declared `image.provider_variants`:
+
+```toml
+[image]
+provider_variants = ["daytona", "e2b"]
+
+[presets.coder]
+steps = [
+  "runtime-user",
+  { step = "daytona-vm-user", providers = ["daytona"] },
+  "dotfiles",
+]
+```
+
+The array position remains the single source of step order. The shared output
+omits provider-qualified entries.
 
 The generator also synchronizes `go/internal/sandbox/sandbox-image/`. That is
 the Go-embed mirror of the bundle, including generated Dockerfiles, scripts,
