@@ -35,12 +35,6 @@
         "group": "amika",
         "mode": "755",
         "owner": "amika",
-        "path": "/run/amika"
-      },
-      {
-        "group": "amika",
-        "mode": "755",
-        "owner": "amika",
         "path": "/usr/local/etc/amika"
       },
       {
@@ -48,12 +42,6 @@
         "mode": "755",
         "owner": "amika",
         "path": "/var/lib/amika"
-      },
-      {
-        "group": "amika",
-        "mode": "755",
-        "owner": "amika",
-        "path": "/tmp/amika"
       }
     ],
     "dotfiles": [
