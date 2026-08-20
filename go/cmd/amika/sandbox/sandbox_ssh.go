@@ -247,14 +247,12 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 
 // openSandboxInCursorTarget launches Cursor connected to a prepared SSH target.
 func openSandboxInCursorTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
-	return launchRemoteSSHEditor(cmd, "cursor", "Cursor",
-		"Cursor > Settings > Extensions > cursor-cli", paths, target, pathOverride)
+	return launchRemoteSSHEditor(cmd, "cursor", "Cursor", paths, target, pathOverride)
 }
 
 // openSandboxInVSCodeTarget launches VS Code connected to a prepared SSH target.
 func openSandboxInVSCodeTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
-	return launchRemoteSSHEditor(cmd, "code", "VS Code",
-		"the VS Code Command Palette: \"Shell Command: Install 'code' command in PATH\"", paths, target, pathOverride)
+	return launchRemoteSSHEditor(cmd, "code", "VS Code", paths, target, pathOverride)
 }
 
 // The WSL seams isolate the editor launch from the Windows side, so tests
@@ -270,12 +268,12 @@ var (
 // launchRemoteSSHEditor launches a VS Code-family editor (Cursor, VS Code)
 // against a prepared SSH target. Both share VS Code's Remote-SSH CLI contract:
 // <cli> --remote ssh-remote+<host> <path>.
-func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+func launchRemoteSSHEditor(cmd *cobra.Command, cli, name string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	if wslIsWSL() {
 		return launchWindowsEditorFromWSL(cmd, cli, name, paths, target, pathOverride)
 	}
 	if _, err := exec.LookPath(cli); err != nil {
-		return fmt.Errorf("%s CLI is not installed or not in PATH; install it from %s", cli, installHint)
+		return fmt.Errorf("%s CLI is not installed or not in PATH: %w", cli, err)
 	}
 
 	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
@@ -313,8 +311,8 @@ func launchWindowsEditorFromWSL(cmd *cobra.Command, cli, name string, paths base
 
 	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Mirrored SSH config for sandbox %q to %s.\n", target.sandboxName, windowsTarget.SSHDirWindows)
-	fmt.Fprintf(out, "Opening %s (Windows)...\n", name)
+	fmt.Fprintf(out, "Opening sandbox %q in %s (Windows) via SSH (%s)...\n", target.sandboxName, name, target.alias)
+	fmt.Fprintf(out, "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
 
 	if err := wslLaunchWindows(exe, "--remote", "ssh-remote+"+target.alias, remotePath); err != nil {
 		return fmt.Errorf("launch Windows %s: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", name, err, name)
