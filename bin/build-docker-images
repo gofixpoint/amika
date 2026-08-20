@@ -40,7 +40,9 @@ if ! [[ "$VERSION" =~ ^[0-9a-f]{7,40}$ ]]; then
   exit 1
 fi
 VERSION="${VERSION:0:12}"
-DAYTONA_CLI="${DAYTONA_CLI:-daytona}"
+if [ -z "${DAYTONA_CLI:-}" ]; then
+  DAYTONA_CLI="$(command -v daytona 2>/dev/null || true)"
+fi
 
 # Allow release jobs and canaries to pin an explicit CLI binary without
 # depending on a login shell preserving PATH. `command` is required: the default
