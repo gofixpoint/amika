@@ -29,6 +29,11 @@ RUN /tmp/amika-step.sh && rm -rf /tmp/amika-step.sh
 COPY sandbox-image/steps/50-runtime-user.sh /tmp/amika-step.sh
 RUN /tmp/amika-step.sh && rm -rf /tmp/amika-step.sh
 
+COPY sandbox-image/assets/providers/daytona /tmp/amika-step-assets
+COPY sandbox-image/steps/55-daytona-vm-user.sh /tmp/amika-step.sh
+RUN /tmp/amika-step.sh /tmp/amika-step-assets \
+    && rm -rf /tmp/amika-step.sh /tmp/amika-step-assets
+
 COPY sandbox-image/assets/stable /tmp/amika-step-assets
 COPY sandbox-image/steps/60-dotfiles.sh /tmp/amika-step.sh
 RUN /tmp/amika-step.sh /tmp/amika-step-assets \

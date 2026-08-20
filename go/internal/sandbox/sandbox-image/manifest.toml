@@ -58,6 +58,12 @@ script = "steps/50-runtime-user.sh"
 versions = []
 assets = []
 
+[steps.daytona-vm-user]
+script = "steps/55-daytona-vm-user.sh"
+versions = []
+assets = ["assets/providers/daytona/99-amika-user.conf"]
+asset_argument = "assets/providers/daytona"
+
 [steps.dotfiles]
 script = "steps/60-dotfiles.sh"
 versions = []
@@ -172,6 +178,7 @@ steps = [
   "node-gh",
   "npm-toolchain",
   "runtime-user",
+  { step = "daytona-vm-user", providers = ["daytona"] },
   "dotfiles",
   "hook-assets",
   "agent-clis",
@@ -205,6 +212,7 @@ steps = [
   "node-gh",
   "npm-toolchain",
   "runtime-user",
+  { step = "daytona-vm-user", providers = ["daytona"] },
   "dotfiles",
   "hook-assets",
   "agent-clis",

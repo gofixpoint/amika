@@ -66,6 +66,11 @@ steps = [
 The array position remains the single source of step order. The shared output
 omits provider-qualified entries.
 
+`bin/build-docker-images --push-daytona-vm` builds the Daytona variant under a
+distinct local tag and publishes that image to linux-vm snapshots. The
+container-class Daytona path continues to build the shared Dockerfile because
+it honors OCI runtime metadata without the VM-specific systemd override.
+
 The generator also synchronizes `go/internal/sandbox/sandbox-image/`. That is
 the Go-embed mirror of the bundle, including generated Dockerfiles, scripts,
 assets, and verification files. It is committed because `go install` must build

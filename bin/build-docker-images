@@ -15,7 +15,7 @@ set -euo pipefail
 #/   --no-cache              Pass --no-cache to docker build (disable layer cache entirely)
 #/   --ignore-unstaged       Continue even if there are unstaged changes
 #/   --push-daytona       Push built images to Daytona orgs amika-prod and Fixpoint (requires linux/amd64)
-#/   --push-daytona-vm    Also publish linux-vm snapshots
+#/   --push-daytona-vm    Build the Daytona provider variant and publish linux-vm snapshots
 #/                        (`a0.<size>.amika-<preset>-<revision>`): uploads the coder
 #/                        image into Daytona's registry, then
 #/                        `daytona snapshot create --image … --sandbox-class linux-vm`
@@ -28,7 +28,7 @@ set -euo pipefail
 #/                        executable used by either path.
 #/   --ci                 Authenticate via DAYTONA_PROD_API_KEY (amika-prod) and DAYTONA_STAGING_API_KEY (Fixpoint)
 #/                        before each org switch instead of relying on existing daytona login state.
-#/                        Requires --push-daytona.
+#/                        Requires --push-daytona or --push-daytona-vm.
 #/   --help               Show this help message
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -353,13 +353,9 @@ BUILT_IMAGES=()
 PUSHED_SNAPSHOTS=()
 EXISTING_SNAPSHOTS=()
 
-# Build images
-for preset in "${PRESETS[@]}"; do
-  image_tag="amika/${preset}:${VERSION}"
-  latest_tag="amika/${preset}:latest"
-  dockerfile="$REPO_ROOT/sandbox-image/generated/${preset}.Dockerfile"
-
-  docker_args=(build)
+build_image() {
+  local image_tag="$1" latest_tag="$2" dockerfile="$3"
+  local docker_args=(build)
   if [ "$NO_CACHE" = true ]; then
     docker_args+=(--no-cache)
   fi
@@ -373,6 +369,23 @@ for preset in "${PRESETS[@]}"; do
   docker_args+=(-f "$dockerfile" -t "$image_tag" -t "$latest_tag" "$REPO_ROOT")
   docker "${docker_args[@]}"
   BUILT_IMAGES+=("$image_tag" "$latest_tag")
+}
+
+# Build images
+for preset in "${PRESETS[@]}"; do
+  image_tag="amika/${preset}:${VERSION}"
+  latest_tag="amika/${preset}:latest"
+  dockerfile="$REPO_ROOT/sandbox-image/generated/${preset}.Dockerfile"
+  if [ "$PUSH_DAYTONA_VM" = false ] || [ "$PUSH_DAYTONA" = true ]; then
+    build_image "$image_tag" "$latest_tag" "$dockerfile"
+  fi
+
+  if [ "$PUSH_DAYTONA_VM" = true ]; then
+    vm_image_tag="amika/${preset}:${VERSION}-daytona-vm"
+    vm_latest_tag="amika/${preset}:latest-daytona-vm"
+    vm_dockerfile="$REPO_ROOT/sandbox-image/generated/daytona/${preset}.Dockerfile"
+    build_image "$vm_image_tag" "$vm_latest_tag" "$vm_dockerfile"
+  fi
 
   if [ "$PUSH_DAYTONA" = true ]; then
     for i in "${!SIZES[@]}"; do
@@ -475,10 +488,10 @@ for preset in "${PRESETS[@]}"; do
       # wrong region ('us'), and the VM create below cannot inspect it. So target
       # the VM region, tolerate the push's exit code, and read the uploaded ref
       # from its output.
-      echo "Uploading ${image_tag} into Daytona's ${VM_REGION} registry (org ${org})..."
+      echo "Uploading ${vm_image_tag} into Daytona's ${VM_REGION} registry (org ${org})..."
       # Capture directly (no `tee`): the pipe/TTY plumbing seems to make Daytona
       # emit ANSI redraws into the captured stream. Echo it afterward for the log.
-      push_output=$(daytona snapshot push "$image_tag" \
+      push_output=$(daytona snapshot push "$vm_image_tag" \
         --name "${vm_name_base}-base:${VERSION}" \
         --region "$VM_REGION" --cpu 1 --memory 1 --disk 3 2>&1)
       printf '%s\n' "$push_output"
