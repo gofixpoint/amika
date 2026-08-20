@@ -21,7 +21,7 @@ import (
 // validateEditor checks that the requested editor is supported.
 func validateEditor(editor string) error {
 	switch editor {
-	case "cursor", "claude", "codex":
+	case "cursor", "vscode", "claude", "codex":
 		return nil
 	default:
 		return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
@@ -113,7 +113,7 @@ Examples:
 }
 
 // supportedEditors lists the values accepted by `sandbox code --editor`.
-var supportedEditors = []string{"cursor", "claude", "codex"}
+var supportedEditors = []string{"cursor", "vscode", "claude", "codex"}
 
 var sandboxCodeCmd = &cobra.Command{
 	Use:   "code <name>",
@@ -122,6 +122,7 @@ var sandboxCodeCmd = &cobra.Command{
 
 Supported --editor values:
   cursor   launch Cursor connected to the sandbox (default)
+  vscode   launch VS Code connected to the sandbox
   claude   register the sandbox as a Claude Desktop SSH environment
   codex    expose the sandbox to Codex as an SSH connection
 
@@ -131,6 +132,7 @@ appears as a remote environment; select it in the app to start the session.
 Examples:
   amika sandbox code my-sandbox
   amika sandbox code my-sandbox --editor=cursor
+  amika sandbox code my-sandbox --editor=vscode
   amika sandbox code my-sandbox --editor=claude
   amika sandbox code my-sandbox --editor=codex`,
 	Args: cobra.ExactArgs(1),
@@ -231,6 +233,8 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 	switch editor {
 	case "cursor":
 		return openSandboxInCursorTarget(cmd, target, pathOverride)
+	case "vscode":
+		return openSandboxInVSCodeTarget(cmd, target, pathOverride)
 	case "claude":
 		return openSandboxInClaudeTarget(cmd, paths, target, pathOverride)
 	case "codex":
@@ -240,24 +244,38 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 	}
 }
 
-// openSandboxInCursor launches Cursor connected to a prepared SSH target.
+// openSandboxInCursorTarget launches Cursor connected to a prepared SSH target.
 func openSandboxInCursorTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
-	if _, err := exec.LookPath("cursor"); err != nil {
-		return fmt.Errorf("cursor CLI is not installed or not in PATH; install it from Cursor > Settings > Extensions > cursor-cli")
+	return launchRemoteSSHEditor(cmd, "cursor", "Cursor",
+		"Cursor > Settings > Extensions > cursor-cli", target, pathOverride)
+}
+
+// openSandboxInVSCodeTarget launches VS Code connected to a prepared SSH target.
+func openSandboxInVSCodeTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
+	return launchRemoteSSHEditor(cmd, "code", "VS Code",
+		"the VS Code Command Palette: \"Shell Command: Install 'code' command in PATH\"", target, pathOverride)
+}
+
+// launchRemoteSSHEditor launches a VS Code-family editor (Cursor, VS Code)
+// against a prepared SSH target. Both share VS Code's Remote-SSH CLI contract:
+// <cli> --remote ssh-remote+<host> <path>.
+func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, target sandboxSSHAlias, pathOverride string) error {
+	if _, err := exec.LookPath(cli); err != nil {
+		return fmt.Errorf("%s CLI is not installed or not in PATH; install it from %s", cli, installHint)
 	}
 
 	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
 
-	cursorCmd := exec.Command("cursor", "--remote", "ssh-remote+"+target.alias, remotePath)
-	cursorCmd.Stdin = os.Stdin
-	cursorCmd.Stdout = os.Stdout
-	cursorCmd.Stderr = os.Stderr
+	editorCmd := exec.Command(cli, "--remote", "ssh-remote+"+target.alias, remotePath)
+	editorCmd.Stdin = os.Stdin
+	editorCmd.Stdout = os.Stdout
+	editorCmd.Stderr = os.Stderr
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in Cursor via SSH (%s)...\n", target.sandboxName, target.alias)
-	fmt.Fprintf(cmd.OutOrStdout(), "Running: cursor --remote ssh-remote+%s %s\n", target.alias, remotePath)
-	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in Cursor to open it.\n")
-	if err := cursorCmd.Run(); err != nil {
-		return fmt.Errorf("cursor failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in Cursor", err)
+	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in %s via SSH (%s)...\n", target.sandboxName, name, target.alias)
+	fmt.Fprintf(cmd.OutOrStdout(), "Running: %s --remote ssh-remote+%s %s\n", cli, target.alias, remotePath)
+	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
+	if err := editorCmd.Run(); err != nil {
+		return fmt.Errorf("%s failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", cli, err, name)
 	}
 	return nil
 }

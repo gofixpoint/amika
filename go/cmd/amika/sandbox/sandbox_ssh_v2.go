@@ -144,6 +144,7 @@ hands that alias to the selected editor. It requires an SSH identity from
 Examples:
   amika sandbox codev2 my-sandbox
   amika sandbox codev2 my-sandbox --editor=cursor
+  amika sandbox codev2 my-sandbox --editor=vscode
   amika sandbox codev2 my-sandbox --editor=claude
   amika sandbox codev2 my-sandbox --editor=codex`,
 	Args: cobra.ExactArgs(1),
