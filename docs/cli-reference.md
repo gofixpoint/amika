@@ -280,6 +280,14 @@ through the same Amika-managed SSH host alias (`amika-<id>`, written to
 
 This command requires a signed-in Amika account and a remote sandbox.
 
+On WSL, `--editor cursor` and `--editor vscode` expect the editor to be a
+Windows application. The command mirrors the managed SSH config, identity,
+and host-key pins to the Windows side (`%USERPROFILE%\.ssh\amika.conf`, added
+via an `Include` line) with a `ProxyCommand` that re-enters your WSL
+distribution through `wsl.exe`, then launches the Windows editor directly
+with `--remote ssh-remote+<alias>`. This needs WSL interop (`cmd.exe`,
+`wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell sets it).
+
 ```bash
 amika sandbox code my-sandbox
 amika sandbox code my-sandbox --editor=cursor
@@ -301,8 +309,8 @@ it when normal `sandbox code` cannot reach the provider SSH route. It works
 with remote sandboxes only and requires a signed-in Amika account.
 
 `codev2` adds a named SSH connection to Amika's managed config so Codex can
-find it, then starts or configures Cursor, Claude Desktop, or Codex as
-`sandbox code` does. The connection routes through Amika's direct transport;
+find it, then starts or configures Cursor, VS Code, Claude Desktop, or Codex
+as `sandbox code` does. The connection routes through Amika's direct transport;
 you do not need to configure that transport yourself.
 
 Before first use, create and upload an SSH key:
@@ -312,8 +320,8 @@ amika secret ssh-keygen
 ```
 
 To use an existing key, pass `--import <public-key-file>` instead. Cursor is
-the default editor; Claude Desktop and Codex are also available without an
-environment-variable feature gate.
+the default editor; VS Code, Claude Desktop, and Codex are also available
+without an environment-variable feature gate.
 
 ```bash
 amika sandbox codev2 my-sandbox
@@ -323,7 +331,8 @@ amika sandbox codev2 my-sandbox --editor=claude
 amika sandbox codev2 my-sandbox --editor=codex
 ```
 
-`--editor` and `--path` have the same values and defaults as `sandbox code`.
+`--editor` and `--path` have the same values and defaults as `sandbox code`,
+and WSL behaves the same way (see `sandbox code` above).
 
 ### `amika sandbox sshv2`
 

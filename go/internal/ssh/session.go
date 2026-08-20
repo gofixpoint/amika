@@ -181,6 +181,22 @@ func ResolveProxyCommand() (string, error) {
 	return BuildProxyCommand(binaryPath)
 }
 
+// BuildWSLProxyCommand renders the ProxyCommand a Windows OpenSSH client uses
+// to reach a session alias: it re-enters the owning WSL distribution and
+// execs the same Linux amika binary the Linux-side proxy would. The
+// distribution name and binary path are held to the alias and proxy path
+// safety rules, so a corrupted mirror source can only ever produce the fixed
+// proxy invocation.
+func BuildWSLProxyCommand(distro, binaryPath string) (string, error) {
+	if !safeAliasPart.MatchString(distro) {
+		return "", fmt.Errorf("unsafe WSL distribution name %q", distro)
+	}
+	if !safeProxyBinaryPath(binaryPath) {
+		return "", ErrUnsafeBinaryPath
+	}
+	return "wsl.exe -d " + distro + " -e " + binaryPath + proxyCommandSuffix, nil
+}
+
 // RenderSessionConfig renders one environment's wildcard block. The pattern is
 // scoped to `*.<environment>.amika` rather than `*.amika` so each control plane
 // gets its own ProxyCommand: a bare `*.amika` would also match every other
@@ -195,6 +211,13 @@ func RenderSessionConfig(environment, proxyCommand string, session SessionConfig
 	if _, err := ParseProxyCommand(proxyCommand); err != nil {
 		return "", err
 	}
+	return renderSessionBlock(environment, proxyCommand, session.IdentityFile, session.KnownHostsFile), nil
+}
+
+// renderSessionBlock formats one environment's wildcard session block. Path
+// and command validation belongs to the callers, which apply different rules
+// per target platform.
+func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile string) string {
 	return fmt.Sprintf(`Host *.%s.amika
   User amika
   IdentityFile %s
@@ -204,7 +227,7 @@ func RenderSessionConfig(environment, proxyCommand string, session SessionConfig
   ProxyCommand %s
   ServerAliveInterval 15
   ServerAliveCountMax 3
-`, environment, session.IdentityFile, session.KnownHostsFile, proxyCommand), nil
+`, environment, identityFile, knownHostsFile, proxyCommand)
 }
 
 // KnownHostLine returns one canonical alias-keyed Ed25519 pin.

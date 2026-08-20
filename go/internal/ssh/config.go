@@ -237,22 +237,16 @@ func (s *HostsState) UpsertSessionHost(alias string) {
 // so the file stays human-readable even though it is keyed by id.
 func Render(state HostsState) string {
 	var b strings.Builder
+	writeManagedConfig(&b, state, renderSessionBlocks(state))
+	return b.String()
+}
+
+// writeManagedConfig assembles the shared layout of the managed config:
+// provider-native hosts, then the concrete session aliases editors discover
+// connections by, then the wildcard session blocks.
+func writeManagedConfig(b *strings.Builder, state HostsState, blocks []string) {
 	b.WriteString(managedHeader)
-	for _, h := range state.Hosts {
-		b.WriteString("\n")
-		if h.SandboxName != "" {
-			fmt.Fprintf(&b, "# %s\n", h.SandboxName)
-		}
-		fmt.Fprintf(&b, "Host %s\n", Alias(h.SandboxID))
-		fmt.Fprintf(&b, "  HostName %s\n", h.HostName)
-		if h.User != "" {
-			fmt.Fprintf(&b, "  User %s\n", h.User)
-		}
-		if h.Port != 0 {
-			fmt.Fprintf(&b, "  Port %d\n", h.Port)
-		}
-		b.WriteString("  StrictHostKeyChecking accept-new\n")
-	}
+	writeHostBlocks(b, state.Hosts)
 	if hosts := renderSessionHosts(state); len(hosts) > 0 {
 		b.WriteString("\n# Direct WebSocket SSH aliases for editor discovery.\n")
 		for i, host := range hosts {
@@ -262,7 +256,7 @@ func Render(state HostsState) string {
 			b.WriteString(host)
 		}
 	}
-	if blocks := renderSessionBlocks(state); len(blocks) > 0 {
+	if len(blocks) > 0 {
 		b.WriteString("\n# No-relay WebSocket SSH aliases, one block per control plane.\n")
 		for i, block := range blocks {
 			if i > 0 {
@@ -271,7 +265,25 @@ func Render(state HostsState) string {
 			b.WriteString(block)
 		}
 	}
-	return b.String()
+}
+
+// writeHostBlocks renders one block per provider-native host entry.
+func writeHostBlocks(b *strings.Builder, hosts []HostEntry) {
+	for _, h := range hosts {
+		b.WriteString("\n")
+		if h.SandboxName != "" {
+			fmt.Fprintf(b, "# %s\n", h.SandboxName)
+		}
+		fmt.Fprintf(b, "Host %s\n", Alias(h.SandboxID))
+		fmt.Fprintf(b, "  HostName %s\n", h.HostName)
+		if h.User != "" {
+			fmt.Fprintf(b, "  User %s\n", h.User)
+		}
+		if h.Port != 0 {
+			fmt.Fprintf(b, "  Port %d\n", h.Port)
+		}
+		b.WriteString("  StrictHostKeyChecking accept-new\n")
+	}
 }
 
 // renderSessionHosts emits intentionally empty concrete Host stanzas before
@@ -461,6 +473,14 @@ func EnsureInclude(paths basedir.Paths) error {
 	if err != nil {
 		return err
 	}
+	return ensureIncludeIn(configPath)
+}
+
+// ensureIncludeIn prepends the Include line for the managed config to an ssh
+// config file, creating the file when absent and preserving existing content.
+// It is target-agnostic so the Windows mirror can maintain its own config the
+// same way the Linux one is maintained.
+func ensureIncludeIn(configPath string) error {
 	writePath, err := resolveWriteTarget(configPath)
 	if err != nil {
 		return err
