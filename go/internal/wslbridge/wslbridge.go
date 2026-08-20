@@ -175,10 +175,37 @@ var execDetached = func(name string, args ...string) error {
 	return nil
 }
 
+// cmdMetacharacters are the characters cmd.exe keeps interpreting even inside
+// double quotes: command separators, redirection, escaping, %VAR% expansion,
+// and the quote itself. Interop quoting cannot neutralize them, so no argument
+// crossing into cmd.exe may contain one.
+const cmdMetacharacters = "&|^<>%\""
+
+// checkCmdArg rejects an argument cmd.exe could reinterpret as anything other
+// than a literal value. The launch arguments are already constrained upstream
+// (sandbox names are valid hosts, the control plane enforces repo name
+// characters), so this is a second fence at the boundary itself.
+func checkCmdArg(arg string) error {
+	if strings.ContainsAny(arg, cmdMetacharacters) {
+		return fmt.Errorf("argument %q contains a cmd.exe metacharacter", arg)
+	}
+	for _, r := range arg {
+		if r < 0x20 {
+			return fmt.Errorf("argument %q contains a control character", arg)
+		}
+	}
+	return nil
+}
+
 // LaunchDetached starts a Windows executable through cmd.exe's start command
 // and returns as soon as it is spawned. The empty title argument keeps start
 // from treating a quoted executable path as the window title.
 func LaunchDetached(windowsExe string, args ...string) error {
+	for _, arg := range append([]string{windowsExe}, args...) {
+		if err := checkCmdArg(arg); err != nil {
+			return err
+		}
+	}
 	startArgs := append([]string{"/c", "start", "", windowsExe}, args...)
 	if err := execDetached("cmd.exe", startArgs...); err != nil {
 		return fmt.Errorf("launch %s: %w", windowsExe, err)

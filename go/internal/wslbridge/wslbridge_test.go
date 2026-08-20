@@ -202,6 +202,51 @@ func TestLaunchDetachedStartsWithEmptyTitle(t *testing.T) {
 	}
 }
 
+// TestLaunchDetachedRejectsCmdMetacharacters covers the fence at the cmd.exe
+// boundary: no argument may smuggle a separator, redirection, %VAR%
+// expansion, quote, or control character past the quoting interop applies.
+func TestLaunchDetachedRejectsCmdMetacharacters(t *testing.T) {
+	var launched int
+	prev := execDetached
+	execDetached = func(string, ...string) error {
+		launched++
+		return nil
+	}
+	t.Cleanup(func() { execDetached = prev })
+
+	exe := `C:\Program Files\Microsoft VS Code\Code.exe`
+	for _, bad := range []string{
+		"/x&calc.exe",
+		"/x|calc.exe",
+		"/x^y",
+		"/x<y",
+		"/x>y",
+		"%USERPROFILE%",
+		`/x"y`,
+		"/x\ny",
+	} {
+		if err := LaunchDetached(exe, "--remote", "ssh-remote+sb.example.amika", bad); err == nil {
+			t.Errorf("LaunchDetached accepted %q", bad)
+		}
+	}
+	// The executable path itself is fenced the same way.
+	if err := LaunchDetached(`C:\evil&calc.exe`); err == nil {
+		t.Error("LaunchDetached accepted a metacharacter in the executable path")
+	}
+	if launched != 0 {
+		t.Fatalf("execDetached ran %d times, want 0", launched)
+	}
+
+	// Legitimate values pass: spaces and parentheses appear in real install
+	// paths and cmd.exe treats them as literal inside quotes.
+	if err := LaunchDetached(`C:\Program Files (x86)\Cursor\Cursor.exe`, "--remote", "ssh-remote+sb.example.amika", "/home/amika/workspace/my.repo"); err != nil {
+		t.Fatalf("LaunchDetached rejected a legitimate argv: %v", err)
+	}
+	if launched != 1 {
+		t.Fatalf("execDetached ran %d times, want 1", launched)
+	}
+}
+
 func TestEditorExeNotFound(t *testing.T) {
 	prev := runInterop
 	runInterop = func(string, ...string) (string, error) {
