@@ -10,7 +10,7 @@ fi
 
 tic -x -o /usr/share/terminfo "$1/ghostty.terminfo"
 
-install -d -m 0755 /etc/ssh/sshd_config.d /etc/systemd/system /run/sshd
+install -d -m 0755 /etc/ssh/sshd_config.d /etc/systemd/system
 cat > /etc/ssh/sshd_config.d/00-amika.conf <<'EOF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
