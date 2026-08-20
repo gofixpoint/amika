@@ -11,6 +11,16 @@ from pathlib import Path
 
 EMBED_SOURCE_DIRECTORIES = ("assets", "steps", "verify")
 
+# Every step's script and assets are staged here by COPY, then removed by the
+# RUN that consumes them. This deliberately avoids /tmp: E2B's builder reboots
+# the VM between cached layers, and a boot wipes /tmp, so a COPY into /tmp is
+# gone by the time the next layer's RUN reads it.
+STAGING_DIRECTORY = "/opt/amika-build"
+STAGING_SCRIPT = f"{STAGING_DIRECTORY}/step.sh"
+STAGING_ASSETS = f"{STAGING_DIRECTORY}/step-assets"
+
+MAX_DOCKERFILE_COLUMNS = 79
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -192,29 +202,25 @@ def render_dockerfile(
         for version in step["versions"]:
             lines.append(f"ARG {version}={versions[version]}")
 
-        cleanup = ["/tmp/amika-step.sh"]
         asset_argument = step.get("asset_argument")
         if asset_argument:
             lines.append(
-                f"COPY sandbox-image/{asset_argument} /tmp/amika-step-assets"
+                f"COPY sandbox-image/{asset_argument} {STAGING_ASSETS}"
             )
-            cleanup.append("/tmp/amika-step-assets")
         for copy in step.get("docker_copies", []):
             lines.append(
                 f"COPY sandbox-image/{copy['source']} {copy['destination']}"
             )
 
-        lines.append(
-            f"COPY sandbox-image/{step['script']} /tmp/amika-step.sh"
-        )
+        lines.append(f"COPY sandbox-image/{step['script']} {STAGING_SCRIPT}")
         command = []
         preset_environment = step.get("preset_environment")
         if preset_environment:
             command.append(f"{preset_environment}={preset_name}")
-        command.append("/tmp/amika-step.sh")
+        command.append(STAGING_SCRIPT)
         if asset_argument:
-            command.append("/tmp/amika-step-assets")
-        lines.extend(render_run(command, cleanup))
+            command.append(STAGING_ASSETS)
+        lines.extend(render_run(command))
 
     lines.extend(
         [
@@ -228,14 +234,19 @@ def render_dockerfile(
     return "\n".join(lines)
 
 
-def render_run(command: list[str], cleanup: list[str]) -> list[str]:
+def render_run(command: list[str]) -> list[str]:
+    """Runs a staged step, then clears the staging directory it read from.
+
+    Removing the whole directory, rather than the paths the step used, keeps
+    the image free of an empty /opt/amika-build once the build finishes.
+    """
     command_text = " ".join(command)
-    cleanup_text = " ".join(cleanup)
-    if len(command_text) + len(cleanup_text) < 72:
-        return [f"RUN {command_text} && rm -rf {cleanup_text}"]
+    single_line = f"RUN {command_text} && rm -rf {STAGING_DIRECTORY}"
+    if len(single_line) <= MAX_DOCKERFILE_COLUMNS:
+        return [single_line]
     return [
         f"RUN {command_text} \\",
-        f"    && rm -rf {cleanup_text}",
+        f"    && rm -rf {STAGING_DIRECTORY}",
     ]
 
 
