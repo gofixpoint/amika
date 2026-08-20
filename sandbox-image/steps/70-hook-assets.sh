@@ -13,6 +13,7 @@ for script in \
   docker-setup.sh \
   opencode-setup.sh \
   pi-setup.sh \
+  pi-web-shim.js \
   post-setup.sh \
   pre-setup.sh \
   restore-setuid.sh \

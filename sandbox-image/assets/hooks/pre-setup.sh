@@ -12,10 +12,12 @@ set -euo pipefail
 #   60999 — amikad daemon
 #   60998 — OpenCode web UI
 #   60997 — amikad's managed sshd (loopback; go/internal/constants)
-#   60996 — Pi Web UI
-#   60899-60995 — unassigned (reserved for future use)
+#   60996 — Pi Web UI (the X-Forwarded-Proto shim; the mapped port)
+#   60995 — Pi Web itself (loopback, behind that shim)
+#   60899-60994 — unassigned (reserved for future use)
 OPENCODE_WEB_PORT=60998
 PI_WEB_PORT=60996
+PI_WEB_INTERNAL_PORT=60995
 
 AMIKA_STATE_DIR="/var/lib/amikad"
 AMIKA_USER_STATE_DIR="/var/lib/amika"
@@ -94,6 +96,7 @@ if command -v pi-web &> /dev/null && [[ "${AMIKA_PI_WEB:-0}" == "1" ]]; then
     nohup env AMIKA_PI_WEB_PASSWORD="$AMIKA_PI_WEB_PASSWORD" \
     AMIKA_PI_WEB_ALLOWED_HOSTS="$AMIKA_PI_WEB_ALLOWED_HOSTS" \
     /usr/lib/amikad/pi-setup.sh "$amika_agent_cwd" "$PI_WEB_PORT" \
+    "$PI_WEB_INTERNAL_PORT" \
     > "$AMIKA_LOG_DIR/pi-web.log" 2>&1 &
 
   echo "$!" > "$AMIKA_RUN_DIR/pi-web.pid"

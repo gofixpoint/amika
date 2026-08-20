@@ -213,13 +213,14 @@ Amika reserves container ports **60899–60999** (101 ports) for internal
 services that run inside sandboxes. User workloads and setup scripts should
 avoid binding to ports in this range.
 
-| Port        | Service                          | Status   |
-| ----------- | -------------------------------- | -------- |
-| 60999       | amikad daemon                    | Reserved |
-| 60998       | OpenCode web UI                  | Active   |
-| 60997       | amikad managed sshd (loopback)   | Active   |
-| 60996       | Pi Web UI                        | Active   |
-| 60899–60995 | _(unassigned, reserved for use)_ | Reserved |
+| Port        | Service                            | Status   |
+| ----------- | ---------------------------------- | -------- |
+| 60999       | amikad daemon                      | Reserved |
+| 60998       | OpenCode web UI                    | Active   |
+| 60997       | amikad managed sshd (loopback)     | Active   |
+| 60996       | Pi Web UI (X-Forwarded-Proto shim) | Active   |
+| 60995       | Pi Web itself (loopback)           | Active   |
+| 60899–60994 | _(unassigned, reserved for use)_   | Reserved |
 
 The OpenCode web server starts automatically on port 60998 when OpenCode is
 installed in the container and `AMIKA_OPENCODE_WEB` is not set to `0`. The
@@ -235,3 +236,23 @@ It is opt-in (`AMIKA_PI_WEB=1`) and refuses to start without two things:
 reached through. Pi Web answers `403 Untrusted request` to any other Host
 header and accepts no wildcard, so an endpoint without it could serve nothing.
 The port number is written to `/run/amikad/pi-web.port` at startup.
+
+Port 60996 is a small proxy rather than Pi Web itself, and Pi Web listens on
+loopback behind it at 60995. The proxy exists because of a second check Pi Web
+applies to `/api/*` routes: it requires the browser's `Origin` to equal
+`<scheme from X-Forwarded-Proto>://<Host header>`. Both halves are whatever the
+provider's proxy makes them. Daytona's terminates TLS, rewrites `Host` to
+`localhost:60996`, and sends no `X-Forwarded-Proto`, so Pi Web expects
+`http://localhost:60996` while the browser sends
+`https://<sandbox>.daytonaproxy01.net`. Every write is then answered
+`403 {"error":"Untrusted API request"}` while reads keep working, because
+browsers omit `Origin` on same-origin GETs — the Pi UI loads and then fails to
+open a project.
+
+The shim restores that identity before Pi Web sees the request, stamping the
+`Host` and scheme the browser actually used. It rewrites only towards the
+public hostname in `AMIKA_PI_WEB_ALLOWED_HOSTS` or the `Host` already present,
+so an `Origin` naming anything else is passed through for Pi Web to reject. It
+exists because Pi Web offers no origin allow-list to configure instead
+([pi-web#497](https://github.com/agegr/pi-web/issues/497)), and can be dropped
+once an upstream release compares hosts rather than full origins.
