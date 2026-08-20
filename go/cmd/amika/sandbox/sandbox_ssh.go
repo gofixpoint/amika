@@ -15,6 +15,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
+	"github.com/gofixpoint/amika/go/internal/wslbridge"
 	"github.com/spf13/cobra"
 )
 
@@ -232,9 +233,9 @@ func resolveSandboxSSHAlias(client sshInfoClient, paths basedir.Paths, name stri
 func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	switch editor {
 	case "cursor":
-		return openSandboxInCursorTarget(cmd, target, pathOverride)
+		return openSandboxInCursorTarget(cmd, paths, target, pathOverride)
 	case "vscode":
-		return openSandboxInVSCodeTarget(cmd, target, pathOverride)
+		return openSandboxInVSCodeTarget(cmd, paths, target, pathOverride)
 	case "claude":
 		return openSandboxInClaudeTarget(cmd, paths, target, pathOverride)
 	case "codex":
@@ -245,21 +246,34 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 }
 
 // openSandboxInCursorTarget launches Cursor connected to a prepared SSH target.
-func openSandboxInCursorTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
+func openSandboxInCursorTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	return launchRemoteSSHEditor(cmd, "cursor", "Cursor",
-		"Cursor > Settings > Extensions > cursor-cli", target, pathOverride)
+		"Cursor > Settings > Extensions > cursor-cli", paths, target, pathOverride)
 }
 
 // openSandboxInVSCodeTarget launches VS Code connected to a prepared SSH target.
-func openSandboxInVSCodeTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
+func openSandboxInVSCodeTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	return launchRemoteSSHEditor(cmd, "code", "VS Code",
-		"the VS Code Command Palette: \"Shell Command: Install 'code' command in PATH\"", target, pathOverride)
+		"the VS Code Command Palette: \"Shell Command: Install 'code' command in PATH\"", paths, target, pathOverride)
 }
+
+// The WSL seams isolate the editor launch from the Windows side, so tests
+// can drive the handoff without interop.
+var (
+	wslIsWSL           = wslbridge.IsWSL
+	wslResolveTarget   = wslbridge.ResolveTarget
+	wslEditorExe       = wslbridge.EditorExe
+	wslLaunchWindows   = wslbridge.LaunchDetached
+	mirrorSSHToWindows = ssh.MirrorToWindows
+)
 
 // launchRemoteSSHEditor launches a VS Code-family editor (Cursor, VS Code)
 // against a prepared SSH target. Both share VS Code's Remote-SSH CLI contract:
 // <cli> --remote ssh-remote+<host> <path>.
-func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, target sandboxSSHAlias, pathOverride string) error {
+func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+	if wslIsWSL() {
+		return launchWindowsEditorFromWSL(cmd, cli, name, paths, target, pathOverride)
+	}
 	if _, err := exec.LookPath(cli); err != nil {
 		return fmt.Errorf("%s CLI is not installed or not in PATH; install it from %s", cli, installHint)
 	}
@@ -276,6 +290,34 @@ func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, ta
 	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
 	if err := editorCmd.Run(); err != nil {
 		return fmt.Errorf("%s failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", cli, err, name)
+	}
+	return nil
+}
+
+// launchWindowsEditorFromWSL is launchRemoteSSHEditor's counterpart when the
+// editor is a Windows application: it mirrors the SSH config to the Windows
+// user's .ssh directory so the editor's OpenSSH can reach the sandbox, then
+// opens the editor on the Windows desktop.
+func launchWindowsEditorFromWSL(cmd *cobra.Command, cli, name string, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+	windowsTarget, err := wslResolveTarget()
+	if err != nil {
+		return fmt.Errorf("resolve the Windows side: %w", err)
+	}
+	if err := mirrorSSHToWindows(paths, windowsTarget); err != nil {
+		return fmt.Errorf("mirror SSH config to Windows: %w", err)
+	}
+	exe, err := wslEditorExe(cli)
+	if err != nil {
+		return err
+	}
+
+	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Mirrored SSH config for sandbox %q to %s.\n", target.sandboxName, windowsTarget.SSHDirWindows)
+	fmt.Fprintf(out, "Opening %s (Windows)...\n", name)
+
+	if err := wslLaunchWindows(exe, "--remote", "ssh-remote+"+target.alias, remotePath); err != nil {
+		return fmt.Errorf("launch Windows %s: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", name, err, name)
 	}
 	return nil
 }

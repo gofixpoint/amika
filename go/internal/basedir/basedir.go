@@ -369,3 +369,21 @@ func SSHHostsStateFileIn(stateDir string) string {
 func SSHAmikaConfigName() string {
 	return sshAmikaConfigFile
 }
+
+// SSHConfigName returns the bare filename of the user's primary ssh config,
+// as it should appear in an `Include` directive within ~/.ssh/config.
+func SSHConfigName() string {
+	return sshConfigFile
+}
+
+// SSHIdentityName returns the bare filename of the default user-owned Ed25519
+// private key in ~/.ssh.
+func SSHIdentityName() string {
+	return sshIdentityFile
+}
+
+// SSHKnownHostsName returns the bare filename of the dedicated strict host-key
+// pin file in ~/.ssh.
+func SSHKnownHostsName() string {
+	return sshKnownHostsFile
+}
