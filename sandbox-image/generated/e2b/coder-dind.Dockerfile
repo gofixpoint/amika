@@ -46,6 +46,10 @@ ARG PI_VERSION=0.84.1
 COPY sandbox-image/steps/80-agent-clis.sh /tmp/amika-step.sh
 RUN /tmp/amika-step.sh && rm -rf /tmp/amika-step.sh
 
+ARG PI_WEB_VERSION=0.8.9
+COPY sandbox-image/steps/82-pi-web.sh /tmp/amika-step.sh
+RUN /tmp/amika-step.sh && rm -rf /tmp/amika-step.sh
+
 ARG AMIKA_VERSION=0.14.1
 ARG AMIKALOG_VERSION=0.2.0
 ARG AMIKAD_VERSION=0.1.0
