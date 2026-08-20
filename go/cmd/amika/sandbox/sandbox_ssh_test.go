@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/ssh"
+	"github.com/gofixpoint/amika/go/internal/wslbridge"
 	"github.com/spf13/cobra"
 )
 
@@ -279,5 +281,101 @@ func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 	}
 	if target.alias != "my-sandbox.sb_abc.app-amika-dev.amika" || target.sandboxName != "my-sandbox" || target.repoName != "biz" {
 		t.Fatalf("target = %#v", target)
+	}
+}
+
+// stubWSLSeams wires the WSL handoff seams to recorders, so the editor
+// launch runs to completion in tests without a Windows side.
+func stubWSLSeams(t *testing.T) (*[]wslbridge.Target, *[][]string) {
+	t.Helper()
+	var mirrored []wslbridge.Target
+	var launched [][]string
+
+	prevIsWSL, prevTarget, prevExe, prevLaunch, prevMirror := wslIsWSL, wslResolveTarget, wslEditorExe, wslLaunchWindows, mirrorSSHToWindows
+	wslIsWSL = func() bool { return true }
+	wslResolveTarget = func() (wslbridge.Target, error) {
+		return wslbridge.Target{
+			SSHDir:        t.TempDir(),
+			SSHDirWindows: `C:\Users\testuser\.ssh`,
+			Distro:        "Ubuntu",
+			User:          "testuser",
+		}, nil
+	}
+	wslEditorExe = func(string) (string, error) {
+		return `C:\Users\testuser\AppData\Local\Programs\Microsoft VS Code\Code.exe`, nil
+	}
+	wslLaunchWindows = func(exe string, args ...string) error {
+		launched = append(launched, append([]string{exe}, args...))
+		return nil
+	}
+	mirrorSSHToWindows = func(_ basedir.Paths, target wslbridge.Target) error {
+		mirrored = append(mirrored, target)
+		return nil
+	}
+	t.Cleanup(func() {
+		wslIsWSL, wslResolveTarget, wslEditorExe, wslLaunchWindows, mirrorSSHToWindows = prevIsWSL, prevTarget, prevExe, prevLaunch, prevMirror
+	})
+	return &mirrored, &launched
+}
+
+func TestOpenSandboxInEditorMirrorsToWindowsUnderWSL(t *testing.T) {
+	mirrored, launched := stubWSLSeams(t)
+	paths, _ := testSSHPaths(t)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.prod.amika", sandboxName: "my-sandbox", repoName: "biz"}
+	if err := openSandboxInEditor(cmd, "vscode", paths, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+	if len(*mirrored) != 1 {
+		t.Fatalf("mirror calls = %d, want 1", len(*mirrored))
+	}
+	if (*mirrored)[0].User != "testuser" {
+		t.Fatalf("mirrored target = %+v", (*mirrored)[0])
+	}
+	if len(*launched) != 1 {
+		t.Fatalf("launch calls = %d, want 1", len(*launched))
+	}
+	argv := (*launched)[0]
+	if !strings.HasSuffix(argv[0], "Code.exe") ||
+		argv[1] != "--remote" ||
+		argv[2] != "ssh-remote+my-sandbox.sb_abc.prod.amika" ||
+		argv[3] != "/home/amika/workspace/biz" {
+		t.Fatalf("launch argv = %q", argv)
+	}
+
+	// The same handoff serves Cursor, which shares the launcher.
+	*mirrored, *launched = nil, nil
+	if err := openSandboxInEditor(cmd, "cursor", paths, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor(cursor): %v", err)
+	}
+	if len(*mirrored) != 1 || len(*launched) != 1 {
+		t.Fatalf("mirror/launch calls = %d/%d, want 1/1", len(*mirrored), len(*launched))
+	}
+}
+
+func TestOpenSandboxInEditorSkipsWindowsWhenNotWSL(t *testing.T) {
+	mirrored, launched := stubWSLSeams(t)
+	wslIsWSL = func() bool { return false }
+	// An empty PATH makes the local editor CLI lookup fail deterministically,
+	// so the test observes the requirement without launching a real editor.
+	t.Setenv("PATH", t.TempDir())
+	paths, _ := testSSHPaths(t)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	target := sandboxSSHAlias{alias: "amika-sb_abc", sandboxName: "my-sandbox", repoName: "biz"}
+	// Without WSL the launcher requires the editor CLI locally; the error
+	// names the install hint rather than touching the Windows side.
+	err := openSandboxInEditor(cmd, "vscode", paths, target, "")
+	if err == nil {
+		t.Fatal("expected a local editor CLI requirement")
+	}
+	if !strings.Contains(err.Error(), "install") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(*mirrored) != 0 || len(*launched) != 0 {
+		t.Fatalf("mirror/launch calls = %d/%d, want 0/0", len(*mirrored), len(*launched))
 	}
 }
