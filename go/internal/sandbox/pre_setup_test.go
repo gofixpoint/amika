@@ -124,9 +124,13 @@ func TestPresetPreSetup_PiWebGatingContract(t *testing.T) {
 	if !strings.Contains(content, "PI_WEB_PORT=60996") {
 		t.Fatal("pre-setup.sh should serve the Pi web terminal on the reserved port 60996")
 	}
+	// 60996 is the shim; Pi Web itself sits one port below it, on loopback.
+	if !strings.Contains(content, "PI_WEB_INTERNAL_PORT=60995") {
+		t.Fatal("pre-setup.sh should run Pi Web itself on the reserved port 60995")
+	}
 }
 
-func TestPresetPiSetup_ServesPiWebAuthenticatedOnEveryInterface(t *testing.T) {
+func TestPresetPiSetup_ServesPiWebAuthenticatedBehindTheShim(t *testing.T) {
 	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pi-setup.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
@@ -138,13 +142,37 @@ func TestPresetPiSetup_ServesPiWebAuthenticatedOnEveryInterface(t *testing.T) {
 		// visible in `ps` to anything else in the sandbox.
 		`export PI_WEB_PASSWORD="$AMIKA_PI_WEB_PASSWORD"`,
 		`export PI_WEB_ALLOWED_HOSTS="$AMIKA_PI_WEB_ALLOWED_HOSTS"`,
-		"exec pi-web",
-		"--hostname 0.0.0.0",
-		"--no-open",
+		// Pi Web is reachable only through the shim, which repairs the Host and
+		// scheme a provider's proxy rewrites before Pi Web's API guard sees them.
+		`pi-web --port "$pi_web_port" --hostname 127.0.0.1 --no-open`,
+		`/usr/lib/amikad/pi-web-shim.js "$public_port" "$pi_web_port" "$pi_web_public_host"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("pi-setup.sh should contain %q", want)
 		}
+	}
+}
+
+func TestPresetPiWebShim_PublishesPiWebFromLoopback(t *testing.T) {
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pi-web-shim.js")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	content := string(data)
+	// The shim is the half the provider maps, so it takes every interface and
+	// reaches Pi Web over loopback.
+	if !strings.Contains(content, `server.listen(listenPort, "0.0.0.0"`) {
+		t.Fatal("pi-web-shim.js should listen on every interface")
+	}
+	if !strings.Contains(content, `const UPSTREAM_HOST = "127.0.0.1"`) {
+		t.Fatal("pi-web-shim.js should forward to Pi Web over loopback")
+	}
+	// Rewriting towards an arbitrary Origin would hand Pi Web's Host allow-list
+	// whatever a cross-origin page claimed, so the public host is the only name
+	// the shim may introduce.
+	if !strings.Contains(content, "originAuthority === publicHost") {
+		t.Fatal("pi-web-shim.js should rewrite only towards the sandbox's public host")
 	}
 }
 
