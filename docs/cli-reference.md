@@ -270,6 +270,7 @@ through the same Amika-managed SSH host alias (`amika-<id>`, written to
 `~/.ssh/amika.conf` and included from `~/.ssh/config`):
 
 - `cursor` launches Cursor connected to the sandbox.
+- `vscode` launches VS Code connected to the sandbox.
 - `claude` registers the sandbox as a Claude Desktop SSH environment (in
   `~/.claude/settings.json`), then opens Claude Desktop; pick `Amika: <name>`
   from the environment dropdown.
@@ -282,13 +283,14 @@ This command requires a signed-in Amika account and a remote sandbox.
 ```bash
 amika sandbox code my-sandbox
 amika sandbox code my-sandbox --editor=cursor
+amika sandbox code my-sandbox --editor=vscode
 amika sandbox code my-sandbox --editor=claude
 amika sandbox code my-sandbox --editor=codex
 ```
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
-| `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `claude`, or `codex`  |
+| `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, or `codex`  |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
 
 ### `amika sandbox codev2`
@@ -316,6 +318,7 @@ environment-variable feature gate.
 ```bash
 amika sandbox codev2 my-sandbox
 amika sandbox codev2 my-sandbox --editor=cursor
+amika sandbox codev2 my-sandbox --editor=vscode
 amika sandbox codev2 my-sandbox --editor=claude
 amika sandbox codev2 my-sandbox --editor=codex
 ```
