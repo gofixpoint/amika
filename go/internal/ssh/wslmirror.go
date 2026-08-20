@@ -41,21 +41,21 @@ func RenderWindows(state HostsState, target wslbridge.Target) (string, error) {
 	if !safeWindowsConfigPath.MatchString(target.SSHDirWindows) {
 		return "", fmt.Errorf("unsafe Windows .ssh directory %q", target.SSHDirWindows)
 	}
-	blocks, err := renderWindowsSessionBlocks(state, target)
-	if err != nil {
-		return "", err
-	}
 	var b strings.Builder
+	blocks := renderWindowsSessionBlocks(state, target)
 	writeManagedConfig(&b, state, blocks)
 	return b.String(), nil
 }
 
 // renderWindowsSessionBlocks renders one wildcard block per control plane,
 // rebuilding each ProxyCommand as its wsl.exe equivalent and pointing the key
-// material at the mirrored copies in the Windows .ssh directory.
-func renderWindowsSessionBlocks(state HostsState, target wslbridge.Target) ([]string, error) {
+// material at the mirrored copies in the Windows .ssh directory. Blocks that
+// fail validation are skipped rather than fatal, matching renderSessionBlocks:
+// a bad entry must not make the whole mirror unwritable, and the v1
+// provider-host flow needs no session block at all.
+func renderWindowsSessionBlocks(state HostsState, target wslbridge.Target) []string {
 	if state.SessionConfig == nil {
-		return nil, nil
+		return nil
 	}
 	environments := make([]string, 0, len(state.SessionProxyCommands))
 	for environment := range state.SessionProxyCommands {
@@ -64,13 +64,19 @@ func renderWindowsSessionBlocks(state HostsState, target wslbridge.Target) ([]st
 	sort.Strings(environments)
 	blocks := make([]string, 0, len(environments))
 	for _, environment := range environments {
+		// The Linux renderer validates the environment inside
+		// RenderSessionConfig; this path bypasses that call, so it applies
+		// the same check itself before embedding the key in a Host pattern.
+		if !safeAliasSegment.MatchString(environment) {
+			continue
+		}
 		binaryPath, err := ParseProxyCommand(state.SessionProxyCommands[environment])
 		if err != nil {
-			return nil, fmt.Errorf("environment %s: %w", environment, err)
+			continue
 		}
 		proxyCommand, err := BuildWSLProxyCommand(target.Distro, binaryPath)
 		if err != nil {
-			return nil, fmt.Errorf("environment %s: %w", environment, err)
+			continue
 		}
 		blocks = append(blocks, renderSessionBlock(
 			environment,
@@ -79,7 +85,7 @@ func renderWindowsSessionBlocks(state HostsState, target wslbridge.Target) ([]st
 			quoteWindowsPath(target.SSHDirWindows+"\\"+basedir.SSHKnownHostsName()),
 		))
 	}
-	return blocks, nil
+	return blocks
 }
 
 // quoteWindowsPath wraps a path in the double quotes ssh config accepts, so
@@ -111,7 +117,7 @@ func MirrorToWindows(paths basedir.Paths, target wslbridge.Target) error {
 		return fmt.Errorf("ensure Windows ssh config include: %w", err)
 	}
 
-	identityPath, err := paths.SSHIdentityFile()
+	identityPath, knownHostsPath, err := sessionKeyMaterialPaths(paths, state)
 	if err != nil {
 		return err
 	}
@@ -125,12 +131,28 @@ func MirrorToWindows(paths basedir.Paths, target wslbridge.Target) error {
 		}
 	}
 
-	knownHostsPath, err := paths.SSHKnownHostsFile()
-	if err != nil {
-		return err
-	}
 	_, err = mirrorFile(knownHostsPath, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
 	return err
+}
+
+// sessionKeyMaterialPaths names the files the rendered config's mirrored key
+// references must be satisfied from. The session config records the identity
+// actually in use (an imported key lives outside the default path), so the
+// mirror copies that file; the defaults apply only before any session is
+// configured.
+func sessionKeyMaterialPaths(paths basedir.Paths, state HostsState) (identity, knownHosts string, err error) {
+	if state.SessionConfig != nil {
+		return state.SessionConfig.IdentityFile, state.SessionConfig.KnownHostsFile, nil
+	}
+	identity, err = paths.SSHIdentityFile()
+	if err != nil {
+		return "", "", err
+	}
+	knownHosts, err = paths.SSHKnownHostsFile()
+	if err != nil {
+		return "", "", err
+	}
+	return identity, knownHosts, nil
 }
 
 // mirrorFile copies src to dst when src exists, reporting whether it copied.

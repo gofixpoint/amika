@@ -209,6 +209,73 @@ func TestMirrorToWindows(t *testing.T) {
 	}
 }
 
+// TestMirrorToWindowsCopiesImportedIdentity covers the imported-key setup:
+// the session config points outside the default identity path, and the mirror
+// must copy that file, since the rendered Windows config only ever references
+// the canonical mirrored name.
+func TestMirrorToWindowsCopiesImportedIdentity(t *testing.T) {
+	paths := testPaths(t)
+	state := sessionTestState(t, paths)
+	imported := filepath.Join(t.TempDir(), "imported_ed25519")
+	if err := os.WriteFile(imported, []byte("imported private key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.SessionConfig.IdentityFile = imported
+	if err := SaveState(paths, state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	knownHosts, err := paths.SSHKnownHostsFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(knownHosts), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(knownHosts, []byte("my-sandbox.sb_1.prod.amika ssh-ed25519 AAAA\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prevIcacls := runIcacls
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() { runIcacls = prevIcacls })
+
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	if err := MirrorToWindows(paths, windowsTestTarget(winSSH)); err != nil {
+		t.Fatalf("MirrorToWindows: %v", err)
+	}
+	copied, err := os.ReadFile(filepath.Join(winSSH, "amika_id_ed25519"))
+	if err != nil {
+		t.Fatalf("read mirrored identity: %v", err)
+	}
+	if string(copied) != "imported private key" {
+		t.Fatalf("mirrored identity = %q, want the imported key", copied)
+	}
+}
+
+// TestRenderWindowsSkipsUnrenderableBlocks matches the Linux renderer's
+// contract: a stored entry that cannot render must vanish from the mirror,
+// not block it, so the v1 provider hosts stay reachable.
+func TestRenderWindowsSkipsUnrenderableBlocks(t *testing.T) {
+	paths := testPaths(t)
+	state := sessionTestState(t, paths)
+	state.SessionProxyCommands["stage"] = "/opt/amika bin/amika plumbing ssh-stdio-proxy %h"
+	state.SessionProxyCommands["bad\nHost *"] = state.SessionProxyCommands["prod"]
+
+	content, err := RenderWindows(state, windowsTestTarget(t.TempDir()))
+	if err != nil {
+		t.Fatalf("RenderWindows: %v", err)
+	}
+	if !strings.Contains(content, "Host *.prod.amika") {
+		t.Fatalf("valid block missing:\n%s", content)
+	}
+	if !strings.Contains(content, "Host amika-sb_1") {
+		t.Fatalf("provider host missing:\n%s", content)
+	}
+	if strings.Contains(content, "stage") || strings.Contains(content, "bad") {
+		t.Fatalf("unrenderable blocks leaked:\n%s", content)
+	}
+}
+
 func TestMirrorToWindowsWithoutIdentity(t *testing.T) {
 	paths := testPaths(t)
 	state := sessionTestState(t, paths)
