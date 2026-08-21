@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// amikaValueFlags mirrors the flags sshv2 passes to Split.
+// amikaValueFlags mirrors the flags `sandbox ssh` passes to Split.
 var amikaValueFlags = map[string]bool{"--output": true, "-o": true, "--remote-target": true}
 
 func TestSplit(t *testing.T) {
@@ -18,7 +18,7 @@ func TestSplit(t *testing.T) {
 	}{
 		{
 			name:        "no flags",
-			procArgs:    []string{"amika", "sandbox", "sshv2", "my-box"},
+			procArgs:    []string{"amika", "sandbox", "ssh", "my-box"},
 			leafArgs:    []string{"my-box"},
 			wantForward: []string{"my-box"},
 		},
@@ -26,27 +26,27 @@ func TestSplit(t *testing.T) {
 			// The pair of cases the split exists for: identical leafArgs,
 			// opposite meanings, told apart only by the process argv.
 			name:        "amika flag before the subcommand is not forwarded",
-			procArgs:    []string{"amika", "--output", "json", "sandbox", "sshv2", "my-box"},
+			procArgs:    []string{"amika", "--output", "json", "sandbox", "ssh", "my-box"},
 			leafArgs:    []string{"--output", "json", "my-box"},
 			wantOwn:     []string{"--output", "json"},
 			wantForward: []string{"my-box"},
 		},
 		{
 			name:        "same flag after the subcommand is forwarded",
-			procArgs:    []string{"amika", "sandbox", "sshv2", "--output", "json", "my-box"},
+			procArgs:    []string{"amika", "sandbox", "ssh", "--output", "json", "my-box"},
 			leafArgs:    []string{"--output", "json", "my-box"},
 			wantForward: []string{"--output", "json", "my-box"},
 		},
 		{
 			name:        "sandbox flag before the subcommand",
-			procArgs:    []string{"amika", "sandbox", "--remote", "sshv2", "-L", "6789:localhost:3010", "my-box"},
+			procArgs:    []string{"amika", "sandbox", "--remote", "ssh", "-L", "6789:localhost:3010", "my-box"},
 			leafArgs:    []string{"--remote", "-L", "6789:localhost:3010", "my-box"},
 			wantOwn:     []string{"--remote"},
 			wantForward: []string{"-L", "6789:localhost:3010", "my-box"},
 		},
 		{
 			name:        "value-taking amika flag before the subcommand",
-			procArgs:    []string{"amika", "sandbox", "--remote-target", "prod", "sshv2", "-N", "my-box"},
+			procArgs:    []string{"amika", "sandbox", "--remote-target", "prod", "ssh", "-N", "my-box"},
 			leafArgs:    []string{"--remote-target", "prod", "-N", "my-box"},
 			wantOwn:     []string{"--remote-target", "prod"},
 			wantForward: []string{"-N", "my-box"},
@@ -55,14 +55,14 @@ func TestSplit(t *testing.T) {
 			// A flag value equal to the subcommand name must not be mistaken
 			// for the subcommand and shift the boundary.
 			name:        "flag value equal to the subcommand name",
-			procArgs:    []string{"amika", "sandbox", "--remote-target", "sshv2", "sshv2", "my-box"},
-			leafArgs:    []string{"--remote-target", "sshv2", "my-box"},
-			wantOwn:     []string{"--remote-target", "sshv2"},
+			procArgs:    []string{"amika", "sandbox", "--remote-target", "ssh", "ssh", "my-box"},
+			leafArgs:    []string{"--remote-target", "ssh", "my-box"},
+			wantOwn:     []string{"--remote-target", "ssh"},
 			wantForward: []string{"my-box"},
 		},
 		{
 			name:        "remote command after the name is forwarded",
-			procArgs:    []string{"amika", "sandbox", "sshv2", "my-box", "uptime"},
+			procArgs:    []string{"amika", "sandbox", "ssh", "my-box", "uptime"},
 			leafArgs:    []string{"my-box", "uptime"},
 			wantForward: []string{"my-box", "uptime"},
 		},
@@ -78,7 +78,7 @@ func TestSplit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			own, forward := Split(tt.procArgs, tt.leafArgs, "sshv2", amikaValueFlags)
+			own, forward := Split(tt.procArgs, tt.leafArgs, "ssh", amikaValueFlags)
 			if len(own) != len(tt.wantOwn) || (len(own) > 0 && !reflect.DeepEqual(own, tt.wantOwn)) {
 				t.Errorf("own = %#v, want %#v", own, tt.wantOwn)
 			}

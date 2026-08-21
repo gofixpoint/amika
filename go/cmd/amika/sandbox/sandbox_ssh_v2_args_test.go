@@ -1,10 +1,10 @@
 package sandboxcmd
 
-// sandbox_ssh_v2_args_test.go covers how `amika sandbox sshv2` divides a
+// sandbox_ssh_v2_args_test.go covers how `amika sandbox ssh` divides a
 // command line between amika and the system ssh binary. The assertions are on
 // the argv the command would exec, which is the whole contract: an argument
-// written after "sshv2" reaches ssh untouched and in its original position,
-// and one written before it does not reach ssh at all.
+// written after the "ssh" subcommand reaches the ssh binary untouched and in
+// its original position, and one written before it does not reach ssh at all.
 
 import (
 	"bytes"
@@ -22,8 +22,9 @@ import (
 
 const testV2Alias = "my-box.sb_abc.app-amika-dev.amika"
 
-// sshV2Harness drives the real sshv2 command with every outward call replaced,
-// and records the argv that would have been handed to ssh.
+// sshV2Harness drives the real `sandbox ssh` command (the v2 direct-WebSocket
+// transport) with every outward call replaced, and records the argv that would
+// have been handed to ssh.
 type sshV2Harness struct {
 	argv  []string
 	alias string
@@ -122,58 +123,58 @@ func TestSSHV2ForwardsArgsToSSH(t *testing.T) {
 	}{
 		{
 			name:     "bare name becomes the alias",
-			procArgs: []string{"amika", "sandbox", "sshv2", "my-box"},
+			procArgs: []string{"amika", "sandbox", "ssh", "my-box"},
 			wantArgv: []string{testV2Alias},
 		},
 		{
 			// The point of the change: -L reaches ssh ahead of the destination,
 			// where ssh reads it as a client option.
 			name:     "local port forward",
-			procArgs: []string{"amika", "sandbox", "sshv2", "-N", "-L", "6789:localhost:3010", "my-box"},
+			procArgs: []string{"amika", "sandbox", "ssh", "-N", "-L", "6789:localhost:3010", "my-box"},
 			wantArgv: []string{"-N", "-L", "6789:localhost:3010", testV2Alias},
 		},
 		{
 			name:     "dynamic port forward",
-			procArgs: []string{"amika", "sandbox", "sshv2", "-N", "-D", "1080", "my-box"},
+			procArgs: []string{"amika", "sandbox", "ssh", "-N", "-D", "1080", "my-box"},
 			wantArgv: []string{"-N", "-D", "1080", testV2Alias},
 		},
 		{
 			name:     "ssh config option with a separate value",
-			procArgs: []string{"amika", "sandbox", "sshv2", "-o", "BatchMode=yes", "my-box"},
+			procArgs: []string{"amika", "sandbox", "ssh", "-o", "BatchMode=yes", "my-box"},
 			wantArgv: []string{"-o", "BatchMode=yes", testV2Alias},
 		},
 		{
 			// -t no longer belongs to amika; it passes through to ssh.
 			name:     "force pty",
-			procArgs: []string{"amika", "sandbox", "sshv2", "-t", "my-box", "top"},
+			procArgs: []string{"amika", "sandbox", "ssh", "-t", "my-box", "top"},
 			wantArgv: []string{"-t", testV2Alias, "top"},
 		},
 		{
 			name:     "remote command stays after the destination",
-			procArgs: []string{"amika", "sandbox", "sshv2", "my-box", "uptime"},
+			procArgs: []string{"amika", "sandbox", "ssh", "my-box", "uptime"},
 			wantArgv: []string{testV2Alias, "uptime"},
 		},
 		{
 			name:     "options and a remote command",
-			procArgs: []string{"amika", "sandbox", "sshv2", "-L", "6789:localhost:3010", "my-box", "ls", "-la"},
+			procArgs: []string{"amika", "sandbox", "ssh", "-L", "6789:localhost:3010", "my-box", "ls", "-la"},
 			wantArgv: []string{"-L", "6789:localhost:3010", testV2Alias, "ls", "-la"},
 		},
 		{
 			// An amika flag before the subcommand is consumed by amika.
 			name:     "sandbox flag before the subcommand is not forwarded",
-			procArgs: []string{"amika", "sandbox", "--remote", "sshv2", "-N", "my-box"},
+			procArgs: []string{"amika", "sandbox", "--remote", "ssh", "-N", "my-box"},
 			wantArgv: []string{"-N", testV2Alias},
 		},
 		{
 			// The same spelling after the subcommand belongs to ssh, which is
 			// what makes the rule positional rather than name-based.
 			name:     "output flag after the subcommand is forwarded",
-			procArgs: []string{"amika", "sandbox", "sshv2", "-o", "SendEnv=FOO", "my-box"},
+			procArgs: []string{"amika", "sandbox", "ssh", "-o", "SendEnv=FOO", "my-box"},
 			wantArgv: []string{"-o", "SendEnv=FOO", testV2Alias},
 		},
 		{
 			name:     "end of options marker before the name",
-			procArgs: []string{"amika", "sandbox", "sshv2", "--", "my-box"},
+			procArgs: []string{"amika", "sandbox", "ssh", "--", "my-box"},
 			wantArgv: []string{"--", testV2Alias},
 		},
 	}
@@ -199,7 +200,7 @@ func TestSSHV2ForwardsArgsToSSH(t *testing.T) {
 
 func TestSSHV2AmikaFlagsBeforeSubcommand(t *testing.T) {
 	t.Run("output flag before the subcommand is rejected, not forwarded", func(t *testing.T) {
-		root, h, _ := newSSHV2Harness(t, []string{"amika", "--output", "json", "sandbox", "sshv2", "my-box"})
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "--output", "json", "sandbox", "ssh", "my-box"})
 		err := root.Execute()
 		if err == nil {
 			t.Fatal("expected --output to be rejected")
@@ -210,7 +211,7 @@ func TestSSHV2AmikaFlagsBeforeSubcommand(t *testing.T) {
 	})
 
 	t.Run("local flag before the subcommand is honored", func(t *testing.T) {
-		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--local", "sshv2", "my-box"})
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--local", "ssh", "my-box"})
 		err := root.Execute()
 		if err == nil || !strings.Contains(err.Error(), "requires a remote sandbox") {
 			t.Fatalf("err = %v, want a remote-sandbox error", err)
@@ -222,7 +223,7 @@ func TestSSHV2AmikaFlagsBeforeSubcommand(t *testing.T) {
 }
 
 func TestSSHV2MissingName(t *testing.T) {
-	root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "sshv2", "-N", "-L", "6789:localhost:3010"})
+	root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", "-N", "-L", "6789:localhost:3010"})
 	err := root.Execute()
 	if err == nil || !strings.Contains(err.Error(), "missing sandbox name") {
 		t.Fatalf("err = %v, want a missing-name error", err)
@@ -239,9 +240,9 @@ func TestSSHV2Help(t *testing.T) {
 		name     string
 		procArgs []string
 	}{
-		{name: "help flag after the subcommand", procArgs: []string{"amika", "sandbox", "sshv2", "--help"}},
-		{name: "short help flag", procArgs: []string{"amika", "sandbox", "sshv2", "-h"}},
-		{name: "help subcommand", procArgs: []string{"amika", "help", "sandbox", "sshv2"}},
+		{name: "help flag after the subcommand", procArgs: []string{"amika", "sandbox", "ssh", "--help"}},
+		{name: "short help flag", procArgs: []string{"amika", "sandbox", "ssh", "-h"}},
+		{name: "help subcommand", procArgs: []string{"amika", "help", "sandbox", "ssh"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root, h, out := newSSHV2Harness(t, tt.procArgs)
@@ -253,7 +254,7 @@ func TestSSHV2Help(t *testing.T) {
 			}
 			got := out.String()
 			for _, want := range []string{
-				"amika sandbox sshv2",
+				"amika sandbox ssh",
 				"Use it like ssh",
 				"-L 6789:localhost:3010",
 			} {
