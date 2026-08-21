@@ -1,6 +1,12 @@
 name: selected provider coder-dind base snapshot contract
 # This real-API case verifies the selected provider's medium DinD
 # base snapshot, including a Docker container smoke test in the boot verifier.
+vars:
+  # See api-base-snapshot-coder.yaml: the requested `--size m` comes back with
+  # a generation prefix on Daytona and bare elsewhere.
+  expected_size:
+    default: m
+    daytona: a0.m
 steps:
   - name: register the local SSH public key for sshv2
     cmd: [secret, ssh-key, create, --name, "e2e-{{sandbox_provider}}-dind-{{run_id}}", -o, json]
@@ -26,7 +32,7 @@ steps:
         provider: "{{sandbox_provider}}"
         snapshot: "@string"
         sandbox_preset: coder-dind
-        sandbox_size: m
+        sandbox_size: "{{expected_size}}"
     capture:
       sandbox_name: $.name
     resource:

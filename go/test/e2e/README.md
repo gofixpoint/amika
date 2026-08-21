@@ -156,6 +156,48 @@ with a previously `capture`d value. Referencing a variable that was never
 captured is an error: the step fails immediately rather than sending a
 literal `{{typo}}` to the CLI.
 
+### Case-level `vars`: provider-conditional values
+
+Some values a case must assert exactly still differ legitimately per provider.
+A top-level `vars` block declares them once, resolved against the run's
+provider before the first step:
+
+```yaml
+name: selected provider coder base snapshot contract
+vars:
+  plain_value: always-this          # a scalar: the same on every provider
+  expected_size:
+    default: m                      # used when no provider entry matches
+    daytona: a0.m                   # this provider's value wins
+steps:
+  - name: create a medium sandbox
+    cmd: [sandbox, create, --remote, --size, m, ...]
+    expect:
+      stdout_json:
+        sandbox_size: "{{expected_size}}"
+```
+
+Resolved vars join `{{run_id}}` and `{{sandbox_provider}}` in the same
+substitution pass, so they work anywhere a `{{var}}` works — argv and
+`resource.name` included, not just assertions.
+
+Prefer this over loosening an assertion to `` `@oneof: m, a0.m` ``. The
+`@oneof` form also passes when a provider returns the *other* provider's
+value, so it stops catching a wrong size; a resolved var keeps the assertion
+exact per provider.
+
+Rejected at **load** time (so `TestE2ECaseFilesLoad` catches it offline, with
+no API run):
+
+- An unknown provider key (`daytonaa: ...`). Left to fall through to
+  `default`, a typo would make the case assert nothing provider-specific
+  while still passing everywhere.
+- A mapping with no `default` that doesn't list every supported provider,
+  which would otherwise fail mid-case on the missing one.
+- Redeclaring `run_id` or `sandbox_provider`, or a `capture` reusing a
+  declared var's name — either would change what `{{name}}` means partway
+  through a case.
+
 ### Capture: a minimal JSONPath
 
 `capture` extracts values from a step's stdout, parsed as JSON, into named
