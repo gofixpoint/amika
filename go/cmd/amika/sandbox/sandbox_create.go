@@ -334,10 +334,11 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 	if err := sandbox.ValidatePreset(preset); err != nil {
 		return err
 	}
+	// Not validated here: the size vocabulary (generations, per-provider
+	// availability, preset exclusions) lives in the API, so a client-side list
+	// would be a second copy that silently rejects sizes the server accepts.
+	// An unknown size comes back as a 400 from the server instead.
 	size, _ := cmd.Flags().GetString("size")
-	if err := sandbox.ValidateSize(size); err != nil {
-		return err
-	}
 	// Validated in RunE before the auth gate; only the value is read here.
 	githubAuthMode, _ := cmd.Flags().GetString("github-auth-mode")
 	githubAuthMode = sandbox.CanonicalGithubAuthMode(githubAuthMode)

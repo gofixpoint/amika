@@ -24,9 +24,16 @@ name: agent-session chats via send and sessions (send, continue, stream, list, s
 # covered for that reason: `--stream` combined with `-o json` (which must stay
 # buffered so the emitted object remains valid) — that decision is local flag
 # logic inlined in runSend, reachable only with a live client.
+vars:
+  # A bare size alias ("xs") is normalized by the API to the a0 generation for
+  # every provider. E2B publishes no a0 images (see snapshots.cue: a1 only), so
+  # it must be asked for the equivalent a1 name instead.
+  request_size:
+    default: xs
+    e2b: a1.tiny
 steps:
   - name: create the sandbox the chat will run in
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox

@@ -2,13 +2,18 @@ name: selected provider coder base snapshot contract
 # This real-API case verifies the selected provider's medium coder
 # base snapshot after the complete sandbox boot lifecycle.
 vars:
-  # `--size m` is what the case requests; what the API echoes back is
-  # provider-specific, because Daytona's size codes carry a generation prefix
-  # while other providers report the bare code. Assert the exact value per
-  # provider rather than loosening the match, so a wrong size is still caught.
-  expected_size:
+  # A bare size alias ("m") is normalized by the API to the a0 generation for
+  # every provider, so a0 is what both the request and the echoed value default
+  # to. E2B publishes no a0 images at all (see snapshots.cue: a1 only), so it
+  # must be asked for an explicit a1 name, which it then echoes back. Assert the
+  # exact value per provider rather than loosening the match, so a wrong size is
+  # still caught.
+  request_size:
     default: m
-    daytona: a0.m
+    e2b: a1.medium
+  expected_size:
+    default: a0.m
+    e2b: a1.medium
 steps:
   - name: register the local SSH public key for sshv2
     cmd: [secret, ssh-key, create, --name, "e2e-{{sandbox_provider}}-coder-{{run_id}}", -o, json]
@@ -25,7 +30,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a medium coder sandbox from the selected provider base snapshot
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, m, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox

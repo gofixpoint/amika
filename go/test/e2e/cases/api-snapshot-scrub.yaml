@@ -4,6 +4,13 @@ name: scrub a snapshot without breaking the restored environment
 # remote token removal, and restoration of `/etc/environment` from its clean
 # baseline. Assertions look for the old sentinels rather than requiring paths
 # to stay absent, because fresh provisioning may legitimately recreate them.
+vars:
+  # A bare size alias ("xs") is normalized by the API to the a0 generation for
+  # every provider. E2B publishes no a0 images (see snapshots.cue: a1 only), so
+  # it must be asked for the equivalent a1 name instead.
+  request_size:
+    default: xs
+    e2b: a1.tiny
 steps:
   # sshv2 authenticates with the caller's user-owned SSH key, so the local
   # identity's public half has to be registered before any sshv2 step runs.
@@ -26,7 +33,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a source sandbox
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -118,7 +125,7 @@ steps:
       name: "{{source_sandbox}}"
 
   - name: fork a sandbox from the scrubbed snapshot
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --snapshot, "{{snapshot_ref}}", --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --snapshot, "{{snapshot_ref}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
