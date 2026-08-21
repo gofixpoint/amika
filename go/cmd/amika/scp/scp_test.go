@@ -565,7 +565,7 @@ func TestHasHelpFlag(t *testing.T) {
 }
 
 func TestRunSCPRejectsOutputLongFlag(t *testing.T) {
-	cmd := New()
+	cmd := NewV1()
 	// The long-form --output is rejected before any resolution/exec, so this
 	// makes no network call. The short -o is scp's own option and must NOT be
 	// rejected here (it is exercised as pass-through elsewhere).
@@ -579,14 +579,32 @@ func TestRunSCPRejectsOutputLongFlag(t *testing.T) {
 }
 
 func TestSCPCommandRegistered(t *testing.T) {
-	cmd := New()
+	cmd := NewV2()
 	if cmd.Name() != "scp" {
 		t.Errorf("command name = %q, want %q", cmd.Name(), "scp")
+	}
+	if cmd.Hidden {
+		t.Error("scp is the supported copy command and must not be hidden")
 	}
 	if !cmd.DisableFlagParsing {
 		t.Error("scp command must disable flag parsing to forward scp flags verbatim")
 	}
+}
+
+// TestSCPV1CommandRegistered pins the superseded command's contract: it keeps
+// working under its new name, and it stays out of the help listing.
+func TestSCPV1CommandRegistered(t *testing.T) {
+	cmd := NewV1()
+	if cmd.Name() != "scpv1" {
+		t.Errorf("command name = %q, want %q", cmd.Name(), "scpv1")
+	}
+	if !cmd.Hidden {
+		t.Error("scpv1 is superseded by scp and must be hidden")
+	}
+	if !cmd.DisableFlagParsing {
+		t.Error("scpv1 command must disable flag parsing to forward scp flags verbatim")
+	}
 	if cmd.Flags().Lookup("print") == nil {
-		t.Error("scp command must define --print")
+		t.Error("scpv1 command must define --print")
 	}
 }

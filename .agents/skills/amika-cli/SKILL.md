@@ -73,16 +73,18 @@ prompts, so such a command errors instead of asking. Supply it up front:
 - `auth login` without `--api-key-file` — browser flow
 - `secret extract`, `secret push` — they print a masked credential table and prompt
 
-`sandbox ssh` and `scp` reject `--output` entirely: both delegate to the system
+`sandbox ssh` and `scp` reject `--output`: both delegate to the system
 `ssh`/`scp`, which stream their own output. (`scp` still forwards its own short
-`-o` for `ssh_config` overrides.)
+`-o` for `ssh_config` overrides.) For `sandbox ssh` the flag must go *before*
+the subcommand to be amika's at all — everything after it is forwarded to `ssh`,
+where `-o` is ssh's own `ssh_config` option.
 
 `secret push` and `secret extract --push` always ask `[y/N]` on stdin and have
 no bypass flag, so pipe the answer in: `echo y | amika secret push KEY=value`.
 
 **4. Don't launch an interactive session you can't steer.** `sandbox connect`,
 `sandbox code`, and bare `sandbox ssh <name>` block on a TTY and hang forever in
-a plain tool call. Use `amika sandbox ssh <name> -- <command>` to run something
+a plain tool call. Use `amika sandbox ssh <name> <command>` to run something
 and get output back.
 
 Exception: if you can drive a terminal — a tmux session or pane you can send
@@ -101,10 +103,11 @@ Errors go to stderr and exit non-zero (`1`).
 | `sandbox start` / `stop`              | Resume / halt without deleting; both take multiple names                                     |
 | `sandbox delete` (`rm`)               | Delete sandboxes; multiple names                                                             |
 | `sandbox agent-send`                  | Send a prompt to a coding agent running inside a sandbox                                     |
-| `sandbox ssh`                         | SSH in, or run one command; `--print` emits the connection string; `--revoke` revokes access |
+| `sandbox ssh`                         | SSH in, or run one command; forwards every ssh option, so it defines none of its own         |
 | `sandbox connect`                     | Interactive shell (`--shell`, default `zsh`), starting at `/home/amika`                      |
 | `sandbox code`                        | Open the sandbox in Cursor / Claude Desktop / Codex over SSH                                 |
 | `scp`                                 | Copy files to/from sandboxes; wraps the system `scp`                                         |
+| `sandbox sshv1` / `codev1` / `scpv1`  | Hidden, superseded provider-native SSH versions of the three above (see below)                |
 | `secret push` / `extract`             | Push arbitrary secrets, or discover local credentials                                        |
 | `secret claude` / `secret codex`      | `push` / `list` / `delete` agent credentials for injection                                   |
 | `secret ssh-key`                      | `create` / `push` / `list` / `delete` the SSH public keys authorizing sandbox access         |
@@ -235,12 +238,29 @@ the sandbox, but anything you send executes unsupervised in there.
 
 ## Running commands and copying files
 
+`sandbox ssh` runs over Amika's direct WebSocket transport, so it needs an SSH
+identity first — `amika secret ssh-keygen` once per machine (or
+`--import <public-key-file>` to reuse an existing key). It takes no flags of its
+own: ssh options go before the sandbox name, the remote command after it.
+
 ```bash
-amika sandbox ssh my-sandbox -- ls -la          # run a command, get output
-amika sandbox ssh -t my-sandbox -- top          # force a PTY
-amika sandbox ssh --print my-sandbox            # print the connection string
-amika sandbox ssh my-sandbox --revoke           # revoke SSH access
+amika sandbox ssh my-sandbox ls -la             # run a command, get output
+amika sandbox ssh -t my-sandbox top             # force a PTY (ssh's own -t)
+amika sandbox ssh -N -L 6789:localhost:3010 my-sandbox   # port forward, no shell
 ```
+
+`--print` and `--revoke` are not `sandbox ssh` flags. They belong to the hidden,
+superseded `sandbox sshv1`, which connects over the provider's own SSH route and
+does parse its own flags:
+
+```bash
+amika sandbox sshv1 my-sandbox -- ls -la        # note the -- separator
+amika sandbox sshv1 --print my-sandbox          # print the connection string
+amika sandbox sshv1 my-sandbox --revoke         # revoke SSH access
+```
+
+Reach for `sshv1` (or `codev1` / `scpv1`) only when the direct transport cannot
+reach a sandbox — for instance one created before Amika exposed it.
 
 `amika scp` forwards every argument to the system `scp`, so `-r`, `-p`, `-C`,
 `-v`, `-o Option=value` all work. Path forms:
@@ -262,8 +282,10 @@ amika scp my-sandbox:/data.csv scp://user@host:22/tmp/data.csv
 amika scp --print ./a.txt my-sandbox:a.txt      # show the resolved scp command
 ```
 
-Sandbox↔sandbox and sandbox↔external copies are not supported yet; go through
-the local machine in two steps.
+`scp` uses the same direct WebSocket transport as `sandbox ssh`, so it needs the
+same `amika secret ssh-keygen` identity. Under the hidden, superseded `scpv1`,
+sandbox↔sandbox and sandbox↔external copies are not supported; go through the
+local machine in two steps.
 
 ## Snapshots and services
 

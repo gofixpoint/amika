@@ -41,3 +41,63 @@ steps:
     expect:
       exit: 0
       stdout_contains: "amika sandbox code <name> [flags]"
+
+  - name: sandbox --help lists ssh and code
+    cmd: [sandbox, --help]
+    expect:
+      exit: 0
+      stdout_contains: "  ssh         SSH into a remote sandbox"
+
+  - name: sandbox --help does NOT list the superseded sshv1
+    # sshv1/codev1 stay registered for existing scripts but are Hidden, so the
+    # help listing must steer new users to the current transport.
+    cmd: [sandbox, --help]
+    expect:
+      exit: 0
+      stdout_not_contains: "sshv1"
+
+  - name: sandbox --help does NOT list the superseded codev1
+    cmd: [sandbox, --help]
+    expect:
+      exit: 0
+      stdout_not_contains: "codev1"
+
+  - name: amika --help does NOT list the superseded scpv1
+    cmd: [--help]
+    expect:
+      exit: 0
+      stdout_not_contains: "scpv1"
+
+  - name: hidden sandbox sshv1 --help still works and keeps its own flags
+    # The compatibility promise: a script that called the old provider-native
+    # ssh keeps working under the new name, flags included.
+    cmd: [sandbox, sshv1, --help]
+    expect:
+      exit: 0
+      stdout_contains: "amika sandbox sshv1 [flags] <name> [-- <command>...]"
+
+  - name: hidden sandbox sshv1 --help still documents --revoke
+    cmd: [sandbox, sshv1, --help]
+    expect:
+      exit: 0
+      stdout_contains: "--revoke"
+
+  - name: sandbox ssh --help defines no flags of its own
+    # ssh forwards everything after the subcommand to the ssh binary, so
+    # sshv1's --revoke must NOT be one of its flags.
+    cmd: [sandbox, ssh, --help]
+    expect:
+      exit: 0
+      stdout_not_contains: "--revoke"
+
+  - name: hidden sandbox codev1 --help still works
+    cmd: [sandbox, codev1, --help]
+    expect:
+      exit: 0
+      stdout_contains: "amika sandbox codev1 <name> [flags]"
+
+  - name: hidden scpv1 --help still works
+    cmd: [scpv1, --help]
+    expect:
+      exit: 0
+      stdout_contains: "amika scpv1 <source> ... <target>"

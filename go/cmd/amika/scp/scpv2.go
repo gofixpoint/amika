@@ -1,8 +1,8 @@
 package scpcmd
 
-// scpv2.go implements `amika scpv2`: the same operand grammar as `amika scp`,
-// carried over the beta direct WebSocket transport that backs
-// `amika sandbox sshv2` instead of the v1 provider-native SSH access.
+// scpv2.go implements `amika scp`: the same operand grammar as the superseded
+// `amika scpv1`, carried over the direct WebSocket transport that backs
+// `amika sandbox ssh` instead of the v1 provider-native SSH access.
 //
 // The transport difference is entirely in how a sandbox reference becomes an
 // scp operand. v1 resolves a sandbox to a concrete host/port/user and spells
@@ -47,7 +47,7 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 
 	// Resolved lazily and cached by name: each sandbox is fetched and pinned at
 	// most once, and a copy naming no sandbox performs no API call and needs no
-	// auth (the same contract as `amika scp`).
+	// auth (the same contract as `amika scpv1`).
 	var client *apiclient.Client
 	aliases := map[string]string{}
 	resolve := func(name string) (string, error) {
@@ -142,15 +142,15 @@ func rewriteV2Operand(tok string, resolve aliasResolver) (string, error) {
 	}
 }
 
-// NewV2 builds the `amika scpv2` command.
+// NewV2 builds the `amika scp` command.
 func NewV2() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "scpv2 <source> ... <target>",
-		Short: "Copy files to or from sandboxes over the beta direct WebSocket transport",
+		Use:   "scp <source> ... <target>",
+		Short: "Copy files to or from sandboxes over SSH",
 		Long: `Copy files between the local machine, sandboxes, and SSH hosts using scp,
-over the same beta direct WebSocket transport as "amika sandbox sshv2".
+over the same direct WebSocket transport as "amika sandbox ssh".
 
-Operands take the same forms as "amika scp":
+Operands take these forms:
 
   PATH                              a local path
   NAME[:PATH]                       a path in sandbox NAME (scp-style): a
@@ -168,15 +168,15 @@ identity from "amika secret ssh-keygen".
 
 Examples:
   # Upload a file into the sandbox home
-  amika scpv2 ./local.txt my-sandbox:local.txt
+  amika scp ./local.txt my-sandbox:local.txt
 
   # Recursively download an absolute directory from the sandbox
-  amika scpv2 -r my-sandbox:/srv/out ./out
+  amika scp -r my-sandbox:/srv/out ./out
 
   # Print the resolved scp command instead of running it
-  amika scpv2 --print ./a.txt my-sandbox:a.txt`,
+  amika scp --print ./a.txt my-sandbox:a.txt`,
 		Args: cobra.MinimumNArgs(1),
-		// As with `amika scp`, every argument is forwarded to system scp, so
+		// As with `amika scpv1`, every argument is forwarded to system scp, so
 		// scp's own single-dash options pass through untouched.
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

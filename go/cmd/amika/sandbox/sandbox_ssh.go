@@ -29,11 +29,16 @@ func validateEditor(editor string) error {
 	}
 }
 
-var sandboxSSHCmd = &cobra.Command{
-	Use:   "ssh [flags] <name> [-- <command>...]",
-	Short: "SSH into a remote sandbox",
-	Long: `Connect to a remote sandbox via SSH, or revoke SSH access.
-Optionally pass a command to execute on the remote sandbox instead of opening an interactive session.
+var sandboxSSHV1Cmd = &cobra.Command{
+	Use:   "sshv1 [flags] <name> [-- <command>...]",
+	Short: "SSH into a remote sandbox over provider-native SSH (superseded by \"sandbox ssh\")",
+	Long: `Connect to a remote sandbox over the provider's own SSH route, or revoke SSH
+access. Optionally pass a command to execute on the remote sandbox instead of
+opening an interactive session.
+
+"sandbox ssh" is the supported way to reach a sandbox; it uses Amika's direct
+WebSocket transport. This command is the earlier provider-native route, kept
+and hidden so existing scripts keep working. Prefer "sandbox ssh".
 
 Use -t to force pseudo-terminal allocation, which is useful for running interactive
 programs on the remote sandbox (equivalent to ssh -t).
@@ -41,12 +46,15 @@ programs on the remote sandbox (equivalent to ssh -t).
 Use --print to print the SSH connection string instead of connecting.
 
 Examples:
-  amika sandbox ssh my-sandbox
-  amika sandbox ssh -t my-sandbox -- top
-  amika sandbox ssh my-sandbox -- ls -la
-  amika sandbox ssh --print my-sandbox
-  amika sandbox ssh my-sandbox --revoke`,
-	Args: cobra.MinimumNArgs(1),
+  amika sandbox sshv1 my-sandbox
+  amika sandbox sshv1 -t my-sandbox -- top
+  amika sandbox sshv1 my-sandbox -- ls -la
+  amika sandbox sshv1 --print my-sandbox
+  amika sandbox sshv1 my-sandbox --revoke`,
+	// Superseded by "sandbox ssh": reachable by name for existing scripts, but
+	// kept out of the help listing so new users land on the current transport.
+	Hidden: true,
+	Args:   cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
@@ -68,7 +76,7 @@ Examples:
 			return err
 		}
 
-		// ssh delegates to the system ssh binary (or, for --print/--revoke,
+		// sshv1 delegates to the system ssh binary (or, for --print/--revoke,
 		// prints a raw connection string / performs a one-off API call). None of
 		// these emit a structured result, so --output is not supported here.
 		if err := output.RejectFlag(cmd); err != nil {
@@ -113,13 +121,19 @@ Examples:
 	},
 }
 
-// supportedEditors lists the values accepted by `sandbox code --editor`.
+// supportedEditors lists the values accepted by `sandbox code --editor` (and by
+// the superseded `sandbox codev1`).
 var supportedEditors = []string{"cursor", "vscode", "claude", "codex"}
 
-var sandboxCodeCmd = &cobra.Command{
-	Use:   "code <name>",
-	Short: "Open a remote sandbox in an editor or agent via SSH",
-	Long: `Open a remote sandbox in an editor or coding agent using SSH remote access.
+var sandboxCodeV1Cmd = &cobra.Command{
+	Use:   "codev1 <name>",
+	Short: "Open a remote sandbox in an editor over provider-native SSH (superseded by \"sandbox code\")",
+	Long: `Open a remote sandbox in an editor or coding agent over the provider's own SSH
+route.
+
+"sandbox code" is the supported way to open a sandbox in an editor; it uses
+Amika's direct WebSocket transport. This command is the earlier provider-native
+route, kept and hidden so existing scripts keep working. Prefer "sandbox code".
 
 Supported --editor values:
   cursor   launch Cursor connected to the sandbox (default)
@@ -131,15 +145,17 @@ For claude and codex, the command writes the local app config so the sandbox
 appears as a remote environment; select it in the app to start the session.
 
 Examples:
-  amika sandbox code my-sandbox
-  amika sandbox code my-sandbox --editor=cursor
-  amika sandbox code my-sandbox --editor=vscode
-  amika sandbox code my-sandbox --editor=claude
-  amika sandbox code my-sandbox --editor=codex`,
-	Args: cobra.ExactArgs(1),
+  amika sandbox codev1 my-sandbox
+  amika sandbox codev1 my-sandbox --editor=cursor
+  amika sandbox codev1 my-sandbox --editor=vscode
+  amika sandbox codev1 my-sandbox --editor=claude
+  amika sandbox codev1 my-sandbox --editor=codex`,
+	// Superseded by "sandbox code"; see sandboxSSHV1Cmd for why it stays hidden.
+	Hidden: true,
+	Args:   cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		// code opens an interactive editor, so it has no JSON result.
+		// codev1 opens an interactive editor, so it has no JSON result.
 		if err := output.RejectJSON(cmd); err != nil {
 			return err
 		}
@@ -150,7 +166,7 @@ Examples:
 
 		mode := runmode.Resolve(cmd)
 		if mode == runmode.Local {
-			return fmt.Errorf("code command requires a remote sandbox; omit --local")
+			return fmt.Errorf("codev1 command requires a remote sandbox; omit --local")
 		}
 		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
 			return err
@@ -178,7 +194,8 @@ Examples:
 }
 
 // sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the
-// identity needed to label and locate it, shared by every `code` editor.
+// identity needed to label and locate it, shared by every editor `sandbox code`
+// and `sandbox codev1` can open.
 type sandboxSSHAlias struct {
 	alias       string
 	sandboxName string
@@ -191,9 +208,10 @@ type sshInfoClient interface {
 	GetSandbox(name string) (*apiclient.RemoteSandbox, error)
 }
 
-// resolveSandboxSSHAlias mints SSH access for the sandbox and upserts it into
-// the Amika-managed SSH config, returning the stable `amika-<id>` Host alias.
-// Every `code` editor connects through this single alias.
+// resolveSandboxSSHAlias mints provider-native SSH access for the sandbox and
+// upserts it into the Amika-managed SSH config, returning the stable
+// `amika-<id>` Host alias. Every editor `sandbox codev1` opens connects through
+// this single alias. (`sandbox code` uses resolveSandboxV2SSHAlias instead.)
 func resolveSandboxSSHAlias(client sshInfoClient, paths basedir.Paths, name string) (sandboxSSHAlias, error) {
 	info, err := client.GetSSH(name)
 	if err != nil {

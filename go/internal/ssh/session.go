@@ -377,7 +377,7 @@ func canonicalHostPublicKey(value string) (string, error) {
 // pins the sandbox's host key.
 //
 // Shared by every command that hands a `*.amika` alias to system OpenSSH
-// (`sandbox sshv2`, `scpv2`), so they cannot drift in how the identity is
+// (`sandbox ssh`, `scp`), so they cannot drift in how the identity is
 // checked or the host key is pinned.
 func PrepareSessionTarget(
 	paths basedir.Paths,

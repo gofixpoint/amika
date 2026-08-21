@@ -2,7 +2,7 @@ name: selected provider coder base snapshot contract
 # This real-API case verifies the selected provider's medium coder
 # base snapshot after the complete sandbox boot lifecycle.
 steps:
-  - name: register the local SSH public key for sshv2
+  - name: register the local SSH public key for sandbox ssh
     cmd: [secret, ssh-key, create, --name, "e2e-{{sandbox_provider}}-coder-{{run_id}}", -o, json]
     expect:
       exit: 0
@@ -37,7 +37,7 @@ steps:
   - name: verify the booted base snapshot contract
     cmd:
       - sandbox
-      - sshv2
+      - ssh
       - "{{sandbox_name}}"
       - --
       - /bin/sh
@@ -67,7 +67,7 @@ steps:
   - name: verify the default amikad and OpenCode services are running
     cmd:
       - sandbox
-      - sshv2
+      - ssh
       - "{{sandbox_name}}"
       - --
       - /bin/sh
