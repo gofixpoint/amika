@@ -11,7 +11,7 @@ func TestEvaluate_HierarchicalConfigAndOverrides(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, configName), `
 [[freezes]]
-label = "schema"
+label = "database/schema"
 paths = ["schema/**/*.sql"]
 `)
 	writeTestFile(t, filepath.Join(root, "schema", configName), `
@@ -26,10 +26,10 @@ paths = ["migrations/*.sql"]
 		t.Fatal(err)
 	}
 	if len(decision.Matches) != 2 {
-		t.Fatalf("matches = %+v, want schema and migration", decision.Matches)
+		t.Fatalf("matches = %+v, want database/schema and migration", decision.Matches)
 	}
 
-	decision, err = Evaluate(root, target, Overrides{RepoRoot: root, Labels: []string{"schema"}})
+	decision, err = Evaluate(root, target, Overrides{RepoRoot: root, Labels: []string{"database/schema"}})
 	if err != nil {
 		t.Fatal(err)
 	}

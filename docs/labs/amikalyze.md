@@ -48,7 +48,7 @@ paths = [
 ```
 
 Each `[[freezes]]` entry requires a label and at least one path. Labels may use
-letters, digits, `.`, `_`, and `-`.
+letters, digits, `.`, `_`, `-`, and `/`.
 
 Patterns use `/` separators. `*`, `?`, and character classes match within one
 path segment; a segment equal to `**` matches zero or more complete segments.

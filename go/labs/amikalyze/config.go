@@ -80,7 +80,7 @@ func validateLabel(label string) error {
 		return errors.New("must not be empty")
 	}
 	for _, r := range label {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-' {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-' || r == '/' {
 			continue
 		}
 		return fmt.Errorf("%q contains invalid character %q", label, r)

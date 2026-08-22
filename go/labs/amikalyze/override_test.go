@@ -9,13 +9,13 @@ import (
 func TestNewOverrides(t *testing.T) {
 	root := t.TempDir()
 	overrides, err := NewOverrides(root,
-		[]string{"schema", "schema", "protocol"},
+		[]string{"database/schema", "database/schema", "protocol"},
 		[]string{"schema/./one.sql", "proto/one.proto"},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"protocol", "schema"}; !reflect.DeepEqual(overrides.Labels, want) {
+	if want := []string{"database/schema", "protocol"}; !reflect.DeepEqual(overrides.Labels, want) {
 		t.Errorf("labels = %v, want %v", overrides.Labels, want)
 	}
 	if want := []string{"proto/one.proto", "schema/one.sql"}; !reflect.DeepEqual(overrides.Paths, want) {

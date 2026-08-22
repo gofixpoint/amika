@@ -8,7 +8,7 @@ func TestValidateConfig(t *testing.T) {
 		config  Config
 		wantErr bool
 	}{
-		{name: "valid", config: Config{Freezes: []Freeze{{Label: "schema-v1", Paths: []string{"schema/**/*.sql", "one.txt"}}}}},
+		{name: "valid", config: Config{Freezes: []Freeze{{Label: "database/schema-v1", Paths: []string{"schema/**/*.sql", "one.txt"}}}}},
 		{name: "empty label", config: Config{Freezes: []Freeze{{Paths: []string{"one.txt"}}}}, wantErr: true},
 		{name: "invalid label", config: Config{Freezes: []Freeze{{Label: "not valid", Paths: []string{"one.txt"}}}}, wantErr: true},
 		{name: "duplicate label", config: Config{Freezes: []Freeze{{Label: "same", Paths: []string{"one"}}, {Label: "same", Paths: []string{"two"}}}}, wantErr: true},
