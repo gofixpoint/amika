@@ -9,7 +9,8 @@ This mirrors the spirit of [`golang.org/x/exp`](https://pkg.go.dev/golang.org/x/
 a place to prototype before anything graduates into the supported surface.
 
 User-facing docs for labs tools live under [`docs/labs/`](../../docs/labs/)
-(e.g. the [`akfs` reference](../../docs/labs/akfs.md)). This README covers the
+(e.g. the [`akfs` reference](../../docs/labs/akfs.md) and
+[`amikalyze` reference](../../docs/labs/amikalyze.md)). This README covers the
 in-repo policy and module-boundary rationale.
 
 ## Why it lives inside the main module
@@ -30,15 +31,18 @@ removed.
 
 ```
 go/labs/
-  README.md          # this file
-  cmd/akfs/          # akfs CLI binary (experimental)
-  akfs/              # akfs library: github.com/gofixpoint/amika/go/labs/akfs
+  README.md             # this file
+  cmd/akfs/             # akfs CLI binary (experimental)
+  cmd/amikalyze/        # amikalyze CLI binary (experimental)
+  akfs/                 # akfs library
+  amikalyze/            # frozen-path policy and agent-hook adapters
 ```
 
 ## Building
 
 ```bash
 make build-akfs      # builds dist/akfs
+make build-amikalyze # builds dist/amikalyze
 ```
 
 ## Graduating an experiment
