@@ -28,9 +28,27 @@ HISTSIZE=1000
 SAVEHIST=1000
 HISTFILE=~/.zsh_history
 
-# Use modern completion system
+# Use modern completion system.
+#
+# -u skips compinit's security audit of $fpath. Without it, a world-writable
+# completion directory makes compinit stop and ask
+#
+#   Ignore insecure directories and files and continue [y] or abort compinit [n]?
+#
+# There is nobody to answer that in a sandbox and usually no terminal either, so
+# zsh gives up and every shell starts with "compinit: initialization aborted"
+# and zero completions. E2B's template builder ends with an unconditional
+# `chmod -R 777 /usr/local`, which hits /usr/local/share/zsh/site-functions, so
+# this is reachable on a stock image with no user involvement.
+#
+# Skipping the audit rather than ignoring it (-i) is deliberate: -i drops the
+# offending directory from $fpath, silently losing any completion installed
+# there. A sandbox is a single trust domain — the runtime user already has
+# passwordless sudo — so there is no privilege boundary for the audit to
+# protect. Amika still repairs the directory modes at boot; this only keeps a
+# permissions surprise from ever hanging a shell.
 autoload -Uz compinit
-compinit
+compinit -u
 
 zstyle ':completion:*' auto-description 'specify: %d'
 zstyle ':completion:*' completer _expand _complete _correct _approximate
