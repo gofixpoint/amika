@@ -74,6 +74,7 @@ export { buildLifecycleCommands } from "./providers/shared/lifecycle-commands";
 export { EXEC_INPUT_STAGING_ROOT } from "./providers/shared/exec-input";
 export { shellQuote } from "./util/shell";
 export {
+  buildCloneUrl,
   buildGitCheckoutNewBranchCmd,
   buildGitSetPlainRemoteCmd,
   buildRefreshClonedRepoScript,
