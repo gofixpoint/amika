@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCloneUrl,
   buildGitCheckoutNewBranchCmd,
   buildGitSetPlainRemoteCmd,
   buildRefreshClonedRepoScript,
@@ -76,5 +77,75 @@ describe("buildRefreshClonedRepoScript", () => {
 
     expect(script).not.toContain("git submodule");
     expect(script).toContain("git checkout -f -B 'main'");
+  });
+});
+
+// The token is a GitHub App installation token or a PAT. Git sends whatever is in
+// a URL's userinfo to whatever host the URL names, and a clone may persist the
+// result into `.git/config` — so what this embeds it into decides where a
+// credential can end up.
+describe("buildCloneUrl", () => {
+  const TOKEN = "ghs_installation_token";
+
+  it("authenticates an https github.com clone", () => {
+    expect(buildCloneUrl("https://github.com/acme/widgets", TOKEN)).toBe(
+      `https://x-access-token:${TOKEN}@github.com/acme/widgets`,
+    );
+  });
+
+  it("never sends the token to another host", () => {
+    for (const url of [
+      "https://gitlab.com/group/project",
+      "https://github.com.example.test/acme/widgets",
+      "https://example.test/acme/widgets",
+      "https://127.0.0.1:8080/acme/widgets",
+    ]) {
+      expect(buildCloneUrl(url, TOKEN), url).toBe(url);
+    }
+  });
+
+  it("never sends the token over plaintext http", () => {
+    expect(buildCloneUrl("http://github.com/acme/widgets", TOKEN)).toBe(
+      "http://github.com/acme/widgets",
+    );
+  });
+
+  it("ignores the case of the host", () => {
+    expect(buildCloneUrl("https://GitHub.com/acme/widgets", TOKEN)).toContain(
+      `x-access-token:${TOKEN}@`,
+    );
+  });
+
+  it("leaves a non-URL alone rather than making it usable", () => {
+    for (const value of [
+      "ext::sh -c id",
+      "--upload-pack=/bin/sh",
+      "/etc/passwd",
+      "git@github.com:acme/widgets.git",
+    ]) {
+      expect(buildCloneUrl(value, TOKEN), value).toBe(value);
+    }
+  });
+
+  it("clones anonymously when there is no token", () => {
+    for (const token of [undefined, null, ""]) {
+      expect(buildCloneUrl("https://github.com/acme/widgets", token)).toBe(
+        "https://github.com/acme/widgets",
+      );
+    }
+  });
+
+  // Percent-encoded via URL.password rather than spliced into the authority, so
+  // a token containing URL-significant characters cannot reshape the URL.
+  it("encodes the token rather than splicing it in", () => {
+    const built = buildCloneUrl(
+      "https://github.com/acme/widgets",
+      "tok/en?with#chars",
+    );
+
+    expect(built).toBe(
+      "https://x-access-token:tok%2Fen%3Fwith%23chars@github.com/acme/widgets",
+    );
+    expect(new URL(built).hostname).toBe("github.com");
   });
 });

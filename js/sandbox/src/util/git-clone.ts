@@ -93,7 +93,27 @@ export function assertValidGitRemoteUrl(repoUrl: string): void {
   }
 }
 
-/** Embed a `x-access-token:<token>` credential into an HTTPS clone URL. */
+/**
+ * The clone URL, carrying an `x-access-token:<token>` credential **only when the
+ * URL is github.com over https**.
+ *
+ * Both conditions matter, because git sends whatever is in a URL's userinfo to
+ * whatever host the URL names, and a clone may `git remote set-url` the result
+ * into `.git/config`:
+ *
+ *  - **the scheme**, or the credential travels in the clear;
+ *  - **the host**, or a caller that takes a repository URL from untrusted input
+ *    hands its GitHub credential to whatever host that URL named.
+ *
+ * The host check costs nothing: the token is a GitHub App installation token or
+ * a PAT, so it is only ever meaningful to github.com. Anything else clones
+ * anonymously — which works for a public repository and fails to authenticate
+ * for a private one, the correct failure either way.
+ *
+ * Exported from the package barrel deliberately. Consumers that build their own
+ * clone commands need this decision made in one place; without it they each grow
+ * a near-copy, and the weakest one becomes reachable.
+ */
 export function buildCloneUrl(
   repoUrl: string,
   githubToken?: string | null,
@@ -103,13 +123,18 @@ export function buildCloneUrl(
   }
   try {
     const url = new URL(repoUrl);
-    if (url.protocol !== "https:") {
+    if (
+      url.protocol !== "https:" ||
+      url.hostname.toLowerCase() !== "github.com"
+    ) {
       return repoUrl;
     }
     url.username = "x-access-token";
     url.password = githubToken;
     return url.toString();
   } catch {
+    // Not a URL at all — an `ext::` transport, a bare path. Nothing to
+    // authenticate, and nothing this should make more usable.
     return repoUrl;
   }
 }
