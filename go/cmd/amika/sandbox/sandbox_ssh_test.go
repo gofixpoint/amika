@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -94,7 +95,7 @@ type stubSSHClient struct {
 	sandbox *apiclient.RemoteSandbox
 }
 
-// stubV2SSHClient implements the APIs codev2 uses before it hands the prepared
+// stubV2SSHClient implements the APIs `sandbox code` uses before it hands the prepared
 // alias to an editor. Its session method is not reached by this test because
 // prepareSessionTarget is replaced with a recorder.
 type stubV2SSHClient struct {
@@ -377,5 +378,36 @@ func TestOpenSandboxInEditorSkipsWindowsWhenNotWSL(t *testing.T) {
 	}
 	if len(*mirrored) != 0 || len(*launched) != 0 {
 		t.Fatalf("mirror/launch calls = %d/%d, want 0/0", len(*mirrored), len(*launched))
+	}
+}
+
+// TestSSHCommandNames pins the CLI surface the rename established: the direct
+// WebSocket transport owns the plain `ssh`/`code` names and is listed in help,
+// while the provider-native predecessors stay reachable under `sshv1`/`codev1`
+// but hidden. New() is a once-per-process call, so assert on the command
+// objects rather than building the tree.
+func TestSSHCommandNames(t *testing.T) {
+	for _, tt := range []struct {
+		cmd         *cobra.Command
+		wantName    string
+		wantHidden  bool
+		wantAliases []string
+	}{
+		{cmd: sandboxSSHV2Cmd, wantName: "ssh", wantHidden: false, wantAliases: []string{"sshv2"}},
+		{cmd: sandboxCodeV2Cmd, wantName: "code", wantHidden: false, wantAliases: []string{"codev2"}},
+		{cmd: sandboxSSHV1Cmd, wantName: "sshv1", wantHidden: true},
+		{cmd: sandboxCodeV1Cmd, wantName: "codev1", wantHidden: true},
+	} {
+		t.Run(tt.wantName, func(t *testing.T) {
+			if got := tt.cmd.Name(); got != tt.wantName {
+				t.Errorf("command name = %q, want %q", got, tt.wantName)
+			}
+			if tt.cmd.Hidden != tt.wantHidden {
+				t.Errorf("Hidden = %v, want %v", tt.cmd.Hidden, tt.wantHidden)
+			}
+			if !reflect.DeepEqual(tt.cmd.Aliases, tt.wantAliases) {
+				t.Errorf("Aliases = %#v, want %#v", tt.cmd.Aliases, tt.wantAliases)
+			}
+		})
 	}
 }

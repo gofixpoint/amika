@@ -7,14 +7,14 @@
 // forwarded. That distinction is not recoverable from the arguments Cobra hands
 // a command, because Cobra removes the command path from the argv first. Both
 //
-//	amika --output json sandbox sshv2 my-box
-//	amika sandbox sshv2 --output json my-box
+//	amika --output json sandbox ssh my-box
+//	amika sandbox ssh --output json my-box
 //
-// reach the sshv2 command as the identical slice
+// reach the ssh command as the identical slice
 //
 //	["--output", "json", "my-box"]
 //
-// so Split needs the original process argv, where the "sshv2" token still marks
+// so Split needs the original process argv, where the "ssh" token still marks
 // the boundary. Callers pass it in rather than reading os.Args here, so tests
 // can exercise the split with a synthetic argv.
 package cliargs
@@ -113,8 +113,8 @@ func ConsumesNextArg(tok, argLetters string) bool {
 // HasHelpFlag reports whether args requests help. Only a help flag written
 // among the leading options counts: once the first operand or a "--" appears,
 // later tokens belong to the underlying utility (for ssh, they form the remote
-// command), so "sshv2 my-box --help" asks the sandbox for help rather than
-// amika.
+// command), so "sandbox ssh my-box --help" asks the sandbox for help rather
+// than amika.
 func HasHelpFlag(args []string) bool {
 	for _, a := range args {
 		if len(a) == 0 || a[0] != '-' || a == "--" || a == "-" {

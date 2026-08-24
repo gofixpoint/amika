@@ -14,24 +14,25 @@ import (
 )
 
 // osArgs is a seam over the process argv, which the positional split needs to
-// tell an amika flag written before "sshv2" from an ssh option written after
-// it. Tests supply a synthetic argv instead of mutating the real one.
+// tell an amika flag written before "ssh" (or its "sshv2" alias) from an ssh
+// option written after it. Tests supply a synthetic argv instead of mutating
+// the real one.
 var osArgs = func() []string { return os.Args }
 
 // execSessionSSH is a seam around the exec of the system ssh binary, so tests
 // can assert the argv the command would run without replacing the process.
 var execSessionSSH = ssh.ExecSessionSSH
 
-// newSSHV2Client is a seam over the API client sshv2 resolves a sandbox
+// newSSHV2Client is a seam over the API client `sandbox ssh` resolves a sandbox
 // through, narrowed to the two calls the command makes so tests can supply a
 // stub instead of reaching the network.
 var newSSHV2Client = func(target string) (sshV2Client, error) {
 	return getRemoteClient(target)
 }
 
-// sshV2OwnValueFlags are the amika flags reaching sshv2 that take their value
-// as a separate token. commandIndex skips those values so a sandbox named for
-// the subcommand ("--remote-target sshv2") is not read as the subcommand.
+// sshV2OwnValueFlags are the amika flags reaching `sandbox ssh` that take their
+// value as a separate token. commandIndex skips those values so a sandbox named
+// for the subcommand ("--remote-target ssh") is not read as the subcommand.
 var sshV2OwnValueFlags = map[string]bool{
 	"--output":        true,
 	"-o":              true,
@@ -39,34 +40,37 @@ var sshV2OwnValueFlags = map[string]bool{
 }
 
 var sandboxSSHV2Cmd = &cobra.Command{
-	Use:   "sshv2 [ssh-options] <name> [command...]",
-	Short: "SSH through the beta direct WebSocket transport",
-	Long: `Open an SSH session to a remote sandbox over the beta direct WebSocket
+	Use: "ssh [ssh-options] <name> [command...]",
+	// "sshv2" is the pre-promotion name this command answered to; kept as an
+	// alias so scripts and docs written against it keep working.
+	Aliases: []string{"sshv2"},
+	Short:   "SSH into a remote sandbox",
+	Long: `Open an SSH session to a remote sandbox over Amika's direct WebSocket
 transport. Requires an SSH identity from "amika secret ssh-keygen".
 
 Use it like ssh: options go before the sandbox name, an optional command
 after it. Every ssh option works, including port forwarding.
 
-Amika's own flags go before "sshv2":
+Amika's own flags go before "ssh":
 
-  amika sandbox --remote sshv2 -N -L 8080:localhost:80 my-sandbox
+  amika sandbox --remote ssh -N -L 8080:localhost:80 my-sandbox
 
 Local (-L) and dynamic (-D) forwarding are supported. Remote forwarding (-R),
 agent forwarding (-A), and X11 forwarding are not.
 
 Examples:
   # Interactive shell
-  amika sandbox sshv2 my-sandbox
+  amika sandbox ssh my-sandbox
 
   # Run a command instead of opening a shell
-  amika sandbox sshv2 my-sandbox uptime
+  amika sandbox ssh my-sandbox uptime
 
   # Forward local port 6789 to port 3010 inside the sandbox, no shell
-  amika sandbox sshv2 -N -L 6789:localhost:3010 my-sandbox
+  amika sandbox ssh -N -L 6789:localhost:3010 my-sandbox
 
   # SOCKS proxy on local port 1080
-  amika sandbox sshv2 -N -D 1080 my-sandbox`,
-	// Arguments after "sshv2" belong to ssh, so Cobra must not parse them: it
+  amika sandbox ssh -N -D 1080 my-sandbox`,
+	// Arguments after "ssh" belong to ssh, so Cobra must not parse them: it
 	// would reject "-L" and friends as unknown flags. RunE therefore parses the
 	// amika-owned portion itself, after splitting the two apart by position.
 	DisableFlagParsing: true,
@@ -75,7 +79,9 @@ Examples:
 	// subcommand, which is exactly what they must not do.
 	DisableFlagsInUseLine: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		own, forward := cliargs.Split(osArgs(), args, cmd.Name(), sshV2OwnValueFlags)
+		// CalledAs, not Name: invoked as the "sshv2" alias, the boundary token
+		// in osArgs() is "sshv2", not this command's primary name "ssh".
+		own, forward := cliargs.Split(osArgs(), args, cmd.CalledAs(), sshV2OwnValueFlags)
 		// DisableFlagParsing bypasses Cobra's built-in help flag, so honor it
 		// here before anything else can fail on an incomplete command line.
 		if cliargs.HasHelpFlag(forward) || cliargs.HasHelpFlag(own) {
@@ -100,7 +106,7 @@ Examples:
 		// prompt.
 		nameIdx := cliargs.FirstOperand(forward, cliargs.SSHArgLetters)
 		if nameIdx < 0 {
-			return fmt.Errorf("missing sandbox name; usage: amika sandbox sshv2 [ssh-options] <name> [command...]")
+			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
 		}
 		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
 			return err
@@ -131,22 +137,30 @@ Examples:
 }
 
 var sandboxCodeV2Cmd = &cobra.Command{
-	Use:   "codev2 <name>",
-	Short: "Open a remote sandbox in an editor over the beta direct WebSocket transport",
-	Long: `Open a remote sandbox in an editor or coding agent over the beta direct
-WebSocket SSH transport. It supports the same editors and flags as "sandbox code",
-but bypasses provider-native SSH access.
+	Use: "code <name>",
+	// "codev2" is the pre-promotion name this command answered to; kept as an
+	// alias so scripts and docs written against it keep working.
+	Aliases: []string{"codev2"},
+	Short:   "Open a remote sandbox in an editor or agent via SSH",
+	Long: `Open a remote sandbox in an editor or coding agent over Amika's direct
+WebSocket SSH transport, bypassing provider-native SSH access.
+
+Supported --editor values:
+  cursor   launch Cursor connected to the sandbox (default)
+  vscode   launch VS Code connected to the sandbox
+  claude   register the sandbox as a Claude Desktop SSH environment
+  codex    expose the sandbox to Codex as an SSH connection
 
 The command creates a managed SSH alias backed by Amika's WebSocket proxy, then
 hands that alias to the selected editor. It requires an SSH identity from
 "amika secret ssh-keygen".
 
 Examples:
-  amika sandbox codev2 my-sandbox
-  amika sandbox codev2 my-sandbox --editor=cursor
-  amika sandbox codev2 my-sandbox --editor=vscode
-  amika sandbox codev2 my-sandbox --editor=claude
-  amika sandbox codev2 my-sandbox --editor=codex`,
+  amika sandbox code my-sandbox
+  amika sandbox code my-sandbox --editor=cursor
+  amika sandbox code my-sandbox --editor=vscode
+  amika sandbox code my-sandbox --editor=claude
+  amika sandbox code my-sandbox --editor=codex`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := output.RejectJSON(cmd); err != nil {
@@ -181,26 +195,27 @@ Examples:
 	},
 }
 
-// sshV2Client is the subset of apiclient.Client codev2 needs to prepare a
-// direct-session SSH alias for an editor.
+// sshV2Client is the subset of apiclient.Client `sandbox code` needs to prepare
+// a direct-session SSH alias for an editor.
 type sshV2Client interface {
 	ssh.SessionCreator
 	GetSandbox(name string) (*apiclient.RemoteSandbox, error)
 }
 
-// prepareSessionTarget is a seam around the shared v2 setup used by codev2,
-// sshv2, and scpv2. Keeping it replaceable lets the command package verify its
-// alias handoff without re-testing the session package's key and pinning logic.
+// prepareSessionTarget is a seam around the shared session-transport setup used
+// by `sandbox code`, `sandbox ssh`, and `scp`. Keeping it replaceable lets the
+// command package verify its alias handoff without re-testing the session
+// package's key and pinning logic.
 var prepareSessionTarget = ssh.PrepareSessionTarget
 
-// upsertSessionHost makes a concrete v2 alias discoverable to editors that
+// upsertSessionHost makes a concrete session alias discoverable to editors that
 // enumerate SSH Host entries, notably Codex. Cursor and Claude receive their
-// aliases directly, so this extra persistent entry is specific to codev2.
+// aliases directly, so this extra persistent entry is specific to `sandbox code`.
 var upsertSessionHost = ssh.UpsertSessionHost
 
 // resolveSandboxV2SSHAlias prepares the same direct-session alias used by
-// sshv2 and scpv2. Editors subsequently use system OpenSSH, which invokes the
-// managed alias's ProxyCommand once it dials the host.
+// `sandbox ssh` and `scp`. Editors subsequently use system OpenSSH, which
+// invokes the managed alias's ProxyCommand once it dials the host.
 func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, name string) (sandboxSSHAlias, error) {
 	sandbox, err := client.GetSandbox(name)
 	if err != nil {

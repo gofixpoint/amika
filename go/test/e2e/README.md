@@ -108,7 +108,7 @@ operation under test consumes a resource, such as `snapshot create --mode
 scrub_and_delete` deleting its source sandbox. If the step fails, the ledger
 entry remains available for best-effort cleanup.
 
-### Remote commands (`sandbox sshv2`)
+### Remote commands (`sandbox ssh`)
 
 A command to run inside a sandbox must be **one** `cmd` element, holding the
 whole script:
@@ -116,7 +116,7 @@ whole script:
 ```yaml
     cmd:
       - sandbox
-      - sshv2
+      - ssh
       - "{{sandbox_name}}"
       - --
       - |                                  # the entire remote command, one element

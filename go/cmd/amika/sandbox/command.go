@@ -23,10 +23,15 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxDeleteCmd)
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
-	sandboxCmd.AddCommand(sandboxSSHCmd)
+	// `ssh` and `code` are the direct-WebSocket-transport commands; they also
+	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases.
+	// `sshv1` and `codev1` are the provider-native predecessors they replaced,
+	// registered so existing scripts keep working but marked Hidden at their
+	// declarations.
 	sandboxCmd.AddCommand(sandboxSSHV2Cmd)
-	sandboxCmd.AddCommand(sandboxCodeCmd)
+	sandboxCmd.AddCommand(sandboxSSHV1Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
+	sandboxCmd.AddCommand(sandboxCodeV1Cmd)
 	sandboxCmd.AddCommand(sandboxAgentSendCmd)
 
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
@@ -64,16 +69,16 @@ func New() *cobra.Command {
 	sandboxDeleteCmd.Flags().Bool("delete-volumes", false, "Also delete associated volumes that are no longer referenced")
 	sandboxDeleteCmd.Flags().Bool("keep-volumes", false, "Keep associated volumes even when only this sandbox references them")
 	sandboxConnectCmd.Flags().String("shell", "zsh", "Shell to run in the sandbox container")
-	sandboxSSHCmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
-	sandboxSSHCmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
-	sandboxSSHCmd.Flags().Bool("print", false, "Print the SSH connection string instead of connecting")
-	// sshv2 registers no flags of its own: it forwards everything after the
+	sandboxSSHV1Cmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
+	sandboxSSHV1Cmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
+	sandboxSSHV1Cmd.Flags().Bool("print", false, "Print the SSH connection string instead of connecting")
+	// `ssh` registers no flags of its own: it forwards everything after the
 	// subcommand to ssh, so ssh's own -t (and every other option) passes
 	// through untouched.
-	sandboxCodeCmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", or \"codex\"")
-	sandboxCodeCmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
 	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", or \"codex\"")
 	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
+	sandboxCodeV1Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", or \"codex\"")
+	sandboxCodeV1Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
 	sandboxAgentSendCmd.Flags().Bool("no-wait", false, "Send the instruction and return immediately without waiting for a response")
 	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")

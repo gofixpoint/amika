@@ -1,11 +1,12 @@
-# Offline case: `sandbox ssh` and `scp` both delegate to a system shell
-# utility that streams its own output, so neither can honor --output. They
-# turn out to enforce that in two different ways, discovered by reading
-# internal/output/output.go and go/cmd/amika/sandbox/sandbox_ssh.go and
-# go/cmd/amika/scp/command.go directly (do not assume — verify against the
+# Offline case: `sandbox ssh`, the superseded `sandbox sshv1`, and `scp` all
+# delegate to a system shell utility that streams its own output, so none of
+# them can honor --output. They turn out to enforce that in three different
+# ways, discovered by reading internal/output/output.go,
+# go/cmd/amika/sandbox/sandbox_ssh.go, go/cmd/amika/sandbox/sandbox_ssh_v2.go
+# and go/cmd/amika/scp/command.go directly (do not assume — verify against the
 # real binary):
 #
-#   - `sandbox ssh` registers --output normally and explicitly calls
+#   - `sandbox sshv1` registers --output normally and explicitly calls
 #     output.RejectFlag(cmd), which fires whenever the flag was Changed()
 #     (i.e. passed at all, regardless of its value — even "-o text" trips
 #     it). In sandbox_ssh.go that check runs *after* the auth check and
@@ -17,6 +18,13 @@
 #     ever moved after an actual network call, hitting that address would
 #     hang/fail loudly instead of silently succeeding against a real host.
 #
+#   - `sandbox ssh` splits its command line positionally (see
+#     internal/cliargs): everything after the subcommand is forwarded to the
+#     system ssh binary, so a trailing "-o json" is ssh's own ssh_config
+#     option and is NOT amika's --output at all. Only a flag written *before*
+#     the subcommand is amika's, and there RejectFlag fires — before any
+#     network call, so it too is reachable offline.
+#
 #   - `scp`'s cobra command sets DisableFlagParsing: true (its whole argv is
 #     forwarded to the system scp binary), so --output/-o is never parsed
 #     as amika's global flag at all — RejectFlag is never called, and there
@@ -25,10 +33,10 @@
 #     particular (an scp option that takes a value) consumes the next token
 #     as its argument. The case below demonstrates the actual resulting
 #     error instead of a rejection that does not exist for this command.
-name: ssh and scp cannot honor --output, but enforce that differently
+name: ssh, sshv1 and scp cannot honor --output, but enforce that differently
 steps:
-  - name: sandbox ssh --output json is rejected
-    cmd: [sandbox, ssh, somebox, --output, json]
+  - name: sandbox --output json ssh is rejected (amika's flag precedes the subcommand)
+    cmd: [sandbox, --output, json, ssh, somebox]
     env:
       AMIKA_API_KEY: fake-test-key
       AMIKA_API_URL: http://192.0.2.1:81
@@ -36,19 +44,8 @@ steps:
       exit: 1
       stderr_contains: "the --output flag is not supported by this command: it runs an underlying shell utility (ssh/scp) that streams its own output and cannot emit JSON"
 
-  - name: sandbox ssh -o json-pretty is rejected
-    cmd: [sandbox, ssh, somebox, -o, json-pretty]
-    env:
-      AMIKA_API_KEY: fake-test-key
-      AMIKA_API_URL: http://192.0.2.1:81
-    expect:
-      exit: 1
-      stderr_contains: "the --output flag is not supported by this command"
-
-  - name: sandbox ssh -o text (explicit default value) is still rejected
-    # RejectFlag keys off Changed(), not the value, so explicitly passing
-    # the default "text" trips it exactly like "json" does.
-    cmd: [sandbox, ssh, somebox, -o, text]
+  - name: sandbox -o json-pretty ssh is rejected too
+    cmd: [sandbox, -o, json-pretty, ssh, somebox]
     env:
       AMIKA_API_KEY: fake-test-key
       AMIKA_API_URL: http://192.0.2.1:81
@@ -67,9 +64,40 @@ steps:
       exit: 1
       stderr_contains: 'not logged in; run "amika auth login" or use --local'
 
+  - name: superseded sandbox sshv1 --output json is still rejected
+    # sshv1 is hidden but must keep working for existing scripts, including
+    # its own (non-positional) --output rejection.
+    cmd: [sandbox, sshv1, somebox, --output, json]
+    env:
+      AMIKA_API_KEY: fake-test-key
+      AMIKA_API_URL: http://192.0.2.1:81
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command: it runs an underlying shell utility (ssh/scp) that streams its own output and cannot emit JSON"
+
+  - name: superseded sandbox sshv1 -o json-pretty is rejected
+    cmd: [sandbox, sshv1, somebox, -o, json-pretty]
+    env:
+      AMIKA_API_KEY: fake-test-key
+      AMIKA_API_URL: http://192.0.2.1:81
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
+  - name: superseded sandbox sshv1 -o text (explicit default value) is still rejected
+    # RejectFlag keys off Changed(), not the value, so explicitly passing
+    # the default "text" trips it exactly like "json" does.
+    cmd: [sandbox, sshv1, somebox, -o, text]
+    env:
+      AMIKA_API_KEY: fake-test-key
+      AMIKA_API_URL: http://192.0.2.1:81
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
+
   - name: scp --output json is rejected (long form is unambiguously amika's flag)
     # scp sets DisableFlagParsing, so the global --output never reaches cobra
-    # to be marked Changed. runSCP rejects the long form explicitly via
+    # to be marked Changed. runSCPV2 rejects the long form explicitly via
     # output.RejectFlagInArgs before any resolution or exec.
     cmd: [scp, --output, json, a, b]
     expect:
@@ -90,24 +118,39 @@ steps:
       exit: 1
       stderr_contains: "the --output flag is not supported by this command"
 
-  - name: a leading short -o is NOT rejected; it is indistinguishable from scp's own -o
-    # Once scp disables flag parsing, "-o json" before the subcommand cannot be
-    # told apart from scp's own -o ssh_config option, so it forwards. Here it is
-    # consumed as scp's -o and the copy fails for lack of a real remote operand.
-    cmd: [-o, json, scp, a, b]
+  # The two short-form cases below run against `scpv1`, not `scp`. Both assert
+  # on "no remote source or target found", which is v1's requirement that a
+  # copy name at least one sandbox or scp:// host (see buildSCPInvocation in
+  # go/cmd/amika/scp/scp.go). The current `scp` has no such check — a
+  # local-only copy just forwards to the system scp binary — so asserting the
+  # same message under `scp` would exercise the real scp binary instead of
+  # amika. `scpv1` keeps the contract these two cases were written for.
+  - name: a leading short -o is NOT rejected by scpv1; it is indistinguishable from scp's own -o
+    # Once scpv1 disables flag parsing, "-o json" before the subcommand cannot
+    # be told apart from scp's own -o ssh_config option, so it forwards. Here it
+    # is consumed as scp's -o and the copy fails for lack of a remote operand.
+    cmd: [-o, json, scpv1, a, b]
     expect:
       exit: 1
       stderr_contains: "no remote source or target found"
 
-  - name: "scp -o json a b: -o is scp's OWN option and is NOT rejected; it forwards"
+  - name: "scpv1 -o json a b: -o is scp's OWN option and is NOT rejected; it forwards"
     # The short -o is scp's ssh_config-override option, not amika's --output
     # shorthand here, so it is left to forward to the system scp. "-o" consumes
     # "json" as its argument; neither "a" nor "b" names a sandbox or scp:// host,
-    # so scp's own source/target resolution fails first (no rejection).
-    cmd: [scp, -o, json, a, b]
+    # so scpv1's own source/target resolution fails first (no rejection).
+    cmd: [scpv1, -o, json, a, b]
     expect:
       exit: 1
       stderr_contains: "no remote source or target found"
+
+  - name: superseded scpv1 --output json is still rejected
+    # scpv1 is hidden but must keep working for existing scripts, including its
+    # own long-form --output rejection.
+    cmd: [scpv1, --output, json, a, b]
+    expect:
+      exit: 1
+      stderr_contains: "the --output flag is not supported by this command"
 
   - name: scp with no operands at all fails cobra's arg-count check first
     cmd: [scp]
