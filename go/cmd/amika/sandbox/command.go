@@ -23,9 +23,11 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxDeleteCmd)
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
-	// `ssh` and `code` are the direct-WebSocket-transport commands; `sshv1` and
-	// `codev1` are their provider-native predecessors, registered so existing
-	// scripts keep working but marked Hidden at their declarations.
+	// `ssh` and `code` are the direct-WebSocket-transport commands; they also
+	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases.
+	// `sshv1` and `codev1` are the provider-native predecessors they replaced,
+	// registered so existing scripts keep working but marked Hidden at their
+	// declarations.
 	sandboxCmd.AddCommand(sandboxSSHV2Cmd)
 	sandboxCmd.AddCommand(sandboxSSHV1Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)

@@ -14,8 +14,9 @@ import (
 )
 
 // osArgs is a seam over the process argv, which the positional split needs to
-// tell an amika flag written before "ssh" from an ssh option written after it.
-// Tests supply a synthetic argv instead of mutating the real one.
+// tell an amika flag written before "ssh" (or its "sshv2" alias) from an ssh
+// option written after it. Tests supply a synthetic argv instead of mutating
+// the real one.
 var osArgs = func() []string { return os.Args }
 
 // execSessionSSH is a seam around the exec of the system ssh binary, so tests
@@ -39,8 +40,11 @@ var sshV2OwnValueFlags = map[string]bool{
 }
 
 var sandboxSSHV2Cmd = &cobra.Command{
-	Use:   "ssh [ssh-options] <name> [command...]",
-	Short: "SSH into a remote sandbox",
+	Use: "ssh [ssh-options] <name> [command...]",
+	// "sshv2" is the pre-promotion name this command answered to; kept as an
+	// alias so scripts and docs written against it keep working.
+	Aliases: []string{"sshv2"},
+	Short:   "SSH into a remote sandbox",
 	Long: `Open an SSH session to a remote sandbox over Amika's direct WebSocket
 transport. Requires an SSH identity from "amika secret ssh-keygen".
 
@@ -75,7 +79,9 @@ Examples:
 	// subcommand, which is exactly what they must not do.
 	DisableFlagsInUseLine: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		own, forward := cliargs.Split(osArgs(), args, cmd.Name(), sshV2OwnValueFlags)
+		// CalledAs, not Name: invoked as the "sshv2" alias, the boundary token
+		// in osArgs() is "sshv2", not this command's primary name "ssh".
+		own, forward := cliargs.Split(osArgs(), args, cmd.CalledAs(), sshV2OwnValueFlags)
 		// DisableFlagParsing bypasses Cobra's built-in help flag, so honor it
 		// here before anything else can fail on an incomplete command line.
 		if cliargs.HasHelpFlag(forward) || cliargs.HasHelpFlag(own) {
@@ -131,8 +137,11 @@ Examples:
 }
 
 var sandboxCodeV2Cmd = &cobra.Command{
-	Use:   "code <name>",
-	Short: "Open a remote sandbox in an editor or agent via SSH",
+	Use: "code <name>",
+	// "codev2" is the pre-promotion name this command answered to; kept as an
+	// alias so scripts and docs written against it keep working.
+	Aliases: []string{"codev2"},
+	Short:   "Open a remote sandbox in an editor or agent via SSH",
 	Long: `Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport, bypassing provider-native SSH access.
 

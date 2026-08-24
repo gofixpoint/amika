@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -387,12 +388,13 @@ func TestOpenSandboxInEditorSkipsWindowsWhenNotWSL(t *testing.T) {
 // objects rather than building the tree.
 func TestSSHCommandNames(t *testing.T) {
 	for _, tt := range []struct {
-		cmd        *cobra.Command
-		wantName   string
-		wantHidden bool
+		cmd         *cobra.Command
+		wantName    string
+		wantHidden  bool
+		wantAliases []string
 	}{
-		{cmd: sandboxSSHV2Cmd, wantName: "ssh", wantHidden: false},
-		{cmd: sandboxCodeV2Cmd, wantName: "code", wantHidden: false},
+		{cmd: sandboxSSHV2Cmd, wantName: "ssh", wantHidden: false, wantAliases: []string{"sshv2"}},
+		{cmd: sandboxCodeV2Cmd, wantName: "code", wantHidden: false, wantAliases: []string{"codev2"}},
 		{cmd: sandboxSSHV1Cmd, wantName: "sshv1", wantHidden: true},
 		{cmd: sandboxCodeV1Cmd, wantName: "codev1", wantHidden: true},
 	} {
@@ -402,6 +404,9 @@ func TestSSHCommandNames(t *testing.T) {
 			}
 			if tt.cmd.Hidden != tt.wantHidden {
 				t.Errorf("Hidden = %v, want %v", tt.cmd.Hidden, tt.wantHidden)
+			}
+			if !reflect.DeepEqual(tt.cmd.Aliases, tt.wantAliases) {
+				t.Errorf("Aliases = %#v, want %#v", tt.cmd.Aliases, tt.wantAliases)
 			}
 		})
 	}

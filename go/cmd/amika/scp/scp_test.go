@@ -589,6 +589,11 @@ func TestSCPCommandRegistered(t *testing.T) {
 	if !cmd.DisableFlagParsing {
 		t.Error("scp command must disable flag parsing to forward scp flags verbatim")
 	}
+	// "scpv2" is the pre-promotion name; kept as an alias so existing scripts
+	// keep working.
+	if want := []string{"scpv2"}; !reflect.DeepEqual(cmd.Aliases, want) {
+		t.Errorf("Aliases = %#v, want %#v", cmd.Aliases, want)
+	}
 }
 
 // TestSCPV1CommandRegistered pins the superseded command's contract: it keeps

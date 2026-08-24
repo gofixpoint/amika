@@ -198,6 +198,27 @@ func TestSSHV2ForwardsArgsToSSH(t *testing.T) {
 	}
 }
 
+// TestSSHV2AliasForwardsArgsToSSH pins the "sshv2" alias to the same
+// positional-split contract as "ssh": the split must key off the token
+// actually typed (via cmd.CalledAs()), not the command's primary name, or an
+// amika flag written before the alias would wrongly be forwarded to ssh.
+func TestSSHV2AliasForwardsArgsToSSH(t *testing.T) {
+	root, h, out := newSSHV2Harness(t, []string{"amika", "sandbox", "sshv2", "-N", "-L", "6789:localhost:3010", "my-box"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v (output %q)", err, out.String())
+	}
+	if !h.ran {
+		t.Fatal("ssh was never invoked")
+	}
+	if h.alias != testV2Alias {
+		t.Errorf("alias = %q, want %q", h.alias, testV2Alias)
+	}
+	wantArgv := []string{"-N", "-L", "6789:localhost:3010", testV2Alias}
+	if !reflect.DeepEqual(h.argv, wantArgv) {
+		t.Errorf("ssh argv = %#v, want %#v", h.argv, wantArgv)
+	}
+}
+
 func TestSSHV2AmikaFlagsBeforeSubcommand(t *testing.T) {
 	t.Run("output flag before the subcommand is rejected, not forwarded", func(t *testing.T) {
 		root, h, _ := newSSHV2Harness(t, []string{"amika", "--output", "json", "sandbox", "ssh", "my-box"})

@@ -284,10 +284,6 @@ Local (`-L`) and dynamic (`-D`) forwarding are supported. Remote forwarding
 `-o`/`--output` is not available there; written before `ssh` it is rejected
 (see [Global flags](#global-flags) above).
 
-If a sandbox predates Amika's direct transport and cannot be reached this way,
-the superseded [`sandbox sshv1`](#amika-sandbox-sshv1) still connects over the
-provider's own SSH route.
-
 ### `amika sandbox code`
 
 Open a remote sandbox in an editor or coding agent over Amika's direct
@@ -337,63 +333,6 @@ amika sandbox code my-sandbox --editor=codex
 | ----------------- | -------- | -------------------------------------------------------- |
 | `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, or `codex`  |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
-
-### `amika sandbox sshv1`
-
-Superseded by [`sandbox ssh`](#amika-sandbox-ssh) and hidden from `--help`, but
-still available by name so existing scripts keep working. It connects over the
-sandbox provider's own SSH route rather than Amika's direct WebSocket
-transport, and it can also revoke that access.
-
-Unlike `sandbox ssh`, this command parses its own flags, so amika flags may be
-written after the subcommand and a command to run goes after a `--` separator.
-
-```bash
-# Interactive SSH session
-amika sandbox sshv1 my-sandbox
-
-# Run a command on the remote sandbox
-amika sandbox sshv1 my-sandbox -- ls -la
-
-# Force pseudo-terminal allocation (for interactive programs)
-amika sandbox sshv1 -t my-sandbox -- top
-
-# Print the SSH connection string instead of connecting
-amika sandbox sshv1 --print my-sandbox
-
-# Revoke SSH access
-amika sandbox sshv1 my-sandbox --revoke
-```
-
-| Flag       | Default | Description                                                              |
-| ---------- | ------- | ------------------------------------------------------------------------ |
-| `-t`       | `false` | Force pseudo-terminal allocation (useful for interactive remote programs) |
-| `--revoke` | `false` | Revoke SSH access for the sandbox                                        |
-| `--print`  | `false` | Print the SSH connection string instead of connecting                    |
-
-`--output` is rejected wherever it appears, since this command parses its own
-flags (contrast `sandbox ssh`, where the rule is positional).
-
-### `amika sandbox codev1`
-
-Superseded by [`sandbox code`](#amika-sandbox-code) and hidden from `--help`,
-but still available by name so existing scripts keep working. It opens the same
-editors, connecting through the provider's own SSH route rather than Amika's
-direct WebSocket transport.
-
-All editors connect through the Amika-managed SSH host alias `amika-<id>`,
-written to `~/.ssh/amika.conf` and included from `~/.ssh/config`.
-
-```bash
-amika sandbox codev1 my-sandbox
-amika sandbox codev1 my-sandbox --editor=cursor
-amika sandbox codev1 my-sandbox --editor=vscode
-amika sandbox codev1 my-sandbox --editor=claude
-amika sandbox codev1 my-sandbox --editor=codex
-```
-
-`--editor` and `--path` have the same values and defaults as `sandbox code`,
-and WSL behaves the same way (see `sandbox code` above).
 
 ### `amika sandbox agent-send`
 
@@ -465,23 +404,7 @@ amika scp --print ./a.txt my-sandbox:a.txt
 | ---------- | ------- | ------------------------------------------------------ |
 | `--print`  | `false` | Print the resolved `scp` command instead of running it |
 
-Unlike [`scpv1`](#amika-scpv1), a copy naming no sandbox at all is simply forwarded to the system `scp`.
-
----
-
-## `amika scpv1`
-
-Superseded by [`amika scp`](#amika-scp) and hidden from `--help`, but still available by name so existing scripts keep working. It takes the same operand forms and the same `--print` flag, but resolves each sandbox to a concrete provider-native SSH destination instead of a managed alias, and it requires that at least one source or target name a sandbox or an `scp://` host.
-
-Because it spells connection options out on the command line, a few behaviors are specific to it. When every remote is a sandbox, the connection uses `StrictHostKeyChecking=accept-new`; when an external host or a jump host is involved, no host-key option is injected (scp applies `-o` options to every hop), so your normal SSH config governs. A non-default sandbox port is carried inline as a self-porting `scp://host:port//path` operand, so sandboxes and hosts on differing ports can be copied together. A password in an `scp://user:password@host` URI is rejected, since `scp` cannot use one non-interactively.
-
-A copy between the local machine and a sandbox is **streamed over an SSH exec channel** rather than run through `scp`. Daytona's `linux-vm` SSH gateway does not deliver the client's channel-EOF to a non-interactive remote, so `scp` (and `sftp`) complete the transfer but then hang forever waiting to tear the session down. The stream instead uses remote commands that exit on their own — `cat` to download, `head -c <size>` (bounded so it never waits for EOF) to upload, with `tar` for directories (`-r`). External `scp://` copies and local-only copies keep the real `scp` binary, which has no such teardown problem. Sandbox↔sandbox and sandbox↔external copies are not yet supported over the stream (copy via the local machine in two steps).
-
-```bash
-amika scpv1 ./local.txt my-sandbox:local.txt
-amika scpv1 -r my-sandbox:/srv/out ./out
-amika scpv1 my-sandbox:/data.csv scp://user@host:22/tmp/data.csv
-```
+A copy naming no sandbox at all is simply forwarded to the system `scp`.
 
 ---
 

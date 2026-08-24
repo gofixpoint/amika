@@ -145,8 +145,11 @@ func rewriteV2Operand(tok string, resolve aliasResolver) (string, error) {
 // NewV2 builds the `amika scp` command.
 func NewV2() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "scp <source> ... <target>",
-		Short: "Copy files to or from sandboxes over SSH",
+		Use: "scp <source> ... <target>",
+		// "scpv2" is the pre-promotion name this command answered to; kept as
+		// an alias so scripts and docs written against it keep working.
+		Aliases: []string{"scpv2"},
+		Short:   "Copy files to or from sandboxes over SSH",
 		Long: `Copy files between the local machine, sandboxes, and SSH hosts using scp,
 over the same direct WebSocket transport as "amika sandbox ssh".
 

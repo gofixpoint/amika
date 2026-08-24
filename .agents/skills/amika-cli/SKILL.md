@@ -107,7 +107,6 @@ Errors go to stderr and exit non-zero (`1`).
 | `sandbox connect`                     | Interactive shell (`--shell`, default `zsh`), starting at `/home/amika`                      |
 | `sandbox code`                        | Open the sandbox in Cursor / Claude Desktop / Codex over SSH                                 |
 | `scp`                                 | Copy files to/from sandboxes; wraps the system `scp`                                         |
-| `sandbox sshv1` / `codev1` / `scpv1`  | Hidden, superseded provider-native SSH versions of the three above (see below)                |
 | `secret push` / `extract`             | Push arbitrary secrets, or discover local credentials                                        |
 | `secret claude` / `secret codex`      | `push` / `list` / `delete` agent credentials for injection                                   |
 | `secret ssh-key`                      | `create` / `push` / `list` / `delete` the SSH public keys authorizing sandbox access         |
@@ -249,19 +248,6 @@ amika sandbox ssh -t my-sandbox top             # force a PTY (ssh's own -t)
 amika sandbox ssh -N -L 6789:localhost:3010 my-sandbox   # port forward, no shell
 ```
 
-`--print` and `--revoke` are not `sandbox ssh` flags. They belong to the hidden,
-superseded `sandbox sshv1`, which connects over the provider's own SSH route and
-does parse its own flags:
-
-```bash
-amika sandbox sshv1 my-sandbox -- ls -la        # note the -- separator
-amika sandbox sshv1 --print my-sandbox          # print the connection string
-amika sandbox sshv1 my-sandbox --revoke         # revoke SSH access
-```
-
-Reach for `sshv1` (or `codev1` / `scpv1`) only when the direct transport cannot
-reach a sandbox — for instance one created before Amika exposed it.
-
 `amika scp` forwards every argument to the system `scp`, so `-r`, `-p`, `-C`,
 `-v`, `-o Option=value` all work. Path forms:
 
@@ -283,9 +269,7 @@ amika scp --print ./a.txt my-sandbox:a.txt      # show the resolved scp command
 ```
 
 `scp` uses the same direct WebSocket transport as `sandbox ssh`, so it needs the
-same `amika secret ssh-keygen` identity. Under the hidden, superseded `scpv1`,
-sandbox↔sandbox and sandbox↔external copies are not supported; go through the
-local machine in two steps.
+same `amika secret ssh-keygen` identity.
 
 ## Snapshots and services
 
