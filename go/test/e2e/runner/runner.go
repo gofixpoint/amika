@@ -23,12 +23,154 @@ import (
 // Case is a parsed E2E case file: a human-readable name and an ordered
 // sequence of steps run against the amika binary.
 type Case struct {
-	Name  string `yaml:"name"`
-	Steps []Step `yaml:"steps"`
+	Name string `yaml:"name"`
+	// Vars declares case-level "{{var}}" values, resolved once against the
+	// run's sandbox provider before the first step. Use them for values a
+	// case must assert exactly but which legitimately differ per provider.
+	Vars  map[string]VarSpec `yaml:"vars"`
+	Steps []Step             `yaml:"steps"`
 
 	// SourcePath is the file the case was loaded from. Not part of the
 	// YAML schema; set by LoadCase for diagnostics.
 	SourcePath string `yaml:"-"`
+}
+
+// SupportedSandboxProviders is the set of provider names a case may select or
+// key a VarSpec on. It is the single source of truth shared by the E2E entry
+// point's -sandbox-provider validation and VarSpec's load-time key checking,
+// so a provider added in one place cannot be silently unknown in the other.
+var SupportedSandboxProviders = map[string]bool{
+	"daytona":   true,
+	"e2b":       true,
+	"freestyle": true,
+	"vercel":    true,
+}
+
+// varDefaultKey is the VarSpec mapping key holding the value used when no
+// per-provider entry matches the run's provider.
+const varDefaultKey = "default"
+
+// reservedVarNames are the "{{var}}" names the runner defines itself. A case
+// may not declare them, because shadowing e.g. {{run_id}} would silently
+// break the uniqueness that remote resource names depend on.
+var reservedVarNames = map[string]bool{
+	"run_id":           true,
+	"sandbox_provider": true,
+}
+
+// VarSpec is one entry in a case's "vars" block: either a plain scalar (a
+// constant for every provider) or a mapping of provider names to values with
+// an optional "default".
+//
+//	vars:
+//	  plain_value: always-this
+//	  expected_size:
+//	    default: m
+//	    daytona: a0.m
+//
+// A mapping without a "default" must enumerate every provider in
+// SupportedSandboxProviders, so a run on an unlisted provider fails at load
+// time rather than mid-case with an undefined-variable error.
+type VarSpec struct {
+	// Value is the resolved value for a scalar spec.
+	Value string
+	// Default is the fallback for a mapping spec; DefaultSet distinguishes an
+	// absent "default" from one explicitly set to the empty string.
+	Default    string
+	DefaultSet bool
+	// ByProvider maps a provider name to its value, excluding "default".
+	ByProvider map[string]string
+
+	// scalar records that the spec was written as a plain scalar, so an
+	// explicit empty string is not mistaken for an empty mapping.
+	scalar bool
+}
+
+// UnmarshalYAML accepts either a scalar or a mapping, so the common
+// (non-conditional) case stays a one-liner in the case file.
+func (v *VarSpec) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		var s string
+		if err := node.Decode(&s); err != nil {
+			return err
+		}
+		v.Value = s
+		v.scalar = true
+		return nil
+	case yaml.MappingNode:
+		raw := map[string]string{}
+		if err := node.Decode(&raw); err != nil {
+			return err
+		}
+		v.ByProvider = make(map[string]string, len(raw))
+		for key, value := range raw {
+			if key == varDefaultKey {
+				v.Default = value
+				v.DefaultSet = true
+				continue
+			}
+			v.ByProvider[key] = value
+		}
+		return nil
+	default:
+		return fmt.Errorf("must be a scalar or a mapping of provider names to values")
+	}
+}
+
+// Resolve returns the spec's value for provider, reporting false when a
+// mapping spec has neither an entry for provider nor a default.
+func (v VarSpec) Resolve(provider string) (string, bool) {
+	if v.scalar {
+		return v.Value, true
+	}
+	if value, ok := v.ByProvider[provider]; ok {
+		return value, true
+	}
+	if v.DefaultSet {
+		return v.Default, true
+	}
+	return "", false
+}
+
+// validate checks one declared var, named for diagnostics.
+func (v VarSpec) validate(name string) error {
+	if v.scalar {
+		return nil
+	}
+	if !v.DefaultSet && len(v.ByProvider) == 0 {
+		return fmt.Errorf("var %q: mapping must set %q or at least one provider", name, varDefaultKey)
+	}
+	// Reject an unknown provider key rather than letting it fall through to
+	// the default: a typo like "daytonaa" would otherwise make the case pass
+	// against the default value on every provider, asserting nothing.
+	unknown := make([]string, 0, len(v.ByProvider))
+	for key := range v.ByProvider {
+		if !SupportedSandboxProviders[key] {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Errorf("var %q: unknown provider key(s) %s", name, strings.Join(unknown, ", "))
+	}
+	if v.DefaultSet {
+		return nil
+	}
+	// No default, so every provider must be covered or a run on the missing
+	// one would fail mid-case on an undefined variable.
+	missing := make([]string, 0, len(SupportedSandboxProviders))
+	for provider := range SupportedSandboxProviders {
+		if _, ok := v.ByProvider[provider]; !ok {
+			missing = append(missing, provider)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("var %q: no %q, so every provider must be listed; missing %s",
+			name, varDefaultKey, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // Step is a single command execution and the assertions to make about its
@@ -176,6 +318,23 @@ func LoadCase(path string) (*Case, error) {
 	if len(c.Steps) == 0 {
 		return nil, fmt.Errorf("case %s: at least one step is required", path)
 	}
+	// Validate declared vars in sorted order for a deterministic error.
+	varNames := make([]string, 0, len(c.Vars))
+	for name := range c.Vars {
+		varNames = append(varNames, name)
+	}
+	sort.Strings(varNames)
+	for _, name := range varNames {
+		if !validVarNamePattern.MatchString(name) {
+			return nil, fmt.Errorf("case %s: var name %q must match %s", path, name, validVarNameGrammar)
+		}
+		if reservedVarNames[name] {
+			return nil, fmt.Errorf("case %s: var %q is defined by the runner and cannot be redeclared", path, name)
+		}
+		if err := c.Vars[name].validate(name); err != nil {
+			return nil, fmt.Errorf("case %s: %w", path, err)
+		}
+	}
 	for i, step := range c.Steps {
 		if step.Name == "" {
 			return nil, fmt.Errorf("case %s: step %d: \"name\" is required", path, i+1)
@@ -196,6 +355,13 @@ func LoadCase(path string) (*Case, error) {
 		for _, name := range captureNames {
 			if !validVarNamePattern.MatchString(name) {
 				return nil, fmt.Errorf("case %s: step %d (%s): capture name %q must match %s", path, i+1, step.Name, name, validVarNameGrammar)
+			}
+			// A capture that reuses a declared var's name would overwrite the
+			// provider-resolved value partway through the case, so every
+			// "{{name}}" before this step means something different from every
+			// one after it. Reject the shadowing instead.
+			if _, declared := c.Vars[name]; declared {
+				return nil, fmt.Errorf("case %s: step %d (%s): capture name %q shadows a declared var", path, i+1, step.Name, name)
 			}
 		}
 		if step.Resource != nil {
@@ -419,10 +585,34 @@ func (r *Runner) Vars() map[string]string {
 // runs on the normal failure path rather than being skipped by a killed
 // process.
 func (r *Runner) RunCase(ctx context.Context, c *Case) error {
+	if err := r.applyCaseVars(c); err != nil {
+		return fmt.Errorf("case %q: %w", c.Name, err)
+	}
 	for i, step := range c.Steps {
 		if err := r.runStep(ctx, i, step); err != nil {
 			return fmt.Errorf("case %q step %d (%s): %w", c.Name, i+1, step.Name, err)
 		}
+	}
+	return nil
+}
+
+// applyCaseVars resolves the case's declared vars against the run's sandbox
+// provider and merges them into the template vars, before any step runs. Load
+// time already rejected an unresolvable spec, so a failure here means the run
+// selected a provider the case does not cover.
+func (r *Runner) applyCaseVars(c *Case) error {
+	names := make([]string, 0, len(c.Vars))
+	for name := range c.Vars {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value, ok := c.Vars[name].Resolve(r.opts.SandboxProvider)
+		if !ok {
+			return fmt.Errorf("var %q has no value for provider %q and no %q",
+				name, r.opts.SandboxProvider, varDefaultKey)
+		}
+		r.vars[name] = value
 	}
 	return nil
 }

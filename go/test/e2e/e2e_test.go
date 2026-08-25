@@ -55,12 +55,7 @@ func providerFromEnv() string {
 }
 
 func validSandboxProvider(provider string) bool {
-	switch provider {
-	case "daytona", "e2b", "freestyle", "vercel":
-		return true
-	default:
-		return false
-	}
+	return runner.SupportedSandboxProviders[provider]
 }
 
 // cleanupReserve is how much of the `go test` -timeout budget is held back

@@ -1,6 +1,16 @@
 name: selected provider coder-dind base snapshot contract
 # This real-API case verifies the selected provider's medium DinD
 # base snapshot, including a Docker container smoke test in the boot verifier.
+vars:
+  # See api-base-snapshot-coder.yaml for why the request and the expectation
+  # are both provider-conditional. coder-dind excludes the xs tier, so a1.tiny
+  # has no dind image; a1.medium does.
+  request_size:
+    default: m
+    e2b: a1.medium
+  expected_size:
+    default: a0.m
+    e2b: a1.medium
 steps:
   - name: register the local SSH public key for sandbox ssh
     cmd: [secret, ssh-key, create, --name, "e2e-{{sandbox_provider}}-dind-{{run_id}}", -o, json]
@@ -17,7 +27,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a medium coder-dind sandbox from the selected provider base snapshot
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-dind, --size, m, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-dind, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -26,7 +36,7 @@ steps:
         provider: "{{sandbox_provider}}"
         snapshot: "@string"
         sandbox_preset: coder-dind
-        sandbox_size: m
+        sandbox_size: "{{expected_size}}"
     capture:
       sandbox_name: $.name
     resource:

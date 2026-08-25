@@ -10,9 +10,16 @@ name: remote sandbox lifecycle (create, list, agent-send, stop, start, delete)
 # depends on the sandbox provider and can fail transiently (HTTP 502), which
 # would redden this core lifecycle and orphan a snapshot. They live in
 # api-snapshot-lifecycle.yaml so that flakiness stays isolated.
+vars:
+  # A bare size alias ("xs") is normalized by the API to the a0 generation for
+  # every provider. E2B publishes no a0 images (see snapshots.cue: a1 only), so
+  # it must be asked for the equivalent a1 name instead.
+  request_size:
+    default: xs
+    e2b: a1.tiny
 steps:
   - name: create a remote sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox

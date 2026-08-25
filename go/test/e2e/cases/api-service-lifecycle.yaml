@@ -6,9 +6,16 @@ name: remote service lifecycle (create source sandbox, create service, list, del
 # lifecycle. Both the service and the sandbox are registered as resources for
 # reverse-order ledger cleanup: the service (registered last) is deleted first,
 # then the sandbox.
+vars:
+  # A bare size alias ("xs") is normalized by the API to the a0 generation for
+  # every provider. E2B publishes no a0 images (see snapshots.cue: a1 only), so
+  # it must be asked for the equivalent a1 name instead.
+  request_size:
+    default: xs
+    e2b: a1.tiny
 steps:
   - name: create a source sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, xs, --yes, -o, json]
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
