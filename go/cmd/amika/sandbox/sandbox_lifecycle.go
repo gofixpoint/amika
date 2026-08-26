@@ -230,6 +230,28 @@ func finishBatch(cmd *cobra.Command, format output.Format, items []any, failed [
 	return nil
 }
 
+// sandboxListRow is one line of `sandbox list` output: the sandbox as the local
+// service or the remote API returned it, plus the two columns the table shows
+// that neither response carries for both kinds.
+//
+// Deliberately not fields on `amika.Sandbox`. That type is the response body of
+// the public `amika.Service` and of `GET`/`POST /v1/sandboxes`, so a field there
+// is advertised in the served schema and has to be populated by every service
+// mapping. For a local sandbox these two would only repeat `ContainerID` and
+// `Image`, which the response already carries; they say something new only for a
+// remote sandbox, which never passes through that service at all. So they belong
+// to the table, which is the one place that has to describe both kinds in the
+// same columns.
+type sandboxListRow struct {
+	amika.Sandbox
+	// ID identifies the sandbox: the control-plane id for a remote one, the
+	// backing container for a local one, which is the thing you can inspect.
+	ID string
+	// BaseSnapshot names what the sandbox was built from: the snapshot label for
+	// a remote one, the Docker image for a local one.
+	BaseSnapshot string
+}
+
 var sandboxListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
@@ -246,7 +268,7 @@ var sandboxListCmd = &cobra.Command{
 			return err
 		}
 
-		var allItems []amika.Sandbox
+		var allItems []sandboxListRow
 		// jsonItems mirrors the API's ListSandboxesResponse shape (an array of
 		// Sandbox) for -o json, per the unification decision: local sandboxes are
 		// emitted in the same shape as remote ones (see remoteSandboxFromPublic),
@@ -260,15 +282,21 @@ var sandboxListCmd = &cobra.Command{
 			}
 			for i := range result.Items {
 				result.Items[i].Location = "local"
-				// A local sandbox is its container, and it was built from a
-				// Docker image, so those are its id and its base.
-				result.Items[i].ID = result.Items[i].ContainerID
-				result.Items[i].BaseSnapshot = result.Items[i].Image
 				if result.Items[i].Provider == "docker" {
 					result.Items[i].State = localDockerState(result.Items[i].Name)
 				}
 			}
-			allItems = append(allItems, result.Items...)
+			for _, sb := range result.Items {
+				// A local sandbox is its container, and it was built from a
+				// Docker image, so those are the two columns for it. Both are
+				// already on the response under their local names; this only
+				// puts them where the shared table reads them from.
+				allItems = append(allItems, sandboxListRow{
+					Sandbox:      sb,
+					ID:           sb.ContainerID,
+					BaseSnapshot: sb.Image,
+				})
+			}
 			for _, sb := range result.Items {
 				jsonItems = append(jsonItems, remoteSandboxFromPublic(sb))
 			}
@@ -289,19 +317,22 @@ var sandboxListCmd = &cobra.Command{
 			}
 			jsonItems = remoteSandboxes
 			for _, rs := range remoteSandboxes {
-				allItems = append(allItems, amika.Sandbox{
-					Name:      rs.Name,
-					ID:        rs.ID,
-					State:     rs.State,
-					Provider:  deref(rs.Provider),
-					CreatedAt: rs.CreatedAt,
-					Location:  "remote",
-					Branch:    deref(rs.Branch),
-					Repos:     repoNamesFromURL(deref(rs.RepoURL)),
-					Ports:     portBindingsFromRemoteServices(rs.Services),
-					CreatedBy: creatorFromRemote(rs.CreatedBy),
-					// Neither of these was carried across before, so the long
-					// table's base column was blank for every remote sandbox.
+				allItems = append(allItems, sandboxListRow{
+					Sandbox: amika.Sandbox{
+						Name:      rs.Name,
+						State:     rs.State,
+						Provider:  deref(rs.Provider),
+						CreatedAt: rs.CreatedAt,
+						Location:  "remote",
+						Branch:    deref(rs.Branch),
+						Repos:     repoNamesFromURL(deref(rs.RepoURL)),
+						Ports:     portBindingsFromRemoteServices(rs.Services),
+						CreatedBy: creatorFromRemote(rs.CreatedBy),
+					},
+					// Neither of these was carried across before, which is why
+					// the long table's base column was blank for every remote
+					// sandbox and had no id column to fill at all.
+					ID:           rs.ID,
 					BaseSnapshot: remoteBaseSnapshot(rs),
 				})
 			}
