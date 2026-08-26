@@ -260,6 +260,10 @@ var sandboxListCmd = &cobra.Command{
 			}
 			for i := range result.Items {
 				result.Items[i].Location = "local"
+				// A local sandbox is its container, and it was built from a
+				// Docker image, so those are its id and its base.
+				result.Items[i].ID = result.Items[i].ContainerID
+				result.Items[i].BaseSnapshot = result.Items[i].Image
 				if result.Items[i].Provider == "docker" {
 					result.Items[i].State = localDockerState(result.Items[i].Name)
 				}
@@ -287,6 +291,7 @@ var sandboxListCmd = &cobra.Command{
 			for _, rs := range remoteSandboxes {
 				allItems = append(allItems, amika.Sandbox{
 					Name:      rs.Name,
+					ID:        rs.ID,
 					State:     rs.State,
 					Provider:  deref(rs.Provider),
 					CreatedAt: rs.CreatedAt,
@@ -295,6 +300,9 @@ var sandboxListCmd = &cobra.Command{
 					Repos:     repoNamesFromURL(deref(rs.RepoURL)),
 					Ports:     portBindingsFromRemoteServices(rs.Services),
 					CreatedBy: creatorFromRemote(rs.CreatedBy),
+					// Neither of these was carried across before, so the long
+					// table's base column was blank for every remote sandbox.
+					BaseSnapshot: remoteBaseSnapshot(rs),
 				})
 			}
 		}
@@ -322,9 +330,13 @@ var sandboxListCmd = &cobra.Command{
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		if long {
-			fmt.Fprintln(w, "NAME\tSTATE\tREPO\tBRANCH\tCREATOR\tLOCATION\tIMAGE\tPORTS\tCREATED")
+			// ID sits beside NAME because they identify the same thing, and the
+			// base snapshot replaces IMAGE: it is the field's own name in the
+			// API, and it covers a remote snapshot and a local Docker image
+			// alike, which "IMAGE" did not.
+			fmt.Fprintln(w, "NAME\tID\tSTATE\tREPO\tBRANCH\tCREATOR\tLOCATION\tBASE_SNAPSHOT\tPORTS\tCREATED")
 			for _, sb := range allItems {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy), sb.Location, sb.Image, formatPortBindings(sb.Ports), sb.CreatedAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, dash(sb.ID), sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy), sb.Location, dash(sb.BaseSnapshot), formatPortBindings(sb.Ports), sb.CreatedAt)
 			}
 		} else {
 			fmt.Fprintln(w, "NAME\tSTATE\tREPO\tBRANCH\tCREATOR")
@@ -369,6 +381,25 @@ func creatorFromRemote(c *apiclient.RemoteSandboxCreator) *amika.SandboxCreator 
 		out.Email = *c.Email
 	}
 	return out
+}
+
+// remoteBaseSnapshot prefers the readable label a provider that addresses
+// snapshots by an opaque id carries separately (Freestyle), and falls back to
+// the value itself for the name-native ones (Daytona).
+func remoteBaseSnapshot(rs apiclient.RemoteSandbox) string {
+	if name := deref(rs.SnapshotName); name != "" {
+		return name
+	}
+	return deref(rs.Snapshot)
+}
+
+// dash keeps a column readable when a sandbox has no value for it, so an empty
+// cell is legible as empty rather than as the next column having shifted left.
+func dash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func formatCreatedBy(c *amika.SandboxCreator) string {

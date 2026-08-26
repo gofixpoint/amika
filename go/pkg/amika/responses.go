@@ -2,21 +2,30 @@ package amika
 
 // Sandbox is a tracked sandbox description.
 type Sandbox struct {
-	Name        string
+	Name string
+	// ID identifies the sandbox: the control plane's sandbox id for a remote
+	// one, the backing container id for a local one. Either is what you paste
+	// into another command, so it is shown in full rather than abbreviated.
+	ID          string
 	State       string
 	Provider    string
 	ContainerID string
 	Image       string
-	CreatedAt   string
-	Preset      string
-	Location    string // "local" or "remote"
-	Branch      string
-	Repos       []string
-	Mounts      []Mount
-	Env         []string
-	Ports       []PortBinding
-	Services    []ServiceInfo
-	CreatedBy   *SandboxCreator
+	// BaseSnapshot names what the sandbox was built from: the snapshot or image
+	// label for a remote one, the Docker image for a local one. Distinct from
+	// Image, which stays the local-only Docker reference that the local create
+	// path sets and reads.
+	BaseSnapshot string
+	CreatedAt    string
+	Preset       string
+	Location     string // "local" or "remote"
+	Branch       string
+	Repos        []string
+	Mounts       []Mount
+	Env          []string
+	Ports        []PortBinding
+	Services     []ServiceInfo
+	CreatedBy    *SandboxCreator
 }
 
 // SandboxCreator identifies the human who created a sandbox. Populated only
