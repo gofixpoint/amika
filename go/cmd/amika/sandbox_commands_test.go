@@ -104,10 +104,11 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
 	store := sandbox.NewStore(filepath.Join(dir, "sandboxes.jsonl"))
 	if err := store.Save(sandbox.Info{
-		Name:      "sb-a",
-		Provider:  "docker",
-		Image:     "img",
-		CreatedAt: "now",
+		Name:        "sb-a",
+		Provider:    "docker",
+		ContainerID: "container-a",
+		Image:       "img",
+		CreatedAt:   "now",
 		Ports: []sandbox.PortBinding{
 			{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
 		},
@@ -124,7 +125,7 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 			t.Fatalf("missing default column %q: %s", col, out)
 		}
 	}
-	for _, col := range []string{"PROVIDER", "PORTS", "IMAGE", "LOCATION", "CREATED"} {
+	for _, col := range []string{"PROVIDER", "PORTS", "BASE_SNAPSHOT", "LOCATION", "CREATED", "\tID"} {
 		if strings.Contains(out, col) {
 			t.Fatalf("unexpected long-only column %q in default output: %s", col, out)
 		}
@@ -137,10 +138,25 @@ func TestSandboxListCommand_PrintsRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sandbox list --long failed: %v", err)
 	}
-	if !strings.Contains(longOut, "IMAGE") || !strings.Contains(longOut, "PORTS") {
-		t.Fatalf("missing long header: %s", longOut)
+	// Every column `--long` promises, including the two it did not carry
+	// before: the sandbox's id, and the base it was built from under the name
+	// the API gives that field rather than "IMAGE".
+	for _, col := range []string{"NAME", "ID", "STATE", "REPO", "BRANCH", "CREATOR", "LOCATION", "BASE_SNAPSHOT", "PORTS", "CREATED"} {
+		if !strings.Contains(longOut, col) {
+			t.Fatalf("missing long column %q: %s", col, longOut)
+		}
+	}
+	if strings.Contains(longOut, "IMAGE") {
+		t.Fatalf("IMAGE should have been replaced by BASE_SNAPSHOT: %s", longOut)
 	}
 	if !strings.Contains(longOut, "127.0.0.1:8080->80/tcp") {
 		t.Fatalf("missing ports in long row: %s", longOut)
+	}
+	// A local sandbox is its container, and it was built from a Docker image, so
+	// those are what its id and base columns say.
+	for _, want := range []string{"container-a", "img"} {
+		if !strings.Contains(longOut, want) {
+			t.Fatalf("missing %q in long row: %s", want, longOut)
+		}
 	}
 }

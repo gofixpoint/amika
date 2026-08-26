@@ -102,18 +102,26 @@ func remoteSandboxServicesFromPublic(services []amika.ServiceInfo) []apiclient.R
 // remoteSandboxFromInfo builds the `sandbox create` JSON for a local sandbox
 // as an apiclient.RemoteSandbox: the same API-shaped mirror type used for
 // remote sandboxes (decision: unify local output to the API's Sandbox shape).
-// Only fields with a local meaning are populated (id/name, provider, branch,
-// services, state, created_at); API-only fields (org_id, user_id,
-// provider_url, repo_*, snapshot, etc.) are left null or empty, since a local
-// Docker sandbox has no such concept. ContainerID and Image have no schema
-// equivalent but are preserved as extra keys (the schema's
-// additionalProperties allows this) rather than dropped.
+// Only fields with a local meaning are populated; the ones with no local
+// equivalent at all (org_id, user_id, provider_url, created_by) are left null
+// or empty. ContainerID and Image have no schema equivalent but are preserved
+// as extra keys (the schema's additionalProperties allows this) rather than
+// dropped.
+//
+// `repo_name` and `snapshot` are populated even though a local Docker sandbox
+// has neither concept natively, because it has an equivalent of each: repos are
+// the workspace mounts, and the base it was built from is its image. The point
+// of the mirror is that one field name answers a question for both kinds, so a
+// script does not have to know whether it is reading a local sandbox to find the
+// base. `image` stays alongside as the local-native spelling.
 func remoteSandboxFromInfo(info sandbox.Info, state string) apiclient.RemoteSandbox {
 	return apiclient.RemoteSandbox{
 		ID:          info.Name,
 		Name:        info.Name,
 		Provider:    stringPtr(info.Provider),
 		Branch:      stringPtr(info.Branch),
+		RepoName:    repoNameForJSON(amika.ExtractRepoNamesFromMounts(mountsFromInfo(info.Mounts))),
+		Snapshot:    stringPtr(info.Image),
 		Services:    remoteSandboxServicesFromInfo(info.Services),
 		State:       state,
 		CreatedAt:   info.CreatedAt,
@@ -123,15 +131,48 @@ func remoteSandboxFromInfo(info sandbox.Info, state string) apiclient.RemoteSand
 	}
 }
 
+// mountsFromInfo converts stored mounts to the public shape that
+// ExtractRepoNamesFromMounts reads, so the repo names in the JSON come from the
+// same derivation the service layer uses rather than a second copy of the rule.
+func mountsFromInfo(in []sandbox.MountBinding) []amika.Mount {
+	out := make([]amika.Mount, 0, len(in))
+	for _, m := range in {
+		out = append(out, amika.Mount{
+			Type:         m.Type,
+			Source:       m.Source,
+			Volume:       m.Volume,
+			Target:       m.Target,
+			Mode:         m.Mode,
+			SnapshotFrom: m.SnapshotFrom,
+		})
+	}
+	return out
+}
+
+// repoNameForJSON renders the mounted repos into the schema's single
+// `repo_name`, joined exactly as the table's REPO column joins them so the two
+// outputs cannot disagree about the same sandbox. Nil when there are none, so
+// the field is null rather than an empty string.
+func repoNameForJSON(repos []string) *string {
+	joined := formatRepos(repos)
+	if joined == "" {
+		return nil
+	}
+	return &joined
+}
+
 // remoteSandboxFromPublic is remoteSandboxFromInfo's counterpart for
 // `sandbox list`, which reads local sandboxes through the pkg/amika service
 // layer (amika.Sandbox) rather than sandbox.Info directly.
 func remoteSandboxFromPublic(sb amika.Sandbox) apiclient.RemoteSandbox {
 	return apiclient.RemoteSandbox{
-		ID:          sb.Name,
-		Name:        sb.Name,
-		Provider:    stringPtr(sb.Provider),
-		Branch:      stringPtr(sb.Branch),
+		ID:       sb.Name,
+		Name:     sb.Name,
+		Provider: stringPtr(sb.Provider),
+		Branch:   stringPtr(sb.Branch),
+		// See remoteSandboxFromInfo on why a local sandbox reports these.
+		RepoName:    repoNameForJSON(sb.Repos),
+		Snapshot:    stringPtr(sb.Image),
 		Services:    remoteSandboxServicesFromPublic(sb.Services),
 		State:       sb.State,
 		CreatedAt:   sb.CreatedAt,

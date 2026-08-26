@@ -167,7 +167,7 @@ amika sandbox list
 
 Output columns: `NAME`, `STATE`, `REPO`, `BRANCH`, `CREATOR`.
 
-Pass `-l`/`--long` for the full set, which adds `LOCATION`, `IMAGE`, `PORTS`, and `CREATED`:
+Pass `-l`/`--long` for the full set, which adds `ID`, `LOCATION`, `BASE_SNAPSHOT`, `PORTS`, and `CREATED`:
 
 ```bash
 amika sandbox list --long
@@ -178,6 +178,12 @@ Column selection applies only to `--output text`. `-o json` and `-o json-pretty`
 The `REPO` column lists the repositories mounted into the sandbox workspace (`/home/amika/workspace/<repo>`). For remote sandboxes it shows the repository name parsed from the sandbox's `repo_url`.
 
 The `CREATOR` column shows the human who created a remote sandbox (name, falling back to email). It is always `-` for local sandboxes and for remote sandboxes whose creator the server could not resolve (deleted user, API-key principal, or `noop` auth mode).
+
+The `ID` column shows the sandbox id for a remote sandbox, and the backing container id for a local one, which is the identifier you can inspect with `docker`. Note that `-o json` reports `id` as the sandbox's *name* for a local sandbox, since that is what addresses it in every other command; its container is carried separately as `container_id`.
+
+The `BASE_SNAPSHOT` column shows what the sandbox was built from: the snapshot or image label for a remote sandbox, and the Docker image for a local one. It replaces the former `IMAGE` column, which was only ever populated for local sandboxes. Both kinds report it as `snapshot` in `-o json`; a local sandbox also keeps `image` as the local-native spelling.
+
+Either column shows `-` when the sandbox has no value for it.
 
 ### `amika sandbox connect`
 
