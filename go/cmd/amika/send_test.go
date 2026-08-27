@@ -22,7 +22,7 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	if send == nil {
 		t.Fatal("send command not registered on rootCmd")
 	}
-	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo", "stream"} {
+	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo", "stream", "model", "effort"} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
 		}
@@ -37,6 +37,51 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	}
 	if findChildCommand(sessions, "show") == nil {
 		t.Error("sessions has no show subcommand")
+	}
+}
+
+func TestSendModelsSubcommandRegistered(t *testing.T) {
+	send := findChildCommand(rootCmd, "send")
+	if send == nil {
+		t.Fatal("send command not registered on rootCmd")
+	}
+	if findChildCommand(send, "models") == nil {
+		t.Fatal("send has no models subcommand")
+	}
+}
+
+// Cobra reads a backquoted span in a usage string as the flag's value
+// placeholder, so a description mentioning `amika send models` in backticks made
+// --model advertise its argument type as "amika send models" instead of
+// "string". Asserting the type keeps that from creeping back.
+func TestSendTuningFlagsAdvertiseStringValues(t *testing.T) {
+	send := findChildCommand(rootCmd, "send")
+	if send == nil {
+		t.Fatal("send command not registered on rootCmd")
+	}
+	for _, name := range []string{"model", "effort"} {
+		flag := send.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("send is missing --%s flag", name)
+		}
+		if flag.Value.Type() != "string" {
+			t.Errorf("--%s value type = %q, want string", name, flag.Value.Type())
+		}
+		if strings.Contains(flag.Usage, "`") {
+			t.Errorf("--%s usage contains a backquote, which cobra reads as the value placeholder: %q", name, flag.Usage)
+		}
+	}
+}
+
+func TestJoinOrDash(t *testing.T) {
+	if got := joinOrDash(nil); got != "-" {
+		t.Errorf("joinOrDash(nil) = %q, want -", got)
+	}
+	if got := joinOrDash([]string{}); got != "-" {
+		t.Errorf("joinOrDash(empty) = %q, want -", got)
+	}
+	if got := joinOrDash([]string{"opus", "sonnet"}); got != "opus, sonnet" {
+		t.Errorf("joinOrDash = %q", got)
 	}
 }
 

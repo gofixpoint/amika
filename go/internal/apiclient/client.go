@@ -852,6 +852,26 @@ type AgentSessionSendRequest struct {
 	SandboxID  string `json:"sandbox_id,omitempty"`
 	NewSession bool   `json:"new_session,omitempty"`
 	RepoURL    string `json:"repo_url,omitempty"`
+	// Model and Effort ask the agent to run a particular model at a particular
+	// reasoning effort. Both omitted means the agent's own default, which is
+	// what every send did before they existed. The server validates them
+	// against its own allowlist and rejects a model belonging to the other
+	// agent, so the CLI passes them through rather than second-guessing which
+	// names are current.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
+// AgentModelOptions is one agent's entry in GET /api/v0beta1/agent-sessions/models.
+type AgentModelOptions struct {
+	Agent   string   `json:"agent"`
+	Models  []string `json:"models"`
+	Efforts []string `json:"efforts"`
+}
+
+// AgentModelOptionsResponse is the body of GET /api/v0beta1/agent-sessions/models.
+type AgentModelOptionsResponse struct {
+	Agents []AgentModelOptions `json:"agents"`
 }
 
 // AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and
@@ -1192,6 +1212,26 @@ func (c *Client) ListAgentSessions(limit int) (*ListAgentSessionsResponse, error
 	// Normalize here so the one encode type always emits [], never null.
 	if result.Sessions == nil {
 		result.Sessions = []AgentSessionSummary{}
+	}
+	return &result, nil
+}
+
+// GetAgentModelOptions returns the models and effort levels each agent
+// supports, as the server currently defines them.
+//
+// Asked rather than compiled in: the CLI ships separately from the control
+// plane, so a list baked into this binary would go stale the moment a model is
+// added or dropped server-side, and would then reject a name the server would
+// have accepted.
+func (c *Client) GetAgentModelOptions() (*AgentModelOptionsResponse, error) {
+	var result AgentModelOptionsResponse
+	if err := c.doJSON(
+		"GET", apiBasePath+"/agent-sessions/models", nil, &result,
+	); err != nil {
+		return nil, fmt.Errorf("remote get agent models: %w", err)
+	}
+	if result.Agents == nil {
+		result.Agents = []AgentModelOptions{}
 	}
 	return &result, nil
 }
