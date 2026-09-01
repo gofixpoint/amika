@@ -7,5 +7,15 @@ packages:
 # own `packageManager` pin, and both `sdk-typescript.yml` and the OIDC publish
 # workflow install from that lockfile. Absorbing it here would orphan it.
 
-onlyBuiltDependencies:
-  - esbuild
+# pnpm 11 replaced `onlyBuiltDependencies` with an explicit per-package map.
+# These values preserve pnpm 10's behavior exactly: esbuild's install scripts
+# ran, everything else's did not. protobufjs is new to the list only because
+# pnpm 11 now names every package it skips.
+allowBuilds:
+  esbuild: true
+  protobufjs: false
+
+# Moved from the root package.json's `pnpm` field, which pnpm 11 no longer
+# reads. Pins a transitive dep below the 7-day package-age gate in CI.
+overrides:
+  "@bufbuild/protobuf": "2.13.0"
