@@ -76,6 +76,15 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 | `deleteSandbox(name)`       | `DELETE /sandboxes/{name}`                |
 | `listRepositories()`        | `GET /repositories`                       |
 
+### Services
+
+| Method                                           | Endpoint                                        |
+| ------------------------------------------------ | ----------------------------------------------- |
+| `listSandboxServices(sandboxRef?)`               | `GET /sandbox-services`                         |
+| `createSandboxService(sandboxRef, req)`          | `POST /sandboxes/{ref}/services`                |
+| `putSandboxService(sandboxRef, serviceRef, req)` | `PUT /sandboxes/{ref}/services/{serviceRef}`    |
+| `deleteSandboxService(sandboxRef, serviceRef)`   | `DELETE /sandboxes/{ref}/services/{serviceRef}` |
+
 ### SSH
 
 | Method                   | Endpoint                       |

@@ -23,5 +23,15 @@ describeFunctional("org resources functional tests", () => {
         expect(typeof repo.repoUrl).toBe("string");
       }
     });
+
+    it("listSandboxServices returns every service in the org", async () => {
+      const services = await client.listSandboxServices();
+      expect(Array.isArray(services)).toBe(true);
+      for (const service of services) {
+        expect(typeof service.name).toBe("string");
+        expect(typeof service.port).toBe("number");
+        expect(["table", "legacy"]).toContain(service.source);
+      }
+    });
   });
 });

@@ -15,6 +15,8 @@
 // on a pointer encodes nil as an omitted key, so the server never distinguishes
 // the two either.
 
+import { AmikaError } from "@/errors";
+
 // ---------- Sandboxes ----------
 
 /**
@@ -519,6 +521,102 @@ export function updateSessionRequestToWire(
   });
 }
 
+// ---------- Sandbox services ----------
+
+/**
+ * One service on a sandbox, as returned by the /sandbox-services endpoints.
+ * It unifies rows from the `sandbox_services` table with legacy jsonb entries:
+ * `source` discriminates ("table" or "legacy") and `kind` is "system" or
+ * "user". A legacy or not-yet-provisioned service has a null `url`/`urlScheme`.
+ *
+ * Distinct from {@link RemoteSandboxService}, the abbreviated form nested in a
+ * sandbox resource.
+ */
+export interface SandboxServiceResource {
+  id: string | null;
+  sandboxId: string;
+  name: string;
+  port: number;
+  urlScheme: string | null;
+  protocol: string;
+  url: string | null;
+  hostPort: number | null;
+  source: string;
+  kind: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export function sandboxServiceResourceFromWire(
+  w: Record<string, unknown>,
+): SandboxServiceResource {
+  return {
+    id: nullableStr(w["id"]),
+    sandboxId: str(w["sandbox_id"]),
+    name: str(w["name"]),
+    port: num(w["port"]),
+    urlScheme: nullableStr(w["url_scheme"]),
+    protocol: str(w["protocol"]),
+    url: nullableStr(w["url"]),
+    hostPort: nullableNum(w["host_port"]),
+    source: str(w["source"]),
+    kind: str(w["kind"]),
+    createdAt: nullableStr(w["created_at"]),
+    updatedAt: nullableStr(w["updated_at"]),
+  };
+}
+
+/** Request body for creating (POST) or replacing (PUT) a sandbox service. */
+export interface SandboxServiceRequest {
+  name: string;
+  /** A user-assignable container port. See {@link validateServicePort}. */
+  port: number;
+  urlScheme: "http" | "https";
+}
+
+/**
+ * Inclusive lower bound of the container port range Amika reserves for its own
+ * sandbox services.
+ */
+export const RESERVED_PORT_MIN = 60899;
+/**
+ * Inclusive upper bound of the reserved range (the OpenCode web UI runs on
+ * 60998 and the amikad daemon on 60999). See `docs/sandbox-configuration.md`
+ * for the full allocation table.
+ */
+export const RESERVED_PORT_MAX = 60999;
+
+/**
+ * Throw unless `port` is a legal, user-assignable container port: within
+ * 1-65535 and outside the reserved Amika range. Mirrors Go's
+ * `services.ValidatePort`, including its messages, so the same bad port fails
+ * the same way whether it goes through the CLI or the SDK.
+ *
+ * The server enforces this too. Checking here turns a round trip into an
+ * immediate error, which is the point of keeping the two in sync.
+ */
+export function validateServicePort(port: number): void {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new AmikaError(`invalid port ${port}: must be between 1 and 65535`);
+  }
+  if (port >= RESERVED_PORT_MIN && port <= RESERVED_PORT_MAX) {
+    throw new AmikaError(
+      `invalid port ${port}: ports ${RESERVED_PORT_MIN}-${RESERVED_PORT_MAX} are reserved for internal Amika services`,
+    );
+  }
+}
+
+/**
+ * Validation lives here rather than in the two client methods so that every
+ * path to the wire goes through it, including any future one.
+ */
+export function sandboxServiceRequestToWire(
+  r: SandboxServiceRequest,
+): Record<string, unknown> {
+  validateServicePort(r.port);
+  return { name: r.name, port: r.port, url_scheme: r.urlScheme };
+}
+
 // ---------- Sandbox snapshots ----------
 
 /**
@@ -678,6 +776,10 @@ export function optionalStr(v: unknown): string | undefined {
 
 export function num(v: unknown): number {
   return v === undefined || v === null ? 0 : Number(v);
+}
+
+export function nullableNum(v: unknown): number | null {
+  return v === undefined || v === null ? null : Number(v);
 }
 
 export function optionalNum(v: unknown): number | undefined {
