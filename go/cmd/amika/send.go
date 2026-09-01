@@ -85,6 +85,8 @@ func runSend(cmd *cobra.Command, args []string) error {
 	sandboxRef, _ := cmd.Flags().GetString("sandbox")
 	newSession, _ := cmd.Flags().GetBool("new-session")
 	repo, _ := cmd.Flags().GetString("repo")
+	model, _ := cmd.Flags().GetString("model")
+	effort, _ := cmd.Flags().GetString("effort")
 
 	format, err := output.FormatFrom(cmd)
 	if err != nil {
@@ -117,6 +119,8 @@ func runSend(cmd *cobra.Command, args []string) error {
 		SandboxID:  sandboxRef,
 		NewSession: newSession,
 		RepoURL:    repo,
+		Model:      model,
+		Effort:     effort,
 	}
 	client := runmode.NewRemoteClient()
 
@@ -385,6 +389,11 @@ func init() {
 	sendCmd.Flags().String("sandbox", "", "Send into a specific sandbox (id or name)")
 	sendCmd.Flags().Bool("new-session", false, "Start a brand-new chat")
 	sendCmd.Flags().String("repo", "", "Repository URL to clone when a sandbox is created")
+	// No backquotes in these usage strings: cobra reads a backquoted span as the
+	// flag's value placeholder, so a backquoted example made --model advertise
+	// its argument type as that example instead of "string".
+	sendCmd.Flags().String("model", "", "Model to run this turn with; the server rejects an unknown name (default: the agent's own)")
+	sendCmd.Flags().String("effort", "", "Reasoning effort: low, medium, high, xhigh or max (default: the agent's own)")
 	sendCmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
 	rootCmd.AddCommand(sendCmd)
 

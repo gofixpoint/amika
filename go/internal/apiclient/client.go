@@ -852,6 +852,14 @@ type AgentSessionSendRequest struct {
 	SandboxID  string `json:"sandbox_id,omitempty"`
 	NewSession bool   `json:"new_session,omitempty"`
 	RepoURL    string `json:"repo_url,omitempty"`
+	// Model and Effort ask the agent to run a particular model at a particular
+	// reasoning effort. Both omitted means the agent's own default, which is
+	// what every send did before they existed. The server validates them
+	// against its own allowlist and rejects a model belonging to the other
+	// agent, so the CLI passes them through rather than second-guessing which
+	// names are current.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and

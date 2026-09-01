@@ -22,7 +22,7 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	if send == nil {
 		t.Fatal("send command not registered on rootCmd")
 	}
-	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo", "stream"} {
+	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo", "stream", "model", "effort"} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
 		}
@@ -37,6 +37,29 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	}
 	if findChildCommand(sessions, "show") == nil {
 		t.Error("sessions has no show subcommand")
+	}
+}
+
+// Cobra reads a backquoted span in a usage string as the flag's value
+// placeholder, so a backquoted example in the description made --model
+// advertise its argument type as that example instead of "string".
+// Asserting the type keeps that from creeping back.
+func TestSendTuningFlagsAdvertiseStringValues(t *testing.T) {
+	send := findChildCommand(rootCmd, "send")
+	if send == nil {
+		t.Fatal("send command not registered on rootCmd")
+	}
+	for _, name := range []string{"model", "effort"} {
+		flag := send.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("send is missing --%s flag", name)
+		}
+		if flag.Value.Type() != "string" {
+			t.Errorf("--%s value type = %q, want string", name, flag.Value.Type())
+		}
+		if strings.Contains(flag.Usage, "`") {
+			t.Errorf("--%s usage contains a backquote, which cobra reads as the value placeholder: %q", name, flag.Usage)
+		}
 	}
 }
 
