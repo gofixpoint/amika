@@ -309,6 +309,23 @@ export function remoteSandboxFromWire(
   };
 }
 
+// ---------- Repositories ----------
+
+/** A repository known to the caller's org, from GET /api/v0beta1/repositories. */
+export interface RemoteRepository {
+  id: string;
+  repoUrl: string;
+}
+
+export function remoteRepositoryFromWire(
+  w: Record<string, unknown>,
+): RemoteRepository {
+  return {
+    id: str(w["id"]),
+    repoUrl: str(w["repo_url"]),
+  };
+}
+
 // ---------- SSH ----------
 
 export interface SSHInfo {
@@ -505,43 +522,82 @@ export function updateSessionRequestToWire(
 // ---------- Sandbox snapshots ----------
 
 /**
+ * Provider-specific Daytona detail nested under {@link SandboxSnapshot.daytona}.
+ * Only `name` is required by the schema; wire keys are camelCase here.
+ */
+export interface ExperimentalDaytonaSnapshot {
+  name: string;
+  state?: string;
+  imageName?: string;
+  cpu?: number;
+  memory?: number;
+  disk?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+function experimentalDaytonaSnapshotFromWire(
+  w: Record<string, unknown>,
+): ExperimentalDaytonaSnapshot {
+  return {
+    name: str(w["name"]),
+    state: optionalStr(w["state"]),
+    imageName: optionalStr(w["imageName"]),
+    cpu: optionalNum(w["cpu"]),
+    memory: optionalNum(w["memory"]),
+    disk: optionalNum(w["disk"]),
+    createdAt: optionalStr(w["createdAt"]),
+    updatedAt: optionalStr(w["updatedAt"]),
+  };
+}
+
+/**
  * A snapshot captured from a running sandbox, as returned by the
  * `/api/v0beta1/sandbox-snapshots` endpoints. `snapshot` is the slug used to
  * fork new sandboxes (pass it as {@link CreateSandboxRequest.snapshot}).
  */
 export interface SandboxSnapshot {
+  id: string;
   snapshot: string;
   provider: string;
   description: string | null;
   sourceSandboxId: string | null;
   sourceSandboxName: string | null;
   repositoryId: string | null;
+  repositoryUrl: string | null;
   baseSnapshot: string | null;
   sandboxPreset: string | null;
   sandboxSize: string | null;
+  captureMode: string | null;
   state: string;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  daytona: ExperimentalDaytonaSnapshot | null;
 }
 
 export function sandboxSnapshotFromWire(
   w: Record<string, unknown>,
 ): SandboxSnapshot {
   return {
-    snapshot: String(w["snapshot"] ?? ""),
-    provider: String(w["provider"] ?? ""),
-    description: (w["description"] ?? null) as string | null,
-    sourceSandboxId: (w["source_sandbox_id"] ?? null) as string | null,
-    sourceSandboxName: (w["source_sandbox_name"] ?? null) as string | null,
-    repositoryId: (w["repository_id"] ?? null) as string | null,
-    baseSnapshot: (w["base_snapshot"] ?? null) as string | null,
-    sandboxPreset: (w["sandbox_preset"] ?? null) as string | null,
-    sandboxSize: (w["sandbox_size"] ?? null) as string | null,
-    state: String(w["state"] ?? ""),
-    errorMessage: (w["error_message"] ?? null) as string | null,
-    createdAt: String(w["created_at"] ?? ""),
-    updatedAt: String(w["updated_at"] ?? ""),
+    id: str(w["id"]),
+    snapshot: str(w["snapshot"]),
+    provider: str(w["provider"]),
+    description: nullableStr(w["description"]),
+    sourceSandboxId: nullableStr(w["source_sandbox_id"]),
+    sourceSandboxName: nullableStr(w["source_sandbox_name"]),
+    repositoryId: nullableStr(w["repository_id"]),
+    repositoryUrl: nullableStr(w["repository_url"]),
+    baseSnapshot: nullableStr(w["base_snapshot"]),
+    sandboxPreset: nullableStr(w["sandbox_preset"]),
+    sandboxSize: nullableStr(w["sandbox_size"]),
+    captureMode: nullableStr(w["capture_mode"]),
+    state: str(w["state"]),
+    errorMessage: nullableStr(w["error_message"]),
+    createdAt: str(w["created_at"]),
+    updatedAt: str(w["updated_at"]),
+    daytona:
+      optionalObject(w["daytona"], experimentalDaytonaSnapshotFromWire) ?? null,
   };
 }
 
@@ -575,10 +631,13 @@ export function createSandboxSnapshotRequestToWire(
 
 /**
  * The injected secrets a scrub-and-delete snapshot would remove from a
- * sandbox — file paths and env var names only, never values.
+ * sandbox — file paths and env var names only, never values. `restoredFiles`
+ * is a third category: paths reset to a retained clean baseline rather than
+ * deleted outright.
  */
 export interface SandboxScrubPreview {
   files: string[];
+  restoredFiles: string[];
   envVars: string[];
 }
 
@@ -586,8 +645,9 @@ export function sandboxScrubPreviewFromWire(
   w: Record<string, unknown>,
 ): SandboxScrubPreview {
   return {
-    files: (w["files"] ?? []) as string[],
-    envVars: (w["env_vars"] ?? []) as string[],
+    files: strArray(w["files"]),
+    restoredFiles: strArray(w["restored_files"]),
+    envVars: strArray(w["env_vars"]),
   };
 }
 
@@ -630,6 +690,10 @@ export function bool(v: unknown): boolean {
 
 export function optionalBool(v: unknown): boolean | undefined {
   return v === undefined || v === null ? undefined : Boolean(v);
+}
+
+export function strArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.map((item) => str(item)) : [];
 }
 
 function optionalStrArray(v: unknown): string[] | undefined {

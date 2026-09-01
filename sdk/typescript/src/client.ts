@@ -17,6 +17,8 @@ import {
   mapArray,
   type ProviderSecretListItem,
   type ProviderSecretSummary,
+  type RemoteRepository,
+  remoteRepositoryFromWire,
   type RemoteSandbox,
   remoteSandboxFromWire,
   type RevokeSSHRequest,
@@ -164,6 +166,17 @@ export class AmikaClient {
       "DELETE",
       `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}`,
     );
+  }
+
+  // ---------- Repositories ----------
+
+  /** List the repositories the caller's org knows about. */
+  async listRepositories(): Promise<RemoteRepository[]> {
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/repositories`,
+    );
+    return mapArray(data, remoteRepositoryFromWire);
   }
 
   // ---------- Secrets ----------
@@ -344,6 +357,37 @@ export class AmikaClient {
       createSandboxSnapshotRequestToWire(req),
     );
     return sandboxSnapshotFromWire(data ?? {});
+  }
+
+  /**
+   * Fetch a single snapshot by name or id (the server resolves id first, then
+   * name).
+   */
+  async getSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/sandbox-snapshots/${encodeURIComponent(ref)}?by=ref`,
+    );
+    return sandboxSnapshotFromWire(data ?? {});
+  }
+
+  /**
+   * Poll {@link getSandboxSnapshot} every 3 seconds until the snapshot reaches
+   * a terminal state. Returns it once `active`; throws `AmikaError` if it ends
+   * up `failed`. No client-side timeout — matches Go's
+   * `WaitForSandboxSnapshot`.
+   */
+  async waitForSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
+    for (;;) {
+      const snapshot = await this.getSandboxSnapshot(ref);
+      if (snapshot.state === "active") return snapshot;
+      if (snapshot.state === "failed") {
+        throw new AmikaError(
+          snapshot.errorMessage || "sandbox snapshot capture failed",
+        );
+      }
+      await sleep(WAIT_POLL_INTERVAL_MS);
+    }
   }
 
   /**

@@ -74,6 +74,7 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 | `stopSandbox(name)`         | `POST /sandboxes/{name}/stop`             |
 | `waitForSandboxStop(name)`  | polls until `stopped`                     |
 | `deleteSandbox(name)`       | `DELETE /sandboxes/{name}`                |
+| `listRepositories()`        | `GET /repositories`                       |
 
 ### SSH
 
@@ -110,6 +111,8 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 | -------------------------------- | -------------------------------------- |
 | `listSandboxSnapshots(filters?)` | `GET /sandbox-snapshots`               |
 | `createSandboxSnapshot(req)`     | `POST /sandbox-snapshots`              |
+| `getSandboxSnapshot(ref)`        | `GET /sandbox-snapshots/{ref}`         |
+| `waitForSandboxSnapshot(ref)`    | polls until `active` or `failed`       |
 | `getSandboxScrubPreview(ref)`    | `GET /sandbox-snapshots/scrub-preview` |
 | `deleteSandboxSnapshot(ref)`     | `DELETE /sandbox-snapshots/{ref}`      |
 
@@ -134,7 +137,7 @@ Two fields sit outside this rule because they sit outside the schema. `container
 
 ## Polling behavior
 
-`waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present.
+`waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present. `waitForSandboxSnapshot` polls `getSandboxSnapshot` the same way, returning once the snapshot is `active` and throwing if it ends up `failed`.
 
 ## Errors
 
