@@ -73,8 +73,8 @@ describeFunctional("sandbox functional tests", () => {
       expect(sb.name).toBe(sandbox.name);
       expect(sb.id).toBe(sandbox.id);
       expect(["active", "running", "started"]).toContain(sb.state);
-      // String fields are always present, even if empty.
-      expect(typeof sb.repoUrl).toBe("string");
+      // repo_url is nullable in the schema; created_at is required.
+      expect(sb.repoUrl === null || typeof sb.repoUrl === "string").toBe(true);
       expect(typeof sb.createdAt).toBe("string");
     });
 

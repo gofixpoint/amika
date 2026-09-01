@@ -542,3 +542,107 @@ describe("AmikaClient sandbox snapshots", () => {
     );
   });
 });
+
+describe("AmikaClient sandbox decoding", () => {
+  it("keeps every field the API schema defines", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          id: "sbx_1",
+          user_id: null,
+          org_id: "org_1",
+          name: "dev",
+          provider: "daytona",
+          provider_sandbox_id: "d_1",
+          provider_url: null,
+          amika_opencode_web: null,
+          repo_name: "proj",
+          repo_provider: "github",
+          repo_id: "r_1",
+          repo_url: "git@github.com:org/proj.git",
+          branch: "main",
+          commit_hash: null,
+          snapshot: "proj-base",
+          current_session_id: null,
+          services: [
+            {
+              name: "web",
+              url: "https://web.example",
+              hostPort: 3000,
+              containerPort: 3000,
+              protocol: "tcp",
+            },
+          ],
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:01:00Z",
+          sandbox_preset: "coder",
+          github_auth_mode: "app",
+          github_credential_provisioned: true,
+          state: "active",
+          status: "ready",
+          setup_status: "done",
+          secret_names: ["API_KEY"],
+          mounted_secrets: [
+            {
+              name: "ANTHROPIC_API_KEY",
+              scope: "user",
+              managed: true,
+              credential_type: "api_key",
+              provider: "claude",
+            },
+          ],
+          has_workflow: true,
+          created_by: { name: "Jakub", email: null },
+          origin: "cli",
+        },
+      },
+    ]);
+    const sb = await makeClient(fetch).getSandbox("dev");
+
+    expect(sb.orgId).toBe("org_1");
+    expect(sb.providerSandboxId).toBe("d_1");
+    expect(sb.services[0]).toEqual({
+      name: "web",
+      url: "https://web.example",
+      hostPort: 3000,
+      containerPort: 3000,
+      protocol: "tcp",
+    });
+    expect(sb.githubAuthMode).toBe("app");
+    expect(sb.githubCredentialProvisioned).toBe(true);
+    expect(sb.setupStatus).toBe("done");
+    expect(sb.secretNames).toEqual(["API_KEY"]);
+    expect(sb.mountedSecrets?.[0]).toEqual({
+      name: "ANTHROPIC_API_KEY",
+      scope: "user",
+      managed: true,
+      credentialType: "api_key",
+      provider: "claude",
+    });
+    expect(sb.hasWorkflow).toBe(true);
+    expect(sb.createdBy).toEqual({ name: "Jakub", email: null });
+    expect(sb.origin).toBe("cli");
+  });
+
+  it("distinguishes a null nullable field from an absent optional one", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: { id: "sbx_1", name: "dev", repo_url: null } },
+    ]);
+    const sb = await makeClient(fetch).getSandbox("dev");
+    expect(sb.repoUrl).toBeNull();
+    expect(sb.branch).toBeNull();
+    expect(sb.services).toEqual([]);
+    expect(sb.errorMessage).toBeUndefined();
+    expect(sb.mountedSecrets).toBeUndefined();
+    expect(sb.hasWorkflow).toBe(false);
+  });
+
+  it("sends github_auth_mode when createSandbox is given one", async () => {
+    const { fetch, calls } = mockFetch([{ status: 202, body: { id: "1" } }]);
+    await makeClient(fetch).createSandbox({ githubAuthMode: "app" });
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      github_auth_mode: "app",
+    });
+  });
+});

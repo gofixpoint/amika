@@ -1,7 +1,19 @@
 // CamelCase TS mirrors of the Go SDK types in go/internal/apiclient/client.go.
 // Each request/response has explicit toWire/fromWire mappers to translate
 // between the SDK's camelCase developer surface and the snake_case JSON wire
-// format the server expects.
+// format the server expects. (A few nested objects are camelCase on the wire
+// too; those mappers say so.)
+//
+// Nullability follows the Go struct tags, which in turn follow the OpenAPI
+// document served at /api/openapi.json:
+//
+//   - `string`             (required, not nullable) -> `x: string`
+//   - `*string`            (required, nullable)     -> `x: string | null`
+//   - `*string,omitempty`  (optional, nullable)     -> `x?: string`
+//
+// The last case collapses null and absent into `undefined`: Go's `omitempty`
+// on a pointer encodes nil as an omitted key, so the server never distinguishes
+// the two either.
 
 // ---------- Sandboxes ----------
 
@@ -92,6 +104,8 @@ export interface CreateSandboxRequest {
   agentCredentials?: AgentCredentialRef[];
   branch?: string;
   newBranchName?: string;
+  /** How the sandbox authenticates to GitHub, e.g. "app" or "none". */
+  githubAuthMode?: string;
 }
 
 export function createSandboxRequestToWire(
@@ -114,6 +128,7 @@ export function createSandboxRequestToWire(
     agent_credentials: r.agentCredentials,
     branch: r.branch,
     new_branch_name: r.newBranchName,
+    github_auth_mode: r.githubAuthMode,
   });
 }
 
@@ -126,40 +141,167 @@ export interface ResolvedAgentCredential {
   reason?: string;
 }
 
+/**
+ * One named service exposed by a sandbox: a published port with an optional
+ * generated URL. Wire keys are camelCase here, unlike the rest of the API.
+ */
+export interface RemoteSandboxService {
+  name: string;
+  url: string;
+  hostPort: number;
+  containerPort: number;
+  protocol: string;
+}
+
+function remoteSandboxServiceFromWire(
+  w: Record<string, unknown>,
+): RemoteSandboxService {
+  return {
+    name: str(w["name"]),
+    url: str(w["url"]),
+    hostPort: num(w["hostPort"]),
+    containerPort: num(w["containerPort"]),
+    protocol: str(w["protocol"]),
+  };
+}
+
+/**
+ * One secret a sandbox carries, by name and scope. The API deliberately
+ * returns no value and no vault handle. `managed` distinguishes a credential
+ * Amika manages for a provider from a plain user-defined secret; it is the
+ * discriminator rather than a null `credentialType`, which a managed entry is
+ * allowed to have.
+ */
+export interface MountedSecret {
+  name: string;
+  scope: string;
+  managed: boolean;
+  credentialType: string | null;
+  provider: string | null;
+}
+
+function mountedSecretFromWire(w: Record<string, unknown>): MountedSecret {
+  return {
+    name: str(w["name"]),
+    scope: str(w["scope"]),
+    managed: bool(w["managed"]),
+    credentialType: nullableStr(w["credential_type"]),
+    provider: nullableStr(w["provider"]),
+  };
+}
+
+/**
+ * Mirrors the API's Sandbox schema (the `Sandbox` component in
+ * /api/openapi.json), the response of the /sandboxes endpoints.
+ *
+ * `containerId` and `image` have no equivalent in the API schema — the CLI
+ * populates them for local Docker sandboxes only, and the schema's
+ * `additionalProperties` allows the extra keys.
+ */
+export interface RemoteSandbox {
+  id: string;
+  userId: string | null;
+  orgId: string;
+  name: string;
+  provider: string | null;
+  providerSandboxId: string | null;
+  providerUrl: string | null;
+  amikaOpencodeWeb: string | null;
+  repoName: string | null;
+  repoProvider: string | null;
+  repoId: string | null;
+  repoUrl: string | null;
+  branch: string | null;
+  commitHash: string | null;
+  snapshot: string | null;
+  currentSessionId: string | null;
+  services: RemoteSandboxService[];
+  createdAt: string;
+  updatedAt: string;
+
+  snapshotName?: string;
+  sandboxPreset?: string;
+  sandboxSize?: string;
+  githubAuthMode?: string;
+  githubCredentialProvisioned?: boolean;
+  errorMessage?: string;
+  state: string;
+  status: string;
+  setupStatus?: string;
+  urlsExpireAt?: string;
+  secretNames?: string[];
+  mountedSecrets?: MountedSecret[];
+  hasWorkflow: boolean;
+  resolvedAgentCredentials?: ResolvedAgentCredential[];
+  createdBy?: RemoteSandboxCreator;
+  origin?: string;
+
+  /** Local Docker sandboxes only; absent for API-backed sandboxes. */
+  containerId?: string;
+  /** Local Docker sandboxes only; absent for API-backed sandboxes. */
+  image?: string;
+}
+
+/**
+ * The human who created a remote sandbox. Either field may be null if the
+ * server could not resolve the user (deleted account, API-key principal, or
+ * noop auth mode).
+ */
 export interface RemoteSandboxCreator {
   name: string | null;
   email: string | null;
-}
-
-export interface RemoteSandbox {
-  id: string;
-  name: string;
-  provider: string;
-  repoUrl: string;
-  state: string;
-  createdAt: string;
-  branch: string;
-  errorMessage: string;
-  resolvedAgentCredentials?: ResolvedAgentCredential[];
-  createdBy?: RemoteSandboxCreator | null;
 }
 
 export function remoteSandboxFromWire(
   w: Record<string, unknown>,
 ): RemoteSandbox {
   return {
-    id: String(w["id"] ?? ""),
-    name: String(w["name"] ?? ""),
-    provider: String(w["provider"] ?? ""),
-    repoUrl: String(w["repo_url"] ?? ""),
-    state: String(w["state"] ?? ""),
-    createdAt: String(w["created_at"] ?? ""),
-    branch: String(w["branch"] ?? ""),
-    errorMessage: String(w["error_message"] ?? ""),
+    id: str(w["id"]),
+    userId: nullableStr(w["user_id"]),
+    orgId: str(w["org_id"]),
+    name: str(w["name"]),
+    provider: nullableStr(w["provider"]),
+    providerSandboxId: nullableStr(w["provider_sandbox_id"]),
+    providerUrl: nullableStr(w["provider_url"]),
+    amikaOpencodeWeb: nullableStr(w["amika_opencode_web"]),
+    repoName: nullableStr(w["repo_name"]),
+    repoProvider: nullableStr(w["repo_provider"]),
+    repoId: nullableStr(w["repo_id"]),
+    repoUrl: nullableStr(w["repo_url"]),
+    branch: nullableStr(w["branch"]),
+    commitHash: nullableStr(w["commit_hash"]),
+    snapshot: nullableStr(w["snapshot"]),
+    currentSessionId: nullableStr(w["current_session_id"]),
+    services: mapArray(w["services"], remoteSandboxServiceFromWire),
+    createdAt: str(w["created_at"]),
+    updatedAt: str(w["updated_at"]),
+
+    snapshotName: optionalStr(w["snapshot_name"]),
+    sandboxPreset: optionalStr(w["sandbox_preset"]),
+    sandboxSize: optionalStr(w["sandbox_size"]),
+    githubAuthMode: optionalStr(w["github_auth_mode"]),
+    githubCredentialProvisioned: optionalBool(
+      w["github_credential_provisioned"],
+    ),
+    errorMessage: optionalStr(w["error_message"]),
+    state: str(w["state"]),
+    status: str(w["status"]),
+    setupStatus: optionalStr(w["setup_status"]),
+    urlsExpireAt: optionalStr(w["urls_expire_at"]),
+    secretNames: optionalStrArray(w["secret_names"]),
+    mountedSecrets: optionalArray(w["mounted_secrets"], mountedSecretFromWire),
+    hasWorkflow: bool(w["has_workflow"]),
     resolvedAgentCredentials: w["resolved_agent_credentials"] as
       | ResolvedAgentCredential[]
       | undefined,
-    createdBy: w["created_by"] as RemoteSandboxCreator | null | undefined,
+    createdBy: optionalObject(w["created_by"], (c) => ({
+      name: nullableStr(c["name"]),
+      email: nullableStr(c["email"]),
+    })),
+    origin: optionalStr(w["origin"]),
+
+    containerId: optionalStr(w["container_id"]),
+    image: optionalStr(w["image"]),
   };
 }
 
@@ -174,10 +316,10 @@ export interface SSHInfo {
 
 export function sshInfoFromWire(w: Record<string, unknown>): SSHInfo {
   return {
-    sshDestination: String(w["ssh_destination"] ?? ""),
-    token: String(w["token"] ?? ""),
-    expiresAt: String(w["expires_at"] ?? ""),
-    repoName: String(w["repo_name"] ?? ""),
+    sshDestination: str(w["ssh_destination"]),
+    token: str(w["token"]),
+    expiresAt: str(w["expires_at"]),
+    repoName: str(w["repo_name"]),
   };
 }
 
@@ -409,7 +551,7 @@ export function sandboxScrubPreviewFromWire(
   };
 }
 
-// ---------- helpers ----------
+// ---------- wire helpers ----------
 
 function omitUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -417,4 +559,62 @@ function omitUndefined(obj: Record<string, unknown>): Record<string, unknown> {
     if (v !== undefined) out[k] = v;
   }
   return out;
+}
+
+/** A schema-required, non-nullable string: null and absent both become "". */
+export function str(v: unknown): string {
+  return v === undefined || v === null ? "" : String(v);
+}
+
+/** A schema-nullable string: null and absent both become null. */
+export function nullableStr(v: unknown): string | null {
+  return v === undefined || v === null ? null : String(v);
+}
+
+/** An optional string: null and absent both become undefined. */
+export function optionalStr(v: unknown): string | undefined {
+  return v === undefined || v === null ? undefined : String(v);
+}
+
+export function num(v: unknown): number {
+  return v === undefined || v === null ? 0 : Number(v);
+}
+
+export function bool(v: unknown): boolean {
+  return Boolean(v);
+}
+
+export function optionalBool(v: unknown): boolean | undefined {
+  return v === undefined || v === null ? undefined : Boolean(v);
+}
+
+function optionalStrArray(v: unknown): string[] | undefined {
+  return Array.isArray(v) ? v.map((item) => str(item)) : undefined;
+}
+
+export function mapArray<T>(
+  v: unknown,
+  from: (w: Record<string, unknown>) => T,
+): T[] {
+  return Array.isArray(v)
+    ? v.map((item) => from(item as Record<string, unknown>))
+    : [];
+}
+
+function optionalArray<T>(
+  v: unknown,
+  from: (w: Record<string, unknown>) => T,
+): T[] | undefined {
+  return Array.isArray(v)
+    ? v.map((item) => from(item as Record<string, unknown>))
+    : undefined;
+}
+
+function optionalObject<T>(
+  v: unknown,
+  from: (w: Record<string, unknown>) => T,
+): T | undefined {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+    ? from(v as Record<string, unknown>)
+    : undefined;
 }
