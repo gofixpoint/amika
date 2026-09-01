@@ -356,3 +356,66 @@ describe("AmikaClient.sendAgentSessionStream async handlers", () => {
     ).rejects.toThrow(/writer closed/);
   });
 });
+
+describe("AmikaClient.sendAgentSessionStream truncated streams", () => {
+  // The server's 300s ceiling cuts the connection at an arbitrary byte
+  // offset, and the `data:` line is most of every frame's bytes, so a cut
+  // lands mid-frame far more often than on a frame boundary. That must read
+  // as a lost stream, not as corrupt output.
+  it("reports a mid-delta cut as a lost stream, not a parse failure", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: 'event: delta\ndata: {"text":"hello "}\n\nevent: delta\ndata: {"tex',
+      },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
+    ).rejects.toThrow(/stream ended without a result/);
+  });
+
+  it("reports a mid-done cut as a lost stream", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: 'event: done\ndata: {"session_id":"as' },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
+    ).rejects.toThrow(/stream ended without a result/);
+  });
+
+  it("keeps an earlier error frame's message when the stream is then cut", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: 'event: error\ndata: {"error":"boom"}\n\nevent: delta\ndata: {"tex',
+      },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
+    ).rejects.toThrow(/boom/);
+  });
+
+  // A complete final frame from a server that omitted the trailing blank line
+  // is still usable, so the unterminated flag must not discard it outright.
+  it("still accepts a complete done frame with no trailing blank line", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: `event: done\ndata: ${JSON.stringify(DONE_PAYLOAD)}`,
+      },
+    ]);
+    const resp = await makeClient(fetch).sendAgentSessionStream({
+      message: "hi",
+    });
+    expect(resp.sessionId).toBe("as_1");
+  });
+
+  it("rejects a JSON array in a done frame instead of resolving empty", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: "event: done\ndata: [1,2]\n\n" },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
+    ).rejects.toThrow(/parsing done frame failed/);
+  });
+});

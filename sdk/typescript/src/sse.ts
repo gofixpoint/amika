@@ -11,6 +11,13 @@
 export interface SSEFrame {
   event: string;
   data: string;
+  /**
+   * False when the stream ended before this frame's terminating blank line,
+   * i.e. the connection was cut mid-frame and `data` is truncated. A consumer
+   * should treat an unparseable unterminated frame as a lost stream rather
+   * than as corrupt content.
+   */
+  terminated: boolean;
 }
 
 /**
@@ -32,7 +39,8 @@ export async function* readSSEFrames(
   const consumeLine = (raw: string): SSEFrame | undefined => {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line === "") {
-      const frame = event === "" ? undefined : { event, data };
+      const frame =
+        event === "" ? undefined : { event, data, terminated: true };
       event = "";
       data = "";
       return frame;
@@ -50,33 +58,53 @@ export async function* readSSEFrames(
     return undefined;
   };
 
-  let buffer = "";
+  // Unconsumed input, kept as chunks rather than one accumulating string.
+  // `buffer += chunk` builds a rope that `indexOf` must flatten, so appending
+  // and scanning per chunk costs O(n) each time and O(n^2) over a line as long
+  // as a whole agent turn (the `done` frame is exactly that). Joining only when
+  // a newline actually arrives keeps the whole read linear.
+  let parts: string[] = [];
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      buffer += value
+      const chunk = value
         ? decoder.decode(value, { stream: true })
         : decoder.decode();
 
+      if (chunk !== "") parts.push(chunk);
+      // No line to emit yet: hold the chunk and read more.
+      if (!done && !chunk.includes("\n")) continue;
+
+      let buffer = parts.length === 1 ? parts[0]! : parts.join("");
+      parts = [];
+
+      let consumed = 0;
       let newline = buffer.indexOf("\n");
       while (newline !== -1) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        const frame = consumeLine(line);
+        const frame = consumeLine(buffer.slice(consumed, newline));
+        consumed = newline + 1;
         if (frame) yield frame;
-        newline = buffer.indexOf("\n");
+        newline = buffer.indexOf("\n", consumed);
       }
+      if (consumed > 0) buffer = buffer.slice(consumed);
+      if (buffer !== "") parts.push(buffer);
 
       if (done) break;
     }
 
     // A final line need not be newline-terminated.
-    if (buffer.length > 0) {
-      const frame = consumeLine(buffer);
+    const tail = parts.join("");
+    if (tail !== "") {
+      const frame = consumeLine(tail);
       if (frame) yield frame;
     }
-    // Flush a trailing frame that never saw its blank line (defensive).
-    if (event !== "") yield { event, data };
+
+    // A frame that never saw its blank line is one the connection was cut in
+    // the middle of, so its `data` may be truncated. Yield it anyway, marked
+    // unterminated, and let the consumer decide: a complete final frame from a
+    // server that omitted the trailing blank line is still usable, while a
+    // genuinely truncated one is a lost stream rather than corrupt content.
+    if (event !== "") yield { event, data, terminated: false };
   } finally {
     await reader.cancel().catch(() => {});
   }

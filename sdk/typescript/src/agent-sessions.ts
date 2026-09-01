@@ -236,7 +236,7 @@ export async function readAgentSessionStream(
 ): Promise<AgentSessionSendResponse> {
   let streamError = "";
 
-  for await (const frame of readSSEFrames(body)) {
+  stream: for await (const frame of readSSEFrames(body)) {
     switch (frame.event) {
       case "status": {
         if (!handlers.onStatus) break;
@@ -255,6 +255,9 @@ export async function readAgentSessionStream(
         // Fail loudly rather than silently returning a truncated reply.
         const parsed = tryParse(frame.data);
         if (!parsed) {
+          // Truncated trailing frame: the connection was cut mid-delta, which
+          // is a lost stream, not corrupt output. Stop and report it as such.
+          if (!frame.terminated) break stream;
           throw new AmikaError(
             "remote agent-session send: parsing delta frame failed",
           );
@@ -266,6 +269,7 @@ export async function readAgentSessionStream(
       case "done": {
         const parsed = tryParse(frame.data);
         if (!parsed) {
+          if (!frame.terminated) break stream;
           throw new AmikaError(
             "remote agent-session send: parsing done frame failed",
           );
@@ -299,7 +303,9 @@ export async function readAgentSessionStream(
 function tryParse(data: string): Record<string, unknown> | undefined {
   try {
     const parsed: unknown = JSON.parse(data);
-    return typeof parsed === "object" && parsed !== null
+    return typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : undefined;
   } catch {

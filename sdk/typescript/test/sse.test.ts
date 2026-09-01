@@ -29,8 +29,8 @@ describe("readSSEFrames", () => {
       ),
     );
     expect(frames).toEqual([
-      { event: "delta", data: '{"text":"hi"}' },
-      { event: "done", data: "{}" },
+      { event: "delta", data: '{"text":"hi"}', terminated: true },
+      { event: "done", data: "{}", terminated: true },
     ]);
   });
 
@@ -38,41 +38,52 @@ describe("readSSEFrames", () => {
     const frames = await collect(
       streamOf("event: de", "lta\ndat", 'a: {"text":"hi"}', "\n\n"),
     );
-    expect(frames).toEqual([{ event: "delta", data: '{"text":"hi"}' }]);
+    expect(frames).toEqual([
+      { event: "delta", data: '{"text":"hi"}', terminated: true },
+    ]);
   });
 
   it("strips exactly one space after the colon", async () => {
     const frames = await collect(streamOf("event:delta\ndata:  padded\n\n"));
-    expect(frames).toEqual([{ event: "delta", data: " padded" }]);
+    expect(frames).toEqual([
+      { event: "delta", data: " padded", terminated: true },
+    ]);
   });
 
   it("joins multiple data lines with a newline", async () => {
     const frames = await collect(streamOf("event: done\ndata: a\ndata: b\n\n"));
-    expect(frames).toEqual([{ event: "done", data: "a\nb" }]);
+    expect(frames).toEqual([{ event: "done", data: "a\nb", terminated: true }]);
   });
 
   it("ignores comments and id lines", async () => {
     const frames = await collect(
       streamOf(": keep-alive\nid: 7\nevent: delta\ndata: x\n\n"),
     );
-    expect(frames).toEqual([{ event: "delta", data: "x" }]);
+    expect(frames).toEqual([{ event: "delta", data: "x", terminated: true }]);
   });
 
   it("drops an event-less frame without letting its data bleed into the next", async () => {
     const frames = await collect(
       streamOf("data: orphan\n\nevent: delta\ndata: x\n\n"),
     );
-    expect(frames).toEqual([{ event: "delta", data: "x" }]);
+    expect(frames).toEqual([{ event: "delta", data: "x", terminated: true }]);
   });
 
   it("tolerates CRLF line endings", async () => {
     const frames = await collect(streamOf("event: delta\r\ndata: x\r\n\r\n"));
-    expect(frames).toEqual([{ event: "delta", data: "x" }]);
+    expect(frames).toEqual([{ event: "delta", data: "x", terminated: true }]);
   });
 
-  it("flushes a trailing frame with no blank line and no final newline", async () => {
+  it("flushes a trailing frame with no blank line, marked unterminated", async () => {
     const frames = await collect(streamOf("event: done\ndata: {}"));
-    expect(frames).toEqual([{ event: "done", data: "{}" }]);
+    expect(frames).toEqual([{ event: "done", data: "{}", terminated: false }]);
+  });
+
+  it("marks a frame cut mid-data as unterminated", async () => {
+    const frames = await collect(streamOf('event: delta\ndata: {"tex'));
+    expect(frames).toEqual([
+      { event: "delta", data: '{"tex', terminated: false },
+    ]);
   });
 
   it("yields nothing for an empty stream", async () => {
@@ -90,6 +101,8 @@ describe("readSSEFrames", () => {
         controller.close();
       },
     });
-    expect(await collect(stream)).toEqual([{ event: "delta", data: "né" }]);
+    expect(await collect(stream)).toEqual([
+      { event: "delta", data: "né", terminated: true },
+    ]);
   });
 });
