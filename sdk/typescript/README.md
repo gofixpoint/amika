@@ -119,11 +119,18 @@ Types are camelCased and translated to/from snake_case on the wire. See `src/typ
 
 ### Nullability
 
-Field optionality follows the API schema, not TypeScript convenience:
+Field optionality mirrors the Go client's struct tags, which in turn follow the API schema. Whether a field can go missing in TypeScript tracks whether it is a pointer in Go:
 
-- a field the schema marks required and non-nullable is `x: string`;
-- a field it marks nullable is `x: string | null` (it is always present, and `null` is meaningful — e.g. a sandbox with no repository);
-- a field it marks optional is `x?: string`, with `null` and absent both surfacing as `undefined`.
+| Go field            | TypeScript          | Decoding                                                                |
+| ------------------- | ------------------- | ----------------------------------------------------------------------- |
+| `string`            | `x: string`         | required, always present                                                |
+| `string,omitempty`  | `x: string`         | may be omitted on the wire, and decodes to `""` exactly as Go does      |
+| `*string`           | `x: string \| null` | always present, and `null` is meaningful (a sandbox with no repository) |
+| `*string,omitempty` | `x?: string`        | `null` and absent both surface as `undefined`                           |
+
+A non-pointer Go field always lands as a value, so `state` and `status` stay plain strings even though the schema marks them optional. Go cannot tell an omitted `status` from an empty one, and neither should a 1:1 mirror. Slices go the other way, being nilable in Go themselves: `[]string,omitempty` is `x?: string[]`.
+
+Two fields sit outside this rule because they sit outside the schema. `containerId` and `image` are CLI-only extensions that the API never returns, so they are typed optional to say exactly that.
 
 ## Polling behavior
 

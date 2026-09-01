@@ -236,9 +236,13 @@ export interface RemoteSandbox {
   createdBy?: RemoteSandboxCreator;
   origin?: string;
 
-  /** Local Docker sandboxes only; absent for API-backed sandboxes. */
+  /**
+   * Local Docker sandboxes only. Not an API schema field at all, so unlike
+   * `state`/`status` (non-pointer Go strings that decode to "") it is typed
+   * optional: an API-backed sandbox never carries one.
+   */
   containerId?: string;
-  /** Local Docker sandboxes only; absent for API-backed sandboxes. */
+  /** Local Docker sandboxes only; see {@link RemoteSandbox.containerId}. */
   image?: string;
 }
 
