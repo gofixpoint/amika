@@ -423,15 +423,21 @@ export interface AgentSendResponse {
   result: string;
   sessionId: string;
   isError: boolean;
+  isNewSession: boolean;
+  agentSessionId?: string;
+  costUsd?: number;
 }
 
 export function agentSendResponseFromWire(
   w: Record<string, unknown>,
 ): AgentSendResponse {
   return {
-    result: String(w["response"] ?? ""),
-    sessionId: String(w["session_id"] ?? ""),
-    isError: Boolean(w["is_error"]),
+    result: str(w["response"]),
+    sessionId: str(w["session_id"]),
+    isError: bool(w["is_error"]),
+    isNewSession: bool(w["is_new_session"]),
+    agentSessionId: optionalStr(w["agent_session_id"]),
+    costUsd: optionalNum(w["cost_usd"]),
   };
 }
 
@@ -446,22 +452,25 @@ export interface Session {
   startedAt: string;
   endedAt: string | null;
   metadata: Record<string, unknown>;
+  /** First user message, capped by the server. List responses only. */
+  preview?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export function sessionFromWire(w: Record<string, unknown>): Session {
   return {
-    id: String(w["id"] ?? ""),
-    sandboxId: String(w["sandbox_id"] ?? ""),
-    orgId: String(w["org_id"] ?? ""),
-    agentName: String(w["agent_name"] ?? ""),
-    status: String(w["status"] ?? ""),
-    startedAt: String(w["started_at"] ?? ""),
-    endedAt: (w["ended_at"] ?? null) as string | null,
+    id: str(w["id"]),
+    sandboxId: str(w["sandbox_id"]),
+    orgId: str(w["org_id"]),
+    agentName: str(w["agent_name"]),
+    status: str(w["status"]),
+    startedAt: str(w["started_at"]),
+    endedAt: nullableStr(w["ended_at"]),
     metadata: (w["metadata"] ?? {}) as Record<string, unknown>,
-    createdAt: String(w["created_at"] ?? ""),
-    updatedAt: String(w["updated_at"] ?? ""),
+    preview: optionalStr(w["preview"]),
+    createdAt: str(w["created_at"]),
+    updatedAt: str(w["updated_at"]),
   };
 }
 
@@ -609,6 +618,10 @@ export function optionalStr(v: unknown): string | undefined {
 
 export function num(v: unknown): number {
   return v === undefined || v === null ? 0 : Number(v);
+}
+
+export function optionalNum(v: unknown): number | undefined {
+  return v === undefined || v === null ? undefined : Number(v);
 }
 
 export function bool(v: unknown): boolean {
