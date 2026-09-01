@@ -25,6 +25,7 @@ import {
   type SandboxSnapshot,
   sandboxSnapshotFromWire,
   type Secret,
+  secretFromWire,
   type Session,
   sessionFromWire,
   type SSHInfo,
@@ -168,10 +169,11 @@ export class AmikaClient {
   // ---------- Secrets ----------
 
   async listSecrets(): Promise<Secret[]> {
-    const data =
-      (await this.http.doJSON<Secret[]>("GET", `${API_BASE_PATH}/secrets`)) ??
-      [];
-    return data;
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/secrets`,
+    );
+    return mapArray(data, secretFromWire);
   }
 
   async createSecret(req: CreateSecretRequest): Promise<void> {

@@ -334,10 +334,33 @@ export interface RevokeSSHRequest {
 
 // ---------- Secrets ----------
 
+/**
+ * Mirrors the API's SecretSummary schema, returned by the /secrets endpoints.
+ * Never carries the secret's value.
+ */
 export interface Secret {
   id: string;
+  orgId: string;
+  userId: string;
   name: string;
+  description: string | null;
+  /** "user" or "org". */
   scope: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function secretFromWire(w: Record<string, unknown>): Secret {
+  return {
+    id: str(w["id"]),
+    orgId: str(w["org_id"]),
+    userId: str(w["user_id"]),
+    name: str(w["name"]),
+    description: nullableStr(w["description"]),
+    scope: str(w["scope"]),
+    createdAt: str(w["created_at"]),
+    updatedAt: str(w["updated_at"]),
+  };
 }
 
 export interface CreateSecretRequest {
@@ -357,6 +380,8 @@ export interface CreateProviderSecretRequest {
   value: string;
   /** "oauth" or "api_key" — required by the server. */
   type: "oauth" | "api_key";
+  /** "user" (default) or "org"; omit to take the server default. */
+  scope?: "user" | "org";
 }
 
 export interface ProviderSecretSummary {
@@ -369,6 +394,8 @@ export interface ProviderSecretListItem {
   id: string;
   name: string;
   type: string;
+  /** "user" or "org". */
+  scope: string;
 }
 
 // ---------- Agent send ----------
