@@ -862,18 +862,6 @@ type AgentSessionSendRequest struct {
 	Effort string `json:"effort,omitempty"`
 }
 
-// AgentModelOptions is one agent's entry in GET /api/v0beta1/agent-sessions/models.
-type AgentModelOptions struct {
-	Agent   string   `json:"agent"`
-	Models  []string `json:"models"`
-	Efforts []string `json:"efforts"`
-}
-
-// AgentModelOptionsResponse is the body of GET /api/v0beta1/agent-sessions/models.
-type AgentModelOptionsResponse struct {
-	Agents []AgentModelOptions `json:"agents"`
-}
-
 // AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and
 // cost accounting for one turn. Every field is optional — Claude reports the
 // full set, Codex currently reports none — so all are pointers and a missing
@@ -1212,26 +1200,6 @@ func (c *Client) ListAgentSessions(limit int) (*ListAgentSessionsResponse, error
 	// Normalize here so the one encode type always emits [], never null.
 	if result.Sessions == nil {
 		result.Sessions = []AgentSessionSummary{}
-	}
-	return &result, nil
-}
-
-// GetAgentModelOptions returns the models and effort levels each agent
-// supports, as the server currently defines them.
-//
-// Asked rather than compiled in: the CLI ships separately from the control
-// plane, so a list baked into this binary would go stale the moment a model is
-// added or dropped server-side, and would then reject a name the server would
-// have accepted.
-func (c *Client) GetAgentModelOptions() (*AgentModelOptionsResponse, error) {
-	var result AgentModelOptionsResponse
-	if err := c.doJSON(
-		"GET", apiBasePath+"/agent-sessions/models", nil, &result,
-	); err != nil {
-		return nil, fmt.Errorf("remote get agent models: %w", err)
-	}
-	if result.Agents == nil {
-		result.Agents = []AgentModelOptions{}
 	}
 	return &result, nil
 }

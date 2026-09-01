@@ -40,20 +40,10 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	}
 }
 
-func TestSendModelsSubcommandRegistered(t *testing.T) {
-	send := findChildCommand(rootCmd, "send")
-	if send == nil {
-		t.Fatal("send command not registered on rootCmd")
-	}
-	if findChildCommand(send, "models") == nil {
-		t.Fatal("send has no models subcommand")
-	}
-}
-
 // Cobra reads a backquoted span in a usage string as the flag's value
-// placeholder, so a description mentioning `amika send models` in backticks made
-// --model advertise its argument type as "amika send models" instead of
-// "string". Asserting the type keeps that from creeping back.
+// placeholder, so a backquoted example in the description made --model
+// advertise its argument type as that example instead of "string".
+// Asserting the type keeps that from creeping back.
 func TestSendTuningFlagsAdvertiseStringValues(t *testing.T) {
 	send := findChildCommand(rootCmd, "send")
 	if send == nil {
@@ -70,18 +60,6 @@ func TestSendTuningFlagsAdvertiseStringValues(t *testing.T) {
 		if strings.Contains(flag.Usage, "`") {
 			t.Errorf("--%s usage contains a backquote, which cobra reads as the value placeholder: %q", name, flag.Usage)
 		}
-	}
-}
-
-func TestJoinOrDash(t *testing.T) {
-	if got := joinOrDash(nil); got != "-" {
-		t.Errorf("joinOrDash(nil) = %q, want -", got)
-	}
-	if got := joinOrDash([]string{}); got != "-" {
-		t.Errorf("joinOrDash(empty) = %q, want -", got)
-	}
-	if got := joinOrDash([]string{"opus", "sonnet"}); got != "opus, sonnet" {
-		t.Errorf("joinOrDash = %q", got)
 	}
 }
 

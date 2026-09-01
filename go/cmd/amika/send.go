@@ -268,60 +268,6 @@ var sessionsCmd = &cobra.Command{
 	Long:    `View the durable agent-session chats created by "amika send".`,
 }
 
-// `amika send models` rather than a top-level command: it answers a question
-// about `send`'s own --model and --effort flags, and lives beside them.
-var sendModelsCmd = &cobra.Command{
-	Use:   "models",
-	Short: "List the models and effort levels each agent supports",
-	Long: `List what --model and --effort accept, as the server currently defines them.
-
-Asked of the control plane rather than compiled into this binary, so the list
-cannot go stale against a server that has added or dropped a model.`,
-	Args: cobra.NoArgs,
-	RunE: runSendModels,
-}
-
-func runSendModels(cmd *cobra.Command, _ []string) error {
-	format, err := output.FormatFrom(cmd)
-	if err != nil {
-		return err
-	}
-	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
-		return err
-	}
-	resp, err := runmode.NewRemoteClient().GetAgentModelOptions()
-	if err != nil {
-		return err
-	}
-	if format.IsJSON() {
-		// The API's envelope verbatim, as every remote-backed command emits it.
-		return format.JSON(cmd.OutOrStdout(), resp)
-	}
-	if len(resp.Agents) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No agents available.")
-		return nil
-	}
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "AGENT\tMODELS\tEFFORTS")
-	for _, a := range resp.Agents {
-		fmt.Fprintf(
-			w, "%s\t%s\t%s\n",
-			a.Agent, joinOrDash(a.Models), joinOrDash(a.Efforts),
-		)
-	}
-	w.Flush()
-	return nil
-}
-
-// joinOrDash keeps a column legible when an agent offers nothing, so an empty
-// cell reads as empty rather than as the next column having shifted left.
-func joinOrDash(values []string) string {
-	if len(values) == 0 {
-		return "-"
-	}
-	return strings.Join(values, ", ")
-}
-
 var sessionsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List the organization's agent-session chats",
@@ -444,12 +390,11 @@ func init() {
 	sendCmd.Flags().Bool("new-session", false, "Start a brand-new chat")
 	sendCmd.Flags().String("repo", "", "Repository URL to clone when a sandbox is created")
 	// No backquotes in these usage strings: cobra reads a backquoted span as the
-	// flag's value placeholder, so "`amika send models`" made --model advertise
-	// its argument type as "amika send models".
-	sendCmd.Flags().String("model", "", "Model to run this turn with; see 'amika send models' (default: the agent's own)")
+	// flag's value placeholder, so a backquoted example made --model advertise
+	// its argument type as that example instead of "string".
+	sendCmd.Flags().String("model", "", "Model to run this turn with; the server rejects an unknown name (default: the agent's own)")
 	sendCmd.Flags().String("effort", "", "Reasoning effort: low, medium, high, xhigh or max (default: the agent's own)")
 	sendCmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
-	sendCmd.AddCommand(sendModelsCmd)
 	rootCmd.AddCommand(sendCmd)
 
 	sessionsListCmd.Flags().Int("limit", 0, "Maximum chats to list (default: the server's page size, 50)")
