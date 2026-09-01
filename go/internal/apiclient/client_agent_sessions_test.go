@@ -104,7 +104,7 @@ func TestSendAgentSession_OmitsUsageWhenAbsent(t *testing.T) {
 
 // TestListAgentSessions_ParsesEnvelope checks the list method unwraps the
 // {sessions,total} envelope and parses the nullable sandbox_name/preview/
-// ended_at fields.
+// model/effort/ended_at fields.
 func TestListAgentSessions_ParsesEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v0beta1/agent-sessions" {
@@ -113,10 +113,12 @@ func TestListAgentSessions_ParsesEnvelope(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"sessions":[
           {"session_id":"as_1","sandbox_id":"sbx_1","sandbox_name":"silver-wuhan","agent":"claude",
-           "status":"active","preview":"hi there","started_at":"t0","ended_at":null,
+           "status":"active","preview":"hi there","model":"opus","effort":"high",
+           "started_at":"t0","ended_at":null,
            "created_at":"t0","updated_at":"t1"},
           {"session_id":"as_2","sandbox_id":"sbx_2","sandbox_name":null,"agent":"codex",
-           "status":"ended","preview":null,"started_at":"t0","ended_at":"t2",
+           "status":"ended","preview":null,"model":null,"effort":null,
+           "started_at":"t0","ended_at":"t2",
            "created_at":"t0","updated_at":"t2"}
         ],"total":2}`)
 	}))
@@ -143,11 +145,22 @@ func TestListAgentSessions_ParsesEnvelope(t *testing.T) {
 	if sessions[0].Preview == nil || *sessions[0].Preview != "hi there" {
 		t.Errorf("sessions[0].Preview = %v", sessions[0].Preview)
 	}
+	if sessions[0].Model == nil || *sessions[0].Model != "opus" {
+		t.Errorf("sessions[0].Model = %v", sessions[0].Model)
+	}
+	if sessions[0].Effort == nil || *sessions[0].Effort != "high" {
+		t.Errorf("sessions[0].Effort = %v", sessions[0].Effort)
+	}
 	if sessions[0].EndedAt != nil {
 		t.Errorf("sessions[0].EndedAt = %v, want nil", sessions[0].EndedAt)
 	}
 	if sessions[1].SandboxName != nil || sessions[1].Preview != nil {
 		t.Errorf("sessions[1] should have null sandbox_name/preview: %+v", sessions[1])
+	}
+	// Null means the agent CLI's own default, which is a different fact from
+	// the field being absent; both must survive as a nil pointer.
+	if sessions[1].Model != nil || sessions[1].Effort != nil {
+		t.Errorf("sessions[1] should have null model/effort: %+v", sessions[1])
 	}
 	if sessions[1].EndedAt == nil || *sessions[1].EndedAt != "t2" {
 		t.Errorf("sessions[1].EndedAt = %v, want t2", sessions[1].EndedAt)
@@ -240,6 +253,53 @@ func TestListAgentSessions_ReEmitsEnvelope(t *testing.T) {
 	}
 	if string(out) != `{"sessions":[],"total":7}` {
 		t.Errorf("re-emitted = %s, want the {sessions,total} envelope with []", out)
+	}
+}
+
+// TestListAgentSessions_ReEmitsEveryRequiredKey pins the summary's re-emitted
+// shape against the response schema's required property list. `sessions list
+// -o json` re-encodes what it decoded, so a field the struct has no home for is
+// dropped silently: the CLI parses 12 keys and prints 10, and nothing fails
+// until an e2e schema assertion happens to cover it. Asserting the key set (not
+// just the values) is what catches that, since a dropped key leaves every
+// remaining assertion passing.
+func TestListAgentSessions_ReEmitsEveryRequiredKey(t *testing.T) {
+	// The 12 properties AgentSessionSummary marks required. A nullable field is
+	// still required: the key is always present and may be null.
+	required := []string{
+		"session_id", "sandbox_id", "sandbox_name", "agent", "status",
+		"preview", "model", "effort", "started_at", "ended_at",
+		"created_at", "updated_at",
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"sessions":[
+          {"session_id":"as_1","sandbox_id":"sbx_1","sandbox_name":null,"agent":"claude",
+           "status":"active","preview":null,"model":null,"effort":null,
+           "started_at":"t0","ended_at":null,"created_at":"t0","updated_at":"t1"}
+        ],"total":1}`)
+	}))
+	defer srv.Close()
+
+	resp, err := NewClient(srv.URL, "test-token").ListAgentSessions(0)
+	if err != nil {
+		t.Fatalf("ListAgentSessions: %v", err)
+	}
+	out, err := json.Marshal(resp.Sessions[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal re-emitted: %v", err)
+	}
+	for _, k := range required {
+		if _, ok := got[k]; !ok {
+			t.Errorf("re-emitted summary drops required key %q: %s", k, out)
+		}
+	}
+	if len(got) != len(required) {
+		t.Errorf("re-emitted %d keys, want %d: %s", len(got), len(required), out)
 	}
 }
 

@@ -146,12 +146,15 @@ type RemoteSandbox struct {
 	SnapshotName             *string                   `json:"snapshot_name,omitempty"`
 	SandboxPreset            *string                   `json:"sandbox_preset,omitempty"`
 	SandboxSize              *string                   `json:"sandbox_size,omitempty"`
+	GithubAuthMode           *string                   `json:"github_auth_mode,omitempty"`
+	GithubCredProvisioned    *bool                     `json:"github_credential_provisioned,omitempty"`
 	ErrorMessage             *string                   `json:"error_message,omitempty"`
 	State                    string                    `json:"state,omitempty"`
 	Status                   string                    `json:"status,omitempty"`
 	SetupStatus              *string                   `json:"setup_status,omitempty"`
 	URLsExpireAt             *string                   `json:"urls_expire_at,omitempty"`
 	SecretNames              []string                  `json:"secret_names,omitempty"`
+	MountedSecrets           []MountedSecret           `json:"mounted_secrets,omitempty"`
 	HasWorkflow              bool                      `json:"has_workflow,omitempty"`
 	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
 	CreatedBy                *RemoteSandboxCreator     `json:"created_by,omitempty"`
@@ -169,6 +172,20 @@ type RemoteSandbox struct {
 type RemoteSandboxCreator struct {
 	Name  *string `json:"name"`
 	Email *string `json:"email"`
+}
+
+// MountedSecret is one entry in RemoteSandbox.MountedSecrets: which secrets a
+// sandbox carries, by name and scope. The API deliberately returns no value and
+// no vault handle, so neither has a field here. Managed distinguishes a
+// credential Amika manages for a provider from a plain user-defined secret; it
+// is the discriminator rather than a null CredentialType, which a managed entry
+// is allowed to have.
+type MountedSecret struct {
+	Name           string  `json:"name"`
+	Scope          string  `json:"scope"`
+	Managed        bool    `json:"managed"`
+	CredentialType *string `json:"credential_type"`
+	Provider       *string `json:"provider"`
 }
 
 // ListSandboxes fetches sandboxes from the remote API.
@@ -455,9 +472,15 @@ func (c *Client) WaitForSandboxSnapshot(ref string) (*SandboxSnapshot, error) {
 
 // SandboxScrubPreview lists the injected secrets a "snapshot and delete" would
 // remove from a sandbox (file paths + env var names only, no values).
+//
+// The schema requires all three fields. RestoredFiles is a third category the
+// scrub performs — paths reset to a retained clean baseline rather than deleted
+// — and is decoded here so the response is not silently truncated; the
+// confirmation prompt does not yet mention it.
 type SandboxScrubPreview struct {
-	Files   []string `json:"files"`
-	EnvVars []string `json:"env_vars"`
+	Files         []string `json:"files"`
+	RestoredFiles []string `json:"restored_files"`
+	EnvVars       []string `json:"env_vars"`
 }
 
 // GetSandboxScrubPreview previews which injected secrets a scrub-and-delete
@@ -747,8 +770,11 @@ type Session struct {
 	StartedAt string                 `json:"started_at"`
 	EndedAt   *string                `json:"ended_at"`
 	Metadata  map[string]interface{} `json:"metadata"`
-	CreatedAt string                 `json:"created_at"`
-	UpdatedAt string                 `json:"updated_at"`
+	// First user message, capped, as computed by the server. Returned on list
+	// responses only, hence omitempty; nullable there, hence a pointer.
+	Preview   *string `json:"preview,omitempty"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
 }
 
 // CreateSessionRequest is the request body for POST /api/v0beta1/sandboxes/{id}/sessions.
@@ -858,9 +884,9 @@ type AgentSessionSendResponse struct {
 }
 
 // AgentSessionSummary is one row of the agent-sessions list. SandboxName,
-// Preview, and EndedAt are nullable in the schema — a chat can outlive the
-// sandbox whose name it shows, carry no user message to preview, and still be
-// running.
+// Preview, Model, Effort, and EndedAt are nullable in the schema — a chat can
+// outlive the sandbox whose name it shows, carry no user message to preview,
+// run at the agent CLI's own model and effort, and still be running.
 type AgentSessionSummary struct {
 	SessionID   string  `json:"session_id"`
 	SandboxID   string  `json:"sandbox_id"`
@@ -868,10 +894,15 @@ type AgentSessionSummary struct {
 	Agent       string  `json:"agent"`
 	Status      string  `json:"status"`
 	Preview     *string `json:"preview"`
-	StartedAt   string  `json:"started_at"`
-	EndedAt     *string `json:"ended_at"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	// What the chat is set to run and to think at. Null (not absent) means the
+	// agent CLI's own default, which is what every chat ran before these were
+	// settable — so pointers, and no `omitempty`.
+	Model     *string `json:"model"`
+	Effort    *string `json:"effort"`
+	StartedAt string  `json:"started_at"`
+	EndedAt   *string `json:"ended_at"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
 }
 
 // AgentSessionMessage is one turn in an agent-session chat's transcript,
