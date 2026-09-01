@@ -854,3 +854,108 @@ describe("AmikaClient snapshot fetch and wait", () => {
     );
   });
 });
+
+describe("AmikaClient sandbox services", () => {
+  const wireService = {
+    id: "svc_1",
+    sandbox_id: "sbx_1",
+    name: "web",
+    port: 3000,
+    url_scheme: "https",
+    protocol: "tcp",
+    url: "https://web.example",
+    host_port: 3000,
+    source: "table",
+    kind: "user",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("listSandboxServices unwraps {items} and filters by sandbox_ref", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: { items: [wireService] } },
+    ]);
+    const services = await makeClient(fetch).listSandboxServices("org/dev");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-services?sandbox_ref=org%2Fdev`,
+    );
+    expect(services[0]?.urlScheme).toBe("https");
+    expect(services[0]?.hostPort).toBe(3000);
+  });
+
+  it("listSandboxServices omits the filter when no ref is given", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    await makeClient(fetch).listSandboxServices();
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandbox-services`);
+  });
+
+  it("keeps a legacy service's null url and id", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          items: [
+            {
+              ...wireService,
+              id: null,
+              url: null,
+              url_scheme: null,
+              host_port: null,
+            },
+          ],
+        },
+      },
+    ]);
+    const services = await makeClient(fetch).listSandboxServices();
+    expect(services[0]?.id).toBeNull();
+    expect(services[0]?.url).toBeNull();
+    expect(services[0]?.urlScheme).toBeNull();
+    expect(services[0]?.hostPort).toBeNull();
+  });
+
+  it("createSandboxService POSTs url_scheme in snake_case", async () => {
+    const { fetch, calls } = mockFetch([{ status: 201, body: wireService }]);
+    const svc = await makeClient(fetch).createSandboxService("org/dev", {
+      name: "web",
+      port: 3000,
+      urlScheme: "https",
+    });
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/org%2Fdev/services`,
+    );
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      name: "web",
+      port: 3000,
+      url_scheme: "https",
+    });
+    expect(svc.name).toBe("web");
+  });
+
+  it("putSandboxService resolves by name unless told otherwise", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: wireService },
+      { status: 200, body: wireService },
+    ]);
+    const client = makeClient(fetch);
+    const req = { name: "web", port: 3001, urlScheme: "http" as const };
+    await client.putSandboxService("dev", "web", req);
+    await client.putSandboxService("dev", "svc_1", req, "id");
+    expect(calls[0]?.method).toBe("PUT");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/dev/services/web?by=name`,
+    );
+    expect(calls[1]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/dev/services/svc_1?by=id`,
+    );
+  });
+
+  it("deleteSandboxService DELETEs by name", async () => {
+    const { fetch, calls } = mockFetch([{ status: 204, body: "" }]);
+    await makeClient(fetch).deleteSandboxService("dev", "web");
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/dev/services/web?by=name`,
+    );
+  });
+});

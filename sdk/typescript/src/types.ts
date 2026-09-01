@@ -519,6 +519,64 @@ export function updateSessionRequestToWire(
   });
 }
 
+// ---------- Sandbox services ----------
+
+/**
+ * One service on a sandbox, as returned by the /sandbox-services endpoints.
+ * It unifies rows from the `sandbox_services` table with legacy jsonb entries:
+ * `source` discriminates ("table" or "legacy") and `kind` is "system" or
+ * "user". A legacy or not-yet-provisioned service has a null `url`/`urlScheme`.
+ *
+ * Distinct from {@link RemoteSandboxService}, the abbreviated form nested in a
+ * sandbox resource.
+ */
+export interface SandboxServiceResource {
+  id: string | null;
+  sandboxId: string;
+  name: string;
+  port: number;
+  urlScheme: string | null;
+  protocol: string;
+  url: string | null;
+  hostPort: number | null;
+  source: string;
+  kind: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export function sandboxServiceResourceFromWire(
+  w: Record<string, unknown>,
+): SandboxServiceResource {
+  return {
+    id: nullableStr(w["id"]),
+    sandboxId: str(w["sandbox_id"]),
+    name: str(w["name"]),
+    port: num(w["port"]),
+    urlScheme: nullableStr(w["url_scheme"]),
+    protocol: str(w["protocol"]),
+    url: nullableStr(w["url"]),
+    hostPort: nullableNum(w["host_port"]),
+    source: str(w["source"]),
+    kind: str(w["kind"]),
+    createdAt: nullableStr(w["created_at"]),
+    updatedAt: nullableStr(w["updated_at"]),
+  };
+}
+
+/** Request body for creating (POST) or replacing (PUT) a sandbox service. */
+export interface SandboxServiceRequest {
+  name: string;
+  port: number;
+  urlScheme: "http" | "https";
+}
+
+export function sandboxServiceRequestToWire(
+  r: SandboxServiceRequest,
+): Record<string, unknown> {
+  return { name: r.name, port: r.port, url_scheme: r.urlScheme };
+}
+
 // ---------- Sandbox snapshots ----------
 
 /**
@@ -678,6 +736,10 @@ export function optionalStr(v: unknown): string | undefined {
 
 export function num(v: unknown): number {
   return v === undefined || v === null ? 0 : Number(v);
+}
+
+export function nullableNum(v: unknown): number | null {
+  return v === undefined || v === null ? null : Number(v);
 }
 
 export function optionalNum(v: unknown): number | undefined {

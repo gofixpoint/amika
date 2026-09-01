@@ -24,6 +24,10 @@ import {
   type RevokeSSHRequest,
   type SandboxScrubPreview,
   sandboxScrubPreviewFromWire,
+  type SandboxServiceRequest,
+  type SandboxServiceResource,
+  sandboxServiceRequestToWire,
+  sandboxServiceResourceFromWire,
   type SandboxSnapshot,
   sandboxSnapshotFromWire,
   type Secret,
@@ -177,6 +181,71 @@ export class AmikaClient {
       `${API_BASE_PATH}/repositories`,
     );
     return mapArray(data, remoteRepositoryFromWire);
+  }
+
+  // ---------- Sandbox services ----------
+
+  /**
+   * List live services for the caller's org. `sandboxRef` is an optional
+   * name-or-id filter; omit it to list every service in the org.
+   */
+  async listSandboxServices(
+    sandboxRef?: string,
+  ): Promise<SandboxServiceResource[]> {
+    const params = new URLSearchParams();
+    if (sandboxRef) params.set("sandbox_ref", sandboxRef);
+    const qs = params.toString();
+    const envelope = await this.http.doJSON<{ items?: unknown[] }>(
+      "GET",
+      `${API_BASE_PATH}/sandbox-services${qs ? `?${qs}` : ""}`,
+    );
+    return mapArray(envelope?.items, sandboxServiceResourceFromWire);
+  }
+
+  /**
+   * Create a service on the sandbox referenced by name or id (the server
+   * resolves id first, then name).
+   */
+  async createSandboxService(
+    sandboxRef: string,
+    req: SandboxServiceRequest,
+  ): Promise<SandboxServiceResource> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services`,
+      sandboxServiceRequestToWire(req),
+    );
+    return sandboxServiceResourceFromWire(data ?? {});
+  }
+
+  /**
+   * Fully replace the service identified by `serviceRef` within a sandbox.
+   * `by` selects how `serviceRef` is resolved and defaults to `name`.
+   */
+  async putSandboxService(
+    sandboxRef: string,
+    serviceRef: string,
+    req: SandboxServiceRequest,
+    by: "name" | "id" | "ref" = "name",
+  ): Promise<SandboxServiceResource> {
+    const params = new URLSearchParams({ by });
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "PUT",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?${params.toString()}`,
+      sandboxServiceRequestToWire(req),
+    );
+    return sandboxServiceResourceFromWire(data ?? {});
+  }
+
+  /** Delete the service with the given name within a sandbox. */
+  async deleteSandboxService(
+    sandboxRef: string,
+    serviceRef: string,
+  ): Promise<void> {
+    await this.http.doJSON(
+      "DELETE",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
+    );
   }
 
   // ---------- Secrets ----------

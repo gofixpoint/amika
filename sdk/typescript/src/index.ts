@@ -26,6 +26,8 @@ export type {
   ResolvedAgentCredential,
   RevokeSSHRequest,
   SandboxScrubPreview,
+  SandboxServiceRequest,
+  SandboxServiceResource,
   SandboxSnapshot,
   SSHInfo,
   Secret,
