@@ -12,8 +12,10 @@ import {
   createSandboxSnapshotRequestToWire,
   type CreateSecretRequest,
   type CreateSessionRequest,
+  type CreateSSHPublicKeyRequest,
   createSandboxRequestToWire,
   createSessionRequestToWire,
+  createSSHPublicKeyRequestToWire,
   mapArray,
   type ProviderSecretListItem,
   type ProviderSecretSummary,
@@ -36,6 +38,8 @@ import {
   sessionFromWire,
   type SSHInfo,
   sshInfoFromWire,
+  type SSHPublicKeySummary,
+  sshPublicKeySummaryFromWire,
   type UpdateSecretRequest,
   type UpdateSessionRequest,
   updateSessionRequestToWire,
@@ -245,6 +249,40 @@ export class AmikaClient {
     await this.http.doJSON(
       "DELETE",
       `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
+    );
+  }
+
+  // ---------- SSH public keys ----------
+
+  /**
+   * Store a user-scoped SSH public key. The endpoint upserts by name, so
+   * re-uploading identical material under the same name is a no-op.
+   */
+  async createSSHPublicKey(
+    req: CreateSSHPublicKeyRequest,
+  ): Promise<SSHPublicKeySummary> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/secrets/ssh-public-keys`,
+      createSSHPublicKeyRequestToWire(req),
+    );
+    return sshPublicKeySummaryFromWire(data ?? {});
+  }
+
+  /** List the caller's user-scoped SSH public keys. */
+  async listSSHPublicKeys(): Promise<SSHPublicKeySummary[]> {
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/secrets/ssh-public-keys`,
+    );
+    return mapArray(data, sshPublicKeySummaryFromWire);
+  }
+
+  /** Remove one of the caller's SSH public keys by id. */
+  async deleteSSHPublicKey(id: string): Promise<void> {
+    await this.http.doJSON(
+      "DELETE",
+      `${API_BASE_PATH}/secrets/ssh-public-keys/${encodeURIComponent(id)}`,
     );
   }
 

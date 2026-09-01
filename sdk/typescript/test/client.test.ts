@@ -993,3 +993,55 @@ describe("sandbox service port validation", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("AmikaClient SSH public keys", () => {
+  const ED25519_KEY =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ4ilkUClOhQyh1hQBSn7N/cMSpX0oqg4P87b21Qqdvt";
+
+  it("createSSHPublicKey POSTs public_key in snake_case", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 201,
+        body: {
+          id: "k_1",
+          name: "laptop",
+          public_key: ED25519_KEY,
+          scope: "user",
+        },
+      },
+    ]);
+    const summary = await makeClient(fetch).createSSHPublicKey({
+      name: "laptop",
+      publicKey: ED25519_KEY,
+    });
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/secrets/ssh-public-keys`);
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      name: "laptop",
+      public_key: ED25519_KEY,
+    });
+    expect(summary.publicKey).toBe(ED25519_KEY);
+  });
+
+  it("listSSHPublicKeys maps each summary", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: [
+          { id: "k_1", name: "laptop", public_key: ED25519_KEY, scope: "user" },
+        ],
+      },
+    ]);
+    const keys = await makeClient(fetch).listSSHPublicKeys();
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/secrets/ssh-public-keys`);
+    expect(keys[0]?.name).toBe("laptop");
+  });
+
+  it("deleteSSHPublicKey URL-encodes the id", async () => {
+    const { fetch, calls } = mockFetch([{ status: 204, body: "" }]);
+    await makeClient(fetch).deleteSSHPublicKey("k/1");
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/secrets/ssh-public-keys/k%2F1`,
+    );
+  });
+});

@@ -87,10 +87,13 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 
 ### SSH
 
-| Method                   | Endpoint                       |
-| ------------------------ | ------------------------------ |
-| `getSSH(name)`           | `POST /sandboxes/{name}/ssh`   |
-| `revokeSSH(name, token)` | `DELETE /sandboxes/{name}/ssh` |
+| Method                    | Endpoint                               |
+| ------------------------- | -------------------------------------- |
+| `getSSH(name)`            | `POST /sandboxes/{name}/ssh`           |
+| `revokeSSH(name, token)`  | `DELETE /sandboxes/{name}/ssh`         |
+| `createSSHPublicKey(req)` | `POST /secrets/ssh-public-keys`        |
+| `listSSHPublicKeys()`     | `GET /secrets/ssh-public-keys`         |
+| `deleteSSHPublicKey(id)`  | `DELETE /secrets/ssh-public-keys/{id}` |
 
 ### Secrets
 

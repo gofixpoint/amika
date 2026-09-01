@@ -351,6 +351,38 @@ export interface RevokeSSHRequest {
   token: string;
 }
 
+/** Request body for POST /api/v0beta1/secrets/ssh-public-keys. */
+export interface CreateSSHPublicKeyRequest {
+  name: string;
+  /** An OpenSSH ed25519 public key line. */
+  publicKey: string;
+}
+
+export function createSSHPublicKeyRequestToWire(
+  r: CreateSSHPublicKeyRequest,
+): Record<string, unknown> {
+  return { name: r.name, public_key: r.publicKey };
+}
+
+/** Non-secret metadata for one stored SSH public key. */
+export interface SSHPublicKeySummary {
+  id: string;
+  name: string;
+  publicKey: string;
+  scope: string;
+}
+
+export function sshPublicKeySummaryFromWire(
+  w: Record<string, unknown>,
+): SSHPublicKeySummary {
+  return {
+    id: str(w["id"]),
+    name: str(w["name"]),
+    publicKey: str(w["public_key"]),
+    scope: str(w["scope"]),
+  };
+}
+
 // ---------- Secrets ----------
 
 /**
