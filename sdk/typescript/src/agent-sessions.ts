@@ -203,14 +203,23 @@ export function listAgentSessionsResponseFromWire(
 
 /**
  * Progress callbacks for {@link AmikaClient.sendAgentSessionStream}. Both are
- * optional and are awaited in order as frames arrive. `onStatus` reports
- * lifecycle milestones (`creating_sandbox` / `sandbox_ready`, the latter
- * carrying the sandbox id); `onDelta` receives agent reply text as it is
- * produced.
+ * optional. `onStatus` reports lifecycle milestones (`creating_sandbox` /
+ * `sandbox_ready`, the latter carrying the sandbox id); `onDelta` receives
+ * agent reply text as it is produced.
+ *
+ * A handler may return a promise, and the reader awaits it before reading the
+ * next frame. Deltas therefore reach an async handler in order, and one that
+ * throws or rejects fails the send instead of becoming an unhandled rejection.
+ * A slow handler backpressures the stream, which is the right trade for output
+ * that must not interleave.
+ *
+ * The return type is `unknown` rather than `void | Promise<void>` so that a
+ * concise arrow body still type-checks: `(text) => process.stdout.write(text)`
+ * returns a boolean, and a union return type would reject it.
  */
 export interface AgentSessionStreamHandlers {
-  onStatus?: (phase: string, sandboxId: string) => void;
-  onDelta?: (text: string) => void;
+  onStatus?: (phase: string, sandboxId: string) => unknown;
+  onDelta?: (text: string) => unknown;
 }
 
 /**
@@ -234,7 +243,10 @@ export async function readAgentSessionStream(
         // Cosmetic progress only, so an unparseable frame is ignored.
         const parsed = tryParse(frame.data);
         if (parsed) {
-          handlers.onStatus(str(parsed["phase"]), str(parsed["sandbox_id"]));
+          await handlers.onStatus(
+            str(parsed["phase"]),
+            str(parsed["sandbox_id"]),
+          );
         }
         break;
       }
@@ -248,7 +260,7 @@ export async function readAgentSessionStream(
           );
         }
         const text = str(parsed["text"]);
-        if (text !== "" && handlers.onDelta) handlers.onDelta(text);
+        if (text !== "" && handlers.onDelta) await handlers.onDelta(text);
         break;
       }
       case "done": {

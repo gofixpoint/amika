@@ -278,3 +278,81 @@ describe("AmikaClient.getAgentSession", () => {
     expect(detail.messages[1]?.isError).toBe(true);
   });
 });
+
+describe("AmikaClient.sendAgentSessionStream async handlers", () => {
+  it("awaits an async onDelta so text arrives in order", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: sse(
+          ["delta", { text: "first" }],
+          ["delta", { text: "second" }],
+          ["delta", { text: "third" }],
+          ["done", DONE_PAYLOAD],
+        ),
+      },
+    ]);
+
+    const written: string[] = [];
+    // The first chunk takes the longest to write. Without an await the
+    // reader would race ahead and the writes would land out of order.
+    const delays: Record<string, number> = { first: 30, second: 10, third: 0 };
+    await makeClient(fetch).sendAgentSessionStream(
+      { message: "hi" },
+      {
+        onDelta: async (text) => {
+          await new Promise((r) => setTimeout(r, delays[text] ?? 0));
+          written.push(text);
+        },
+      },
+    );
+
+    expect(written).toEqual(["first", "second", "third"]);
+  });
+
+  it("awaits an async onStatus before the next frame", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: sse(
+          ["status", { phase: "creating_sandbox", sandbox_id: "" }],
+          ["delta", { text: "x" }],
+          ["done", DONE_PAYLOAD],
+        ),
+      },
+    ]);
+
+    const order: string[] = [];
+    await makeClient(fetch).sendAgentSessionStream(
+      { message: "hi" },
+      {
+        onStatus: async (phase) => {
+          await new Promise((r) => setTimeout(r, 20));
+          order.push(`status:${phase}`);
+        },
+        onDelta: (text) => {
+          order.push(`delta:${text}`);
+        },
+      },
+    );
+
+    expect(order).toEqual(["status:creating_sandbox", "delta:x"]);
+  });
+
+  it("fails the send when a handler rejects", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: sse(["delta", { text: "x" }], ["done", DONE_PAYLOAD]),
+      },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream(
+        { message: "hi" },
+        {
+          onDelta: () => Promise.reject(new Error("writer closed")),
+        },
+      ),
+    ).rejects.toThrow(/writer closed/);
+  });
+});
