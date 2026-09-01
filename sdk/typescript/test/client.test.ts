@@ -363,7 +363,39 @@ describe("AmikaClient.agentSend", () => {
       session_id: "s1",
       agent: "claude",
     });
-    expect(resp).toEqual({ result: "ok", sessionId: "s1", isError: false });
+    expect(resp).toEqual({
+      result: "ok",
+      sessionId: "s1",
+      isError: false,
+      isNewSession: false,
+      agentSessionId: undefined,
+      costUsd: undefined,
+    });
+  });
+
+  it("decodes the optional accounting fields when the server sends them", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          response: "ok",
+          session_id: "s1",
+          is_error: false,
+          is_new_session: true,
+          agent_session_id: "as_1",
+          cost_usd: 0.42,
+        },
+      },
+    ]);
+    const resp = await makeClient(fetch).agentSend("dev", { message: "hi" });
+    expect(resp).toEqual({
+      result: "ok",
+      sessionId: "s1",
+      isError: false,
+      isNewSession: true,
+      agentSessionId: "as_1",
+      costUsd: 0.42,
+    });
   });
 
   it("rewrites agent auth-error HTTP failures to a friendly AmikaError", async () => {
@@ -413,7 +445,7 @@ describe("AmikaClient sessions", () => {
         status: 200,
         body: {
           sessions: [
-            { id: "s1", agent_name: "claude" },
+            { id: "s1", agent_name: "claude", preview: "fix the bug" },
             { id: "s2", agent_name: "codex" },
           ],
           total: 2,
@@ -424,6 +456,9 @@ describe("AmikaClient sessions", () => {
     const sessions = await client.listSessions("dev");
     expect(sessions).toHaveLength(2);
     expect(sessions[1]?.agentName).toBe("codex");
+    // `preview` is returned on list responses only.
+    expect(sessions[0]?.preview).toBe("fix the bug");
+    expect(sessions[1]?.preview).toBeUndefined();
   });
 
   it("getLatestSession returns null on 404", async () => {
