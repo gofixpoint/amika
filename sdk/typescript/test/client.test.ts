@@ -243,14 +243,60 @@ describe("AmikaClient.waitForSandbox", () => {
 });
 
 describe("AmikaClient secrets", () => {
-  it("listSecrets returns the array as-is", async () => {
+  it("listSecrets decodes the full summary", async () => {
     const { fetch, calls } = mockFetch([
-      { status: 200, body: [{ id: "1", name: "API_KEY", scope: "user" }] },
+      {
+        status: 200,
+        body: [
+          {
+            id: "1",
+            org_id: "org_1",
+            user_id: "usr_1",
+            name: "API_KEY",
+            description: null,
+            scope: "user",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-02T00:00:00Z",
+          },
+        ],
+      },
     ]);
     const client = makeClient(fetch);
     const secrets = await client.listSecrets();
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/secrets`);
-    expect(secrets[0]?.name).toBe("API_KEY");
+    expect(secrets[0]).toEqual({
+      id: "1",
+      orgId: "org_1",
+      userId: "usr_1",
+      name: "API_KEY",
+      description: null,
+      scope: "user",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-02T00:00:00Z",
+    });
+  });
+
+  it("listSecrets returns [] when the server sends no body", async () => {
+    const { fetch } = mockFetch([{ status: 200, body: "" }]);
+    expect(await makeClient(fetch).listSecrets()).toEqual([]);
+  });
+
+  it("createProviderSecret forwards an explicit scope", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 201, body: { id: "1", name: "work", scope: "org" } },
+    ]);
+    await makeClient(fetch).createProviderSecret("claude", {
+      name: "work",
+      value: "sk-…",
+      type: "api_key",
+      scope: "org",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      name: "work",
+      value: "sk-…",
+      type: "api_key",
+      scope: "org",
+    });
   });
 
   it("createSecret POSTs the request body", async () => {
