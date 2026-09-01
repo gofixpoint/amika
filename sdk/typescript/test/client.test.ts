@@ -317,7 +317,39 @@ describe("AmikaClient.agentSend", () => {
       session_id: "s1",
       agent: "claude",
     });
-    expect(resp).toEqual({ result: "ok", sessionId: "s1", isError: false });
+    expect(resp).toEqual({
+      result: "ok",
+      sessionId: "s1",
+      isError: false,
+      isNewSession: false,
+      agentSessionId: undefined,
+      costUsd: undefined,
+    });
+  });
+
+  it("decodes the optional accounting fields when the server sends them", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          response: "ok",
+          session_id: "s1",
+          is_error: false,
+          is_new_session: true,
+          agent_session_id: "as_1",
+          cost_usd: 0.42,
+        },
+      },
+    ]);
+    const resp = await makeClient(fetch).agentSend("dev", { message: "hi" });
+    expect(resp).toEqual({
+      result: "ok",
+      sessionId: "s1",
+      isError: false,
+      isNewSession: true,
+      agentSessionId: "as_1",
+      costUsd: 0.42,
+    });
   });
 
   it("rewrites agent auth-error HTTP failures to a friendly AmikaError", async () => {
@@ -539,6 +571,442 @@ describe("AmikaClient sandbox snapshots", () => {
     expect(calls[0]?.method).toBe("DELETE");
     expect(calls[0]?.url).toBe(
       `${BASE}/api/v0beta1/sandbox-snapshots/org%2Fmy-snap?by=ref`,
+    );
+  });
+});
+
+describe("AmikaClient sandbox decoding", () => {
+  it("keeps every field the API schema defines", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          id: "sbx_1",
+          user_id: null,
+          org_id: "org_1",
+          name: "dev",
+          provider: "daytona",
+          provider_sandbox_id: "d_1",
+          provider_url: null,
+          amika_opencode_web: null,
+          repo_name: "proj",
+          repo_provider: "github",
+          repo_id: "r_1",
+          repo_url: "git@github.com:org/proj.git",
+          branch: "main",
+          commit_hash: null,
+          snapshot: "proj-base",
+          current_session_id: null,
+          services: [
+            {
+              name: "web",
+              url: "https://web.example",
+              hostPort: 3000,
+              containerPort: 3000,
+              protocol: "tcp",
+            },
+          ],
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:01:00Z",
+          sandbox_preset: "coder",
+          github_auth_mode: "app",
+          github_credential_provisioned: true,
+          state: "active",
+          status: "ready",
+          setup_status: "done",
+          secret_names: ["API_KEY"],
+          mounted_secrets: [
+            {
+              name: "ANTHROPIC_API_KEY",
+              scope: "user",
+              managed: true,
+              credential_type: "api_key",
+              provider: "claude",
+            },
+          ],
+          has_workflow: true,
+          created_by: { name: "Jakub", email: null },
+          origin: "cli",
+        },
+      },
+    ]);
+    const sb = await makeClient(fetch).getSandbox("dev");
+
+    expect(sb.orgId).toBe("org_1");
+    expect(sb.providerSandboxId).toBe("d_1");
+    expect(sb.services[0]).toEqual({
+      name: "web",
+      url: "https://web.example",
+      hostPort: 3000,
+      containerPort: 3000,
+      protocol: "tcp",
+    });
+    expect(sb.githubAuthMode).toBe("app");
+    expect(sb.githubCredentialProvisioned).toBe(true);
+    expect(sb.setupStatus).toBe("done");
+    expect(sb.secretNames).toEqual(["API_KEY"]);
+    expect(sb.mountedSecrets?.[0]).toEqual({
+      name: "ANTHROPIC_API_KEY",
+      scope: "user",
+      managed: true,
+      credentialType: "api_key",
+      provider: "claude",
+    });
+    expect(sb.hasWorkflow).toBe(true);
+    expect(sb.createdBy).toEqual({ name: "Jakub", email: null });
+    expect(sb.origin).toBe("cli");
+  });
+
+  it("distinguishes a null nullable field from an absent optional one", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: { id: "sbx_1", name: "dev", repo_url: null } },
+    ]);
+    const sb = await makeClient(fetch).getSandbox("dev");
+    expect(sb.repoUrl).toBeNull();
+    expect(sb.branch).toBeNull();
+    expect(sb.services).toEqual([]);
+    expect(sb.errorMessage).toBeUndefined();
+    expect(sb.mountedSecrets).toBeUndefined();
+    expect(sb.hasWorkflow).toBe(false);
+  });
+
+  it("sends github_auth_mode when createSandbox is given one", async () => {
+    const { fetch, calls } = mockFetch([{ status: 202, body: { id: "1" } }]);
+    await makeClient(fetch).createSandbox({ githubAuthMode: "app" });
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      github_auth_mode: "app",
+    });
+  });
+});
+
+describe("AmikaClient.listRepositories", () => {
+  it("GETs /repositories and maps repo_url", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: [{ id: "r_1", repo_url: "git@github.com:o/p.git" }],
+      },
+    ]);
+    const repos = await makeClient(fetch).listRepositories();
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/repositories`);
+    expect(repos).toEqual([{ id: "r_1", repoUrl: "git@github.com:o/p.git" }]);
+  });
+
+  it("returns [] when the server sends no body", async () => {
+    const { fetch } = mockFetch([{ status: 200, body: "" }]);
+    expect(await makeClient(fetch).listRepositories()).toEqual([]);
+  });
+});
+
+describe("AmikaClient sandbox services", () => {
+  const wireService = {
+    id: "svc_1",
+    sandbox_id: "sbx_1",
+    name: "web",
+    port: 3000,
+    url_scheme: "https",
+    protocol: "tcp",
+    url: "https://web.example",
+    host_port: 3000,
+    source: "table",
+    kind: "user",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("listSandboxServices unwraps {items} and filters by sandbox_ref", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: { items: [wireService] } },
+    ]);
+    const services = await makeClient(fetch).listSandboxServices("org/dev");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-services?sandbox_ref=org%2Fdev`,
+    );
+    expect(services[0]?.urlScheme).toBe("https");
+    expect(services[0]?.hostPort).toBe(3000);
+  });
+
+  it("listSandboxServices omits the filter when no ref is given", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    await makeClient(fetch).listSandboxServices();
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandbox-services`);
+  });
+
+  it("keeps a legacy service's null url and id", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          items: [
+            {
+              ...wireService,
+              id: null,
+              url: null,
+              url_scheme: null,
+              host_port: null,
+            },
+          ],
+        },
+      },
+    ]);
+    const services = await makeClient(fetch).listSandboxServices();
+    expect(services[0]?.id).toBeNull();
+    expect(services[0]?.url).toBeNull();
+    expect(services[0]?.urlScheme).toBeNull();
+    expect(services[0]?.hostPort).toBeNull();
+  });
+
+  it("createSandboxService POSTs url_scheme in snake_case", async () => {
+    const { fetch, calls } = mockFetch([{ status: 201, body: wireService }]);
+    const svc = await makeClient(fetch).createSandboxService("org/dev", {
+      name: "web",
+      port: 3000,
+      urlScheme: "https",
+    });
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/org%2Fdev/services`,
+    );
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      name: "web",
+      port: 3000,
+      url_scheme: "https",
+    });
+    expect(svc.name).toBe("web");
+  });
+
+  it("putSandboxService resolves by name unless told otherwise", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: wireService },
+      { status: 200, body: wireService },
+    ]);
+    const client = makeClient(fetch);
+    const req = { name: "web", port: 3001, urlScheme: "http" as const };
+    await client.putSandboxService("dev", "web", req);
+    await client.putSandboxService("dev", "svc_1", req, "id");
+    expect(calls[0]?.method).toBe("PUT");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/dev/services/web?by=name`,
+    );
+    expect(calls[1]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/dev/services/svc_1?by=id`,
+    );
+  });
+
+  it("deleteSandboxService DELETEs by name", async () => {
+    const { fetch, calls } = mockFetch([{ status: 204, body: "" }]);
+    await makeClient(fetch).deleteSandboxService("dev", "web");
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/dev/services/web?by=name`,
+    );
+  });
+});
+
+describe("AmikaClient SSH public keys", () => {
+  const ED25519_KEY =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ4ilkUClOhQyh1hQBSn7N/cMSpX0oqg4P87b21Qqdvt";
+
+  it("createSSHPublicKey POSTs public_key in snake_case", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 201,
+        body: {
+          id: "k_1",
+          name: "laptop",
+          public_key: ED25519_KEY,
+          scope: "user",
+        },
+      },
+    ]);
+    const summary = await makeClient(fetch).createSSHPublicKey({
+      name: "laptop",
+      publicKey: ED25519_KEY,
+    });
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/secrets/ssh-public-keys`);
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      name: "laptop",
+      public_key: ED25519_KEY,
+    });
+    expect(summary.publicKey).toBe(ED25519_KEY);
+  });
+
+  it("listSSHPublicKeys maps each summary", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: [
+          { id: "k_1", name: "laptop", public_key: ED25519_KEY, scope: "user" },
+        ],
+      },
+    ]);
+    const keys = await makeClient(fetch).listSSHPublicKeys();
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/secrets/ssh-public-keys`);
+    expect(keys[0]?.name).toBe("laptop");
+  });
+
+  it("deleteSSHPublicKey URL-encodes the id", async () => {
+    const { fetch, calls } = mockFetch([{ status: 204, body: "" }]);
+    await makeClient(fetch).deleteSSHPublicKey("k/1");
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/secrets/ssh-public-keys/k%2F1`,
+    );
+  });
+});
+
+describe("AmikaClient.createSSHSession", () => {
+  const validDescriptor = {
+    session_id: "sshs_abc",
+    transport: "direct_ws",
+    connect_url: "wss://relay.example.com/v1/ssh-sessions",
+    connect_credential: "A".repeat(42) + "Q",
+    sandbox_id: "sbx_1",
+    ssh_user: "amika",
+    host_public_key:
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ4ilkUClOhQyh1hQBSn7N/cMSpX0oqg4P87b21Qqdvt",
+  };
+
+  it("POSTs to /ssh-sessions and returns the validated descriptor", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 201, body: validDescriptor },
+    ]);
+    const session = await makeClient(fetch).createSSHSession("sbx_1");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/sbx_1/ssh-sessions`,
+    );
+    expect(session.sessionId).toBe("sshs_abc");
+    expect(session.transport).toBe("direct_ws");
+  });
+
+  it("rejects a descriptor issued for another sandbox", async () => {
+    const { fetch } = mockFetch([{ status: 201, body: validDescriptor }]);
+    await expect(makeClient(fetch).createSSHSession("sbx_2")).rejects.toThrow(
+      /invalid SSH session descriptor/,
+    );
+  });
+
+  it("rejects a descriptor with a non-wss connect URL", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 201,
+        body: {
+          ...validDescriptor,
+          connect_url: "ws://relay.example.com/v1/ssh-sessions",
+        },
+      },
+    ]);
+    await expect(makeClient(fetch).createSSHSession("sbx_1")).rejects.toThrow(
+      /invalid SSH session descriptor/,
+    );
+  });
+});
+
+describe("AmikaClient snapshot fetch and wait", () => {
+  it("getSandboxSnapshot resolves by ref and decodes every field", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: {
+          id: "snap_1",
+          snapshot: "proj-base",
+          provider: "daytona",
+          description: null,
+          source_sandbox_id: "sbx_1",
+          source_sandbox_name: "dev",
+          repository_id: "r_1",
+          repository_url: "git@github.com:o/p.git",
+          base_snapshot: null,
+          sandbox_preset: "coder",
+          sandbox_size: null,
+          capture_mode: "scrub_and_delete",
+          state: "active",
+          error_message: null,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:01:00Z",
+          daytona: { name: "amika-proj-base", state: "active", cpu: 2 },
+        },
+      },
+    ]);
+    const snap = await makeClient(fetch).getSandboxSnapshot("org/proj-base");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-snapshots/org%2Fproj-base?by=ref`,
+    );
+    expect(snap.id).toBe("snap_1");
+    expect(snap.repositoryUrl).toBe("git@github.com:o/p.git");
+    expect(snap.captureMode).toBe("scrub_and_delete");
+    expect(snap.daytona).toEqual({
+      name: "amika-proj-base",
+      state: "active",
+      imageName: undefined,
+      cpu: 2,
+      memory: undefined,
+      disk: undefined,
+      createdAt: undefined,
+      updatedAt: undefined,
+    });
+  });
+
+  it("leaves daytona null when the provider sends none", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: { snapshot: "s", state: "active" } },
+    ]);
+    const snap = await makeClient(fetch).getSandboxSnapshot("s");
+    expect(snap.daytona).toBeNull();
+  });
+
+  it("getSandboxScrubPreview decodes restored_files", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          files: ["/home/amika/.claude/.credentials.json"],
+          restored_files: ["/home/amika/.gitconfig"],
+          env_vars: ["ANTHROPIC_API_KEY"],
+        },
+      },
+    ]);
+    const preview = await makeClient(fetch).getSandboxScrubPreview("dev");
+    expect(preview.restoredFiles).toEqual(["/home/amika/.gitconfig"]);
+  });
+
+  it("waitForSandboxSnapshot polls every 3 seconds until active", async () => {
+    vi.useFakeTimers();
+    try {
+      const { fetch } = mockFetch([
+        { status: 200, body: { snapshot: "s", state: "capturing" } },
+        { status: 200, body: { snapshot: "s", state: "capturing" } },
+        { status: 200, body: { snapshot: "s", state: "active" } },
+      ]);
+      const promise = makeClient(fetch).waitForSandboxSnapshot("s");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect((await promise).state).toBe("active");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waitForSandboxSnapshot throws the server's message on failure", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: { snapshot: "s", state: "failed", error_message: "disk full" },
+      },
+    ]);
+    await expect(makeClient(fetch).waitForSandboxSnapshot("s")).rejects.toThrow(
+      /disk full/,
+    );
+  });
+
+  it("waitForSandboxSnapshot falls back to a generic message", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: { snapshot: "s", state: "failed" } },
+    ]);
+    await expect(makeClient(fetch).waitForSandboxSnapshot("s")).rejects.toThrow(
+      /sandbox snapshot capture failed/,
     );
   });
 });

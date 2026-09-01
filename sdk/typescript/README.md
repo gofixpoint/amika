@@ -59,45 +59,116 @@ new AmikaClient({
 
 ## API surface
 
-Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
+Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1, so everything the `amika` CLI can do over the network is reachable from here.
 
-| Method                                | Endpoint                                              |
-| ------------------------------------- | ----------------------------------------------------- |
-| `listSandboxes()`                     | `GET /sandboxes`                                      |
-| `createSandbox(req)`                  | `POST /sandboxes`                                     |
-| `getSandbox(name)`                    | `GET /sandboxes/{name}`                               |
-| `waitForSandbox(name)`                | polls `GET /sandboxes/{name}` until ready             |
-| `getSSH(name)`                        | `POST /sandboxes/{name}/ssh`                          |
-| `revokeSSH(name, token)`              | `DELETE /sandboxes/{name}/ssh`                        |
-| `startSandbox(name)`                  | `POST /sandboxes/{name}/start`                        |
-| `waitForSandboxStart(name)`           | polls until ready                                     |
-| `stopSandbox(name)`                   | `POST /sandboxes/{name}/stop`                         |
-| `waitForSandboxStop(name)`            | polls until `stopped`                                 |
-| `deleteSandbox(name)`                 | `DELETE /sandboxes/{name}`                            |
-| `listSecrets()`                       | `GET /secrets`                                        |
-| `createSecret(req)`                   | `POST /secrets`                                       |
-| `updateSecret(id, req)`               | `PUT /secrets/{id}`                                   |
-| `createProviderSecret(provider, req)` | `POST /secrets/{provider}`                            |
-| `listProviderSecrets(provider)`       | `GET /secrets/{provider}`                             |
-| `deleteProviderSecret(provider, id)`  | `DELETE /secrets/{provider}/{id}`                     |
-| `agentSend(name, req)`                | `POST /sandboxes/{name}/agent-send` (10-min timeout)  |
-| `createSession(name, req)`            | `POST /sandboxes/{name}/sessions`                     |
-| `listSessions(name)`                  | `GET /sandboxes/{name}/sessions`                      |
-| `getLatestSession(name)`              | `GET /sandboxes/{name}/sessions/latest` (null on 404) |
-| `getSession(name, sessionId)`         | `GET /sandboxes/{name}/sessions/{sessionId}`          |
-| `updateSession(name, sessionId, req)` | `PATCH /sandboxes/{name}/sessions/{sessionId}`        |
-| `listSandboxSnapshots(filters?)`      | `GET /sandbox-snapshots`                              |
-| `createSandboxSnapshot(req)`          | `POST /sandbox-snapshots`                             |
-| `getSandboxScrubPreview(ref)`         | `GET /sandbox-snapshots/scrub-preview`                |
-| `deleteSandboxSnapshot(ref)`          | `DELETE /sandbox-snapshots/{ref}`                     |
+### Sandboxes
+
+| Method                      | Endpoint                                  |
+| --------------------------- | ----------------------------------------- |
+| `listSandboxes()`           | `GET /sandboxes`                          |
+| `createSandbox(req)`        | `POST /sandboxes`                         |
+| `getSandbox(name)`          | `GET /sandboxes/{name}`                   |
+| `waitForSandbox(name)`      | polls `GET /sandboxes/{name}` until ready |
+| `startSandbox(name)`        | `POST /sandboxes/{name}/start`            |
+| `waitForSandboxStart(name)` | polls until ready                         |
+| `stopSandbox(name)`         | `POST /sandboxes/{name}/stop`             |
+| `waitForSandboxStop(name)`  | polls until `stopped`                     |
+| `deleteSandbox(name)`       | `DELETE /sandboxes/{name}`                |
+| `listRepositories()`        | `GET /repositories`                       |
+
+### Services
+
+| Method                                           | Endpoint                                        |
+| ------------------------------------------------ | ----------------------------------------------- |
+| `listSandboxServices(sandboxRef?)`               | `GET /sandbox-services`                         |
+| `createSandboxService(sandboxRef, req)`          | `POST /sandboxes/{ref}/services`                |
+| `putSandboxService(sandboxRef, serviceRef, req)` | `PUT /sandboxes/{ref}/services/{serviceRef}`    |
+| `deleteSandboxService(sandboxRef, serviceRef)`   | `DELETE /sandboxes/{ref}/services/{serviceRef}` |
+
+### SSH
+
+| Method                        | Endpoint                               |
+| ----------------------------- | -------------------------------------- |
+| `getSSH(name)`                | `POST /sandboxes/{name}/ssh`           |
+| `revokeSSH(name, token)`      | `DELETE /sandboxes/{name}/ssh`         |
+| `createSSHSession(sandboxId)` | `POST /sandboxes/{id}/ssh-sessions`    |
+| `createSSHPublicKey(req)`     | `POST /secrets/ssh-public-keys`        |
+| `listSSHPublicKeys()`         | `GET /secrets/ssh-public-keys`         |
+| `deleteSSHPublicKey(id)`      | `DELETE /secrets/ssh-public-keys/{id}` |
+
+### Secrets
+
+| Method                                | Endpoint                          |
+| ------------------------------------- | --------------------------------- |
+| `listSecrets()`                       | `GET /secrets`                    |
+| `createSecret(req)`                   | `POST /secrets`                   |
+| `updateSecret(id, req)`               | `PUT /secrets/{id}`               |
+| `createProviderSecret(provider, req)` | `POST /secrets/{provider}`        |
+| `listProviderSecrets(provider)`       | `GET /secrets/{provider}`         |
+| `deleteProviderSecret(provider, id)`  | `DELETE /secrets/{provider}/{id}` |
+
+### Agents and sessions
+
+| Method                                  | Endpoint                                              |
+| --------------------------------------- | ----------------------------------------------------- |
+| `agentSend(name, req)`                  | `POST /sandboxes/{name}/agent-send` (10-min timeout)  |
+| `sendAgentSession(req)`                 | `POST /agent-sessions` (10-min timeout)               |
+| `sendAgentSessionStream(req, handlers)` | `POST /agent-sessions/stream` (SSE)                   |
+| `listAgentSessions(limit?)`             | `GET /agent-sessions`                                 |
+| `getAgentSession(sessionId)`            | `GET /agent-sessions/{sessionId}`                     |
+| `createSession(name, req)`              | `POST /sandboxes/{name}/sessions`                     |
+| `listSessions(name)`                    | `GET /sandboxes/{name}/sessions`                      |
+| `getLatestSession(name)`                | `GET /sandboxes/{name}/sessions/latest` (null on 404) |
+| `getSession(name, sessionId)`           | `GET /sandboxes/{name}/sessions/{sessionId}`          |
+| `updateSession(name, sessionId, req)`   | `PATCH /sandboxes/{name}/sessions/{sessionId}`        |
+
+### Snapshots
+
+| Method                           | Endpoint                               |
+| -------------------------------- | -------------------------------------- |
+| `listSandboxSnapshots(filters?)` | `GET /sandbox-snapshots`               |
+| `createSandboxSnapshot(req)`     | `POST /sandbox-snapshots`              |
+| `getSandboxSnapshot(ref)`        | `GET /sandbox-snapshots/{ref}`         |
+| `waitForSandboxSnapshot(ref)`    | polls until `active` or `failed`       |
+| `getSandboxScrubPreview(ref)`    | `GET /sandbox-snapshots/scrub-preview` |
+| `deleteSandboxSnapshot(ref)`     | `DELETE /sandbox-snapshots/{ref}`      |
 
 Fork a new sandbox from a captured snapshot by passing its slug as `snapshot` to `createSandbox({ snapshot })`.
 
-Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `SSHInfo`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `CreateSandboxSnapshotRequest`, etc.
+Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` and `src/agent-sessions.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `SSHInfo`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `SandboxServiceResource`, `AgentSessionSendRequest`, `AgentSessionDetail`, etc.
+
+### Nullability
+
+Field optionality follows the API schema, not TypeScript convenience:
+
+- a field the schema marks required and non-nullable is `x: string`;
+- a field it marks nullable is `x: string | null` (it is always present, and `null` is meaningful — e.g. a sandbox with no repository);
+- a field it marks optional is `x?: string`, with `null` and absent both surfacing as `undefined`.
+
+## Streaming an agent turn
+
+`sendAgentSessionStream` reads the SSE endpoint and resolves with the same response `sendAgentSession` returns, after forwarding progress to your handlers:
+
+```ts
+const result = await amika.sendAgentSessionStream(
+  { message: "Add a CHANGELOG", repoUrl: "git@github.com:org/proj.git" },
+  {
+    onStatus: (phase, sandboxId) => console.error(`[${phase}] ${sandboxId}`),
+    onDelta: (text) => process.stdout.write(text),
+  },
+);
+console.log(`\nsession ${result.sessionId} on sandbox ${result.sandboxId}`);
+```
+
+The server enforces a 300s ceiling on the request, below the client's 10-minute timeout. If it cuts the stream before a terminal frame, the call throws and the turn may still have completed — check `listAgentSessions()` for the session rather than assuming the work was lost.
 
 ## Polling behavior
 
-`waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present.
+`waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present. `waitForSandboxSnapshot` polls `getSandboxSnapshot` the same way, returning once the snapshot is `active` and throwing if it ends up `failed`.
+
+## SSH helpers
+
+`createSSHSession` returns a one-shot transport descriptor for dialing a sandbox over SSH, and validates it before handing it back — a descriptor for the wrong sandbox, on the wrong transport, or with a malformed connect URL, credential, or host key throws `InvalidSSHSessionError`. `isValidSSHSession` exposes the same check, and `canonicalEd25519PublicKey` validates an OpenSSH ed25519 public key line and returns it in the canonical, comment-stripped form the server stores (`""` if it is not a well-formed ed25519 key). Use it before `createSSHPublicKey` so a typo fails locally.
 
 ## Errors
 
@@ -149,3 +220,5 @@ pnpm test:functional
 Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_SANDBOX_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_SANDBOX_PROVIDER`. See `test/functional/helpers.ts` for details.
 
 The suite provisions a real sandbox and runs the full lifecycle (create → wait → list → get → SSH → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Sandboxes are cleaned up in `afterAll`, but the secrets API has no delete endpoint — test-created secrets accumulate.
+
+`org-resources.functional.test.ts` is the exception: it only reads org-scoped listings and round-trips one SSH public key, so it provisions nothing and finishes in seconds. Run it alone with `pnpm test:functional org-resources`.

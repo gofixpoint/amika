@@ -1,5 +1,23 @@
+import {
+  type AgentSessionDetail,
+  agentSessionDetailFromWire,
+  type AgentSessionSendRequest,
+  type AgentSessionSendResponse,
+  agentSessionSendRequestToWire,
+  agentSessionSendResponseFromWire,
+  type AgentSessionStreamHandlers,
+  type ListAgentSessionsResponse,
+  listAgentSessionsResponseFromWire,
+  readAgentSessionStream,
+} from "@/agent-sessions";
 import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
 import { HTTPClient } from "@/http";
+import {
+  InvalidSSHSessionError,
+  isValidSSHSession,
+  type SSHSession,
+  sshSessionFromWire,
+} from "@/ssh-session";
 import { StaticTokenSource, type TokenSource } from "@/token";
 import {
   type AgentSendRequest,
@@ -12,22 +30,34 @@ import {
   createSandboxSnapshotRequestToWire,
   type CreateSecretRequest,
   type CreateSessionRequest,
+  type CreateSSHPublicKeyRequest,
   createSandboxRequestToWire,
   createSessionRequestToWire,
+  createSSHPublicKeyRequestToWire,
+  mapArray,
   type ProviderSecretListItem,
   type ProviderSecretSummary,
+  type RemoteRepository,
+  remoteRepositoryFromWire,
   type RemoteSandbox,
   remoteSandboxFromWire,
   type RevokeSSHRequest,
   type SandboxScrubPreview,
   sandboxScrubPreviewFromWire,
+  type SandboxServiceRequest,
+  type SandboxServiceResource,
+  sandboxServiceRequestToWire,
+  sandboxServiceResourceFromWire,
   type SandboxSnapshot,
   sandboxSnapshotFromWire,
   type Secret,
+  secretFromWire,
   type Session,
   sessionFromWire,
   type SSHInfo,
   sshInfoFromWire,
+  type SSHPublicKeySummary,
+  sshPublicKeySummaryFromWire,
   type UpdateSecretRequest,
   type UpdateSessionRequest,
   updateSessionRequestToWire,
@@ -70,14 +100,11 @@ export class AmikaClient {
   // ---------- Sandboxes ----------
 
   async listSandboxes(): Promise<RemoteSandbox[]> {
-    const data =
-      (await this.http.doJSON<unknown[]>(
-        "GET",
-        `${API_BASE_PATH}/sandboxes`,
-      )) ?? [];
-    return data.map((item) =>
-      remoteSandboxFromWire(item as Record<string, unknown>),
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/sandboxes`,
     );
+    return mapArray(data, remoteSandboxFromWire);
   }
 
   async createSandbox(req: CreateSandboxRequest): Promise<RemoteSandbox> {
@@ -167,13 +194,141 @@ export class AmikaClient {
     );
   }
 
+  // ---------- Repositories ----------
+
+  /** List the repositories the caller's org knows about. */
+  async listRepositories(): Promise<RemoteRepository[]> {
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/repositories`,
+    );
+    return mapArray(data, remoteRepositoryFromWire);
+  }
+
+  // ---------- Sandbox services ----------
+
+  /**
+   * List live services for the caller's org. `sandboxRef` is an optional
+   * name-or-id filter; omit it to list every service in the org.
+   */
+  async listSandboxServices(
+    sandboxRef?: string,
+  ): Promise<SandboxServiceResource[]> {
+    const params = new URLSearchParams();
+    if (sandboxRef) params.set("sandbox_ref", sandboxRef);
+    const qs = params.toString();
+    const envelope = await this.http.doJSON<{ items?: unknown[] }>(
+      "GET",
+      `${API_BASE_PATH}/sandbox-services${qs ? `?${qs}` : ""}`,
+    );
+    return mapArray(envelope?.items, sandboxServiceResourceFromWire);
+  }
+
+  /**
+   * Create a service on the sandbox referenced by name or id (the server
+   * resolves id first, then name).
+   */
+  async createSandboxService(
+    sandboxRef: string,
+    req: SandboxServiceRequest,
+  ): Promise<SandboxServiceResource> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services`,
+      sandboxServiceRequestToWire(req),
+    );
+    return sandboxServiceResourceFromWire(data ?? {});
+  }
+
+  /**
+   * Fully replace the service identified by `serviceRef` within a sandbox.
+   * `by` selects how `serviceRef` is resolved and defaults to `name`.
+   */
+  async putSandboxService(
+    sandboxRef: string,
+    serviceRef: string,
+    req: SandboxServiceRequest,
+    by: "name" | "id" | "ref" = "name",
+  ): Promise<SandboxServiceResource> {
+    const params = new URLSearchParams({ by });
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "PUT",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?${params.toString()}`,
+      sandboxServiceRequestToWire(req),
+    );
+    return sandboxServiceResourceFromWire(data ?? {});
+  }
+
+  /** Delete the service with the given name within a sandbox. */
+  async deleteSandboxService(
+    sandboxRef: string,
+    serviceRef: string,
+  ): Promise<void> {
+    await this.http.doJSON(
+      "DELETE",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
+    );
+  }
+
+  // ---------- SSH sessions and public keys ----------
+
+  /**
+   * Create a fresh transport descriptor for one SSH dial into a sandbox, and
+   * validate it. Throws {@link InvalidSSHSessionError} if the server returns a
+   * descriptor that is unsafe or is not for `sandboxId`.
+   */
+  async createSSHSession(sandboxId: string): Promise<SSHSession> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxId)}/ssh-sessions`,
+    );
+    const session = sshSessionFromWire(data ?? {});
+    if (!isValidSSHSession(session, sandboxId)) {
+      throw new InvalidSSHSessionError();
+    }
+    return session;
+  }
+
+  /**
+   * Store a user-scoped SSH public key. The endpoint upserts by name, so
+   * re-uploading identical material under the same name is a no-op.
+   */
+  async createSSHPublicKey(
+    req: CreateSSHPublicKeyRequest,
+  ): Promise<SSHPublicKeySummary> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/secrets/ssh-public-keys`,
+      createSSHPublicKeyRequestToWire(req),
+    );
+    return sshPublicKeySummaryFromWire(data ?? {});
+  }
+
+  /** List the caller's user-scoped SSH public keys. */
+  async listSSHPublicKeys(): Promise<SSHPublicKeySummary[]> {
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/secrets/ssh-public-keys`,
+    );
+    return mapArray(data, sshPublicKeySummaryFromWire);
+  }
+
+  /** Remove one of the caller's SSH public keys by id. */
+  async deleteSSHPublicKey(id: string): Promise<void> {
+    await this.http.doJSON(
+      "DELETE",
+      `${API_BASE_PATH}/secrets/ssh-public-keys/${encodeURIComponent(id)}`,
+    );
+  }
+
   // ---------- Secrets ----------
 
   async listSecrets(): Promise<Secret[]> {
-    const data =
-      (await this.http.doJSON<Secret[]>("GET", `${API_BASE_PATH}/secrets`)) ??
-      [];
-    return data;
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/secrets`,
+    );
+    return mapArray(data, secretFromWire);
   }
 
   async createSecret(req: CreateSecretRequest): Promise<void> {
@@ -347,6 +502,37 @@ export class AmikaClient {
   }
 
   /**
+   * Fetch a single snapshot by name or id (the server resolves id first, then
+   * name).
+   */
+  async getSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/sandbox-snapshots/${encodeURIComponent(ref)}?by=ref`,
+    );
+    return sandboxSnapshotFromWire(data ?? {});
+  }
+
+  /**
+   * Poll {@link getSandboxSnapshot} every 3 seconds until the snapshot reaches
+   * a terminal state. Returns it once `active`; throws `AmikaError` if it ends
+   * up `failed`. No client-side timeout — matches Go's
+   * `WaitForSandboxSnapshot`.
+   */
+  async waitForSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
+    for (;;) {
+      const snapshot = await this.getSandboxSnapshot(ref);
+      if (snapshot.state === "active") return snapshot;
+      if (snapshot.state === "failed") {
+        throw new AmikaError(
+          snapshot.errorMessage || "sandbox snapshot capture failed",
+        );
+      }
+      await sleep(WAIT_POLL_INTERVAL_MS);
+    }
+  }
+
+  /**
    * Preview which injected secrets a scrub-and-delete snapshot would remove
    * from a sandbox (file paths + env var names only, no values). `sandboxRef`
    * is a name or id; the server resolves id first, then name.
@@ -371,6 +557,80 @@ export class AmikaClient {
       "DELETE",
       `${API_BASE_PATH}/sandbox-snapshots/${encodeURIComponent(ref)}?by=ref`,
     );
+  }
+
+  // ---------- Agent sessions ----------
+
+  /**
+   * Send a message to a coding agent, creating a sandbox behind the scenes
+   * when the chat has none, or routing to an existing sandbox or session. The
+   * endpoint is synchronous, so it uses the same 10-minute timeout as
+   * {@link agentSend}.
+   *
+   * Unlike {@link agentSend}, a provider auth failure comes back as a normal
+   * response with `isError` set and the agent CLI's own message in `response`,
+   * not as an HTTP error.
+   */
+  async sendAgentSession(
+    req: AgentSessionSendRequest,
+  ): Promise<AgentSessionSendResponse> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/agent-sessions`,
+      agentSessionSendRequestToWire(req),
+      { timeoutMs: AGENT_SEND_TIMEOUT_MS },
+    );
+    return agentSessionSendResponseFromWire(data ?? {});
+  }
+
+  /**
+   * The streaming counterpart to {@link sendAgentSession}: forwards `status`
+   * and `delta` frames to `handlers` as they arrive and resolves with the same
+   * response the buffered endpoint returns.
+   *
+   * The effective time limit is the server's (a 300s request ceiling), which
+   * is lower than the client's 10 minutes: it ends the stream first, without a
+   * terminal frame, and the client timeout only guards a connection that hangs
+   * past even that.
+   */
+  async sendAgentSessionStream(
+    req: AgentSessionSendRequest,
+    handlers: AgentSessionStreamHandlers = {},
+  ): Promise<AgentSessionSendResponse> {
+    const { body, release } = await this.http.openStream(
+      "POST",
+      `${API_BASE_PATH}/agent-sessions/stream`,
+      agentSessionSendRequestToWire(req),
+      { timeoutMs: AGENT_SEND_TIMEOUT_MS },
+    );
+    try {
+      return await readAgentSessionStream(body, handlers);
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * List the org's agent-session chats, newest first. Omitting `limit` leaves
+   * the server's default page size (50) in place. The response's `total`
+   * exceeds `sessions.length` when the page cuts the list short.
+   */
+  async listAgentSessions(limit?: number): Promise<ListAgentSessionsResponse> {
+    const qs = limit && limit > 0 ? `?limit=${limit}` : "";
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/agent-sessions${qs}`,
+    );
+    return listAgentSessionsResponseFromWire(data ?? {});
+  }
+
+  /** Fetch one agent-session chat with its message history. */
+  async getAgentSession(sessionId: string): Promise<AgentSessionDetail> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/agent-sessions/${encodeURIComponent(sessionId)}`,
+    );
+    return agentSessionDetailFromWire(data ?? {});
   }
 }
 
