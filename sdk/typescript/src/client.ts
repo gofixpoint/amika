@@ -14,6 +14,7 @@ import {
   type CreateSessionRequest,
   createSandboxRequestToWire,
   createSessionRequestToWire,
+  mapArray,
   type ProviderSecretListItem,
   type ProviderSecretSummary,
   type RemoteSandbox,
@@ -70,14 +71,11 @@ export class AmikaClient {
   // ---------- Sandboxes ----------
 
   async listSandboxes(): Promise<RemoteSandbox[]> {
-    const data =
-      (await this.http.doJSON<unknown[]>(
-        "GET",
-        `${API_BASE_PATH}/sandboxes`,
-      )) ?? [];
-    return data.map((item) =>
-      remoteSandboxFromWire(item as Record<string, unknown>),
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/sandboxes`,
     );
+    return mapArray(data, remoteSandboxFromWire);
   }
 
   async createSandbox(req: CreateSandboxRequest): Promise<RemoteSandbox> {
