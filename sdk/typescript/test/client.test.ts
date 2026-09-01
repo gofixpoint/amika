@@ -959,3 +959,37 @@ describe("AmikaClient sandbox services", () => {
     );
   });
 });
+
+describe("sandbox service port validation", () => {
+  // Mirrors go/internal/services.TestValidatePort so the two stay in step.
+  it.each([3000, 1, 65535, 60898, 61000])("accepts port %i", async (port) => {
+    const { fetch, calls } = mockFetch([{ status: 201, body: {} }]);
+    await makeClient(fetch).createSandboxService("dev", {
+      name: "web",
+      port,
+      urlScheme: "http",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "").port).toBe(port);
+  });
+
+  it.each([
+    [0, /must be between 1 and 65535/],
+    [-1, /must be between 1 and 65535/],
+    [70000, /must be between 1 and 65535/],
+    [3000.5, /must be between 1 and 65535/],
+    [60899, /reserved for internal Amika services/],
+    [60999, /reserved for internal Amika services/],
+    [60950, /reserved for internal Amika services/],
+  ])("rejects port %i without issuing a request", async (port, message) => {
+    const { fetch, calls } = mockFetch([]);
+    const client = makeClient(fetch);
+    const req = { name: "web", port, urlScheme: "http" as const };
+    await expect(client.createSandboxService("dev", req)).rejects.toThrow(
+      message,
+    );
+    await expect(client.putSandboxService("dev", "web", req)).rejects.toThrow(
+      message,
+    );
+    expect(calls).toHaveLength(0);
+  });
+});
