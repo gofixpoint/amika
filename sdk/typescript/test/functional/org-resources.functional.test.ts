@@ -51,10 +51,14 @@ describeFunctional("org resources functional tests", () => {
         name,
         publicKey: TEST_PUBLIC_KEY,
       });
-      expect(created.name).toBe(name);
-      expect(created.id).not.toBe("");
 
+      // Every assertion goes inside the try: the key exists from the line
+      // above onwards, and one failing outside would leak it under a name no
+      // later run reuses.
       try {
+        expect(created.name).toBe(name);
+        expect(created.id).not.toBe("");
+
         const keys = await client.listSSHPublicKeys();
         expect(keys.some((k) => k.id === created.id)).toBe(true);
       } finally {
