@@ -86,18 +86,6 @@ describeFunctional("sandbox functional tests", () => {
     });
   });
 
-  describe("SSH", () => {
-    it("getSSH returns credentials and revokeSSH revokes them", async () => {
-      const info = await client.getSSH(sandbox.name);
-      expect(info.sshDestination).not.toBe("");
-      expect(info.token).not.toBe("");
-      expect(info.expiresAt).not.toBe("");
-
-      // Should accept the token we just minted.
-      await client.revokeSSH(sandbox.name, info.token);
-    });
-  });
-
   describe("sessions", () => {
     let sessionId: string;
 

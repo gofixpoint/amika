@@ -85,13 +85,6 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 | `putSandboxService(sandboxRef, serviceRef, req)` | `PUT /sandboxes/{ref}/services/{serviceRef}`    |
 | `deleteSandboxService(sandboxRef, serviceRef)`   | `DELETE /sandboxes/{ref}/services/{serviceRef}` |
 
-### SSH
-
-| Method                   | Endpoint                       |
-| ------------------------ | ------------------------------ |
-| `getSSH(name)`           | `POST /sandboxes/{name}/ssh`   |
-| `revokeSSH(name, token)` | `DELETE /sandboxes/{name}/ssh` |
-
 ### Secrets
 
 | Method                                | Endpoint                          |
@@ -131,7 +124,7 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 
 Fork a new sandbox from a captured snapshot by passing its slug as `snapshot` to `createSandbox({ snapshot })`.
 
-Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` and `src/agent-sessions.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `SSHInfo`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `SandboxServiceResource`, `AgentSessionSendRequest`, `AgentSessionDetail`, etc.
+Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` and `src/agent-sessions.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `SandboxServiceResource`, `AgentSessionSendRequest`, `AgentSessionDetail`, etc.
 
 ### Nullability
 
@@ -218,6 +211,6 @@ pnpm test:functional
 
 Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_SANDBOX_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_SANDBOX_PROVIDER`. See `test/functional/helpers.ts` for details.
 
-The suite provisions a real sandbox and runs the full lifecycle (create → wait → list → get → SSH → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Sandboxes are cleaned up in `afterAll`, but the secrets API has no delete endpoint — test-created secrets accumulate.
+The suite provisions a real sandbox and runs the full lifecycle (create → wait → list → get → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Sandboxes are cleaned up in `afterAll`, but the secrets API has no delete endpoint — test-created secrets accumulate.
 
-`org-resources.functional.test.ts` is the exception: it only reads org-scoped listings and round-trips one SSH public key, so it provisions nothing and finishes in seconds. Run it alone with `pnpm test:functional org-resources`.
+`org-resources.functional.test.ts` is the exception: it only reads org-scoped listings, so it provisions nothing and finishes in seconds. Run it alone with `pnpm test:functional org-resources`.

@@ -14,7 +14,6 @@
  *   AMIKA_TEST_SANDBOX_PROVIDER — default "daytona" (remote)
  */
 
-import { spawnSync } from "child_process";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { AmikaClient } from "@/client";
@@ -29,50 +28,6 @@ import {
 
 const PROVIDER = process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ?? "daytona";
 const EXAMPLE_REPO = "https://github.com/gofixpoint/example-repo";
-const SENTINEL_PATH = "/home/amika/snapshot-check.txt";
-const SENTINEL_VALUE = "hello-snapshot";
-
-/**
- * Run a command inside a sandbox via SSH, return trimmed stdout.
- * Retries on exit 255 (transport-level failure: SSH daemon not yet ready)
- * with exponential backoff.
- */
-function sshRun(
-  sshDestination: string,
-  command: string,
-  { maxAttempts = 6, baseDelayMs = 5_000 } = {},
-): string {
-  const args = sshDestination.trim().split(/\s+/);
-  let lastErr: Error | undefined;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt > 0) {
-      const delay = baseDelayMs * Math.pow(2, attempt - 1);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
-    }
-    const result = spawnSync(
-      "ssh",
-      [...args, "-o", "StrictHostKeyChecking=accept-new", "--", command],
-      {
-        encoding: "utf8",
-        timeout: 30_000,
-      },
-    );
-    if (result.error) throw result.error;
-    if (result.status === 0) return result.stdout.trim();
-    // SSH exit 255 = transport failure (connection refused / not yet ready).
-    // Any other non-zero exit = command error inside the sandbox, don't retry.
-    if (result.status !== 255) {
-      throw new Error(
-        `SSH command failed (exit ${result.status}): ${result.stderr}`,
-      );
-    }
-    lastErr = new Error(
-      `SSH connection failed (exit 255, attempt ${attempt + 1}/${maxAttempts})`,
-    );
-  }
-  throw lastErr;
-}
-
 /** Poll until a snapshot slug reaches the target state. */
 async function waitForSnapshot(
   client: AmikaClient,
@@ -188,17 +143,6 @@ describeFunctional("Release test: snapshot round-trip", () => {
   });
 
   it(
-    "write and read sentinel file via SSH",
-    async () => {
-      const info = await client.getSSH(sourceSandbox.name);
-      sshRun(info.sshDestination, `echo ${SENTINEL_VALUE} > ${SENTINEL_PATH}`);
-      const content = sshRun(info.sshDestination, `cat ${SENTINEL_PATH}`);
-      expect(content).toBe(SENTINEL_VALUE);
-    },
-    LONG_TIMEOUT_MS,
-  );
-
-  it(
     "create full snapshot and poll to active; source sandbox still present",
     async () => {
       const snap = await client.createSandboxSnapshot({
@@ -222,7 +166,7 @@ describeFunctional("Release test: snapshot round-trip", () => {
   );
 
   it(
-    "boot new sandbox from snapshot and verify sentinel survived",
+    "boot new sandbox from snapshot",
     async () => {
       const created = await client.createSandbox({
         name: fromSnapName,
@@ -240,10 +184,6 @@ describeFunctional("Release test: snapshot round-trip", () => {
 
       fromSnapSandbox = await client.waitForSandbox(created.name);
       expect(fromSnapSandbox.state).toBe("started");
-
-      const info = await client.getSSH(fromSnapSandbox.name);
-      const content = sshRun(info.sshDestination, `cat ${SENTINEL_PATH}`);
-      expect(content).toBe(SENTINEL_VALUE);
     },
     LONG_TIMEOUT_MS,
   );

@@ -328,29 +328,6 @@ export function remoteRepositoryFromWire(
   };
 }
 
-// ---------- SSH ----------
-
-export interface SSHInfo {
-  sshDestination: string;
-  token: string;
-  expiresAt: string;
-  repoName: string;
-}
-
-export function sshInfoFromWire(w: Record<string, unknown>): SSHInfo {
-  return {
-    sshDestination: str(w["ssh_destination"]),
-    token: str(w["token"]),
-    expiresAt: str(w["expires_at"]),
-    repoName: str(w["repo_name"]),
-  };
-}
-
-/** Request body for DELETE /api/v0beta1/sandboxes/{name}/ssh. */
-export interface RevokeSSHRequest {
-  token: string;
-}
-
 // ---------- Secrets ----------
 
 /**

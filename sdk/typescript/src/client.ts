@@ -33,7 +33,6 @@ import {
   remoteRepositoryFromWire,
   type RemoteSandbox,
   remoteSandboxFromWire,
-  type RevokeSSHRequest,
   type SandboxScrubPreview,
   sandboxScrubPreviewFromWire,
   type SandboxServiceRequest,
@@ -46,8 +45,6 @@ import {
   secretFromWire,
   type Session,
   sessionFromWire,
-  type SSHInfo,
-  sshInfoFromWire,
   type UpdateSecretRequest,
   type UpdateSessionRequest,
   updateSessionRequestToWire,
@@ -125,23 +122,6 @@ export class AmikaClient {
       name,
       ["active", "running", "started"],
       "sandbox provisioning failed",
-    );
-  }
-
-  async getSSH(name: string): Promise<SSHInfo> {
-    const data = await this.http.doJSON<Record<string, unknown>>(
-      "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}/ssh`,
-    );
-    return sshInfoFromWire(data ?? {});
-  }
-
-  async revokeSSH(name: string, token: string): Promise<void> {
-    const body: RevokeSSHRequest = { token };
-    await this.http.doJSON(
-      "DELETE",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}/ssh`,
-      body,
     );
   }
 
