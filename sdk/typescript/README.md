@@ -91,6 +91,7 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 | ------------------------- | -------------------------------------- |
 | `getSSH(name)`            | `POST /sandboxes/{name}/ssh`           |
 | `revokeSSH(name, token)`  | `DELETE /sandboxes/{name}/ssh`         |
+| `createSSHSession(id)`    | `POST /sandboxes/{id}/ssh-sessions`    |
 | `createSSHPublicKey(req)` | `POST /secrets/ssh-public-keys`        |
 | `listSSHPublicKeys()`     | `GET /secrets/ssh-public-keys`         |
 | `deleteSSHPublicKey(id)`  | `DELETE /secrets/ssh-public-keys/{id}` |
@@ -150,6 +151,10 @@ Two fields sit outside this rule because they sit outside the schema. `container
 ## Polling behavior
 
 `waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present. `waitForSandboxSnapshot` polls `getSandboxSnapshot` the same way, returning once the snapshot is `active` and throwing if it ends up `failed`.
+
+## SSH helpers
+
+`createSSHSession` returns a one-shot transport descriptor for dialing a sandbox over SSH, and validates it before handing it back — a descriptor for the wrong sandbox, on the wrong transport, or with a malformed connect URL, credential, or host key throws `InvalidSSHSessionError`. `isValidSSHSession` exposes the same check, and `canonicalEd25519PublicKey` validates an OpenSSH ed25519 public key line and returns it in the canonical, comment-stripped form the server stores (`""` if it is not a well-formed ed25519 key). Use it before `createSSHPublicKey` so a typo fails locally.
 
 ## Errors
 

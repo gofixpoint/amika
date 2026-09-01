@@ -1,5 +1,11 @@
 import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
 import { HTTPClient } from "@/http";
+import {
+  InvalidSSHSessionError,
+  isValidSSHSession,
+  type SSHSession,
+  sshSessionFromWire,
+} from "@/ssh-session";
 import { StaticTokenSource, type TokenSource } from "@/token";
 import {
   type AgentSendRequest,
@@ -250,6 +256,25 @@ export class AmikaClient {
       "DELETE",
       `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
     );
+  }
+
+  // ---------- SSH sessions ----------
+
+  /**
+   * Create a fresh transport descriptor for one SSH dial into a sandbox, and
+   * validate it. Throws {@link InvalidSSHSessionError} if the server returns a
+   * descriptor that is unsafe or is not for `sandboxId`.
+   */
+  async createSSHSession(sandboxId: string): Promise<SSHSession> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxId)}/ssh-sessions`,
+    );
+    const session = sshSessionFromWire(data ?? {});
+    if (!isValidSSHSession(session, sandboxId)) {
+      throw new InvalidSSHSessionError();
+    }
+    return session;
   }
 
   // ---------- SSH public keys ----------

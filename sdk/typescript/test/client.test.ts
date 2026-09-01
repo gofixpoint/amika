@@ -1045,3 +1045,51 @@ describe("AmikaClient SSH public keys", () => {
     );
   });
 });
+
+describe("AmikaClient.createSSHSession", () => {
+  const validDescriptor = {
+    session_id: "sshs_abc",
+    transport: "direct_ws",
+    connect_url: "wss://relay.example.com/v1/ssh-sessions",
+    connect_credential: "A".repeat(42) + "Q",
+    sandbox_id: "sbx_1",
+    ssh_user: "amika",
+    host_public_key:
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ4ilkUClOhQyh1hQBSn7N/cMSpX0oqg4P87b21Qqdvt",
+  };
+
+  it("POSTs to /ssh-sessions and returns the validated descriptor", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 201, body: validDescriptor },
+    ]);
+    const session = await makeClient(fetch).createSSHSession("sbx_1");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandboxes/sbx_1/ssh-sessions`,
+    );
+    expect(session.sessionId).toBe("sshs_abc");
+    expect(session.transport).toBe("direct_ws");
+  });
+
+  it("rejects a descriptor issued for another sandbox", async () => {
+    const { fetch } = mockFetch([{ status: 201, body: validDescriptor }]);
+    await expect(makeClient(fetch).createSSHSession("sbx_2")).rejects.toThrow(
+      /invalid SSH session descriptor/,
+    );
+  });
+
+  it("rejects a descriptor with a non-wss connect URL", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 201,
+        body: {
+          ...validDescriptor,
+          connect_url: "ws://relay.example.com/v1/ssh-sessions",
+        },
+      },
+    ]);
+    await expect(makeClient(fetch).createSSHSession("sbx_1")).rejects.toThrow(
+      /invalid SSH session descriptor/,
+    );
+  });
+});

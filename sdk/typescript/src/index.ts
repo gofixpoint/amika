@@ -12,6 +12,14 @@ export {
 export { StaticTokenSource } from "@/token";
 export type { TokenSource } from "@/token";
 
+export {
+  canonicalEd25519PublicKey,
+  InvalidSSHSessionError,
+  isValidSSHSession,
+  SSH_SESSION_TRANSPORT_DIRECT_WS,
+} from "@/ssh-session";
+export type { SSHSession, SSHSessionTransport } from "@/ssh-session";
+
 export type {
   AgentCredentialRef,
   AgentSendRequest,
