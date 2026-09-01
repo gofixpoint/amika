@@ -80,7 +80,9 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 11
+          # Exact version, matching the sdk/typescript `packageManager` pin.
+          # See sdk-typescript.yml.
+          version: 11.1.3
 
       - uses: actions/setup-node@v4
         with:
