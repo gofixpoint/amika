@@ -727,3 +727,130 @@ describe("AmikaClient sandbox decoding", () => {
     });
   });
 });
+
+describe("AmikaClient.listRepositories", () => {
+  it("GETs /repositories and maps repo_url", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: [{ id: "r_1", repo_url: "git@github.com:o/p.git" }],
+      },
+    ]);
+    const repos = await makeClient(fetch).listRepositories();
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/repositories`);
+    expect(repos).toEqual([{ id: "r_1", repoUrl: "git@github.com:o/p.git" }]);
+  });
+
+  it("returns [] when the server sends no body", async () => {
+    const { fetch } = mockFetch([{ status: 200, body: "" }]);
+    expect(await makeClient(fetch).listRepositories()).toEqual([]);
+  });
+});
+
+describe("AmikaClient snapshot fetch and wait", () => {
+  it("getSandboxSnapshot resolves by ref and decodes every field", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: {
+          id: "snap_1",
+          snapshot: "proj-base",
+          provider: "daytona",
+          description: null,
+          source_sandbox_id: "sbx_1",
+          source_sandbox_name: "dev",
+          repository_id: "r_1",
+          repository_url: "git@github.com:o/p.git",
+          base_snapshot: null,
+          sandbox_preset: "coder",
+          sandbox_size: null,
+          capture_mode: "scrub_and_delete",
+          state: "active",
+          error_message: null,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:01:00Z",
+          daytona: { name: "amika-proj-base", state: "active", cpu: 2 },
+        },
+      },
+    ]);
+    const snap = await makeClient(fetch).getSandboxSnapshot("org/proj-base");
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/sandbox-snapshots/org%2Fproj-base?by=ref`,
+    );
+    expect(snap.id).toBe("snap_1");
+    expect(snap.repositoryUrl).toBe("git@github.com:o/p.git");
+    expect(snap.captureMode).toBe("scrub_and_delete");
+    expect(snap.daytona).toEqual({
+      name: "amika-proj-base",
+      state: "active",
+      imageName: undefined,
+      cpu: 2,
+      memory: undefined,
+      disk: undefined,
+      createdAt: undefined,
+      updatedAt: undefined,
+    });
+  });
+
+  it("leaves daytona null when the provider sends none", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: { snapshot: "s", state: "active" } },
+    ]);
+    const snap = await makeClient(fetch).getSandboxSnapshot("s");
+    expect(snap.daytona).toBeNull();
+  });
+
+  it("getSandboxScrubPreview decodes restored_files", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: {
+          files: ["/home/amika/.claude/.credentials.json"],
+          restored_files: ["/home/amika/.gitconfig"],
+          env_vars: ["ANTHROPIC_API_KEY"],
+        },
+      },
+    ]);
+    const preview = await makeClient(fetch).getSandboxScrubPreview("dev");
+    expect(preview.restoredFiles).toEqual(["/home/amika/.gitconfig"]);
+  });
+
+  it("waitForSandboxSnapshot polls every 3 seconds until active", async () => {
+    vi.useFakeTimers();
+    try {
+      const { fetch } = mockFetch([
+        { status: 200, body: { snapshot: "s", state: "capturing" } },
+        { status: 200, body: { snapshot: "s", state: "capturing" } },
+        { status: 200, body: { snapshot: "s", state: "active" } },
+      ]);
+      const promise = makeClient(fetch).waitForSandboxSnapshot("s");
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect((await promise).state).toBe("active");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waitForSandboxSnapshot throws the server's message on failure", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: { snapshot: "s", state: "failed", error_message: "disk full" },
+      },
+    ]);
+    await expect(makeClient(fetch).waitForSandboxSnapshot("s")).rejects.toThrow(
+      /disk full/,
+    );
+  });
+
+  it("waitForSandboxSnapshot falls back to a generic message", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: { snapshot: "s", state: "failed" } },
+    ]);
+    await expect(makeClient(fetch).waitForSandboxSnapshot("s")).rejects.toThrow(
+      /sandbox snapshot capture failed/,
+    );
+  });
+});
