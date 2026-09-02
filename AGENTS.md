@@ -9,7 +9,7 @@ commands with `go -C go ...`, so `make` targets continue to work
 unchanged from the repo root. Build outputs are written to `dist/` at
 the repo root.
 
-**Use `make build` to build all binaries (`amika`, `amika-server`, `amikalog`, and the experimental `akfs`), or `make build-cli` / `make build-server` / `make build-amikalog` / `make build-akfs` for one binary.** If you run `go build` directly, do it from the `go/` directory and write outputs to the repo-root `dist/`:
+**Use `make build` to build all binaries (`amika`, `amika-server`, `amikalog`, and the experimental `akfs` and `amikalyze`), or `make build-cli` / `make build-server` / `make build-amikalog` / `make build-akfs` / `make build-amikalyze` for one binary.** If you run `go build` directly, do it from the `go/` directory and write outputs to the repo-root `dist/`:
 
 ```bash
 (cd go && go build -o ../dist/amika ./cmd/amika)
@@ -25,11 +25,12 @@ make setup
 make ci
 
 # Individual targets
-make build          # builds dist/amika, dist/amika-server, dist/amikalog, dist/akfs
+make build          # builds all stable and experimental binaries
 make build-cli      # builds dist/amika
 make build-server   # builds dist/amika-server
 make build-amikalog # builds dist/amikalog
 make build-akfs     # builds dist/akfs (experimental, labs)
+make build-amikalyze # builds dist/amikalyze (experimental, labs)
 make test    # go test ./... (run from go/)
 make vet     # go vet ./...  (run from go/)
 make fmt     # check formatting
@@ -113,7 +114,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - `responses.go` — Response types
 
 ### Labs / Experimental Code (`go/labs/`)
-- Experimental, unstable code with **no compatibility guarantees**; stable code (`go/cmd/*`, `go/pkg/amika`, `go/internal/*`) must **not** import from it. Holds the `akfs` CLI (`go/labs/cmd/akfs/`) and library (`go/labs/akfs/`).
+- Experimental, unstable code with **no compatibility guarantees**; stable code (`go/cmd/*`, `go/pkg/amika`, `go/internal/*`) must **not** import from it. Holds the `akfs` CLI and library plus the `amikalyze` frozen-path CLI and library.
 - See `go/labs/AGENTS.md` before working there.
 
 ### Other
@@ -121,6 +122,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - `bin/amika` — Wrapper script that auto-builds and runs `dist/amika`
 - `bin/amika-server` — Wrapper script that auto-builds and runs `dist/amika-server`
 - `bin/amikalog` — Wrapper script that auto-builds and runs `dist/amikalog`
+- `bin/amikalyze` — Wrapper script that auto-builds and runs `dist/amikalyze`
 - `materialization-scripts/` — Example data materialization scripts
 - `sandbox-image/` — Shared manifest, build steps, assets, verification suite, and generated Dockerfiles
 - `sdk/typescript/` — TypeScript SDK

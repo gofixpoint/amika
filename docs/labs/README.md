@@ -19,6 +19,7 @@ Trying a Labs tool? Start with its doc, then build it from the repo root.
 
 ## What's here
 
-| **Tool** | **Description** | **Documentation** |
-|:---------|:----------------|:------------------|
-| `akfs` | Extract YAML frontmatter (and optionally the document body) from Markdown files as JSON Lines; broader filesystem-data tooling is planned. | [akfs.md](akfs.md) |
+| **Tool**    | **Description**                                                                                                                                    | **Documentation**                 |
+|:------------|:---------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------|
+| `akfs`      | Extract YAML frontmatter (and optionally the document body) from Markdown files as JSON Lines; broader filesystem-data tooling is planned.         | [akfs.md](akfs.md)                |
+| `amikalyze` | Block native Claude Code and Codex edit tools from modifying repository paths matched by hierarchical `.amikalyze.toml` freeze rules.              | [amikalyze.md](amikalyze.md)      |

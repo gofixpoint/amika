@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ ! -f "$REPO_ROOT/dist/amikalyze" ]; then
+  echo "Building amikalyze..." >&2
+  mkdir -p "$REPO_ROOT/dist"
+  (cd "$REPO_ROOT/go" && go build -o "$REPO_ROOT/dist/amikalyze" ./labs/cmd/amikalyze)
+fi
+
+exec "$REPO_ROOT/dist/amikalyze" "$@"
