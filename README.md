@@ -21,31 +21,35 @@
 
 ## Multiplayer cloud workstations for coding agents and humans
 
-Amika lets you provision VMs on any cloud or computer, load them with your favorite agent(s), and then remote control the agents from any chat surface or app.
+Amika lets you **provision VMs on any cloud or computer, load them with your favorite agent(s), and then remote control the agents from any chat surface or app.**
 
-Each VM is configured as an "Amika Rig", which is a workstation tuned for coding agents and humans to collaborate in.
+Each VM is configured as an **Amika Rig**, which is **a workstation tuned for coding agents and humans** to collaborate in.
 
-- provision Rigs on any machine: you can create Rigs on a Kubernetes cluster, on a cloud provider like E2B, or on the desktop in your closet
-- use any agent: Amika works with your existing AI agent subscriptions and API keys. We support Codex, Claude, OpenCode, and Pi by default — but Amika uses an agent-agnostic messaging layer so you can load in any agent and remote control it
-- remote control the agents and VMs from anywhere — message from Slack, Linear, or GitHub; control agents and VMs programatically via API or CLI; SSH into them; load the VMs into Cursor, Codex app, etc.
+- **provision Rigs on any machine**: you can create Rigs on a Kubernetes cluster, on a cloud provider like E2B, or on the desktop in your closet
+- **use any agent**: Amika works with your existing AI agent subscriptions and API keys. We support Codex, Claude, OpenCode, and Pi by default — but Amika uses an agent-agnostic messaging layer so you can load in any agent and remote control it
+- **remote control the agents and VMs from anywhere**: message from Slack, Linear, or GitHub; control agents and VMs programatically via API or CLI; SSH into them; load the VMs into Cursor, Codex app, etc.
 
 ## What's an Amika Rig?
 
-We call these VMs "Amika Rigs". On a Rig, you can run 1 or more agents simultaneously, expose the HTTPS URLs of the apps your agent is working on, and let agents on Rigs communicate with other Rigs and other agents to fan out work across VMs.
+We call these VMs "Amika Rigs". On a Rig, you can
+
+- **run 1 or more agents** simultaneously
+- **expose the HTTPS URLs** of the apps your agent is working on
+- let Rigs and their agents **communicate with each other**
 
 Each Rig can be short-lived or persistent, depending on whether you want it to disappear when your PR is done, or whether you want to keep it around more permanently.
 
-Amika automatically wires your Git repos and agent configs and credentials into each Rig.
+Amika **automatically wires your Git repos and agent configs and credentials** into each Rig.
 
 ## What can you use Amika for?
 
 Since Amika schedules cloud VMs and then gives you networking, agent messaging, and chat UIs, you can use it in many ways. Some examples:
 
-- create multiplayer cloud devboxes for engineers that are pre-configured with your tech stack
-- build managed cloud agents that you control via API to automate work in the background
-- plug into your GitHub CI to not only run unit tests, but let agents auto-fix failures
-- make custom agents for non-technical teammates to chat with on the web
-- spin up agents from other tools like Slack and Linear
+- create **multiplayer cloud devboxes** for engineers that are pre-configured with your tech stack
+- build **managed cloud agents** that you **control via API** to automate work in the background
+- **plug into your GitHub CI** to not only run unit tests, but **auto-fix failures*
+- make **custom agents for non-technical teammates** to chat with on the web
+- **talk with agents** from other **tools like Slack and Linear**
 
 You can use Amika for anything where you need cloud VMs and control over the VMs, their agents, and their file contents or git repos.
 
@@ -72,7 +76,7 @@ Amika is designed as a hosted cloud product. Read on for how to get started (and
 
 Now, you can either (a) directly start an agent chat session, which will provision its own Rig behind the scenes, or (b) create a Rig and then connect to it however you choose. Both can be done from the https://app.amika.dev/, and also from the CLI.
 
-**creating an agent chat session**
+### creating an agent chat session
 
 Assuming you connected GitHub during web onboarding:
 
@@ -83,7 +87,7 @@ amika send --agent codex "What does this repo do?"
 
 This will spin up a Rig in the background and send the message to a Codex agent on the Rig.
 
-**creating a Rig**
+### creating a Rig
 
 ```
 # make sure you uploaded an SSH key
@@ -96,14 +100,14 @@ amika sandbox ssh my-first-sandbox
 
 ## Configuration
 
-Usually, each Rig boots from a repo, which specifies the config for the Rig (VM size, git repos loaded, agent skills, MCP servers, config files loaded). You define config-as-code inside a repo's `.amika/config.toml`, but you can also configure settings in the web UI or per Rig. See [more docs](https://docs.amika.dev/guides/configuration) on how configuration works.
+Usually, **each Rig boots from a repo**, which specifies the config for the Rig (VM size, git repos loaded, agent skills, MCP servers, config files loaded). You define **config-as-code inside a repo's `.amika/config.toml`**, but you can also configure settings in the web UI or adhoc per Rig. See [more docs](https://docs.amika.dev/guides/configuration) on how configuration works.
 
 ## Amika principles
 
-Our goal is to make cloud agents and VMs feel like you're just using your desktop, but with some extra powers:
+Our goal is to make cloud agents and VMs feel like you're just using your desktop, but with extra super-powers:
 
 - **multiplayer**: multiple humans and agents can share the same Rig and chat sessions
-- **programmatic + human-in-the-loop**: you must be able to toggle between (a) programmatic or agentic control of the Rigs and agents, and (b) human-in-the-loop UIs
+- **programmatic control + human-in-the-loop**: you must be able to toggle between (a) programmatic or agentic control of the Rigs and agents, and (b) human-in-the-loop UIs
 - **multi-surface**: talk to agents from (a) work tools like Slack and Linear, (b) the web UI, API, CLI + SSH, and (c) your preferred editors and ADEs like Cursor and the Codex app
 - **run any harness, any model, any ADE**: everybody has their favorite harness, models, and agent development environments; an Amika Rig doesn't restrict you to just one
 - **run on any computer or cloud**: You should be able to slice any computer up into Rig workstations — the desktop in your closet, a sandbox on E2B, a node in your Kubernetes cluster
@@ -120,9 +124,9 @@ Amika has a few important parts:
 - the control plane that manages these
 - the UIs and interfaces to work with the agents and VMs (Rigs)
 
-Compared to **agents and agent development environments (ADEs)** like Claude, Codex, OpenCode, Conductor, cmux: we are not an agent or a harness. We are an environment and cloud workstation for humans and agents. You can connect to an Amika Rig and its agents using these other tools.
+Compared to **agents and agent development environments (ADEs)** like Claude, Codex, OpenCode, Conductor, cmux: **we are not an agent or a harness**. We are **an environment and cloud workstation** for humans and agents. You can connect to an Amika Rig and its agents using these other tools.
 
-Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research: we are a networked runtime and "operating system" on top of any cloud or computer. We schedule VM workstations on any compute provider, tune it to be a great agent workstation, and turn the Rig workstation into an agent mesh network to connect the Rigs and agents together.
+Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research: we are **a networked runtime and "operating system"** on top of **any cloud or computer**. We schedule VM workstations on any compute provider, tune it to be a great agent workstation, and turn the Rig workstation into an agent mesh network to connect the Rigs and agents together.
 
 ## What's open source and what's closed source
 
@@ -150,17 +154,17 @@ Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research:
 
 ## Other tools and links
 
-Tools:
+Other tools:
 
-- `amikalog` — capture your Claude Code and Codex sessions, alongside the git repo changes ([docs](./docs/amikalog.md))
-- `amikalyze` — experimental guardrails that control which files coding agents can modify ([docs](./docs/labs/amikalyze.md))
-- `akfs` — experimental tooling for treating file contents as structured data that humans and AI agents can work with ([docs](./docs/labs/akfs.md))
-- `js/sandbox` — Typescript package for plugging sandbox providers into Amika ([docs on adding new providers](./js/sandbox/src/providers/README.md))
+- [`amikalog`](./docs/amikalog.md): capture your Claude Code and Codex sessions, alongside the git repo changes
+- [`amikalyze`](./docs/labs/amikalyze.md): experimental guardrails that control which files coding agents can modify
+- [`akfs`](./docs/labs/akfs.md): experimental tooling for treating file contents as structured data that humans and AI agents can work with
+- [`js/sandbox`](./js/sandbox/src/providers/README.md): Typescript package for plugging sandbox providers into Amika
 
 Links:
 
-- [amika.dev](https://www.amika.dev/) — cloud service
-- [docs.amika.dev](https://docs.amika.dev/) — docs
+- [amika.dev](https://www.amika.dev/): cloud service
+- [docs.amika.dev](https://docs.amika.dev/): docs
 
 ## Contributing
 
