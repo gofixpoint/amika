@@ -57,7 +57,7 @@ You can use Amika for anything where you need cloud VMs and control over the VMs
 
 ## Getting started
 
-Amika is designed as a hosted cloud product. Read on for how to get started (and if you want to self-host, read the [self-hosting guide](./docs/self-hosting.md)).
+To get started with Amika's cloud product:
 
 1. Sign up at https://app.amika.dev/signup and follow onboarding.
 
@@ -78,18 +78,11 @@ Amika is designed as a hosted cloud product. Read on for how to get started (and
 
 Now, you can either (a) directly start an agent chat session, which will provision its own Rig behind the scenes, or (b) create a Rig and then connect to it however you choose. Both can be done from the https://app.amika.dev/, and also from the CLI.
 
-### creating an agent chat session
+### creating a Rig
+
+If you want to create a Rig and then chat with it from Codex, Cursor, OpenCode, SSH, etc., you can create a Rig without first making an agent session.
 
 Assuming you connected GitHub during web onboarding:
-
-```
-cd path/to/git/repo/you/want/to/work/on
-amika send --agent codex "What does this repo do?"
-```
-
-This will spin up a Rig in the background and send the message to a Codex agent on the Rig.
-
-### creating a Rig
 
 ```
 # make sure you uploaded an SSH key
@@ -99,6 +92,22 @@ cd path/to/git/repo/you/want/to/work/on
 amika rig create --name my-first-sandbox
 amika sandbox ssh my-first-sandbox
 ```
+
+This spins up a Rig, pre-loaded with your Git repo and agent credentials.
+
+
+### creating an agent chat session
+
+```
+cd path/to/git/repo/you/want/to/work/on
+amika send --agent codex "What does this repo do?"
+```
+
+This will spin up a Rig in the background and send the message to a Codex agent on the Rig.
+
+### Self-hosting
+
+If you want to self-host, read the [self-hosting guide](./docs/self-hosting.md).
 
 ## Configuration
 
