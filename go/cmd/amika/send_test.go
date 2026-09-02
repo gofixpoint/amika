@@ -125,15 +125,15 @@ func TestSendRepo(t *testing.T) {
 
 	t.Run("infers the origin of the repo containing the cwd", func(t *testing.T) {
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t), "", "")
+		url, identity, err := sendRepo(newCmd(t), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if url != origin {
 			t.Fatalf("url = %q, want %q", url, origin)
 		}
-		if name != "myrepo" {
-			t.Fatalf("name = %q, want %q", name, "myrepo")
+		if identity.Name != "myrepo" {
+			t.Fatalf("name = %q, want %q", identity.Name, "myrepo")
 		}
 	})
 
@@ -155,23 +155,23 @@ func TestSendRepo(t *testing.T) {
 
 	t.Run("outside a repo sends no repo", func(t *testing.T) {
 		chdir(t, t.TempDir())
-		url, name, err := sendRepo(newCmd(t), "", "")
+		url, identity, err := sendRepo(newCmd(t), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "" || name != "" {
-			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		if url != "" || identity.Name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, identity.Name)
 		}
 	})
 
 	t.Run("--no-git skips detection inside a repo", func(t *testing.T) {
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--no-git"), "", "")
+		url, identity, err := sendRepo(newCmd(t, "--no-git"), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "" || name != "" {
-			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		if url != "" || identity.Name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, identity.Name)
 		}
 	})
 
@@ -188,12 +188,12 @@ func TestSendRepo(t *testing.T) {
 
 	t.Run("--git overrides the detected repo", func(t *testing.T) {
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--git", "https://github.com/other/thing.git"), "", "")
+		url, identity, err := sendRepo(newCmd(t, "--git", "https://github.com/other/thing.git"), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "https://github.com/other/thing.git" || name != "thing" {
-			t.Fatalf("url = %q, name = %q, want the --git repo", url, name)
+		if url != "https://github.com/other/thing.git" || identity.Name != "thing" {
+			t.Fatalf("url = %q, name = %q, want the --git repo", url, identity.Name)
 		}
 	})
 
@@ -202,12 +202,12 @@ func TestSendRepo(t *testing.T) {
 		// support rather than staying URL-only.
 		other := initRepo(t, "otherrepo", map[string]string{"origin": "https://github.com/example/other.git"})
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--repo", other), "", "")
+		url, identity, err := sendRepo(newCmd(t, "--repo", other), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "https://github.com/example/other.git" || name != "otherrepo" {
-			t.Fatalf("url = %q, name = %q, want the --repo path's origin", url, name)
+		if url != "https://github.com/example/other.git" || identity.Name != "otherrepo" {
+			t.Fatalf("url = %q, name = %q, want the --repo path's origin", url, identity.Name)
 		}
 	})
 
@@ -227,12 +227,12 @@ func TestSendRepo(t *testing.T) {
 	t.Run("an existing target accepts --no-git", func(t *testing.T) {
 		// --no-git asks for what already happens there, so it is no conflict.
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--no-git"), "sess-1", "")
+		url, identity, err := sendRepo(newCmd(t, "--no-git"), "sess-1", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "" || name != "" {
-			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		if url != "" || identity.Name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, identity.Name)
 		}
 	})
 
@@ -256,12 +256,12 @@ func TestSendRepo(t *testing.T) {
 			{sessionID: "sess-1"},
 			{sandboxRef: "my-sandbox"},
 		} {
-			url, name, err := sendRepo(newCmd(t), tc.sessionID, tc.sandboxRef)
+			url, identity, err := sendRepo(newCmd(t), tc.sessionID, tc.sandboxRef)
 			if err != nil {
 				t.Fatalf("unexpected error for %+v: %v", tc, err)
 			}
-			if url != "" || name != "" {
-				t.Fatalf("url = %q, name = %q for %+v, want both empty", url, name, tc)
+			if url != "" || identity.Name != "" {
+				t.Fatalf("url = %q, name = %q for %+v, want both empty", url, identity.Name, tc)
 			}
 		}
 	})
@@ -416,10 +416,66 @@ func TestPrintSendRepo(t *testing.T) {
 				t.Fatalf("ParseFormat(%q): %v", tt.format, err)
 			}
 			var buf strings.Builder
-			printSendRepo(format, &buf, tt.repo)
+			printSendRepo(format, &buf, tt.repo, "")
 			if got := buf.String(); got != tt.want {
 				t.Fatalf("output = %q, want %q", got, tt.want)
 			}
 		})
 	}
+}
+
+// TestValidateSendBranchFlags pins that a branch aimed at an already-created
+// sandbox is refused rather than dropped, the same rule the repo flags follow.
+func TestValidateSendBranchFlags(t *testing.T) {
+	newCmd := func(t *testing.T, args ...string) *cobra.Command {
+		t.Helper()
+		cmd := &cobra.Command{Use: "send"}
+		gitrepo.AddFlags(cmd, "git", "no-git")
+		gitrepo.AddRepoAlias(cmd)
+		cmd.Flags().String(flagBranch, "", "branch")
+		cmd.Flags().String(flagNewBranch, "", "new-branch")
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		return cmd
+	}
+
+	t.Run("a branch flag with an existing target is refused", func(t *testing.T) {
+		for _, flag := range []string{"--" + flagBranch, "--" + flagNewBranch} {
+			for _, tc := range []struct{ sessionID, sandboxRef string }{
+				{sessionID: "sess-1"},
+				{sandboxRef: "my-sandbox"},
+			} {
+				err := validateSendRepoFlags(newCmd(t, flag, "release"), tc.sessionID, tc.sandboxRef)
+				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --sandbox") {
+					t.Fatalf("err = %v for %s %+v, want a refusal", err, flag, tc)
+				}
+				// The message must name the flag the caller actually typed.
+				if !strings.Contains(err.Error(), flag) {
+					t.Fatalf("err = %v, want it to name %s", err, flag)
+				}
+			}
+		}
+	})
+
+	t.Run("branch flags are fine for a sandbox this command creates", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"--" + flagBranch, "release"},
+			{"--" + flagNewBranch, "feature/x"},
+			{"--" + flagBranch, "release", "--" + flagNewBranch, "feature/x"},
+		} {
+			if err := validateSendRepoFlags(newCmd(t, args...), "", ""); err != nil {
+				t.Fatalf("unexpected error for %v: %v", args, err)
+			}
+		}
+	})
+
+	t.Run("a repo flag is still reported ahead of a branch flag", func(t *testing.T) {
+		// Both are unhonorable; naming the repo one first keeps the message
+		// stable for callers who passed both.
+		err := validateSendRepoFlags(newCmd(t, "--git", "https://github.com/a/b.git", "--"+flagBranch, "release"), "sess-1", "")
+		if err == nil || !strings.Contains(err.Error(), "--git cannot be combined") {
+			t.Fatalf("err = %v, want the repo flag named", err)
+		}
+	})
 }
