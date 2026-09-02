@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/agentconfig"
 	"github.com/gofixpoint/amika/go/internal/amikaconfig"
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/txn"
 	"github.com/gofixpoint/amika/go/pkg/amika"
@@ -88,7 +89,7 @@ type collectedMounts struct {
 func collectMounts(
 	mountStrs, volumeStrs, portStrs []string,
 	portHostIP string,
-	identity repoIdentity,
+	identity gitrepo.Identity,
 	noClean bool,
 	setupScript string,
 	setupScriptFlagChanged bool,
@@ -112,7 +113,7 @@ func collectMounts(
 	cleanup := func() {}
 	var gmi *gitMountInfo
 	switch identity.Source {
-	case repoSourceAutoDetect, repoSourceFlagPath:
+	case gitrepo.SourceAutoDetect, gitrepo.SourceFlagPath:
 		info, cleanupGitMount, err := prepareGitMount(identity.Path, noClean, cloneGitRepo, branch, newBranch)
 		if err != nil {
 			return collectedMounts{}, err
@@ -120,7 +121,7 @@ func collectMounts(
 		cleanup = cleanupGitMount
 		gmi = &info
 		mounts = append(mounts, info.Mount)
-	case repoSourceFlagURL:
+	case gitrepo.SourceFlagURL:
 		info, cleanupGitMount, err := prepareGitMountFromURL(identity.URL, cloneGitURL, branch, newBranch)
 		if err != nil {
 			return collectedMounts{}, err

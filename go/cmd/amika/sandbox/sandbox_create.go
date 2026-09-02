@@ -12,6 +12,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/constants"
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
@@ -28,9 +29,6 @@ var sandboxCreateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		noClean, _ := cmd.Flags().GetBool("no-clean")
 		noSetup, _ := cmd.Flags().GetBool("no-setup")
-		gitFlag, _ := cmd.Flags().GetString("git")
-		gitFlagSet := cmd.Flags().Changed("git")
-		noGit, _ := cmd.Flags().GetBool("no-git")
 		if noSetup && cmd.Flags().Changed("setup-script") {
 			return fmt.Errorf("--no-setup and --setup-script are mutually exclusive")
 		}
@@ -63,7 +61,7 @@ var sandboxCreateCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to determine working directory: %w", err)
 		}
-		identity, err := resolveRepoIdentity(cwd, gitFlag, gitFlagSet, noGit, noClean)
+		identity, err := gitrepo.FromCommand(cmd, cwd)
 		if err != nil {
 			return err
 		}
@@ -325,7 +323,7 @@ var sandboxCreateCmd = &cobra.Command{
 	},
 }
 
-func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentity) error {
+func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Identity) error {
 	name, _ := cmd.Flags().GetString("name")
 	provider := requestedRemoteProvider(cmd)
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
@@ -351,21 +349,14 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity repoIdentit
 		name = sandbox.GenerateName()
 	}
 
-	var gitURL string
-	gitIsLocalPath := identity.Source == repoSourceAutoDetect || identity.Source == repoSourceFlagPath
-	switch identity.Source {
-	case repoSourceFlagURL:
-		gitURL = identity.URL
-	case repoSourceAutoDetect, repoSourceFlagPath:
-		resolved, err := resolveGitURL(identity.Path)
-		if err != nil {
-			return err
-		}
-		gitURL = resolved
+	gitIsLocalPath := identity.IsLocalPath()
+	gitURL, err := identity.RemoteURL()
+	if err != nil {
+		return err
 	}
 
 	if branch == "" && newBranch == "" && gitIsLocalPath {
-		if hostBranch, err := detectHostCurrentBranch(identity.Path); err == nil {
+		if hostBranch, err := gitrepo.CurrentBranch(identity.Path); err == nil {
 			branch = hostBranch
 		}
 	}
