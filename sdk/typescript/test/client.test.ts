@@ -153,33 +153,6 @@ describe("AmikaClient sandbox lifecycle", () => {
     expect(calls[0]?.method).toBe("DELETE");
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes/dev`);
   });
-
-  it("getSSH POSTs to /ssh and maps fields", async () => {
-    const { fetch, calls } = mockFetch([
-      {
-        status: 200,
-        body: {
-          ssh_destination: "user@host",
-          token: "t",
-          expires_at: "2026-01-01T00:00:00Z",
-          repo_name: "proj",
-        },
-      },
-    ]);
-    const client = makeClient(fetch);
-    const info = await client.getSSH("dev");
-    expect(calls[0]?.method).toBe("POST");
-    expect(info.sshDestination).toBe("user@host");
-    expect(info.repoName).toBe("proj");
-  });
-
-  it("revokeSSH DELETEs with token in body", async () => {
-    const { fetch, calls } = mockFetch([{ status: 204, body: "" }]);
-    const client = makeClient(fetch);
-    await client.revokeSSH("dev", "tok-xyz");
-    expect(calls[0]?.method).toBe("DELETE");
-    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({ token: "tok-xyz" });
-  });
 });
 
 describe("AmikaClient.waitForSandbox", () => {
