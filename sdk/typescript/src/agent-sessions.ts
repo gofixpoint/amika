@@ -12,6 +12,7 @@ import {
   num,
   optionalBool,
   optionalNum,
+  optionalObject,
   optionalStr,
   str,
 } from "@/types";
@@ -89,7 +90,6 @@ export interface AgentSessionSendResponse {
 export function agentSessionSendResponseFromWire(
   w: Record<string, unknown>,
 ): AgentSessionSendResponse {
-  const usage = w["usage"];
   return {
     sessionId: str(w["session_id"]),
     sandboxId: str(w["sandbox_id"]),
@@ -98,10 +98,9 @@ export function agentSessionSendResponseFromWire(
     isError: bool(w["is_error"]),
     isNewSession: bool(w["is_new_session"]),
     createdSandbox: bool(w["created_sandbox"]),
-    usage:
-      typeof usage === "object" && usage !== null
-        ? agentSessionUsageFromWire(usage as Record<string, unknown>)
-        : undefined,
+    // optionalObject rather than a bare typeof check: an array is also
+    // `typeof "object"`, and would decode to an all-undefined usage object.
+    usage: optionalObject(w["usage"], agentSessionUsageFromWire),
   };
 }
 
@@ -280,6 +279,10 @@ export async function readAgentSessionStream(
       }
       case "error": {
         const parsed = tryParse(frame.data);
+        // Same reasoning as delta/done: a cut mid-frame is a lost stream, not
+        // a new error. Without this, a truncated error frame overwrites an
+        // earlier real message with the generic fallback.
+        if (!parsed && !frame.terminated) break stream;
         streamError = optionalStr(parsed?.["error"]) || "stream error";
         break;
       }
@@ -289,14 +292,15 @@ export async function readAgentSessionStream(
   if (streamError !== "") {
     throw new AmikaError(`remote agent-session send: ${streamError}`);
   }
-  // No terminal frame. The most likely cause is the server's own request
-  // ceiling (300s) cutting the stream mid-turn — the turn may well have
-  // completed and persisted, so point at the session list rather than
-  // implying the work was lost.
+  // No terminal frame. The likeliest cause is the server's own request ceiling
+  // (300s) cutting the stream mid-turn, but a clean close with a malformed
+  // final frame lands here too and the two are indistinguishable from here, so
+  // name both. Either way the turn may have completed and persisted, so point
+  // at the session list rather than implying the work was lost.
   throw new AmikaError(
     "remote agent-session send: stream ended without a result " +
-      "(the server may have hit its request time limit; " +
-      "check listAgentSessions() for the session)",
+      "(the server may have hit its request time limit, or the final frame " +
+      "was truncated or malformed; check listAgentSessions() for the session)",
   );
 }
 

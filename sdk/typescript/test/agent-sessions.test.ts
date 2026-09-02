@@ -419,3 +419,51 @@ describe("AmikaClient.sendAgentSessionStream truncated streams", () => {
     ).rejects.toThrow(/parsing done frame failed/);
   });
 });
+
+describe("AmikaClient agent-session malformed payloads", () => {
+  it("treats a non-object usage as absent rather than an empty object", async () => {
+    for (const usage of [[1], "x", 3]) {
+      const { fetch } = mockFetch([
+        { status: 200, body: { ...DONE_PAYLOAD, usage } },
+      ]);
+      const resp = await makeClient(fetch).sendAgentSession({ message: "hi" });
+      expect(resp.usage, `usage=${JSON.stringify(usage)}`).toBeUndefined();
+    }
+  });
+
+  // A cut mid-error-frame is a lost stream, not a new error, so it must not
+  // overwrite a message an earlier error frame already delivered.
+  it("keeps an earlier error message when a later error frame is cut", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body:
+          'event: error\ndata: {"error":"boom"}\n\n' +
+          'event: error\ndata: {"error":"tru',
+      },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
+    ).rejects.toThrow(/boom/);
+  });
+
+  it("reports a lone truncated error frame as a lost stream", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: 'event: error\ndata: {"error":"boom bec' },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
+    ).rejects.toThrow(/stream ended without a result/);
+  });
+
+  // The SDK cannot tell a cut connection from a clean close with a corrupt
+  // final frame, so the message must not assert only the former.
+  it("does not blame the time limit alone for a corrupt final frame", async () => {
+    const { fetch } = mockFetch([
+      { status: 200, body: "event: delta\ndata: <html>oops</html>" },
+    ]);
+    await expect(
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
+    ).rejects.toThrow(/truncated or malformed/);
+  });
+});
