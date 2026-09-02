@@ -13,53 +13,48 @@ import (
 // Both empty means "decide from the working directory".
 type BranchRequest struct {
 	// Branch is --branch: check out this branch, creating it if the remote
-	// has none.
+	// has none. It is also the base --new-branch is cut from.
 	Branch string
-	// NewBranch is --new-branch: cut a new branch, from Branch when both are
-	// given.
+	// NewBranch is --new-branch: cut a new branch from Branch.
 	NewBranch string
-	// BranchFlagSet reports whether --branch was passed explicitly, which
-	// suppresses the unpushed-branch refusal: someone naming a branch has
-	// said what they want, even if the remote does not have it yet.
-	BranchFlagSet bool
 }
 
 // ResolveBranch fills in the branch a remote sandbox should be cut from and
 // refuses the case where the caller would silently get different code.
 //
-// With neither flag given and a local checkout to read, the current branch is
-// carried over — a sandbox for "the thing I am working on" should hold that
-// thing. But a branch the remote does not have cannot be cloned, and the
-// sandbox would quietly come up on the default branch instead; since only the
-// caller can fix that, it is an error rather than a warning.
+// Whenever --branch is absent, the checked-out branch becomes the base: a
+// sandbox for "the thing I am working on" should hold that thing, and a new
+// branch should be cut from it. Leaving the base empty would hand the server
+// nothing to start from, so it would use its default branch instead — the
+// same code the caller is not looking at.
 //
-// A URL source has no local checkout to read, so its pair passes through
-// untouched and the server applies its own default.
+// An inferred base must exist on the remote, since that is where the sandbox
+// clones from. If it does not, the sandbox would quietly come up on the
+// default branch, so this is an error rather than a warning. A base named
+// explicitly with --branch is the caller's stated intent and is passed
+// through: the server creates it when the remote has none.
+//
+// A URL source has no local checkout to read, so its pair passes through and
+// the server applies its own default.
 func ResolveBranch(identity Identity, req BranchRequest) (BranchRequest, error) {
-	if !identity.IsLocalPath() {
+	if !identity.IsLocalPath() || req.Branch != "" {
 		return req, nil
 	}
-	if req.Branch == "" && req.NewBranch == "" {
-		// A detached HEAD has no branch to carry over; the server's default
-		// is the only sensible answer, so leave the pair empty.
-		if current, err := CurrentBranch(identity.Path); err == nil {
-			req.Branch = current
-		}
-	}
-	// Only an inferred base branch is checked. --new-branch cuts a fresh
-	// branch, so the remote is not expected to have it, and an explicit
-	// --branch is the caller's stated intent.
-	if req.Branch == "" || req.NewBranch != "" || req.BranchFlagSet {
+	// A detached HEAD has no branch name to carry over; the server's default
+	// is then the only answer available, so leave the pair as it is.
+	current, err := CurrentBranch(identity.Path)
+	if err != nil {
 		return req, nil
 	}
-	if !BranchReachableFromRemote(identity.Path, req.Branch) {
+	if !BranchReachableFromRemote(identity.Path, current) {
 		return BranchRequest{}, fmt.Errorf(
 			"current branch %q has not been pushed or is not up-to-date with the remote\n\n"+
-				"The sandbox will either start from an older version of this branch or\n"+
-				"create it fresh from the default branch.\n\n"+
-				"Push your branch first, or use --branch to specify your branch explicitly.",
-			req.Branch)
+				"The sandbox clones from the remote, so it would start from an older\n"+
+				"version of this branch or from the default branch instead.\n\n"+
+				"Push your branch first, or use --branch to name the branch to start from.",
+			current)
 	}
+	req.Branch = current
 	return req, nil
 }
 

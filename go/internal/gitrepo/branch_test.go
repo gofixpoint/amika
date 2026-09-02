@@ -225,7 +225,7 @@ func TestResolveBranch(t *testing.T) {
 		repo := pushedRepo(t)
 		runGitIn(t, repo, "checkout", "-q", "-b", "unpushed")
 		runGitIn(t, repo, "commit", "--allow-empty", "-m", "local only")
-		got, err := ResolveBranch(local(repo), BranchRequest{Branch: "unpushed", BranchFlagSet: true})
+		got, err := ResolveBranch(local(repo), BranchRequest{Branch: "unpushed"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -234,11 +234,12 @@ func TestResolveBranch(t *testing.T) {
 		}
 	})
 
-	t.Run("--new-branch skips the reachability check", func(t *testing.T) {
-		// A new branch is not expected to exist on the remote.
+	t.Run("--new-branch is cut from the current branch", func(t *testing.T) {
+		// The base has to be sent explicitly: with no branch in the request the
+		// server cuts from its default, which is not the code the caller is
+		// looking at.
 		repo := pushedRepo(t)
-		runGitIn(t, repo, "checkout", "-q", "-b", "unpushed")
-		runGitIn(t, repo, "commit", "--allow-empty", "-m", "local only")
+		want := currentBranchOf(t, repo)
 		got, err := ResolveBranch(local(repo), BranchRequest{NewBranch: "feature/x"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -246,15 +247,41 @@ func TestResolveBranch(t *testing.T) {
 		if got.NewBranch != "feature/x" {
 			t.Fatalf("NewBranch = %q", got.NewBranch)
 		}
-		if got.Branch != "" {
-			t.Fatalf("Branch = %q, want it left empty so the server picks the base", got.Branch)
+		if got.Branch != want {
+			t.Fatalf("Branch = %q, want the current branch %q as the base", got.Branch, want)
+		}
+	})
+
+	t.Run("--new-branch from an unpushed branch is refused", func(t *testing.T) {
+		// The remote has no such base to cut from, so the server would fall
+		// back to its default branch without saying so.
+		repo := pushedRepo(t)
+		runGitIn(t, repo, "checkout", "-q", "-b", "unpushed")
+		runGitIn(t, repo, "commit", "--allow-empty", "-m", "local only")
+		_, err := ResolveBranch(local(repo), BranchRequest{NewBranch: "feature/x"})
+		if err == nil || !strings.Contains(err.Error(), "has not been pushed") {
+			t.Fatalf("err = %v, want an unpushed-base refusal", err)
+		}
+	})
+
+	t.Run("an explicit --branch base is honored with --new-branch", func(t *testing.T) {
+		// Naming the base is intent, so no reachability check applies.
+		repo := pushedRepo(t)
+		runGitIn(t, repo, "checkout", "-q", "-b", "unpushed")
+		runGitIn(t, repo, "commit", "--allow-empty", "-m", "local only")
+		got, err := ResolveBranch(local(repo), BranchRequest{Branch: "unpushed", NewBranch: "feature/x"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Branch != "unpushed" || got.NewBranch != "feature/x" {
+			t.Fatalf("pair = %+v, want both forwarded", got)
 		}
 	})
 
 	t.Run("both flags pass through together", func(t *testing.T) {
 		repo := pushedRepo(t)
 		got, err := ResolveBranch(local(repo), BranchRequest{
-			Branch: "release/2.0", NewBranch: "feature/from-release", BranchFlagSet: true,
+			Branch: "release/2.0", NewBranch: "feature/from-release",
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -275,7 +302,7 @@ func TestResolveBranch(t *testing.T) {
 		if got.Branch != "" || got.NewBranch != "" {
 			t.Fatalf("pair = %+v, want empty", got)
 		}
-		got, err = ResolveBranch(id, BranchRequest{Branch: "develop", BranchFlagSet: true})
+		got, err = ResolveBranch(id, BranchRequest{Branch: "develop"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -355,9 +355,8 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Ide
 	}
 
 	branches, err := gitrepo.ResolveBranch(identity, gitrepo.BranchRequest{
-		Branch:        branch,
-		NewBranch:     newBranch,
-		BranchFlagSet: cmd.Flags().Changed("branch"),
+		Branch:    branch,
+		NewBranch: newBranch,
 	})
 	if err != nil {
 		return err
