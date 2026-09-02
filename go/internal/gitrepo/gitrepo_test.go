@@ -89,9 +89,19 @@ func TestIsNetworkURL(t *testing.T) {
 		{url: "http://github.com/org/repo.git", want: true},
 		{url: "ssh://git@github.com/org/repo.git", want: true},
 		{url: "git@github.com:org/repo.git", want: true},
+		// scp-like syntax with the optional user half omitted, which git
+		// still resolves over ssh.
+		{url: "build-host:org/repo.git", want: true},
 		{url: "/Users/me/repo", want: false},
 		{url: "../repo", want: false},
 		{url: "file:///Users/me/repo", want: false},
+		// A colon that follows a path separator belongs to the path.
+		{url: "/srv/git:mirror/repo", want: false},
+		{url: "./weird:name", want: false},
+		// A Windows drive letter is a path, not a one-character host.
+		{url: `C:\Users\me\repo`, want: false},
+		// A host with nothing after the colon names no repo.
+		{url: "build-host:", want: false},
 	}
 	for _, tt := range tests {
 		if got := IsNetworkURL(tt.url); got != tt.want {

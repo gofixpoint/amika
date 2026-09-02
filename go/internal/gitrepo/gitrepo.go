@@ -210,7 +210,7 @@ func ListRemotes(repo string) (map[string]string, error) {
 
 // IsNetworkURL reports whether a remote URL points at a network host, as
 // opposed to a local path (which a sandbox on another machine cannot reach).
-// It recognizes http(s)://, ssh://, and the scp-like user@host:path form.
+// It recognizes http(s)://, ssh://, and the scp-like [user@]host:path form.
 func IsNetworkURL(url string) bool {
 	switch {
 	case strings.HasPrefix(url, "http://"),
@@ -220,9 +220,19 @@ func IsNetworkURL(url string) bool {
 	case strings.HasPrefix(url, "file://"):
 		return false
 	}
-	at := strings.Index(url, "@")
+	// scp-like syntax, which git resolves over ssh. Git's own rule is that a
+	// colon with no slash before it makes this an ssh URL, so the user half is
+	// optional: "build-host:org/repo.git" is as valid as
+	// "git@build-host:org/repo.git".
 	colon := strings.Index(url, ":")
-	return at > 0 && colon > at+1
+	// A one-character host is a Windows drive letter ("C:\repo"), not a host.
+	if colon < 2 {
+		return false
+	}
+	if strings.ContainsAny(url[:colon], `/\`) {
+		return false
+	}
+	return url[colon+1:] != ""
 }
 
 // NameFromURL extracts the repo name from a git URL.
