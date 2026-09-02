@@ -58,6 +58,67 @@ steps:
       exit: 1
       stderr_contains: 'not logged in; run "amika auth login" or use --local'
 
+  - name: send --no-git skips repo detection and reaches the auth check
+    # Nothing is inferred from the working directory, so the next thing that
+    # can fail is the auth gate. The runner executes cases from inside this
+    # repo, so without --no-git the cwd's repo would be resolved first.
+    cmd: [send, hello, --no-git]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: send --repo reaches the auth check with a repo given
+    # --repo is an alias for --git, so it resolves the same way; with valid
+    # flags the next thing that can fail is the auth gate.
+    cmd: [send, hello, --repo, "https://github.com/gofixpoint/example-repo"]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: send rejects --git with --no-git before asking for credentials
+    # Flag contradictions are checked ahead of the auth gate: needing a login
+    # to be told about a typo would be absurd, and it keeps these assertable
+    # without credentials.
+    cmd: [send, hello, --git, ".", --no-git]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--git and --no-git are mutually exclusive"
+
+  - name: send names the alias when --repo is the flag that conflicts
+    # The message has to name what the caller typed, not the canonical spelling
+    # of the flag it aliases.
+    cmd: [send, hello, --repo, "https://github.com/gofixpoint/example-repo", --no-git]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--repo and --no-git are mutually exclusive"
+
+  - name: send rejects --git and --repo set to different values
+    cmd: [send, hello, --git, "https://github.com/gofixpoint/example-repo", --repo, "https://github.com/gofixpoint/amika"]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "are the same flag under two names"
+
+  - name: send refuses a repo flag aimed at an existing sandbox
+    # No sandbox is created, so an explicit repo cannot be honored. Before
+    # inference existed this reached the API and was ignored; dropping it
+    # silently would be a regression visible only in the sandbox contents.
+    cmd: [send, hello, --sandbox, some-sandbox, --repo, "https://github.com/gofixpoint/example-repo"]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--repo cannot be combined with --session-id or --sandbox"
+
   - name: send --stream reaches the same auth check as the buffered path
     # --stream selects the SSE transport, but only after auth. Asserting the
     # same failure here proves the flag is registered and does not change the
