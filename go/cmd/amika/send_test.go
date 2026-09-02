@@ -2,9 +2,13 @@ package main
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
+	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +26,7 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	if send == nil {
 		t.Fatal("send command not registered on rootCmd")
 	}
-	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo", "stream"} {
+	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "git", "repo", "no-git", "stream"} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
 		}
@@ -71,6 +75,275 @@ func TestSendRejectsInvalidOutput(t *testing.T) {
 	}
 }
 
+// TestSendRepo covers which repo the sandbox created for a message clones,
+// and when the working directory is not consulted at all.
+func TestSendRepo(t *testing.T) {
+	// initRepo builds a real repo, since resolving a repo to its "origin"
+	// shells out to git.
+	initRepo := func(t *testing.T, name string, remotes map[string]string) string {
+		t.Helper()
+		repo := filepath.Join(t.TempDir(), name)
+		run := func(dir string, args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %s", args, out)
+			}
+		}
+		run(filepath.Dir(repo), "init", repo)
+		for n, url := range remotes {
+			run(repo, "remote", "add", n, url)
+		}
+		return repo
+	}
+	// chdir runs the resolution from inside dir, since auto-detection walks up
+	// from the process's working directory.
+	chdir := func(t *testing.T, dir string) {
+		t.Helper()
+		old, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(old) })
+	}
+	const origin = "https://github.com/example/upstream.git"
+	// sendRepo reads the repo flags off the command, so tests need one
+	// registering the same set `send` does.
+	newCmd := func(t *testing.T, args ...string) *cobra.Command {
+		t.Helper()
+		cmd := &cobra.Command{Use: "send"}
+		gitrepo.AddFlags(cmd, "git", "no-git")
+		gitrepo.AddRepoAlias(cmd)
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		return cmd
+	}
+
+	t.Run("infers the origin of the repo containing the cwd", func(t *testing.T) {
+		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
+		url, name, err := sendRepo(newCmd(t), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != origin {
+			t.Fatalf("url = %q, want %q", url, origin)
+		}
+		if name != "myrepo" {
+			t.Fatalf("name = %q, want %q", name, "myrepo")
+		}
+	})
+
+	t.Run("infers from a nested directory", func(t *testing.T) {
+		repo := initRepo(t, "myrepo", map[string]string{"origin": origin})
+		nested := filepath.Join(repo, "a", "b")
+		if err := os.MkdirAll(nested, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		chdir(t, nested)
+		url, _, err := sendRepo(newCmd(t), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != origin {
+			t.Fatalf("url = %q, want %q", url, origin)
+		}
+	})
+
+	t.Run("outside a repo sends no repo", func(t *testing.T) {
+		chdir(t, t.TempDir())
+		url, name, err := sendRepo(newCmd(t), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "" || name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		}
+	})
+
+	t.Run("--no-git skips detection inside a repo", func(t *testing.T) {
+		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
+		url, name, err := sendRepo(newCmd(t, "--no-git"), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "" || name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		}
+	})
+
+	t.Run("--repo overrides the detected repo", func(t *testing.T) {
+		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
+		url, _, err := sendRepo(newCmd(t, "--repo", "https://github.com/other/thing.git"), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://github.com/other/thing.git" {
+			t.Fatalf("url = %q, want the --repo value", url)
+		}
+	})
+
+	t.Run("--git overrides the detected repo", func(t *testing.T) {
+		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
+		url, name, err := sendRepo(newCmd(t, "--git", "https://github.com/other/thing.git"), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://github.com/other/thing.git" || name != "thing" {
+			t.Fatalf("url = %q, name = %q, want the --git repo", url, name)
+		}
+	})
+
+	t.Run("--repo resolves a local path, like --git", func(t *testing.T) {
+		// The alias is the same input under an older name, so it gained path
+		// support rather than staying URL-only.
+		other := initRepo(t, "otherrepo", map[string]string{"origin": "https://github.com/example/other.git"})
+		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
+		url, name, err := sendRepo(newCmd(t, "--repo", other), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://github.com/example/other.git" || name != "otherrepo" {
+			t.Fatalf("url = %q, name = %q, want the --repo path's origin", url, name)
+		}
+	})
+
+	t.Run("--git and --repo agreeing is accepted", func(t *testing.T) {
+		chdir(t, t.TempDir())
+		url, _, err := sendRepo(newCmd(t,
+			"--git", "https://github.com/a/b.git",
+			"--repo", "https://github.com/a/b.git"), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://github.com/a/b.git" {
+			t.Fatalf("url = %q", url)
+		}
+	})
+
+	t.Run("an existing target accepts --no-git", func(t *testing.T) {
+		// --no-git asks for what already happens there, so it is no conflict.
+		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
+		url, name, err := sendRepo(newCmd(t, "--no-git"), "sess-1", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "" || name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		}
+	})
+
+	t.Run("a repo with no origin is an error naming the way out", func(t *testing.T) {
+		chdir(t, initRepo(t, "myrepo", nil))
+		_, _, err := sendRepo(newCmd(t), "", "")
+		if err == nil || !strings.Contains(err.Error(), "no origin remote found") {
+			t.Fatalf("err = %v, want a missing-origin error", err)
+		}
+		if !strings.Contains(err.Error(), "--no-git") {
+			t.Fatalf("err = %v, want it to mention --no-git", err)
+		}
+	})
+
+	t.Run("an existing target never consults the cwd", func(t *testing.T) {
+		// Not merely "sends no repo": a repo with no origin would error if the
+		// working directory were consulted at all, so this also pins that the
+		// detection is skipped rather than attempted and discarded.
+		chdir(t, initRepo(t, "myrepo", nil))
+		for _, tc := range []struct{ sessionID, sandboxRef string }{
+			{sessionID: "sess-1"},
+			{sandboxRef: "my-sandbox"},
+		} {
+			url, name, err := sendRepo(newCmd(t), tc.sessionID, tc.sandboxRef)
+			if err != nil {
+				t.Fatalf("unexpected error for %+v: %v", tc, err)
+			}
+			if url != "" || name != "" {
+				t.Fatalf("url = %q, name = %q for %+v, want both empty", url, name, tc)
+			}
+		}
+	})
+}
+
+// TestValidateSendRepoFlags covers the checks that run before the auth gate,
+// so a mistyped invocation is reported without needing credentials.
+func TestValidateSendRepoFlags(t *testing.T) {
+	newCmd := func(t *testing.T, args ...string) *cobra.Command {
+		t.Helper()
+		cmd := &cobra.Command{Use: "send"}
+		gitrepo.AddFlags(cmd, "git", "no-git")
+		gitrepo.AddRepoAlias(cmd)
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		return cmd
+	}
+
+	t.Run("a repo flag with --no-git is refused, naming the flag typed", func(t *testing.T) {
+		for _, flag := range []string{"--git", "--repo"} {
+			err := validateSendRepoFlags(newCmd(t, flag, "https://github.com/a/b.git", "--no-git"), "", "")
+			if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+				t.Fatalf("err = %v for %s, want a mutual-exclusion error", err, flag)
+			}
+			if !strings.Contains(err.Error(), flag) {
+				t.Fatalf("err = %v, want it to name %s", err, flag)
+			}
+		}
+	})
+
+	t.Run("--git and --repo disagreeing is ambiguous", func(t *testing.T) {
+		err := validateSendRepoFlags(newCmd(t,
+			"--git", "https://github.com/a/b.git",
+			"--repo", "https://github.com/c/d.git"), "", "")
+		if err == nil || !strings.Contains(err.Error(), "same flag under two names") {
+			t.Fatalf("err = %v, want an ambiguity error", err)
+		}
+	})
+
+	t.Run("--git with an empty value is refused", func(t *testing.T) {
+		err := validateSendRepoFlags(newCmd(t, "--git", "  "), "", "")
+		if err == nil || !strings.Contains(err.Error(), "requires a non-empty value") {
+			t.Fatalf("err = %v, want an empty-value error", err)
+		}
+	})
+
+	t.Run("an existing target refuses an explicit repo rather than dropping it", func(t *testing.T) {
+		// Before inference existed, --repo with --sandbox reached the API as-is.
+		// Silently discarding it would be a regression visible only in what the
+		// agent could see, so it is an error.
+		for _, flag := range []string{"--git", "--repo"} {
+			for _, tc := range []struct{ sessionID, sandboxRef string }{
+				{sessionID: "sess-1"},
+				{sandboxRef: "my-sandbox"},
+			} {
+				err := validateSendRepoFlags(newCmd(t, flag, "https://github.com/a/b.git"), tc.sessionID, tc.sandboxRef)
+				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --sandbox") {
+					t.Fatalf("err = %v for %s %+v, want a refusal", err, flag, tc)
+				}
+				if !strings.Contains(err.Error(), flag) {
+					t.Fatalf("err = %v, want it to name %s", err, flag)
+				}
+			}
+		}
+	})
+
+	t.Run("an existing target with no repo flag, or --no-git, is fine", func(t *testing.T) {
+		for _, args := range [][]string{nil, {"--no-git"}} {
+			if err := validateSendRepoFlags(newCmd(t, args...), "sess-1", ""); err != nil {
+				t.Fatalf("unexpected error for %v: %v", args, err)
+			}
+		}
+	})
+
+	t.Run("a plain invocation passes", func(t *testing.T) {
+		if err := validateSendRepoFlags(newCmd(t), "", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
 // TestUnstreamedRemainder covers what `amika send --stream` still has to print
 // after the deltas, given that the streamed text and the authoritative
 // `response` come from two different server-side parsers and need not agree.
@@ -115,6 +388,37 @@ func TestUnstreamedRemainder(t *testing.T) {
 			if extra != tc.extra || continuation != tc.continuation {
 				t.Errorf("unstreamedRemainder(%q, %q) = (%q, %v), want (%q, %v)",
 					tc.streamed, tc.response, extra, continuation, tc.extra, tc.continuation)
+			}
+		})
+	}
+}
+
+// TestPrintSendRepo pins the output contract for the repo line: stderr in text
+// mode, nothing at all in JSON mode. Getting this wrong by writing to stdout
+// would put a bare "repo: x" ahead of the JSON object and break every scripted
+// consumer, so it is worth a test of its own.
+func TestPrintSendRepo(t *testing.T) {
+	tests := []struct {
+		name   string
+		format string
+		repo   string
+		want   string
+	}{
+		{name: "text mode names the repo", format: "text", repo: "myrepo", want: "repo: myrepo\n"},
+		{name: "text mode with no repo says nothing", format: "text", repo: "", want: ""},
+		{name: "json mode is silent", format: "json", repo: "myrepo", want: ""},
+		{name: "json-pretty mode is silent", format: "json-pretty", repo: "myrepo", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			format, err := output.ParseFormat(tt.format)
+			if err != nil {
+				t.Fatalf("ParseFormat(%q): %v", tt.format, err)
+			}
+			var buf strings.Builder
+			printSendRepo(format, &buf, tt.repo)
+			if got := buf.String(); got != tt.want {
+				t.Fatalf("output = %q, want %q", got, tt.want)
 			}
 		})
 	}

@@ -76,45 +76,73 @@ type Options struct {
 	GitSet bool
 	// NoGit is the --no-git flag: skip auto-detection entirely.
 	NoGit bool
+	// GitFlagName is the flag that supplied Git, so an error names what the
+	// caller actually typed. Empty means "git"; `amika send` sets "repo" when
+	// the value arrived through that alias.
+	GitFlagName string
 	// NoClean is the local-sandbox --no-clean flag. It only makes sense with a
 	// local-path repo, so it constrains which sources are acceptable.
 	// Commands that do not offer --no-clean leave it false.
 	NoClean bool
 }
 
+// Validate reports contradictions between the flags without touching the
+// filesystem, so a command can reject a bad invocation before doing any work
+// — or before requiring credentials. Resolve applies it too, so a caller that
+// skips it still cannot resolve an invalid combination.
+func (o Options) Validate() error {
+	gitFlag := "--" + FlagGit
+	if o.GitFlagName != "" {
+		gitFlag = "--" + o.GitFlagName
+	}
+	if o.GitSet && o.NoGit {
+		return fmt.Errorf("%s and --%s are mutually exclusive", gitFlag, FlagNoGit)
+	}
+	if o.NoClean && o.NoGit {
+		return fmt.Errorf("--%s and --%s are mutually exclusive", FlagNoClean, FlagNoGit)
+	}
+	if o.GitSet {
+		v := strings.TrimSpace(o.Git)
+		if v == "" {
+			return fmt.Errorf("%s requires a non-empty value", gitFlag)
+		}
+		if o.NoClean && IsNetworkURL(v) {
+			return fmt.Errorf("--%s cannot be used with a git URL", FlagNoClean)
+		}
+	}
+	return nil
+}
+
 // Resolve decides which git repo (if any) should back a sandbox based on the
 // user's flag input and the working directory.
 //
-//   - --git and --no-git are mutually exclusive.
-//   - --no-clean and --no-git are mutually exclusive.
-//   - --no-clean is only meaningful when a local-path repo is sourced
-//     (auto-detect or --git <path>).
+//   - Contradictory combinations are rejected by Options.Validate, which this
+//     applies first.
 //   - When neither --git nor --no-git is set, the function walks up from Cwd
 //     to detect a repo; if none is found, the identity is SourceNone.
 func Resolve(opts Options) (Identity, error) {
-	if opts.GitSet && opts.NoGit {
-		return Identity{}, fmt.Errorf("--git and --no-git are mutually exclusive")
-	}
-	if opts.NoClean && opts.NoGit {
-		return Identity{}, fmt.Errorf("--no-clean and --no-git are mutually exclusive")
+	if err := opts.Validate(); err != nil {
+		return Identity{}, err
 	}
 	if opts.NoGit {
 		return Identity{Source: SourceNone}, nil
 	}
 	if opts.GitSet {
+		// Validate already rejected an empty value.
 		v := strings.TrimSpace(opts.Git)
-		if v == "" {
-			return Identity{}, fmt.Errorf("--git requires a non-empty value")
-		}
 		if IsNetworkURL(v) {
-			if opts.NoClean {
-				return Identity{}, fmt.Errorf("--no-clean cannot be used with a git URL")
-			}
 			name, err := NameFromURL(v)
 			if err != nil {
 				return Identity{}, err
 			}
 			return Identity{Name: name, Source: SourceFlagURL, URL: v}, nil
+		}
+		// An explicitly named path has to exist. ResolveRoot walks *up*, which
+		// is what auto-detection wants but would quietly promote a typo — or
+		// GitHub shorthand like "acme/billing", which reads as a repo but is
+		// not a URL — into whatever repo happens to enclose the caller.
+		if _, statErr := os.Stat(v); statErr != nil {
+			return Identity{}, fmt.Errorf("could not find git repo at %q: %w", v, statErr)
 		}
 		repoRoot, err := ResolveRoot(v)
 		if err != nil {

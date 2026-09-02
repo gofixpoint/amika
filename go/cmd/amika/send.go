@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
@@ -50,6 +51,16 @@ scenes and a new chat is started; the returned session id can be passed back as
 --session-id to continue the conversation. The agent (claude or codex) comes
 from --agent, else the organization's default, else claude.
 
+Run from inside a git repo and that repo's "origin" remote is cloned into
+the sandbox, the same way "amika sandbox create" picks up the repo you are
+standing in. Pass --git <path|url> to choose a different repo, or --no-git for
+a sandbox with no repo at all; --repo is accepted as an alias for --git. Only
+the repo's default branch is cloned, whatever branch you have checked out
+locally.
+
+Repo selection only applies to a sandbox this command creates, so it cannot be
+combined with --session-id or --sandbox.
+
 The message can be provided as a positional argument or piped via stdin.
 
 By default the reply streams in as the agent produces it when stdout is a
@@ -84,7 +95,6 @@ func runSend(cmd *cobra.Command, args []string) error {
 	sessionID, _ := cmd.Flags().GetString("session-id")
 	sandboxRef, _ := cmd.Flags().GetString("sandbox")
 	newSession, _ := cmd.Flags().GetBool("new-session")
-	repo, _ := cmd.Flags().GetString("repo")
 
 	format, err := output.FormatFrom(cmd)
 	if err != nil {
@@ -104,11 +114,29 @@ func runSend(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Contradictory repo flags are reported before the auth gate: checking
+	// them costs nothing, so a login should not stand between the caller and
+	// a plain flag conflict. Only the flag-level checks move up — a bad path
+	// needs the filesystem, so it still waits.
+	if err := validateSendRepoFlags(cmd, sessionID, sandboxRef); err != nil {
+		return err
+	}
+
 	// The agent-sessions API is remote-only: it provisions sandboxes in the
 	// control plane, so there is no local equivalent.
 	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
+
+	// Resolving the repo waits until after the gate: it walks the filesystem
+	// and shells out to git, and login is the precondition for all of it, so
+	// someone not logged in hears that rather than a complaint about their
+	// git remote.
+	repoURL, repoName, err := sendRepo(cmd, sessionID, sandboxRef)
+	if err != nil {
+		return err
+	}
+	printSendRepo(format, os.Stderr, repoName)
 
 	req := apiclient.AgentSessionSendRequest{
 		Message:    message,
@@ -116,7 +144,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 		SessionID:  sessionID,
 		SandboxID:  sandboxRef,
 		NewSession: newSession,
-		RepoURL:    repo,
+		RepoURL:    repoURL,
 	}
 	client := runmode.NewRemoteClient()
 
@@ -154,6 +182,74 @@ func runSend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("agent returned an error")
 	}
 	return nil
+}
+
+// printSendRepo reports which repo the sandbox will get, on stderr alongside
+// the other identifying lines so stdout stays the pure agent reply.
+//
+// Suppressed under --output json, per the CLI's rule that human progress goes
+// through format.Progress: a JSON caller gets one object and nothing else,
+// even on the stream stdout does not use.
+func printSendRepo(format output.Format, w io.Writer, name string) {
+	if name == "" {
+		return
+	}
+	fmt.Fprintf(format.Progress(w), "repo: %s\n", name)
+}
+
+// validateSendRepoFlags rejects a repo selection this command cannot honor,
+// using only the flags themselves so it can run before the auth gate.
+//
+// Beyond the contradictions gitrepo knows about, `send` has one of its own:
+// --session-id and --sandbox address a sandbox that already exists, so no
+// repo is created and an explicitly requested one cannot be honored. Refusing
+// beats dropping it from the request, which would show up only in what the
+// agent could see. --no-git needs no such refusal — it asks for exactly what
+// already happens there.
+func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) error {
+	if err := gitrepo.ValidateFlags(cmd); err != nil {
+		return err
+	}
+	if sessionID == "" && sandboxRef == "" {
+		return nil
+	}
+	if flag := gitrepo.RequestedFlag(cmd); flag != "" {
+		return fmt.Errorf(
+			"--%s cannot be combined with --session-id or --sandbox; it only applies to a sandbox this command creates",
+			flag)
+	}
+	return nil
+}
+
+// sendRepo decides which git repo the sandbox created for this message should
+// clone, returning the URL to send and a short name to report (empty when
+// there is no repo to name).
+//
+// A message aimed at an existing chat (--session-id) or an existing sandbox
+// (--sandbox) creates nothing, so there is no repo to choose and the working
+// directory is not consulted at all.
+func sendRepo(cmd *cobra.Command, sessionID, sandboxRef string) (url, name string, err error) {
+	if sessionID != "" || sandboxRef != "" {
+		// validateSendRepoFlags has already refused an explicit repo here, so
+		// this is the "nothing was asked for" case: skip detection entirely.
+		return "", "", nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to determine working directory: %w", err)
+	}
+	identity, err := gitrepo.FromCommand(cmd, cwd)
+	if err != nil {
+		return "", "", err
+	}
+	url, err = identity.RemoteURL()
+	if err != nil {
+		return "", "", err
+	}
+	// Name, not URL: it is what identifies the repo to a reader, it matches
+	// what `sandbox create` reports, and an origin can carry a token in its
+	// userinfo that has no business on a terminal.
+	return url, identity.Name, nil
 }
 
 // mustBool reads a bool flag, ignoring the (impossible for a defined flag)
@@ -384,7 +480,10 @@ func init() {
 	sendCmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
 	sendCmd.Flags().String("sandbox", "", "Send into a specific sandbox (id or name)")
 	sendCmd.Flags().Bool("new-session", false, "Start a brand-new chat")
-	sendCmd.Flags().String("repo", "", "Repository URL to clone when a sandbox is created")
+	gitrepo.AddFlags(sendCmd,
+		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",
+		"Skip git repo auto-detection; create a sandbox without any repo")
+	gitrepo.AddRepoAlias(sendCmd)
 	sendCmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
 	rootCmd.AddCommand(sendCmd)
 
