@@ -54,9 +54,11 @@ from --agent, else the organization's default, else claude.
 Run from inside a git repo and that repo's "origin" remote is cloned into
 the sandbox, the same way "amika sandbox create" picks up the repo you are
 standing in. Pass --git <path|url> to choose a different repo, or --no-git for
-a sandbox with no repo at all; --repo is accepted as an alias for --git. Only
-the repo's default branch is cloned, whatever branch you have checked out
-locally.
+a sandbox with no repo at all; --repo is accepted as an alias for --git.
+
+Only the repo's default branch is cloned, whatever branch you have checked out
+locally; a warning says so when the two differ. To work on a specific branch,
+use "amika sandbox create --branch" and send into that sandbox with --sandbox.
 
 Repo selection only applies to a sandbox this command creates, so it cannot be
 combined with --session-id or --sandbox.
@@ -132,11 +134,14 @@ func runSend(cmd *cobra.Command, args []string) error {
 	// and shells out to git, and login is the precondition for all of it, so
 	// someone not logged in hears that rather than a complaint about their
 	// git remote.
-	repoURL, repoName, err := sendRepo(cmd, sessionID, sandboxRef)
+	repoURL, identity, err := sendRepo(cmd, sessionID, sandboxRef)
 	if err != nil {
 		return err
 	}
-	printSendRepo(format, os.Stderr, repoName)
+	printSendRepo(format, os.Stderr, identity.Name)
+	if w := sendBranchWarning(identity); w != "" {
+		fmt.Fprintln(format.Progress(os.Stderr), w)
+	}
 
 	req := apiclient.AgentSessionSendRequest{
 		Message:    message,
@@ -228,28 +233,58 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) err
 // A message aimed at an existing chat (--session-id) or an existing sandbox
 // (--sandbox) creates nothing, so there is no repo to choose and the working
 // directory is not consulted at all.
-func sendRepo(cmd *cobra.Command, sessionID, sandboxRef string) (url, name string, err error) {
+func sendRepo(cmd *cobra.Command, sessionID, sandboxRef string) (url string, identity gitrepo.Identity, err error) {
 	if sessionID != "" || sandboxRef != "" {
 		// validateSendRepoFlags has already refused an explicit repo here, so
 		// this is the "nothing was asked for" case: skip detection entirely.
-		return "", "", nil
+		return "", gitrepo.Identity{}, nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to determine working directory: %w", err)
+		return "", gitrepo.Identity{}, fmt.Errorf("failed to determine working directory: %w", err)
 	}
-	identity, err := gitrepo.FromCommand(cmd, cwd)
+	identity, err = gitrepo.FromCommand(cmd, cwd)
 	if err != nil {
-		return "", "", err
+		return "", gitrepo.Identity{}, err
 	}
 	url, err = identity.RemoteURL()
 	if err != nil {
-		return "", "", err
+		return "", gitrepo.Identity{}, err
 	}
-	// Name, not URL: it is what identifies the repo to a reader, it matches
-	// what `sandbox create` reports, and an origin can carry a token in its
-	// userinfo that has no business on a terminal.
-	return url, identity.Name, nil
+	return url, identity, nil
+}
+
+// sendBranchWarning returns the warning to print when the sandbox will not
+// have the branch the caller is standing on, or "" when there is nothing to
+// say.
+//
+// The agent-sessions API accepts no branch, so a sandbox always gets the
+// repo's default branch. Asking an agent about work in progress therefore
+// gets an answer about different code, and without this the only clue is the
+// repo name — which looks exactly right. The warning cannot fix that; it
+// makes it visible.
+//
+// Silence is the answer whenever the comparison cannot be made confidently:
+// a URL source has no local checkout to compare, a detached HEAD has no
+// branch name, and a repo with no recorded origin HEAD has no default branch
+// to compare against. Guessing would put a wrong warning in front of people
+// who are on the default branch already.
+func sendBranchWarning(identity gitrepo.Identity) string {
+	if !identity.IsLocalPath() {
+		return ""
+	}
+	current, err := gitrepo.CurrentBranch(identity.Path)
+	if err != nil {
+		return ""
+	}
+	defaultBranch, err := gitrepo.DefaultBranch(identity.Path)
+	if err != nil || defaultBranch == current {
+		return ""
+	}
+	return fmt.Sprintf(
+		"warning: you are on %q but the sandbox will get %q — the agent-sessions API cannot select a branch yet.\n"+
+			"         Push %q and mention it in your message, or use \"amika sandbox create --branch %s\" instead.",
+		current, defaultBranch, current, current)
 }
 
 // mustBool reads a bool flag, ignoring the (impossible for a defined flag)

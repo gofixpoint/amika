@@ -151,3 +151,44 @@ func TestIdentityIsLocalPath(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultBranch(t *testing.T) {
+	t.Run("reads the recorded origin HEAD", func(t *testing.T) {
+		repo := initRepo(t, map[string]string{"origin": "https://github.com/example/upstream.git"})
+		runGit(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+		got, err := DefaultBranch(repo)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "develop" {
+			t.Fatalf("DefaultBranch = %q, want %q", got, "develop")
+		}
+	})
+
+	t.Run("a branch name containing slashes survives", func(t *testing.T) {
+		repo := initRepo(t, map[string]string{"origin": "https://github.com/example/upstream.git"})
+		runGit(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release/v2")
+		got, err := DefaultBranch(repo)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "release/v2" {
+			t.Fatalf("DefaultBranch = %q, want %q", got, "release/v2")
+		}
+	})
+
+	t.Run("no recorded HEAD is an error, not a guess", func(t *testing.T) {
+		// `git init` plus a manually added remote records no origin HEAD.
+		// Returning "main" here would put a wrong branch in a warning.
+		repo := initRepo(t, map[string]string{"origin": "https://github.com/example/upstream.git"})
+		if _, err := DefaultBranch(repo); err == nil {
+			t.Fatal("expected an error when origin HEAD is unrecorded")
+		}
+	})
+
+	t.Run("not a repo is an error", func(t *testing.T) {
+		if _, err := DefaultBranch(t.TempDir()); err == nil {
+			t.Fatal("expected an error outside a repo")
+		}
+	})
+}

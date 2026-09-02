@@ -125,15 +125,15 @@ func TestSendRepo(t *testing.T) {
 
 	t.Run("infers the origin of the repo containing the cwd", func(t *testing.T) {
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t), "", "")
+		url, identity, err := sendRepo(newCmd(t), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if url != origin {
 			t.Fatalf("url = %q, want %q", url, origin)
 		}
-		if name != "myrepo" {
-			t.Fatalf("name = %q, want %q", name, "myrepo")
+		if identity.Name != "myrepo" {
+			t.Fatalf("name = %q, want %q", identity.Name, "myrepo")
 		}
 	})
 
@@ -155,23 +155,23 @@ func TestSendRepo(t *testing.T) {
 
 	t.Run("outside a repo sends no repo", func(t *testing.T) {
 		chdir(t, t.TempDir())
-		url, name, err := sendRepo(newCmd(t), "", "")
+		url, identity, err := sendRepo(newCmd(t), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "" || name != "" {
-			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		if url != "" || identity.Name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, identity.Name)
 		}
 	})
 
 	t.Run("--no-git skips detection inside a repo", func(t *testing.T) {
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--no-git"), "", "")
+		url, identity, err := sendRepo(newCmd(t, "--no-git"), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "" || name != "" {
-			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		if url != "" || identity.Name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, identity.Name)
 		}
 	})
 
@@ -188,12 +188,12 @@ func TestSendRepo(t *testing.T) {
 
 	t.Run("--git overrides the detected repo", func(t *testing.T) {
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--git", "https://github.com/other/thing.git"), "", "")
+		url, identity, err := sendRepo(newCmd(t, "--git", "https://github.com/other/thing.git"), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "https://github.com/other/thing.git" || name != "thing" {
-			t.Fatalf("url = %q, name = %q, want the --git repo", url, name)
+		if url != "https://github.com/other/thing.git" || identity.Name != "thing" {
+			t.Fatalf("url = %q, name = %q, want the --git repo", url, identity.Name)
 		}
 	})
 
@@ -202,12 +202,12 @@ func TestSendRepo(t *testing.T) {
 		// support rather than staying URL-only.
 		other := initRepo(t, "otherrepo", map[string]string{"origin": "https://github.com/example/other.git"})
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--repo", other), "", "")
+		url, identity, err := sendRepo(newCmd(t, "--repo", other), "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "https://github.com/example/other.git" || name != "otherrepo" {
-			t.Fatalf("url = %q, name = %q, want the --repo path's origin", url, name)
+		if url != "https://github.com/example/other.git" || identity.Name != "otherrepo" {
+			t.Fatalf("url = %q, name = %q, want the --repo path's origin", url, identity.Name)
 		}
 	})
 
@@ -227,12 +227,12 @@ func TestSendRepo(t *testing.T) {
 	t.Run("an existing target accepts --no-git", func(t *testing.T) {
 		// --no-git asks for what already happens there, so it is no conflict.
 		chdir(t, initRepo(t, "myrepo", map[string]string{"origin": origin}))
-		url, name, err := sendRepo(newCmd(t, "--no-git"), "sess-1", "")
+		url, identity, err := sendRepo(newCmd(t, "--no-git"), "sess-1", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if url != "" || name != "" {
-			t.Fatalf("url = %q, name = %q, want both empty", url, name)
+		if url != "" || identity.Name != "" {
+			t.Fatalf("url = %q, name = %q, want both empty", url, identity.Name)
 		}
 	})
 
@@ -256,12 +256,12 @@ func TestSendRepo(t *testing.T) {
 			{sessionID: "sess-1"},
 			{sandboxRef: "my-sandbox"},
 		} {
-			url, name, err := sendRepo(newCmd(t), tc.sessionID, tc.sandboxRef)
+			url, identity, err := sendRepo(newCmd(t), tc.sessionID, tc.sandboxRef)
 			if err != nil {
 				t.Fatalf("unexpected error for %+v: %v", tc, err)
 			}
-			if url != "" || name != "" {
-				t.Fatalf("url = %q, name = %q for %+v, want both empty", url, name, tc)
+			if url != "" || identity.Name != "" {
+				t.Fatalf("url = %q, name = %q for %+v, want both empty", url, identity.Name, tc)
 			}
 		}
 	})
@@ -422,4 +422,98 @@ func TestPrintSendRepo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSendBranchWarning covers when the user is told that the sandbox will not
+// have their branch — and, just as importantly, when they are not, since a
+// warning shown to someone already on the default branch is pure noise.
+func TestSendBranchWarning(t *testing.T) {
+	// recordDefault is separate from defaultBranch because a repo can have a
+	// branch checked out and still have no origin HEAD recorded — the `git
+	// init` plus manual remote case — and that is one of the cases under test.
+	newRepo := func(t *testing.T, name, current, defaultBranch string, recordDefault bool) string {
+		t.Helper()
+		repo := filepath.Join(t.TempDir(), name)
+		run := func(args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %s", args, out)
+			}
+		}
+		if out, err := exec.Command("git", "init", "-q", "-b", defaultBranch, repo).CombinedOutput(); err != nil {
+			t.Fatalf("git init: %s", out)
+		}
+		run("config", "user.email", "t@example.com")
+		run("config", "user.name", "T")
+		run("commit", "--allow-empty", "-m", "c1")
+		run("remote", "add", "origin", "https://github.com/example/"+name+".git")
+		if recordDefault {
+			run("update-ref", "refs/remotes/origin/"+defaultBranch, "HEAD")
+			run("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
+		}
+		if current != defaultBranch {
+			run("checkout", "-q", "-b", current)
+		}
+		return repo
+	}
+
+	t.Run("warns when the checked-out branch is not the default", func(t *testing.T) {
+		repo := newRepo(t, "r1", "fix-parser", "main", true)
+		got := sendBranchWarning(gitrepo.Identity{Name: "r1", Source: gitrepo.SourceAutoDetect, Path: repo})
+		if got == "" {
+			t.Fatal("expected a warning on a non-default branch")
+		}
+		for _, want := range []string{"fix-parser", "main", "cannot select a branch"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("warning = %q, want it to mention %q", got, want)
+			}
+		}
+	})
+
+	t.Run("silent on the default branch", func(t *testing.T) {
+		repo := newRepo(t, "r2", "main", "main", true)
+		if got := sendBranchWarning(gitrepo.Identity{Source: gitrepo.SourceAutoDetect, Path: repo}); got != "" {
+			t.Fatalf("warning = %q, want silence on the default branch", got)
+		}
+	})
+
+	t.Run("silent when the default branch is not main", func(t *testing.T) {
+		// The comparison is against what origin actually records, not a guess
+		// at "main" — someone whose default is "develop" must not be warned
+		// while sitting on it.
+		repo := newRepo(t, "r3", "develop", "develop", true)
+		if got := sendBranchWarning(gitrepo.Identity{Source: gitrepo.SourceAutoDetect, Path: repo}); got != "" {
+			t.Fatalf("warning = %q, want silence", got)
+		}
+	})
+
+	t.Run("silent when origin records no default branch", func(t *testing.T) {
+		repo := newRepo(t, "r4", "feature", "main", false)
+		if got := sendBranchWarning(gitrepo.Identity{Source: gitrepo.SourceAutoDetect, Path: repo}); got != "" {
+			t.Fatalf("warning = %q, want silence when there is nothing to compare", got)
+		}
+	})
+
+	t.Run("silent for a URL source and for no repo", func(t *testing.T) {
+		for _, id := range []gitrepo.Identity{
+			{Name: "x", Source: gitrepo.SourceFlagURL, URL: "https://github.com/a/b.git"},
+			{Source: gitrepo.SourceNone},
+		} {
+			if got := sendBranchWarning(id); got != "" {
+				t.Fatalf("warning = %q for %+v, want silence", got, id)
+			}
+		}
+	})
+
+	t.Run("silent on a detached HEAD", func(t *testing.T) {
+		repo := newRepo(t, "r5", "main", "main", true)
+		cmd := exec.Command("git", "-C", repo, "checkout", "-q", "--detach")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("detach: %s", out)
+		}
+		if got := sendBranchWarning(gitrepo.Identity{Source: gitrepo.SourceAutoDetect, Path: repo}); got != "" {
+			t.Fatalf("warning = %q, want silence with no branch name", got)
+		}
+	})
 }

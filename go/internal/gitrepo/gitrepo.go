@@ -340,3 +340,29 @@ func Output(repo string, args ...string) (string, error) {
 	}
 	return string(out), nil
 }
+
+// DefaultBranch returns the branch a fresh clone of the repo's origin would
+// check out, read from the local `refs/remotes/origin/HEAD` symref that git
+// records at clone time.
+//
+// Deliberately local-only: no ls-remote, so this costs nothing on a command
+// that runs it every invocation. A repo created with `git init` and a manually
+// added remote has no such symref, and rather than guess at "main" or "master"
+// it returns an error — a caller comparing branches is better off staying
+// quiet than reporting a default it invented.
+func DefaultBranch(repoPath string) (string, error) {
+	out, err := Output(repoPath, "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "", fmt.Errorf("no recorded default branch for origin in %q: %w", repoPath, err)
+	}
+	ref := strings.TrimSpace(out)
+	const prefix = "refs/remotes/origin/"
+	if !strings.HasPrefix(ref, prefix) {
+		return "", fmt.Errorf("unexpected origin HEAD ref %q in %q", ref, repoPath)
+	}
+	name := strings.TrimPrefix(ref, prefix)
+	if name == "" {
+		return "", fmt.Errorf("empty default branch in %q", repoPath)
+	}
+	return name, nil
+}
