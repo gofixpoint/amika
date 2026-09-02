@@ -33,5 +33,22 @@ describeFunctional("org resources functional tests", () => {
         expect(["table", "legacy"]).toContain(service.source);
       }
     });
+
+    it("listAgentSessions returns a page and its total", async () => {
+      const page = await client.listAgentSessions(5);
+      expect(Array.isArray(page.sessions)).toBe(true);
+      expect(page.sessions.length).toBeLessThanOrEqual(5);
+      expect(typeof page.total).toBe("number");
+    });
+
+    it("getAgentSession returns the transcript for a listed chat", async () => {
+      const page = await client.listAgentSessions(1);
+      const summary = page.sessions[0];
+      if (!summary) return; // Fresh org with no chats yet.
+
+      const detail = await client.getAgentSession(summary.sessionId);
+      expect(detail.sessionId).toBe(summary.sessionId);
+      expect(Array.isArray(detail.messages)).toBe(true);
+    });
   });
 });

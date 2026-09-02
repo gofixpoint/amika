@@ -820,7 +820,7 @@ function optionalArray<T>(
     : undefined;
 }
 
-function optionalObject<T>(
+export function optionalObject<T>(
   v: unknown,
   from: (w: Record<string, unknown>) => T,
 ): T | undefined {

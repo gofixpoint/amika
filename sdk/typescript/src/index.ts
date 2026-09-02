@@ -13,6 +13,17 @@ export { StaticTokenSource } from "@/token";
 export type { TokenSource } from "@/token";
 
 export type {
+  AgentSessionDetail,
+  AgentSessionMessage,
+  AgentSessionSendRequest,
+  AgentSessionSendResponse,
+  AgentSessionStreamHandlers,
+  AgentSessionSummary,
+  AgentSessionUsage,
+  ListAgentSessionsResponse,
+} from "@/agent-sessions";
+
+export type {
   AgentCredentialRef,
   AgentSendRequest,
   AgentSendResponse,

@@ -1,3 +1,15 @@
+import {
+  type AgentSessionDetail,
+  agentSessionDetailFromWire,
+  type AgentSessionSendRequest,
+  type AgentSessionSendResponse,
+  agentSessionSendRequestToWire,
+  agentSessionSendResponseFromWire,
+  type AgentSessionStreamHandlers,
+  type ListAgentSessionsResponse,
+  listAgentSessionsResponseFromWire,
+  readAgentSessionStream,
+} from "@/agent-sessions";
 import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
 import { HTTPClient } from "@/http";
 import { StaticTokenSource, type TokenSource } from "@/token";
@@ -484,6 +496,80 @@ export class AmikaClient {
       "DELETE",
       `${API_BASE_PATH}/sandbox-snapshots/${encodeURIComponent(ref)}?by=ref`,
     );
+  }
+
+  // ---------- Agent sessions ----------
+
+  /**
+   * Send a message to a coding agent, creating a sandbox behind the scenes
+   * when the chat has none, or routing to an existing sandbox or session. The
+   * endpoint is synchronous, so it uses the same 10-minute timeout as
+   * {@link agentSend}.
+   *
+   * Unlike {@link agentSend}, a provider auth failure comes back as a normal
+   * response with `isError` set and the agent CLI's own message in `response`,
+   * not as an HTTP error.
+   */
+  async sendAgentSession(
+    req: AgentSessionSendRequest,
+  ): Promise<AgentSessionSendResponse> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/agent-sessions`,
+      agentSessionSendRequestToWire(req),
+      { timeoutMs: AGENT_SEND_TIMEOUT_MS },
+    );
+    return agentSessionSendResponseFromWire(data ?? {});
+  }
+
+  /**
+   * The streaming counterpart to {@link sendAgentSession}: forwards `status`
+   * and `delta` frames to `handlers` as they arrive and resolves with the same
+   * response the buffered endpoint returns.
+   *
+   * The effective time limit is the server's (a 300s request ceiling), which
+   * is lower than the client's 10 minutes: it ends the stream first, without a
+   * terminal frame, and the client timeout only guards a connection that hangs
+   * past even that.
+   */
+  async sendAgentSessionStream(
+    req: AgentSessionSendRequest,
+    handlers: AgentSessionStreamHandlers = {},
+  ): Promise<AgentSessionSendResponse> {
+    const { body, release } = await this.http.openStream(
+      "POST",
+      `${API_BASE_PATH}/agent-sessions/stream`,
+      agentSessionSendRequestToWire(req),
+      { timeoutMs: AGENT_SEND_TIMEOUT_MS },
+    );
+    try {
+      return await readAgentSessionStream(body, handlers);
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * List the org's agent-session chats, newest first. Omitting `limit` leaves
+   * the server's default page size (50) in place. The response's `total`
+   * exceeds `sessions.length` when the page cuts the list short.
+   */
+  async listAgentSessions(limit?: number): Promise<ListAgentSessionsResponse> {
+    const qs = limit && limit > 0 ? `?limit=${limit}` : "";
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/agent-sessions${qs}`,
+    );
+    return listAgentSessionsResponseFromWire(data ?? {});
+  }
+
+  /** Fetch one agent-session chat with its message history. */
+  async getAgentSession(sessionId: string): Promise<AgentSessionDetail> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/agent-sessions/${encodeURIComponent(sessionId)}`,
+    );
+    return agentSessionDetailFromWire(data ?? {});
   }
 }
 

@@ -105,14 +105,18 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 
 ### Agents and sessions
 
-| Method                                | Endpoint                                              |
-| ------------------------------------- | ----------------------------------------------------- |
-| `agentSend(name, req)`                | `POST /sandboxes/{name}/agent-send` (10-min timeout)  |
-| `createSession(name, req)`            | `POST /sandboxes/{name}/sessions`                     |
-| `listSessions(name)`                  | `GET /sandboxes/{name}/sessions`                      |
-| `getLatestSession(name)`              | `GET /sandboxes/{name}/sessions/latest` (null on 404) |
-| `getSession(name, sessionId)`         | `GET /sandboxes/{name}/sessions/{sessionId}`          |
-| `updateSession(name, sessionId, req)` | `PATCH /sandboxes/{name}/sessions/{sessionId}`        |
+| Method                                  | Endpoint                                              |
+| --------------------------------------- | ----------------------------------------------------- |
+| `agentSend(name, req)`                  | `POST /sandboxes/{name}/agent-send` (10-min timeout)  |
+| `sendAgentSession(req)`                 | `POST /agent-sessions` (10-min timeout)               |
+| `sendAgentSessionStream(req, handlers)` | `POST /agent-sessions/stream` (SSE)                   |
+| `listAgentSessions(limit?)`             | `GET /agent-sessions`                                 |
+| `getAgentSession(sessionId)`            | `GET /agent-sessions/{sessionId}`                     |
+| `createSession(name, req)`              | `POST /sandboxes/{name}/sessions`                     |
+| `listSessions(name)`                    | `GET /sandboxes/{name}/sessions`                      |
+| `getLatestSession(name)`                | `GET /sandboxes/{name}/sessions/latest` (null on 404) |
+| `getSession(name, sessionId)`           | `GET /sandboxes/{name}/sessions/{sessionId}`          |
+| `updateSession(name, sessionId, req)`   | `PATCH /sandboxes/{name}/sessions/{sessionId}`        |
 
 ### Snapshots
 
@@ -127,7 +131,7 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 
 Fork a new sandbox from a captured snapshot by passing its slug as `snapshot` to `createSandbox({ snapshot })`.
 
-Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `SSHInfo`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `CreateSandboxSnapshotRequest`, etc.
+Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` and `src/agent-sessions.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `SSHInfo`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `SandboxServiceResource`, `AgentSessionSendRequest`, `AgentSessionDetail`, etc.
 
 ### Nullability
 
@@ -147,6 +151,23 @@ Two fields sit outside this rule because they sit outside the schema. `container
 ## Polling behavior
 
 `waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present. `waitForSandboxSnapshot` polls `getSandboxSnapshot` the same way, returning once the snapshot is `active` and throwing if it ends up `failed`.
+
+## Streaming an agent turn
+
+`sendAgentSessionStream` reads the SSE endpoint and resolves with the same response `sendAgentSession` returns, after forwarding progress to your handlers:
+
+```ts
+const result = await amika.sendAgentSessionStream(
+  { message: "Add a CHANGELOG", repoUrl: "git@github.com:org/proj.git" },
+  {
+    onStatus: (phase, sandboxId) => console.error(`[${phase}] ${sandboxId}`),
+    onDelta: (text) => process.stdout.write(text),
+  },
+);
+console.log(`\nsession ${result.sessionId} on sandbox ${result.sandboxId}`);
+```
+
+The server enforces a 300s ceiling on the request, below the client's 10-minute timeout. If it cuts the stream before a terminal frame, the call throws and the turn may still have completed — check `listAgentSessions()` for the session rather than assuming the work was lost.
 
 ## Errors
 
@@ -198,3 +219,5 @@ pnpm test:functional
 Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_SANDBOX_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_SANDBOX_PROVIDER`. See `test/functional/helpers.ts` for details.
 
 The suite provisions a real sandbox and runs the full lifecycle (create → wait → list → get → SSH → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Sandboxes are cleaned up in `afterAll`, but the secrets API has no delete endpoint — test-created secrets accumulate.
+
+`org-resources.functional.test.ts` is the exception: it only reads org-scoped listings and round-trips one SSH public key, so it provisions nothing and finishes in seconds. Run it alone with `pnpm test:functional org-resources`.
