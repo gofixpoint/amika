@@ -2,9 +2,11 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +24,7 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	if send == nil {
 		t.Fatal("send command not registered on rootCmd")
 	}
-	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "repo", "stream"} {
+	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "git", "no-git", "repo", "stream"} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
 		}
@@ -69,6 +71,142 @@ func TestSendRejectsInvalidOutput(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid --output") {
 		t.Fatalf("err = %v, want an invalid --output error", err)
 	}
+}
+
+// TestSendRepoIdentity covers which repo a `amika send` message puts in the
+// sandbox it creates, and when that question does not apply at all.
+func TestSendRepoIdentity(t *testing.T) {
+	newSendCmd := func() *cobra.Command {
+		cmd := &cobra.Command{Use: "send"}
+		gitrepo.AddFlags(cmd, "git usage", "no-git usage")
+		gitrepo.AddRepoAlias(cmd)
+		return cmd
+	}
+	fakeRepo := func(t *testing.T, name string) string {
+		t.Helper()
+		repo := filepath.Join(t.TempDir(), name)
+		if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+			t.Fatalf("failed to create fake repo: %v", err)
+		}
+		return repo
+	}
+	// chdirTo runs the resolution from inside dir, since auto-detection walks
+	// up from the process's working directory.
+	chdirTo := func(t *testing.T, dir string) {
+		t.Helper()
+		old, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(old) })
+	}
+
+	t.Run("auto-detects the repo containing the cwd", func(t *testing.T) {
+		repo := fakeRepo(t, "myrepo")
+		chdirTo(t, repo)
+		got, err := sendRepoIdentity(newSendCmd(), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Source != gitrepo.SourceAutoDetect || got.Name != "myrepo" {
+			t.Fatalf("identity = %+v, want the auto-detected repo", got)
+		}
+	})
+
+	t.Run("outside a repo resolves to no repo", func(t *testing.T) {
+		chdirTo(t, t.TempDir())
+		got, err := sendRepoIdentity(newSendCmd(), "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Source != gitrepo.SourceNone {
+			t.Fatalf("Source = %v, want none", got.Source)
+		}
+	})
+
+	t.Run("--no-git skips auto-detection", func(t *testing.T) {
+		repo := fakeRepo(t, "myrepo")
+		chdirTo(t, repo)
+		cmd := newSendCmd()
+		if err := cmd.ParseFlags([]string{"--no-git"}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := sendRepoIdentity(cmd, "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Source != gitrepo.SourceNone {
+			t.Fatalf("Source = %v, want none", got.Source)
+		}
+	})
+
+	t.Run("--git overrides the cwd repo", func(t *testing.T) {
+		chdirTo(t, fakeRepo(t, "cwdrepo"))
+		cmd := newSendCmd()
+		if err := cmd.ParseFlags([]string{"--git", "https://github.com/foo/bar.git"}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := sendRepoIdentity(cmd, "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Source != gitrepo.SourceFlagURL || got.URL != "https://github.com/foo/bar.git" {
+			t.Fatalf("identity = %+v, want the --git URL", got)
+		}
+	})
+
+	t.Run("an existing target skips auto-detection", func(t *testing.T) {
+		// No sandbox is created for these, so the cwd repo is not a silently
+		// dropped part of the request.
+		repo := fakeRepo(t, "myrepo")
+		chdirTo(t, repo)
+		for _, tc := range []struct{ sessionID, sandboxRef string }{
+			{sessionID: "sess-1"},
+			{sandboxRef: "my-sandbox"},
+		} {
+			got, err := sendRepoIdentity(newSendCmd(), tc.sessionID, tc.sandboxRef)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Source != gitrepo.SourceNone {
+				t.Fatalf("Source = %v for %+v, want none", got.Source, tc)
+			}
+		}
+	})
+
+	t.Run("an existing target rejects an explicit repo", func(t *testing.T) {
+		chdirTo(t, t.TempDir())
+		for _, flag := range []string{"--git", "--repo"} {
+			cmd := newSendCmd()
+			if err := cmd.ParseFlags([]string{flag, "https://github.com/foo/bar.git"}); err != nil {
+				t.Fatal(err)
+			}
+			_, err := sendRepoIdentity(cmd, "sess-1", "")
+			if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id") {
+				t.Fatalf("err = %v for %s, want a conflict error", err, flag)
+			}
+		}
+	})
+
+	t.Run("an existing target accepts --no-git", func(t *testing.T) {
+		// --no-git asks for exactly what already happens, so it is not a
+		// contradiction worth failing on.
+		chdirTo(t, fakeRepo(t, "myrepo"))
+		cmd := newSendCmd()
+		if err := cmd.ParseFlags([]string{"--no-git"}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := sendRepoIdentity(cmd, "sess-1", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Source != gitrepo.SourceNone {
+			t.Fatalf("Source = %v, want none", got.Source)
+		}
+	})
 }
 
 // TestUnstreamedRemainder covers what `amika send --stream` still has to print

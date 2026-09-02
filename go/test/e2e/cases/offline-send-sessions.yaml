@@ -58,6 +58,47 @@ steps:
       exit: 1
       stderr_contains: 'not logged in; run "amika auth login" or use --local'
 
+  - name: send rejects --git together with --no-git
+    # The repo selection is resolved before the auth check, so a
+    # contradictory pair fails on its own terms rather than behind a login
+    # error — the same ordering `amika sandbox create` uses.
+    cmd: [send, hello, --git, "https://github.com/example/repo.git", --no-git]
+    expect:
+      exit: 1
+      stderr_contains: "--git and --no-git are mutually exclusive"
+
+  - name: send rejects a --git path that is not a git repo
+    cmd: [send, hello, --git, /nonexistent-amika-e2e-path]
+    expect:
+      exit: 1
+      stderr_contains: "could not find git repo"
+
+  - name: send --no-git skips repo detection and reaches the auth check
+    # Nothing is inferred from the working directory, so the next thing that
+    # can fail is the auth gate.
+    cmd: [send, hello, --no-git]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+
+  - name: send rejects --git alongside --session-id
+    # A continued chat already has a sandbox, so there is no repo to choose;
+    # an explicit request the server cannot honor is an error, not a no-op.
+    cmd: [send, hello, --session-id, some-session-id, --git, "https://github.com/example/repo.git"]
+    expect:
+      exit: 1
+      stderr_contains: "--git cannot be combined with --session-id or --sandbox"
+
+  - name: send rejects the legacy --repo alias alongside --sandbox
+    # Same rule through the --repo spelling, which proves the alias feeds the
+    # same resolution as --git.
+    cmd: [send, hello, --sandbox, some-sandbox, --repo, "https://github.com/example/repo.git"]
+    expect:
+      exit: 1
+      stderr_contains: "--git cannot be combined with --session-id or --sandbox"
+
   - name: send --stream reaches the same auth check as the buffered path
     # --stream selects the SSE transport, but only after auth. Asserting the
     # same failure here proves the flag is registered and does not change the
