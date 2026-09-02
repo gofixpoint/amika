@@ -29,13 +29,15 @@ Each VM is configured as an **Amika Rig**, which is **a workstation tuned for co
 - **use any agent**: Amika works with your existing AI agent subscriptions and API keys. We support Codex, Claude, OpenCode, and Pi by default — but Amika uses an agent-agnostic messaging layer so you can load in any agent and remote control it
 - **remote control the agents and VMs from anywhere**: message from Slack, Linear, or GitHub; control agents and VMs programatically via API or CLI; SSH into them; load the VMs into Cursor, Codex app, etc.
 
-## What's an Amika Rig?
+## What can an Amika Rig do?
 
-We call these VMs "Amika Rigs". On a Rig, you can
+On a Rig, you can
 
 - **run 1 or more agents** simultaneously
 - **expose the HTTPS URLs** of the apps your agent is working on
 - let Rigs and their agents **communicate with each other**
+- **programmatically control** the Rig and its agents
+- **connect** to the Rig from tools like the **Codex app, Cursor, and cmux**
 
 Each Rig can be short-lived or persistent, depending on whether you want it to disappear when your PR is done, or whether you want to keep it around more permanently.
 
