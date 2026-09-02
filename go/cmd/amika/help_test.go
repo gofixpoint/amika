@@ -90,3 +90,26 @@ func TestHelpNoAliasesForCommandsWithoutAliases(t *testing.T) {
 		}
 	}
 }
+
+func TestRootHelpDescribesSandboxes(t *testing.T) {
+	out, _ := runRootCommandOutput(t, "--help")
+	if !strings.Contains(out, "sandboxed environments for AI coding agents") {
+		t.Errorf("root help should describe sandboxed agents, got:\n%s", out)
+	}
+	if strings.Contains(out, "filesystem mounting") {
+		t.Errorf("root help still describes the v0 materialize feature, got:\n%s", out)
+	}
+}
+
+func TestLocalRemoteFlagsAreMutuallyExclusive(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	for _, args := range [][]string{
+		{"sandbox", "list", "--local", "--remote"},
+		{"service", "list", "--local", "--remote"},
+	} {
+		_, err := runRootCommandOutput(t, args...)
+		if err == nil || !strings.Contains(err.Error(), "none of the others can be") {
+			t.Errorf("runRootCommand(%v) error = %v, want a mutual-exclusion error", args, err)
+		}
+	}
+}

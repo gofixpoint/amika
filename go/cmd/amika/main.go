@@ -12,8 +12,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:               "amika",
-	Short:             "Amika - filesystem mounting and script execution",
-	Long:              `Amika provides filesystem mounting and script execution with output materialization.`,
+	Short:             "Amika - run AI coding agents in sandboxes",
+	Long:              `Amika creates and manages sandboxed environments for AI coding agents. Each sandbox comes pre-configured with agent CLIs (Claude Code, Codex, OpenCode), development tools, your git repo, and auto-discovered credentials.`,
 	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 	SilenceUsage:      true,
 	SilenceErrors:     true,

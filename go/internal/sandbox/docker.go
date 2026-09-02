@@ -2,6 +2,7 @@
 package sandbox
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,17 @@ import (
 	"sort"
 	"strings"
 )
+
+// dockerMissingHint returns an actionable message when an exec of the docker
+// binary failed because it is not installed, and "" for any other failure. A
+// missing Docker installation should read as a solvable prerequisite, not as
+// a raw "executable file not found in $PATH" exec error.
+func dockerMissingHint(err error) string {
+	if errors.Is(err, exec.ErrNotFound) {
+		return "docker is not installed or not on PATH; local sandboxes require Docker"
+	}
+	return ""
+}
 
 // TODO(KAPRO-842): forward AMIKA_PI_WEB / AMIKA_PI_WEB_PASSWORD too. sudo
 // resets the environment, so the Pi web terminal's gate never reaches
@@ -26,6 +38,9 @@ func CreateDockerSandbox(name, image string, mounts []MountBinding, env []string
 	cmd := exec.Command("docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return "", fmt.Errorf("failed to create docker sandbox: %s", hint)
+		}
 		return "", fmt.Errorf("failed to create docker sandbox: %s", strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
@@ -63,6 +78,9 @@ func buildDockerImageWithArgs(name string, contextDir string, dockerfileRelPath 
 	cmd.Stdout = buildOutput
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return fmt.Errorf("failed to build image %q: %s", name, hint)
+		}
 		return fmt.Errorf("failed to build image %q: %w", name, err)
 	}
 	return nil
@@ -73,6 +91,9 @@ func GetDockerContainerState(name string) (string, error) {
 	cmd := exec.Command("docker", "inspect", "--format", "{{.State.Status}}", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return "", fmt.Errorf("failed to inspect docker container %q: %s", name, hint)
+		}
 		return "", fmt.Errorf("failed to inspect docker container %q: %s", name, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)), nil
@@ -83,6 +104,9 @@ func StartDockerSandbox(name string) error {
 	cmd := exec.Command("docker", "start", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return fmt.Errorf("failed to start docker sandbox: %s", hint)
+		}
 		return fmt.Errorf("failed to start docker sandbox: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -93,6 +117,9 @@ func StopDockerSandbox(name string) error {
 	cmd := exec.Command("docker", "stop", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return fmt.Errorf("failed to stop docker sandbox: %s", hint)
+		}
 		return fmt.Errorf("failed to stop docker sandbox: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -103,6 +130,9 @@ func RemoveDockerSandbox(name string) error {
 	cmd := exec.Command("docker", "rm", "-f", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return fmt.Errorf("failed to remove docker sandbox: %s", hint)
+		}
 		return fmt.Errorf("failed to remove docker sandbox: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -113,6 +143,9 @@ func CreateDockerVolume(name string) error {
 	cmd := exec.Command("docker", "volume", "create", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return fmt.Errorf("failed to create docker volume %q: %s", name, hint)
+		}
 		return fmt.Errorf("failed to create docker volume %q: %s", name, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -123,6 +156,9 @@ func RemoveDockerVolume(name string) error {
 	cmd := exec.Command("docker", "volume", "rm", name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return fmt.Errorf("failed to remove docker volume %q: %s", name, hint)
+		}
 		return fmt.Errorf("failed to remove docker volume %q: %s", name, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -159,6 +195,9 @@ func CopyHostDirToVolume(volumeName, hostDir string) error {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if hint := dockerMissingHint(err); hint != "" {
+			return fmt.Errorf("failed to copy %q into volume %q: %s", absHostDir, volumeName, hint)
+		}
 		return fmt.Errorf("failed to copy %q into volume %q: %s", absHostDir, volumeName, strings.TrimSpace(string(out)))
 	}
 	return nil

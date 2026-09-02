@@ -31,6 +31,20 @@ steps:
       exit: 1
       stderr_contains: 'sandbox "does-not-exist" not found'
 
+  - name: sandbox start --local fails clearly for an unknown sandbox
+    # The batch error already names the target ("sandbox <name>:"), so the
+    # underlying message must not repeat it.
+    cmd: [sandbox, start, does-not-exist, --local]
+    expect:
+      exit: 1
+      stderr_contains: 'sandbox "does-not-exist": not found'
+
+  - name: sandbox stop --local fails clearly for an unknown sandbox
+    cmd: [sandbox, stop, does-not-exist, --local]
+    expect:
+      exit: 1
+      stderr_contains: 'sandbox "does-not-exist": not found'
+
   - name: agent-send requires a message from args or stdin
     cmd: [sandbox, agent-send, some-sandbox, --local]
     expect:

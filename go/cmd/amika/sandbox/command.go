@@ -36,6 +36,10 @@ func New() *cobra.Command {
 
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	sandboxCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
+	// Contradictory flags must fail fast instead of silently resolving to one
+	// mode. Cobra enforces this per leaf command (excluding ssh, which parses
+	// its own flags and already rejects --local outright).
+	sandboxCmd.MarkFlagsMutuallyExclusive("local", "remote")
 	sandboxCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	sandboxCmd.PersistentFlags().MarkHidden("remote-target")
 

@@ -86,7 +86,9 @@ var sandboxStartCmd = &cobra.Command{
 			for _, name := range args {
 				info, localErr := store.Get(name)
 				if localErr != nil {
-					appendBatchFailure(&items, &failed, name, fmt.Errorf("sandbox %q not found", name))
+					// The batch error already names the target ("sandbox
+					// <name>:"), so the underlying message must not repeat it.
+					appendBatchFailure(&items, &failed, name, fmt.Errorf("not found"))
 					continue
 				}
 				state := "running"
@@ -159,7 +161,9 @@ var sandboxStopCmd = &cobra.Command{
 			for _, name := range args {
 				info, localErr := store.Get(name)
 				if localErr != nil {
-					appendBatchFailure(&items, &failed, name, fmt.Errorf("sandbox %q not found", name))
+					// The batch error already names the target ("sandbox
+					// <name>:"), so the underlying message must not repeat it.
+					appendBatchFailure(&items, &failed, name, fmt.Errorf("not found"))
 					continue
 				}
 				state := "stopped"

@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"fmt"
+	"os/exec"
 	"reflect"
 	"testing"
 )
@@ -60,5 +62,15 @@ func TestMountVolumeSpec_EmptyIgnored(t *testing.T) {
 func TestPortPublishSpec_EmptyIgnored(t *testing.T) {
 	if got := portPublishSpec(PortBinding{}); got != "" {
 		t.Fatalf("portPublishSpec should ignore empty binding, got %q", got)
+	}
+}
+
+func TestDockerMissingHint(t *testing.T) {
+	missing := &exec.Error{Name: "docker", Err: exec.ErrNotFound}
+	if hint := dockerMissingHint(missing); hint == "" {
+		t.Fatalf("dockerMissingHint(%v) = \"\", want an actionable hint", missing)
+	}
+	if hint := dockerMissingHint(fmt.Errorf("boom")); hint != "" {
+		t.Fatalf("dockerMissingHint(non-exec error) = %q, want \"\"", hint)
 	}
 }

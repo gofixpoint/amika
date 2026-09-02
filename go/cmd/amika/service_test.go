@@ -11,6 +11,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/spf13/pflag"
 )
 
 // strptr returns a pointer to s, for populating the nullable pointer fields of
@@ -22,33 +23,34 @@ func strptr(s string) *string { return &s }
 // command's declared defaults regardless of test order.
 func resetServiceFlags(t *testing.T) {
 	t.Helper()
-	if err := serviceCmd.PersistentFlags().Set("local", "false"); err != nil {
-		t.Fatal(err)
-	}
-	if err := serviceCmd.PersistentFlags().Set("remote", "false"); err != nil {
-		t.Fatal(err)
-	}
-	if err := serviceCmd.PersistentFlags().Set("remote-target", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := serviceListCmd.Flags().Set("sandbox-name", ""); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"sandbox", "name", "url-scheme"} {
-		if err := serviceCreateCmd.Flags().Set(f, ""); err != nil {
-			t.Fatal(err)
+	// Restore value and Changed state: pflag's Set marks a flag as Changed,
+	// which would trip cobra's flag-group validation in later tests, so reset
+	// Changed explicitly after setting the default value back.
+	for _, f := range []struct {
+		set  *pflag.FlagSet
+		name string
+		def  string
+	}{
+		{serviceCmd.PersistentFlags(), "local", "false"},
+		{serviceCmd.PersistentFlags(), "remote", "false"},
+		{serviceCmd.PersistentFlags(), "remote-target", ""},
+		{serviceListCmd.Flags(), "sandbox-name", ""},
+		{serviceCreateCmd.Flags(), "sandbox", ""},
+		{serviceCreateCmd.Flags(), "name", ""},
+		{serviceCreateCmd.Flags(), "url-scheme", ""},
+		{serviceCreateCmd.Flags(), "port", "0"},
+		{serviceDeleteCmd.Flags(), "sandbox", ""},
+		{serviceDeleteCmd.Flags(), "name", ""},
+		{serviceDeleteCmd.Flags(), "force", "false"},
+	} {
+		flag := f.set.Lookup(f.name)
+		if flag == nil {
+			t.Fatalf("flag %q not found", f.name)
 		}
-	}
-	if err := serviceCreateCmd.Flags().Set("port", "0"); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"sandbox", "name"} {
-		if err := serviceDeleteCmd.Flags().Set(f, ""); err != nil {
-			t.Fatal(err)
+		if err := flag.Value.Set(f.def); err != nil {
+			t.Fatalf("reset flag %q: %v", f.name, err)
 		}
-	}
-	if err := serviceDeleteCmd.Flags().Set("force", "false"); err != nil {
-		t.Fatal(err)
+		flag.Changed = false
 	}
 }
 

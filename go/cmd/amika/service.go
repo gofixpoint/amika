@@ -405,6 +405,7 @@ func init() {
 	serviceCmd.AddCommand(serviceDeleteCmd)
 	serviceCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	serviceCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
+	serviceCmd.MarkFlagsMutuallyExclusive("local", "remote")
 	serviceCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	serviceCmd.PersistentFlags().MarkHidden("remote-target")
 	serviceListCmd.Flags().String("sandbox-name", "", "Filter services to a specific sandbox")

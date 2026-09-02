@@ -30,6 +30,14 @@ steps:
       exit: 1
       stderr_contains: 'unknown command "bogus-command" for "amika"'
 
+  - name: --local and --remote together are rejected as contradictory
+    # The docs say the two are mutually exclusive; the CLI must fail fast
+    # instead of silently resolving to one mode.
+    cmd: [sandbox, list, --local, --remote]
+    expect:
+      exit: 1
+      stderr_contains: "none of the others can be"
+
   - name: amika --help exits 0 and lists top-level commands
     cmd: [--help]
     expect:
