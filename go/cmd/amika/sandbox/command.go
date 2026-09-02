@@ -3,6 +3,7 @@ package sandboxcmd
 // command.go assembles the top-level sandbox command and its flags.
 
 import (
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -47,8 +48,9 @@ func New() *cobra.Command {
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().StringArray("port", nil, "Publish a container port (hostPort:containerPort[/protocol], protocol defaults to tcp)")
 	sandboxCreateCmd.Flags().String("port-host-ip", "127.0.0.1", "Host IP address to bind published ports")
-	sandboxCreateCmd.Flags().String("git", "", "Mount a git repo into the sandbox. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.")
-	sandboxCreateCmd.Flags().Bool("no-git", false, "Skip git repo auto-detection; create a sandbox without mounting any repo.")
+	gitrepo.AddFlags(sandboxCreateCmd,
+		"Mount a git repo into the sandbox. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.",
+		"Skip git repo auto-detection; create a sandbox without mounting any repo.")
 	sandboxCreateCmd.Flags().Bool("no-clean", false, "With a local-path git source, include untracked files from the working tree instead of a clean clone. Local sandboxes only.")
 	sandboxCreateCmd.Flags().String("size", "", "Sandbox size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\", remote only)")
 	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the sandbox from a captured snapshot slug (remote only)")

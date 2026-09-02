@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 )
@@ -282,8 +283,8 @@ func validateMountTargets(bindMounts, volumeMounts []sandbox.MountBinding) error
 	return nil
 }
 
-func formatRepoBanner(identity repoIdentity) string {
-	if identity.Source == repoSourceNone {
+func formatRepoBanner(identity gitrepo.Identity) string {
+	if identity.Source == gitrepo.SourceNone {
 		return "Creating a bare sandbox with no repos."
 	}
 	return fmt.Sprintf("Creating sandbox with repo %s.", identity.Name)

@@ -4,7 +4,6 @@ package sandboxcmd
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -12,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 )
 
@@ -23,7 +23,7 @@ type gitMountInfo struct {
 }
 
 func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst string) error, branch, newBranch string) (gitMountInfo, func(), error) {
-	repoRoot, err := resolveGitRoot(startPath)
+	repoRoot, err := gitrepo.ResolveRoot(startPath)
 	if err != nil {
 		return gitMountInfo{}, func() {}, err
 	}
@@ -70,36 +70,6 @@ func prepareGitMount(startPath string, noClean bool, cloneFn func(src, dst strin
 	}, cleanup, nil
 }
 
-func resolveGitRoot(startPath string) (string, error) {
-	if startPath == "" {
-		startPath = "."
-	}
-	absPath, err := filepath.Abs(startPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve git start path %q: %w", startPath, err)
-	}
-
-	current := absPath
-	if stat, err := os.Stat(absPath); err == nil && !stat.IsDir() {
-		current = filepath.Dir(absPath)
-	}
-
-	for {
-		gitMarker := filepath.Join(current, ".git")
-		if _, err := os.Stat(gitMarker); err == nil {
-			return current, nil
-		}
-
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-		current = parent
-	}
-
-	return "", fmt.Errorf("no git repository root found from %q", absPath)
-}
-
 func cloneGitRepo(src, dst string) error {
 	args := []string{"clone", "--local", "--no-hardlinks", src, dst}
 	cmd := exec.Command("git", args...)
@@ -127,7 +97,7 @@ func cloneGitURL(src, dst string) error {
 // path delegates to "git clone <url>", which already configures origin
 // pointing at rawURL. No additional remote sync is needed.
 func prepareGitMountFromURL(rawURL string, cloneFn func(src, dst string) error, branch, newBranch string) (gitMountInfo, func(), error) {
-	name, err := repoNameFromURL(rawURL)
+	name, err := gitrepo.NameFromURL(rawURL)
 	if err != nil {
 		return gitMountInfo{}, func() {}, err
 	}
@@ -243,23 +213,6 @@ func applyBranchCheckout(repoDir, branch, newBranch string) error {
 	return nil
 }
 
-func detectHostCurrentBranch(startPath string) (string, error) {
-	repoRoot, err := resolveGitRoot(startPath)
-	if err != nil {
-		return "", err
-	}
-	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to detect current host branch: %w", err)
-	}
-	name := strings.TrimSpace(string(out))
-	if name == "" || name == "HEAD" {
-		return "", fmt.Errorf("detached HEAD; specify --branch explicitly")
-	}
-	return name, nil
-}
-
 // isLocalBranchReachableFromRemote returns true when the local branch tip
 // is an ancestor of (or equal to) the corresponding branch on the "origin"
 // remote. This means the remote already contains every commit on the local
@@ -340,63 +293,32 @@ func copyRepoWorkingTree(src, dst string) error {
 }
 
 func syncGitRemotes(srcRepo, dstRepo string) error {
-	srcRemotes, err := listGitRemotes(srcRepo)
+	srcRemotes, err := gitrepo.ListRemotes(srcRepo)
 	if err != nil {
 		return fmt.Errorf("failed to read remotes from source repo %q: %w", srcRepo, err)
 	}
 	filtered := make(map[string]string)
 	for name, url := range srcRemotes {
-		if isNetworkRemoteURL(url) {
+		if gitrepo.IsNetworkURL(url) {
 			filtered[name] = url
 		}
 	}
 
-	dstRemotes, err := listGitRemotes(dstRepo)
+	dstRemotes, err := gitrepo.ListRemotes(dstRepo)
 	if err != nil {
 		return fmt.Errorf("failed to read remotes from prepared repo %q: %w", dstRepo, err)
 	}
 	for _, name := range sortedRemoteNames(dstRemotes) {
-		if err := runGit(dstRepo, "remote", "remove", name); err != nil {
+		if err := gitrepo.Run(dstRepo, "remote", "remove", name); err != nil {
 			return fmt.Errorf("failed to remove remote %q from prepared repo %q: %w", name, dstRepo, err)
 		}
 	}
 	for _, name := range sortedRemoteNames(filtered) {
-		if err := runGit(dstRepo, "remote", "add", name, filtered[name]); err != nil {
+		if err := gitrepo.Run(dstRepo, "remote", "add", name, filtered[name]); err != nil {
 			return fmt.Errorf("failed to add remote %q to prepared repo %q: %w", name, dstRepo, err)
 		}
 	}
 	return nil
-}
-
-func listGitRemotes(repo string) (map[string]string, error) {
-	out, err := runGitOutput(repo, "remote")
-	if err != nil {
-		return nil, err
-	}
-	names := strings.Fields(strings.TrimSpace(out))
-	remotes := make(map[string]string, len(names))
-	for _, name := range names {
-		url, err := runGitOutput(repo, "remote", "get-url", name)
-		if err != nil {
-			return nil, err
-		}
-		remotes[name] = strings.TrimSpace(url)
-	}
-	return remotes, nil
-}
-
-func isNetworkRemoteURL(url string) bool {
-	switch {
-	case strings.HasPrefix(url, "http://"),
-		strings.HasPrefix(url, "https://"),
-		strings.HasPrefix(url, "ssh://"):
-		return true
-	case strings.HasPrefix(url, "file://"):
-		return false
-	}
-	at := strings.Index(url, "@")
-	colon := strings.Index(url, ":")
-	return at > 0 && colon > at+1
 }
 
 func sortedRemoteNames(m map[string]string) []string {
@@ -406,149 +328,4 @@ func sortedRemoteNames(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func runGit(repo string, args ...string) error {
-	_, err := runGitOutput(repo, args...)
-	return err
-}
-
-func runGitOutput(repo string, args ...string) (string, error) {
-	cmdArgs := append([]string{"-C", repo}, args...)
-	cmd := exec.Command("git", cmdArgs...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
-}
-
-type repoSource int
-
-const (
-	repoSourceNone repoSource = iota
-	repoSourceAutoDetect
-	repoSourceFlagPath
-	repoSourceFlagURL
-)
-
-type repoIdentity struct {
-	Name   string
-	Source repoSource
-	Path   string
-	URL    string
-}
-
-// resolveRepoIdentity decides which git repo (if any) should back a sandbox
-// based on the user's flag input and the working directory.
-//
-//   - --git and --no-git are mutually exclusive.
-//   - --no-clean and --no-git are mutually exclusive.
-//   - --no-clean is only meaningful when a local-path repo is sourced
-//     (auto-detect or --git <path>).
-//   - When neither --git nor --no-git is set, the function walks up from cwd
-//     to detect a repo; if none is found, identity is repoSourceNone.
-func resolveRepoIdentity(cwd, gitFlag string, gitFlagSet, noGit, noClean bool) (repoIdentity, error) {
-	if gitFlagSet && noGit {
-		return repoIdentity{}, fmt.Errorf("--git and --no-git are mutually exclusive")
-	}
-	if noClean && noGit {
-		return repoIdentity{}, fmt.Errorf("--no-clean and --no-git are mutually exclusive")
-	}
-	if noGit {
-		return repoIdentity{Source: repoSourceNone}, nil
-	}
-	if gitFlagSet {
-		v := strings.TrimSpace(gitFlag)
-		if v == "" {
-			return repoIdentity{}, fmt.Errorf("--git requires a non-empty value")
-		}
-		if isNetworkRemoteURL(v) {
-			if noClean {
-				return repoIdentity{}, fmt.Errorf("--no-clean cannot be used with a git URL")
-			}
-			name, err := repoNameFromURL(v)
-			if err != nil {
-				return repoIdentity{}, err
-			}
-			return repoIdentity{Name: name, Source: repoSourceFlagURL, URL: v}, nil
-		}
-		repoRoot, err := resolveGitRoot(v)
-		if err != nil {
-			return repoIdentity{}, fmt.Errorf("could not find git repo at %q: %w", v, err)
-		}
-		return repoIdentity{Name: filepath.Base(repoRoot), Source: repoSourceFlagPath, Path: repoRoot}, nil
-	}
-	repoRoot, err := resolveGitRoot(cwd)
-	if err != nil {
-		if noClean {
-			return repoIdentity{}, fmt.Errorf("--no-clean requires a git repo, but none was detected from %q", cwd)
-		}
-		return repoIdentity{Source: repoSourceNone}, nil
-	}
-	return repoIdentity{Name: filepath.Base(repoRoot), Source: repoSourceAutoDetect, Path: repoRoot}, nil
-}
-
-// repoNameFromURL extracts the repo name from a git URL.
-// Examples:
-//
-//	https://github.com/foo/bar       -> bar
-//	https://github.com/foo/bar.git   -> bar
-//	git@github.com:foo/bar.git       -> bar
-//	ssh://git@github.com/foo/bar.git -> bar
-func repoNameFromURL(rawURL string) (string, error) {
-	s := strings.TrimSpace(rawURL)
-	if s == "" {
-		return "", fmt.Errorf("empty git URL")
-	}
-	var pathPart string
-	if strings.Contains(s, "://") {
-		u, err := url.Parse(s)
-		if err != nil {
-			return "", fmt.Errorf("parsing git URL %q: %w", rawURL, err)
-		}
-		pathPart = u.Path
-	} else if i := strings.Index(s, ":"); i >= 0 {
-		pathPart = s[i+1:]
-	} else {
-		return "", fmt.Errorf("not a git URL: %q", rawURL)
-	}
-	pathPart = strings.TrimSuffix(strings.TrimSpace(pathPart), "/")
-	if pathPart == "" {
-		return "", fmt.Errorf("git URL %q has no repo path", rawURL)
-	}
-	if i := strings.LastIndex(pathPart, "/"); i >= 0 {
-		pathPart = pathPart[i+1:]
-	}
-	pathPart = strings.TrimSuffix(pathPart, ".git")
-	if pathPart == "" {
-		return "", fmt.Errorf("could not extract repo name from %q", rawURL)
-	}
-	if pathPart == "." || pathPart == ".." || strings.ContainsAny(pathPart, "/\\") {
-		return "", fmt.Errorf("invalid repo name %q extracted from %q", pathPart, rawURL)
-	}
-	return pathPart, nil
-}
-
-func resolveGitURL(value string) (string, error) {
-	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "git@") {
-		return value, nil
-	}
-
-	repoRoot, err := resolveGitRoot(value)
-	if err != nil {
-		return "", fmt.Errorf("could not find git repo at %q: %w", value, err)
-	}
-	remotes, err := listGitRemotes(repoRoot)
-	if err != nil {
-		return "", err
-	}
-	origin, ok := remotes["origin"]
-	if !ok {
-		return "", fmt.Errorf("no origin remote found in %q; specify a git HTTP(S) or SSH URL directly with --git <url>, or pass --no-git to create a sandbox without a repo", repoRoot)
-	}
-	if !isNetworkRemoteURL(origin) {
-		return "", fmt.Errorf("origin remote %q is a local path; specify a git HTTP(S) or SSH URL directly with --git <url>, or pass --no-git to create a sandbox without a repo", origin)
-	}
-	return origin, nil
 }
