@@ -151,3 +151,109 @@ func TestIdentityIsLocalPath(t *testing.T) {
 		}
 	}
 }
+
+func TestStripCredentials(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{{
+		name: "GitHub App token in the password half",
+		url:  "https://x-access-token:ghs_SECRET@github.com/org/repo.git",
+		want: "https://github.com/org/repo.git",
+	}, {
+		name: "PAT in the username half",
+		url:  "https://ghp_SECRET@github.com/org/repo.git",
+		want: "https://github.com/org/repo.git",
+	}, {
+		name: "user and password",
+		url:  "http://user:SECRET@example.com/org/repo.git",
+		want: "http://example.com/org/repo.git",
+	}, {
+		name: "no userinfo is untouched",
+		url:  "https://github.com/org/repo.git",
+		want: "https://github.com/org/repo.git",
+	}, {
+		name: "an @ in the path is not userinfo",
+		url:  "https://example.com/org/repo@v2.git",
+		want: "https://example.com/org/repo@v2.git",
+	}, {
+		// The ssh username selects the account; dropping it would authenticate
+		// as the wrong user, or fail outright.
+		name: "scp-style ssh username is kept",
+		url:  "git@github.com:org/repo.git",
+		want: "git@github.com:org/repo.git",
+	}, {
+		name: "ssh:// username is kept",
+		url:  "ssh://git@github.com/org/repo.git",
+		want: "ssh://git@github.com/org/repo.git",
+	}, {
+		name: "ssh:// password half is dropped, username kept",
+		url:  "ssh://git:SECRET@github.com/org/repo.git",
+		want: "ssh://git@github.com/org/repo.git",
+	}, {
+		name: "scp-style password half is dropped, username kept",
+		url:  "git:SECRET@build-host:org/repo.git",
+		want: "git@build-host:org/repo.git",
+	}, {
+		name: "user-less scp URL is untouched",
+		url:  "build-host:org/repo.git",
+		want: "build-host:org/repo.git",
+	}, {
+		name: "a local path is untouched",
+		url:  "/srv/git/repo.git",
+		want: "/srv/git/repo.git",
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StripCredentials(tt.url)
+			if got != tt.want {
+				t.Fatalf("StripCredentials(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+			if strings.Contains(got, "SECRET") {
+				t.Fatalf("StripCredentials(%q) leaked the secret", tt.url)
+			}
+		})
+	}
+}
+
+func TestRemoteURLStripsCredentials(t *testing.T) {
+	// The whole point: what reaches the API carries no credential, whether the
+	// URL was typed or read out of a checkout's origin.
+	t.Run("from an explicit URL", func(t *testing.T) {
+		id := Identity{Name: "repo", Source: SourceFlagURL, URL: "https://x-access-token:ghs_SECRET@github.com/org/repo.git"}
+		got, err := id.RemoteURL()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "https://github.com/org/repo.git" {
+			t.Fatalf("RemoteURL = %q", got)
+		}
+	})
+
+	t.Run("from a checkout whose origin carries a token", func(t *testing.T) {
+		// Amika's own sandboxes have exactly this shape of origin.
+		repo := initRepo(t, map[string]string{
+			"origin": "https://x-access-token:ghs_SECRET@github.com/gofixpoint/amika",
+		})
+		for _, source := range []Source{SourceAutoDetect, SourceFlagPath} {
+			got, err := Identity{Source: source, Path: repo}.RemoteURL()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != "https://github.com/gofixpoint/amika" {
+				t.Fatalf("RemoteURL = %q, want the credential stripped", got)
+			}
+		}
+	})
+
+	t.Run("local cloning still sees the credential", func(t *testing.T) {
+		// Identity.URL is what the local-sandbox clone path uses, and it has
+		// to keep working auth — only the API-bound value is sanitized.
+		const withToken = "https://x-access-token:ghs_SECRET@github.com/org/repo.git"
+		id := Identity{Source: SourceFlagURL, URL: withToken}
+		if id.URL != withToken {
+			t.Fatalf("Identity.URL = %q, want it untouched", id.URL)
+		}
+	})
+}

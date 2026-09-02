@@ -53,15 +53,66 @@ func (i Identity) IsLocalPath() bool {
 // RemoteURL returns the git URL a remote sandbox should clone: the URL from
 // --git as given, or the "origin" remote of a local-path repo. An identity
 // with no repo returns an empty string and no error.
+//
+// Any embedded credential is stripped. The server clones with the GitHub auth
+// the user configured there and never uses one supplied in the URL, so sending
+// it would leak a secret to no purpose — and origins written by Amika's own
+// sandbox provisioning carry a live token. Local cloning reads Identity.URL
+// directly and so keeps whatever credential it needs.
 func (i Identity) RemoteURL() (string, error) {
 	switch i.Source {
 	case SourceFlagURL:
-		return i.URL, nil
+		return StripCredentials(i.URL), nil
 	case SourceAutoDetect, SourceFlagPath:
-		return ResolveURL(i.Path)
+		url, err := ResolveURL(i.Path)
+		if err != nil {
+			return "", err
+		}
+		return StripCredentials(url), nil
 	default:
 		return "", nil
 	}
+}
+
+// StripCredentials removes a credential embedded in a git URL, leaving an ssh
+// username in place.
+//
+// For http(s) the whole userinfo is a credential — a GitHub App token arrives
+// as `https://x-access-token:<token>@…` and a PAT is often pasted as
+// `https://<pat>@…`, so the secret can be on either side of the colon and both
+// halves go. For ssh:// and the scp-like `user@host:path`, the username is how
+// ssh picks an account (`git@github.com` will not authenticate as anything
+// else), so only a password half is dropped.
+func StripCredentials(rawURL string) string {
+	if i := strings.Index(rawURL, "://"); i >= 0 {
+		scheme, rest := rawURL[:i+3], rawURL[i+3:]
+		at := strings.Index(rest, "@")
+		slash := strings.Index(rest, "/")
+		// An "@" after the first "/" belongs to the path, not the authority.
+		if at < 0 || (slash >= 0 && at > slash) {
+			return rawURL
+		}
+		userinfo, host := rest[:at], rest[at+1:]
+		if strings.HasPrefix(scheme, "ssh") {
+			if name, _, ok := strings.Cut(userinfo, ":"); ok && name != "" {
+				return scheme + name + "@" + host
+			}
+			return rawURL
+		}
+		return scheme + host
+	}
+	// scp-like [user@]host:path.
+	at := strings.Index(rawURL, "@")
+	if at < 0 {
+		return rawURL
+	}
+	if name, _, ok := strings.Cut(rawURL[:at], ":"); ok {
+		if name == "" {
+			return rawURL[at+1:]
+		}
+		return name + "@" + rawURL[at+1:]
+	}
+	return rawURL
 }
 
 // Options is the flag input to Resolve.
