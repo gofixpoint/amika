@@ -210,8 +210,7 @@ type fakeSessionDialer struct {
 	url        string
 	credential string
 	calls      int
-	// pins, and the count read from it on dial, are how the ordering assertion
-	// is made: the pin has to be on disk before any byte can reach OpenSSH.
+	// Pin count as of the dial, for the ordering assertion.
 	pins       *fakePinStore
 	pinsAtDial int
 }
@@ -248,14 +247,12 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	if creator.calls != 1 || dialer.calls != 1 {
 		t.Fatalf("creator calls = %d, dialer calls = %d", creator.calls, dialer.calls)
 	}
-	// The alias OpenSSH was invoked with, keyed to the host key the API just
-	// issued: this is what lets a sandbox never opened through `sandbox code`
-	// pass StrictHostKeyChecking.
+	// The dialled alias, keyed to the host key the API just issued.
 	if pins.calls != 1 || pins.alias != "my.team.sbx_123.localhost-3011.amika" || pins.key != creator.hostKey {
 		t.Fatalf("pin calls = %d alias = %q key = %q", pins.calls, pins.alias, pins.key)
 	}
-	// Before the dial, not merely somewhere in the run. Pinned afterwards, the
-	// write would race the handshake it exists to satisfy.
+	// Before the dial, not merely somewhere in the run: pinned afterwards, the
+	// write would race the handshake.
 	if dialer.pinsAtDial != 1 {
 		t.Fatalf("pins at dial = %d, want the host key pinned before the transport opens", dialer.pinsAtDial)
 	}
@@ -291,10 +288,8 @@ func TestProxySessionAcceptsNormalWebSocketClosure(t *testing.T) {
 	}
 }
 
-// A host key that no longer matches the pin must stop the connection here,
-// rather than being written over. Pinning on every dial is only safe because
-// this direction still fails closed: the store refuses the change, and the
-// transport is never opened.
+// Pinning on every dial is only safe because a changed key still fails closed:
+// the store refuses it and the transport is never opened.
 func TestProxySessionRefusesChangedHostKeyBeforeDialing(t *testing.T) {
 	creator := &fakeCreator{hostKey: testHostKey(t)}
 	dialer := &fakeSessionDialer{stream: &proxyStream{read: bytes.NewReader(nil)}}
