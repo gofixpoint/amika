@@ -146,13 +146,14 @@ type fakePinStore struct {
 	alias string
 	key   string
 	calls int
+	err   error
 }
 
 func (s *fakePinStore) Pin(alias, key string) error {
 	s.calls++
 	s.alias = alias
 	s.key = key
-	return nil
+	return s.err
 }
 
 func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
@@ -209,25 +210,33 @@ type fakeSessionDialer struct {
 	url        string
 	credential string
 	calls      int
+	// Pin count as of the dial, for the ordering assertion.
+	pins       *fakePinStore
+	pinsAtDial int
 }
 
 func (d *fakeSessionDialer) Dial(_ context.Context, url, credential string) (Stream, error) {
 	d.calls++
 	d.url = url
 	d.credential = credential
+	if d.pins != nil {
+		d.pinsAtDial = d.pins.calls
+	}
 	return d.stream, nil
 }
 
 func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	creator := &fakeCreator{hostKey: testHostKey(t)}
 	stream := &proxyStream{read: bytes.NewReader([]byte("from-sshd"))}
-	dialer := &fakeSessionDialer{stream: stream}
+	pins := &fakePinStore{}
+	dialer := &fakeSessionDialer{stream: stream, pins: pins}
 	var stdout bytes.Buffer
 
 	err := ProxySession(
 		context.Background(),
 		creator,
 		dialer,
+		pins,
 		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader("from-openssh"),
 		&stdout,
@@ -237,6 +246,15 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	}
 	if creator.calls != 1 || dialer.calls != 1 {
 		t.Fatalf("creator calls = %d, dialer calls = %d", creator.calls, dialer.calls)
+	}
+	// The dialled alias, keyed to the host key the API just issued.
+	if pins.calls != 1 || pins.alias != "my.team.sbx_123.localhost-3011.amika" || pins.key != creator.hostKey {
+		t.Fatalf("pin calls = %d alias = %q key = %q", pins.calls, pins.alias, pins.key)
+	}
+	// Before the dial, not merely somewhere in the run: pinned afterwards, the
+	// write would race the handshake.
+	if dialer.pinsAtDial != 1 {
+		t.Fatalf("pins at dial = %d, want the host key pinned before the transport opens", dialer.pinsAtDial)
 	}
 	if dialer.url != "wss://sandbox.example/v1/ssh-sessions" || dialer.credential != testConnectToken() {
 		t.Fatalf("dial = %q credential %q", dialer.url, dialer.credential)
@@ -261,11 +279,35 @@ func TestProxySessionAcceptsNormalWebSocketClosure(t *testing.T) {
 		context.Background(),
 		creator,
 		dialer,
+		&fakePinStore{},
 		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader(""),
 		io.Discard,
 	); err != nil {
 		t.Fatalf("ProxySession normal close: %v", err)
+	}
+}
+
+// Pinning on every dial is only safe because a changed key still fails closed:
+// the store refuses it and the transport is never opened.
+func TestProxySessionRefusesChangedHostKeyBeforeDialing(t *testing.T) {
+	creator := &fakeCreator{hostKey: testHostKey(t)}
+	dialer := &fakeSessionDialer{stream: &proxyStream{read: bytes.NewReader(nil)}}
+
+	err := ProxySession(
+		context.Background(),
+		creator,
+		dialer,
+		&fakePinStore{err: ErrHostKeyMismatch},
+		"my.team.sbx_123.localhost-3011.amika",
+		strings.NewReader(""),
+		io.Discard,
+	)
+	if !errors.Is(err, ErrHostKeyMismatch) {
+		t.Fatalf("ProxySession err = %v, want ErrHostKeyMismatch", err)
+	}
+	if dialer.calls != 0 {
+		t.Fatalf("dialer calls = %d, want the transport left unopened", dialer.calls)
 	}
 }
 

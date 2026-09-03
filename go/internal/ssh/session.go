@@ -271,12 +271,14 @@ func PrepareSessionHost(
 	return session, nil
 }
 
-// ProxySession creates a fresh descriptor, dials it with header credentials,
-// and copies opaque bytes between OpenSSH standard I/O and the WebSocket.
+// ProxySession creates a fresh descriptor, pins its host key, dials it with
+// header credentials, and copies opaque bytes between OpenSSH standard I/O and
+// the WebSocket.
 func ProxySession(
 	ctx context.Context,
 	creator SessionCreator,
 	dialer SessionDialer,
+	pins HostKeyPinStore,
 	alias string,
 	stdin io.Reader,
 	stdout io.Writer,
@@ -290,6 +292,21 @@ func ProxySession(
 		return err
 	}
 	if err := session.Validate(parsed.ID); err != nil {
+		return err
+	}
+	// Pin here, not only in PrepareSessionHost: this runs as the ProxyCommand on
+	// every dial, so an alias never opened through `sandbox ssh`/`code` still
+	// gets the API-issued key pinned. Without it the managed block's
+	// StrictHostKeyChecking refuses every other route to an alias — a bare
+	// `ssh`, an editor's Remote-SSH entry, a cmux deep link.
+	//
+	// Before the dial: no byte crosses until the stream exists, so the line is
+	// always on disk before OpenSSH reads it. Pin still returns
+	// ErrHostKeyMismatch for a changed key, so this cannot loosen the check.
+	//
+	// TODO(KAPRO-911): writes the Linux file only. Under WSL the Windows client
+	// reads a mirrored copy that only MirrorToWindows refreshes.
+	if err := pins.Pin(alias, session.HostPublicKey); err != nil {
 		return err
 	}
 	stream, err := dialer.Dial(ctx, session.ConnectURL, session.ConnectCredential)
@@ -415,6 +432,18 @@ func PrepareSessionTarget(
 		return "", err
 	}
 	return alias, nil
+}
+
+// SessionPinStore returns the pin store for the session known-hosts file,
+// resolved the way every other session caller resolves it: `ssh-keygen
+// --import` persists its own path, and reaching for the default instead would
+// write pins where OpenSSH never looks.
+func SessionPinStore(paths basedir.Paths) (HostKeyPinStore, error) {
+	sessionConfig, err := resolveSessionConfig(paths)
+	if err != nil {
+		return nil, err
+	}
+	return FileHostKeyPinStore{Path: sessionConfig.KnownHostsFile}, nil
 }
 
 // resolveSessionConfig returns the persisted session identity, or the default
