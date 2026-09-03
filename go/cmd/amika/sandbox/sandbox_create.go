@@ -349,31 +349,19 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Ide
 		name = sandbox.GenerateName()
 	}
 
-	gitIsLocalPath := identity.IsLocalPath()
 	gitURL, err := identity.RemoteURL()
 	if err != nil {
 		return err
 	}
 
-	if branch == "" && newBranch == "" && gitIsLocalPath {
-		if hostBranch, err := gitrepo.CurrentBranch(identity.Path); err == nil {
-			branch = hostBranch
-		}
+	branches, err := gitrepo.ResolveBranch(identity, gitrepo.BranchRequest{
+		Branch:    branch,
+		NewBranch: newBranch,
+	})
+	if err != nil {
+		return err
 	}
-
-	// Warn if the auto-detected branch hasn't been pushed to the remote
-	// or has local commits that the remote doesn't have yet.
-	if branch != "" && newBranch == "" && gitIsLocalPath && !cmd.Flags().Changed("branch") {
-		if !isLocalBranchReachableFromRemote(identity.Path, branch) {
-			return fmt.Errorf(
-				"current branch %q has not been pushed or is not up-to-date with the remote\n\n"+
-					"The sandbox will either start from an older version of this branch or\n"+
-					"create it fresh from the default branch.\n\n"+
-					"Push your branch first, or use --branch to specify your branch explicitly.",
-				branch,
-			)
-		}
-	}
+	branch, newBranch = branches.Branch, branches.NewBranch
 
 	secretEnvVars, err := parseSecretFlags(secretFlags)
 	if err != nil {
