@@ -316,6 +316,14 @@ func ProxySession(
 	// ErrHostKeyMismatch for a changed one, so a rotated host key still fails
 	// closed — with this command's error rather than OpenSSH's, and on exactly
 	// the terms `sandbox code` already fails on.
+	//
+	// TODO(KAPRO-911): reaches the Linux known-hosts file only, so this does
+	// nothing for a WSL setup, where the Windows session block reads a mirrored
+	// copy (wslmirror.go) that only MirrorToWindows refreshes. `sandbox code`
+	// is unaffected — it pins before it mirrors — but every other route to an
+	// alias still fails verification from the Windows side. Mirroring here has
+	// to wait on Pin reporting whether it wrote: wslbridge.ResolveTarget spawns
+	// two Windows interop processes, which does not belong on every dial.
 	if err := pins.Pin(alias, session.HostPublicKey); err != nil {
 		return err
 	}
