@@ -26,25 +26,25 @@
 
 Amika lets you **provision VMs on any cloud or computer, load them with your favorite agent(s), and then remote control the agents from any chat surface or app.**
 
-Each VM is configured as an **Amika Rig**, which is **a workstation tuned for coding agents and humans** to collaborate in.
+Each VM is configured as **a sandboxed workstation tuned for coding agents and humans** to collaborate in.
 
-- **provision Rigs on any machine**: you can create Rigs on a Kubernetes cluster, on a cloud provider like E2B, or on the desktop in your closet
+- **provision sandboxes on any machine**: you can create sandboxes on a Kubernetes cluster, on a cloud provider like E2B, or on the desktop in your closet
 - **use any agent**: Amika works with your existing AI agent subscriptions and API keys. We support Codex, Claude, OpenCode, and Pi by default — but Amika uses an agent-agnostic messaging layer so you can load in any agent and remote control it
 - **remote control the agents and VMs from anywhere**: message from Slack, Linear, or GitHub; control agents and VMs programatically via API or CLI; SSH into them; load the VMs into Cursor, Codex app, etc.
 
-## What can an Amika Rig do?
+## What can an Amika sandbox do?
 
-On a Rig, you can
+On a sandbox, you can
 
 - **run 1 or more agents** simultaneously
 - **expose the HTTPS URLs** of the apps your agent is working on
-- let Rigs and their agents **communicate with each other**
-- **programmatically control** the Rig and its agents
-- **connect** to the Rig from tools like the **Codex app, Cursor, and cmux**
+- let sandboxes and their agents **communicate with each other**
+- **programmatically control** the sandbox and its agents
+- **connect** to the sandbox from tools like the **Codex app, Cursor, and cmux**
 
-Each Rig can be short-lived or persistent, depending on whether you want it to disappear when your PR is done, or whether you want to keep it around more permanently.
+Each sandbox can be short-lived or persistent, depending on whether you want it to disappear when your PR is done, or whether you want to keep it around more permanently.
 
-Amika **automatically wires your Git repos and agent configs and credentials** into each Rig.
+Amika **automatically wires your Git repos and agent configs and credentials** into each sandbox.
 
 ## What can you use Amika for?
 
@@ -79,11 +79,11 @@ To get started with Amika's cloud product:
    ```
 
 
-Now, you can either (a) directly start an agent chat session, which will provision its own Rig behind the scenes, or (b) create a Rig and then connect to it however you choose. Both can be done from the https://app.amika.dev/, and also from the CLI.
+Now, you can either (a) create a sandbox and then connect to it however you choose, or (b) directly start an agent chat session, which will provision its own sandbox behind the scenes. Both can be done from the https://app.amika.dev/, and also from the CLI.
 
-### creating a Rig
+### creating a sandbox
 
-If you want to create a Rig and then chat with it from Codex, Cursor, OpenCode, SSH, etc., you can create a Rig without first making an agent session.
+If you want to create a sandbox and then chat with it from Codex, Cursor, OpenCode, SSH, etc., you can create a sandbox without first making an agent session.
 
 Assuming you connected GitHub during web onboarding:
 
@@ -92,11 +92,11 @@ Assuming you connected GitHub during web onboarding:
 amika secret ssh-keygen
 
 cd path/to/git/repo/you/want/to/work/on
-amika rig create --name my-first-rig
-amika rig ssh my-first-rig
+amika sandbox create --name my-first-sandbox
+amika sandbox ssh my-first-sandbox
 ```
 
-This spins up a Rig, pre-loaded with your Git repo and agent credentials.
+This spins up a sandbox, pre-loaded with your Git repo and agent credentials.
 
 
 ### creating an agent chat session
@@ -106,7 +106,7 @@ cd path/to/git/repo/you/want/to/work/on
 amika send --agent codex "What does this repo do?"
 ```
 
-This will spin up a Rig in the background and send the message to a Codex agent on the Rig.
+This will spin up a sandbox in the background and send the message to a Codex agent on the sandbox.
 
 ### Self-hosting
 
@@ -114,18 +114,18 @@ If you want to self-host, read the [self-hosting guide](./docs/self-hosting.md).
 
 ## Configuration
 
-Usually, **each Rig boots from a repo**, which specifies the config for the Rig (VM size, git repos loaded, agent skills, MCP servers, config files loaded). You define **config-as-code inside a repo's `.amika/config.toml`**, but you can also configure settings in the web UI or adhoc per Rig. See [more docs](https://docs.amika.dev/guides/configuration) on how configuration works.
+Usually, **each sandbox boots from a repo**, which specifies the config for the sandbox (VM size, git repos loaded, agent skills, MCP servers, config files loaded). You define **config-as-code inside a repo's `.amika/config.toml`**, but you can also configure settings in the web UI or adhoc per sandbox. See [more docs](https://docs.amika.dev/guides/configuration) on how configuration works.
 
 ## Amika principles
 
 Our goal is to make cloud agents and VMs feel like you're just using your desktop, but with extra super-powers:
 
-- **multiplayer**: multiple humans and agents can share the same Rig and chat sessions
-- **programmatic control + human-in-the-loop**: you must be able to toggle between (a) programmatic or agentic control of the Rigs and agents, and (b) human-in-the-loop UIs
+- **multiplayer**: multiple humans and agents can share the same sandbox and chat sessions
+- **programmatic control + human-in-the-loop**: you must be able to toggle between (a) programmatic or agentic control of the sandboxes and agents, and (b) human-in-the-loop UIs
 - **multi-surface**: talk to agents from (a) work tools like Slack and Linear, (b) the web UI, API, CLI + SSH, and (c) your preferred editors and ADEs like Cursor and the Codex app
-- **run any harness, any model, any ADE**: everybody has their favorite harness, models, and agent development environments; an Amika Rig doesn't restrict you to just one
-- **run on any computer or cloud**: You should be able to slice any computer up into Rig workstations — the desktop in your closet, a sandbox on E2B, a node in your Kubernetes cluster
-- **config-as-code**: your Rig configs and agent workflows are just code in a git repo; you can pick which config to use per Rig, with per-user config customization
+- **run any harness, any model, any ADE**: everybody has their favorite harness, models, and agent development environments; an Amika sandbox doesn't restrict you to just one
+- **run on any computer or cloud**: You should be able to slice any computer up into sandbox workstations — the desktop in your closet, a sandbox on E2B, a node in your Kubernetes cluster
+- **config-as-code**: your sandbox configuration and agent workflows are just code in a git repo; you can pick which config to use per sandbox, with per-user config customization
 
 See more of [our axioms](https://github.com/gofixpoint/amika/blob/main/docs/AXIOMS.md) about the type of workstation agents need, and what a new "operating system" for agents should look like.
 
@@ -136,34 +136,34 @@ Amika is kind of like an "operating system" for AI agents. We have a few importa
 - a VM networking and agent messaging layer
 - a VM scheduling layer
 - the control plane that manages these
-- the UIs and interfaces to work with the agents and VMs (Rigs)
+- the UIs and interfaces to work with the agents and sandboxes
 
-Compared to **agents and agent development environments (ADEs)** like Claude, Codex, OpenCode, Conductor, cmux: **we are not an agent or a harness**. We are **an environment and cloud workstation** for humans and agents. You can connect to an Amika Rig and its agents using these other tools. In some ways, you can think of us like an "operating system" for AI agents.
+Compared to **agents and agent development environments (ADEs)** like Claude, Codex, OpenCode, Conductor, cmux: **we are not an agent or a harness**. We are **an environment and cloud workstation** for humans and agents. You can connect to an Amika sandbox and its agents using these other tools. In some ways, you can think of us like an "operating system" for AI agents.
 
-Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research: we are **a networked runtime and "operating system"** on top of **any cloud or computer**. We schedule VM workstations on any compute provider, tune it to be a great agent workstation, and turn the Rig workstation into an agent mesh network to connect the Rigs and agents together.
+Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research: we are **a networked runtime and "operating system"** on top of **any cloud or computer**. We schedule VM workstations on any compute provider, tune it to be a great agent workstation, and turn the sandbox workstation into an agent mesh network to connect the sandboxes and agents together.
 
 ## What's open source and what's closed source
 
 ### Open source
 
 - `amika`: CLI to interact with Amika
-- `amikad`: daemon that runs inside each VM or machine; manages Rig setup, network connectivity, and communication with the `amika-gateway` and the e2e-encrypted `amika-relay`
-- `sandbox-image`: Rig VM snapshots + images. Defines the VM (Rig) environment for the agents ([docs](./sandbox-image/README.md))
+- `amikad`: daemon that runs inside each VM or machine; manages sandbox setup, network connectivity, and communication with the `amika-gateway` and the e2e-encrypted `amika-relay`
+- `sandbox-image`: Sandbox VM snapshots + images. Defines the sandbox environment for the agents ([docs](./sandbox-image/README.md))
 - `amika-sdks`: Typescript SDK to interact with Amika
 
 ### Closed source
 
-- `amika-control-plane`: control plane that schedules rigs and stores references to all rigs
-- `amika-ui`: web UI for interacting with Amika agents and rigs
+- `amika-control-plane`: control plane that schedules sandboxes and stores references to all sandboxes
+- `amika-ui`: web UI for interacting with Amika agents and sandboxes
 - `amika-relay`: handles fully e2e encrypted...
   - messages to agents
-  - exec commands to rigs
+  - exec commands to sandboxes
   - network and SSH access
 
 ### What will be open sourced soon
 
-- `amika-gateway`: gateway inside your cloud that receives signed or encrypted commands, decrypts them, runs auth checks, and sends them to the right rig or agent
-  - `sandbox-provisioner`: the adapter layer that converts gateway Rig commands to the right format per provider (ie E2B, K8S, Modal, Daytona, etc.)
+- `amika-gateway`: gateway inside your cloud that receives signed or encrypted commands, decrypts them, runs auth checks, and sends them to the right sandbox or agent
+  - `sandbox-provisioner`: the adapter layer that converts gateway sandbox commands to the right format per provider (ie E2B, K8S, Modal, Daytona, etc.)
 
 
 ## Other tools and links
