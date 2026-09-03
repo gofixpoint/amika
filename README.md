@@ -24,13 +24,11 @@
 
 ## Multiplayer cloud workstations for coding agents and humans
 
-Amika lets you **provision VMs on any cloud or computer, load them with your favorite agent(s), and then remote control the agents from any chat surface or app.**
+Amika provides sandboxed cloud workstations where people and coding agents work together.
 
-Each VM is configured as **a sandboxed workstation tuned for coding agents and humans** to collaborate in.
-
-- **provision sandboxes on any machine**: you can create sandboxes on a Kubernetes cluster, on a cloud provider like E2B, or on the desktop in your closet
-- **use any agent**: Amika works with your existing AI agent subscriptions and API keys. We support Codex, Claude, OpenCode, and Pi by default — but Amika uses an agent-agnostic messaging layer so you can load in any agent and remote control it
-- **remote control the agents and VMs from anywhere**: message from Slack, Linear, or GitHub; control agents and VMs programatically via API or CLI; SSH into them; load the VMs into Cursor, Codex app, etc.
+- **Run anywhere.** Use Kubernetes, E2B, or your own computer.
+- **Bring any agent.** Use Codex, Claude, OpenCode, Pi, or your own agent with existing subscriptions and API keys.
+- **Control from anywhere.** Use chat apps, the web UI, API, CLI, SSH, or your editor.
 
 ## What can an Amika sandbox do?
 
