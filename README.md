@@ -24,7 +24,7 @@
 
 ## Multiplayer cloud workstations for coding agents and humans
 
-Amika provides sandboxed cloud workstations where people and coding agents work together.
+Amika lets you **provision VMs on any cloud or computer, load them with your favorite agent(s), and then remote control the agents from any chat surface or app.**
 
 - **Run anywhere.** Use Kubernetes, E2B, or your own computer.
 - **Bring any agent.** Use Codex, Claude, OpenCode, Pi, or your own agent with existing subscriptions and API keys.
