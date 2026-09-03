@@ -17,8 +17,7 @@
   <a href="https://app.amika.dev/signup">Sign up</a> |
   <a href="https://docs.amika.dev/">Docs</a> |
   <a href="https://discord.gg/xDXk4KjGWg">Discord</a> |
-  <a href=" https://github.com/gofixpoint/amika/blob/main/docs/AXIOMS.md">Axioms</a>
-  >
+  <a href="https://github.com/gofixpoint/amika/blob/main/docs/AXIOMS.md">Axioms</a>
 </p>
 
 ---
