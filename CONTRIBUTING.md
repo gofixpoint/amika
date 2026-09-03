@@ -1,5 +1,10 @@
 # Contributing
 
+Instead of submitting PRs, we prefer you open issues with a precise description of the feature you want implemented or of a bug report. Since AI agents make it easy to generate code, we have a much easier time turning your human-readable prompts and requests into code, than reviewing code you submit.
+
+In some cases, we accept code contributions from users. Please reach out on [Discord to chat with us](https://discord.gg/xDXk4KjGWg).
+
+
 ## Prerequisites
 
 - Go 1.25 or later
