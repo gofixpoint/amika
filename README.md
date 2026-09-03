@@ -32,6 +32,8 @@ Each VM is configured as **a sandboxed workstation tuned for coding agents and h
 - **Bring any agent.** Use Codex, Claude, OpenCode, Pi, or your own agent with existing subscriptions and API keys.
 - **Control from anywhere.** Use chat apps, the web UI, API, CLI, SSH, or your editor.
 
+![Amika sandbox dashboard showing OpenCode and Pi coding agents, exposed services, and sandbox controls.](docs/assets/amika-sandbox-dashboard.png)
+
 ## What can an Amika sandbox do?
 
 On a sandbox, you can
