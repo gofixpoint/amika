@@ -26,6 +26,8 @@
 
 Amika lets you **provision VMs on any cloud or computer, load them with your favorite agent(s), and then remote control the agents from any chat surface or app.**
 
+Each VM is configured as **a sandboxed workstation tuned for coding agents and humans** to collaborate in.
+
 - **Run anywhere.** Use Kubernetes, E2B, or your own computer.
 - **Bring any agent.** Use Codex, Claude, OpenCode, Pi, or your own agent with existing subscriptions and API keys.
 - **Control from anywhere.** Use chat apps, the web UI, API, CLI, SSH, or your editor.
