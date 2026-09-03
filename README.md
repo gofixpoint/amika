@@ -14,7 +14,11 @@
   <a href="https://amika.dev">amika.dev</a>
   <br />
   <br />
-  <a href="https://app.amika.dev/signup">Sign up</a> | <a href="https://docs.amika.dev/">Docs</a> | <a href="https://discord.gg/xDXk4KjGWg">Discord</a>
+  <a href="https://app.amika.dev/signup">Sign up</a> |
+  <a href="https://docs.amika.dev/">Docs</a> |
+  <a href="https://discord.gg/xDXk4KjGWg">Discord</a> |
+  <a href=" https://github.com/gofixpoint/amika/blob/main/docs/AXIOMS.md">Axioms</a>
+  >
 </p>
 
 ---
@@ -89,8 +93,8 @@ Assuming you connected GitHub during web onboarding:
 amika secret ssh-keygen
 
 cd path/to/git/repo/you/want/to/work/on
-amika rig create --name my-first-sandbox
-amika sandbox ssh my-first-sandbox
+amika rig create --name my-first-rig
+amika rig ssh my-first-rig
 ```
 
 This spins up a Rig, pre-loaded with your Git repo and agent credentials.
@@ -128,14 +132,14 @@ See more of [our axioms](https://github.com/gofixpoint/amika/blob/main/docs/AXIO
 
 ## How Amika compares to other products
 
-Amika has a few important parts:
+Amika is kind of like an "operating system" for AI agents. We have a few important parts:
 
 - a VM networking and agent messaging layer
 - a VM scheduling layer
 - the control plane that manages these
 - the UIs and interfaces to work with the agents and VMs (Rigs)
 
-Compared to **agents and agent development environments (ADEs)** like Claude, Codex, OpenCode, Conductor, cmux: **we are not an agent or a harness**. We are **an environment and cloud workstation** for humans and agents. You can connect to an Amika Rig and its agents using these other tools.
+Compared to **agents and agent development environments (ADEs)** like Claude, Codex, OpenCode, Conductor, cmux: **we are not an agent or a harness**. We are **an environment and cloud workstation** for humans and agents. You can connect to an Amika Rig and its agents using these other tools. In some ways, you can think of us like an "operating system" for AI agents.
 
 Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research: we are **a networked runtime and "operating system"** on top of **any cloud or computer**. We schedule VM workstations on any compute provider, tune it to be a great agent workstation, and turn the Rig workstation into an agent mesh network to connect the Rigs and agents together.
 
@@ -144,23 +148,23 @@ Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research:
 ### Open source
 
 - `amika`: CLI to interact with Amika
-- `amikad`: daemon that runs inside each sandbox; manages Rig setup, network connectivity, and communication with the `amika-gateway` and the e2e-encrypted `amika-relay`
+- `amikad`: daemon that runs inside each VM or machine; manages Rig setup, network connectivity, and communication with the `amika-gateway` and the e2e-encrypted `amika-relay`
 - `sandbox-image`: Rig VM snapshots + images. Defines the VM (Rig) environment for the agents ([docs](./sandbox-image/README.md))
 - `amika-sdks`: Typescript SDK to interact with Amika
 
 ### Closed source
 
-- `amika-control-plane`: control plane that schedules sandboxes and stores references to all sandboxes
-- `amika-ui`: web UI for interacting with Amika agents and sandboxes
+- `amika-control-plane`: control plane that schedules rigs and stores references to all rigs
+- `amika-ui`: web UI for interacting with Amika agents and rigs
 - `amika-relay`: handles fully e2e encrypted...
   - messages to agents
-  - exec commands to sandboxes
+  - exec commands to rigs
   - network and SSH access
 
 ### What will be open sourced soon
 
-- `amika-gateway`: gateway inside your cloud that receives signed or encrypted commands, decrypts them, runs auth checks, and sends them to the right sandbox or agent
-  `sandbox-provisioner`: the adapter layer that converts gateway sandbox commands to the right format per provider (ie E2B, K8S, Modal, Daytona, etc.)
+- `amika-gateway`: gateway inside your cloud that receives signed or encrypted commands, decrypts them, runs auth checks, and sends them to the right rig or agent
+  - `sandbox-provisioner`: the adapter layer that converts gateway Rig commands to the right format per provider (ie E2B, K8S, Modal, Daytona, etc.)
 
 
 ## Other tools and links
