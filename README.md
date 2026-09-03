@@ -68,13 +68,13 @@ To get started with Amika's cloud product:
 
 2. Download the CLI
 
-   ```
+   ```bash
    curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh | sh
    ```
 
 3. Login, and sync your Claude and/or Codex credentials
 
-   ```
+   ```bash
    amika auth login
    amika secret codex push --type oauth --name "Codex Subscription"
    amika secret claude push --type oauth --name "Claude Subscription"
@@ -89,7 +89,7 @@ If you want to create a sandbox and then chat with it from Codex, Cursor, OpenCo
 
 Assuming you connected GitHub during web onboarding:
 
-```
+```bash
 # make sure you uploaded an SSH key
 amika secret ssh-keygen
 
@@ -98,17 +98,25 @@ amika sandbox create --name my-first-sandbox
 amika sandbox ssh my-first-sandbox
 ```
 
-This spins up a sandbox, pre-loaded with your Git repo and agent credentials.
+This spins up a sandbox, pre-loaded with your Git repo and agent credentials. List your sandboxes with:
 
+```bash
+amika sandbox list
+```
 
 ### creating an agent chat session
 
-```
+```bash
 cd path/to/git/repo/you/want/to/work/on
 amika send --agent codex "What does this repo do?"
 ```
 
-This will spin up a sandbox in the background and send the message to a Codex agent on the sandbox.
+This will spin up a sandbox in the background and send the message to a Codex agent on the sandbox. You can list agent sessions with:
+
+```bash
+amika session list
+```
+
 
 ### Self-hosting
 
