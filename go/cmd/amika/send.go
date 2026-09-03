@@ -294,9 +294,8 @@ func sendBranches(cmd *cobra.Command, identity gitrepo.Identity) (gitrepo.Branch
 	branch, _ := cmd.Flags().GetString(flagBranch)
 	newBranch, _ := cmd.Flags().GetString(flagNewBranch)
 	return gitrepo.ResolveBranch(identity, gitrepo.BranchRequest{
-		Branch:        branch,
-		NewBranch:     newBranch,
-		BranchFlagSet: cmd.Flags().Changed(flagBranch),
+		Branch:    branch,
+		NewBranch: newBranch,
 	})
 }
 
