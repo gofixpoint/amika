@@ -271,12 +271,14 @@ func PrepareSessionHost(
 	return session, nil
 }
 
-// ProxySession creates a fresh descriptor, dials it with header credentials,
-// and copies opaque bytes between OpenSSH standard I/O and the WebSocket.
+// ProxySession creates a fresh descriptor, pins its host key, dials it with
+// header credentials, and copies opaque bytes between OpenSSH standard I/O and
+// the WebSocket.
 func ProxySession(
 	ctx context.Context,
 	creator SessionCreator,
 	dialer SessionDialer,
+	pins HostKeyPinStore,
 	alias string,
 	stdin io.Reader,
 	stdout io.Writer,
@@ -290,6 +292,31 @@ func ProxySession(
 		return err
 	}
 	if err := session.Validate(parsed.ID); err != nil {
+		return err
+	}
+	// Pin here, and not only in PrepareSessionHost, because this is the one
+	// step every connection goes through: OpenSSH runs it as the ProxyCommand
+	// on every dial of a managed alias, and the descriptor it just validated
+	// carries the same API-issued host key `sandbox code` would have pinned.
+	//
+	// Without it the pin exists only for sandboxes opened at least once through
+	// `sandbox ssh`, `sandbox code` or `scp`. The managed block is
+	// StrictHostKeyChecking yes against a dedicated known-hosts file, so any
+	// other way of naming the alias — cmux's ssh deep link, an editor's own
+	// Remote-SSH entry, a bare `ssh <alias>` — met an empty file and failed
+	// verification, for a host this command was in the middle of authenticating.
+	//
+	// Before the dial, which is what makes the ordering sound rather than
+	// lucky: no SSH byte can cross until the stream exists, and OpenSSH cannot
+	// reach host-key verification without those bytes, so the line is always on
+	// disk before it is read. Pinning afterwards would race the handshake it
+	// exists to satisfy.
+	//
+	// This cannot loosen the check. Pin accepts an identical key and returns
+	// ErrHostKeyMismatch for a changed one, so a rotated host key still fails
+	// closed — with this command's error rather than OpenSSH's, and on exactly
+	// the terms `sandbox code` already fails on.
+	if err := pins.Pin(alias, session.HostPublicKey); err != nil {
 		return err
 	}
 	stream, err := dialer.Dial(ctx, session.ConnectURL, session.ConnectCredential)
@@ -415,6 +442,22 @@ func PrepareSessionTarget(
 		return "", err
 	}
 	return alias, nil
+}
+
+// SessionPinStore returns the pin store backing the shared session known-hosts
+// file.
+//
+// It resolves that path the same way every other session caller does, which is
+// the whole point of it existing: `ssh-keygen --import` persists a session
+// config naming its own known-hosts file, and a caller that reached for the
+// default path instead would pin into a file the generated SSH block does not
+// name — pins written where OpenSSH will never look for them.
+func SessionPinStore(paths basedir.Paths) (HostKeyPinStore, error) {
+	sessionConfig, err := resolveSessionConfig(paths)
+	if err != nil {
+		return nil, err
+	}
+	return FileHostKeyPinStore{Path: sessionConfig.KnownHostsFile}, nil
 }
 
 // resolveSessionConfig returns the persisted session identity, or the default
