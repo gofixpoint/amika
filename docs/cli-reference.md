@@ -654,7 +654,15 @@ amika secret ssh-key push --name laptop --force
 
 Re-pushing the *same* key material under an existing name is a no-op. Pushing *different* material under an existing name fails unless `--force` is passed. Only ed25519 keys are accepted, and the key's trailing comment is stripped before upload.
 
-A successful push also registers the key locally, the same way `ssh-keygen` does: the Amika-managed SSH host entry in `~/.ssh/amika.conf` is regenerated to authenticate with the private key sitting beside the `.pub` file, and `~/.ssh/config` is given the `Include` that pulls it in. That is what lets `amika sandbox ssh` and `amika sandbox code` reach a sandbox straight after the push. A `.pub` whose matching private key is missing, encrypted, not ed25519, or readable by others is still uploaded; only the local registration is skipped, and the command says so.
+**The first push on a machine also registers the key locally**, the way `ssh-keygen` does: the Amika-managed SSH host entry in `~/.ssh/amika.conf` is written to authenticate with the private key sitting beside the `.pub` file, and `~/.ssh/config` is given the `Include` that pulls it in.
+
+That matters for anything that hands an `amika` host alias straight to OpenSSH without going through the CLI first, such as the `cmux://` and `cursor://` links the web app offers. `amika sandbox ssh` and `sandbox code` do not depend on it: they write the same entry themselves on their way through.
+
+**Later pushes leave the entry alone.** Uploaded keys are a set, so pushing a second key authorizes it alongside the first, while the entry names the one identity every connection authenticates with — and it is rendered with `IdentitiesOnly yes`, so re-pointing it would offer OpenSSH only the newest key and cut off sandboxes provisioned against the previous one. Use `amika secret ssh-key create` to change which identity is in effect. A repeat push rewrites the same entry from the same identity, so re-running it changes nothing.
+
+A `.pub` whose matching private key is missing, encrypted, not ed25519, readable by others, or at a path OpenSSH cannot express is still uploaded; only the local registration is skipped, and the command says so. A push that is not registering anything needs no private key at all.
+
+Either way the command's last line names the identity the entry holds, which after a later push is not the key just uploaded.
 
 With `-o json` this emits the API's `SshPublicKeySummary` response unchanged (`id`, `name`, `public_key`, `scope`). Whether the push created or replaced a key is reported only in the text output.
 

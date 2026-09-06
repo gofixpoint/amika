@@ -828,6 +828,120 @@ func TestSSHKeyPushInProcess_RegistersManagedSSHEntry(t *testing.T) {
 	}
 }
 
+// The reason later pushes must not adopt: uploaded keys are a set, so a second
+// push authorizes another key rather than replacing one — while the entry names
+// the single identity every connection authenticates with, under
+// `IdentitiesOnly yes`. Re-pointing it here would offer OpenSSH only the newest
+// key and cut off every sandbox provisioned against the first.
+func TestSSHKeyPushInProcess_SecondPushDoesNotRepointTheIdentity(t *testing.T) {
+	home := isolateSSHHome(t)
+	firstKey := writeTestKeypair(t, filepath.Join(home, ".ssh"))
+	// A second, complete keypair: adopting it is exactly what must not happen.
+	secondDir := filepath.Join(home, "other")
+	if err := os.MkdirAll(secondDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secondKey := writeTestKeypair(t, secondDir)
+
+	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
+
+	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", firstKey+".pub"); err != nil {
+		t.Fatalf("first push failed: %v\n%s", err, out)
+	}
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "work", "--from-file", secondKey+".pub")
+	if err != nil {
+		t.Fatalf("second push failed: %v\n%s", err, out)
+	}
+
+	conf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(conf), "IdentityFile "+firstKey) {
+		t.Errorf("the second push moved the entry off the adopted key:\n%s", conf)
+	}
+	if strings.Contains(string(conf), secondKey) {
+		t.Errorf("the second push adopted its own key:\n%s", conf)
+	}
+	// The reader has just uploaded a key the entry does not name, so the line
+	// has to say which one it does name.
+	if !strings.Contains(out, "unchanged") || !strings.Contains(out, firstKey) {
+		t.Errorf("output should name the identity still in effect: %s", out)
+	}
+}
+
+// Idempotent in the strict sense: pushing the same key again reproduces the
+// same files, so a re-run cannot drift the config it wrote the first time.
+func TestSSHKeyPushInProcess_RepeatPushRewritesTheSameEntry(t *testing.T) {
+	home := isolateSSHHome(t)
+	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
+
+	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
+
+	read := func() (string, string) {
+		t.Helper()
+		conf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := os.ReadFile(filepath.Join(home, "state", "amika", "ssh-hosts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(conf), string(state)
+	}
+
+	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", keyPath+".pub"); err != nil {
+		t.Fatalf("first push failed: %v\n%s", err, out)
+	}
+	firstConf, firstState := read()
+
+	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", keyPath+".pub"); err != nil {
+		t.Fatalf("second push failed: %v\n%s", err, out)
+	}
+	secondConf, secondState := read()
+
+	if firstConf != secondConf {
+		t.Errorf("amika.conf changed on a repeat push:\n--- first ---\n%s\n--- second ---\n%s",
+			firstConf, secondConf)
+	}
+	if firstState != secondState {
+		t.Errorf("ssh-hosts.json changed on a repeat push:\n--- first ---\n%s\n--- second ---\n%s",
+			firstState, secondState)
+	}
+}
+
+// An adopted entry is the machine's answer to "which private key", so a push
+// that is not adopting one has no use for the private half at all. Before this
+// rule the resolution ran first and its failure suppressed the write.
+func TestSSHKeyPushInProcess_LaterPushNeedsNoPrivateKey(t *testing.T) {
+	home := isolateSSHHome(t)
+	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
+	orphan, _ := writeTestPubKey(t, t.TempDir(), "elsewhere@host")
+
+	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
+
+	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", keyPath+".pub"); err != nil {
+		t.Fatalf("first push failed: %v\n%s", err, out)
+	}
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "remote", "--from-file", orphan)
+	if err != nil {
+		t.Fatalf("push of a key with no private half failed: %v\n%s", err, out)
+	}
+
+	// Reported as unchanged, not as skipped: nothing was missing, because
+	// nothing was needed.
+	if !strings.Contains(out, "unchanged") {
+		t.Errorf("output should report the entry unchanged: %s", out)
+	}
+}
+
 func TestSSHKeyPushInProcess_UploadsWithoutRegisteringWhenPrivateKeyIsMissing(t *testing.T) {
 	home := isolateSSHHome(t)
 	// A .pub with no private half beside it: a legitimate thing to push (the
