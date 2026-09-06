@@ -754,6 +754,137 @@ func TestSSHKeyPushInProcess_JSONIsTheAPIResponse(t *testing.T) {
 	}
 }
 
+// writeTestKeypair generates a real ed25519 keypair in dir and returns the
+// private key path. Unlike writeTestPubKey it produces both halves, which is
+// what a push needs before it can register a managed SSH entry for the key.
+func writeTestKeypair(t *testing.T, dir string) string {
+	t.Helper()
+	keyPath := filepath.Join(dir, "id_ed25519")
+	if out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", "me@host",
+		"-f", keyPath).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v\n%s", err, out)
+	}
+	return keyPath
+}
+
+// isolateSSHHome points HOME and the state dir at fresh directories, so a test
+// that writes SSH config cannot touch the developer's own. Returns the home.
+func isolateSSHHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Set explicitly rather than relying on the HOME fallback: an inherited
+	// XDG_STATE_HOME would otherwise put ssh-hosts.json outside the temp home.
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+func TestSSHKeyPushInProcess_RegistersManagedSSHEntry(t *testing.T) {
+	home := isolateSSHHome(t)
+	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
+
+	api := &sshKeyAPI{}
+	setupInProcessSSHKeyAPI(t, api)
+
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", keyPath+".pub")
+	if err != nil {
+		t.Fatalf("push failed: %v\n%s", err, out)
+	}
+	if len(api.created) != 1 {
+		t.Fatalf("expected the key to be uploaded, got %+v", api.created)
+	}
+
+	// A push must leave behind exactly what `ssh-keygen` leaves behind: the
+	// JSON state naming the identity, the config rendered from it, and the
+	// Include that makes OpenSSH read that config.
+	state, err := os.ReadFile(filepath.Join(home, "state", "amika", "ssh-hosts.json"))
+	if err != nil {
+		t.Fatalf("ssh-hosts.json was not written: %v", err)
+	}
+	if !strings.Contains(string(state), keyPath) {
+		t.Errorf("ssh-hosts.json does not record the pushed identity:\n%s", state)
+	}
+	conf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
+	if err != nil {
+		t.Fatalf("~/.ssh/amika.conf was not written: %v", err)
+	}
+	if !strings.Contains(string(conf), "IdentityFile "+keyPath) {
+		t.Errorf("the managed config does not select the pushed key:\n%s", conf)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".ssh", "config"))
+	if err != nil {
+		t.Fatalf("~/.ssh/config was not written: %v", err)
+	}
+	if !strings.Contains(string(config), "Include amika.conf") {
+		t.Errorf("~/.ssh/config does not include the managed config:\n%s", config)
+	}
+	if !strings.Contains(out, "Registered the managed SSH host entry") {
+		t.Errorf("output should say the entry was registered: %s", out)
+	}
+}
+
+func TestSSHKeyPushInProcess_UploadsWithoutRegisteringWhenPrivateKeyIsMissing(t *testing.T) {
+	home := isolateSSHHome(t)
+	// A .pub with no private half beside it: a legitimate thing to push (the
+	// private key may live on another machine), and nothing a usable local
+	// config can be written from.
+	pubPath, canonical := writeTestPubKey(t, t.TempDir(), "me@host")
+
+	api := &sshKeyAPI{}
+	setupInProcessSSHKeyAPI(t, api)
+
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", pubPath)
+	if err != nil {
+		t.Fatalf("push failed: %v\n%s", err, out)
+	}
+	// The upload is the command's job and must still happen.
+	if len(api.created) != 1 || api.created[0]["public_key"] != canonical {
+		t.Errorf("expected the key to be uploaded, got %+v", api.created)
+	}
+	if !strings.Contains(out, "Left the managed SSH host entry alone") {
+		t.Errorf("output should say the entry was skipped, and why: %s", out)
+	}
+	// No half-written config selecting a key OpenSSH cannot use.
+	for _, name := range []string{"amika.conf", "config"} {
+		if _, statErr := os.Stat(filepath.Join(home, ".ssh", name)); statErr == nil {
+			t.Errorf("~/.ssh/%s was written for a key with no private half", name)
+		}
+	}
+}
+
+func TestSSHKeyPushInProcess_DoesNotRegisterWhenUploadRefused(t *testing.T) {
+	home := isolateSSHHome(t)
+	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
+
+	// A different key already stored under this name, so the upload is
+	// refused without --force.
+	api := &sshKeyAPI{existing: []map[string]string{
+		{"id": "specsec_old", "name": "laptop",
+			"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijkl", "scope": "user"},
+	}}
+	setupInProcessSSHKeyAPI(t, api)
+
+	_, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", keyPath+".pub")
+	if err == nil {
+		t.Fatal("expected the upload to be refused")
+	}
+
+	// Same rule as `ssh-keygen`: the config must not end up pointing at a
+	// private key whose public half was never stored.
+	for _, name := range []string{"amika.conf", "config"} {
+		if _, statErr := os.Stat(filepath.Join(home, ".ssh", name)); statErr == nil {
+			t.Errorf("~/.ssh/%s was written despite the upload being refused", name)
+		}
+	}
+}
+
 func TestSSHKeygenInProcess_DoesNotPersistSessionWhenUploadRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

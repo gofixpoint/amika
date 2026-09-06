@@ -135,6 +135,11 @@ Keys are named, and a name is unique per user. Re-pushing the same key material
 under an existing name is a no-op; replacing a name with different material
 requires `--force`.
 
+Like `create`, this also points the Amika-managed SSH config at the private key
+beside the `.pub` file, so the sandbox commands work straight after the push. A
+`.pub` with no usable private key beside it is still uploaded; only that local
+step is skipped.
+
 3. **List your keys:**
 
 ```bash

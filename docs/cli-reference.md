@@ -654,6 +654,8 @@ amika secret ssh-key push --name laptop --force
 
 Re-pushing the *same* key material under an existing name is a no-op. Pushing *different* material under an existing name fails unless `--force` is passed. Only ed25519 keys are accepted, and the key's trailing comment is stripped before upload.
 
+A successful push also registers the key locally, the same way `ssh-keygen` does: the Amika-managed SSH host entry in `~/.ssh/amika.conf` is regenerated to authenticate with the private key sitting beside the `.pub` file, and `~/.ssh/config` is given the `Include` that pulls it in. That is what lets `amika sandbox ssh` and `amika sandbox code` reach a sandbox straight after the push. A `.pub` whose matching private key is missing, encrypted, not ed25519, or readable by others is still uploaded; only the local registration is skipped, and the command says so.
+
 With `-o json` this emits the API's `SshPublicKeySummary` response unchanged (`id`, `name`, `public_key`, `scope`). Whether the push created or replaced a key is reported only in the text output.
 
 #### `amika secret ssh-key list`

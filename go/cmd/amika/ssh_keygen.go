@@ -51,14 +51,6 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			knownHostsPath, err := paths.SSHKnownHostsFile()
-			if err != nil {
-				return err
-			}
-			session := ssh.SessionConfig{
-				IdentityFile:   identityPath,
-				KnownHostsFile: knownHostsPath,
-			}
 
 			// Order matters in both directions, because the upload and the
 			// local SSH config have to end up describing the same keypair.
@@ -73,7 +65,11 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 			// upload (the name already holds different material and --force
 			// was not passed) must not leave the config pointing at a private
 			// key whose public half was never stored.
-			if err := ssh.ValidateSessionConfig(session); err != nil {
+			//
+			// `ssh-key push` builds and validates its session through the same
+			// helper, for the same reasons.
+			session, err := sshSessionFor(paths, identityPath)
+			if err != nil {
 				return err
 			}
 

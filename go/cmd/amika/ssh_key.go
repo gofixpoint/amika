@@ -11,6 +11,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -65,6 +66,12 @@ func newSSHKeyPushCmd() *cobra.Command {
 Reads ~/.ssh/amika_id_ed25519.pub unless --from-file names another file. Use
 "amika secret ssh-key create" to generate a new keypair instead.
 
+The uploaded key is also registered locally, exactly as "ssh-key create" does:
+the managed SSH entry in ~/.ssh/amika.conf is regenerated to authenticate with
+the private half beside the .pub file, so a sandbox can be reached over SSH
+straight after the push. A .pub with no usable private key beside it is still
+uploaded; only the local registration is skipped.
+
 A key is identified by its name. Re-uploading the same key material under an
 existing name is a no-op; replacing an existing name with different material
 requires --force.
@@ -88,10 +95,10 @@ Examples:
 				return fmt.Errorf("--name must not be empty")
 			}
 
+			paths := basedir.New("")
 			fromFile, _ := cmd.Flags().GetString("from-file")
 			fromFile = strings.TrimSpace(fromFile)
 			if fromFile == "" {
-				paths := basedir.New("")
 				identityPath, err := paths.SSHIdentityFile()
 				if err != nil {
 					return err
@@ -111,19 +118,48 @@ Examples:
 				return fmt.Errorf("%s is not a valid ed25519 public key", fromFile)
 			}
 
+			// Resolve the local SSH entry before uploading, for the reason
+			// `ssh-keygen` validates before it uploads: a config that cannot
+			// be written must be known while the stored key is still the one
+			// the current config selects. Unlike keygen, a failure here is not
+			// fatal — the upload is what this command is for, and a public key
+			// whose private half is elsewhere is a legitimate thing to push —
+			// so the reason is carried and reported instead.
+			session, sessionErr := localSSHEntryFor(paths, fromFile)
+
 			force, _ := cmd.Flags().GetBool("force")
 			summary, status, err := uploadSSHPublicKey(name, publicKey, force)
 			if err != nil {
 				return err
 			}
+
+			// The same writer `secret ssh-keygen` uses, so a key that arrives
+			// by push leaves the machine in the state a generated one does:
+			// there is one managed SSH entry, written in one place.
+			if sessionErr == nil {
+				if err := ssh.ConfigureSession(paths, session); err != nil {
+					return fmt.Errorf("registering the managed SSH host entry: %w", err)
+				}
+			}
+
 			if format.IsJSON() {
 				// Remote-backed commands emit the API's response schema
 				// unchanged (AGENTS.md "CLI Output Format"), so the
-				// created/updated distinction stays in the text output only.
+				// created/updated distinction — and the two lines below —
+				// stay in the text output only.
 				return format.JSON(cmd.OutOrStdout(), summary)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s SSH public key %q from %s\n",
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "%s SSH public key %q from %s\n",
 				uploadVerb(status), summary.Name, fromFile)
+			if sessionErr != nil {
+				// Said after the upload it qualifies, because the upload is
+				// what the reader asked for and it did happen.
+				fmt.Fprintf(out, "Left the managed SSH host entry alone: %v\n", sessionErr)
+				return nil
+			}
+			fmt.Fprintf(out, "Registered the managed SSH host entry; it authenticates with %s.\n",
+				session.IdentityFile)
 			return nil
 		},
 	}
@@ -131,6 +167,41 @@ Examples:
 	cmd.Flags().String("from-file", "", "Public key file to upload (default ~/.ssh/amika_id_ed25519.pub)")
 	cmd.Flags().Bool("force", false, "Replace an existing SSH key with the same name")
 	return cmd
+}
+
+// localSSHEntryFor resolves the managed SSH entry an uploaded public key
+// implies on this machine: the private half beside the .pub is the identity
+// the entry authenticates with. `ImportIdentity` is what establishes that the
+// pair is real — the private key exists, is owner-only, is an unencrypted
+// Ed25519 key, and matches the public half — so a push whose .pub has no
+// usable partner is told apart from one that does, rather than registering an
+// entry that selects a key OpenSSH cannot use.
+func localSSHEntryFor(paths basedir.Paths, publicKeyPath string) (ssh.SessionConfig, error) {
+	identityPath, _, err := ssh.ImportIdentity(publicKeyPath)
+	if err != nil {
+		return ssh.SessionConfig{}, err
+	}
+	return sshSessionFor(paths, identityPath)
+}
+
+// sshSessionFor builds the session config for a private key and checks that
+// ConfigureSession would accept it, without writing anything. Both commands
+// that upload a key — `ssh-key push` and `ssh-keygen` — go through it, so they
+// cannot disagree about what an uploaded key implies locally, and both learn of
+// a config OpenSSH cannot express before the remote key changes.
+func sshSessionFor(paths basedir.Paths, identityPath string) (ssh.SessionConfig, error) {
+	knownHostsPath, err := paths.SSHKnownHostsFile()
+	if err != nil {
+		return ssh.SessionConfig{}, err
+	}
+	session := ssh.SessionConfig{
+		IdentityFile:   identityPath,
+		KnownHostsFile: knownHostsPath,
+	}
+	if err := ssh.ValidateSessionConfig(session); err != nil {
+		return ssh.SessionConfig{}, err
+	}
+	return session, nil
 }
 
 // uploadSSHPublicKey stores one public key under a name, refusing to replace
