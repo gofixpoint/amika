@@ -138,10 +138,13 @@ requires `--force`.
 The first push on a machine also points the Amika-managed SSH config at the
 private key beside the `.pub` file, the way `create` does, so an app handed an
 `amika` host alias can resolve it without a sandbox command having run first.
-Later pushes add an authorized key and leave that choice alone; use `create` to
-change which identity is in effect. A `.pub` with no usable private key beside
-it is still uploaded, and only a push that would have registered one needs a
-private key at all.
+Resolving it is not the whole of connecting: the generated block pins host keys
+strictly, and only `sandbox ssh`, `sandbox code` and `scp` write those pins.
+
+Later pushes add an authorized key and leave that identity alone; use `create`
+to change which identity is in effect. A `.pub` with no usable private key
+beside it is still uploaded, and only a push that would have registered one
+needs a private key at all.
 
 3. **List your keys:**
 

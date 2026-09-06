@@ -31,9 +31,22 @@ type sshKeyAPI struct {
 }
 
 // setupMockSSHKeyAPI stands up a stub control plane for the ssh-key endpoints
-// and returns the env that points the CLI at it.
+// and returns the env that points the CLI at it, pointed at an isolated HOME.
+//
+// The isolation is here rather than in the tests that obviously need it,
+// because `ssh-key push` writes SSH config on a path no test opts into: a push
+// that is not adopting an identity registers the entry without ever touching a
+// private key, so on a machine that has run `secret ssh-keygen` — which every
+// developer's does — the plain push tests rewrite the real ~/.ssh/amika.conf
+// and ~/.ssh/config. Isolation that each test remembers to ask for is
+// isolation the next test forgets; this is the one door they all come through.
+//
+// XDG_STATE_HOME is set explicitly rather than left to the HOME fallback: an
+// inherited value would put ssh-hosts.json outside the temp home, which is
+// what decides whether a push adopts.
 func setupMockSSHKeyAPI(t *testing.T, api *sshKeyAPI) []string {
 	t.Helper()
+	home := isolateSSHHome(t)
 	if api.deleteStatus == 0 {
 		api.deleteStatus = http.StatusNoContent
 	}
@@ -102,10 +115,28 @@ func setupMockSSHKeyAPI(t *testing.T, api *sshKeyAPI) []string {
 		}
 	}))
 	t.Cleanup(srv.Close)
+	// HOME and XDG_STATE_HOME travel in the env too, so a subprocess test's
+	// child gets the same isolated home the parent was just given.
 	return withEnv(os.Environ(),
 		"AMIKA_API_URL="+srv.URL,
 		"AMIKA_API_KEY=test-bearer-token",
+		"HOME="+home,
+		"XDG_STATE_HOME="+filepath.Join(home, "state"),
 	)
+}
+
+// isolateSSHHome points HOME and the state dir at fresh directories, so a test
+// that writes SSH config cannot touch the developer's own. Returns the home.
+func isolateSSHHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
 
 // writeTestPubKey writes a valid ed25519 .pub file and returns its path plus
@@ -389,11 +420,15 @@ func TestSecretSSHKeyDelete_NotFound(t *testing.T) {
 // subprocess. Subprocess tests assert the real end-to-end behavior but record
 // no coverage for this package, so the RunE bodies are exercised here too.
 
-// setupInProcessSSHKeyAPI points the in-process command tree at a stub API.
-func setupInProcessSSHKeyAPI(t *testing.T, api *sshKeyAPI) {
+// setupInProcessSSHKeyAPI points the in-process command tree at a stub API and
+// returns the isolated HOME it will read and write, which a test asserting on
+// SSH config needs to look inside. HOME itself is already set by
+// setupMockSSHKeyAPI; only the API variables have to be copied into this
+// process, since it does not go through the returned env.
+func setupInProcessSSHKeyAPI(t *testing.T, api *sshKeyAPI) string {
 	t.Helper()
-	env := setupMockSSHKeyAPI(t, api)
-	for _, entry := range env {
+	home := ""
+	for _, entry := range setupMockSSHKeyAPI(t, api) {
 		key, value, found := strings.Cut(entry, "=")
 		if !found {
 			continue
@@ -401,8 +436,11 @@ func setupInProcessSSHKeyAPI(t *testing.T, api *sshKeyAPI) {
 		switch key {
 		case "AMIKA_API_URL", "AMIKA_API_KEY":
 			t.Setenv(key, value)
+		case "HOME":
+			home = value
 		}
 	}
+	return home
 }
 
 func TestSSHKeyListInProcess(t *testing.T) {
@@ -627,10 +665,8 @@ func TestSSHKeyPushInProcess_SameMaterialIsNoOpWithoutForce(t *testing.T) {
 }
 
 func TestSSHKeyPushInProcess_DefaultFromFile(t *testing.T) {
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	api := &sshKeyAPI{}
+	home := setupInProcessSSHKeyAPI(t, api)
 	pubPath, canonical := writeTestPubKey(t, t.TempDir(), "me@host")
 	raw, err := os.ReadFile(pubPath)
 	if err != nil {
@@ -641,10 +677,6 @@ func TestSSHKeyPushInProcess_DefaultFromFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "amika_id_ed25519.pub"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
-
-	api := &sshKeyAPI{}
-	setupInProcessSSHKeyAPI(t, api)
 
 	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push", "--name", "laptop")
 	if err != nil {
@@ -767,28 +799,10 @@ func writeTestKeypair(t *testing.T, dir string) string {
 	return keyPath
 }
 
-// isolateSSHHome points HOME and the state dir at fresh directories, so a test
-// that writes SSH config cannot touch the developer's own. Returns the home.
-func isolateSSHHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	// Set explicitly rather than relying on the HOME fallback: an inherited
-	// XDG_STATE_HOME would otherwise put ssh-hosts.json outside the temp home.
-	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	sshDir := filepath.Join(home, ".ssh")
-	if err := os.MkdirAll(sshDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
 func TestSSHKeyPushInProcess_RegistersManagedSSHEntry(t *testing.T) {
-	home := isolateSSHHome(t)
-	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
-
 	api := &sshKeyAPI{}
-	setupInProcessSSHKeyAPI(t, api)
+	home := setupInProcessSSHKeyAPI(t, api)
+	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
 
 	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
 		"--name", "laptop", "--from-file", keyPath+".pub")
@@ -834,7 +848,7 @@ func TestSSHKeyPushInProcess_RegistersManagedSSHEntry(t *testing.T) {
 // `IdentitiesOnly yes`. Re-pointing it here would offer OpenSSH only the newest
 // key and cut off every sandbox provisioned against the first.
 func TestSSHKeyPushInProcess_SecondPushDoesNotRepointTheIdentity(t *testing.T) {
-	home := isolateSSHHome(t)
+	home := setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
 	firstKey := writeTestKeypair(t, filepath.Join(home, ".ssh"))
 	// A second, complete keypair: adopting it is exactly what must not happen.
 	secondDir := filepath.Join(home, "other")
@@ -842,8 +856,6 @@ func TestSSHKeyPushInProcess_SecondPushDoesNotRepointTheIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondKey := writeTestKeypair(t, secondDir)
-
-	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
 
 	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
 		"--name", "laptop", "--from-file", firstKey+".pub"); err != nil {
@@ -867,7 +879,7 @@ func TestSSHKeyPushInProcess_SecondPushDoesNotRepointTheIdentity(t *testing.T) {
 	}
 	// The reader has just uploaded a key the entry does not name, so the line
 	// has to say which one it does name.
-	if !strings.Contains(out, "unchanged") || !strings.Contains(out, firstKey) {
+	if !strings.Contains(out, "still authenticates with "+firstKey) {
 		t.Errorf("output should name the identity still in effect: %s", out)
 	}
 }
@@ -875,10 +887,8 @@ func TestSSHKeyPushInProcess_SecondPushDoesNotRepointTheIdentity(t *testing.T) {
 // Idempotent in the strict sense: pushing the same key again reproduces the
 // same files, so a re-run cannot drift the config it wrote the first time.
 func TestSSHKeyPushInProcess_RepeatPushRewritesTheSameEntry(t *testing.T) {
-	home := isolateSSHHome(t)
+	home := setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
 	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
-
-	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
 
 	read := func() (string, string) {
 		t.Helper()
@@ -899,6 +909,19 @@ func TestSSHKeyPushInProcess_RepeatPushRewritesTheSameEntry(t *testing.T) {
 	}
 	firstConf, firstState := read()
 
+	// Deleting the generated files between the pushes is what makes this test
+	// mean something. Comparing two runs alone cannot tell "rewrote the same
+	// bytes" from "wrote nothing at all" — `Render` is deterministic and every
+	// input is held constant — so it stayed green with the whole non-adopting
+	// write deleted. Restoring them is also the behaviour the write is there
+	// for: a hand-deleted amika.conf or a stripped Include heals on the next
+	// push, rather than staying broken until a sandbox command is run.
+	for _, name := range []string{"amika.conf", "config"} {
+		if err := os.Remove(filepath.Join(home, ".ssh", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
 		"--name", "laptop", "--from-file", keyPath+".pub"); err != nil {
 		t.Fatalf("second push failed: %v\n%s", err, out)
@@ -906,12 +929,19 @@ func TestSSHKeyPushInProcess_RepeatPushRewritesTheSameEntry(t *testing.T) {
 	secondConf, secondState := read()
 
 	if firstConf != secondConf {
-		t.Errorf("amika.conf changed on a repeat push:\n--- first ---\n%s\n--- second ---\n%s",
+		t.Errorf("amika.conf was not restored identically:\n--- first ---\n%s\n--- second ---\n%s",
 			firstConf, secondConf)
 	}
 	if firstState != secondState {
 		t.Errorf("ssh-hosts.json changed on a repeat push:\n--- first ---\n%s\n--- second ---\n%s",
 			firstState, secondState)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".ssh", "config"))
+	if err != nil {
+		t.Fatalf("~/.ssh/config was not restored: %v", err)
+	}
+	if !strings.Contains(string(config), "Include amika.conf") {
+		t.Errorf("the Include was not restored:\n%s", config)
 	}
 }
 
@@ -919,11 +949,9 @@ func TestSSHKeyPushInProcess_RepeatPushRewritesTheSameEntry(t *testing.T) {
 // that is not adopting one has no use for the private half at all. Before this
 // rule the resolution ran first and its failure suppressed the write.
 func TestSSHKeyPushInProcess_LaterPushNeedsNoPrivateKey(t *testing.T) {
-	home := isolateSSHHome(t)
+	home := setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
 	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
 	orphan, _ := writeTestPubKey(t, t.TempDir(), "elsewhere@host")
-
-	setupInProcessSSHKeyAPI(t, &sshKeyAPI{})
 
 	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
 		"--name", "laptop", "--from-file", keyPath+".pub"); err != nil {
@@ -935,22 +963,94 @@ func TestSSHKeyPushInProcess_LaterPushNeedsNoPrivateKey(t *testing.T) {
 		t.Fatalf("push of a key with no private half failed: %v\n%s", err, out)
 	}
 
-	// Reported as unchanged, not as skipped: nothing was missing, because
-	// nothing was needed.
-	if !strings.Contains(out, "unchanged") {
-		t.Errorf("output should report the entry unchanged: %s", out)
+	// Reported as still in effect, not as skipped: nothing was missing,
+	// because nothing was needed.
+	if !strings.Contains(out, "still authenticates with "+keyPath) {
+		t.Errorf("output should report the identity still in effect: %s", out)
+	}
+	if strings.Contains(out, "Left the managed SSH host entry alone") {
+		t.Errorf("no private key was needed, so nothing should have been skipped: %s", out)
+	}
+}
+
+// Refusing to re-point is the rule; saying nothing while re-rendering a config
+// that selects a deleted file is not part of it. The notice is the only place
+// the reader could learn their entry is dead, so it must not read as fine.
+func TestSSHKeyPushInProcess_ReportsARegisteredIdentityThatHasGone(t *testing.T) {
+	api := &sshKeyAPI{}
+	home := setupInProcessSSHKeyAPI(t, api)
+	firstKey := writeTestKeypair(t, filepath.Join(home, ".ssh"))
+
+	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", firstKey+".pub"); err != nil {
+		t.Fatalf("first push failed: %v\n%s", err, out)
+	}
+	// The adopted private key goes away behind the entry's back.
+	if err := os.Remove(firstKey); err != nil {
+		t.Fatal(err)
+	}
+
+	secondDir := filepath.Join(home, "other")
+	if err := os.MkdirAll(secondDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secondKey := writeTestKeypair(t, secondDir)
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "work", "--from-file", secondKey+".pub")
+	if err != nil {
+		t.Fatalf("second push failed: %v\n%s", err, out)
+	}
+
+	// Still not re-pointed — that is the rule, and a dead identity is not a
+	// licence to break it.
+	conf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(conf), "IdentityFile "+firstKey) {
+		t.Errorf("a dead identity was silently replaced:\n%s", conf)
+	}
+	if !strings.Contains(out, "missing or not owner-only") {
+		t.Errorf("output should say the entry names an unusable key: %s", out)
+	}
+	if !strings.Contains(out, "ssh-key create") {
+		t.Errorf("output should name the command that fixes it: %s", out)
+	}
+}
+
+// Same rule, the other way an identity stops being usable: OpenSSH refuses a
+// private key anyone but its owner can read, and so does `PrepareSessionTarget`
+// before it dials.
+func TestSSHKeyPushInProcess_ReportsARegisteredIdentityGoneWorldReadable(t *testing.T) {
+	api := &sshKeyAPI{}
+	home := setupInProcessSSHKeyAPI(t, api)
+	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
+
+	if out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", keyPath+".pub"); err != nil {
+		t.Fatalf("first push failed: %v\n%s", err, out)
+	}
+	if err := os.Chmod(keyPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
+		"--name", "laptop", "--from-file", keyPath+".pub")
+	if err != nil {
+		t.Fatalf("second push failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "missing or not owner-only") {
+		t.Errorf("output should say the entry names an unusable key: %s", out)
 	}
 }
 
 func TestSSHKeyPushInProcess_UploadsWithoutRegisteringWhenPrivateKeyIsMissing(t *testing.T) {
-	home := isolateSSHHome(t)
+	api := &sshKeyAPI{}
+	home := setupInProcessSSHKeyAPI(t, api)
 	// A .pub with no private half beside it: a legitimate thing to push (the
 	// private key may live on another machine), and nothing a usable local
 	// config can be written from.
 	pubPath, canonical := writeTestPubKey(t, t.TempDir(), "me@host")
-
-	api := &sshKeyAPI{}
-	setupInProcessSSHKeyAPI(t, api)
 
 	out, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
 		"--name", "laptop", "--from-file", pubPath)
@@ -973,16 +1073,14 @@ func TestSSHKeyPushInProcess_UploadsWithoutRegisteringWhenPrivateKeyIsMissing(t 
 }
 
 func TestSSHKeyPushInProcess_DoesNotRegisterWhenUploadRefused(t *testing.T) {
-	home := isolateSSHHome(t)
-	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
-
 	// A different key already stored under this name, so the upload is
 	// refused without --force.
 	api := &sshKeyAPI{existing: []map[string]string{
 		{"id": "specsec_old", "name": "laptop",
 			"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijkl", "scope": "user"},
 	}}
-	setupInProcessSSHKeyAPI(t, api)
+	home := setupInProcessSSHKeyAPI(t, api)
+	keyPath := writeTestKeypair(t, filepath.Join(home, ".ssh"))
 
 	_, err := runRootCommandOutput(t, "secret", "ssh-key", "push",
 		"--name", "laptop", "--from-file", keyPath+".pub")
@@ -1000,16 +1098,15 @@ func TestSSHKeyPushInProcess_DoesNotRegisterWhenUploadRefused(t *testing.T) {
 }
 
 func TestSSHKeygenInProcess_DoesNotPersistSessionWhenUploadRefused(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
 	// A key already stored under this name, with different material, so the
 	// upload is refused without --force.
 	api := &sshKeyAPI{existing: []map[string]string{
 		{"id": "specsec_old", "name": "default",
 			"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijkl", "scope": "user"},
 	}}
-	setupInProcessSSHKeyAPI(t, api)
+	// The home the assertion below reads has to be the one the command wrote
+	// to, so it comes from the setup rather than being set alongside it.
+	home := setupInProcessSSHKeyAPI(t, api)
 
 	_, err := runRootCommandOutput(t, "secret", "ssh-keygen")
 	if err == nil {
@@ -1030,8 +1127,14 @@ func TestSSHKeygenInProcess_DoesNotPersistSessionWhenUploadRefused(t *testing.T)
 }
 
 func TestSSHKeygenInProcess_DoesNotUploadWhenSessionConfigIsInvalid(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	// A different key is already stored under this name, so --force would
+	// replace it. If validation ran after the upload, the remote key would be
+	// gone while the local config still selected the old identity.
+	api := &sshKeyAPI{existing: []map[string]string{
+		{"id": "specsec_old", "name": "default",
+			"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijkl", "scope": "user"},
+	}}
+	home := setupInProcessSSHKeyAPI(t, api)
 
 	// An --import path containing whitespace is a perfectly valid file but a
 	// config `ConfigureSession` refuses, because OpenSSH cannot express it.
@@ -1044,15 +1147,6 @@ func TestSSHKeygenInProcess_DoesNotUploadWhenSessionConfigIsInvalid(t *testing.T
 		"-f", keyPath).CombinedOutput(); err != nil {
 		t.Fatalf("ssh-keygen: %v\n%s", err, out)
 	}
-
-	// A different key is already stored under this name, so --force would
-	// replace it. If validation ran after the upload, the remote key would be
-	// gone while the local config still selected the old identity.
-	api := &sshKeyAPI{existing: []map[string]string{
-		{"id": "specsec_old", "name": "default",
-			"public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijkl", "scope": "user"},
-	}}
-	setupInProcessSSHKeyAPI(t, api)
 
 	_, err := runRootCommandOutput(t, "secret", "ssh-keygen",
 		"--import", keyPath+".pub", "--force")

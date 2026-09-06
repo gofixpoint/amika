@@ -69,16 +69,19 @@ Reads ~/.ssh/amika_id_ed25519.pub unless --from-file names another file. Use
 The first push on a machine also registers the key locally, the way
 "ssh-key create" does: the managed SSH entry in ~/.ssh/amika.conf is written to
 authenticate with the private half beside the .pub file, and ~/.ssh/config is
-given the Include that pulls it in. That is what lets an app resolve an
-"amika" host alias on a machine where no sandbox command has run yet.
+given the Include that pulls it in. That is one of the two things an app needs
+before it can resolve an "amika" host alias on its own; the other is a
+host-key pin, which only "sandbox ssh", "sandbox code" and "scp" write today.
 
-Later pushes leave that entry alone. Uploaded keys are a set, so pushing a
+Later pushes leave the identity alone. Uploaded keys are a set, so pushing a
 second key authorizes it alongside the first; the entry names the one identity
 every connection authenticates with, and re-pointing it would cut off sandboxes
-provisioned against the previous key. Use "ssh-key create" to change it.
+provisioned against the previous key. Use "ssh-key create" to change it. Such a
+push still refreshes the generated config, so a deleted amika.conf or a stripped
+Include is restored.
 
 A .pub with no usable private key beside it is still uploaded; only the local
-registration is skipped.
+registration is skipped. A push that registers nothing needs no private key.
 
 A key is identified by its name. Re-uploading the same key material under an
 existing name is a no-op; replacing an existing name with different material
@@ -152,7 +155,20 @@ Examples:
 			// command cannot repair anyway.
 			writeErr := error(nil)
 			if planErr == nil {
-				writeErr = ssh.ConfigureSession(paths, plan.session)
+				if err := ssh.ConfigureSession(paths, plan.session); err != nil {
+					// Wrapped for the same reason the resolve errors are: the
+					// bare error can be `invalid Amika SSH host alias`, which
+					// names an alias nobody asked for.
+					writeErr = fmt.Errorf("regenerating the managed SSH config: %w", err)
+				}
+			}
+			if writeErr != nil {
+				// Stderr, and in JSON mode too, unlike every other line here.
+				// This one says the command wrote to the user's ~/.ssh and
+				// failed — a thing the response schema has no field for, and
+				// that a script should not have to infer from silence. AGENTS.md
+				// keeps stdout for the JSON value alone, not stderr.
+				fmt.Fprintln(cmd.ErrOrStderr(), writeErr)
 			}
 
 			if format.IsJSON() {
@@ -167,8 +183,11 @@ Examples:
 			fmt.Fprintf(out, "%s SSH public key %q from %s\n",
 				uploadVerb(status), summary.Name, fromFile)
 			// Said after the upload it qualifies, because the upload is what
-			// the reader asked for and it did happen.
-			fmt.Fprintln(out, sshEntryNotice(plan, planErr, writeErr))
+			// the reader asked for and it did happen. Empty when the write
+			// failed, which stderr has already reported.
+			if notice := sshEntryNotice(plan, planErr, writeErr); notice != "" {
+				fmt.Fprintln(out, notice)
+			}
 			return nil
 		},
 	}
@@ -187,6 +206,12 @@ type sshEntryPlan struct {
 	// key becomes it. False means one was already registered and this push
 	// leaves it selecting whatever it selected before.
 	adopted bool
+	// deadIdentity is set when an already-registered identity is no longer a
+	// key OpenSSH will use — deleted, or readable by anyone but its owner.
+	// Refusing to silently re-point is the rule; saying nothing while
+	// re-rendering a config that selects a missing file is not part of it, and
+	// this notice is the one place the reader could find out.
+	deadIdentity bool
 }
 
 // planSSHEntry decides what a push should register.
@@ -214,7 +239,10 @@ func planSSHEntry(paths basedir.Paths, publicKeyPath string) (sshEntryPlan, erro
 		return sshEntryPlan{}, err
 	}
 	if state.SessionConfig != nil {
-		return sshEntryPlan{session: *state.SessionConfig}, nil
+		return sshEntryPlan{
+			session:      *state.SessionConfig,
+			deadIdentity: !usableIdentity(state.SessionConfig.IdentityFile),
+		}, nil
 	}
 	session, err := localSSHEntryFor(paths, publicKeyPath)
 	if err != nil {
@@ -234,14 +262,33 @@ func sshEntryNotice(plan sshEntryPlan, planErr, writeErr error) string {
 	case planErr != nil:
 		return fmt.Sprintf("Left the managed SSH host entry alone: %v", planErr)
 	case writeErr != nil:
-		return fmt.Sprintf("Could not write the managed SSH host entry: %v", writeErr)
+		// Already reported on stderr, where a JSON caller can see it too.
+		return ""
 	case plan.adopted:
 		return fmt.Sprintf("Registered the managed SSH host entry; it authenticates with %s.",
 			plan.session.IdentityFile)
+	case plan.deadIdentity:
+		return fmt.Sprintf(
+			"The managed SSH host entry still names %s, which is missing or not owner-only; "+
+				"run \"amika secret ssh-key create\" to point it at a usable key.",
+			plan.session.IdentityFile)
 	default:
-		return fmt.Sprintf("The managed SSH host entry is unchanged; it authenticates with %s.",
+		// "Identity" rather than "entry": the generated config *is* rewritten,
+		// and a push against another control plane or from another binary
+		// legitimately changes what it holds. What this push did not touch is
+		// which private key it authenticates with.
+		return fmt.Sprintf("The managed SSH host entry still authenticates with %s.",
 			plan.session.IdentityFile)
 	}
+}
+
+// usableIdentity reports whether a private key path is one OpenSSH would
+// accept: a regular file, readable by nobody but its owner. The same test
+// `PrepareSessionTarget` applies before it dials, so a push cannot call an
+// identity fine that a later `sandbox ssh` will refuse.
+func usableIdentity(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0
 }
 
 // localSSHEntryFor resolves the managed SSH entry an uploaded public key

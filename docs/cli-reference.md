@@ -658,7 +658,11 @@ Re-pushing the *same* key material under an existing name is a no-op. Pushing *d
 
 That matters for anything that hands an `amika` host alias straight to OpenSSH without going through the CLI first, such as the `cmux://` and `cursor://` links the web app offers. `amika sandbox ssh` and `sandbox code` do not depend on it: they write the same entry themselves on their way through.
 
-**Later pushes leave the entry alone.** Uploaded keys are a set, so pushing a second key authorizes it alongside the first, while the entry names the one identity every connection authenticates with — and it is rendered with `IdentitiesOnly yes`, so re-pointing it would offer OpenSSH only the newest key and cut off sandboxes provisioned against the previous one. Use `amika secret ssh-key create` to change which identity is in effect. A repeat push rewrites the same entry from the same identity, so re-running it changes nothing.
+**The entry is one of two prerequisites, not the whole of one.** The generated block sets `StrictHostKeyChecking yes` against a dedicated known-hosts file, and that file is filled in by `sandbox ssh`, `sandbox code` and `scp` alone. So on a machine that has only ever pushed a key, another client can now resolve the alias but will still be refused for want of a host-key pin, until the sandbox has been reached from the CLI once.
+
+**Later pushes leave the identity alone.** Uploaded keys are a set, so pushing a second key authorizes it alongside the first, while the entry names the one identity every connection authenticates with. It is rendered with `IdentitiesOnly yes`, so re-pointing it would offer OpenSSH only the newest key and cut off sandboxes provisioned against the previous one. Use `amika secret ssh-key create` to change which identity is in effect.
+
+Such a push still regenerates the config from that identity, which is deliberate: a deleted `amika.conf` or a stripped `Include` is restored. Two things about it are not fixed, and neither is a bug: pushing while pointed at a different control plane adds that environment's block alongside the existing ones, and pushing from a different `amika` binary rewrites the `ProxyCommand` line to name it, exactly as a sandbox command would.
 
 A `.pub` whose matching private key is missing, encrypted, not ed25519, readable by others, or at a path OpenSSH cannot express is still uploaded; only the local registration is skipped, and the command says so. A push that is not registering anything needs no private key at all.
 
