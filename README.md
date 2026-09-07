@@ -24,13 +24,13 @@
 
 ## Multiplayer cloud workstations for coding agents and humans
 
-Amika lets you **provision VMs on any cloud or computer, load them with your favorite agent(s), and then remote control the agents from any chat surface or app.**
+Amika lets you **provision VMs on any cloud or computer, load them with your favorite agent(s) and your git repos, and then remote control the agents from any chat surface or app.**
 
 Each VM is configured as **a sandboxed workstation tuned for coding agents and humans** to collaborate in.
 
-- **Run anywhere.** Use any sandbox provider (E2B, Daytona, Vercel, etc.), Kubernetes, or your own computer.
+- **Run anywhere.** create workstations on Kubernetes nodes, sandbox clouds (E2B, Daytona, Vercel, etc.), or (soon) your own computer.
 - **Bring any agent.** Use Codex, Claude, OpenCode, Pi, or your own agent with existing subscriptions and API keys.
-- **Control from anywhere.** Use chat apps, the web UI, API, CLI, SSH, or your editor.
+- **Control from anywhere.** Use chat apps, the web UI, API, CLI, SSH, or an app like Cursor or the Codex app
 
 ![Amika sandbox dashboard showing OpenCode and Pi coding agents, exposed services, and sandbox controls.](docs/assets/amika-sandbox-dashboard.png)
 
