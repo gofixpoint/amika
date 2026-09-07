@@ -8,10 +8,28 @@ import (
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/auth"
+	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
+
+// ensureSSHSessionConfig refreshes the managed SSH config for the control
+// plane just logged in to, so a user whose public key was uploaded through
+// the web UI (and who therefore never runs `amika secret ssh-keygen`) still
+// ends up with the session block `amika sandbox ssh` needs.
+//
+// A failure only warns. The credential is already stored by this point, so
+// returning an error would report a login that actually succeeded as failed,
+// and every command that needs the block rewrites it on use anyway. The
+// warning goes to stderr to keep `-o json` stdout a single JSON value.
+func ensureSSHSessionConfig(cmd *cobra.Command) {
+	if err := ssh.EnsureSessionConfig(basedir.New("")); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"Warning: could not update the managed SSH config (%v); run `amika secret ssh-keygen` to retry.\n", err)
+	}
+}
 
 // logoutJSON is the JSON representation of `auth logout`, reporting which
 // stored credentials were cleared.
@@ -126,6 +144,7 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 		if err != nil {
 			return err
 		}
+		ensureSSHSessionConfig(cmd)
 		fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s\n", session.Email)
 		return nil
 	},
@@ -150,6 +169,7 @@ func loginWithAPIKeyFile(cmd *cobra.Command, path string, format output.Format) 
 	if err := auth.SaveAPIKey(auth.APIKeyAuth{Key: key, StoredAt: time.Now().UTC()}); err != nil {
 		return fmt.Errorf("saving api key: %w", err)
 	}
+	ensureSSHSessionConfig(cmd)
 	if format.IsJSON() {
 		return format.JSON(cmd.OutOrStdout(), authStatusJSON{Authenticated: true, Method: "stored_api_key", Warnings: []string{}})
 	}
