@@ -417,6 +417,23 @@ func PrepareSessionTarget(
 	return alias, nil
 }
 
+// EnsureSessionConfig writes the wildcard session block for the environment
+// this process points at, using whichever identity is already configured
+// without generating, importing, or requiring any key material.
+//
+// It exists so logging in also repairs the managed SSH config. A user who
+// uploads their public key through the web UI never runs
+// `amika secret ssh-keygen`, so nothing would have written the block, and the
+// aliases `amika sandbox ssh` hands to system OpenSSH would resolve against
+// whatever the user's own `~/.ssh/config` happens to say.
+func EnsureSessionConfig(paths basedir.Paths) error {
+	session, err := resolveSessionConfig(paths)
+	if err != nil {
+		return err
+	}
+	return ConfigureSession(paths, session)
+}
+
 // resolveSessionConfig returns the persisted session identity, or the default
 // one built from the standard identity and known-hosts paths. The persisted
 // value is honored so an identity imported by `amika ssh-keygen --import` keeps

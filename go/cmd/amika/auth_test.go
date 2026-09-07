@@ -13,6 +13,9 @@ import (
 func TestAuthLogin_APIKeyFile(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "")
+	// A successful login writes the managed SSH config, so HOME has to be
+	// redirected or the test would edit the developer's own ~/.ssh.
+	t.Setenv("HOME", t.TempDir())
 
 	keyPath := filepath.Join(t.TempDir(), "key")
 	if err := os.WriteFile(keyPath, []byte("sk_abc\n"), 0600); err != nil {
@@ -66,6 +69,7 @@ func TestAuthLogin_RefusesWhenAlreadyLoggedIn(t *testing.T) {
 func TestAuthLogin_APIKeyFileIgnoresStoredSession(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "")
+	t.Setenv("HOME", t.TempDir())
 
 	// A stored session — valid or not — must not block API-key login.
 	// runmode.DefaultAuthChecker resolves API keys ahead of sessions, so they
@@ -106,6 +110,8 @@ func TestAuthLogout_RecoversFromCorruptFiles(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("AMIKA_STATE_DIRECTORY", stateDir)
 	t.Setenv("AMIKA_API_KEY", "")
+	// The recovery login at the end writes the managed SSH config.
+	t.Setenv("HOME", t.TempDir())
 
 	// Write garbage where each credential file is expected. Logout must
 	// still succeed so the user can recover and log back in.
@@ -364,5 +370,89 @@ func TestAuthStatus_NotLoggedIn(t *testing.T) {
 	}
 	if !strings.Contains(out, "Not logged in") {
 		t.Fatalf("unexpected status: %q", out)
+	}
+}
+
+// A login has to leave a usable SSH host block behind, so a user whose public
+// key was uploaded through the web UI — and who therefore never runs
+// `secret ssh-keygen` — can still reach a sandbox.
+func TestAuthLogin_WritesManagedSSHSessionBlock(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	t.Setenv("AMIKA_API_URL", "https://app.amika.dev")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Pin the ProxyCommand: without an override it names the test binary.
+	binaryPath := filepath.Join(t.TempDir(), "amika")
+	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write stand-in binary: %v", err)
+	}
+	t.Setenv("AMIKA_BINARY_PATH", binaryPath)
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_abc\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	if out, err := runRootCommandOutput(t, "auth", "login", "--api-key-file", keyPath); err != nil {
+		t.Fatalf("login: %v (out=%q)", err, out)
+	}
+
+	conf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	want := "Host *.app-amika-dev.amika\n" +
+		"  User amika\n" +
+		"  IdentityFile " + filepath.Join(home, ".ssh", "amika_id_ed25519") + "\n" +
+		"  IdentitiesOnly yes\n" +
+		"  StrictHostKeyChecking yes\n" +
+		"  UserKnownHostsFile " + filepath.Join(home, ".ssh", "amika_known_hosts") + "\n" +
+		"  ProxyCommand " + binaryPath + " plumbing ssh-stdio-proxy %h\n" +
+		"  ServerAliveInterval 15\n" +
+		"  ServerAliveCountMax 3\n"
+	if !strings.Contains(string(conf), want) {
+		t.Fatalf("amika.conf missing the session block:\nwant:\n%s\ngot:\n%s", want, conf)
+	}
+
+	sshConfig, err := os.ReadFile(filepath.Join(home, ".ssh", "config"))
+	if err != nil {
+		t.Fatalf("read ssh config: %v", err)
+	}
+	if !strings.Contains(string(sshConfig), "Include amika.conf") {
+		t.Fatalf("~/.ssh/config missing the Include line:\n%s", sshConfig)
+	}
+}
+
+// The credential is already stored by the time the SSH config is written, so a
+// config that cannot be written must warn rather than report the login as
+// failed. Every command that needs the block rewrites it on use anyway.
+func TestAuthLogin_WarnsButSucceedsWhenSSHConfigCannotBeWritten(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// A relative override cannot be embedded in a ProxyCommand, so resolving
+	// the session config fails before anything is written.
+	t.Setenv("AMIKA_BINARY_PATH", "relative/amika")
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_abc\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	out, err := runRootCommandOutput(t, "auth", "login", "--api-key-file", keyPath)
+	if err != nil {
+		t.Fatalf("login must still succeed: %v (out=%q)", err, out)
+	}
+	if !strings.Contains(out, "could not update the managed SSH config") {
+		t.Errorf("no warning about the unwritable SSH config: %q", out)
+	}
+	if !strings.Contains(out, "Stored API key") {
+		t.Errorf("login did not report success: %q", out)
+	}
+
+	loaded, loadErr := auth.LoadAPIKey()
+	if loadErr != nil || loaded == nil || loaded.Key != "sk_abc" {
+		t.Fatalf("api key not stored: %+v (%v)", loaded, loadErr)
 	}
 }

@@ -546,3 +546,83 @@ func TestLegacySessionStateLosesItsEnvironmentAgnosticWildcard(t *testing.T) {
 		t.Errorf("amika.conf missing the resolved ProxyCommand:\n%s", conf)
 	}
 }
+
+// A user who uploads their public key through the web UI never runs
+// `secret ssh-keygen`, so nothing has created key material locally. The block
+// still has to be written, naming the default paths the key will land in.
+func TestEnsureSessionConfigWritesTheBlockWithoutAnyKeyMaterial(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "https://app.amika.dev")
+	binary := testBinary(t, "amika")
+
+	if err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+
+	identityPath, _ := paths.SSHIdentityFile()
+	knownHostsPath, _ := paths.SSHKnownHostsFile()
+	if _, err := os.Stat(identityPath); !os.IsNotExist(err) {
+		t.Fatalf("EnsureSessionConfig must not create key material: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	want := "Host *.app-amika-dev.amika\n" +
+		"  User amika\n" +
+		"  IdentityFile " + identityPath + "\n" +
+		"  IdentitiesOnly yes\n" +
+		"  StrictHostKeyChecking yes\n" +
+		"  UserKnownHostsFile " + knownHostsPath + "\n" +
+		"  ProxyCommand " + binary + " plumbing ssh-stdio-proxy %h\n" +
+		"  ServerAliveInterval 15\n" +
+		"  ServerAliveCountMax 3\n"
+	if !strings.Contains(string(conf), want) {
+		t.Errorf("amika.conf missing the session block:\nwant:\n%s\ngot:\n%s", want, conf)
+	}
+
+	// The block only takes effect once ~/.ssh/config pulls the file in.
+	sshConfigPath, _ := paths.SSHConfigFile()
+	sshConfig, err := os.ReadFile(sshConfigPath)
+	if err != nil {
+		t.Fatalf("read ssh config: %v", err)
+	}
+	if !strings.Contains(string(sshConfig), "Include "+basedir.SSHAmikaConfigName()) {
+		t.Errorf("ssh config missing the Include line:\n%s", sshConfig)
+	}
+}
+
+// Ensuring the block must not silently retarget an identity imported by
+// `secret ssh-keygen --import`, whose private key lives outside the default
+// path and is the only one the control plane holds the public half of.
+func TestEnsureSessionConfigKeepsAnImportedIdentity(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "https://app.amika.dev")
+	testBinary(t, "amika")
+
+	imported := SessionConfig{
+		IdentityFile:   "/home/user/keys/work_ed25519",
+		KnownHostsFile: "/home/user/keys/amika_known_hosts",
+	}
+	if err := ConfigureSession(paths, imported); err != nil {
+		t.Fatalf("ConfigureSession: %v", err)
+	}
+	if err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	if !strings.Contains(string(conf), "  IdentityFile "+imported.IdentityFile+"\n") {
+		t.Errorf("imported identity was replaced:\n%s", conf)
+	}
+	defaultIdentity, _ := paths.SSHIdentityFile()
+	if strings.Contains(string(conf), defaultIdentity) {
+		t.Errorf("amika.conf reverted to the default identity:\n%s", conf)
+	}
+}

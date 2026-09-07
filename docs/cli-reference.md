@@ -458,6 +458,12 @@ Log in to Amika via a device authorization flow. Opens a browser for you to auth
 amika auth login
 ```
 
+A successful login also writes the managed SSH host block for the control plane
+you logged in to (`~/.ssh/amika.conf`, included from `~/.ssh/config`), so
+`amika sandbox ssh` and `amika scp` work even if your public key was uploaded
+through the web UI instead of by `amika secret ssh-keygen`. The block only
+describes where the key material lives; it does not create a keypair.
+
 See [auth.md](auth.md) for details on the login flow and session storage.
 
 ### `amika auth status`
