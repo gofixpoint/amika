@@ -284,7 +284,8 @@ amika sandbox ssh -N -D 1080 my-sandbox
 ```
 
 Local (`-L`) and dynamic (`-D`) forwarding are supported. Remote forwarding
-(`-R`), agent forwarding (`-A`), and X11 forwarding are not.
+(`-R`), agent forwarding (`-A`), and X11 forwarding are not: the sandbox's own
+SSH daemon refuses them, so no local config or `-o` override enables them.
 
 `-o` after the subcommand is ssh's ssh_config option, so amika's
 `-o`/`--output` is not available there; written before `ssh` it is rejected
@@ -414,6 +415,83 @@ A copy naming no sandbox at all is simply forwarded to the system `scp`.
 
 ---
 
+## The managed SSH config
+
+`sandbox ssh`, `sandbox code`, and `scp` all connect by handing system OpenSSH
+a hostname such as `my-sandbox.sb_123.app-amika-dev.amika`. Every setting that
+connection needs comes from a block Amika generates in `~/.ssh/amika.conf`,
+which `~/.ssh/config` pulls in through an `Include` line. The file
+is regenerated from Amika's own state whenever a command prepares an SSH
+target, so edits to it are lost. `amika auth login` and
+`amika secret ssh-keygen` both write it; `auth login` names the files it
+touched.
+
+| Option                                        | Value                | Why                                                                          |
+| --------------------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
+| `User`                                        | `amika`              | The sandbox account                                                          |
+| `IdentityFile` / `IdentitiesOnly`             | your Amika key       | Offer the key the control plane holds, rather than every key in your agent   |
+| `StrictHostKeyChecking` / `UserKnownHostsFile`| `yes`, Amika's file  | Pin each sandbox host key in a dedicated file, so a change fails closed      |
+| `ProxyCommand`                                | `amika plumbing …`   | Carry the session over Amika's WebSocket transport instead of a TCP dial     |
+| `ServerAliveInterval` / `ServerAliveCountMax` | `15`, `3`            | Notice a dead transport instead of hanging                                   |
+
+These are defaults, not rules. OpenSSH resolves around 90 options per
+connection, merging across every block whose pattern matches the hostname and
+keeping the **first** value it finds for most of them. Amika appends its
+`Include` at the end of `~/.ssh/config`, so anything already in that file
+wins:
+
+```
+Host *
+  StrictHostKeyChecking no     # this wins for sandboxes too
+
+# Amika's defaults for sandbox hosts (*.amika). ssh uses the first value it
+# finds for each option, so settings ABOVE this line override them; settings
+# below it do not. "Host *" scopes the include so it is not swallowed by
+# whatever Host block happens to precede it.
+Host *
+Include amika.conf
+```
+
+That is deliberate: your own SSH config governs every connection your machine
+makes, and Amika does not overrule it. It does mean a wildcard stanza of your
+own can weaken a sandbox connection (turning off host-key checking, say) or
+break it outright (a `Host *` `ProxyCommand` replaces Amika's transport). If
+`sandbox ssh` misbehaves and you have wildcard blocks, check them first with
+`ssh -G <alias>`, which prints the settings OpenSSH actually resolved.
+
+To override an Amika default, put your setting **above** the `Include` line,
+or pass it on the command line, which outranks every config file:
+
+```bash
+amika sandbox ssh -o ServerAliveInterval=60 my-sandbox
+```
+
+Three exceptions to keep in mind.
+
+**A few options accumulate rather than resolving to one value**, `IdentityFile`
+among them. A wildcard `IdentityFile` of your own is therefore tried
+*alongside* Amika's key, not instead of it, so ssh may offer both. `ssh -G
+<alias>` lists every identity that will be tried.
+
+**Your override has to sit in a first-pass block.** OpenSSH re-parses the
+config in a second pass for the `final` and `canonical` match predicates, by
+which point the first pass has already assigned the scalar options. A
+`Match final` or `Match canonical` block therefore cannot override these
+defaults from either side of the `Include`. Use a plain `Host` or `Match`
+block above it, or `-o` on the command line.
+
+**Amika only chooses the position when it first adds the line.** If your config
+already contains `Include amika.conf` it is left exactly where it is, because
+moving a line in this file is a bigger liberty than adding one. Installations
+set up before this behavior changed have the include near the **top**, where
+Amika's defaults win instead of yielding. To switch to the current behavior,
+move the `Include` line (and the `Host *` above it, if present) to the end of
+the file yourself.
+
+Under WSL, `sandbox code` mirrors this file (and the key material it names) to
+the Windows side so a Windows editor's own OpenSSH can reach the sandbox. The
+mirrored block carries the same settings.
+
 ## `amika volume`
 
 Manage tracked Docker volumes used by sandboxes.
@@ -458,11 +536,22 @@ Log in to Amika via a device authorization flow. Opens a browser for you to auth
 amika auth login
 ```
 
-A successful login also writes the managed SSH host block for the control plane
-you logged in to (`~/.ssh/amika.conf`, included from `~/.ssh/config`), so
-`amika sandbox ssh` and `amika scp` work even if your public key was uploaded
-through the web UI instead of by `amika secret ssh-keygen`. The block only
-describes where the key material lives; it does not create a keypair.
+A successful login also writes [the managed SSH config](#the-managed-ssh-config)
+for the control plane you logged in to, so a bare `ssh <alias>` works even if
+your public key was uploaded through the web UI instead of by
+`amika secret ssh-keygen`. Login prints the two files it touched, since
+`~/.ssh/config` governs every SSH connection your machine makes and is often a
+symlink into a dotfiles repo.
+
+The block records where your key material lives; it never creates a keypair.
+If no key is there yet, login says so and names both ways to fix it:
+
+```
+Updated ~/.ssh/amika.conf, included from ~/.ssh/config.
+No SSH identity at ~/.ssh/amika_id_ed25519 yet, so `amika sandbox ssh` will not connect until you add one:
+  amika secret ssh-keygen                                 # create a new key
+  amika secret ssh-keygen --import <path>.pub             # use a key you already have
+```
 
 See [auth.md](auth.md) for details on the login flow and session storage.
 
@@ -624,6 +713,8 @@ amika secret ssh-keygen --import ~/.ssh/id_ed25519.pub
 | `--force`         | `false`   | Replace an existing key of the same name                       |
 
 Re-running this command is safe: an existing keypair at `~/.ssh/amika_id_ed25519` is reused rather than regenerated, so the upload is a no-op. `--force` is only needed when the name already holds *different* key material (for example when switching `--import` targets).
+
+`--import` is also the fix when your public key is already registered (you uploaded it through the web UI, say) but your private key lives somewhere other than `~/.ssh/amika_id_ed25519`. Pointing it at that key's `.pub` re-uploads identical material as a no-op and updates [the managed SSH config](#the-managed-ssh-config) to name your key rather than the default path.
 
 `amika secret ssh-key create` is an alias for this command.
 

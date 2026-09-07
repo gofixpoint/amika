@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -384,10 +385,7 @@ func TestAuthLogin_WritesManagedSSHSessionBlock(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	// Pin the ProxyCommand: without an override it names the test binary.
-	binaryPath := filepath.Join(t.TempDir(), "amika")
-	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("write stand-in binary: %v", err)
-	}
+	binaryPath := writeStandInBinary(t)
 	t.Setenv("AMIKA_BINARY_PATH", binaryPath)
 
 	keyPath := filepath.Join(t.TempDir(), "key")
@@ -455,4 +453,127 @@ func TestAuthLogin_WarnsButSucceedsWhenSSHConfigCannotBeWritten(t *testing.T) {
 	if loadErr != nil || loaded == nil || loaded.Key != "sk_abc" {
 		t.Fatalf("api key not stored: %+v (%v)", loaded, loadErr)
 	}
+}
+
+// `~/.ssh/config` governs every SSH connection the machine makes, and it is
+// often a symlink into a dotfiles repo, so a login that edits it has to say
+// which files it touched.
+func TestAuthLogin_NamesTheSSHFilesItTouched(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AMIKA_BINARY_PATH", writeStandInBinary(t))
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_abc\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	out, err := runRootCommandOutput(t, "auth", "login", "--api-key-file", keyPath)
+	if err != nil {
+		t.Fatalf("login: %v (out=%q)", err, out)
+	}
+	for _, want := range []string{
+		filepath.Join(home, ".ssh", "amika.conf"),
+		filepath.Join(home, ".ssh", "config"),
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("login did not disclose %q: %q", want, out)
+		}
+	}
+}
+
+// The block names an identity whether or not one exists. Saying so at login
+// beats letting the first `sandbox ssh` be where the user finds out, and the
+// --import route has to be offered because a UI-uploaded key already has a
+// private half that only --import points the config at.
+func TestAuthLogin_HintsBothFixesWhenNoIdentityExists(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AMIKA_BINARY_PATH", writeStandInBinary(t))
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_abc\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	out, err := runRootCommandOutput(t, "auth", "login", "--api-key-file", keyPath)
+	if err != nil {
+		t.Fatalf("login: %v (out=%q)", err, out)
+	}
+	for _, want := range []string{
+		"No SSH identity at",
+		"amika secret ssh-keygen",
+		"--import",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("login output missing %q: %q", want, out)
+		}
+	}
+}
+
+// With an identity in place there is nothing to fix, so the hint must not
+// fire — an unconditional warning trains users to ignore it.
+func TestAuthLogin_NoIdentityHintWhenOneExists(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AMIKA_BINARY_PATH", writeStandInBinary(t))
+
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	identity := filepath.Join(home, ".ssh", "amika_id_ed25519")
+	if err := os.WriteFile(identity, []byte("key material\n"), 0o600); err != nil {
+		t.Fatalf("write identity: %v", err)
+	}
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_abc\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	out, err := runRootCommandOutput(t, "auth", "login", "--api-key-file", keyPath)
+	if err != nil {
+		t.Fatalf("login: %v (out=%q)", err, out)
+	}
+	if strings.Contains(out, "No SSH identity at") {
+		t.Errorf("hint fired despite an identity being present: %q", out)
+	}
+}
+
+// In JSON mode stdout carries only the JSON value, so neither the disclosure
+// nor the hint may leak into it.
+func TestAuthLoginJSON_KeepsStdoutASingleJSONValue(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AMIKA_BINARY_PATH", writeStandInBinary(t))
+
+	keyPath := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyPath, []byte("sk_abc\n"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	out, err := runRootCommandOutput(t, "auth", "login", "--api-key-file", keyPath, "-o", "json")
+	if err != nil {
+		t.Fatalf("login: %v (out=%q)", err, out)
+	}
+	var status authStatusJSON
+	if jsonErr := json.Unmarshal([]byte(out), &status); jsonErr != nil {
+		t.Fatalf("stdout is not a single JSON value (%v): %q", jsonErr, out)
+	}
+	if !status.Authenticated || status.Method != "stored_api_key" {
+		t.Errorf("unexpected status: %+v", status)
+	}
+}
+
+// writeStandInBinary creates a file that passes the ProxyCommand path checks,
+// so the rendered config does not name the test binary.
+func writeStandInBinary(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "amika")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write stand-in binary: %v", err)
+	}
+	return path
 }
