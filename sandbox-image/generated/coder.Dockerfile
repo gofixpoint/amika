@@ -6,7 +6,7 @@ FROM ubuntu:${UBUNTU_TAG}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
-ARG GIT_VERSION=2.43.0
+ARG GIT_VERSION=2.55.0
 COPY sandbox-image/steps/10-os-packages.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
@@ -15,14 +15,14 @@ COPY sandbox-image/steps/20-static-config.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
     && rm -rf /opt/amika-build
 
-ARG NODE_VERSION=22.19.0
-ARG GH_VERSION=2.76.2
+ARG NODE_VERSION=24.20.0
+ARG GH_VERSION=2.98.0
 COPY sandbox-image/steps/30-node-gh.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
-ARG PNPM_VERSION=10.15.1
-ARG TYPESCRIPT_VERSION=5.9.2
-ARG TSX_VERSION=4.20.3
+ARG PNPM_VERSION=12.1.0
+ARG TYPESCRIPT_VERSION=7.0.2
+ARG TSX_VERSION=4.23.13
 COPY sandbox-image/steps/40-npm-toolchain.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
@@ -39,18 +39,18 @@ COPY sandbox-image/steps/70-hook-assets.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
     && rm -rf /opt/amika-build
 
-ARG CLAUDE_CODE_VERSION=2.1.224
-ARG CODEX_VERSION=0.147.0
-ARG OPENCODE_VERSION=1.18.4
-ARG PI_VERSION=0.84.1
+ARG CLAUDE_CODE_VERSION=2.1.252
+ARG CODEX_VERSION=0.151.0
+ARG OPENCODE_VERSION=1.18.25
+ARG PI_VERSION=0.84.4
 COPY sandbox-image/steps/80-agent-clis.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
-ARG PI_WEB_VERSION=0.8.9
+ARG PI_WEB_VERSION=0.8.11
 COPY sandbox-image/steps/82-pi-web.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
-ARG AMIKA_VERSION=0.16.1
+ARG AMIKA_VERSION=0.18.0
 ARG AMIKALOG_VERSION=0.2.0
 ARG AMIKAD_VERSION=0.1.0
 COPY sandbox-image/steps/85-amika-clis.sh /opt/amika-build/step.sh
