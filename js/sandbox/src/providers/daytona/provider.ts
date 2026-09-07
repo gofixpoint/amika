@@ -57,9 +57,8 @@ export default defineProvider(daytonaCapabilities, (config: DaytonaConfig) => ({
     create: (ctx, input) => createDaytonaSandbox(ctx, config, input),
     delete: (id) => deleteDaytonaSandbox(config, id),
 
-    // Daytona persists the auto-stop interval server-side (set at create), so
-    // it does not need to be re-applied on start.
-    start: (id) => startDaytonaSandbox(config, id),
+    start: (id, autoStopInterval) =>
+      startDaytonaSandbox(config, id, autoStopInterval),
     stop: (id) => stopDaytonaSandbox(config, id),
     getState: (id) => getDaytonaSandboxState(config, id),
     mapState: mapDaytonaSandboxState,
