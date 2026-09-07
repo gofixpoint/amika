@@ -286,7 +286,15 @@ var sandboxCreateCmd = &cobra.Command{
 			Branch:      effectiveBranch,
 		}
 		if err := store.Save(info); err != nil {
-			return fmt.Errorf("sandbox created but failed to save state: %w", err)
+			rollbackVolumes()
+			// The sandbox record is the source of truth for every other
+			// command, so a saved-failed create must not leave the container
+			// (or its mounts) behind: the next run would fail on "docker
+			// name already exists" with no way to reach the orphan.
+			if rmErr := sandbox.RemoveDockerSandbox(name); rmErr != nil {
+				return fmt.Errorf("sandbox created but failed to save state: %v; cleanup of container %q failed: %w", err, name, rmErr)
+			}
+			return fmt.Errorf("sandbox created but failed to save state, the container was removed: %w", err)
 		}
 		rb.Disarm()
 

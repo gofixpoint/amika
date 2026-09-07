@@ -181,7 +181,15 @@ func (s *serviceImpl) CreateSandbox(_ context.Context, req CreateSandboxRequest)
 		Branch:      req.Branch,
 	}
 	if err := s.sandboxes.Save(info); err != nil {
-		return Sandbox{}, fmt.Errorf("%w: %v", ErrInternal, err)
+		cleanupSetupScript()
+		cleanupGitRepo()
+		// Like the CLI path, never leave a container with no sandbox record:
+		// retries would collide on the container name with no way to reach
+		// the orphan.
+		if rmErr := sandbox.RemoveDockerSandbox(name); rmErr != nil {
+			return Sandbox{}, fmt.Errorf("%w: failed to save sandbox state: %v; cleanup of container %q failed: %v", ErrInternal, err, name, rmErr)
+		}
+		return Sandbox{}, fmt.Errorf("%w: failed to save sandbox state, created container removed: %v", ErrInternal, err)
 	}
 	publicMounts := toMounts(info.Mounts)
 	return Sandbox{
