@@ -99,7 +99,7 @@
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
           "versions": {
-            "GIT_VERSION": "2.43.0"
+            "GIT_VERSION": "2.55.0"
           }
         },
         {
@@ -116,8 +116,8 @@
           "id": "node-gh",
           "script": "steps/30-node-gh.sh",
           "versions": {
-            "GH_VERSION": "2.76.2",
-            "NODE_VERSION": "22.19.0"
+            "GH_VERSION": "2.98.0",
+            "NODE_VERSION": "24.20.0"
           }
         },
         {
@@ -125,9 +125,9 @@
           "id": "npm-toolchain",
           "script": "steps/40-npm-toolchain.sh",
           "versions": {
-            "PNPM_VERSION": "10.15.1",
-            "TSX_VERSION": "4.20.3",
-            "TYPESCRIPT_VERSION": "5.9.2"
+            "PNPM_VERSION": "12.1.0",
+            "TSX_VERSION": "4.23.13",
+            "TYPESCRIPT_VERSION": "7.0.2"
           }
         },
         {
@@ -169,10 +169,10 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.224",
-            "CODEX_VERSION": "0.147.0",
-            "OPENCODE_VERSION": "1.18.4",
-            "PI_VERSION": "0.84.1"
+            "CLAUDE_CODE_VERSION": "2.1.252",
+            "CODEX_VERSION": "0.151.0",
+            "OPENCODE_VERSION": "1.18.25",
+            "PI_VERSION": "0.84.4"
           }
         },
         {
@@ -180,7 +180,7 @@
           "id": "pi-web",
           "script": "steps/82-pi-web.sh",
           "versions": {
-            "PI_WEB_VERSION": "0.8.9"
+            "PI_WEB_VERSION": "0.8.11"
           }
         },
         {
@@ -190,7 +190,7 @@
           "versions": {
             "AMIKAD_VERSION": "0.1.0",
             "AMIKALOG_VERSION": "0.2.0",
-            "AMIKA_VERSION": "0.16.1"
+            "AMIKA_VERSION": "0.18.0"
           }
         },
         {
@@ -237,7 +237,7 @@
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
           "versions": {
-            "GIT_VERSION": "2.43.0"
+            "GIT_VERSION": "2.55.0"
           }
         },
         {
@@ -254,8 +254,8 @@
           "id": "node-gh",
           "script": "steps/30-node-gh.sh",
           "versions": {
-            "GH_VERSION": "2.76.2",
-            "NODE_VERSION": "22.19.0"
+            "GH_VERSION": "2.98.0",
+            "NODE_VERSION": "24.20.0"
           }
         },
         {
@@ -263,9 +263,9 @@
           "id": "npm-toolchain",
           "script": "steps/40-npm-toolchain.sh",
           "versions": {
-            "PNPM_VERSION": "10.15.1",
-            "TSX_VERSION": "4.20.3",
-            "TYPESCRIPT_VERSION": "5.9.2"
+            "PNPM_VERSION": "12.1.0",
+            "TSX_VERSION": "4.23.13",
+            "TYPESCRIPT_VERSION": "7.0.2"
           }
         },
         {
@@ -307,10 +307,10 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.224",
-            "CODEX_VERSION": "0.147.0",
-            "OPENCODE_VERSION": "1.18.4",
-            "PI_VERSION": "0.84.1"
+            "CLAUDE_CODE_VERSION": "2.1.252",
+            "CODEX_VERSION": "0.151.0",
+            "OPENCODE_VERSION": "1.18.25",
+            "PI_VERSION": "0.84.4"
           }
         },
         {
@@ -318,7 +318,7 @@
           "id": "pi-web",
           "script": "steps/82-pi-web.sh",
           "versions": {
-            "PI_WEB_VERSION": "0.8.9"
+            "PI_WEB_VERSION": "0.8.11"
           }
         },
         {
@@ -328,7 +328,7 @@
           "versions": {
             "AMIKAD_VERSION": "0.1.0",
             "AMIKALOG_VERSION": "0.2.0",
-            "AMIKA_VERSION": "0.16.1"
+            "AMIKA_VERSION": "0.18.0"
           }
         },
         {
