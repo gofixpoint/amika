@@ -13,6 +13,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/auth"
 	"github.com/gofixpoint/amika/go/internal/materialize"
 	"github.com/gofixpoint/amika/go/internal/ports"
+	"github.com/gofixpoint/amika/go/internal/services"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 )
 
@@ -368,8 +369,9 @@ func normalizePortBindings(in []amika.PortBinding) ([]amika.PortBinding, error) 
 		if p.HostPort < 1 || p.HostPort > 65535 {
 			return nil, fmt.Errorf("%w: HostPort %d must be between 1 and 65535", amika.ErrInvalidArgument, p.HostPort)
 		}
-		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
-			return nil, fmt.Errorf("%w: ContainerPort %d must be between 1 and 65535", amika.ErrInvalidArgument, p.ContainerPort)
+		// Only the container side is reserved (see services.ValidatePort).
+		if err := services.ValidatePort(p.ContainerPort); err != nil {
+			return nil, fmt.Errorf("%w: %v", amika.ErrInvalidArgument, err)
 		}
 		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
 		if protocol == "" {
