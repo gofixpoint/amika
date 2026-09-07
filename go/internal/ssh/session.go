@@ -399,9 +399,17 @@ func PrepareSessionTarget(
 	}
 	// A world- or group-readable private key is refused rather than used:
 	// OpenSSH would reject it anyway, and the clearer error names the fix.
+	//
+	// Both fixes are named because the likelier one is not the obvious one: a
+	// user whose public key was uploaded through the web UI already has a
+	// keypair, and "run ssh-keygen" reads as an instruction to throw it away.
 	identityInfo, statErr := os.Stat(sessionConfig.IdentityFile)
 	if statErr != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("SSH identity is missing or unsafe; run %q", "amika secret ssh-keygen")
+		return "", fmt.Errorf(
+			"SSH identity %s is missing or unsafe; run %q to create one, or %q to use a key you already have",
+			sessionConfig.IdentityFile,
+			"amika secret ssh-keygen",
+			"amika secret ssh-keygen --import <path>.pub")
 	}
 	if err := ConfigureSession(paths, sessionConfig); err != nil {
 		return "", err
@@ -419,19 +427,24 @@ func PrepareSessionTarget(
 
 // EnsureSessionConfig writes the wildcard session block for the environment
 // this process points at, using whichever identity is already configured
-// without generating, importing, or requiring any key material.
+// without generating, importing, or requiring any key material. It returns
+// the session it recorded, so a caller can tell the user which identity the
+// block now names and whether that file is actually there yet.
 //
 // It exists so logging in also repairs the managed SSH config. A user who
 // uploads their public key through the web UI never runs
 // `amika secret ssh-keygen`, so nothing would have written the block, and the
 // aliases `amika sandbox ssh` hands to system OpenSSH would resolve against
 // whatever the user's own `~/.ssh/config` happens to say.
-func EnsureSessionConfig(paths basedir.Paths) error {
+func EnsureSessionConfig(paths basedir.Paths) (SessionConfig, error) {
 	session, err := resolveSessionConfig(paths)
 	if err != nil {
-		return err
+		return SessionConfig{}, err
 	}
-	return ConfigureSession(paths, session)
+	if err := ConfigureSession(paths, session); err != nil {
+		return SessionConfig{}, err
+	}
+	return session, nil
 }
 
 // resolveSessionConfig returns the persisted session identity, or the default

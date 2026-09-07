@@ -555,7 +555,7 @@ func TestEnsureSessionConfigWritesTheBlockWithoutAnyKeyMaterial(t *testing.T) {
 	t.Setenv(config.EnvAPIURL, "https://app.amika.dev")
 	binary := testBinary(t, "amika")
 
-	if err := EnsureSessionConfig(paths); err != nil {
+	if _, err := EnsureSessionConfig(paths); err != nil {
 		t.Fatalf("EnsureSessionConfig: %v", err)
 	}
 
@@ -609,7 +609,7 @@ func TestEnsureSessionConfigKeepsAnImportedIdentity(t *testing.T) {
 	if err := ConfigureSession(paths, imported); err != nil {
 		t.Fatalf("ConfigureSession: %v", err)
 	}
-	if err := EnsureSessionConfig(paths); err != nil {
+	if _, err := EnsureSessionConfig(paths); err != nil {
 		t.Fatalf("EnsureSessionConfig: %v", err)
 	}
 

@@ -414,6 +414,33 @@ A copy naming no sandbox at all is simply forwarded to the system `scp`.
 
 ---
 
+## The managed SSH config
+
+`sandbox ssh`, `sandbox code`, and `scp` all connect by handing system OpenSSH
+a hostname such as `my-sandbox.sb_123.app-amika-dev.amika`. Every setting that
+connection needs comes from a block Amika generates in `~/.ssh/amika.conf`,
+which `~/.ssh/config` pulls in through an `Include` line at the top. The file
+is regenerated from Amika's own state whenever a command prepares an SSH
+target, so edits to it are lost. `amika auth login` and
+`amika secret ssh-keygen` both write it; `auth login` names the files it
+touched.
+
+| Option                                        | Value                | Why                                                                          |
+| --------------------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
+| `User`                                        | `amika`              | The sandbox account                                                          |
+| `IdentityFile` / `IdentitiesOnly`             | your Amika key, only | Offer exactly the key the control plane holds, not every key in your agent   |
+| `StrictHostKeyChecking` / `UserKnownHostsFile`| `yes`, Amika's file  | Pin each sandbox host key in a dedicated file, so a change fails closed      |
+| `ProxyCommand`                                | `amika plumbing …`   | Carry the session over Amika's WebSocket transport instead of a TCP dial     |
+| `ServerAliveInterval` / `ServerAliveCountMax` | `15`, `3`            | Notice a dead transport instead of hanging                                   |
+
+Anything the block does not set is answered by whatever else in your
+`~/.ssh/config` matches the hostname, since OpenSSH merges every matching
+block and keeps the first value it finds for each option.
+
+Under WSL, `sandbox code` mirrors this file (and the key material it names) to
+the Windows side so a Windows editor's own OpenSSH can reach the sandbox. The
+mirrored block carries the same settings.
+
 ## `amika volume`
 
 Manage tracked Docker volumes used by sandboxes.
@@ -458,11 +485,22 @@ Log in to Amika via a device authorization flow. Opens a browser for you to auth
 amika auth login
 ```
 
-A successful login also writes the managed SSH host block for the control plane
-you logged in to (`~/.ssh/amika.conf`, included from `~/.ssh/config`), so
-`amika sandbox ssh` and `amika scp` work even if your public key was uploaded
-through the web UI instead of by `amika secret ssh-keygen`. The block only
-describes where the key material lives; it does not create a keypair.
+A successful login also writes [the managed SSH config](#the-managed-ssh-config)
+for the control plane you logged in to, so a bare `ssh <alias>` works even if
+your public key was uploaded through the web UI instead of by
+`amika secret ssh-keygen`. Login prints the two files it touched, since
+`~/.ssh/config` governs every SSH connection your machine makes and is often a
+symlink into a dotfiles repo.
+
+The block records where your key material lives; it never creates a keypair.
+If no key is there yet, login says so and names both ways to fix it:
+
+```
+Updated ~/.ssh/amika.conf, included from ~/.ssh/config.
+No SSH identity at ~/.ssh/amika_id_ed25519 yet, so `amika sandbox ssh` will not connect until you add one:
+  amika secret ssh-keygen                                 # create a new key
+  amika secret ssh-keygen --import <path>.pub             # use a key you already have
+```
 
 See [auth.md](auth.md) for details on the login flow and session storage.
 
@@ -624,6 +662,8 @@ amika secret ssh-keygen --import ~/.ssh/id_ed25519.pub
 | `--force`         | `false`   | Replace an existing key of the same name                       |
 
 Re-running this command is safe: an existing keypair at `~/.ssh/amika_id_ed25519` is reused rather than regenerated, so the upload is a no-op. `--force` is only needed when the name already holds *different* key material (for example when switching `--import` targets).
+
+`--import` is also the fix when your public key is already registered (you uploaded it through the web UI, say) but your private key lives somewhere other than `~/.ssh/amika_id_ed25519`. Pointing it at that key's `.pub` re-uploads identical material as a no-op and updates [the managed SSH config](#the-managed-ssh-config) to name your key rather than the default path.
 
 `amika secret ssh-key create` is an alias for this command.
 
