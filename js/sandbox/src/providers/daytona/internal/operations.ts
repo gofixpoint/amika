@@ -170,9 +170,17 @@ export async function listDaytonaSandboxes(
 export async function startDaytonaSandbox(
   config: DaytonaConfig,
   providerSandboxId: string,
+  autoStopInterval?: number | null,
 ): Promise<void> {
   const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
+  // Re-apply the caller's interval before resuming, so a sandbox whose stored
+  // interval changed since create (an unapproved org's clamp) comes back on the
+  // current value rather than the one baked in server-side. Negatives are
+  // skipped: the SDK rejects anything but a non-negative integer.
+  if (autoStopInterval != null && autoStopInterval >= 0) {
+    await sandbox.setAutostopInterval(autoStopInterval);
+  }
   await sandbox.start();
 }
 
