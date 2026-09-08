@@ -6,7 +6,7 @@ FROM ubuntu:${UBUNTU_TAG}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
-ARG GIT_VERSION=2.55.0
+ARG GIT_VERSION=2.54.0
 COPY sandbox-image/steps/10-os-packages.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
