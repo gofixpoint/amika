@@ -201,16 +201,13 @@ func TestUpsertSessionHostRendersConcreteAliasBeforeWildcardSettings(t *testing.
 	}
 }
 
-func TestEnsureIncludeCreatesAndIsIdempotent(t *testing.T) {
+func TestEnsureIncludeCreatesMissingConfig(t *testing.T) {
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
 	includeLine := "Include " + basedir.SSHAmikaConfigName()
 
 	if err := EnsureInclude(paths); err != nil {
-		t.Fatalf("EnsureInclude (create): %v", err)
-	}
-	if err := EnsureInclude(paths); err != nil {
-		t.Fatalf("EnsureInclude (idempotent): %v", err)
+		t.Fatalf("EnsureInclude: %v", err)
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -220,10 +217,13 @@ func TestEnsureIncludeCreatesAndIsIdempotent(t *testing.T) {
 	if n := strings.Count(string(data), includeLine); n != 1 {
 		t.Fatalf("expected exactly 1 include line, got %d:\n%s", n, data)
 	}
+	if !strings.HasPrefix(string(data), includeStanza+includeLine+"\n") {
+		t.Fatalf("include stanza is not first:\n%s", data)
+	}
 	assertPerm(t, configPath, 0o600)
 }
 
-func TestEnsureIncludePreservesExistingConfig(t *testing.T) {
+func TestEnsureIncludePrependsToConfigWithoutInclude(t *testing.T) {
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
@@ -243,16 +243,9 @@ func TestEnsureIncludePreservesExistingConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, existing) {
-		t.Errorf("existing config not preserved:\n%s", content)
-	}
-	// The include goes last so the managed block reads as defaults the user's
-	// own config outranks: ssh keeps the first value it finds for an option,
-	// so everything already in the file wins.
-	includeIdx := strings.Index(content, "Include "+basedir.SSHAmikaConfigName())
-	hostIdx := strings.Index(content, "Host example")
-	if includeIdx < 0 || includeIdx < hostIdx {
-		t.Errorf("include should follow the user's existing config:\n%s", content)
+	want := includeStanza + "Include " + basedir.SSHAmikaConfigName() + "\n\n" + existing
+	if content != want {
+		t.Errorf("config rewrite mismatch:\ngot:\n%s\nwant:\n%s", content, want)
 	}
 }
 
@@ -298,11 +291,9 @@ func TestEnsureIncludePreservesSymlinkedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "Include "+basedir.SSHAmikaConfigName()) {
-		t.Errorf("target config missing include:\n%s", content)
-	}
-	if !strings.Contains(content, existing) {
-		t.Errorf("target config did not preserve existing content:\n%s", content)
+	want := includeStanza + "Include " + basedir.SSHAmikaConfigName() + "\n\n" + existing
+	if content != want {
+		t.Errorf("target config rewrite mismatch:\ngot:\n%s\nwant:\n%s", content, want)
 	}
 	assertPerm(t, targetPath, 0o600)
 }
@@ -630,10 +621,7 @@ func TestEnsureSessionConfigKeepsAnImportedIdentity(t *testing.T) {
 	}
 }
 
-// The banner is what makes the placement legible: a user who wants to change
-// a sandbox default has to write it above the include, which is the opposite
-// of what "later wins" instincts suggest.
-func TestEnsureIncludeExplainsAndScopesTheInclude(t *testing.T) {
+func TestEnsureIncludeWritesCodexDiscoveryComment(t *testing.T) {
 	paths := testPaths(t)
 	if err := EnsureInclude(paths); err != nil {
 		t.Fatalf("EnsureInclude: %v", err)
@@ -644,35 +632,20 @@ func TestEnsureIncludeExplainsAndScopesTheInclude(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, want := range []string{
-		"takes the first value it",
-		"ABOVE this line override them",
-		"accumulate instead (IdentityFile among them)",
-		"# Amika's defaults for sandbox hosts",
-	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("include stanza missing %q:\n%s", want, content)
-		}
-	}
-	// An ssh config block has no terminator, so a bare Include appended after
-	// a Host block would be conditional on that block matching and would
-	// silently never load. The `Host *` guard has to sit immediately above it.
-	if !strings.Contains(content, "Host *\nInclude "+basedir.SSHAmikaConfigName()+"\n") {
-		t.Errorf("include is not scoped by a `Host *` guard:\n%s", content)
+	want := includeStanza + "Include " + basedir.SSHAmikaConfigName() + "\n"
+	if content != want {
+		t.Errorf("config mismatch:\ngot:\n%s\nwant:\n%s", content, want)
 	}
 }
 
-// A config whose include already sits early is left exactly as it is. Moving
-// a line in a file that governs every SSH connection the machine makes is a
-// bigger liberty than adding one, so placement is only chosen on first write.
-func TestEnsureIncludeLeavesAnExistingIncludeWhereItIs(t *testing.T) {
+func TestEnsureIncludeDoesNotModifyConfigWithExistingInclude(t *testing.T) {
 	includeLine := "Include " + basedir.SSHAmikaConfigName()
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	existing := includeLine + "\n\nHost *\n  ForwardAgent yes\n"
+	existing := "Host example\n  HostName example.com\n\n" + includeLine + "\n"
 	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -687,38 +660,5 @@ func TestEnsureIncludeLeavesAnExistingIncludeWhereItIs(t *testing.T) {
 	}
 	if string(data) != existing {
 		t.Errorf("config was rewritten:\ngot:\n%s\nwant:\n%s", data, existing)
-	}
-}
-
-// The guard has to survive the case it exists for: a config that ends inside
-// a Host block. Without it, the appended Include belongs to that block and
-// the managed settings never reach a sandbox alias.
-func TestEnsureIncludeStaysGlobalWhenTheConfigEndsInsideAHostBlock(t *testing.T) {
-	paths := testPaths(t)
-	configPath, _ := paths.SSHConfigFile()
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	existing := "Host myserver\n  HostName example.com\n  User me\n"
-	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := EnsureInclude(paths); err != nil {
-		t.Fatalf("EnsureInclude: %v", err)
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(data)
-	if !strings.HasPrefix(content, existing) {
-		t.Errorf("existing config not preserved verbatim at the front:\n%s", content)
-	}
-	guard := strings.Index(content, "Host *")
-	host := strings.Index(content, "Host myserver")
-	if guard < 0 || guard < host {
-		t.Errorf("guard must follow the user's block, not precede it:\n%s", content)
 	}
 }
