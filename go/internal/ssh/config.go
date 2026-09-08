@@ -465,9 +465,8 @@ func resolveSessionRendering(session SessionConfig) (string, string, error) {
 }
 
 // EnsureInclude makes sure ~/.ssh/config pulls in the managed amika.conf via an
-// Include directive near the top (Include must precede Host blocks to take
-// effect, since ssh resolves options first-match-wins). It is idempotent and
-// creates ~/.ssh/config if absent.
+// Include directive before every Host block so Codex discovers the managed
+// hosts. It is idempotent and creates ~/.ssh/config if absent.
 func EnsureInclude(paths basedir.Paths) error {
 	configPath, err := paths.SSHConfigFile()
 	if err != nil {
@@ -476,56 +475,24 @@ func EnsureInclude(paths basedir.Paths) error {
 	return ensureIncludeIn(configPath)
 }
 
-// includeStanza is the managed Include plus the comment explaining which side
-// of it wins, so the placement is self-describing in the user's own file.
-//
-// The wording follows OpenSSH's resolution order rather than intuition:
-// ssh_config(5) says the *first* obtained value for each option is used, so a
-// setting written above this stanza beats Amika's and one written below it is
-// the one ignored. That is the opposite of what "later wins" instincts
-// suggest, which is exactly why it is spelled out here.
-//
-// "Most" is doing real work in that sentence. A handful of options accumulate
-// rather than resolving to one value, IdentityFile among them, so a wildcard
-// IdentityFile above this stanza is tried *alongside* Amika's key rather than
-// replacing it. Verified with `ssh -G`, which lists both.
-//
-// The banner deliberately stops there rather than also covering OpenSSH's
-// second-pass match predicates, `final` and `canonical`. Neither can override
-// these defaults from either side, because the reparse happens after the
-// first pass has already assigned the scalar options. That belongs in the
-// docs, not in more lines inside the user's own file describing directives
-// almost nobody writes. Rendering the managed blocks with `Match final`
-// themselves would remove the inconsistency, but editors discover sandboxes
-// by enumerating `Host` entries, so the blocks have to stay `Host`.
-//
-// The `Host *` line is load-bearing, not decoration. An ssh config block has
-// no terminator: every directive belongs to the preceding Host or Match until
-// the next one. Appending a bare Include to a file that ends inside
-// `Host myserver` would make the include conditional on connecting to
-// myserver, so the managed block would silently never load. `Host *` reopens
-// an always-matching scope first. It cannot affect the user's other hosts,
-// because the file it pulls in contains nothing but Amika's own Host blocks.
-const includeStanza = `# Amika's defaults for sandbox hosts (*.amika). ssh takes the first value it
-# finds for most options, so settings ABOVE this line override them; settings
-# below it do not. A few options accumulate instead (IdentityFile among them),
-# where yours is tried alongside Amika's rather than replacing it. "Host *"
-# scopes the include so it is not swallowed by whatever Host block precedes it.
-Host *
-`
+// includeStanza explains why the managed Include is prepended and shows how to
+// add an SSH option that amika.conf does not already set. OpenSSH keeps the
+// first value it finds for most options, so a block below the Include cannot
+// replace scalar values already supplied by amika.conf.
+const includeStanza = "# This `Include` directive must be the first line, or Codex cannot find your Amika SSH\n" +
+	"# hosts.\n" +
+	"#\n" +
+	"# To modify amika SSH target settings, add another host config block below this, like:\n" +
+	"#\n" +
+	"# ```\n" +
+	"# Host *.amika\n" +
+	"#   ForwardAgent yes\n" +
+	"# ```\n"
 
-// ensureIncludeIn appends the Include line for the managed config to an ssh
+// ensureIncludeIn prepends the Include line for the managed config to an ssh
 // config file, creating the file when absent and preserving existing content.
 // It is target-agnostic so the Windows mirror can maintain its own config the
 // same way the Linux one is maintained.
-//
-// Appending rather than prepending makes the managed block a set of defaults
-// the user's own config outranks, which is the deliberate trade: Amika does
-// not get to quietly win an argument with a file that governs every SSH
-// connection the machine makes. The cost is that a `Host *` stanza setting
-// something the sandbox transport depends on (a ProxyCommand, say) takes
-// precedence, so anything Amika truly cannot yield on has to be passed on the
-// ssh command line, which outranks every config file.
 //
 // The line is left wherever it already is. Detecting it anywhere counts as
 // present, because moving a line in the user's config is a bigger liberty
@@ -545,15 +512,9 @@ func ensureIncludeIn(configPath string) error {
 		return nil
 	}
 
-	var content string
-	if len(existing) == 0 {
-		content = includeStanza + includeLine + "\n"
-	} else {
-		content = string(existing)
-		if !strings.HasSuffix(content, "\n") {
-			content += "\n"
-		}
-		content += "\n" + includeStanza + includeLine + "\n"
+	content := includeStanza + includeLine + "\n"
+	if len(existing) > 0 {
+		content += "\n" + string(existing)
 	}
 	return writeFileAtomic(writePath, []byte(content), 0o600)
 }

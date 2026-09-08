@@ -434,33 +434,28 @@ touched.
 | `ProxyCommand`                                | `amika plumbing …`   | Carry the session over Amika's WebSocket transport instead of a TCP dial     |
 | `ServerAliveInterval` / `ServerAliveCountMax` | `15`, `3`            | Notice a dead transport instead of hanging                                   |
 
-These are defaults, not rules. OpenSSH resolves around 90 options per
-connection, merging across every block whose pattern matches the hostname and
-keeping the **first** value it finds for most of them. Amika appends its
-`Include` at the end of `~/.ssh/config`, so anything already in that file
-wins:
+OpenSSH resolves around 90 options per connection, merging across every block
+whose pattern matches the hostname and keeping the **first** value it finds for
+most of them. Amika puts its `Include` first because Codex only discovers the
+managed hosts when the directive precedes every `Host` block:
 
 ```
-Host *
-  StrictHostKeyChecking no     # this wins for sandboxes too
-
-# Amika's defaults for sandbox hosts (*.amika). ssh uses the first value it
-# finds for each option, so settings ABOVE this line override them; settings
-# below it do not. "Host *" scopes the include so it is not swallowed by
-# whatever Host block happens to precede it.
-Host *
+# This `Include` directive must be the first line, or Codex cannot find your Amika SSH
+# hosts.
+#
+# To modify amika SSH target settings, add another host config block below this, like:
+#
+# ```
+# Host *.amika
+#   ForwardAgent yes
+# ```
 Include amika.conf
 ```
 
-That is deliberate: your own SSH config governs every connection your machine
-makes, and Amika does not overrule it. It does mean a wildcard stanza of your
-own can weaken a sandbox connection (turning off host-key checking, say) or
-break it outright (a `Host *` `ProxyCommand` replaces Amika's transport). If
-`sandbox ssh` misbehaves and you have wildcard blocks, check them first with
-`ssh -G <alias>`, which prints the settings OpenSSH actually resolved.
-
-To override an Amika default, put your setting **above** the `Include` line,
-or pass it on the command line, which outranks every config file:
+Because the include comes first, blocks below it can add options that
+`amika.conf` does not set, such as `ForwardAgent`, but cannot replace scalar
+options Amika already supplied. To override one of those options, pass it on
+the command line, which outranks every config file:
 
 ```bash
 amika sandbox ssh -o ServerAliveInterval=60 my-sandbox
@@ -473,20 +468,10 @@ among them. A wildcard `IdentityFile` of your own is therefore tried
 *alongside* Amika's key, not instead of it, so ssh may offer both. `ssh -G
 <alias>` lists every identity that will be tried.
 
-**Your override has to sit in a first-pass block.** OpenSSH re-parses the
-config in a second pass for the `final` and `canonical` match predicates, by
-which point the first pass has already assigned the scalar options. A
-`Match final` or `Match canonical` block therefore cannot override these
-defaults from either side of the `Include`. Use a plain `Host` or `Match`
-block above it, or `-o` on the command line.
-
 **Amika only chooses the position when it first adds the line.** If your config
-already contains `Include amika.conf` it is left exactly where it is, because
-moving a line in this file is a bigger liberty than adding one. Installations
-set up before this behavior changed have the include near the **top**, where
-Amika's defaults win instead of yielding. To switch to the current behavior,
-move the `Include` line (and the `Host *` above it, if present) to the end of
-the file yourself.
+already contains `Include amika.conf`, Amika leaves the file byte-for-byte
+unchanged. Move an existing directive to the beginning yourself if Codex does
+not discover the managed hosts.
 
 Under WSL, `sandbox code` mirrors this file (and the key material it names) to
 the Windows side so a Windows editor's own OpenSSH can reach the sandbox. The
