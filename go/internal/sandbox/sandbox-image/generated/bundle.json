@@ -99,7 +99,7 @@
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
           "versions": {
-            "GIT_VERSION": "2.55.0"
+            "GIT_VERSION": "2.54.0"
           }
         },
         {
@@ -237,7 +237,7 @@
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
           "versions": {
-            "GIT_VERSION": "2.55.0"
+            "GIT_VERSION": "2.54.0"
           }
         },
         {
