@@ -25,7 +25,7 @@ amika sandbox list --remote -o json | jq '.[].name'
 amika snapshot list -o json-pretty
 ```
 
-Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
+Most list commands emit a JSON array (empty as `[]`, never `null`). `snapshot list` and `bindings list` are the exceptions and emit a `{ "items": [...] }` envelope to match their remote API responses. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
 
 ```bash
 # Create a sandbox and capture its name for a script
@@ -35,7 +35,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `bindings list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `bind`, `bindings delete`, `unbind`, `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika sandbox`
 
@@ -364,6 +364,56 @@ amika sandbox agent-send my-sandbox "Review this code" --agent codex
 | `--no-wait`           | `false`            | Send the instruction and return immediately without waiting  |
 | `--workdir <path>`    | `$AMIKA_AGENT_CWD` | Working directory inside the container                       |
 | `--agent <name>`      | `claude`           | Agent CLI to use                                             |
+
+---
+
+## Sandbox bindings
+
+Bindings connect a remote sandbox to an external resource. The initial binding
+target is a GitHub pull request. CI can use the relationship to select the same
+sandbox as the pull request's inspectable workspace.
+
+Creating or deleting a binding does not start, stop, or delete its sandbox.
+These commands use the remote Amika API and require authentication.
+
+### `amika bind`
+
+Bind a sandbox, identified by name or ID, to a GitHub pull request URL:
+
+```bash
+amika bind my-sandbox https://github.com/acme/widgets/pull/42
+```
+
+With `--output json`, the command prints the API response containing the new or
+existing binding ID:
+
+```json
+{"id":"sbind_123"}
+```
+
+### `amika bindings list`
+
+List the bindings in the current Amika organization:
+
+```bash
+amika bindings list
+```
+
+Text output shows the binding ID, sandbox ID, target type and URL,
+relationship, and creation time. JSON output mirrors the API's
+`{"items":[...]}` response envelope.
+
+### `amika bindings delete`
+
+Delete a binding by the opaque ID shown by `bindings list`:
+
+```bash
+amika bindings delete sbind_123
+amika bindings rm sbind_123
+amika unbind sbind_123
+```
+
+`bindings rm` and the top-level `unbind` command are aliases for deletion.
 
 ---
 
