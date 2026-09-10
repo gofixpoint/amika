@@ -68,7 +68,7 @@ COPY sandbox-image/manifest.toml /usr/lib/amika-image/manifest.toml
 COPY sandbox-image/versions.env /usr/lib/amika-image/versions.env
 COPY sandbox-image/verify /usr/lib/amika-image/verify
 COPY sandbox-image/steps/95-verify.sh /opt/amika-build/step.sh
-RUN AMIKA_IMAGE_PROVIDER=e2b AMIKA_PRESET=coder-dind /opt/amika-build/step.sh \
+RUN AMIKA_PRESET=coder-plus-docker /opt/amika-build/step.sh \
     && rm -rf /opt/amika-build
 
 USER amika

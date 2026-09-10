@@ -29,6 +29,11 @@ RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 COPY sandbox-image/steps/50-runtime-user.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
+COPY sandbox-image/assets/providers/daytona /opt/amika-build/step-assets
+COPY sandbox-image/steps/55-daytona-vm-user.sh /opt/amika-build/step.sh
+RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
+    && rm -rf /opt/amika-build
+
 COPY sandbox-image/assets/stable /opt/amika-build/step-assets
 COPY sandbox-image/steps/60-dotfiles.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
@@ -68,7 +73,8 @@ COPY sandbox-image/manifest.toml /usr/lib/amika-image/manifest.toml
 COPY sandbox-image/versions.env /usr/lib/amika-image/versions.env
 COPY sandbox-image/verify /usr/lib/amika-image/verify
 COPY sandbox-image/steps/95-verify.sh /opt/amika-build/step.sh
-RUN AMIKA_PRESET=coder-dind /opt/amika-build/step.sh && rm -rf /opt/amika-build
+RUN AMIKA_IMAGE_PROVIDER=daytona AMIKA_PRESET=coder-plus-docker /opt/amika-build/step.sh \
+    && rm -rf /opt/amika-build
 
 USER amika
 ENV HOME=/home/amika

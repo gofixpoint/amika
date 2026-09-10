@@ -13,7 +13,7 @@ const presetImagePrefixEnv = "AMIKA_PRESET_IMAGE_PREFIX"
 const DefaultCoderImage = "amika/coder:latest"
 
 // AllowedPresets lists the preset names available for user selection via --preset.
-var AllowedPresets = []string{"coder", "coder-dind"}
+var AllowedPresets = []string{"coder", "coder-plus-docker"}
 
 // ValidatePreset returns an error if preset is non-empty and not in AllowedPresets.
 func ValidatePreset(preset string) error {

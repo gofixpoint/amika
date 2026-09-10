@@ -45,7 +45,7 @@ func TestWritePresetBuildContext_ExtractsBundle(t *testing.T) {
 		filepath.Join("sandbox-image", "versions.env"),
 		filepath.Join("sandbox-image", "assets", "stable", ".zshrc"),
 		filepath.Join("sandbox-image", "generated", "coder.Dockerfile"),
-		filepath.Join("sandbox-image", "generated", "coder-dind.Dockerfile"),
+		filepath.Join("sandbox-image", "generated", "coder-plus-docker.Dockerfile"),
 		filepath.Join("sandbox-image", "steps", "10-os-packages.sh"),
 		filepath.Join("sandbox-image", "verify", "run.sh"),
 	} {

@@ -1,6 +1,6 @@
 # Sandbox image bundle
 
-This directory is the source of truth for the `coder` and `coder-dind`
+This directory is the source of truth for the `coder` and `coder-plus-docker`
 sandbox images. The manifest declares the image contract, ordered steps,
 assets, version pins, and preset membership. Provider publishers and the local
 CLI consume generated artifacts rather than implementing provisioning logic of
@@ -37,9 +37,9 @@ generator instead.
 The generator writes these provider-facing artifacts:
 
 - `generated/coder.Dockerfile`
-- `generated/coder-dind.Dockerfile`
-- `generated/daytona/{coder,coder-dind}.Dockerfile`
-- `generated/e2b/{coder,coder-dind}.Dockerfile`
+- `generated/coder-plus-docker.Dockerfile`
+- `generated/daytona/{coder,coder-plus-docker}.Dockerfile`
+- `generated/e2b/{coder,coder-plus-docker}.Dockerfile`
 - `generated/bundle.json`
 
 The top-level Dockerfiles contain the shared preset steps and remain the OCI
@@ -83,7 +83,7 @@ Build a generated image directly from this repository:
 
 ```bash
 ./sandbox-image/build.sh coder
-./sandbox-image/build.sh coder-dind amika/coder-dind:dev
+./sandbox-image/build.sh coder-plus-docker amika/coder-plus-docker:dev
 ```
 
 The build context must be the repository root because generated Dockerfiles
