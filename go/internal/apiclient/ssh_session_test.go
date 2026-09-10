@@ -30,7 +30,7 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
-		if r.URL.Path != "/api/v0beta1/sandboxes/sbx_123/ssh-sessions" {
+		if r.URL.Path != "/api/v0beta1/rigs/sbx_123/ssh-sessions" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer api-token" {

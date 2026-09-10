@@ -81,7 +81,7 @@ export interface AgentCredentialRef {
   none?: boolean;
 }
 
-/** Request body for POST /api/v0beta1/sandboxes. */
+/** Request body for POST /api/v0beta1/rigs. */
 export interface CreateSandboxRequest {
   name?: string;
   provider?: string;

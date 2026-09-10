@@ -68,7 +68,7 @@ func (s *SSHSession) Validate(expectedSandboxID string) error {
 // CreateSSHSession creates and validates a fresh descriptor for one dial.
 func (c *Client) CreateSSHSession(sandboxID string) (*SSHSession, error) {
 	var result SSHSession
-	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxID) + "/ssh-sessions"
+	path := apiBasePath + "/rigs/" + url.PathEscape(sandboxID) + "/ssh-sessions"
 	if err := c.doJSON("POST", path, nil, &result); err != nil {
 		return nil, fmt.Errorf("remote create SSH session: %w", err)
 	}

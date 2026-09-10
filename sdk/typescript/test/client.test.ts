@@ -51,7 +51,7 @@ describe("AmikaClient.listSandboxes", () => {
     const client = makeClient(fetch);
     const sandboxes = await client.listSandboxes();
     expect(calls[0]?.method).toBe("GET");
-    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes`);
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rigs`);
     expect(sandboxes).toHaveLength(1);
     expect(sandboxes[0]?.repoUrl).toBe("git@github.com:org/a.git");
   });
@@ -128,7 +128,7 @@ describe("AmikaClient sandbox lifecycle", () => {
     ]);
     const client = makeClient(fetch);
     await client.getSandbox("org/proj");
-    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes/org%2Fproj`);
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rigs/org%2Fproj`);
   });
 
   it("startSandbox POSTs to /start", async () => {
@@ -136,14 +136,14 @@ describe("AmikaClient sandbox lifecycle", () => {
     const client = makeClient(fetch);
     await client.startSandbox("dev");
     expect(calls[0]?.method).toBe("POST");
-    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes/dev/start`);
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rigs/dev/start`);
   });
 
   it("stopSandbox POSTs to /stop", async () => {
     const { fetch, calls } = mockFetch([{ status: 202, body: "" }]);
     const client = makeClient(fetch);
     await client.stopSandbox("dev");
-    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes/dev/stop`);
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rigs/dev/stop`);
   });
 
   it("deleteSandbox DELETEs the sandbox", async () => {
@@ -151,7 +151,7 @@ describe("AmikaClient sandbox lifecycle", () => {
     const client = makeClient(fetch);
     await client.deleteSandbox("dev");
     expect(calls[0]?.method).toBe("DELETE");
-    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes/dev`);
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rigs/dev`);
   });
 });
 
@@ -460,7 +460,7 @@ describe("AmikaClient sessions", () => {
     const client = makeClient(fetch);
     await client.updateSession("dev", "s1", { status: "completed" });
     expect(calls[0]?.method).toBe("PATCH");
-    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/sandboxes/dev/sessions/s1`);
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rigs/dev/sessions/s1`);
   });
 });
 
@@ -895,7 +895,7 @@ describe("AmikaClient sandbox services", () => {
     });
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.url).toBe(
-      `${BASE}/api/v0beta1/sandboxes/org%2Fdev/services`,
+      `${BASE}/api/v0beta1/rigs/org%2Fdev/services`,
     );
     expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
       name: "web",
@@ -916,10 +916,10 @@ describe("AmikaClient sandbox services", () => {
     await client.putSandboxService("dev", "svc_1", req, "id");
     expect(calls[0]?.method).toBe("PUT");
     expect(calls[0]?.url).toBe(
-      `${BASE}/api/v0beta1/sandboxes/dev/services/web?by=name`,
+      `${BASE}/api/v0beta1/rigs/dev/services/web?by=name`,
     );
     expect(calls[1]?.url).toBe(
-      `${BASE}/api/v0beta1/sandboxes/dev/services/svc_1?by=id`,
+      `${BASE}/api/v0beta1/rigs/dev/services/svc_1?by=id`,
     );
   });
 
@@ -928,7 +928,7 @@ describe("AmikaClient sandbox services", () => {
     await makeClient(fetch).deleteSandboxService("dev", "web");
     expect(calls[0]?.method).toBe("DELETE");
     expect(calls[0]?.url).toBe(
-      `${BASE}/api/v0beta1/sandboxes/dev/services/web?by=name`,
+      `${BASE}/api/v0beta1/rigs/dev/services/web?by=name`,
     );
   });
 });

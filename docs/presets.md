@@ -43,11 +43,11 @@ A variant of `coder` that also includes Docker-in-Docker support.
 
 ```bash
 # Explicit preset selection
-amika sandbox create --preset coder
-amika sandbox create --preset coder-dind
+amika rig create --preset coder
+amika rig create --preset coder-dind
 
 # Default behavior (uses coder preset automatically)
-amika sandbox create
+amika rig create
 
 # Materialize with a preset
 amika materialize --preset coder --cmd "claude --help" --destdir /tmp/out
@@ -76,7 +76,7 @@ sandbox command. By default this is a no-op script. When creating a sandbox,
 use `--setup-script` to inject your own setup logic:
 
 ```bash
-amika sandbox create --setup-script ./install-deps.sh
+amika rig create --setup-script ./install-deps.sh
 ```
 
 See [sandbox-configuration.md](sandbox-configuration.md) for details.

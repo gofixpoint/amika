@@ -6,7 +6,7 @@ Complete reference for all `amika` commands, flags, and environment variables.
 
 Most commands accept `--output` (short `-o`) to control how they print their result. This lets you read output at a terminal and pipe the same command into a script or `jq` without reformatting.
 
-Two commands do **not** produce JSON because they delegate to a system shell utility that streams its own output: `amika sandbox ssh` (runs `ssh`) rejects `--output` with an error, and `amika scp` (a thin wrapper around `scp`) rejects the unambiguous long form `--output`/`--output=VALUE` but forwards `scp`'s own short `-o` option (used for `ssh_config` overrides) to the system `scp`. For `sandbox ssh` the rejection applies to a flag written **before** the subcommand; anything after it is forwarded to `ssh`, where `-o` is ssh's own `ssh_config` option.
+Two commands do **not** produce JSON because they delegate to a system shell utility that streams its own output: `amika rig ssh` (runs `ssh`) rejects `--output` with an error, and `amika scp` (a thin wrapper around `scp`) rejects the unambiguous long form `--output`/`--output=VALUE` but forwards `scp`'s own short `-o` option (used for `ssh_config` overrides) to the system `scp`. For `sandbox ssh` the rejection applies to a flag written **before** the subcommand; anything after it is forwarded to `ssh`, where `-o` is ssh's own `ssh_config` option.
 
 | Value         | Description                                    |
 | ------------- | ---------------------------------------------- |
@@ -16,10 +16,10 @@ Two commands do **not** produce JSON because they delegate to a system shell uti
 
 ```bash
 # Default human-readable table
-amika sandbox list
+amika rig list
 
 # Compact JSON for a script or jq
-amika sandbox list --remote -o json | jq '.[].name'
+amika rig list --remote -o json | jq '.[].name'
 
 # Indented JSON for reading
 amika snapshot list -o json-pretty
@@ -29,15 +29,15 @@ Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot li
 
 ```bash
 # Create a sandbox and capture its name for a script
-name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
+name=$(amika rig create --remote --no-git -o json | jq -r .name)
 
 # Delete several sandboxes and inspect per-item results
-amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
+amika rig delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
 Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
-## `amika sandbox`
+## `amika rig`
 
 Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
 
@@ -54,75 +54,75 @@ When none of these flags are set, the default behavior depends on login state: i
 
 `--local` and `--remote` are mutually exclusive.
 
-### `amika sandbox create`
+### `amika rig create`
 
 Create a new sandbox.
 
 ```bash
 # Minimal — auto-generates a name, uses the coder preset image
-amika sandbox create --yes
+amika rig create --yes
 
 # Named sandbox with mounts
-amika sandbox create --name dev-sandbox \
+amika rig create --name dev-sandbox \
   --mount ./src:/workspace/src:ro \
   --mount ./out:/workspace/out
 
 # Auto-detect the git repo containing the current working directory
 # (this is the default behavior when no --git/--no-git flag is passed)
-amika sandbox create --name dev-sandbox
+amika rig create --name dev-sandbox
 
 # Mount git repo with untracked/uncommitted files included (local sandboxes only)
-amika sandbox create --name dev-sandbox --no-clean
+amika rig create --name dev-sandbox --no-clean
 
 # Mount git repo at a specific path
-amika sandbox create --name dev-sandbox --git ./src
+amika rig create --name dev-sandbox --git ./src
 
 # Mount a remote git repo by URL (HTTPS or SSH)
-amika sandbox create --name dev-sandbox --git https://github.com/octocat/Hello-World.git
+amika rig create --name dev-sandbox --git https://github.com/octocat/Hello-World.git
 
 # Skip git auto-detection and create a bare sandbox
-amika sandbox create --name dev-sandbox --no-git
+amika rig create --name dev-sandbox --no-git
 
 # Use the Docker-in-Docker preset image
-amika sandbox create --name docker-box --preset coder-dind
+amika rig create --name docker-box --preset coder-dind
 
 # Use a custom Docker image
-amika sandbox create --name custom-box --image myimage:latest
+amika rig create --name custom-box --image myimage:latest
 
 # Attach an existing tracked volume
-amika sandbox create --name dev-sandbox-2 \
+amika rig create --name dev-sandbox-2 \
   --volume amika-rwcopy-dev-sandbox-workspace-out-123:/workspace/out:rw
 
 # Set environment variables
-amika sandbox create --name dev-sandbox --env MY_KEY=my_value
+amika rig create --name dev-sandbox --env MY_KEY=my_value
 
 # Create and immediately connect
-amika sandbox create --name dev-sandbox --connect
+amika rig create --name dev-sandbox --connect
 
 # Run a setup script on container start
-amika sandbox create --name dev-sandbox --setup-script ./install-deps.sh
+amika rig create --name dev-sandbox --setup-script ./install-deps.sh
 
 # Publish a container port to the host
-amika sandbox create --name dev-sandbox --port 8080:8080
+amika rig create --name dev-sandbox --port 8080:8080
 
 # Publish a port bound to all interfaces
-amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
+amika rig create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
 
 # Clone a specific git branch
-amika sandbox create --name dev-sandbox --branch develop
+amika rig create --name dev-sandbox --branch develop
 
 # Create a new branch from your current branch
-amika sandbox create --new-branch feature-x
+amika rig create --new-branch feature-x
 
 # Create a new branch starting from a specific existing branch
-amika sandbox create --branch main --new-branch bugfix-1
+amika rig create --branch main --new-branch bugfix-1
 
 # Inject remote secrets (remote sandboxes only)
-amika sandbox create --name dev-sandbox --remote \
+amika rig create --name dev-sandbox --remote \
   --secret env:ANTHROPIC_API_KEY=my-claude-key
 
 # Fork from a captured snapshot (remote sandboxes only)
-amika sandbox create --name dev-sandbox --remote --snapshot amika-mono-base
+amika rig create --name dev-sandbox --remote --snapshot amika-mono-base
 ```
 
 #### Flags
@@ -157,12 +157,12 @@ amika sandbox create --name dev-sandbox --remote --snapshot amika-mono-base
 | `rw`     | Read-write bind mount from host (writes sync back to host)                                                                               |
 | `rwcopy` | Read-write snapshot in a Docker volume (default for `--mount`). Host files are copied in; writes stay in the volume and do not sync back |
 
-### `amika sandbox list`
+### `amika rig list`
 
 List all tracked sandboxes.
 
 ```bash
-amika sandbox list
+amika rig list
 ```
 
 Output columns: `NAME`, `STATE`, `REPO`, `BRANCH`, `CREATOR`.
@@ -170,7 +170,7 @@ Output columns: `NAME`, `STATE`, `REPO`, `BRANCH`, `CREATOR`.
 Pass `-l`/`--long` for the full set, which adds `ID`, `LOCATION`, `BASE_SNAPSHOT`, `PORTS`, and `CREATED`:
 
 ```bash
-amika sandbox list --long
+amika rig list --long
 ```
 
 Column selection applies only to `--output text`. `-o json` and `-o json-pretty` always emit every field.
@@ -185,16 +185,16 @@ The `BASE_SNAPSHOT` column shows what the sandbox was built from: the snapshot o
 
 Either column shows `-` when the sandbox has no value for it.
 
-### `amika sandbox connect`
+### `amika rig connect`
 
 Connect to a running sandbox container with an interactive shell.
 
 ```bash
 # Connect with default shell (zsh)
-amika sandbox connect dev-sandbox
+amika rig connect dev-sandbox
 
 # Connect with a different shell
-amika sandbox connect dev-sandbox --shell bash
+amika rig connect dev-sandbox --shell bash
 ```
 
 | Flag              | Default | Description                           |
@@ -203,22 +203,22 @@ amika sandbox connect dev-sandbox --shell bash
 
 The shell starts in `/home/amika`.
 
-### `amika sandbox delete`
+### `amika rig delete`
 
 Delete one or more sandboxes and their backing containers. Aliases: `rm`, `remove`.
 
 ```bash
 # Delete a sandbox (prompts about exclusive volumes)
-amika sandbox delete dev-sandbox
+amika rig delete dev-sandbox
 
 # Delete multiple sandboxes
-amika sandbox delete sandbox-1 sandbox-2
+amika rig delete sandbox-1 sandbox-2
 
 # Also delete associated unreferenced volumes
-amika sandbox delete dev-sandbox --delete-volumes
+amika rig delete dev-sandbox --delete-volumes
 
 # Keep all volumes without prompting
-amika sandbox delete dev-sandbox --keep-volumes
+amika rig delete dev-sandbox --keep-volumes
 ```
 
 | Flag               | Default | Description                                                                           |
@@ -228,32 +228,32 @@ amika sandbox delete dev-sandbox --keep-volumes
 
 When neither flag is set and the sandbox is the sole reference for a volume, you will be prompted to decide.
 
-### `amika sandbox stop`
+### `amika rig stop`
 
 Stop one or more running sandboxes without removing them.
 
 ```bash
-amika sandbox stop dev-sandbox
-amika sandbox stop sandbox-1 sandbox-2
+amika rig stop dev-sandbox
+amika rig stop sandbox-1 sandbox-2
 ```
 
-### `amika sandbox start`
+### `amika rig start`
 
 Start (resume) one or more stopped sandboxes.
 
 ```bash
-amika sandbox start dev-sandbox
-amika sandbox start sandbox-1 sandbox-2
+amika rig start dev-sandbox
+amika rig start sandbox-1 sandbox-2
 ```
 
-### `amika sandbox ssh`
+### `amika rig ssh`
 
 Open an SSH session to a remote sandbox over Amika's direct WebSocket
 transport. Remote sandboxes only; requires an SSH identity from
 `amika secret ssh-keygen`.
 
 ```
-amika sandbox ssh [ssh-options] <name> [command...]
+amika rig ssh [ssh-options] <name> [command...]
 ```
 
 Use it like `ssh`: options go before the sandbox name, an optional command
@@ -263,24 +263,24 @@ defines no flags of its own.
 Amika's own flags go **before** `ssh`:
 
 ```bash
-amika sandbox --remote ssh -N -L 8080:localhost:80 my-sandbox
+amika rig --remote ssh -N -L 8080:localhost:80 my-sandbox
 ```
 
-`--help` is the one exception: `amika sandbox ssh --help` prints amika's
-help, as does `amika help sandbox ssh`.
+`--help` is the one exception: `amika rig ssh --help` prints amika's
+help, as does `amika help rig ssh`.
 
 ```bash
 # Interactive shell
-amika sandbox ssh my-sandbox
+amika rig ssh my-sandbox
 
 # Run a command instead of opening a shell
-amika sandbox ssh my-sandbox uptime
+amika rig ssh my-sandbox uptime
 
 # Forward local port 6789 to port 3010 inside the sandbox, without a shell
-amika sandbox ssh -N -L 6789:localhost:3010 my-sandbox
+amika rig ssh -N -L 6789:localhost:3010 my-sandbox
 
 # SOCKS proxy on local port 1080
-amika sandbox ssh -N -D 1080 my-sandbox
+amika rig ssh -N -D 1080 my-sandbox
 ```
 
 Local (`-L`) and dynamic (`-D`) forwarding are supported. Remote forwarding
@@ -291,7 +291,7 @@ SSH daemon refuses them, so no local config or `-o` override enables them.
 `-o`/`--output` is not available there; written before `ssh` it is rejected
 (see [Global flags](#global-flags) above).
 
-### `amika sandbox code`
+### `amika rig code`
 
 Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport. Remote sandboxes only; requires a signed-in Amika
@@ -329,11 +329,11 @@ with `--remote ssh-remote+<alias>`. This needs WSL interop (`cmd.exe`,
 `wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell sets it).
 
 ```bash
-amika sandbox code my-sandbox
-amika sandbox code my-sandbox --editor=cursor
-amika sandbox code my-sandbox --editor=vscode
-amika sandbox code my-sandbox --editor=claude
-amika sandbox code my-sandbox --editor=codex
+amika rig code my-sandbox
+amika rig code my-sandbox --editor=cursor
+amika rig code my-sandbox --editor=vscode
+amika rig code my-sandbox --editor=claude
+amika rig code my-sandbox --editor=codex
 ```
 
 | Flag              | Default  | Description                                              |
@@ -341,22 +341,22 @@ amika sandbox code my-sandbox --editor=codex
 | `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, or `codex`  |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
 
-### `amika sandbox agent-send`
+### `amika rig agent-send`
 
 Send a prompt to an AI agent CLI running inside a sandbox container. The message can be provided as a positional argument or piped via stdin. By default the command waits for the agent to finish and streams the response.
 
 ```bash
 # Send a message to Claude in a sandbox
-amika sandbox agent-send my-sandbox "Add unit tests for the auth module"
+amika rig agent-send my-sandbox "Add unit tests for the auth module"
 
 # Pipe a message via stdin
-echo "Fix the failing tests" | amika sandbox agent-send my-sandbox
+echo "Fix the failing tests" | amika rig agent-send my-sandbox
 
 # Send without waiting for a response
-amika sandbox agent-send my-sandbox "Refactor the API layer" --no-wait
+amika rig agent-send my-sandbox "Refactor the API layer" --no-wait
 
 # Use a different agent CLI
-amika sandbox agent-send my-sandbox "Review this code" --agent codex
+amika rig agent-send my-sandbox "Review this code" --agent codex
 ```
 
 | Flag                  | Default            | Description                                                  |
@@ -458,7 +458,7 @@ options Amika already supplied. To override one of those options, pass it on
 the command line, which outranks every config file:
 
 ```bash
-amika sandbox ssh -o ServerAliveInterval=60 my-sandbox
+amika rig ssh -o ServerAliveInterval=60 my-sandbox
 ```
 
 Three exceptions to keep in mind.
@@ -533,7 +533,7 @@ If no key is there yet, login says so and names both ways to fix it:
 
 ```
 Updated ~/.ssh/amika.conf, included from ~/.ssh/config.
-No SSH identity at ~/.ssh/amika_id_ed25519 yet, so `amika sandbox ssh` will not connect until you add one:
+No SSH identity at ~/.ssh/amika_id_ed25519 yet, so `amika rig ssh` will not connect until you add one:
   amika secret ssh-keygen                                 # create a new key
   amika secret ssh-keygen --import <path>.pub             # use a key you already have
 ```
