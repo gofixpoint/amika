@@ -10,6 +10,9 @@ inputs:
     description: Reuse the current repository branch's bound sandbox
     required: false
     default: "true"
+  fallback-sandbox-name:
+    description: Name to use when no reusable branch sandbox is bound
+    required: false
   sandbox:
     description: Explicit sandbox ID or name; requires reuse-branch-sandbox=false
     required: false
@@ -36,6 +39,8 @@ outputs:
     description: Amika command-run API URL
   sandbox-id:
     description: Selected Amika sandbox ID
+  sandbox-name:
+    description: Selected Amika sandbox name
   sandbox-url:
     description: Amika sandbox page URL
   conclusion:
