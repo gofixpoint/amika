@@ -34,6 +34,7 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV1Cmd)
 	sandboxCmd.AddCommand(sandboxAgentSendCmd)
+	sandboxCmd.AddCommand(sandboxBindGitHubBranchCmd)
 
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	sandboxCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
@@ -86,6 +87,10 @@ func New() *cobra.Command {
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
 	sandboxAgentSendCmd.Flags().String("session-id", "", "Resume an existing agent session by ID (remote sandboxes only)")
 	sandboxAgentSendCmd.Flags().Bool("new-session", false, "Start a new agent session (remote sandboxes only)")
+	sandboxBindGitHubBranchCmd.Flags().String("owner", "", "GitHub repository owner (defaults from the sandbox repository)")
+	sandboxBindGitHubBranchCmd.Flags().String("repo", "", "GitHub repository name (defaults from the sandbox repository)")
+	sandboxBindGitHubBranchCmd.Flags().String("branch", "", "GitHub branch (defaults from the sandbox branch)")
+	sandboxBindGitHubBranchCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
 
 	return sandboxCmd
 }
