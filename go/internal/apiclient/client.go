@@ -217,6 +217,55 @@ func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
 	return &result, nil
 }
 
+// GitHubBranchBindingRequest is the request body for binding a sandbox to a
+// GitHub repository branch. Rebind must be explicitly true to move an
+// existing branch binding from another sandbox.
+type GitHubBranchBindingRequest struct {
+	Target GitHubBranchBindingTarget `json:"target"`
+	Rebind bool                      `json:"rebind,omitempty"`
+}
+
+// GitHubBranchBindingTarget identifies a GitHub repository branch.
+type GitHubBranchBindingTarget struct {
+	Kind       string                        `json:"kind"`
+	Repository GitHubBranchBindingRepository `json:"repository"`
+	Branch     string                        `json:"branch"`
+}
+
+// GitHubBranchBindingRepository identifies a GitHub repository by owner and
+// name.
+type GitHubBranchBindingRepository struct {
+	Owner string `json:"owner"`
+	Name  string `json:"name"`
+}
+
+// SandboxBindingReference is the stable reference returned after creating or
+// reusing a sandbox binding.
+type SandboxBindingReference struct {
+	ID string `json:"id"`
+}
+
+// BindSandboxGitHubBranch creates or reuses a sandbox's GitHub branch binding.
+func (c *Client) BindSandboxGitHubBranch(sandboxRef, owner, repo, branch string, rebind bool) (*SandboxBindingReference, error) {
+	req := GitHubBranchBindingRequest{
+		Target: GitHubBranchBindingTarget{
+			Kind: "github_branch",
+			Repository: GitHubBranchBindingRepository{
+				Owner: owner,
+				Name:  repo,
+			},
+			Branch: branch,
+		},
+		Rebind: rebind,
+	}
+	var result SandboxBindingReference
+	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/bindings?sandbox_by=ref"
+	if err := c.doJSON("POST", path, req, &result); err != nil {
+		return nil, fmt.Errorf("remote bind sandbox GitHub branch: %w", err)
+	}
+	return &result, nil
+}
+
 // pollInterval is the delay between polls in the WaitForSandbox* loops.
 // It is a package var (not a constant) so tests can shrink it to keep the
 // suite fast; production always uses the 3 second default.
