@@ -1,0 +1,52 @@
+name: Run in an Amika sandbox
+description: Delegate a shell command from GitHub Actions to an Amika sandbox
+author: Amika
+
+inputs:
+  command:
+    description: Shell command to run in the sandbox checkout
+    required: true
+  reuse-branch-sandbox:
+    description: Reuse the current repository branch's bound sandbox
+    required: false
+    default: "true"
+  sandbox:
+    description: Explicit sandbox ID or name; requires reuse-branch-sandbox=false
+    required: false
+  working-directory:
+    description: Working directory relative to the isolated checkout
+    required: false
+    default: "."
+  timeout-minutes:
+    description: Remote command deadline in whole minutes
+    required: false
+    default: "60"
+  amika-url:
+    description: Amika control-plane origin
+    required: false
+    default: https://app.amika.dev
+  job-key:
+    description: Stable matrix identity; defaults to the GitHub job and runner identity
+    required: false
+
+outputs:
+  run-id:
+    description: Durable Amika command-run ID
+  run-url:
+    description: Amika command-run API URL
+  sandbox-id:
+    description: Selected Amika sandbox ID
+  sandbox-url:
+    description: Amika sandbox page URL
+  conclusion:
+    description: Remote conclusion
+  exit-code:
+    description: Remote shell exit code, when available
+
+runs:
+  using: node20
+  main: dist/index.js
+
+branding:
+  icon: terminal
+  color: purple
