@@ -47,9 +47,14 @@ function parseActionContext(env, event, token = requireEnvironment(env, "AMIKA_T
   const command = requireInput(env, "command", false);
   const sandbox = optionalInput(env, "sandbox");
   const reuseBranchSandbox = booleanInput(env, "reuse-branch-sandbox", true);
+  const fallbackSandboxName = optionalInput(env, "fallback-sandbox-name");
   if (sandbox && reuseBranchSandbox) {
     throw new Error("sandbox requires reuse-branch-sandbox to be false");
   }
+  if (sandbox && fallbackSandboxName) {
+    throw new Error("sandbox cannot be combined with fallback-sandbox-name");
+  }
+  if (fallbackSandboxName) validateSandboxName(fallbackSandboxName);
   const workingDirectory = optionalInput(env, "working-directory") ?? ".";
   validateWorkingDirectory(workingDirectory);
   const timeoutMinutes = integerInput(env, "timeout-minutes", 60, 1, 1440);
@@ -92,6 +97,7 @@ function parseActionContext(env, event, token = requireEnvironment(env, "AMIKA_T
     command,
     sandbox,
     reuseBranchSandbox,
+    fallbackSandboxName,
     workingDirectory,
     timeoutSeconds: timeoutMinutes * 60,
     repository: {
@@ -118,6 +124,7 @@ async function createRun(context, ports, signal) {
     idempotency_key: context.idempotencyKey,
     ...context.sandbox ? { sandbox: context.sandbox } : {},
     reuse_branch_sandbox: context.reuseBranchSandbox,
+    ...context.fallbackSandboxName ? { fallback_sandbox_name: context.fallbackSandboxName } : {},
     repository: context.repository,
     source_sha: context.sourceSha,
     git_ref: context.gitRef,
@@ -231,6 +238,7 @@ function publishRunOutputs(context, run, ports) {
 function publishSandboxOutputs(context, run, ports) {
   if (!run.sandbox_id) return;
   ports.setOutput("sandbox-id", run.sandbox_id);
+  if (run.sandbox_name) ports.setOutput("sandbox-name", run.sandbox_name);
   ports.setOutput(
     "sandbox-url",
     `${context.amikaUrl}/sandbox/${encodeURIComponent(run.sandbox_id)}`
@@ -301,6 +309,14 @@ function validateWorkingDirectory(value) {
     throw new Error(
       "working-directory must be relative and cannot traverse its parent"
     );
+  }
+}
+function validateSandboxName(value) {
+  const labels = value.split(".");
+  if (value.length > 253 || labels.some(
+    (label) => label.length === 0 || label.length > 63 || !/^[a-z0-9-]+$/.test(label) || label.startsWith("-") || label.endsWith("-")
+  )) {
+    throw new Error("fallback-sandbox-name must be a lowercase DNS hostname");
   }
 }
 function requireInput(env, name, trim = true) {
