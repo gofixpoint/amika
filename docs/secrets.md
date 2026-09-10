@@ -100,7 +100,7 @@ amika secret claude push --type api_key --value sk-ant-xxx
 amika secret claude list
 ```
 
-3. **Inject when creating a sandbox** — credentials can be selected via the web UI or referenced via the `--secret` flag on `amika sandbox create`.
+3. **Inject when creating a sandbox** — credentials can be selected via the web UI or referenced via the `--secret` flag on `amika rig create`.
 
 4. **Delete a credential:**
 

@@ -24,10 +24,10 @@ Self-hosting currently supports a "local-only" mode that spins up Docker contain
 To run local Rigs, include the `--local` flag whenever you run an `amika` command.
 
 ```
-amika sandbox create --local --name local-rig
-amika sandbox ls --local
-amika sandbox connect --local local-rig
-amika sandbox rm --local local-rig
+amika rig create --local --name local-rig
+amika rig ls --local
+amika rig connect --local local-rig
+amika rig rm --local local-rig
 ```
 
 

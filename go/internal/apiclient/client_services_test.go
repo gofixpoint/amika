@@ -40,7 +40,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 				return err
 			},
 			wantMethod: "POST",
-			wantPath:   "/api/v0beta1/sandboxes/org%2Fbox/services",
+			wantPath:   "/api/v0beta1/rigs/org%2Fbox/services",
 		},
 		{
 			name: "PutSandboxService defaults by=name and escapes refs",
@@ -49,7 +49,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 				return err
 			},
 			wantMethod: "PUT",
-			wantPath:   "/api/v0beta1/sandboxes/my-box/services/web?by=name",
+			wantPath:   "/api/v0beta1/rigs/my-box/services/web?by=name",
 		},
 		{
 			name: "PutSandboxService honors an explicit by param",
@@ -58,7 +58,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 				return err
 			},
 			wantMethod: "PUT",
-			wantPath:   "/api/v0beta1/sandboxes/my-box/services/sbsvc_1?by=id",
+			wantPath:   "/api/v0beta1/rigs/my-box/services/sbsvc_1?by=id",
 		},
 		{
 			name: "DeleteSandboxService resolves by name",
@@ -66,7 +66,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 				return c.DeleteSandboxService("my-box", "web")
 			},
 			wantMethod: "DELETE",
-			wantPath:   "/api/v0beta1/sandboxes/my-box/services/web?by=name",
+			wantPath:   "/api/v0beta1/rigs/my-box/services/web?by=name",
 		},
 	}
 

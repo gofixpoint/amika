@@ -89,7 +89,7 @@ export class AmikaClient {
   async listSandboxes(): Promise<RemoteSandbox[]> {
     const data = await this.http.doJSON<unknown[]>(
       "GET",
-      `${API_BASE_PATH}/sandboxes`,
+      `${API_BASE_PATH}/rigs`,
     );
     return mapArray(data, remoteSandboxFromWire);
   }
@@ -97,7 +97,7 @@ export class AmikaClient {
   async createSandbox(req: CreateSandboxRequest): Promise<RemoteSandbox> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
-      `${API_BASE_PATH}/sandboxes`,
+      `${API_BASE_PATH}/rigs`,
       createSandboxRequestToWire(req),
     );
     return remoteSandboxFromWire(data ?? {});
@@ -106,7 +106,7 @@ export class AmikaClient {
   async getSandbox(name: string): Promise<RemoteSandbox> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "GET",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}`,
     );
     return remoteSandboxFromWire(data ?? {});
   }
@@ -128,7 +128,7 @@ export class AmikaClient {
   async startSandbox(name: string): Promise<void> {
     await this.http.doJSON(
       "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}/start`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}/start`,
     );
   }
 
@@ -144,7 +144,7 @@ export class AmikaClient {
   async stopSandbox(name: string): Promise<void> {
     await this.http.doJSON(
       "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}/stop`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}/stop`,
     );
   }
 
@@ -160,7 +160,7 @@ export class AmikaClient {
   async deleteSandbox(name: string): Promise<void> {
     await this.http.doJSON(
       "DELETE",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}`,
     );
   }
 
@@ -204,7 +204,7 @@ export class AmikaClient {
   ): Promise<SandboxServiceResource> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxRef)}/services`,
       sandboxServiceRequestToWire(req),
     );
     return sandboxServiceResourceFromWire(data ?? {});
@@ -223,7 +223,7 @@ export class AmikaClient {
     const params = new URLSearchParams({ by });
     const data = await this.http.doJSON<Record<string, unknown>>(
       "PUT",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?${params.toString()}`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?${params.toString()}`,
       sandboxServiceRequestToWire(req),
     );
     return sandboxServiceResourceFromWire(data ?? {});
@@ -236,7 +236,7 @@ export class AmikaClient {
   ): Promise<void> {
     await this.http.doJSON(
       "DELETE",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
     );
   }
 
@@ -304,7 +304,7 @@ export class AmikaClient {
     try {
       const data = await this.http.doJSON<Record<string, unknown>>(
         "POST",
-        `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/agent-send`,
+        `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxName)}/agent-send`,
         agentSendRequestToWire(req),
         { timeoutMs: AGENT_SEND_TIMEOUT_MS },
       );
@@ -328,7 +328,7 @@ export class AmikaClient {
   ): Promise<Session> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxName)}/sessions`,
       createSessionRequestToWire(req),
     );
     return sessionFromWire(data ?? {});
@@ -339,7 +339,7 @@ export class AmikaClient {
       sessions?: Record<string, unknown>[];
     }>(
       "GET",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxName)}/sessions`,
     );
     const sessions = envelope?.sessions ?? [];
     return sessions.map((s) => sessionFromWire(s));
@@ -350,7 +350,7 @@ export class AmikaClient {
     try {
       const data = await this.http.doJSON<Record<string, unknown>>(
         "GET",
-        `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions/latest`,
+        `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxName)}/sessions/latest`,
       );
       return sessionFromWire(data ?? {});
     } catch (err) {
@@ -362,7 +362,7 @@ export class AmikaClient {
   async getSession(sandboxName: string, sessionId: string): Promise<Session> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "GET",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions/${encodeURIComponent(sessionId)}`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxName)}/sessions/${encodeURIComponent(sessionId)}`,
     );
     return sessionFromWire(data ?? {});
   }
@@ -374,7 +374,7 @@ export class AmikaClient {
   ): Promise<Session> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "PATCH",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions/${encodeURIComponent(sessionId)}`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(sandboxName)}/sessions/${encodeURIComponent(sessionId)}`,
       updateSessionRequestToWire(req),
     );
     return sessionFromWire(data ?? {});

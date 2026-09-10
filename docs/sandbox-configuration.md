@@ -8,7 +8,7 @@ The `--setup-script` flag lets you mount a local script into the container at `/
 
 ```bash
 # sandbox create
-amika sandbox create --setup-script ./my-setup.sh
+amika rig create --setup-script ./my-setup.sh
 
 # materialize
 amika materialize --setup-script ./my-setup.sh --cmd "echo done" --destdir /tmp/out
@@ -55,23 +55,23 @@ The `--git` CLI flag and the `GitRepo` HTTP API field clone a remote or local gi
 
 ### CLI (`--git`)
 
-By default, `amika sandbox create` walks up from the current working directory and uses the first git repo it finds. Pass `--git <path|url>` to override the source, or `--no-git` to skip git entirely.
+By default, `amika rig create` walks up from the current working directory and uses the first git repo it finds. Pass `--git <path|url>` to override the source, or `--no-git` to skip git entirely.
 
 ```bash
 # Auto-detect the repo containing the current working directory (clean clone)
-amika sandbox create
+amika rig create
 
 # Auto-detect and include untracked/uncommitted files (local sandboxes only)
-amika sandbox create --no-clean
+amika rig create --no-clean
 
 # Use the repo at a specific path
-amika sandbox create --git ./src
+amika rig create --git ./src
 
 # Clone a remote git URL (HTTPS or SSH)
-amika sandbox create --git https://github.com/octocat/Hello-World.git
+amika rig create --git https://github.com/octocat/Hello-World.git
 
 # Skip auto-detection and create a sandbox without any repo
-amika sandbox create --no-git
+amika rig create --no-git
 ```
 
 ### HTTP API (`GitRepo`)
@@ -157,7 +157,7 @@ my-project/
     setup.sh          # must be executable (chmod +x)
 ```
 
-Running `amika sandbox create` from anywhere inside `my-project` (the repo is auto-detected) will automatically mount `scripts/setup.sh` to `/usr/local/etc/amikad/setup/setup.sh` in the container.
+Running `amika rig create` from anywhere inside `my-project` (the repo is auto-detected) will automatically mount `scripts/setup.sh` to `/usr/local/etc/amikad/setup/setup.sh` in the container.
 
 ### `[env]` — Environment variables
 

@@ -94,14 +94,14 @@ Assuming you connected GitHub during web onboarding:
 amika secret ssh-keygen
 
 cd path/to/git/repo/you/want/to/work/on
-amika sandbox create --name my-first-sandbox
-amika sandbox ssh my-first-sandbox
+amika rig create --name my-first-sandbox
+amika rig ssh my-first-sandbox
 ```
 
 This spins up a sandbox, pre-loaded with your Git repo and agent credentials. List your sandboxes with:
 
 ```bash
-amika sandbox list
+amika rig list
 ```
 
 ### creating an agent chat session

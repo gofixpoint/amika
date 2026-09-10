@@ -23,14 +23,17 @@ func findSubcommand(t *testing.T, parent *cobra.Command, name string) *cobra.Com
 }
 
 func TestSandboxCommandRegistered(t *testing.T) {
-	sandboxCmd := findSubcommand(t, rootCmd, "sandbox")
-	if sandboxCmd.Name() != "sandbox" {
-		t.Fatalf("command name = %q, want sandbox", sandboxCmd.Name())
+	sandboxCmd := findSubcommand(t, rootCmd, "rig")
+	if sandboxCmd.Name() != "rig" {
+		t.Fatalf("command name = %q, want rig", sandboxCmd.Name())
+	}
+	if !slices.Contains(sandboxCmd.Aliases, "sandbox") {
+		t.Fatal("rig command must retain the sandbox alias")
 	}
 }
 
 func TestSandboxDeleteAliases(t *testing.T) {
-	sandboxCmd := findSubcommand(t, rootCmd, "sandbox")
+	sandboxCmd := findSubcommand(t, rootCmd, "rig")
 	deleteCmd := findSubcommand(t, sandboxCmd, "delete")
 	if !slices.Contains(deleteCmd.Aliases, "rm") {
 		t.Fatal("sandbox delete command must include alias \"rm\"")
@@ -41,7 +44,7 @@ func TestSandboxDeleteAliases(t *testing.T) {
 }
 
 func TestSandboxCreateHasConnectFlag(t *testing.T) {
-	sandboxCmd := findSubcommand(t, rootCmd, "sandbox")
+	sandboxCmd := findSubcommand(t, rootCmd, "rig")
 	createCmd := findSubcommand(t, sandboxCmd, "create")
 	flag := createCmd.Flags().Lookup("connect")
 	if flag == nil {
@@ -53,7 +56,7 @@ func TestSandboxCreateHasConnectFlag(t *testing.T) {
 }
 
 func TestSandboxCreateHasSnapshotFlag(t *testing.T) {
-	sandboxCmd := findSubcommand(t, rootCmd, "sandbox")
+	sandboxCmd := findSubcommand(t, rootCmd, "rig")
 	createCmd := findSubcommand(t, sandboxCmd, "create")
 	flag := createCmd.Flags().Lookup("snapshot")
 	if flag == nil {
@@ -68,7 +71,7 @@ func TestSandboxCreateSnapshotRequiresRemote(t *testing.T) {
 	// runRootCommand shares the package-global rootCmd, and cobra carries flag
 	// values and their Changed state across Execute calls. Reset what this test
 	// sets so it can't leak --local/--snapshot onto later sandbox tests.
-	sandboxCmd := findSubcommand(t, rootCmd, "sandbox")
+	sandboxCmd := findSubcommand(t, rootCmd, "rig")
 	createCmd := findSubcommand(t, sandboxCmd, "create")
 	t.Cleanup(func() {
 		resetFlag(t, sandboxCmd.PersistentFlags().Lookup("local"))

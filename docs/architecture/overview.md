@@ -25,7 +25,7 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 | Command                                       | Description                                                                         |
 | --------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `amika materialize`                           | Run a script/command in an ephemeral container and copy outputs to a host directory |
-| `amika sandbox create\|list\|connect\|delete` | Manage persistent Docker sandboxes                                                  |
+| `amika rig create\|list\|connect\|delete` | Manage persistent Docker sandboxes                                                  |
 | `amika volume list\|delete`                   | Manage tracked Docker volumes created by `rwcopy` mounts                            |
 | `amika auth extract`                          | Discover local credentials and print shell environment assignments                  |
 | `amika-server`                                | HTTP server exposing the same functionality as a REST API                           |
