@@ -169,8 +169,8 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.252",
-            "CODEX_VERSION": "0.151.0",
+            "CLAUDE_CODE_VERSION": "2.1.259",
+            "CODEX_VERSION": "0.153.0",
             "OPENCODE_VERSION": "1.18.25",
             "PI_VERSION": "0.84.4"
           }
@@ -307,8 +307,8 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.252",
-            "CODEX_VERSION": "0.151.0",
+            "CLAUDE_CODE_VERSION": "2.1.259",
+            "CODEX_VERSION": "0.153.0",
             "OPENCODE_VERSION": "1.18.25",
             "PI_VERSION": "0.84.4"
           }
