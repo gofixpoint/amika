@@ -1,9 +1,9 @@
-name: selected provider coder-dind base snapshot contract
+name: selected provider coder-plus-docker base snapshot contract
 # This real-API case verifies the selected provider's medium DinD
 # base snapshot, including a Docker container smoke test in the boot verifier.
 vars:
   # See api-base-snapshot-coder.yaml for why the request and the expectation
-  # are both provider-conditional. coder-dind excludes the xs tier, so a1.tiny
+  # are both provider-conditional. coder-plus-docker excludes the xs tier, so a1.tiny
   # has no dind image; a1.medium does.
   request_size:
     default: m
@@ -26,8 +26,8 @@ steps:
       name: "{{ssh_key_id}}"
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
-  - name: create a medium coder-dind sandbox from the selected provider base snapshot
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-dind, --size, "{{request_size}}", --yes, -o, json]
+  - name: create a medium coder-plus-docker sandbox from the selected provider base snapshot
+    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-plus-docker, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -35,7 +35,7 @@ steps:
         name: "@string"
         provider: "{{sandbox_provider}}"
         snapshot: "@string"
-        sandbox_preset: coder-dind
+        sandbox_preset: coder-plus-docker
         sandbox_size: "{{expected_size}}"
     capture:
       sandbox_name: $.name
@@ -69,7 +69,7 @@ steps:
       sudo rm -f /tmp/verify/checks/11-no-root-build-cache.sh \
         /tmp/verify/checks/12-no-package-cache.sh
 
-      sudo env AMIKA_PRESET=coder-dind AMIKA_VERIFY_CHECKS_DIR=/tmp/verify/checks \
+      sudo env AMIKA_PRESET=coder-plus-docker AMIKA_VERIFY_CHECKS_DIR=/tmp/verify/checks \
         /usr/lib/amika-image/verify/run.sh boot
     expect:
       exit: 0

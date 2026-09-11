@@ -1,6 +1,6 @@
 # Sandbox image — agent guidance
 
-Source of truth for the `coder` and `coder-dind` images. Most of this
+Source of truth for the `coder` and `coder-plus-docker` images. Most of this
 directory is generated, so an edit here is only half the change.
 
 - **Never hand-edit generated files.** `generated/*.Dockerfile`,

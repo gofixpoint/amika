@@ -8,7 +8,7 @@ set -euo pipefail
 #/ builds for linux/amd64 (Daytona's architecture) and publishes snapshots.
 #/
 #/ Arguments:
-#/   <image>...            One or more of: amika/coder, amika/coder-dind, all
+#/   <image>...            One or more of: amika/coder, amika/coder-plus-docker, all
 #/
 #/ Options:
 #/   --platform <plat>    Override build platform (linux/amd64 or linux/arm64)
@@ -174,7 +174,7 @@ done
 # canonical `<profile>:<revision>` id). The coder image is uploaded into Daytona's registry
 # with `snapshot push`, then turned into linux-vm snapshots with `snapshot create
 # --image … --sandbox-class linux-vm`. Built for `coder`
-# and used for both `coder` and `coder-dind` releases.
+# and used for both `coder` and `coder-plus-docker` releases.
 # VM snapshots must live in a region with linux-vm runners
 # (DAYTONA_VM_REGION, default "us-west-2"); Daytona's default region has only
 # container runners.
@@ -183,7 +183,7 @@ done
 # `linux-vm` sandbox is provisioned identically to its container equivalent —
 # the app advertises one size table for both. Keep these in sync with `SIZE_*`
 # above (and with `SANDBOX_SIZE_MAPPINGS` in amika-mono). Note that not every size
-# is published for every preset — see `vm_excluded_sizes` below (coder-dind has
+# is published for every preset — see `vm_excluded_sizes` below (coder-plus-docker has
 # no xs tier).
 VM_SIZES=("xs" "m" "l" "xl")
 VM_CPUS=("1" "2" "2" "4")
@@ -216,7 +216,7 @@ if [ -n "$VM_SIZES_FILTER" ]; then
   done
 fi
 
-VALID_IMAGES="amika/coder, amika/coder-dind, all"
+VALID_IMAGES="amika/coder, amika/coder-plus-docker, all"
 
 usage() {
   grep '^#/' "$0" | cut -c4-
@@ -226,8 +226,8 @@ usage() {
 image_presets() {
   case "$1" in
     amika/coder)      echo "coder" ;;
-    amika/coder-dind) echo "coder-dind" ;;
-    all)              echo "coder coder-dind" ;;
+    amika/coder-plus-docker) echo "coder-plus-docker" ;;
+    all)              echo "coder coder-plus-docker" ;;
     *) return 1 ;;
   esac
 }
@@ -422,7 +422,7 @@ for preset in "${PRESETS[@]}"; do
     done
   fi
 
-  # Publish the coder / coder-dind environment as linux-vm snapshots.
+  # Publish the coder / coder-plus-docker environment as linux-vm snapshots.
   #
   # A VM snapshot requires `--sandbox-class linux-vm`, which only `daytona
   # snapshot create` sets. But `create --image` PULLS its image from a registry
@@ -438,16 +438,16 @@ for preset in "${PRESETS[@]}"; do
   #      in the VM-capable region (VM_REGION).
   if [ "$PUSH_DAYTONA_VM" = true ]; then
     # Snapshot name base per preset: coder -> amika-daytona-vm,
-    # coder-dind -> amika-daytona-vm-dind. (dind runs dockerd natively in
+    # coder-plus-docker -> amika-daytona-vm-dind. (dind runs dockerd natively in
     # the VM — no privileged container nesting — so the same image works as a VM.)
     # `vm_excluded_sizes` (space-separated) drops tiers a preset can't support.
-    # coder-dind bundles the full Docker engine, whose image does not fit the xs
+    # coder-plus-docker bundles the full Docker engine, whose image does not fit the xs
     # tier's 3GB disk — the OCI→qcow2 build fails — and a 1 vCPU / 1GB RAM box
     # can't run docker-in-docker usefully anyway, so xs is not published for it.
     # Keep in sync with `EXCLUDED_SIZES_BY_PRESET` in amika-mono.
     case "$preset" in
       coder)      vm_name_base="amika-daytona-vm";      vm_excluded_sizes="" ;;
-      coder-dind) vm_name_base="amika-daytona-vm-dind"; vm_excluded_sizes="xs" ;;
+      coder-plus-docker) vm_name_base="amika-daytona-vm-dind"; vm_excluded_sizes="xs" ;;
     esac
     # Verifying an existing snapshot's state on conflict (below) parses
     # `daytona snapshot list --format json` with jq. Fail fast if jq is missing

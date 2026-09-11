@@ -43,7 +43,7 @@ func New() *cobra.Command {
 	addProviderFlag(sandboxCreateCmd)
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
 	sandboxCreateCmd.Flags().String("image", sandbox.DefaultCoderImage, "Docker image to use")
-	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-dind")`)
+	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-plus-docker")`)
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rwcopy)")
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().StringArray("port", nil, "Publish a container port (hostPort:containerPort[/protocol], protocol defaults to tcp)")

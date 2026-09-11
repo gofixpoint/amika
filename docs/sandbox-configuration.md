@@ -31,7 +31,7 @@ The script is mounted read-only, so it cannot be modified from inside the contai
 
 ### How it works
 
-Preset images (`coder` and `coder-dind`) bake a no-op
+Preset images (`coder` and `coder-plus-docker`) bake a no-op
 `/usr/local/etc/amikad/setup/setup.sh` into the image. At container creation,
 the local runtime wraps the requested command with the shared lifecycle hooks:
 

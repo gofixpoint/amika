@@ -84,7 +84,7 @@ amika sandbox create --name dev-sandbox --git https://github.com/octocat/Hello-W
 amika sandbox create --name dev-sandbox --no-git
 
 # Use the Docker-in-Docker preset image
-amika sandbox create --name docker-box --preset coder-dind
+amika sandbox create --name docker-box --preset coder-plus-docker
 
 # Use a custom Docker image
 amika sandbox create --name custom-box --image myimage:latest

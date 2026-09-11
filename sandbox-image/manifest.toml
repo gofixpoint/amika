@@ -205,7 +205,7 @@ binaries = [
   "amikad",
 ]
 
-[presets.coder-dind]
+[presets.coder-plus-docker]
 steps = [
   "os-packages",
   "static-config",
@@ -317,10 +317,10 @@ command = ["amikad", "--version"]
 id = "docker"
 env = "DOCKER_VERSION"
 command = ["docker", "--version"]
-presets = ["coder-dind"]
+presets = ["coder-plus-docker"]
 
 [[version_checks]]
 id = "buildx"
 env = "BUILDX_VERSION"
 command = ["docker", "buildx", "version"]
-presets = ["coder-dind"]
+presets = ["coder-plus-docker"]
