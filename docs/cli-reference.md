@@ -640,7 +640,7 @@ Push Claude Code credentials (API key or OAuth token) to the remote Amika secret
 amika secret claude push
 
 # Push with a custom label
-amika secret claude push --name "Claude OAuth (Work Laptop)"
+amika secret claude push --name claude-oauth-work-laptop
 
 # Push from a credentials file
 amika secret claude push --from-file ~/.claude/.credentials.json
@@ -660,6 +660,7 @@ amika secret claude push --type api_key
 | `--type <type>`      | `oauth` | Credential type: `oauth` or `api_key`                           |
 
 `--value` and `--from-file` are mutually exclusive.
+When `--name` is omitted, the prompt defaults to `claude-oauth` for OAuth credentials and `claude-api-key` for API keys.
 
 #### `amika secret claude list`
 
