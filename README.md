@@ -76,8 +76,8 @@ To get started with Amika's cloud product:
 
    ```bash
    amika auth login
-   amika secret codex push --type oauth --name "Codex Subscription"
-   amika secret claude push --type oauth --name "Claude Subscription"
+   amika secret codex push --type oauth --name codex-oauth
+   amika secret claude push --type oauth --name claude-oauth
    ```
 
 
