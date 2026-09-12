@@ -19,6 +19,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Branch-selection flags, spelled as `amika sandbox create` spells them.
+const (
+	flagBranch    = "branch"
+	flagNewBranch = "new-branch"
+)
+
 // sendStdinPiped reports whether stdin is a pipe/redirect rather than a
 // terminal, so a message can be read from it when no positional arg is given.
 func sendStdinPiped() bool {
@@ -54,12 +60,16 @@ from --agent, else the organization's default, else claude.
 Run from inside a git repo and that repo's "origin" remote is cloned into
 the sandbox, the same way "amika sandbox create" picks up the repo you are
 standing in. Pass --git <path|url> to choose a different repo, or --no-git for
-a sandbox with no repo at all; --repo is accepted as an alias for --git. Only
-the repo's default branch is cloned, whatever branch you have checked out
-locally.
+a sandbox with no repo at all; --repo is accepted as an alias for --git.
 
-Repo selection only applies to a sandbox this command creates, so it cannot be
-combined with --session-id or --sandbox.
+The branch you have checked out is cloned too, so the sandbox holds the work
+you are looking at. --branch checks out a different one and --new-branch cuts
+a new branch; both mirror "amika sandbox create". A branch the remote does not
+have yet is refused, since the sandbox would otherwise come up on the default
+branch without saying so.
+
+Repo and branch selection only apply to a sandbox this command creates, so
+neither can be combined with --session-id or --sandbox.
 
 The message can be provided as a positional argument or piped via stdin.
 
@@ -132,11 +142,15 @@ func runSend(cmd *cobra.Command, args []string) error {
 	// and shells out to git, and login is the precondition for all of it, so
 	// someone not logged in hears that rather than a complaint about their
 	// git remote.
-	repoURL, repoName, err := sendRepo(cmd, sessionID, sandboxRef)
+	repoURL, identity, err := sendRepo(cmd, sessionID, sandboxRef)
 	if err != nil {
 		return err
 	}
-	printSendRepo(format, os.Stderr, repoName)
+	branches, err := sendBranches(cmd, identity)
+	if err != nil {
+		return err
+	}
+	printSendRepo(format, os.Stderr, identity.Name, branches.Branch)
 
 	req := apiclient.AgentSessionSendRequest{
 		Message:    message,
@@ -145,6 +159,9 @@ func runSend(cmd *cobra.Command, args []string) error {
 		SandboxID:  sandboxRef,
 		NewSession: newSession,
 		RepoURL:    repoURL,
+
+		Branch:        branches.Branch,
+		NewBranchName: branches.NewBranch,
 	}
 	client := runmode.NewRemoteClient()
 
@@ -190,20 +207,24 @@ func runSend(cmd *cobra.Command, args []string) error {
 // Suppressed under --output json, per the CLI's rule that human progress goes
 // through format.Progress: a JSON caller gets one object and nothing else,
 // even on the stream stdout does not use.
-func printSendRepo(format output.Format, w io.Writer, name string) {
+func printSendRepo(format output.Format, w io.Writer, name, branch string) {
 	if name == "" {
+		return
+	}
+	if branch != "" {
+		fmt.Fprintf(format.Progress(w), "repo: %s (%s)\n", name, branch)
 		return
 	}
 	fmt.Fprintf(format.Progress(w), "repo: %s\n", name)
 }
 
-// validateSendRepoFlags rejects a repo selection this command cannot honor,
-// using only the flags themselves so it can run before the auth gate.
+// validateSendRepoFlags rejects a repo or branch selection this command cannot
+// honor, using only the flags themselves so it can run before the auth gate.
 //
 // Beyond the contradictions gitrepo knows about, `send` has one of its own:
-// --session-id and --sandbox address a sandbox that already exists, so no
-// repo is created and an explicitly requested one cannot be honored. Refusing
-// beats dropping it from the request, which would show up only in what the
+// --session-id and --sandbox address a sandbox that already exists, so nothing
+// is created and neither a repo nor a branch can be honored. Refusing beats
+// dropping the flag from the request, which would show up only in what the
 // agent could see. --no-git needs no such refusal — it asks for exactly what
 // already happens there.
 func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) error {
@@ -213,7 +234,18 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) err
 	if sessionID == "" && sandboxRef == "" {
 		return nil
 	}
-	if flag := gitrepo.RequestedFlag(cmd); flag != "" {
+	flag := gitrepo.RequestedFlag(cmd)
+	if flag == "" {
+		// Branch flags are as unhonorable here as repo ones, and are checked
+		// in the same pass so one message covers whichever the caller used.
+		for _, name := range []string{flagBranch, flagNewBranch} {
+			if cmd.Flags().Changed(name) {
+				flag = name
+				break
+			}
+		}
+	}
+	if flag != "" {
 		return fmt.Errorf(
 			"--%s cannot be combined with --session-id or --sandbox; it only applies to a sandbox this command creates",
 			flag)
@@ -228,28 +260,43 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) err
 // A message aimed at an existing chat (--session-id) or an existing sandbox
 // (--sandbox) creates nothing, so there is no repo to choose and the working
 // directory is not consulted at all.
-func sendRepo(cmd *cobra.Command, sessionID, sandboxRef string) (url, name string, err error) {
+func sendRepo(cmd *cobra.Command, sessionID, sandboxRef string) (url string, identity gitrepo.Identity, err error) {
 	if sessionID != "" || sandboxRef != "" {
 		// validateSendRepoFlags has already refused an explicit repo here, so
 		// this is the "nothing was asked for" case: skip detection entirely.
-		return "", "", nil
+		return "", gitrepo.Identity{}, nil
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to determine working directory: %w", err)
+		return "", gitrepo.Identity{}, fmt.Errorf("failed to determine working directory: %w", err)
 	}
-	identity, err := gitrepo.FromCommand(cmd, cwd)
+	identity, err = gitrepo.FromCommand(cmd, cwd)
 	if err != nil {
-		return "", "", err
+		return "", gitrepo.Identity{}, err
 	}
 	url, err = identity.RemoteURL()
 	if err != nil {
-		return "", "", err
+		return "", gitrepo.Identity{}, err
 	}
-	// Name, not URL: it is what identifies the repo to a reader, it matches
-	// what `sandbox create` reports, and an origin can carry a token in its
-	// userinfo that has no business on a terminal.
-	return url, identity.Name, nil
+	return url, identity, nil
+}
+
+// sendBranches decides the branch pair for a sandbox this message creates.
+//
+// An identity with no repo carries no branch either: there is nothing to check
+// out, and a branch for a repo that will not be cloned is meaningless. With a
+// repo, the pair comes from the same resolver `sandbox create` uses, so both
+// commands carry over the current branch and refuse an unpushed one alike.
+func sendBranches(cmd *cobra.Command, identity gitrepo.Identity) (gitrepo.BranchRequest, error) {
+	if identity.Source == gitrepo.SourceNone {
+		return gitrepo.BranchRequest{}, nil
+	}
+	branch, _ := cmd.Flags().GetString(flagBranch)
+	newBranch, _ := cmd.Flags().GetString(flagNewBranch)
+	return gitrepo.ResolveBranch(identity, gitrepo.BranchRequest{
+		Branch:    branch,
+		NewBranch: newBranch,
+	})
 }
 
 // mustBool reads a bool flag, ignoring the (impossible for a defined flag)
@@ -484,6 +531,8 @@ func init() {
 		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",
 		"Skip git repo auto-detection; create a sandbox without any repo")
 	gitrepo.AddRepoAlias(sendCmd)
+	sendCmd.Flags().String(flagBranch, "", "Check out this git branch in the sandbox, or create it if it doesn't exist (default: the branch checked out locally)")
+	sendCmd.Flags().String(flagNewBranch, "", "Create a new git branch. With --branch, starts from that branch; otherwise from the current checkout")
 	sendCmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
 	rootCmd.AddCommand(sendCmd)
 

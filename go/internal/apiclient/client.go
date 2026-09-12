@@ -843,8 +843,8 @@ func (c *Client) UpdateSession(sandboxName, sessionID string, req UpdateSessionR
 
 // AgentSessionSendRequest is the request body for POST /api/v0beta1/agent-sessions.
 // Message is required; the rest are optional. SessionID continues an existing
-// chat, SandboxID routes into a specific sandbox, and RepoURL is only used when
-// a sandbox is created behind the scenes.
+// chat, SandboxID routes into a specific sandbox, and RepoURL, Branch and
+// NewBranchName are only used when a sandbox is created behind the scenes.
 type AgentSessionSendRequest struct {
 	Message    string `json:"message"`
 	Agent      string `json:"agent,omitempty"`
@@ -852,6 +852,13 @@ type AgentSessionSendRequest struct {
 	SandboxID  string `json:"sandbox_id,omitempty"`
 	NewSession bool   `json:"new_session,omitempty"`
 	RepoURL    string `json:"repo_url,omitempty"`
+	// Branch and NewBranchName mirror the create request's pair: Branch
+	// checks out an existing branch, NewBranchName cuts a new one (from
+	// Branch when both are given). Both omitempty, because the server reads
+	// "no branch requested" from an absent field and rejects an empty string
+	// as a branch name.
+	Branch        string `json:"branch,omitempty"`
+	NewBranchName string `json:"new_branch_name,omitempty"`
 }
 
 // AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and
