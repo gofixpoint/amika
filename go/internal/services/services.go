@@ -2,17 +2,23 @@
 // consistent across the CLI and the HTTP API, such as port validation rules.
 package services
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/gofixpoint/amika/go/internal/constants"
+)
 
 const (
 	// ReservedPortMin is the inclusive lower bound of the container port range
-	// Amika reserves for its own internal sandbox services.
-	ReservedPortMin = 60899
+	// Amika reserves for its own internal sandbox services. It is an alias of
+	// constants.ReservedPortStart so the two cannot drift apart.
+	ReservedPortMin = constants.ReservedPortStart
 	// ReservedPortMax is the inclusive upper bound of the reserved range (e.g.
 	// the OpenCode web UI on 60998 and the amikad daemon on 60999). User
 	// services may not bind ports in this range. See
-	// docs/sandbox-configuration.md for the full allocation table.
-	ReservedPortMax = 60999
+	// docs/sandbox-configuration.md for the full allocation table. It is an
+	// alias of constants.ReservedPortEnd so the two cannot drift apart.
+	ReservedPortMax = constants.ReservedPortEnd
 )
 
 // ValidatePort reports whether port is a legal, user-assignable container port

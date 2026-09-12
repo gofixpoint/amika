@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/gofixpoint/amika/go/internal/services"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 )
 
@@ -54,8 +55,10 @@ func parsePortFlags(flags []string, hostIP string) ([]sandbox.PortBinding, error
 		if hostPort < 1 || hostPort > 65535 {
 			return nil, fmt.Errorf("host port %d must be between 1 and 65535", hostPort)
 		}
-		if containerPort < 1 || containerPort > 65535 {
-			return nil, fmt.Errorf("container port %d must be between 1 and 65535", containerPort)
+		// Only the container side is reserved: publishing the host's 60998 is
+		// fine, binding a user service to container port 60998 is not.
+		if err := services.ValidatePort(containerPort); err != nil {
+			return nil, err
 		}
 
 		key := fmt.Sprintf("%s:%d/%s", hostIP, hostPort, protocol)

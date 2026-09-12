@@ -214,6 +214,36 @@ func TestParsePortFlags(t *testing.T) {
 			hostIP:  " ",
 			wantErr: true,
 		},
+		{
+			name:    "reserved container port low boundary",
+			flags:   []string{"8080:60899"},
+			hostIP:  "127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "reserved container port opencode web",
+			flags:   []string{"8080:60998"},
+			hostIP:  "127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "reserved container port high boundary",
+			flags:   []string{"8080:60999"},
+			hostIP:  "127.0.0.1",
+			wantErr: true,
+		},
+		{
+			name:    "container port just above reserved",
+			flags:   []string{"8080:61000"},
+			hostIP:  "127.0.0.1",
+			wantLen: 1,
+		},
+		{
+			name:    "host port inside reserved range is allowed",
+			flags:   []string{"60998:8080"},
+			hostIP:  "127.0.0.1",
+			wantLen: 1,
+		},
 	}
 
 	for _, tt := range tests {

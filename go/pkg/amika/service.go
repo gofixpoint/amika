@@ -18,6 +18,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/constants"
 	"github.com/gofixpoint/amika/go/internal/materialize"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/gofixpoint/amika/go/internal/services"
 )
 
 // Service defines the public API surface for running Amika operations from Go.
@@ -401,8 +402,11 @@ func normalizePortBindings(in []PortBinding) ([]PortBinding, error) {
 		if p.HostPort < 1 || p.HostPort > 65535 {
 			return nil, fmt.Errorf("%w: HostPort %d must be between 1 and 65535", ErrInvalidArgument, p.HostPort)
 		}
-		if p.ContainerPort < 1 || p.ContainerPort > 65535 {
-			return nil, fmt.Errorf("%w: ContainerPort %d must be between 1 and 65535", ErrInvalidArgument, p.ContainerPort)
+		// Only the container side is reserved: a host port inside the Amika
+		// reserved range is fine, a user service binding to a reserved
+		// container port (OpenCode web UI, amikad) is not.
+		if err := services.ValidatePort(p.ContainerPort); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 		}
 		protocol := strings.ToLower(strings.TrimSpace(p.Protocol))
 		if protocol == "" {
