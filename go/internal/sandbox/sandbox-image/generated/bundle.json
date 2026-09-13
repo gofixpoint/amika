@@ -74,6 +74,7 @@
       "/usr/local/etc/amikad/setup/start.sh"
     ],
     "standard_path": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "welcome_script": "/usr/lib/amika/welcome.sh",
     "workspace": "/home/amika/workspace"
   },
   "presets": {
@@ -143,7 +144,8 @@
           "assets": [
             "assets/stable/.bashrc",
             "assets/stable/.tmux.conf",
-            "assets/stable/.zshrc"
+            "assets/stable/.zshrc",
+            "assets/stable/welcome.sh"
           ],
           "id": "dotfiles",
           "script": "steps/60-dotfiles.sh",
@@ -294,7 +296,8 @@
           "assets": [
             "assets/stable/.bashrc",
             "assets/stable/.tmux.conf",
-            "assets/stable/.zshrc"
+            "assets/stable/.zshrc",
+            "assets/stable/welcome.sh"
           ],
           "id": "dotfiles",
           "script": "steps/60-dotfiles.sh",
