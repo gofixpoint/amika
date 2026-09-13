@@ -58,6 +58,9 @@ func TestEndpoints(t *testing.T) {
 		code int
 	}{
 		{http.MethodGet, "/v1/health", 200},
+		{http.MethodGet, "/v1/rigs", 200},
+		{http.MethodPost, "/v1/rigs", 422},
+		{http.MethodDelete, "/v1/rigs/sb", 501},
 		{http.MethodGet, "/v1/sandboxes", 200},
 		{http.MethodPost, "/v1/sandboxes", 422},
 		{http.MethodDelete, "/v1/sandboxes/sb", 501},
@@ -98,7 +101,7 @@ func TestOpenAPIIncludesV1Paths(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths := doc["paths"].(map[string]any)
-	for _, p := range []string{"/v1/sandboxes", "/v1/volumes", "/v1/auth/extract", "/v1/materialize"} {
+	for _, p := range []string{"/v1/rigs", "/v1/sandboxes", "/v1/volumes", "/v1/auth/extract", "/v1/materialize"} {
 		if _, ok := paths[p]; !ok {
 			t.Fatalf("missing path %s", p)
 		}

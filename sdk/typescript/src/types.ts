@@ -110,6 +110,9 @@ export interface CreateSandboxRequest {
   githubAuthMode?: string;
 }
 
+/** Canonical request name for creating a rig. */
+export type CreateRigRequest = CreateSandboxRequest;
+
 export function createSandboxRequestToWire(
   r: CreateSandboxRequest,
 ): Record<string, unknown> {
@@ -247,6 +250,13 @@ export interface RemoteSandbox {
   /** Local Docker sandboxes only; see {@link RemoteSandbox.containerId}. */
   image?: string;
 }
+
+/** Canonical product name for a remote sandbox resource. */
+export type RemoteRig = RemoteSandbox;
+/** Canonical product name for a service exposed by a rig. */
+export type RemoteRigService = RemoteSandboxService;
+/** Canonical product name for the creator metadata of a rig. */
+export type RemoteRigCreator = RemoteSandboxCreator;
 
 /**
  * The human who created a remote sandbox. Either field may be null if the

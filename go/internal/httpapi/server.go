@@ -21,6 +21,9 @@ func NewHandler(service amika.Service) http.Handler {
 
 	api := humago.New(mux, config)
 	registerHealth(api)
+	registerListRigs(api, service)
+	registerCreateRig(api, service)
+	registerDeleteRig(api, service)
 	registerListSandboxes(api, service)
 	registerCreateSandbox(api, service)
 	registerDeleteSandbox(api, service)
@@ -53,6 +56,18 @@ func registerHealth(api huma.API) {
 
 type listSandboxesOutput struct{ Body amika.ListSandboxesResult }
 
+// registerListRigs exposes the canonical name for sandbox resources. The
+// sandbox route remains registered below for backwards compatibility.
+func registerListRigs(api huma.API, service amika.Service) {
+	huma.Get(api, "/v1/rigs", func(ctx context.Context, _ *struct{}) (*listSandboxesOutput, error) {
+		result, err := service.ListSandboxes(ctx, amika.ListSandboxesRequest{})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &listSandboxesOutput{Body: result}, nil
+	})
+}
+
 func registerListSandboxes(api huma.API, service amika.Service) {
 	huma.Get(api, "/v1/sandboxes", func(ctx context.Context, _ *struct{}) (*listSandboxesOutput, error) {
 		result, err := service.ListSandboxes(ctx, amika.ListSandboxesRequest{})
@@ -65,6 +80,16 @@ func registerListSandboxes(api huma.API, service amika.Service) {
 
 type createSandboxInput struct{ Body amika.CreateSandboxRequest }
 type createSandboxOutput struct{ Body amika.Sandbox }
+
+func registerCreateRig(api huma.API, service amika.Service) {
+	huma.Post(api, "/v1/rigs", func(ctx context.Context, input *createSandboxInput) (*createSandboxOutput, error) {
+		result, err := service.CreateSandbox(ctx, input.Body)
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &createSandboxOutput{Body: result}, nil
+	})
+}
 
 func registerCreateSandbox(api huma.API, service amika.Service) {
 	huma.Post(api, "/v1/sandboxes", func(ctx context.Context, input *createSandboxInput) (*createSandboxOutput, error) {
@@ -80,6 +105,16 @@ type deleteSandboxInput struct {
 	Name string `path:"name"`
 }
 type deleteSandboxOutput struct{ Body amika.DeleteSandboxResult }
+
+func registerDeleteRig(api huma.API, service amika.Service) {
+	huma.Delete(api, "/v1/rigs/{name}", func(ctx context.Context, input *deleteSandboxInput) (*deleteSandboxOutput, error) {
+		result, err := service.DeleteSandbox(ctx, amika.DeleteSandboxRequest{Names: []string{input.Name}})
+		if err != nil {
+			return nil, toHTTPError(err)
+		}
+		return &deleteSandboxOutput{Body: result}, nil
+	})
+}
 
 func registerDeleteSandbox(api huma.API, service amika.Service) {
 	huma.Delete(api, "/v1/sandboxes/{name}", func(ctx context.Context, input *deleteSandboxInput) (*deleteSandboxOutput, error) {
