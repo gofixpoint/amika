@@ -22,7 +22,7 @@ import type {
 
 /**
  * Load the Amika-managed environment that provisioning persists to
- * `/etc/environment` (`HOME`, `AMIKA_AGENT_CWD`, `OPENCODE_*`, injected vars)
+ * `/etc/environment` (home, working-directory, service, and injected vars)
  * before running the command. Vercel's `runCommand` starts a fresh shell with
  * only the sandbox's default `env`, so — like Freestyle's `vm.exec` — it
  * wouldn't otherwise see the managed env. Guarded with `[ -f ... ]` so it's a

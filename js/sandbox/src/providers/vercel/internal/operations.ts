@@ -23,12 +23,12 @@ import {
   type RefreshUrlsResult,
   type SandboxExecResult,
   type SandboxService,
+  type ServiceRestartContext,
   type StreamCommandHandlers,
 } from "../../provider";
 import type { SandboxStatus } from "../../../sandbox-status";
 import { execChecked, type SandboxAdapter } from "../../shared/adapter";
 import { execWithStagedInput } from "../../shared/exec-input";
-import { buildLifecycleCommands } from "../../shared/lifecycle-commands";
 import { buildVercelCommand, VercelAdapter } from "./adapter";
 import { getVercelSandbox, vercelCredentials } from "./client";
 
@@ -66,8 +66,8 @@ const VERCEL_MAX_TIMEOUT_MS = 45 * 60 * 1000;
  * Vercel caps the number of ports a sandbox may expose. The platform limit is
  * 15 across all plans (Hobby/Pro/Enterprise; see Vercel's Sandbox pricing &
  * limits docs) — the `@vercel/sandbox` type comment that says "up to 4" is
- * stale. We cap the service port list here (the Coding Agent port is always
- * kept first) rather than letting `create` reject an over-limit request.
+ * stale. We cap the caller-ordered service port list here rather than letting
+ * `create` reject an over-limit request.
  */
 export const VERCEL_MAX_EXPOSED_PORTS = 15;
 
@@ -88,7 +88,7 @@ export function vercelTimeoutMs(autoStopInterval?: number | null): number {
 /**
  * Resolve the prepared source a new sandbox boots from. Default sandboxes use a
  * VCR image that has the amikad lifecycle hook bundle
- * (`/usr/lib/amikad/*`) and agent tooling (OpenCode, the agent CLIs) baked in —
+ * (`/usr/lib/amikad/*`) and caller tooling baked in —
  * the same prepared-image dependency Daytona and Freestyle have. A plain Vercel
  * runtime (`node24`, `python3.13`, …) has none of that, so the Vercel
  * provisioning flow would fail at the very first lifecycle step
@@ -119,16 +119,12 @@ export function resolveVercelBootSource(
 
 /**
  * The (deduped, capped) set of container ports to expose for a sandbox's
- * services. The Coding Agent port is kept first so it is never the one dropped
- * when more than {@link VERCEL_MAX_EXPOSED_PORTS} services are requested.
+ * services. Input order is the caller's priority order, so ports beyond the
+ * provider limit are dropped from the end without interpreting service names.
  */
 export function resolveVercelPorts(services: SandboxService[]): number[] {
-  const ordered = [
-    ...services.filter((s) => s.name === "Coding Agent"),
-    ...services.filter((s) => s.name !== "Coding Agent"),
-  ];
   const unique: number[] = [];
-  for (const service of ordered) {
+  for (const service of services) {
     if (!unique.includes(service.containerPort)) {
       unique.push(service.containerPort);
     }
@@ -194,7 +190,6 @@ export async function createVercelSandbox(
   return {
     provider: "vercel",
     providerSandboxId: sandbox.name,
-    providerUrl: null,
     services,
     envVars: {},
   };
@@ -221,7 +216,6 @@ export async function refreshVercelUrls(
   });
   const routedPorts = new Set(sandbox.routes.map((r) => r.port));
   const refreshed: SandboxService[] = [];
-  let providerUrl: string | null = null;
 
   for (const service of services) {
     let url = "";
@@ -233,18 +227,15 @@ export async function refreshVercelUrls(
     // here. Expose it via `sandbox.update({ ports })` before minting instead of
     // skipping it.
     refreshed.push({ ...service, url });
-    if (service.name === "Coding Agent" && url) {
-      providerUrl = url;
-    }
   }
 
-  return { providerUrl, services: refreshed };
+  return { services: refreshed };
 }
 
 /**
  * The exposed-port list that realizes `desired`, or `null` when the live set
  * already matches. Pure so it is unit-testable: service ports (deduped,
- * "Coding Agent" prioritized, capped at {@link VERCEL_MAX_EXPOSED_PORTS}).
+ * caller order preserved, capped at {@link VERCEL_MAX_EXPOSED_PORTS}).
  * Order-insensitive comparison, since `update({ ports })` needs a change only
  * when the *set* differs.
  *
@@ -411,32 +402,17 @@ export async function deleteVercelSandbox(
   await sandbox.delete();
 }
 
-/**
- * Root-only file (0600, written via sudo) holding just enough to relaunch a
- * sandbox's services after a cold resume without any external lookup: the
- * OpenCode server password, the OpenCode-web mode, and the repo working dir.
- * Kept out of `/etc/environment` (which every shell auto-sources, and which a
- * cloned repo's setup script could read) so the password isn't exposed to user
- * code — the rest of the start-phase env is already persisted there and gets
- * sourced by `buildVercelCommand` on the restart execs.
- */
+/** Root-only file holding caller-defined commands to replay after resume. */
 export const VERCEL_RESUME_CONTEXT_PATH = `${AMIKAD_ETC_DIR}/vercel-resume.json`;
 
-interface VercelResumeContext {
-  openCodePassword: string;
-  amikaOpenCodeWeb?: string | null;
-  /** Repo working directory (`AMIKA_AGENT_CWD`); the lifecycle hooks' cwd. */
-  repoDir: string;
-}
-
 /**
- * Persist the {@link VercelResumeContext} so {@link restartVercelServicesOnResume}
- * can restart services after an idle-timeout resume. Written during create and
- * restart, when the password and repo dir are known.
+ * Persist the {@link ServiceRestartContext} so
+ * {@link restartVercelServicesOnResume} can restore caller-managed processes
+ * after an idle-timeout resume.
  */
 export async function writeVercelResumeContext(
   adapter: SandboxAdapter,
-  context: VercelResumeContext,
+  context: ServiceRestartContext,
 ): Promise<void> {
   const tempPath = `/tmp/amika-vercel-resume-${Date.now()}-${Math.random()
     .toString(36)
@@ -456,7 +432,7 @@ export async function writeVercelResumeContext(
 /** Read back the persisted resume context, or null when it isn't present yet. */
 async function readVercelResumeContext(
   adapter: SandboxAdapter,
-): Promise<VercelResumeContext | null> {
+): Promise<ServiceRestartContext | null> {
   const result = await adapter.exec(
     `cat ${shellQuote(VERCEL_RESUME_CONTEXT_PATH)}`,
     { sudo: true },
@@ -465,24 +441,17 @@ async function readVercelResumeContext(
     return null;
   }
   try {
-    return JSON.parse(result.stdout) as VercelResumeContext;
+    return JSON.parse(result.stdout) as ServiceRestartContext;
   } catch {
     return null;
   }
 }
 
 /**
- * SDK `onResume` callback for the exec/stream paths: when Vercel wakes a stopped
- * session it restores the filesystem but not the processes the lifecycle hooks
- * started, leaving OpenCode and the user services dead. Re-run the start-phase
- * hooks (pre-setup → post-setup → start) to bring them back, mirroring how
- * `runLifecycleScripts({ phase: "start" })` restarts them on an explicit start.
- * The base/service/injected env is sourced from `/etc/environment` (persisted by
- * `configureManagedEnvironment`); the password/web/cwd come from the persisted
- * resume context. Best-effort: a sandbox resumed mid-initialization has no
- * context yet (skip), and a restart failure is swallowed rather than failing the
- * triggering exec — the next interaction retries and direct execs (e.g. agent
- * launches) don't need OpenCode to be up.
+ * SDK `onResume` callback for the exec/stream paths. Vercel restores the
+ * filesystem but not running processes, so replay the caller's persisted
+ * commands in order. Best-effort: missing context or a replay failure does not
+ * fail the command that triggered the resume.
  */
 async function restartVercelServicesOnResume(sandbox: Sandbox): Promise<void> {
   try {
@@ -491,32 +460,13 @@ async function restartVercelServicesOnResume(sandbox: Sandbox): Promise<void> {
     if (!context) {
       return;
     }
-    // TODO(KAPRO-840): the Pi web terminal is not relaunched here. `pre-setup.sh`
-    // gates it on `AMIKA_PI_WEB` / `AMIKA_PI_WEB_PASSWORD`, which the resume
-    // context does not carry, so a resumed sandbox keeps its Pi service URL
-    // while nothing listens on port 60996 until an explicit restart. Known
-    // limitation: this path is Vercel-only and that provider is not in use.
-    const hookEnv: Record<string, string> = {
-      AMIKA_AGENT_CWD: context.repoDir,
-      OPENCODE_SERVER_PASSWORD: context.openCodePassword,
-    };
-    if (context.amikaOpenCodeWeb != null) {
-      hookEnv.AMIKA_OPENCODE_WEB = context.amikaOpenCodeWeb;
+    for (const replay of context.commands) {
+      await execChecked(adapter, replay.command, {
+        cwd: replay.cwd,
+        env: replay.env,
+        sudo: replay.sudo,
+      });
     }
-    const commands = buildLifecycleCommands();
-    await execChecked(adapter, commands.preSetup, {
-      cwd: context.repoDir,
-      env: hookEnv,
-      sudo: true,
-    });
-    await execChecked(adapter, commands.postSetup, {
-      cwd: context.repoDir,
-      sudo: true,
-    });
-    await execChecked(adapter, commands.start, {
-      cwd: context.repoDir,
-      env: hookEnv,
-    });
   } catch {
     // Swallow — see the doc comment: this is a best-effort recovery, and the
     // direct-exec paths that trigger it don't depend on the restarted services.
@@ -556,8 +506,8 @@ export async function executeVercelCommand(
   const sandbox = await getVercelSandbox(config, providerSandboxId, {
     resume: true,
     // Default relaunches the lifecycle services on a cold resume so an
-    // interactive session is fully live; `"bare"` skips that (e.g. the chat
-    // worker's agent launch / exit probe, which don't need OpenCode up).
+    // interactive session is fully live; `"bare"` skips that when the caller's
+    // command does not depend on any managed background process.
     onResume:
       opts?.resumeMode === "bare" ? undefined : restartVercelServicesOnResume,
   });
