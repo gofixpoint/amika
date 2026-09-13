@@ -13,9 +13,10 @@ const sandboxConnectWorkdir = "/home/amika"
 // New builds the sandbox command tree.
 func New() *cobra.Command {
 	sandboxCmd := &cobra.Command{
-		Use:   "sandbox",
-		Short: "Manage sandboxes",
-		Long:  `Create and delete sandboxed environments backed by container providers.`,
+		Use:     "rig",
+		Aliases: []string{"sandbox"},
+		Short:   "Manage rigs",
+		Long:    "Create and delete rig environments backed by container providers. The legacy `sandbox` command remains an alias.",
 	}
 
 	sandboxCmd.AddCommand(sandboxCreateCmd)

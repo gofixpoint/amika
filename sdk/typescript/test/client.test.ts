@@ -57,6 +57,30 @@ describe("AmikaClient.listSandboxes", () => {
   });
 });
 
+describe("AmikaClient rigs", () => {
+  it("uses the canonical /rigs routes", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: [] },
+      { status: 202, body: { id: "1", name: "dev", state: "initializing" } },
+      { status: 202, body: "" },
+      { status: 204, body: "" },
+    ]);
+    const client = makeClient(fetch);
+
+    await client.listRigs();
+    await client.createRig({ name: "dev" });
+    await client.startRig("dev");
+    await client.deleteRig("dev");
+
+    expect(calls.map((call) => call.url)).toEqual([
+      `${BASE}/api/v0beta1/rigs`,
+      `${BASE}/api/v0beta1/rigs`,
+      `${BASE}/api/v0beta1/rigs/dev/start`,
+      `${BASE}/api/v0beta1/rigs/dev`,
+    ]);
+  });
+});
+
 describe("AmikaClient.createSandbox", () => {
   it("translates camelCase input to snake_case wire and parses response", async () => {
     const { fetch, calls } = mockFetch([

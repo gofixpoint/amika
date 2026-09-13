@@ -20,6 +20,7 @@ import {
   agentSendResponseFromWire,
   type CreateProviderSecretRequest,
   type CreateSandboxRequest,
+  type CreateRigRequest,
   type CreateSandboxSnapshotRequest,
   createSandboxSnapshotRequestToWire,
   type CreateSecretRequest,
@@ -32,6 +33,7 @@ import {
   type RemoteRepository,
   remoteRepositoryFromWire,
   type RemoteSandbox,
+  type RemoteRig,
   remoteSandboxFromWire,
   type SandboxScrubPreview,
   sandboxScrubPreviewFromWire,
@@ -85,6 +87,83 @@ export class AmikaClient {
   }
 
   // ---------- Sandboxes ----------
+
+  // ---------- Rigs ----------
+
+  /** List rigs. `listSandboxes` remains available for backwards compatibility. */
+  async listRigs(): Promise<RemoteRig[]> {
+    const data = await this.http.doJSON<unknown[]>(
+      "GET",
+      `${API_BASE_PATH}/rigs`,
+    );
+    return mapArray(data, remoteSandboxFromWire);
+  }
+
+  /** Create a rig. `createSandbox` remains available for backwards compatibility. */
+  async createRig(req: CreateRigRequest): Promise<RemoteRig> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "POST",
+      `${API_BASE_PATH}/rigs`,
+      createSandboxRequestToWire(req),
+    );
+    return remoteSandboxFromWire(data ?? {});
+  }
+
+  async getRig(name: string): Promise<RemoteRig> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}`,
+    );
+    return remoteSandboxFromWire(data ?? {});
+  }
+
+  waitForRig(name: string): Promise<RemoteRig> {
+    return waitForSandboxState(
+      (n) => this.getRig(n),
+      name,
+      ["active", "running", "started"],
+      "rig provisioning failed",
+    );
+  }
+
+  async startRig(name: string): Promise<void> {
+    await this.http.doJSON(
+      "POST",
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}/start`,
+    );
+  }
+
+  waitForRigStart(name: string): Promise<RemoteRig> {
+    return waitForSandboxState(
+      (n) => this.getRig(n),
+      name,
+      ["active", "running", "started"],
+      "rig start failed",
+    );
+  }
+
+  async stopRig(name: string): Promise<void> {
+    await this.http.doJSON(
+      "POST",
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}/stop`,
+    );
+  }
+
+  waitForRigStop(name: string): Promise<RemoteRig> {
+    return waitForSandboxState(
+      (n) => this.getRig(n),
+      name,
+      ["stopped"],
+      "rig stop failed",
+    );
+  }
+
+  async deleteRig(name: string): Promise<void> {
+    await this.http.doJSON(
+      "DELETE",
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}`,
+    );
+  }
 
   async listSandboxes(): Promise<RemoteSandbox[]> {
     const data = await this.http.doJSON<unknown[]>(
