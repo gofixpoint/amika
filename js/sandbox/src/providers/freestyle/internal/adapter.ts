@@ -48,7 +48,7 @@ function scopeToUser(vm: FreestyleVm, username: string): FreestyleVm {
 
 /**
  * Load the Amika-managed environment that provisioning persists to
- * `/etc/environment` (`AMIKA_AGENT_CWD`, `OPENCODE_*`, injected vars). Daytona
+ * `/etc/environment` (working-directory, service, and injected vars). Daytona
  * gets these from the container env baked at create time, not by sourcing this
  * file: a Daytona `process.exec` runs a non-login shell, and `BASH_ENV` (which
  * would make bash source the file) lives only inside `/etc/environment`, not
