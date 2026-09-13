@@ -177,7 +177,7 @@ eslint             ^9
 typescript-eslint  ^8.55.0
 globals            ^16.4.0
 prettier           3.8.3     (exact — see below)
-vitest             4.1.0
+vitest             4.1.11
 ```
 
 `prettier` is pinned to an **exact** version rather than a caret range. This
