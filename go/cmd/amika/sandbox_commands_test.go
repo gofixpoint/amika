@@ -14,7 +14,7 @@ import (
 func findSubcommand(t *testing.T, parent *cobra.Command, name string) *cobra.Command {
 	t.Helper()
 	for _, child := range parent.Commands() {
-		if child.Name() == name {
+		if child.Name() == name || slices.Contains(child.Aliases, name) {
 			return child
 		}
 	}
@@ -22,10 +22,13 @@ func findSubcommand(t *testing.T, parent *cobra.Command, name string) *cobra.Com
 	return nil
 }
 
-func TestSandboxCommandRegistered(t *testing.T) {
-	sandboxCmd := findSubcommand(t, rootCmd, "sandbox")
-	if sandboxCmd.Name() != "sandbox" {
-		t.Fatalf("command name = %q, want sandbox", sandboxCmd.Name())
+func TestRigCommandRegistered(t *testing.T) {
+	rigCmd := findSubcommand(t, rootCmd, "rig")
+	if rigCmd.Name() != "rig" {
+		t.Fatalf("command name = %q, want rig", rigCmd.Name())
+	}
+	if !slices.Contains(rigCmd.Aliases, "sandbox") {
+		t.Fatal("rig command must include alias \"sandbox\"")
 	}
 }
 
