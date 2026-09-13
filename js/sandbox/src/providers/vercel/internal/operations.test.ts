@@ -130,26 +130,22 @@ describe("resolveVercelBootSource", () => {
 });
 
 describe("resolveVercelPorts", () => {
-  it("keeps the Coding Agent port first and dedupes", () => {
+  it("preserves caller priority while deduping", () => {
     const ports = resolveVercelPorts([
       service("web", 3000),
-      service("Coding Agent", 60998),
+      service("primary", 60998),
       service("web", 3000),
     ]);
-    expect(ports).toEqual([60998, 3000]);
+    expect(ports).toEqual([3000, 60998]);
   });
 
-  it("caps the exposed ports at the Vercel limit (15), dropping extras after the agent", () => {
-    // 1 agent + 16 services = 17 requested, two over the platform limit of 15.
-    const extras = Array.from({ length: 16 }, (_, i) =>
-      service(`svc-${i}`, 3001 + i),
+  it("caps the exposed ports at the Vercel limit (15)", () => {
+    const services = Array.from({ length: 17 }, (_, i) =>
+      service(`svc-${i}`, 3000 + i),
     );
-    const ports = resolveVercelPorts([
-      service("Coding Agent", 60998),
-      ...extras,
-    ]);
+    const ports = resolveVercelPorts(services);
     expect(ports).toHaveLength(15);
-    expect(ports[0]).toBe(60998);
+    expect(ports[0]).toBe(3000);
     // The last two requested ports are the ones dropped.
     expect(ports).not.toContain(3015);
     expect(ports).not.toContain(3016);
@@ -162,10 +158,7 @@ describe("portsForDesiredServices", () => {
     // bridge (2222); the desired set no longer contains port 3000, so the
     // reconciled list drops both the removed service and the defunct bridge.
     expect(
-      portsForDesiredServices(
-        [60998, 3000, 2222],
-        [service("Coding Agent", 60998)],
-      ),
+      portsForDesiredServices([60998, 3000, 2222], [service("primary", 60998)]),
     ).toEqual([60998]);
   });
 
@@ -176,7 +169,7 @@ describe("portsForDesiredServices", () => {
     expect(
       portsForDesiredServices(
         [60998, 3000, 2222],
-        [service("Coding Agent", 60998), service("web", 3000)],
+        [service("primary", 60998), service("web", 3000)],
       ),
     ).toEqual([60998, 3000]);
   });
@@ -185,7 +178,7 @@ describe("portsForDesiredServices", () => {
     expect(
       portsForDesiredServices(
         [60998, 3000],
-        [service("Coding Agent", 60998), service("other", 3000)],
+        [service("primary", 60998), service("other", 3000)],
       ),
     ).toBeNull();
   });
@@ -196,7 +189,7 @@ describe("portsForDesiredServices", () => {
     expect(
       portsForDesiredServices(
         [60998],
-        [service("Coding Agent", 60998), service("late", 4000)],
+        [service("primary", 60998), service("late", 4000)],
       ),
     ).toEqual([60998, 4000]);
   });
@@ -205,7 +198,7 @@ describe("portsForDesiredServices", () => {
     expect(
       portsForDesiredServices(
         [3000, 60998],
-        [service("Coding Agent", 60998), service("web", 3000)],
+        [service("primary", 60998), service("web", 3000)],
       ),
     ).toBeNull();
   });
@@ -474,9 +467,13 @@ describe("writeVercelFile", () => {
 
 describe("writeVercelResumeContext", () => {
   const context = {
-    openCodePassword: "pw",
-    amikaOpenCodeWeb: "http://box:60998",
-    repoDir: "/home/amika/workspace/amika",
+    commands: [
+      {
+        command: "./restart-services",
+        cwd: "/workspace/project",
+        env: { SERVICE_MODE: "web" },
+      },
+    ],
   };
 
   it("uploads the context as JSON to a temp file", async () => {

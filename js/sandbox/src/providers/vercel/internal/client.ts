@@ -39,7 +39,7 @@ export function vercelCredentials(config: VercelConfig): {
  * actually wakes a stopped session from its snapshot (it does NOT fire for a
  * sandbox that is already running). Persistence restores only the filesystem,
  * not the processes the lifecycle hooks started, so exec/stream paths pass a
- * callback here to relaunch OpenCode and the user services on a cold resume.
+ * callback here to replay the caller's service commands on a cold resume.
  */
 export function getVercelSandbox(
   config: VercelConfig,

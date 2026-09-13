@@ -108,10 +108,10 @@ describe("deleteDaytonaSandbox", () => {
 });
 
 describe("createDaytonaSandbox", () => {
-  it("bakes only non-secret operational vars into the container env", async () => {
+  it("bakes the caller-supplied non-secret vars into the container env", async () => {
     // The container env is baked into snapshots and can't be scrubbed
-    // afterward. Secrets do not exist on the create input; this pins that the
-    // create path bakes only the allowed operational vars.
+    // afterward. The provider must pass through only the generic values the
+    // caller explicitly supplies.
     const createFn = vi.fn().mockResolvedValue({ id: "sandbox-xyz" });
     vi.mocked(Daytona).mockImplementation(function () {
       return {
@@ -127,8 +127,7 @@ describe("createDaytonaSandbox", () => {
       name: "sb",
       snapshot: "snap",
       services: [],
-      amikaOpenCodeWeb: "1",
-      repoName: "example-repo",
+      envVars: { CALLER_MODE: "enabled", SANDBOX_LABEL: "sb" },
       scrubSafe: true,
     });
 
@@ -138,18 +137,7 @@ describe("createDaytonaSandbox", () => {
       labels: Record<string, string>;
     };
 
-    // Only the non-secret operational vars are baked; nothing else may leak
-    // into the snapshot-captured container env.
-    expect(Object.keys(envVars).sort()).toEqual([
-      "AMIKA_AGENT_CWD",
-      "AMIKA_OPENCODE_WEB",
-      "AMIKA_SANDBOX_NAME",
-    ]);
-    expect(envVars.AMIKA_OPENCODE_WEB).toBe("1");
-    expect(envVars).toHaveProperty("AMIKA_AGENT_CWD");
-    // The sandbox name is baked into the container env so the launched agent
-    // (a non-login exec that doesn't source /etc/environment) can see it.
-    expect(envVars.AMIKA_SANDBOX_NAME).toBe("sb");
+    expect(envVars).toEqual({ CALLER_MODE: "enabled", SANDBOX_LABEL: "sb" });
     // A scrub-safe base earns the clean-env marker, which lets
     // snapshot-and-delete distinguish this sandbox from ones with baked-in
     // container env secrets.
@@ -177,7 +165,6 @@ describe("createDaytonaSandbox", () => {
       name: "sb",
       snapshot: "user-snapshot",
       services: [],
-      repoName: "example-repo",
       labels: { "amika-org-id": "org_1" },
       scrubSafe: false,
     });
@@ -222,7 +209,6 @@ describe("createDaytonaSandbox", () => {
       name: "sb",
       snapshot: "snap",
       services: [],
-      repoName: "example-repo",
       scrubSafe: true,
     });
 
@@ -269,7 +255,6 @@ describe("createDaytonaSandbox", () => {
         name: "sb",
         snapshot: "snap",
         services: [],
-        repoName: "example-repo",
         labels: { "amika-org-id": "org_1" },
         scrubSafe: true,
       },
@@ -291,8 +276,7 @@ describe("createDaytonaSandbox", () => {
     expect(body.target).toBe("test-target");
     // Same env/label discipline as the container path: no secrets in the
     // container env, scrub-safe marker preserved.
-    expect(body.env).not.toHaveProperty("OPENCODE_SERVER_PASSWORD");
-    expect(body.env).not.toHaveProperty("SNAPSHOT_TEST_VAR");
+    expect(body.env).toEqual({});
     expect(body.labels["amika-org-id"]).toBe("org_1");
     expect(body.labels[SANDBOX_ENV_SECRETS_EXCLUDED_LABEL]).toBe(
       SANDBOX_ENV_SECRETS_EXCLUDED_VALUE,

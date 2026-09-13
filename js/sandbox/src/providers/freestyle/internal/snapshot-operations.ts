@@ -271,8 +271,8 @@ export async function waitForFreestyleSnapshotActive(
  * that includes RAM and CPU state, and a VM created from it resumes that
  * memory (Freestyle docs: "restoring the entire saved memory image"). A disk
  * scrub run before this capture removes the injected credential files and
- * managed env, but secrets already loaded into memory (the OpenCode server's
- * API keys, an agent's process environment, page cache of the scrubbed files)
+ * managed env, but secrets already loaded into memory (service API keys,
+ * process environments, or page cache of the scrubbed files)
  * survive the image and come back when it is cloned. Acceptable for the
  * current dev-gated, org-scoped Freestyle usage (a snapshot only boots within
  * its owning org); the robust cold, disk-only capture is blocked until

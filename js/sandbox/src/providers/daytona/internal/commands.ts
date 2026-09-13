@@ -7,16 +7,6 @@ import { shellQuote } from "../../../util/shell";
 import { execFailureText } from "../../shared/adapter";
 
 /**
- * Amika hook vars that must survive the `sudo` environment reset even when the
- * caller passes no explicit `env` (the lifecycle scripts read these).
- */
-const SUDO_PRESERVE_ENV_BASE = [
-  "AMIKA_AGENT_CWD",
-  "AMIKA_OPENCODE_WEB",
-  "OPENCODE_SERVER_PASSWORD",
-] as const;
-
-/**
  * Build the on-box command string for a Daytona exec, one-shot or session.
  * Both paths run the *entire* command as the single quoted argument of a
  * `bash -c`, which buys three things:
@@ -34,11 +24,10 @@ const SUDO_PRESERVE_ENV_BASE = [
  *     take it down before the agent recorded an exit status.
  *
  * `sudo: true` additionally elevates the whole command rather than just its
- * first simple command, and extends `--preserve-env` with the caller's explicit
- * `env` keys (on top of the Amika hook vars) so `sudo`'s environment reset
- * doesn't strip the variables `ExecCommandOptions.env` promises to expose.
- * `sudo -n` is non-interactive so it fails fast rather than hanging on a
- * password prompt. Exported for unit testing.
+ * first simple command, and preserves the caller's explicit `env` keys so
+ * `sudo`'s environment reset doesn't strip values promised by
+ * `ExecCommandOptions.env`. `sudo -n` is non-interactive so it fails fast
+ * rather than hanging on a password prompt. Exported for unit testing.
  */
 export function buildDaytonaCommand(
   command: string,
@@ -47,8 +36,10 @@ export function buildDaytonaCommand(
   assertEnvNames(opts?.env);
   const inner = `bash -c ${shellQuote(command)}`;
   if (!opts?.sudo) return inner;
-  const preserve = [...SUDO_PRESERVE_ENV_BASE, ...Object.keys(opts.env ?? {})];
-  return `sudo -n --preserve-env=${preserve.join(",")} ${inner}`;
+  const preserve = Object.keys(opts.env ?? {});
+  const preserveArg =
+    preserve.length > 0 ? ` --preserve-env=${preserve.join(",")}` : "";
+  return `sudo -n${preserveArg} ${inner}`;
 }
 
 /** Shell-legal environment variable name; anything else is rejected. */

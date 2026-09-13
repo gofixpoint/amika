@@ -15,7 +15,7 @@
  *
  * Every command runs with `resumeMode: "bare"`: on Vercel a generic exec
  * against a stopped sandbox would otherwise fire the service-restart resume
- * callback, which reads the resume-context file and relaunches OpenCode with
+ * callback, which reads the resume-context file and replays commands with
  * the source password — reloading the very secret being scrubbed into a live
  * session right before capture. Providers without resume callbacks ignore it.
  *

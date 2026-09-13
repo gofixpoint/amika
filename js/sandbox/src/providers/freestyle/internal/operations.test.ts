@@ -330,7 +330,7 @@ describe("syncFreestyleRoutes", () => {
     );
 
     await syncFreestyleRoutes({ apiKey: "test-key" }, "vm_abc", [
-      svc("Coding Agent", 60998),
+      svc("primary", 60998),
     ]);
 
     // Only the stale Amika-owned mapping for THIS vm is torn down — never
