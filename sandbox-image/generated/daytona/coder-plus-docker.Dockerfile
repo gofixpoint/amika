@@ -39,6 +39,11 @@ COPY sandbox-image/steps/60-dotfiles.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
     && rm -rf /opt/amika-build
 
+COPY sandbox-image/assets/skills/amika-cli /opt/amika-build/step-assets
+COPY sandbox-image/steps/65-agent-skill.sh /opt/amika-build/step.sh
+RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
+    && rm -rf /opt/amika-build
+
 COPY sandbox-image/assets/hooks /opt/amika-build/step-assets
 COPY sandbox-image/steps/70-hook-assets.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \

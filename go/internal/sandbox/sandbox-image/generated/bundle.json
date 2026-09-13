@@ -4,6 +4,7 @@
       ".claude/settings.json",
       ".codex/hooks.json"
     ],
+    "agent_skill": ".agents/skills/amika-cli/SKILL.md",
     "base_image": "ubuntu",
     "base_version": "UBUNTU_TAG",
     "directories": [
@@ -148,6 +149,19 @@
           "versions": {}
         },
         {
+          "asset_argument": "assets/skills/amika-cli",
+          "assets": [
+            "assets/skills/amika-cli/SKILL.md",
+            "assets/skills/amika-cli/references/connectivity.md",
+            "assets/skills/amika-cli/references/non-interactive.md",
+            "assets/skills/amika-cli/references/sandbox-operations.md",
+            "assets/skills/amika-cli/references/services-config-snapshots.md"
+          ],
+          "id": "agent-skill",
+          "script": "steps/65-agent-skill.sh",
+          "versions": {}
+        },
+        {
           "asset_argument": "assets/hooks",
           "assets": [
             "assets/hooks/amika-restore-setuid.service",
@@ -283,6 +297,19 @@
           ],
           "id": "dotfiles",
           "script": "steps/60-dotfiles.sh",
+          "versions": {}
+        },
+        {
+          "asset_argument": "assets/skills/amika-cli",
+          "assets": [
+            "assets/skills/amika-cli/SKILL.md",
+            "assets/skills/amika-cli/references/connectivity.md",
+            "assets/skills/amika-cli/references/non-interactive.md",
+            "assets/skills/amika-cli/references/sandbox-operations.md",
+            "assets/skills/amika-cli/references/services-config-snapshots.md"
+          ],
+          "id": "agent-skill",
+          "script": "steps/65-agent-skill.sh",
           "versions": {}
         },
         {
