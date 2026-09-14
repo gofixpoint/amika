@@ -434,6 +434,14 @@ touched.
 | `ProxyCommand`                                | `amika plumbing …`   | Carry the session over Amika's WebSocket transport instead of a TCP dial     |
 | `ServerAliveInterval` / `ServerAliveCountMax` | `15`, `3`            | Notice a dead transport instead of hanging                                   |
 
+The `ProxyCommand` pins the sandbox's host key every time it runs, so an alias
+also works in tools that never call the Amika CLI. An editor's Remote-SSH deep
+link, `cursor://vscode-remote/ssh-remote+<alias>/home/amika/workspace`,
+connects to a sandbox you have never opened before, as long as
+`~/.ssh/amika.conf` is in place and your key is uploaded. Pinning stays strict:
+the first connection records the key the control plane reports, and a sandbox
+that later presents a different one is refused.
+
 OpenSSH resolves around 90 options per connection, merging across every block
 whose pattern matches the hostname and keeping the **first** value it finds for
 most of them. Amika puts its `Include` first because Codex only discovers the
