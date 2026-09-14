@@ -79,6 +79,14 @@ build context, so a generated Dockerfile cannot `COPY` from above this
 directory. Edit the skill at the repository root, never the copy; `--check`
 fails on any divergence between the two.
 
+Only one tree of skills is installed, at `~/.agents/skills`. opencode and pi
+load that path themselves. Claude Code does not, so the step also links
+`~/.claude/skills` at it (`image.agent_skill_link`); that harness reads
+`~/.agents/skills` only as an import source, and loads user skills from
+`~/.claude/skills` alone. A link rather than a second copy because Claude Code
+follows one, opencode collapses the tree it then reaches by two paths, and one
+tree cannot drift from itself.
+
 The `agent-skill` step installs its whole asset directory, so its declared
 `assets` list is the one part of that copy still written by hand. The generator
 validates the list against the source tree in both modes and prints the block
