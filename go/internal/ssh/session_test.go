@@ -146,13 +146,14 @@ type fakePinStore struct {
 	alias string
 	key   string
 	calls int
+	err   error
 }
 
 func (s *fakePinStore) Pin(alias, key string) error {
 	s.calls++
 	s.alias = alias
 	s.key = key
-	return nil
+	return s.err
 }
 
 func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
@@ -222,12 +223,14 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	creator := &fakeCreator{hostKey: testHostKey(t)}
 	stream := &proxyStream{read: bytes.NewReader([]byte("from-sshd"))}
 	dialer := &fakeSessionDialer{stream: stream}
+	pins := &fakePinStore{}
 	var stdout bytes.Buffer
 
 	err := ProxySession(
 		context.Background(),
 		creator,
 		dialer,
+		pins,
 		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader("from-openssh"),
 		&stdout,
@@ -237,6 +240,11 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	}
 	if creator.calls != 1 || dialer.calls != 1 {
 		t.Fatalf("creator calls = %d, dialer calls = %d", creator.calls, dialer.calls)
+	}
+	// The pin is what a deep-link launch depends on: nothing else on that path
+	// writes the known-hosts entry OpenSSH's strict checking demands.
+	if pins.calls != 1 || pins.alias != "my.team.sbx_123.localhost-3011.amika" || pins.key != creator.hostKey {
+		t.Fatalf("pin calls = %d alias = %q key = %q", pins.calls, pins.alias, pins.key)
 	}
 	if dialer.url != "wss://sandbox.example/v1/ssh-sessions" || dialer.credential != testConnectToken() {
 		t.Fatalf("dial = %q credential %q", dialer.url, dialer.credential)
@@ -261,11 +269,36 @@ func TestProxySessionAcceptsNormalWebSocketClosure(t *testing.T) {
 		context.Background(),
 		creator,
 		dialer,
+		&fakePinStore{},
 		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader(""),
 		io.Discard,
 	); err != nil {
 		t.Fatalf("ProxySession normal close: %v", err)
+	}
+}
+
+func TestProxySessionRefusesToDialWhenTheHostKeyChanged(t *testing.T) {
+	creator := &fakeCreator{hostKey: testHostKey(t)}
+	dialer := &fakeSessionDialer{stream: &proxyStream{read: bytes.NewReader(nil)}}
+	pins := &fakePinStore{err: ErrHostKeyMismatch}
+
+	err := ProxySession(
+		context.Background(),
+		creator,
+		dialer,
+		pins,
+		"my.team.sbx_123.localhost-3011.amika",
+		strings.NewReader(""),
+		io.Discard,
+	)
+	if !errors.Is(err, ErrHostKeyMismatch) {
+		t.Fatalf("ProxySession error = %v, want %v", err, ErrHostKeyMismatch)
+	}
+	// Fails closed: a host whose key no longer matches its pin must not have
+	// bytes carried to it, the same posture the command path takes.
+	if dialer.calls != 0 {
+		t.Fatalf("dialer calls = %d, want 0", dialer.calls)
 	}
 }
 
