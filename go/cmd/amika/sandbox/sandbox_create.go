@@ -148,6 +148,13 @@ var sandboxCreateCmd = &cobra.Command{
 		if !hasEnvKey(envStrs, constants.EnvSandboxProvider) {
 			envStrs = append(envStrs, constants.EnvSandboxProvider+"="+constants.ProviderLocalDocker)
 		}
+		// TODO(KAPRO-934): seed AMIKA_SANDBOX_NAME here too. The remote
+		// providers set it, and the amika-cli skill this image now ships reads
+		// it to decide whether it is running inside a sandbox at all, so an
+		// agent in a local container concludes it is not and then cannot name
+		// the sandbox it is sitting in. The append cannot go here as written:
+		// name is not resolved until further down, so it has to move below
+		// that and above CreateDockerSandbox.
 
 		provSvcInfos, provPorts, err := amika.ResolveProvisionedServices(envStrs, publishedPorts, portHostIP)
 		if err != nil {

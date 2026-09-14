@@ -71,6 +71,20 @@ distinct local tag and publishes that image to linux-vm snapshots. The
 container-class Daytona path continues to build the shared Dockerfile because
 it honors OCI runtime metadata without the VM-specific systemd override.
 
+The generator also copies `.agents/skills/amika-cli/` from the repository root
+into `assets/skills/amika-cli/`, which the `agent-skill` step installs into the
+runtime home and `/etc/skel`. The image needs its own copy because a bundle
+must be self-contained: the Go CLI extracts only `sandbox-image/` into its
+build context, so a generated Dockerfile cannot `COPY` from above this
+directory. Edit the skill at the repository root, never the copy; `--check`
+fails on any divergence between the two.
+
+The `agent-skill` step installs its whole asset directory, so its declared
+`assets` list is the one part of that copy still written by hand. The generator
+validates the list against the source tree in both modes and prints the block
+to paste, so adding a reference file cannot leave `bundle.json` describing a
+skill smaller than the one installed.
+
 The generator also synchronizes `go/internal/sandbox/sandbox-image/`. That is
 the Go-embed mirror of the bundle, including generated Dockerfiles, scripts,
 assets, and verification files. It is committed because `go install` must build

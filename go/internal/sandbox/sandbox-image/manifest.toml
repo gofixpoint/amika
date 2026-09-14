@@ -8,6 +8,9 @@ runtime_shell = "/usr/bin/zsh"
 standard_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 workspace = "/home/amika/workspace"
 dotfiles = [".zshrc", ".bashrc", ".tmux.conf"]
+# The agent skill a sandbox ships for its coding agents to read, relative
+# to the runtime home. Synchronized from the repository root by generate.py.
+agent_skill = ".agents/skills/amika-cli/SKILL.md"
 setup_hooks = [
   "/usr/local/etc/amikad/setup/setup.sh",
   "/usr/local/etc/amikad/setup/start.sh",
@@ -73,6 +76,18 @@ assets = [
   "assets/stable/.zshrc",
 ]
 asset_argument = "assets/stable"
+
+[steps.agent-skill]
+script = "steps/65-agent-skill.sh"
+versions = []
+assets = [
+  "assets/skills/amika-cli/SKILL.md",
+  "assets/skills/amika-cli/references/connectivity.md",
+  "assets/skills/amika-cli/references/non-interactive.md",
+  "assets/skills/amika-cli/references/sandbox-operations.md",
+  "assets/skills/amika-cli/references/services-config-snapshots.md",
+]
+asset_argument = "assets/skills/amika-cli"
 
 [steps.hook-assets]
 script = "steps/70-hook-assets.sh"
@@ -180,6 +195,7 @@ steps = [
   "runtime-user",
   { step = "daytona-vm-user", providers = ["daytona"] },
   "dotfiles",
+  "agent-skill",
   "hook-assets",
   "agent-clis",
   "pi-web",
@@ -214,6 +230,7 @@ steps = [
   "runtime-user",
   { step = "daytona-vm-user", providers = ["daytona"] },
   "dotfiles",
+  "agent-skill",
   "hook-assets",
   "agent-clis",
   "pi-web",
