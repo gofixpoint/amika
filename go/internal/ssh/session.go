@@ -289,7 +289,7 @@ func ProxyPinStore(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, er
 	if err != nil {
 		return nil, err
 	}
-	return windowsMirroredPins(FileHostKeyPinStore{Path: session.KnownHostsFile}, paths, warnings), nil
+	return windowsMirroredPins(FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings), nil
 }
 
 // ProxySession creates a fresh descriptor, pins its host key, dials it with

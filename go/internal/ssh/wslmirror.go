@@ -153,42 +153,55 @@ var (
 // until now only an editor launch through `sandbox code` refreshed. Without
 // this, pinning from the proxy would fix the deep links everywhere except the
 // platform whose ProxyCommand exists to cross back into Linux.
-func windowsMirroredPins(pins HostKeyPinStore, paths basedir.Paths, warnings io.Writer) HostKeyPinStore {
+func windowsMirroredPins(pins HostKeyPinStore, knownHostsFile string, warnings io.Writer) HostKeyPinStore {
 	if !isWSL() {
 		return pins
 	}
-	return mirroredPinStore{pins: pins, paths: paths, warnings: warnings}
+	return mirroredPinStore{pins: pins, knownHostsFile: knownHostsFile, warnings: warnings}
 }
 
-// mirroredPinStore pins on the Linux side and republishes the Windows copies.
+// mirroredPinStore pins on the Linux side and republishes the Windows copy of
+// the pin file.
 type mirroredPinStore struct {
-	pins     HostKeyPinStore
-	paths    basedir.Paths
-	warnings io.Writer
+	pins           HostKeyPinStore
+	knownHostsFile string
+	warnings       io.Writer
 }
 
-// Pin writes the pin, then refreshes the mirror. A failed refresh is reported
-// rather than returned: the Windows copy is a derived artifact, and a stale one
-// can only make OpenSSH refuse a host it cannot verify, never admit one. Failing
-// the dial instead would break a connection whose pin is already mirrored — for
-// an icacls that is missing, say — which is a working connection this is not
-// entitled to end.
+// Pin writes the pin, then republishes it to the Windows side. A failed
+// republish is reported rather than returned: the Windows copy is a derived
+// artifact, and a stale one can only make OpenSSH refuse a host it cannot
+// verify, never admit one. Failing the dial instead would end a connection
+// whose pin is already mirrored, which this is not entitled to do.
 func (s mirroredPinStore) Pin(alias, hostPublicKey string) error {
 	if err := s.pins.Pin(alias, hostPublicKey); err != nil {
 		return err
 	}
 	if err := s.mirror(); err != nil && s.warnings != nil {
-		fmt.Fprintf(s.warnings, "warning: could not refresh the Windows copy of the Amika SSH files: %v\n", err)
+		fmt.Fprintf(s.warnings, "warning: could not publish the host key to the Windows copy of %s: %v\n", basedir.SSHKnownHostsName(), err)
 	}
 	return nil
 }
 
+// mirror copies the pin file alone, rather than calling MirrorToWindows.
+//
+// The full mirror refreshes the config, the include line, the identity and its
+// Windows ACLs before it reaches the pin file, and any of those failing would
+// take the pin down with it — an absent `icacls.exe` would leave OpenSSH
+// refusing a sandbox whose config and identity were perfectly usable, which is
+// the failure this whole path exists to remove.
+//
+// Copying only the pin is also all this path is entitled to do. OpenSSH ran
+// this ProxyCommand, so the Windows config that names it is already there,
+// along with the identity it points at; the pin for a sandbox nobody has
+// opened yet is the one file that can be missing.
 func (s mirroredPinStore) mirror() error {
 	target, err := resolveWSLTarget()
 	if err != nil {
 		return err
 	}
-	return MirrorToWindows(s.paths, target)
+	_, err = mirrorFile(s.knownHostsFile, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
+	return err
 }
 
 // sessionKeyMaterialPaths names the files the rendered config's mirrored key
