@@ -28,3 +28,13 @@ fi
 
 export PNPM_HOME="$HOME/.local/share/pnpm"
 export PATH="$PNPM_HOME:$PATH"
+
+# Greet an interactive SSH login, once. This file runs for every interactive
+# bash, so the login test is what keeps a nested shell from repeating the
+# banner: sshd starts a session's shell as a login shell, and a shell the user
+# opens inside that session is not one. welcome.sh decides the rest; see
+# assets/stable/welcome.sh. Kept last so a failure here cannot cost the shell
+# any of the setup above.
+if shopt -q login_shell && [ -x /usr/lib/amika/welcome.sh ]; then
+  /usr/lib/amika/welcome.sh
+fi

@@ -11,6 +11,7 @@ shellcheck \
   "$bundle_dir/build.sh" \
   "$bundle_dir/steps"/*.sh \
   "$bundle_dir/assets/hooks"/*.sh \
+  "$bundle_dir/assets/stable/welcome.sh" \
   "$bundle_dir/verify/run.sh" \
   "$bundle_dir/verify/checks"/*.sh \
   "$bundle_dir/verify/lib/check.sh"
