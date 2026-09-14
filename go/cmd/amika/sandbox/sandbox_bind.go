@@ -23,6 +23,10 @@ var sandboxBindCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		sandboxBy, _ := cmd.Flags().GetString("sandbox-by")
+		if err := validateSandboxBindingRefKind(sandboxBy); err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
@@ -41,7 +45,7 @@ var sandboxBindCmd = &cobra.Command{
 
 		rebind, _ := cmd.Flags().GetBool("rebind")
 
-		binding, err := client.BindSandboxGitHubBranch(sandboxRef, owner, repo, branch, rebind)
+		binding, err := client.BindSandboxGitHubBranch(sandboxRef, sandboxBy, owner, repo, branch, rebind)
 		if err != nil {
 			return err
 		}
