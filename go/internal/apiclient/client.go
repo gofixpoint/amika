@@ -217,6 +217,110 @@ func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
 	return &result, nil
 }
 
+// GitHubBranchBindingRequest is the request body for binding a sandbox to a
+// GitHub repository branch. Rebind must be explicitly true to move an
+// existing branch binding from another sandbox.
+type GitHubBranchBindingRequest struct {
+	Target GitHubBranchBindingTarget `json:"target"`
+	Rebind bool                      `json:"rebind,omitempty"`
+}
+
+// GitHubBranchBindingTarget identifies a GitHub repository branch.
+type GitHubBranchBindingTarget struct {
+	Kind       string                        `json:"kind"`
+	Repository GitHubBranchBindingRepository `json:"repository"`
+	Branch     string                        `json:"branch"`
+}
+
+// GitHubBranchBindingRepository identifies a GitHub repository by owner and
+// name.
+type GitHubBranchBindingRepository struct {
+	Owner string `json:"owner"`
+	Name  string `json:"name"`
+}
+
+// SandboxBindingReference is the stable reference returned after creating or
+// reusing a sandbox binding.
+type SandboxBindingReference struct {
+	ID string `json:"id"`
+}
+
+// SandboxBinding mirrors the API's SandboxBinding resource.
+type SandboxBinding struct {
+	ID              string         `json:"id"`
+	SandboxID       string         `json:"sandbox_id"`
+	TargetNamespace string         `json:"target_namespace"`
+	TargetKind      string         `json:"target_kind"`
+	TargetID        string         `json:"target_id"`
+	TargetURL       string         `json:"target_url"`
+	Relationship    string         `json:"relationship"`
+	Metadata        map[string]any `json:"metadata"`
+	SystemMetadata  map[string]any `json:"system_metadata"`
+	CreatedByKind   string         `json:"created_by_kind"`
+	CreatedByID     string         `json:"created_by_id"`
+	CreatedAt       string         `json:"created_at"`
+	UpdatedAt       string         `json:"updated_at"`
+}
+
+// ListSandboxBindingsResponse mirrors the API's binding list envelope.
+type ListSandboxBindingsResponse struct {
+	Items []SandboxBinding `json:"items"`
+}
+
+// BindSandboxGitHubBranch creates or reuses a sandbox's GitHub branch binding.
+func (c *Client) BindSandboxGitHubBranch(sandboxRef, sandboxBy, owner, repo, branch string, rebind bool) (*SandboxBindingReference, error) {
+	req := GitHubBranchBindingRequest{
+		Target: GitHubBranchBindingTarget{
+			Kind: "github_branch",
+			Repository: GitHubBranchBindingRepository{
+				Owner: owner,
+				Name:  repo,
+			},
+			Branch: branch,
+		},
+		Rebind: rebind,
+	}
+	var result SandboxBindingReference
+	q := url.Values{}
+	q.Set("sandbox_by", sandboxBy)
+	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/bindings?" + q.Encode()
+	if err := c.doJSON("POST", path, req, &result); err != nil {
+		return nil, fmt.Errorf("remote bind sandbox GitHub branch: %w", err)
+	}
+	return &result, nil
+}
+
+// ListSandboxBindings lists every binding in the caller's organization.
+func (c *Client) ListSandboxBindings() (*ListSandboxBindingsResponse, error) {
+	var result ListSandboxBindingsResponse
+	if err := c.doJSON("GET", apiBasePath+"/sandbox-bindings", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list sandbox bindings: %w", err)
+	}
+	return &result, nil
+}
+
+// ListSandboxBindingsForSandbox lists bindings for a sandbox resolved using
+// sandboxBy ("ref", "name", or "id").
+func (c *Client) ListSandboxBindingsForSandbox(sandboxRef, sandboxBy string) (*ListSandboxBindingsResponse, error) {
+	q := url.Values{}
+	q.Set("sandbox_by", sandboxBy)
+	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/bindings?" + q.Encode()
+	var result ListSandboxBindingsResponse
+	if err := c.doJSON("GET", path, nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list sandbox bindings: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteSandboxBinding deletes an organization binding by ID.
+func (c *Client) DeleteSandboxBinding(id string) error {
+	path := apiBasePath + "/sandbox-bindings/" + url.PathEscape(id)
+	if err := c.doJSON("DELETE", path, nil, nil); err != nil {
+		return fmt.Errorf("remote delete sandbox binding: %w", err)
+	}
+	return nil
+}
+
 // pollInterval is the delay between polls in the WaitForSandbox* loops.
 // It is a package var (not a constant) so tests can shrink it to keep the
 // suite fast; production always uses the 3 second default.

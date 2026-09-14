@@ -35,6 +35,8 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV1Cmd)
 	sandboxCmd.AddCommand(sandboxAgentSendCmd)
+	sandboxCmd.AddCommand(sandboxBindCmd)
+	sandboxCmd.AddCommand(sandboxBindingsCmd)
 
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	sandboxCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
@@ -87,6 +89,12 @@ func New() *cobra.Command {
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
 	sandboxAgentSendCmd.Flags().String("session-id", "", "Resume an existing agent session by ID (remote sandboxes only)")
 	sandboxAgentSendCmd.Flags().Bool("new-session", false, "Start a new agent session (remote sandboxes only)")
+	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
+	sandboxBindCmd.Flags().String("sandbox-by", "ref", "Resolve the sandbox by ref, name, or id")
+	sandboxBindingsListCmd.Flags().String("sandbox", "", "Only show bindings for this sandbox (name or id)")
+	sandboxBindingsListCmd.Flags().String("sandbox-by", "ref", "Resolve --sandbox by ref, name, or id")
+	sandboxBindingsDeleteCmd.Flags().String("sandbox-by", "ref", "Resolve the sandbox by ref, name, or id")
+	sandboxBindingsDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
 	return sandboxCmd
 }
