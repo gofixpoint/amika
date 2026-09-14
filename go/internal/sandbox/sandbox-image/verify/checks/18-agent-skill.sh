@@ -6,6 +6,7 @@ CHECK_CONTEXTS="build"
 source "$(dirname "$0")/../lib/check.sh" "$@"
 
 relative="$(manifest_value image.agent_skill)"
+link="$(manifest_value image.agent_skill_link)"
 user="$(runtime_user)"
 home="$(runtime_home)"
 problems=()
@@ -17,5 +18,20 @@ owner="$(stat -c '%U:%G' "$home/$relative" 2>/dev/null || true)"
 # the same file rather than an empty path.
 [[ -f "/etc/skel/$relative" ]] || problems+=("/etc/skel/$relative=missing")
 
-[[ ${#problems[@]} -eq 0 ]] && pass "agent skill installed for the runtime user and in /etc/skel" "skill readable at the declared path"
-fail "agent skill installed for the runtime user and in /etc/skel" "${problems[*]}"
+# Read the skill back through the Claude Code link the way that harness would,
+# rather than asserting the link's target text: what matters is that the file
+# arrives, and a link pointing at a path that does not resolve looks correct
+# under readlink right up until an agent reads nothing.
+skill_under_root="${relative#.agents/skills/}"
+for root in "$home" /etc/skel; do
+  [[ -L "$root/$link" ]] || problems+=("$root/$link=not-a-symlink")
+  [[ -f "$root/$link/$skill_under_root" ]] ||
+    problems+=("$root/$link/$skill_under_root=unreadable")
+done
+# No -L, so this reports the link's own ownership rather than its target's,
+# which is what a root-owned-paths sweep of the runtime home sees.
+link_owner="$(stat -c '%U:%G' "$home/$link" 2>/dev/null || true)"
+[[ "$link_owner" == "$user:$user" ]] || problems+=("$home/$link=$link_owner")
+
+[[ ${#problems[@]} -eq 0 ]] && pass "agent skill installed for the runtime user, in /etc/skel, and linked for Claude Code" "skill readable at the declared path and through the link"
+fail "agent skill installed for the runtime user, in /etc/skel, and linked for Claude Code" "${problems[*]}"
