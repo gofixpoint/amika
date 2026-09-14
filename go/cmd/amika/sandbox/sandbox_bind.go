@@ -10,9 +10,10 @@ import (
 )
 
 var sandboxBindCmd = &cobra.Command{
-	Use:   "bind <sandbox> gh-branch:<owner>/<repo>/<branch>",
-	Short: "Bind a remote sandbox to a resource",
-	Args:  cobra.ExactArgs(2),
+	Use:    "bind <sandbox> gh-branch:<owner>/<repo>/<branch>",
+	Short:  "Bind a remote sandbox to a resource",
+	Hidden: true,
+	Args:   cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if runmode.Resolve(cmd) != runmode.Remote {
 			return fmt.Errorf("bind is only supported for remote sandboxes")

@@ -14,8 +14,9 @@ import (
 )
 
 var sandboxBindingsCmd = &cobra.Command{
-	Use:   "bindings",
-	Short: "Manage remote sandbox bindings",
+	Use:    "bindings",
+	Short:  "Manage remote sandbox bindings",
+	Hidden: true,
 }
 
 var sandboxBindingsListCmd = &cobra.Command{
