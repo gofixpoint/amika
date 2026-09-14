@@ -28,7 +28,18 @@ import {
 } from "./client";
 
 export const E2B_URL_TTL_S = 24 * 60 * 60;
-export const E2B_MAX_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+
+/**
+ * Ceiling applied to a requested auto-stop interval, mirroring Vercel's
+ * `VERCEL_MAX_TIMEOUT_MS`. E2B rejects a `timeoutMs` above the account's plan
+ * limit outright (`400: Timeout cannot be greater than 1 hours`), so the
+ * ceiling has to be the lowest limit a plan imposes rather than the highest
+ * one E2B documents. This used to be 24 hours — the paid-plan maximum — which
+ * meant every create whose interval exceeded the plan limit failed at the
+ * provider instead of simply stopping sooner. Sandboxes are paused rather than
+ * deleted on timeout, so a clamped sandbox resumes on its next use.
+ */
+export const E2B_MAX_TIMEOUT_MS = 60 * 60 * 1_000;
 export const E2B_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000;
 
 /** Translate Amika's idle-stop minutes into E2B's bounded timeout. */

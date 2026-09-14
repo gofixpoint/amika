@@ -66,12 +66,16 @@ describe("e2b provider wiring", () => {
 });
 
 describe("E2B lifecycle mapping", () => {
-  it("uses a 30 minute default and caps timeouts at 24 hours", () => {
+  it("uses a 30 minute default and caps timeouts at the plan limit", () => {
+    expect(E2B_MAX_TIMEOUT_MS).toBe(60 * 60 * 1_000);
     expect(e2bTimeoutMs()).toBe(E2B_DEFAULT_TIMEOUT_MS);
     expect(e2bTimeoutMs(null)).toBe(E2B_DEFAULT_TIMEOUT_MS);
     expect(e2bTimeoutMs(15)).toBe(15 * 60_000);
     expect(e2bTimeoutMs(0)).toBe(E2B_MAX_TIMEOUT_MS);
     expect(e2bTimeoutMs(-1)).toBe(E2B_MAX_TIMEOUT_MS);
+    // The control plane always sends an interval (the deployed default is 300
+    // minutes), so an over-limit value must clamp rather than reach E2B.
+    expect(e2bTimeoutMs(300)).toBe(E2B_MAX_TIMEOUT_MS);
     expect(e2bTimeoutMs(48 * 60)).toBe(E2B_MAX_TIMEOUT_MS);
   });
 
