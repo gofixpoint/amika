@@ -25,7 +25,12 @@ var safeWindowsConfigPath = regexp.MustCompile(`^[A-Za-z]:\\[^/*?:"<>|%\r\n\t'` 
 // runIcacls is a seam over the Windows ACL tool, so tests observe the
 // permission hardening without a Windows side.
 var runIcacls = func(path, user string) error {
-	cmd := exec.Command("icacls.exe", path, "/inheritance:r", "/grant:r", user+":F")
+	binPath, err := wslbridge.ResolveWindowsBin("icacls.exe")
+	if err != nil {
+		return fmt.Errorf("resolve icacls.exe: %w", err)
+	}
+
+	cmd := exec.Command(binPath, path, "/inheritance:r", "/grant:r", user+":F")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("icacls %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
