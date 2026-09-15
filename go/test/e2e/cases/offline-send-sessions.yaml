@@ -119,6 +119,24 @@ steps:
       exit: 1
       stderr_contains: "--repo cannot be combined with --session-id or --sandbox"
 
+  - name: send refuses a branch flag aimed at an existing sandbox
+    # Nothing is created, so the branch cannot be honored. Dropping it would
+    # be visible only in what the agent could see.
+    cmd: [send, hello, --sandbox, some-sandbox, --branch, release]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--branch cannot be combined with --session-id or --sandbox"
+
+  - name: send refuses --new-branch aimed at an existing chat
+    cmd: [send, hello, --session-id, some-session-id, --new-branch, feature/x]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--new-branch cannot be combined with --session-id or --sandbox"
+
   - name: send --stream reaches the same auth check as the buffered path
     # --stream selects the SSE transport, but only after auth. Asserting the
     # same failure here proves the flag is registered and does not change the
