@@ -23,12 +23,32 @@ set -eu
 # rather than orient.
 printf '\n'
 if [ -n "${AMIKA_SANDBOX_NAME:-}" ]; then
-  printf 'You'\''re on the Amika rig "%s".\n' "$AMIKA_SANDBOX_NAME"
+  welcome_heading="You're on the Amika rig \"$AMIKA_SANDBOX_NAME\"."
 else
-  printf 'You'\''re on an Amika rig.\n'
+  welcome_heading="You're on an Amika rig."
 fi
 
-cat <<'EOF'
+cat <<EOF
+     ╭────────────────────────────────────╮
+     │ ╭────────────────────────────────╮ │
+     │ │                                │ │
+     │ │       ████▀        ████▀       │ │
+     │ │       ████▄        ████▄       │ │
+     │ │                                │ │
+     │ │                                │ │
+     │ │                                │ │
+     │ ╰────────────────────────────────╯ │
+     ╰────────────────────────────────────╯
+         ╰────────────────────────────╯
+
+                          ██  ██
+                              ██
+▄███████  ▄████████████▄  ██  ██   ▄█▀  ▄███████
+██    ██  ██    ██    ██  ██  ██▄▄█▀    ██    ██
+██    ██  ██    ██    ██  ██  ██▀▀█▄    ██    ██
+▀███████  ██    ██    ██  ██  ██   ▀█▄  ▀███████
+
+$welcome_heading
 
 Type amika help for CLI help.
 
