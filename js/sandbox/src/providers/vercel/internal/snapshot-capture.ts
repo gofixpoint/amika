@@ -25,8 +25,8 @@
  *
  * SECURITY CAVEAT: like Freestyle, the disk scrub removes the injected
  * credential files and managed env, but `sandbox.snapshot()` captures a live
- * session — secrets that were already loaded into memory (the OpenCode
- * server's API keys, an agent's process env) may survive in the captured state
+ * session — secrets that were already loaded into memory (service API keys or
+ * process environments) may survive in the captured state
  * and come back when the snapshot is booted. Acceptable for the current
  * dev-gated, org-scoped Vercel usage (a snapshot only boots within its owning
  * org).
@@ -41,13 +41,11 @@ import type { VercelConfig } from "../config";
 
 /**
  * Remove the secrets Vercel itself injected into the sandbox: the resume
- * context ({@link VERCEL_RESUME_CONTEXT_PATH}), which holds the source
- * sandbox's OpenCode server password and would otherwise land on disk in a
- * capture even after the Amika scrub removed `OPENCODE_SERVER_PASSWORD` from
- * `/etc/environment`. Root owned (installed 0600), so removed with sudo;
- * idempotent (`rm -f`). Resumes bare (no `onResume` callback) — the
- * service-restart callback reads this very file, and relaunching OpenCode with
- * the password mid-scrub would defeat the removal.
+ * context ({@link VERCEL_RESUME_CONTEXT_PATH}), which can hold caller-supplied
+ * command environments and would otherwise land on disk in a capture. Root
+ * owned (installed 0600), so removed with sudo; idempotent (`rm -f`). Resumes
+ * bare (no `onResume` callback) because the callback reads this same file and
+ * replaying commands mid-scrub could reintroduce removed values.
  */
 export async function removeVercelInjectedSecrets(
   config: VercelConfig,

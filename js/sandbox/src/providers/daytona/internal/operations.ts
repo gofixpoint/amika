@@ -14,7 +14,6 @@ import {
   SANDBOX_ENV_SECRETS_EXCLUDED_VALUE,
   SANDBOX_ORG_ID_LABEL,
 } from "../../../constants";
-import { DEFAULT_HOME_DIR } from "../../../constants";
 import type { DaytonaConfig } from "../config";
 import type { SandboxCtx } from "../../../logger";
 import { getDaytonaClient } from "./client";
@@ -37,13 +36,12 @@ import { executeCommand } from "./commands";
 import { cloneRepository } from "./configure";
 import type { SandboxStatus } from "../../../sandbox-status";
 import type { SandboxAdapter } from "../../shared/adapter";
-import { getRepoDir } from "../../shared/adapter-helpers";
 
 export async function refreshDaytonaUrls(
   config: DaytonaConfig,
   providerSandboxId: string,
   services: SandboxService[],
-): Promise<{ providerUrl: string | null; services: SandboxService[] }> {
+): Promise<{ services: SandboxService[] }> {
   const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
   return refreshServiceUrls(sandbox, services);
@@ -56,9 +54,8 @@ export async function refreshDaytonaUrls(
 async function refreshServiceUrls(
   sandbox: Awaited<ReturnType<Daytona["get"]>>,
   services: SandboxService[],
-): Promise<{ providerUrl: string | null; services: SandboxService[] }> {
+): Promise<{ services: SandboxService[] }> {
   const refreshed: SandboxService[] = [];
-  let providerUrl: string | null = null;
 
   for (const service of services) {
     const preview = await sandbox.getSignedPreviewUrl(
@@ -66,12 +63,9 @@ async function refreshServiceUrls(
       SIGNED_URL_EXPIRY_S,
     );
     refreshed.push({ ...service, url: preview.url });
-    if (service.name === "Coding Agent") {
-      providerUrl = preview.url;
-    }
   }
 
-  return { providerUrl, services: refreshed };
+  return { services: refreshed };
 }
 
 export async function getDaytonaSandboxState(
@@ -294,37 +288,16 @@ export async function createDaytonaSandbox(
 ): Promise<{
   provider: string;
   providerSandboxId: string;
-  providerUrl: string | null;
   services: SandboxService[];
   envVars: Record<string, string>;
 }> {
   const daytona = getDaytonaClient(config);
-  const cwd = getRepoDir(DEFAULT_HOME_DIR, input.repoName);
 
-  // Only NON-SECRET operational vars go into the container env. Anything
-  // passed to `daytona.create({ envVars })` becomes part of the container's
-  // spec, which `sandbox.createSnapshot` bakes into the snapshot image
-  // — and no Daytona API can scrub a sandbox's env afterward. So secrets
-  // (OPENCODE_SERVER_PASSWORD + injected user env) are deliberately NOT set
-  // here; they are delivered via /etc/environment (configureSshEnvironment)
-  // and passed explicitly to the lifecycle scripts (runLifecycleScripts),
-  // both of which the snapshot scrubber can clean.
-  //
-  // AMIKA_AGENT_CWD and AMIKA_SANDBOX_NAME are also seeded into the base block
-  // of /etc/environment during initialize, but that file is only sourced by
-  // login shells — the launched agent runs via a non-login `process.exec`
-  // (see DaytonaAdapter.exec), which inherits the container env, not the
-  // managed file. Baking them here is what actually makes them visible to the
-  // agent. They are per-sandbox, so a from-snapshot boot re-sets them via this
-  // create call (create-time env overrides the value baked into the snapshot
-  // image); both are non-secret, so baking them carries no scrub concern.
-  const envVars: Record<string, string> = {
-    AMIKA_AGENT_CWD: cwd,
-    AMIKA_SANDBOX_NAME: input.name,
-  };
-  if (input.amikaOpenCodeWeb != null) {
-    envVars.AMIKA_OPENCODE_WEB = input.amikaOpenCodeWeb;
-  }
+  // Daytona bakes create-time environment variables into snapshots and cannot
+  // scrub them afterward. The provider therefore accepts only the caller's
+  // explicitly supplied non-secret environment; secret delivery belongs in a
+  // later, scrub-capable provisioning layer.
+  const envVars = input.envVars ?? {};
 
   // Mark the sandbox as having secrets kept out of its container env, so
   // "snapshot and delete" can tell it apart from sandboxes whose baked-in
@@ -396,7 +369,6 @@ export async function createDaytonaSandbox(
   return {
     provider: "daytona",
     providerSandboxId,
-    providerUrl: null,
     services: input.services,
     envVars,
   };

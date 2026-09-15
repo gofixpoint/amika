@@ -161,11 +161,9 @@ export default defineProvider(
         }
         return captureVercelSnapshot(config, id);
       },
-      // The one provider-owned injected secret: the resume-context file,
-      // written by Vercel's own create/resume hooks and carrying the source
-      // sandbox's OpenCode server password. Removed here so the
-      // core-synthesized scrub — which only knows the Amika target list —
-      // can't leave it in a capture.
+      // The one provider-owned sensitive file: the caller-supplied restart
+      // context written by Vercel's resume hook. Remove it so the generic scrub
+      // cannot leave persisted command environments in a capture.
       removeInjectedSecrets: (id) => removeVercelInjectedSecrets(config, id),
       // Vercel never bakes Amika secrets into an un-scrubbable container env
       // spec — injected env vars live only in `/etc/environment`, which the

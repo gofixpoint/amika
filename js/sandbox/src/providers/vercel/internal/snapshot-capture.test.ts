@@ -58,7 +58,7 @@ describe("removeVercelInjectedSecrets", () => {
 
     await removeVercelInjectedSecrets(config, "sbx_2");
 
-    // The Vercel-only resume context (holds the OpenCode server password) is
+    // The Vercel-only caller restart context is
     // removed with sudo; the Amika scrub above in core doesn't cover it.
     expect(adapterExec).toHaveBeenCalledWith(
       expect.stringContaining("vercel-resume.json"),
@@ -69,7 +69,7 @@ describe("removeVercelInjectedSecrets", () => {
     });
     // Bare resume: `resume: true` with NO onResume callback — the
     // service-restart callback reads the very file being removed and would
-    // relaunch OpenCode with the password mid-scrub.
+    // replay caller commands with persisted environment values mid-scrub.
     expect(getVercelSandbox).toHaveBeenCalledWith(config, "sbx_2", {
       resume: true,
     });
