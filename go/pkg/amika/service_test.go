@@ -181,6 +181,24 @@ func TestCreateSandbox_InvalidPortBinding(t *testing.T) {
 	}
 }
 
+func TestCreateSandbox_ReservedContainerPort(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	svc := NewService(Options{})
+	for _, port := range []int{60899, 60998, 60999} {
+		_, err := svc.CreateSandbox(context.Background(), CreateSandboxRequest{
+			Provider: "docker",
+			Name:     "sb",
+			Image:    "img",
+			Ports: []PortBinding{
+				{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: port, Protocol: "tcp"},
+			},
+		})
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("container port %d: expected invalid argument, got %v", port, err)
+		}
+	}
+}
+
 func TestCreateSandbox_DuplicatePortBinding(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	svc := NewService(Options{})
