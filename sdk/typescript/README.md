@@ -45,7 +45,7 @@ than the deprecated one, they carry only the schema's `sandboxId`,
 `sandboxName`, and `createdSandbox`. Those name a wire object with no rig
 identity of its own, and the wire stays `sandbox_*` either way.
 
-Two behavior changes are deliberate. A decoded value now carries the rig-spelled
+Three behavior changes are deliberate. A decoded value now carries the rig-spelled
 mirrors as extra own keys — `providerRigId`, `rigPreset` and `rigSize` on a rig,
 `sourceRigId`, `sourceRigName`, `rigPreset` and `rigSize` on a snapshot, `rigId`
 on a service. Field access is unaffected, but a whole-object comparison sees
@@ -58,6 +58,15 @@ Second, `createRigSnapshot` and its
 sent `sandbox_ref: ""` and let the server reject it, so a caller whose ref came
 from an unset variable now sees a client-side `AmikaError` instead of an
 `AmikaHTTPError`. Catch `AmikaError` (the base of both) if you relied on that.
+
+Third, the error text the SDK produces itself now says rig. `waitForRig` and its
+`waitForSandbox` alias throw `rig provisioning failed` where 0.11 threw
+`sandbox provisioning failed`, and likewise for `rig start failed`,
+`rig stop failed`, `rig snapshot capture failed`, and the agent-send
+authentication message. These are fallbacks, used only when the server reports a
+failure with no `errorMessage` of its own, and the deprecated aliases produce the
+new wording too because they forward to the rig methods. Code matching on the old
+text needs updating; matching on `AmikaError` and reading `errorMessage` does not.
 
 What is _not_ renamed is the wire format. The server's JSON schema still spells these fields `sandbox_id`, `sandbox_ref`, `sandbox_preset`, and so on, and the SDK sends and reads exactly those keys. Only the TypeScript surface moved to `rig`.
 

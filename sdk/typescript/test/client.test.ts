@@ -931,6 +931,24 @@ describe("AmikaClient snapshot fetch and wait", () => {
     );
   });
 
+  // These strings are user-facing and changed from 0.11 ("sandbox ... failed"),
+  // which the README documents as a deliberate change. Pin them so a later edit
+  // cannot move them again silently.
+  it("throws rig-worded fallbacks when the server gives no errorMessage", async () => {
+    const failed = { status: 200, body: { name: "dev", state: "failed" } };
+    const { fetch } = mockFetch([failed, failed, failed]);
+    const client = makeClient(fetch);
+    await expect(client.waitForRig("dev")).rejects.toThrow(
+      /^rig provisioning failed$/,
+    );
+    await expect(client.waitForRigStart("dev")).rejects.toThrow(
+      /^rig start failed$/,
+    );
+    await expect(client.waitForRigStop("dev")).rejects.toThrow(
+      /^rig stop failed$/,
+    );
+  });
+
   it("waitForRigSnapshot falls back to a generic message", async () => {
     const { fetch } = mockFetch([
       { status: 200, body: { snapshot: "s", state: "failed" } },
