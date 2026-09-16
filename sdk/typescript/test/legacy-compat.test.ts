@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { AmikaClient } from "@/client";
 import type { AgentSessionSendResponse } from "@/agent-sessions";
 import type {
   RemoteSandbox,
@@ -109,5 +110,24 @@ describe("pre-rig literals still satisfy the sandbox-named types", () => {
     // is not promised.
     const withRigFields: RemoteSandbox = { ...sandbox, providerRigId: null };
     expect(withRigFields.providerRigId).toBeNull();
+  });
+
+  // The deprecated methods are declared with the legacy types for this reason:
+  // a stand-in built from these fixtures has to satisfy the real method
+  // signature, and a relaxed legacy shape is not assignable to the strict rig
+  // type. Declaring them with `Rig*` return types would break this.
+  it("lets a hand-built stand-in satisfy the deprecated method signatures", async () => {
+    const stub: Pick<
+      AmikaClient,
+      "listSandboxes" | "getSandbox" | "listSandboxSnapshots"
+    > = {
+      listSandboxes: () => Promise.resolve([sandbox]),
+      getSandbox: () => Promise.resolve(sandbox),
+      listSandboxSnapshots: () => Promise.resolve([snapshot]),
+    };
+
+    expect(await stub.listSandboxes()).toHaveLength(1);
+    expect((await stub.getSandbox("dev")).name).toBe("dev");
+    expect(await stub.listSandboxSnapshots()).toHaveLength(1);
   });
 });

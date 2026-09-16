@@ -23,6 +23,8 @@ import {
   type CreateRigSnapshotRequest,
   createRigRequestToWire,
   createRigSnapshotRequestToWire,
+  type CreateSandboxRequest,
+  type CreateSandboxSnapshotRequest,
   type CreateSecretRequest,
   type CreateSessionRequest,
   createSessionRequestToWire,
@@ -41,6 +43,11 @@ import {
   rigServiceResourceFromWire,
   type RigSnapshot,
   rigSnapshotFromWire,
+  type RemoteSandbox,
+  type SandboxScrubPreview,
+  type SandboxServiceRequest,
+  type SandboxServiceResource,
+  type SandboxSnapshot,
   type Secret,
   secretFromWire,
   type Session,
@@ -77,6 +84,12 @@ export interface AmikaClientOptions {
  * the same object. The server mounts `/rigs`, `/rig-services`, and
  * `/rig-snapshots` alongside their `sandbox` originals, so the requests the
  * SDK issues are rig-named throughout.
+ *
+ * A deprecated method is declared with the legacy sandbox-named types, not the
+ * rig ones it forwards to. The decoded value satisfies both, but only the
+ * legacy declaration lets an existing mock (a `Pick<AmikaClient, "getSandbox">`
+ * returning a hand-built `RemoteSandbox`) still type-check, since a relaxed
+ * legacy shape is not assignable to the strict rig type.
  */
 export class AmikaClient {
   private readonly http: HTTPClient;
@@ -172,22 +185,22 @@ export class AmikaClient {
   }
 
   /** @deprecated Use {@link AmikaClient.listRigs}. */
-  listSandboxes(): Promise<RemoteRig[]> {
+  listSandboxes(): Promise<RemoteSandbox[]> {
     return this.listRigs();
   }
 
   /** @deprecated Use {@link AmikaClient.createRig}. */
-  createSandbox(req: CreateRigRequest): Promise<RemoteRig> {
+  createSandbox(req: CreateSandboxRequest): Promise<RemoteSandbox> {
     return this.createRig(req);
   }
 
   /** @deprecated Use {@link AmikaClient.getRig}. */
-  getSandbox(name: string): Promise<RemoteRig> {
+  getSandbox(name: string): Promise<RemoteSandbox> {
     return this.getRig(name);
   }
 
   /** @deprecated Use {@link AmikaClient.waitForRig}. */
-  waitForSandbox(name: string): Promise<RemoteRig> {
+  waitForSandbox(name: string): Promise<RemoteSandbox> {
     return this.waitForRig(name);
   }
 
@@ -197,7 +210,7 @@ export class AmikaClient {
   }
 
   /** @deprecated Use {@link AmikaClient.waitForRigStart}. */
-  waitForSandboxStart(name: string): Promise<RemoteRig> {
+  waitForSandboxStart(name: string): Promise<RemoteSandbox> {
     return this.waitForRigStart(name);
   }
 
@@ -207,7 +220,7 @@ export class AmikaClient {
   }
 
   /** @deprecated Use {@link AmikaClient.waitForRigStop}. */
-  waitForSandboxStop(name: string): Promise<RemoteRig> {
+  waitForSandboxStop(name: string): Promise<RemoteSandbox> {
     return this.waitForRigStop(name);
   }
 
@@ -289,15 +302,15 @@ export class AmikaClient {
   }
 
   /** @deprecated Use {@link AmikaClient.listRigServices}. */
-  listSandboxServices(sandboxRef?: string): Promise<RigServiceResource[]> {
+  listSandboxServices(sandboxRef?: string): Promise<SandboxServiceResource[]> {
     return this.listRigServices(sandboxRef);
   }
 
   /** @deprecated Use {@link AmikaClient.createRigService}. */
   createSandboxService(
     sandboxRef: string,
-    req: RigServiceRequest,
-  ): Promise<RigServiceResource> {
+    req: SandboxServiceRequest,
+  ): Promise<SandboxServiceResource> {
     return this.createRigService(sandboxRef, req);
   }
 
@@ -305,9 +318,9 @@ export class AmikaClient {
   putSandboxService(
     sandboxRef: string,
     serviceRef: string,
-    req: RigServiceRequest,
+    req: SandboxServiceRequest,
     by: "name" | "id" | "ref" = "name",
-  ): Promise<RigServiceResource> {
+  ): Promise<SandboxServiceResource> {
     return this.putRigService(sandboxRef, serviceRef, req, by);
   }
 
@@ -555,27 +568,29 @@ export class AmikaClient {
   listSandboxSnapshots(filters?: {
     repositoryId?: string;
     sourceSandboxId?: string;
-  }): Promise<RigSnapshot[]> {
+  }): Promise<SandboxSnapshot[]> {
     return this.listRigSnapshots(filters);
   }
 
   /** @deprecated Use {@link AmikaClient.createRigSnapshot}. */
-  createSandboxSnapshot(req: CreateRigSnapshotRequest): Promise<RigSnapshot> {
+  createSandboxSnapshot(
+    req: CreateSandboxSnapshotRequest,
+  ): Promise<SandboxSnapshot> {
     return this.createRigSnapshot(req);
   }
 
   /** @deprecated Use {@link AmikaClient.getRigSnapshot}. */
-  getSandboxSnapshot(ref: string): Promise<RigSnapshot> {
+  getSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
     return this.getRigSnapshot(ref);
   }
 
   /** @deprecated Use {@link AmikaClient.waitForRigSnapshot}. */
-  waitForSandboxSnapshot(ref: string): Promise<RigSnapshot> {
+  waitForSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
     return this.waitForRigSnapshot(ref);
   }
 
   /** @deprecated Use {@link AmikaClient.getRigScrubPreview}. */
-  getSandboxScrubPreview(sandboxRef: string): Promise<RigScrubPreview> {
+  getSandboxScrubPreview(sandboxRef: string): Promise<SandboxScrubPreview> {
     return this.getRigScrubPreview(sandboxRef);
   }
 
