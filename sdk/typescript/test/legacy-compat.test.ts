@@ -9,8 +9,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { AmikaClient } from "@/client";
-import type { AgentSessionSendResponse } from "@/agent-sessions";
 import type {
+  AgentSessionSendResponse,
+  AgentSessionSummary,
+} from "@/agent-sessions";
+import type {
+  CreateSandboxSnapshotRequest,
   RemoteSandbox,
   SandboxServiceResource,
   SandboxSnapshot,
@@ -100,9 +104,51 @@ const sendResponse: AgentSessionSendResponse = {
   createdSandbox: false,
 };
 
+const summary: AgentSessionSummary = {
+  sessionId: "as_1",
+  sandboxId: "sbx_1",
+  sandboxName: null,
+  agent: "claude",
+  status: "running",
+  preview: null,
+  model: null,
+  effort: null,
+  startedAt: "2026-01-01T00:00:00Z",
+  endedAt: null,
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-01T00:00:00Z",
+};
+
+const captureRequest: CreateSandboxSnapshotRequest = {
+  sandboxRef: "dev",
+  name: "my-snap",
+};
+
+/**
+ * `sandboxRef` was a required `string` in 0.11, so reading it must still give a
+ * `string` rather than `string | undefined`. Declaring the return type is the
+ * assertion: aliasing the legacy request to the rig union widens this and fails
+ * to compile here.
+ */
+function readsSandboxRef(req: CreateSandboxSnapshotRequest): string {
+  return req.sandboxRef;
+}
+
 describe("pre-rig literals still satisfy the sandbox-named types", () => {
   it("accepts fixtures carrying no rig-spelled field", () => {
-    expect([sandbox, session, service, snapshot, sendResponse]).toHaveLength(5);
+    expect([
+      sandbox,
+      session,
+      service,
+      snapshot,
+      sendResponse,
+      summary,
+      captureRequest,
+    ]).toHaveLength(7);
+  });
+
+  it("keeps sandboxRef readable as a plain string", () => {
+    expect(readsSandboxRef(captureRequest)).toBe("dev");
   });
 
   it("still admits a value the SDK decodes, which carries both spellings", () => {

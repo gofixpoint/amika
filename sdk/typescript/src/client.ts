@@ -481,7 +481,7 @@ export class AmikaClient {
     const params = new URLSearchParams();
     if (filters?.repositoryId)
       params.set("repository_id", filters.repositoryId);
-    const sourceRigId = filters?.sourceRigId ?? filters?.sourceSandboxId;
+    const sourceRigId = filters?.sourceRigId || filters?.sourceSandboxId;
     // The query key is the server's, which still spells it `source_sandbox_id`.
     if (sourceRigId) params.set("source_sandbox_id", sourceRigId);
     const qs = params.toString();

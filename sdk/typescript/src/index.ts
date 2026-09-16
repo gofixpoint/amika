@@ -51,8 +51,12 @@ export type {
   UpdateSessionRequest,
 } from "@/types";
 
-// Legacy sandbox spellings. Each is a type alias of the rig-named type above,
-// kept so code written against earlier releases keeps compiling.
+// Legacy sandbox spellings, kept so code written against earlier releases keeps
+// compiling. Most are plain type aliases of the rig-named type above;
+// `RemoteSandbox`, `SandboxSnapshot`, and `SandboxServiceResource` instead
+// relax that type's rig-spelled fields to optional, and
+// `CreateSandboxSnapshotRequest` keeps `sandboxRef` required. See the notes in
+// `types.ts` — the distinction is what an assignability error will point at.
 export type {
   CreateSandboxRequest,
   CreateSandboxSnapshotRequest,

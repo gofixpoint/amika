@@ -577,6 +577,69 @@ describe("AmikaClient rig snapshots", () => {
     ]);
   });
 
+  it("prefers rigRef over sandboxRef when both are set", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 202, body: { snapshot: "my-snap" } },
+    ]);
+    await makeClient(fetch).createRigSnapshot({
+      rigRef: "from-rig",
+      sandboxRef: "from-sandbox",
+      name: "my-snap",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "").sandbox_ref).toBe("from-rig");
+  });
+
+  it("falls through to sandboxRef when rigRef is empty", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 202, body: { snapshot: "my-snap" } },
+    ]);
+    await makeClient(fetch).createRigSnapshot({
+      rigRef: "",
+      sandboxRef: "dev",
+      name: "my-snap",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "").sandbox_ref).toBe("dev");
+  });
+
+  it("rejects a capture naming no rig, without issuing a request", async () => {
+    const { fetch, calls } = mockFetch([]);
+    const client = makeClient(fetch);
+    // Cast: the union rejects this at compile time, so the throw exists for
+    // callers arriving untyped from JavaScript and for an empty string.
+    const noRef = { name: "my-snap" } as unknown as Parameters<
+      typeof client.createRigSnapshot
+    >[0];
+    await expect(client.createRigSnapshot(noRef)).rejects.toThrow(
+      /rigRef \(or its alias sandboxRef\) is required/,
+    );
+    await expect(
+      client.createRigSnapshot({ rigRef: "", sandboxRef: "", name: "s" }),
+    ).rejects.toThrow(/is required/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("listRigSnapshots falls through to sourceSandboxId when sourceRigId is empty", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    await makeClient(fetch).listRigSnapshots({
+      sourceRigId: "",
+      sourceSandboxId: "sbx-2",
+    });
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/rig-snapshots?source_sandbox_id=sbx-2`,
+    );
+  });
+
+  it("listRigSnapshots prefers sourceRigId over the legacy filter", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    await makeClient(fetch).listRigSnapshots({
+      sourceRigId: "from-rig",
+      sourceSandboxId: "from-sandbox",
+    });
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/rig-snapshots?source_sandbox_id=from-rig`,
+    );
+  });
+
   it("createRigSnapshot still accepts the legacy sandboxRef field", async () => {
     const { fetch, calls } = mockFetch([
       { status: 202, body: { snapshot: "my-snap" } },
@@ -1043,6 +1106,15 @@ describe("legacy sandbox method aliases", () => {
       `${BASE}/api/v0beta1/rigs/dev/stop`,
       `${BASE}/api/v0beta1/rigs/dev`,
     ]);
+    expect(calls.map((call) => call.method)).toEqual([
+      "GET",
+      "POST",
+      "GET",
+      "POST",
+      "POST",
+      "DELETE",
+    ]);
+    expect(JSON.parse(calls[1]?.body ?? "")).toEqual({ name: "dev" });
   });
 
   it("routes service aliases to /rig-services and /rigs/{ref}/services", async () => {
@@ -1066,6 +1138,33 @@ describe("legacy sandbox method aliases", () => {
       `${BASE}/api/v0beta1/rigs/dev/services/web?by=name`,
       `${BASE}/api/v0beta1/rigs/dev/services/web?by=name`,
     ]);
+    expect(calls.map((call) => call.method)).toEqual([
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+    ]);
+    // The body is the other half of equivalence: a forward that reached the
+    // right URL with the wrong payload would pass a URL-only assertion.
+    expect(JSON.parse(calls[1]?.body ?? "")).toEqual({
+      name: "web",
+      port: 3000,
+      url_scheme: "https",
+    });
+  });
+
+  it("listSandboxServices with no ref omits the filter, as listRigServices does", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    await makeClient(fetch).listSandboxServices();
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rig-services`);
+  });
+
+  it("listSandboxSnapshots forwards the legacy sourceSandboxId filter", async () => {
+    const { fetch, calls } = mockFetch([{ status: 200, body: { items: [] } }]);
+    await makeClient(fetch).listSandboxSnapshots({ sourceSandboxId: "sbx-2" });
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/rig-snapshots?source_sandbox_id=sbx-2`,
+    );
   });
 
   it("routes snapshot aliases to /rig-snapshots", async () => {
@@ -1091,6 +1190,17 @@ describe("legacy sandbox method aliases", () => {
       `${BASE}/api/v0beta1/rig-snapshots/scrub-preview?sandbox=dev&by=ref`,
       `${BASE}/api/v0beta1/rig-snapshots/my-snap?by=ref`,
     ]);
+    expect(calls.map((call) => call.method)).toEqual([
+      "GET",
+      "POST",
+      "GET",
+      "GET",
+      "DELETE",
+    ]);
+    expect(JSON.parse(calls[1]?.body ?? "")).toEqual({
+      sandbox_ref: "dev",
+      name: "my-snap",
+    });
   });
 
   it("waitForSandbox forwards to waitForRig", async () => {

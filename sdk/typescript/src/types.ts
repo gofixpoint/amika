@@ -770,17 +770,8 @@ export function rigSnapshotFromWire(w: Record<string, unknown>): RigSnapshot {
 /** Legacy spelling of {@link rigSnapshotFromWire}. */
 export const sandboxSnapshotFromWire = rigSnapshotFromWire;
 
-/**
- * Names the source rig of a snapshot capture. `rigRef` is the canonical
- * spelling and `sandboxRef` the legacy one; the union requires one of them
- * without forcing callers that already pass `sandboxRef` to change.
- */
-type RigRefFields =
-  | { rigRef: string; sandboxRef?: string }
-  | { sandboxRef: string; rigRef?: string };
-
-/** Request body for POST /api/v0beta1/rig-snapshots. */
-export type CreateRigSnapshotRequest = {
+/** The fields of a snapshot capture request that name nothing rig-related. */
+interface RigSnapshotCaptureFields {
   /** Name for the new snapshot. */
   name: string;
   description?: string;
@@ -792,10 +783,33 @@ export type CreateRigSnapshotRequest = {
    *     rig running.
    */
   mode?: "scrub_and_delete" | "full";
-} & RigRefFields;
+}
 
-/** Legacy spelling of {@link CreateRigSnapshotRequest}. */
-export type CreateSandboxSnapshotRequest = CreateRigSnapshotRequest;
+/**
+ * Request body for POST /api/v0beta1/rig-snapshots. The union requires one of
+ * the two spellings for the source rig without forcing callers that already
+ * pass `sandboxRef` to change.
+ */
+export type CreateRigSnapshotRequest = RigSnapshotCaptureFields &
+  (
+    | { rigRef: string; sandboxRef?: string }
+    | { sandboxRef: string; rigRef?: string }
+  );
+
+/**
+ * Legacy spelling of {@link CreateRigSnapshotRequest}.
+ *
+ * Spelled out rather than aliased to the union: under the union a *read* of
+ * `sandboxRef` widens to `string | undefined`, because one member declares it
+ * optional. That silently breaks 0.11 code doing `const ref: string =
+ * req.sandboxRef`. Here `sandboxRef` stays required exactly as it was, and the
+ * type is still assignable to {@link CreateRigSnapshotRequest}.
+ */
+export type CreateSandboxSnapshotRequest = RigSnapshotCaptureFields & {
+  /** Source rig, by name or id (the server resolves id first, then name). */
+  sandboxRef: string;
+  rigRef?: string;
+};
 
 export function createRigSnapshotRequestToWire(
   r: CreateRigSnapshotRequest,
@@ -814,12 +828,16 @@ export const createSandboxSnapshotRequestToWire =
 
 /**
  * Resolve the source rig from whichever of the two spellings the caller used.
- * `rigRef` wins when both are set, and the TypeScript union above already
- * rejects neither — this throws only for callers coming in untyped.
+ * A non-empty `rigRef` wins; `||` rather than `??` so an empty rig spelling
+ * falls through to the legacy one instead of shadowing it.
+ *
+ * The union above already rejects a request carrying neither, so the throw
+ * catches an empty string in both, plus callers arriving untyped from
+ * JavaScript.
  */
-function rigRefOf(r: RigRefFields): string {
-  const ref = r.rigRef ?? r.sandboxRef;
-  if (ref === undefined || ref === "") {
+function rigRefOf(r: { rigRef?: string; sandboxRef?: string }): string {
+  const ref = r.rigRef || r.sandboxRef;
+  if (!ref) {
     throw new AmikaError("rigRef (or its alias sandboxRef) is required");
   }
   return ref;

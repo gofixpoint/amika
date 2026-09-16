@@ -21,7 +21,7 @@ await amika.createSandbox({ name: "hello-amika" }); // same call, deprecated nam
 
 The aliasing is exhaustive:
 
-- **Methods** — `listSandboxes`, `createSandbox`, `getSandbox`, `waitForSandbox*`, `startSandbox`, `stopSandbox`, `deleteSandbox`, `*SandboxService*`, and `*SandboxSnapshot*` all delegate to their `Rig` counterparts and issue the same rig-named request.
+- **Methods** — `listSandboxes`, `createSandbox`, `getSandbox`, `waitForSandbox*`, `startSandbox`, `stopSandbox`, `deleteSandbox`, `*SandboxService*`, `*SandboxSnapshot*`, and `getSandboxScrubPreview` all delegate to their `Rig` counterparts and issue the same rig-named request.
 - **Types** — `RemoteSandbox`, `CreateSandboxRequest`, `SandboxSnapshot`, `SandboxServiceResource`, and the rest are type aliases of `RemoteRig`, `CreateRigRequest`, `RigSnapshot`, `RigServiceResource`, …
 - **Fields** — a response carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `session.rigId` and `session.sandboxId`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, and so on. On request objects the rig spelling wins when both are set: `createRigSnapshot({ rigRef })` and `createRigSnapshot({ sandboxRef })` both work.
 - **Functional-test env vars** — `AMIKA_TEST_RIG_PROVIDER` and `AMIKA_TEST_RIG_NAME_PREFIX` fall back to `AMIKA_TEST_SANDBOX_PROVIDER` and `AMIKA_TEST_SANDBOX_NAME_PREFIX`.
