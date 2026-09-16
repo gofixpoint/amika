@@ -19,30 +19,28 @@ import {
   agentSendRequestToWire,
   agentSendResponseFromWire,
   type CreateProviderSecretRequest,
-  type CreateSandboxRequest,
   type CreateRigRequest,
-  type CreateSandboxSnapshotRequest,
-  createSandboxSnapshotRequestToWire,
+  type CreateRigSnapshotRequest,
+  createRigRequestToWire,
+  createRigSnapshotRequestToWire,
   type CreateSecretRequest,
   type CreateSessionRequest,
-  createSandboxRequestToWire,
   createSessionRequestToWire,
   mapArray,
   type ProviderSecretListItem,
   type ProviderSecretSummary,
   type RemoteRepository,
   remoteRepositoryFromWire,
-  type RemoteSandbox,
   type RemoteRig,
-  remoteSandboxFromWire,
-  type SandboxScrubPreview,
-  sandboxScrubPreviewFromWire,
-  type SandboxServiceRequest,
-  type SandboxServiceResource,
-  sandboxServiceRequestToWire,
-  sandboxServiceResourceFromWire,
-  type SandboxSnapshot,
-  sandboxSnapshotFromWire,
+  remoteRigFromWire,
+  type RigScrubPreview,
+  rigScrubPreviewFromWire,
+  type RigServiceRequest,
+  type RigServiceResource,
+  rigServiceRequestToWire,
+  rigServiceResourceFromWire,
+  type RigSnapshot,
+  rigSnapshotFromWire,
   type Secret,
   secretFromWire,
   type Session,
@@ -72,6 +70,13 @@ export interface AmikaClientOptions {
  * AmikaClient calls the remote Amika API with a bearer token. Mirrors Go's
  * `apiclient.Client` 1:1 — method names, inputs, return shapes, and HTTP
  * behavior (timeouts, polling intervals, 404 handling) all match.
+ *
+ * `rig` is the canonical product term. Every `*Rig*` method below is the real
+ * implementation; the `*Sandbox*` method beside it is a deprecated alias that
+ * forwards to it unchanged, so both spellings hit the same endpoint and return
+ * the same object. The server mounts `/rigs`, `/rig-services`, and
+ * `/rig-snapshots` alongside their `sandbox` originals, so the requests the
+ * SDK issues are rig-named throughout.
  */
 export class AmikaClient {
   private readonly http: HTTPClient;
@@ -86,27 +91,23 @@ export class AmikaClient {
     });
   }
 
-  // ---------- Sandboxes ----------
-
   // ---------- Rigs ----------
 
-  /** List rigs. `listSandboxes` remains available for backwards compatibility. */
   async listRigs(): Promise<RemoteRig[]> {
     const data = await this.http.doJSON<unknown[]>(
       "GET",
       `${API_BASE_PATH}/rigs`,
     );
-    return mapArray(data, remoteSandboxFromWire);
+    return mapArray(data, remoteRigFromWire);
   }
 
-  /** Create a rig. `createSandbox` remains available for backwards compatibility. */
   async createRig(req: CreateRigRequest): Promise<RemoteRig> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
       `${API_BASE_PATH}/rigs`,
-      createSandboxRequestToWire(req),
+      createRigRequestToWire(req),
     );
-    return remoteSandboxFromWire(data ?? {});
+    return remoteRigFromWire(data ?? {});
   }
 
   async getRig(name: string): Promise<RemoteRig> {
@@ -114,11 +115,16 @@ export class AmikaClient {
       "GET",
       `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}`,
     );
-    return remoteSandboxFromWire(data ?? {});
+    return remoteRigFromWire(data ?? {});
   }
 
+  /**
+   * Polls `getRig(name)` every 3 seconds until the rig reaches a ready state
+   * (`active`, `running`, `started`) or `failed`. No client-side timeout —
+   * matches Go's `WaitForSandbox`.
+   */
   waitForRig(name: string): Promise<RemoteRig> {
-    return waitForSandboxState(
+    return waitForRigState(
       (n) => this.getRig(n),
       name,
       ["active", "running", "started"],
@@ -134,7 +140,7 @@ export class AmikaClient {
   }
 
   waitForRigStart(name: string): Promise<RemoteRig> {
-    return waitForSandboxState(
+    return waitForRigState(
       (n) => this.getRig(n),
       name,
       ["active", "running", "started"],
@@ -150,7 +156,7 @@ export class AmikaClient {
   }
 
   waitForRigStop(name: string): Promise<RemoteRig> {
-    return waitForSandboxState(
+    return waitForRigState(
       (n) => this.getRig(n),
       name,
       ["stopped"],
@@ -165,82 +171,49 @@ export class AmikaClient {
     );
   }
 
-  async listSandboxes(): Promise<RemoteSandbox[]> {
-    const data = await this.http.doJSON<unknown[]>(
-      "GET",
-      `${API_BASE_PATH}/sandboxes`,
-    );
-    return mapArray(data, remoteSandboxFromWire);
+  /** @deprecated Use {@link AmikaClient.listRigs}. */
+  listSandboxes(): Promise<RemoteRig[]> {
+    return this.listRigs();
   }
 
-  async createSandbox(req: CreateSandboxRequest): Promise<RemoteSandbox> {
-    const data = await this.http.doJSON<Record<string, unknown>>(
-      "POST",
-      `${API_BASE_PATH}/sandboxes`,
-      createSandboxRequestToWire(req),
-    );
-    return remoteSandboxFromWire(data ?? {});
+  /** @deprecated Use {@link AmikaClient.createRig}. */
+  createSandbox(req: CreateRigRequest): Promise<RemoteRig> {
+    return this.createRig(req);
   }
 
-  async getSandbox(name: string): Promise<RemoteSandbox> {
-    const data = await this.http.doJSON<Record<string, unknown>>(
-      "GET",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}`,
-    );
-    return remoteSandboxFromWire(data ?? {});
+  /** @deprecated Use {@link AmikaClient.getRig}. */
+  getSandbox(name: string): Promise<RemoteRig> {
+    return this.getRig(name);
   }
 
-  /**
-   * Polls `getSandbox(name)` every 3 seconds until the sandbox reaches a
-   * ready state (`active`, `running`, `started`) or `failed`. No client-side
-   * timeout — matches Go's `WaitForSandbox`.
-   */
-  waitForSandbox(name: string): Promise<RemoteSandbox> {
-    return waitForSandboxState(
-      (n) => this.getSandbox(n),
-      name,
-      ["active", "running", "started"],
-      "sandbox provisioning failed",
-    );
+  /** @deprecated Use {@link AmikaClient.waitForRig}. */
+  waitForSandbox(name: string): Promise<RemoteRig> {
+    return this.waitForRig(name);
   }
 
-  async startSandbox(name: string): Promise<void> {
-    await this.http.doJSON(
-      "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}/start`,
-    );
+  /** @deprecated Use {@link AmikaClient.startRig}. */
+  startSandbox(name: string): Promise<void> {
+    return this.startRig(name);
   }
 
-  waitForSandboxStart(name: string): Promise<RemoteSandbox> {
-    return waitForSandboxState(
-      (n) => this.getSandbox(n),
-      name,
-      ["active", "running", "started"],
-      "sandbox start failed",
-    );
+  /** @deprecated Use {@link AmikaClient.waitForRigStart}. */
+  waitForSandboxStart(name: string): Promise<RemoteRig> {
+    return this.waitForRigStart(name);
   }
 
-  async stopSandbox(name: string): Promise<void> {
-    await this.http.doJSON(
-      "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}/stop`,
-    );
+  /** @deprecated Use {@link AmikaClient.stopRig}. */
+  stopSandbox(name: string): Promise<void> {
+    return this.stopRig(name);
   }
 
-  waitForSandboxStop(name: string): Promise<RemoteSandbox> {
-    return waitForSandboxState(
-      (n) => this.getSandbox(n),
-      name,
-      ["stopped"],
-      "sandbox stop failed",
-    );
+  /** @deprecated Use {@link AmikaClient.waitForRigStop}. */
+  waitForSandboxStop(name: string): Promise<RemoteRig> {
+    return this.waitForRigStop(name);
   }
 
-  async deleteSandbox(name: string): Promise<void> {
-    await this.http.doJSON(
-      "DELETE",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(name)}`,
-    );
+  /** @deprecated Use {@link AmikaClient.deleteRig}. */
+  deleteSandbox(name: string): Promise<void> {
+    return this.deleteRig(name);
   }
 
   // ---------- Repositories ----------
@@ -254,69 +227,93 @@ export class AmikaClient {
     return mapArray(data, remoteRepositoryFromWire);
   }
 
-  // ---------- Sandbox services ----------
+  // ---------- Rig services ----------
 
   /**
-   * List live services for the caller's org. `sandboxRef` is an optional
+   * List live services for the caller's org. `rigRef` is an optional
    * name-or-id filter; omit it to list every service in the org.
    */
-  async listSandboxServices(
-    sandboxRef?: string,
-  ): Promise<SandboxServiceResource[]> {
+  async listRigServices(rigRef?: string): Promise<RigServiceResource[]> {
     const params = new URLSearchParams();
-    if (sandboxRef) params.set("sandbox_ref", sandboxRef);
+    // The query key is the server's, which still spells it `sandbox_ref`.
+    if (rigRef) params.set("sandbox_ref", rigRef);
     const qs = params.toString();
     const envelope = await this.http.doJSON<{ items?: unknown[] }>(
       "GET",
-      `${API_BASE_PATH}/sandbox-services${qs ? `?${qs}` : ""}`,
+      `${API_BASE_PATH}/rig-services${qs ? `?${qs}` : ""}`,
     );
-    return mapArray(envelope?.items, sandboxServiceResourceFromWire);
+    return mapArray(envelope?.items, rigServiceResourceFromWire);
   }
 
   /**
-   * Create a service on the sandbox referenced by name or id (the server
+   * Create a service on the rig referenced by name or id (the server
    * resolves id first, then name).
    */
-  async createSandboxService(
-    sandboxRef: string,
-    req: SandboxServiceRequest,
-  ): Promise<SandboxServiceResource> {
+  async createRigService(
+    rigRef: string,
+    req: RigServiceRequest,
+  ): Promise<RigServiceResource> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services`,
-      sandboxServiceRequestToWire(req),
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigRef)}/services`,
+      rigServiceRequestToWire(req),
     );
-    return sandboxServiceResourceFromWire(data ?? {});
+    return rigServiceResourceFromWire(data ?? {});
   }
 
   /**
-   * Fully replace the service identified by `serviceRef` within a sandbox.
+   * Fully replace the service identified by `serviceRef` within a rig.
    * `by` selects how `serviceRef` is resolved and defaults to `name`.
    */
-  async putSandboxService(
-    sandboxRef: string,
+  async putRigService(
+    rigRef: string,
     serviceRef: string,
-    req: SandboxServiceRequest,
+    req: RigServiceRequest,
     by: "name" | "id" | "ref" = "name",
-  ): Promise<SandboxServiceResource> {
+  ): Promise<RigServiceResource> {
     const params = new URLSearchParams({ by });
     const data = await this.http.doJSON<Record<string, unknown>>(
       "PUT",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?${params.toString()}`,
-      sandboxServiceRequestToWire(req),
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigRef)}/services/${encodeURIComponent(serviceRef)}?${params.toString()}`,
+      rigServiceRequestToWire(req),
     );
-    return sandboxServiceResourceFromWire(data ?? {});
+    return rigServiceResourceFromWire(data ?? {});
   }
 
-  /** Delete the service with the given name within a sandbox. */
-  async deleteSandboxService(
-    sandboxRef: string,
-    serviceRef: string,
-  ): Promise<void> {
+  /** Delete the service with the given name within a rig. */
+  async deleteRigService(rigRef: string, serviceRef: string): Promise<void> {
     await this.http.doJSON(
       "DELETE",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
     );
+  }
+
+  /** @deprecated Use {@link AmikaClient.listRigServices}. */
+  listSandboxServices(sandboxRef?: string): Promise<RigServiceResource[]> {
+    return this.listRigServices(sandboxRef);
+  }
+
+  /** @deprecated Use {@link AmikaClient.createRigService}. */
+  createSandboxService(
+    sandboxRef: string,
+    req: RigServiceRequest,
+  ): Promise<RigServiceResource> {
+    return this.createRigService(sandboxRef, req);
+  }
+
+  /** @deprecated Use {@link AmikaClient.putRigService}. */
+  putSandboxService(
+    sandboxRef: string,
+    serviceRef: string,
+    req: RigServiceRequest,
+    by: "name" | "id" | "ref" = "name",
+  ): Promise<RigServiceResource> {
+    return this.putRigService(sandboxRef, serviceRef, req, by);
+  }
+
+  /** @deprecated Use {@link AmikaClient.deleteRigService}. */
+  deleteSandboxService(sandboxRef: string, serviceRef: string): Promise<void> {
+    return this.deleteRigService(sandboxRef, serviceRef);
   }
 
   // ---------- Secrets ----------
@@ -372,18 +369,18 @@ export class AmikaClient {
   // ---------- Agent send ----------
 
   /**
-   * Send a message to an agent inside a remote sandbox. The endpoint is
+   * Send a message to an agent inside a remote rig. The endpoint is
    * synchronous: it blocks until the agent finishes, so a longer per-request
    * timeout (10 minutes) is used in place of the default 30 seconds.
    */
   async agentSend(
-    sandboxName: string,
+    rigName: string,
     req: AgentSendRequest,
   ): Promise<AgentSendResponse> {
     try {
       const data = await this.http.doJSON<Record<string, unknown>>(
         "POST",
-        `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/agent-send`,
+        `${API_BASE_PATH}/rigs/${encodeURIComponent(rigName)}/agent-send`,
         agentSendRequestToWire(req),
         { timeoutMs: AGENT_SEND_TIMEOUT_MS },
       );
@@ -392,7 +389,7 @@ export class AmikaClient {
       const authErr = extractAgentAuthError(err);
       if (authErr) {
         throw new AmikaError(
-          `remote agent-send: agent failed to authenticate with its AI provider: ${authErr}\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access`,
+          `remote agent-send: agent failed to authenticate with its AI provider: ${authErr}\n\nthe rig agent's API credentials may have expired or been revoked; recreate the rig or update its API keys to restore access`,
         );
       }
       throw err;
@@ -402,34 +399,31 @@ export class AmikaClient {
   // ---------- Sessions ----------
 
   async createSession(
-    sandboxName: string,
+    rigName: string,
     req: CreateSessionRequest,
   ): Promise<Session> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigName)}/sessions`,
       createSessionRequestToWire(req),
     );
     return sessionFromWire(data ?? {});
   }
 
-  async listSessions(sandboxName: string): Promise<Session[]> {
+  async listSessions(rigName: string): Promise<Session[]> {
     const envelope = await this.http.doJSON<{
       sessions?: Record<string, unknown>[];
-    }>(
-      "GET",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions`,
-    );
+    }>("GET", `${API_BASE_PATH}/rigs/${encodeURIComponent(rigName)}/sessions`);
     const sessions = envelope?.sessions ?? [];
     return sessions.map((s) => sessionFromWire(s));
   }
 
   /** Returns null if no session exists (HTTP 404). */
-  async getLatestSession(sandboxName: string): Promise<Session | null> {
+  async getLatestSession(rigName: string): Promise<Session | null> {
     try {
       const data = await this.http.doJSON<Record<string, unknown>>(
         "GET",
-        `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions/latest`,
+        `${API_BASE_PATH}/rigs/${encodeURIComponent(rigName)}/sessions/latest`,
       );
       return sessionFromWire(data ?? {});
     } catch (err) {
@@ -438,92 +432,93 @@ export class AmikaClient {
     }
   }
 
-  async getSession(sandboxName: string, sessionId: string): Promise<Session> {
+  async getSession(rigName: string, sessionId: string): Promise<Session> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "GET",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions/${encodeURIComponent(sessionId)}`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigName)}/sessions/${encodeURIComponent(sessionId)}`,
     );
     return sessionFromWire(data ?? {});
   }
 
   async updateSession(
-    sandboxName: string,
+    rigName: string,
     sessionId: string,
     req: UpdateSessionRequest,
   ): Promise<Session> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "PATCH",
-      `${API_BASE_PATH}/sandboxes/${encodeURIComponent(sandboxName)}/sessions/${encodeURIComponent(sessionId)}`,
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigName)}/sessions/${encodeURIComponent(sessionId)}`,
       updateSessionRequestToWire(req),
     );
     return sessionFromWire(data ?? {});
   }
 
-  // ---------- Sandbox snapshots ----------
+  // ---------- Rig snapshots ----------
 
   /**
-   * List sandbox-captured snapshots for the caller's org. Both filters are
+   * List rig-captured snapshots for the caller's org. Both filters are
    * optional; omit them to list every snapshot.
    */
-  async listSandboxSnapshots(filters?: {
+  async listRigSnapshots(filters?: {
     repositoryId?: string;
+    /** Source rig id. `sourceSandboxId` is the legacy spelling. */
+    sourceRigId?: string;
     sourceSandboxId?: string;
-  }): Promise<SandboxSnapshot[]> {
+  }): Promise<RigSnapshot[]> {
     const params = new URLSearchParams();
     if (filters?.repositoryId)
       params.set("repository_id", filters.repositoryId);
-    if (filters?.sourceSandboxId)
-      params.set("source_sandbox_id", filters.sourceSandboxId);
+    const sourceRigId = filters?.sourceRigId ?? filters?.sourceSandboxId;
+    // The query key is the server's, which still spells it `source_sandbox_id`.
+    if (sourceRigId) params.set("source_sandbox_id", sourceRigId);
     const qs = params.toString();
-    const path = `${API_BASE_PATH}/sandbox-snapshots${qs ? `?${qs}` : ""}`;
+    const path = `${API_BASE_PATH}/rig-snapshots${qs ? `?${qs}` : ""}`;
     const envelope = await this.http.doJSON<{
       items?: Record<string, unknown>[];
     }>("GET", path);
     const items = envelope?.items ?? [];
-    return items.map((item) => sandboxSnapshotFromWire(item));
+    return items.map((item) => rigSnapshotFromWire(item));
   }
 
   /**
-   * Start capturing a snapshot from a running sandbox. The endpoint returns
+   * Start capturing a snapshot from a running rig. The endpoint returns
    * 202 Accepted with the snapshot in the `capturing` state; poll
-   * {@link listSandboxSnapshots} until it reaches `active` or `failed`.
+   * {@link listRigSnapshots} until it reaches `active` or `failed`.
    */
-  async createSandboxSnapshot(
-    req: CreateSandboxSnapshotRequest,
-  ): Promise<SandboxSnapshot> {
+  async createRigSnapshot(req: CreateRigSnapshotRequest): Promise<RigSnapshot> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
-      `${API_BASE_PATH}/sandbox-snapshots`,
-      createSandboxSnapshotRequestToWire(req),
+      `${API_BASE_PATH}/rig-snapshots`,
+      createRigSnapshotRequestToWire(req),
     );
-    return sandboxSnapshotFromWire(data ?? {});
+    return rigSnapshotFromWire(data ?? {});
   }
 
   /**
    * Fetch a single snapshot by name or id (the server resolves id first, then
    * name).
    */
-  async getSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
+  async getRigSnapshot(ref: string): Promise<RigSnapshot> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "GET",
-      `${API_BASE_PATH}/sandbox-snapshots/${encodeURIComponent(ref)}?by=ref`,
+      `${API_BASE_PATH}/rig-snapshots/${encodeURIComponent(ref)}?by=ref`,
     );
-    return sandboxSnapshotFromWire(data ?? {});
+    return rigSnapshotFromWire(data ?? {});
   }
 
   /**
-   * Poll {@link getSandboxSnapshot} every 3 seconds until the snapshot reaches
+   * Poll {@link getRigSnapshot} every 3 seconds until the snapshot reaches
    * a terminal state. Returns it once `active`; throws `AmikaError` if it ends
    * up `failed`. No client-side timeout — matches Go's
    * `WaitForSandboxSnapshot`.
    */
-  async waitForSandboxSnapshot(ref: string): Promise<SandboxSnapshot> {
+  async waitForRigSnapshot(ref: string): Promise<RigSnapshot> {
     for (;;) {
-      const snapshot = await this.getSandboxSnapshot(ref);
+      const snapshot = await this.getRigSnapshot(ref);
       if (snapshot.state === "active") return snapshot;
       if (snapshot.state === "failed") {
         throw new AmikaError(
-          snapshot.errorMessage || "sandbox snapshot capture failed",
+          snapshot.errorMessage || "rig snapshot capture failed",
         );
       }
       await sleep(WAIT_POLL_INTERVAL_MS);
@@ -532,36 +527,68 @@ export class AmikaClient {
 
   /**
    * Preview which injected secrets a scrub-and-delete snapshot would remove
-   * from a sandbox (file paths + env var names only, no values). `sandboxRef`
+   * from a rig (file paths + env var names only, no values). `rigRef`
    * is a name or id; the server resolves id first, then name.
    */
-  async getSandboxScrubPreview(
-    sandboxRef: string,
-  ): Promise<SandboxScrubPreview> {
-    const params = new URLSearchParams({ sandbox: sandboxRef, by: "ref" });
+  async getRigScrubPreview(rigRef: string): Promise<RigScrubPreview> {
+    // The query key is the server's, which still spells it `sandbox`.
+    const params = new URLSearchParams({ sandbox: rigRef, by: "ref" });
     const data = await this.http.doJSON<Record<string, unknown>>(
       "GET",
-      `${API_BASE_PATH}/sandbox-snapshots/scrub-preview?${params.toString()}`,
+      `${API_BASE_PATH}/rig-snapshots/scrub-preview?${params.toString()}`,
     );
-    return sandboxScrubPreviewFromWire(data ?? {});
+    return rigScrubPreviewFromWire(data ?? {});
   }
 
   /**
-   * Delete a sandbox snapshot referenced by name or id (the server resolves
+   * Delete a rig snapshot referenced by name or id (the server resolves
    * id first, then name).
    */
-  async deleteSandboxSnapshot(ref: string): Promise<void> {
+  async deleteRigSnapshot(ref: string): Promise<void> {
     await this.http.doJSON(
       "DELETE",
-      `${API_BASE_PATH}/sandbox-snapshots/${encodeURIComponent(ref)}?by=ref`,
+      `${API_BASE_PATH}/rig-snapshots/${encodeURIComponent(ref)}?by=ref`,
     );
+  }
+
+  /** @deprecated Use {@link AmikaClient.listRigSnapshots}. */
+  listSandboxSnapshots(filters?: {
+    repositoryId?: string;
+    sourceSandboxId?: string;
+  }): Promise<RigSnapshot[]> {
+    return this.listRigSnapshots(filters);
+  }
+
+  /** @deprecated Use {@link AmikaClient.createRigSnapshot}. */
+  createSandboxSnapshot(req: CreateRigSnapshotRequest): Promise<RigSnapshot> {
+    return this.createRigSnapshot(req);
+  }
+
+  /** @deprecated Use {@link AmikaClient.getRigSnapshot}. */
+  getSandboxSnapshot(ref: string): Promise<RigSnapshot> {
+    return this.getRigSnapshot(ref);
+  }
+
+  /** @deprecated Use {@link AmikaClient.waitForRigSnapshot}. */
+  waitForSandboxSnapshot(ref: string): Promise<RigSnapshot> {
+    return this.waitForRigSnapshot(ref);
+  }
+
+  /** @deprecated Use {@link AmikaClient.getRigScrubPreview}. */
+  getSandboxScrubPreview(sandboxRef: string): Promise<RigScrubPreview> {
+    return this.getRigScrubPreview(sandboxRef);
+  }
+
+  /** @deprecated Use {@link AmikaClient.deleteRigSnapshot}. */
+  deleteSandboxSnapshot(ref: string): Promise<void> {
+    return this.deleteRigSnapshot(ref);
   }
 
   // ---------- Agent sessions ----------
 
   /**
-   * Send a message to a coding agent, creating a sandbox behind the scenes
-   * when the chat has none, or routing to an existing sandbox or session. The
+   * Send a message to a coding agent, creating a rig behind the scenes
+   * when the chat has none, or routing to an existing rig or session. The
    * endpoint is synchronous, so it uses the same 10-minute timeout as
    * {@link agentSend}.
    *
@@ -644,19 +671,19 @@ function resolveTokenSource(options: AmikaClientOptions): TokenSource {
   throw new Error("AmikaClient: accessToken or tokenSource is required");
 }
 
-async function waitForSandboxState(
-  getSandbox: (name: string) => Promise<RemoteSandbox>,
+async function waitForRigState(
+  getRig: (name: string) => Promise<RemoteRig>,
   name: string,
   readyStates: readonly string[],
   failMsg: string,
-): Promise<RemoteSandbox> {
+): Promise<RemoteRig> {
   // Match Go: no client-side timeout, just poll until terminal state.
   for (;;) {
-    const sb = await getSandbox(name);
-    if (sb.state === "failed") {
-      throw new AmikaError(sb.errorMessage || failMsg);
+    const rig = await getRig(name);
+    if (rig.state === "failed") {
+      throw new AmikaError(rig.errorMessage || failMsg);
     }
-    if (readyStates.includes(sb.state)) return sb;
+    if (readyStates.includes(rig.state)) return rig;
     await sleep(WAIT_POLL_INTERVAL_MS);
   }
 }

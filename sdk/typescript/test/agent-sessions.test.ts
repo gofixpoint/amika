@@ -49,7 +49,7 @@ describe("AmikaClient.sendAgentSession", () => {
       message: "hi",
       agent: "claude",
       sessionId: "as_1",
-      sandboxId: "sbx_1",
+      rigId: "sbx_1",
       newSession: false,
       repoUrl: "git@github.com:org/p.git",
     });
@@ -65,6 +65,9 @@ describe("AmikaClient.sendAgentSession", () => {
       repo_url: "git@github.com:org/p.git",
     });
     expect(resp.sessionId).toBe("as_1");
+    expect(resp.rigId).toBe("sbx_1");
+    expect(resp.sandboxId).toBe("sbx_1");
+    expect(resp.createdRig).toBe(true);
     expect(resp.createdSandbox).toBe(true);
     expect(resp.usage).toEqual({
       costUsd: 0.12,
@@ -81,6 +84,22 @@ describe("AmikaClient.sendAgentSession", () => {
     const { fetch, calls } = mockFetch([{ status: 200, body: DONE_PAYLOAD }]);
     await makeClient(fetch).sendAgentSession({ message: "hi" });
     expect(JSON.parse(calls[0]?.body ?? "")).toEqual({ message: "hi" });
+  });
+
+  it("accepts the legacy sandboxId spelling, and prefers rigId over it", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: DONE_PAYLOAD },
+      { status: 200, body: DONE_PAYLOAD },
+    ]);
+    const client = makeClient(fetch);
+    await client.sendAgentSession({ message: "hi", sandboxId: "sbx_1" });
+    await client.sendAgentSession({
+      message: "hi",
+      rigId: "rig_1",
+      sandboxId: "sbx_1",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "").sandbox_id).toBe("sbx_1");
+    expect(JSON.parse(calls[1]?.body ?? "").sandbox_id).toBe("rig_1");
   });
 
   it("leaves usage undefined when the provider reports none", async () => {
@@ -110,7 +129,7 @@ describe("AmikaClient.sendAgentSessionStream", () => {
     const resp = await makeClient(fetch).sendAgentSessionStream(
       { message: "hi" },
       {
-        onStatus: (phase, sandboxId) => statuses.push([phase, sandboxId]),
+        onStatus: (phase, rigId) => statuses.push([phase, rigId]),
         onDelta: (chunk) => {
           text += chunk;
         },
@@ -219,6 +238,9 @@ describe("AmikaClient.listAgentSessions", () => {
     const page = await makeClient(fetch).listAgentSessions();
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/agent-sessions`);
     expect(page.total).toBe(12);
+    expect(page.sessions[0]?.rigId).toBe("sbx_1");
+    expect(page.sessions[0]?.sandboxId).toBe("sbx_1");
+    expect(page.sessions[0]?.rigName).toBeNull();
     expect(page.sessions[0]?.sandboxName).toBeNull();
     expect(page.sessions[0]?.model).toBeNull();
     expect(page.sessions[0]?.effort).toBe("high");
@@ -273,6 +295,8 @@ describe("AmikaClient.getAgentSession", () => {
     const detail = await makeClient(fetch).getAgentSession("as/1");
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/agent-sessions/as%2F1`);
     expect(detail.model).toBe("claude-opus-5");
+    expect(detail.rigName).toBe("dev");
+    expect(detail.sandboxName).toBe("dev");
     expect(detail.messages).toHaveLength(2);
     expect(detail.messages[0]?.isError).toBeUndefined();
     expect(detail.messages[1]?.isError).toBe(true);

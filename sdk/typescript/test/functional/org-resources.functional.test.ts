@@ -1,4 +1,4 @@
-// Read-only org-scoped endpoints. Nothing here provisions a sandbox, so this
+// Read-only org-scoped endpoints. Nothing here provisions a rig, so this
 // suite is cheap enough to run on its own.
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -24,8 +24,8 @@ describeFunctional("org resources functional tests", () => {
       }
     });
 
-    it("listSandboxServices returns every service in the org", async () => {
-      const services = await client.listSandboxServices();
+    it("listRigServices returns every service in the org", async () => {
+      const services = await client.listRigServices();
       expect(Array.isArray(services)).toBe(true);
       for (const service of services) {
         expect(typeof service.name).toBe("string");

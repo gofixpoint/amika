@@ -2,11 +2,7 @@ import { afterAll, describe } from "vitest";
 
 import { AmikaClient } from "@/client";
 import { assertNotProdUrl } from "./prod-guard";
-import type {
-  AgentCredentialRef,
-  CreateSandboxRequest,
-  RemoteSandbox,
-} from "@/types";
+import type { AgentCredentialRef, CreateRigRequest, RemoteRig } from "@/types";
 
 /**
  * Required env vars to enable functional tests:
@@ -15,17 +11,17 @@ import type {
  * Optional:
  *   AMIKA_API_TOKEN                      — bearer token; defaults to a dummy
  *                                          value so no-auth servers also work
- *   AMIKA_TEST_REPO_URL                  — repo URL passed to createSandbox
+ *   AMIKA_TEST_REPO_URL                  — repo URL passed to createRig
  *                                          (default: https://github.com/gofixpoint/example-repo)
- *   AMIKA_TEST_SANDBOX_PROVIDER          — infrastructure provider on createSandbox (default: "docker")
- *   AMIKA_TEST_PRESET                    — sandbox preset (default: "coder")
+ *   AMIKA_TEST_RIG_PROVIDER              — infrastructure provider on createRig (default: "docker")
+ *   AMIKA_TEST_PRESET                    — rig preset (default: "coder")
  *   AMIKA_TEST_AGENT_NAME                — agent name for sessions / agentSend (default: "claude")
- *   AMIKA_TEST_AGENT_CREDENTIAL_NAME     — credential `name` injected into the sandbox
+ *   AMIKA_TEST_AGENT_CREDENTIAL_NAME     — credential `name` injected into the rig
  *   AMIKA_TEST_AGENT_CREDENTIAL_TYPE     — "oauth" or "api_key"
- *   AMIKA_TEST_SANDBOX_NAME_PREFIX       — prefix used for generated sandbox names (default: "ts-sdk-fn")
- *   AMIKA_TEST_BRANCH                    — branch checked out in the sandbox
+ *   AMIKA_TEST_RIG_NAME_PREFIX           — prefix used for generated rig names (default: "ts-sdk-fn")
+ *   AMIKA_TEST_BRANCH                    — branch checked out in the rig
  *   AMIKA_TEST_GITHUB_TOKEN              — GitHub PAT registered before provisioning
- *                                          a sandbox (servers that gate sandbox
+ *                                          a rig (servers that gate rig
  *                                          creation on a per-user GitHub token)
  *   AMIKA_TEST_PROVIDER                  — AI provider used in secrets.test.ts (default: "claude")
  *   AMIKA_TEST_PROVIDER_SECRET_VALUE     — real provider API key for the secrets
@@ -33,6 +29,11 @@ import type {
  *                                          target server validates keys upstream
  *                                          (e.g. Anthropic). Falls back to a
  *                                          placeholder otherwise.
+ *
+ * The two rig vars keep their former spellings as aliases:
+ * AMIKA_TEST_SANDBOX_PROVIDER and AMIKA_TEST_SANDBOX_NAME_PREFIX are still read
+ * when the `RIG` name is unset, so existing shell profiles and CI configs need
+ * no edit.
  *
  * When AMIKA_API_URL is unset, the helpers below cause every functional `describe`
  * to be skipped — `pnpm test:functional` becomes a no-op rather than failing.
@@ -66,14 +67,18 @@ export function makeClient(): AmikaClient {
 export const TEST_REPO_URL =
   process.env["AMIKA_TEST_REPO_URL"] ??
   "https://github.com/gofixpoint/example-repo";
-export const TEST_SANDBOX_PROVIDER =
-  process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ?? "docker";
+export const TEST_RIG_PROVIDER =
+  process.env["AMIKA_TEST_RIG_PROVIDER"] ??
+  process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ??
+  "docker";
 export const TEST_PRESET = process.env["AMIKA_TEST_PRESET"] ?? "coder";
 export const TEST_GITHUB_TOKEN = process.env["AMIKA_TEST_GITHUB_TOKEN"];
 export const TEST_AGENT_NAME = process.env["AMIKA_TEST_AGENT_NAME"] ?? "claude";
 export const TEST_BRANCH = process.env["AMIKA_TEST_BRANCH"];
-const SANDBOX_NAME_PREFIX =
-  process.env["AMIKA_TEST_SANDBOX_NAME_PREFIX"] ?? "ts-sdk-fn";
+const RIG_NAME_PREFIX =
+  process.env["AMIKA_TEST_RIG_NAME_PREFIX"] ??
+  process.env["AMIKA_TEST_SANDBOX_NAME_PREFIX"] ??
+  "ts-sdk-fn";
 
 const agentCredentialName = process.env["AMIKA_TEST_AGENT_CREDENTIAL_NAME"];
 const agentCredentialType = process.env["AMIKA_TEST_AGENT_CREDENTIAL_TYPE"] as
@@ -87,28 +92,28 @@ export function uniqueSuffix(): string {
   return `${ts}-${rand}`;
 }
 
-const MAX_SANDBOX_NAME_LEN = 40;
+const MAX_RIG_NAME_LEN = 40;
 
 /**
  * Generates `${prefix}-${suffix}` capped at 40 chars (server name limit).
  * Truncates the prefix rather than the combined string so the unique suffix
- * is always preserved — otherwise a long `AMIKA_TEST_SANDBOX_NAME_PREFIX`
+ * is always preserved — otherwise a long `AMIKA_TEST_RIG_NAME_PREFIX`
  * would clip the random suffix and successive runs would collide.
  */
-export function uniqueSandboxName(prefix = SANDBOX_NAME_PREFIX): string {
+export function uniqueRigName(prefix = RIG_NAME_PREFIX): string {
   const suffix = uniqueSuffix();
   // -1 reserves room for the joining hyphen.
-  const maxPrefixLen = MAX_SANDBOX_NAME_LEN - 1 - suffix.length;
-  if (maxPrefixLen <= 0) return suffix.slice(0, MAX_SANDBOX_NAME_LEN);
+  const maxPrefixLen = MAX_RIG_NAME_LEN - 1 - suffix.length;
+  if (maxPrefixLen <= 0) return suffix.slice(0, MAX_RIG_NAME_LEN);
   return `${prefix.slice(0, maxPrefixLen)}-${suffix}`;
 }
 
-export function buildCreateSandboxRequest(
-  overrides: Partial<CreateSandboxRequest> = {},
-): CreateSandboxRequest {
-  const req: CreateSandboxRequest = {
-    name: uniqueSandboxName(),
-    provider: TEST_SANDBOX_PROVIDER,
+export function buildCreateRigRequest(
+  overrides: Partial<CreateRigRequest> = {},
+): CreateRigRequest {
+  const req: CreateRigRequest = {
+    name: uniqueRigName(),
+    provider: TEST_RIG_PROVIDER,
     repoUrl: TEST_REPO_URL,
     preset: TEST_PRESET,
     ...overrides,
@@ -132,8 +137,8 @@ const PROVIDER_SECRET_VALUE = process.env["AMIKA_TEST_PROVIDER_SECRET_VALUE"];
 
 /**
  * If AMIKA_TEST_PROVIDER_SECRET_VALUE is set, register it as a provider secret
- * for TEST_AGENT_NAME (default "claude") so the sandbox can authenticate agent
- * calls. Returns an `AgentCredentialRef` to pass into `createSandbox`, or null
+ * for TEST_AGENT_NAME (default "claude") so the rig can authenticate agent
+ * calls. Returns an `AgentCredentialRef` to pass into `createRig`, or null
  * when no value is configured. Registers afterAll cleanup.
  */
 export async function ensureAgentCredential(
@@ -179,30 +184,28 @@ export async function ensureGitHubToken(client: AmikaClient): Promise<void> {
 }
 
 /**
- * Create a sandbox, wait for it to become active, and register an afterAll hook
+ * Create a rig, wait for it to become active, and register an afterAll hook
  * that deletes it (best-effort) when the test file finishes. Intended to be
- * called inside a `beforeAll` so the same sandbox is reused across `it` blocks.
+ * called inside a `beforeAll` so the same rig is reused across `it` blocks.
  */
-export async function provisionSandbox(
+export async function provisionRig(
   client: AmikaClient,
-  overrides: Partial<CreateSandboxRequest> = {},
-): Promise<RemoteSandbox> {
-  const created = await client.createSandbox(
-    buildCreateSandboxRequest(overrides),
-  );
-  // Register cleanup immediately so a failure in waitForSandbox still tears
-  // down the newly created sandbox.
+  overrides: Partial<CreateRigRequest> = {},
+): Promise<RemoteRig> {
+  const created = await client.createRig(buildCreateRigRequest(overrides));
+  // Register cleanup immediately so a failure in waitForRig still tears
+  // down the newly created rig.
   afterAll(async () => {
     try {
-      await client.deleteSandbox(created.name);
+      await client.deleteRig(created.name);
     } catch {
       // Already deleted by the test, or the server is unreachable; ignore.
     }
   });
-  return await client.waitForSandbox(created.name);
+  return await client.waitForRig(created.name);
 }
 
-// Most operations finish in <1s, but sandbox provisioning, stop, start, and
+// Most operations finish in <1s, but rig provisioning, stop, start, and
 // agent-send may legitimately take many minutes. Use a generous hook timeout
 // so long-running setup doesn't time out.
 export const LONG_TIMEOUT_MS = 15 * 60 * 1000;

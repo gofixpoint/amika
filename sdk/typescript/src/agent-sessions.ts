@@ -19,14 +19,19 @@ import {
 
 /**
  * Request body for POST /api/v0beta1/agent-sessions. Only `message` is
- * required: `sessionId` continues an existing chat, `sandboxId` routes into a
- * specific sandbox, and `repoUrl` is used only when a sandbox has to be
+ * required: `sessionId` continues an existing chat, `rigId` routes into a
+ * specific rig, and `repoUrl` is used only when a rig has to be
  * created behind the scenes.
+ *
+ * `sandboxId` is the legacy spelling of `rigId`. Setting both is allowed and
+ * `rigId` wins, but there is no reason to.
  */
 export interface AgentSessionSendRequest {
   message: string;
   agent?: string;
   sessionId?: string;
+  rigId?: string;
+  /** Legacy spelling of {@link AgentSessionSendRequest.rigId}. */
   sandboxId?: string;
   newSession?: boolean;
   repoUrl?: string;
@@ -36,9 +41,10 @@ export function agentSessionSendRequestToWire(
   r: AgentSessionSendRequest,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { message: r.message };
+  const rigId = r.rigId ?? r.sandboxId;
   if (r.agent !== undefined) out["agent"] = r.agent;
   if (r.sessionId !== undefined) out["session_id"] = r.sessionId;
-  if (r.sandboxId !== undefined) out["sandbox_id"] = r.sandboxId;
+  if (rigId !== undefined) out["sandbox_id"] = rigId;
   if (r.newSession !== undefined) out["new_session"] = r.newSession;
   if (r.repoUrl !== undefined) out["repo_url"] = r.repoUrl;
   return out;
@@ -78,11 +84,15 @@ function agentSessionUsageFromWire(
  */
 export interface AgentSessionSendResponse {
   sessionId: string;
+  /** Canonical spelling; mirrors {@link AgentSessionSendResponse.sandboxId}. */
+  rigId: string;
   sandboxId: string;
   agent: string;
   response: string;
   isError: boolean;
   isNewSession: boolean;
+  /** Canonical spelling; mirrors {@link AgentSessionSendResponse.createdSandbox}. */
+  createdRig: boolean;
   createdSandbox: boolean;
   usage?: AgentSessionUsage;
 }
@@ -92,11 +102,13 @@ export function agentSessionSendResponseFromWire(
 ): AgentSessionSendResponse {
   return {
     sessionId: str(w["session_id"]),
+    rigId: str(w["sandbox_id"]),
     sandboxId: str(w["sandbox_id"]),
     agent: str(w["agent"]),
     response: str(w["response"]),
     isError: bool(w["is_error"]),
     isNewSession: bool(w["is_new_session"]),
+    createdRig: bool(w["created_sandbox"]),
     createdSandbox: bool(w["created_sandbox"]),
     // optionalObject rather than a bare typeof check: an array is also
     // `typeof "object"`, and would decode to an all-undefined usage object.
@@ -105,14 +117,18 @@ export function agentSessionSendResponseFromWire(
 }
 
 /**
- * One row of the agent-sessions list. `sandboxName`, `preview`, `model`,
- * `effort`, and `endedAt` are nullable: a chat can outlive the sandbox whose
+ * One row of the agent-sessions list. `rigName`, `preview`, `model`,
+ * `effort`, and `endedAt` are nullable: a chat can outlive the rig whose
  * name it shows, carry no user message to preview, run at the agent CLI's own
  * model and effort, and still be running.
  */
 export interface AgentSessionSummary {
   sessionId: string;
+  /** Canonical spelling; mirrors {@link AgentSessionSummary.sandboxId}. */
+  rigId: string;
   sandboxId: string;
+  /** Canonical spelling; mirrors {@link AgentSessionSummary.sandboxName}. */
+  rigName: string | null;
   sandboxName: string | null;
   agent: string;
   status: string;
@@ -130,7 +146,9 @@ export function agentSessionSummaryFromWire(
 ): AgentSessionSummary {
   return {
     sessionId: str(w["session_id"]),
+    rigId: str(w["sandbox_id"]),
     sandboxId: str(w["sandbox_id"]),
+    rigName: nullableStr(w["sandbox_name"]),
     sandboxName: nullableStr(w["sandbox_name"]),
     agent: str(w["agent"]),
     status: str(w["status"]),
@@ -203,8 +221,9 @@ export function listAgentSessionsResponseFromWire(
 /**
  * Progress callbacks for {@link AmikaClient.sendAgentSessionStream}. Both are
  * optional. `onStatus` reports lifecycle milestones (`creating_sandbox` /
- * `sandbox_ready`, the latter carrying the sandbox id); `onDelta` receives
- * agent reply text as it is produced.
+ * `sandbox_ready` — the server's own phase names, which still say sandbox —
+ * the latter carrying the rig id); `onDelta` receives agent reply text as it
+ * is produced.
  *
  * A handler may return a promise, and the reader awaits it before reading the
  * next frame. Deltas therefore reach an async handler in order, and one that
@@ -217,7 +236,7 @@ export function listAgentSessionsResponseFromWire(
  * returns a boolean, and a union return type would reject it.
  */
 export interface AgentSessionStreamHandlers {
-  onStatus?: (phase: string, sandboxId: string) => unknown;
+  onStatus?: (phase: string, rigId: string) => unknown;
   onDelta?: (text: string) => unknown;
 }
 

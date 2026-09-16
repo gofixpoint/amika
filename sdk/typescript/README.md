@@ -8,6 +8,26 @@ TypeScript SDK for [Amika](https://github.com/gofixpoint/amika). A 1:1 port of t
 npm install @amika/sdk
 ```
 
+## Rig is the canonical name
+
+A **rig** is what earlier releases of this SDK called a sandbox. Every rig-named
+method and type is the real one; the sandbox-named twin beside it is a
+deprecated alias that forwards to it, so existing code keeps working unchanged:
+
+```ts
+await amika.createRig({ name: "hello-amika" }); // canonical
+await amika.createSandbox({ name: "hello-amika" }); // same call, deprecated name
+```
+
+The aliasing is exhaustive:
+
+- **Methods** — `listSandboxes`, `createSandbox`, `getSandbox`, `waitForSandbox*`, `startSandbox`, `stopSandbox`, `deleteSandbox`, `*SandboxService*`, and `*SandboxSnapshot*` all delegate to their `Rig` counterparts and issue the same rig-named request.
+- **Types** — `RemoteSandbox`, `CreateSandboxRequest`, `SandboxSnapshot`, `SandboxServiceResource`, and the rest are type aliases of `RemoteRig`, `CreateRigRequest`, `RigSnapshot`, `RigServiceResource`, …
+- **Fields** — a response carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `session.rigId` and `session.sandboxId`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, and so on. On request objects the rig spelling wins when both are set: `createRigSnapshot({ rigRef })` and `createRigSnapshot({ sandboxRef })` both work.
+- **Functional-test env vars** — `AMIKA_TEST_RIG_PROVIDER` and `AMIKA_TEST_RIG_NAME_PREFIX` fall back to `AMIKA_TEST_SANDBOX_PROVIDER` and `AMIKA_TEST_SANDBOX_NAME_PREFIX`.
+
+What is _not_ renamed is the wire format. The server's JSON schema still spells these fields `sandbox_id`, `sandbox_ref`, `sandbox_preset`, and so on, and the SDK sends and reads exactly those keys. Only the TypeScript surface moved to `rig`.
+
 ## Quick start
 
 ```ts
@@ -18,29 +38,29 @@ const amika = new AmikaClient({
   accessToken: process.env.AMIKA_API_KEY!,
 });
 
-// Create a sandbox (returns immediately with state "initializing")
-const sb = await amika.createSandbox({
+// Create a rig (returns immediately with state "initializing")
+const rig = await amika.createRig({
   name: "hello-amika",
   provider: "daytona",
   repoUrl: "git@github.com:gofixpoint/example-repo.git",
   preset: "coder",
   agentCredentials: [{ kind: "claude" }],
 });
-console.log(`Created sandbox "${sb.name}"`);
+console.log(`Created rig "${rig.name}"`);
 
 // Wait until it's ready (polls every 3s, no timeout)
-await amika.waitForSandbox(sb.name);
+await amika.waitForRig(rig.name);
 
 // Send a prompt to an agent (HTTP timeout is 10 minutes for this endpoint)
-const resp = await amika.agentSend(sb.name, {
+const resp = await amika.agentSend(rig.name, {
   message: "Write a hello_world.md file with Hello World! in it",
   agent: "claude",
 });
 console.log(`Agent Response: ${resp.result}`);
 
 // Tear down
-console.log(`Deleting sandbox "${sb.name}"`);
-await amika.deleteSandbox(sb.name);
+console.log(`Deleting rig "${rig.name}"`);
+await amika.deleteRig(rig.name);
 ```
 
 ## Configuration
@@ -59,31 +79,31 @@ new AmikaClient({
 
 ## API surface
 
-Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
+Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1. The "Deprecated alias" column names the pre-rig spelling, which still works.
 
-### Sandboxes
+### Rigs
 
-| Method                      | Endpoint                                  |
-| --------------------------- | ----------------------------------------- |
-| `listSandboxes()`           | `GET /sandboxes`                          |
-| `createSandbox(req)`        | `POST /sandboxes`                         |
-| `getSandbox(name)`          | `GET /sandboxes/{name}`                   |
-| `waitForSandbox(name)`      | polls `GET /sandboxes/{name}` until ready |
-| `startSandbox(name)`        | `POST /sandboxes/{name}/start`            |
-| `waitForSandboxStart(name)` | polls until ready                         |
-| `stopSandbox(name)`         | `POST /sandboxes/{name}/stop`             |
-| `waitForSandboxStop(name)`  | polls until `stopped`                     |
-| `deleteSandbox(name)`       | `DELETE /sandboxes/{name}`                |
-| `listRepositories()`        | `GET /repositories`                       |
+| Method                  | Endpoint                             | Deprecated alias            |
+| ----------------------- | ------------------------------------ | --------------------------- |
+| `listRigs()`            | `GET /rigs`                          | `listSandboxes()`           |
+| `createRig(req)`        | `POST /rigs`                         | `createSandbox(req)`        |
+| `getRig(name)`          | `GET /rigs/{name}`                   | `getSandbox(name)`          |
+| `waitForRig(name)`      | polls `GET /rigs/{name}` until ready | `waitForSandbox(name)`      |
+| `startRig(name)`        | `POST /rigs/{name}/start`            | `startSandbox(name)`        |
+| `waitForRigStart(name)` | polls until ready                    | `waitForSandboxStart(name)` |
+| `stopRig(name)`         | `POST /rigs/{name}/stop`             | `stopSandbox(name)`         |
+| `waitForRigStop(name)`  | polls until `stopped`                | `waitForSandboxStop(name)`  |
+| `deleteRig(name)`       | `DELETE /rigs/{name}`                | `deleteSandbox(name)`       |
+| `listRepositories()`    | `GET /repositories`                  | —                           |
 
 ### Services
 
-| Method                                           | Endpoint                                        |
-| ------------------------------------------------ | ----------------------------------------------- |
-| `listSandboxServices(sandboxRef?)`               | `GET /sandbox-services`                         |
-| `createSandboxService(sandboxRef, req)`          | `POST /sandboxes/{ref}/services`                |
-| `putSandboxService(sandboxRef, serviceRef, req)` | `PUT /sandboxes/{ref}/services/{serviceRef}`    |
-| `deleteSandboxService(sandboxRef, serviceRef)`   | `DELETE /sandboxes/{ref}/services/{serviceRef}` |
+| Method                                   | Endpoint                                   | Deprecated alias         |
+| ---------------------------------------- | ------------------------------------------ | ------------------------ |
+| `listRigServices(rigRef?)`               | `GET /rig-services`                        | `listSandboxServices()`  |
+| `createRigService(rigRef, req)`          | `POST /rigs/{ref}/services`                | `createSandboxService()` |
+| `putRigService(rigRef, serviceRef, req)` | `PUT /rigs/{ref}/services/{serviceRef}`    | `putSandboxService()`    |
+| `deleteRigService(rigRef, serviceRef)`   | `DELETE /rigs/{ref}/services/{serviceRef}` | `deleteSandboxService()` |
 
 ### Secrets
 
@@ -98,44 +118,44 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1:
 
 ### Agents and sessions
 
-| Method                                  | Endpoint                                              |
-| --------------------------------------- | ----------------------------------------------------- |
-| `agentSend(name, req)`                  | `POST /sandboxes/{name}/agent-send` (10-min timeout)  |
-| `sendAgentSession(req)`                 | `POST /agent-sessions` (10-min timeout)               |
-| `sendAgentSessionStream(req, handlers)` | `POST /agent-sessions/stream` (SSE)                   |
-| `listAgentSessions(limit?)`             | `GET /agent-sessions`                                 |
-| `getAgentSession(sessionId)`            | `GET /agent-sessions/{sessionId}`                     |
-| `createSession(name, req)`              | `POST /sandboxes/{name}/sessions`                     |
-| `listSessions(name)`                    | `GET /sandboxes/{name}/sessions`                      |
-| `getLatestSession(name)`                | `GET /sandboxes/{name}/sessions/latest` (null on 404) |
-| `getSession(name, sessionId)`           | `GET /sandboxes/{name}/sessions/{sessionId}`          |
-| `updateSession(name, sessionId, req)`   | `PATCH /sandboxes/{name}/sessions/{sessionId}`        |
+| Method                                  | Endpoint                                         |
+| --------------------------------------- | ------------------------------------------------ |
+| `agentSend(name, req)`                  | `POST /rigs/{name}/agent-send` (10-min timeout)  |
+| `sendAgentSession(req)`                 | `POST /agent-sessions` (10-min timeout)          |
+| `sendAgentSessionStream(req, handlers)` | `POST /agent-sessions/stream` (SSE)              |
+| `listAgentSessions(limit?)`             | `GET /agent-sessions`                            |
+| `getAgentSession(sessionId)`            | `GET /agent-sessions/{sessionId}`                |
+| `createSession(name, req)`              | `POST /rigs/{name}/sessions`                     |
+| `listSessions(name)`                    | `GET /rigs/{name}/sessions`                      |
+| `getLatestSession(name)`                | `GET /rigs/{name}/sessions/latest` (null on 404) |
+| `getSession(name, sessionId)`           | `GET /rigs/{name}/sessions/{sessionId}`          |
+| `updateSession(name, sessionId, req)`   | `PATCH /rigs/{name}/sessions/{sessionId}`        |
 
 ### Snapshots
 
-| Method                           | Endpoint                               |
-| -------------------------------- | -------------------------------------- |
-| `listSandboxSnapshots(filters?)` | `GET /sandbox-snapshots`               |
-| `createSandboxSnapshot(req)`     | `POST /sandbox-snapshots`              |
-| `getSandboxSnapshot(ref)`        | `GET /sandbox-snapshots/{ref}`         |
-| `waitForSandboxSnapshot(ref)`    | polls until `active` or `failed`       |
-| `getSandboxScrubPreview(ref)`    | `GET /sandbox-snapshots/scrub-preview` |
-| `deleteSandboxSnapshot(ref)`     | `DELETE /sandbox-snapshots/{ref}`      |
+| Method                       | Endpoint                           | Deprecated alias              |
+| ---------------------------- | ---------------------------------- | ----------------------------- |
+| `listRigSnapshots(filters?)` | `GET /rig-snapshots`               | `listSandboxSnapshots()`      |
+| `createRigSnapshot(req)`     | `POST /rig-snapshots`              | `createSandboxSnapshot(req)`  |
+| `getRigSnapshot(ref)`        | `GET /rig-snapshots/{ref}`         | `getSandboxSnapshot(ref)`     |
+| `waitForRigSnapshot(ref)`    | polls until `active` or `failed`   | `waitForSandboxSnapshot(ref)` |
+| `getRigScrubPreview(ref)`    | `GET /rig-snapshots/scrub-preview` | `getSandboxScrubPreview(ref)` |
+| `deleteRigSnapshot(ref)`     | `DELETE /rig-snapshots/{ref}`      | `deleteSandboxSnapshot(ref)`  |
 
-Fork a new sandbox from a captured snapshot by passing its slug as `snapshot` to `createSandbox({ snapshot })`.
+Fork a new rig from a captured snapshot by passing its slug as `snapshot` to `createRig({ snapshot })`.
 
-Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` and `src/agent-sessions.ts` for the full set: `CreateSandboxRequest`, `RemoteSandbox`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `SandboxSnapshot`, `SandboxServiceResource`, `AgentSessionSendRequest`, `AgentSessionDetail`, etc.
+Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` and `src/agent-sessions.ts` for the full set: `CreateRigRequest`, `RemoteRig`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `RigSnapshot`, `RigServiceResource`, `AgentSessionSendRequest`, `AgentSessionDetail`, etc.
 
 ### Nullability
 
 Field optionality mirrors the Go client's struct tags, which in turn follow the API schema. Whether a field can go missing in TypeScript tracks whether it is a pointer in Go:
 
-| Go field            | TypeScript          | Decoding                                                                |
-| ------------------- | ------------------- | ----------------------------------------------------------------------- |
-| `string`            | `x: string`         | required, always present                                                |
-| `string,omitempty`  | `x: string`         | may be omitted on the wire, and decodes to `""` exactly as Go does      |
-| `*string`           | `x: string \| null` | always present, and `null` is meaningful (a sandbox with no repository) |
-| `*string,omitempty` | `x?: string`        | `null` and absent both surface as `undefined`                           |
+| Go field            | TypeScript          | Decoding                                                            |
+| ------------------- | ------------------- | ------------------------------------------------------------------- |
+| `string`            | `x: string`         | required, always present                                            |
+| `string,omitempty`  | `x: string`         | may be omitted on the wire, and decodes to `""` exactly as Go does  |
+| `*string`           | `x: string \| null` | always present, and `null` is meaningful (a rig with no repository) |
+| `*string,omitempty` | `x?: string`        | `null` and absent both surface as `undefined`                       |
 
 A non-pointer Go field always lands as a value, so `state` and `status` stay plain strings even though the schema marks them optional. Go cannot tell an omitted `status` from an empty one, and neither should a 1:1 mirror. Slices go the other way, being nilable in Go themselves: `[]string,omitempty` is `x?: string[]`.
 
@@ -143,7 +163,7 @@ Two fields sit outside this rule because they sit outside the schema. `container
 
 ## Polling behavior
 
-`waitForSandbox`, `waitForSandboxStart`, and `waitForSandboxStop` poll `getSandbox` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the sandbox enters `failed` state, including the server's `errorMessage` when present. `waitForSandboxSnapshot` polls `getSandboxSnapshot` the same way, returning once the snapshot is `active` and throwing if it ends up `failed`.
+`waitForRig`, `waitForRigStart`, and `waitForRigStop` poll `getRig` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the rig enters `failed` state, including the server's `errorMessage` when present. `waitForRigSnapshot` polls `getRigSnapshot` the same way, returning once the snapshot is `active` and throwing if it ends up `failed`.
 
 ## Streaming an agent turn
 
@@ -153,12 +173,14 @@ Two fields sit outside this rule because they sit outside the schema. `container
 const result = await amika.sendAgentSessionStream(
   { message: "Add a CHANGELOG", repoUrl: "git@github.com:org/proj.git" },
   {
-    onStatus: (phase, sandboxId) => console.error(`[${phase}] ${sandboxId}`),
+    onStatus: (phase, rigId) => console.error(`[${phase}] ${rigId}`),
     onDelta: (text) => process.stdout.write(text),
   },
 );
-console.log(`\nsession ${result.sessionId} on sandbox ${result.sandboxId}`);
+console.log(`\nsession ${result.sessionId} on rig ${result.rigId}`);
 ```
+
+The `phase` values are the server's own (`creating_sandbox`, `sandbox_ready`) and still say sandbox.
 
 The server enforces a 300s ceiling on the request, below the client's 10-minute timeout. If it cuts the stream before a terminal frame, the call throws and the turn may still have completed — check `listAgentSessions()` for the session rather than assuming the work was lost.
 
@@ -168,7 +190,7 @@ The server enforces a 300s ceiling on the request, below the client's 10-minute 
 import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@amika/sdk";
 
 try {
-  await amika.getSandbox("does-not-exist");
+  await amika.getRig("does-not-exist");
 } catch (err) {
   if (err instanceof AmikaHTTPError) {
     console.error(err.statusCode, err.userMessage());
@@ -209,8 +231,8 @@ pnpm test:functional
 
 **Production is banned.** These tests provision and tear down real resources, so pointing `AMIKA_API_URL` at a production host (`app.amika.dev` or `amika.dev`) aborts the run before any test executes. This is a hard ban with no override; always target staging (e.g. `https://app.staging-amika.dev`).
 
-Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_SANDBOX_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_SANDBOX_PROVIDER`. See `test/functional/helpers.ts` for details.
+Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_RIG_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_RIG_PROVIDER`. The last two rig vars accept their former `SANDBOX` spellings as fallbacks. See `test/functional/helpers.ts` for details.
 
-The suite provisions a real sandbox and runs the full lifecycle (create → wait → list → get → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Sandboxes are cleaned up in `afterAll`, but the secrets API has no delete endpoint — test-created secrets accumulate.
+The suite provisions a real rig and runs the full lifecycle (create → wait → list → get → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Rigs are cleaned up in `afterAll`, but the secrets API has no delete endpoint — test-created secrets accumulate.
 
 `org-resources.functional.test.ts` is the exception: it only reads org-scoped listings, so it provisions nothing and finishes in seconds. Run it alone with `pnpm test:functional org-resources`.

@@ -17,11 +17,16 @@
 
 import { AmikaError } from "@/errors";
 
-// ---------- Sandboxes ----------
+// ---------- Rigs ----------
+//
+// `rig` is the canonical product term for what the API still calls a sandbox.
+// Every rig-named type below is the canonical spelling; the sandbox-named one
+// beside it is a type alias kept so existing code keeps compiling. Wire keys
+// are untouched — the server's schema is still snake_case `sandbox_*`.
 
 /**
  * Selects which stored credential of a given `kind` the server injects
- * into a sandbox (e.g. a Claude credential surfaces as `ANTHROPIC_API_KEY`
+ * into a rig (e.g. a Claude credential surfaces as `ANTHROPIC_API_KEY`
  * or an on-disk OAuth token).
  *
  * One entry engages exactly one kind; at most one entry per kind is
@@ -53,19 +58,19 @@ import { AmikaError } from "@/errors";
  * IMPORTANT: This is per-entry only. A kind with no entry in the
  * request's `agentCredentials` array gets NO credential injected, and
  * auto-default does not run for it. Omitting the array entirely means
- * the sandbox boots unauthenticated against every agent, regardless of
+ * the rig boots unauthenticated against every agent, regardless of
  * any configured user or org credential.
  *
  *   // Unauthenticated: the agent has no credential to use.
- *   await client.createSandbox({ repoUrl });
+ *   await client.createRig({ repoUrl });
  *
  *   // Authenticated: server picks the default Claude credential.
- *   await client.createSandbox({
+ *   await client.createRig({
  *     repoUrl,
  *     agentCredentials: [{ kind: "claude" }],
  *   });
  *
- * The create-sandbox response echoes the outcome per engaged kind in
+ * The create-rig response echoes the outcome per engaged kind in
  * `resolvedAgentCredentials`, e.g.
  * `{ kind: "claude", outcome: "resolved", type: "oauth", source: "default:oauth" }`
  * or `{ kind: "claude", outcome: "skipped", reason: "no_user_credential" }`.
@@ -81,8 +86,8 @@ export interface AgentCredentialRef {
   none?: boolean;
 }
 
-/** Request body for POST /api/v0beta1/sandboxes. */
-export interface CreateSandboxRequest {
+/** Request body for POST /api/v0beta1/rigs. */
+export interface CreateRigRequest {
   name?: string;
   provider?: string;
   repoUrl?: string;
@@ -93,8 +98,8 @@ export interface CreateSandboxRequest {
   preset?: string;
   size?: string;
   /**
-   * Snapshot to fork the new sandbox from, given as its org-stripped slug
-   * (e.g. `amika-mono-base`). Capture one with {@link AmikaClient.createSandboxSnapshot}.
+   * Snapshot to fork the new rig from, given as its org-stripped slug
+   * (e.g. `amika-mono-base`). Capture one with {@link AmikaClient.createRigSnapshot}.
    *
    * Tri-state, matching the server's `snapshot` param:
    *   - a slug  -> boot from that snapshot
@@ -106,15 +111,15 @@ export interface CreateSandboxRequest {
   agentCredentials?: AgentCredentialRef[];
   branch?: string;
   newBranchName?: string;
-  /** How the sandbox authenticates to GitHub, e.g. "app" or "none". */
+  /** How the rig authenticates to GitHub, e.g. "app" or "none". */
   githubAuthMode?: string;
 }
 
-/** Canonical request name for creating a rig. */
-export type CreateRigRequest = CreateSandboxRequest;
+/** Legacy spelling of {@link CreateRigRequest}. */
+export type CreateSandboxRequest = CreateRigRequest;
 
-export function createSandboxRequestToWire(
-  r: CreateSandboxRequest,
+export function createRigRequestToWire(
+  r: CreateRigRequest,
 ): Record<string, unknown> {
   return omitUndefined({
     name: r.name,
@@ -137,6 +142,9 @@ export function createSandboxRequestToWire(
   });
 }
 
+/** Legacy spelling of {@link createRigRequestToWire}. */
+export const createSandboxRequestToWire = createRigRequestToWire;
+
 export interface ResolvedAgentCredential {
   kind: string;
   outcome: "resolved" | "skipped" | string;
@@ -147,10 +155,10 @@ export interface ResolvedAgentCredential {
 }
 
 /**
- * One named service exposed by a sandbox: a published port with an optional
+ * One named service exposed by a rig: a published port with an optional
  * generated URL. Wire keys are camelCase here, unlike the rest of the API.
  */
-export interface RemoteSandboxService {
+export interface RemoteRigService {
   name: string;
   url: string;
   hostPort: number;
@@ -158,9 +166,12 @@ export interface RemoteSandboxService {
   protocol: string;
 }
 
-function remoteSandboxServiceFromWire(
+/** Legacy spelling of {@link RemoteRigService}. */
+export type RemoteSandboxService = RemoteRigService;
+
+function remoteRigServiceFromWire(
   w: Record<string, unknown>,
-): RemoteSandboxService {
+): RemoteRigService {
   return {
     name: str(w["name"]),
     url: str(w["url"]),
@@ -171,7 +182,7 @@ function remoteSandboxServiceFromWire(
 }
 
 /**
- * One secret a sandbox carries, by name and scope. The API deliberately
+ * One secret a rig carries, by name and scope. The API deliberately
  * returns no value and no vault handle. `managed` distinguishes a credential
  * Amika manages for a provider from a plain user-defined secret; it is the
  * discriminator rather than a null `credentialType`, which a managed entry is
@@ -197,18 +208,25 @@ function mountedSecretFromWire(w: Record<string, unknown>): MountedSecret {
 
 /**
  * Mirrors the API's Sandbox schema (the `Sandbox` component in
- * /api/openapi.json), the response of the /sandboxes endpoints.
+ * /api/openapi.json), the response of the /rigs endpoints.
+ *
+ * `providerRigId`, `rigPreset`, and `rigSize` are the canonical spellings of
+ * the three fields the schema still names after sandboxes. Each is decoded
+ * from the same wire key as its `sandbox*` twin and carries the same value, so
+ * either name reads the field.
  *
  * `containerId` and `image` have no equivalent in the API schema — the CLI
- * populates them for local Docker sandboxes only, and the schema's
+ * populates them for local Docker rigs only, and the schema's
  * `additionalProperties` allows the extra keys.
  */
-export interface RemoteSandbox {
+export interface RemoteRig {
   id: string;
   userId: string | null;
   orgId: string;
   name: string;
   provider: string | null;
+  /** Canonical spelling; mirrors {@link RemoteRig.providerSandboxId}. */
+  providerRigId: string | null;
   providerSandboxId: string | null;
   providerUrl: string | null;
   amikaOpencodeWeb: string | null;
@@ -220,12 +238,16 @@ export interface RemoteSandbox {
   commitHash: string | null;
   snapshot: string | null;
   currentSessionId: string | null;
-  services: RemoteSandboxService[];
+  services: RemoteRigService[];
   createdAt: string;
   updatedAt: string;
 
   snapshotName?: string;
+  /** Canonical spelling; mirrors {@link RemoteRig.sandboxPreset}. */
+  rigPreset?: string;
   sandboxPreset?: string;
+  /** Canonical spelling; mirrors {@link RemoteRig.sandboxSize}. */
+  rigSize?: string;
   sandboxSize?: string;
   githubAuthMode?: string;
   githubCredentialProvisioned?: boolean;
@@ -238,45 +260,43 @@ export interface RemoteSandbox {
   mountedSecrets?: MountedSecret[];
   hasWorkflow: boolean;
   resolvedAgentCredentials?: ResolvedAgentCredential[];
-  createdBy?: RemoteSandboxCreator;
+  createdBy?: RemoteRigCreator;
   origin?: string;
 
   /**
-   * Local Docker sandboxes only. Not an API schema field at all, so unlike
+   * Local Docker rigs only. Not an API schema field at all, so unlike
    * `state`/`status` (non-pointer Go strings that decode to "") it is typed
-   * optional: an API-backed sandbox never carries one.
+   * optional: an API-backed rig never carries one.
    */
   containerId?: string;
-  /** Local Docker sandboxes only; see {@link RemoteSandbox.containerId}. */
+  /** Local Docker rigs only; see {@link RemoteRig.containerId}. */
   image?: string;
 }
 
-/** Canonical product name for a remote sandbox resource. */
-export type RemoteRig = RemoteSandbox;
-/** Canonical product name for a service exposed by a rig. */
-export type RemoteRigService = RemoteSandboxService;
-/** Canonical product name for the creator metadata of a rig. */
-export type RemoteRigCreator = RemoteSandboxCreator;
+/** Legacy spelling of {@link RemoteRig}. */
+export type RemoteSandbox = RemoteRig;
 
 /**
- * The human who created a remote sandbox. Either field may be null if the
+ * The human who created a remote rig. Either field may be null if the
  * server could not resolve the user (deleted account, API-key principal, or
  * noop auth mode).
  */
-export interface RemoteSandboxCreator {
+export interface RemoteRigCreator {
   name: string | null;
   email: string | null;
 }
 
-export function remoteSandboxFromWire(
-  w: Record<string, unknown>,
-): RemoteSandbox {
+/** Legacy spelling of {@link RemoteRigCreator}. */
+export type RemoteSandboxCreator = RemoteRigCreator;
+
+export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
   return {
     id: str(w["id"]),
     userId: nullableStr(w["user_id"]),
     orgId: str(w["org_id"]),
     name: str(w["name"]),
     provider: nullableStr(w["provider"]),
+    providerRigId: nullableStr(w["provider_sandbox_id"]),
     providerSandboxId: nullableStr(w["provider_sandbox_id"]),
     providerUrl: nullableStr(w["provider_url"]),
     amikaOpencodeWeb: nullableStr(w["amika_opencode_web"]),
@@ -288,12 +308,14 @@ export function remoteSandboxFromWire(
     commitHash: nullableStr(w["commit_hash"]),
     snapshot: nullableStr(w["snapshot"]),
     currentSessionId: nullableStr(w["current_session_id"]),
-    services: mapArray(w["services"], remoteSandboxServiceFromWire),
+    services: mapArray(w["services"], remoteRigServiceFromWire),
     createdAt: str(w["created_at"]),
     updatedAt: str(w["updated_at"]),
 
     snapshotName: optionalStr(w["snapshot_name"]),
+    rigPreset: optionalStr(w["sandbox_preset"]),
     sandboxPreset: optionalStr(w["sandbox_preset"]),
+    rigSize: optionalStr(w["sandbox_size"]),
     sandboxSize: optionalStr(w["sandbox_size"]),
     githubAuthMode: optionalStr(w["github_auth_mode"]),
     githubCredentialProvisioned: optionalBool(
@@ -320,6 +342,9 @@ export function remoteSandboxFromWire(
     image: optionalStr(w["image"]),
   };
 }
+
+/** Legacy spelling of {@link remoteRigFromWire}. */
+export const remoteSandboxFromWire = remoteRigFromWire;
 
 // ---------- Repositories ----------
 
@@ -451,6 +476,8 @@ export function agentSendResponseFromWire(
 
 export interface Session {
   id: string;
+  /** Canonical spelling; mirrors {@link Session.sandboxId}. */
+  rigId: string;
   sandboxId: string;
   orgId: string;
   agentName: string;
@@ -467,6 +494,7 @@ export interface Session {
 export function sessionFromWire(w: Record<string, unknown>): Session {
   return {
     id: str(w["id"]),
+    rigId: str(w["sandbox_id"]),
     sandboxId: str(w["sandbox_id"]),
     orgId: str(w["org_id"]),
     agentName: str(w["agent_name"]),
@@ -508,19 +536,21 @@ export function updateSessionRequestToWire(
   });
 }
 
-// ---------- Sandbox services ----------
+// ---------- Rig services ----------
 
 /**
- * One service on a sandbox, as returned by the /sandbox-services endpoints.
+ * One service on a rig, as returned by the /rig-services endpoints.
  * It unifies rows from the `sandbox_services` table with legacy jsonb entries:
  * `source` discriminates ("table" or "legacy") and `kind` is "system" or
  * "user". A legacy or not-yet-provisioned service has a null `url`/`urlScheme`.
  *
- * Distinct from {@link RemoteSandboxService}, the abbreviated form nested in a
- * sandbox resource.
+ * Distinct from {@link RemoteRigService}, the abbreviated form nested in a
+ * rig resource.
  */
-export interface SandboxServiceResource {
+export interface RigServiceResource {
   id: string | null;
+  /** Canonical spelling; mirrors {@link RigServiceResource.sandboxId}. */
+  rigId: string;
   sandboxId: string;
   name: string;
   port: number;
@@ -534,11 +564,15 @@ export interface SandboxServiceResource {
   updatedAt: string | null;
 }
 
-export function sandboxServiceResourceFromWire(
+/** Legacy spelling of {@link RigServiceResource}. */
+export type SandboxServiceResource = RigServiceResource;
+
+export function rigServiceResourceFromWire(
   w: Record<string, unknown>,
-): SandboxServiceResource {
+): RigServiceResource {
   return {
     id: nullableStr(w["id"]),
+    rigId: str(w["sandbox_id"]),
     sandboxId: str(w["sandbox_id"]),
     name: str(w["name"]),
     port: num(w["port"]),
@@ -553,17 +587,23 @@ export function sandboxServiceResourceFromWire(
   };
 }
 
-/** Request body for creating (POST) or replacing (PUT) a sandbox service. */
-export interface SandboxServiceRequest {
+/** Legacy spelling of {@link rigServiceResourceFromWire}. */
+export const sandboxServiceResourceFromWire = rigServiceResourceFromWire;
+
+/** Request body for creating (POST) or replacing (PUT) a rig service. */
+export interface RigServiceRequest {
   name: string;
   /** A user-assignable container port. See {@link validateServicePort}. */
   port: number;
   urlScheme: "http" | "https";
 }
 
+/** Legacy spelling of {@link RigServiceRequest}. */
+export type SandboxServiceRequest = RigServiceRequest;
+
 /**
  * Inclusive lower bound of the container port range Amika reserves for its own
- * sandbox services.
+ * rig services.
  */
 export const RESERVED_PORT_MIN = 60899;
 /**
@@ -597,17 +637,20 @@ export function validateServicePort(port: number): void {
  * Validation lives here rather than in the two client methods so that every
  * path to the wire goes through it, including any future one.
  */
-export function sandboxServiceRequestToWire(
-  r: SandboxServiceRequest,
+export function rigServiceRequestToWire(
+  r: RigServiceRequest,
 ): Record<string, unknown> {
   validateServicePort(r.port);
   return { name: r.name, port: r.port, url_scheme: r.urlScheme };
 }
 
-// ---------- Sandbox snapshots ----------
+/** Legacy spelling of {@link rigServiceRequestToWire}. */
+export const sandboxServiceRequestToWire = rigServiceRequestToWire;
+
+// ---------- Rig snapshots ----------
 
 /**
- * Provider-specific Daytona detail nested under {@link SandboxSnapshot.daytona}.
+ * Provider-specific Daytona detail nested under {@link RigSnapshot.daytona}.
  * Only `name` is required by the schema; wire keys are camelCase here.
  */
 export interface ExperimentalDaytonaSnapshot {
@@ -637,21 +680,33 @@ function experimentalDaytonaSnapshotFromWire(
 }
 
 /**
- * A snapshot captured from a running sandbox, as returned by the
- * `/api/v0beta1/sandbox-snapshots` endpoints. `snapshot` is the slug used to
- * fork new sandboxes (pass it as {@link CreateSandboxRequest.snapshot}).
+ * A snapshot captured from a running rig, as returned by the
+ * `/api/v0beta1/rig-snapshots` endpoints. `snapshot` is the slug used to
+ * fork new rigs (pass it as {@link CreateRigRequest.snapshot}).
+ *
+ * The four `sourceRig*` / `rig*` fields are the canonical spellings of the
+ * `sourceSandbox*` / `sandbox*` ones beside them, decoded from the same wire
+ * keys.
  */
-export interface SandboxSnapshot {
+export interface RigSnapshot {
   id: string;
   snapshot: string;
   provider: string;
   description: string | null;
+  /** Canonical spelling; mirrors {@link RigSnapshot.sourceSandboxId}. */
+  sourceRigId: string | null;
   sourceSandboxId: string | null;
+  /** Canonical spelling; mirrors {@link RigSnapshot.sourceSandboxName}. */
+  sourceRigName: string | null;
   sourceSandboxName: string | null;
   repositoryId: string | null;
   repositoryUrl: string | null;
   baseSnapshot: string | null;
+  /** Canonical spelling; mirrors {@link RigSnapshot.sandboxPreset}. */
+  rigPreset: string | null;
   sandboxPreset: string | null;
+  /** Canonical spelling; mirrors {@link RigSnapshot.sandboxSize}. */
+  rigSize: string | null;
   sandboxSize: string | null;
   captureMode: string | null;
   state: string;
@@ -661,20 +716,25 @@ export interface SandboxSnapshot {
   daytona: ExperimentalDaytonaSnapshot | null;
 }
 
-export function sandboxSnapshotFromWire(
-  w: Record<string, unknown>,
-): SandboxSnapshot {
+/** Legacy spelling of {@link RigSnapshot}. */
+export type SandboxSnapshot = RigSnapshot;
+
+export function rigSnapshotFromWire(w: Record<string, unknown>): RigSnapshot {
   return {
     id: str(w["id"]),
     snapshot: str(w["snapshot"]),
     provider: str(w["provider"]),
     description: nullableStr(w["description"]),
+    sourceRigId: nullableStr(w["source_sandbox_id"]),
     sourceSandboxId: nullableStr(w["source_sandbox_id"]),
+    sourceRigName: nullableStr(w["source_sandbox_name"]),
     sourceSandboxName: nullableStr(w["source_sandbox_name"]),
     repositoryId: nullableStr(w["repository_id"]),
     repositoryUrl: nullableStr(w["repository_url"]),
     baseSnapshot: nullableStr(w["base_snapshot"]),
+    rigPreset: nullableStr(w["sandbox_preset"]),
     sandboxPreset: nullableStr(w["sandbox_preset"]),
+    rigSize: nullableStr(w["sandbox_size"]),
     sandboxSize: nullableStr(w["sandbox_size"]),
     captureMode: nullableStr(w["capture_mode"]),
     state: str(w["state"]),
@@ -686,55 +746,91 @@ export function sandboxSnapshotFromWire(
   };
 }
 
-/** Request body for POST /api/v0beta1/sandbox-snapshots. */
-export interface CreateSandboxSnapshotRequest {
-  /** Source sandbox, by name or id (the server resolves id first, then name). */
-  sandboxRef: string;
+/** Legacy spelling of {@link rigSnapshotFromWire}. */
+export const sandboxSnapshotFromWire = rigSnapshotFromWire;
+
+/**
+ * Names the source rig of a snapshot capture. `rigRef` is the canonical
+ * spelling and `sandboxRef` the legacy one; the union requires one of them
+ * without forcing callers that already pass `sandboxRef` to change.
+ */
+type RigRefFields =
+  | { rigRef: string; sandboxRef?: string }
+  | { sandboxRef: string; rigRef?: string };
+
+/** Request body for POST /api/v0beta1/rig-snapshots. */
+export type CreateRigSnapshotRequest = {
   /** Name for the new snapshot. */
   name: string;
   description?: string;
   /**
    * Capture mode (default `scrub_and_delete`):
    *   - `scrub_and_delete`: strip Amika-injected secrets, capture the clean
-   *     filesystem, then delete the source sandbox.
+   *     filesystem, then delete the source rig.
    *   - `full`: capture everything as-is (including secrets) and keep the
-   *     sandbox running.
+   *     rig running.
    */
   mode?: "scrub_and_delete" | "full";
-}
+} & RigRefFields;
 
-export function createSandboxSnapshotRequestToWire(
-  r: CreateSandboxSnapshotRequest,
+/** Legacy spelling of {@link CreateRigSnapshotRequest}. */
+export type CreateSandboxSnapshotRequest = CreateRigSnapshotRequest;
+
+export function createRigSnapshotRequestToWire(
+  r: CreateRigSnapshotRequest,
 ): Record<string, unknown> {
   return omitUndefined({
-    sandbox_ref: r.sandboxRef,
+    sandbox_ref: rigRefOf(r),
     name: r.name,
     description: r.description,
     mode: r.mode,
   });
 }
 
+/** Legacy spelling of {@link createRigSnapshotRequestToWire}. */
+export const createSandboxSnapshotRequestToWire =
+  createRigSnapshotRequestToWire;
+
+/**
+ * Resolve the source rig from whichever of the two spellings the caller used.
+ * `rigRef` wins when both are set, and the TypeScript union above already
+ * rejects neither — this throws only for callers coming in untyped.
+ */
+function rigRefOf(r: RigRefFields): string {
+  const ref = r.rigRef ?? r.sandboxRef;
+  if (ref === undefined || ref === "") {
+    throw new AmikaError("rigRef (or its alias sandboxRef) is required");
+  }
+  return ref;
+}
+
 /**
  * The injected secrets a scrub-and-delete snapshot would remove from a
- * sandbox — file paths and env var names only, never values. `restoredFiles`
+ * rig — file paths and env var names only, never values. `restoredFiles`
  * is a third category: paths reset to a retained clean baseline rather than
  * deleted outright.
  */
-export interface SandboxScrubPreview {
+export interface RigScrubPreview {
   files: string[];
   restoredFiles: string[];
   envVars: string[];
 }
 
-export function sandboxScrubPreviewFromWire(
+/** Legacy spelling of {@link RigScrubPreview}. */
+export type SandboxScrubPreview = RigScrubPreview;
+
+export function rigScrubPreviewFromWire(
   w: Record<string, unknown>,
-): SandboxScrubPreview {
+): RigScrubPreview {
   return {
     files: strArray(w["files"]),
     restoredFiles: strArray(w["restored_files"]),
     envVars: strArray(w["env_vars"]),
   };
 }
+
+/** Legacy spelling of {@link rigScrubPreviewFromWire}. */
+export const sandboxScrubPreviewFromWire = rigScrubPreviewFromWire;
 
 // ---------- wire helpers ----------
 
