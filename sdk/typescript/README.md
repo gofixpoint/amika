@@ -26,6 +26,16 @@ The aliasing is exhaustive:
 - **Fields** — a response carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `session.rigId` and `session.sandboxId`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, and so on. On request objects the rig spelling wins when both are set: `createRigSnapshot({ rigRef })` and `createRigSnapshot({ sandboxRef })` both work.
 - **Functional-test env vars** — `AMIKA_TEST_RIG_PROVIDER` and `AMIKA_TEST_RIG_NAME_PREFIX` fall back to `AMIKA_TEST_SANDBOX_PROVIDER` and `AMIKA_TEST_SANDBOX_NAME_PREFIX`.
 
+The SDK populates both spellings on every value it returns, so reading either is
+safe. Building one of these response types by hand, as a test fixture does, is
+safe too: on a sandbox-named alias the rig-spelled fields are optional, and the
+three types that keep their own names (`Session`, `AgentSessionSendResponse`,
+`AgentSessionSummary`) declare their rig fields optional for the same reason. A
+fixture written against 0.11 still type-checks, and `test/legacy-compat.test.ts`
+holds the package to that. The one direction not promised is the reverse
+assignment: a value typed as the legacy alias is not assignable to the strict
+rig type, since it need not carry the rig fields.
+
 What is _not_ renamed is the wire format. The server's JSON schema still spells these fields `sandbox_id`, `sandbox_ref`, `sandbox_preset`, and so on, and the SDK sends and reads exactly those keys. Only the TypeScript surface moved to `rig`.
 
 ## Quick start
@@ -231,8 +241,8 @@ pnpm test:functional
 
 **Production is banned.** These tests provision and tear down real resources, so pointing `AMIKA_API_URL` at a production host (`app.amika.dev` or `amika.dev`) aborts the run before any test executes. This is a hard ban with no override; always target staging (e.g. `https://app.staging-amika.dev`).
 
-Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_RIG_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_RIG_PROVIDER`. The last two rig vars accept their former `SANDBOX` spellings as fallbacks. See `test/functional/helpers.ts` for details.
+Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_RIG_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_RIG_PROVIDER`. Two of those fall back to a former spelling when unset: `AMIKA_TEST_RIG_PROVIDER` to `AMIKA_TEST_SANDBOX_PROVIDER`, and `AMIKA_TEST_RIG_NAME_PREFIX` to `AMIKA_TEST_SANDBOX_NAME_PREFIX`. `AMIKA_TEST_PROVIDER` names the AI provider and has no alias. See `test/functional/helpers.ts` for details.
 
-The suite provisions a real rig and runs the full lifecycle (create → wait → list → get → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Rigs are cleaned up in `afterAll`, but the secrets API has no delete endpoint — test-created secrets accumulate.
+The suite provisions a real rig and runs the full lifecycle (create → wait → list → get → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Rigs are cleaned up in `afterAll`, but the secrets API has no delete endpoint, so test-created secrets accumulate.
 
 `org-resources.functional.test.ts` is the exception: it only reads org-scoped listings, so it provisions nothing and finishes in seconds. Run it alone with `pnpm test:functional org-resources`.

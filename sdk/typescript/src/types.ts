@@ -22,7 +22,22 @@ import { AmikaError } from "@/errors";
 // `rig` is the canonical product term for what the API still calls a sandbox.
 // Every rig-named type below is the canonical spelling; the sandbox-named one
 // beside it is a type alias kept so existing code keeps compiling. Wire keys
-// are untouched — the server's schema is still snake_case `sandbox_*`.
+// are untouched: the server's schema is still snake_case `sandbox_*`.
+//
+// Response types gained rig-spelled mirrors of their sandbox-spelled fields.
+// The decoders always populate both, so the mirror is required on the rig-named
+// type and a returned value satisfies it. The sandbox-named alias relaxes those
+// same fields to optional via {@link LegacyShape}, so an object literal written
+// against an earlier release still type-checks. Three types keep their own
+// names (`Session` and the agent-session responses) and so have no alias to
+// relax; their mirrors are declared optional for the same reason.
+
+/**
+ * `T` with the keys in `K` made optional. Gives a legacy sandbox-named alias a
+ * shape that accepts a literal predating the rig fields, while still admitting
+ * every value the SDK decodes (which carries both spellings).
+ */
+type LegacyShape<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
 /**
  * Selects which stored credential of a given `kind` the server injects
@@ -273,8 +288,8 @@ export interface RemoteRig {
   image?: string;
 }
 
-/** Legacy spelling of {@link RemoteRig}. */
-export type RemoteSandbox = RemoteRig;
+/** Legacy spelling of {@link RemoteRig}; see {@link LegacyShape}. */
+export type RemoteSandbox = LegacyShape<RemoteRig, "providerRigId">;
 
 /**
  * The human who created a remote rig. Either field may be null if the
@@ -476,8 +491,11 @@ export function agentSendResponseFromWire(
 
 export interface Session {
   id: string;
-  /** Canonical spelling; mirrors {@link Session.sandboxId}. */
-  rigId: string;
+  /**
+   * Canonical spelling; mirrors {@link Session.sandboxId}. Always set by the
+   * decoder, and optional only so a literal predating it still type-checks.
+   */
+  rigId?: string;
   sandboxId: string;
   orgId: string;
   agentName: string;
@@ -564,8 +582,8 @@ export interface RigServiceResource {
   updatedAt: string | null;
 }
 
-/** Legacy spelling of {@link RigServiceResource}. */
-export type SandboxServiceResource = RigServiceResource;
+/** Legacy spelling of {@link RigServiceResource}; see {@link LegacyShape}. */
+export type SandboxServiceResource = LegacyShape<RigServiceResource, "rigId">;
 
 export function rigServiceResourceFromWire(
   w: Record<string, unknown>,
@@ -716,8 +734,11 @@ export interface RigSnapshot {
   daytona: ExperimentalDaytonaSnapshot | null;
 }
 
-/** Legacy spelling of {@link RigSnapshot}. */
-export type SandboxSnapshot = RigSnapshot;
+/** Legacy spelling of {@link RigSnapshot}; see {@link LegacyShape}. */
+export type SandboxSnapshot = LegacyShape<
+  RigSnapshot,
+  "sourceRigId" | "sourceRigName" | "rigPreset" | "rigSize"
+>;
 
 export function rigSnapshotFromWire(w: Record<string, unknown>): RigSnapshot {
   return {

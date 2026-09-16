@@ -84,15 +84,19 @@ function agentSessionUsageFromWire(
  */
 export interface AgentSessionSendResponse {
   sessionId: string;
-  /** Canonical spelling; mirrors {@link AgentSessionSendResponse.sandboxId}. */
-  rigId: string;
+  /**
+   * Canonical spelling; mirrors {@link AgentSessionSendResponse.sandboxId}.
+   * Always set by the decoder, and optional only so a literal predating it
+   * still type-checks.
+   */
+  rigId?: string;
   sandboxId: string;
   agent: string;
   response: string;
   isError: boolean;
   isNewSession: boolean;
   /** Canonical spelling; mirrors {@link AgentSessionSendResponse.createdSandbox}. */
-  createdRig: boolean;
+  createdRig?: boolean;
   createdSandbox: boolean;
   usage?: AgentSessionUsage;
 }
@@ -124,11 +128,15 @@ export function agentSessionSendResponseFromWire(
  */
 export interface AgentSessionSummary {
   sessionId: string;
-  /** Canonical spelling; mirrors {@link AgentSessionSummary.sandboxId}. */
-  rigId: string;
+  /**
+   * Canonical spelling; mirrors {@link AgentSessionSummary.sandboxId}. Always
+   * set by the decoder, and optional only so a literal predating it still
+   * type-checks. `rigName` follows the same rule.
+   */
+  rigId?: string;
   sandboxId: string;
   /** Canonical spelling; mirrors {@link AgentSessionSummary.sandboxName}. */
-  rigName: string | null;
+  rigName?: string | null;
   sandboxName: string | null;
   agent: string;
   status: string;
