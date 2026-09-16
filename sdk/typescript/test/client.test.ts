@@ -435,12 +435,11 @@ describe("AmikaClient sessions", () => {
     expect(sessions[1]?.preview).toBeUndefined();
   });
 
-  it("decodes sandbox_id under both rigId and sandboxId", async () => {
+  it("decodes sandbox_id, the name the schema uses for a session's rig", async () => {
     const { fetch } = mockFetch([
       { status: 200, body: { id: "s1", sandbox_id: "sbx_1" } },
     ]);
     const sess = await makeClient(fetch).getSession("dev", "s1");
-    expect(sess.rigId).toBe("sbx_1");
     expect(sess.sandboxId).toBe("sbx_1");
   });
 
@@ -863,6 +862,8 @@ describe("AmikaClient snapshot fetch and wait", () => {
     expect(snap.sourceSandboxId).toBe("sbx_1");
     expect(snap.rigPreset).toBe("coder");
     expect(snap.sandboxPreset).toBe("coder");
+    expect(snap.rigSize).toBeNull();
+    expect(snap.sandboxSize).toBeNull();
     expect(snap.repositoryUrl).toBe("git@github.com:o/p.git");
     expect(snap.captureMode).toBe("scrub_and_delete");
     expect(snap.daytona).toEqual({

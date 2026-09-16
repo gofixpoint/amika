@@ -23,8 +23,8 @@ import {
  * specific rig, and `repoUrl` is used only when a rig has to be
  * created behind the scenes.
  *
- * `sandboxId` is the legacy spelling of `rigId`. Setting both is allowed and
- * `rigId` wins, but there is no reason to.
+ * `sandboxId` is the legacy spelling of `rigId`. Setting both is allowed and a
+ * non-empty `rigId` wins, but there is no reason to.
  */
 export interface AgentSessionSendRequest {
   message: string;
@@ -41,7 +41,10 @@ export function agentSessionSendRequestToWire(
   r: AgentSessionSendRequest,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { message: r.message };
-  const rigId = r.rigId ?? r.sandboxId;
+  // `||`, not `??`, matching the other two sites that accept both spellings: an
+  // empty rig spelling falls through to the legacy one rather than shadowing it.
+  // Preserves 0.11 for every input, which sent `sandbox_id` whenever it was set.
+  const rigId = r.rigId || r.sandboxId;
   if (r.agent !== undefined) out["agent"] = r.agent;
   if (r.sessionId !== undefined) out["session_id"] = r.sessionId;
   if (rigId !== undefined) out["sandbox_id"] = rigId;
@@ -84,19 +87,13 @@ function agentSessionUsageFromWire(
  */
 export interface AgentSessionSendResponse {
   sessionId: string;
-  /**
-   * Canonical spelling; mirrors {@link AgentSessionSendResponse.sandboxId}.
-   * Always set by the decoder, and optional only so a literal predating it
-   * still type-checks.
-   */
-  rigId?: string;
+  /** The rig the turn ran on. Named for the wire field; see the note in types.ts. */
   sandboxId: string;
   agent: string;
   response: string;
   isError: boolean;
   isNewSession: boolean;
-  /** Canonical spelling; mirrors {@link AgentSessionSendResponse.createdSandbox}. */
-  createdRig?: boolean;
+  /** Whether the turn had to create a rig. Named for the wire field. */
   createdSandbox: boolean;
   usage?: AgentSessionUsage;
 }
@@ -106,13 +103,11 @@ export function agentSessionSendResponseFromWire(
 ): AgentSessionSendResponse {
   return {
     sessionId: str(w["session_id"]),
-    rigId: str(w["sandbox_id"]),
     sandboxId: str(w["sandbox_id"]),
     agent: str(w["agent"]),
     response: str(w["response"]),
     isError: bool(w["is_error"]),
     isNewSession: bool(w["is_new_session"]),
-    createdRig: bool(w["created_sandbox"]),
     createdSandbox: bool(w["created_sandbox"]),
     // optionalObject rather than a bare typeof check: an array is also
     // `typeof "object"`, and would decode to an all-undefined usage object.
@@ -121,22 +116,15 @@ export function agentSessionSendResponseFromWire(
 }
 
 /**
- * One row of the agent-sessions list. `rigName`, `preview`, `model`,
+ * One row of the agent-sessions list. `sandboxName`, `preview`, `model`,
  * `effort`, and `endedAt` are nullable: a chat can outlive the rig whose
  * name it shows, carry no user message to preview, run at the agent CLI's own
  * model and effort, and still be running.
  */
 export interface AgentSessionSummary {
   sessionId: string;
-  /**
-   * Canonical spelling; mirrors {@link AgentSessionSummary.sandboxId}. Always
-   * set by the decoder, and optional only so a literal predating it still
-   * type-checks. `rigName` follows the same rule.
-   */
-  rigId?: string;
+  /** The rig the chat runs on. Named for the wire field; see the note in types.ts. */
   sandboxId: string;
-  /** Canonical spelling; mirrors {@link AgentSessionSummary.sandboxName}. */
-  rigName?: string | null;
   sandboxName: string | null;
   agent: string;
   status: string;
@@ -154,9 +142,7 @@ export function agentSessionSummaryFromWire(
 ): AgentSessionSummary {
   return {
     sessionId: str(w["session_id"]),
-    rigId: str(w["sandbox_id"]),
     sandboxId: str(w["sandbox_id"]),
-    rigName: nullableStr(w["sandbox_name"]),
     sandboxName: nullableStr(w["sandbox_name"]),
     agent: str(w["agent"]),
     status: str(w["status"]),

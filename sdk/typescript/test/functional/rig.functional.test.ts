@@ -105,7 +105,7 @@ describeFunctional("rig functional tests", () => {
       });
       expect(session.id).not.toBe("");
       expect(session.agentName).toBe(TEST_AGENT_NAME);
-      expect(session.rigId).toBe(rig.id);
+      expect(session.sandboxId).toBe(rig.id);
       sessionId = session.id;
     });
 
@@ -118,13 +118,13 @@ describeFunctional("rig functional tests", () => {
     it("getSession returns the session by id", async () => {
       const session = await client.getSession(rig.name, sessionId);
       expect(session.id).toBe(sessionId);
-      expect(session.rigId).toBe(rig.id);
+      expect(session.sandboxId).toBe(rig.id);
     });
 
     it("getLatestSession returns a session (non-null)", async () => {
       const latest = await client.getLatestSession(rig.name);
       expect(latest).not.toBeNull();
-      expect(latest?.rigId).toBe(rig.id);
+      expect(latest?.sandboxId).toBe(rig.id);
     });
 
     it("updateSession can mutate metadata", async () => {

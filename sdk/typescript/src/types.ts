@@ -24,13 +24,20 @@ import { AmikaError } from "@/errors";
 // beside it is a type alias kept so existing code keeps compiling. Wire keys
 // are untouched: the server's schema is still snake_case `sandbox_*`.
 //
-// Response types gained rig-spelled mirrors of their sandbox-spelled fields.
-// The decoders always populate both, so the mirror is required on the rig-named
-// type and a returned value satisfies it. The sandbox-named alias relaxes those
-// same fields to optional via {@link LegacyShape}, so an object literal written
-// against an earlier release still type-checks. Three types keep their own
-// names (`Session` and the agent-session responses) and so have no alias to
-// relax; their mirrors are declared optional for the same reason.
+// A response type gains rig-spelled mirrors of its sandbox-spelled fields only
+// where it also has a sandbox-named alias. The decoders populate both, so the
+// mirror is required on the rig-named type and a returned value satisfies it,
+// while the sandbox-named alias relaxes those same fields to optional via
+// {@link LegacyShape} so an object literal written against an earlier release
+// still type-checks.
+//
+// `Session` and the agent-session types keep their own names, so there is no
+// second name to relax and no way to have both. Declaring their mirrors
+// optional would leave the canonical spelling weaker-typed than the deprecated
+// one, which is backwards; declaring them required would break 0.11 fixtures.
+// They therefore carry the schema's `sandboxId`/`sandboxName`/`createdSandbox`
+// and no mirror. Those names describe a wire object with no rig identity of its
+// own, and the wire is staying `sandbox_*` regardless.
 
 /**
  * `T` with the keys in `K` made optional. Gives a legacy sandbox-named alias a
@@ -491,11 +498,7 @@ export function agentSendResponseFromWire(
 
 export interface Session {
   id: string;
-  /**
-   * Canonical spelling; mirrors {@link Session.sandboxId}. Always set by the
-   * decoder, and optional only so a literal predating it still type-checks.
-   */
-  rigId?: string;
+  /** The rig this session runs on. Named for the wire field; see the note above. */
   sandboxId: string;
   orgId: string;
   agentName: string;
@@ -512,7 +515,6 @@ export interface Session {
 export function sessionFromWire(w: Record<string, unknown>): Session {
   return {
     id: str(w["id"]),
-    rigId: str(w["sandbox_id"]),
     sandboxId: str(w["sandbox_id"]),
     orgId: str(w["org_id"]),
     agentName: str(w["agent_name"]),

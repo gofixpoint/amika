@@ -22,19 +22,33 @@ await amika.createSandbox({ name: "hello-amika" }); // same call, deprecated nam
 The aliasing is exhaustive:
 
 - **Methods** — `listSandboxes`, `createSandbox`, `getSandbox`, `waitForSandbox*`, `startSandbox`, `stopSandbox`, `deleteSandbox`, `*SandboxService*`, `*SandboxSnapshot*`, and `getSandboxScrubPreview` all delegate to their `Rig` counterparts and issue the same rig-named request.
-- **Types** — `RemoteSandbox`, `CreateSandboxRequest`, `SandboxSnapshot`, `SandboxServiceResource`, and the rest are type aliases of `RemoteRig`, `CreateRigRequest`, `RigSnapshot`, `RigServiceResource`, …
-- **Fields** — a response carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `session.rigId` and `session.sandboxId`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, and so on. On request objects the rig spelling wins when both are set: `createRigSnapshot({ rigRef })` and `createRigSnapshot({ sandboxRef })` both work.
+- **Types** — every sandbox-named type still resolves: `CreateSandboxRequest` is a plain alias of `CreateRigRequest`, while `RemoteSandbox`, `SandboxSnapshot`, and `SandboxServiceResource` resolve to their rig type with the rig-spelled fields relaxed to optional (see below).
+- **Fields** — a response from a type with a sandbox-named alias carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, `service.rigId` and `service.sandboxId`. On request objects either spelling works and a non-empty rig one wins: `createRigSnapshot({ rigRef })`, `createRigSnapshot({ sandboxRef })`, and `sendAgentSession({ rigId })` or `({ sandboxId })`.
 - **Functional-test env vars** — `AMIKA_TEST_RIG_PROVIDER` and `AMIKA_TEST_RIG_NAME_PREFIX` fall back to `AMIKA_TEST_SANDBOX_PROVIDER` and `AMIKA_TEST_SANDBOX_NAME_PREFIX`.
 
 The SDK populates both spellings on every value it returns, so reading either is
-safe. Building one of these response types by hand, as a test fixture does, is
-safe too: on a sandbox-named alias the rig-spelled fields are optional, and the
-three types that keep their own names (`Session`, `AgentSessionSendResponse`,
-`AgentSessionSummary`) declare their rig fields optional for the same reason. A
-fixture written against 0.11 still type-checks, and `test/legacy-compat.test.ts`
-holds the package to that. The one direction not promised is the reverse
-assignment: a value typed as the legacy alias is not assignable to the strict
-rig type, since it need not carry the rig fields.
+safe, and both are plain non-optional fields. Building one of these response
+types by hand, as a test fixture does, is safe too: on a sandbox-named alias the
+rig-spelled fields are optional, so a fixture written against 0.11 still
+type-checks. `test/legacy-compat.test.ts` holds the package to that. The one
+direction not promised is the reverse assignment: a value typed as the legacy
+alias is not assignable to the strict rig type, since it need not carry the rig
+fields.
+
+`Session`, `AgentSessionSendResponse`, `AgentSessionSummary`, and
+`AgentSessionDetail` are the exception: they keep their own names, so there is no
+second name to relax and no way to have both a strict canonical field and a
+constructible legacy one. Rather than leave the canonical spelling weaker-typed
+than the deprecated one, they carry only the schema's `sandboxId`,
+`sandboxName`, and `createdSandbox`. Those name a wire object with no rig
+identity of its own, and the wire stays `sandbox_*` either way.
+
+One behavior change is deliberate. `createRigSnapshot` and its
+`createSandboxSnapshot` alias throw `AmikaError` when neither `rigRef` nor
+`sandboxRef` names a source rig, including when both are the empty string. 0.11
+sent `sandbox_ref: ""` and let the server reject it, so a caller whose ref came
+from an unset variable now sees a client-side `AmikaError` instead of an
+`AmikaHTTPError`. Catch `AmikaError` (the base of both) if you relied on that.
 
 What is _not_ renamed is the wire format. The server's JSON schema still spells these fields `sandbox_id`, `sandbox_ref`, `sandbox_preset`, and so on, and the SDK sends and reads exactly those keys. Only the TypeScript surface moved to `rig`.
 
@@ -108,12 +122,12 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1. The "Deprecated al
 
 ### Services
 
-| Method                                   | Endpoint                                   | Deprecated alias         |
-| ---------------------------------------- | ------------------------------------------ | ------------------------ |
-| `listRigServices(rigRef?)`               | `GET /rig-services`                        | `listSandboxServices()`  |
-| `createRigService(rigRef, req)`          | `POST /rigs/{ref}/services`                | `createSandboxService()` |
-| `putRigService(rigRef, serviceRef, req)` | `PUT /rigs/{ref}/services/{serviceRef}`    | `putSandboxService()`    |
-| `deleteRigService(rigRef, serviceRef)`   | `DELETE /rigs/{ref}/services/{serviceRef}` | `deleteSandboxService()` |
+| Method                                   | Endpoint                                   | Deprecated alias                   |
+| ---------------------------------------- | ------------------------------------------ | ---------------------------------- |
+| `listRigServices(rigRef?)`               | `GET /rig-services`                        | `listSandboxServices(sandboxRef?)` |
+| `createRigService(rigRef, req)`          | `POST /rigs/{ref}/services`                | `createSandboxService()`           |
+| `putRigService(rigRef, serviceRef, req)` | `PUT /rigs/{ref}/services/{serviceRef}`    | `putSandboxService()`              |
+| `deleteRigService(rigRef, serviceRef)`   | `DELETE /rigs/{ref}/services/{serviceRef}` | `deleteSandboxService()`           |
 
 ### Secrets
 
@@ -187,7 +201,7 @@ const result = await amika.sendAgentSessionStream(
     onDelta: (text) => process.stdout.write(text),
   },
 );
-console.log(`\nsession ${result.sessionId} on rig ${result.rigId}`);
+console.log(`\nsession ${result.sessionId} on rig ${result.sandboxId}`);
 ```
 
 The `phase` values are the server's own (`creating_sandbox`, `sandbox_ready`) and still say sandbox.
