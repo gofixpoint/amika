@@ -17,11 +17,30 @@ set -eu
 [ -n "${SSH_CONNECTION:-}" ] || exit 0
 [ -z "${TMUX:-}" ] || exit 0
 
+printf '\n'
+
+cat <<'EOF'
+╭──────────────────────╮
+│ ╭──────────────────╮ │
+│ │   ███▀    ███▀   │ │
+│ │   ███▄    ███▄   │ │
+│ │                  │ │
+│ │                  │ │
+│ ╰──────────────────╯ │
+╰──────────────────────╯
+  ╰──────────────────╯
+
+             ▀ █
+▄▀▀█ █▀▀█▀▀█ █ █  ▄ ▄▀▀█
+█  █ █  █  █ █ █▄▀  █  █
+▀▄▄█ █  █  █ █ █ ▀▄ ▀▄▄█
+
+EOF
+
 # AMIKA_SANDBOX_NAME carries the rig's own name into every session of a hosted
 # sandbox. A rig booted without it is still greeted, just without a name: the
 # hostname is a provider-assigned container id, so naming it would mislead
 # rather than orient.
-printf '\n'
 if [ -n "${AMIKA_SANDBOX_NAME:-}" ]; then
   printf 'You'\''re on the Amika rig "%s".\n' "$AMIKA_SANDBOX_NAME"
 else
