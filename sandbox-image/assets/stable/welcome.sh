@@ -17,38 +17,47 @@ set -eu
 [ -n "${SSH_CONNECTION:-}" ] || exit 0
 [ -z "${TMUX:-}" ] || exit 0
 
+printf '\n'
+
+# The brand lockup: the computer mark from computer-logo.svg beside a lowercase
+# "amika", the same arrangement and rough size ratio the site's navbar uses.
+#
+# The mark keeps the SVG's proportions, read against a terminal cell being
+# about twice as tall as it is wide: a 1.4:1 body, a 1.5:1 screen inset within
+# it, square eyes about a quarter of the screen's width, sitting above centre
+# with the open space below them, and a stand around four fifths of the body's
+# width. Each eye is a block square with the SVG's wedge cut from its right
+# edge, which `▀` and `▄` place at half-row resolution.
+#
+# Drawn small deliberately. A login banner competes with the scrollback the
+# session is about to fill, and the greeting has to clear a 24-row terminal
+# with the four lines below it still on screen.
+#
+# Quoted delimiter: everything here is literal, and an unquoted heredoc would
+# let a stray `$` or backtick in the art or the prose expand.
+cat <<'EOF'
+╭──────────────────╮
+│ ╭──────────────╮ │                             ██  ██
+│ │  ███▀  ███▀  │ │                                 ██
+│ │  ███▄  ███▄  │ │   ▄███████  ▄████████████▄  ██  ██   ▄█▀  ▄███████
+│ │              │ │   ██    ██  ██    ██    ██  ██  ██▄▄█▀    ██    ██
+│ ╰──────────────╯ │   ██    ██  ██    ██    ██  ██  ██▀▀█▄    ██    ██
+╰──────────────────╯   ▀███████  ██    ██    ██  ██  ██   ▀█▄  ▀███████
+  ╰──────────────╯
+
+EOF
+
 # AMIKA_SANDBOX_NAME carries the rig's own name into every session of a hosted
 # sandbox. A rig booted without it is still greeted, just without a name: the
 # hostname is a provider-assigned container id, so naming it would mislead
 # rather than orient.
-printf '\n'
 if [ -n "${AMIKA_SANDBOX_NAME:-}" ]; then
-  welcome_heading="You're on the Amika rig \"$AMIKA_SANDBOX_NAME\"."
+  printf 'You'\''re on the Amika rig "%s".\n' "$AMIKA_SANDBOX_NAME"
 else
-  welcome_heading="You're on an Amika rig."
+  printf 'You'\''re on an Amika rig.\n'
 fi
 
-cat <<EOF
-     ╭────────────────────────────────────╮
-     │ ╭────────────────────────────────╮ │
-     │ │                                │ │
-     │ │       ████▀        ████▀       │ │
-     │ │       ████▄        ████▄       │ │
-     │ │                                │ │
-     │ │                                │ │
-     │ │                                │ │
-     │ ╰────────────────────────────────╯ │
-     ╰────────────────────────────────────╯
-         ╰────────────────────────────╯
-
-                          ██  ██
-                              ██
-▄███████  ▄████████████▄  ██  ██   ▄█▀  ▄███████
-██    ██  ██    ██    ██  ██  ██▄▄█▀    ██    ██
-██    ██  ██    ██    ██  ██  ██▀▀█▄    ██    ██
-▀███████  ██    ██    ██  ██  ██   ▀█▄  ▀███████
-
-$welcome_heading
+cat <<'EOF'
 
 Type amika help for CLI help.
 
