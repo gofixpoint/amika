@@ -22,12 +22,14 @@ await amika.createSandbox({ name: "hello-amika" }); // same call, deprecated nam
 The aliasing is exhaustive:
 
 - **Methods** — `listSandboxes`, `createSandbox`, `getSandbox`, `waitForSandbox*`, `startSandbox`, `stopSandbox`, `deleteSandbox`, `*SandboxService*`, `*SandboxSnapshot*`, and `getSandboxScrubPreview` all delegate to their `Rig` counterparts and issue the same rig-named request.
-- **Types** — every sandbox-named type still resolves: `CreateSandboxRequest` is a plain alias of `CreateRigRequest`, while `RemoteSandbox`, `SandboxSnapshot`, and `SandboxServiceResource` resolve to their rig type with the rig-spelled fields relaxed to optional (see below).
-- **Fields** — a response from a type with a sandbox-named alias carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, `service.rigId` and `service.sandboxId`. On request objects either spelling works and a non-empty rig one wins: `createRigSnapshot({ rigRef })`, `createRigSnapshot({ sandboxRef })`, and `sendAgentSession({ rigId })` or `({ sandboxId })`.
+- **Types** — every sandbox-named type still resolves, in one of three ways: `CreateSandboxRequest` is a plain alias of `CreateRigRequest`; `RemoteSandbox`, `SandboxSnapshot`, and `SandboxServiceResource` resolve to their rig type with the rig-spelled fields relaxed to optional (see below); and `CreateSandboxSnapshotRequest` is spelled out separately so `sandboxRef` stays required.
+- **Fields** — a response from a type with a sandbox-named alias carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, `service.rigId` and `service.sandboxId`. On request objects either spelling works and a non-empty rig one wins, at all three sites that take a pair: `createRigSnapshot({ rigRef | sandboxRef })`, `sendAgentSession({ rigId | sandboxId })`, and `listRigSnapshots({ sourceRigId | sourceSandboxId })`.
 - **Functional-test env vars** — `AMIKA_TEST_RIG_PROVIDER` and `AMIKA_TEST_RIG_NAME_PREFIX` fall back to `AMIKA_TEST_SANDBOX_PROVIDER` and `AMIKA_TEST_SANDBOX_NAME_PREFIX`.
 
 The SDK populates both spellings on every value it returns, so reading either is
-safe, and both are plain non-optional fields. Building one of these response
+safe, and a mirror is declared exactly as its twin is: `rig.providerRigId`
+matches `rig.providerSandboxId`, and `rig.rigPreset` is optional because
+`rig.sandboxPreset` always was. Building one of these response
 types by hand, as a test fixture does, is safe too: on a sandbox-named alias the
 rig-spelled fields are optional, so a fixture written against 0.11 still
 type-checks. `test/legacy-compat.test.ts` holds the package to that. The one
@@ -43,7 +45,14 @@ than the deprecated one, they carry only the schema's `sandboxId`,
 `sandboxName`, and `createdSandbox`. Those name a wire object with no rig
 identity of its own, and the wire stays `sandbox_*` either way.
 
-One behavior change is deliberate. `createRigSnapshot` and its
+Two behavior changes are deliberate. A decoded value now carries the rig-spelled
+mirrors as extra own keys — `providerRigId`, `rigPreset` and `rigSize` on a rig,
+`sourceRigId`, `sourceRigName`, `rigPreset` and `rigSize` on a snapshot, `rigId`
+on a service. Field access is unaffected, but a whole-object comparison sees
+them, so `expect(rig).toEqual(fixtureFrom0_11)`, a snapshot test, or anything
+keyed on `Object.keys` or `JSON.stringify` of a decoded value needs updating.
+
+Second, `createRigSnapshot` and its
 `createSandboxSnapshot` alias throw `AmikaError` when neither `rigRef` nor
 `sandboxRef` names a source rig, including when both are the empty string. 0.11
 sent `sandbox_ref: ""` and let the server reject it, so a caller whose ref came
@@ -157,14 +166,14 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1. The "Deprecated al
 
 ### Snapshots
 
-| Method                       | Endpoint                           | Deprecated alias              |
-| ---------------------------- | ---------------------------------- | ----------------------------- |
-| `listRigSnapshots(filters?)` | `GET /rig-snapshots`               | `listSandboxSnapshots()`      |
-| `createRigSnapshot(req)`     | `POST /rig-snapshots`              | `createSandboxSnapshot(req)`  |
-| `getRigSnapshot(ref)`        | `GET /rig-snapshots/{ref}`         | `getSandboxSnapshot(ref)`     |
-| `waitForRigSnapshot(ref)`    | polls until `active` or `failed`   | `waitForSandboxSnapshot(ref)` |
-| `getRigScrubPreview(ref)`    | `GET /rig-snapshots/scrub-preview` | `getSandboxScrubPreview(ref)` |
-| `deleteRigSnapshot(ref)`     | `DELETE /rig-snapshots/{ref}`      | `deleteSandboxSnapshot(ref)`  |
+| Method                       | Endpoint                           | Deprecated alias                 |
+| ---------------------------- | ---------------------------------- | -------------------------------- |
+| `listRigSnapshots(filters?)` | `GET /rig-snapshots`               | `listSandboxSnapshots(filters?)` |
+| `createRigSnapshot(req)`     | `POST /rig-snapshots`              | `createSandboxSnapshot(req)`     |
+| `getRigSnapshot(ref)`        | `GET /rig-snapshots/{ref}`         | `getSandboxSnapshot(ref)`        |
+| `waitForRigSnapshot(ref)`    | polls until `active` or `failed`   | `waitForSandboxSnapshot(ref)`    |
+| `getRigScrubPreview(ref)`    | `GET /rig-snapshots/scrub-preview` | `getSandboxScrubPreview(ref)`    |
+| `deleteRigSnapshot(ref)`     | `DELETE /rig-snapshots/{ref}`      | `deleteSandboxSnapshot(ref)`     |
 
 Fork a new rig from a captured snapshot by passing its slug as `snapshot` to `createRig({ snapshot })`.
 

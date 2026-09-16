@@ -31,7 +31,7 @@ export interface AgentSessionSendRequest {
   agent?: string;
   sessionId?: string;
   rigId?: string;
-  /** Legacy spelling of {@link AgentSessionSendRequest.rigId}. */
+  /** @deprecated Use {@link AgentSessionSendRequest.rigId}. */
   sandboxId?: string;
   newSession?: boolean;
   repoUrl?: string;

@@ -28,8 +28,8 @@ import {
 } from "./helpers";
 
 const PROVIDER =
-  process.env["AMIKA_TEST_RIG_PROVIDER"] ??
-  process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ??
+  process.env["AMIKA_TEST_RIG_PROVIDER"] ||
+  process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ||
   "daytona";
 const EXAMPLE_REPO = "https://github.com/gofixpoint/example-repo";
 /** Poll until a snapshot slug reaches the target state. */

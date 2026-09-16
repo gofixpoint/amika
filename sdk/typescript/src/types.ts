@@ -25,9 +25,11 @@ import { AmikaError } from "@/errors";
 // are untouched: the server's schema is still snake_case `sandbox_*`.
 //
 // A response type gains rig-spelled mirrors of its sandbox-spelled fields only
-// where it also has a sandbox-named alias. The decoders populate both, so the
-// mirror is required on the rig-named type and a returned value satisfies it,
-// while the sandbox-named alias relaxes those same fields to optional via
+// where it also has a sandbox-named alias. The decoders populate both, so on the
+// rig-named type a mirror is declared exactly as its twin is -- required where
+// the twin is required, optional where the schema marks it `omitempty`, as
+// `rigPreset` and `rigSize` are -- and a returned value satisfies both. The
+// sandbox-named alias then relaxes those mirrors to optional via
 // {@link LegacyShape} so an object literal written against an earlier release
 // still type-checks.
 //
@@ -137,7 +139,7 @@ export interface CreateRigRequest {
   githubAuthMode?: string;
 }
 
-/** Legacy spelling of {@link CreateRigRequest}. */
+/** @deprecated Use {@link CreateRigRequest}. */
 export type CreateSandboxRequest = CreateRigRequest;
 
 export function createRigRequestToWire(
@@ -164,9 +166,6 @@ export function createRigRequestToWire(
   });
 }
 
-/** Legacy spelling of {@link createRigRequestToWire}. */
-export const createSandboxRequestToWire = createRigRequestToWire;
-
 export interface ResolvedAgentCredential {
   kind: string;
   outcome: "resolved" | "skipped" | string;
@@ -188,7 +187,7 @@ export interface RemoteRigService {
   protocol: string;
 }
 
-/** Legacy spelling of {@link RemoteRigService}. */
+/** @deprecated Use {@link RemoteRigService}. */
 export type RemoteSandboxService = RemoteRigService;
 
 function remoteRigServiceFromWire(
@@ -295,7 +294,7 @@ export interface RemoteRig {
   image?: string;
 }
 
-/** Legacy spelling of {@link RemoteRig}; see {@link LegacyShape}. */
+/** @deprecated Use {@link RemoteRig}; see {@link LegacyShape}. */
 export type RemoteSandbox = LegacyShape<RemoteRig, "providerRigId">;
 
 /**
@@ -308,7 +307,7 @@ export interface RemoteRigCreator {
   email: string | null;
 }
 
-/** Legacy spelling of {@link RemoteRigCreator}. */
+/** @deprecated Use {@link RemoteRigCreator}. */
 export type RemoteSandboxCreator = RemoteRigCreator;
 
 export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
@@ -364,9 +363,6 @@ export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
     image: optionalStr(w["image"]),
   };
 }
-
-/** Legacy spelling of {@link remoteRigFromWire}. */
-export const remoteSandboxFromWire = remoteRigFromWire;
 
 // ---------- Repositories ----------
 
@@ -584,7 +580,7 @@ export interface RigServiceResource {
   updatedAt: string | null;
 }
 
-/** Legacy spelling of {@link RigServiceResource}; see {@link LegacyShape}. */
+/** @deprecated Use {@link RigServiceResource}; see {@link LegacyShape}. */
 export type SandboxServiceResource = LegacyShape<RigServiceResource, "rigId">;
 
 export function rigServiceResourceFromWire(
@@ -607,9 +603,6 @@ export function rigServiceResourceFromWire(
   };
 }
 
-/** Legacy spelling of {@link rigServiceResourceFromWire}. */
-export const sandboxServiceResourceFromWire = rigServiceResourceFromWire;
-
 /** Request body for creating (POST) or replacing (PUT) a rig service. */
 export interface RigServiceRequest {
   name: string;
@@ -618,7 +611,7 @@ export interface RigServiceRequest {
   urlScheme: "http" | "https";
 }
 
-/** Legacy spelling of {@link RigServiceRequest}. */
+/** @deprecated Use {@link RigServiceRequest}. */
 export type SandboxServiceRequest = RigServiceRequest;
 
 /**
@@ -663,9 +656,6 @@ export function rigServiceRequestToWire(
   validateServicePort(r.port);
   return { name: r.name, port: r.port, url_scheme: r.urlScheme };
 }
-
-/** Legacy spelling of {@link rigServiceRequestToWire}. */
-export const sandboxServiceRequestToWire = rigServiceRequestToWire;
 
 // ---------- Rig snapshots ----------
 
@@ -736,7 +726,7 @@ export interface RigSnapshot {
   daytona: ExperimentalDaytonaSnapshot | null;
 }
 
-/** Legacy spelling of {@link RigSnapshot}; see {@link LegacyShape}. */
+/** @deprecated Use {@link RigSnapshot}; see {@link LegacyShape}. */
 export type SandboxSnapshot = LegacyShape<
   RigSnapshot,
   "sourceRigId" | "sourceRigName" | "rigPreset" | "rigSize"
@@ -769,9 +759,6 @@ export function rigSnapshotFromWire(w: Record<string, unknown>): RigSnapshot {
   };
 }
 
-/** Legacy spelling of {@link rigSnapshotFromWire}. */
-export const sandboxSnapshotFromWire = rigSnapshotFromWire;
-
 /** The fields of a snapshot capture request that name nothing rig-related. */
 interface RigSnapshotCaptureFields {
   /** Name for the new snapshot. */
@@ -799,7 +786,7 @@ export type CreateRigSnapshotRequest = RigSnapshotCaptureFields &
   );
 
 /**
- * Legacy spelling of {@link CreateRigSnapshotRequest}.
+ * @deprecated Use {@link CreateRigSnapshotRequest}.
  *
  * Spelled out rather than aliased to the union: under the union a *read* of
  * `sandboxRef` widens to `string | undefined`, because one member declares it
@@ -823,10 +810,6 @@ export function createRigSnapshotRequestToWire(
     mode: r.mode,
   });
 }
-
-/** Legacy spelling of {@link createRigSnapshotRequestToWire}. */
-export const createSandboxSnapshotRequestToWire =
-  createRigSnapshotRequestToWire;
 
 /**
  * Resolve the source rig from whichever of the two spellings the caller used.
@@ -857,7 +840,7 @@ export interface RigScrubPreview {
   envVars: string[];
 }
 
-/** Legacy spelling of {@link RigScrubPreview}. */
+/** @deprecated Use {@link RigScrubPreview}. */
 export type SandboxScrubPreview = RigScrubPreview;
 
 export function rigScrubPreviewFromWire(
@@ -869,9 +852,6 @@ export function rigScrubPreviewFromWire(
     envVars: strArray(w["env_vars"]),
   };
 }
-
-/** Legacy spelling of {@link rigScrubPreviewFromWire}. */
-export const sandboxScrubPreviewFromWire = rigScrubPreviewFromWire;
 
 // ---------- wire helpers ----------
 

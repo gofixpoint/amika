@@ -134,6 +134,95 @@ function readsSandboxRef(req: CreateSandboxSnapshotRequest): string {
   return req.sandboxRef;
 }
 
+/**
+ * The construct direction above is only half the promise. `LegacyShape<T, K>`
+ * takes a free-form key list, so adding a field that 0.11 declared *required*
+ * to any `K` would silently relax it to optional for every consumer — a
+ * widening that shows up only where they annotate, and propagates silently
+ * where they do not. These functions pin the read direction by declaring the
+ * type each field had in 0.11; relaxing one makes this file fail to compile.
+ *
+ * Fields 0.11 already declared optional (`rigPreset`, `sandboxSize`, …) are
+ * deliberately absent — they are `?:` on both sides and always were.
+ */
+function readsRequiredRemoteSandboxFields(sb: RemoteSandbox): void {
+  const id: string = sb.id;
+  const orgId: string = sb.orgId;
+  const name: string = sb.name;
+  const userId: string | null = sb.userId;
+  const provider: string | null = sb.provider;
+  const providerSandboxId: string | null = sb.providerSandboxId;
+  const repoUrl: string | null = sb.repoUrl;
+  const branch: string | null = sb.branch;
+  const snapshot: string | null = sb.snapshot;
+  const services: RemoteSandbox["services"] = sb.services;
+  const createdAt: string = sb.createdAt;
+  const state: string = sb.state;
+  const status: string = sb.status;
+  const hasWorkflow: boolean = sb.hasWorkflow;
+  void [
+    id,
+    orgId,
+    name,
+    userId,
+    provider,
+    providerSandboxId,
+    repoUrl,
+    branch,
+    snapshot,
+    services,
+    createdAt,
+    state,
+    status,
+    hasWorkflow,
+  ];
+}
+
+function readsRequiredServiceFields(svc: SandboxServiceResource): void {
+  const id: string | null = svc.id;
+  const sandboxId: string = svc.sandboxId;
+  const name: string = svc.name;
+  const port: number = svc.port;
+  const protocol: string = svc.protocol;
+  const source: string = svc.source;
+  const kind: string = svc.kind;
+  void [id, sandboxId, name, port, protocol, source, kind];
+}
+
+function readsRequiredSnapshotFields(snap: SandboxSnapshot): void {
+  const id: string = snap.id;
+  const snapshot: string = snap.snapshot;
+  const provider: string = snap.provider;
+  const sourceSandboxId: string | null = snap.sourceSandboxId;
+  const sourceSandboxName: string | null = snap.sourceSandboxName;
+  const sandboxPreset: string | null = snap.sandboxPreset;
+  const sandboxSize: string | null = snap.sandboxSize;
+  const state: string = snap.state;
+  const createdAt: string = snap.createdAt;
+  void [
+    id,
+    snapshot,
+    provider,
+    sourceSandboxId,
+    sourceSandboxName,
+    sandboxPreset,
+    sandboxSize,
+    state,
+    createdAt,
+  ];
+}
+
+function readsRequiredSessionFields(
+  sess: Session,
+  sum: AgentSessionSummary,
+): void {
+  const sandboxId: string = sess.sandboxId;
+  const agentName: string = sess.agentName;
+  const summarySandboxId: string = sum.sandboxId;
+  const summarySandboxName: string | null = sum.sandboxName;
+  void [sandboxId, agentName, summarySandboxId, summarySandboxName];
+}
+
 describe("pre-rig literals still satisfy the sandbox-named types", () => {
   it("accepts fixtures carrying no rig-spelled field", () => {
     expect([
@@ -145,6 +234,15 @@ describe("pre-rig literals still satisfy the sandbox-named types", () => {
       summary,
       captureRequest,
     ]).toHaveLength(7);
+  });
+
+  it("keeps every field 0.11 declared required readable at its old type", () => {
+    // The compile is the assertion; calling them keeps them from being dead.
+    readsRequiredRemoteSandboxFields(sandbox);
+    readsRequiredServiceFields(service);
+    readsRequiredSnapshotFields(snapshot);
+    readsRequiredSessionFields(session, summary);
+    expect(true).toBe(true);
   });
 
   it("keeps sandboxRef readable as a plain string", () => {

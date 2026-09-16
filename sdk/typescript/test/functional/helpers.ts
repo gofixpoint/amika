@@ -30,6 +30,10 @@ import type { AgentCredentialRef, CreateRigRequest, RemoteRig } from "@/types";
  *                                          (e.g. Anthropic). Falls back to a
  *                                          placeholder otherwise.
  *
+ * `||` rather than `??` on the two fallbacks below, matching the rule the SDK
+ * itself follows: a set-but-empty rig var falls through to the legacy var and
+ * then to the default, instead of shadowing both with "".
+ *
  * The two rig vars keep their former spellings as aliases:
  * AMIKA_TEST_SANDBOX_PROVIDER and AMIKA_TEST_SANDBOX_NAME_PREFIX are still read
  * when the `RIG` name is unset, so existing shell profiles and CI configs need
@@ -68,16 +72,16 @@ export const TEST_REPO_URL =
   process.env["AMIKA_TEST_REPO_URL"] ??
   "https://github.com/gofixpoint/example-repo";
 export const TEST_RIG_PROVIDER =
-  process.env["AMIKA_TEST_RIG_PROVIDER"] ??
-  process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ??
+  process.env["AMIKA_TEST_RIG_PROVIDER"] ||
+  process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ||
   "docker";
 export const TEST_PRESET = process.env["AMIKA_TEST_PRESET"] ?? "coder";
 export const TEST_GITHUB_TOKEN = process.env["AMIKA_TEST_GITHUB_TOKEN"];
 export const TEST_AGENT_NAME = process.env["AMIKA_TEST_AGENT_NAME"] ?? "claude";
 export const TEST_BRANCH = process.env["AMIKA_TEST_BRANCH"];
 const RIG_NAME_PREFIX =
-  process.env["AMIKA_TEST_RIG_NAME_PREFIX"] ??
-  process.env["AMIKA_TEST_SANDBOX_NAME_PREFIX"] ??
+  process.env["AMIKA_TEST_RIG_NAME_PREFIX"] ||
+  process.env["AMIKA_TEST_SANDBOX_NAME_PREFIX"] ||
   "ts-sdk-fn";
 
 const agentCredentialName = process.env["AMIKA_TEST_AGENT_CREDENTIAL_NAME"];
