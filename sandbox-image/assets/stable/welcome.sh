@@ -19,31 +19,43 @@ set -eu
 
 printf '\n'
 
-# The brand lockup: the computer mark from computer-logo.svg beside a lowercase
-# "amika", the same arrangement and rough size ratio the site's navbar uses.
+# The brand lockup: the computer mark from computer-logo.svg above a lowercase
+# "amika", the mark centred on the wordmark's axis.
+#
+# Stacked rather than set beside the word as the site's navbar has it. Side by
+# side the banner ran 71 columns, wide enough to wrap or crowd a split pane,
+# and a greeting that reflows is worse than one that is a few rows taller.
 #
 # The mark keeps the SVG's proportions, read against a terminal cell being
-# about twice as tall as it is wide: a 1.4:1 body, a 1.5:1 screen inset within
+# about twice as tall as it is wide: a 1.4:1 body, a 1.6:1 screen inset within
 # it, square eyes about a quarter of the screen's width, sitting above centre
 # with the open space below them, and a stand around four fifths of the body's
 # width. Each eye is a block square with the SVG's wedge cut from its right
 # edge, which `▀` and `▄` place at half-row resolution.
 #
-# Drawn small deliberately. A login banner competes with the scrollback the
-# session is about to fill, and the greeting has to clear a 24-row terminal
-# with the four lines below it still on screen.
+# Drawn small deliberately: stacking spends rows, and the mark is what can give
+# them back without costing the word its legibility. The blank row between the
+# two is load-bearing -- closed up, the dot of the "i" tucks under the stand and
+# reads as part of the mark.
 #
 # Quoted delimiter: everything here is literal, and an unquoted heredoc would
 # let a stray `$` or backtick in the art or the prose expand.
 cat <<'EOF'
-╭──────────────────╮
-│ ╭──────────────╮ │                             ██  ██
-│ │  ███▀  ███▀  │ │                                 ██
-│ │  ███▄  ███▄  │ │   ▄███████  ▄████████████▄  ██  ██   ▄█▀  ▄███████
-│ │              │ │   ██    ██  ██    ██    ██  ██  ██▄▄█▀    ██    ██
-│ ╰──────────────╯ │   ██    ██  ██    ██    ██  ██  ██▀▀█▄    ██    ██
-╰──────────────────╯   ▀███████  ██    ██    ██  ██  ██   ▀█▄  ▀███████
-  ╰──────────────╯
+              ╭──────────────────╮
+              │ ╭──────────────╮ │
+              │ │  ███▀  ███▀  │ │
+              │ │  ███▄  ███▄  │ │
+              │ │              │ │
+              │ ╰──────────────╯ │
+              ╰──────────────────╯
+                ╰──────────────╯
+
+                          ██  ██
+                              ██
+▄███████  ▄████████████▄  ██  ██   ▄█▀  ▄███████
+██    ██  ██    ██    ██  ██  ██▄▄█▀    ██    ██
+██    ██  ██    ██    ██  ██  ██▀▀█▄    ██    ██
+▀███████  ██    ██    ██  ██  ██   ▀█▄  ▀███████
 
 EOF
 
