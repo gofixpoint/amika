@@ -136,7 +136,6 @@ export async function createFreestyleSandbox(
   return {
     provider: "freestyle",
     providerSandboxId: created.vmId,
-    providerUrl: null,
     services: input.services,
     envVars: {},
   };
@@ -156,7 +155,6 @@ export async function refreshFreestyleUrls(
 ): Promise<RefreshUrlsResult> {
   const client = createFreestyleClient(config);
   const refreshed: SandboxService[] = [];
-  let providerUrl: string | null = null;
 
   for (const service of services) {
     const domain = previewDomainFor(providerSandboxId, service.containerPort);
@@ -178,12 +176,9 @@ export async function refreshFreestyleUrls(
     }
     const url = `https://${domain}`;
     refreshed.push({ ...service, url });
-    if (service.name === "Coding Agent") {
-      providerUrl = url;
-    }
   }
 
-  return { providerUrl, services: refreshed };
+  return { services: refreshed };
 }
 
 /** Page size for the account-wide mapping enumeration in {@link syncFreestyleRoutes}. */

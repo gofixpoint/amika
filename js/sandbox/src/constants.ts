@@ -6,9 +6,6 @@
  * as one source of truth for these on-box contracts.
  */
 
-/** Default port the OpenCode web server listens on inside a sandbox. */
-export const DEFAULT_OPENCODE_PORT = 60998;
-
 /**
  * Auto-delete interval when a sandbox is stopped.
  *  -1 = never auto-delete (preserve stopped sandboxes)

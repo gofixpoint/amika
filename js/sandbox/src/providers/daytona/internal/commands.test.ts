@@ -55,13 +55,17 @@ describe("buildDaytonaCommand", () => {
     expect(cmd).toContain("bash -c 'touch /root/a && touch /root/b'");
   });
 
-  it("preserves the caller's env keys across the sudo boundary (plus the Amika hook vars)", () => {
+  it("preserves only the caller's env keys across the sudo boundary", () => {
     const cmd = buildDaytonaCommand("printenv FOO", {
       sudo: true,
       env: { FOO: "bar" },
     });
-    expect(cmd).toContain(
-      "--preserve-env=AMIKA_AGENT_CWD,AMIKA_OPENCODE_WEB,OPENCODE_SERVER_PASSWORD,FOO",
+    expect(cmd).toContain("--preserve-env=FOO");
+  });
+
+  it("omits preserve-env when the caller supplies no environment", () => {
+    expect(buildDaytonaCommand("true", { sudo: true })).toBe(
+      "sudo -n bash -c 'true'",
     );
   });
 

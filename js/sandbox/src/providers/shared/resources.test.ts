@@ -46,7 +46,6 @@ function fullDef() {
     create: vi.fn(async () => ({
       provider: "daytona" as const,
       providerSandboxId: "sb_new",
-      providerUrl: "https://sb_new",
       services: [],
     })),
     delete: vi.fn(async () => {}),
@@ -71,7 +70,6 @@ function fullDef() {
     })),
     revoke: vi.fn(async () => {}),
     refreshUrls: vi.fn(async () => ({
-      providerUrl: "https://x",
       services: [],
     })),
     syncRoutes: vi.fn(async () => {}),
@@ -196,7 +194,6 @@ function minimalProvider(): SandboxProvider {
       create: async () => ({
         provider: "daytona",
         providerSandboxId: "sb_1",
-        providerUrl: null,
         services: [],
       }),
       delete: async () => {},
@@ -224,7 +221,6 @@ describe("sandboxes namespace", () => {
     expect(sandbox.created).toEqual({
       provider: "daytona",
       providerSandboxId: "sb_new",
-      providerUrl: "https://sb_new",
       services: [],
     });
   });
@@ -306,10 +302,10 @@ describe("Sandbox sub-namespaces", () => {
     const { provider, spies } = fullProvider();
     const sandbox = provider.sandboxes.get("sb_1");
     const web = svc("web", 3000);
-    const agent = svc("Coding Agent", 60998);
+    const agent = svc("primary", 60998);
     const loaded = sandbox.services!.load([agent, web]);
 
-    expect(loaded.list().map((s) => s.name)).toEqual(["Coding Agent", "web"]);
+    expect(loaded.list().map((s) => s.name)).toEqual(["primary", "web"]);
     expect(loaded.get(4000)).toBeNull();
 
     // revoke: routes reconcile to the loaded set minus the revoked service.
@@ -327,7 +323,7 @@ describe("Sandbox sub-namespaces", () => {
   it("services.load().refresh() reconciles routes then re-mints", async () => {
     const { provider, spies } = fullProvider();
     const sandbox = provider.sandboxes.get("sb_1");
-    const set = [svc("Coding Agent", 60998), svc("late", 4000)];
+    const set = [svc("primary", 60998), svc("late", 4000)];
     await sandbox.services!.load(set).refresh();
     expect(spies.syncRoutes).toHaveBeenCalledWith("sb_1", set);
     expect(spies.refreshUrls).toHaveBeenCalledWith("sb_1", set);
@@ -579,7 +575,6 @@ describe("unsupported operations on a minimal provider", () => {
         create: async () => ({
           provider: "daytona",
           providerSandboxId: "sb_1",
-          providerUrl: null,
           services: [],
         }),
         delete: async () => {},
