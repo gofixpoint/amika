@@ -166,7 +166,7 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		}
 		reader := bufio.NewReader(cmd.InOrStdin())
 		confirmed, err := confirmAction(
-			fmt.Sprintf("Delete service %q from rig %q?", name, rigRef),
+			fmt.Sprintf("Delete service %q from sandbox %q?", name, rigRef),
 			reader,
 		)
 		if err != nil {

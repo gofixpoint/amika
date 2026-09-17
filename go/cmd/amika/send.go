@@ -46,7 +46,7 @@ var sendCmd = &cobra.Command{
 	Short: "Send a message to a coding agent, creating a sandbox if needed",
 	Long: `Send a message to a coding agent via the remote agent-sessions API.
 
-If neither --session-id nor --rig is given, a rig is created behind the
+If neither --session-id nor --rig is given, a sandbox is created behind the
 scenes and a new chat is started; the returned session id can be passed back as
 --session-id to continue the conversation. The agent (claude or codex) comes
 from --agent, else the organization's default, else claude.
@@ -201,7 +201,7 @@ func printSendRepo(format output.Format, w io.Writer, name string) {
 // using only the flags themselves so it can run before the auth gate.
 //
 // Beyond the contradictions gitrepo knows about, `send` has one of its own:
-// --session-id and --rig address a rig that already exists, so no
+// --session-id and --rig address a sandbox that already exists, so no
 // repo is created and an explicitly requested one cannot be honored. Refusing
 // beats dropping it from the request, which would show up only in what the
 // agent could see. --no-git needs no such refusal — it asks for exactly what
@@ -215,7 +215,7 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, rigRef string) error {
 	}
 	if flag := gitrepo.RequestedFlag(cmd); flag != "" {
 		return fmt.Errorf(
-			"--%s cannot be combined with --session-id or --rig; it only applies to a rig this command creates",
+			"--%s cannot be combined with --session-id or --rig; it only applies to a sandbox this command creates",
 			flag)
 	}
 	return nil
@@ -225,7 +225,7 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, rigRef string) error {
 // clone, returning the URL to send and a short name to report (empty when
 // there is no repo to name).
 //
-// A message aimed at an existing chat (--session-id) or an existing rig
+// A message aimed at an existing chat (--session-id) or an existing sandbox
 // (--rig) creates nothing, so there is no repo to choose and the working
 // directory is not consulted at all.
 func sendRepo(cmd *cobra.Command, sessionID, rigRef string) (url, name string, err error) {

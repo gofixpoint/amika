@@ -8,8 +8,9 @@ import (
 )
 
 // legacyRigFlagAliases pairs each sandbox-era flag spelling with the rig-era
-// flag it must resolve to. It restates the mapping in internal/cliflags so a
-// change there has to be made deliberately in both places.
+// flag it must resolve to. It restates the mapping in internal/cliflags, which
+// catches an entry retargeted or dropped there but not one added — the two maps
+// are never compared, so a new alias lands with this file untouched.
 var legacyRigFlagAliases = map[string]string{
 	"sandbox":      "rig",
 	"sandbox-name": "rig-name",
@@ -44,6 +45,16 @@ func TestRigFlagsAcceptTheLegacySandboxSpelling(t *testing.T) {
 			if want := legacyRigFlagAliases[tc.legacy]; flag.Name != want {
 				t.Fatalf("--%s resolved to --%s, want --%s", tc.legacy, flag.Name, want)
 			}
+			// Reintroducing a legacy name on a command whose flags are
+			// registered before the normalizer reaches it does not panic: the
+			// rename silently keeps one flag under the rig name carrying the
+			// legacy registration's usage text. Every rig flag's usage names a
+			// rig, so reading it is what tells the two apart — the flag's own
+			// Name cannot, since the survivor is rig-named either way.
+			if !strings.Contains(strings.ToLower(flag.Usage), "rig") {
+				t.Fatalf("--%s resolved to a flag whose usage never says rig (%q); a legacy registration has displaced it",
+					tc.legacy, flag.Usage)
+			}
 		})
 	}
 }
@@ -52,9 +63,10 @@ func TestRigFlagsAcceptTheLegacySandboxSpelling(t *testing.T) {
 // on the rig flag the command actually reads.
 func TestLegacySandboxFlagCarriesItsValueToTheRigFlag(t *testing.T) {
 	cmd := resolveCommandPath(t, []string{"service", "create"})
-	// The command objects are package-level and shared across tests, so undo
-	// the parse rather than leaking a value into whatever runs next.
-	t.Cleanup(func() { _ = cmd.Flags().Set("rig", "") })
+	// The service commands are package-level objects shared across tests, and
+	// this parse writes to one. Hand them back through the same reset the rest
+	// of the package uses rather than leaving the value for whatever runs next.
+	t.Cleanup(func() { resetServiceFlags(t) })
 
 	if err := cmd.ParseFlags([]string{"--sandbox", "box"}); err != nil {
 		t.Fatalf("parsing --sandbox: %v", err)

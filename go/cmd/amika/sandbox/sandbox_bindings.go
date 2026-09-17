@@ -156,7 +156,7 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 		sandboxRef := strings.TrimSpace(args[0])
 		bindingTarget := args[1]
 		if sandboxRef == "" {
-			return fmt.Errorf("a sandbox reference is required")
+			return fmt.Errorf("a rig reference is required")
 		}
 		bindings, err := client.ListSandboxBindingsForSandbox(sandboxRef, rigBy)
 		if err != nil {

@@ -25,9 +25,23 @@ func NormalizeFlagName(_ *pflag.FlagSet, name string) pflag.NormalizedName {
 }
 
 // legacyRigFlagNames maps each sandbox-era flag name to the rig-era name that
-// replaced it. A name appearing here must not also be registered as a flag of
-// its own anywhere in the command tree: normalization is applied at
-// registration too, so such a flag would silently land on its replacement.
+// replaced it.
+//
+// A name appearing here must never also be registered as a flag of its own,
+// because normalization is applied at registration too, so the pair collides on
+// the rig name. Which way that breaks depends on the order the command was
+// built in, and neither way is pleasant:
+//
+//   - Normalizer already installed: pflag's AddFlag panics on the duplicate
+//     ("flag redefined"), taking every invocation of the binary down at startup.
+//   - Normalizer installed afterwards: SetNormalizeFunc's rename loop overwrites
+//     the first entry, leaving one flag under the rig name carrying the legacy
+//     registration's default and usage string. No panic, no error.
+//
+// The rig command tree is on the second path — sandboxcmd.New registers its
+// flags and only then is the built tree handed to rootCmd.AddCommand — so a
+// legacy name reintroduced there fails silently. TestRigFlagsAccept... in
+// package main guards against it by checking the surviving flag's usage text.
 var legacyRigFlagNames = map[string]string{
 	"sandbox":      "rig",
 	"sandbox-name": "rig-name",
