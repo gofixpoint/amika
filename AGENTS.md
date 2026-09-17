@@ -81,7 +81,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 ### CLI Commands (`go/cmd/amika/`)
 - `main.go` — Entry point, root Cobra command
 - `sandbox.go` — `sandbox create|list|connect|delete` commands
-- `auth.go` — `auth extract` command
+- `auth.go` — `auth login|logout|status` commands
 
 ### HTTP Server (`go/cmd/amika-server/`)
 - `main.go` — Entry point for the HTTP server (listens on `:8080` by default)
@@ -171,7 +171,7 @@ For user-facing docs (`docs/`, README):
 | `AMIKA_API_URL` | Override remote API base URL (default: `https://app.amika.dev`) |
 | `AMIKA_BINARY_PATH` | Absolute path to the `amika` executable recorded in generated config (the SSH `ProxyCommand`). Defaults to the running binary; set it inside a wrapper script so the wrapper names itself and the environment it exports survives |
 | `AMIKA_WORKOS_CLIENT_ID` | Override default WorkOS client ID for `amika auth login` |
-| `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker integration tests |
+| `AMIKA_RUN_EXPENSIVE_TESTS` | Gate for expensive Docker integration tests. No test opts into it today; see `docs/development/testing.md` |
 | `PORT` | Override listen address for `amika-server` (mutually exclusive with `-addr` flag) |
 
 ## Cursor Cloud specific instructions

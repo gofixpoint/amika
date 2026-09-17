@@ -108,15 +108,22 @@ Examples:
 		// line is reported as the usage error it is rather than as a login
 		// prompt.
 		nameIdx := cliargs.FirstOperand(forward, cliargs.SSHArgLetters)
-		if nameIdx < 0 {
-			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
-		}
 		// --local written after the subcommand would otherwise be forwarded to
 		// ssh verbatim. Only the options ahead of the sandbox name are amika's
 		// to reject: everything from the name onward is the remote command, so
-		// `rig ssh box git log --local` must reach git untouched.
-		if err := cliflags.RejectRemovedLocalFlagInArgs(forward[:nameIdx]); err != nil {
+		// `rig ssh box git log --local` must reach git untouched. With no name
+		// at all there is no remote command, so the whole line is options —
+		// and reporting the retired flag beats reporting the missing name,
+		// since removing --local is what makes the line valid again.
+		optionArgs := forward
+		if nameIdx >= 0 {
+			optionArgs = forward[:nameIdx]
+		}
+		if err := cliflags.RejectRemovedLocalFlagInArgs(optionArgs, cliargs.SSHArgLetters); err != nil {
 			return err
+		}
+		if nameIdx < 0 {
+			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
 		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err

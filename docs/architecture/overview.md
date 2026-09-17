@@ -8,7 +8,7 @@ For user-facing docs, see [README.md](../../README.md).
 
 **Rigs**: Persistent remote sandboxes provisioned through the Amika control plane. Agents get an isolated environment at `/home/amika/workspace`.
 
-**Credential discovery**: `amika auth extract` scans for locally stored API credentials from Claude Code, Codex, OpenCode, and Amp and renders them as shell environment assignments. Rigs themselves receive credentials from the control plane, not from the host.
+**Credential discovery**: `amika secret extract` scans for locally stored API credentials from Claude Code, Codex, OpenCode, and Amp and displays them masked, so they can be reviewed and optionally pushed as Amika secrets. Rigs themselves receive credentials from the control plane, not from the host.
 
 The `amika-server` binary additionally exposes a Docker-backed sandbox and materialization API over HTTP, including `ro`/`rw`/`rwcopy` mount modes. The `amika` CLI no longer has a local mode.
 
@@ -19,7 +19,7 @@ The `amika-server` binary additionally exposes a Docker-backed sandbox and mater
 | Command                                       | Description                                                                         |
 | --------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `amika sandbox create\|list\|connect\|delete` | Manage persistent remote rigs                                                       |
-| `amika auth extract`                          | Discover local credentials and print shell environment assignments                  |
+| `amika secret extract`                        | Discover local credentials, display them masked, and optionally push them as secrets |
 | `amika-server`                                | HTTP server exposing the same functionality as a REST API                           |
 
 See [cli-reference.md](../cli-reference.md) for full flag documentation.
@@ -33,7 +33,7 @@ go/
   cmd/amika/
     main.go              CLI entry point, root Cobra command
     sandbox.go           sandbox create/list/connect/delete commands
-    auth.go              auth extract command
+    auth.go              auth login/logout/status commands
   cmd/amika-server/
     main.go              HTTP server entry point (REST API)
 

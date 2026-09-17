@@ -1,16 +1,24 @@
-// Package cliflags holds flag-naming rules shared across the amika CLI.
+// Package cliflags holds the CLI's rules for flag spellings that are no longer
+// current: the ones that were renamed, and the ones that were removed outright.
 //
 // The CLI renamed its core noun from "sandbox" to "rig": the command is now
 // `amika rig`, with `sandbox` kept as a Cobra alias. The flags that name a rig
 // followed, so `--rig`, `--rig-name`, and `--rig-by` are the spellings help
 // output advertises. The `--sandbox…` names they replaced keep working, so
 // scripts written against the old vocabulary do not break.
+//
+// Removal is the other half. `--local`, which ran rigs as local Docker
+// containers, is gone; the flag stays registered but hidden on the trees that
+// offered it so it still parses and can be reported as removed rather than as
+// an unknown flag. Both mechanisms live here so a retired spelling has one
+// place to look.
 package cliflags
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/gofixpoint/amika/go/internal/cliargs"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -79,13 +87,22 @@ func RejectRemovedLocalFlag(cmd *cobra.Command) error {
 // RejectRemovedLocalFlagInArgs is RejectRemovedLocalFlag for a command that
 // sets DisableFlagParsing and forwards its tail to another program: --local
 // never reaches a pflag set there, so the raw args have to be scanned instead.
-// Without this, `amika rig ssh --local box` would forward --local to ssh, and
-// `amika rig --local ssh box` would parse it and silently ignore it.
-func RejectRemovedLocalFlagInArgs(rawArgs []string) error {
+// Without this, `amika rig ssh --local box` would forward --local to ssh.
+//
+// argLetters names the short options of the underlying utility that take a
+// separate value, so a token consumed as one is skipped rather than read as a
+// flag of its own. That keeps this in step with cliargs.FirstOperand, which
+// callers use to bound the slice passed here: without it `ssh -i --local box`
+// would be rejected over an identity file literally named "--local".
+func RejectRemovedLocalFlagInArgs(rawArgs []string, argLetters string) error {
 	long := "--" + RemovedLocalFlagName
-	for _, arg := range rawArgs {
+	for i := 0; i < len(rawArgs); i++ {
+		arg := rawArgs[i]
 		if arg == long || strings.HasPrefix(arg, long+"=") {
 			return removedLocalFlagError()
+		}
+		if cliargs.ConsumesNextArg(arg, argLetters) {
+			i++
 		}
 	}
 	return nil

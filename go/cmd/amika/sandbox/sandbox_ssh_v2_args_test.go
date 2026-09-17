@@ -248,6 +248,9 @@ func TestSSHV2RejectsRemovedLocalFlag(t *testing.T) {
 		{name: "after the subcommand", args: []string{"amika", "sandbox", "ssh", "--local", "my-box"}},
 		{name: "with an explicit value", args: []string{"amika", "sandbox", "--local=false", "ssh", "my-box"}},
 		{name: "among ssh options", args: []string{"amika", "sandbox", "ssh", "-t", "--local", "my-box"}},
+		// With no rig name there is no remote command to protect, and the
+		// retired flag is the more useful of the two things wrong here.
+		{name: "with no rig name at all", args: []string{"amika", "sandbox", "ssh", "--local"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root, h, _ := newSSHV2Harness(t, tt.args)
@@ -323,6 +326,13 @@ func TestSSHV2ForwardsRemoteCommandLocalFlag(t *testing.T) {
 		{
 			name: "after a bare double dash",
 			args: []string{"amika", "sandbox", "ssh", "my-box", "--", "mycmd", "--local"},
+			want: "--local",
+		},
+		{
+			// The scan skips a token an ssh short option consumes, so an
+			// identity file named "--local" is a value, not amika's flag.
+			name: "as the value of an argument-taking ssh option",
+			args: []string{"amika", "sandbox", "ssh", "-i", "--local", "my-box"},
 			want: "--local",
 		},
 	} {

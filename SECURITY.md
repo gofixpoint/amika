@@ -115,9 +115,10 @@ A few things worth knowing when assessing Amika's security posture:
 
 - Rigs receive their coding-agent credentials from the Amika control plane. The
   `amika` CLI does not copy credential files from your host into a rig; the
-  `--local` mode that did was removed. `amika auth extract` still discovers
-  local credentials (Claude, Codex, OpenCode, Amp) and prints them as shell
-  assignments, but only on request. See `go/internal/auth/`.
+  `--local` mode that did was removed. `amika secret extract` still discovers
+  local credentials (Claude, Codex, OpenCode, Amp), but only on request, and
+  displays them masked; it uploads nothing unless you pass `--push`. See
+  `go/internal/auth/`.
 - Ports 60899–60999 are reserved inside sandbox containers for Amika services.
   Both the CLI and the API reject user-specified ports in that range. See
   [`docs/sandbox-configuration.md`](docs/sandbox-configuration.md).
