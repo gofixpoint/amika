@@ -13,6 +13,8 @@ import { execFailureText } from "../../shared/adapter";
 const SUDO_PRESERVE_ENV_BASE = [
   "AMIKA_AGENT_CWD",
   "AMIKA_OPENCODE_WEB",
+  "AMIKA_SANDBOX_NAME",
+  "AMIKA_RIG_NAME",
   "OPENCODE_SERVER_PASSWORD",
 ] as const;
 

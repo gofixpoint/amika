@@ -143,6 +143,7 @@ describe("createDaytonaSandbox", () => {
     expect(Object.keys(envVars).sort()).toEqual([
       "AMIKA_AGENT_CWD",
       "AMIKA_OPENCODE_WEB",
+      "AMIKA_RIG_NAME",
       "AMIKA_SANDBOX_NAME",
     ]);
     expect(envVars.AMIKA_OPENCODE_WEB).toBe("1");
@@ -150,6 +151,7 @@ describe("createDaytonaSandbox", () => {
     // The sandbox name is baked into the container env so the launched agent
     // (a non-login exec that doesn't source /etc/environment) can see it.
     expect(envVars.AMIKA_SANDBOX_NAME).toBe("sb");
+    expect(envVars.AMIKA_RIG_NAME).toBe("sb");
     // A scrub-safe base earns the clean-env marker, which lets
     // snapshot-and-delete distinguish this sandbox from ones with baked-in
     // container env secrets.
