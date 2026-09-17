@@ -1,5 +1,5 @@
-// Guards the compatibility promise in the README: an object literal written
-// against the pre-rig (0.11) type surface must still type-check against the
+// Guards the package's compatibility promise: an object literal written against
+// the pre-rig (0.11) type surface must still type-check against the
 // sandbox-named aliases. These fixtures carry only the fields that release
 // required, so adding a required rig-spelled mirror to any of these types
 // breaks this file at `pnpm typecheck` rather than in a consumer's build.

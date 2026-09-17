@@ -931,9 +931,9 @@ describe("AmikaClient snapshot fetch and wait", () => {
     );
   });
 
-  // These strings are user-facing and changed from 0.11 ("sandbox ... failed"),
-  // which the README documents as a deliberate change. Pin them so a later edit
-  // cannot move them again silently.
+  // These strings are user-facing and changed from 0.11 ("sandbox ... failed")
+  // when the SDK moved to rig terminology. Pin them so a later edit cannot move
+  // them again silently.
   it("throws rig-worded fallbacks when the server gives no errorMessage", async () => {
     const failed = { status: 200, body: { name: "dev", state: "failed" } };
     const { fetch } = mockFetch([failed, failed, failed]);
