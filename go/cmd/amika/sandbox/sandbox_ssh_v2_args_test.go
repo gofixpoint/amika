@@ -9,6 +9,7 @@ package sandboxcmd
 import (
 	"bytes"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -246,6 +247,7 @@ func TestSSHV2RejectsRemovedLocalFlag(t *testing.T) {
 		{name: "before the subcommand", args: []string{"amika", "sandbox", "--local", "ssh", "my-box"}},
 		{name: "after the subcommand", args: []string{"amika", "sandbox", "ssh", "--local", "my-box"}},
 		{name: "with an explicit value", args: []string{"amika", "sandbox", "--local=false", "ssh", "my-box"}},
+		{name: "among ssh options", args: []string{"amika", "sandbox", "ssh", "-t", "--local", "my-box"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root, h, _ := newSSHV2Harness(t, tt.args)
@@ -299,6 +301,41 @@ func TestSSHV2Help(t *testing.T) {
 				if !strings.Contains(got, want) {
 					t.Errorf("help output missing %q; got:\n%s", want, got)
 				}
+			}
+		})
+	}
+}
+
+// Only the options ahead of the sandbox name are amika's to reject. Everything
+// from the name onward is the command to run on the rig, so a remote program's
+// own --local has to reach it untouched rather than tripping the removal check.
+func TestSSHV2ForwardsRemoteCommandLocalFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "remote command flag",
+			args: []string{"amika", "sandbox", "ssh", "my-box", "git", "log", "--local"},
+			want: "--local",
+		},
+		{
+			name: "after a bare double dash",
+			args: []string{"amika", "sandbox", "ssh", "my-box", "--", "mycmd", "--local"},
+			want: "--local",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, h, _ := newSSHV2Harness(t, tt.args)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !h.ran {
+				t.Fatal("ssh should have run")
+			}
+			if !slices.Contains(h.argv, tt.want) {
+				t.Fatalf("argv = %#v, want it to carry %q through to the remote command", h.argv, tt.want)
 			}
 		})
 	}

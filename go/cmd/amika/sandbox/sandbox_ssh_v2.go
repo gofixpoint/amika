@@ -100,13 +100,8 @@ Examples:
 			return err
 		}
 		// This command parses its own flags, so the root's PersistentPreRunE
-		// ran before --local was parsed and could not catch it. Check both
-		// halves: written before the subcommand it lands in own, and after it
-		// would otherwise be forwarded to ssh verbatim.
+		// ran before --local was parsed and could not catch it there.
 		if err := cliflags.RejectRemovedLocalFlag(cmd); err != nil {
-			return err
-		}
-		if err := cliflags.RejectRemovedLocalFlagInArgs(forward); err != nil {
 			return err
 		}
 		// Locate the sandbox name before requiring auth, so an unusable command
@@ -115,6 +110,13 @@ Examples:
 		nameIdx := cliargs.FirstOperand(forward, cliargs.SSHArgLetters)
 		if nameIdx < 0 {
 			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
+		}
+		// --local written after the subcommand would otherwise be forwarded to
+		// ssh verbatim. Only the options ahead of the sandbox name are amika's
+		// to reject: everything from the name onward is the remote command, so
+		// `rig ssh box git log --local` must reach git untouched.
+		if err := cliflags.RejectRemovedLocalFlagInArgs(forward[:nameIdx]); err != nil {
+			return err
 		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
