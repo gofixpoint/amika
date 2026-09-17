@@ -57,7 +57,7 @@ func getSnapshotClient() (*apiclient.Client, error) {
 }
 
 func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
-	sandboxRef, _ := cmd.Flags().GetString("sandbox")
+	rigRef, _ := cmd.Flags().GetString("rig")
 	name, _ := cmd.Flags().GetString("name")
 	mode, _ := cmd.Flags().GetString("mode")
 	description, _ := cmd.Flags().GetString("description")
@@ -71,8 +71,8 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("snapshot create with --%s %s requires --no-interactive together with --mode and --name", output.FlagName, format)
 	}
 
-	if strings.TrimSpace(sandboxRef) == "" {
-		return fmt.Errorf("--sandbox is required")
+	if strings.TrimSpace(rigRef) == "" {
+		return fmt.Errorf("--rig is required")
 	}
 
 	client, err := getSnapshotClient()
@@ -114,7 +114,7 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 	// For scrub-and-delete, show what will be removed and confirm before the
 	// destructive capture (interactive runs only).
 	if mode == "scrub_and_delete" && !noInteractive {
-		preview, err := client.GetSandboxScrubPreview(sandboxRef)
+		preview, err := client.GetSandboxScrubPreview(rigRef)
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	snap, err := client.CreateSandboxSnapshot(apiclient.CreateSandboxSnapshotRequest{
-		SandboxRef:  sandboxRef,
+		SandboxRef:  rigRef,
 		Name:        name,
 		Description: description,
 		Mode:        mode,
@@ -168,7 +168,7 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 
 func runSnapshotList(cmd *cobra.Command, _ []string) error {
 	long, _ := cmd.Flags().GetBool("long")
-	sandboxRef, _ := cmd.Flags().GetString("sandbox")
+	rigRef, _ := cmd.Flags().GetString("rig")
 	repoRef, _ := cmd.Flags().GetString("repo")
 
 	client, err := getSnapshotClient()
@@ -177,8 +177,8 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 	}
 
 	var sourceSandboxID, repositoryID string
-	if strings.TrimSpace(sandboxRef) != "" {
-		sourceSandboxID, err = resolveSandboxID(client, sandboxRef)
+	if strings.TrimSpace(rigRef) != "" {
+		sourceSandboxID, err = resolveSandboxID(client, rigRef)
 		if err != nil {
 			return err
 		}
@@ -429,14 +429,14 @@ func init() {
 	snapshotCmd.AddCommand(snapshotListCmd)
 	snapshotCmd.AddCommand(snapshotDeleteCmd)
 
-	snapshotCreateCmd.Flags().String("sandbox", "", "Source sandbox to snapshot (name or id)")
+	snapshotCreateCmd.Flags().String("rig", "", "Source rig to snapshot (name or id)")
 	snapshotCreateCmd.Flags().String("name", "", "Name for the snapshot")
 	snapshotCreateCmd.Flags().String("mode", "", "Capture mode: scrub_and_delete or full (required with --no-interactive)")
 	snapshotCreateCmd.Flags().String("description", "", "Optional description shown in the snapshot list")
 	snapshotCreateCmd.Flags().Bool("no-interactive", false, "Do not prompt; requires --mode and --name")
 
 	snapshotListCmd.Flags().BoolP("long", "l", false, "Show additional columns")
-	snapshotListCmd.Flags().String("sandbox", "", "Only show snapshots captured from this sandbox (name or id)")
+	snapshotListCmd.Flags().String("rig", "", "Only show snapshots captured from this rig (name or id)")
 	snapshotListCmd.Flags().String("repo", "", "Only show snapshots for this repository (name or id)")
 
 	snapshotDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")

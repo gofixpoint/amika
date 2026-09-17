@@ -26,7 +26,7 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	if send == nil {
 		t.Fatal("send command not registered on rootCmd")
 	}
-	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "git", "repo", "no-git", "stream"} {
+	for _, name := range []string{"agent", "session-id", "rig", "new-session", "git", "repo", "no-git", "stream"} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
 		}
@@ -310,16 +310,16 @@ func TestValidateSendRepoFlags(t *testing.T) {
 	})
 
 	t.Run("an existing target refuses an explicit repo rather than dropping it", func(t *testing.T) {
-		// Before inference existed, --repo with --sandbox reached the API as-is.
+		// Before inference existed, --repo with --rig reached the API as-is.
 		// Silently discarding it would be a regression visible only in what the
 		// agent could see, so it is an error.
 		for _, flag := range []string{"--git", "--repo"} {
-			for _, tc := range []struct{ sessionID, sandboxRef string }{
+			for _, tc := range []struct{ sessionID, rigRef string }{
 				{sessionID: "sess-1"},
-				{sandboxRef: "my-sandbox"},
+				{rigRef: "my-rig"},
 			} {
-				err := validateSendRepoFlags(newCmd(t, flag, "https://github.com/a/b.git"), tc.sessionID, tc.sandboxRef)
-				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --sandbox") {
+				err := validateSendRepoFlags(newCmd(t, flag, "https://github.com/a/b.git"), tc.sessionID, tc.rigRef)
+				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --rig") {
 					t.Fatalf("err = %v for %s %+v, want a refusal", err, flag, tc)
 				}
 				if !strings.Contains(err.Error(), flag) {

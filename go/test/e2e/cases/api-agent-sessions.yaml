@@ -9,7 +9,7 @@ name: agent-session chats via send and sessions (send, continue, stream, list, s
 # command. `send` drives the newer agent-sessions API instead: durable session
 # ids, continuation across turns, and an SSE streaming transport.
 #
-# The sandbox is created explicitly up front and passed via `--sandbox`, rather
+# The sandbox is created explicitly up front and passed via `--rig`, rather
 # than letting `send` provision one behind the scenes. `send`'s auto-create path
 # is the safer thing to leave uncovered here: the sandbox id comes back only in
 # the command's own output, so a turn that creates a sandbox and then fails
@@ -53,7 +53,7 @@ steps:
     # a deterministic assertion. The agent's reply text is deliberately NOT
     # asserted: model output is nondeterministic, so the case checks the
     # envelope (a string response, no error) and not the words in it.
-    cmd: [send, "Reply with exactly the word: pong", --sandbox, "{{sandbox_name}}", --agent, claude, -o, json]
+    cmd: [send, "Reply with exactly the word: pong", --rig, "{{sandbox_name}}", --agent, claude, -o, json]
     expect:
       exit: 0
       schema: AgentSessionSendResponse

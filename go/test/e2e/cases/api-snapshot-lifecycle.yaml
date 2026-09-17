@@ -35,7 +35,7 @@ steps:
       cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: capture a full snapshot and wait until it settles
-    cmd: [snapshot, create, --no-interactive, --mode, full, --name, "e2e-{{sandbox_name}}", --sandbox, "{{sandbox_name}}", -o, json]
+    cmd: [snapshot, create, --no-interactive, --mode, full, --name, "e2e-{{sandbox_name}}", --rig, "{{sandbox_name}}", -o, json]
     expect:
       exit: 0
       schema: SandboxSnapshot

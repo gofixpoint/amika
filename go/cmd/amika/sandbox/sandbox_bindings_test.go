@@ -109,7 +109,7 @@ func TestSandboxBindingsDeleteUsageListsVariants(t *testing.T) {
 	usage := deleteCmd.UsageString()
 	want := "Usage:\n" +
 		"  amika sandbox bindings delete <binding-id> [flags]\n" +
-		"  amika sandbox bindings delete <sandbox-ref> <target> [flags]\n"
+		"  amika sandbox bindings delete <rig-ref> <target> [flags]\n"
 	if !strings.HasPrefix(usage, want) {
 		t.Fatalf("usage =\n%s\nwant prefix =\n%s", usage, want)
 	}
@@ -142,10 +142,10 @@ func TestRunSandboxBindingsListJSON(t *testing.T) {
 	t.Setenv("AMIKA_API_KEY", "test-key")
 
 	cmd := newBindingsTestCommand(t)
-	if err := cmd.Flags().Set("sandbox", "org/box"); err != nil {
+	if err := cmd.Flags().Set("rig", "org/box"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Flags().Set("sandbox-by", "id"); err != nil {
+	if err := cmd.Flags().Set("rig-by", "id"); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -215,8 +215,8 @@ func newBindingsTestCommand(t *testing.T) *cobra.Command {
 	cmd.Flags().Bool("local", false, "")
 	cmd.Flags().String("remote-target", "", "")
 	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("sandbox", "", "")
-	cmd.Flags().String("sandbox-by", "ref", "")
+	cmd.Flags().String("rig", "", "")
+	cmd.Flags().String("rig-by", "ref", "")
 	cmd.Flags().Bool("force", false, "")
 	return cmd
 }

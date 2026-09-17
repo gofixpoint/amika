@@ -32,7 +32,7 @@ steps:
       cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: create a service on the running sandbox
-    cmd: [service, create, --sandbox, "{{sandbox_name}}", --name, e2e-svc, --port, "3000", --url-scheme, http, -o, json]
+    cmd: [service, create, --rig, "{{sandbox_name}}", --name, e2e-svc, --port, "3000", --url-scheme, http, -o, json]
     expect:
       exit: 0
       stdout_json:
@@ -44,16 +44,16 @@ steps:
     resource:
       type: service
       name: e2e-svc
-      cleanup: [service, delete, --sandbox, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
+      cleanup: [service, delete, --rig, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
 
   - name: list services and confirm ours is present
-    cmd: [service, list, --sandbox-name, "{{sandbox_name}}", -o, json]
+    cmd: [service, list, --rig-name, "{{sandbox_name}}", -o, json]
     expect:
       exit: 0
       stdout_contains: e2e-svc
 
   - name: delete the service
-    cmd: [service, delete, --sandbox, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
+    cmd: [service, delete, --rig, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
     expect:
       exit: 0
       stdout_json:
