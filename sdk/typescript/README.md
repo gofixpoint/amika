@@ -1,6 +1,6 @@
 # @amika/sdk
 
-TypeScript SDK for [Amika](https://github.com/gofixpoint/amika). A 1:1 port of the Go API client at `go/internal/apiclient`. Same method names, same input/output shapes (camelCased), same HTTP behavior — talks to the cloud API at `https://app.amika.dev/api/v0beta1`.
+TypeScript SDK for [Amika](https://github.com/gofixpoint/amika). Ported from the Go API client at `go/internal/apiclient`, with the same input/output shapes (camelCased) and the same HTTP behavior. Method names and paths diverge: this SDK says rig where Go still says sandbox. Talks to the cloud API at `https://app.amika.dev/api/v0beta1`.
 
 ## Install
 
@@ -22,8 +22,8 @@ await amika.createSandbox({ name: "hello-amika" }); // same call, deprecated nam
 The aliasing is exhaustive:
 
 - **Methods** — `listSandboxes`, `createSandbox`, `getSandbox`, `waitForSandbox*`, `startSandbox`, `stopSandbox`, `deleteSandbox`, `*SandboxService*`, `*SandboxSnapshot*`, and `getSandboxScrubPreview` all delegate to their `Rig` counterparts and issue the same rig-named request.
-- **Types** — every sandbox-named type still resolves, in one of three ways: `CreateSandboxRequest` is a plain alias of `CreateRigRequest`; `RemoteSandbox`, `SandboxSnapshot`, and `SandboxServiceResource` resolve to their rig type with the rig-spelled fields relaxed to optional (see below); and `CreateSandboxSnapshotRequest` is spelled out separately so `sandboxRef` stays required.
-- **Fields** — a response from a type with a sandbox-named alias carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, `service.rigId` and `service.sandboxId`. On request objects either spelling works and a non-empty rig one wins, at all three sites that take a pair: `createRigSnapshot({ rigRef | sandboxRef })`, `sendAgentSession({ rigId | sandboxId })`, and `listRigSnapshots({ sourceRigId | sourceSandboxId })`.
+- **Types** — all nine sandbox-named types still resolve, in one of three ways. Five are plain aliases of their rig type: `CreateSandboxRequest`, `RemoteSandboxService`, `RemoteSandboxCreator`, `SandboxServiceRequest`, and `SandboxScrubPreview`. Three resolve to their rig type with the rig-spelled fields relaxed to optional: `RemoteSandbox`, `SandboxSnapshot`, and `SandboxServiceResource` (see below). One, `CreateSandboxSnapshotRequest`, is spelled out separately so `sandboxRef` stays required.
+- **Fields** — a response from a type with a sandbox-named alias carries both spellings with the same value: `rig.rigPreset` and `rig.sandboxPreset`, `snapshot.sourceRigId` and `snapshot.sourceSandboxId`, `service.rigId` and `service.sandboxId`. On request objects either spelling works and a non-empty rig one wins, in all three request shapes that carry a pair: `createRigSnapshot({ rigRef | sandboxRef })`, `sendAgentSession({ rigId | sandboxId })` (and `sendAgentSessionStream`, which takes the same request), and `listRigSnapshots({ sourceRigId | sourceSandboxId })`.
 - **Functional-test env vars** — `AMIKA_TEST_RIG_PROVIDER` and `AMIKA_TEST_RIG_NAME_PREFIX` fall back to `AMIKA_TEST_SANDBOX_PROVIDER` and `AMIKA_TEST_SANDBOX_NAME_PREFIX`.
 
 The SDK populates both spellings on every value it returns, so reading either is
@@ -45,21 +45,30 @@ than the deprecated one, they carry only the schema's `sandboxId`,
 `sandboxName`, and `createdSandbox`. Those name a wire object with no rig
 identity of its own, and the wire stays `sandbox_*` either way.
 
-Three behavior changes are deliberate. A decoded value now carries the rig-spelled
-mirrors as extra own keys — `providerRigId`, `rigPreset` and `rigSize` on a rig,
-`sourceRigId`, `sourceRigName`, `rigPreset` and `rigSize` on a snapshot, `rigId`
-on a service. Field access is unaffected, but a whole-object comparison sees
-them, so `expect(rig).toEqual(fixtureFrom0_11)`, a snapshot test, or anything
-keyed on `Object.keys` or `JSON.stringify` of a decoded value needs updating.
+Four behavior changes are deliberate. Every request moved from `/sandboxes*` to
+`/rigs*`, including the ones the deprecated aliases issue, so a test double, a
+recorded HTTP fixture, or a proxy allowlist pinned to the old paths needs
+updating. The endpoint tables below give the new path for each method. The
+server has served both since before this release, so a live call is unaffected.
 
-Second, `createRigSnapshot` and its
-`createSandboxSnapshot` alias throw `AmikaError` when neither `rigRef` nor
-`sandboxRef` names a source rig, including when both are the empty string. 0.11
-sent `sandbox_ref: ""` and let the server reject it, so a caller whose ref came
-from an unset variable now sees a client-side `AmikaError` instead of an
-`AmikaHTTPError`. Catch `AmikaError` (the base of both) if you relied on that.
+Second, a decoded value now carries the rig-spelled mirrors as extra own keys:
+`providerRigId`, `rigPreset` and `rigSize` on a rig, `sourceRigId`,
+`sourceRigName`, `rigPreset` and `rigSize` on a snapshot, `rigId` on a service.
+Field access is unaffected, but a whole-object comparison sees them, so
+`expect(rig).toEqual(fixtureFrom0_11)`, a snapshot test, or anything keyed on
+`Object.keys` or `JSON.stringify` of a decoded value needs updating. The same
+applies at the type level: a `Record<keyof RemoteSandbox, T>` or any other
+exhaustive `keyof` map written against 0.11 now misses the added keys.
 
-Third, the error text the SDK produces itself now says rig. `waitForRig` and its
+Third, `createRigSnapshot` and its `createSandboxSnapshot` alias throw
+`AmikaError` unless one of `rigRef` and `sandboxRef` is a non-empty string. Any
+falsy value counts as absent, so an untyped caller passing `null` or `""` throws
+where 0.11 sent `sandbox_ref` through and let the server reject it. A caller
+whose ref came from an unset variable now sees a client-side `AmikaError`
+instead of an `AmikaHTTPError`. Catch `AmikaError` (the base of both) if you
+relied on that.
+
+Fourth, the error text the SDK produces itself now says rig. `waitForRig` and its
 `waitForSandbox` alias throw `rig provisioning failed` where 0.11 threw
 `sandbox provisioning failed`, and likewise for `rig start failed`,
 `rig stop failed`, `rig snapshot capture failed`, and the agent-send
@@ -121,7 +130,7 @@ new AmikaClient({
 
 ## API surface
 
-Methods on `AmikaClient` mirror Go's `*apiclient.Client` 1:1. The "Deprecated alias" column names the pre-rig spelling, which still works.
+Methods on `AmikaClient` mirror Go's `*apiclient.Client` in shape and HTTP behavior, though not in name since the rig rename. The "Deprecated alias" column names the pre-rig spelling, which still works.
 
 ### Rigs
 

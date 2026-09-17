@@ -74,9 +74,12 @@ export interface AmikaClientOptions {
 }
 
 /**
- * AmikaClient calls the remote Amika API with a bearer token. Mirrors Go's
- * `apiclient.Client` 1:1 — method names, inputs, return shapes, and HTTP
- * behavior (timeouts, polling intervals, 404 handling) all match.
+ * AmikaClient calls the remote Amika API with a bearer token. Inputs, return
+ * shapes, and HTTP behavior (timeouts, polling intervals, 404 handling) still
+ * match Go's `apiclient.Client` exactly. Method names and request paths no
+ * longer do: Go still spells these `ListSandboxes` and calls `/sandboxes`,
+ * while this SDK moved to rig and keeps the sandbox names as deprecated
+ * forwards. Port a change here to Go by behavior, not by name.
  *
  * `rig` is the canonical product term. Every `*Rig*` method below is the real
  * implementation; the `*Sandbox*` method beside it is a deprecated alias that
@@ -474,8 +477,9 @@ export class AmikaClient {
    */
   async listRigSnapshots(filters?: {
     repositoryId?: string;
-    /** Source rig id. `sourceSandboxId` is the legacy spelling. */
+    /** Source rig id. */
     sourceRigId?: string;
+    /** @deprecated Use `sourceRigId`. */
     sourceSandboxId?: string;
   }): Promise<RigSnapshot[]> {
     const params = new URLSearchParams();

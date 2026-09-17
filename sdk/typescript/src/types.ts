@@ -781,7 +781,11 @@ interface RigSnapshotCaptureFields {
  */
 export type CreateRigSnapshotRequest = RigSnapshotCaptureFields &
   (
-    | { rigRef: string; sandboxRef?: string }
+    | {
+        rigRef: string;
+        /** @deprecated Use `rigRef`. */
+        sandboxRef?: string;
+      }
     | { sandboxRef: string; rigRef?: string }
   );
 
