@@ -6,17 +6,11 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 
 ## Core Concepts
 
-**Docker-backed sandboxes**: Persistent containers with controlled filesystem mounts. Agents get an isolated environment at `/home/amika/workspace` with fine-grained access control per mount.
+**Rigs**: Persistent remote sandboxes provisioned through the Amika control plane. Agents get an isolated environment at `/home/amika/workspace`.
 
-**Materialization**: Ephemeral Docker containers run scripts or commands, and their output files are copied to a host destination via `rsync`.
+**Credential discovery**: `amika auth extract` scans for locally stored API credentials from Claude Code, Codex, OpenCode, and Amp and renders them as shell environment assignments. Rigs themselves receive credentials from the control plane, not from the host.
 
-**Mount modes**: Host directories can be mounted into sandboxes with three access modes:
-
-- `ro` — read-only bind mount
-- `rw` — read-write bind mount (writes sync back to host)
-- `rwcopy` — read-write snapshot in a Docker volume (default; host is not modified)
-
-**Credential discovery**: Amika scans for locally stored API credentials from Claude Code, Codex, OpenCode, and Amp, then auto-mounts them into containers so coding agents can authenticate without manual setup.
+The `amika-server` binary additionally exposes a Docker-backed sandbox and materialization API over HTTP, including `ro`/`rw`/`rwcopy` mount modes. The `amika` CLI no longer has a local mode.
 
 **Preset images**: Bundled Dockerfiles (`coder`, `claude`) that include common dev tools and coding agent CLIs. Auto-built on first use.
 
@@ -61,10 +55,6 @@ go/
       auth.go              CredentialSet type, env var rendering
       discovery.go         Multi-source credential scanning with priority
 
-    agentconfig/         Agent credential auto-mounting
-      agentconfig.go       Discovers Claude/Codex/OpenCode config files and
-                           produces MountBindings for containers
-
     config/              XDG path resolution and state file locations
     basedir/             XDG base directory resolution
     httpapi/             HTTP handler for the REST API server
@@ -81,10 +71,10 @@ go/
 
 ## System Dependencies
 
-| Tool   | Required By                        | Purpose                                    |
-| ------ | ---------------------------------- | ------------------------------------------ |
-| Docker | `materialize`, `sandbox`, `volume` | Container runtime for sandboxes            |
-| rsync  | `materialize`                      | Copies output files from container to host |
+| Tool   | Required By    | Purpose                                    |
+| ------ | -------------- | ------------------------------------------ |
+| Docker | `amika-server` | Container runtime for sandboxes            |
+| rsync  | `amika-server` | Copies output files from container to host |
 
 ## State Storage
 

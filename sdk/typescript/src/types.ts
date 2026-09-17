@@ -345,7 +345,6 @@ export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
       email: nullableStr(c["email"]),
     })),
     origin: optionalStr(w["origin"]),
-
   };
 }
 

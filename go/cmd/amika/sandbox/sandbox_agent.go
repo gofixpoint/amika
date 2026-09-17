@@ -155,7 +155,7 @@ func isStdinPiped() bool {
 var sandboxAgentSendCmd = &cobra.Command{
 	Use:   "agent-send <name> [message]",
 	Short: "Send a message to an agent in a sandbox",
-	Long: `Send a prompt to an AI agent CLI running inside a sandbox container.
+	Long: `Send a prompt to an AI agent CLI running inside a sandbox.
 The message can be provided as a positional argument or piped via stdin.
 By default the command waits for the agent to finish and streams the response.
 Use --no-wait to send the message and return immediately.

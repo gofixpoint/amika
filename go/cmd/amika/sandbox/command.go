@@ -38,6 +38,10 @@ func New() *cobra.Command {
 	// Rigs are always remote, so --remote defaults to true and is kept as an
 	// accepted no-op so existing scripts and CI that still pass it keep working.
 	sandboxCmd.PersistentFlags().Bool("remote", true, "Operate on remote rigs; accepted as a no-op since rigs are always remote")
+	// Registered only so the retired --local parses and the root's
+	// PersistentPreRunE can report its removal instead of "unknown flag".
+	sandboxCmd.PersistentFlags().Bool("local", false, "Removed; rigs are always remote")
+	sandboxCmd.PersistentFlags().MarkHidden("local")
 	sandboxCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	sandboxCmd.PersistentFlags().MarkHidden("remote-target")
 
@@ -55,7 +59,7 @@ func New() *cobra.Command {
 	sandboxCreateCmd.Flags().StringArray("agent-credential-type", nil, "Pin an agent credential by type (KIND=TYPE, type is oauth or api-key). Repeatable per kind.")
 	sandboxCreateCmd.Flags().StringArray("no-agent-credential", nil, "Skip injecting any credential of this kind (e.g. --no-agent-credential codex). Repeatable per kind.")
 	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
-	sandboxCreateCmd.Flags().String("setup-script", "", "Mount a local script file to /usr/local/etc/amikad/setup/setup.sh in the container (read-only)")
+	sandboxCreateCmd.Flags().String("setup-script", "", "Upload a local script file to run as /usr/local/etc/amikad/setup/setup.sh in the rig")
 	sandboxCreateCmd.Flags().Bool("no-setup", false, "Skip the setup script (uses a no-op script instead)")
 	sandboxCreateCmd.Flags().String("branch", "", "Check out this git branch, or create it if it doesn't exist.")
 	sandboxCreateCmd.Flags().String("new-branch", "", "Create a new git branch. With --branch, starts from that branch; otherwise starts from the current checkout.")

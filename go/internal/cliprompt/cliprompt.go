@@ -1,7 +1,6 @@
-package main
-
-// confirm.go holds the interactive confirmation prompt shared by the
-// destructive top-level commands.
+// Package cliprompt holds the interactive confirmation prompt shared by the
+// CLI's destructive commands.
+package cliprompt
 
 import (
 	"bufio"
@@ -9,7 +8,11 @@ import (
 	"strings"
 )
 
-func confirmAction(message string, reader *bufio.Reader) (bool, error) {
+// Confirm asks message as a yes/no question and reads the answer from reader,
+// repeating the question until it gets one it understands. It returns an error
+// only when reader fails (including EOF), so a caller that cannot prompt
+// surfaces that rather than silently treating it as "no".
+func Confirm(message string, reader *bufio.Reader) (bool, error) {
 	for {
 		fmt.Printf("%s [y/n] ", message)
 		answer, err := reader.ReadString('\n')

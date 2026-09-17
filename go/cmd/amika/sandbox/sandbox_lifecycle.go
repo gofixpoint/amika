@@ -363,7 +363,7 @@ func repoBasenameFromURL(repoURL string) string {
 var sandboxConnectCmd = &cobra.Command{
 	Use:   "connect <name>",
 	Short: "Connect to a sandbox console",
-	Long:  `Connect to a running sandbox container and open an interactive shell.`,
+	Long:  `Connect to a running sandbox and open an interactive shell.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]

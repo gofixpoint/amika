@@ -25,7 +25,7 @@ amika sandbox list --remote -o json | jq '.[].name'
 amika snapshot list -o json-pretty
 ```
 
-Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--yes` for `sandbox create` mounts, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
+Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
 
 ```bash
 # Create a sandbox and capture its name for a script
@@ -47,9 +47,9 @@ These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `co
 
 | Flag       | Default | Description                                            |
 | ---------- | ------- | ------------------------------------------------------ |
-| `--remote` | `false` | Operate on remote rigs. This is the default; the flag is accepted as a no-op so existing scripts keep working |
+| `--remote` | `true`  | Operate on remote rigs. Rigs are always remote, so the flag is accepted as a no-op and exists only so existing scripts keep working |
 
-Every `sandbox` subcommand talks to the Amika API and requires you to be logged in (`amika auth login`) or to have `AMIKA_API_KEY` set. The former `--local` flag, which ran rigs as Docker containers on your own machine, has been removed.
+Every `sandbox` subcommand talks to the Amika API and requires you to be logged in (`amika auth login`) or to have `AMIKA_API_KEY` set. The former `--local` flag, which ran rigs as Docker containers on your own machine, has been removed; passing it now reports that removal.
 
 ### `amika sandbox create`
 
@@ -730,7 +730,7 @@ The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
 
 ### `POST /v1/sandboxes` — Port Publishing
 
-The `Ports` field accepts an array of port binding objects. It is the HTTP API equivalent of the `--port` and `--port-host-ip` CLI flags.
+The `Ports` field accepts an array of port binding objects. It has no CLI equivalent; port publishing is an `amika-server` API feature.
 
 ```json
 {

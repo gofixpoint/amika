@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/spf13/cobra"
@@ -119,7 +120,7 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		printScrubPreview(cmd, preview)
-		confirmed, err := confirmAction(
+		confirmed, err := cliprompt.Confirm(
 			"Scrub these secrets, snapshot the sandbox, and delete it?",
 			reader,
 		)
@@ -246,7 +247,7 @@ func runSnapshotDelete(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
 		}
 		reader := bufio.NewReader(cmd.InOrStdin())
-		confirmed, err := confirmAction(
+		confirmed, err := cliprompt.Confirm(
 			fmt.Sprintf("Delete snapshot(s) %s?", strings.Join(args, ", ")),
 			reader,
 		)

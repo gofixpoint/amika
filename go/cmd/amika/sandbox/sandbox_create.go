@@ -119,10 +119,8 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Ide
 		return err
 	}
 
+	// RunE already rejected --no-setup together with --setup-script.
 	noSetup, _ := cmd.Flags().GetBool("no-setup")
-	if noSetup && cmd.Flags().Changed("setup-script") {
-		return fmt.Errorf("--no-setup and --setup-script are mutually exclusive")
-	}
 
 	var setupScriptText string
 	if noSetup {
@@ -186,7 +184,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Ide
 		return err
 	}
 
-	fmt.Fprintf(pw, "Sandbox %q created (remote)\n", sb.Name)
+	fmt.Fprintf(pw, "Sandbox %q created\n", sb.Name)
 	printResolvedAgentCredentials(cmd, resolved)
 
 	if format.IsJSON() {

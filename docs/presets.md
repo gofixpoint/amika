@@ -1,14 +1,14 @@
 # Preset Images
 
 Amika includes preset Docker images that come pre-configured with common
-development tools and coding agent CLIs. Presets are used by both
-`sandbox create` and `materialize`.
+development tools and coding agent CLIs. Presets are selected with
+`sandbox create --preset`.
 
 ## Available Presets
 
 ### `coder` (default)
 
-The default preset, used when no `--image` or `--preset` flag is provided.
+The default preset, used when no `--preset` flag is provided.
 
 **Image name:** `amika/coder:latest`
 
@@ -48,12 +48,7 @@ amika sandbox create --preset coder-plus-docker
 
 # Default behavior (uses coder preset automatically)
 amika sandbox create
-
-# Materialize with a preset
-amika materialize --preset coder --cmd "claude --help" --destdir /tmp/out
 ```
-
-The `--preset` and `--image` flags are mutually exclusive. Use `--image` to specify a custom Docker image instead.
 
 ## Auto-Build
 
@@ -118,26 +113,8 @@ export AMIKA_PRESET_IMAGE_PREFIX=myregistry/amika
 
 This produces image names like `myregistry/amika-coder:latest` instead of `amika/coder:latest`.
 
-## Agent Credential Auto-Mounting
+## Agent credentials
 
-When creating a sandbox or running materialize, Amika automatically discovers and mounts credential files for supported coding agents. These files are mounted as `rwcopy` so the container gets a snapshot and cannot modify the originals on the host.
-
-The following credential files are auto-mounted when they exist:
-
-**Claude Code:**
-
-- `~/.claude.json.api`
-- `~/.claude.json`
-- `~/.claude/.credentials.json`
-- `~/.claude-oauth-credentials.json`
-
-**Codex:**
-
-- `~/.codex/auth.json`
-
-**OpenCode:**
-
-- `~/.local/share/opencode/auth.json`
-- `~/.local/state/opencode/model.json`
-
-Inside the container, these files appear at the same relative paths under `/home/amika/`. This means coding agents running inside sandboxes can authenticate without manual configuration.
+Rigs get their coding-agent credentials from the Amika control plane. See
+[secrets.md](secrets.md) and the `--agent-credential` flags on
+`amika sandbox create`.

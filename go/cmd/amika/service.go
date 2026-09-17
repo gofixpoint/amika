@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/services"
@@ -155,7 +156,7 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
 		}
 		reader := bufio.NewReader(cmd.InOrStdin())
-		confirmed, err := confirmAction(
+		confirmed, err := cliprompt.Confirm(
 			fmt.Sprintf("Delete service %q from sandbox %q?", name, rigRef),
 			reader,
 		)
@@ -354,6 +355,9 @@ func init() {
 	serviceCmd.AddCommand(serviceCreateCmd)
 	serviceCmd.AddCommand(serviceDeleteCmd)
 	serviceCmd.PersistentFlags().Bool("remote", true, "Operate on remote rigs; accepted as a no-op since rigs are always remote")
+	// See the matching registration in the rig command tree.
+	serviceCmd.PersistentFlags().Bool("local", false, "Removed; rigs are always remote")
+	serviceCmd.PersistentFlags().MarkHidden("local")
 	serviceCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	serviceCmd.PersistentFlags().MarkHidden("remote-target")
 	serviceListCmd.Flags().String("rig-name", "", "Filter services to a specific rig")

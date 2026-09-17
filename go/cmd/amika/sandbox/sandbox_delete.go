@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
@@ -31,7 +32,7 @@ var sandboxDeleteCmd = &cobra.Command{
 				return fmt.Errorf("refusing to prompt for confirmation with --%s %s; pass --force to delete", output.FlagName, format)
 			}
 			reader := bufio.NewReader(cmd.InOrStdin())
-			confirmed, err := confirmAction(
+			confirmed, err := cliprompt.Confirm(
 				fmt.Sprintf("Delete sandbox(es) %s?", strings.Join(args, ", ")),
 				reader,
 			)

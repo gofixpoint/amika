@@ -8,7 +8,7 @@ In some cases, we accept code contributions from users. Please reach out on [Dis
 ## Prerequisites
 
 - Go 1.25 or later
-- Docker (required for `materialize`, `sandbox`, and `volume` commands)
+- Docker (required by `amika-server`, which exposes the Docker-backed sandbox API)
 - macOS (the only supported platform currently)
 - rsync (usually pre-installed on macOS)
 
@@ -95,7 +95,6 @@ go/                      Go module (github.com/gofixpoint/amika/go)
   internal/
     sandbox/             Docker sandbox management, presets, volumes
     auth/                Credential discovery (Claude, Codex, OpenCode, Amp)
-    agentconfig/         Auto-mount agent credential files into containers
     config/              XDG path resolution, state file locations
     basedir/             XDG base directory resolution
     httpapi/             HTTP handler for the REST API

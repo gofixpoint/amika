@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
@@ -241,7 +242,7 @@ sessions that are already open.`,
 						output.FlagName, format)
 				}
 				reader := bufio.NewReader(cmd.InOrStdin())
-				confirmed, err := confirmAction(
+				confirmed, err := cliprompt.Confirm(
 					fmt.Sprintf("Delete SSH public key %s?", id), reader)
 				if err != nil {
 					return err

@@ -78,36 +78,20 @@ make ci
 
 ## Docker-Backed Integration Tests (Opt-in)
 
-Docker suites are disabled by default and run only when:
-
-- `AMIKA_RUN_DOCKER_INTEGRATION=1`
-
-Run them with:
+Docker suites are disabled by default and run only when
+`AMIKA_RUN_DOCKER_INTEGRATION=1` (plus `AMIKA_RUN_EXPENSIVE_TESTS=1` for the
+expensive preset rebuilds):
 
 ```bash
-AMIKA_RUN_DOCKER_INTEGRATION=1 make test-unit
 AMIKA_RUN_DOCKER_INTEGRATION=1 make test-integration
+AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 make test-expensive
 ```
 
-## Expensive Preset Rebuild Tests (Opt-in)
-
-The preset image rebuild test requires both Docker integration mode and the expensive toggle:
-
-- `AMIKA_RUN_DOCKER_INTEGRATION=1`
-- `AMIKA_RUN_EXPENSIVE_TESTS=1`
-
-The simplest way to run these is with the make target, which sets both env vars and runs `test-all`:
-
-```bash
-make test-expensive
-```
-
-To run a single expensive test directly:
-
-```bash
-AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 \
-  go -C go test ./cmd/amika -run TestTopMaterialize_PresetAgentsAvailableOnPath -count=1
-```
+Note that no test currently opts into either gate. The Docker-backed suites
+covered the CLI's local sandbox, volume, and materialize commands, and were
+removed along with the `--local` mode. The toggles and the
+`testutil.RequireDockerIntegration` / `RequireExpensiveDockerTests` helpers are
+kept for Docker tests against `amika-server`, which still serves that API.
 
 ## Coverage Gates
 
