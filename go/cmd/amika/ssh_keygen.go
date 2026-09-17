@@ -25,7 +25,7 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 		Short: "Create or import a user-owned SSH key",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 				return err
 			}
 			format, err := output.FormatFrom(cmd)

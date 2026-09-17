@@ -45,8 +45,7 @@ func sshV2TestTree() (*cobra.Command, *cobra.Command) {
 		sshV2Root = &cobra.Command{Use: "amika", SilenceUsage: true, SilenceErrors: true}
 		sshV2Root.PersistentFlags().StringP("output", "o", "text", "output format")
 		sshV2Parent = &cobra.Command{Use: "sandbox"}
-		sshV2Parent.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
-		sshV2Parent.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
+		sshV2Parent.PersistentFlags().Bool("remote", true, "Operate on remote rigs; accepted as a no-op since rigs are always remote")
 		sshV2Parent.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 		sshV2Root.AddCommand(sshV2Parent)
 	})
@@ -228,17 +227,6 @@ func TestSSHV2AmikaFlagsBeforeSubcommand(t *testing.T) {
 		}
 		if h.ran {
 			t.Errorf("ssh ran with argv %#v; --output should never reach it", h.argv)
-		}
-	})
-
-	t.Run("local flag before the subcommand is honored", func(t *testing.T) {
-		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--local", "ssh", "my-box"})
-		err := root.Execute()
-		if err == nil || !strings.Contains(err.Error(), "requires a remote sandbox") {
-			t.Fatalf("err = %v, want a remote-sandbox error", err)
-		}
-		if h.ran {
-			t.Error("ssh should not run for a local sandbox")
 		}
 	})
 }

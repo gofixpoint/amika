@@ -37,14 +37,6 @@ func TestHelpShowsAliasesForSubcommands(t *testing.T) {
 			},
 		},
 		{
-			name: "volume delete shows rm and remove aliases",
-			args: []string{"volume", "--help"},
-			wantLines: [][]string{
-				{"delete", "(aliases: rm, remove)"},
-				{"list", "(aliases: ls)"},
-			},
-		},
-		{
 			name: "service list shows ls alias",
 			args: []string{"service", "--help"},
 			wantLines: [][]string{

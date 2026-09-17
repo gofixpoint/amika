@@ -8,42 +8,16 @@ import (
 	"github.com/gofixpoint/amika/go/test/testutil"
 )
 
-func TestSandboxCreateNoCleanRejectsNoGit(t *testing.T) {
-	bin := testutil.BuildAmikaBinary(t)
-
-	cmd := exec.Command(bin, "sandbox", "create", "--name", "contract-sb", "--no-clean", "--no-git", "--yes")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected sandbox create to fail, output:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "--no-clean and --no-git are mutually exclusive") {
-		t.Fatalf("expected --no-clean/--no-git contract error, got:\n%s", string(out))
-	}
-}
-
 func TestSandboxCreateGitAndNoGitConflict(t *testing.T) {
 	bin := testutil.BuildAmikaBinary(t)
 
-	cmd := exec.Command(bin, "sandbox", "create", "--name", "contract-sb", "--git", "https://example.com/x/y.git", "--no-git", "--yes")
+	cmd := exec.Command(bin, "sandbox", "create", "--name", "contract-sb", "--git", "https://example.com/x/y.git", "--no-git")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected sandbox create to fail, output:\n%s", string(out))
 	}
 	if !strings.Contains(string(out), "--git and --no-git are mutually exclusive") {
 		t.Fatalf("expected --git/--no-git contract error, got:\n%s", string(out))
-	}
-}
-
-func TestSandboxCreateNoCleanRejectsRemote(t *testing.T) {
-	bin := testutil.BuildAmikaBinary(t)
-
-	cmd := exec.Command(bin, "sandbox", "create", "--name", "contract-sb", "--no-clean", "--remote", "--yes")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected sandbox create to fail, output:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "--no-clean is only supported for local sandboxes") {
-		t.Fatalf("expected --no-clean/remote contract error, got:\n%s", string(out))
 	}
 }
 
@@ -91,18 +65,5 @@ func TestSandboxCreateInvalidGithubAuthModeFailsEarly(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "unknown github-auth-mode") {
 		t.Fatalf("expected unknown github-auth-mode error, got:\n%s", string(out))
-	}
-}
-
-func TestSandboxCreateGithubAuthModeRequiresRemote(t *testing.T) {
-	bin := testutil.BuildAmikaBinary(t)
-
-	cmd := exec.Command(bin, "sandbox", "create", "--local", "--github-auth-mode", "pat", "--no-git")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected sandbox create to fail, output:\n%s", string(out))
-	}
-	if !strings.Contains(string(out), "--github-auth-mode requires --remote mode") {
-		t.Fatalf("expected --github-auth-mode remote-only error, got:\n%s", string(out))
 	}
 }

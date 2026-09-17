@@ -24,9 +24,7 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 
 | Command                                       | Description                                                                         |
 | --------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `amika materialize`                           | Run a script/command in an ephemeral container and copy outputs to a host directory |
-| `amika sandbox create\|list\|connect\|delete` | Manage persistent Docker sandboxes                                                  |
-| `amika volume list\|delete`                   | Manage tracked Docker volumes created by `rwcopy` mounts                            |
+| `amika sandbox create\|list\|connect\|delete` | Manage persistent remote rigs                                                       |
 | `amika auth extract`                          | Discover local credentials and print shell environment assignments                  |
 | `amika-server`                                | HTTP server exposing the same functionality as a REST API                           |
 
@@ -41,8 +39,6 @@ go/
   cmd/amika/
     main.go              CLI entry point, root Cobra command
     sandbox.go           sandbox create/list/connect/delete commands
-    materialize.go       Docker-based materialize command
-    volume.go            volume list/delete commands
     auth.go              auth extract command
   cmd/amika-server/
     main.go              HTTP server entry point (REST API)

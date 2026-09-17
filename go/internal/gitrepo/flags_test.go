@@ -10,17 +10,13 @@ import (
 )
 
 // newTestCmd builds a command carrying the flags a caller opts into: always
-// --git/--no-git, plus the --repo alias and --no-clean when asked. That mirrors
-// the real split — `amika send` registers the alias, `amika sandbox create`
-// registers --no-clean, and neither registers the other's.
-func newTestCmd(withRepoAlias, withNoClean bool) *cobra.Command {
+// --git/--no-git, plus the --repo alias when asked. That mirrors the real
+// split — `amika send` registers the alias and `amika rig create` does not.
+func newTestCmd(withRepoAlias bool) *cobra.Command {
 	cmd := &cobra.Command{Use: "test", RunE: func(*cobra.Command, []string) error { return nil }}
 	AddFlags(cmd, "git usage", "no-git usage")
 	if withRepoAlias {
 		AddRepoAlias(cmd)
-	}
-	if withNoClean {
-		cmd.Flags().Bool(FlagNoClean, false, "no-clean usage")
 	}
 	return cmd
 }
@@ -44,7 +40,7 @@ func makeFakeRepo(t *testing.T, name string) string {
 func TestFromCommand(t *testing.T) {
 	t.Run("no flags auto-detects from cwd", func(t *testing.T) {
 		repo := makeFakeRepo(t, "myrepo")
-		cmd := newTestCmd(false, true)
+		cmd := newTestCmd(false)
 		got, err := FromCommand(cmd, repo)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -57,7 +53,7 @@ func TestFromCommand(t *testing.T) {
 	t.Run("--git wins over auto-detection", func(t *testing.T) {
 		cwdRepo := makeFakeRepo(t, "cwdrepo")
 		flagRepo := makeFakeRepo(t, "flagrepo")
-		cmd := newTestCmd(false, true)
+		cmd := newTestCmd(false)
 		parseFlags(t, cmd, "--git", flagRepo)
 		got, err := FromCommand(cmd, cwdRepo)
 		if err != nil {
@@ -70,7 +66,7 @@ func TestFromCommand(t *testing.T) {
 
 	t.Run("--no-git skips auto-detection", func(t *testing.T) {
 		repo := makeFakeRepo(t, "myrepo")
-		cmd := newTestCmd(false, true)
+		cmd := newTestCmd(false)
 		parseFlags(t, cmd, "--no-git")
 		got, err := FromCommand(cmd, repo)
 		if err != nil {
@@ -81,24 +77,6 @@ func TestFromCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("--no-clean is read only where it is registered", func(t *testing.T) {
-		// The command that offers --no-clean must see it enforced...
-		withFlag := newTestCmd(false, true)
-		parseFlags(t, withFlag, "--no-clean")
-		if _, err := FromCommand(withFlag, t.TempDir()); err == nil {
-			t.Fatal("expected --no-clean outside a repo to error")
-		}
-		// ...and one that does not offer it must resolve as if unset, rather
-		// than tripping over a flag it never exposed.
-		withoutFlag := newTestCmd(false, false)
-		got, err := FromCommand(withoutFlag, t.TempDir())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Source != SourceNone {
-			t.Fatalf("Source = %v, want none", got.Source)
-		}
-	})
 }
 
 func TestFromCommandWithoutGitFlag(t *testing.T) {
@@ -157,18 +135,6 @@ func TestOptionsValidate(t *testing.T) {
 		name: "empty value names the alias",
 		opts: Options{Git: "", GitSet: true, GitFlagName: FlagRepo},
 		want: "--repo requires a non-empty value",
-	}, {
-		name: "no-clean with no-git",
-		opts: Options{NoClean: true, NoGit: true},
-		want: "--no-clean and --no-git are mutually exclusive",
-	}, {
-		name: "no-clean with a URL",
-		opts: Options{Git: "https://github.com/a/b.git", GitSet: true, NoClean: true},
-		want: "--no-clean cannot be used with a git URL",
-	}, {
-		// A path is fine with --no-clean; only a URL is not.
-		name: "no-clean with a path",
-		opts: Options{Git: "/some/path", GitSet: true, NoClean: true},
 	}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -191,7 +157,7 @@ func TestValidateFlags(t *testing.T) {
 		// This is `sandbox create`'s shape. Its error wording is pinned here
 		// so a change to how readFlags picks GitFlagName cannot make create
 		// advise a flag it does not accept.
-		cmd := newTestCmd(false, true)
+		cmd := newTestCmd(false)
 		parseFlags(t, cmd, "--git", "x", "--no-git")
 		err := ValidateFlags(cmd)
 		if err == nil || !strings.Contains(err.Error(), "--git and --no-git") {
@@ -203,7 +169,7 @@ func TestValidateFlags(t *testing.T) {
 	})
 
 	t.Run("the alias alone reports --repo", func(t *testing.T) {
-		cmd := newTestCmd(true, false)
+		cmd := newTestCmd(true)
 		parseFlags(t, cmd, "--repo", "x", "--no-git")
 		err := ValidateFlags(cmd)
 		if err == nil || !strings.Contains(err.Error(), "--repo and --no-git") {
@@ -212,7 +178,7 @@ func TestValidateFlags(t *testing.T) {
 	})
 
 	t.Run("both spellings agreeing reports --git, matching RequestedFlag", func(t *testing.T) {
-		cmd := newTestCmd(true, false)
+		cmd := newTestCmd(true)
 		parseFlags(t, cmd, "--git", "x", "--repo", "x", "--no-git")
 		err := ValidateFlags(cmd)
 		if err == nil || !strings.Contains(err.Error(), "--git and --no-git") {
@@ -226,7 +192,7 @@ func TestValidateFlags(t *testing.T) {
 	t.Run("a valid invocation passes without touching the filesystem", func(t *testing.T) {
 		// A path that does not exist must still validate: ValidateFlags is the
 		// pure half, and resolution is what rejects a bad path.
-		cmd := newTestCmd(true, true)
+		cmd := newTestCmd(true)
 		parseFlags(t, cmd, "--git", "/no/such/path/anywhere")
 		if err := ValidateFlags(cmd); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -249,7 +215,7 @@ func TestRequestedFlag(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := newTestCmd(true, false)
+			cmd := newTestCmd(true)
 			parseFlags(t, cmd, tt.args...)
 			if got := RequestedFlag(cmd); got != tt.want {
 				t.Fatalf("RequestedFlag() = %q, want %q", got, tt.want)
@@ -260,7 +226,7 @@ func TestRequestedFlag(t *testing.T) {
 
 func TestRequestedFlagWithoutAlias(t *testing.T) {
 	// A command that never registered --repo must not panic looking for it.
-	cmd := newTestCmd(false, true)
+	cmd := newTestCmd(false)
 	if got := RequestedFlag(cmd); got != "" {
 		t.Fatalf("RequestedFlag() = %q, want empty", got)
 	}

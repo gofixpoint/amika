@@ -1,10 +1,9 @@
 # Offline sample case: exercises basic CLI plumbing (unknown commands,
-# flags that aren't registered anywhere in the tree, stdin, and a --local
-# sandbox lookup that fails fast against an empty, isolated state
-# directory). No Docker, network, or API credentials required — the
-# e2e_test.go entry point points AMIKA_STATE_DIRECTORY at a fresh empty
-# directory for each run, so "sandbox connect" below always sees an empty
-# local sandbox store.
+# flags that aren't registered anywhere in the tree, and stdin). No Docker,
+# network, or API credentials required — the e2e_test.go entry point points
+# AMIKA_STATE_DIRECTORY at a fresh empty directory for each run, and the
+# steps that reach an auth check pin AMIKA_API_KEY to an empty string so
+# they do not depend on an ambient credential.
 name: CLI basics work offline against an isolated, empty state directory
 steps:
   - name: an unknown top-level command is rejected
@@ -25,24 +24,32 @@ steps:
       exit: 1
       stderr_contains: "unknown flag: --bogus-flag"
 
-  - name: sandbox connect --local fails fast against an empty sandbox store
-    cmd: [sandbox, connect, does-not-exist, --local]
+  - name: sandbox connect without credentials fails at the auth gate
+    cmd: [sandbox, connect, does-not-exist]
+    env:
+      AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: 'sandbox "does-not-exist" not found'
+      stderr_contains: 'not logged in; run "amika auth login"'
 
   - name: agent-send requires a message from args or stdin
-    cmd: [sandbox, agent-send, some-sandbox, --local]
+    # The message check runs before the auth gate, so this fails on the
+    # missing message rather than on credentials.
+    cmd: [sandbox, agent-send, some-sandbox]
+    env:
+      AMIKA_API_KEY: ""
     expect:
       exit: 1
       stderr_contains: "message is required as an argument or via stdin"
 
   - name: agent-send reads the message from stdin when no positional message is given
     # Confirms stdin plumbing: with a message on stdin, the command gets
-    # past the "message is required" check and fails later, at sandbox
-    # lookup, instead — proving the piped message was read.
-    cmd: [sandbox, agent-send, does-not-exist, --local]
+    # past the "message is required" check and fails later, at the auth
+    # gate, instead — proving the piped message was read.
+    cmd: [sandbox, agent-send, does-not-exist]
     stdin: "hello from stdin"
+    env:
+      AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: 'sandbox "does-not-exist" not found'
+      stderr_contains: 'not logged in; run "amika auth login"'

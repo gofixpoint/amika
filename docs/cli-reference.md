@@ -35,44 +35,33 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `volume list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `volume delete`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, `auth logout`, and `materialize`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, and `auth logout`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika sandbox`
 
-Manage Docker-backed persistent sandboxes with bind mounts and named volumes.
+Manage persistent rigs backed by the Amika control plane.
 
 ### Global sandbox flags
 
 These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `agent-send`). For `ssh` they must be written before the subcommand, since everything after it is forwarded to `ssh`:
 
-| Flag       | Default | Description                      |
-| ---------- | ------- | -------------------------------- |
-| `--local`  | `false` | Only operate on local sandboxes  |
-| `--remote` | `false` | Only operate on remote sandboxes |
+| Flag       | Default | Description                                            |
+| ---------- | ------- | ------------------------------------------------------ |
+| `--remote` | `false` | Operate on remote rigs. This is the default; the flag is accepted as a no-op so existing scripts keep working |
 
-When none of these flags are set, the default behavior depends on login state: if you are logged in, both local and remote sandboxes are shown; otherwise only local.
-
-`--local` and `--remote` are mutually exclusive.
+Every `sandbox` subcommand talks to the Amika API and requires you to be logged in (`amika auth login`) or to have `AMIKA_API_KEY` set. The former `--local` flag, which ran rigs as Docker containers on your own machine, has been removed.
 
 ### `amika sandbox create`
 
 Create a new sandbox.
 
 ```bash
-# Minimal — auto-generates a name, uses the coder preset image
-amika sandbox create --yes
-
-# Named sandbox with mounts
-amika sandbox create --name dev-sandbox \
-  --mount ./src:/workspace/src:ro \
-  --mount ./out:/workspace/out
+# Minimal — auto-generates a name, uses the default snapshot
+amika sandbox create
 
 # Auto-detect the git repo containing the current working directory
 # (this is the default behavior when no --git/--no-git flag is passed)
 amika sandbox create --name dev-sandbox
-
-# Mount git repo with untracked/uncommitted files included (local sandboxes only)
-amika sandbox create --name dev-sandbox --no-clean
 
 # Mount git repo at a specific path
 amika sandbox create --name dev-sandbox --git ./src
@@ -83,15 +72,11 @@ amika sandbox create --name dev-sandbox --git https://github.com/octocat/Hello-W
 # Skip git auto-detection and create a bare sandbox
 amika sandbox create --name dev-sandbox --no-git
 
-# Use the Docker-in-Docker preset image
+# Use the Docker-in-Docker preset
 amika sandbox create --name docker-box --preset coder-plus-docker
 
-# Use a custom Docker image
-amika sandbox create --name custom-box --image myimage:latest
-
-# Attach an existing tracked volume
-amika sandbox create --name dev-sandbox-2 \
-  --volume amika-rwcopy-dev-sandbox-workspace-out-123:/workspace/out:rw
+# Pick a size
+amika sandbox create --name dev-sandbox --size m
 
 # Set environment variables
 amika sandbox create --name dev-sandbox --env MY_KEY=my_value
@@ -102,12 +87,6 @@ amika sandbox create --name dev-sandbox --connect
 # Run a setup script on container start
 amika sandbox create --name dev-sandbox --setup-script ./install-deps.sh
 
-# Publish a container port to the host
-amika sandbox create --name dev-sandbox --port 8080:8080
-
-# Publish a port bound to all interfaces
-amika sandbox create --name dev-sandbox --port 3000:3000 --port-host-ip 0.0.0.0
-
 # Clone a specific git branch
 amika sandbox create --name dev-sandbox --branch develop
 
@@ -117,12 +96,12 @@ amika sandbox create --new-branch feature-x
 # Create a new branch starting from a specific existing branch
 amika sandbox create --branch main --new-branch bugfix-1
 
-# Inject remote secrets (remote sandboxes only)
-amika sandbox create --name dev-sandbox --remote \
+# Inject remote secrets
+amika sandbox create --name dev-sandbox \
   --secret env:ANTHROPIC_API_KEY=my-claude-key
 
-# Fork from a captured snapshot (remote sandboxes only)
-amika sandbox create --name dev-sandbox --remote --snapshot amika-mono-base
+# Fork from a captured snapshot
+amika sandbox create --name dev-sandbox --snapshot amika-mono-base
 ```
 
 #### Flags
@@ -130,32 +109,22 @@ amika sandbox create --name dev-sandbox --remote --snapshot amika-mono-base
 | Flag                    | Default              | Description                                                                                                                          |
 | ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--name <name>`         | auto-generated       | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`)                                    |
-| `--provider <name>`     | `docker`             | Sandbox provider (only `docker` is currently supported)                                                                              |
-| `--image <image>`       | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`)                                                                             |
-| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md)                 |
-| `--mount <spec>`        |                      | Mount a host path (`source:target[:mode]`, mode defaults to `rwcopy`). Repeatable                                                    |
-| `--volume <spec>`       |                      | Mount an existing named volume (`name:target[:mode]`, mode defaults to `rw`). Repeatable                                             |
-| `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory. Clean clone by default |
+| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `coder-plus-docker`. See [presets.md](presets.md)                                          |
+| `--size <size>`         | `m`                  | Sandbox size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers                                       |
+| `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory |
 | `--no-git`              | `false`              | Skip git auto-detection; create a sandbox without mounting any repo                                                                  |
-| `--no-clean`            | `false`              | With a local-path git source, include untracked/uncommitted files instead of a clean clone. Local sandboxes only                     |
 | `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                                 |
-| `--port <spec>`         |                      | Publish a container port (`hostPort:containerPort[/protocol]`, protocol defaults to `tcp`). Repeatable                               |
-| `--port-host-ip <ip>`   | `127.0.0.1`          | Host IP address to bind all published ports to. Use `0.0.0.0` to bind to all interfaces                                              |
-| `--yes`                 | `false`              | Skip mount confirmation prompt                                                                                                       |
 | `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                                              |
-| `--setup-script <path>` |                      | Mount a local script to `/usr/local/etc/amikad/setup/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
+| `--setup-script <path>` |                      | Upload a local script to run as `/usr/local/etc/amikad/setup/setup.sh`. See [sandbox-configuration.md](sandbox-configuration.md)     |
+| `--no-setup`            | `false`              | Skip the setup script (uses a no-op script instead)                                                                                  |
 | `--branch <name>`       |                      | Check out this branch, or create it if it doesn't exist. Requires a git repo (auto-detected or via `--git`)                          |
 | `--new-branch <name>`  |                      | Create a new branch (errors if it already exists). Starts from `--branch` if set, otherwise from the base branch. Requires a git repo (auto-detected or via `--git`)  |
-| `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. Requires `--remote`. See [secrets.md](secrets.md)   |
-| `--snapshot <slug>`     |                      | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`). Requires `--remote`                       |
-
-#### Mount modes
-
-| Mode     | Behavior                                                                                                                                 |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `ro`     | Read-only bind mount from host                                                                                                           |
-| `rw`     | Read-write bind mount from host (writes sync back to host)                                                                               |
-| `rwcopy` | Read-write snapshot in a Docker volume (default for `--mount`). Host files are copied in; writes stay in the volume and do not sync back |
+| `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. See [secrets.md](secrets.md)                        |
+| `--snapshot <slug>`     |                      | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`)                                            |
+| `--github-auth-mode <mode>` |                  | GitHub auth mode for the sandbox runtime: `pat`, `app_token`, or `app-token`. Unset uses the server default                          |
+| `--agent-credential <KIND=NAME>` |             | Pin an agent credential by name (e.g. `claude=personal-oauth`). Repeatable per kind                                                  |
+| `--agent-credential-type <KIND=TYPE>` |        | Pin an agent credential by type (`oauth` or `api-key`). Repeatable per kind                                                          |
+| `--no-agent-credential <KIND>` |               | Skip injecting any credential of this kind (e.g. `--no-agent-credential codex`). Repeatable                                          |
 
 ### `amika sandbox list`
 
@@ -167,7 +136,7 @@ amika sandbox list
 
 Output columns: `NAME`, `STATE`, `REPO`, `BRANCH`, `CREATOR`.
 
-Pass `-l`/`--long` for the full set, which adds `ID`, `LOCATION`, `BASE_SNAPSHOT`, `PORTS`, and `CREATED`:
+Pass `-l`/`--long` for the full set, which adds `ID`, `BASE_SNAPSHOT`, `PORTS`, and `CREATED`:
 
 ```bash
 amika sandbox list --long
@@ -175,58 +144,38 @@ amika sandbox list --long
 
 Column selection applies only to `--output text`. `-o json` and `-o json-pretty` always emit every field.
 
-The `REPO` column lists the repositories mounted into the sandbox workspace (`/home/amika/workspace/<repo>`). For remote sandboxes it shows the repository name parsed from the sandbox's `repo_url`.
+The `REPO` column shows the repository name parsed from the sandbox's `repo_url`.
 
-The `CREATOR` column shows the human who created a remote sandbox (name, falling back to email). It is always `-` for local sandboxes and for remote sandboxes whose creator the server could not resolve (deleted user, API-key principal, or `noop` auth mode).
+The `CREATOR` column shows the human who created the sandbox (name, falling back to email). It is `-` when the server could not resolve a creator (deleted user, API-key principal, or `noop` auth mode).
 
-The `ID` column shows the sandbox id for a remote sandbox, and the backing container id for a local one, which is the identifier you can inspect with `docker`. Note that `-o json` reports `id` as the sandbox's *name* for a local sandbox, since that is what addresses it in every other command; its container is carried separately as `container_id`.
-
-The `BASE_SNAPSHOT` column shows what the sandbox was built from: the snapshot or image label for a remote sandbox, and the Docker image for a local one. It replaces the former `IMAGE` column, which was only ever populated for local sandboxes. Both kinds report it as `snapshot` in `-o json`; a local sandbox also keeps `image` as the local-native spelling.
-
-Either column shows `-` when the sandbox has no value for it.
+The `ID` column shows the sandbox id, and `BASE_SNAPSHOT` shows the snapshot it was built from. Either shows `-` when the sandbox has no value for it.
 
 ### `amika sandbox connect`
 
-Connect to a running sandbox container with an interactive shell.
+Connect to a running sandbox with an interactive shell, over Amika's SSH transport.
 
 ```bash
-# Connect with default shell (zsh)
 amika sandbox connect dev-sandbox
-
-# Connect with a different shell
-amika sandbox connect dev-sandbox --shell bash
 ```
-
-| Flag              | Default | Description                           |
-| ----------------- | ------- | ------------------------------------- |
-| `--shell <shell>` | `zsh`   | Shell to run in the sandbox container |
-
-The shell starts in `/home/amika`.
 
 ### `amika sandbox delete`
 
-Delete one or more sandboxes and their backing containers. Aliases: `rm`, `remove`.
+Delete one or more sandboxes. Aliases: `rm`, `remove`.
 
 ```bash
-# Delete a sandbox (prompts about exclusive volumes)
+# Delete a sandbox (prompts for confirmation)
 amika sandbox delete dev-sandbox
 
 # Delete multiple sandboxes
 amika sandbox delete sandbox-1 sandbox-2
 
-# Also delete associated unreferenced volumes
-amika sandbox delete dev-sandbox --delete-volumes
-
-# Keep all volumes without prompting
-amika sandbox delete dev-sandbox --keep-volumes
+# Skip the confirmation prompt
+amika sandbox delete dev-sandbox --force
 ```
 
-| Flag               | Default | Description                                                                           |
-| ------------------ | ------- | ------------------------------------------------------------------------------------- |
-| `--delete-volumes` | `false` | Delete associated volumes that are no longer referenced by other sandboxes            |
-| `--keep-volumes`   | `false` | Keep associated volumes without prompting, even if this sandbox is the only reference |
-
-When neither flag is set and the sandbox is the sole reference for a volume, you will be prompted to decide.
+| Flag      | Default | Description              |
+| --------- | ------- | ------------------------ |
+| `--force` | `false` | Skip confirmation prompt |
 
 ### `amika sandbox stop`
 
@@ -485,38 +434,6 @@ Under WSL, `sandbox code` mirrors this file (and the key material it names) to
 the Windows side so a Windows editor's own OpenSSH can reach the sandbox. The
 mirrored block carries the same settings.
 
-## `amika volume`
-
-Manage tracked Docker volumes used by sandboxes.
-
-### `amika volume list`
-
-List all tracked volumes (both directory-backed and file-backed).
-
-```bash
-amika volume list
-```
-
-Output columns: `NAME`, `TYPE`, `CREATED`, `IN_USE`, `SANDBOXES`, `SOURCE`.
-
-### `amika volume delete`
-
-Delete one or more tracked volumes. Aliases: `rm`, `remove`.
-
-```bash
-# Delete an unused volume
-amika volume delete my-volume
-
-# Force delete even if referenced by sandboxes
-amika volume delete my-volume --force
-```
-
-| Flag      | Default | Description                                         |
-| --------- | ------- | --------------------------------------------------- |
-| `--force` | `false` | Delete volume even if still referenced by sandboxes |
-
----
-
 ## `amika auth`
 
 Authentication and credential commands.
@@ -773,55 +690,6 @@ amika secret ssh-key delete <id> --force  # skips the prompt
 With `-o json` the prompt is never shown, so `--force` is required.
 
 Deleting a key does not revoke access on sandboxes that are already running; the removal applies the next time a sandbox is provisioned.
-
----
-
-## `amika materialize`
-
-Run a script or command in an ephemeral Docker container and copy outputs to a destination directory.
-
-The container runs with working directory `/home/amika/workspace`. Exactly one of `--script` or `--cmd` must be specified.
-
-```bash
-# Run a script, copy results to a destination
-amika materialize --script ./pull-data.sh --destdir ./output
-
-# Run an inline command
-amika materialize --cmd "curl -s https://api.example.com/data > result.json" --destdir ./output
-
-# Specify which container directory to copy from
-amika materialize --script ./transform.sh --outdir /app/results --destdir ./output
-
-# Run interactively (e.g. launch Claude Code inside the container)
-amika materialize -i --cmd claude --mount $(pwd):/workspace --env ANTHROPIC_API_KEY=...
-
-# Use a preset image
-amika materialize --preset coder --cmd "claude --help" --destdir /tmp/out
-
-# Run a setup script before the main command
-amika materialize --setup-script ./install-deps.sh --cmd "echo done" --destdir /tmp/out
-```
-
-### Flags
-
-| Flag                    | Default              | Description                                                                                                                          |
-| ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--script <path>`       |                      | Path to the script to execute (mutually exclusive with `--cmd`)                                                                      |
-| `--cmd <string>`        |                      | Bash command string to execute (mutually exclusive with `--script`)                                                                  |
-| `--outdir <path>`       | workdir              | Container directory to copy from. Absolute paths are used as-is; relative paths resolve from workdir                                 |
-| `--destdir <path>`      | **(required)**       | Host directory where output files are copied                                                                                         |
-| `--image <image>`       | `amika/coder:latest` | Docker image to use (mutually exclusive with `--preset`)                                                                             |
-| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `claude` (mutually exclusive with `--image`). See [presets.md](presets.md)                 |
-| `--mount <spec>`        |                      | Mount a host directory (`source:target[:mode]`, mode defaults to `rw`). Repeatable                                                   |
-| `--env <KEY=VALUE>`     |                      | Set environment variable in the container. Repeatable                                                                                |
-| `-i`, `--interactive`   | `false`              | Run interactively with TTY (for programs like `claude`)                                                                              |
-| `--setup-script <path>` |                      | Mount a local script to `/usr/local/etc/amikad/setup/setup.sh` (read-only). See [sandbox-configuration.md](sandbox-configuration.md) |
-
-Script arguments can be passed after `--`:
-
-```bash
-amika materialize --script ./gen.sh --destdir /tmp/dest -- arg1 arg2
-```
 
 ---
 

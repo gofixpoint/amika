@@ -2,12 +2,10 @@ package main
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/auth"
-	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -36,72 +34,6 @@ func runRootCommandOutput(t *testing.T, args ...string) (string, error) {
 	resetChangedFlags(rootCmd)
 	t.Cleanup(func() { resetChangedFlags(rootCmd) })
 	return runRootCommand(args...)
-}
-
-func TestVolumeListJSON_EmptyIsEmptyArray(t *testing.T) {
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-
-	out, err := runRootCommandOutput(t, "volume", "list", "-o", "json")
-	if err != nil {
-		t.Fatalf("volume list -o json failed: %v", err)
-	}
-	if out != "[]\n" {
-		t.Fatalf("empty volume list JSON = %q, want %q", out, "[]\n")
-	}
-}
-
-func TestVolumeListJSON_ItemFields(t *testing.T) {
-	stateDir := t.TempDir()
-	t.Setenv("AMIKA_STATE_DIRECTORY", stateDir)
-
-	store := sandbox.NewVolumeStore(filepath.Join(stateDir, "volumes.jsonl"))
-	if err := store.Save(sandbox.VolumeInfo{
-		Name:        "vol-1",
-		CreatedAt:   "2026-01-02T00:00:00Z",
-		SourcePath:  "/host/data",
-		SandboxRefs: []string{"sb-a"},
-	}); err != nil {
-		t.Fatalf("Save failed: %v", err)
-	}
-
-	out, err := runRootCommandOutput(t, "volume", "list", "-o", "json")
-	if err != nil {
-		t.Fatalf("volume list -o json failed: %v", err)
-	}
-	for _, want := range []string{
-		`"name":"vol-1"`,
-		`"type":"directory"`,
-		`"in_use":true`,
-		`"sandboxes":["sb-a"]`,
-		`"source_path":"/host/data"`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("volume list JSON missing %q, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestVolumeDeleteJSON_MissingReportsError(t *testing.T) {
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-
-	out, err := runRootCommandOutput(t, "volume", "delete", "ghost", "--force", "-o", "json")
-	if err == nil {
-		t.Fatal("expected a non-nil error when deletion fails")
-	}
-	for _, want := range []string{`"name":"ghost"`, `"status":"error"`, "no volume found"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("volume delete JSON missing %q, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestVolumeDeleteJSON_RequiresForce(t *testing.T) {
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-
-	_, err := runRootCommandOutput(t, "volume", "delete", "ghost", "-o", "json")
-	if err == nil || !strings.Contains(err.Error(), "--force") {
-		t.Fatalf("expected a --force requirement error, got %v", err)
-	}
 }
 
 func TestAuthLogoutJSON_NothingStored(t *testing.T) {

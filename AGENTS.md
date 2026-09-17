@@ -72,16 +72,15 @@ checked out as a sibling worktree rather than searching for those paths in this 
 
 ## Runtime Dependencies
 
-- **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `coder-plus-docker`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
-- **rsync** is required by the `materialize` command to copy output files.
+- **Docker** is required by `amika-server`, which still exposes the Docker-backed sandbox API over HTTP. Preset images (`coder`, `coder-plus-docker`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
+- **rsync** is required by `amika-server`'s materialize endpoint to copy output files.
+- The `amika` CLI itself is remote-only: every `rig`/`sandbox` command talks to the Amika API. The former `--local` mode, and the `volume` and `materialize` commands that served it, have been removed.
 
 ## Code Structure
 
 ### CLI Commands (`go/cmd/amika/`)
 - `main.go` — Entry point, root Cobra command
 - `sandbox.go` — `sandbox create|list|connect|delete` commands
-- `materialize.go` — `materialize` command (Docker-based)
-- `volume.go` — `volume list|delete` commands
 - `auth.go` — `auth extract` command
 
 ### HTTP Server (`go/cmd/amika-server/`)

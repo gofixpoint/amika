@@ -15,10 +15,6 @@ var sandboxBindCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if runmode.Resolve(cmd) != runmode.Remote {
-			return fmt.Errorf("bind is only supported for remote sandboxes")
-		}
-
 		sandboxRef := args[0]
 		owner, repo, branch, err := parseGitHubBranchBinding(args[1])
 		if err != nil {
@@ -28,7 +24,7 @@ var sandboxBindCmd = &cobra.Command{
 		if err := validateSandboxBindingRefKind(rigBy); err != nil {
 			return err
 		}
-		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 		target, err := getRemoteTarget(cmd)

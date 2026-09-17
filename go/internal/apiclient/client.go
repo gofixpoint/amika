@@ -112,12 +112,6 @@ type RemoteSandboxService struct {
 // emitted rather than the field being omitted; fields the schema marks
 // `required` are always present in the encoded output (no `omitempty`).
 // Non-required fields may use `omitempty`.
-//
-// ContainerID and Image have no equivalent in the API schema. They are local
-// CLI extensions populated only for Docker sandboxes (see
-// sandboxcmd.remoteSandboxFromInfo / remoteSandboxFromPublic); the schema's
-// `additionalProperties: {nullable:true}` allows extra keys, so they still
-// validate against the documented shape.
 type RemoteSandbox struct {
 	// --- required fields (schema "required": always present, never omitted) ---
 
@@ -159,11 +153,6 @@ type RemoteSandbox struct {
 	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
 	CreatedBy                *RemoteSandboxCreator     `json:"created_by,omitempty"`
 	Origin                   *string                   `json:"origin,omitempty"`
-
-	// --- local CLI extensions (no API equivalent; see doc comment above) ---
-
-	ContainerID string `json:"container_id,omitempty"`
-	Image       string `json:"image,omitempty"`
 }
 
 // RemoteSandboxCreator describes the human who created a remote sandbox, as

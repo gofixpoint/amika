@@ -153,20 +153,6 @@ func TestResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("auto-detect + --no-clean uses repo", func(t *testing.T) {
-		repo := makeRepo(t, "myrepo")
-		got, err := Resolve(Options{Cwd: repo, NoClean: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Source != SourceAutoDetect {
-			t.Fatalf("Source = %v, want autoDetect", got.Source)
-		}
-		if got.Path != repo {
-			t.Fatalf("Path = %q, want %q", got.Path, repo)
-		}
-	})
-
 	t.Run("--no-git in repo returns none", func(t *testing.T) {
 		repo := makeRepo(t, "myrepo")
 		got, err := Resolve(Options{Cwd: repo, NoGit: true})
@@ -223,25 +209,6 @@ func TestResolve(t *testing.T) {
 
 	t.Run("--git + --no-git is an error", func(t *testing.T) {
 		if _, err := Resolve(Options{Cwd: "/tmp", Git: "https://x/y.git", GitSet: true, NoGit: true}); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
-	t.Run("--no-clean + --no-git is an error", func(t *testing.T) {
-		if _, err := Resolve(Options{Cwd: "/tmp", NoGit: true, NoClean: true}); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
-	t.Run("--no-clean + --git <url> is an error", func(t *testing.T) {
-		if _, err := Resolve(Options{Cwd: "/tmp", Git: "https://x/y.git", GitSet: true, NoClean: true}); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
-	t.Run("--no-clean without a repo is an error", func(t *testing.T) {
-		dir := t.TempDir()
-		if _, err := Resolve(Options{Cwd: dir, NoClean: true}); err == nil {
 			t.Fatal("expected error")
 		}
 	})

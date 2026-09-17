@@ -89,17 +89,14 @@ Examples:
 		}
 		// Cobra merges the parents' persistent flags into a command's own set
 		// inside ParseFlags, which DisableFlagParsing skips. Reading
-		// InheritedFlags forces that merge, so --local, --remote,
-		// --remote-target, and --output resolve as they do elsewhere.
+		// InheritedFlags forces that merge, so --remote, --remote-target,
+		// and --output resolve as they do elsewhere.
 		_ = cmd.InheritedFlags()
 		if err := cmd.Flags().Parse(own); err != nil {
 			return err
 		}
 		if err := output.RejectFlag(cmd); err != nil {
 			return err
-		}
-		if runmode.Resolve(cmd) == runmode.Local {
-			return fmt.Errorf("direct WebSocket SSH requires a remote sandbox")
 		}
 		// Locate the sandbox name before requiring auth, so an unusable command
 		// line is reported as the usage error it is rather than as a login
@@ -108,7 +105,7 @@ Examples:
 		if nameIdx < 0 {
 			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
 		}
-		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 		target, err := getRemoteTarget(cmd)
@@ -170,10 +167,7 @@ Examples:
 		if err := validateEditor(editor); err != nil {
 			return err
 		}
-		if runmode.Resolve(cmd) == runmode.Local {
-			return fmt.Errorf("direct WebSocket SSH requires a remote sandbox")
-		}
-		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 

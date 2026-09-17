@@ -62,7 +62,7 @@ steps:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+      stderr_contains: 'not logged in; run "amika auth login"'
 
   - name: superseded sandbox sshv1 --output json is still rejected
     # sshv1 is hidden but must keep working for existing scripts, including

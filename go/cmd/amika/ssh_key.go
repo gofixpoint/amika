@@ -75,7 +75,7 @@ Examples:
   amika secret ssh-key push --name laptop --force`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 				return err
 			}
 			format, err := output.FormatFrom(cmd)
@@ -180,7 +180,7 @@ func newSSHKeyListCmd() *cobra.Command {
 		Short:   "List uploaded SSH public keys",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 				return err
 			}
 			format, err := output.FormatFrom(cmd)
@@ -223,7 +223,7 @@ running keep the key until they are provisioned again, so this does not end
 sessions that are already open.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 				return err
 			}
 			id := strings.TrimSpace(args[0])

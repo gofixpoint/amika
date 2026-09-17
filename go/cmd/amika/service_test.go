@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/pflag"
 )
 
@@ -23,10 +21,7 @@ func strptr(s string) *string { return &s }
 // command's declared defaults regardless of test order.
 func resetServiceFlags(t *testing.T) {
 	t.Helper()
-	if err := serviceCmd.PersistentFlags().Set("local", "false"); err != nil {
-		t.Fatal(err)
-	}
-	if err := serviceCmd.PersistentFlags().Set("remote", "false"); err != nil {
+	if err := serviceCmd.PersistentFlags().Set("remote", "true"); err != nil {
 		t.Fatal(err)
 	}
 	if err := serviceCmd.PersistentFlags().Set("remote-target", ""); err != nil {
@@ -51,9 +46,8 @@ func resetServiceFlags(t *testing.T) {
 	if err := serviceDeleteCmd.Flags().Set("force", "false"); err != nil {
 		t.Fatal(err)
 	}
-	// Set marks a flag Changed, and that bit is load-bearing: `service list`
-	// tells an explicitly empty --rig-name (match nothing) apart from an absent
-	// one (match everything). Clear it so each test starts from "not provided".
+	// Set marks a flag Changed, and that bit distinguishes an explicitly empty
+	// --rig-name (match nothing) from an absent one (match everything).
 	for _, fs := range []*pflag.FlagSet{
 		serviceCmd.PersistentFlags(),
 		serviceListCmd.Flags(),
@@ -64,121 +58,36 @@ func resetServiceFlags(t *testing.T) {
 	}
 }
 
-func TestServiceListCommand_Local_PrintsRows(t *testing.T) {
-	resetServiceFlags(t)
-	dir := t.TempDir()
-	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
-	store := sandbox.NewStore(filepath.Join(dir, "sandboxes.jsonl"))
-	if err := store.Save(sandbox.Info{
-		Name:      "sb-a",
-		Provider:  "docker",
-		Image:     "img",
-		CreatedAt: "now",
-		Services: []sandbox.ServiceInfo{
-			{
-				Name: "frontend",
-				Ports: []sandbox.ServicePortInfo{
-					{
-						PortBinding: sandbox.PortBinding{HostIP: "127.0.0.1", HostDomain: "localhost", HostPort: 3000, ContainerPort: 3000, Protocol: "tcp"},
-						URL:         "http://localhost:3000",
-					},
-				},
-			},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := runRootCommand("service", "list", "--local")
-	if err != nil {
-		t.Fatalf("service list --local failed: %v", err)
-	}
-	for _, needle := range []string{"SERVICE", "SANDBOX", "PORTS", "URL", "frontend", "sb-a", "127.0.0.1:3000->3000/tcp", "http://localhost:3000"} {
-		if !strings.Contains(out, needle) {
-			t.Fatalf("output missing %q:\n%s", needle, out)
-		}
-	}
-}
-
-func TestServiceListCommand_Local_SandboxNameFilter(t *testing.T) {
-	resetServiceFlags(t)
-	dir := t.TempDir()
-	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
-	store := sandbox.NewStore(filepath.Join(dir, "sandboxes.jsonl"))
-	svc := []sandbox.ServiceInfo{{Name: "frontend", Ports: []sandbox.ServicePortInfo{{PortBinding: sandbox.PortBinding{HostIP: "127.0.0.1", HostPort: 3000, ContainerPort: 3000, Protocol: "tcp"}}}}}
-	if err := store.Save(sandbox.Info{Name: "keep", Provider: "docker", CreatedAt: "now", Services: svc}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Save(sandbox.Info{Name: "other", Provider: "docker", CreatedAt: "now", Services: svc}); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := runRootCommand("service", "list", "--local", "--rig-name", "keep")
-	if err != nil {
-		t.Fatalf("service list failed: %v", err)
-	}
-	if !strings.Contains(out, "keep") {
-		t.Fatalf("output missing target rig:\n%s", out)
-	}
-	if strings.Contains(out, "other") {
-		t.Fatalf("--rig-name filter leaked another rig:\n%s", out)
-	}
-}
-
-// An explicitly empty --rig-name names no rig, so it must match none. The row
-// filters read "" as "no filter", so the shell form --rig-name "$AMIKA_RIG_NAME"
-// evaluated outside a rig would otherwise list every rig in the organization
-// and still exit 0.
 func TestServiceListCommand_EmptyRigNameMatchesNothing(t *testing.T) {
 	resetServiceFlags(t)
-	dir := t.TempDir()
-	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
-	store := sandbox.NewStore(filepath.Join(dir, "sandboxes.jsonl"))
-	svc := []sandbox.ServiceInfo{{Name: "frontend", Ports: []sandbox.ServicePortInfo{{PortBinding: sandbox.PortBinding{HostIP: "127.0.0.1", HostPort: 3000, ContainerPort: 3000, Protocol: "tcp"}}}}}
-	for _, name := range []string{"keep", "other"} {
-		if err := store.Save(sandbox.Info{Name: name, Provider: "docker", CreatedAt: "now", Services: svc}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	t.Setenv("AMIKA_API_KEY", "test-key")
 
-	out, err := runRootCommand("service", "list", "--local", "--rig-name", "")
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode([]apiclient.RemoteSandbox{{Name: "keep"}})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "list", "--rig-name", "")
 	if err != nil {
 		t.Fatalf("service list failed: %v", err)
 	}
 	if !strings.Contains(out, "No services found.") {
 		t.Fatalf("an empty --rig-name must match no rig; got:\n%s", out)
 	}
-
-	// Omitting the flag still lists everything, which is what makes the empty
-	// case distinguishable rather than just a narrower default.
-	resetServiceFlags(t)
-	out, err = runRootCommand("service", "list", "--local")
-	if err != nil {
-		t.Fatalf("service list failed: %v", err)
-	}
-	if !strings.Contains(out, "keep") || !strings.Contains(out, "other") {
-		t.Fatalf("omitting --rig-name must still list every rig; got:\n%s", out)
+	if requests != 0 {
+		t.Fatalf("an empty --rig-name made %d API requests, want none", requests)
 	}
 }
 
-func TestServiceListCommand_Local_NoServices(t *testing.T) {
-	resetServiceFlags(t)
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	out, err := runRootCommand("service", "list", "--local")
-	if err != nil {
-		t.Fatalf("service list failed: %v", err)
-	}
-	if !strings.Contains(out, "No services found.") {
-		t.Fatalf("expected empty message, got:\n%s", out)
-	}
-}
-
-// --remote-target is unsupported and must be rejected up front regardless of
-// mode, matching the sandbox command — not silently ignored in local mode.
+// --remote-target is unsupported and must be rejected up front, before the
+// auth gate, matching the sandbox command.
 func TestServiceListCommand_RemoteTargetRejected(t *testing.T) {
 	resetServiceFlags(t)
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	_, err := runRootCommand("service", "list", "--local", "--remote-target", "staging")
+	_, err := runRootCommand("service", "list", "--remote-target", "staging")
 	if err == nil {
 		t.Fatal("expected --remote-target to be rejected")
 	}
@@ -187,8 +96,7 @@ func TestServiceListCommand_RemoteTargetRejected(t *testing.T) {
 	}
 }
 
-// The default mode is remote, so listing without credentials must fail with a
-// login hint rather than silently reading local state.
+// Listing without credentials must fail with a login hint.
 func TestServiceListCommand_DefaultRemote_RequiresAuth(t *testing.T) {
 	resetServiceFlags(t)
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
@@ -306,33 +214,6 @@ func TestServiceDeleteCommand_RmAlias(t *testing.T) {
 	}
 	if !strings.Contains(out, "Aborted.") {
 		t.Fatalf("expected 'Aborted.', got:\n%s", out)
-	}
-}
-
-// create and delete are remote-only: --local must be rejected rather than
-// silently routed to the remote API (which would mutate the wrong service when
-// a same-named local and remote sandbox coexist).
-func TestServiceCreateCommand_LocalRejected(t *testing.T) {
-	resetServiceFlags(t)
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	_, err := runRootCommand("service", "create", "--local", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
-	if err == nil {
-		t.Fatal("expected --local to be rejected for create")
-	}
-	if !strings.Contains(err.Error(), "only supported for remote sandboxes") {
-		t.Fatalf("expected remote-only error, got: %v", err)
-	}
-}
-
-func TestServiceDeleteCommand_LocalRejected(t *testing.T) {
-	resetServiceFlags(t)
-	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	_, err := runRootCommand("service", "delete", "--local", "--force", "--rig", "box", "--name", "web")
-	if err == nil {
-		t.Fatal("expected --local to be rejected for delete")
-	}
-	if !strings.Contains(err.Error(), "only supported for remote sandboxes") {
-		t.Fatalf("expected remote-only error, got: %v", err)
 	}
 }
 

@@ -3,19 +3,15 @@ package sandboxcmd
 // sandbox_agent.go implements agent-send command wiring and agent CLI helpers.
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
-	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
-	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
@@ -26,8 +22,7 @@ import (
 // The response-carrying fields (session_id, response, is_error,
 // is_new_session, agent_session_id, cost_usd) use the same names as the API's
 // AgentSendResponse schema; Sandbox/Agent/Status are CLI-only wrapper fields
-// with no schema equivalent (agent-send has no polled resource, and the local
-// Docker path has no API-backed response at all).
+// with no schema equivalent (agent-send has no polled resource).
 //
 // Response is a pointer so a completed send always emits the field, even when
 // the agent produced no text (""), matching the schema where response is
@@ -82,30 +77,9 @@ func resolveAgentConfig(name string) (agentConfig, error) {
 	return agentConfig{}, fmt.Errorf("unknown agent %q; supported agents: %s", name, strings.Join(known, ", "))
 }
 
-func runDockerSandboxAgentSend(name, message string, noWait bool, workdir string, agent agentConfig, stdout, stderr io.Writer) error {
-	dockerArgs := buildDockerAgentSendArgs(name, message, noWait, workdir, agent)
-	dockerCmd := exec.Command("docker", dockerArgs...)
-	if !noWait {
-		dockerCmd.Stdout = stdout
-		dockerCmd.Stderr = stderr
-	}
-	return dockerCmd.Run()
-}
-
 type agentRunOpts struct {
 	SessionID  string
 	NewSession bool
-}
-
-func agentCmdParts(agent agentConfig, message string) []string {
-	parts := []string{agent.Binary}
-	parts = append(parts, agent.SubCmd...)
-	parts = append(parts, agent.ExtraArgs...)
-	if agent.PrintArg != "" {
-		parts = append(parts, agent.PrintArg)
-	}
-	parts = append(parts, message)
-	return parts
 }
 
 func agentCmdPartsWithOpts(agent agentConfig, message string, opts agentRunOpts, jsonOutput bool) []string {
@@ -129,16 +103,6 @@ func agentCmdPartsWithOpts(agent agentConfig, message string, opts agentRunOpts,
 	}
 	parts = append(parts, message)
 	return parts
-}
-
-func buildAgentShellCmd(message string, noWait bool, workdir string, agent agentConfig) string {
-	agentStr := strings.Join(agentCmdParts(agent, fmt.Sprintf("%q", message)), " ")
-	cmd := fmt.Sprintf("cd %s && %s", workdir, agentStr)
-	if noWait {
-		sessionName := fmt.Sprintf("amika-agent-send-%d", time.Now().UnixNano())
-		return fmt.Sprintf("tmux new-session -d -s '%s' '%s'", sessionName, cmd)
-	}
-	return cmd
 }
 
 func buildRemoteAgentShellCmd(message string, noWait bool, workdir string, agent agentConfig, opts agentRunOpts) string {
@@ -180,11 +144,6 @@ func runRemoteAgentSend(client *apiclient.Client, name, message string, noWait b
 	return resp, nil
 }
 
-func buildDockerAgentSendArgs(name, message string, noWait bool, workdir string, agent agentConfig) []string {
-	shellCmd := buildAgentShellCmd(message, noWait, workdir, agent)
-	return []string{"exec", name, "bash", "-c", shellCmd}
-}
-
 func isStdinPiped() bool {
 	fi, err := os.Stdin.Stat()
 	if err != nil {
@@ -201,7 +160,7 @@ The message can be provided as a positional argument or piped via stdin.
 By default the command waits for the agent to finish and streams the response.
 Use --no-wait to send the message and return immediately.
 
-For synchronous remote sends, the agent session id is surfaced so the session
+For synchronous sends, the agent session id is surfaced so the session
 can be resumed with --session-id. In text output (the default) "session_id: <id>"
 is written to stderr first, before the response is written to stdout, keeping
 stdout the pure agent response. With --output json, a single JSON object is written to stdout
@@ -243,51 +202,8 @@ sends) and the response, session id, and error status included once known.`,
 			return err
 		}
 
-		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
-		}
-
-		if mode == runmode.Local {
-			sandboxesFile, err := config.SandboxesStateFile()
-			if err != nil {
-				return err
-			}
-			store := sandbox.NewStore(sandboxesFile)
-			info, err := store.Get(name)
-			if err != nil {
-				return fmt.Errorf("sandbox %q not found", name)
-			}
-			if info.Provider != "docker" {
-				return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
-			}
-			// In JSON mode capture the streamed agent output so stdout carries
-			// only the JSON envelope; otherwise stream straight to stdout.
-			var captured bytes.Buffer
-			agentStdout := io.Writer(os.Stdout)
-			if format.IsJSON() && !noWait {
-				agentStdout = &captured
-			}
-			if err := runDockerSandboxAgentSend(name, message, noWait, workdir, agent, agentStdout, os.Stderr); err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 127 {
-					return fmt.Errorf("%s CLI not found in sandbox %q; was it created with the right preset?", agent.Binary, name)
-				}
-				return fmt.Errorf("agent-send failed for sandbox %q: %w", name, err)
-			}
-			if format.IsJSON() {
-				result := agentSendJSON{Sandbox: name, Agent: agent.Binary, Status: "completed"}
-				if noWait {
-					result.Status = "sent"
-				} else {
-					resp := captured.String()
-					result.Response = &resp
-				}
-				return format.JSON(cmd.OutOrStdout(), result)
-			}
-			if noWait {
-				fmt.Fprintf(os.Stderr, "Message sent to %s in sandbox %q\n", agent.Binary, name)
-			}
-			return nil
 		}
 
 		client, err := getRemoteClient(target)

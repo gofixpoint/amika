@@ -13,8 +13,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:               "amika",
-	Short:             "Amika - filesystem mounting and script execution",
-	Long:              `Amika provides filesystem mounting and script execution with output materialization.`,
+	Short:             "Amika - run coding agents in remote rigs",
+	Long:              `Amika creates and manages remote rigs (sandboxes) and runs coding agents inside them.`,
 	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 	SilenceUsage:      true,
 	SilenceErrors:     true,

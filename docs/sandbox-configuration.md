@@ -61,9 +61,6 @@ By default, `amika sandbox create` walks up from the current working directory a
 # Auto-detect the repo containing the current working directory (clean clone)
 amika sandbox create
 
-# Auto-detect and include untracked/uncommitted files (local sandboxes only)
-amika sandbox create --no-clean
-
 # Use the repo at a specific path
 amika sandbox create --git ./src
 

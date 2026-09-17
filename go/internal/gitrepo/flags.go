@@ -18,14 +18,10 @@ const (
 	FlagNoGit = "no-git"
 	// FlagRepo is a legacy alias for FlagGit that a command may register.
 	FlagRepo = "repo"
-	// FlagNoClean includes the working tree's untracked files instead of a
-	// clean clone. Only local sandboxes offer it.
-	FlagNoClean = "no-clean"
 )
 
 // AddFlags registers --git and --no-git on cmd. The usage strings stay
-// per-command because a local sandbox mounts the repo while a remote one
-// clones it, but the names, types, and defaults live here so every command
+// per-command, but the names, types, and defaults live here so every command
 // accepts exactly the same input.
 func AddFlags(cmd *cobra.Command, gitUsage, noGitUsage string) {
 	cmd.Flags().String(FlagGit, "", gitUsage)
@@ -63,10 +59,10 @@ func RequestedFlag(cmd *cobra.Command) string {
 // readFlags translates cmd's repo-selection flags into Options, leaving Cwd
 // unset.
 //
-// Only --no-git is required of a caller. --git, --repo, and --no-clean are
-// read when the command registers them and treated as unset otherwise, so a
-// command offering some of the set resolves the same way as one offering all
-// of it rather than tripping over a flag it never exposed.
+// Only --no-git is required of a caller. --git and --repo are read when the
+// command registers them and treated as unset otherwise, so a command offering
+// some of the set resolves the same way as one offering all of it rather than
+// tripping over a flag it never exposed.
 func readFlags(cmd *cobra.Command) (Options, error) {
 	git, gitSet, gitFlagName := "", false, FlagGit
 	if f := cmd.Flags().Lookup(FlagGit); f != nil {
@@ -92,13 +88,9 @@ func readFlags(cmd *cobra.Command) (Options, error) {
 		git, gitSet = alias, true
 	}
 	noGit, _ := cmd.Flags().GetBool(FlagNoGit)
-	noClean := false
-	if f := cmd.Flags().Lookup(FlagNoClean); f != nil {
-		noClean, _ = cmd.Flags().GetBool(FlagNoClean)
-	}
 	return Options{
 		Git: git, GitSet: gitSet, GitFlagName: gitFlagName,
-		NoGit: noGit, NoClean: noClean,
+		NoGit: noGit,
 	}, nil
 }
 

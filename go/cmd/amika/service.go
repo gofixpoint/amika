@@ -8,10 +8,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
-	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
-	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/services"
 	"github.com/spf13/cobra"
 )
@@ -93,16 +91,12 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Validate --remote-target up front, unconditionally, matching `service
-	// list`: a bad value fails the same way regardless of mode or auth state.
+	// list`: a bad value fails the same way regardless of auth state.
 	if _, err := getServiceRemoteTarget(cmd); err != nil {
 		return err
 	}
 
-	mode := runmode.Resolve(cmd)
-	if mode == runmode.Local {
-		return fmt.Errorf("service create is only supported for remote sandboxes; omit --local (local sandbox services are declared in the repo config at creation time)")
-	}
-	if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 
@@ -152,11 +146,7 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	mode := runmode.Resolve(cmd)
-	if mode == runmode.Local {
-		return fmt.Errorf("service delete is only supported for remote sandboxes; omit --local (local sandbox services are declared in the repo config at creation time)")
-	}
-	if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 
@@ -224,32 +214,24 @@ var serviceListCmd = &cobra.Command{
 		rigName, _ := cmd.Flags().GetString("rig-name")
 
 		// Validate --remote-target up front, unconditionally, matching the
-		// sandbox command: a bad value fails the same way regardless of mode or
-		// auth state, rather than being silently ignored in local mode.
+		// sandbox command: a bad value fails the same way regardless of auth
+		// state.
 		if _, err := getServiceRemoteTarget(cmd); err != nil {
 			return err
 		}
 
-		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
 		var rows []serviceRow
 		var err error
-		switch {
-		case cmd.Flags().Changed("rig-name") && strings.TrimSpace(rigName) == "":
+		if cmd.Flags().Changed("rig-name") && strings.TrimSpace(rigName) == "" {
 			// An explicitly empty --rig-name names no rig, so it matches no
-			// rig. The row filters below read "" as "no filter", so without
-			// this case the common shell form --rig-name "$AMIKA_RIG_NAME",
-			// evaluated where that variable is unset, would widen the listing
-			// to every rig in the organization instead of narrowing it to none
-			// -- and succeed, so the caller has no signal that it happened.
+			// rig. An omitted filter continues to list every rig.
 			rows = nil
-		case mode == runmode.Remote:
+		} else {
 			rows, err = remoteServiceRows(rigName)
-		default:
-			rows, err = localServiceRows(rigName)
 		}
 		if err != nil {
 			return err
@@ -285,47 +267,6 @@ var serviceListCmd = &cobra.Command{
 		w.Flush()
 		return nil
 	},
-}
-
-// localServiceRows reads services from the local sandbox state file.
-func localServiceRows(sandboxName string) ([]serviceRow, error) {
-	sandboxesFile, err := config.SandboxesStateFile()
-	if err != nil {
-		return nil, err
-	}
-	store := sandbox.NewStore(sandboxesFile)
-	sandboxes, err := store.List()
-	if err != nil {
-		return nil, err
-	}
-
-	var rows []serviceRow
-	for _, sb := range sandboxes {
-		if sandboxName != "" && sb.Name != sandboxName {
-			continue
-		}
-		for _, svc := range sb.Services {
-			portStrs := make([]string, 0, len(svc.Ports))
-			var urls []string
-			for _, p := range svc.Ports {
-				portStrs = append(portStrs, formatPortBinding(p.PortBinding))
-				if p.URL != "" {
-					urls = append(urls, p.URL)
-				}
-			}
-			urlStr := "-"
-			if len(urls) > 0 {
-				urlStr = strings.Join(urls, " ")
-			}
-			rows = append(rows, serviceRow{
-				service:     svc.Name,
-				sandboxName: sb.Name,
-				ports:       strings.Join(portStrs, ","),
-				url:         urlStr,
-			})
-		}
-	}
-	return rows, nil
 }
 
 // remoteServiceRows fetches services from the remote API. The list endpoint
@@ -412,8 +353,7 @@ func init() {
 	serviceCmd.AddCommand(serviceListCmd)
 	serviceCmd.AddCommand(serviceCreateCmd)
 	serviceCmd.AddCommand(serviceDeleteCmd)
-	serviceCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
-	serviceCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
+	serviceCmd.PersistentFlags().Bool("remote", true, "Operate on remote rigs; accepted as a no-op since rigs are always remote")
 	serviceCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	serviceCmd.PersistentFlags().MarkHidden("remote-target")
 	serviceListCmd.Flags().String("rig-name", "", "Filter services to a specific rig")
