@@ -7,7 +7,13 @@
 // scripts written against the old vocabulary do not break.
 package cliflags
 
-import "github.com/spf13/pflag"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
 
 // NormalizeFlagName maps a flag name written on the command line to the name
 // its flag is registered under, so a retired `--sandbox…` spelling reaches the
@@ -46,4 +52,41 @@ var legacyRigFlagNames = map[string]string{
 	"sandbox":      "rig",
 	"sandbox-name": "rig-name",
 	"sandbox-by":   "rig-by",
+}
+
+// RemovedLocalFlagName is the retired --local flag. Rigs are always remote, so
+// the flag is registered (hidden) on the command trees that used to offer it
+// purely so it parses and can be reported as removed rather than surfacing as
+// Cobra's bare "unknown flag: --local".
+const RemovedLocalFlagName = "local"
+
+// removedLocalFlagError is the migration message both rejections return.
+func removedLocalFlagError() error {
+	return fmt.Errorf("--%s has been removed; rigs are always remote now, so run the command without it",
+		RemovedLocalFlagName)
+}
+
+// RejectRemovedLocalFlag returns the migration error when --local was passed to
+// cmd. Commands whose tree never registered the flag are unaffected, so those
+// keep Cobra's unknown-flag error.
+func RejectRemovedLocalFlag(cmd *cobra.Command) error {
+	if f := cmd.Flags().Lookup(RemovedLocalFlagName); f != nil && f.Changed {
+		return removedLocalFlagError()
+	}
+	return nil
+}
+
+// RejectRemovedLocalFlagInArgs is RejectRemovedLocalFlag for a command that
+// sets DisableFlagParsing and forwards its tail to another program: --local
+// never reaches a pflag set there, so the raw args have to be scanned instead.
+// Without this, `amika rig ssh --local box` would forward --local to ssh, and
+// `amika rig --local ssh box` would parse it and silently ignore it.
+func RejectRemovedLocalFlagInArgs(rawArgs []string) error {
+	long := "--" + RemovedLocalFlagName
+	for _, arg := range rawArgs {
+		if arg == long || strings.HasPrefix(arg, long+"=") {
+			return removedLocalFlagError()
+		}
+	}
+	return nil
 }

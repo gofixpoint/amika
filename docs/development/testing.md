@@ -87,11 +87,14 @@ AMIKA_RUN_DOCKER_INTEGRATION=1 make test-integration
 AMIKA_RUN_DOCKER_INTEGRATION=1 AMIKA_RUN_EXPENSIVE_TESTS=1 make test-expensive
 ```
 
-Note that no test currently opts into either gate. The Docker-backed suites
-covered the CLI's local sandbox, volume, and materialize commands, and were
-removed along with the `--local` mode. The toggles and the
-`testutil.RequireDockerIntegration` / `RequireExpensiveDockerTests` helpers are
-kept for Docker tests against `amika-server`, which still serves that API.
+**No test currently opts into either gate**, so both commands above pass
+without exercising anything Docker-backed. A green run here proves nothing
+about Docker. The suites that used these gates covered
+the CLI's local sandbox, volume, and materialize commands and were removed with
+the `--local` mode. The toggles and the `testutil.RequireDockerIntegration`,
+`RequireExpensiveDockerTests`, and `NewSandboxName` helpers are kept as
+scaffolding for Docker tests against `amika-server`, which still serves that
+API.
 
 ## Coverage Gates
 

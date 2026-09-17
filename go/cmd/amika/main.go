@@ -24,23 +24,12 @@ var rootCmd = &cobra.Command{
 	// subcommand that defines its own must call output.FormatFrom (or invoke
 	// this hook) to keep --output validated for that subtree.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-		if err := rejectRemovedLocalFlag(cmd); err != nil {
+		if err := cliflags.RejectRemovedLocalFlag(cmd); err != nil {
 			return err
 		}
 		_, err := output.FormatFrom(cmd)
 		return err
 	},
-}
-
-// rejectRemovedLocalFlag turns the retired --local into a migration message
-// rather than cobra's bare "unknown flag: --local". The flag is still
-// registered (hidden) on the command trees that used to offer it, purely so it
-// parses and can be reported here; rigs are always remote now.
-func rejectRemovedLocalFlag(cmd *cobra.Command) error {
-	if f := cmd.Flags().Lookup("local"); f != nil && f.Changed {
-		return fmt.Errorf("--local has been removed; rigs are always remote now, so run the command without it")
-	}
-	return nil
 }
 
 func init() {

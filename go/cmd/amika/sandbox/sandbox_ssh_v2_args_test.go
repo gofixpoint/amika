@@ -47,6 +47,9 @@ func sshV2TestTree() (*cobra.Command, *cobra.Command) {
 		sshV2Parent = &cobra.Command{Use: "sandbox"}
 		sshV2Parent.PersistentFlags().Bool("remote", true, "Operate on remote rigs; accepted as a no-op since rigs are always remote")
 		sshV2Parent.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
+		// Mirrors the real tree's hidden registration of the retired --local.
+		sshV2Parent.PersistentFlags().Bool("local", false, "Removed; rigs are always remote")
+		sshV2Parent.PersistentFlags().MarkHidden("local")
 		sshV2Root.AddCommand(sshV2Parent)
 	})
 	return sshV2Root, sshV2Parent
@@ -229,6 +232,32 @@ func TestSSHV2AmikaFlagsBeforeSubcommand(t *testing.T) {
 			t.Errorf("ssh ran with argv %#v; --output should never reach it", h.argv)
 		}
 	})
+}
+
+// `ssh` sets DisableFlagParsing, so the root's PersistentPreRunE runs before
+// --local has been parsed and cannot catch it there. Both positions have to be
+// rejected by the command itself: before the subcommand it lands in the
+// amika-owned half, and after it would otherwise be forwarded to ssh verbatim.
+func TestSSHV2RejectsRemovedLocalFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+	}{
+		{name: "before the subcommand", args: []string{"amika", "sandbox", "--local", "ssh", "my-box"}},
+		{name: "after the subcommand", args: []string{"amika", "sandbox", "ssh", "--local", "my-box"}},
+		{name: "with an explicit value", args: []string{"amika", "sandbox", "--local=false", "ssh", "my-box"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, h, _ := newSSHV2Harness(t, tt.args)
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), "--local has been removed") {
+				t.Fatalf("err = %v, want the --local removal message", err)
+			}
+			if h.ran {
+				t.Errorf("ssh ran with argv %#v; --local should never reach it", h.argv)
+			}
+		})
+	}
 }
 
 func TestSSHV2MissingName(t *testing.T) {

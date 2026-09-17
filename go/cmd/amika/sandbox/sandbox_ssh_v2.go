@@ -7,6 +7,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/cliargs"
+	"github.com/gofixpoint/amika/go/internal/cliflags"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
@@ -96,6 +97,16 @@ Examples:
 			return err
 		}
 		if err := output.RejectFlag(cmd); err != nil {
+			return err
+		}
+		// This command parses its own flags, so the root's PersistentPreRunE
+		// ran before --local was parsed and could not catch it. Check both
+		// halves: written before the subcommand it lands in own, and after it
+		// would otherwise be forwarded to ssh verbatim.
+		if err := cliflags.RejectRemovedLocalFlag(cmd); err != nil {
+			return err
+		}
+		if err := cliflags.RejectRemovedLocalFlagInArgs(forward); err != nil {
 			return err
 		}
 		// Locate the sandbox name before requiring auth, so an unusable command

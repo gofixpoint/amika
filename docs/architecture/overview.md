@@ -2,7 +2,7 @@
 
 Amika is an open-source CLI and HTTP API for running AI coding agents in sandboxes. Each sandbox comes pre-configured with development tools and agent CLIs — Claude Code, Codex, and OpenCode — ready to go out of the box.
 
-For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, see [README.md](../../README.md).
+For user-facing docs, see [README.md](../../README.md).
 
 ## Core Concepts
 
@@ -12,7 +12,7 @@ For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, 
 
 The `amika-server` binary additionally exposes a Docker-backed sandbox and materialization API over HTTP, including `ro`/`rw`/`rwcopy` mount modes. The `amika` CLI no longer has a local mode.
 
-**Preset images**: Bundled Dockerfiles (`coder`, `claude`) that include common dev tools and coding agent CLIs. Auto-built on first use.
+**Preset images**: Bundled Dockerfiles (`coder`, `coder-plus-docker`) that include common dev tools and coding agent CLIs. Auto-built on first use by `amika-server`.
 
 ## Commands
 

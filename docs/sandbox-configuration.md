@@ -2,7 +2,7 @@
 
 ## Setup Scripts
 
-The `--setup-script` flag lets you mount a local script into the container at `/usr/local/etc/amikad/setup/setup.sh`. The script runs automatically when the container starts, before the main command (CMD).
+The `--setup-script` flag lets you supply a local script to run inside the rig at `/usr/local/etc/amikad/setup/setup.sh`. The script runs automatically when the container starts, before the main command (CMD).
 
 ### Usage
 

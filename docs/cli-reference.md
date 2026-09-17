@@ -769,7 +769,7 @@ The HTTP API accepts some fields that are not available as CLI flags:
 | Variable                    | Description                                                                                                                                                        |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `AMIKA_STATE_DIRECTORY`     | Override the default state directory (`~/.local/state/amika`). All state files are stored here when set                                                            |
-| `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets. E.g. setting to `myregistry/amika` produces `myregistry/amika-coder:latest`                                     |
+| `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets, e.g. `myregistry/amika` produces `myregistry/amika-coder:latest`. Read by `amika-server`; the CLI does not build images |
 | `AMIKA_API_URL`             | Override the remote API base URL (default: `https://app.amika.dev`). Used by sandbox commands when operating on remote sandboxes                                   |
 | `AMIKA_WORKOS_CLIENT_ID`    | Override the default WorkOS client ID for `amika auth login`. If you change `AMIKA_API_URL`, you likely need to update this too                                    |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker rebuild integration tests during `go test`                                                                                   |

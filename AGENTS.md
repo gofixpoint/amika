@@ -158,7 +158,7 @@ For user-facing docs (`docs/`, README):
 
 - Docker must be running for integration tests and CLI end-to-end testing
 - Test targets: `make test-unit`, `make test-integration`, `make test-contract`, `make test-expensive`
-- Some tests are skipped by default. Run expensive Docker tests with: `AMIKA_RUN_EXPENSIVE_TESTS=1 make test-expensive`
+- The Docker-gated suites (`AMIKA_RUN_DOCKER_INTEGRATION`, `AMIKA_RUN_EXPENSIVE_TESTS`) currently have no tests opting into them; they were removed with the CLI's `--local` mode. See `docs/development/testing.md`
 - See `docs/development/testing.md` for the full smoke test plan
 - Cobra does not reset `rootCmd` flag state between `Execute` calls, so CLI tests that set flags must reset them afterward (see `resetChangedFlags` in `cmd/amika`)
 
@@ -167,7 +167,7 @@ For user-facing docs (`docs/`, README):
 | Variable | Purpose |
 |----------|---------|
 | `AMIKA_STATE_DIRECTORY` | Override default state directory (`~/.local/state/amika`) |
-| `AMIKA_PRESET_IMAGE_PREFIX` | Override Docker image name prefix for presets |
+| `AMIKA_PRESET_IMAGE_PREFIX` | Override Docker image name prefix for presets (read by `amika-server`; no effect on the CLI) |
 | `AMIKA_API_URL` | Override remote API base URL (default: `https://app.amika.dev`) |
 | `AMIKA_BINARY_PATH` | Absolute path to the `amika` executable recorded in generated config (the SSH `ProxyCommand`). Defaults to the running binary; set it inside a wrapper script so the wrapper names itself and the environment it exports survives |
 | `AMIKA_WORKOS_CLIENT_ID` | Override default WorkOS client ID for `amika auth login` |
