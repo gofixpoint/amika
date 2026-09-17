@@ -2,14 +2,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { AmikaClient } from "@/client";
 import { AmikaHTTPError } from "@/errors";
-import type { AgentCredentialRef, RemoteSandbox } from "@/types";
+import type { AgentCredentialRef, RemoteRig } from "@/types";
 
 import {
   describeFunctional,
   ensureGitHubToken,
   LONG_TIMEOUT_MS,
   makeClient,
-  provisionSandbox,
+  provisionRig,
   TEST_AGENT_NAME,
 } from "@test/functional/helpers";
 
@@ -17,9 +17,9 @@ const ENV_CRED_NAME = process.env["AMIKA_TEST_AGENT_CREDENTIAL_NAME"];
 const ENV_CRED_TYPE = (process.env["AMIKA_TEST_AGENT_CREDENTIAL_TYPE"] ??
   "api_key") as "oauth" | "api_key";
 
-describeFunctional("sandbox functional tests", () => {
+describeFunctional("rig functional tests", () => {
   let client: AmikaClient;
-  let sandbox: RemoteSandbox;
+  let rig: RemoteRig;
 
   beforeAll(async () => {
     client = makeClient();
@@ -50,39 +50,48 @@ describeFunctional("sandbox functional tests", () => {
       };
     }
 
-    sandbox = await provisionSandbox(client, {
+    rig = await provisionRig(client, {
       agentCredentials: [credential],
     });
   }, LONG_TIMEOUT_MS);
 
   describe("provisioning", () => {
-    it("createSandbox + waitForSandbox returned a ready sandbox", () => {
-      // The actual API calls happened in beforeAll via provisionSandbox; this
+    it("createRig + waitForRig returned a ready rig", () => {
+      // The actual API calls happened in beforeAll via provisionRig; this
       // test makes the assertion explicit so a failure points at the right
       // method instead of cascading into every other test.
-      expect(sandbox.id).not.toBe("");
-      expect(sandbox.name).not.toBe("");
-      expect(["active", "running", "started"]).toContain(sandbox.state);
-      expect(sandbox.createdAt).not.toBe("");
+      expect(rig.id).not.toBe("");
+      expect(rig.name).not.toBe("");
+      expect(["active", "running", "started"]).toContain(rig.state);
+      expect(rig.createdAt).not.toBe("");
     });
   });
 
   describe("read operations", () => {
-    it("getSandbox returns the provisioned sandbox in a ready state", async () => {
-      const sb = await client.getSandbox(sandbox.name);
-      expect(sb.name).toBe(sandbox.name);
-      expect(sb.id).toBe(sandbox.id);
-      expect(["active", "running", "started"]).toContain(sb.state);
+    it("getRig returns the provisioned rig in a ready state", async () => {
+      const got = await client.getRig(rig.name);
+      expect(got.name).toBe(rig.name);
+      expect(got.id).toBe(rig.id);
+      expect(["active", "running", "started"]).toContain(got.state);
       // repo_url is nullable in the schema; created_at is required.
-      expect(sb.repoUrl === null || typeof sb.repoUrl === "string").toBe(true);
-      expect(typeof sb.createdAt).toBe("string");
+      expect(got.repoUrl === null || typeof got.repoUrl === "string").toBe(
+        true,
+      );
+      expect(typeof got.createdAt).toBe("string");
     });
 
-    it("listSandboxes includes the provisioned sandbox", async () => {
-      const all = await client.listSandboxes();
-      const match = all.find((s) => s.name === sandbox.name);
+    it("listRigs includes the provisioned rig", async () => {
+      const all = await client.listRigs();
+      const match = all.find((r) => r.name === rig.name);
       expect(match).toBeDefined();
-      expect(match?.id).toBe(sandbox.id);
+      expect(match?.id).toBe(rig.id);
+    });
+
+    it("the legacy sandbox aliases reach the same rig", async () => {
+      const viaAlias = await client.getSandbox(rig.name);
+      expect(viaAlias.id).toBe(rig.id);
+      const all = await client.listSandboxes();
+      expect(all.some((r) => r.id === rig.id)).toBe(true);
     });
   });
 
@@ -90,36 +99,36 @@ describeFunctional("sandbox functional tests", () => {
     let sessionId: string;
 
     it("createSession returns a session for the configured agent", async () => {
-      const session = await client.createSession(sandbox.name, {
+      const session = await client.createSession(rig.name, {
         agentName: TEST_AGENT_NAME,
         metadata: { source: "ts-sdk-functional" },
       });
       expect(session.id).not.toBe("");
       expect(session.agentName).toBe(TEST_AGENT_NAME);
-      expect(session.sandboxId).toBe(sandbox.id);
+      expect(session.sandboxId).toBe(rig.id);
       sessionId = session.id;
     });
 
     it("listSessions returns the created session in the envelope", async () => {
-      const sessions = await client.listSessions(sandbox.name);
+      const sessions = await client.listSessions(rig.name);
       expect(sessions.length).toBeGreaterThanOrEqual(1);
       expect(sessions.some((s) => s.id === sessionId)).toBe(true);
     });
 
     it("getSession returns the session by id", async () => {
-      const session = await client.getSession(sandbox.name, sessionId);
+      const session = await client.getSession(rig.name, sessionId);
       expect(session.id).toBe(sessionId);
-      expect(session.sandboxId).toBe(sandbox.id);
+      expect(session.sandboxId).toBe(rig.id);
     });
 
     it("getLatestSession returns a session (non-null)", async () => {
-      const latest = await client.getLatestSession(sandbox.name);
+      const latest = await client.getLatestSession(rig.name);
       expect(latest).not.toBeNull();
-      expect(latest?.sandboxId).toBe(sandbox.id);
+      expect(latest?.sandboxId).toBe(rig.id);
     });
 
     it("updateSession can mutate metadata", async () => {
-      const updated = await client.updateSession(sandbox.name, sessionId, {
+      const updated = await client.updateSession(rig.name, sessionId, {
         metadata: { source: "ts-sdk-functional", updated: true },
       });
       expect(updated.id).toBe(sessionId);
@@ -131,7 +140,7 @@ describeFunctional("sandbox functional tests", () => {
     it(
       "agentSend returns a response and a session id",
       async () => {
-        const resp = await client.agentSend(sandbox.name, {
+        const resp = await client.agentSend(rig.name, {
           message:
             "Reply with the single word 'ok' and nothing else. This is a functional test from the TypeScript SDK.",
           newSession: true,
@@ -146,50 +155,50 @@ describeFunctional("sandbox functional tests", () => {
   });
 
   // Mutates state — keep at the end so earlier read tests run against a running
-  // sandbox.
+  // rig.
   describe("stop / start lifecycle", () => {
     it(
-      "stopSandbox + waitForSandboxStop transitions to stopped",
+      "stopRig + waitForRigStop transitions to stopped",
       async () => {
-        await client.stopSandbox(sandbox.name);
-        const stopped = await client.waitForSandboxStop(sandbox.name);
+        await client.stopRig(rig.name);
+        const stopped = await client.waitForRigStop(rig.name);
         expect(stopped.state).toBe("stopped");
       },
       LONG_TIMEOUT_MS,
     );
 
     it(
-      "startSandbox + waitForSandboxStart returns to a ready state",
+      "startRig + waitForRigStart returns to a ready state",
       async () => {
-        await client.startSandbox(sandbox.name);
-        const started = await client.waitForSandboxStart(sandbox.name);
+        await client.startRig(rig.name);
+        const started = await client.waitForRigStart(rig.name);
         expect(["active", "running", "started"]).toContain(started.state);
       },
       LONG_TIMEOUT_MS,
     );
   });
 
-  // Runs last so every preceding test still has a sandbox to talk to. The
-  // afterAll registered by provisionSandbox is kept as a safety net for runs
+  // Runs last so every preceding test still has a rig to talk to. The
+  // afterAll registered by provisionRig is kept as a safety net for runs
   // where this test is skipped or fails before deleting.
   describe("delete", () => {
-    it("deleteSandbox removes the sandbox", async () => {
-      await client.deleteSandbox(sandbox.name);
+    it("deleteRig removes the rig", async () => {
+      await client.deleteRig(rig.name);
 
-      // After deletion the server either returns 404 from getSandbox or keeps
+      // After deletion the server either returns 404 from getRig or keeps
       // the record around briefly in a terminal "deleted"-style state. Accept
-      // both, but require that listSandboxes no longer surfaces it as live.
+      // both, but require that listRigs no longer surfaces it as live.
       try {
-        const sb = await client.getSandbox(sandbox.name);
-        expect(sb.state).toMatch(/delet/i);
+        const got = await client.getRig(rig.name);
+        expect(got.state).toMatch(/delet/i);
       } catch (err) {
         expect(err).toBeInstanceOf(AmikaHTTPError);
         expect((err as AmikaHTTPError).statusCode).toBe(404);
       }
 
-      const all = await client.listSandboxes();
+      const all = await client.listRigs();
       const stillLive = all.find(
-        (s) => s.name === sandbox.name && !/delet/i.test(s.state),
+        (r) => r.name === rig.name && !/delet/i.test(r.state),
       );
       expect(stillLive).toBeUndefined();
     });

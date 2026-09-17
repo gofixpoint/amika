@@ -19,14 +19,19 @@ import {
 
 /**
  * Request body for POST /api/v0beta1/agent-sessions. Only `message` is
- * required: `sessionId` continues an existing chat, `sandboxId` routes into a
- * specific sandbox, and `repoUrl` is used only when a sandbox has to be
+ * required: `sessionId` continues an existing chat, `rigId` routes into a
+ * specific rig, and `repoUrl` is used only when a rig has to be
  * created behind the scenes.
+ *
+ * `sandboxId` is the legacy spelling of `rigId`. Setting both is allowed and a
+ * non-empty `rigId` wins, but there is no reason to.
  */
 export interface AgentSessionSendRequest {
   message: string;
   agent?: string;
   sessionId?: string;
+  rigId?: string;
+  /** @deprecated Use {@link AgentSessionSendRequest.rigId}. */
   sandboxId?: string;
   newSession?: boolean;
   repoUrl?: string;
@@ -36,9 +41,13 @@ export function agentSessionSendRequestToWire(
   r: AgentSessionSendRequest,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { message: r.message };
+  // `||`, not `??`, matching the other two sites that accept both spellings: an
+  // empty rig spelling falls through to the legacy one rather than shadowing it.
+  // Preserves 0.11 for every input, which sent `sandbox_id` whenever it was set.
+  const rigId = r.rigId || r.sandboxId;
   if (r.agent !== undefined) out["agent"] = r.agent;
   if (r.sessionId !== undefined) out["session_id"] = r.sessionId;
-  if (r.sandboxId !== undefined) out["sandbox_id"] = r.sandboxId;
+  if (rigId !== undefined) out["sandbox_id"] = rigId;
   if (r.newSession !== undefined) out["new_session"] = r.newSession;
   if (r.repoUrl !== undefined) out["repo_url"] = r.repoUrl;
   return out;
@@ -78,11 +87,13 @@ function agentSessionUsageFromWire(
  */
 export interface AgentSessionSendResponse {
   sessionId: string;
+  /** The rig the turn ran on. Named for the wire field; see the note in types.ts. */
   sandboxId: string;
   agent: string;
   response: string;
   isError: boolean;
   isNewSession: boolean;
+  /** Whether the turn had to create a rig. Named for the wire field. */
   createdSandbox: boolean;
   usage?: AgentSessionUsage;
 }
@@ -106,12 +117,13 @@ export function agentSessionSendResponseFromWire(
 
 /**
  * One row of the agent-sessions list. `sandboxName`, `preview`, `model`,
- * `effort`, and `endedAt` are nullable: a chat can outlive the sandbox whose
+ * `effort`, and `endedAt` are nullable: a chat can outlive the rig whose
  * name it shows, carry no user message to preview, run at the agent CLI's own
  * model and effort, and still be running.
  */
 export interface AgentSessionSummary {
   sessionId: string;
+  /** The rig the chat runs on. Named for the wire field; see the note in types.ts. */
   sandboxId: string;
   sandboxName: string | null;
   agent: string;
@@ -203,8 +215,9 @@ export function listAgentSessionsResponseFromWire(
 /**
  * Progress callbacks for {@link AmikaClient.sendAgentSessionStream}. Both are
  * optional. `onStatus` reports lifecycle milestones (`creating_sandbox` /
- * `sandbox_ready`, the latter carrying the sandbox id); `onDelta` receives
- * agent reply text as it is produced.
+ * `sandbox_ready` — the server's own phase names, which still say sandbox —
+ * the latter carrying the rig id); `onDelta` receives agent reply text as it
+ * is produced.
  *
  * A handler may return a promise, and the reader awaits it before reading the
  * next frame. Deltas therefore reach an async handler in order, and one that
@@ -217,7 +230,7 @@ export function listAgentSessionsResponseFromWire(
  * returns a boolean, and a union return type would reject it.
  */
 export interface AgentSessionStreamHandlers {
-  onStatus?: (phase: string, sandboxId: string) => unknown;
+  onStatus?: (phase: string, rigId: string) => unknown;
   onDelta?: (text: string) => unknown;
 }
 
