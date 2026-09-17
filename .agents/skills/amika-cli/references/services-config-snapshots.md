@@ -9,9 +9,9 @@ multiple URLs are space-joined.
 ## Managing services
 
 ```bash
-amika service create --rig my-sandbox --name web --port 3000 --url-scheme http
-amika service list --rig-name my-sandbox -o json
-amika service delete --rig my-sandbox --name web --force
+amika service create --sandbox my-sandbox --name web --port 3000 --url-scheme http
+amika service list --sandbox-name my-sandbox -o json
+amika service delete --sandbox my-sandbox --name web --force
 ```
 
 Services in `.amika/config.toml` are created with the sandbox. Use
@@ -53,7 +53,7 @@ credentials. For the full schema, use:
 the source sandbox. The non-interactive form does not ask for confirmation.
 
 ```bash
-amika snapshot create --rig my-sandbox --no-interactive \
+amika snapshot create --sandbox my-sandbox --no-interactive \
   --mode scrub_and_delete --name my-base
 amika snapshot list -o json | jq -r '.items[].name'
 amika snapshot delete my-base --force
