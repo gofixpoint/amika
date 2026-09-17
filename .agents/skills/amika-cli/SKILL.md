@@ -26,7 +26,7 @@ For any task involving a service, URL, port, preview, or local server, inspect
 the sandbox's live services first:
 
 ```bash
-amika service list --sandbox-name "$AMIKA_SANDBOX_NAME" -o json
+amika service list --rig-name "$AMIKA_SANDBOX_NAME" -o json
 ```
 
 Find the referenced service in that result and use its provisioned `url` and
@@ -64,7 +64,7 @@ confirmation flags, and commands that reject JSON output.
 | Need | Start with |
 |---|---|
 | Identify the current sandbox | `$AMIKA_SANDBOX_NAME` |
-| Find a service URL or port inside a sandbox | `amika service list --sandbox-name "$AMIKA_SANDBOX_NAME" -o json` |
+| Find a service URL or port inside a sandbox | `amika service list --rig-name "$AMIKA_SANDBOX_NAME" -o json` |
 | Create, list, start, stop, or delete sandboxes | `amika sandbox --help` |
 | Run a coding agent | `amika send --help` |
 | Run a command remotely | `amika sandbox ssh <name> <command>` |

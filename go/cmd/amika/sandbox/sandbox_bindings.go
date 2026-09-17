@@ -37,7 +37,7 @@ var sandboxBindingsDeleteCmd = &cobra.Command{
 
 const sandboxBindingsDeleteUsageTemplate = `Usage:
   {{.CommandPath}} <binding-id> [flags]
-  {{.CommandPath}} <sandbox-ref> <target> [flags]{{if gt (len .Aliases) 0}}
+  {{.CommandPath}} <rig-ref> <target> [flags]{{if gt (len .Aliases) 0}}
 
 Aliases:
   {{.NameAndAliases}}{{end}}{{if .HasAvailableLocalFlags}}
@@ -59,12 +59,12 @@ func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
 	if runmode.Resolve(cmd) != runmode.Remote {
 		return fmt.Errorf("bindings list is only supported for remote sandboxes")
 	}
-	sandboxRef, _ := cmd.Flags().GetString("sandbox")
-	sandboxBy, _ := cmd.Flags().GetString("sandbox-by")
-	if sandboxRef == "" && cmd.Flags().Changed("sandbox-by") {
-		return fmt.Errorf("--sandbox-by requires --sandbox")
+	rigRef, _ := cmd.Flags().GetString("rig")
+	rigBy, _ := cmd.Flags().GetString("rig-by")
+	if rigRef == "" && cmd.Flags().Changed("rig-by") {
+		return fmt.Errorf("--rig-by requires --rig")
 	}
-	if err := validateSandboxBindingRefKind(sandboxBy); err != nil {
+	if err := validateSandboxBindingRefKind(rigBy); err != nil {
 		return err
 	}
 
@@ -85,10 +85,10 @@ func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
 	}
 
 	var result *apiclient.ListSandboxBindingsResponse
-	if sandboxRef == "" {
+	if rigRef == "" {
 		result, err = client.ListSandboxBindings()
 	} else {
-		result, err = client.ListSandboxBindingsForSandbox(sandboxRef, sandboxBy)
+		result, err = client.ListSandboxBindingsForSandbox(rigRef, rigBy)
 	}
 	if err != nil {
 		return err
@@ -122,11 +122,11 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 	if runmode.Resolve(cmd) != runmode.Remote {
 		return fmt.Errorf("bindings delete is only supported for remote sandboxes")
 	}
-	sandboxBy, _ := cmd.Flags().GetString("sandbox-by")
-	if len(args) == 1 && cmd.Flags().Changed("sandbox-by") {
-		return fmt.Errorf("--sandbox-by requires the <sandbox-ref> <target> form")
+	rigBy, _ := cmd.Flags().GetString("rig-by")
+	if len(args) == 1 && cmd.Flags().Changed("rig-by") {
+		return fmt.Errorf("--rig-by requires the <rig-ref> <target> form")
 	}
-	if err := validateSandboxBindingRefKind(sandboxBy); err != nil {
+	if err := validateSandboxBindingRefKind(rigBy); err != nil {
 		return err
 	}
 	format, err := output.FormatFrom(cmd)
@@ -158,7 +158,7 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 		if sandboxRef == "" {
 			return fmt.Errorf("a sandbox reference is required")
 		}
-		bindings, err := client.ListSandboxBindingsForSandbox(sandboxRef, sandboxBy)
+		bindings, err := client.ListSandboxBindingsForSandbox(sandboxRef, rigBy)
 		if err != nil {
 			return err
 		}
@@ -199,7 +199,7 @@ func validateSandboxBindingRefKind(kind string) error {
 	case "ref", "name", "id":
 		return nil
 	default:
-		return fmt.Errorf("invalid --sandbox-by value %q: must be one of ref, name, id", kind)
+		return fmt.Errorf("invalid --rig-by value %q: must be one of ref, name, id", kind)
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 )
 
 var sandboxBindCmd = &cobra.Command{
-	Use:    "bind <sandbox> gh-branch:<owner>/<repo>/<branch>",
+	Use:    "bind <rig> gh-branch:<owner>/<repo>/<branch>",
 	Short:  "Bind a remote sandbox to a resource",
 	Hidden: true,
 	Args:   cobra.ExactArgs(2),
@@ -24,8 +24,8 @@ var sandboxBindCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		sandboxBy, _ := cmd.Flags().GetString("sandbox-by")
-		if err := validateSandboxBindingRefKind(sandboxBy); err != nil {
+		rigBy, _ := cmd.Flags().GetString("rig-by")
+		if err := validateSandboxBindingRefKind(rigBy); err != nil {
 			return err
 		}
 		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
@@ -46,7 +46,7 @@ var sandboxBindCmd = &cobra.Command{
 
 		rebind, _ := cmd.Flags().GetBool("rebind")
 
-		binding, err := client.BindSandboxGitHubBranch(sandboxRef, sandboxBy, owner, repo, branch, rebind)
+		binding, err := client.BindSandboxGitHubBranch(sandboxRef, rigBy, owner, repo, branch, rebind)
 		if err != nil {
 			return err
 		}

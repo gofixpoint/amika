@@ -52,21 +52,21 @@ value.
 ## Driving an agent
 
 `amika send` is the programmatic entry point for remote agent chats. Without
-`--session-id` or `--sandbox`, it creates a sandbox and starts a chat. It uses
+`--session-id` or `--rig`, it creates a sandbox and starts a chat. It uses
 the organization's default agent, falling back to Claude; pass `--agent claude`
 or `--agent codex` to choose explicitly.
 
 ```bash
 amika send "Add tests for the auth module"
 printf 'Fix the failing tests\n' | amika send
-amika send --sandbox my-sandbox "Refactor the API layer"
+amika send --rig my-sandbox "Refactor the API layer"
 amika send --session-id <id> "Continue the refactor"
 amika send "Summarize this repo" -o json
 ```
 
 In JSON output, check `is_error`; a completed request can still contain an agent
 failure. Use `--session-id <id>` to continue a chat or `--new-session` with
-`--sandbox` to start another chat in an existing sandbox. When `amika send`
+`--rig` to start another chat in an existing sandbox. When `amika send`
 creates a sandbox, it auto-detects the current git repository; use `--git` or
 `--no-git` to override that behavior.
 

@@ -65,13 +65,13 @@ var serviceDeleteCmd = &cobra.Command{
 }
 
 func runServiceCreate(cmd *cobra.Command, _ []string) error {
-	sandboxRef, _ := cmd.Flags().GetString("sandbox")
+	rigRef, _ := cmd.Flags().GetString("rig")
 	name, _ := cmd.Flags().GetString("name")
 	port, _ := cmd.Flags().GetInt("port")
 	urlScheme, _ := cmd.Flags().GetString("url-scheme")
 
-	if strings.TrimSpace(sandboxRef) == "" {
-		return fmt.Errorf("--sandbox is required")
+	if strings.TrimSpace(rigRef) == "" {
+		return fmt.Errorf("--rig is required")
 	}
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("--name is required")
@@ -111,7 +111,7 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	svc, err := runmode.NewRemoteClient().CreateSandboxService(sandboxRef, apiclient.SandboxServiceRequest{
+	svc, err := runmode.NewRemoteClient().CreateSandboxService(rigRef, apiclient.SandboxServiceRequest{
 		Name:      name,
 		Port:      port,
 		URLScheme: urlScheme,
@@ -130,12 +130,12 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runServiceDelete(cmd *cobra.Command, _ []string) error {
-	sandboxRef, _ := cmd.Flags().GetString("sandbox")
+	rigRef, _ := cmd.Flags().GetString("rig")
 	name, _ := cmd.Flags().GetString("name")
 	force, _ := cmd.Flags().GetBool("force")
 
-	if strings.TrimSpace(sandboxRef) == "" {
-		return fmt.Errorf("--sandbox is required")
+	if strings.TrimSpace(rigRef) == "" {
+		return fmt.Errorf("--rig is required")
 	}
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("--name is required")
@@ -166,7 +166,7 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		}
 		reader := bufio.NewReader(cmd.InOrStdin())
 		confirmed, err := confirmAction(
-			fmt.Sprintf("Delete service %q from sandbox %q?", name, sandboxRef),
+			fmt.Sprintf("Delete service %q from rig %q?", name, rigRef),
 			reader,
 		)
 		if err != nil {
@@ -178,7 +178,7 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	if err := runmode.NewRemoteClient().DeleteSandboxService(sandboxRef, name); err != nil {
+	if err := runmode.NewRemoteClient().DeleteSandboxService(rigRef, name); err != nil {
 		return err
 	}
 	if format.IsJSON() {
@@ -221,7 +221,7 @@ var serviceListCmd = &cobra.Command{
 	Short:   "List services across sandboxes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		sandboxName, _ := cmd.Flags().GetString("sandbox-name")
+		rigName, _ := cmd.Flags().GetString("rig-name")
 
 		// Validate --remote-target up front, unconditionally, matching the
 		// sandbox command: a bad value fails the same way regardless of mode or
@@ -238,9 +238,9 @@ var serviceListCmd = &cobra.Command{
 		var rows []serviceRow
 		var err error
 		if mode == runmode.Remote {
-			rows, err = remoteServiceRows(sandboxName)
+			rows, err = remoteServiceRows(rigName)
 		} else {
-			rows, err = localServiceRows(sandboxName)
+			rows, err = localServiceRows(rigName)
 		}
 		if err != nil {
 			return err
@@ -407,14 +407,14 @@ func init() {
 	serviceCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
 	serviceCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	serviceCmd.PersistentFlags().MarkHidden("remote-target")
-	serviceListCmd.Flags().String("sandbox-name", "", "Filter services to a specific sandbox")
+	serviceListCmd.Flags().String("rig-name", "", "Filter services to a specific rig")
 
-	serviceCreateCmd.Flags().String("sandbox", "", "Sandbox to create the service on (name or id)")
+	serviceCreateCmd.Flags().String("rig", "", "Rig to create the service on (name or id)")
 	serviceCreateCmd.Flags().String("name", "", "Service name (a single DNS label)")
 	serviceCreateCmd.Flags().Int("port", 0, "Container port the service listens on")
 	serviceCreateCmd.Flags().String("url-scheme", "", "URL scheme for the generated URL: http or https")
 
-	serviceDeleteCmd.Flags().String("sandbox", "", "Sandbox the service belongs to (name or id)")
+	serviceDeleteCmd.Flags().String("rig", "", "Rig the service belongs to (name or id)")
 	serviceDeleteCmd.Flags().String("name", "", "Name of the service to delete")
 	serviceDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 }

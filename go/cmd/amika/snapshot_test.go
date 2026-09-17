@@ -108,7 +108,7 @@ func TestResolveRepositoryID(t *testing.T) {
 // exercised directly.
 func newTestCreateCmd() *cobra.Command {
 	c := &cobra.Command{RunE: runSnapshotCreate}
-	c.Flags().String("sandbox", "", "")
+	c.Flags().String("rig", "", "")
 	c.Flags().String("name", "", "")
 	c.Flags().String("mode", "", "")
 	c.Flags().String("description", "", "")
@@ -118,17 +118,17 @@ func newTestCreateCmd() *cobra.Command {
 }
 
 func TestSnapshotCreateNoInteractiveValidation(t *testing.T) {
-	t.Run("requires sandbox", func(t *testing.T) {
+	t.Run("requires rig", func(t *testing.T) {
 		c := newTestCreateCmd()
 		if err := runSnapshotCreate(c, nil); err == nil ||
-			!strings.Contains(err.Error(), "--sandbox is required") {
+			!strings.Contains(err.Error(), "--rig is required") {
 			t.Errorf("got %v", err)
 		}
 	})
 
 	t.Run("requires mode without interactive", func(t *testing.T) {
 		c := newTestCreateCmd()
-		c.Flags().Set("sandbox", "box")
+		c.Flags().Set("rig", "box")
 		c.Flags().Set("no-interactive", "true")
 		if err := runSnapshotCreate(c, nil); err == nil ||
 			!strings.Contains(err.Error(), "--mode is required") {
@@ -138,7 +138,7 @@ func TestSnapshotCreateNoInteractiveValidation(t *testing.T) {
 
 	t.Run("requires name without interactive", func(t *testing.T) {
 		c := newTestCreateCmd()
-		c.Flags().Set("sandbox", "box")
+		c.Flags().Set("rig", "box")
 		c.Flags().Set("no-interactive", "true")
 		c.Flags().Set("mode", "full")
 		if err := runSnapshotCreate(c, nil); err == nil ||
@@ -188,7 +188,7 @@ func TestSnapshotCreateJSON_PollsUntilTerminalAndEmitsFinalResource(t *testing.T
 	t.Setenv("AMIKA_API_KEY", "test-token")
 
 	c := newTestCreateCmd()
-	c.Flags().Set("sandbox", "box")
+	c.Flags().Set("rig", "box")
 	c.Flags().Set("name", "snap")
 	c.Flags().Set("mode", "full")
 	c.Flags().Set("no-interactive", "true")
@@ -233,7 +233,7 @@ func TestSnapshotListJSON_WrapsItemsEnvelope(t *testing.T) {
 
 	c := &cobra.Command{RunE: runSnapshotList}
 	c.Flags().BoolP("long", "l", false, "")
-	c.Flags().String("sandbox", "", "")
+	c.Flags().String("rig", "", "")
 	c.Flags().String("repo", "", "")
 	c.Flags().String(output.FlagName, "text", "")
 	c.Flags().Set(output.FlagName, "json")

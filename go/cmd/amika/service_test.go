@@ -31,10 +31,10 @@ func resetServiceFlags(t *testing.T) {
 	if err := serviceCmd.PersistentFlags().Set("remote-target", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := serviceListCmd.Flags().Set("sandbox-name", ""); err != nil {
+	if err := serviceListCmd.Flags().Set("rig-name", ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"sandbox", "name", "url-scheme"} {
+	for _, f := range []string{"rig", "name", "url-scheme"} {
 		if err := serviceCreateCmd.Flags().Set(f, ""); err != nil {
 			t.Fatal(err)
 		}
@@ -42,7 +42,7 @@ func resetServiceFlags(t *testing.T) {
 	if err := serviceCreateCmd.Flags().Set("port", "0"); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"sandbox", "name"} {
+	for _, f := range []string{"rig", "name"} {
 		if err := serviceDeleteCmd.Flags().Set(f, ""); err != nil {
 			t.Fatal(err)
 		}
@@ -101,15 +101,15 @@ func TestServiceListCommand_Local_SandboxNameFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runRootCommand("service", "list", "--local", "--sandbox-name", "keep")
+	out, err := runRootCommand("service", "list", "--local", "--rig-name", "keep")
 	if err != nil {
 		t.Fatalf("service list failed: %v", err)
 	}
 	if !strings.Contains(out, "keep") {
-		t.Fatalf("output missing target sandbox:\n%s", out)
+		t.Fatalf("output missing target rig:\n%s", out)
 	}
 	if strings.Contains(out, "other") {
-		t.Fatalf("--sandbox-name filter leaked another sandbox:\n%s", out)
+		t.Fatalf("--rig-name filter leaked another rig:\n%s", out)
 	}
 }
 
@@ -178,15 +178,15 @@ func TestServiceCreateCommand_Validation(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{"missing sandbox", []string{"service", "create", "--name", "web", "--port", "3000", "--url-scheme", "https"}, "--sandbox is required"},
-		{"missing name", []string{"service", "create", "--sandbox", "box", "--port", "3000", "--url-scheme", "https"}, "--name is required"},
-		{"missing port", []string{"service", "create", "--sandbox", "box", "--name", "web", "--url-scheme", "https"}, "--port is required"},
-		{"missing url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000"}, "--url-scheme is required"},
-		{"bad name", []string{"service", "create", "--sandbox", "box", "--name", "Web_1", "--port", "3000", "--url-scheme", "https"}, "must be a single DNS label"},
-		{"bad url-scheme", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "ftp"}, `must be "http" or "https"`},
-		{"port too large", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "70000", "--url-scheme", "https"}, "must be between 1 and 65535"},
-		{"reserved port low", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "60899", "--url-scheme", "https"}, "reserved for internal Amika services"},
-		{"reserved port high", []string{"service", "create", "--sandbox", "box", "--name", "web", "--port", "60999", "--url-scheme", "https"}, "reserved for internal Amika services"},
+		{"missing rig", []string{"service", "create", "--name", "web", "--port", "3000", "--url-scheme", "https"}, "--rig is required"},
+		{"missing name", []string{"service", "create", "--rig", "box", "--port", "3000", "--url-scheme", "https"}, "--name is required"},
+		{"missing port", []string{"service", "create", "--rig", "box", "--name", "web", "--url-scheme", "https"}, "--port is required"},
+		{"missing url-scheme", []string{"service", "create", "--rig", "box", "--name", "web", "--port", "3000"}, "--url-scheme is required"},
+		{"bad name", []string{"service", "create", "--rig", "box", "--name", "Web_1", "--port", "3000", "--url-scheme", "https"}, "must be a single DNS label"},
+		{"bad url-scheme", []string{"service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "ftp"}, `must be "http" or "https"`},
+		{"port too large", []string{"service", "create", "--rig", "box", "--name", "web", "--port", "70000", "--url-scheme", "https"}, "must be between 1 and 65535"},
+		{"reserved port low", []string{"service", "create", "--rig", "box", "--name", "web", "--port", "60899", "--url-scheme", "https"}, "reserved for internal Amika services"},
+		{"reserved port high", []string{"service", "create", "--rig", "box", "--name", "web", "--port", "60999", "--url-scheme", "https"}, "reserved for internal Amika services"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,8 +208,8 @@ func TestServiceDeleteCommand_Validation(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{"missing sandbox", []string{"service", "delete", "--force", "--name", "web"}, "--sandbox is required"},
-		{"missing name", []string{"service", "delete", "--force", "--sandbox", "box"}, "--name is required"},
+		{"missing rig", []string{"service", "delete", "--force", "--name", "web"}, "--rig is required"},
+		{"missing name", []string{"service", "delete", "--force", "--rig", "box"}, "--name is required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -235,7 +235,7 @@ func TestServiceDeleteCommand_DeclineAborts(t *testing.T) {
 	rootCmd.SetIn(strings.NewReader("n\n"))
 	defer rootCmd.SetIn(nil)
 
-	out, err := runRootCommand("service", "delete", "--sandbox", "box", "--name", "web")
+	out, err := runRootCommand("service", "delete", "--rig", "box", "--name", "web")
 	if err != nil {
 		t.Fatalf("delete declined should not error: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestServiceDeleteCommand_RmAlias(t *testing.T) {
 	rootCmd.SetIn(strings.NewReader("n\n"))
 	defer rootCmd.SetIn(nil)
 
-	out, err := runRootCommand("service", "rm", "--sandbox", "box", "--name", "web")
+	out, err := runRootCommand("service", "rm", "--rig", "box", "--name", "web")
 	if err != nil {
 		t.Fatalf("service rm should resolve: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestServiceDeleteCommand_RmAlias(t *testing.T) {
 func TestServiceCreateCommand_LocalRejected(t *testing.T) {
 	resetServiceFlags(t)
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	_, err := runRootCommand("service", "create", "--local", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	_, err := runRootCommand("service", "create", "--local", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
 	if err == nil {
 		t.Fatal("expected --local to be rejected for create")
 	}
@@ -279,7 +279,7 @@ func TestServiceCreateCommand_LocalRejected(t *testing.T) {
 func TestServiceDeleteCommand_LocalRejected(t *testing.T) {
 	resetServiceFlags(t)
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	_, err := runRootCommand("service", "delete", "--local", "--force", "--sandbox", "box", "--name", "web")
+	_, err := runRootCommand("service", "delete", "--local", "--force", "--rig", "box", "--name", "web")
 	if err == nil {
 		t.Fatal("expected --local to be rejected for delete")
 	}
@@ -293,7 +293,7 @@ func TestServiceDeleteCommand_LocalRejected(t *testing.T) {
 func TestServiceCreateCommand_RemoteTargetRejected(t *testing.T) {
 	resetServiceFlags(t)
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	_, err := runRootCommand("service", "create", "--remote-target", "staging", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	_, err := runRootCommand("service", "create", "--remote-target", "staging", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
 	if err == nil {
 		t.Fatal("expected --remote-target to be rejected")
 	}
@@ -305,7 +305,7 @@ func TestServiceCreateCommand_RemoteTargetRejected(t *testing.T) {
 func TestServiceDeleteCommand_RemoteTargetRejected(t *testing.T) {
 	resetServiceFlags(t)
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
-	_, err := runRootCommand("service", "delete", "--remote-target", "staging", "--force", "--sandbox", "box", "--name", "web")
+	_, err := runRootCommand("service", "delete", "--remote-target", "staging", "--force", "--rig", "box", "--name", "web")
 	if err == nil {
 		t.Fatal("expected --remote-target to be rejected")
 	}
@@ -321,7 +321,7 @@ func TestServiceDeleteCommand_DefaultRemote_RequiresAuth(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "")
 
-	_, err := runRootCommand("service", "delete", "--force", "--sandbox", "box", "--name", "web")
+	_, err := runRootCommand("service", "delete", "--force", "--rig", "box", "--name", "web")
 	if err == nil {
 		t.Fatal("expected an auth error in remote mode without credentials")
 	}
@@ -352,7 +352,7 @@ func TestServiceCreateCommand_PrintsCreatedService(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AMIKA_API_URL", srv.URL)
 
-	out, err := runRootCommand("service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	out, err := runRootCommand("service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
 	if err != nil {
 		t.Fatalf("service create failed: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestServiceCreateCommand_NoURLRendersDash(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AMIKA_API_URL", srv.URL)
 
-	out, err := runRootCommand("service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
+	out, err := runRootCommand("service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https")
 	if err != nil {
 		t.Fatalf("service create failed: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestServiceDeleteCommand_PrintsDeleted(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AMIKA_API_URL", srv.URL)
 
-	out, err := runRootCommand("service", "delete", "--force", "--sandbox", "box", "--name", "web")
+	out, err := runRootCommand("service", "delete", "--force", "--rig", "box", "--name", "web")
 	if err != nil {
 		t.Fatalf("service delete failed: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestServiceCreateCommand_JSONOutput(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AMIKA_API_URL", srv.URL)
 
-	out, err := runRootCommandOutput(t, "service", "create", "--sandbox", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "-o", "json")
+	out, err := runRootCommandOutput(t, "service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "-o", "json")
 	if err != nil {
 		t.Fatalf("service create failed: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestServiceDeleteCommand_JSONOutput(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("AMIKA_API_URL", srv.URL)
 
-	out, err := runRootCommandOutput(t, "service", "delete", "--force", "--sandbox", "box", "--name", "web", "-o", "json")
+	out, err := runRootCommandOutput(t, "service", "delete", "--force", "--rig", "box", "--name", "web", "-o", "json")
 	if err != nil {
 		t.Fatalf("service delete failed: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestServiceDeleteCommand_JSONRequiresForce(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "test-key")
 
-	_, err := runRootCommandOutput(t, "service", "delete", "--sandbox", "box", "--name", "web", "-o", "json")
+	_, err := runRootCommandOutput(t, "service", "delete", "--rig", "box", "--name", "web", "-o", "json")
 	if err == nil {
 		t.Fatal("expected an error requiring --force in JSON mode")
 	}

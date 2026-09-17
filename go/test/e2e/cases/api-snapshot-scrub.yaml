@@ -101,7 +101,7 @@ steps:
       exit: 0
 
   - name: capture a scrubbed snapshot
-    cmd: [snapshot, create, --no-interactive, --mode, scrub_and_delete, --name, "e2e-scrub-{{source_sandbox}}", --sandbox, "{{source_sandbox}}", -o, json]
+    cmd: [snapshot, create, --no-interactive, --mode, scrub_and_delete, --name, "e2e-scrub-{{source_sandbox}}", --rig, "{{source_sandbox}}", -o, json]
     expect:
       exit: 0
       schema: SandboxSnapshot
