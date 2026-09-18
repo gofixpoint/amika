@@ -2,12 +2,16 @@
 
 ## Setup Scripts
 
-The `--setup-script` flag lets you supply a local script to run inside the rig at `/usr/local/etc/amikad/setup/setup.sh`. The script runs automatically when the container starts, before the main command (CMD).
+The `--setup-script` flag lets you mount a local script into the container at `/usr/local/etc/amikad/setup/setup.sh`. The script runs automatically when the container starts, before the main command (CMD).
 
 ### Usage
 
 ```bash
+# sandbox create
 amika sandbox create --setup-script ./my-setup.sh
+
+# materialize
+amika materialize --setup-script ./my-setup.sh --cmd "echo done" --destdir /tmp/out
 ```
 
 ### Writing a setup script
@@ -57,6 +61,9 @@ By default, `amika sandbox create` walks up from the current working directory a
 # Auto-detect the repo containing the current working directory (clean clone)
 amika sandbox create
 
+# Auto-detect and include untracked/uncommitted files (local sandboxes only)
+amika sandbox create --no-clean
+
 # Use the repo at a specific path
 amika sandbox create --git ./src
 
@@ -85,12 +92,13 @@ curl -X POST http://localhost:8080/v1/sandboxes \
   -d '{"GitRepo": "https://github.com/octocat/Hello-World.git"}'
 ```
 
-The repository is cloned on the host, copied into a named Docker volume, and mounted read-write at `/home/amika/workspace/<repo-name>`. If the clone fails, no sandbox is created.
+The repository is cloned on the host, copied into a named Docker volume, and mounted read-write at `/home/amika/workspace/<repo-name>`. The volume is tracked by `amika volume list`. If the clone fails, no sandbox is created.
 
 ### Notes
 
 - `file://` URLs must use three slashes (`file:///absolute/path`). Relative paths are rejected.
 - The volume name is derived from the sandbox name and repo name, e.g. `amika-git-teal-tokyo-Hello-World-<timestamp>`.
+- Deleting the sandbox does not automatically delete the git volume; use `amika volume delete` when you no longer need it.
 
 ## Per-repo configuration: `.amika/config.toml`
 
@@ -181,15 +189,23 @@ The **base branch** — used when creating a branch that doesn't exist — is yo
 
 `.amika/config.toml` is read from whatever branch the sandbox ends up on.
 
-## Agent credentials
+## Agent Credential Auto-Mounting
 
-Rigs get their coding-agent credentials from the Amika control plane, not from
-your host. Pin one explicitly at creation time with `--agent-credential`,
-`--agent-credential-type`, or `--no-agent-credential`, and manage the stored
-credentials with `amika secret`. See [secrets.md](secrets.md).
+When creating a sandbox or running materialize, Amika automatically discovers credential files for supported coding agents on the host and mounts them into the container as `rwcopy` snapshots. This means agents running inside containers can authenticate without manual configuration.
 
-Earlier versions discovered credential files on the host and mounted them into
-the local Docker container. That went away with the `--local` mode.
+The container receives copies of the files — the originals on the host are never modified.
+
+### Files mounted
+
+**Claude Code:** `~/.claude.json.api`, `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude-oauth-credentials.json`
+
+**Codex:** `~/.codex/auth.json`
+
+**OpenCode:** `~/.local/share/opencode/auth.json`, `~/.local/state/opencode/model.json`
+
+Only files that exist on the host are mounted. Inside the container, they appear at the same relative paths under `/home/amika/`.
+
+This behavior is automatic and requires no flags. See [presets.md](presets.md) for more details on preset images.
 
 ## Reserved Ports
 

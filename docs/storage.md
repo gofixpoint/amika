@@ -31,4 +31,4 @@ When `rwcopy` mode is used with individual files (not directories), Amika copies
 - `${XDG_STATE_HOME:-~/.local/state}/amika/rwcopy-mounts.d/`
 - Or `${AMIKA_STATE_DIRECTORY}/rwcopy-mounts.d/` when the override is set
 
-These copies are cleaned up when the associated sandbox is deleted.
+These copies are cleaned up when the associated sandbox is deleted with `--delete-volumes`.
