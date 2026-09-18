@@ -2,22 +2,20 @@
 
 ## Setup Scripts
 
-The `--setup-script` flag lets you mount a local script into the container at `/usr/local/etc/amikad/setup/setup.sh`. The script runs automatically when the container starts, before the main command (CMD).
+The `--setup-script` flag uploads a local script for the hosted rig to run at
+`/usr/local/etc/amikad/setup/setup.sh`. The script runs during rig
+initialization, before the agent starts.
 
 ### Usage
 
 ```bash
-# sandbox create
 amika sandbox create --setup-script ./my-setup.sh
-
-# materialize
-amika materialize --setup-script ./my-setup.sh --cmd "echo done" --destdir /tmp/out
 ```
 
 ### Writing a setup script
 
 Your script just needs to do its setup work and exit 0. You do **not** need to
-chain into the next command. Amika's local runtime handles that automatically.
+chain into the next command. Amika continues the rig lifecycle automatically.
 
 ```bash
 #!/bin/bash
@@ -27,44 +25,48 @@ apt-get update && apt-get install -y ripgrep
 pip install numpy
 ```
 
-The script is mounted read-only, so it cannot be modified from inside the container.
-
 ### How it works
 
-Preset images (`coder` and `coder-plus-docker`) bake a no-op
-`/usr/local/etc/amikad/setup/setup.sh` into the image. At container creation,
-the local runtime wraps the requested command with the shared lifecycle hooks:
+The CLI reads the file and sends its contents to the Amika API. During
+provisioning, Amika installs the uploaded script at
+`/usr/local/etc/amikad/setup/setup.sh` and runs the shared lifecycle hooks:
 
 ```text
 pre-setup.sh -> setup.sh -> post-setup.sh -> requested command
 ```
 
-When you pass `--setup-script`, your script is bind-mounted over the no-op, so
-the lifecycle wrapper runs your script instead.
+When neither setup flag is present, hosted Amika resolves the setup script from
+the rig's UI or stored settings, then from the selected branch's
+`.amika/config.toml`. The image's no-op script is the final fallback. Pass
+`--no-setup` to force that no-op. `--setup-script` and `--no-setup` are
+mutually exclusive.
 
 ### Notes
 
-- The script must be executable (`chmod +x`).
+- The local file does not need executable permissions; Amika makes the uploaded
+  script executable in the rig.
 - Setup scripts run with the working directory set to the agent's working directory (`$AMIKA_AGENT_CWD`).
-- If the script exits with a non-zero status, the container's main command will not run.
-- Preset images are cached locally. If you have an existing preset image from before the setup script feature was added, you need to rebuild your images by removing the old image first: `docker rmi amika/coder:latest`.
+- If the script exits with a non-zero status, rig initialization fails and the
+  agent does not start.
 
 ## Git Repository Cloning
 
-The `--git` CLI flag and the `GitRepo` HTTP API field clone a remote or local git repository into a Docker volume that is mounted at `/home/amika/workspace/<repo-name>` inside the sandbox.
-
 ### CLI (`--git`)
 
-By default, `amika sandbox create` walks up from the current working directory and uses the first git repo it finds. Pass `--git <path|url>` to override the source, or `--no-git` to skip git entirely.
+By default, `amika sandbox create` walks up from the current working directory,
+finds the first git repository, and sends its origin URL to hosted Amika. The
+control plane clones the selected remote branch. Local uncommitted changes are
+not copied.
+
+Pass `--git <path>` to select a different local repository and use its origin,
+`--git <url>` to send a remote URL directly, or `--no-git` to create a rig
+without a repository.
 
 ```bash
-# Auto-detect the repo containing the current working directory (clean clone)
+# Clone the remote branch for the current repository
 amika sandbox create
 
-# Auto-detect and include untracked/uncommitted files (local sandboxes only)
-amika sandbox create --no-clean
-
-# Use the repo at a specific path
+# Use the origin of a repository at a specific local path
 amika sandbox create --git ./src
 
 # Clone a remote git URL (HTTPS or SSH)
@@ -74,9 +76,11 @@ amika sandbox create --git https://github.com/octocat/Hello-World.git
 amika sandbox create --no-git
 ```
 
-### HTTP API (`GitRepo`)
+### Self-hosted HTTP API (`GitRepo`)
 
-The `GitRepo` field on `POST /v1/sandboxes` accepts a URL pointing to any remote or local git repository. Supported URL schemes:
+The self-hosted `amika-server` API has different local behavior. Its `GitRepo`
+field on `POST /v1/sandboxes` accepts a URL pointing to a remote repository or
+to a repository accessible from the server host. Supported URL schemes:
 
 | Scheme     | Example                                               |
 | ---------- | ----------------------------------------------------- |
@@ -92,17 +96,29 @@ curl -X POST http://localhost:8080/v1/sandboxes \
   -d '{"GitRepo": "https://github.com/octocat/Hello-World.git"}'
 ```
 
-The repository is cloned on the host, copied into a named Docker volume, and mounted read-write at `/home/amika/workspace/<repo-name>`. The volume is tracked by `amika volume list`. If the clone fails, no sandbox is created.
+The self-hosted server clones the repository on its host, copies it into a
+named Docker volume, and mounts that volume read-write at
+`/home/amika/workspace/<repo-name>`. If the clone fails, no sandbox is created.
 
 ### Notes
 
-- `file://` URLs must use three slashes (`file:///absolute/path`). Relative paths are rejected.
-- The volume name is derived from the sandbox name and repo name, e.g. `amika-git-teal-tokyo-Hello-World-<timestamp>`.
-- Deleting the sandbox does not automatically delete the git volume; use `amika volume delete` when you no longer need it.
+- `file://` URLs are supported by the self-hosted API, not by hosted cloning.
+  They must use three slashes (`file:///absolute/path`), and relative paths are
+  rejected.
+- The self-hosted volume name is derived from the sandbox name and repository
+  name, for example `amika-git-teal-tokyo-Hello-World-<timestamp>`.
 
 ## Per-repo configuration: `.amika/config.toml`
 
-When the sandbox is backed by a git repo (auto-detected from the cwd, `--git <path>`, or `--git <url>`), Amika looks for a `.amika/config.toml` file at the root of the repository and applies it automatically. This lets you commit sandbox configuration alongside your code so every collaborator gets the same environment without passing extra flags.
+Hosted Amika reads `.amika/config.toml` from the repository branch selected for
+the rig and applies it during provisioning. The CLI does not read an
+uncommitted local copy of this file. Commit and push configuration changes so
+the control plane can see them in the remote repository.
+
+This lets you keep shared rig configuration alongside the code while allowing
+CLI flags and UI settings to override those defaults. See the hosted
+[configuration guide](https://docs.amika.dev/guides/configuration) for the full
+schema.
 
 ### File location
 
@@ -116,8 +132,7 @@ When the sandbox is backed by a git repo (auto-detected from the cwd, `--git <pa
 
 ```toml
 [lifecycle]
-# Path to an executable that is mounted into the container at /usr/local/etc/amikad/setup/setup.sh.
-# Relative paths are resolved from the repository root.
+# Path to a setup script in the repository.
 setup_script = "scripts/setup.sh"
 
 [env]
@@ -129,21 +144,21 @@ MY_SECRET = { secret = "my-secret-name" }
 
 #### `[lifecycle].setup_script`
 
-Works exactly like `--setup-script`: the script is bind-mounted read-only at
-`/usr/local/etc/amikad/setup/setup.sh`, and the local lifecycle wrapper runs it
-before the main command.
+Amika reads the script from the selected repository branch, installs it at
+`/usr/local/etc/amikad/setup/setup.sh`, and runs it during rig initialization.
 
-**Path resolution:** if the value is a relative path it is resolved from the repository root (the directory containing `.git`). Absolute paths are used as-is.
+Paths are relative to the repository root. For a script outside the repository,
+pass its local path with `--setup-script` so the CLI uploads its contents.
 
 ### Interaction with `--setup-script`
 
-`--setup-script` always takes priority. When that flag is passed explicitly, `.amika/config.toml` is not consulted for the setup script.
+`--setup-script` always takes priority over the repository setting.
 
-| Flags passed                                                | Source used                       |
-| ----------------------------------------------------------- | --------------------------------- |
-| Repo backed (auto-detect or `--git`), no `--setup-script`   | `.amika/config.toml` (if present) |
-| Repo backed plus `--setup-script /path/script.sh`           | `--setup-script` flag             |
-| `--setup-script /path/script.sh` with `--no-git`            | `--setup-script` flag             |
+| Flags passed                                              | Source used                                      |
+| --------------------------------------------------------- | ------------------------------------------------ |
+| Repo backed, no `--setup-script`                          | Selected branch's `.amika/config.toml`, if any   |
+| Repo backed plus `--setup-script /path/script.sh`         | Uploaded local file                              |
+| `--setup-script /path/script.sh` with `--no-git`          | Uploaded local file                              |
 
 ### Example
 
@@ -154,10 +169,13 @@ my-project/
   .amika/
     config.toml       # setup_script = "scripts/setup.sh"
   scripts/
-    setup.sh          # must be executable (chmod +x)
+    setup.sh
 ```
 
-Running `amika sandbox create` from anywhere inside `my-project` (the repo is auto-detected) will automatically mount `scripts/setup.sh` to `/usr/local/etc/amikad/setup/setup.sh` in the container.
+After these files are committed and pushed, running `amika sandbox create`
+from anywhere inside `my-project` auto-detects the repository. Hosted Amika
+reads the selected branch's config and runs `scripts/setup.sh` while
+provisioning the rig.
 
 ### `[env]` — Environment variables
 
@@ -187,25 +205,18 @@ The **base branch** — used when creating a branch that doesn't exist — is yo
 | `--new-branch bar` | `bar` (created from base) |
 | `--branch foo --new-branch bar` | `bar` (created from `foo`) |
 
-`.amika/config.toml` is read from whatever branch the sandbox ends up on.
+Hosted Amika reads `.amika/config.toml` from whatever branch the rig ends up
+on. Local uncommitted changes are not visible during provisioning.
 
-## Agent Credential Auto-Mounting
+## Agent credentials
 
-When creating a sandbox or running materialize, Amika automatically discovers credential files for supported coding agents on the host and mounts them into the container as `rwcopy` snapshots. This means agents running inside containers can authenticate without manual configuration.
+Rigs get their coding-agent credentials from the Amika control plane, not from
+your host. Pin one explicitly at creation time with `--agent-credential`,
+`--agent-credential-type`, or `--no-agent-credential`, and manage the stored
+credentials with `amika secret`. See [secrets.md](secrets.md).
 
-The container receives copies of the files — the originals on the host are never modified.
-
-### Files mounted
-
-**Claude Code:** `~/.claude.json.api`, `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude-oauth-credentials.json`
-
-**Codex:** `~/.codex/auth.json`
-
-**OpenCode:** `~/.local/share/opencode/auth.json`, `~/.local/state/opencode/model.json`
-
-Only files that exist on the host are mounted. Inside the container, they appear at the same relative paths under `/home/amika/`.
-
-This behavior is automatic and requires no flags. See [presets.md](presets.md) for more details on preset images.
+Earlier versions discovered credential files on the host and mounted them into
+the local Docker container. That went away with the `--local` mode.
 
 ## Reserved Ports
 

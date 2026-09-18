@@ -2,32 +2,24 @@
 
 Amika is an open-source CLI and HTTP API for running AI coding agents in sandboxes. Each sandbox comes pre-configured with development tools and agent CLIs — Claude Code, Codex, and OpenCode — ready to go out of the box.
 
-For the vision and roadmap, see [roadmap.md](roadmap.md). For user-facing docs, see [README.md](../../README.md).
+For user-facing docs, see [README.md](../../README.md).
 
 ## Core Concepts
 
-**Docker-backed sandboxes**: Persistent containers with controlled filesystem mounts. Agents get an isolated environment at `/home/amika/workspace` with fine-grained access control per mount.
+**Rigs**: Persistent remote sandboxes provisioned through the Amika control plane. Agents get an isolated environment at `/home/amika/workspace`.
 
-**Materialization**: Ephemeral Docker containers run scripts or commands, and their output files are copied to a host destination via `rsync`.
+**Credential discovery**: `amika secret extract` scans for locally stored API credentials from Claude Code, Codex, OpenCode, and Amp and displays them masked, so they can be reviewed and optionally pushed as Amika secrets. Rigs themselves receive credentials from the control plane, not from the host.
 
-**Mount modes**: Host directories can be mounted into sandboxes with three access modes:
+The `amika-server` binary additionally exposes a Docker-backed sandbox and materialization API over HTTP, including `ro`/`rw`/`rwcopy` mount modes. The `amika` CLI no longer has a local mode.
 
-- `ro` — read-only bind mount
-- `rw` — read-write bind mount (writes sync back to host)
-- `rwcopy` — read-write snapshot in a Docker volume (default; host is not modified)
-
-**Credential discovery**: Amika scans for locally stored API credentials from Claude Code, Codex, OpenCode, and Amp, then auto-mounts them into containers so coding agents can authenticate without manual setup.
-
-**Preset images**: Bundled Dockerfiles (`coder`, `claude`) that include common dev tools and coding agent CLIs. Auto-built on first use.
+**Preset images**: Bundled Dockerfiles (`coder`, `coder-plus-docker`) that include common dev tools and coding agent CLIs. Auto-built on first use by `amika-server`.
 
 ## Commands
 
 | Command                                       | Description                                                                         |
 | --------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `amika materialize`                           | Run a script/command in an ephemeral container and copy outputs to a host directory |
-| `amika sandbox create\|list\|connect\|delete` | Manage persistent Docker sandboxes                                                  |
-| `amika volume list\|delete`                   | Manage tracked Docker volumes created by `rwcopy` mounts                            |
-| `amika auth extract`                          | Discover local credentials and print shell environment assignments                  |
+| `amika sandbox create\|list\|connect\|delete` | Manage persistent remote rigs                                                       |
+| `amika secret extract`                        | Discover local credentials, display them masked, and optionally push them as secrets |
 | `amika-server`                                | HTTP server exposing the same functionality as a REST API                           |
 
 See [cli-reference.md](../cli-reference.md) for full flag documentation.
@@ -41,9 +33,7 @@ go/
   cmd/amika/
     main.go              CLI entry point, root Cobra command
     sandbox.go           sandbox create/list/connect/delete commands
-    materialize.go       Docker-based materialize command
-    volume.go            volume list/delete commands
-    auth.go              auth extract command
+    auth.go              auth login/logout/status commands
   cmd/amika-server/
     main.go              HTTP server entry point (REST API)
 
@@ -65,10 +55,6 @@ go/
       auth.go              CredentialSet type, env var rendering
       discovery.go         Multi-source credential scanning with priority
 
-    agentconfig/         Agent credential auto-mounting
-      agentconfig.go       Discovers Claude/Codex/OpenCode config files and
-                           produces MountBindings for containers
-
     config/              XDG path resolution and state file locations
     basedir/             XDG base directory resolution
     httpapi/             HTTP handler for the REST API server
@@ -85,10 +71,10 @@ go/
 
 ## System Dependencies
 
-| Tool   | Required By                        | Purpose                                    |
-| ------ | ---------------------------------- | ------------------------------------------ |
-| Docker | `materialize`, `sandbox`, `volume` | Container runtime for sandboxes            |
-| rsync  | `materialize`                      | Copies output files from container to host |
+| Tool   | Required By    | Purpose                                    |
+| ------ | -------------- | ------------------------------------------ |
+| Docker | `amika-server` | Container runtime for sandboxes            |
+| rsync  | `amika-server` | Copies output files from container to host |
 
 ## State Storage
 
