@@ -1,12 +1,14 @@
 package ssh
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/wslbridge"
@@ -99,9 +101,15 @@ func TestRenderWindows(t *testing.T) {
 		`IdentityFile "C:\Users\testuser\.ssh\amika_id_ed25519"` + "\n",
 		`UserKnownHostsFile "C:\Users\testuser\.ssh\amika_known_hosts"` + "\n",
 		"ProxyCommand wsl.exe -d Ubuntu -e /usr/local/bin/amika plumbing ssh-stdio-proxy %h\n",
+		"ForwardAgent no\n",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("rendered config missing %q:\n%s", want, content)
+		}
+	}
+	for _, unwanted := range []string{"IdentityAgent", "ForwardAgent yes"} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("Windows mirror must not contain %q:\n%s", unwanted, content)
 		}
 	}
 }
@@ -208,6 +216,126 @@ func TestMirrorToWindows(t *testing.T) {
 	want := [2]string{`C:\Users\testuser\.ssh\amika_id_ed25519`, "testuser"}
 	if icaclsCalls[0] != want {
 		t.Fatalf("icacls = %v, want %v", icaclsCalls[0], want)
+	}
+}
+
+func TestMirrorToWindowsWaitsForKeyRotationSnapshot(t *testing.T) {
+	paths := testPaths(t)
+	state := sessionTestState(t, paths)
+	dir := t.TempDir()
+	oldIdentity := filepath.Join(dir, "old_identity")
+	newIdentity := filepath.Join(dir, "new_identity")
+	knownHosts := filepath.Join(dir, "known_hosts")
+	for path, content := range map[string]string{
+		oldIdentity: "old private key",
+		newIdentity: "new private key",
+		knownHosts:  "my-sandbox.sb_1.prod.amika ssh-ed25519 AAAA\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state.SessionConfig.IdentityFile = oldIdentity
+	state.SessionConfig.KnownHostsFile = knownHosts
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+
+	previousIcacls := runIcacls
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() { runIcacls = previousIcacls })
+	target := windowsTestTarget(filepath.Join(t.TempDir(), "winssh"))
+
+	rotationLocked := make(chan struct{})
+	finishRotation := make(chan struct{})
+	rotationDone := make(chan error, 1)
+	go func() {
+		rotationDone <- WithSessionTransaction(context.Background(), paths, func(SessionTransaction) error {
+			close(rotationLocked)
+			<-finishRotation
+			state.SessionConfig.IdentityFile = newIdentity
+			return SaveState(paths, state)
+		})
+	}()
+	<-rotationLocked
+
+	mirrorDone := make(chan error, 1)
+	go func() { mirrorDone <- MirrorToWindows(paths, target) }()
+	select {
+	case <-mirrorDone:
+		t.Fatal("Windows mirror bypassed the key-rotation transaction")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(finishRotation)
+	if err := <-rotationDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-mirrorDone; err != nil {
+		t.Fatal(err)
+	}
+
+	mirrored, err := os.ReadFile(filepath.Join(target.SSHDir, basedir.SSHIdentityName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mirrored) != "new private key" {
+		t.Fatalf("mirrored identity = %q, want rotated identity", mirrored)
+	}
+}
+
+func TestMirrorToWindowsWaitsForKnownHostsMutation(t *testing.T) {
+	paths := testPaths(t)
+	state := sessionTestState(t, paths)
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "identity")
+	knownHosts := filepath.Join(dir, "known_hosts")
+	if err := os.WriteFile(identity, []byte("private key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(knownHosts, []byte("old pin\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.SessionConfig.IdentityFile = identity
+	state.SessionConfig.KnownHostsFile = knownHosts
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+	previousIcacls := runIcacls
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() { runIcacls = previousIcacls })
+	target := windowsTestTarget(filepath.Join(t.TempDir(), "winssh"))
+
+	mutationLocked := make(chan struct{})
+	finishMutation := make(chan struct{})
+	mutationDone := make(chan error, 1)
+	go func() {
+		mutationDone <- withKnownHostsLock(knownHosts, func() error {
+			close(mutationLocked)
+			<-finishMutation
+			return writeFileAtomic(knownHosts, []byte("new pin\n"), 0o600)
+		})
+	}()
+	<-mutationLocked
+	mirrorDone := make(chan error, 1)
+	go func() { mirrorDone <- MirrorToWindows(paths, target) }()
+	select {
+	case <-mirrorDone:
+		t.Fatal("Windows mirror bypassed the known-hosts mutation lock")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(finishMutation)
+	if err := <-mutationDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-mirrorDone; err != nil {
+		t.Fatal(err)
+	}
+	mirrored, err := os.ReadFile(filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mirrored) != "new pin\n" {
+		t.Fatalf("mirrored known hosts = %q, want post-mutation snapshot", mirrored)
 	}
 }
 
@@ -333,7 +461,7 @@ func TestWindowsMirroredPinsLeavesTheStoreAloneOutsideWSL(t *testing.T) {
 	t.Cleanup(func() { isWSL = prevIsWSL })
 
 	inner := &fakePinStore{}
-	if got := windowsMirroredPins(inner, "/tmp/amika_known_hosts", io.Discard); got != HostKeyPinStore(inner) {
+	if got := windowsMirroredPins(testPaths(t), inner, "/tmp/amika_known_hosts", io.Discard); got != HostKeyPinStore(inner) {
 		t.Fatalf("wrapped the store on a machine with no Windows side: %#v", got)
 	}
 }
@@ -372,7 +500,7 @@ func TestWindowsMirroredPinsPublishesThePinWhateverElseFails(t *testing.T) {
 	stubWSL(t, winSSH, nil)
 
 	var warnings strings.Builder
-	pins := windowsMirroredPins(FileHostKeyPinStore{Path: knownHosts}, knownHosts, &warnings)
+	pins := windowsMirroredPins(paths, FileHostKeyPinStore{Path: knownHosts}, knownHosts, &warnings)
 	if err := pins.Pin("my-sandbox.sb_1.prod.amika", testHostKey(t)); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
@@ -396,11 +524,12 @@ func TestWindowsMirroredPinsPublishesThePinWhateverElseFails(t *testing.T) {
 }
 
 func TestWindowsMirroredPinsWarnsRatherThanFailsTheDial(t *testing.T) {
+	paths := testPaths(t)
 	stubWSL(t, "", errors.New("no Windows side"))
 
 	var warnings strings.Builder
 	inner := &fakePinStore{}
-	if err := windowsMirroredPins(inner, "/tmp/amika_known_hosts", &warnings).Pin("my-sandbox.sb_1.prod.amika", "ssh-ed25519 AAAA"); err != nil {
+	if err := windowsMirroredPins(paths, inner, "/tmp/amika_known_hosts", &warnings).Pin("my-sandbox.sb_1.prod.amika", "ssh-ed25519 AAAA"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
 	if inner.calls != 1 {
@@ -408,5 +537,52 @@ func TestWindowsMirroredPinsWarnsRatherThanFailsTheDial(t *testing.T) {
 	}
 	if !strings.Contains(warnings.String(), "no Windows side") {
 		t.Fatalf("warning = %q", warnings.String())
+	}
+}
+
+func TestWindowsMirroredPinsWaitsForSessionMirrorLock(t *testing.T) {
+	paths := testPaths(t)
+	knownHosts, err := paths.SSHKnownHostsFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	stubWSL(t, winSSH, nil)
+	pins := windowsMirroredPins(paths, FileHostKeyPinStore{Path: knownHosts}, knownHosts, io.Discard)
+	hostKey := testHostKey(t)
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	transactionDone := make(chan error, 1)
+	go func() {
+		transactionDone <- WithSessionTransaction(context.Background(), paths, func(SessionTransaction) error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	pinDone := make(chan error, 1)
+	go func() {
+		pinDone <- pins.Pin("my-sandbox.sb_1.prod.amika", hostKey)
+	}()
+	select {
+	case <-pinDone:
+		t.Fatal("Windows pin mirror bypassed the session mirror lock")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	if err := <-transactionDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-pinDone; err != nil {
+		t.Fatal(err)
+	}
+	mirrored, err := os.ReadFile(filepath.Join(winSSH, basedir.SSHKnownHostsName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mirrored), "my-sandbox.sb_1.prod.amika") {
+		t.Fatalf("Windows mirror missing serialized pin:\n%s", mirrored)
 	}
 }

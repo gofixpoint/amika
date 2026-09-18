@@ -27,40 +27,45 @@ func (s FileHostKeyPinStore) Pin(alias, hostPublicKey string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
+	return withKnownHostsLock(s.Path, func() error {
+		pins, err := readPins(s.Path)
+		if err != nil {
+			return err
+		}
+		canonical := strings.TrimSuffix(line, "\n")
+		if existing, found := pins[alias]; found {
+			if existing != canonical {
+				return ErrHostKeyMismatch
+			}
+			return nil
+		}
+		pins[alias] = canonical
+		aliases := make([]string, 0, len(pins))
+		for pinnedAlias := range pins {
+			aliases = append(aliases, pinnedAlias)
+		}
+		sort.Strings(aliases)
+		var output strings.Builder
+		for _, pinnedAlias := range aliases {
+			output.WriteString(pins[pinnedAlias])
+			output.WriteByte('\n')
+		}
+		return writeFileAtomic(s.Path, []byte(output.String()), 0o600)
+	})
+}
+
+func withKnownHostsLock(path string, action func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	lock, err := filelock.Acquire(ctx, s.Path+".lock")
+	lock, err := filelock.Acquire(ctx, path+".lock")
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-
-	pins, err := readPins(s.Path)
-	if err != nil {
-		return err
-	}
-	canonical := strings.TrimSuffix(line, "\n")
-	if existing, found := pins[alias]; found {
-		if existing != canonical {
-			return ErrHostKeyMismatch
-		}
-		return nil
-	}
-	pins[alias] = canonical
-	aliases := make([]string, 0, len(pins))
-	for pinnedAlias := range pins {
-		aliases = append(aliases, pinnedAlias)
-	}
-	sort.Strings(aliases)
-	var output strings.Builder
-	for _, pinnedAlias := range aliases {
-		output.WriteString(pins[pinnedAlias])
-		output.WriteByte('\n')
-	}
-	return writeFileAtomic(s.Path, []byte(output.String()), 0o600)
+	return action()
 }
 
 func readPins(path string) (map[string]string, error) {

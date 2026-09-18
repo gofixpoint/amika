@@ -9,6 +9,8 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/wslbridge"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func TestAlias(t *testing.T) {
@@ -95,7 +97,7 @@ func TestRender(t *testing.T) {
 	state := HostsState{Hosts: []HostEntry{
 		{SandboxID: "sb_1", SandboxName: "my-sandbox", HostName: "ssh.app.daytona.io", User: "token"},
 	}}
-	want := managedHeader + "\n# my-sandbox\nHost amika-sb_1\n  HostName ssh.app.daytona.io\n  User token\n  StrictHostKeyChecking accept-new\n"
+	want := managedHeader + "\n# my-sandbox\nHost amika-sb_1\n  HostName ssh.app.daytona.io\n  User token\n  ForwardAgent no\n  StrictHostKeyChecking accept-new\n"
 	if got := Render(state); got != want {
 		t.Fatalf("Render mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
@@ -568,6 +570,8 @@ func TestEnsureSessionConfigWritesTheBlockWithoutAnyKeyMaterial(t *testing.T) {
 		"  User amika\n" +
 		"  IdentityFile " + identityPath + "\n" +
 		"  IdentitiesOnly yes\n" +
+		"  IdentityAgent " + filepath.Join(filepath.Dir(identityPath), "amika_agent.sock") + "\n" +
+		"  ForwardAgent yes\n" +
 		"  StrictHostKeyChecking yes\n" +
 		"  UserKnownHostsFile " + knownHostsPath + "\n" +
 		"  ProxyCommand " + binary + " plumbing ssh-stdio-proxy %h\n" +
@@ -621,6 +625,64 @@ func TestEnsureSessionConfigKeepsAnImportedIdentity(t *testing.T) {
 	}
 }
 
+func TestEnsureSessionConfigCompletesLegacyWSLMigration(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	testBinary(t, "amika")
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "amika_id_ed25519")
+	if _, err := GenerateIdentity(identity); err != nil {
+		t.Fatal(err)
+	}
+	legacy := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   identity,
+			KnownHostsFile: filepath.Join(dir, "known_hosts"),
+		},
+		SessionProxyCommands: map[string]string{
+			"localhost-3011": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+	}
+	if err := SaveState(paths, legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	previousIsWSL, previousResolve, previousIcacls := isWSL, resolveWSLTarget, runIcacls
+	isWSL = func() bool { return true }
+	resolveWSLTarget = func() (wslbridge.Target, error) {
+		return windowsTestTarget(winSSH), nil
+	}
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() {
+		isWSL, resolveWSLTarget, runIcacls = previousIsWSL, previousResolve, previousIcacls
+	})
+	originalStartAgent := startAgent
+	t.Cleanup(func() { startAgent = originalStartAgent })
+	startAgent = func(socketPath string) error {
+		serveTestAgent(t, socketPath, agent.NewKeyring())
+		return nil
+	}
+
+	if _, err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+	state, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SSHConfigVersion != currentSSHConfigVersion {
+		t.Fatalf("SSH config version = %d, want %d", state.SSHConfigVersion, currentSSHConfigVersion)
+	}
+	windowsConfig, err := os.ReadFile(filepath.Join(winSSH, basedir.SSHAmikaConfigName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(windowsConfig), "ForwardAgent no") {
+		t.Fatalf("normal session writer left ambient Windows forwarding enabled:\n%s", windowsConfig)
+	}
+}
+
 func TestEnsureIncludeWritesCodexDiscoveryComment(t *testing.T) {
 	paths := testPaths(t)
 	if err := EnsureInclude(paths); err != nil {
@@ -638,14 +700,14 @@ func TestEnsureIncludeWritesCodexDiscoveryComment(t *testing.T) {
 	}
 }
 
-func TestEnsureIncludeDoesNotModifyConfigWithExistingInclude(t *testing.T) {
+func TestEnsureIncludeMovesExistingIncludeAheadOfHostBlocks(t *testing.T) {
 	includeLine := "Include " + basedir.SSHAmikaConfigName()
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	existing := "Host example\n  HostName example.com\n\n" + includeLine + "\n"
+	existing := "Host *\n  IdentityAgent /tmp/ordinary-agent.sock\n  ForwardAgent yes\n\n" + includeLine + "\n"
 	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +720,15 @@ func TestEnsureIncludeDoesNotModifyConfigWithExistingInclude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != existing {
-		t.Errorf("config was rewritten:\ngot:\n%s\nwant:\n%s", data, existing)
+	content := string(data)
+	wantPrefix := includeStanza + includeLine + "\n"
+	if !strings.HasPrefix(content, wantPrefix) {
+		t.Fatalf("managed Include is not first:\n%s", content)
+	}
+	if strings.Count(content, includeLine) != 1 {
+		t.Fatalf("managed Include appears more than once:\n%s", content)
+	}
+	if !strings.Contains(content, "Host *\n  IdentityAgent /tmp/ordinary-agent.sock\n  ForwardAgent yes\n") {
+		t.Fatalf("existing host block was not preserved:\n%s", content)
 	}
 }

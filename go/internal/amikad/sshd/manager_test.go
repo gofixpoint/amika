@@ -125,7 +125,7 @@ func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
 		"PasswordAuthentication no",
 		"KbdInteractiveAuthentication no",
 		"PermitRootLogin no",
-		"AllowAgentForwarding no",
+		"AllowAgentForwarding yes",
 		"AllowTcpForwarding local",
 		"GatewayPorts no",
 		"X11Forwarding no",

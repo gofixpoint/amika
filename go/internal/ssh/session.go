@@ -61,10 +61,10 @@ type SandboxAlias struct {
 }
 
 // SessionConfig describes the local key material shared by every environment's
-// session block: the private key OpenSSH authenticates with and the file its
-// host-key pins live in.
+// session block: the private key OpenSSH authenticates with, the file its
+// host-key pins live in, and the dedicated agent socket that forwards the key.
 //
-// Neither is per-environment. One private key authenticates to every control
+// None is per-environment. One private key authenticates to every control
 // plane, each of which holds its own uploaded copy of the public key, so an
 // identity imported while pointed at one environment stays in effect for all of
 // them. Only the ProxyCommand varies per environment, and it is stored
@@ -72,6 +72,7 @@ type SandboxAlias struct {
 type SessionConfig struct {
 	IdentityFile   string
 	KnownHostsFile string
+	AgentSocket    string
 }
 
 // SessionCreator creates a fresh transport descriptor for each SSH dial.
@@ -205,29 +206,36 @@ func BuildWSLProxyCommand(distro, binaryPath string) (string, error) {
 func RenderSessionConfig(environment, proxyCommand string, session SessionConfig) (string, error) {
 	if !safeAliasSegment.MatchString(environment) ||
 		!safeConfigPath(session.IdentityFile) ||
-		!safeConfigPath(session.KnownHostsFile) {
+		!safeConfigPath(session.KnownHostsFile) ||
+		(session.AgentSocket != "" && !safeConfigPath(session.AgentSocket)) {
 		return "", ErrInvalidSessionAlias
 	}
 	if _, err := ParseProxyCommand(proxyCommand); err != nil {
 		return "", err
 	}
-	return renderSessionBlock(environment, proxyCommand, session.IdentityFile, session.KnownHostsFile), nil
+	return renderSessionBlock(environment, proxyCommand, session.IdentityFile, session.KnownHostsFile, session.AgentSocket), nil
 }
 
 // renderSessionBlock formats one environment's wildcard session block. Path
 // and command validation belongs to the callers, which apply different rules
 // per target platform.
-func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile string) string {
-	return fmt.Sprintf(`Host *.%s.amika
+func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile, agentSocket string) string {
+	block := fmt.Sprintf(`Host *.%s.amika
   User amika
   IdentityFile %s
   IdentitiesOnly yes
-  StrictHostKeyChecking yes
+`, environment, identityFile)
+	if agentSocket != "" {
+		block += fmt.Sprintf("  IdentityAgent %s\n  ForwardAgent yes\n", agentSocket)
+	} else {
+		block += "  ForwardAgent no\n"
+	}
+	return block + fmt.Sprintf(`  StrictHostKeyChecking yes
   UserKnownHostsFile %s
   ProxyCommand %s
   ServerAliveInterval 15
   ServerAliveCountMax 3
-`, environment, identityFile, knownHostsFile, proxyCommand)
+`, knownHostsFile, proxyCommand)
 }
 
 // KnownHostLine returns one canonical alias-keyed Ed25519 pin.
@@ -272,24 +280,51 @@ func PrepareSessionHost(
 	return session, nil
 }
 
-// ProxyPinStore returns the store the stdio proxy pins through: the
-// known-hosts file the managed session config names, wrapped so a WSL setup's
-// Windows copy is republished along with it.
-//
-// The configured file rather than the default path, for the same reason
-// resolveSessionConfig exists: a key imported by `secret ssh-keygen --import`
-// moves both files, and a pin written anywhere but where the rendered config
-// points OpenSSH is a pin OpenSSH will not read.
-//
-// Warnings about the Windows copy go to warnings, which is the proxy's stderr
-// and so the SSH client's — the one channel a ProxyCommand has to a reader who
-// is looking at an editor, not a terminal.
-func ProxyPinStore(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, error) {
-	session, err := resolveSessionConfig(paths)
+// PrepareProxy repairs the dedicated agent and returns the store the stdio
+// proxy pins through. It runs before the ProxyCommand carries any SSH bytes,
+// so bare aliases and editor deep links recover from a stopped agent without
+// requiring a separate Amika command first.
+func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, error) {
+	var pins HostKeyPinStore
+	migrated := false
+	err := withSessionLock(paths, func() error {
+		state, err := LoadState(paths)
+		if err != nil {
+			return err
+		}
+		socketAdded, err := migrateAgentSocket(paths, &state)
+		if err != nil {
+			return err
+		}
+		migrated = socketAdded || state.SSHConfigVersion < currentSSHConfigVersion
+		session, err := resolveSessionConfigFromState(paths, state)
+		if err != nil {
+			return err
+		}
+		if state.SessionConfig == nil {
+			state.SessionConfig = &session
+		}
+		if err := validateSessionIdentity(session); err != nil {
+			return err
+		}
+		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+			return err
+		}
+		if migrated {
+			if err := persistManagedStateLocked(paths, state, false); err != nil {
+				return err
+			}
+		}
+		pins = windowsMirroredPins(paths, FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return windowsMirroredPins(FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings), nil
+	if migrated {
+		return nil, fmt.Errorf("upgraded the managed SSH config for isolated agent forwarding; reconnect to use it")
+	}
+	return pins, nil
 }
 
 // ProxySession creates a fresh descriptor, pins its host key, dials it with
@@ -433,25 +468,21 @@ func PrepareSessionTarget(
 	if err != nil {
 		return "", err
 	}
-	sessionConfig, err := resolveSessionConfig(paths)
-	if err != nil {
-		return "", err
-	}
-	// A world- or group-readable private key is refused rather than used:
-	// OpenSSH would reject it anyway, and the clearer error names the fix.
-	//
-	// Both fixes are named because the likelier one is not the obvious one: a
-	// user whose public key was uploaded through the web UI already has a
-	// keypair, and "run ssh-keygen" reads as an instruction to throw it away.
-	identityInfo, statErr := os.Stat(sessionConfig.IdentityFile)
-	if statErr != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf(
-			"SSH identity %s is missing or unsafe; run %q to create one, or %q to use a key you already have",
-			sessionConfig.IdentityFile,
-			"amika secret ssh-keygen",
-			"amika secret ssh-keygen --import <path>.pub")
-	}
-	if err := ConfigureSession(paths, sessionConfig); err != nil {
+	var sessionConfig SessionConfig
+	if err := withSessionLock(paths, func() error {
+		sessionConfig, err = resolveSessionConfig(paths)
+		if err != nil {
+			return err
+		}
+		if err := validateSessionIdentity(sessionConfig); err != nil {
+			return fmt.Errorf(
+				"%w; run %q to create one, or %q to use a key you already have",
+				err,
+				"amika secret ssh-keygen",
+				"amika secret ssh-keygen --import <path>.pub")
+		}
+		return configureSessionLocked(paths, sessionConfig)
+	}); err != nil {
 		return "", err
 	}
 	if _, err := PrepareSessionHost(
@@ -477,14 +508,16 @@ func PrepareSessionTarget(
 // aliases `amika sandbox ssh` hands to system OpenSSH would resolve against
 // whatever the user's own `~/.ssh/config` happens to say.
 func EnsureSessionConfig(paths basedir.Paths) (SessionConfig, error) {
-	session, err := resolveSessionConfig(paths)
-	if err != nil {
-		return SessionConfig{}, err
-	}
-	if err := ConfigureSession(paths, session); err != nil {
-		return SessionConfig{}, err
-	}
-	return session, nil
+	var session SessionConfig
+	err := withSessionLock(paths, func() error {
+		var err error
+		session, err = resolveSessionConfig(paths)
+		if err != nil {
+			return err
+		}
+		return configureSessionLocked(paths, session)
+	})
+	return session, err
 }
 
 // resolveSessionConfig returns the persisted session identity, or the default
@@ -496,8 +529,20 @@ func resolveSessionConfig(paths basedir.Paths) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, err
 	}
+	return resolveSessionConfigFromState(paths, state)
+}
+
+func resolveSessionConfigFromState(paths basedir.Paths, state HostsState) (SessionConfig, error) {
+	var err error
 	if state.SessionConfig != nil {
-		return *state.SessionConfig, nil
+		session := *state.SessionConfig
+		if session.AgentSocket == "" {
+			session.AgentSocket, err = paths.SSHAgentSocketFile()
+			if err != nil {
+				return SessionConfig{}, err
+			}
+		}
+		return session, nil
 	}
 	identityFile, err := paths.SSHIdentityFile()
 	if err != nil {
@@ -507,8 +552,21 @@ func resolveSessionConfig(paths basedir.Paths) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, err
 	}
+	agentSocket, err := paths.SSHAgentSocketFile()
+	if err != nil {
+		return SessionConfig{}, err
+	}
 	return SessionConfig{
 		IdentityFile:   identityFile,
 		KnownHostsFile: knownHostsFile,
+		AgentSocket:    agentSocket,
 	}, nil
+}
+
+func validateSessionIdentity(session SessionConfig) error {
+	identityInfo, err := os.Stat(session.IdentityFile)
+	if err != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("SSH identity %s is missing or unsafe", session.IdentityFile)
+	}
+	return nil
 }

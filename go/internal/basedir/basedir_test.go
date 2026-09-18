@@ -102,6 +102,9 @@ func TestPaths_SSHPaths(t *testing.T) {
 	if got, _ := p.SSHIdentityFile(); got != filepath.Join(home, ".ssh", "amika_id_ed25519") {
 		t.Fatalf("SSHIdentityFile = %q", got)
 	}
+	if got, _ := p.SSHAgentSocketFile(); got != filepath.Join(home, ".ssh", "amika_agent.sock") {
+		t.Fatalf("SSHAgentSocketFile = %q", got)
+	}
 }
 
 func TestSSHAmikaConfigName(t *testing.T) {

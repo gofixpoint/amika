@@ -18,9 +18,10 @@ var sshStdioProxyCmd = &cobra.Command{
 	Short: "Proxy standard IO to one SSH transport",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		paths := basedir.New("")
 		// Stderr, not stdout: stdout is the SSH transport, and a byte of
 		// diagnostics on it would corrupt the connection it describes.
-		pins, err := ssh.ProxyPinStore(basedir.New(""), cmd.ErrOrStderr())
+		pins, err := ssh.PrepareProxy(paths, cmd.ErrOrStderr())
 		if err != nil {
 			return err
 		}

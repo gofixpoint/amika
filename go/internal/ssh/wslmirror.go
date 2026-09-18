@@ -84,6 +84,7 @@ func renderWindowsSessionBlocks(state HostsState, target wslbridge.Target) []str
 			proxyCommand,
 			quoteWindowsPath(target.SSHDirWindows+"\\"+basedir.SSHIdentityName()),
 			quoteWindowsPath(target.SSHDirWindows+"\\"+basedir.SSHKnownHostsName()),
+			"",
 		))
 	}
 	return blocks
@@ -103,10 +104,20 @@ func quoteWindowsPath(path string) string {
 // regenerated artifacts; the Linux-side state stays the only source of
 // truth.
 func MirrorToWindows(paths basedir.Paths, target wslbridge.Target) error {
+	return withSessionLock(paths, func() error {
+		return mirrorToWindowsLocked(paths, target)
+	})
+}
+
+func mirrorToWindowsLocked(paths basedir.Paths, target wslbridge.Target) error {
 	state, err := LoadState(paths)
 	if err != nil {
 		return err
 	}
+	return mirrorStateToWindowsLocked(paths, state, target)
+}
+
+func mirrorStateToWindowsLocked(paths basedir.Paths, state HostsState, target wslbridge.Target) error {
 	content, err := RenderWindows(state, target)
 	if err != nil {
 		return err
@@ -132,8 +143,7 @@ func MirrorToWindows(paths basedir.Paths, target wslbridge.Target) error {
 		}
 	}
 
-	_, err = mirrorFile(knownHostsPath, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
-	return err
+	return mirrorKnownHostsFile(knownHostsPath, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
 }
 
 // isWSL and resolveWSLTarget are seams over WSL detection, so a test can drive
@@ -153,16 +163,17 @@ var (
 // until now only an editor launch through `sandbox code` refreshed. Without
 // this, pinning from the proxy would fix the deep links everywhere except the
 // platform whose ProxyCommand exists to cross back into Linux.
-func windowsMirroredPins(pins HostKeyPinStore, knownHostsFile string, warnings io.Writer) HostKeyPinStore {
+func windowsMirroredPins(paths basedir.Paths, pins HostKeyPinStore, knownHostsFile string, warnings io.Writer) HostKeyPinStore {
 	if !isWSL() {
 		return pins
 	}
-	return mirroredPinStore{pins: pins, knownHostsFile: knownHostsFile, warnings: warnings}
+	return mirroredPinStore{paths: paths, pins: pins, knownHostsFile: knownHostsFile, warnings: warnings}
 }
 
 // mirroredPinStore pins on the Linux side and republishes the Windows copy of
 // the pin file.
 type mirroredPinStore struct {
+	paths          basedir.Paths
 	pins           HostKeyPinStore
 	knownHostsFile string
 	warnings       io.Writer
@@ -174,13 +185,15 @@ type mirroredPinStore struct {
 // verify, never admit one. Failing the dial instead would end a connection
 // whose pin is already mirrored, which this is not entitled to do.
 func (s mirroredPinStore) Pin(alias, hostPublicKey string) error {
-	if err := s.pins.Pin(alias, hostPublicKey); err != nil {
-		return err
-	}
-	if err := s.mirror(); err != nil && s.warnings != nil {
-		fmt.Fprintf(s.warnings, "warning: could not publish the host key to the Windows copy of %s: %v\n", basedir.SSHKnownHostsName(), err)
-	}
-	return nil
+	return withSessionLock(s.paths, func() error {
+		if err := s.pins.Pin(alias, hostPublicKey); err != nil {
+			return err
+		}
+		if err := s.mirror(); err != nil && s.warnings != nil {
+			fmt.Fprintf(s.warnings, "warning: could not publish the host key to the Windows copy of %s: %v\n", basedir.SSHKnownHostsName(), err)
+		}
+		return nil
+	})
 }
 
 // mirror copies the pin file alone, rather than calling MirrorToWindows.
@@ -200,8 +213,14 @@ func (s mirroredPinStore) mirror() error {
 	if err != nil {
 		return err
 	}
-	_, err = mirrorFile(s.knownHostsFile, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
-	return err
+	return mirrorKnownHostsFile(s.knownHostsFile, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
+}
+
+func mirrorKnownHostsFile(src, dst string) error {
+	return withKnownHostsLock(src, func() error {
+		_, err := mirrorFile(src, dst)
+		return err
+	})
 }
 
 // sessionKeyMaterialPaths names the files the rendered config's mirrored key

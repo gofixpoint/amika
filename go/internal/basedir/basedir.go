@@ -25,6 +25,7 @@ const (
 	sshAmikaConfigFile  = "amika.conf"
 	sshKnownHostsFile   = "amika_known_hosts"
 	sshIdentityFile     = "amika_id_ed25519"
+	sshAgentSocketFile  = "amika_agent.sock"
 	claudeDirName       = ".claude"
 	claudeSettingsFile  = "settings.json"
 	codexDirName        = ".codex"
@@ -65,6 +66,7 @@ type Paths interface {
 	SSHAmikaConfigFile() (string, error)
 	SSHKnownHostsFile() (string, error)
 	SSHIdentityFile() (string, error)
+	SSHAgentSocketFile() (string, error)
 
 	ClaudeSettingsFile() (string, error)
 	CodexConfigFile() (string, error)
@@ -301,6 +303,16 @@ func (p *xdgPaths) SSHIdentityFile() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, sshIdentityFile), nil
+}
+
+// SSHAgentSocketFile returns the dedicated socket for the agent that exposes
+// only the Amika SSH identity.
+func (p *xdgPaths) SSHAgentSocketFile() (string, error) {
+	dir, err := p.SSHDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, sshAgentSocketFile), nil
 }
 
 // ClaudeSettingsFile returns the Claude Desktop / Claude Code settings file at

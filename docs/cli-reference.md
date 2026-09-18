@@ -283,9 +283,11 @@ amika sandbox ssh -N -L 6789:localhost:3010 my-sandbox
 amika sandbox ssh -N -D 1080 my-sandbox
 ```
 
-Local (`-L`) and dynamic (`-D`) forwarding are supported. Remote forwarding
-(`-R`), agent forwarding (`-A`), and X11 forwarding are not: the sandbox's own
-SSH daemon refuses them, so no local config or `-o` override enables them.
+Local (`-L`), dynamic (`-D`), and isolated agent forwarding are supported.
+Amika enables agent forwarding by default through an agent containing only
+the Amika SSH identity. This lets an SSH client in one sandbox authenticate to
+another sandbox without exposing any of your other local keys. Remote (`-R`)
+and X11 forwarding are not supported.
 
 `-o` after the subcommand is ssh's ssh_config option, so amika's
 `-o`/`--output` is not available there; written before `ssh` it is rejected
@@ -426,13 +428,24 @@ target, so edits to it are lost. `amika auth login` and
 `amika secret ssh-keygen` both write it; `auth login` names the files it
 touched.
 
-| Option                                        | Value                | Why                                                                          |
-| --------------------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
-| `User`                                        | `amika`              | The sandbox account                                                          |
-| `IdentityFile` / `IdentitiesOnly`             | your Amika key       | Offer the key the control plane holds, rather than every key in your agent   |
-| `StrictHostKeyChecking` / `UserKnownHostsFile`| `yes`, Amika's file  | Pin each sandbox host key in a dedicated file, so a change fails closed      |
-| `ProxyCommand`                                | `amika plumbing …`   | Carry the session over Amika's WebSocket transport instead of a TCP dial     |
-| `ServerAliveInterval` / `ServerAliveCountMax` | `15`, `3`            | Notice a dead transport instead of hanging                                   |
+| Option                                         | Value                    | Why                                                                        |
+| ---------------------------------------------- | ------------------------ | -------------------------------------------------------------------------- |
+| `User`                                         | `amika`                  | The sandbox account                                                        |
+| `IdentityFile` / `IdentitiesOnly`              | your Amika key           | Offer the key the control plane holds                                      |
+| `IdentityAgent` / `ForwardAgent`               | Amika's agent, `yes`     | Forward only the Amika key, never every key in your ordinary agent         |
+| `StrictHostKeyChecking` / `UserKnownHostsFile` | `yes`, Amika's file      | Pin each sandbox host key in a dedicated file, so a change fails closed    |
+| `ProxyCommand`                                 | `amika plumbing …`     | Carry the session over Amika's WebSocket transport instead of a TCP dial   |
+| `ServerAliveInterval` / `ServerAliveCountMax`  | `15`, `3`                | Notice a dead transport instead of hanging                                 |
+
+Amika starts a separate `ssh-agent` at `~/.ssh/amika_agent.sock` and loads
+exactly the configured Amika identity into it. The generated host block uses
+that socket for both the initial connection and forwarding. Your ordinary
+`SSH_AUTH_SOCK` is never forwarded, so its GitHub, production, or personal
+keys are not exposed to the sandbox. If the dedicated agent stops, the next
+Amika SSH connection, including an editor deep link, starts it again and
+reloads the key. The first editor connection after upgrading a config written
+by an older Amika version updates the config and asks the client to reconnect
+once, so OpenSSH can parse the new forwarding options.
 
 The `ProxyCommand` pins the sandbox's host key every time it runs, so an alias
 also works in tools that never call the Amika CLI. An editor's Remote-SSH deep
@@ -450,20 +463,14 @@ managed hosts when the directive precedes every `Host` block:
 ```
 # This `Include` directive must be the first line, or Codex cannot find your Amika SSH
 # hosts.
-#
-# To modify amika SSH target settings, add another host config block below this, like:
-#
-# ```
-# Host *.amika
-#   ForwardAgent yes
-# ```
+# Connection settings are managed in amika.conf.
 Include amika.conf
 ```
 
 Because the include comes first, blocks below it can add options that
-`amika.conf` does not set, such as `ForwardAgent`, but cannot replace scalar
-options Amika already supplied. To override one of those options, pass it on
-the command line, which outranks every config file:
+`amika.conf` does not set, but cannot replace scalar options Amika already
+supplied. To override one of those options, pass it on the command line, which
+outranks every config file:
 
 ```bash
 amika sandbox ssh -o ServerAliveInterval=60 my-sandbox
@@ -483,7 +490,9 @@ not discover the managed hosts.
 
 Under WSL, `sandbox code` mirrors this file (and the key material it names) to
 the Windows side so a Windows editor's own OpenSSH can reach the sandbox. The
-mirrored block carries the same settings.
+Windows mirror omits agent forwarding because Windows OpenSSH cannot use the
+dedicated Unix socket. Connections made by the Amika CLI inside WSL do use the
+isolated agent normally.
 
 ## `amika volume`
 
@@ -690,7 +699,10 @@ amika secret claude delete <id>
 
 ### `amika secret ssh-keygen`
 
-Generate a user-owned ed25519 keypair and upload only its public half. The private key is written to `~/.ssh/amika_id_ed25519` and never leaves the machine.
+Generate a user-owned ed25519 keypair and upload only its public half. The
+private key is written to `~/.ssh/amika_id_ed25519` and never leaves the
+machine. The command also starts the dedicated one-key agent used for safe
+forwarding into sandboxes.
 
 ```bash
 # Generate a keypair and upload the public key

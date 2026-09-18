@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -51,6 +50,10 @@ type HostsState struct {
 	// supplied directly. Their connection settings come from the wildcard
 	// session blocks below, not these intentionally empty entries.
 	SessionHosts []SessionHostEntry `json:"session_hosts,omitempty"`
+	// SSHConfigVersion is advanced only after every managed Linux and WSL
+	// artifact reflects the forwarding policy. Zero means reconciliation must
+	// be retried; older state naturally decodes to zero.
+	SSHConfigVersion int `json:"ssh_config_version,omitempty"`
 }
 
 // SessionHostEntry is a concrete direct-WebSocket SSH alias advertised to
@@ -282,6 +285,7 @@ func writeHostBlocks(b *strings.Builder, hosts []HostEntry) {
 		if h.Port != 0 {
 			fmt.Fprintf(b, "  Port %d\n", h.Port)
 		}
+		b.WriteString("  ForwardAgent no\n")
 		b.WriteString("  StrictHostKeyChecking accept-new\n")
 	}
 }
@@ -410,6 +414,19 @@ func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
 // a binary that has since moved or been replaced by one that cannot serve as a
 // proxy.
 func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
+	return withSessionLock(paths, func() error {
+		return configureSessionLocked(paths, session)
+	})
+}
+
+func configureSessionLocked(paths basedir.Paths, session SessionConfig) error {
+	if session.AgentSocket == "" {
+		var err error
+		session.AgentSocket, err = paths.SSHAgentSocketFile()
+		if err != nil {
+			return err
+		}
+	}
 	environment, proxyCommand, err := resolveSessionRendering(session)
 	if err != nil {
 		return err
@@ -423,13 +440,13 @@ func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
 		state.SessionProxyCommands = make(map[string]string)
 	}
 	state.SessionProxyCommands[environment] = proxyCommand
-	if err := SaveState(paths, state); err != nil {
-		return err
+	if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
+		info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
+		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+			return err
+		}
 	}
-	if err := WriteAmikaConfig(paths, state); err != nil {
-		return err
-	}
-	return EnsureInclude(paths)
+	return persistManagedStateLocked(paths, state, true)
 }
 
 // ValidateSessionConfig reports whether ConfigureSession would accept this
@@ -481,22 +498,13 @@ func EnsureInclude(paths basedir.Paths) error {
 // replace scalar values already supplied by amika.conf.
 const includeStanza = "# This `Include` directive must be the first line, or Codex cannot find your Amika SSH\n" +
 	"# hosts.\n" +
-	"#\n" +
-	"# To modify amika SSH target settings, add another host config block below this, like:\n" +
-	"#\n" +
-	"# ```\n" +
-	"# Host *.amika\n" +
-	"#   ForwardAgent yes\n" +
-	"# ```\n"
+	"# Connection settings are managed in amika.conf.\n"
 
-// ensureIncludeIn prepends the Include line for the managed config to an ssh
-// config file, creating the file when absent and preserving existing content.
-// It is target-agnostic so the Windows mirror can maintain its own config the
-// same way the Linux one is maintained.
-//
-// The line is left wherever it already is. Detecting it anywhere counts as
-// present, because moving a line in the user's config is a bigger liberty
-// than adding one.
+// ensureIncludeIn puts the managed Include before every user Host block,
+// creating the file when absent and preserving all non-Amika content. OpenSSH
+// keeps the first value it finds for most options, so leaving an existing
+// Include below Host * could let that block replace the isolated agent.
+// It is target-agnostic so the Windows mirror follows the same rule.
 func ensureIncludeIn(configPath string) error {
 	writePath, err := resolveWriteTarget(configPath)
 	if err != nil {
@@ -508,27 +516,30 @@ func ensureIncludeIn(configPath string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read ssh config: %w", err)
 	}
-	if hasIncludeLine(string(existing), includeLine) {
+	prefix := includeStanza + includeLine + "\n"
+	if strings.HasPrefix(string(existing), prefix) {
 		return nil
 	}
-
-	content := includeStanza + includeLine + "\n"
-	if len(existing) > 0 {
-		content += "\n" + string(existing)
+	remainder := removeIncludeLines(string(existing), includeLine)
+	if strings.HasPrefix(remainder, includeStanza) {
+		remainder = strings.TrimPrefix(remainder, includeStanza)
+	}
+	content := prefix
+	if remainder != "" {
+		content += "\n" + remainder
 	}
 	return writeFileAtomic(writePath, []byte(content), 0o600)
 }
 
-// hasIncludeLine reports whether the config already includes the managed file,
-// wherever it sits.
-func hasIncludeLine(content, includeLine string) bool {
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	for scanner.Scan() {
-		if strings.EqualFold(strings.TrimSpace(scanner.Text()), includeLine) {
-			return true
+func removeIncludeLines(content, includeLine string) string {
+	var kept strings.Builder
+	for _, line := range strings.SplitAfter(content, "\n") {
+		candidate := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if !strings.EqualFold(strings.TrimSpace(candidate), includeLine) {
+			kept.WriteString(line)
 		}
 	}
-	return false
+	return kept.String()
 }
 
 // UpsertHost records (or refreshes) the managed SSH host for a sandbox: it
@@ -536,32 +547,47 @@ func hasIncludeLine(content, includeLine string) bool {
 // includes it, and returns the stable alias to connect to. This is the single
 // entry point editors use so connection details stay behind one seam.
 func UpsertHost(paths basedir.Paths, entry HostEntry) (string, error) {
-	state, err := LoadState(paths)
-	if err != nil {
-		return "", err
-	}
-	state.Upsert(entry)
-	if err := SaveState(paths, state); err != nil {
-		return "", err
-	}
-	if err := WriteAmikaConfig(paths, state); err != nil {
-		return "", err
-	}
-	if err := EnsureInclude(paths); err != nil {
-		return "", err
-	}
-	return Alias(entry.SandboxID), nil
+	err := withSessionLock(paths, func() error {
+		state, err := LoadState(paths)
+		if err != nil {
+			return err
+		}
+		state.Upsert(entry)
+		if _, err := migrateAgentSocket(paths, &state); err != nil {
+			return err
+		}
+		return persistManagedStateLocked(paths, state, false)
+	})
+	return Alias(entry.SandboxID), err
 }
 
 // UpsertSessionHost records a concrete direct-WebSocket SSH alias for editor
 // discovery while its wildcard session block continues to provide the actual
 // connection settings.
 func UpsertSessionHost(paths basedir.Paths, alias string) error {
-	state, err := LoadState(paths)
-	if err != nil {
-		return err
+	return withSessionLock(paths, func() error {
+		state, err := LoadState(paths)
+		if err != nil {
+			return err
+		}
+		state.UpsertSessionHost(alias)
+		if _, err := migrateAgentSocket(paths, &state); err != nil {
+			return err
+		}
+		return persistManagedStateLocked(paths, state, false)
+	})
+}
+
+const currentSSHConfigVersion = 1
+
+func persistManagedStateLocked(paths basedir.Paths, state HostsState, forceSessionArtifacts bool) error {
+	reconcileSession := state.SessionConfig != nil &&
+		(forceSessionArtifacts || state.SSHConfigVersion < currentSSHConfigVersion)
+	if reconcileSession {
+		state.SSHConfigVersion = 0
 	}
-	state.UpsertSessionHost(alias)
+	// Persist the pending marker and source state first. If any derived artifact
+	// fails, the next session operation sees version zero and retries it.
 	if err := SaveState(paths, state); err != nil {
 		return err
 	}
@@ -571,7 +597,32 @@ func UpsertSessionHost(paths basedir.Paths, alias string) error {
 	if err := EnsureInclude(paths); err != nil {
 		return err
 	}
-	return nil
+	if !reconcileSession {
+		return nil
+	}
+	if isWSL() {
+		target, err := resolveWSLTarget()
+		if err != nil {
+			return err
+		}
+		if err := mirrorStateToWindowsLocked(paths, state, target); err != nil {
+			return err
+		}
+	}
+	state.SSHConfigVersion = currentSSHConfigVersion
+	return SaveState(paths, state)
+}
+
+func migrateAgentSocket(paths basedir.Paths, state *HostsState) (bool, error) {
+	if state.SessionConfig == nil || state.SessionConfig.AgentSocket != "" {
+		return false, nil
+	}
+	socket, err := paths.SSHAgentSocketFile()
+	if err != nil {
+		return false, err
+	}
+	state.SessionConfig.AgentSocket = socket
+	return true, nil
 }
 
 // writeFileAtomic writes data to path via a temp file + rename so a concurrent

@@ -404,6 +404,8 @@ func TestAuthLogin_WritesManagedSSHSessionBlock(t *testing.T) {
 		"  User amika\n" +
 		"  IdentityFile " + filepath.Join(home, ".ssh", "amika_id_ed25519") + "\n" +
 		"  IdentitiesOnly yes\n" +
+		"  IdentityAgent " + filepath.Join(home, ".ssh", "amika_agent.sock") + "\n" +
+		"  ForwardAgent yes\n" +
 		"  StrictHostKeyChecking yes\n" +
 		"  UserKnownHostsFile " + filepath.Join(home, ".ssh", "amika_known_hosts") + "\n" +
 		"  ProxyCommand " + binaryPath + " plumbing ssh-stdio-proxy %h\n" +
