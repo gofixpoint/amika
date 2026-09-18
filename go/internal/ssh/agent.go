@@ -22,7 +22,12 @@ func EnsureAgent(socketPath, identityFile string) error {
 	if err != nil {
 		return err
 	}
+	return withAgentLock(socketPath, func() error {
+		return ensureAgent(socketPath, privateKey, publicBlob)
+	})
+}
 
+func ensureAgent(socketPath string, privateKey any, publicBlob []byte) error {
 	client, connection, err := connectAgent(socketPath)
 	if err == nil {
 		defer connection.Close()

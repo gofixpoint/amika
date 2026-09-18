@@ -302,26 +302,6 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 	return pins, err
 }
 
-// ProxyPinStore returns the store the stdio proxy pins through: the
-// known-hosts file the managed session config names, wrapped so a WSL setup's
-// Windows copy is republished along with it.
-//
-// The configured file rather than the default path, for the same reason
-// resolveSessionConfig exists: a key imported by `secret ssh-keygen --import`
-// moves both files, and a pin written anywhere but where the rendered config
-// points OpenSSH is a pin OpenSSH will not read.
-//
-// Warnings about the Windows copy go to warnings, which is the proxy's stderr
-// and so the SSH client's — the one channel a ProxyCommand has to a reader who
-// is looking at an editor, not a terminal.
-func ProxyPinStore(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, error) {
-	session, err := resolveSessionConfig(paths)
-	if err != nil {
-		return nil, err
-	}
-	return windowsMirroredPins(FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings), nil
-}
-
 // ProxySession creates a fresh descriptor, pins its host key, dials it with
 // header credentials, and copies opaque bytes between OpenSSH standard I/O and
 // the WebSocket.
