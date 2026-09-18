@@ -55,8 +55,9 @@ Amika's own flags go before "ssh":
 
   amika sandbox --remote ssh -N -L 8080:localhost:80 my-sandbox
 
-Local (-L) and dynamic (-D) forwarding are supported. Remote forwarding (-R),
-agent forwarding (-A), and X11 forwarding are not.
+Local (-L), dynamic (-D), and isolated agent forwarding are supported. Amika
+enables agent forwarding through a dedicated agent containing only the Amika
+SSH key. Remote forwarding (-R) and X11 forwarding are not supported.
 
 Examples:
   # Interactive shell

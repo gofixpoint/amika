@@ -55,9 +55,14 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			agentSocket, err := paths.SSHAgentSocketFile()
+			if err != nil {
+				return err
+			}
 			session := ssh.SessionConfig{
 				IdentityFile:   identityPath,
 				KnownHostsFile: knownHostsPath,
+				AgentSocket:    agentSocket,
 			}
 
 			// Order matters in both directions, because the upload and the

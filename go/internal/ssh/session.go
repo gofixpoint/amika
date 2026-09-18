@@ -61,10 +61,10 @@ type SandboxAlias struct {
 }
 
 // SessionConfig describes the local key material shared by every environment's
-// session block: the private key OpenSSH authenticates with and the file its
-// host-key pins live in.
+// session block: the private key OpenSSH authenticates with, the file its
+// host-key pins live in, and the dedicated agent socket that forwards the key.
 //
-// Neither is per-environment. One private key authenticates to every control
+// None is per-environment. One private key authenticates to every control
 // plane, each of which holds its own uploaded copy of the public key, so an
 // identity imported while pointed at one environment stays in effect for all of
 // them. Only the ProxyCommand varies per environment, and it is stored
@@ -72,6 +72,7 @@ type SandboxAlias struct {
 type SessionConfig struct {
 	IdentityFile   string
 	KnownHostsFile string
+	AgentSocket    string
 }
 
 // SessionCreator creates a fresh transport descriptor for each SSH dial.
@@ -205,29 +206,34 @@ func BuildWSLProxyCommand(distro, binaryPath string) (string, error) {
 func RenderSessionConfig(environment, proxyCommand string, session SessionConfig) (string, error) {
 	if !safeAliasSegment.MatchString(environment) ||
 		!safeConfigPath(session.IdentityFile) ||
-		!safeConfigPath(session.KnownHostsFile) {
+		!safeConfigPath(session.KnownHostsFile) ||
+		(session.AgentSocket != "" && !safeConfigPath(session.AgentSocket)) {
 		return "", ErrInvalidSessionAlias
 	}
 	if _, err := ParseProxyCommand(proxyCommand); err != nil {
 		return "", err
 	}
-	return renderSessionBlock(environment, proxyCommand, session.IdentityFile, session.KnownHostsFile), nil
+	return renderSessionBlock(environment, proxyCommand, session.IdentityFile, session.KnownHostsFile, session.AgentSocket), nil
 }
 
 // renderSessionBlock formats one environment's wildcard session block. Path
 // and command validation belongs to the callers, which apply different rules
 // per target platform.
-func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile string) string {
-	return fmt.Sprintf(`Host *.%s.amika
+func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile, agentSocket string) string {
+	block := fmt.Sprintf(`Host *.%s.amika
   User amika
   IdentityFile %s
   IdentitiesOnly yes
-  StrictHostKeyChecking yes
+`, environment, identityFile)
+	if agentSocket != "" {
+		block += fmt.Sprintf("  IdentityAgent %s\n  ForwardAgent yes\n", agentSocket)
+	}
+	return block + fmt.Sprintf(`  StrictHostKeyChecking yes
   UserKnownHostsFile %s
   ProxyCommand %s
   ServerAliveInterval 15
   ServerAliveCountMax 3
-`, environment, identityFile, knownHostsFile, proxyCommand)
+`, knownHostsFile, proxyCommand)
 }
 
 // KnownHostLine returns one canonical alias-keyed Ed25519 pin.
@@ -497,7 +503,14 @@ func resolveSessionConfig(paths basedir.Paths) (SessionConfig, error) {
 		return SessionConfig{}, err
 	}
 	if state.SessionConfig != nil {
-		return *state.SessionConfig, nil
+		session := *state.SessionConfig
+		if session.AgentSocket == "" {
+			session.AgentSocket, err = paths.SSHAgentSocketFile()
+			if err != nil {
+				return SessionConfig{}, err
+			}
+		}
+		return session, nil
 	}
 	identityFile, err := paths.SSHIdentityFile()
 	if err != nil {
@@ -507,8 +520,13 @@ func resolveSessionConfig(paths basedir.Paths) (SessionConfig, error) {
 	if err != nil {
 		return SessionConfig{}, err
 	}
+	agentSocket, err := paths.SSHAgentSocketFile()
+	if err != nil {
+		return SessionConfig{}, err
+	}
 	return SessionConfig{
 		IdentityFile:   identityFile,
 		KnownHostsFile: knownHostsFile,
+		AgentSocket:    agentSocket,
 	}, nil
 }

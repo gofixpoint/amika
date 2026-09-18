@@ -410,6 +410,13 @@ func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
 // a binary that has since moved or been replaced by one that cannot serve as a
 // proxy.
 func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
+	if session.AgentSocket == "" {
+		var err error
+		session.AgentSocket, err = paths.SSHAgentSocketFile()
+		if err != nil {
+			return err
+		}
+	}
 	environment, proxyCommand, err := resolveSessionRendering(session)
 	if err != nil {
 		return err
@@ -423,6 +430,12 @@ func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
 		state.SessionProxyCommands = make(map[string]string)
 	}
 	state.SessionProxyCommands[environment] = proxyCommand
+	if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
+		info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
+		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+			return err
+		}
+	}
 	if err := SaveState(paths, state); err != nil {
 		return err
 	}
@@ -481,13 +494,7 @@ func EnsureInclude(paths basedir.Paths) error {
 // replace scalar values already supplied by amika.conf.
 const includeStanza = "# This `Include` directive must be the first line, or Codex cannot find your Amika SSH\n" +
 	"# hosts.\n" +
-	"#\n" +
-	"# To modify amika SSH target settings, add another host config block below this, like:\n" +
-	"#\n" +
-	"# ```\n" +
-	"# Host *.amika\n" +
-	"#   ForwardAgent yes\n" +
-	"# ```\n"
+	"# Connection settings are managed in amika.conf.\n"
 
 // ensureIncludeIn prepends the Include line for the managed config to an ssh
 // config file, creating the file when absent and preserving existing content.

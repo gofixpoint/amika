@@ -84,6 +84,7 @@ func renderWindowsSessionBlocks(state HostsState, target wslbridge.Target) []str
 			proxyCommand,
 			quoteWindowsPath(target.SSHDirWindows+"\\"+basedir.SSHIdentityName()),
 			quoteWindowsPath(target.SSHDirWindows+"\\"+basedir.SSHKnownHostsName()),
+			"",
 		))
 	}
 	return blocks

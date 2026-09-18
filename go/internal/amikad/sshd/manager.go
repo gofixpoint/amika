@@ -409,7 +409,7 @@ KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
 PermitRootLogin no
 PermitEmptyPasswords no
-AllowAgentForwarding no
+AllowAgentForwarding yes
 AllowTcpForwarding local
 GatewayPorts no
 X11Forwarding no

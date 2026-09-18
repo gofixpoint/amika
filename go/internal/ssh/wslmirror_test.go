@@ -104,6 +104,11 @@ func TestRenderWindows(t *testing.T) {
 			t.Fatalf("rendered config missing %q:\n%s", want, content)
 		}
 	}
+	for _, unwanted := range []string{"IdentityAgent", "ForwardAgent"} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("Windows mirror must not contain %q:\n%s", unwanted, content)
+		}
+	}
 }
 
 func TestRenderWindowsWithoutSession(t *testing.T) {

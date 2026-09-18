@@ -58,6 +58,7 @@ func TestRenderSessionConfigScopesTheWildcardToOneEnvironment(t *testing.T) {
 		SessionConfig{
 			IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
 			KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+			AgentSocket:    "/home/user/.ssh/amika_agent.sock",
 		},
 	)
 	if err != nil {
@@ -68,6 +69,8 @@ func TestRenderSessionConfigScopesTheWildcardToOneEnvironment(t *testing.T) {
 		"User amika",
 		"IdentityFile /home/user/.ssh/amika_id_ed25519",
 		"IdentitiesOnly yes",
+		"IdentityAgent /home/user/.ssh/amika_agent.sock",
+		"ForwardAgent yes",
 		"StrictHostKeyChecking yes",
 		"UserKnownHostsFile /home/user/.ssh/amika_known_hosts",
 		"ProxyCommand /Users/dev/bin/amika-local plumbing ssh-stdio-proxy %h",

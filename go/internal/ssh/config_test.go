@@ -568,6 +568,8 @@ func TestEnsureSessionConfigWritesTheBlockWithoutAnyKeyMaterial(t *testing.T) {
 		"  User amika\n" +
 		"  IdentityFile " + identityPath + "\n" +
 		"  IdentitiesOnly yes\n" +
+		"  IdentityAgent " + filepath.Join(filepath.Dir(identityPath), "amika_agent.sock") + "\n" +
+		"  ForwardAgent yes\n" +
 		"  StrictHostKeyChecking yes\n" +
 		"  UserKnownHostsFile " + knownHostsPath + "\n" +
 		"  ProxyCommand " + binary + " plumbing ssh-stdio-proxy %h\n" +
