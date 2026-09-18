@@ -6,8 +6,8 @@ Use `-o json` for scripts and `-o json-pretty` for inspection. JSON mode
 suppresses progress; subprocess output may go to stderr, leaving stdout as JSON.
 
 ```bash
-name=$(amika sandbox create --no-git -o json | jq -r .name)
-amika sandbox list -o json | jq -r '.[].name'
+name=$(amika rig create --no-git -o json | jq -r .name)
+amika rig list -o json | jq -r '.[].name'
 ```
 
 Most list commands return a bare array (`[]` when empty). `snapshot list`
@@ -38,13 +38,13 @@ printf 'y\n' | amika secret push KEY=value
 Do not pass `-o json` to commands that open a shell, editor, browser, or masked
 credential prompt:
 
-- `sandbox connect`, `sandbox code`, and `sandbox create --connect`
-- bare `sandbox ssh`
+- `rig connect`, `rig code`, and `rig create --connect`
+- bare `rig ssh`
 - `auth login` without `--api-key-file`
 - `secret extract` and `secret push`
 
-`sandbox ssh` and `scp` delegate to system tools and reject Amika's `--output`
-flag. With `sandbox ssh`, arguments after the sandbox name belong to the remote
+`rig ssh` and `scp` delegate to system tools and reject Amika's `--output`
+flag. With `rig ssh`, arguments after the rig name belong to the remote
 command. With `scp`, short `-o` is the system `scp` option.
 
 Avoid launching an interactive command in a plain tool call. It will block on a
