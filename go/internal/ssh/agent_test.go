@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/wslbridge"
 	"golang.org/x/crypto/ssh/agent"
 )
 
@@ -244,6 +246,16 @@ func TestPrepareProxyMigratesLegacyConfigAndRequiresReconnect(t *testing.T) {
 	if err := WriteAmikaConfig(paths, state); err != nil {
 		t.Fatal(err)
 	}
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	previousIsWSL, previousResolve, previousIcacls := isWSL, resolveWSLTarget, runIcacls
+	isWSL = func() bool { return true }
+	resolveWSLTarget = func() (wslbridge.Target, error) {
+		return windowsTestTarget(winSSH), nil
+	}
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() {
+		isWSL, resolveWSLTarget, runIcacls = previousIsWSL, previousResolve, previousIcacls
+	})
 
 	originalStartAgent := startAgent
 	t.Cleanup(func() { startAgent = originalStartAgent })
@@ -276,8 +288,59 @@ func TestPrepareProxyMigratesLegacyConfigAndRequiresReconnect(t *testing.T) {
 			t.Errorf("migrated config missing %q:\n%s", expected, configData)
 		}
 	}
+	windowsConfig, err := os.ReadFile(filepath.Join(winSSH, basedir.SSHAmikaConfigName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(windowsConfig), "ForwardAgent no") {
+		t.Fatalf("migrated Windows config can inherit ambient forwarding:\n%s", windowsConfig)
+	}
 	if _, err := PrepareProxy(paths, os.Stderr); err != nil {
 		t.Fatalf("second PrepareProxy: %v", err)
+	}
+}
+
+func TestPrepareProxyRetriesMigrationAfterIncludeFailure(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	testBinary(t, "amika")
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "amika_id_ed25519")
+	if _, err := GenerateIdentity(identity); err != nil {
+		t.Fatal(err)
+	}
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   identity,
+			KnownHostsFile: filepath.Join(dir, "known_hosts"),
+		},
+		SessionProxyCommands: map[string]string{
+			"localhost-3011": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+	}
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+	configPath, _ := paths.SSHConfigFile()
+	if err := os.MkdirAll(configPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	originalStartAgent := startAgent
+	t.Cleanup(func() { startAgent = originalStartAgent })
+	startAgent = func(socketPath string) error {
+		serveTestAgent(t, socketPath, agent.NewKeyring())
+		return nil
+	}
+	if _, err := PrepareProxy(paths, os.Stderr); err == nil {
+		t.Fatal("PrepareProxy succeeded despite unusable primary config path")
+	}
+	loaded, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.SessionConfig.AgentSocket != "" {
+		t.Fatalf("migration was marked complete after a failed artifact write: %+v", loaded.SessionConfig)
 	}
 }
 

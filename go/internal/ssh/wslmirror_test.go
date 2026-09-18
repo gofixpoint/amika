@@ -405,7 +405,7 @@ func TestWindowsMirroredPinsLeavesTheStoreAloneOutsideWSL(t *testing.T) {
 	t.Cleanup(func() { isWSL = prevIsWSL })
 
 	inner := &fakePinStore{}
-	if got := windowsMirroredPins(inner, "/tmp/amika_known_hosts", io.Discard); got != HostKeyPinStore(inner) {
+	if got := windowsMirroredPins(testPaths(t), inner, "/tmp/amika_known_hosts", io.Discard); got != HostKeyPinStore(inner) {
 		t.Fatalf("wrapped the store on a machine with no Windows side: %#v", got)
 	}
 }
@@ -444,7 +444,7 @@ func TestWindowsMirroredPinsPublishesThePinWhateverElseFails(t *testing.T) {
 	stubWSL(t, winSSH, nil)
 
 	var warnings strings.Builder
-	pins := windowsMirroredPins(FileHostKeyPinStore{Path: knownHosts}, knownHosts, &warnings)
+	pins := windowsMirroredPins(paths, FileHostKeyPinStore{Path: knownHosts}, knownHosts, &warnings)
 	if err := pins.Pin("my-sandbox.sb_1.prod.amika", testHostKey(t)); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
@@ -468,11 +468,12 @@ func TestWindowsMirroredPinsPublishesThePinWhateverElseFails(t *testing.T) {
 }
 
 func TestWindowsMirroredPinsWarnsRatherThanFailsTheDial(t *testing.T) {
+	paths := testPaths(t)
 	stubWSL(t, "", errors.New("no Windows side"))
 
 	var warnings strings.Builder
 	inner := &fakePinStore{}
-	if err := windowsMirroredPins(inner, "/tmp/amika_known_hosts", &warnings).Pin("my-sandbox.sb_1.prod.amika", "ssh-ed25519 AAAA"); err != nil {
+	if err := windowsMirroredPins(paths, inner, "/tmp/amika_known_hosts", &warnings).Pin("my-sandbox.sb_1.prod.amika", "ssh-ed25519 AAAA"); err != nil {
 		t.Fatalf("Pin: %v", err)
 	}
 	if inner.calls != 1 {
@@ -480,5 +481,52 @@ func TestWindowsMirroredPinsWarnsRatherThanFailsTheDial(t *testing.T) {
 	}
 	if !strings.Contains(warnings.String(), "no Windows side") {
 		t.Fatalf("warning = %q", warnings.String())
+	}
+}
+
+func TestWindowsMirroredPinsWaitsForSessionMirrorLock(t *testing.T) {
+	paths := testPaths(t)
+	knownHosts, err := paths.SSHKnownHostsFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	stubWSL(t, winSSH, nil)
+	pins := windowsMirroredPins(paths, FileHostKeyPinStore{Path: knownHosts}, knownHosts, io.Discard)
+	hostKey := testHostKey(t)
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	transactionDone := make(chan error, 1)
+	go func() {
+		transactionDone <- WithSessionTransaction(context.Background(), paths, func(SessionTransaction) error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	pinDone := make(chan error, 1)
+	go func() {
+		pinDone <- pins.Pin("my-sandbox.sb_1.prod.amika", hostKey)
+	}()
+	select {
+	case <-pinDone:
+		t.Fatal("Windows pin mirror bypassed the session mirror lock")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	if err := <-transactionDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-pinDone; err != nil {
+		t.Fatal(err)
+	}
+	mirrored, err := os.ReadFile(filepath.Join(winSSH, basedir.SSHKnownHostsName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mirrored), "my-sandbox.sb_1.prod.amika") {
+		t.Fatalf("Windows mirror missing serialized pin:\n%s", mirrored)
 	}
 }

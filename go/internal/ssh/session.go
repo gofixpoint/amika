@@ -307,17 +307,28 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 			return err
 		}
 		if migrated {
-			if err := SaveState(paths, state); err != nil {
-				return err
-			}
 			if err := WriteAmikaConfig(paths, state); err != nil {
 				return err
 			}
 			if err := EnsureInclude(paths); err != nil {
 				return err
 			}
+			if isWSL() {
+				target, err := resolveWSLTarget()
+				if err != nil {
+					return err
+				}
+				if err := mirrorStateToWindowsLocked(paths, state, target); err != nil {
+					return err
+				}
+			}
+			// AgentSocket is the migration marker. Persist it only after every
+			// config artifact succeeds so a transient failure retries the work.
+			if err := SaveState(paths, state); err != nil {
+				return err
+			}
 		}
-		pins = windowsMirroredPins(FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings)
+		pins = windowsMirroredPins(paths, FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings)
 		return nil
 	})
 	if err != nil {
