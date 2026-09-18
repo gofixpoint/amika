@@ -292,13 +292,17 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 		if err != nil {
 			return err
 		}
-		migrated, err = migrateAgentSocket(paths, &state)
+		socketAdded, err := migrateAgentSocket(paths, &state)
 		if err != nil {
 			return err
 		}
+		migrated = socketAdded || state.SSHConfigVersion < currentSSHConfigVersion
 		session, err := resolveSessionConfigFromState(paths, state)
 		if err != nil {
 			return err
+		}
+		if state.SessionConfig == nil {
+			state.SessionConfig = &session
 		}
 		if err := validateSessionIdentity(session); err != nil {
 			return err
@@ -307,24 +311,7 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 			return err
 		}
 		if migrated {
-			if err := WriteAmikaConfig(paths, state); err != nil {
-				return err
-			}
-			if err := EnsureInclude(paths); err != nil {
-				return err
-			}
-			if isWSL() {
-				target, err := resolveWSLTarget()
-				if err != nil {
-					return err
-				}
-				if err := mirrorStateToWindowsLocked(paths, state, target); err != nil {
-					return err
-				}
-			}
-			// AgentSocket is the migration marker. Persist it only after every
-			// config artifact succeeds so a transient failure retries the work.
-			if err := SaveState(paths, state); err != nil {
+			if err := persistManagedStateLocked(paths, state, false); err != nil {
 				return err
 			}
 		}

@@ -190,11 +190,14 @@ func TestPrepareProxyRestartsMissingAgentFromPersistedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	socket := filepath.Join(dir, "missing_agent.sock")
-	state := HostsState{SessionConfig: &SessionConfig{
-		IdentityFile:   identity,
-		KnownHostsFile: filepath.Join(dir, "known_hosts"),
-		AgentSocket:    socket,
-	}}
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   identity,
+			KnownHostsFile: filepath.Join(dir, "known_hosts"),
+			AgentSocket:    socket,
+		},
+		SSHConfigVersion: currentSSHConfigVersion,
+	}
 	if err := SaveState(paths, state); err != nil {
 		t.Fatal(err)
 	}
@@ -339,8 +342,8 @@ func TestPrepareProxyRetriesMigrationAfterIncludeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.SessionConfig.AgentSocket != "" {
-		t.Fatalf("migration was marked complete after a failed artifact write: %+v", loaded.SessionConfig)
+	if loaded.SSHConfigVersion != 0 {
+		t.Fatalf("migration was marked complete after a failed artifact write: version=%d", loaded.SSHConfigVersion)
 	}
 }
 

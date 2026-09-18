@@ -50,6 +50,10 @@ type HostsState struct {
 	// supplied directly. Their connection settings come from the wildcard
 	// session blocks below, not these intentionally empty entries.
 	SessionHosts []SessionHostEntry `json:"session_hosts,omitempty"`
+	// SSHConfigVersion is advanced only after every managed Linux and WSL
+	// artifact reflects the forwarding policy. Zero means reconciliation must
+	// be retried; older state naturally decodes to zero.
+	SSHConfigVersion int `json:"ssh_config_version,omitempty"`
 }
 
 // SessionHostEntry is a concrete direct-WebSocket SSH alias advertised to
@@ -442,13 +446,7 @@ func configureSessionLocked(paths basedir.Paths, session SessionConfig) error {
 			return err
 		}
 	}
-	if err := SaveState(paths, state); err != nil {
-		return err
-	}
-	if err := WriteAmikaConfig(paths, state); err != nil {
-		return err
-	}
-	return EnsureInclude(paths)
+	return persistManagedStateLocked(paths, state, true)
 }
 
 // ValidateSessionConfig reports whether ConfigureSession would accept this
@@ -558,13 +556,7 @@ func UpsertHost(paths basedir.Paths, entry HostEntry) (string, error) {
 		if _, err := migrateAgentSocket(paths, &state); err != nil {
 			return err
 		}
-		if err := SaveState(paths, state); err != nil {
-			return err
-		}
-		if err := WriteAmikaConfig(paths, state); err != nil {
-			return err
-		}
-		return EnsureInclude(paths)
+		return persistManagedStateLocked(paths, state, false)
 	})
 	return Alias(entry.SandboxID), err
 }
@@ -582,14 +574,43 @@ func UpsertSessionHost(paths basedir.Paths, alias string) error {
 		if _, err := migrateAgentSocket(paths, &state); err != nil {
 			return err
 		}
-		if err := SaveState(paths, state); err != nil {
-			return err
-		}
-		if err := WriteAmikaConfig(paths, state); err != nil {
-			return err
-		}
-		return EnsureInclude(paths)
+		return persistManagedStateLocked(paths, state, false)
 	})
+}
+
+const currentSSHConfigVersion = 1
+
+func persistManagedStateLocked(paths basedir.Paths, state HostsState, forceSessionArtifacts bool) error {
+	reconcileSession := state.SessionConfig != nil &&
+		(forceSessionArtifacts || state.SSHConfigVersion < currentSSHConfigVersion)
+	if reconcileSession {
+		state.SSHConfigVersion = 0
+	}
+	// Persist the pending marker and source state first. If any derived artifact
+	// fails, the next session operation sees version zero and retries it.
+	if err := SaveState(paths, state); err != nil {
+		return err
+	}
+	if err := WriteAmikaConfig(paths, state); err != nil {
+		return err
+	}
+	if err := EnsureInclude(paths); err != nil {
+		return err
+	}
+	if !reconcileSession {
+		return nil
+	}
+	if isWSL() {
+		target, err := resolveWSLTarget()
+		if err != nil {
+			return err
+		}
+		if err := mirrorStateToWindowsLocked(paths, state, target); err != nil {
+			return err
+		}
+	}
+	state.SSHConfigVersion = currentSSHConfigVersion
+	return SaveState(paths, state)
 }
 
 func migrateAgentSocket(paths basedir.Paths, state *HostsState) (bool, error) {

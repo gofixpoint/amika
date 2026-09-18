@@ -9,6 +9,8 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
+	"github.com/gofixpoint/amika/go/internal/wslbridge"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func TestAlias(t *testing.T) {
@@ -620,6 +622,64 @@ func TestEnsureSessionConfigKeepsAnImportedIdentity(t *testing.T) {
 	defaultIdentity, _ := paths.SSHIdentityFile()
 	if strings.Contains(string(conf), defaultIdentity) {
 		t.Errorf("amika.conf reverted to the default identity:\n%s", conf)
+	}
+}
+
+func TestEnsureSessionConfigCompletesLegacyWSLMigration(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	testBinary(t, "amika")
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "amika_id_ed25519")
+	if _, err := GenerateIdentity(identity); err != nil {
+		t.Fatal(err)
+	}
+	legacy := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   identity,
+			KnownHostsFile: filepath.Join(dir, "known_hosts"),
+		},
+		SessionProxyCommands: map[string]string{
+			"localhost-3011": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+	}
+	if err := SaveState(paths, legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	previousIsWSL, previousResolve, previousIcacls := isWSL, resolveWSLTarget, runIcacls
+	isWSL = func() bool { return true }
+	resolveWSLTarget = func() (wslbridge.Target, error) {
+		return windowsTestTarget(winSSH), nil
+	}
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() {
+		isWSL, resolveWSLTarget, runIcacls = previousIsWSL, previousResolve, previousIcacls
+	})
+	originalStartAgent := startAgent
+	t.Cleanup(func() { startAgent = originalStartAgent })
+	startAgent = func(socketPath string) error {
+		serveTestAgent(t, socketPath, agent.NewKeyring())
+		return nil
+	}
+
+	if _, err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+	state, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SSHConfigVersion != currentSSHConfigVersion {
+		t.Fatalf("SSH config version = %d, want %d", state.SSHConfigVersion, currentSSHConfigVersion)
+	}
+	windowsConfig, err := os.ReadFile(filepath.Join(winSSH, basedir.SSHAmikaConfigName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(windowsConfig), "ForwardAgent no") {
+		t.Fatalf("normal session writer left ambient Windows forwarding enabled:\n%s", windowsConfig)
 	}
 }
 
