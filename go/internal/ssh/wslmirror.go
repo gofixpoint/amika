@@ -143,8 +143,7 @@ func mirrorStateToWindowsLocked(paths basedir.Paths, state HostsState, target ws
 		}
 	}
 
-	_, err = mirrorFile(knownHostsPath, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
-	return err
+	return mirrorKnownHostsFile(knownHostsPath, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
 }
 
 // isWSL and resolveWSLTarget are seams over WSL detection, so a test can drive
@@ -214,8 +213,14 @@ func (s mirroredPinStore) mirror() error {
 	if err != nil {
 		return err
 	}
-	_, err = mirrorFile(s.knownHostsFile, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
-	return err
+	return mirrorKnownHostsFile(s.knownHostsFile, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
+}
+
+func mirrorKnownHostsFile(src, dst string) error {
+	return withKnownHostsLock(src, func() error {
+		_, err := mirrorFile(src, dst)
+		return err
+	})
 }
 
 // sessionKeyMaterialPaths names the files the rendered config's mirrored key

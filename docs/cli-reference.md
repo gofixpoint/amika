@@ -442,7 +442,7 @@ exactly the configured Amika identity into it. The generated host block uses
 that socket for both the initial connection and forwarding. Your ordinary
 `SSH_AUTH_SOCK` is never forwarded, so its GitHub, production, or personal
 keys are not exposed to the sandbox. If the dedicated agent stops, the next
-Amika SSH connection — including an editor deep link — starts it again and
+Amika SSH connection, including an editor deep link, starts it again and
 reloads the key. The first editor connection after upgrading a config written
 by an older Amika version updates the config and asks the client to reconnect
 once, so OpenSSH can parse the new forwarding options.

@@ -283,6 +283,62 @@ func TestMirrorToWindowsWaitsForKeyRotationSnapshot(t *testing.T) {
 	}
 }
 
+func TestMirrorToWindowsWaitsForKnownHostsMutation(t *testing.T) {
+	paths := testPaths(t)
+	state := sessionTestState(t, paths)
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "identity")
+	knownHosts := filepath.Join(dir, "known_hosts")
+	if err := os.WriteFile(identity, []byte("private key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(knownHosts, []byte("old pin\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.SessionConfig.IdentityFile = identity
+	state.SessionConfig.KnownHostsFile = knownHosts
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+	previousIcacls := runIcacls
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() { runIcacls = previousIcacls })
+	target := windowsTestTarget(filepath.Join(t.TempDir(), "winssh"))
+
+	mutationLocked := make(chan struct{})
+	finishMutation := make(chan struct{})
+	mutationDone := make(chan error, 1)
+	go func() {
+		mutationDone <- withKnownHostsLock(knownHosts, func() error {
+			close(mutationLocked)
+			<-finishMutation
+			return writeFileAtomic(knownHosts, []byte("new pin\n"), 0o600)
+		})
+	}()
+	<-mutationLocked
+	mirrorDone := make(chan error, 1)
+	go func() { mirrorDone <- MirrorToWindows(paths, target) }()
+	select {
+	case <-mirrorDone:
+		t.Fatal("Windows mirror bypassed the known-hosts mutation lock")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(finishMutation)
+	if err := <-mutationDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-mirrorDone; err != nil {
+		t.Fatal(err)
+	}
+	mirrored, err := os.ReadFile(filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mirrored) != "new pin\n" {
+		t.Fatalf("mirrored known hosts = %q, want post-mutation snapshot", mirrored)
+	}
+}
+
 // TestMirrorToWindowsCopiesImportedIdentity covers the imported-key setup:
 // the session config points outside the default identity path, and the mirror
 // must copy that file, since the rendered Windows config only ever references
