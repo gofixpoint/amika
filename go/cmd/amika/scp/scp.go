@@ -64,7 +64,7 @@ func runSCP(cmd *cobra.Command, rawArgs []string) error {
 	var client *apiclient.Client
 	resolve := func(name string) (ssh.Destination, error) {
 		if client == nil {
-			if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 				return ssh.Destination{}, err
 			}
 			client = runmode.NewRemoteClient()

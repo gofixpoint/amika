@@ -25,12 +25,6 @@ steps:
       exit: 1
       stderr_contains: "the --output json-pretty option is not supported by this command: it produces no structured JSON result"
 
-  - name: sandbox connect --local -o json is still rejected before any local sandbox lookup
-    cmd: [sandbox, connect, somebox, --local, -o, json]
-    expect:
-      exit: 1
-      stderr_contains: "the --output json option is not supported by this command"
-
   - name: sandbox code -o json is rejected before editor validation
     cmd: [sandbox, code, somebox, -o, json]
     expect:

@@ -131,10 +131,6 @@ type Options struct {
 	// caller actually typed. Empty means "git"; `amika send` sets "repo" when
 	// the value arrived through that alias.
 	GitFlagName string
-	// NoClean is the local-sandbox --no-clean flag. It only makes sense with a
-	// local-path repo, so it constrains which sources are acceptable.
-	// Commands that do not offer --no-clean leave it false.
-	NoClean bool
 }
 
 // Validate reports contradictions between the flags without touching the
@@ -149,16 +145,10 @@ func (o Options) Validate() error {
 	if o.GitSet && o.NoGit {
 		return fmt.Errorf("%s and --%s are mutually exclusive", gitFlag, FlagNoGit)
 	}
-	if o.NoClean && o.NoGit {
-		return fmt.Errorf("--%s and --%s are mutually exclusive", FlagNoClean, FlagNoGit)
-	}
 	if o.GitSet {
 		v := strings.TrimSpace(o.Git)
 		if v == "" {
 			return fmt.Errorf("%s requires a non-empty value", gitFlag)
-		}
-		if o.NoClean && IsNetworkURL(v) {
-			return fmt.Errorf("--%s cannot be used with a git URL", FlagNoClean)
 		}
 	}
 	return nil
@@ -203,9 +193,6 @@ func Resolve(opts Options) (Identity, error) {
 	}
 	repoRoot, err := ResolveRoot(opts.Cwd)
 	if err != nil {
-		if opts.NoClean {
-			return Identity{}, fmt.Errorf("--no-clean requires a git repo, but none was detected from %q", opts.Cwd)
-		}
 		return Identity{Source: SourceNone}, nil
 	}
 	return Identity{Name: filepath.Base(repoRoot), Source: SourceAutoDetect, Path: repoRoot}, nil

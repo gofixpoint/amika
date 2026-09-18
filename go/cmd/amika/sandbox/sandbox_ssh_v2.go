@@ -7,6 +7,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/cliargs"
+	"github.com/gofixpoint/amika/go/internal/cliflags"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
@@ -90,8 +91,8 @@ Examples:
 		}
 		// Cobra merges the parents' persistent flags into a command's own set
 		// inside ParseFlags, which DisableFlagParsing skips. Reading
-		// InheritedFlags forces that merge, so --local, --remote,
-		// --remote-target, and --output resolve as they do elsewhere.
+		// InheritedFlags forces that merge, so --remote, --remote-target,
+		// and --output resolve as they do elsewhere.
 		_ = cmd.InheritedFlags()
 		if err := cmd.Flags().Parse(own); err != nil {
 			return err
@@ -99,17 +100,33 @@ Examples:
 		if err := output.RejectFlag(cmd); err != nil {
 			return err
 		}
-		if runmode.Resolve(cmd) == runmode.Local {
-			return fmt.Errorf("direct WebSocket SSH requires a remote sandbox")
+		// This command parses its own flags, so the root's PersistentPreRunE
+		// ran before --local was parsed and could not catch it there.
+		if err := cliflags.RejectRemovedLocalFlag(cmd); err != nil {
+			return err
 		}
 		// Locate the sandbox name before requiring auth, so an unusable command
 		// line is reported as the usage error it is rather than as a login
 		// prompt.
 		nameIdx := cliargs.FirstOperand(forward, cliargs.SSHArgLetters)
+		// --local written after the subcommand would otherwise be forwarded to
+		// ssh verbatim. Only the options ahead of the sandbox name are amika's
+		// to reject: everything from the name onward is the remote command, so
+		// `rig ssh box git log --local` must reach git untouched. With no name
+		// at all there is no remote command, so the whole line is options —
+		// and reporting the retired flag beats reporting the missing name,
+		// since removing --local is what makes the line valid again.
+		optionArgs := forward
+		if nameIdx >= 0 {
+			optionArgs = forward[:nameIdx]
+		}
+		if err := cliflags.RejectRemovedLocalFlagInArgs(optionArgs, cliargs.SSHArgLetters); err != nil {
+			return err
+		}
 		if nameIdx < 0 {
 			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
 		}
-		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 		target, err := getRemoteTarget(cmd)
@@ -171,10 +188,7 @@ Examples:
 		if err := validateEditor(editor); err != nil {
 			return err
 		}
-		if runmode.Resolve(cmd) == runmode.Local {
-			return fmt.Errorf("direct WebSocket SSH requires a remote sandbox")
-		}
-		if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 

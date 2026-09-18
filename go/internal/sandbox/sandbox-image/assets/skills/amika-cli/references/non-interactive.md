@@ -18,14 +18,13 @@ inspect each item's `status` and `error`.
 
 JSON mode never prompts. Pass the bypass flag when required:
 
-| Command                        | Required flag                                      |
-| ------------------------------ | -------------------------------------------------- |
-| `rig create` with local mounts | `--yes`                                            |
-| `rig delete`                   | `--force`                                          |
-| `snapshot create`              | `--no-interactive`, plus `--mode` and `--name`     |
-| `snapshot delete`              | `--force` / `-f`                                   |
-| `service delete`               | `--force` / `-f`                                   |
-| `secret ssh-key delete`        | `--force` / `-f`                                   |
+| Command                 | Required flag                                  |
+| ----------------------- | ---------------------------------------------- |
+| `rig delete`            | `--force`                                      |
+| `snapshot create`       | `--no-interactive`, plus `--mode` and `--name` |
+| `snapshot delete`       | `--force` / `-f`                               |
+| `service delete`        | `--force` / `-f`                               |
+| `secret ssh-key delete` | `--force` / `-f`                               |
 
 `secret push` and `secret extract --push` have no bypass flag and prompt on
 stdin. If the operation is intended, pipe the confirmation:

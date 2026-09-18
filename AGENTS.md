@@ -72,17 +72,16 @@ checked out as a sibling worktree rather than searching for those paths in this 
 
 ## Runtime Dependencies
 
-- **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `coder-plus-docker`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
-- **rsync** is required by the `materialize` command to copy output files.
+- **Docker** is required by `amika-server`, which still exposes the Docker-backed sandbox API over HTTP. Preset images (`coder`, `coder-plus-docker`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
+- **rsync** is required by `amika-server`'s materialize endpoint to copy output files.
+- The `amika` CLI itself is remote-only: every `rig`/`sandbox` command talks to the Amika API. The former `--local` mode, and the `volume` and `materialize` commands that served it, have been removed.
 
 ## Code Structure
 
 ### CLI Commands (`go/cmd/amika/`)
 - `main.go` — Entry point, root Cobra command
 - `sandbox.go` — `sandbox create|list|connect|delete` commands
-- `materialize.go` — `materialize` command (Docker-based)
-- `volume.go` — `volume list|delete` commands
-- `auth.go` — `auth extract` command
+- `auth.go` — `auth login|logout|status` commands
 
 ### HTTP Server (`go/cmd/amika-server/`)
 - `main.go` — Entry point for the HTTP server (listens on `:8080` by default)
@@ -97,7 +96,6 @@ checked out as a sibling worktree rather than searching for those paths in this 
 ### Internal Packages (`go/internal/`)
 - `sandbox/` — Docker sandbox management, preset image resolution + auto-build, volume and file mount stores, random name generation
 - `auth/` — Multi-source credential discovery (Claude, Codex, OpenCode, Amp) with priority-based deduplication
-- `agentconfig/` — Discovers agent credential files on host and produces mount specs for containers (auto-mounted into every sandbox and materialize container)
 - `config/` — XDG path resolution, state file location helpers
 - `basedir/` — XDG base directory resolution
 - `httpapi/` — HTTP handler for the REST API server
@@ -134,10 +132,10 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - Read the format with `output.FormatFrom(cmd)`, and when `format.IsJSON()` write the result via `format.JSON(w, v)`.
 - Emit snake_case JSON keys, empty lists as `[]` (never `null`), and per-item batch results as `output.ItemResult{name, status, error}`.
 - In JSON mode stdout carries only the JSON value: emit human progress through `format.Progress(w)` (which discards it in JSON mode) and send any subprocess or build output to stderr.
-- Do not prompt in JSON mode: destructive commands require their confirmation flag (`--force`, `--yes`, or `--no-interactive`).
+- Do not prompt in JSON mode: destructive commands require their confirmation flag (`--force` or `--no-interactive`).
 - Commands that open a shell or editor, or that prompt over a masked table with no structured result (`secret extract`, `secret push`), call `output.RejectJSON(cmd)`. Commands that delegate to a shell utility reject the flag instead: `ssh` calls `output.RejectFlag(cmd)`; `scp` sets `DisableFlagParsing` (so its own `-o` ssh_config option forwards to the system scp) and therefore rejects only the unambiguous long form via `output.RejectFlagInArgs(rawArgs)`.
 
-**Remote-backed commands emit the API's response schema.** For any command backed by a remote API resource (`sandbox create/list/start/stop`, `snapshot create/list`), `-o json`/`-o json-pretty` emit the same shape as the documented `amika-server` API response (see `/api/openapi.json`), via the typed mirror structs in `internal/apiclient` (`RemoteSandbox`, `SandboxSnapshot`, `SecretSummary`, `AgentSendResponse`, `AgentSendJobResponse`). Those structs are the single decode/encode type: the CLI decodes an API response into one and re-encodes the same value for `-o json`, so a field the schema marks `nullable` is a Go pointer (emits explicit `null`, never omitted) and a field the schema marks `required` has no `omitempty` (always present). `sandbox list` and `snapshot list` mirror `ListSandboxesResponse`/`ListSandboxSnapshotsResponse` exactly, including the latter's `{"items": [...]}` envelope (`sandbox list` is a bare array; `snapshot list` is not). Local (Docker) `sandbox create`/`list` are unified into the same `RemoteSandbox` shape: local-meaningful fields (name, provider, branch, services, state) are populated and API-only fields (`org_id`, `user_id`, `provider_url`, `repo_*`, etc.) are left null/empty; `container_id`/`image` have no schema field but are kept as extra JSON keys rather than dropped. `sandbox start`/`stop` emit an array of each target's final resource (the CLI already polls the API to completion) mixed with an `output.ItemResult` per failed target; `sandbox delete`/`snapshot delete` stay arrays of `output.ItemResult` since the API returns no body (`OkStatus`/204) to mirror.
+**Remote-backed commands emit the API's response schema.** For any command backed by a remote API resource (`sandbox create/list/start/stop`, `snapshot create/list`), `-o json`/`-o json-pretty` emit the same shape as the documented `amika-server` API response (see `/api/openapi.json`), via the typed mirror structs in `internal/apiclient` (`RemoteSandbox`, `SandboxSnapshot`, `SecretSummary`, `AgentSendResponse`, `AgentSendJobResponse`). Those structs are the single decode/encode type: the CLI decodes an API response into one and re-encodes the same value for `-o json`, so a field the schema marks `nullable` is a Go pointer (emits explicit `null`, never omitted) and a field the schema marks `required` has no `omitempty` (always present). `sandbox list` and `snapshot list` mirror `ListSandboxesResponse`/`ListSandboxSnapshotsResponse` exactly, including the latter's `{"items": [...]}` envelope (`sandbox list` is a bare array; `snapshot list` is not). These structs carry only schema fields: the former `container_id`/`image` extras existed for local Docker sandboxes and were dropped with the `--local` mode. `sandbox start`/`stop` emit an array of each target's final resource (the CLI already polls the API to completion) mixed with an `output.ItemResult` per failed target; `sandbox delete`/`snapshot delete` stay arrays of `output.ItemResult` since the API returns no body (`OkStatus`/204) to mirror.
 
 ## Development Notes
 
@@ -160,7 +158,7 @@ For user-facing docs (`docs/`, README):
 
 - Docker must be running for integration tests and CLI end-to-end testing
 - Test targets: `make test-unit`, `make test-integration`, `make test-contract`, `make test-expensive`
-- Some tests are skipped by default. Run expensive Docker tests with: `AMIKA_RUN_EXPENSIVE_TESTS=1 make test-expensive`
+- The Docker-gated suites (`AMIKA_RUN_DOCKER_INTEGRATION`, `AMIKA_RUN_EXPENSIVE_TESTS`) currently have no tests opting into them; they were removed with the CLI's `--local` mode. See `docs/development/testing.md`
 - See `docs/development/testing.md` for the full smoke test plan
 - Cobra does not reset `rootCmd` flag state between `Execute` calls, so CLI tests that set flags must reset them afterward (see `resetChangedFlags` in `cmd/amika`)
 
@@ -169,11 +167,11 @@ For user-facing docs (`docs/`, README):
 | Variable | Purpose |
 |----------|---------|
 | `AMIKA_STATE_DIRECTORY` | Override default state directory (`~/.local/state/amika`) |
-| `AMIKA_PRESET_IMAGE_PREFIX` | Override Docker image name prefix for presets |
+| `AMIKA_PRESET_IMAGE_PREFIX` | Override Docker image name prefix for presets (read by `amika-server`; no effect on the CLI) |
 | `AMIKA_API_URL` | Override remote API base URL (default: `https://app.amika.dev`) |
 | `AMIKA_BINARY_PATH` | Absolute path to the `amika` executable recorded in generated config (the SSH `ProxyCommand`). Defaults to the running binary; set it inside a wrapper script so the wrapper names itself and the environment it exports survives |
 | `AMIKA_WORKOS_CLIENT_ID` | Override default WorkOS client ID for `amika auth login` |
-| `AMIKA_RUN_EXPENSIVE_TESTS` | Set to `1` to enable expensive Docker integration tests |
+| `AMIKA_RUN_EXPENSIVE_TESTS` | Gate for expensive Docker integration tests. No test opts into it today; see `docs/development/testing.md` |
 | `PORT` | Override listen address for `amika-server` (mutually exclusive with `-addr` flag) |
 
 ## Cursor Cloud specific instructions

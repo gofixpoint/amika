@@ -56,9 +56,6 @@ func init() {
 }
 
 func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
-	if runmode.Resolve(cmd) != runmode.Remote {
-		return fmt.Errorf("bindings list is only supported for remote sandboxes")
-	}
 	rigRef, _ := cmd.Flags().GetString("rig")
 	rigBy, _ := cmd.Flags().GetString("rig-by")
 	if rigRef == "" && cmd.Flags().Changed("rig-by") {
@@ -72,7 +69,7 @@ func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 	format, err := output.FormatFrom(cmd)
@@ -119,9 +116,6 @@ func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
 }
 
 func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
-	if runmode.Resolve(cmd) != runmode.Remote {
-		return fmt.Errorf("bindings delete is only supported for remote sandboxes")
-	}
 	rigBy, _ := cmd.Flags().GetString("rig-by")
 	if len(args) == 1 && cmd.Flags().Changed("rig-by") {
 		return fmt.Errorf("--rig-by requires the <rig-ref> <target> form")
@@ -142,7 +136,7 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 	client, err := getRemoteClient(target)

@@ -134,7 +134,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 
 	// The agent-sessions API is remote-only: it provisions sandboxes in the
 	// control plane, so there is no local equivalent.
-	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 
@@ -435,7 +435,7 @@ func runSessionsList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 	limit, _ := cmd.Flags().GetInt("limit")
@@ -495,7 +495,7 @@ func runSessionsShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 		return err
 	}
 	detail, err := runmode.NewRemoteClient().GetAgentSession(args[0])

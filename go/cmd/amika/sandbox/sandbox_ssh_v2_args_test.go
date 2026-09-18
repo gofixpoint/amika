@@ -9,6 +9,7 @@ package sandboxcmd
 import (
 	"bytes"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -45,9 +46,11 @@ func sshV2TestTree() (*cobra.Command, *cobra.Command) {
 		sshV2Root = &cobra.Command{Use: "amika", SilenceUsage: true, SilenceErrors: true}
 		sshV2Root.PersistentFlags().StringP("output", "o", "text", "output format")
 		sshV2Parent = &cobra.Command{Use: "sandbox"}
-		sshV2Parent.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
-		sshV2Parent.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
+		sshV2Parent.PersistentFlags().Bool("remote", true, "Operate on remote rigs; accepted as a no-op since rigs are always remote")
 		sshV2Parent.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
+		// Mirrors the real tree's hidden registration of the retired --local.
+		sshV2Parent.PersistentFlags().Bool("local", false, "Removed; rigs are always remote")
+		sshV2Parent.PersistentFlags().MarkHidden("local")
 		sshV2Root.AddCommand(sshV2Parent)
 	})
 	return sshV2Root, sshV2Parent
@@ -230,17 +233,36 @@ func TestSSHV2AmikaFlagsBeforeSubcommand(t *testing.T) {
 			t.Errorf("ssh ran with argv %#v; --output should never reach it", h.argv)
 		}
 	})
+}
 
-	t.Run("local flag before the subcommand is honored", func(t *testing.T) {
-		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--local", "ssh", "my-box"})
-		err := root.Execute()
-		if err == nil || !strings.Contains(err.Error(), "requires a remote sandbox") {
-			t.Fatalf("err = %v, want a remote-sandbox error", err)
-		}
-		if h.ran {
-			t.Error("ssh should not run for a local sandbox")
-		}
-	})
+// `ssh` sets DisableFlagParsing, so the root's PersistentPreRunE runs before
+// --local has been parsed and cannot catch it there. Both positions have to be
+// rejected by the command itself: before the subcommand it lands in the
+// amika-owned half, and after it would otherwise be forwarded to ssh verbatim.
+func TestSSHV2RejectsRemovedLocalFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+	}{
+		{name: "before the subcommand", args: []string{"amika", "sandbox", "--local", "ssh", "my-box"}},
+		{name: "after the subcommand", args: []string{"amika", "sandbox", "ssh", "--local", "my-box"}},
+		{name: "with an explicit value", args: []string{"amika", "sandbox", "--local=false", "ssh", "my-box"}},
+		{name: "among ssh options", args: []string{"amika", "sandbox", "ssh", "-t", "--local", "my-box"}},
+		// With no rig name there is no remote command to protect, and the
+		// retired flag is the more useful of the two things wrong here.
+		{name: "with no rig name at all", args: []string{"amika", "sandbox", "ssh", "--local"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, h, _ := newSSHV2Harness(t, tt.args)
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), "--local has been removed") {
+				t.Fatalf("err = %v, want the --local removal message", err)
+			}
+			if h.ran {
+				t.Errorf("ssh ran with argv %#v; --local should never reach it", h.argv)
+			}
+		})
+	}
 }
 
 func TestSSHV2MissingName(t *testing.T) {
@@ -282,6 +304,48 @@ func TestSSHV2Help(t *testing.T) {
 				if !strings.Contains(got, want) {
 					t.Errorf("help output missing %q; got:\n%s", want, got)
 				}
+			}
+		})
+	}
+}
+
+// Only the options ahead of the sandbox name are amika's to reject. Everything
+// from the name onward is the command to run on the rig, so a remote program's
+// own --local has to reach it untouched rather than tripping the removal check.
+func TestSSHV2ForwardsRemoteCommandLocalFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "remote command flag",
+			args: []string{"amika", "sandbox", "ssh", "my-box", "git", "log", "--local"},
+			want: "--local",
+		},
+		{
+			name: "after a bare double dash",
+			args: []string{"amika", "sandbox", "ssh", "my-box", "--", "mycmd", "--local"},
+			want: "--local",
+		},
+		{
+			// The scan skips a token an ssh short option consumes, so an
+			// identity file named "--local" is a value, not amika's flag.
+			name: "as the value of an argument-taking ssh option",
+			args: []string{"amika", "sandbox", "ssh", "-i", "--local", "my-box"},
+			want: "--local",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root, h, _ := newSSHV2Harness(t, tt.args)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !h.ran {
+				t.Fatal("ssh should have run")
+			}
+			if !slices.Contains(h.argv, tt.want) {
+				t.Fatalf("argv = %#v, want it to carry %q through to the remote command", h.argv, tt.want)
 			}
 		})
 	}

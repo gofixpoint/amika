@@ -36,10 +36,6 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 	if err := output.RejectFlagInArgs(rawArgs); err != nil {
 		return err
 	}
-	if runmode.Resolve(cmd) == runmode.Local {
-		return fmt.Errorf("direct WebSocket SSH requires a remote sandbox")
-	}
-
 	plan, err := parseSCPArgs(rawArgs)
 	if err != nil {
 		return err
@@ -55,7 +51,7 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 			return alias, nil
 		}
 		if client == nil {
-			if err := runmode.RequireAuth(runmode.Remote, runmode.DefaultAuthChecker); err != nil {
+			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 				return "", err
 			}
 			client = runmode.NewRemoteClient()

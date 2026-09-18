@@ -1,33 +1,20 @@
 package sandboxcmd
 
-// sandbox_lifecycle.go implements start, stop, list, and connect commands.
+// sandbox_lifecycle.go implements start, stop, list, and connect commands
+// against the remote Amika API.
 
 import (
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
-	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
-	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 	"github.com/spf13/cobra"
 )
-
-var runSandboxConnect = func(name, shell string, stdin io.Reader, stdout, stderr io.Writer) error {
-	dockerArgs := buildSandboxConnectArgs(name, shell)
-	dockerCmd := exec.Command("docker", dockerArgs...)
-	dockerCmd.Stdin = stdin
-	dockerCmd.Stdout = stdout
-	dockerCmd.Stderr = stderr
-	return dockerCmd.Run()
-}
 
 var sandboxStartCmd = &cobra.Command{
 	Use:   "start <name> [<name>...]",
@@ -40,8 +27,7 @@ var sandboxStartCmd = &cobra.Command{
 			return err
 		}
 
-		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -58,48 +44,23 @@ var sandboxStartCmd = &cobra.Command{
 		// ("batch start/stop emit an array of final resources").
 		var items []any
 		var failed []string
-		if mode == runmode.Remote {
-			remoteClient, err := getRemoteClient(target)
-			if err != nil {
-				return err
+		remoteClient, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
+		for _, name := range args {
+			if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
+				appendBatchFailure(&items, &failed, name, remoteErr)
+				continue
 			}
-			for _, name := range args {
-				if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
-					appendBatchFailure(&items, &failed, name, remoteErr)
-					continue
-				}
-				fmt.Fprintf(pw, "Sandbox %q starting...\n", name)
-				polled, remoteErr := remoteClient.WaitForSandboxStart(name)
-				if remoteErr != nil {
-					appendBatchFailure(&items, &failed, name, remoteErr)
-					continue
-				}
-				fmt.Fprintf(pw, "Sandbox %q started (remote)\n", name)
-				items = append(items, normalizeSandboxJSON(*polled))
+			fmt.Fprintf(pw, "Sandbox %q starting...\n", name)
+			polled, remoteErr := remoteClient.WaitForSandboxStart(name)
+			if remoteErr != nil {
+				appendBatchFailure(&items, &failed, name, remoteErr)
+				continue
 			}
-		} else {
-			sandboxesFile, err := config.SandboxesStateFile()
-			if err != nil {
-				return err
-			}
-			store := sandbox.NewStore(sandboxesFile)
-			for _, name := range args {
-				info, localErr := store.Get(name)
-				if localErr != nil {
-					appendBatchFailure(&items, &failed, name, fmt.Errorf("sandbox %q not found", name))
-					continue
-				}
-				state := "running"
-				if info.Provider == "docker" {
-					if err := sandbox.StartDockerSandbox(name); err != nil {
-						appendBatchFailure(&items, &failed, name, err)
-						continue
-					}
-					state = localDockerState(name)
-				}
-				fmt.Fprintf(pw, "Sandbox %q started\n", name)
-				items = append(items, normalizeSandboxJSON(remoteSandboxFromInfo(info, state)))
-			}
+			fmt.Fprintf(pw, "Sandbox %q started\n", name)
+			items = append(items, normalizeSandboxJSON(*polled))
 		}
 		return finishBatch(cmd, format, items, failed)
 	},
@@ -116,8 +77,7 @@ var sandboxStopCmd = &cobra.Command{
 			return err
 		}
 
-		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -131,48 +91,23 @@ var sandboxStopCmd = &cobra.Command{
 		// in sandboxStartCmd.
 		var items []any
 		var failed []string
-		if mode == runmode.Remote {
-			remoteClient, err := getRemoteClient(target)
-			if err != nil {
-				return err
+		remoteClient, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
+		for _, name := range args {
+			if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
+				appendBatchFailure(&items, &failed, name, remoteErr)
+				continue
 			}
-			for _, name := range args {
-				if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
-					appendBatchFailure(&items, &failed, name, remoteErr)
-					continue
-				}
-				fmt.Fprintf(pw, "Sandbox %q stopping...\n", name)
-				polled, remoteErr := remoteClient.WaitForSandboxStop(name)
-				if remoteErr != nil {
-					appendBatchFailure(&items, &failed, name, remoteErr)
-					continue
-				}
-				fmt.Fprintf(pw, "Sandbox %q stopped (remote)\n", name)
-				items = append(items, normalizeSandboxJSON(*polled))
+			fmt.Fprintf(pw, "Sandbox %q stopping...\n", name)
+			polled, remoteErr := remoteClient.WaitForSandboxStop(name)
+			if remoteErr != nil {
+				appendBatchFailure(&items, &failed, name, remoteErr)
+				continue
 			}
-		} else {
-			sandboxesFile, err := config.SandboxesStateFile()
-			if err != nil {
-				return err
-			}
-			store := sandbox.NewStore(sandboxesFile)
-			for _, name := range args {
-				info, localErr := store.Get(name)
-				if localErr != nil {
-					appendBatchFailure(&items, &failed, name, fmt.Errorf("sandbox %q not found", name))
-					continue
-				}
-				state := "stopped"
-				if info.Provider == "docker" {
-					if err := sandbox.StopDockerSandbox(name); err != nil {
-						appendBatchFailure(&items, &failed, name, err)
-						continue
-					}
-					state = localDockerState(name)
-				}
-				fmt.Fprintf(pw, "Sandbox %q stopped\n", name)
-				items = append(items, normalizeSandboxJSON(remoteSandboxFromInfo(info, state)))
-			}
+			fmt.Fprintf(pw, "Sandbox %q stopped\n", name)
+			items = append(items, normalizeSandboxJSON(*polled))
 		}
 		return finishBatch(cmd, format, items, failed)
 	},
@@ -181,17 +116,6 @@ var sandboxStopCmd = &cobra.Command{
 // batchError builds a failed ItemResult for one item in a batch command.
 func batchError(name string, err error) output.ItemResult {
 	return output.ItemResult{Name: name, Status: "error", Error: err.Error()}
-}
-
-// localDockerState reads a local Docker sandbox's live container state (e.g.
-// "running", "exited"), falling back to "unknown" if the state cannot be
-// determined (matching `sandbox list`'s treatment of the same failure).
-func localDockerState(name string) string {
-	state, err := sandbox.GetDockerContainerState(name)
-	if err != nil {
-		return "unknown"
-	}
-	return state
 }
 
 // appendBatchFailure records one failed batch item both in items (the JSON
@@ -230,25 +154,19 @@ func finishBatch(cmd *cobra.Command, format output.Format, items []any, failed [
 	return nil
 }
 
-// sandboxListRow is one line of `sandbox list` output: the sandbox as the local
-// service or the remote API returned it, plus the two columns the table shows
-// that neither response carries for both kinds.
+// sandboxListRow is one line of `sandbox list` output: the sandbox as the
+// remote API returned it, plus the two columns the table shows that the
+// response does not carry under those names.
 //
-// Deliberately not fields on `amika.Sandbox`. That type is the response body of
-// the public `amika.Service` and of `GET`/`POST /v1/sandboxes`, so a field there
-// is advertised in the served schema and has to be populated by every service
-// mapping. For a local sandbox these two would only repeat `ContainerID` and
-// `Image`, which the response already carries; they say something new only for a
-// remote sandbox, which never passes through that service at all. So they belong
-// to the table, which is the one place that has to describe both kinds in the
-// same columns.
+// Deliberately not fields on `amika.Sandbox`: that type is the response body of
+// the public `amika.Service`, so a field there is advertised in the served
+// schema and has to be populated by every service mapping. These two belong to
+// the table instead.
 type sandboxListRow struct {
 	amika.Sandbox
-	// ID identifies the sandbox: the control-plane id for a remote one, the
-	// backing container for a local one, which is the thing you can inspect.
+	// ID is the sandbox's control-plane id.
 	ID string
-	// BaseSnapshot names what the sandbox was built from: the snapshot label for
-	// a remote one, the Docker image for a local one.
+	// BaseSnapshot names the snapshot the sandbox was built from.
 	BaseSnapshot string
 }
 
@@ -263,79 +181,44 @@ var sandboxListCmd = &cobra.Command{
 			return err
 		}
 
-		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
-		var allItems []sandboxListRow
+		client, err := getRemoteClient(target)
+		if err != nil {
+			return err
+		}
+		remoteSandboxes, err := client.ListSandboxes()
+		if err != nil {
+			return err
+		}
+		// Normalize each sandbox the same way create/start/stop do, so a
+		// sandbox whose services the API returns as null emits "services":[]
+		// rather than "services":null in the list too.
+		for i := range remoteSandboxes {
+			remoteSandboxes[i] = normalizeSandboxJSON(remoteSandboxes[i])
+		}
 		// jsonItems mirrors the API's ListSandboxesResponse shape (an array of
-		// Sandbox) for -o json, per the unification decision: local sandboxes are
-		// emitted in the same shape as remote ones (see remoteSandboxFromPublic),
-		// rather than the CLI-only DTO previously used here.
-		var jsonItems []apiclient.RemoteSandbox
+		// Sandbox) for -o json.
+		jsonItems := remoteSandboxes
 
-		if mode == runmode.Local {
-			result, err := amika.NewService(amika.Options{}).ListSandboxes(cmd.Context(), amika.ListSandboxesRequest{})
-			if err != nil {
-				return err
-			}
-			for i := range result.Items {
-				result.Items[i].Location = "local"
-				if result.Items[i].Provider == "docker" {
-					result.Items[i].State = localDockerState(result.Items[i].Name)
-				}
-			}
-			for _, sb := range result.Items {
-				// A local sandbox is its container, and it was built from a
-				// Docker image, so those are the two columns for it. Both are
-				// already on the response under their local names; this only
-				// puts them where the shared table reads them from.
-				allItems = append(allItems, sandboxListRow{
-					Sandbox:      sb,
-					ID:           sb.ContainerID,
-					BaseSnapshot: sb.Image,
-				})
-			}
-			for _, sb := range result.Items {
-				jsonItems = append(jsonItems, remoteSandboxFromPublic(sb))
-			}
-		} else {
-			client, err := getRemoteClient(target)
-			if err != nil {
-				return err
-			}
-			remoteSandboxes, err := client.ListSandboxes()
-			if err != nil {
-				return err
-			}
-			// Normalize each sandbox the same way create/start/stop do, so a
-			// remote sandbox whose services the API returns as null emits
-			// "services":[] rather than "services":null in the list too.
-			for i := range remoteSandboxes {
-				remoteSandboxes[i] = normalizeSandboxJSON(remoteSandboxes[i])
-			}
-			jsonItems = remoteSandboxes
-			for _, rs := range remoteSandboxes {
-				allItems = append(allItems, sandboxListRow{
-					Sandbox: amika.Sandbox{
-						Name:      rs.Name,
-						State:     rs.State,
-						Provider:  deref(rs.Provider),
-						CreatedAt: rs.CreatedAt,
-						Location:  "remote",
-						Branch:    deref(rs.Branch),
-						Repos:     repoNamesFromURL(deref(rs.RepoURL)),
-						Ports:     portBindingsFromRemoteServices(rs.Services),
-						CreatedBy: creatorFromRemote(rs.CreatedBy),
-					},
-					// Neither of these was carried across before, which is why
-					// the long table's base column was blank for every remote
-					// sandbox and had no id column to fill at all.
-					ID:           rs.ID,
-					BaseSnapshot: remoteBaseSnapshot(rs),
-				})
-			}
+		var allItems []sandboxListRow
+		for _, rs := range remoteSandboxes {
+			allItems = append(allItems, sandboxListRow{
+				Sandbox: amika.Sandbox{
+					Name:      rs.Name,
+					State:     rs.State,
+					Provider:  deref(rs.Provider),
+					CreatedAt: rs.CreatedAt,
+					Branch:    deref(rs.Branch),
+					Repos:     repoNamesFromURL(deref(rs.RepoURL)),
+					Ports:     portBindingsFromRemoteServices(rs.Services),
+					CreatedBy: creatorFromRemote(rs.CreatedBy),
+				},
+				ID:           rs.ID,
+				BaseSnapshot: remoteBaseSnapshot(rs),
+			})
 		}
 
 		format, err := output.FormatFrom(cmd)
@@ -362,12 +245,10 @@ var sandboxListCmd = &cobra.Command{
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		if long {
 			// ID sits beside NAME because they identify the same thing, and the
-			// base snapshot replaces IMAGE: it is the field's own name in the
-			// API, and it covers a remote snapshot and a local Docker image
-			// alike, which "IMAGE" did not.
-			fmt.Fprintln(w, "NAME\tID\tSTATE\tREPO\tBRANCH\tCREATOR\tLOCATION\tBASE_SNAPSHOT\tPORTS\tCREATED")
+			// base snapshot replaces IMAGE: it is the field's own name in the API.
+			fmt.Fprintln(w, "NAME\tID\tSTATE\tREPO\tBRANCH\tCREATOR\tBASE_SNAPSHOT\tPORTS\tCREATED")
 			for _, sb := range allItems {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, dash(sb.ID), sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy), sb.Location, dash(sb.BaseSnapshot), formatPortBindings(sb.Ports), sb.CreatedAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, dash(sb.ID), sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy), dash(sb.BaseSnapshot), formatPortBindings(sb.Ports), sb.CreatedAt)
 			}
 		} else {
 			fmt.Fprintln(w, "NAME\tSTATE\tREPO\tBRANCH\tCREATOR")
@@ -381,10 +262,9 @@ var sandboxListCmd = &cobra.Command{
 }
 
 // portBindingsFromRemoteServices derives the published port bindings of a
-// remote sandbox from its provisioned services, so `sandbox list -l` can show a
-// PORTS column instead of "-". Remote sandboxes have no host IP (services are
-// reached via generated URLs), so HostIP is left empty and formatPortBindings
-// omits it.
+// sandbox from its provisioned services, so `sandbox list -l` can show a PORTS
+// column instead of "-". Sandboxes have no host IP (services are reached via
+// generated URLs), so HostIP is left empty and formatPortBindings omits it.
 func portBindingsFromRemoteServices(services []apiclient.RemoteSandboxService) []amika.PortBinding {
 	if len(services) == 0 {
 		return nil
@@ -483,7 +363,7 @@ func repoBasenameFromURL(repoURL string) string {
 var sandboxConnectCmd = &cobra.Command{
 	Use:   "connect <name>",
 	Short: "Connect to a sandbox console",
-	Long:  `Connect to a running sandbox container and open an interactive shell.`,
+	Long:  `Connect to a running sandbox and open an interactive shell.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -491,38 +371,12 @@ var sandboxConnectCmd = &cobra.Command{
 		if err := output.RejectJSON(cmd); err != nil {
 			return err
 		}
-		shell, _ := cmd.Flags().GetString("shell")
-		if err := validateShell(shell); err != nil {
-			return err
-		}
-
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
 		}
-
-		mode := runmode.Resolve(cmd)
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
-		}
-
-		if mode == runmode.Local {
-			sandboxesFile, err := config.SandboxesStateFile()
-			if err != nil {
-				return err
-			}
-			store := sandbox.NewStore(sandboxesFile)
-			info, err := store.Get(name)
-			if err != nil {
-				return fmt.Errorf("sandbox %q not found", name)
-			}
-			if info.Provider != "docker" {
-				return fmt.Errorf("unsupported local provider %q: only \"docker\" is supported", info.Provider)
-			}
-			if err := runSandboxConnect(name, shell, os.Stdin, os.Stdout, os.Stderr); err != nil {
-				return fmt.Errorf("failed to connect to sandbox %q with shell %q: %w", name, shell, err)
-			}
-			return nil
 		}
 
 		client, err := getRemoteClient(target)
@@ -531,15 +385,4 @@ var sandboxConnectCmd = &cobra.Command{
 		}
 		return ssh.ExecSSH(client, name, false, nil)
 	},
-}
-
-func validateShell(shell string) error {
-	if strings.TrimSpace(shell) == "" {
-		return fmt.Errorf("--shell must not be empty")
-	}
-	return nil
-}
-
-func buildSandboxConnectArgs(name, shell string) []string {
-	return []string{"exec", "-it", "-w", sandboxConnectWorkdir, name, shell}
 }

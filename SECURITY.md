@@ -113,16 +113,20 @@ destroy, or exfiltrate data belonging to other users.
 
 A few things worth knowing when assessing Amika's security posture:
 
-- Amika discovers agent credentials on the host (Claude, Codex, OpenCode, Amp)
-  and mounts them into sandbox and materialize containers. See
-  `go/internal/agentconfig/` and `go/internal/auth/`.
+- Rigs receive their coding-agent credentials from the Amika control plane. The
+  `amika` CLI does not copy credential files from your host into a rig; the
+  `--local` mode that did was removed. `amika secret extract` still discovers
+  local credentials (Claude, Codex, OpenCode, Amp), but only on request, and
+  displays them masked; it uploads nothing unless you pass `--push`. See
+  `go/internal/auth/`.
 - Ports 60899–60999 are reserved inside sandbox containers for Amika services.
   Both the CLI and the API reject user-specified ports in that range. See
   [`docs/sandbox-configuration.md`](docs/sandbox-configuration.md).
-- Local sandboxes run as Docker containers on the host Docker daemon, so they
-  inherit that daemon's isolation properties and are not a hard security
-  boundary against untrusted code.
-- Hosted sandboxes run in true VMs.
+- Hosted rigs run in true VMs.
+- The `amika-server` binary still exposes a Docker-backed sandbox API. Those
+  sandboxes run as containers on the host Docker daemon, so they inherit that
+  daemon's isolation properties and are not a hard security boundary against
+  untrusted code.
 
 ## Non-Security Bugs
 

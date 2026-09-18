@@ -58,11 +58,7 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		mode := runmode.Resolve(cmd)
-		if mode == runmode.Local {
-			return fmt.Errorf("SSH access requires a remote sandbox; omit --local")
-		}
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 
@@ -164,11 +160,7 @@ Examples:
 			return err
 		}
 
-		mode := runmode.Resolve(cmd)
-		if mode == runmode.Local {
-			return fmt.Errorf("codev1 command requires a remote sandbox; omit --local")
-		}
-		if err := runmode.RequireAuth(mode, runmode.DefaultAuthChecker); err != nil {
+		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
 

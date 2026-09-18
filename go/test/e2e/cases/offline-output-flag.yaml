@@ -17,25 +17,23 @@ steps:
       stdout_contains: "Available Commands"
 
   - name: an invalid --output value is rejected before doing any work
-    cmd: [sandbox, agent-send, some-sandbox, hello, --local, --output, bogus]
+    cmd: [sandbox, agent-send, some-sandbox, hello, --output, bogus]
     expect:
       exit: 1
       stderr_contains: 'invalid --output value "bogus": must be one of text, json, json-pretty'
 
-  - name: --output json is now honored (not rejected) for --local agent-send
-    # On main this used to reject --output json for --local agent-send
-    # ("--output json is not supported with --local"). That rejection no
-    # longer exists: --local agent-send now accepts --output json like any
-    # other command and simply proceeds — here failing at sandbox lookup,
-    # same as it would in text mode. cobra/main.go prints RunE errors as
-    # plain text regardless of --output, so the error text below is
-    # unchanged from the text-mode message.
-    cmd: [sandbox, agent-send, some-sandbox, hello, --local, --output, json]
+  - name: --output json is honored (not rejected) for agent-send
+    # agent-send accepts --output json like any other command and simply
+    # proceeds — here failing at the auth gate, same as it would in text
+    # mode. cobra/main.go prints RunE errors as plain text regardless of
+    # --output, so the error text below is unchanged from the text-mode
+    # message.
+    cmd: [sandbox, agent-send, some-sandbox, hello, --output, json]
     env:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: 'sandbox "some-sandbox" not found'
+      stderr_contains: 'not logged in; run "amika auth login"'
 
   - name: --output json is now honored (not rejected) for --no-wait agent-send
     # Likewise, the old "--output json is not supported with --no-wait"
@@ -47,4 +45,4 @@ steps:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: 'not logged in; run "amika auth login" or use --local'
+      stderr_contains: 'not logged in; run "amika auth login"'

@@ -2,7 +2,6 @@ package sandboxcmd
 
 import (
 	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -45,82 +44,6 @@ func TestAgentSendJSONResponsePresence(t *testing.T) {
 	if strings.Contains(string(sent), `"response"`) {
 		t.Errorf("async sent shape must omit response, got: %s", sent)
 	}
-}
-
-func TestBuildSandboxConnectArgs(t *testing.T) {
-	got := buildSandboxConnectArgs("sb-1", "zsh")
-	want := []string{"exec", "-it", "-w", "/home/amika", "sb-1", "zsh"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("args = %#v, want %#v", got, want)
-	}
-}
-
-func TestBuildAgentShellCmd(t *testing.T) {
-	claude := knownAgents["claude"]
-
-	t.Run("wait mode", func(t *testing.T) {
-		got := buildAgentShellCmd("hello world", false, "/home/amika", claude)
-		if !strings.Contains(got, "cd /home/amika") {
-			t.Fatalf("cmd = %q, want to contain 'cd /home/amika'", got)
-		}
-		if !strings.Contains(got, "--dangerously-skip-permissions") {
-			t.Fatalf("cmd = %q, want to contain '--dangerously-skip-permissions'", got)
-		}
-		if !strings.Contains(got, "claude") {
-			t.Fatalf("cmd = %q, want to contain 'claude'", got)
-		}
-		if strings.Contains(got, "tmux") {
-			t.Fatalf("cmd = %q, should not contain tmux in wait mode", got)
-		}
-	})
-
-	t.Run("no-wait mode wraps in tmux", func(t *testing.T) {
-		got := buildAgentShellCmd("hello world", true, "/home/amika", claude)
-		if !strings.Contains(got, "tmux new-session -d") {
-			t.Fatalf("cmd = %q, want to contain 'tmux new-session -d'", got)
-		}
-		if !strings.Contains(got, "amika-agent-send-") {
-			t.Fatalf("cmd = %q, want to contain session name prefix", got)
-		}
-		if !strings.Contains(got, "--dangerously-skip-permissions") {
-			t.Fatalf("cmd = %q, want to contain '--dangerously-skip-permissions'", got)
-		}
-	})
-
-	t.Run("custom workdir", func(t *testing.T) {
-		got := buildAgentShellCmd("test", false, "/workspace", claude)
-		if !strings.Contains(got, "cd /workspace") {
-			t.Fatalf("cmd = %q, want to contain 'cd /workspace'", got)
-		}
-	})
-
-	t.Run("codex wait mode", func(t *testing.T) {
-		codex := knownAgents["codex"]
-		got := buildAgentShellCmd("hello world", false, "/home/amika", codex)
-		if !strings.Contains(got, "cd /home/amika") {
-			t.Fatalf("cmd = %q, want to contain 'cd /home/amika'", got)
-		}
-		if !strings.Contains(got, "codex exec") {
-			t.Fatalf("cmd = %q, want to contain 'codex exec'", got)
-		}
-		if !strings.Contains(got, "--dangerously-bypass-approvals-and-sandbox") {
-			t.Fatalf("cmd = %q, want to contain '--dangerously-bypass-approvals-and-sandbox'", got)
-		}
-	})
-}
-
-func TestBuildDockerAgentSendArgs(t *testing.T) {
-	claude := knownAgents["claude"]
-
-	t.Run("wraps in docker exec bash -c", func(t *testing.T) {
-		got := buildDockerAgentSendArgs("sb-1", "hello", false, "/home/amika", claude)
-		if got[0] != "exec" || got[1] != "sb-1" || got[2] != "bash" || got[3] != "-c" {
-			t.Fatalf("args prefix = %#v, want [exec sb-1 bash -c ...]", got[:4])
-		}
-		if !strings.Contains(got[4], "claude") {
-			t.Fatalf("shell cmd = %q, want to contain 'claude'", got[4])
-		}
-	})
 }
 
 func TestResolveAgentConfig(t *testing.T) {

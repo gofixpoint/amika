@@ -13,8 +13,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:               "amika",
-	Short:             "Amika - filesystem mounting and script execution",
-	Long:              `Amika provides filesystem mounting and script execution with output materialization.`,
+	Short:             "Amika - run coding agents in remote rigs",
+	Long:              `Amika creates and manages remote rigs (sandboxes) and runs coding agents inside them.`,
 	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 	SilenceUsage:      true,
 	SilenceErrors:     true,
@@ -24,6 +24,9 @@ var rootCmd = &cobra.Command{
 	// subcommand that defines its own must call output.FormatFrom (or invoke
 	// this hook) to keep --output validated for that subtree.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		if err := cliflags.RejectRemovedLocalFlag(cmd); err != nil {
+			return err
+		}
 		_, err := output.FormatFrom(cmd)
 		return err
 	},

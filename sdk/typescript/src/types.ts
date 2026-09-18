@@ -235,10 +235,6 @@ function mountedSecretFromWire(w: Record<string, unknown>): MountedSecret {
  * the three fields the schema still names after sandboxes. Each is decoded
  * from the same wire key as its `sandbox*` twin and carries the same value, so
  * either name reads the field.
- *
- * `containerId` and `image` have no equivalent in the API schema — the CLI
- * populates them for local Docker rigs only, and the schema's
- * `additionalProperties` allows the extra keys.
  */
 export interface RemoteRig {
   id: string;
@@ -283,15 +279,6 @@ export interface RemoteRig {
   resolvedAgentCredentials?: ResolvedAgentCredential[];
   createdBy?: RemoteRigCreator;
   origin?: string;
-
-  /**
-   * Local Docker rigs only. Not an API schema field at all, so unlike
-   * `state`/`status` (non-pointer Go strings that decode to "") it is typed
-   * optional: an API-backed rig never carries one.
-   */
-  containerId?: string;
-  /** Local Docker rigs only; see {@link RemoteRig.containerId}. */
-  image?: string;
 }
 
 /** @deprecated Use {@link RemoteRig}; see {@link LegacyShape}. */
@@ -358,9 +345,6 @@ export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
       email: nullableStr(c["email"]),
     })),
     origin: optionalStr(w["origin"]),
-
-    containerId: optionalStr(w["container_id"]),
-    image: optionalStr(w["image"]),
   };
 }
 
