@@ -1,4 +1,4 @@
-# Sandbox lifecycle, agents, auth, and secrets
+# Rig lifecycle, agents, auth, and secrets
 
 ## Authentication
 
@@ -16,33 +16,33 @@ amika auth logout
 
 Do not invoke browser login in an unattended environment.
 
-## Creating sandboxes
+## Creating rigs
 
 Without `--git` or `--no-git`, creation detects the repository containing the
-current directory and checks out a clean clone in the sandbox. Uncommitted work
+current directory and checks out a clean clone in the rig. Uncommitted work
 does not carry over.
 
 ```bash
-amika sandbox create --no-git -o json
-amika sandbox create --name dev \
+amika rig create --no-git -o json
+amika rig create --name dev \
   --git https://github.com/octocat/Hello-World.git --branch develop
-amika sandbox create --branch main --new-branch bugfix-1
-amika sandbox create --snapshot my-project-base
+amika rig create --branch main --new-branch bugfix-1
+amika rig create --snapshot my-project-base
 ```
 
-Use `amika sandbox create --help` for the current flags, including preset,
+Use `amika rig create --help` for the current flags, including preset,
 size, environment, setup, repository, snapshot, and credential options.
 
 ## Agent credentials and secrets
 
-Push agent credentials before selecting them for a sandbox:
+Push agent credentials before selecting them for a rig:
 
 ```bash
 amika secret claude push
 amika secret codex push
-amika sandbox create --agent-credential claude=personal-oauth
-amika sandbox create --agent-credential-type claude=oauth
-amika sandbox create --no-agent-credential codex
+amika rig create --agent-credential claude=personal-oauth
+amika rig create --agent-credential-type claude=oauth
+amika rig create --no-agent-credential codex
 ```
 
 `--secret env:ANTHROPIC_API_KEY=my-claude-key` maps an environment variable to
@@ -52,23 +52,23 @@ value.
 ## Driving an agent
 
 `amika send` is the programmatic entry point for remote agent chats. Without
-`--session-id` or `--sandbox`, it creates a sandbox and starts a chat. It uses
+`--session-id` or `--rig`, it creates a rig and starts a chat. It uses
 the organization's default agent, falling back to Claude; pass `--agent claude`
 or `--agent codex` to choose explicitly.
 
 ```bash
 amika send "Add tests for the auth module"
 printf 'Fix the failing tests\n' | amika send
-amika send --sandbox my-sandbox "Refactor the API layer"
+amika send --rig my-rig "Refactor the API layer"
 amika send --session-id <id> "Continue the refactor"
 amika send "Summarize this repo" -o json
 ```
 
 In JSON output, check `is_error`; a completed request can still contain an agent
 failure. Use `--session-id <id>` to continue a chat or `--new-session` with
-`--sandbox` to start another chat in an existing sandbox. When `amika send`
-creates a sandbox, it auto-detects the current git repository; use `--git` or
+`--rig` to start another chat in an existing rig. When `amika send`
+creates a rig, it auto-detects the current git repository; use `--git` or
 `--no-git` to override that behavior.
 
-The agent runs with permission prompts disabled inside the sandbox, so prompts
+The agent runs with permission prompts disabled inside the rig, so prompts
 execute unsupervised there.
