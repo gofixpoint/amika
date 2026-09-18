@@ -40,11 +40,9 @@ func ResolveBranch(identity Identity, req BranchRequest) (BranchRequest, error) 
 	if !identity.IsLocalPath() || req.Branch != "" {
 		return req, nil
 	}
-	// A detached HEAD has no branch name to carry over; the server's default
-	// is then the only answer available, so leave the pair as it is.
 	current, err := CurrentBranch(identity.Path)
 	if err != nil {
-		return req, nil
+		return BranchRequest{}, err
 	}
 	if !BranchReachableFromRemote(identity.Path, current) {
 		return BranchRequest{}, fmt.Errorf(
@@ -83,7 +81,8 @@ func BranchReachableFromRemote(repoDir, branch string) bool {
 	remoteSHA := strings.Fields(strings.TrimSpace(string(lsOut)))[0]
 
 	// Get the local branch tip SHA.
-	localCmd := exec.Command("git", "-C", repoDir, "rev-parse", branch)
+	localRef := "refs/heads/" + branch + "^{commit}"
+	localCmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", localRef)
 	localOut, err := localCmd.Output()
 	if err != nil {
 		return false

@@ -198,7 +198,7 @@ func TestBranchReachableFromRemoteRejectsForcePushedTip(t *testing.T) {
 	}
 }
 
-func TestBranchReachableFromRemoteMatchesFullRef(t *testing.T) {
+func TestBranchReachableFromRemoteMatchesExactRefs(t *testing.T) {
 	bare := t.TempDir()
 	runGitIn(t, bare, "init", "--bare")
 
@@ -213,10 +213,11 @@ func TestBranchReachableFromRemoteMatchesFullRef(t *testing.T) {
 	runGitIn(t, work, "push", "origin", "foo")
 	runGitIn(t, work, "checkout", "--orphan", "a/foo")
 	runGitIn(t, work, "commit", "--allow-empty", "-m", "unrelated suffix")
+	runGitIn(t, work, "tag", "foo")
 	runGitIn(t, work, "push", "origin", "a/foo")
 
 	if !BranchReachableFromRemote(work, "foo") {
-		t.Fatal("expected refs/heads/foo to match without selecting refs/heads/a/foo")
+		t.Fatal("expected refs/heads/foo without selecting a/foo or the foo tag")
 	}
 }
 
@@ -360,15 +361,12 @@ func TestResolveBranch(t *testing.T) {
 		}
 	})
 
-	t.Run("a detached HEAD leaves the pair empty", func(t *testing.T) {
+	t.Run("a detached HEAD is refused", func(t *testing.T) {
 		repo := pushedRepo(t)
 		runGitIn(t, repo, "checkout", "-q", "--detach")
-		got, err := ResolveBranch(local(repo), BranchRequest{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Branch != "" {
-			t.Fatalf("Branch = %q, want empty with no branch name to carry", got.Branch)
+		_, err := ResolveBranch(local(repo), BranchRequest{NewBranch: "feature/x"})
+		if err == nil || !strings.Contains(err.Error(), "detached HEAD; specify --branch explicitly") {
+			t.Fatalf("err = %v, want a detached-HEAD refusal", err)
 		}
 	})
 }
