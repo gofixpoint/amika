@@ -1,6 +1,8 @@
 # Architecture Overview
 
-Amika is an open-source CLI and HTTP API for running AI coding agents in sandboxes. Each sandbox comes pre-configured with development tools and agent CLIs — Claude Code, Codex, and OpenCode — ready to go out of the box.
+Amika is an open-source CLI for running AI coding agents in remote rigs. Each
+rig comes pre-configured with development tools and agent CLIs, including
+Claude Code, Codex, and OpenCode, ready to go out of the box.
 
 For user-facing docs, see [README.md](../../README.md).
 
@@ -10,17 +12,16 @@ For user-facing docs, see [README.md](../../README.md).
 
 **Credential discovery**: `amika secret extract` scans for locally stored API credentials from Claude Code, Codex, OpenCode, and Amp and displays them masked, so they can be reviewed and optionally pushed as Amika secrets. Rigs themselves receive credentials from the control plane, not from the host.
 
-The `amika-server` binary additionally exposes a Docker-backed sandbox and materialization API over HTTP, including `ro`/`rw`/`rwcopy` mount modes. The `amika` CLI no longer has a local mode.
-
-**Preset images**: Bundled Dockerfiles (`coder`, `coder-plus-docker`) that include common dev tools and coding agent CLIs. Auto-built on first use by `amika-server`.
+**Preset images**: Environments (`coder`, `coder-plus-docker`) that include
+common development tools and coding agent CLIs. The control plane provisions
+the selected preset for each rig.
 
 ## Commands
 
-| Command                                       | Description                                                                         |
-| --------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `amika sandbox create\|list\|connect\|delete` | Manage persistent remote rigs                                                       |
+| Command                                       | Description                                                                          |
+| --------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `amika sandbox create\|list\|connect\|delete` | Manage persistent remote rigs                                                        |
 | `amika secret extract`                        | Discover local credentials, display them masked, and optionally push them as secrets |
-| `amika-server`                                | HTTP server exposing the same functionality as a REST API                           |
 
 See [cli-reference.md](../cli-reference.md) for full flag documentation.
 
@@ -34,9 +35,6 @@ go/
     main.go              CLI entry point, root Cobra command
     sandbox.go           sandbox create/list/connect/delete commands
     auth.go              auth login/logout/status commands
-  cmd/amika-server/
-    main.go              HTTP server entry point (REST API)
-
   internal/
     sandbox/             Docker sandbox management
       sandbox.go           Sandbox paths and temp directory creation
@@ -57,24 +55,16 @@ go/
 
     config/              XDG path resolution and state file locations
     basedir/             XDG base directory resolution
-    httpapi/             HTTP handler for the REST API server
     app/                 Application service layer implementation
     ports/               Port interfaces for Docker and store operations
 
     materialize/         Local sandbox script execution (v0)
 
-  pkg/amika/             Public service API (used by both CLI and HTTP server)
+  pkg/amika/             Public Go service API
     service.go           Service interface and implementation
     requests.go          Request types
     responses.go         Response types
 ```
-
-## System Dependencies
-
-| Tool   | Required By    | Purpose                                    |
-| ------ | -------------- | ------------------------------------------ |
-| Docker | `amika-server` | Container runtime for sandboxes            |
-| rsync  | `amika-server` | Copies output files from container to host |
 
 ## State Storage
 

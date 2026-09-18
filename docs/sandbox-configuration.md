@@ -76,38 +76,6 @@ amika sandbox create --git https://github.com/octocat/Hello-World.git
 amika sandbox create --no-git
 ```
 
-### Self-hosted HTTP API (`GitRepo`)
-
-The self-hosted `amika-server` API has different local behavior. Its `GitRepo`
-field on `POST /v1/sandboxes` accepts a URL pointing to a remote repository or
-to a repository accessible from the server host. Supported URL schemes:
-
-| Scheme     | Example                                               |
-| ---------- | ----------------------------------------------------- |
-| `https://` | `https://github.com/octocat/Hello-World.git`          |
-| `http://`  | `http://git.example.com/repo.git`                     |
-| `ssh://`   | `ssh://git@github.com/org/proj.git`                   |
-| `file:///` | `file:///home/user/local-repo.git` (must be absolute) |
-| SCP-style  | `git@github.com:org/proj.git`                         |
-
-```bash
-curl -X POST http://localhost:8080/v1/sandboxes \
-  -H 'Content-Type: application/json' \
-  -d '{"GitRepo": "https://github.com/octocat/Hello-World.git"}'
-```
-
-The self-hosted server clones the repository on its host, copies it into a
-named Docker volume, and mounts that volume read-write at
-`/home/amika/workspace/<repo-name>`. If the clone fails, no sandbox is created.
-
-### Notes
-
-- `file://` URLs are supported by the self-hosted API, not by hosted cloning.
-  They must use three slashes (`file:///absolute/path`), and relative paths are
-  rejected.
-- The self-hosted volume name is derived from the sandbox name and repository
-  name, for example `amika-git-teal-tokyo-Hello-World-<timestamp>`.
-
 ## Per-repo configuration: `.amika/config.toml`
 
 Hosted Amika reads `.amika/config.toml` from the repository branch selected for

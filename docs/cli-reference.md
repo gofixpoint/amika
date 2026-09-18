@@ -693,84 +693,11 @@ Deleting a key does not revoke access on sandboxes that are already running; the
 
 ---
 
-## `amika-server`
-
-HTTP server that exposes the Amika API as a REST service. This is a separate binary (`dist/amika-server`).
-
-```bash
-# Start with default address (:8080)
-amika-server
-
-# Specify a custom listen address
-amika-server -addr :9090
-
-# Or use the PORT environment variable
-PORT=9090 amika-server
-```
-
-| Flag / Env          | Default | Description                                               |
-| ------------------- | ------- | --------------------------------------------------------- |
-| `-addr <host:port>` | `:8080` | HTTP listen address                                       |
-| `PORT` (env)        |         | Override listen address (mutually exclusive with `-addr`) |
-
-The server provides OpenAPI documentation at `/openapi.json` and `/docs`.
-
-### API Endpoints
-
-| Method   | Path                   | Description                 |
-| -------- | ---------------------- | --------------------------- |
-| `GET`    | `/v1/health`           | Health check                |
-| `GET`    | `/v1/sandboxes`        | List sandboxes              |
-| `POST`   | `/v1/sandboxes`        | Create a sandbox            |
-| `DELETE` | `/v1/sandboxes/{name}` | Delete a sandbox            |
-| `GET`    | `/v1/volumes`          | List volumes                |
-| `DELETE` | `/v1/volumes/{name}`   | Delete a volume             |
-| `POST`   | `/v1/auth/extract`     | Extract credentials         |
-| `POST`   | `/v1/materialize`      | Run a materialize operation |
-
-### `POST /v1/sandboxes` — Port Publishing
-
-The `Ports` field accepts an array of port binding objects. It has no CLI equivalent; port publishing is an `amika-server` API feature.
-
-```json
-{
-  "Ports": [
-    {
-      "HostIP": "127.0.0.1",
-      "HostPort": 8080,
-      "ContainerPort": 80,
-      "Protocol": "tcp"
-    },
-    { "HostPort": 5432, "ContainerPort": 5432, "Protocol": "tcp" }
-  ]
-}
-```
-
-| Field           | Required | Default     | Description                                                      |
-| --------------- | -------- | ----------- | ---------------------------------------------------------------- |
-| `HostPort`      | yes      |             | Port on the host (1–65535)                                       |
-| `ContainerPort` | yes      |             | Port inside the container (1–65535)                              |
-| `Protocol`      | no       | `"tcp"`     | `"tcp"` or `"udp"`                                               |
-| `HostIP`        | no       | `127.0.0.1` | Host IP to bind the port. Use `"0.0.0.0"` to bind all interfaces |
-
-Duplicate bindings (same `HostIP:HostPort/Protocol`) are rejected with a 400 error.
-
-### API-Only Fields
-
-The HTTP API accepts some fields that are not available as CLI flags:
-
-- **`SetupScriptText`** (on `POST /v1/sandboxes`): Inline setup script content as a string. Amika writes it to a temporary file and mounts it as `/usr/local/etc/amikad/setup/setup.sh`. Mutually exclusive with `SetupScript` (file path).
-- **`GitRepo`** (on `POST /v1/sandboxes`): URL of a git repository to clone into the sandbox. The repo is cloned on the host, copied into a Docker volume, and mounted at `/home/amika/workspace/<repo-name>`. Supported schemes: `https://`, `http://`, `ssh://`, `file:///` (absolute paths only), and SCP-style (`git@host:path`). See [sandbox-configuration.md](sandbox-configuration.md) for details.
-
----
-
 ## Environment Variables
 
-| Variable                    | Description                                                                                                                                                        |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AMIKA_STATE_DIRECTORY`     | Override the default state directory (`~/.local/state/amika`). All state files are stored here when set                                                            |
-| `AMIKA_PRESET_IMAGE_PREFIX` | Override the Docker image name prefix for presets, e.g. `myregistry/amika` produces `myregistry/amika-coder:latest`. Read by `amika-server`; the CLI does not build images |
-| `AMIKA_API_URL`             | Override the remote API base URL (default: `https://app.amika.dev`). Used by sandbox commands when operating on remote sandboxes                                   |
-| `AMIKA_WORKOS_CLIENT_ID`    | Override the default WorkOS client ID for `amika auth login`. If you change `AMIKA_API_URL`, you likely need to update this too                                    |
-| `AMIKA_RUN_EXPENSIVE_TESTS` | Gate for expensive Docker rebuild integration tests during `go test`. No test opts into it today                                                                   |
-| `PORT`                      | Override listen address for `amika-server`. Accepts a plain port (`8080` becomes `:8080`) or full address (`127.0.0.1:8080`). Mutually exclusive with `-addr` flag |
+| Variable                    | Description                                                                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `AMIKA_STATE_DIRECTORY`     | Override the default state directory (`~/.local/state/amika`). All state files are stored here when set                          |
+| `AMIKA_API_URL`             | Override the remote API base URL (default: `https://app.amika.dev`). Used by commands that operate on remote rigs                |
+| `AMIKA_WORKOS_CLIENT_ID`    | Override the WorkOS client ID for `amika auth login`. Changing `AMIKA_API_URL` may require changing this too                     |
+| `AMIKA_RUN_EXPENSIVE_TESTS` | Gate expensive Docker rebuild integration tests during `go test`. No test currently opts into it                                |

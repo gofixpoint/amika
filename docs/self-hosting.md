@@ -7,10 +7,8 @@ The `amika` CLI no longer creates Rigs on your own machine. The `--local` mode,
 which ran each Rig as a Docker container on the host, has been removed, so every
 `amika` command now talks to the Amika control plane.
 
-The `amika-server` binary in this repo still exposes the Docker-backed Rig API
-over HTTP (see the `amika-server` section of
-[cli-reference.md](cli-reference.md)), but there is no supported CLI path to it
-today.
+There is currently no supported local CLI path. Rig commands use the hosted
+Amika control plane.
 
 ## Upcoming improvements
 

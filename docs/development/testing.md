@@ -92,9 +92,8 @@ without exercising anything Docker-backed. A green run here proves nothing
 about Docker. The suites that used these gates covered
 the CLI's local sandbox, volume, and materialize commands and were removed with
 the `--local` mode. The toggles and the `testutil.RequireDockerIntegration`,
-`RequireExpensiveDockerTests`, and `NewSandboxName` helpers are kept as
-scaffolding for Docker tests against `amika-server`, which still serves that
-API.
+`RequireExpensiveDockerTests`, and `NewSandboxName` helpers remain as
+scaffolding for future Docker-backed tests.
 
 ## Coverage Gates
 

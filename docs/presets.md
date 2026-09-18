@@ -50,15 +50,7 @@ amika sandbox create --preset coder-plus-docker
 amika sandbox create
 ```
 
-## Auto-Build
-
-Preset images are built on first use by `amika-server`, which resolves the
-preset, builds it from the embedded shared bundle if it is missing, and tags
-it. This one-time build may take a few minutes. To force a rebuild, remove the
-image (`docker rmi amika/coder:latest`) and run the next request that needs it.
-
-The `amika` CLI does not build images: it names a preset to the control plane,
-which provisions the rig.
+The `amika` CLI names a preset to the control plane, which provisions the rig.
 
 ## Setup Scripts
 
@@ -98,18 +90,6 @@ Preset images reserve container ports 60899–60999 for Amika internal services
 (e.g. OpenCode web on 60998, Pi Web on 60996, amikad daemon on 60999). See
 [sandbox-configuration.md](sandbox-configuration.md#reserved-ports) for the
 full allocation table.
-
-## Image Name Prefix
-
-`AMIKA_PRESET_IMAGE_PREFIX` overrides the default image name prefix used when
-`amika-server` builds preset images. It has no effect on the `amika` CLI. For
-example:
-
-```bash
-export AMIKA_PRESET_IMAGE_PREFIX=myregistry/amika
-```
-
-This produces image names like `myregistry/amika-coder:latest` instead of `amika/coder:latest`.
 
 ## Agent credentials
 
