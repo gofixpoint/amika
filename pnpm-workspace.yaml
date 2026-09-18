@@ -19,3 +19,5 @@ allowBuilds:
 # reads. Pins a transitive dep below the 7-day package-age gate in CI.
 overrides:
   "@bufbuild/protobuf": "2.13.0"
+  esbuild: "0.28.1"
+  js-yaml: "4.3.2"

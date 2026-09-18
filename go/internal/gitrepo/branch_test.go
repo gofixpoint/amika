@@ -105,16 +105,14 @@ func TestBranchReachableFromRemote(t *testing.T) {
 	})
 }
 
-// TestBranchReachableFromRemote_TrackingRefFallback exercises the
-// fallback path where the remote SHA (from ls-remote) is NOT in the local
-// object store. This happens when someone else pushes to the remote and the
-// user hasn't fetched. The function should fall back to comparing against
-// the last-fetched tracking ref (refs/remotes/origin/<branch>).
-func TestBranchReachableFromRemote_TrackingRefFallback(t *testing.T) {
+// TestBranchReachableFromRemoteUnfetchedTip exercises the path where the
+// remote SHA is not in the local object store and must be fetched before its
+// ancestry can be checked.
+func TestBranchReachableFromRemoteUnfetchedTip(t *testing.T) {
 	bare := t.TempDir()
 	runGitIn(t, bare, "init", "--bare")
 
-	// First clone: "work" — the repo under test.
+	// First clone, "work", is the repo under test.
 	work := filepath.Join(t.TempDir(), "work")
 	cloneCmd := exec.Command("git", "clone", bare, work)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
@@ -132,7 +130,7 @@ func TestBranchReachableFromRemote_TrackingRefFallback(t *testing.T) {
 	runGitIn(t, work, "push", "origin", "HEAD")
 	branch := currentBranchOf(t, work)
 
-	// Second clone: "other" — simulates another contributor.
+	// Second clone, "other", simulates another contributor.
 	other := filepath.Join(t.TempDir(), "other")
 	cloneCmd2 := exec.Command("git", "clone", bare, other)
 	if out, err := cloneCmd2.CombinedOutput(); err != nil {
@@ -142,7 +140,7 @@ func TestBranchReachableFromRemote_TrackingRefFallback(t *testing.T) {
 	runGitIn(t, other, "config", "user.email", "other@example.com")
 
 	// Push a new commit from "other" so the bare repo is ahead of "work".
-	// "work" has never seen this commit — its object store does not contain
+	// "work" has never seen this commit, so its object store does not contain
 	// the new SHA.
 	if err := os.WriteFile(filepath.Join(other, "b.txt"), []byte("b\n"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
@@ -151,7 +149,7 @@ func TestBranchReachableFromRemote_TrackingRefFallback(t *testing.T) {
 	runGitIn(t, other, "commit", "-m", "c2-from-other")
 	runGitIn(t, other, "push", "origin", "HEAD")
 
-	t.Run("local behind unfetched remote returns true via tracking ref", func(t *testing.T) {
+	t.Run("local behind unfetched remote returns true", func(t *testing.T) {
 		if !BranchReachableFromRemote(work, branch) {
 			t.Fatal("expected true when local is behind remote and remote SHA is not in local store")
 		}
@@ -164,11 +162,62 @@ func TestBranchReachableFromRemote_TrackingRefFallback(t *testing.T) {
 	runGitIn(t, work, "add", "c.txt")
 	runGitIn(t, work, "commit", "-m", "c3-local-only")
 
-	t.Run("local ahead of tracking ref with unfetched remote returns false", func(t *testing.T) {
+	t.Run("local diverged from an unfetched remote returns false", func(t *testing.T) {
 		if BranchReachableFromRemote(work, branch) {
 			t.Fatal("expected false when local has unpushed commits and remote SHA is not in local store")
 		}
 	})
+}
+
+func TestBranchReachableFromRemoteRejectsForcePushedTip(t *testing.T) {
+	bare := t.TempDir()
+	runGitIn(t, bare, "init", "--bare")
+
+	work := filepath.Join(t.TempDir(), "work")
+	if out, err := exec.Command("git", "clone", bare, work).CombinedOutput(); err != nil {
+		t.Fatalf("clone work: %s", out)
+	}
+	runGitIn(t, work, "config", "user.name", "Test User")
+	runGitIn(t, work, "config", "user.email", "test@example.com")
+	runGitIn(t, work, "commit", "--allow-empty", "-m", "original")
+	runGitIn(t, work, "push", "origin", "HEAD")
+	branch := currentBranchOf(t, work)
+
+	other := filepath.Join(t.TempDir(), "other")
+	if out, err := exec.Command("git", "clone", bare, other).CombinedOutput(); err != nil {
+		t.Fatalf("clone other: %s", out)
+	}
+	runGitIn(t, other, "config", "user.name", "Other User")
+	runGitIn(t, other, "config", "user.email", "other@example.com")
+	runGitIn(t, other, "checkout", "--orphan", "replacement")
+	runGitIn(t, other, "commit", "--allow-empty", "-m", "replacement")
+	runGitIn(t, other, "push", "--force", "origin", "HEAD:"+branch)
+
+	if BranchReachableFromRemote(work, branch) {
+		t.Fatal("expected false after the remote branch was replaced")
+	}
+}
+
+func TestBranchReachableFromRemoteMatchesFullRef(t *testing.T) {
+	bare := t.TempDir()
+	runGitIn(t, bare, "init", "--bare")
+
+	work := filepath.Join(t.TempDir(), "work")
+	if out, err := exec.Command("git", "clone", bare, work).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %s", out)
+	}
+	runGitIn(t, work, "config", "user.name", "Test User")
+	runGitIn(t, work, "config", "user.email", "test@example.com")
+	runGitIn(t, work, "commit", "--allow-empty", "-m", "foo")
+	runGitIn(t, work, "branch", "foo")
+	runGitIn(t, work, "push", "origin", "foo")
+	runGitIn(t, work, "checkout", "--orphan", "a/foo")
+	runGitIn(t, work, "commit", "--allow-empty", "-m", "unrelated suffix")
+	runGitIn(t, work, "push", "origin", "a/foo")
+
+	if !BranchReachableFromRemote(work, "foo") {
+		t.Fatal("expected refs/heads/foo to match without selecting refs/heads/a/foo")
+	}
 }
 
 func TestResolveBranch(t *testing.T) {

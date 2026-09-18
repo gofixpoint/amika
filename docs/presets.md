@@ -26,11 +26,11 @@ The default preset, used when no `--image` or `--preset` flag is provided.
 - Pi (`@earendil-works/pi-coding-agent`)
 - amika, amikalog, and amikad CLIs
 
-### `coder-dind`
+### `coder-plus-docker`
 
 A variant of `coder` that also includes Docker-in-Docker support.
 
-**Image name:** `amika/coder-dind:latest`
+**Image name:** `amika/coder-plus-docker:latest`
 
 **Base:** Ubuntu 24.04
 
@@ -44,7 +44,7 @@ A variant of `coder` that also includes Docker-in-Docker support.
 ```bash
 # Explicit preset selection
 amika sandbox create --preset coder
-amika sandbox create --preset coder-dind
+amika sandbox create --preset coder-plus-docker
 
 # Default behavior (uses coder preset automatically)
 amika sandbox create

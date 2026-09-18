@@ -11,6 +11,16 @@ from pathlib import Path
 
 EMBED_SOURCE_DIRECTORIES = ("assets", "steps", "verify")
 
+# The amika CLI agent skill is authored once, at the repository root, which is
+# the copy every reader outside this image is pointed at. The image still needs
+# one of its own because a bundle must be self-contained: WritePresetBuildContext
+# extracts only sandbox-image/, so a generated Dockerfile cannot COPY from above
+# it. The generator owns that copy for the same reason it owns the go/ mirror.
+# A hand-maintained second copy of a file agents follow literally goes stale in
+# silence, and --check turns that into a CI failure instead.
+AGENT_SKILL_SOURCE = ".agents/skills/amika-cli"
+AGENT_SKILL_BUNDLE = "assets/skills/amika-cli"
+
 # Every step's script and assets are staged here by COPY, then removed by the
 # RUN that consumes them. This deliberately avoids /tmp: E2B's builder reboots
 # the VM between cached layers, and a boot wipes /tmp, so a COPY into /tmp is
@@ -31,44 +41,44 @@ def main() -> int:
     manifest = load_toml(bundle / "manifest.toml")
     versions = load_versions(bundle / "versions.env")
     generated = bundle / "generated"
-    generated.mkdir(exist_ok=True)
+    skill = bundle / AGENT_SKILL_BUNDLE
+    embed_root = bundle.parent / "go" / "internal" / "sandbox" / "sandbox-image"
 
     outputs = build_outputs(manifest, versions)
-    embed_root = bundle.parent / "go" / "internal" / "sandbox" / "sandbox-image"
-    embed_outputs = build_embed_outputs(bundle, outputs)
+    skill_outputs = read_tree(bundle.parent / AGENT_SKILL_SOURCE)
+
+    # Checked in both modes, because the manifest is a source file the
+    # generator cannot repair: writing the trees while leaving a stale asset
+    # list behind would hand the author a bundle that regenerates cleanly and
+    # still under-declares what the step installs.
+    mismatch = validate_skill_assets(manifest, skill_outputs)
+    if mismatch:
+        print(mismatch, file=sys.stderr)
+        return 1
+
     if args.check:
-        stale = []
-        for name, expected in outputs.items():
-            path = generated / name
-            if not path.is_file() or path.read_text(encoding="utf-8") != expected:
-                stale.append(name)
-        actual = {
-            str(path.relative_to(generated))
-            for path in generated.rglob("*")
-            if path.is_file()
-        }
-        stale.extend(
-            f"unexpected:{name}" for name in sorted(actual - outputs.keys())
-        )
-        if stale:
-            print(
-                "generated sandbox image artifacts are stale: "
-                + ", ".join(stale),
-                file=sys.stderr,
-            )
-            return 1
-        stale_embed = validate_embed_outputs(embed_root, embed_outputs)
-        if stale_embed:
-            print(
-                "embedded sandbox image artifacts are stale: "
-                + ", ".join(stale_embed),
-                file=sys.stderr,
-            )
-            return 1
+        # The skill copy is reported before the embed mirror because the mirror
+        # is built from assets/ on disk: a stale skill makes both look stale,
+        # and only the first line names the edit that actually diverged.
+        for label, root, expected in (
+            ("generated sandbox image artifacts", generated, outputs),
+            ("bundled agent skill files", skill, skill_outputs),
+            (
+                "embedded sandbox image artifacts",
+                embed_root,
+                build_embed_outputs(bundle, outputs),
+            ),
+        ):
+            stale = validate_tree(root, expected)
+            if stale:
+                print(f"{label} are stale: " + ", ".join(stale), file=sys.stderr)
+                return 1
         return 0
 
-    write_outputs(generated, outputs)
-    write_embed_outputs(embed_root, embed_outputs)
+    write_tree(generated, outputs)
+    # Before the mirror, which embeds assets/ as it finds it on disk.
+    write_tree(skill, skill_outputs)
+    write_tree(embed_root, build_embed_outputs(bundle, outputs))
     return 0
 
 
@@ -132,7 +142,57 @@ def preset_step_ids(preset: dict, provider: str | None = None) -> list[str]:
     return selected
 
 
-def write_outputs(root: Path, outputs: dict[str, str]) -> None:
+def validate_skill_assets(manifest: dict, skill_outputs: dict[str, str]) -> str:
+    """Reports the agent-skill step declaring assets other than the skill tree.
+
+    The step installs its whole asset directory, so its declared list is the
+    one place a new reference file has to be repeated by hand. Nothing at build
+    time reads the list -- Docker COPYs the directory and Freestyle uploads the
+    bundle wholesale -- which is exactly why a divergence would otherwise sit
+    unnoticed in bundle.json until someone read it and believed it.
+    """
+    expected = sorted(
+        f"{AGENT_SKILL_BUNDLE}/{Path(name).as_posix()}" for name in skill_outputs
+    )
+    declared = manifest["steps"]["agent-skill"]["assets"]
+    if declared == expected:
+        return ""
+    listing = "\n".join(f'  "{name}",' for name in expected)
+    return (
+        "steps.agent-skill assets do not match "
+        f"{AGENT_SKILL_SOURCE}; expected:\nassets = [\n{listing}\n]"
+    )
+
+
+def read_tree(root: Path) -> dict[str, str]:
+    """Reads every file under root, keyed by its path relative to root."""
+    return {
+        str(path.relative_to(root)): path.read_text(encoding="utf-8")
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def validate_tree(root: Path, expected: dict[str, str]) -> list[str]:
+    """Names under root that differ from expected, in either direction."""
+    if not root.is_dir():
+        return [f"{root.name}/"]
+
+    stale = []
+    actual = {
+        str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()
+    }
+    for name, content in expected.items():
+        path = root / name
+        if not path.is_file() or path.read_text(encoding="utf-8") != content:
+            stale.append(name)
+    stale.extend(f"unexpected:{name}" for name in sorted(actual - expected.keys()))
+    return stale
+
+
+def write_tree(root: Path, outputs: dict[str, str]) -> None:
+    """Makes root hold exactly outputs, deleting anything else it finds."""
+    root.mkdir(parents=True, exist_ok=True)
     expected = set(outputs)
     for path in sorted(root.rglob("*"), reverse=True):
         if path.is_file() and str(path.relative_to(root)) not in expected:
@@ -161,40 +221,6 @@ def build_embed_outputs(
     for name, content in generated_outputs.items():
         outputs[f"generated/{name}"] = content
     return outputs
-
-
-def validate_embed_outputs(
-    embed_root: Path, expected: dict[str, str]
-) -> list[str]:
-    if not embed_root.is_dir():
-        return ["sandbox-image/"]
-
-    stale = []
-    actual = {
-        str(path.relative_to(embed_root))
-        for path in embed_root.rglob("*")
-        if path.is_file()
-    }
-    for name, content in expected.items():
-        path = embed_root / name
-        if not path.is_file() or path.read_text(encoding="utf-8") != content:
-            stale.append(name)
-    stale.extend(f"unexpected:{name}" for name in sorted(actual - expected.keys()))
-    return stale
-
-
-def write_embed_outputs(embed_root: Path, outputs: dict[str, str]) -> None:
-    embed_root.mkdir(parents=True, exist_ok=True)
-    expected = set(outputs)
-    for path in sorted(embed_root.rglob("*"), reverse=True):
-        if path.is_file() and str(path.relative_to(embed_root)) not in expected:
-            path.unlink()
-        elif path.is_dir() and not any(path.iterdir()):
-            path.rmdir()
-    for name, content in outputs.items():
-        path = embed_root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
 
 
 def load_toml(path: Path) -> dict:

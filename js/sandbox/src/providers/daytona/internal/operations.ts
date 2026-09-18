@@ -170,9 +170,17 @@ export async function listDaytonaSandboxes(
 export async function startDaytonaSandbox(
   config: DaytonaConfig,
   providerSandboxId: string,
+  autoStopInterval?: number | null,
 ): Promise<void> {
   const daytona = getDaytonaClient(config);
   const sandbox = await daytona.get(providerSandboxId);
+  // Re-apply the caller's interval before resuming, so a sandbox whose stored
+  // interval changed since create (an unapproved org's clamp) comes back on the
+  // current value rather than the one baked in server-side. Negatives are
+  // skipped: the SDK rejects anything but a non-negative integer.
+  if (autoStopInterval != null && autoStopInterval >= 0) {
+    await sandbox.setAutostopInterval(autoStopInterval);
+  }
   await sandbox.start();
 }
 
@@ -302,17 +310,19 @@ export async function createDaytonaSandbox(
   // and passed explicitly to the lifecycle scripts (runLifecycleScripts),
   // both of which the snapshot scrubber can clean.
   //
-  // AMIKA_AGENT_CWD and AMIKA_SANDBOX_NAME are also seeded into the base block
-  // of /etc/environment during initialize, but that file is only sourced by
-  // login shells — the launched agent runs via a non-login `process.exec`
-  // (see DaytonaAdapter.exec), which inherits the container env, not the
-  // managed file. Baking them here is what actually makes them visible to the
-  // agent. They are per-sandbox, so a from-snapshot boot re-sets them via this
-  // create call (create-time env overrides the value baked into the snapshot
-  // image); both are non-secret, so baking them carries no scrub concern.
+  // AMIKA_AGENT_CWD, AMIKA_SANDBOX_NAME, and AMIKA_RIG_NAME are also seeded
+  // into the base block of /etc/environment during initialize, but that file
+  // is only sourced by login shells — the launched agent runs via a non-login
+  // `process.exec` (see DaytonaAdapter.exec), which inherits the container
+  // env, not the managed file. Baking them here is what actually makes them
+  // visible to the agent. They are per-sandbox, so a from-snapshot boot re-sets
+  // them via this create call (create-time env overrides the value baked into
+  // the snapshot image); all are non-secret, so baking them carries no scrub
+  // concern.
   const envVars: Record<string, string> = {
     AMIKA_AGENT_CWD: cwd,
     AMIKA_SANDBOX_NAME: input.name,
+    AMIKA_RIG_NAME: input.name,
   };
   if (input.amikaOpenCodeWeb != null) {
     envVars.AMIKA_OPENCODE_WEB = input.amikaOpenCodeWeb;

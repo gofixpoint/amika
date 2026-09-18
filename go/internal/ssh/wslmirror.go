@@ -7,6 +7,7 @@ package ssh
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,6 +133,74 @@ func MirrorToWindows(paths basedir.Paths, target wslbridge.Target) error {
 	}
 
 	_, err = mirrorFile(knownHostsPath, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
+	return err
+}
+
+// isWSL and resolveWSLTarget are seams over WSL detection, so a test can drive
+// both sides of the mirrored pin store's branch from any platform.
+var (
+	isWSL            = wslbridge.IsWSL
+	resolveWSLTarget = wslbridge.ResolveTarget
+)
+
+// windowsMirroredPins wraps a pin store so every pin it accepts is republished
+// to the Windows side, and returns the store untouched when this is not a WSL
+// setup.
+//
+// A WSL setup is the one place where writing the Linux pin file is not enough:
+// the editor is a Windows application, so the OpenSSH that verifies the host
+// reads the mirrored `amika_known_hosts` in the Windows .ssh directory, which
+// until now only an editor launch through `sandbox code` refreshed. Without
+// this, pinning from the proxy would fix the deep links everywhere except the
+// platform whose ProxyCommand exists to cross back into Linux.
+func windowsMirroredPins(pins HostKeyPinStore, knownHostsFile string, warnings io.Writer) HostKeyPinStore {
+	if !isWSL() {
+		return pins
+	}
+	return mirroredPinStore{pins: pins, knownHostsFile: knownHostsFile, warnings: warnings}
+}
+
+// mirroredPinStore pins on the Linux side and republishes the Windows copy of
+// the pin file.
+type mirroredPinStore struct {
+	pins           HostKeyPinStore
+	knownHostsFile string
+	warnings       io.Writer
+}
+
+// Pin writes the pin, then republishes it to the Windows side. A failed
+// republish is reported rather than returned: the Windows copy is a derived
+// artifact, and a stale one can only make OpenSSH refuse a host it cannot
+// verify, never admit one. Failing the dial instead would end a connection
+// whose pin is already mirrored, which this is not entitled to do.
+func (s mirroredPinStore) Pin(alias, hostPublicKey string) error {
+	if err := s.pins.Pin(alias, hostPublicKey); err != nil {
+		return err
+	}
+	if err := s.mirror(); err != nil && s.warnings != nil {
+		fmt.Fprintf(s.warnings, "warning: could not publish the host key to the Windows copy of %s: %v\n", basedir.SSHKnownHostsName(), err)
+	}
+	return nil
+}
+
+// mirror copies the pin file alone, rather than calling MirrorToWindows.
+//
+// The full mirror refreshes the config, the include line, the identity and its
+// Windows ACLs before it reaches the pin file, and any of those failing would
+// take the pin down with it — an absent `icacls.exe` would leave OpenSSH
+// refusing a sandbox whose config and identity were perfectly usable, which is
+// the failure this whole path exists to remove.
+//
+// Copying only the pin is also all this path is entitled to do. OpenSSH ran
+// this ProxyCommand, so the Windows config that names it is already there,
+// along with the identity it points at; the pin for a sandbox nobody has
+// opened yet is the one file that can be missing.
+func (s mirroredPinStore) mirror() error {
+	target, err := resolveWSLTarget()
+	if err != nil {
+		return err
+	}
+	_, err = mirrorFile(s.knownHostsFile, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
 	return err
 }
 

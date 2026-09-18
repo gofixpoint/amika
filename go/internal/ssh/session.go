@@ -242,8 +242,9 @@ func KnownHostLine(alias, hostPublicKey string) (string, error) {
 	return alias + " " + canonical + "\n", nil
 }
 
-// PrepareSessionHost fetches a descriptor and pins its key before OpenSSH is
-// launched.
+// PrepareSessionHost fetches a descriptor and pins its key before OpenSSH
+// verifies the host: ahead of the launch when a command prepares the target,
+// and inside the ProxyCommand when the connection started somewhere else.
 func PrepareSessionHost(
 	creator SessionCreator,
 	pins HostKeyPinStore,
@@ -271,12 +272,54 @@ func PrepareSessionHost(
 	return session, nil
 }
 
-// ProxySession creates a fresh descriptor, dials it with header credentials,
-// and copies opaque bytes between OpenSSH standard I/O and the WebSocket.
+// ProxyPinStore returns the store the stdio proxy pins through: the
+// known-hosts file the managed session config names, wrapped so a WSL setup's
+// Windows copy is republished along with it.
+//
+// The configured file rather than the default path, for the same reason
+// resolveSessionConfig exists: a key imported by `secret ssh-keygen --import`
+// moves both files, and a pin written anywhere but where the rendered config
+// points OpenSSH is a pin OpenSSH will not read.
+//
+// Warnings about the Windows copy go to warnings, which is the proxy's stderr
+// and so the SSH client's — the one channel a ProxyCommand has to a reader who
+// is looking at an editor, not a terminal.
+func ProxyPinStore(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, error) {
+	session, err := resolveSessionConfig(paths)
+	if err != nil {
+		return nil, err
+	}
+	return windowsMirroredPins(FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings), nil
+}
+
+// ProxySession creates a fresh descriptor, pins its host key, dials it with
+// header credentials, and copies opaque bytes between OpenSSH standard I/O and
+// the WebSocket.
+//
+// Pinning here, and not only in the commands that prepare a target, is what
+// lets a connection nobody prepared succeed. The web app's editor deep links
+// (`cursor://vscode-remote/ssh-remote+<alias>`, `cmux://ssh?host=<alias>`)
+// hand the alias straight to system OpenSSH, which resolves it through the
+// managed block and its `StrictHostKeyChecking yes`. No Amika command runs on
+// that path, so nothing wrote the pin, and OpenSSH refused every sandbox the
+// user had not already reached with `sandbox ssh` or `sandbox code`:
+// "No ED25519 host key is known for <alias> ... Host key verification failed."
+//
+// The ProxyCommand is the one step every alias-based connection passes
+// through, and it already fetches the descriptor the pin is taken from. The
+// pin lands before OpenSSH looks for it, too: OpenSSH reads the known-hosts
+// file to check the key exchange, and the key exchange cannot start until this
+// process is carrying its bytes.
+//
+// This is no weaker than pinning from a command. Both take the key from the
+// same authenticated control-plane response, and both write through a store
+// that accepts an identical pin and refuses a changed one, so a host whose key
+// later differs still fails closed.
 func ProxySession(
 	ctx context.Context,
 	creator SessionCreator,
 	dialer SessionDialer,
+	pins HostKeyPinStore,
 	alias string,
 	stdin io.Reader,
 	stdout io.Writer,
@@ -285,11 +328,8 @@ func ProxySession(
 	if err != nil {
 		return err
 	}
-	session, err := creator.CreateSSHSession(parsed.ID)
+	session, err := PrepareSessionHost(creator, pins, parsed.ID, alias)
 	if err != nil {
-		return err
-	}
-	if err := session.Validate(parsed.ID); err != nil {
 		return err
 	}
 	stream, err := dialer.Dial(ctx, session.ConnectURL, session.ConnectCredential)
@@ -399,9 +439,17 @@ func PrepareSessionTarget(
 	}
 	// A world- or group-readable private key is refused rather than used:
 	// OpenSSH would reject it anyway, and the clearer error names the fix.
+	//
+	// Both fixes are named because the likelier one is not the obvious one: a
+	// user whose public key was uploaded through the web UI already has a
+	// keypair, and "run ssh-keygen" reads as an instruction to throw it away.
 	identityInfo, statErr := os.Stat(sessionConfig.IdentityFile)
 	if statErr != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("SSH identity is missing or unsafe; run %q", "amika secret ssh-keygen")
+		return "", fmt.Errorf(
+			"SSH identity %s is missing or unsafe; run %q to create one, or %q to use a key you already have",
+			sessionConfig.IdentityFile,
+			"amika secret ssh-keygen",
+			"amika secret ssh-keygen --import <path>.pub")
 	}
 	if err := ConfigureSession(paths, sessionConfig); err != nil {
 		return "", err
@@ -415,6 +463,28 @@ func PrepareSessionTarget(
 		return "", err
 	}
 	return alias, nil
+}
+
+// EnsureSessionConfig writes the wildcard session block for the environment
+// this process points at, using whichever identity is already configured
+// without generating, importing, or requiring any key material. It returns
+// the session it recorded, so a caller can tell the user which identity the
+// block now names and whether that file is actually there yet.
+//
+// It exists so logging in also repairs the managed SSH config. A user who
+// uploads their public key through the web UI never runs
+// `amika secret ssh-keygen`, so nothing would have written the block, and the
+// aliases `amika sandbox ssh` hands to system OpenSSH would resolve against
+// whatever the user's own `~/.ssh/config` happens to say.
+func EnsureSessionConfig(paths basedir.Paths) (SessionConfig, error) {
+	session, err := resolveSessionConfig(paths)
+	if err != nil {
+		return SessionConfig{}, err
+	}
+	if err := ConfigureSession(paths, session); err != nil {
+		return SessionConfig{}, err
+	}
+	return session, nil
 }
 
 // resolveSessionConfig returns the persisted session identity, or the default

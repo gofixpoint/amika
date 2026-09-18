@@ -84,7 +84,7 @@ amika sandbox create --name dev-sandbox --git https://github.com/octocat/Hello-W
 amika sandbox create --name dev-sandbox --no-git
 
 # Use the Docker-in-Docker preset image
-amika sandbox create --name docker-box --preset coder-dind
+amika sandbox create --name docker-box --preset coder-plus-docker
 
 # Use a custom Docker image
 amika sandbox create --name custom-box --image myimage:latest
@@ -284,7 +284,8 @@ amika sandbox ssh -N -D 1080 my-sandbox
 ```
 
 Local (`-L`) and dynamic (`-D`) forwarding are supported. Remote forwarding
-(`-R`), agent forwarding (`-A`), and X11 forwarding are not.
+(`-R`), agent forwarding (`-A`), and X11 forwarding are not: the sandbox's own
+SSH daemon refuses them, so no local config or `-o` override enables them.
 
 `-o` after the subcommand is ssh's ssh_config option, so amika's
 `-o`/`--output` is not available there; written before `ssh` it is rejected
@@ -414,6 +415,76 @@ A copy naming no sandbox at all is simply forwarded to the system `scp`.
 
 ---
 
+## The managed SSH config
+
+`sandbox ssh`, `sandbox code`, and `scp` all connect by handing system OpenSSH
+a hostname such as `my-sandbox.sb_123.app-amika-dev.amika`. Every setting that
+connection needs comes from a block Amika generates in `~/.ssh/amika.conf`,
+which `~/.ssh/config` pulls in through an `Include` line. The file
+is regenerated from Amika's own state whenever a command prepares an SSH
+target, so edits to it are lost. `amika auth login` and
+`amika secret ssh-keygen` both write it; `auth login` names the files it
+touched.
+
+| Option                                        | Value                | Why                                                                          |
+| --------------------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
+| `User`                                        | `amika`              | The sandbox account                                                          |
+| `IdentityFile` / `IdentitiesOnly`             | your Amika key       | Offer the key the control plane holds, rather than every key in your agent   |
+| `StrictHostKeyChecking` / `UserKnownHostsFile`| `yes`, Amika's file  | Pin each sandbox host key in a dedicated file, so a change fails closed      |
+| `ProxyCommand`                                | `amika plumbing …`   | Carry the session over Amika's WebSocket transport instead of a TCP dial     |
+| `ServerAliveInterval` / `ServerAliveCountMax` | `15`, `3`            | Notice a dead transport instead of hanging                                   |
+
+The `ProxyCommand` pins the sandbox's host key every time it runs, so an alias
+also works in tools that never call the Amika CLI. An editor's Remote-SSH deep
+link, `cursor://vscode-remote/ssh-remote+<alias>/home/amika/workspace`,
+connects to a sandbox you have never opened before, as long as
+`~/.ssh/amika.conf` is in place and your key is uploaded. Pinning stays strict:
+the first connection records the key the control plane reports, and a sandbox
+that later presents a different one is refused.
+
+OpenSSH resolves around 90 options per connection, merging across every block
+whose pattern matches the hostname and keeping the **first** value it finds for
+most of them. Amika puts its `Include` first because Codex only discovers the
+managed hosts when the directive precedes every `Host` block:
+
+```
+# This `Include` directive must be the first line, or Codex cannot find your Amika SSH
+# hosts.
+#
+# To modify amika SSH target settings, add another host config block below this, like:
+#
+# ```
+# Host *.amika
+#   ForwardAgent yes
+# ```
+Include amika.conf
+```
+
+Because the include comes first, blocks below it can add options that
+`amika.conf` does not set, such as `ForwardAgent`, but cannot replace scalar
+options Amika already supplied. To override one of those options, pass it on
+the command line, which outranks every config file:
+
+```bash
+amika sandbox ssh -o ServerAliveInterval=60 my-sandbox
+```
+
+Three exceptions to keep in mind.
+
+**A few options accumulate rather than resolving to one value**, `IdentityFile`
+among them. A wildcard `IdentityFile` of your own is therefore tried
+*alongside* Amika's key, not instead of it, so ssh may offer both. `ssh -G
+<alias>` lists every identity that will be tried.
+
+**Amika only chooses the position when it first adds the line.** If your config
+already contains `Include amika.conf`, Amika leaves the file byte-for-byte
+unchanged. Move an existing directive to the beginning yourself if Codex does
+not discover the managed hosts.
+
+Under WSL, `sandbox code` mirrors this file (and the key material it names) to
+the Windows side so a Windows editor's own OpenSSH can reach the sandbox. The
+mirrored block carries the same settings.
+
 ## `amika volume`
 
 Manage tracked Docker volumes used by sandboxes.
@@ -456,6 +527,23 @@ Log in to Amika via a device authorization flow. Opens a browser for you to auth
 
 ```bash
 amika auth login
+```
+
+A successful login also writes [the managed SSH config](#the-managed-ssh-config)
+for the control plane you logged in to, so a bare `ssh <alias>` works even if
+your public key was uploaded through the web UI instead of by
+`amika secret ssh-keygen`. Login prints the two files it touched, since
+`~/.ssh/config` governs every SSH connection your machine makes and is often a
+symlink into a dotfiles repo.
+
+The block records where your key material lives; it never creates a keypair.
+If no key is there yet, login says so and names both ways to fix it:
+
+```
+Updated ~/.ssh/amika.conf, included from ~/.ssh/config.
+No SSH identity at ~/.ssh/amika_id_ed25519 yet, so `amika sandbox ssh` will not connect until you add one:
+  amika secret ssh-keygen                                 # create a new key
+  amika secret ssh-keygen --import <path>.pub             # use a key you already have
 ```
 
 See [auth.md](auth.md) for details on the login flow and session storage.
@@ -560,7 +648,7 @@ Push Claude Code credentials (API key or OAuth token) to the remote Amika secret
 amika secret claude push
 
 # Push with a custom label
-amika secret claude push --name "Claude OAuth (Work Laptop)"
+amika secret claude push --name claude-oauth-work-laptop
 
 # Push from a credentials file
 amika secret claude push --from-file ~/.claude/.credentials.json
@@ -580,6 +668,7 @@ amika secret claude push --type api_key
 | `--type <type>`      | `oauth` | Credential type: `oauth` or `api_key`                           |
 
 `--value` and `--from-file` are mutually exclusive.
+When `--name` is omitted, the prompt defaults to `claude-oauth` for OAuth credentials and `claude-api-key` for API keys.
 
 #### `amika secret claude list`
 
@@ -618,6 +707,8 @@ amika secret ssh-keygen --import ~/.ssh/id_ed25519.pub
 | `--force`         | `false`   | Replace an existing key of the same name                       |
 
 Re-running this command is safe: an existing keypair at `~/.ssh/amika_id_ed25519` is reused rather than regenerated, so the upload is a no-op. `--force` is only needed when the name already holds *different* key material (for example when switching `--import` targets).
+
+`--import` is also the fix when your public key is already registered (you uploaded it through the web UI, say) but your private key lives somewhere other than `~/.ssh/amika_id_ed25519`. Pointing it at that key's `.pub` re-uploads identical material as a no-op and updates [the managed SSH config](#the-managed-ssh-config) to name your key rather than the default path.
 
 `amika secret ssh-key create` is an alias for this command.
 

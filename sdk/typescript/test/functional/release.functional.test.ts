@@ -2,31 +2,35 @@
  * Release test suite for the TypeScript SDK against staging.
  *
  * Mirrors the CLI test cases in devdocs/release-testplan.md:
- *   - Create a sandbox with the example repo
+ *   - Create a rig with the example repo
  *   - Snapshot round-trip: write sentinel, capture, boot from snapshot, verify sentinel
- *   - Scrub-and-delete: capture deletes the source sandbox on completion
+ *   - Scrub-and-delete: capture deletes the source rig on completion
  *
  * Required env vars:
  *   AMIKA_API_URL   — e.g. https://app.staging-amika.dev
  *   AMIKA_API_TOKEN — staging API key
  *
  * Optional:
- *   AMIKA_TEST_SANDBOX_PROVIDER — default "daytona" (remote)
+ *   AMIKA_TEST_RIG_PROVIDER — default "daytona" (remote); the former
+ *                             AMIKA_TEST_SANDBOX_PROVIDER still works
  */
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { AmikaClient } from "@/client";
-import type { RemoteSandbox } from "@/types";
+import type { RemoteRig } from "@/types";
 
 import {
   LONG_TIMEOUT_MS,
   describeFunctional,
   makeClient,
-  uniqueSandboxName,
+  uniqueRigName,
 } from "./helpers";
 
-const PROVIDER = process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ?? "daytona";
+const PROVIDER =
+  process.env["AMIKA_TEST_RIG_PROVIDER"] ||
+  process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ||
+  "daytona";
 const EXAMPLE_REPO = "https://github.com/gofixpoint/example-repo";
 /** Poll until a snapshot slug reaches the target state. */
 async function waitForSnapshot(
@@ -37,7 +41,7 @@ async function waitForSnapshot(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const snapshots = await client.listSandboxSnapshots();
+    const snapshots = await client.listRigSnapshots();
     const snap = snapshots.find((s) => s.snapshot === slug);
     if (snap?.state === targetState) return;
     await new Promise((r) => setTimeout(r, 5_000));
@@ -47,81 +51,80 @@ async function waitForSnapshot(
   );
 }
 
-/** Poll sandbox list until the named sandbox is absent. */
-async function waitForSandboxGone(
+/** Poll the rig list until the named rig is absent. */
+async function waitForRigGone(
   client: AmikaClient,
   name: string,
   timeoutMs = 5 * 60 * 1000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const sandboxes = await client.listSandboxes();
-    if (!sandboxes.some((s) => s.name === name && !/delet/i.test(s.state)))
-      return;
+    const rigs = await client.listRigs();
+    if (!rigs.some((s) => s.name === name && !/delet/i.test(s.state))) return;
     await new Promise((r) => setTimeout(r, 5_000));
   }
-  throw new Error(`Sandbox "${name}" was not deleted within ${timeoutMs}ms`);
+  throw new Error(`Rig "${name}" was not deleted within ${timeoutMs}ms`);
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: Create a sandbox with the example repo
+// Test 1: Create a rig with the example repo
 // ---------------------------------------------------------------------------
 
-describeFunctional("Release test: create sandbox with example repo", () => {
+describeFunctional("Release test: create rig with example repo", () => {
   let client: AmikaClient;
-  let sandbox: RemoteSandbox;
-  const sandboxName = uniqueSandboxName("dylan-rls");
+  let rig: RemoteRig;
+  const rigName = uniqueRigName("dylan-rls");
 
   beforeAll(async () => {
     client = makeClient();
-    const created = await client.createSandbox({
-      name: sandboxName,
+    const created = await client.createRig({
+      name: rigName,
       provider: PROVIDER,
       repoUrl: EXAMPLE_REPO,
       preset: "coder",
     });
     afterAll(async () => {
       try {
-        await client.deleteSandbox(created.name);
+        await client.deleteRig(created.name);
       } catch {
         // Already deleted, or the server is unreachable; ignore.
       }
     });
-    sandbox = await client.waitForSandbox(created.name);
+    rig = await client.waitForRig(created.name);
   }, LONG_TIMEOUT_MS);
 
-  it("sandbox reaches started state", () => {
-    expect(sandbox.state).toBe("started");
+  it("rig reaches started state", () => {
+    expect(rig.state).toBe("started");
   });
 
   it("repo URL contains example-repo", () => {
-    expect(sandbox.repoUrl).toContain("example-repo");
+    expect(rig.repoUrl).toContain("example-repo");
   });
 
   it("provider is daytona", () => {
-    expect(sandbox.provider).toBe("daytona");
+    expect(rig.provider).toBe("daytona");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Test 2: Snapshot round-trip preserves sandbox contents
+// Test 2: Snapshot round-trip preserves rig contents
 // ---------------------------------------------------------------------------
 
 describeFunctional("Release test: snapshot round-trip", () => {
   let client: AmikaClient;
-  let sourceSandbox: RemoteSandbox;
+  let sourceRig: RemoteRig;
   let snapshotSlug: string;
-  let fromSnapSandbox: RemoteSandbox;
+  let fromSnapRig: RemoteRig;
 
-  const sourceName = uniqueSandboxName("dylan-snap-src");
-  const snapName = uniqueSandboxName("dylan-roundtrip");
-  const fromSnapName = uniqueSandboxName("dylan-from-snap");
+  const sourceName = uniqueRigName("dylan-snap-src");
+  const snapName = uniqueRigName("dylan-roundtrip");
+  const fromSnapName = uniqueRigName("dylan-from-snap");
 
   beforeAll(async () => {
     client = makeClient();
 
-    // Create and wait for source sandbox
-    const created = await client.createSandbox({
+    // Create and wait for the source rig
+    const created = await client.createRig({
       name: sourceName,
       provider: PROVIDER,
       repoUrl: EXAMPLE_REPO,
@@ -129,24 +132,24 @@ describeFunctional("Release test: snapshot round-trip", () => {
     });
     afterAll(async () => {
       try {
-        await client.deleteSandbox(sourceName);
+        await client.deleteRig(sourceName);
       } catch {
         // Already deleted, or the server is unreachable; ignore.
       }
     });
-    sourceSandbox = await client.waitForSandbox(created.name);
+    sourceRig = await client.waitForRig(created.name);
   }, LONG_TIMEOUT_MS);
 
-  it("source sandbox reaches started state with daytona provider", () => {
-    expect(sourceSandbox.state).toBe("started");
-    expect(sourceSandbox.provider).toBe("daytona");
+  it("source rig reaches started state with daytona provider", () => {
+    expect(sourceRig.state).toBe("started");
+    expect(sourceRig.provider).toBe("daytona");
   });
 
   it(
-    "create full snapshot and poll to active; source sandbox still present",
+    "create full snapshot and poll to active; source rig still present",
     async () => {
-      const snap = await client.createSandboxSnapshot({
-        sandboxRef: sourceSandbox.name,
+      const snap = await client.createRigSnapshot({
+        rigRef: sourceRig.name,
         name: snapName,
         mode: "full",
       });
@@ -157,18 +160,18 @@ describeFunctional("Release test: snapshot round-trip", () => {
 
       await waitForSnapshot(client, snapshotSlug, "active");
 
-      // Source sandbox must still be running
-      const sandboxes = await client.listSandboxes();
-      const src = sandboxes.find((s) => s.name === sourceSandbox.name);
+      // The source rig must still be running
+      const rigs = await client.listRigs();
+      const src = rigs.find((s) => s.name === sourceRig.name);
       expect(src?.state).toBe("started");
     },
     LONG_TIMEOUT_MS,
   );
 
   it(
-    "boot new sandbox from snapshot",
+    "boot a new rig from the snapshot",
     async () => {
-      const created = await client.createSandbox({
+      const created = await client.createRig({
         name: fromSnapName,
         provider: PROVIDER,
         preset: "coder",
@@ -176,14 +179,14 @@ describeFunctional("Release test: snapshot round-trip", () => {
       });
       afterAll(async () => {
         try {
-          await client.deleteSandbox(fromSnapName);
+          await client.deleteRig(fromSnapName);
         } catch {
           // Already deleted, or the server is unreachable; ignore.
         }
       });
 
-      fromSnapSandbox = await client.waitForSandbox(created.name);
-      expect(fromSnapSandbox.state).toBe("started");
+      fromSnapRig = await client.waitForRig(created.name);
+      expect(fromSnapRig.state).toBe("started");
     },
     LONG_TIMEOUT_MS,
   );
@@ -191,7 +194,7 @@ describeFunctional("Release test: snapshot round-trip", () => {
   afterAll(async () => {
     if (snapshotSlug) {
       try {
-        await client.deleteSandboxSnapshot(snapshotSlug);
+        await client.deleteRigSnapshot(snapshotSlug);
       } catch {
         // Already deleted, or the server is unreachable; ignore.
       }
@@ -200,21 +203,21 @@ describeFunctional("Release test: snapshot round-trip", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 3: Scrub-and-delete snapshot removes the source sandbox
+// Test 3: Scrub-and-delete snapshot removes the source rig
 // ---------------------------------------------------------------------------
 
 describeFunctional("Release test: scrub-and-delete snapshot", () => {
   let client: AmikaClient;
-  let sourceSandbox: RemoteSandbox;
+  let sourceRig: RemoteRig;
   let snapshotSlug: string;
 
-  const sourceName = uniqueSandboxName("dylan-scrub-src");
-  const snapName = uniqueSandboxName("dylan-scrub-rt");
+  const sourceName = uniqueRigName("dylan-scrub-src");
+  const snapName = uniqueRigName("dylan-scrub-rt");
 
   beforeAll(async () => {
     client = makeClient();
 
-    const created = await client.createSandbox({
+    const created = await client.createRig({
       name: sourceName,
       provider: PROVIDER,
       repoUrl: EXAMPLE_REPO,
@@ -222,43 +225,41 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
     });
     afterAll(async () => {
       try {
-        await client.deleteSandbox(created.name);
+        await client.deleteRig(created.name);
       } catch {
         // Already deleted by scrub-and-delete, or the server is unreachable; ignore.
       }
     });
-    sourceSandbox = await client.waitForSandbox(created.name);
+    sourceRig = await client.waitForRig(created.name);
   }, LONG_TIMEOUT_MS);
 
-  it("source sandbox reaches started state", () => {
-    expect(sourceSandbox.state).toBe("started");
+  it("source rig reaches started state", () => {
+    expect(sourceRig.state).toBe("started");
   });
 
   it(
     "scrub-and-delete snapshot captures and deletes source on completion",
     async () => {
-      const snap = await client.createSandboxSnapshot({
-        sandboxRef: sourceSandbox.name,
+      const snap = await client.createRigSnapshot({
+        rigRef: sourceRig.name,
         name: snapName,
         mode: "scrub_and_delete",
       });
       snapshotSlug = snap.snapshot;
 
-      // Source sandbox should transition to "snapshotting" immediately
-      const sandboxes = await client.listSandboxes();
-      const src = sandboxes.find((s) => s.name === sourceSandbox.name);
+      // The source rig should transition to "snapshotting" immediately
+      const rigs = await client.listRigs();
+      const src = rigs.find((s) => s.name === sourceRig.name);
       expect(["snapshotting", "started"]).toContain(src?.state);
 
       // Wait for snapshot to go active
       await waitForSnapshot(client, snapshotSlug, "active");
 
-      // Source sandbox must be gone (or in a terminal deleted state).
-      await waitForSandboxGone(client, sourceSandbox.name);
-      const after = await client.listSandboxes();
+      // The source rig must be gone (or in a terminal deleted state).
+      await waitForRigGone(client, sourceRig.name);
+      const after = await client.listRigs();
       expect(
-        after.some(
-          (s) => s.name === sourceSandbox.name && !/delet/i.test(s.state),
-        ),
+        after.some((s) => s.name === sourceRig.name && !/delet/i.test(s.state)),
       ).toBe(false);
     },
     LONG_TIMEOUT_MS,
@@ -267,7 +268,7 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
   afterAll(async () => {
     if (snapshotSlug) {
       try {
-        await client.deleteSandboxSnapshot(snapshotSlug);
+        await client.deleteRigSnapshot(snapshotSlug);
       } catch {
         // Already deleted, or the server is unreachable; ignore.
       }

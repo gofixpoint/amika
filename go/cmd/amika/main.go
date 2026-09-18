@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/gofixpoint/amika/go/internal/buildmeta"
+	"github.com/gofixpoint/amika/go/internal/cliflags"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +32,11 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Version = versionString()
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
+	// Keep the retired --sandbox, --sandbox-name, and --sandbox-by spellings
+	// pointing at the --rig flags that replaced them. Cobra applies this to the
+	// commands already attached here and to every command attached later, so it
+	// holds whichever order the package's init functions run in.
+	rootCmd.SetGlobalNormalizationFunc(cliflags.NormalizeFlagName)
 	output.AddFlag(rootCmd)
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",

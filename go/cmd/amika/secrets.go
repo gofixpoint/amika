@@ -418,8 +418,7 @@ type providerConfig struct {
 	// DisplayName is the user-facing provider name shown in help text
 	// ("Claude Code", "Codex").
 	DisplayName string
-	// ShortName is the prefix used for default credential labels and
-	// terse messages ("Claude", "Codex").
+	// ShortName is used for terse messages ("Claude", "Codex").
 	ShortName string
 	// APIPath is the provider segment of the API endpoint used to build
 	// /api/v0beta1/secrets/<APIPath>.
@@ -459,7 +458,7 @@ When run interactively (no flags), scans all known credential sources:
 
 Examples:
   amika secret claude push
-  amika secret claude push --name "Claude OAuth (Work Laptop)"
+  amika secret claude push --name claude-oauth-work-laptop
   amika secret claude push --from-file ~/.claude/.credentials.json
   amika secret claude push --value '{"claudeAiOauth":{...}}'`,
 	Discover:    discoverClaudeCredentials,
@@ -485,8 +484,8 @@ When using --type to auto-resolve credentials:
 
 Examples:
   amika secret codex push
-  amika secret codex push --type oauth --name "Codex OAuth"
-  amika secret codex push --type api_key --name "Codex API Key"
+  amika secret codex push --type oauth --name codex-oauth
+  amika secret codex push --type api_key --name codex-api-key
   amika secret codex push --from-file ~/.codex/auth.json
   amika secret codex push --value '{"tokens":{"access_token":"..."}}'`,
 	Discover:    discoverCodexCredentials,
@@ -754,9 +753,9 @@ func parseProviderName(cmd *cobra.Command, p providerConfig, credType string) (s
 	}
 
 	reader := bufio.NewReader(cmd.InOrStdin())
-	defaultName := p.ShortName + " OAuth"
+	defaultName := p.Use + "-oauth"
 	if credType == "api_key" {
-		defaultName = p.ShortName + " API Key"
+		defaultName = p.Use + "-api-key"
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Name for this credential [%s]: ", defaultName)
 	input, err := reader.ReadString('\n')

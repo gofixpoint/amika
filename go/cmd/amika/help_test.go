@@ -29,8 +29,8 @@ func TestHelpShowsAliasesForSubcommands(t *testing.T) {
 		wantLines [][]string // each inner slice is a set of strings that must appear together on one line
 	}{
 		{
-			name: "sandbox delete shows rm and remove aliases",
-			args: []string{"sandbox", "--help"},
+			name: "rig delete shows rm and remove aliases",
+			args: []string{"rig", "--help"},
 			wantLines: [][]string{
 				{"delete", "(aliases: rm, remove)"},
 				{"list", "(aliases: ls)"},
@@ -81,8 +81,15 @@ func TestHelpShowsAliasesForSubcommands(t *testing.T) {
 	}
 }
 
+func TestRigHelpShowsSandboxAlias(t *testing.T) {
+	out, _ := runRootCommand("rig", "--help")
+	if !strings.Contains(out, "Aliases:") || !strings.Contains(out, "sandbox") {
+		t.Fatalf("rig help must show the sandbox alias; got:\n%s", out)
+	}
+}
+
 func TestHelpNoAliasesForCommandsWithoutAliases(t *testing.T) {
-	out, _ := runRootCommand("sandbox", "--help")
+	out, _ := runRootCommand("rig", "--help")
 	// "create" has no aliases — its line should not contain "(aliases:"
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "create") && strings.Contains(line, "(aliases:") {

@@ -26,7 +26,10 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	if send == nil {
 		t.Fatal("send command not registered on rootCmd")
 	}
-	for _, name := range []string{"agent", "session-id", "sandbox", "new-session", "git", "repo", "no-git", "stream"} {
+	for _, name := range []string{
+		"agent", "session-id", "rig", "new-session", "git", "repo",
+		"no-git", flagBranch, flagNewBranch, "stream",
+	} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
 		}
@@ -310,16 +313,16 @@ func TestValidateSendRepoFlags(t *testing.T) {
 	})
 
 	t.Run("an existing target refuses an explicit repo rather than dropping it", func(t *testing.T) {
-		// Before inference existed, --repo with --sandbox reached the API as-is.
+		// Before inference existed, --repo with --rig reached the API as-is.
 		// Silently discarding it would be a regression visible only in what the
 		// agent could see, so it is an error.
 		for _, flag := range []string{"--git", "--repo"} {
-			for _, tc := range []struct{ sessionID, sandboxRef string }{
+			for _, tc := range []struct{ sessionID, rigRef string }{
 				{sessionID: "sess-1"},
-				{sandboxRef: "my-sandbox"},
+				{rigRef: "my-rig"},
 			} {
-				err := validateSendRepoFlags(newCmd(t, flag, "https://github.com/a/b.git"), tc.sessionID, tc.sandboxRef)
-				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --sandbox") {
+				err := validateSendRepoFlags(newCmd(t, flag, "https://github.com/a/b.git"), tc.sessionID, tc.rigRef)
+				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --rig") {
 					t.Fatalf("err = %v for %s %+v, want a refusal", err, flag, tc)
 				}
 				if !strings.Contains(err.Error(), flag) {
@@ -424,8 +427,30 @@ func TestPrintSendRepo(t *testing.T) {
 	}
 }
 
+func TestBranchForDisplay(t *testing.T) {
+	tests := []struct {
+		name string
+		req  gitrepo.BranchRequest
+		want string
+	}{
+		{name: "base branch", req: gitrepo.BranchRequest{Branch: "release"}, want: "release"},
+		{
+			name: "new branch instead of its base",
+			req:  gitrepo.BranchRequest{Branch: "release", NewBranch: "feature/x"},
+			want: "feature/x",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := branchForDisplay(tt.req); got != tt.want {
+				t.Fatalf("branchForDisplay(%+v) = %q, want %q", tt.req, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestValidateSendBranchFlags pins that a branch aimed at an already-created
-// sandbox is refused rather than dropped, the same rule the repo flags follow.
+// rig is refused rather than dropped, the same rule the repo flags follow.
 func TestValidateSendBranchFlags(t *testing.T) {
 	newCmd := func(t *testing.T, args ...string) *cobra.Command {
 		t.Helper()
@@ -442,12 +467,12 @@ func TestValidateSendBranchFlags(t *testing.T) {
 
 	t.Run("a branch flag with an existing target is refused", func(t *testing.T) {
 		for _, flag := range []string{"--" + flagBranch, "--" + flagNewBranch} {
-			for _, tc := range []struct{ sessionID, sandboxRef string }{
+			for _, tc := range []struct{ sessionID, rigRef string }{
 				{sessionID: "sess-1"},
-				{sandboxRef: "my-sandbox"},
+				{rigRef: "my-rig"},
 			} {
-				err := validateSendRepoFlags(newCmd(t, flag, "release"), tc.sessionID, tc.sandboxRef)
-				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --sandbox") {
+				err := validateSendRepoFlags(newCmd(t, flag, "release"), tc.sessionID, tc.rigRef)
+				if err == nil || !strings.Contains(err.Error(), "cannot be combined with --session-id or --rig") {
 					t.Fatalf("err = %v for %s %+v, want a refusal", err, flag, tc)
 				}
 				// The message must name the flag the caller actually typed.
@@ -458,7 +483,7 @@ func TestValidateSendBranchFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("branch flags are fine for a sandbox this command creates", func(t *testing.T) {
+	t.Run("branch flags are fine for a rig this command creates", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"--" + flagBranch, "release"},
 			{"--" + flagNewBranch, "feature/x"},
@@ -478,4 +503,30 @@ func TestValidateSendBranchFlags(t *testing.T) {
 			t.Fatalf("err = %v, want the repo flag named", err)
 		}
 	})
+}
+
+func TestSendBranchesRequiresRepoForBranchFlags(t *testing.T) {
+	newCmd := func(t *testing.T, args ...string) *cobra.Command {
+		t.Helper()
+		cmd := &cobra.Command{Use: "send"}
+		cmd.Flags().String(flagBranch, "", "branch")
+		cmd.Flags().String(flagNewBranch, "", "new-branch")
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		return cmd
+	}
+
+	for _, flag := range []string{"--" + flagBranch, "--" + flagNewBranch} {
+		t.Run(flag, func(t *testing.T) {
+			_, err := sendBranches(newCmd(t, flag, "release"), gitrepo.Identity{})
+			if err == nil || !strings.Contains(err.Error(), flag+" requires a git repository") {
+				t.Fatalf("err = %v, want a missing-repository refusal", err)
+			}
+		})
+	}
+
+	if _, err := sendBranches(newCmd(t), gitrepo.Identity{}); err != nil {
+		t.Fatalf("no branch flags: %v", err)
+	}
 }

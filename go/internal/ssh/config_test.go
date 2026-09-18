@@ -201,16 +201,13 @@ func TestUpsertSessionHostRendersConcreteAliasBeforeWildcardSettings(t *testing.
 	}
 }
 
-func TestEnsureIncludeCreatesAndIsIdempotent(t *testing.T) {
+func TestEnsureIncludeCreatesMissingConfig(t *testing.T) {
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
 	includeLine := "Include " + basedir.SSHAmikaConfigName()
 
 	if err := EnsureInclude(paths); err != nil {
-		t.Fatalf("EnsureInclude (create): %v", err)
-	}
-	if err := EnsureInclude(paths); err != nil {
-		t.Fatalf("EnsureInclude (idempotent): %v", err)
+		t.Fatalf("EnsureInclude: %v", err)
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -220,10 +217,13 @@ func TestEnsureIncludeCreatesAndIsIdempotent(t *testing.T) {
 	if n := strings.Count(string(data), includeLine); n != 1 {
 		t.Fatalf("expected exactly 1 include line, got %d:\n%s", n, data)
 	}
+	if !strings.HasPrefix(string(data), includeStanza+includeLine+"\n") {
+		t.Fatalf("include stanza is not first:\n%s", data)
+	}
 	assertPerm(t, configPath, 0o600)
 }
 
-func TestEnsureIncludePreservesExistingConfig(t *testing.T) {
+func TestEnsureIncludePrependsToConfigWithoutInclude(t *testing.T) {
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
@@ -243,13 +243,9 @@ func TestEnsureIncludePreservesExistingConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, existing) {
-		t.Errorf("existing config not preserved:\n%s", content)
-	}
-	includeIdx := strings.Index(content, "Include "+basedir.SSHAmikaConfigName())
-	hostIdx := strings.Index(content, "Host example")
-	if includeIdx < 0 || includeIdx > hostIdx {
-		t.Errorf("include should precede existing Host blocks:\n%s", content)
+	want := includeStanza + "Include " + basedir.SSHAmikaConfigName() + "\n\n" + existing
+	if content != want {
+		t.Errorf("config rewrite mismatch:\ngot:\n%s\nwant:\n%s", content, want)
 	}
 }
 
@@ -295,11 +291,9 @@ func TestEnsureIncludePreservesSymlinkedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "Include "+basedir.SSHAmikaConfigName()) {
-		t.Errorf("target config missing include:\n%s", content)
-	}
-	if !strings.Contains(content, existing) {
-		t.Errorf("target config did not preserve existing content:\n%s", content)
+	want := includeStanza + "Include " + basedir.SSHAmikaConfigName() + "\n\n" + existing
+	if content != want {
+		t.Errorf("target config rewrite mismatch:\ngot:\n%s\nwant:\n%s", content, want)
 	}
 	assertPerm(t, targetPath, 0o600)
 }
@@ -544,5 +538,127 @@ func TestLegacySessionStateLosesItsEnvironmentAgnosticWildcard(t *testing.T) {
 	}
 	if !strings.Contains(string(conf), "ProxyCommand "+binary+" plumbing ssh-stdio-proxy %h") {
 		t.Errorf("amika.conf missing the resolved ProxyCommand:\n%s", conf)
+	}
+}
+
+// A user who uploads their public key through the web UI never runs
+// `secret ssh-keygen`, so nothing has created key material locally. The block
+// still has to be written, naming the default paths the key will land in.
+func TestEnsureSessionConfigWritesTheBlockWithoutAnyKeyMaterial(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "https://app.amika.dev")
+	binary := testBinary(t, "amika")
+
+	if _, err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+
+	identityPath, _ := paths.SSHIdentityFile()
+	knownHostsPath, _ := paths.SSHKnownHostsFile()
+	if _, err := os.Stat(identityPath); !os.IsNotExist(err) {
+		t.Fatalf("EnsureSessionConfig must not create key material: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	want := "Host *.app-amika-dev.amika\n" +
+		"  User amika\n" +
+		"  IdentityFile " + identityPath + "\n" +
+		"  IdentitiesOnly yes\n" +
+		"  StrictHostKeyChecking yes\n" +
+		"  UserKnownHostsFile " + knownHostsPath + "\n" +
+		"  ProxyCommand " + binary + " plumbing ssh-stdio-proxy %h\n" +
+		"  ServerAliveInterval 15\n" +
+		"  ServerAliveCountMax 3\n"
+	if !strings.Contains(string(conf), want) {
+		t.Errorf("amika.conf missing the session block:\nwant:\n%s\ngot:\n%s", want, conf)
+	}
+
+	// The block only takes effect once ~/.ssh/config pulls the file in.
+	sshConfigPath, _ := paths.SSHConfigFile()
+	sshConfig, err := os.ReadFile(sshConfigPath)
+	if err != nil {
+		t.Fatalf("read ssh config: %v", err)
+	}
+	if !strings.Contains(string(sshConfig), "Include "+basedir.SSHAmikaConfigName()) {
+		t.Errorf("ssh config missing the Include line:\n%s", sshConfig)
+	}
+}
+
+// Ensuring the block must not silently retarget an identity imported by
+// `secret ssh-keygen --import`, whose private key lives outside the default
+// path and is the only one the control plane holds the public half of.
+func TestEnsureSessionConfigKeepsAnImportedIdentity(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "https://app.amika.dev")
+	testBinary(t, "amika")
+
+	imported := SessionConfig{
+		IdentityFile:   "/home/user/keys/work_ed25519",
+		KnownHostsFile: "/home/user/keys/amika_known_hosts",
+	}
+	if err := ConfigureSession(paths, imported); err != nil {
+		t.Fatalf("ConfigureSession: %v", err)
+	}
+	if _, err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+
+	confPath, _ := paths.SSHAmikaConfigFile()
+	conf, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read amika.conf: %v", err)
+	}
+	if !strings.Contains(string(conf), "  IdentityFile "+imported.IdentityFile+"\n") {
+		t.Errorf("imported identity was replaced:\n%s", conf)
+	}
+	defaultIdentity, _ := paths.SSHIdentityFile()
+	if strings.Contains(string(conf), defaultIdentity) {
+		t.Errorf("amika.conf reverted to the default identity:\n%s", conf)
+	}
+}
+
+func TestEnsureIncludeWritesCodexDiscoveryComment(t *testing.T) {
+	paths := testPaths(t)
+	if err := EnsureInclude(paths); err != nil {
+		t.Fatalf("EnsureInclude: %v", err)
+	}
+	configPath, _ := paths.SSHConfigFile()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	want := includeStanza + "Include " + basedir.SSHAmikaConfigName() + "\n"
+	if content != want {
+		t.Errorf("config mismatch:\ngot:\n%s\nwant:\n%s", content, want)
+	}
+}
+
+func TestEnsureIncludeDoesNotModifyConfigWithExistingInclude(t *testing.T) {
+	includeLine := "Include " + basedir.SSHAmikaConfigName()
+	paths := testPaths(t)
+	configPath, _ := paths.SSHConfigFile()
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	existing := "Host example\n  HostName example.com\n\n" + includeLine + "\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureInclude(paths); err != nil {
+		t.Fatalf("EnsureInclude: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != existing {
+		t.Errorf("config was rewritten:\ngot:\n%s\nwant:\n%s", data, existing)
 	}
 }

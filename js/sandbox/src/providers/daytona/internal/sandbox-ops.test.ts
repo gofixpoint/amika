@@ -4,7 +4,11 @@ import {
   SANDBOX_ENV_SECRETS_EXCLUDED_LABEL,
   SANDBOX_ENV_SECRETS_EXCLUDED_VALUE,
 } from "../../../constants";
-import { createDaytonaSandbox, deleteDaytonaSandbox } from "./operations";
+import {
+  createDaytonaSandbox,
+  deleteDaytonaSandbox,
+  startDaytonaSandbox,
+} from "./operations";
 
 vi.mock("@daytonaio/sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@daytonaio/sdk")>();
@@ -139,6 +143,7 @@ describe("createDaytonaSandbox", () => {
     expect(Object.keys(envVars).sort()).toEqual([
       "AMIKA_AGENT_CWD",
       "AMIKA_OPENCODE_WEB",
+      "AMIKA_RIG_NAME",
       "AMIKA_SANDBOX_NAME",
     ]);
     expect(envVars.AMIKA_OPENCODE_WEB).toBe("1");
@@ -146,6 +151,7 @@ describe("createDaytonaSandbox", () => {
     // The sandbox name is baked into the container env so the launched agent
     // (a non-login exec that doesn't source /etc/environment) can see it.
     expect(envVars.AMIKA_SANDBOX_NAME).toBe("sb");
+    expect(envVars.AMIKA_RIG_NAME).toBe("sb");
     // A scrub-safe base earns the clean-env marker, which lets
     // snapshot-and-delete distinguish this sandbox from ones with baked-in
     // container env secrets.
@@ -293,5 +299,53 @@ describe("createDaytonaSandbox", () => {
     expect(body.labels[SANDBOX_ENV_SECRETS_EXCLUDED_LABEL]).toBe(
       SANDBOX_ENV_SECRETS_EXCLUDED_VALUE,
     );
+  });
+});
+
+describe("startDaytonaSandbox", () => {
+  function setupMockSandbox(): {
+    setAutostopInterval: ReturnType<typeof vi.fn>;
+    start: ReturnType<typeof vi.fn>;
+  } {
+    const sandbox = {
+      setAutostopInterval: vi.fn().mockResolvedValue(undefined),
+      start: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(Daytona).mockImplementation(function () {
+      return {
+        get: vi.fn().mockResolvedValue(sandbox),
+      } as unknown as InstanceType<typeof Daytona>;
+    });
+    return sandbox;
+  }
+
+  it("re-applies the given interval before resuming", async () => {
+    const sandbox = setupMockSandbox();
+
+    await startDaytonaSandbox(testConfig(), "sandbox-1", 30);
+
+    expect(sandbox.setAutostopInterval).toHaveBeenCalledWith(30);
+    expect(sandbox.start).toHaveBeenCalledTimes(1);
+    expect(
+      sandbox.setAutostopInterval.mock.invocationCallOrder[0],
+    ).toBeLessThan(sandbox.start.mock.invocationCallOrder[0]);
+  });
+
+  it("leaves the server-side interval alone when none is given", async () => {
+    const sandbox = setupMockSandbox();
+
+    await startDaytonaSandbox(testConfig(), "sandbox-1");
+    await startDaytonaSandbox(testConfig(), "sandbox-1", null);
+
+    expect(sandbox.setAutostopInterval).not.toHaveBeenCalled();
+    expect(sandbox.start).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a never-auto-stop interval of 0", async () => {
+    const sandbox = setupMockSandbox();
+
+    await startDaytonaSandbox(testConfig(), "sandbox-1", 0);
+
+    expect(sandbox.setAutostopInterval).toHaveBeenCalledWith(0);
   });
 });

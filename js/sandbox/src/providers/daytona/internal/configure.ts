@@ -89,7 +89,7 @@ exit 0
  * Stop the Docker daemon and leave `/var/lib/docker` at rest before a
  * snapshot is captured.
  *
- * Dind sandboxes (`coder-dind` preset) start `dockerd` from the image's
+ * Dind sandboxes (`coder-plus-docker` preset) start `dockerd` from the image's
  * `pre-setup.sh` hook on every boot. A snapshot taken while the daemon is
  * live bakes in the source sandbox's mid-flight Docker state — active
  * overlay mounts and network namespaces that no longer exist on a fresh

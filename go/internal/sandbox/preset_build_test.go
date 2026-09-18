@@ -15,11 +15,11 @@ func TestBuildPresetImage_BuildsGeneratedDockerfile(t *testing.T) {
 		return nil
 	}
 
-	if err := BuildPresetImage("coder-dind", "/tmp/context", io.Discard); err != nil {
+	if err := BuildPresetImage("coder-plus-docker", "/tmp/context", io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	want := "amika/coder-dind:latest|/tmp/context|sandbox-image/generated/coder-dind.Dockerfile|map[]"
+	want := "amika/coder-plus-docker:latest|/tmp/context|sandbox-image/generated/coder-plus-docker.Dockerfile|map[]"
 	if built != want {
 		t.Fatalf("built = %q, want %q", built, want)
 	}

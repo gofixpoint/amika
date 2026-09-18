@@ -13,9 +13,10 @@ const sandboxConnectWorkdir = "/home/amika"
 // New builds the sandbox command tree.
 func New() *cobra.Command {
 	sandboxCmd := &cobra.Command{
-		Use:   "sandbox",
-		Short: "Manage sandboxes",
-		Long:  `Create and delete sandboxed environments backed by container providers.`,
+		Use:     "rig",
+		Aliases: []string{"sandbox"},
+		Short:   "Manage rigs",
+		Long:    "Create and delete rig environments backed by container providers. The legacy `sandbox` command remains an alias.",
 	}
 
 	sandboxCmd.AddCommand(sandboxCreateCmd)
@@ -34,6 +35,8 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV1Cmd)
 	sandboxCmd.AddCommand(sandboxAgentSendCmd)
+	sandboxCmd.AddCommand(sandboxBindCmd)
+	sandboxCmd.AddCommand(sandboxBindingsCmd)
 
 	sandboxCmd.PersistentFlags().Bool("local", false, "Only operate on local sandboxes")
 	sandboxCmd.PersistentFlags().Bool("remote", false, "Only operate on remote sandboxes")
@@ -43,7 +46,7 @@ func New() *cobra.Command {
 	addProviderFlag(sandboxCreateCmd)
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
 	sandboxCreateCmd.Flags().String("image", sandbox.DefaultCoderImage, "Docker image to use")
-	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-dind")`)
+	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-plus-docker")`)
 	sandboxCreateCmd.Flags().StringArray("mount", nil, "Mount a host directory (source:target[:mode], mode defaults to rwcopy)")
 	sandboxCreateCmd.Flags().StringArray("volume", nil, "Mount an existing named volume (name:target[:mode], mode defaults to rw)")
 	sandboxCreateCmd.Flags().StringArray("port", nil, "Publish a container port (hostPort:containerPort[/protocol], protocol defaults to tcp)")
@@ -86,6 +89,12 @@ func New() *cobra.Command {
 	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
 	sandboxAgentSendCmd.Flags().String("session-id", "", "Resume an existing agent session by ID (remote sandboxes only)")
 	sandboxAgentSendCmd.Flags().Bool("new-session", false, "Start a new agent session (remote sandboxes only)")
+	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
+	sandboxBindCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")
+	sandboxBindingsListCmd.Flags().String("rig", "", "Only show bindings for this rig (name or id)")
+	sandboxBindingsListCmd.Flags().String("rig-by", "ref", "Resolve --rig by ref, name, or id")
+	sandboxBindingsDeleteCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")
+	sandboxBindingsDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
 	return sandboxCmd
 }

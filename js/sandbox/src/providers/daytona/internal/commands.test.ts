@@ -61,7 +61,7 @@ describe("buildDaytonaCommand", () => {
       env: { FOO: "bar" },
     });
     expect(cmd).toContain(
-      "--preserve-env=AMIKA_AGENT_CWD,AMIKA_OPENCODE_WEB,OPENCODE_SERVER_PASSWORD,FOO",
+      "--preserve-env=AMIKA_AGENT_CWD,AMIKA_OPENCODE_WEB,AMIKA_SANDBOX_NAME,AMIKA_RIG_NAME,OPENCODE_SERVER_PASSWORD,FOO",
     );
   });
 

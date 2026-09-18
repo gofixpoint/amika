@@ -465,9 +465,8 @@ func resolveSessionRendering(session SessionConfig) (string, string, error) {
 }
 
 // EnsureInclude makes sure ~/.ssh/config pulls in the managed amika.conf via an
-// Include directive near the top (Include must precede Host blocks to take
-// effect, since ssh resolves options first-match-wins). It is idempotent and
-// creates ~/.ssh/config if absent.
+// Include directive before every Host block so Codex discovers the managed
+// hosts. It is idempotent and creates ~/.ssh/config if absent.
 func EnsureInclude(paths basedir.Paths) error {
 	configPath, err := paths.SSHConfigFile()
 	if err != nil {
@@ -476,10 +475,28 @@ func EnsureInclude(paths basedir.Paths) error {
 	return ensureIncludeIn(configPath)
 }
 
+// includeStanza explains why the managed Include is prepended and shows how to
+// add an SSH option that amika.conf does not already set. OpenSSH keeps the
+// first value it finds for most options, so a block below the Include cannot
+// replace scalar values already supplied by amika.conf.
+const includeStanza = "# This `Include` directive must be the first line, or Codex cannot find your Amika SSH\n" +
+	"# hosts.\n" +
+	"#\n" +
+	"# To modify amika SSH target settings, add another host config block below this, like:\n" +
+	"#\n" +
+	"# ```\n" +
+	"# Host *.amika\n" +
+	"#   ForwardAgent yes\n" +
+	"# ```\n"
+
 // ensureIncludeIn prepends the Include line for the managed config to an ssh
 // config file, creating the file when absent and preserving existing content.
 // It is target-agnostic so the Windows mirror can maintain its own config the
 // same way the Linux one is maintained.
+//
+// The line is left wherever it already is. Detecting it anywhere counts as
+// present, because moving a line in the user's config is a bigger liberty
+// than adding one.
 func ensureIncludeIn(configPath string) error {
 	writePath, err := resolveWriteTarget(configPath)
 	if err != nil {
@@ -495,16 +512,15 @@ func ensureIncludeIn(configPath string) error {
 		return nil
 	}
 
-	var content string
-	if len(existing) == 0 {
-		content = includeLine + "\n"
-	} else {
-		content = includeLine + "\n\n" + string(existing)
+	content := includeStanza + includeLine + "\n"
+	if len(existing) > 0 {
+		content += "\n" + string(existing)
 	}
 	return writeFileAtomic(writePath, []byte(content), 0o600)
 }
 
-// hasIncludeLine reports whether the config already includes the managed file.
+// hasIncludeLine reports whether the config already includes the managed file,
+// wherever it sits.
 func hasIncludeLine(content, includeLine string) bool {
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {

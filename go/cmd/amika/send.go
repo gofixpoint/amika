@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Branch-selection flags, spelled as `amika sandbox create` spells them.
+// Branch-selection flags, spelled as `amika rig create` spells them.
 const (
 	flagBranch    = "branch"
 	flagNewBranch = "new-branch"
@@ -52,7 +52,7 @@ var sendCmd = &cobra.Command{
 	Short: "Send a message to a coding agent, creating a sandbox if needed",
 	Long: `Send a message to a coding agent via the remote agent-sessions API.
 
-If neither --session-id nor --sandbox is given, a sandbox is created behind the
+If neither --session-id nor --rig is given, a sandbox is created behind the
 scenes and a new chat is started; the returned session id can be passed back as
 --session-id to continue the conversation. The agent (claude or codex) comes
 from --agent, else the organization's default, else claude.
@@ -64,12 +64,12 @@ a sandbox with no repo at all; --repo is accepted as an alias for --git.
 
 The branch you have checked out is cloned too, so the sandbox holds the work
 you are looking at. --branch checks out a different one and --new-branch cuts
-a new branch; both mirror "amika sandbox create". A branch the remote does not
+a new branch; both mirror "amika rig create". A branch the remote does not
 have yet is refused, since the sandbox would otherwise come up on the default
 branch without saying so.
 
 Repo and branch selection only apply to a sandbox this command creates, so
-neither can be combined with --session-id or --sandbox.
+neither can be combined with --session-id or --rig.
 
 The message can be provided as a positional argument or piped via stdin.
 
@@ -103,7 +103,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 
 	agent, _ := cmd.Flags().GetString("agent")
 	sessionID, _ := cmd.Flags().GetString("session-id")
-	sandboxRef, _ := cmd.Flags().GetString("sandbox")
+	rigRef, _ := cmd.Flags().GetString("rig")
 	newSession, _ := cmd.Flags().GetBool("new-session")
 
 	format, err := output.FormatFrom(cmd)
@@ -128,7 +128,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 	// them costs nothing, so a login should not stand between the caller and
 	// a plain flag conflict. Only the flag-level checks move up — a bad path
 	// needs the filesystem, so it still waits.
-	if err := validateSendRepoFlags(cmd, sessionID, sandboxRef); err != nil {
+	if err := validateSendRepoFlags(cmd, sessionID, rigRef); err != nil {
 		return err
 	}
 
@@ -142,7 +142,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 	// and shells out to git, and login is the precondition for all of it, so
 	// someone not logged in hears that rather than a complaint about their
 	// git remote.
-	repoURL, identity, err := sendRepo(cmd, sessionID, sandboxRef)
+	repoURL, identity, err := sendRepo(cmd, sessionID, rigRef)
 	if err != nil {
 		return err
 	}
@@ -150,13 +150,13 @@ func runSend(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printSendRepo(format, os.Stderr, identity.Name, branches.Branch)
+	printSendRepo(format, os.Stderr, identity.Name, branchForDisplay(branches))
 
 	req := apiclient.AgentSessionSendRequest{
 		Message:    message,
 		Agent:      agent,
 		SessionID:  sessionID,
-		SandboxID:  sandboxRef,
+		SandboxID:  rigRef,
 		NewSession: newSession,
 		RepoURL:    repoURL,
 
@@ -218,20 +218,29 @@ func printSendRepo(format output.Format, w io.Writer, name, branch string) {
 	fmt.Fprintf(format.Progress(w), "repo: %s\n", name)
 }
 
+// branchForDisplay reports the branch the sandbox checks out. Branch is only
+// the base when NewBranch is present, so the new branch takes precedence.
+func branchForDisplay(branches gitrepo.BranchRequest) string {
+	if branches.NewBranch != "" {
+		return branches.NewBranch
+	}
+	return branches.Branch
+}
+
 // validateSendRepoFlags rejects a repo or branch selection this command cannot
 // honor, using only the flags themselves so it can run before the auth gate.
 //
 // Beyond the contradictions gitrepo knows about, `send` has one of its own:
-// --session-id and --sandbox address a sandbox that already exists, so nothing
+// --session-id and --rig address a sandbox that already exists, so nothing
 // is created and neither a repo nor a branch can be honored. Refusing beats
 // dropping the flag from the request, which would show up only in what the
 // agent could see. --no-git needs no such refusal — it asks for exactly what
 // already happens there.
-func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) error {
+func validateSendRepoFlags(cmd *cobra.Command, sessionID, rigRef string) error {
 	if err := gitrepo.ValidateFlags(cmd); err != nil {
 		return err
 	}
-	if sessionID == "" && sandboxRef == "" {
+	if sessionID == "" && rigRef == "" {
 		return nil
 	}
 	flag := gitrepo.RequestedFlag(cmd)
@@ -247,7 +256,7 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) err
 	}
 	if flag != "" {
 		return fmt.Errorf(
-			"--%s cannot be combined with --session-id or --sandbox; it only applies to a sandbox this command creates",
+			"--%s cannot be combined with --session-id or --rig; it only applies to a sandbox this command creates",
 			flag)
 	}
 	return nil
@@ -258,10 +267,10 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, sandboxRef string) err
 // there is no repo to name).
 //
 // A message aimed at an existing chat (--session-id) or an existing sandbox
-// (--sandbox) creates nothing, so there is no repo to choose and the working
+// (--rig) creates nothing, so there is no repo to choose and the working
 // directory is not consulted at all.
-func sendRepo(cmd *cobra.Command, sessionID, sandboxRef string) (url string, identity gitrepo.Identity, err error) {
-	if sessionID != "" || sandboxRef != "" {
+func sendRepo(cmd *cobra.Command, sessionID, rigRef string) (url string, identity gitrepo.Identity, err error) {
+	if sessionID != "" || rigRef != "" {
 		// validateSendRepoFlags has already refused an explicit repo here, so
 		// this is the "nothing was asked for" case: skip detection entirely.
 		return "", gitrepo.Identity{}, nil
@@ -288,11 +297,18 @@ func sendRepo(cmd *cobra.Command, sessionID, sandboxRef string) (url string, ide
 // repo, the pair comes from the same resolver `sandbox create` uses, so both
 // commands carry over the current branch and refuse an unpushed one alike.
 func sendBranches(cmd *cobra.Command, identity gitrepo.Identity) (gitrepo.BranchRequest, error) {
-	if identity.Source == gitrepo.SourceNone {
-		return gitrepo.BranchRequest{}, nil
-	}
 	branch, _ := cmd.Flags().GetString(flagBranch)
 	newBranch, _ := cmd.Flags().GetString(flagNewBranch)
+	if identity.Source == gitrepo.SourceNone {
+		for _, name := range []string{flagBranch, flagNewBranch} {
+			if cmd.Flags().Changed(name) {
+				return gitrepo.BranchRequest{}, fmt.Errorf(
+					"--%s requires a git repository; remove --no-git or select one with --git",
+					name)
+			}
+		}
+		return gitrepo.BranchRequest{}, nil
+	}
 	return gitrepo.ResolveBranch(identity, gitrepo.BranchRequest{
 		Branch:    branch,
 		NewBranch: newBranch,
@@ -525,7 +541,7 @@ func strOrDash(s *string, fallbacks ...string) string {
 func init() {
 	sendCmd.Flags().String("agent", "", "Coding agent to use: claude or codex (default: org setting, else claude)")
 	sendCmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
-	sendCmd.Flags().String("sandbox", "", "Send into a specific sandbox (id or name)")
+	sendCmd.Flags().String("rig", "", "Send into a specific rig (id or name)")
 	sendCmd.Flags().Bool("new-session", false, "Start a brand-new chat")
 	gitrepo.AddFlags(sendCmd,
 		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",

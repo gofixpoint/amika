@@ -8,10 +8,55 @@ import (
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/auth"
+	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
+
+// ensureSSHSessionConfig refreshes the managed SSH config for the control
+// plane just logged in to, so a user whose public key was uploaded through
+// the web UI (and who therefore never runs `amika secret ssh-keygen`) still
+// ends up with the session block `amika sandbox ssh` needs.
+//
+// It names the files it touched. `~/.ssh/config` governs every SSH connection
+// the machine makes, not just Amika's, and it is commonly a symlink into a
+// dotfiles repo, so editing it as a side effect of logging in is not
+// something to do quietly.
+//
+// A failure only warns. The credential is already stored by this point, so
+// returning an error would report a login that actually succeeded as failed,
+// and every command that needs the block rewrites it on use anyway. The
+// warning goes to stderr to keep `-o json` stdout a single JSON value, while
+// the routine disclosure goes through Progress, which discards it in JSON
+// mode.
+func ensureSSHSessionConfig(cmd *cobra.Command, format output.Format) {
+	paths := basedir.New("")
+	session, err := ssh.EnsureSessionConfig(paths)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"Warning: could not update the managed SSH config (%v); run `amika secret ssh-keygen` to retry.\n", err)
+		return
+	}
+	out := format.Progress(cmd.OutOrStdout())
+	amikaConfig, configErr := paths.SSHAmikaConfigFile()
+	sshConfig, sshConfigErr := paths.SSHConfigFile()
+	if configErr == nil && sshConfigErr == nil {
+		fmt.Fprintf(out, "Updated %s, included from %s.\n", amikaConfig, sshConfig)
+	}
+
+	// The block names an identity whether or not one exists yet, so say so
+	// rather than letting the first `sandbox ssh` be where the user finds
+	// out. Both fixes are offered: a UI-uploaded key already has a private
+	// half somewhere, and only --import points the config at it.
+	if info, statErr := os.Stat(session.IdentityFile); statErr != nil || !info.Mode().IsRegular() {
+		fmt.Fprintf(out, "No SSH identity at %s yet, so `amika sandbox ssh` will not connect until you add one:\n",
+			session.IdentityFile)
+		fmt.Fprintln(out, "  amika secret ssh-keygen                                 # create a new key")
+		fmt.Fprintln(out, "  amika secret ssh-keygen --import <path>.pub             # use a key you already have")
+	}
+}
 
 // logoutJSON is the JSON representation of `auth logout`, reporting which
 // stored credentials were cleared.
@@ -127,6 +172,7 @@ managers in CI (for example: "vault kv get -field=key … | amika auth login --a
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s\n", session.Email)
+		ensureSSHSessionConfig(cmd, format)
 		return nil
 	},
 }
@@ -151,9 +197,11 @@ func loginWithAPIKeyFile(cmd *cobra.Command, path string, format output.Format) 
 		return fmt.Errorf("saving api key: %w", err)
 	}
 	if format.IsJSON() {
+		ensureSSHSessionConfig(cmd, format)
 		return format.JSON(cmd.OutOrStdout(), authStatusJSON{Authenticated: true, Method: "stored_api_key", Warnings: []string{}})
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "Stored API key")
+	ensureSSHSessionConfig(cmd, format)
 	return nil
 }
 

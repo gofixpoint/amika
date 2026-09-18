@@ -72,7 +72,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 
 ## Runtime Dependencies
 
-- **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `coder-dind`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
+- **Docker** is required for `materialize`, `sandbox`, and `volume` commands. Preset images (`coder`, `coder-plus-docker`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
 - **rsync** is required by the `materialize` command to copy output files.
 
 ## Code Structure

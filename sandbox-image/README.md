@@ -1,6 +1,6 @@
 # Sandbox image bundle
 
-This directory is the source of truth for the `coder` and `coder-dind`
+This directory is the source of truth for the `coder` and `coder-plus-docker`
 sandbox images. The manifest declares the image contract, ordered steps,
 assets, version pins, and preset membership. Provider publishers and the local
 CLI consume generated artifacts rather than implementing provisioning logic of
@@ -37,9 +37,9 @@ generator instead.
 The generator writes these provider-facing artifacts:
 
 - `generated/coder.Dockerfile`
-- `generated/coder-dind.Dockerfile`
-- `generated/daytona/{coder,coder-dind}.Dockerfile`
-- `generated/e2b/{coder,coder-dind}.Dockerfile`
+- `generated/coder-plus-docker.Dockerfile`
+- `generated/daytona/{coder,coder-plus-docker}.Dockerfile`
+- `generated/e2b/{coder,coder-plus-docker}.Dockerfile`
 - `generated/bundle.json`
 
 The top-level Dockerfiles contain the shared preset steps and remain the OCI
@@ -71,6 +71,28 @@ distinct local tag and publishes that image to linux-vm snapshots. The
 container-class Daytona path continues to build the shared Dockerfile because
 it honors OCI runtime metadata without the VM-specific systemd override.
 
+The generator also copies `.agents/skills/amika-cli/` from the repository root
+into `assets/skills/amika-cli/`, which the `agent-skill` step installs into the
+runtime home and `/etc/skel`. The image needs its own copy because a bundle
+must be self-contained: the Go CLI extracts only `sandbox-image/` into its
+build context, so a generated Dockerfile cannot `COPY` from above this
+directory. Edit the skill at the repository root, never the copy; `--check`
+fails on any divergence between the two.
+
+Only one tree of skills is installed, at `~/.agents/skills`. opencode and pi
+load that path themselves. Claude Code does not, so the step also links
+`~/.claude/skills` at it (`image.agent_skill_link`); that harness reads
+`~/.agents/skills` only as an import source, and loads user skills from
+`~/.claude/skills` alone. A link rather than a second copy because Claude Code
+follows one, opencode collapses the tree it then reaches by two paths, and one
+tree cannot drift from itself.
+
+The `agent-skill` step installs its whole asset directory, so its declared
+`assets` list is the one part of that copy still written by hand. The generator
+validates the list against the source tree in both modes and prints the block
+to paste, so adding a reference file cannot leave `bundle.json` describing a
+skill smaller than the one installed.
+
 The generator also synchronizes `go/internal/sandbox/sandbox-image/`. That is
 the Go-embed mirror of the bundle, including generated Dockerfiles, scripts,
 assets, and verification files. It is committed because `go install` must build
@@ -83,7 +105,7 @@ Build a generated image directly from this repository:
 
 ```bash
 ./sandbox-image/build.sh coder
-./sandbox-image/build.sh coder-dind amika/coder-dind:dev
+./sandbox-image/build.sh coder-plus-docker amika/coder-plus-docker:dev
 ```
 
 The build context must be the repository root because generated Dockerfiles

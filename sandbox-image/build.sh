@@ -3,13 +3,13 @@
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "usage: $0 <coder|coder-dind> [image-tag]" >&2
+  echo "usage: $0 <coder|coder-plus-docker> [image-tag]" >&2
   exit 64
 fi
 
 preset="$1"
 case "$preset" in
-  coder|coder-dind) ;;
+  coder|coder-plus-docker) ;;
   *) echo "unknown sandbox image preset: $preset" >&2; exit 64 ;;
 esac
 

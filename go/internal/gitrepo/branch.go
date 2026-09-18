@@ -25,7 +25,7 @@ type BranchRequest struct {
 // Whenever --branch is absent, the checked-out branch becomes the base: a
 // sandbox for "the thing I am working on" should hold that thing, and a new
 // branch should be cut from it. Leaving the base empty would hand the server
-// nothing to start from, so it would use its default branch instead — the
+// nothing to start from, so it would use its default branch instead. That is
 // same code the caller is not looking at.
 //
 // An inferred base must exist on the remote, since that is where the sandbox
@@ -68,16 +68,14 @@ func ResolveBranch(identity Identity, req BranchRequest) (BranchRequest, error) 
 // what remote the branch tracks.
 //
 // The ancestry check uses "git merge-base --is-ancestor", which requires
-// both SHAs to be in the local object store. The remote SHA (obtained via
-// ls-remote) may not be local if the user hasn't fetched recently — the
-// common case when someone else pushes to the branch. To avoid a fetch
-// (which would mutate local state), we fall back to comparing against the
-// last-fetched tracking ref (refs/remotes/origin/<branch>). If local
-// hasn't moved past that ref, and the remote is even further ahead, then
-// local is certainly behind remote and it is safe to proceed.
+// both SHAs to be in the local object store. If the remote tip has not been
+// fetched, fetch that exact advertised object without updating FETCH_HEAD or
+// any refs. Comparing with a stale tracking ref is not sufficient because the
+// remote branch may have been force-pushed since the last fetch.
 func BranchReachableFromRemote(repoDir, branch string) bool {
 	// Query origin for the branch tip SHA without downloading objects.
-	lsCmd := exec.Command("git", "-C", repoDir, "ls-remote", "--heads", "origin", branch)
+	remoteRef := "refs/heads/" + branch
+	lsCmd := exec.Command("git", "-C", repoDir, "ls-remote", "--heads", "origin", remoteRef)
 	lsOut, err := lsCmd.Output()
 	if err != nil || strings.TrimSpace(string(lsOut)) == "" {
 		return false // branch doesn't exist on origin
@@ -97,27 +95,22 @@ func BranchReachableFromRemote(repoDir, branch string) bool {
 		return true
 	}
 
-	// Check whether the remote SHA exists in the local object store. It
-	// will be present if the user has fetched recently, or if the commit
-	// was created locally and then pushed.
+	// Download an unfetched remote tip without moving a local ref. Fetching the
+	// exact SHA also keeps the ancestry check tied to the ls-remote result if
+	// the branch moves between the two commands.
 	catCmd := exec.Command("git", "-C", repoDir, "cat-file", "-e", remoteSHA)
-	if catCmd.Run() == nil {
-		// Remote SHA is local — do a precise ancestry check.
-		// "merge-base --is-ancestor A B" exits 0 when A is an ancestor of B,
-		// meaning the remote (B) contains every commit in local (A).
-		ancestorCmd := exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", localSHA, remoteSHA)
-		return ancestorCmd.Run() == nil
+	if catCmd.Run() != nil {
+		fetchCmd := exec.Command(
+			"git", "-C", repoDir, "fetch", "--quiet", "--no-tags",
+			"--no-write-fetch-head", "origin", remoteSHA,
+		)
+		if fetchCmd.Run() != nil {
+			return false
+		}
 	}
 
-	// Remote SHA is NOT in the local object store (e.g. someone else pushed
-	// new commits and we haven't fetched). Fall back to the last-fetched
-	// tracking ref: if local hasn't moved past origin/<branch>, then local
-	// has no unpushed commits and must be behind the (even newer) remote.
-	trackingRef := "refs/remotes/origin/" + branch
-	verifyCmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", trackingRef)
-	if verifyCmd.Run() != nil {
-		return false // no tracking ref — can't determine relationship
-	}
-	trackingAncestorCmd := exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", localSHA, trackingRef)
-	return trackingAncestorCmd.Run() == nil
+	// "merge-base --is-ancestor A B" exits 0 when A is an ancestor of B,
+	// meaning the remote (B) contains every commit in local (A).
+	ancestorCmd := exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", localSHA, remoteSHA)
+	return ancestorCmd.Run() == nil
 }

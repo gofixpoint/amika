@@ -15,3 +15,5 @@ go/test/e2e/testdata/openapi.json
 .env
 .env.*
 !.env.example
+
+__pycache__

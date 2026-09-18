@@ -1,11 +1,13 @@
 # Sandbox image — agent guidance
 
-Source of truth for the `coder` and `coder-dind` images. Most of this
+Source of truth for the `coder` and `coder-plus-docker` images. Most of this
 directory is generated, so an edit here is only half the change.
 
 - **Never hand-edit generated files.** `generated/*.Dockerfile`,
-  `generated/bundle.json`, and everything under
-  `go/internal/sandbox/sandbox-image/` are generator output.
+  `generated/bundle.json`, `assets/skills/`, and everything under
+  `go/internal/sandbox/sandbox-image/` are generator output. `assets/skills/`
+  in particular is a copy: edit the skill at the repository root
+  (`.agents/skills/`) and rerun the generator.
 - **Run the generator after any change** to `manifest.toml`, `versions.env`,
   `steps/`, `assets/`, or `verify/`, then check it:
 
