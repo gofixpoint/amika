@@ -104,6 +104,12 @@ func quoteWindowsPath(path string) string {
 // regenerated artifacts; the Linux-side state stays the only source of
 // truth.
 func MirrorToWindows(paths basedir.Paths, target wslbridge.Target) error {
+	return withSessionLock(paths, func() error {
+		return mirrorToWindowsLocked(paths, target)
+	})
+}
+
+func mirrorToWindowsLocked(paths basedir.Paths, target wslbridge.Target) error {
 	state, err := LoadState(paths)
 	if err != nil {
 		return err

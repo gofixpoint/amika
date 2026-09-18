@@ -1,12 +1,14 @@
 package ssh
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/wslbridge"
@@ -214,6 +216,70 @@ func TestMirrorToWindows(t *testing.T) {
 	want := [2]string{`C:\Users\testuser\.ssh\amika_id_ed25519`, "testuser"}
 	if icaclsCalls[0] != want {
 		t.Fatalf("icacls = %v, want %v", icaclsCalls[0], want)
+	}
+}
+
+func TestMirrorToWindowsWaitsForKeyRotationSnapshot(t *testing.T) {
+	paths := testPaths(t)
+	state := sessionTestState(t, paths)
+	dir := t.TempDir()
+	oldIdentity := filepath.Join(dir, "old_identity")
+	newIdentity := filepath.Join(dir, "new_identity")
+	knownHosts := filepath.Join(dir, "known_hosts")
+	for path, content := range map[string]string{
+		oldIdentity: "old private key",
+		newIdentity: "new private key",
+		knownHosts:  "my-sandbox.sb_1.prod.amika ssh-ed25519 AAAA\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state.SessionConfig.IdentityFile = oldIdentity
+	state.SessionConfig.KnownHostsFile = knownHosts
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+
+	previousIcacls := runIcacls
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() { runIcacls = previousIcacls })
+	target := windowsTestTarget(filepath.Join(t.TempDir(), "winssh"))
+
+	rotationLocked := make(chan struct{})
+	finishRotation := make(chan struct{})
+	rotationDone := make(chan error, 1)
+	go func() {
+		rotationDone <- WithSessionTransaction(context.Background(), paths, func(SessionTransaction) error {
+			close(rotationLocked)
+			<-finishRotation
+			state.SessionConfig.IdentityFile = newIdentity
+			return SaveState(paths, state)
+		})
+	}()
+	<-rotationLocked
+
+	mirrorDone := make(chan error, 1)
+	go func() { mirrorDone <- MirrorToWindows(paths, target) }()
+	select {
+	case <-mirrorDone:
+		t.Fatal("Windows mirror bypassed the key-rotation transaction")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(finishRotation)
+	if err := <-rotationDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-mirrorDone; err != nil {
+		t.Fatal(err)
+	}
+
+	mirrored, err := os.ReadFile(filepath.Join(target.SSHDir, basedir.SSHIdentityName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mirrored) != "new private key" {
+		t.Fatalf("mirrored identity = %q, want rotated identity", mirrored)
 	}
 }
 
