@@ -117,5 +117,12 @@ func loadOnlyIdentity(client agent.ExtendedAgent, privateKey any, publicBlob []b
 	if err := client.Add(agent.AddedKey{PrivateKey: privateKey, Comment: "Amika SSH identity"}); err != nil {
 		return fmt.Errorf("add Amika SSH identity to dedicated agent: %w", err)
 	}
+	keys, err = client.List()
+	if err != nil {
+		return fmt.Errorf("verify dedicated Amika ssh-agent identities: %w", err)
+	}
+	if len(keys) != 1 || !bytes.Equal(keys[0].Blob, publicBlob) {
+		return fmt.Errorf("dedicated Amika ssh-agent does not contain exactly the configured identity")
+	}
 	return nil
 }

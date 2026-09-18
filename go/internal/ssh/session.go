@@ -278,6 +278,30 @@ func PrepareSessionHost(
 	return session, nil
 }
 
+// PrepareProxy repairs the dedicated agent and returns the store the stdio
+// proxy pins through. It runs before the ProxyCommand carries any SSH bytes,
+// so bare aliases and editor deep links recover from a stopped agent without
+// requiring a separate Amika command first.
+func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, error) {
+	var pins HostKeyPinStore
+	err := withSessionLock(paths, func() error {
+		session, err := resolveSessionConfig(paths)
+		if err != nil {
+			return err
+		}
+		identityInfo, err := os.Stat(session.IdentityFile)
+		if err != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
+			return fmt.Errorf("SSH identity %s is missing or unsafe", session.IdentityFile)
+		}
+		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+			return err
+		}
+		pins = windowsMirroredPins(FileHostKeyPinStore{Path: session.KnownHostsFile}, session.KnownHostsFile, warnings)
+		return nil
+	})
+	return pins, err
+}
+
 // ProxyPinStore returns the store the stdio proxy pins through: the
 // known-hosts file the managed session config names, wrapped so a WSL setup's
 // Windows copy is republished along with it.

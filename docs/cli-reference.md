@@ -442,7 +442,8 @@ exactly the configured Amika identity into it. The generated host block uses
 that socket for both the initial connection and forwarding. Your ordinary
 `SSH_AUTH_SOCK` is never forwarded, so its GitHub, production, or personal
 keys are not exposed to the sandbox. If the dedicated agent stops, the next
-Amika SSH command starts it again and reloads the key.
+Amika SSH connection — including an editor deep link — starts it again and
+reloads the key.
 
 The `ProxyCommand` pins the sandbox's host key every time it runs, so an alias
 also works in tools that never call the Amika CLI. An editor's Remote-SSH deep

@@ -421,28 +421,30 @@ func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
 	if err != nil {
 		return err
 	}
-	state, err := LoadState(paths)
-	if err != nil {
-		return err
-	}
-	state.SessionConfig = &session
-	if state.SessionProxyCommands == nil {
-		state.SessionProxyCommands = make(map[string]string)
-	}
-	state.SessionProxyCommands[environment] = proxyCommand
-	if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
-		info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
-		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+	return withSessionLock(paths, func() error {
+		state, err := LoadState(paths)
+		if err != nil {
 			return err
 		}
-	}
-	if err := SaveState(paths, state); err != nil {
-		return err
-	}
-	if err := WriteAmikaConfig(paths, state); err != nil {
-		return err
-	}
-	return EnsureInclude(paths)
+		state.SessionConfig = &session
+		if state.SessionProxyCommands == nil {
+			state.SessionProxyCommands = make(map[string]string)
+		}
+		state.SessionProxyCommands[environment] = proxyCommand
+		if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
+			info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
+			if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+				return err
+			}
+		}
+		if err := SaveState(paths, state); err != nil {
+			return err
+		}
+		if err := WriteAmikaConfig(paths, state); err != nil {
+			return err
+		}
+		return EnsureInclude(paths)
+	})
 }
 
 // ValidateSessionConfig reports whether ConfigureSession would accept this
@@ -543,42 +545,41 @@ func hasIncludeLine(content, includeLine string) bool {
 // includes it, and returns the stable alias to connect to. This is the single
 // entry point editors use so connection details stay behind one seam.
 func UpsertHost(paths basedir.Paths, entry HostEntry) (string, error) {
-	state, err := LoadState(paths)
-	if err != nil {
-		return "", err
-	}
-	state.Upsert(entry)
-	if err := SaveState(paths, state); err != nil {
-		return "", err
-	}
-	if err := WriteAmikaConfig(paths, state); err != nil {
-		return "", err
-	}
-	if err := EnsureInclude(paths); err != nil {
-		return "", err
-	}
-	return Alias(entry.SandboxID), nil
+	err := withSessionLock(paths, func() error {
+		state, err := LoadState(paths)
+		if err != nil {
+			return err
+		}
+		state.Upsert(entry)
+		if err := SaveState(paths, state); err != nil {
+			return err
+		}
+		if err := WriteAmikaConfig(paths, state); err != nil {
+			return err
+		}
+		return EnsureInclude(paths)
+	})
+	return Alias(entry.SandboxID), err
 }
 
 // UpsertSessionHost records a concrete direct-WebSocket SSH alias for editor
 // discovery while its wildcard session block continues to provide the actual
 // connection settings.
 func UpsertSessionHost(paths basedir.Paths, alias string) error {
-	state, err := LoadState(paths)
-	if err != nil {
-		return err
-	}
-	state.UpsertSessionHost(alias)
-	if err := SaveState(paths, state); err != nil {
-		return err
-	}
-	if err := WriteAmikaConfig(paths, state); err != nil {
-		return err
-	}
-	if err := EnsureInclude(paths); err != nil {
-		return err
-	}
-	return nil
+	return withSessionLock(paths, func() error {
+		state, err := LoadState(paths)
+		if err != nil {
+			return err
+		}
+		state.UpsertSessionHost(alias)
+		if err := SaveState(paths, state); err != nil {
+			return err
+		}
+		if err := WriteAmikaConfig(paths, state); err != nil {
+			return err
+		}
+		return EnsureInclude(paths)
+	})
 }
 
 // writeFileAtomic writes data to path via a temp file + rename so a concurrent
