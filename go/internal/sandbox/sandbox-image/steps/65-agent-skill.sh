@@ -17,7 +17,8 @@ runtime_user="${AMIKA_RUNTIME_USER:-amika}"
 runtime_group="${AMIKA_RUNTIME_GROUP:-$runtime_user}"
 runtime_home="${AMIKA_RUNTIME_HOME:-/home/$runtime_user}"
 skill_directory=".agents/skills/amika-cli"
-claude_skills_link=".claude/skills"
+claude_skills_directory=".claude/skills"
+claude_skill_link="$claude_skills_directory/amika-cli"
 
 for root in /etc/skel "$runtime_home"; do
   install -d -m 0755 "$root/.agents" "$root/.agents/skills"
@@ -32,15 +33,19 @@ for root in /etc/skel "$runtime_home"; do
   # opencode and pi both load ~/.agents/skills on their own. Claude Code does
   # not: it loads user skills from ~/.claude/skills and reads ~/.agents/skills
   # only as an import source, so without this link the skill above is invisible
-  # to it. A link rather than a second copy because Claude Code follows one,
-  # opencode collapses the tree it now reaches by two paths, and one tree
-  # cannot drift from itself.
+  # to it. Link this skill rather than the whole skills directory: a base image
+  # or later setup can then carry Claude-only skills beside Amika's. A link
+  # rather than a second copy lets the two discovery paths share one source.
   #
-  # Relative, so the copy /etc/skel hands a later user resolves inside that
-  # user's own home rather than pointing back at this one.
+  # Replace the whole-directory link shipped by older images before making the
+  # parent directory. Leave a real existing directory and all its other skills
+  # intact. The relative target resolves inside each copied user's own home.
   install -d -m 0755 "$root/.claude"
-  rm -rf "${root:?}/$claude_skills_link"
-  ln -s ../.agents/skills "$root/$claude_skills_link"
+  [[ ! -L "$root/$claude_skills_directory" ]] ||
+    rm "$root/$claude_skills_directory"
+  install -d -m 0755 "$root/$claude_skills_directory"
+  rm -rf "${root:?}/$claude_skill_link"
+  ln -s ../../.agents/skills/amika-cli "$root/$claude_skill_link"
 done
 
 # One recursive chown covers every directory created above, including the
@@ -50,5 +55,6 @@ chown -R "$runtime_user:$runtime_group" "$runtime_home/.agents"
 # target is inside .agents, which the recursive chown above already covered,
 # and `find -user` reads the link rather than the target when the image is
 # checked for root-owned paths in the runtime home.
-chown "$runtime_user:$runtime_group" "$runtime_home/.claude"
-chown -h "$runtime_user:$runtime_group" "$runtime_home/$claude_skills_link"
+chown "$runtime_user:$runtime_group" \
+  "$runtime_home/.claude" "$runtime_home/$claude_skills_directory"
+chown -h "$runtime_user:$runtime_group" "$runtime_home/$claude_skill_link"

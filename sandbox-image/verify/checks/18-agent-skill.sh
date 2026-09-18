@@ -21,12 +21,16 @@ owner="$(stat -c '%U:%G' "$home/$relative" 2>/dev/null || true)"
 # Read the skill back through the Claude Code link the way that harness would,
 # rather than asserting the link's target text: what matters is that the file
 # arrives, and a link pointing at a path that does not resolve looks correct
-# under readlink right up until an agent reads nothing.
-skill_under_root="${relative#.agents/skills/}"
+# under readlink right up until an agent reads nothing. The parent remains a
+# real directory so Claude-specific skills can coexist beside Amika's.
+skill_file="${relative##*/}"
+link_parent="${link%/*}"
 for root in "$home" /etc/skel; do
+  [[ -d "$root/$link_parent" && ! -L "$root/$link_parent" ]] ||
+    problems+=("$root/$link_parent=not-a-directory")
   [[ -L "$root/$link" ]] || problems+=("$root/$link=not-a-symlink")
-  [[ -f "$root/$link/$skill_under_root" ]] ||
-    problems+=("$root/$link/$skill_under_root=unreadable")
+  [[ -f "$root/$link/$skill_file" ]] ||
+    problems+=("$root/$link/$skill_file=unreadable")
 done
 # No -L, so this reports the link's own ownership rather than its target's,
 # which is what a root-owned-paths sweep of the runtime home sees.

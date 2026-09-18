@@ -5,7 +5,7 @@
       ".codex/hooks.json"
     ],
     "agent_skill": ".agents/skills/amika-cli/SKILL.md",
-    "agent_skill_link": ".claude/skills",
+    "agent_skill_link": ".claude/skills/amika-cli",
     "base_image": "ubuntu",
     "base_version": "UBUNTU_TAG",
     "directories": [
