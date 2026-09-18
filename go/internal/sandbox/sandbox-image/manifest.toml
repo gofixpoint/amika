@@ -12,7 +12,7 @@ dotfiles = [".zshrc", ".bashrc", ".tmux.conf"]
 # SSH login. Absolute because it lives outside the runtime home, unlike the
 # dotfiles above.
 welcome_script = "/usr/lib/amika/welcome.sh"
-# The agent skill a sandbox ships for its coding agents to read, relative
+# The agent skill a rig ships for its coding agents to read, relative
 # to the runtime home. Synchronized from the repository root by generate.py.
 agent_skill = ".agents/skills/amika-cli/SKILL.md"
 # Claude Code loads user skills from here and nowhere else, so the image
@@ -92,7 +92,7 @@ assets = [
   "assets/skills/amika-cli/SKILL.md",
   "assets/skills/amika-cli/references/connectivity.md",
   "assets/skills/amika-cli/references/non-interactive.md",
-  "assets/skills/amika-cli/references/sandbox-operations.md",
+  "assets/skills/amika-cli/references/rig-operations.md",
   "assets/skills/amika-cli/references/services-config-snapshots.md",
 ]
 asset_argument = "assets/skills/amika-cli"

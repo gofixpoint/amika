@@ -157,7 +157,7 @@
             "assets/skills/amika-cli/SKILL.md",
             "assets/skills/amika-cli/references/connectivity.md",
             "assets/skills/amika-cli/references/non-interactive.md",
-            "assets/skills/amika-cli/references/sandbox-operations.md",
+            "assets/skills/amika-cli/references/rig-operations.md",
             "assets/skills/amika-cli/references/services-config-snapshots.md"
           ],
           "id": "agent-skill",
@@ -309,7 +309,7 @@
             "assets/skills/amika-cli/SKILL.md",
             "assets/skills/amika-cli/references/connectivity.md",
             "assets/skills/amika-cli/references/non-interactive.md",
-            "assets/skills/amika-cli/references/sandbox-operations.md",
+            "assets/skills/amika-cli/references/rig-operations.md",
             "assets/skills/amika-cli/references/services-config-snapshots.md"
           ],
           "id": "agent-skill",
