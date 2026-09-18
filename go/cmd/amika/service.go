@@ -237,9 +237,18 @@ var serviceListCmd = &cobra.Command{
 
 		var rows []serviceRow
 		var err error
-		if mode == runmode.Remote {
+		switch {
+		case cmd.Flags().Changed("rig-name") && strings.TrimSpace(rigName) == "":
+			// An explicitly empty --rig-name names no rig, so it matches no
+			// rig. The row filters below read "" as "no filter", so without
+			// this case the common shell form --rig-name "$AMIKA_RIG_NAME",
+			// evaluated where that variable is unset, would widen the listing
+			// to every rig in the organization instead of narrowing it to none
+			// -- and succeed, so the caller has no signal that it happened.
+			rows = nil
+		case mode == runmode.Remote:
 			rows, err = remoteServiceRows(rigName)
-		} else {
+		default:
 			rows, err = localServiceRows(rigName)
 		}
 		if err != nil {

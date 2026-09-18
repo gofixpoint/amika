@@ -11,6 +11,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
+	"github.com/spf13/pflag"
 )
 
 // strptr returns a pointer to s, for populating the nullable pointer fields of
@@ -49,6 +50,17 @@ func resetServiceFlags(t *testing.T) {
 	}
 	if err := serviceDeleteCmd.Flags().Set("force", "false"); err != nil {
 		t.Fatal(err)
+	}
+	// Set marks a flag Changed, and that bit is load-bearing: `service list`
+	// tells an explicitly empty --rig-name (match nothing) apart from an absent
+	// one (match everything). Clear it so each test starts from "not provided".
+	for _, fs := range []*pflag.FlagSet{
+		serviceCmd.PersistentFlags(),
+		serviceListCmd.Flags(),
+		serviceCreateCmd.Flags(),
+		serviceDeleteCmd.Flags(),
+	} {
+		fs.VisitAll(func(f *pflag.Flag) { f.Changed = false })
 	}
 }
 
@@ -110,6 +122,42 @@ func TestServiceListCommand_Local_SandboxNameFilter(t *testing.T) {
 	}
 	if strings.Contains(out, "other") {
 		t.Fatalf("--rig-name filter leaked another rig:\n%s", out)
+	}
+}
+
+// An explicitly empty --rig-name names no rig, so it must match none. The row
+// filters read "" as "no filter", so the shell form --rig-name "$AMIKA_RIG_NAME"
+// evaluated outside a rig would otherwise list every rig in the organization
+// and still exit 0.
+func TestServiceListCommand_EmptyRigNameMatchesNothing(t *testing.T) {
+	resetServiceFlags(t)
+	dir := t.TempDir()
+	t.Setenv("AMIKA_STATE_DIRECTORY", dir)
+	store := sandbox.NewStore(filepath.Join(dir, "sandboxes.jsonl"))
+	svc := []sandbox.ServiceInfo{{Name: "frontend", Ports: []sandbox.ServicePortInfo{{PortBinding: sandbox.PortBinding{HostIP: "127.0.0.1", HostPort: 3000, ContainerPort: 3000, Protocol: "tcp"}}}}}
+	for _, name := range []string{"keep", "other"} {
+		if err := store.Save(sandbox.Info{Name: name, Provider: "docker", CreatedAt: "now", Services: svc}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := runRootCommand("service", "list", "--local", "--rig-name", "")
+	if err != nil {
+		t.Fatalf("service list failed: %v", err)
+	}
+	if !strings.Contains(out, "No services found.") {
+		t.Fatalf("an empty --rig-name must match no rig; got:\n%s", out)
+	}
+
+	// Omitting the flag still lists everything, which is what makes the empty
+	// case distinguishable rather than just a narrower default.
+	resetServiceFlags(t)
+	out, err = runRootCommand("service", "list", "--local")
+	if err != nil {
+		t.Fatalf("service list failed: %v", err)
+	}
+	if !strings.Contains(out, "keep") || !strings.Contains(out, "other") {
+		t.Fatalf("omitting --rig-name must still list every rig; got:\n%s", out)
 	}
 }
 
