@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -216,6 +217,67 @@ func TestPrepareProxyRestartsMissingAgentFromPersistedState(t *testing.T) {
 	}
 	if len(keys) != 1 || !bytes.Equal(keys[0].Blob, expectedBlob) {
 		t.Fatalf("restarted agent has the wrong identities: keys=%d", len(keys))
+	}
+}
+
+func TestPrepareProxyMigratesLegacyConfigAndRequiresReconnect(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	testBinary(t, "amika")
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "amika_id_ed25519")
+	if _, err := GenerateIdentity(identity); err != nil {
+		t.Fatal(err)
+	}
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   identity,
+			KnownHostsFile: filepath.Join(dir, "known_hosts"),
+		},
+		SessionProxyCommands: map[string]string{
+			"localhost-3011": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+	}
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAmikaConfig(paths, state); err != nil {
+		t.Fatal(err)
+	}
+
+	originalStartAgent := startAgent
+	t.Cleanup(func() { startAgent = originalStartAgent })
+	startAgent = func(socketPath string) error {
+		serveTestAgent(t, socketPath, agent.NewKeyring())
+		return nil
+	}
+	if _, err := PrepareProxy(paths, os.Stderr); err == nil || !strings.Contains(err.Error(), "reconnect") {
+		t.Fatalf("PrepareProxy error = %v, want reconnect instruction", err)
+	}
+
+	migrated, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedSocket, _ := paths.SSHAgentSocketFile()
+	if migrated.SessionConfig.AgentSocket != expectedSocket {
+		t.Fatalf("migrated socket = %q, want %q", migrated.SessionConfig.AgentSocket, expectedSocket)
+	}
+	configPath, _ := paths.SSHAmikaConfigFile()
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"IdentityAgent " + expectedSocket,
+		"ForwardAgent yes",
+	} {
+		if !strings.Contains(string(configData), expected) {
+			t.Errorf("migrated config missing %q:\n%s", expected, configData)
+		}
+	}
+	if _, err := PrepareProxy(paths, os.Stderr); err != nil {
+		t.Fatalf("second PrepareProxy: %v", err)
 	}
 }
 

@@ -443,7 +443,9 @@ that socket for both the initial connection and forwarding. Your ordinary
 `SSH_AUTH_SOCK` is never forwarded, so its GitHub, production, or personal
 keys are not exposed to the sandbox. If the dedicated agent stops, the next
 Amika SSH connection — including an editor deep link — starts it again and
-reloads the key.
+reloads the key. The first editor connection after upgrading a config written
+by an older Amika version updates the config and asks the client to reconnect
+once, so OpenSSH can parse the new forwarding options.
 
 The `ProxyCommand` pins the sandbox's host key every time it runs, so an alias
 also works in tools that never call the Amika CLI. An editor's Remote-SSH deep

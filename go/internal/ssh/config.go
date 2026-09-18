@@ -410,6 +410,12 @@ func WriteAmikaConfig(paths basedir.Paths, state HostsState) error {
 // a binary that has since moved or been replaced by one that cannot serve as a
 // proxy.
 func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
+	return withSessionLock(paths, func() error {
+		return configureSessionLocked(paths, session)
+	})
+}
+
+func configureSessionLocked(paths basedir.Paths, session SessionConfig) error {
 	if session.AgentSocket == "" {
 		var err error
 		session.AgentSocket, err = paths.SSHAgentSocketFile()
@@ -421,30 +427,28 @@ func ConfigureSession(paths basedir.Paths, session SessionConfig) error {
 	if err != nil {
 		return err
 	}
-	return withSessionLock(paths, func() error {
-		state, err := LoadState(paths)
-		if err != nil {
+	state, err := LoadState(paths)
+	if err != nil {
+		return err
+	}
+	state.SessionConfig = &session
+	if state.SessionProxyCommands == nil {
+		state.SessionProxyCommands = make(map[string]string)
+	}
+	state.SessionProxyCommands[environment] = proxyCommand
+	if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
+		info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
+		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
 			return err
 		}
-		state.SessionConfig = &session
-		if state.SessionProxyCommands == nil {
-			state.SessionProxyCommands = make(map[string]string)
-		}
-		state.SessionProxyCommands[environment] = proxyCommand
-		if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
-			info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
-			if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
-				return err
-			}
-		}
-		if err := SaveState(paths, state); err != nil {
-			return err
-		}
-		if err := WriteAmikaConfig(paths, state); err != nil {
-			return err
-		}
-		return EnsureInclude(paths)
-	})
+	}
+	if err := SaveState(paths, state); err != nil {
+		return err
+	}
+	if err := WriteAmikaConfig(paths, state); err != nil {
+		return err
+	}
+	return EnsureInclude(paths)
 }
 
 // ValidateSessionConfig reports whether ConfigureSession would accept this
@@ -551,6 +555,9 @@ func UpsertHost(paths basedir.Paths, entry HostEntry) (string, error) {
 			return err
 		}
 		state.Upsert(entry)
+		if _, err := migrateAgentSocket(paths, &state); err != nil {
+			return err
+		}
 		if err := SaveState(paths, state); err != nil {
 			return err
 		}
@@ -572,6 +579,9 @@ func UpsertSessionHost(paths basedir.Paths, alias string) error {
 			return err
 		}
 		state.UpsertSessionHost(alias)
+		if _, err := migrateAgentSocket(paths, &state); err != nil {
+			return err
+		}
 		if err := SaveState(paths, state); err != nil {
 			return err
 		}
@@ -580,6 +590,18 @@ func UpsertSessionHost(paths basedir.Paths, alias string) error {
 		}
 		return EnsureInclude(paths)
 	})
+}
+
+func migrateAgentSocket(paths basedir.Paths, state *HostsState) (bool, error) {
+	if state.SessionConfig == nil || state.SessionConfig.AgentSocket != "" {
+		return false, nil
+	}
+	socket, err := paths.SSHAgentSocketFile()
+	if err != nil {
+		return false, err
+	}
+	state.SessionConfig.AgentSocket = socket
+	return true, nil
 }
 
 // writeFileAtomic writes data to path via a temp file + rename so a concurrent

@@ -37,8 +37,8 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 				return fmt.Errorf("--name must not be empty")
 			}
 			paths := basedir.New("")
-			return ssh.WithKeyRotationLock(cmd.Context(), paths, func() error {
-				return runSSHKeygen(cmd, paths, name, format)
+			return ssh.WithSessionTransaction(cmd.Context(), paths, func(transaction ssh.SessionTransaction) error {
+				return runSSHKeygen(cmd, paths, transaction, name, format)
 			})
 		},
 	}
@@ -48,7 +48,13 @@ func newSSHKeygenCmdAs(use string) *cobra.Command {
 	return cmd
 }
 
-func runSSHKeygen(cmd *cobra.Command, paths basedir.Paths, name string, format output.Format) error {
+func runSSHKeygen(
+	cmd *cobra.Command,
+	paths basedir.Paths,
+	transaction ssh.SessionTransaction,
+	name string,
+	format output.Format,
+) error {
 	identityPath, err := paths.SSHIdentityFile()
 	if err != nil {
 		return err
@@ -88,7 +94,7 @@ func runSSHKeygen(cmd *cobra.Command, paths basedir.Paths, name string, format o
 	if err != nil {
 		return err
 	}
-	if err := ssh.ConfigureSession(paths, session); err != nil {
+	if err := transaction.Configure(session); err != nil {
 		return err
 	}
 	if format.IsJSON() {

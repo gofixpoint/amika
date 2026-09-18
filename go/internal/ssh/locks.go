@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
@@ -13,17 +14,40 @@ import (
 
 const sessionLockTimeout = 10 * time.Second
 
-// WithKeyRotationLock serializes the local-key, upload, and session-config
-// steps that must finish as one operation for the remote and local identities
-// to stay in sync.
-func WithKeyRotationLock(ctx context.Context, paths basedir.Paths, action func() error) error {
-	return withStateFileLock(ctx, paths, ".key-rotation.lock", action)
+// SessionTransaction holds the lock shared by every session-state reader and
+// writer. Key rotation keeps it across local key selection, remote upload, and
+// config persistence so a stale reader cannot restore the previous identity.
+type SessionTransaction struct {
+	paths  basedir.Paths
+	active *atomic.Bool
+}
+
+// WithSessionTransaction runs action while no other process can resolve or
+// update the managed SSH session.
+func WithSessionTransaction(ctx context.Context, paths basedir.Paths, action func(SessionTransaction) error) error {
+	return withStateFileLock(ctx, paths, ".session.lock", func() error {
+		active := &atomic.Bool{}
+		active.Store(true)
+		defer active.Store(false)
+		return action(SessionTransaction{paths: paths, active: active})
+	})
+}
+
+// Configure reconciles the agent and persists session state while the
+// transaction lock is held.
+func (t SessionTransaction) Configure(session SessionConfig) error {
+	if t.active == nil || !t.active.Load() {
+		return fmt.Errorf("SSH session transaction is no longer active")
+	}
+	return configureSessionLocked(t.paths, session)
 }
 
 func withSessionLock(paths basedir.Paths, action func() error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionLockTimeout)
 	defer cancel()
-	return withStateFileLock(ctx, paths, ".session.lock", action)
+	return WithSessionTransaction(ctx, paths, func(SessionTransaction) error {
+		return action()
+	})
 }
 
 func withAgentLock(socketPath string, action func() error) error {
