@@ -95,7 +95,7 @@ func TestRender(t *testing.T) {
 	state := HostsState{Hosts: []HostEntry{
 		{SandboxID: "sb_1", SandboxName: "my-sandbox", HostName: "ssh.app.daytona.io", User: "token"},
 	}}
-	want := managedHeader + "\n# my-sandbox\nHost amika-sb_1\n  HostName ssh.app.daytona.io\n  User token\n  StrictHostKeyChecking accept-new\n"
+	want := managedHeader + "\n# my-sandbox\nHost amika-sb_1\n  HostName ssh.app.daytona.io\n  User token\n  ForwardAgent no\n  StrictHostKeyChecking accept-new\n"
 	if got := Render(state); got != want {
 		t.Fatalf("Render mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
@@ -640,14 +640,14 @@ func TestEnsureIncludeWritesCodexDiscoveryComment(t *testing.T) {
 	}
 }
 
-func TestEnsureIncludeDoesNotModifyConfigWithExistingInclude(t *testing.T) {
+func TestEnsureIncludeMovesExistingIncludeAheadOfHostBlocks(t *testing.T) {
 	includeLine := "Include " + basedir.SSHAmikaConfigName()
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	existing := "Host example\n  HostName example.com\n\n" + includeLine + "\n"
+	existing := "Host *\n  IdentityAgent /tmp/ordinary-agent.sock\n  ForwardAgent yes\n\n" + includeLine + "\n"
 	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +660,15 @@ func TestEnsureIncludeDoesNotModifyConfigWithExistingInclude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != existing {
-		t.Errorf("config was rewritten:\ngot:\n%s\nwant:\n%s", data, existing)
+	content := string(data)
+	wantPrefix := includeStanza + includeLine + "\n"
+	if !strings.HasPrefix(content, wantPrefix) {
+		t.Fatalf("managed Include is not first:\n%s", content)
+	}
+	if strings.Count(content, includeLine) != 1 {
+		t.Fatalf("managed Include appears more than once:\n%s", content)
+	}
+	if !strings.Contains(content, "Host *\n  IdentityAgent /tmp/ordinary-agent.sock\n  ForwardAgent yes\n") {
+		t.Fatalf("existing host block was not preserved:\n%s", content)
 	}
 }

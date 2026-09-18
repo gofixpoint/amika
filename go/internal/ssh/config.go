@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -282,6 +281,7 @@ func writeHostBlocks(b *strings.Builder, hosts []HostEntry) {
 		if h.Port != 0 {
 			fmt.Fprintf(b, "  Port %d\n", h.Port)
 		}
+		b.WriteString("  ForwardAgent no\n")
 		b.WriteString("  StrictHostKeyChecking accept-new\n")
 	}
 }
@@ -502,14 +502,11 @@ const includeStanza = "# This `Include` directive must be the first line, or Cod
 	"# hosts.\n" +
 	"# Connection settings are managed in amika.conf.\n"
 
-// ensureIncludeIn prepends the Include line for the managed config to an ssh
-// config file, creating the file when absent and preserving existing content.
-// It is target-agnostic so the Windows mirror can maintain its own config the
-// same way the Linux one is maintained.
-//
-// The line is left wherever it already is. Detecting it anywhere counts as
-// present, because moving a line in the user's config is a bigger liberty
-// than adding one.
+// ensureIncludeIn puts the managed Include before every user Host block,
+// creating the file when absent and preserving all non-Amika content. OpenSSH
+// keeps the first value it finds for most options, so leaving an existing
+// Include below Host * could let that block replace the isolated agent.
+// It is target-agnostic so the Windows mirror follows the same rule.
 func ensureIncludeIn(configPath string) error {
 	writePath, err := resolveWriteTarget(configPath)
 	if err != nil {
@@ -521,27 +518,30 @@ func ensureIncludeIn(configPath string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read ssh config: %w", err)
 	}
-	if hasIncludeLine(string(existing), includeLine) {
+	prefix := includeStanza + includeLine + "\n"
+	if strings.HasPrefix(string(existing), prefix) {
 		return nil
 	}
-
-	content := includeStanza + includeLine + "\n"
-	if len(existing) > 0 {
-		content += "\n" + string(existing)
+	remainder := removeIncludeLines(string(existing), includeLine)
+	if strings.HasPrefix(remainder, includeStanza) {
+		remainder = strings.TrimPrefix(remainder, includeStanza)
+	}
+	content := prefix
+	if remainder != "" {
+		content += "\n" + remainder
 	}
 	return writeFileAtomic(writePath, []byte(content), 0o600)
 }
 
-// hasIncludeLine reports whether the config already includes the managed file,
-// wherever it sits.
-func hasIncludeLine(content, includeLine string) bool {
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	for scanner.Scan() {
-		if strings.EqualFold(strings.TrimSpace(scanner.Text()), includeLine) {
-			return true
+func removeIncludeLines(content, includeLine string) string {
+	var kept strings.Builder
+	for _, line := range strings.SplitAfter(content, "\n") {
+		candidate := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if !strings.EqualFold(strings.TrimSpace(candidate), includeLine) {
+			kept.WriteString(line)
 		}
 	}
-	return false
+	return kept.String()
 }
 
 // UpsertHost records (or refreshes) the managed SSH host for a sandbox: it

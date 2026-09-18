@@ -227,6 +227,8 @@ func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile,
 `, environment, identityFile)
 	if agentSocket != "" {
 		block += fmt.Sprintf("  IdentityAgent %s\n  ForwardAgent yes\n", agentSocket)
+	} else {
+		block += "  ForwardAgent no\n"
 	}
 	return block + fmt.Sprintf(`  StrictHostKeyChecking yes
   UserKnownHostsFile %s

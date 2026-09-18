@@ -99,12 +99,13 @@ func TestRenderWindows(t *testing.T) {
 		`IdentityFile "C:\Users\testuser\.ssh\amika_id_ed25519"` + "\n",
 		`UserKnownHostsFile "C:\Users\testuser\.ssh\amika_known_hosts"` + "\n",
 		"ProxyCommand wsl.exe -d Ubuntu -e /usr/local/bin/amika plumbing ssh-stdio-proxy %h\n",
+		"ForwardAgent no\n",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("rendered config missing %q:\n%s", want, content)
 		}
 	}
-	for _, unwanted := range []string{"IdentityAgent", "ForwardAgent"} {
+	for _, unwanted := range []string{"IdentityAgent", "ForwardAgent yes"} {
 		if strings.Contains(content, unwanted) {
 			t.Fatalf("Windows mirror must not contain %q:\n%s", unwanted, content)
 		}
