@@ -34,9 +34,7 @@ async function runAction(env, event, ports) {
     publishRunOutputs(context, run, ports);
     if (!context.waitForCompletion) {
       completed = true;
-      ports.notice(
-        context.reportResult === "pr-comment" ? `Amika accepted command run ${run.id}; the result will be posted to the pull request.` : `Amika accepted command run ${run.id}; it will continue asynchronously.`
-      );
+      ports.notice(asynchronousNotice(run.id, context.reportResult));
       return run;
     }
     run = await followRun(context, run, ports, abort.signal);
@@ -95,7 +93,7 @@ function parseActionContext(env, event, token = requireEnvironment(env, "AMIKA_T
   if (pullRequest && pullRequest.head_repository_id !== repositoryId) {
     throw new Error("Fork pull requests are not supported by this Action");
   }
-  if (reportResult === "pr-comment" && !pullRequest) {
+  if (requiresPullRequest(reportResult) && !pullRequest) {
     throw new Error(
       "report-result pr-comment requires a pull request workflow"
     );
@@ -369,6 +367,26 @@ function booleanInput(env, name, defaultValue) {
   if (value.toLowerCase() === "false") return false;
   throw new Error(`Input ${name} must be true or false`);
 }
+function asynchronousNotice(runId, reportResult) {
+  switch (reportResult) {
+    case "none":
+      return `Amika accepted command run ${runId}; it will continue asynchronously.`;
+    case "pr-comment":
+      return `Amika accepted command run ${runId}; the result will be posted to the pull request.`;
+    default:
+      return assertNever(reportResult);
+  }
+}
+function requiresPullRequest(reportResult) {
+  switch (reportResult) {
+    case "none":
+      return false;
+    case "pr-comment":
+      return true;
+    default:
+      return assertNever(reportResult);
+  }
+}
 function reportResultInput(env) {
   const value = optionalInput(env, "report-result") ?? "none";
   switch (value) {
@@ -409,7 +427,7 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 function assertNever(value) {
-  throw new Error(`Unexpected remote conclusion: ${String(value)}`);
+  throw new Error(`Unexpected Action value: ${String(value)}`);
 }
 var PermanentHttpError = class extends Error {
 };
