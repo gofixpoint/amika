@@ -31,6 +31,14 @@ inputs:
   job-key:
     description: Stable matrix identity; defaults to the GitHub job and runner identity
     required: false
+  wait-for-completion:
+    description: Wait for the remote command and mirror its result in this job
+    required: false
+    default: "true"
+  report-result:
+    description: How Amika reports the eventual result (none or pr-comment)
+    required: false
+    default: none
 
 outputs:
   run-id:

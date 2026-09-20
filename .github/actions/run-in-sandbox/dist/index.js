@@ -32,6 +32,13 @@ async function runAction(env, event, ports) {
   try {
     run = await createRun(context, ports, abort.signal);
     publishRunOutputs(context, run, ports);
+    if (!context.waitForCompletion) {
+      completed = true;
+      ports.notice(
+        `Amika accepted command run ${run.id}; the result will be reported asynchronously.`
+      );
+      return run;
+    }
     run = await followRun(context, run, ports, abort.signal);
     completed = true;
     publishTerminalOutputs(context, run, ports);
@@ -58,6 +65,8 @@ function parseActionContext(env, event, token = requireEnvironment(env, "AMIKA_T
   const workingDirectory = optionalInput(env, "working-directory") ?? ".";
   validateWorkingDirectory(workingDirectory);
   const timeoutMinutes = integerInput(env, "timeout-minutes", 60, 1, 1440);
+  const waitForCompletion = booleanInput(env, "wait-for-completion", true);
+  const reportResult = reportResultInput(env);
   const amikaUrl = parseAmikaUrl(optionalInput(env, "amika-url"));
   const repositoryName = requireEnvironment(env, "GITHUB_REPOSITORY");
   const [owner, name, extra] = repositoryName.split("/");
@@ -70,13 +79,26 @@ function parseActionContext(env, event, token = requireEnvironment(env, "AMIKA_T
   if (!/^\d+$/.test(repositoryId)) {
     throw new Error("GitHub repository ID is missing or invalid");
   }
-  const sourceSha = requireEnvironment(env, "GITHUB_SHA");
-  if (!/^[0-9a-f]{40}$/.test(sourceSha)) {
-    throw new Error("GITHUB_SHA must be a lowercase 40-character commit SHA");
+  const eventName = requireEnvironment(env, "GITHUB_EVENT_NAME");
+  if (eventName === "pull_request_target") {
+    throw new Error(
+      "pull_request_target workflows are not supported by this Action"
+    );
+  }
+  const sourceSha = event.pull_request ? event.pull_request.head?.sha : requireEnvironment(env, "GITHUB_SHA");
+  if (!sourceSha || !/^[0-9a-f]{40}$/.test(sourceSha)) {
+    throw new Error(
+      event.pull_request ? "pull_request.head.sha must be a lowercase 40-character commit SHA" : "GITHUB_SHA must be a lowercase 40-character commit SHA"
+    );
   }
   const pullRequest = parsePullRequest(event);
   if (pullRequest && pullRequest.head_repository_id !== repositoryId) {
     throw new Error("Fork pull requests are not supported by this Action");
+  }
+  if (reportResult === "pr-comment" && !pullRequest) {
+    throw new Error(
+      "report-result pr-comment requires a pull request workflow"
+    );
   }
   const headBranch = parseHeadBranch(env, event);
   const runId = requireEnvironment(env, "GITHUB_RUN_ID");
@@ -100,6 +122,8 @@ function parseActionContext(env, event, token = requireEnvironment(env, "AMIKA_T
     fallbackSandboxName,
     workingDirectory,
     timeoutSeconds: timeoutMinutes * 60,
+    waitForCompletion,
+    reportResult,
     repository: {
       id: repositoryId,
       owner,
@@ -133,7 +157,8 @@ async function createRun(context, ports, signal) {
     workflow: context.workflow,
     command: context.command,
     working_directory: context.workingDirectory,
-    timeout_seconds: context.timeoutSeconds
+    timeout_seconds: context.timeoutSeconds,
+    report_result: context.reportResult
   };
   return requestJson(
     context,
@@ -148,9 +173,29 @@ async function followRun(context, initialRun, ports, signal) {
   let cursor = 0;
   const deadline = ports.now() + context.timeoutSeconds * 1e3 + COMPLETION_GRACE_MS;
   while (ports.now() < deadline) {
+    cursor = await drainEvents(context, run.id, cursor, ports, signal);
+    run = await requestJson(
+      context,
+      `${COMMAND_RUN_API_PATH}/${encodeURIComponent(run.id)}`,
+      { method: "GET" },
+      ports,
+      signal
+    );
+    publishSandboxOutputs(context, run, ports);
+    if (run.status === "completed") {
+      await drainEvents(context, run.id, cursor, ports, signal);
+      return run;
+    }
+    await ports.sleep(POLL_INTERVAL_MS, signal);
+  }
+  throw new Error("Timed out waiting for Amika to finish command-run cleanup");
+}
+async function drainEvents(context, runId, initialCursor, ports, signal) {
+  let cursor = initialCursor;
+  while (true) {
     const events = await requestJson(
       context,
-      `${COMMAND_RUN_API_PATH}/${encodeURIComponent(run.id)}/events?after=${cursor}&limit=100`,
+      `${COMMAND_RUN_API_PATH}/${encodeURIComponent(runId)}/events?after=${cursor}&limit=100`,
       { method: "GET" },
       ports,
       signal
@@ -161,19 +206,8 @@ async function followRun(context, initialRun, ports, signal) {
       cursor = event.sequence;
     }
     if (events.next_sequence > cursor) cursor = events.next_sequence;
-    if (events.items.length === 100) continue;
-    run = await requestJson(
-      context,
-      `${COMMAND_RUN_API_PATH}/${encodeURIComponent(run.id)}`,
-      { method: "GET" },
-      ports,
-      signal
-    );
-    publishSandboxOutputs(context, run, ports);
-    if (run.status === "completed") return run;
-    await ports.sleep(POLL_INTERVAL_MS, signal);
+    if (events.items.length < 100) return cursor;
   }
-  throw new Error("Timed out waiting for Amika to finish command-run cleanup");
 }
 async function cancelRun(context, runId, ports) {
   await requestJson(
@@ -334,6 +368,16 @@ function booleanInput(env, name, defaultValue) {
   if (value.toLowerCase() === "true") return true;
   if (value.toLowerCase() === "false") return false;
   throw new Error(`Input ${name} must be true or false`);
+}
+function reportResultInput(env) {
+  const value = optionalInput(env, "report-result") ?? "none";
+  switch (value) {
+    case "none":
+    case "pr-comment":
+      return value;
+    default:
+      throw new Error("Input report-result must be none or pr-comment");
+  }
 }
 function integerInput(env, name, defaultValue, minimum, maximum) {
   const value = optionalInput(env, name);
