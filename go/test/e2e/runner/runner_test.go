@@ -565,7 +565,7 @@ func TestLedgerAppendPersistsToDisk(t *testing.T) {
 		t.Fatalf("NewLedger: %v", err)
 	}
 
-	e1 := Entry{Type: "sandbox", Name: "sb-1", CreatedByStep: "create", CleanupArgv: []string{"sandbox", "delete", "sb-1"}}
+	e1 := Entry{Type: "sandbox", Name: "sb-1", CreatedByStep: "create", CleanupArgv: []string{"rig", "delete", "sb-1"}}
 	e2 := Entry{Type: "volume", Name: "vol-1", CreatedByStep: "mount", CleanupArgv: []string{"volume", "delete", "vol-1"}}
 
 	if err := l.Append(e1); err != nil {
@@ -1432,7 +1432,7 @@ func TestLoadCaseRejectsResourceWithoutCleanup(t *testing.T) {
 	writeFile(t, path, `name: resource without cleanup
 steps:
   - name: create something with no cleanup argv
-    cmd: [sandbox, create]
+    cmd: [rig, create]
     resource:
       type: sandbox
       name: sb-1

@@ -4,10 +4,8 @@ name: agent-session chats via send and sessions (send, continue, stream, list, s
 # them would mean paying for a second sandbox and a second agent turn just to
 # produce a session for the read side, so they share one case.
 #
-# This is distinct from api-sandbox-lifecycle.yaml's `sandbox agent-send` step,
-# which is deliberately kept as its own coverage of the older per-sandbox
-# command. `send` drives the newer agent-sessions API instead: durable session
-# ids, continuation across turns, and an SSE streaming transport.
+# `send` drives the agent-sessions API: durable session ids, continuation
+# across turns, and an SSE streaming transport.
 #
 # The sandbox is created explicitly up front and passed via `--rig`, rather
 # than letting `send` provision one behind the scenes. `send`'s auto-create path
@@ -33,7 +31,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create the sandbox the chat will run in
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -46,7 +44,7 @@ steps:
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: send the first message and start a durable chat
     # --agent is pinned rather than left to the org default so `agent` below is
@@ -142,6 +140,6 @@ steps:
       exit: 1
 
   - name: delete the sandbox
-    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    cmd: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
     expect:
       exit: 0

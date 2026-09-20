@@ -12,13 +12,13 @@ vars:
     default: xs
     e2b: a1.tiny
 steps:
-  # `sandbox ssh` authenticates with the caller's user-owned SSH key, so the local
-  # identity's public half has to be registered before any `sandbox ssh` step runs.
+  # `rig ssh` authenticates with the caller's user-owned SSH key, so the local
+  # identity's public half has to be registered before any `rig ssh` step runs.
   # `create` reuses an existing local keypair rather than regenerating one (see
   # ssh.GenerateIdentity), so this uploads the key already at
   # ~/.ssh/amika_id_ed25519 and never overwrites it. The run-unique name means
   # the key this case deletes is always one it registered.
-  - name: register the local SSH public key for sandbox ssh
+  - name: register the local SSH public key for rig ssh
     cmd: [secret, ssh-key, create, --name, "e2e-scrub-{{run_id}}", -o, json]
     expect:
       exit: 0
@@ -33,7 +33,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a source sandbox
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -45,11 +45,11 @@ steps:
     resource:
       type: sandbox
       name: "{{source_sandbox}}"
-      cleanup: [sandbox, delete, "{{source_sandbox}}", --remote, --force, -o, json]
+      cleanup: [rig, delete, "{{source_sandbox}}", --remote, --force, -o, json]
 
   - name: inject scrub sentinels into the source sandbox
     cmd:
-      - sandbox
+      - rig
       - ssh
       - "{{source_sandbox}}"
       - --
@@ -116,7 +116,7 @@ steps:
       cleanup: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
 
   - name: confirm scrub and delete removed the source sandbox
-    cmd: [sandbox, list, --remote, -o, json]
+    cmd: [rig, list, --remote, -o, json]
     expect:
       exit: 0
       stdout_not_contains: "{{source_sandbox}}"
@@ -125,7 +125,7 @@ steps:
       name: "{{source_sandbox}}"
 
   - name: fork a sandbox from the scrubbed snapshot
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --snapshot, "{{snapshot_ref}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --snapshot, "{{snapshot_ref}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -137,11 +137,11 @@ steps:
     resource:
       type: sandbox
       name: "{{restored_sandbox}}"
-      cleanup: [sandbox, delete, "{{restored_sandbox}}", --remote, --force, -o, json]
+      cleanup: [rig, delete, "{{restored_sandbox}}", --remote, --force, -o, json]
 
   - name: verify the scrubbed snapshot restores a clean usable environment
     cmd:
-      - sandbox
+      - rig
       - ssh
       - "{{restored_sandbox}}"
       - --

@@ -20,7 +20,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create a source sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -32,7 +32,7 @@ steps:
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: capture a full snapshot and wait until it settles
     cmd: [snapshot, create, --no-interactive, --mode, full, --name, "e2e-{{sandbox_name}}", --rig, "{{sandbox_name}}", -o, json]
@@ -62,6 +62,6 @@ steps:
       exit: 0
 
   - name: delete the source sandbox
-    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    cmd: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
     expect:
       exit: 0

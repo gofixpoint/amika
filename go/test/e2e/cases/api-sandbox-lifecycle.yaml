@@ -1,4 +1,4 @@
-name: remote sandbox lifecycle (create, list, agent-send, stop, start, delete)
+name: remote rig lifecycle (create, list, send, stop, start, delete)
 # A single real remote sandbox is created and reused across every
 # resource-dependent command, then deleted. The `resource` block registers
 # the sandbox for reverse-order ledger cleanup, so it is removed even if a
@@ -19,7 +19,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create a remote sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -33,39 +33,40 @@ steps:
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: list sandboxes as json and confirm ours is present
-    cmd: [sandbox, list, -o, json]
+    cmd: [rig, list, -o, json]
     expect:
       exit: 0
       schema: ListSandboxesResponse
       stdout_contains: "{{sandbox_name}}"
 
   - name: send one message to the agent and get a synchronous response
-    cmd: [sandbox, agent-send, "{{sandbox_name}}", "Reply with exactly the word: pong", --remote, -o, json]
+    cmd: [send, "Reply with exactly the word: pong", --rig, "{{sandbox_name}}", --agent, claude, -o, json]
     expect:
       exit: 0
+      schema: AgentSessionSendResponse
       stdout_json:
-        sandbox: "{{sandbox_name}}"
+        sandbox_id: "@string"
         agent: claude
-        status: completed
         response: "@string"
         is_error: false
+        created_sandbox: false
 
   - name: stop the sandbox
-    cmd: [sandbox, stop, "{{sandbox_name}}", --remote, -o, json]
+    cmd: [rig, stop, "{{sandbox_name}}", --remote, -o, json]
     expect:
       exit: 0
       stdout_contains: "{{sandbox_name}}"
 
   - name: start the sandbox again
-    cmd: [sandbox, start, "{{sandbox_name}}", --remote, -o, json]
+    cmd: [rig, start, "{{sandbox_name}}", --remote, -o, json]
     expect:
       exit: 0
       stdout_contains: "{{sandbox_name}}"
 
   - name: delete the sandbox
-    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    cmd: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
     expect:
       exit: 0
