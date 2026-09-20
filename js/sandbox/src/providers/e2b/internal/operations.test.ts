@@ -55,6 +55,7 @@ describe("E2B lifecycle operations", () => {
         name: "demo",
         snapshot: "tpl_coder_xs",
         labels: { "amika-org-id": "org_1" },
+        envVars: { CALLER_MODE: "enabled" },
         autoStopInterval: 15,
         services: [],
       } as never,
@@ -66,6 +67,7 @@ describe("E2B lifecycle operations", () => {
         "amika-org-id": "org_1",
         "amika-sandbox-name": "demo",
       },
+      envs: { CALLER_MODE: "enabled" },
       timeoutMs: 15 * 60_000,
       lifecycle: {
         onTimeout: { action: "pause", keepMemory: false },
@@ -76,6 +78,7 @@ describe("E2B lifecycle operations", () => {
     expect(result).toMatchObject({
       provider: "e2b",
       providerSandboxId: "sbx_1",
+      envVars: { CALLER_MODE: "enabled" },
     });
   });
 

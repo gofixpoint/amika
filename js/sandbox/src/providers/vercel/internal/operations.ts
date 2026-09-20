@@ -172,6 +172,7 @@ export async function createVercelSandbox(
       ...vercelCredentials(config),
       ports,
       timeout: timeoutMs,
+      ...(input.envVars ? { env: input.envVars } : {}),
       persistent: true as const,
       // Persistence auto-snapshots the filesystem on every stop / idle-timeout.
       // Keep only the latest snapshot so storage stays flat across resume cycles
@@ -191,7 +192,7 @@ export async function createVercelSandbox(
     provider: "vercel",
     providerSandboxId: sandbox.name,
     services,
-    envVars: {},
+    envVars: input.envVars ?? {},
   };
 }
 

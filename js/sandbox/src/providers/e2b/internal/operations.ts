@@ -59,6 +59,7 @@ export async function createE2bSandbox(
   const sandbox = await Sandbox.create(input.snapshot, {
     ...e2bApiOptions(config),
     metadata,
+    ...(input.envVars ? { envs: input.envVars } : {}),
     timeoutMs: e2bTimeoutMs(input.autoStopInterval),
     lifecycle: {
       onTimeout: { action: "pause", keepMemory: false },
@@ -70,7 +71,7 @@ export async function createE2bSandbox(
     provider: "e2b",
     providerSandboxId: sandbox.sandboxId,
     services: input.services,
-    envVars: {},
+    envVars: input.envVars ?? {},
   };
 }
 

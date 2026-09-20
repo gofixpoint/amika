@@ -262,7 +262,10 @@ describe("createVercelSandbox", () => {
     const result = await createVercelSandbox(
       ctx(),
       config,
-      createInput({ snapshot: image }),
+      createInput({
+        snapshot: image,
+        envVars: { CALLER_MODE: "enabled" },
+      }),
     );
 
     expect(sandboxCreate).toHaveBeenCalledTimes(1);
@@ -273,10 +276,14 @@ describe("createVercelSandbox", () => {
       persistent: true,
       keepLastSnapshots: { count: 1 },
       snapshotExpiration: 0,
+      env: { CALLER_MODE: "enabled" },
       image,
     });
-    expect(result.provider).toBe("vercel");
-    expect(result.providerSandboxId).toBe("vercel-generated");
+    expect(result).toMatchObject({
+      provider: "vercel",
+      providerSandboxId: "vercel-generated",
+      envVars: { CALLER_MODE: "enabled" },
+    });
   });
 
   it("boots a captured user snapshot by id", async () => {
