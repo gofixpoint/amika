@@ -15,7 +15,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create a source sandbox and wait until it is provisioned
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -29,7 +29,7 @@ steps:
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: create a service on the running sandbox
     cmd: [service, create, --rig, "{{sandbox_name}}", --name, e2e-svc, --port, "3000", --url-scheme, http, -o, json]
@@ -61,6 +61,6 @@ steps:
         status: deleted
 
   - name: delete the source sandbox
-    cmd: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+    cmd: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
     expect:
       exit: 0

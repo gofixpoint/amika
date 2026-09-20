@@ -72,7 +72,7 @@ list of `steps`:
 name: create and delete a remote sandbox
 steps:
   - name: create remote sandbox
-    cmd: [sandbox, create, --preset, claude, -o, json]   # argv, NOT including "amika" itself
+    cmd: [rig, create, --preset, claude, -o, json]   # argv, NOT including "amika" itself
     stdin: "optional string piped to the process's stdin"
     env:
       SOME_VAR: some-value                                # extra env for this step only
@@ -91,7 +91,7 @@ steps:
     resource:                                               # optional: register for cleanup
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --force, -o, json]
+      cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
       register_on_failure: false                            # optional: set true to register even on an unexpected exit (default false)
     release_resource:                                      # optional: retire a consumed resource after this step passes
       type: sandbox
@@ -108,14 +108,14 @@ operation under test consumes a resource, such as `snapshot create --mode
 scrub_and_delete` deleting its source sandbox. If the step fails, the ledger
 entry remains available for best-effort cleanup.
 
-### Remote commands (`sandbox ssh`)
+### Remote commands (`rig ssh`)
 
 A command to run inside a sandbox must be **one** `cmd` element, holding the
 whole script:
 
 ```yaml
     cmd:
-      - sandbox
+      - rig
       - ssh
       - "{{sandbox_name}}"
       - --
@@ -171,7 +171,7 @@ vars:
     daytona: a0.m                   # this provider's value wins
 steps:
   - name: create a medium sandbox
-    cmd: [sandbox, create, --remote, --size, m, ...]
+    cmd: [rig, create, --remote, --size, m, ...]
     expect:
       stdout_json:
         sandbox_size: "{{expected_size}}"
@@ -405,14 +405,14 @@ run").
 
 Real-API cases that create something must declare a `resource` block so the
 ledger can delete it afterward (see "Resources and cleanup" above). A
-read-only real-API case (e.g. `sandbox list`) needs no `resource`. Example:
+read-only real-API case (e.g. `rig list`) needs no `resource`. Example:
 
 ```yaml
 # cases/api-sandbox-lifecycle.yaml
 name: create and delete a remote sandbox via the real API
 steps:
   - name: create remote sandbox
-    cmd: [sandbox, create, --remote, --preset, claude, -o, json]
+    cmd: [rig, create, --remote, --preset, claude, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -421,5 +421,5 @@ steps:
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --force, -o, json]
+      cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
 ```

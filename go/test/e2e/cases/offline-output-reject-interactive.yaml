@@ -6,27 +6,27 @@
 # env isolation is needed beyond the runner's own isolated
 # AMIKA_STATE_DIRECTORY.
 #
-# `sandbox connect` and `sandbox code` both require a positional <name>
+# `rig connect` and `rig code` both require a positional <name>
 # (cobra's Args validator runs before RunE), so the JSON rejection is only
 # reachable once a name is supplied; omitting it instead fails with cobra's
 # own "accepts 1 arg(s)" error before RejectJSON ever runs (see
 # offline-usage-errors.yaml for that case).
 name: interactive commands reject -o json/json-pretty before doing any work
 steps:
-  - name: sandbox connect -o json is rejected
-    cmd: [sandbox, connect, somebox, -o, json]
+  - name: rig connect -o json is rejected
+    cmd: [rig, connect, somebox, -o, json]
     expect:
       exit: 1
       stderr_contains: "the --output json option is not supported by this command: it produces no structured JSON result"
 
-  - name: sandbox connect -o json-pretty is rejected
-    cmd: [sandbox, connect, somebox, -o, json-pretty]
+  - name: rig connect -o json-pretty is rejected
+    cmd: [rig, connect, somebox, -o, json-pretty]
     expect:
       exit: 1
       stderr_contains: "the --output json-pretty option is not supported by this command: it produces no structured JSON result"
 
-  - name: sandbox code -o json is rejected before editor validation
-    cmd: [sandbox, code, somebox, -o, json]
+  - name: rig code -o json is rejected before editor validation
+    cmd: [rig, code, somebox, -o, json]
     expect:
       exit: 1
       stderr_contains: "the --output json option is not supported by this command: it produces no structured JSON result"

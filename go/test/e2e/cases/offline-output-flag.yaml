@@ -1,5 +1,5 @@
 # Offline sample case: exercises the --output/-o flag's validation and its
-# interaction with `sandbox agent-send`. Every step here is fully
+# interaction with `send`. Every step here is fully
 # deterministic and needs no Docker, no network, and no real API
 # credentials, so it runs the same way in any environment — including this
 # repo's own dev sandbox, which happens to export a real AMIKA_API_KEY into
@@ -17,30 +17,28 @@ steps:
       stdout_contains: "Available Commands"
 
   - name: an invalid --output value is rejected before doing any work
-    cmd: [sandbox, agent-send, some-sandbox, hello, --output, bogus]
+    cmd: [send, hello, --rig, some-sandbox, --output, bogus]
     expect:
       exit: 1
       stderr_contains: 'invalid --output value "bogus": must be one of text, json, json-pretty'
 
-  - name: --output json is honored (not rejected) for agent-send
-    # agent-send accepts --output json like any other command and simply
-    # proceeds — here failing at the auth gate, same as it would in text
-    # mode. cobra/main.go prints RunE errors as plain text regardless of
-    # --output, so the error text below is unchanged from the text-mode
-    # message.
-    cmd: [sandbox, agent-send, some-sandbox, hello, --output, json]
+  - name: --output json is honored by send
+    # send accepts --output json like any other command and simply proceeds,
+    # here failing at the auth gate, same as it would in text mode.
+    # cobra/main.go prints RunE errors as plain text regardless of --output,
+    # so the error text below is unchanged from the text-mode message.
+    cmd: [send, hello, --rig, some-sandbox, --output, json]
     env:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
       stderr_contains: 'not logged in; run "amika auth login"'
 
-  - name: --output json is now honored (not rejected) for --no-wait agent-send
-    # Likewise, the old "--output json is not supported with --no-wait"
-    # rejection is gone. A --remote --no-wait send with no stored
-    # credentials and no AMIKA_API_KEY now fails at the auth check instead,
-    # before any network call is attempted.
-    cmd: [sandbox, agent-send, some-sandbox, hello, --no-wait, --output, json, --remote]
+  - name: --output json is honored when send explicitly requests streaming
+    # JSON output forces a buffered response even when --stream is present.
+    # With no stored credentials and no AMIKA_API_KEY, validation reaches the
+    # auth check before any network call is attempted.
+    cmd: [send, hello, --rig, some-sandbox, --stream, --output, json]
     env:
       AMIKA_API_KEY: ""
     expect:

@@ -19,34 +19,34 @@ steps:
     # demonstrates an unknown-flag rejection. A flag with no registration on
     # this command (or the root) still fails fast, before RunE, via cobra's
     # own flag parser.
-    cmd: [sandbox, connect, somebox, --bogus-flag]
+    cmd: [rig, connect, somebox, --bogus-flag]
     expect:
       exit: 1
       stderr_contains: "unknown flag: --bogus-flag"
 
-  - name: sandbox connect without credentials fails at the auth gate
-    cmd: [sandbox, connect, does-not-exist]
+  - name: rig connect without credentials fails at the auth gate
+    cmd: [rig, connect, does-not-exist]
     env:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
       stderr_contains: 'not logged in; run "amika auth login"'
 
-  - name: agent-send requires a message from args or stdin
+  - name: send requires a message from args or stdin
     # The message check runs before the auth gate, so this fails on the
     # missing message rather than on credentials.
-    cmd: [sandbox, agent-send, some-sandbox]
+    cmd: [send, --rig, some-sandbox]
     env:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
       stderr_contains: "message is required as an argument or via stdin"
 
-  - name: agent-send reads the message from stdin when no positional message is given
+  - name: send reads the message from stdin when no positional message is given
     # Confirms stdin plumbing: with a message on stdin, the command gets
     # past the "message is required" check and fails later, at the auth
     # gate, instead — proving the piped message was read.
-    cmd: [sandbox, agent-send, does-not-exist]
+    cmd: [send, --rig, does-not-exist]
     stdin: "hello from stdin"
     env:
       AMIKA_API_KEY: ""

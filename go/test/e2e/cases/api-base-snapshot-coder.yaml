@@ -15,7 +15,7 @@ vars:
     default: a0.m
     e2b: a1.medium
 steps:
-  - name: register the local SSH public key for sandbox ssh
+  - name: register the local SSH public key for rig ssh
     cmd: [secret, ssh-key, create, --name, "e2e-{{sandbox_provider}}-coder-{{run_id}}", -o, json]
     expect:
       exit: 0
@@ -30,7 +30,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a medium coder sandbox from the selected provider base snapshot
-    cmd: [sandbox, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -45,11 +45,11 @@ steps:
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
-      cleanup: [sandbox, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: verify the booted base snapshot contract
     cmd:
-      - sandbox
+      - rig
       - ssh
       - "{{sandbox_name}}"
       - --
@@ -79,7 +79,7 @@ steps:
 
   - name: verify the default amikad and OpenCode services are running
     cmd:
-      - sandbox
+      - rig
       - ssh
       - "{{sandbox_name}}"
       - --

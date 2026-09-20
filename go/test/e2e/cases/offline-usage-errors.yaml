@@ -3,7 +3,7 @@
 name: argument and usage errors are reported clearly offline
 steps:
   - name: a missing required positional argument fails with cobra's arg-count error
-    cmd: [sandbox, delete]
+    cmd: [rig, delete]
     expect:
       exit: 1
       stderr_contains: "requires at least 1 arg(s), only received 0"
@@ -17,7 +17,7 @@ steps:
     # command, which cobra resolves by printing that group's help and
     # exiting 0 — no error, no stderr output. Contrast with the root-level
     # case just below.
-    cmd: [sandbox, bogus]
+    cmd: [rig, bogus]
     expect:
       exit: 0
       stdout_contains: "Available Commands"
@@ -36,28 +36,28 @@ steps:
       exit: 0
       stdout_contains: "Available Commands"
 
-  - name: amika sandbox code --help exits 0 and shows its own usage line
-    cmd: [sandbox, code, --help]
+  - name: amika rig code --help exits 0 and shows its own usage line
+    cmd: [rig, code, --help]
     expect:
       exit: 0
-      stdout_contains: "amika sandbox code <name> [flags]"
+      stdout_contains: "amika rig code <name> [flags]"
 
-  - name: sandbox --help lists ssh and code
-    cmd: [sandbox, --help]
+  - name: rig --help lists ssh and code
+    cmd: [rig, --help]
     expect:
       exit: 0
       stdout_contains: "  ssh         SSH into a remote sandbox"
 
-  - name: sandbox --help does NOT list the superseded sshv1
+  - name: rig --help does NOT list the superseded sshv1
     # sshv1/codev1 stay registered for existing scripts but are Hidden, so the
     # help listing must steer new users to the current transport.
-    cmd: [sandbox, --help]
+    cmd: [rig, --help]
     expect:
       exit: 0
       stdout_not_contains: "sshv1"
 
-  - name: sandbox --help does NOT list the superseded codev1
-    cmd: [sandbox, --help]
+  - name: rig --help does NOT list the superseded codev1
+    cmd: [rig, --help]
     expect:
       exit: 0
       stdout_not_contains: "codev1"
@@ -68,33 +68,33 @@ steps:
       exit: 0
       stdout_not_contains: "scpv1"
 
-  - name: hidden sandbox sshv1 --help still works and keeps its own flags
+  - name: hidden rig sshv1 --help still works and keeps its own flags
     # The compatibility promise: a script that called the old provider-native
     # ssh keeps working under the new name, flags included.
-    cmd: [sandbox, sshv1, --help]
+    cmd: [rig, sshv1, --help]
     expect:
       exit: 0
-      stdout_contains: "amika sandbox sshv1 [flags] <name> [-- <command>...]"
+      stdout_contains: "amika rig sshv1 [flags] <name> [-- <command>...]"
 
-  - name: hidden sandbox sshv1 --help still documents --revoke
-    cmd: [sandbox, sshv1, --help]
+  - name: hidden rig sshv1 --help still documents --revoke
+    cmd: [rig, sshv1, --help]
     expect:
       exit: 0
       stdout_contains: "--revoke"
 
-  - name: sandbox ssh --help defines no flags of its own
+  - name: rig ssh --help defines no flags of its own
     # ssh forwards everything after the subcommand to the ssh binary, so
     # sshv1's --revoke must NOT be one of its flags.
-    cmd: [sandbox, ssh, --help]
+    cmd: [rig, ssh, --help]
     expect:
       exit: 0
       stdout_not_contains: "--revoke"
 
-  - name: hidden sandbox codev1 --help still works
-    cmd: [sandbox, codev1, --help]
+  - name: hidden rig codev1 --help still works
+    cmd: [rig, codev1, --help]
     expect:
       exit: 0
-      stdout_contains: "amika sandbox codev1 <name> [flags]"
+      stdout_contains: "amika rig codev1 <name> [flags]"
 
   - name: hidden scpv1 --help still works
     cmd: [scpv1, --help]
