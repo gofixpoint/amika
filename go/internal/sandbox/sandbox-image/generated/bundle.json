@@ -186,9 +186,9 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.263",
-            "CODEX_VERSION": "0.153.4",
-            "OPENCODE_VERSION": "1.18.25",
+            "CLAUDE_CODE_VERSION": "2.1.270",
+            "CODEX_VERSION": "0.154.0",
+            "OPENCODE_VERSION": "1.18.30",
             "PI_VERSION": "0.84.4"
           }
         },
@@ -197,7 +197,7 @@
           "id": "pi-web",
           "script": "steps/82-pi-web.sh",
           "versions": {
-            "PI_WEB_VERSION": "0.8.11"
+            "PI_WEB_VERSION": "0.9.1"
           }
         },
         {
@@ -207,7 +207,7 @@
           "versions": {
             "AMIKAD_VERSION": "0.1.0",
             "AMIKALOG_VERSION": "0.2.0",
-            "AMIKA_VERSION": "0.19.0"
+            "AMIKA_VERSION": "0.19.1-rc.1"
           }
         },
         {
@@ -338,9 +338,9 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.263",
-            "CODEX_VERSION": "0.153.4",
-            "OPENCODE_VERSION": "1.18.25",
+            "CLAUDE_CODE_VERSION": "2.1.270",
+            "CODEX_VERSION": "0.154.0",
+            "OPENCODE_VERSION": "1.18.30",
             "PI_VERSION": "0.84.4"
           }
         },
@@ -349,7 +349,7 @@
           "id": "pi-web",
           "script": "steps/82-pi-web.sh",
           "versions": {
-            "PI_WEB_VERSION": "0.8.11"
+            "PI_WEB_VERSION": "0.9.1"
           }
         },
         {
@@ -359,7 +359,7 @@
           "versions": {
             "AMIKAD_VERSION": "0.1.0",
             "AMIKALOG_VERSION": "0.2.0",
-            "AMIKA_VERSION": "0.19.0"
+            "AMIKA_VERSION": "0.19.1-rc.1"
           }
         },
         {
