@@ -35,7 +35,7 @@ async function runAction(env, event, ports) {
     if (!context.waitForCompletion) {
       completed = true;
       ports.notice(
-        `Amika accepted command run ${run.id}; the result will be reported asynchronously.`
+        context.reportResult === "pr-comment" ? `Amika accepted command run ${run.id}; the result will be posted to the pull request.` : `Amika accepted command run ${run.id}; it will continue asynchronously.`
       );
       return run;
     }
