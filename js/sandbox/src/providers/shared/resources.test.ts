@@ -19,7 +19,6 @@ const ALL_OFF: SandboxProviderCapabilities = {
   scrubCapture: false,
   fullSnapshotCapture: false,
   dockerRegistries: false,
-  skipStartScript: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
 };
@@ -35,7 +34,6 @@ const ALL_ON: SandboxProviderCapabilities = {
   scrubCapture: true,
   fullSnapshotCapture: true,
   dockerRegistries: true,
-  skipStartScript: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
 };

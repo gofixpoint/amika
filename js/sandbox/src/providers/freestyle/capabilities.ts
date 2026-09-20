@@ -24,7 +24,6 @@ export const freestyleCapabilities: SandboxProviderCapabilities = {
   scrubCapture: true,
   fullSnapshotCapture: true,
   dockerRegistries: false,
-  skipStartScript: false,
   // `vm.snapshot` returns an opaque id distinct from the org-scoped name.
   snapshotIdsAreOpaque: true,
   // Persistent VMs suspend/resume rather than being auto-deleted.

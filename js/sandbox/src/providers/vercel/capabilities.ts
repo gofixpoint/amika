@@ -12,8 +12,7 @@
  * scrub-and-delete capture is supported (a kept-alive source's
  * `keepLastSnapshots` retention would evict a full capture), so
  * `fullSnapshotCapture` is false. Docker registries and image-derived snapshots
- * stay Daytona-only — a control-plane concern Vercel does not back. Vercel
- * honors `skipStartScript` in its start-phase lifecycle rerun.
+ * stay Daytona-only — a control-plane concern Vercel does not back.
  */
 import type { SandboxProviderCapabilities } from "../provider";
 
@@ -28,7 +27,6 @@ export const vercelCapabilities: SandboxProviderCapabilities = {
   scrubCapture: true,
   fullSnapshotCapture: false,
   dockerRegistries: false,
-  skipStartScript: true,
   // Vercel snapshots are id-only (`snap_…`), resolved from the org-scoped name
   // through the injected resolver.
   snapshotIdsAreOpaque: true,

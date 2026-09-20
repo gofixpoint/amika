@@ -6,8 +6,7 @@
  * The full-featured, control-plane provider: per-sandbox lifecycle + exec + log
  * streaming + SSH + snapshots, plus the image-derived snapshots and docker
  * registries no other provider backs. Streaming is real (session command logs
- * over a WebSocket). Daytona honors `skipStartScript` in its start-phase
- * lifecycle rerun.
+ * over a WebSocket).
  */
 import type { SandboxProviderCapabilities } from "../provider";
 
@@ -22,7 +21,6 @@ export const daytonaCapabilities: SandboxProviderCapabilities = {
   scrubCapture: true,
   fullSnapshotCapture: true,
   dockerRegistries: true,
-  skipStartScript: true,
   // Snapshots are booted by their org-scoped name (no separate id handle).
   snapshotIdsAreOpaque: false,
   // Daytona deletes idle sandboxes on the auto-delete interval.

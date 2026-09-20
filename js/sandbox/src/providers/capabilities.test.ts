@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  getSandboxProviderLabel,
-  SANDBOX_PROVIDER_CAPABILITIES,
-} from "./capabilities";
+import { getSandboxProviderLabel } from "./capabilities";
 
 describe("getSandboxProviderLabel", () => {
   it("labels a Daytona VM", () => {
@@ -29,20 +26,5 @@ describe("getSandboxProviderLabel", () => {
 
   it("falls back to the raw name for unknown providers", () => {
     expect(getSandboxProviderLabel("mystery", null)).toBe("mystery");
-  });
-});
-
-describe("skipStartScript capability", () => {
-  // This flag is the UI gate for the Start button's "start without running
-  // start script" dropdown. It must be true only for providers whose
-  // `rerunLifecycle` actually forwards `skipStartScript` to the shared
-  // lifecycle runner, otherwise the dropdown would render a silent no-op.
-  it("is advertised by the providers that wire it through (Daytona, Vercel)", () => {
-    expect(SANDBOX_PROVIDER_CAPABILITIES.daytona.skipStartScript).toBe(true);
-    expect(SANDBOX_PROVIDER_CAPABILITIES.vercel.skipStartScript).toBe(true);
-  });
-
-  it("stays off for providers that always run the start script", () => {
-    expect(SANDBOX_PROVIDER_CAPABILITIES.freestyle.skipStartScript).toBe(false);
   });
 });

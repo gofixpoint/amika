@@ -7,8 +7,6 @@
  * constants that are genuinely Daytona-specific.
  */
 export {
-  RepositoryCloneError,
-  type McpIntegrationInput,
   type SandboxService,
   type CreateSandboxProviderInput as DaytonaCreateRequest,
 } from "../../provider";

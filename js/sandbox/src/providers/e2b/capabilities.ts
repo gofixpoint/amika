@@ -12,7 +12,6 @@ export const e2bCapabilities: SandboxProviderCapabilities = {
   scrubCapture: true,
   fullSnapshotCapture: true,
   dockerRegistries: false,
-  skipStartScript: true,
   snapshotIdsAreOpaque: true,
   supportsAutoDelete: false,
 };

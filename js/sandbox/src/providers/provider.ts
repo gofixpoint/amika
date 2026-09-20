@@ -38,90 +38,6 @@ export class SandboxProviderUnsupportedError extends Error {
 }
 
 /**
- * Thrown when a repository clone fails inside a freshly provisioned sandbox.
- * Carries the original cause so the create flow can map known git errors onto
- * actionable API errors. Provider-agnostic: any provider that clones a repo
- * during initialization throws this.
- */
-export class RepositoryCloneError extends Error {
-  constructor(repoUrl: string, cause: unknown) {
-    const inner =
-      cause instanceof Error ? cause.message : "Unknown clone error";
-    super(
-      `Failed to clone repository ${repoUrl} inside the sandbox: ${inner}. ` +
-        "Check that your GitHub token has access to this repository.",
-    );
-    this.name = "RepositoryCloneError";
-    this.cause = cause;
-  }
-}
-
-/**
- * Thrown by the shared lifecycle-script runner when a *user* lifecycle script
- * (`setup.sh` on create, `start.sh` on start) exits non-zero. The system hooks
- * around it (pre-setup/post-setup) still run before this is raised, so the
- * sandbox's agent server comes up and the VM stays usable; failures of the
- * hooks themselves surface as plain errors (a system-setup problem, not a
- * user-script one).
- */
-export class SetupScriptError extends Error {
-  /** Which user lifecycle script failed. */
-  readonly phase: "setup" | "start";
-  constructor(phase: "setup" | "start", cause: unknown) {
-    const inner =
-      cause instanceof Error ? cause.message : "Unknown script error";
-    super(
-      phase === "setup"
-        ? `Setup script failed: ${inner}`
-        : `Start script failed: ${inner}`,
-    );
-    this.name = "SetupScriptError";
-    this.phase = phase;
-    this.cause = cause;
-  }
-}
-
-/**
- * A setup problem an initialization / lifecycle-rerun hit while the VM itself
- * stayed usable. Providers record it and *finish* initializing (agent server,
- * signed URLs) instead of aborting, so the caller can mark the sandbox running
- * with this as its setup sub-status rather than tearing the VM down.
- *
- * `git-failed` strictly means the *primary* repo is missing (the agent's cwd
- * doesn't exist) — consumers make control decisions on that (skipping the
- * workflow kickoff, failing a Slack turn fast). Everything else that leaves
- * the workspace usable but incompletely set up — a failed user script or a
- * failed additional-repo clone — is `setup-failed`. System-setup failures are
- * not represented here — providers can't always finish after those, so they
- * throw and the caller classifies the error.
- */
-export interface SandboxSetupFailure {
-  kind: "git-failed" | "setup-failed";
-  message: string;
-}
-
-/**
- * A service-derived env var definition from `.amika/config.toml`:
- *   `MY_URL = { service = "web", field = "url" }`
- * Resolved against live service URLs/ports after a sandbox is provisioned.
- */
-export interface ServiceEnvVarDef {
-  name: string;
-  service: string;
-  field: "url" | "host" | "port";
-}
-
-/** An MCP integration to wire into the sandbox's agent config. */
-export interface McpIntegrationInput {
-  name: string;
-  mcpServerType: string;
-  mcpServerUrl: string;
-  // Required for OAuth (http) integrations; omitted for stdio MCPs that
-  // run locally in the sandbox with no auth (e.g. Playwright).
-  accessToken?: string;
-}
-
-/**
  * Request to provision a new provider sandbox.
  *
  * Service identity and environment contents are caller-owned policy. Providers
@@ -626,12 +542,6 @@ export interface SandboxProviderCapabilities {
   scrubCapture: boolean;
   /** Docker registry management (`provider.docker` non-null iff true). */
   dockerRegistries: boolean;
-  /**
-   * Whether starting the sandbox can skip re-running the start phase.
-   * Providers that can skip the caller's start-phase command set this true;
-   * consumers hide that option otherwise so it cannot become a silent no-op.
-   */
-  skipStartScript: boolean;
   /**
    * Whether the provider's bootable snapshot handle is an opaque id
    * (`sc-…`/`snap_…`) distinct from the org-scoped snapshot *name* — the
