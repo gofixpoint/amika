@@ -31,7 +31,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create the sandbox the chat will run in
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox

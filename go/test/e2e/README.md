@@ -1,10 +1,9 @@
 # E2E test runner
 
-A black-box test runner for the `amika` CLI. It runs the compiled
-`dist/amika` binary as a subprocess and asserts on
-`argv + stdin + env -> stdout + stderr + exit code`. Nothing here calls
-into Go packages that implement `amika`; every case is exactly what a
-user typing commands at a shell would see.
+A black-box test runner for the `amika` CLI. It runs an `amika` executable
+as a subprocess and asserts on `argv + stdin + env -> stdout + stderr + exit
+code`. Nothing here calls into Go packages that implement `amika`; every case
+is exactly what a user typing commands at a shell would see.
 
 ## Running it
 
@@ -28,9 +27,41 @@ go -C go test ./test/e2e/runner/...
 ```
 
 `TestE2ECases` (in `e2e_test.go`) is skipped unless `AMIKA_RUN_E2E=1`,
-because some cases may reach a real API or Docker daemon. It builds
-`amika` fresh via `testutil.BuildAmikaBinary`, discovers every
-`cases/*.yaml`, and runs each file as a subtest.
+because some cases may reach a real API or Docker daemon. By default it builds
+`amika` fresh via `testutil.BuildAmikaBinary`, discovers every `cases/*.yaml`,
+and runs each file as a subtest.
+
+### Supplying the executable
+
+Set `AMIKA_BINARY_PATH` to an absolute executable path to run that path instead
+of building a temporary binary. The executable may be a wrapper, and the same
+path is then recorded in managed SSH `ProxyCommand` configuration. This is
+necessary when the tests target a control plane other than the host's default
+and a shell startup file can overwrite `AMIKA_API_URL` during the second-stage
+SSH proxy invocation.
+
+Build the CLI from the checkout under test, then make the wrapper restore the
+target URL before executing that build:
+
+```bash
+make build-cli
+cat >/tmp/amika-e2e-rig <<'EOF'
+#!/bin/sh
+export AMIKA_API_URL='https://coding-agents.example.test'
+exec /absolute/path/to/amika/dist/amika "$@"
+EOF
+chmod 700 /tmp/amika-e2e-rig
+
+AMIKA_BINARY_PATH=/tmp/amika-e2e-rig \
+AMIKA_API_URL=https://coding-agents.example.test \
+AMIKA_E2E_OPENAPI_URL=https://coding-agents.example.test/api/openapi.json \
+make test-e2e-api E2E_SANDBOX_PROVIDER=e2b
+```
+
+The wrapper must execute a build from the same checkout being tested and must
+outlive the test. Do not put `AMIKA_API_KEY` or another secret directly in the
+wrapper; let the test process and wrapper inherit credentials through the
+environment.
 
 ## Directory layout
 

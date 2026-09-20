@@ -1,11 +1,12 @@
 // Package e2e_test is the Go test entry point for the black-box E2E case
-// runner: it builds the amika binary, discovers cases/*.yaml, and runs each
-// as a subtest via the runner package.
+// runner: it selects the amika executable, discovers cases/*.yaml, and runs
+// each as a subtest via the runner package.
 package e2e_test
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +23,13 @@ import (
 // case, may reach out over the network, so it does not run under a plain
 // `go test ./...`.
 const runE2EEnv = "AMIKA_RUN_E2E"
+
+// binaryPathEnv optionally names the absolute executable the suite should run
+// instead of building a temporary amika binary. It may be a wrapper that
+// restores deployment-specific environment before invoking the real binary,
+// which is required when an SSH ProxyCommand crosses a shell environment
+// boundary.
+const binaryPathEnv = "AMIKA_BINARY_PATH"
 
 // openAPIURLEnv overrides the OpenAPI document that expect.schema names are
 // validated against. It is a URL (or local path); when unset it defaults to
@@ -121,9 +129,71 @@ func baseEnvFor(isAPICase bool) []string {
 	return scrubbed
 }
 
+func e2eBinary(t *testing.T) string {
+	t.Helper()
+	configured, err := configuredE2EBinaryPath(os.Getenv(binaryPathEnv))
+	if err != nil {
+		t.Fatalf("%s: %v", binaryPathEnv, err)
+	}
+	if configured != "" {
+		t.Logf("using %s override %s", binaryPathEnv, configured)
+		return configured
+	}
+	return testutil.BuildAmikaBinary(t)
+}
+
+func configuredE2EBinaryPath(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(raw) {
+		return "", fmt.Errorf("must be an absolute path, got %q", raw)
+	}
+	path := filepath.Clean(raw)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%q is not a regular file", path)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return "", fmt.Errorf("%q is not executable", path)
+	}
+	return path, nil
+}
+
+func TestConfiguredE2EBinaryPath(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "amika-wrapper")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := configuredE2EBinaryPath(executable)
+	if err != nil {
+		t.Fatalf("configuredE2EBinaryPath: %v", err)
+	}
+	if got != executable {
+		t.Fatalf("configured path = %q, want %q", got, executable)
+	}
+
+	if _, err := configuredE2EBinaryPath("relative/amika"); err == nil {
+		t.Fatal("relative AMIKA_BINARY_PATH unexpectedly accepted")
+	}
+
+	nonExecutable := filepath.Join(t.TempDir(), "amika-wrapper")
+	if err := os.WriteFile(nonExecutable, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configuredE2EBinaryPath(nonExecutable); err == nil {
+		t.Fatal("non-executable AMIKA_BINARY_PATH unexpectedly accepted")
+	}
+}
+
 // TestE2ECases discovers every case file under cases/, runs each as a
-// subtest against a freshly built amika binary, and cleans up any
-// resources the case registered — even if the case failed or panicked.
+// subtest against either AMIKA_BINARY_PATH or a freshly built amika binary,
+// and cleans up any resources the case registered — even if the case failed
+// or panicked.
 func TestE2ECases(t *testing.T) {
 	if os.Getenv(runE2EEnv) != "1" {
 		t.Skipf("set %s=1 to run black-box E2E CLI cases", runE2EEnv)
@@ -132,7 +202,7 @@ func TestE2ECases(t *testing.T) {
 		t.Fatalf("invalid -sandbox-provider %q (want daytona, e2b, freestyle, or vercel)", *sandboxProvider)
 	}
 
-	bin := testutil.BuildAmikaBinary(t)
+	bin := e2eBinary(t)
 	moduleRoot := testutil.FindModuleRoot(t)
 	casesDir := filepath.Join(moduleRoot, "test", "e2e", "cases")
 	schemaDoc := os.Getenv(openAPIURLEnv)
