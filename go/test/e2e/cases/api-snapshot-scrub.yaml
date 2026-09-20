@@ -33,7 +33,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a source sandbox
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -125,7 +125,7 @@ steps:
       name: "{{source_sandbox}}"
 
   - name: fork a sandbox from the scrubbed snapshot
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --snapshot, "{{snapshot_ref}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --snapshot, "{{snapshot_ref}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox

@@ -27,7 +27,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a medium coder-plus-docker sandbox from the selected provider base snapshot
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-plus-docker, --size, "{{request_size}}", --yes, -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-plus-docker, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
