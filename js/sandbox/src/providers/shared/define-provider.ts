@@ -171,9 +171,8 @@ export interface ProviderDefinition {
  *
  * The namespace-internal invariants (files/services are method pairs, `stream`
  * requires `exec`) are gone from here — they're enforced by the definition's
- * types. `fullSnapshotCapture`/`skipStartScript` are behavioral sub-flags with
- * no namespace of their own, so they're carried through unchecked (the author
- * owns them).
+ * types. `fullSnapshotCapture` is a behavioral sub-flag with no namespace of
+ * its own, so it is carried through unchecked (the author owns it).
  */
 function assertCapabilitiesMatch(
   capabilities: SandboxProviderCapabilities,
@@ -228,7 +227,6 @@ function assertCapabilitiesMatch(
     scrubCapture: def.snapshots != null && def.exec != null,
     dockerRegistries: def.dockerRegistries != null,
     fullSnapshotCapture: capabilities.fullSnapshotCapture,
-    skipStartScript: capabilities.skipStartScript,
     // Behavioral facts with no namespace to derive from — the author owns them.
     snapshotIdsAreOpaque: capabilities.snapshotIdsAreOpaque,
     supportsAutoDelete: capabilities.supportsAutoDelete,

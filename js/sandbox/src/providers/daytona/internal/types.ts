@@ -7,12 +7,8 @@
  * constants that are genuinely Daytona-specific.
  */
 export {
-  RepositoryCloneError,
-  type McpIntegrationInput,
   type SandboxService,
   type CreateSandboxProviderInput as DaytonaCreateRequest,
-  type InitializeSandboxInput as DaytonaInitializeRequest,
-  type SandboxInitializeResult as DaytonaInitializeResult,
 } from "../../provider";
 
 export const DAYTONA_PROVIDER = "daytona";

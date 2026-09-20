@@ -87,7 +87,6 @@ daytona/
        fullSnapshotCapture: false,
        scrubCapture: false,
        dockerRegistries: false,
-       skipStartScript: false,
        snapshotIdsAreOpaque: false,
        supportsAutoDelete: false,
      };
@@ -115,7 +114,6 @@ daytona/
            create: async (ctx, input) => ({
              provider: "acme",
              providerSandboxId: (await acme.create(input.name)).id,
-             providerUrl: null,
              services: input.services,
            }),
            delete: (id) => acme.delete(id),

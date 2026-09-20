@@ -47,7 +47,6 @@ describe("e2b provider wiring", () => {
       scrubCapture: true,
       fullSnapshotCapture: true,
       dockerRegistries: false,
-      skipStartScript: true,
       snapshotIdsAreOpaque: true,
       supportsAutoDelete: false,
     });

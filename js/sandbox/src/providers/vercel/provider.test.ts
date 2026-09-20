@@ -48,8 +48,6 @@ describe("vercel provider wiring", () => {
       // Only scrub-and-delete capture is supported; full mode is rejected.
       fullSnapshotCapture: false,
       dockerRegistries: false,
-      // Vercel honors skipStartScript on start.
-      skipStartScript: true,
       // Snapshots are id-only; persistent microVMs aren't auto-deleted.
       snapshotIdsAreOpaque: true,
       supportsAutoDelete: false,

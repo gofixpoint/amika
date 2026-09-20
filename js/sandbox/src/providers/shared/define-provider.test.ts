@@ -16,7 +16,6 @@ const ALL_OFF: SandboxProviderCapabilities = {
   scrubCapture: false,
   fullSnapshotCapture: false,
   dockerRegistries: false,
-  skipStartScript: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
 };
@@ -26,7 +25,6 @@ const SANDBOX_NAMESPACE: ProviderDefinition["sandbox"] = {
   create: async () => ({
     provider: "daytona",
     providerSandboxId: "sb_1",
-    providerUrl: null,
     services: [],
   }),
   delete: async () => {},
@@ -70,7 +68,7 @@ const LIFECYCLE_MEMBERS: DefOverrides = {
     getState: async () => "running",
   },
   services: {
-    refreshUrls: async () => ({ providerUrl: null, services: [] }),
+    refreshUrls: async () => ({ services: [] }),
     syncRoutes: async () => {},
   },
 };
@@ -124,7 +122,6 @@ describe("defineProvider metadata + defaults", () => {
           create: async () => ({
             provider: "daytona",
             providerSandboxId: config.token,
-            providerUrl: null,
             services: [],
           }),
           delete: async () => {},
@@ -215,7 +212,6 @@ describe("defineProvider object assembly", () => {
     const created = {
       provider: "daytona",
       providerSandboxId: "sb_1",
-      providerUrl: null,
       services: [],
     };
     const provider = build(ALL_OFF, {

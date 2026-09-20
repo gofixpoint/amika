@@ -55,6 +55,7 @@ describe("E2B lifecycle operations", () => {
         name: "demo",
         snapshot: "tpl_coder_xs",
         labels: { "amika-org-id": "org_1" },
+        envVars: { CALLER_MODE: "enabled" },
         autoStopInterval: 15,
         services: [],
       } as never,
@@ -66,6 +67,7 @@ describe("E2B lifecycle operations", () => {
         "amika-org-id": "org_1",
         "amika-sandbox-name": "demo",
       },
+      envs: { CALLER_MODE: "enabled" },
       timeoutMs: 15 * 60_000,
       lifecycle: {
         onTimeout: { action: "pause", keepMemory: false },
@@ -76,6 +78,7 @@ describe("E2B lifecycle operations", () => {
     expect(result).toMatchObject({
       provider: "e2b",
       providerSandboxId: "sbx_1",
+      envVars: { CALLER_MODE: "enabled" },
     });
   });
 
@@ -134,7 +137,7 @@ describe("E2B services and listing", () => {
     });
 
     const services = [
-      { name: "Coding Agent", containerPort: 3000, url: null },
+      { name: "primary", containerPort: 3000, url: null },
       { name: "Preview", containerPort: 5173, url: null },
     ] as never;
     const result = await refreshE2bUrls(CONFIG, "sbx_1", services);
@@ -142,7 +145,6 @@ describe("E2B services and listing", () => {
     expect(run).toHaveBeenCalledWith(e2bRouteSyncCommand(services), {
       user: "root",
     });
-    expect(result.providerUrl).toBe("https://3000-sbx_1.e2b.app");
     expect(result.services.map((service) => service.url)).toEqual([
       "https://3000-sbx_1.e2b.app",
       "https://5173-sbx_1.e2b.app",

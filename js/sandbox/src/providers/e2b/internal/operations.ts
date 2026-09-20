@@ -59,6 +59,7 @@ export async function createE2bSandbox(
   const sandbox = await Sandbox.create(input.snapshot, {
     ...e2bApiOptions(config),
     metadata,
+    ...(input.envVars ? { envs: input.envVars } : {}),
     timeoutMs: e2bTimeoutMs(input.autoStopInterval),
     lifecycle: {
       onTimeout: { action: "pause", keepMemory: false },
@@ -69,9 +70,8 @@ export async function createE2bSandbox(
   return {
     provider: "e2b",
     providerSandboxId: sandbox.sandboxId,
-    providerUrl: null,
     services: input.services,
-    envVars: {},
+    envVars: input.envVars ?? {},
   };
 }
 
@@ -140,11 +140,7 @@ export async function refreshE2bUrls(
     ...service,
     url: `https://${sandbox.getHost(service.containerPort)}`,
   }));
-  return {
-    providerUrl:
-      refreshed.find((service) => service.name === "Coding Agent")?.url ?? null,
-    services: refreshed,
-  };
+  return { services: refreshed };
 }
 
 export async function syncE2bRoutes(

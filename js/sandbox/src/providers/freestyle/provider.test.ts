@@ -41,7 +41,6 @@ describe("freestyle provider wiring", () => {
       scrubCapture: true,
       fullSnapshotCapture: true,
       dockerRegistries: false,
-      skipStartScript: false,
       snapshotIdsAreOpaque: true,
       supportsAutoDelete: false,
     });

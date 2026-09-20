@@ -15,7 +15,6 @@
 import type { SandboxCtx } from "../logger";
 import type { SandboxProviderName, SandboxService } from "../types";
 import type { SandboxStatus } from "../sandbox-status";
-import type { GithubAuthMode } from "../enums";
 
 export type { SandboxProviderName, SandboxService } from "../types";
 
@@ -39,103 +38,11 @@ export class SandboxProviderUnsupportedError extends Error {
 }
 
 /**
- * Thrown when a repository clone fails inside a freshly provisioned sandbox.
- * Carries the original cause so the create flow can map known git errors onto
- * actionable API errors. Provider-agnostic: any provider that clones a repo
- * during initialization throws this.
- */
-export class RepositoryCloneError extends Error {
-  constructor(repoUrl: string, cause: unknown) {
-    const inner =
-      cause instanceof Error ? cause.message : "Unknown clone error";
-    super(
-      `Failed to clone repository ${repoUrl} inside the sandbox: ${inner}. ` +
-        "Check that your GitHub token has access to this repository.",
-    );
-    this.name = "RepositoryCloneError";
-    this.cause = cause;
-  }
-}
-
-/**
- * Thrown by the shared lifecycle-script runner when a *user* lifecycle script
- * (`setup.sh` on create, `start.sh` on start) exits non-zero. The system hooks
- * around it (pre-setup/post-setup) still run before this is raised, so the
- * sandbox's agent server comes up and the VM stays usable; failures of the
- * hooks themselves surface as plain errors (a system-setup problem, not a
- * user-script one).
- */
-export class SetupScriptError extends Error {
-  /** Which user lifecycle script failed. */
-  readonly phase: "setup" | "start";
-  constructor(phase: "setup" | "start", cause: unknown) {
-    const inner =
-      cause instanceof Error ? cause.message : "Unknown script error";
-    super(
-      phase === "setup"
-        ? `Setup script failed: ${inner}`
-        : `Start script failed: ${inner}`,
-    );
-    this.name = "SetupScriptError";
-    this.phase = phase;
-    this.cause = cause;
-  }
-}
-
-/**
- * A setup problem an initialization / lifecycle-rerun hit while the VM itself
- * stayed usable. Providers record it and *finish* initializing (agent server,
- * signed URLs) instead of aborting, so the caller can mark the sandbox running
- * with this as its setup sub-status rather than tearing the VM down.
- *
- * `git-failed` strictly means the *primary* repo is missing (the agent's cwd
- * doesn't exist) — consumers make control decisions on that (skipping the
- * workflow kickoff, failing a Slack turn fast). Everything else that leaves
- * the workspace usable but incompletely set up — a failed user script or a
- * failed additional-repo clone — is `setup-failed`. System-setup failures are
- * not represented here — providers can't always finish after those, so they
- * throw and the caller classifies the error.
- */
-export interface SandboxSetupFailure {
-  kind: "git-failed" | "setup-failed";
-  message: string;
-}
-
-/**
- * A service-derived env var definition from `.amika/config.toml`:
- *   `MY_URL = { service = "web", field = "url" }`
- * Resolved against live service URLs/ports after a sandbox is provisioned.
- */
-export interface ServiceEnvVarDef {
-  name: string;
-  service: string;
-  field: "url" | "host" | "port";
-}
-
-/** An MCP integration to wire into the sandbox's agent config. */
-export interface McpIntegrationInput {
-  name: string;
-  mcpServerType: string;
-  mcpServerUrl: string;
-  // Required for OAuth (http) integrations; omitted for stdio MCPs that
-  // run locally in the sandbox with no auth (e.g. Playwright).
-  accessToken?: string;
-}
-
-/** Lazy resolver for an agent credential (lazy keeps OAuth tokens fresh). */
-export type AgentCredentialResolver = () => Promise<{
-  value: string;
-  type: "oauth" | "api_key";
-} | null>;
-
-/**
  * Request to provision a new provider sandbox.
  *
- * The Amika-flavored fields are documented in place: `services` is load-bearing on
- * Vercel (the exposed-port set is fixed at create), and
- * `amikaOpenCodeWeb`/`scrubSafe`/`labels` are an accepted residual exception
- * (Daytona's non-login exec inherits the container env, so the
- * non-secret operational keys are baked at create).
+ * Service identity and environment contents are caller-owned policy. Providers
+ * expose the requested ports and pass the supplied non-secret environment
+ * through without assigning product-specific meaning to either.
  */
 export interface CreateSandboxProviderInput {
   name: string;
@@ -147,16 +54,11 @@ export interface CreateSandboxProviderInput {
    * Product tier names and their resource mappings belong to the caller.
    */
   resources?: SandboxResources;
-  githubUrl?: string;
-  repoName?: string | null;
-  amikaOpenCodeWeb?: string | null;
+  /** Non-secret environment variables that must exist in the provider image. */
+  envVars?: Record<string, string>;
   autoStopInterval?: number;
   autoDeleteInterval?: number;
-  /**
-   * The full service list to seed the sandbox with — including Amika's default
-   * "Coding Agent" (OpenCode) service. Built by the caller and passed in;
-   * the provider records it rather than deciding services of its own.
-   */
+  /** The caller-ordered service list to expose and return unchanged by identity. */
   services: SandboxService[];
   labels?: Record<string, string>;
   /**
@@ -172,102 +74,13 @@ export interface CreateSandboxProviderInput {
 export interface CreatedProviderSandbox {
   provider: string;
   providerSandboxId: string;
-  providerUrl: string | null;
   services: SandboxService[];
   /** Operational (non-secret) env vars baked into the container, if any. */
   envVars?: Record<string, string>;
 }
 
-/** Full initialization request: clone, credentials, lifecycle scripts, URLs. */
-export interface InitializeSandboxInput {
-  providerSandboxId: string;
-  /**
-   * The Amika sandbox name. Persisted into the managed base env as
-   * `AMIKA_SANDBOX_NAME` so every shell session and the launched agent can
-   * identify which sandbox they're running in. Threaded through (rather than
-   * read from the provider) because the name is owned by the caller, not stored
-   * in the provider's sandbox metadata.
-   */
-  sandboxName: string;
-  /** Lifecycle/base env vars that should be present in shell sessions. */
-  envVars: Record<string, string> | null;
-  setupScript: string;
-  githubUrl?: string;
-  branch?: string;
-  /** When set, create this branch (off the cloned branch) and check it out. */
-  newBranch?: string;
-  /**
-   * Extra repos to clone alongside the primary repo, from `[filesystem] repos`
-   * in `.amika/config.toml`. Each is cloned at its default branch into
-   * `~/workspace/<repoName>`. Only cloned during initialization; restart does
-   * not re-clone (repos are already on disk), so this is unused on the rerun
-   * path. Only the Daytona provider honors this today.
-   */
-  additionalRepos?: string[];
-  repoName?: string | null;
-  githubToken?: string | null;
-  /**
-   * GitHub runtime auth mode. `"pat"` (default when absent)
-   * writes the static credential files; `"app_token"` installs a
-   * callback-based credential helper + gh shim instead, and strips
-   * the one-shot clone token from persisted git remotes. Creation-only:
-   * the rerun path never re-installs.
-   */
-  githubAuthMode?: GithubAuthMode;
-  resolveClaudeCredentials?: AgentCredentialResolver;
-  resolveCodexCredentials?: AgentCredentialResolver;
-  /** Resolver for the OpenCode OpenAI credential (lazy for OAuth freshness). */
-  resolveOpenCodeOpenaiCredential?: AgentCredentialResolver;
-  /** Anthropic API key for OpenCode (API key credentials only). */
-  openCodeAnthropicApiKey?: string;
-  /** OpenAI API key for OpenCode (eagerly resolved from api_key credential). */
-  openCodeOpenaiApiKey?: string;
-  openCodePort?: number;
-  openCodePassword: string;
-  amikaOpenCodeWeb?: string | null;
-  injectedEnvVars?: Record<string, string>;
-  gitUserName?: string;
-  gitUserEmail?: string;
-  mcpIntegrations?: McpIntegrationInput[];
-  /** Service definitions created at sandbox provision time (with empty URLs). */
-  services: SandboxService[];
-  /** Service-derived env var definitions to resolve after URL refresh. */
-  serviceEnvVars?: ServiceEnvVarDef[];
-}
-
-/**
- * Re-run the lifecycle on a restarted sandbox. Same shape as initialization
- * minus the create-only inputs (the repo is already cloned), plus the start
- * script to (re)upload.
- */
-export type RerunLifecycleInput = Omit<
-  InitializeSandboxInput,
-  "setupScript" | "githubUrl" | "githubToken"
-> & {
-  startScript: string;
-  /**
-   * When true, skip re-running the start script (the start-phase lifecycle
-   * step) on this restart. Honored by the Daytona and Vercel providers;
-   * providers that don't wire it through always run the start script.
-   */
-  skipStartScript?: boolean;
-};
-
-/** Result of initialization / lifecycle re-run: the signed URLs to persist. */
-export interface SandboxInitializeResult {
-  providerUrl: string | null;
-  services: SandboxService[];
-  /**
-   * A repo-clone or user-script failure the run absorbed while completing the
-   * rest of initialization (see {@link SandboxSetupFailure}). Absent when
-   * everything set up cleanly.
-   */
-  setupFailure?: SandboxSetupFailure;
-}
-
 /** Result of refreshing signed preview URLs for a sandbox's services. */
 export interface RefreshUrlsResult {
-  providerUrl: string | null;
   services: SandboxService[];
 }
 
@@ -301,8 +114,8 @@ export interface SandboxExecResult {
  * interactive/editor callers want:
  *
  *   - `resumeMode` — on a cold resume, `"restart-services"` (the default)
- *     relaunches the sandbox's lifecycle services (OpenCode, preview servers)
- *     so an interactive session is fully live; `"bare"` skips that relaunch,
+ *     replays the caller-provided restart commands so an interactive session
+ *     is fully live; `"bare"` skips that replay,
  *     resuming only the filesystem. Use `"bare"` when the command doesn't need
  *     those services up and the relaunch would just add latency.
  *   - `sessionTimeoutMs` — reapply this idle-suspend timeout before running the
@@ -641,10 +454,9 @@ export interface SnapshotCapability {
   ): Promise<CapturedSnapshot>;
   /**
    * Remove secrets the PROVIDER itself injected into the sandbox, ahead of a
-   * capture. Vercel removes its resume-context file (which carries the source
-   * OpenCode password); Daytona and Freestyle are no-ops. Amika-injected
-   * secrets are not this method's concern — those are scrubbed above by the
-   * core-synthesized `scrubAndCreate`.
+   * capture. Vercel removes its caller-provided resume context; Daytona and
+   * Freestyle are no-ops. Caller-injected secrets are not this method's concern
+   * — those are scrubbed above by the core-synthesized `scrubAndCreate`.
    */
   removeInjectedSecrets(providerSandboxId: string): Promise<void>;
   /** Whether the sandbox was created with secrets kept out of container env. */
@@ -730,13 +542,6 @@ export interface SandboxProviderCapabilities {
   scrubCapture: boolean;
   /** Docker registry management (`provider.docker` non-null iff true). */
   dockerRegistries: boolean;
-  /**
-   * Whether starting the sandbox can skip re-running the start script (the
-   * start-phase lifecycle step). Only providers that honor
-   * {@link RerunLifecycleInput.skipStartScript} set this true; the UI hides the
-   * "start without start script" option otherwise so it can't be a silent no-op.
-   */
-  skipStartScript: boolean;
   /**
    * Whether the provider's bootable snapshot handle is an opaque id
    * (`sc-…`/`snap_…`) distinct from the org-scoped snapshot *name* — the
@@ -998,22 +803,21 @@ export interface SandboxGitNamespace {
   clone(input: CloneRepoInput): Promise<void>;
 }
 
+/** One caller-defined command a provider can replay after a cold resume. */
+export interface ServiceRestartCommand {
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  sudo?: boolean;
+}
+
 /**
- * The inputs a provider persists so it can relaunch a sandbox's services after a
- * resume — see {@link Sandbox.persistServiceRestartContext}. The relaunch re-runs
- * the start-phase lifecycle hooks, which need the OpenCode server password and
- * the agent working directory they run in.
+ * Opaque caller policy a provider persists and replays when a cold resume loses
+ * running processes. The provider does not interpret command purpose or
+ * environment names.
  */
 export interface ServiceRestartContext {
-  openCodePassword: string;
-  amikaOpenCodeWeb?: string | null;
-  /** The agent working directory (`AMIKA_AGENT_CWD`) the relaunch hooks run in. */
-  repoDir: string;
-  // TODO(KAPRO-840): carry `AMIKA_PI_WEB` / `AMIKA_PI_WEB_PASSWORD` too. Without
-  // them a resumed sandbox re-runs `pre-setup.sh` with the Pi gate unset, so the
-  // Pi web terminal (port 60996) never restarts while its service URL lives on.
-  // Left out deliberately: only the Vercel resume path reads this context, and
-  // we don't run that provider today.
+  commands: ServiceRestartCommand[];
 }
 
 /**
