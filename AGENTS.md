@@ -48,11 +48,14 @@ language SDKs live under `sdk/` (e.g. `sdk/typescript/`). TypeScript packages
 that are consumed as source rather than published live under `js/` — currently
 `js/sandbox` (`@amika/sandbox`), the sandbox provider abstraction. See
 [`js/AGENTS.md`](./js/AGENTS.md) for the conventions every `js/` package
-follows.
+follows. The public GitHub Action is a separate workspace package under
+`.github/actions/run-in-sandbox`; its checked-in `dist/index.js` is the bundle
+external workflows execute.
 
 There are two independent pnpm workspaces here, on purpose. The repo root
-governs `js/*` and `eslint-rules` (root `pnpm-workspace.yaml` and
-`pnpm-lock.yaml`); `sdk/typescript` governs itself, with its own workspace file,
+governs `.github/actions/*`, `js/*`, and `eslint-rules` (root
+`pnpm-workspace.yaml` and `pnpm-lock.yaml`); `sdk/typescript` governs itself,
+with its own workspace file,
 lockfile, and `packageManager` pin, because it is a published npm package with
 its own release pipeline. Run `pnpm install` at the root for the former and
 from `sdk/typescript/` for the latter.

@@ -13,6 +13,39 @@ importers:
 
   .: {}
 
+  .github/actions/run-in-sandbox:
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.39.2
+        version: 9.39.5
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
+      eslint:
+        specifier: ^9
+        version: 9.39.5
+      globals:
+        specifier: ^16.4.0
+        version: 16.5.0
+      prettier:
+        specifier: 3.8.3
+        version: 3.8.3
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.55.0
+        version: 8.67.0(eslint@9.39.5)(typescript@5.9.3)
+      vite:
+        specifier: 7.3.5
+        version: 7.3.5(@types/node@22.20.1)(yaml@2.9.0)
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(vite@7.3.5(@types/node@22.20.1)(yaml@2.9.0))
+
   eslint-rules:
     devDependencies:
       eslint:
@@ -1158,9 +1191,6 @@ packages:
   es-errors@1.3.0:
     resolution: {integrity: sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==}
     engines: {node: '>= 0.4'}
-
-  es-module-lexer@2.3.1:
-    resolution: {integrity: sha512-shc1dbU90Yl/xq1QrC7QRtfcwURZuVRfPhZbDoldJ1cn1gzDvBaBWlv0eFolj5+0znnPJz5TXLxsN77X/12KTA==}
 
   es-module-lexer@2.3.2:
     resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
@@ -3232,8 +3262,6 @@ snapshots:
 
   es-errors@1.3.0: {}
 
-  es-module-lexer@2.3.1: {}
-
   es-module-lexer@2.3.2: {}
 
   es-object-atoms@1.1.2:
@@ -3513,7 +3541,7 @@ snapshots:
   import-in-the-middle@3.3.3:
     dependencies:
       cjs-module-lexer: 2.2.0
-      es-module-lexer: 2.3.1
+      es-module-lexer: 2.3.2
       module-details-from-path: 1.0.4
 
   imurmurhash@0.1.4: {}
