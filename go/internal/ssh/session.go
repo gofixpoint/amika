@@ -22,6 +22,12 @@ import (
 
 const proxyCopyBufferBytes = 32 * 1024
 
+const (
+	forwardedAgentSocket   = "SSH_AUTH_SOCK"
+	rigNameEnvironment     = "AMIKA_RIG_NAME"
+	sandboxNameEnvironment = "AMIKA_SANDBOX_NAME"
+)
+
 // safeAliasPart matches a sandbox name, which may itself contain dots.
 var safeAliasPart = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
 
@@ -62,7 +68,9 @@ type SandboxAlias struct {
 
 // SessionConfig describes the local key material shared by every environment's
 // session block: the private key OpenSSH authenticates with, the file its
-// host-key pins live in, and the dedicated agent socket that forwards the key.
+// host-key pins live in, and the agent socket that forwards the key. Inside a
+// rig, IdentityFile is empty and AgentSocket is the OpenSSH SSH_AUTH_SOCK token
+// so nested sessions reuse the isolated agent forwarded by the outer session.
 //
 // None is per-environment. One private key authenticates to every control
 // plane, each of which holds its own uploaded copy of the public key, so an
@@ -204,10 +212,14 @@ func BuildWSLProxyCommand(distro, binaryPath string) (string, error) {
 // environment's aliases, and OpenSSH takes the first value it finds for an
 // option.
 func RenderSessionConfig(environment, proxyCommand string, session SessionConfig) (string, error) {
+	validAuthentication := safeConfigPath(session.IdentityFile) &&
+		(session.AgentSocket == "" || safeConfigPath(session.AgentSocket))
+	if usesForwardedAgent(session) {
+		validAuthentication = session.IdentityFile == ""
+	}
 	if !safeAliasSegment.MatchString(environment) ||
-		!safeConfigPath(session.IdentityFile) ||
-		!safeConfigPath(session.KnownHostsFile) ||
-		(session.AgentSocket != "" && !safeConfigPath(session.AgentSocket)) {
+		!validAuthentication ||
+		!safeConfigPath(session.KnownHostsFile) {
 		return "", ErrInvalidSessionAlias
 	}
 	if _, err := ParseProxyCommand(proxyCommand); err != nil {
@@ -222,9 +234,12 @@ func RenderSessionConfig(environment, proxyCommand string, session SessionConfig
 func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile, agentSocket string) string {
 	block := fmt.Sprintf(`Host *.%s.amika
   User amika
-  IdentityFile %s
-  IdentitiesOnly yes
-`, environment, identityFile)
+`, environment)
+	if agentSocket == forwardedAgentSocket {
+		block += "  IdentityFile none\n  IdentitiesOnly no\n"
+	} else {
+		block += fmt.Sprintf("  IdentityFile %s\n  IdentitiesOnly yes\n", identityFile)
+	}
 	if agentSocket != "" {
 		block += fmt.Sprintf("  IdentityAgent %s\n  ForwardAgent yes\n", agentSocket)
 	} else {
@@ -280,10 +295,12 @@ func PrepareSessionHost(
 	return session, nil
 }
 
-// PrepareProxy repairs the dedicated agent and returns the store the stdio
-// proxy pins through. It runs before the ProxyCommand carries any SSH bytes,
-// so bare aliases and editor deep links recover from a stopped agent without
-// requiring a separate Amika command first.
+// PrepareProxy prepares the authentication agent and returns the store the
+// stdio proxy pins through. On a host it repairs the dedicated agent; inside a
+// rig it verifies the isolated agent forwarded by the outer session. It runs
+// before the ProxyCommand carries any SSH bytes, so bare aliases and editor
+// deep links recover from a stopped host agent without a separate Amika
+// command first.
 func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, error) {
 	var pins HostKeyPinStore
 	migrated := false
@@ -307,8 +324,10 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 		if err := validateSessionIdentity(session); err != nil {
 			return err
 		}
-		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
-			return err
+		if !usesForwardedAgent(session) {
+			if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+				return err
+			}
 		}
 		if migrated {
 			if err := persistManagedStateLocked(paths, state, false); err != nil {
@@ -536,10 +555,18 @@ func resolveSessionConfigFromState(paths basedir.Paths, state HostsState) (Sessi
 	var err error
 	if state.SessionConfig != nil {
 		session := *state.SessionConfig
+		if usesForwardedAgent(session) {
+			return session, nil
+		}
 		if session.AgentSocket == "" {
 			session.AgentSocket, err = paths.SSHAgentSocketFile()
 			if err != nil {
 				return SessionConfig{}, err
+			}
+		}
+		if identityMissing(session.IdentityFile) {
+			if forwarded, ok := forwardedSessionConfig(session.KnownHostsFile); ok {
+				return forwarded, nil
 			}
 		}
 		return session, nil
@@ -556,17 +583,66 @@ func resolveSessionConfigFromState(paths basedir.Paths, state HostsState) (Sessi
 	if err != nil {
 		return SessionConfig{}, err
 	}
-	return SessionConfig{
+	session := SessionConfig{
 		IdentityFile:   identityFile,
 		KnownHostsFile: knownHostsFile,
 		AgentSocket:    agentSocket,
-	}, nil
+	}
+	if forwarded, ok := forwardedSessionConfig(knownHostsFile); ok {
+		return forwarded, nil
+	}
+	return session, nil
 }
 
 func validateSessionIdentity(session SessionConfig) error {
+	if usesForwardedAgent(session) {
+		if !forwardedAmikaAgentAvailable() {
+			return fmt.Errorf("forwarded Amika SSH agent is unavailable or does not contain exactly one Amika identity")
+		}
+		return nil
+	}
 	identityInfo, err := os.Stat(session.IdentityFile)
 	if err != nil || !identityInfo.Mode().IsRegular() || identityInfo.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("SSH identity %s is missing or unsafe", session.IdentityFile)
 	}
 	return nil
+}
+
+func usesForwardedAgent(session SessionConfig) bool {
+	return session.AgentSocket == forwardedAgentSocket
+}
+
+func identityMissing(path string) bool {
+	_, err := os.Stat(path)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func forwardedSessionConfig(knownHostsFile string) (SessionConfig, bool) {
+	if !forwardedAmikaAgentAvailable() {
+		return SessionConfig{}, false
+	}
+	return SessionConfig{
+		KnownHostsFile: knownHostsFile,
+		AgentSocket:    forwardedAgentSocket,
+	}, true
+}
+
+func forwardedAmikaAgentAvailable() bool {
+	if os.Getenv(rigNameEnvironment) == "" && os.Getenv(sandboxNameEnvironment) == "" {
+		return false
+	}
+	socket := os.Getenv(forwardedAgentSocket)
+	if socket == "" {
+		return false
+	}
+	client, connection, err := connectAgent(socket)
+	if err != nil {
+		return false
+	}
+	defer connection.Close()
+	keys, err := client.List()
+	// The outer CLI assigns this comment while loading its dedicated agent. The
+	// marker keeps an unrelated one-key agent from silently becoming the Amika
+	// identity when a caller happens to set SSH_AUTH_SOCK inside a rig.
+	return err == nil && len(keys) == 1 && keys[0].Comment == amikaAgentIdentityComment
 }

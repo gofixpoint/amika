@@ -440,10 +440,12 @@ func configureSessionLocked(paths basedir.Paths, session SessionConfig) error {
 		state.SessionProxyCommands = make(map[string]string)
 	}
 	state.SessionProxyCommands[environment] = proxyCommand
-	if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
-		info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
-		if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
-			return err
+	if !usesForwardedAgent(session) {
+		if info, statErr := os.Stat(session.IdentityFile); statErr == nil &&
+			info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0 {
+			if err := EnsureAgent(session.AgentSocket, session.IdentityFile); err != nil {
+				return err
+			}
 		}
 	}
 	return persistManagedStateLocked(paths, state, true)
