@@ -318,8 +318,9 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 		if err != nil {
 			return err
 		}
-		if state.SessionConfig == nil {
+		if state.SessionConfig == nil || *state.SessionConfig != session {
 			state.SessionConfig = &session
+			migrated = true
 		}
 		if err := validateSessionIdentity(session); err != nil {
 			return err
@@ -494,6 +495,9 @@ func PrepareSessionTarget(
 			return err
 		}
 		if err := validateSessionIdentity(sessionConfig); err != nil {
+			if usesForwardedAgent(sessionConfig) {
+				return fmt.Errorf("%w; reconnect to this rig with the Amika SSH agent forwarded", err)
+			}
 			return fmt.Errorf(
 				"%w; run %q to create one, or %q to use a key you already have",
 				err,

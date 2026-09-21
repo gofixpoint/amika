@@ -276,6 +276,53 @@ func TestNestedSessionUsesForwardedAmikaAgentWithoutPrivateKey(t *testing.T) {
 	}
 }
 
+func TestPrepareProxyPersistsForwardedConfigOverMissingIdentity(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	testBinary(t, "amika")
+	forwardAmikaAgent(t)
+	dir := t.TempDir()
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   filepath.Join(dir, "missing_identity"),
+			KnownHostsFile: filepath.Join(dir, "known_hosts"),
+			AgentSocket:    filepath.Join(dir, "dedicated_agent.sock"),
+		},
+		SessionProxyCommands: map[string]string{
+			"localhost-3011": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+		SSHConfigVersion: currentSSHConfigVersion,
+	}
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAmikaConfig(paths, state); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := PrepareProxy(paths, os.Stderr); err == nil || !strings.Contains(err.Error(), "reconnect") {
+		t.Fatalf("PrepareProxy error = %v, want reconnect instruction", err)
+	}
+	persisted, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.SessionConfig == nil || !usesForwardedAgent(*persisted.SessionConfig) {
+		t.Fatalf("persisted session = %#v, want forwarded agent", persisted.SessionConfig)
+	}
+	configPath, _ := paths.SSHAmikaConfigFile()
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(configData), "IdentityAgent SSH_AUTH_SOCK") {
+		t.Fatalf("managed config did not replace the stale identity:\n%s", configData)
+	}
+	if _, err := PrepareProxy(paths, os.Stderr); err != nil {
+		t.Fatalf("second PrepareProxy: %v", err)
+	}
+}
+
 func TestNestedSessionRejectsAnUnmarkedForwardedAgent(t *testing.T) {
 	paths := testPaths(t)
 	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
@@ -301,6 +348,28 @@ func TestNestedSessionRejectsAnUnmarkedForwardedAgent(t *testing.T) {
 	_, err = PrepareSessionTarget(paths, &fakeCreator{hostKey: testHostKey(t)}, "destination", "sbx_123")
 	if err == nil || !strings.Contains(err.Error(), "SSH identity") {
 		t.Fatalf("PrepareSessionTarget error = %v, want missing identity", err)
+	}
+}
+
+func TestNestedSessionWithLostForwardedAgentRecommendsReconnect(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	testBinary(t, "amika")
+	t.Setenv(rigNameEnvironment, "source")
+	state := HostsState{SessionConfig: &SessionConfig{
+		KnownHostsFile: filepath.Join(t.TempDir(), "known_hosts"),
+		AgentSocket:    forwardedAgentSocket,
+	}}
+	if err := SaveState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := PrepareSessionTarget(paths, &fakeCreator{hostKey: testHostKey(t)}, "destination", "sbx_123")
+	if err == nil || !strings.Contains(err.Error(), "reconnect") {
+		t.Fatalf("PrepareSessionTarget error = %v, want reconnect guidance", err)
+	}
+	if strings.Contains(err.Error(), "ssh-keygen") {
+		t.Fatalf("forwarded-agent error recommends replacing the identity: %v", err)
 	}
 }
 
