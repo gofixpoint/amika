@@ -14,6 +14,8 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
+const amikaAgentIdentityComment = "Amika SSH identity"
+
 // EnsureAgent starts or repairs the dedicated Amika ssh-agent and leaves
 // exactly identityFile loaded in it. It never reads or modifies the caller's
 // SSH_AUTH_SOCK agent.
@@ -119,7 +121,7 @@ func loadOnlyIdentity(client agent.ExtendedAgent, privateKey any, publicBlob []b
 	if err := client.RemoveAll(); err != nil {
 		return fmt.Errorf("clear dedicated Amika ssh-agent identities: %w", err)
 	}
-	if err := client.Add(agent.AddedKey{PrivateKey: privateKey, Comment: "Amika SSH identity"}); err != nil {
+	if err := client.Add(agent.AddedKey{PrivateKey: privateKey, Comment: amikaAgentIdentityComment}); err != nil {
 		return fmt.Errorf("add Amika SSH identity to dedicated agent: %w", err)
 	}
 	keys, err = client.List()

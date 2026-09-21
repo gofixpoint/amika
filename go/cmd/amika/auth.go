@@ -46,16 +46,25 @@ func ensureSSHSessionConfig(cmd *cobra.Command, format output.Format) {
 		fmt.Fprintf(out, "Updated %s, included from %s.\n", amikaConfig, sshConfig)
 	}
 
-	// The block names an identity whether or not one exists yet, so say so
-	// rather than letting the first `sandbox ssh` be where the user finds
-	// out. Both fixes are offered: a UI-uploaded key already has a private
-	// half somewhere, and only --import points the config at it.
-	if info, statErr := os.Stat(session.IdentityFile); statErr != nil || !info.Mode().IsRegular() {
+	// A host-side block names an identity whether or not one exists yet, so
+	// say so rather than letting the first `sandbox ssh` be where the user
+	// finds out. A forwarded session intentionally has no identity file.
+	// Both host-side fixes are offered: a UI-uploaded key already has a
+	// private half somewhere, and only --import points the config at it.
+	if sessionNeedsIdentityWarning(session) {
 		fmt.Fprintf(out, "No SSH identity at %s yet, so `amika sandbox ssh` will not connect until you add one:\n",
 			session.IdentityFile)
 		fmt.Fprintln(out, "  amika secret ssh-keygen                                 # create a new key")
 		fmt.Fprintln(out, "  amika secret ssh-keygen --import <path>.pub             # use a key you already have")
 	}
+}
+
+func sessionNeedsIdentityWarning(session ssh.SessionConfig) bool {
+	if session.IdentityFile == "" {
+		return false
+	}
+	info, err := os.Stat(session.IdentityFile)
+	return err != nil || !info.Mode().IsRegular()
 }
 
 // logoutJSON is the JSON representation of `auth logout`, reporting which

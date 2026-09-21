@@ -9,7 +9,14 @@ import (
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/auth"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 )
+
+func TestSessionNeedsIdentityWarningSkipsForwardedSession(t *testing.T) {
+	if sessionNeedsIdentityWarning(ssh.SessionConfig{AgentSocket: "SSH_AUTH_SOCK"}) {
+		t.Fatal("forwarded session without an identity file produced a warning")
+	}
+}
 
 func TestAuthLogin_APIKeyFile(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
