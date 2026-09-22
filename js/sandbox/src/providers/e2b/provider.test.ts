@@ -25,7 +25,7 @@ function deps(apiKey: string | null): SandboxProviderDeps {
     e2b: apiKey ? { apiKey } : null,
     freestyle: null,
     vercel: null,
-    smol: {},
+    smol: null,
     resolveSnapshotId: async () => null,
   };
 }
