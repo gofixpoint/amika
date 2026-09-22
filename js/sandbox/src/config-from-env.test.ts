@@ -152,10 +152,29 @@ describe("Amika host daemon environment configuration", () => {
     });
   });
 
-  it("requires no provider credentials and defaults to networking disabled", () => {
-    expect(
-      sandboxProviderConfigsFromEnv({ ...BASE, AMIKA_HOSTD_ENABLED: "true" })
-        .amikaHostd,
-    ).toEqual({ apiUrl: undefined, network: false });
-  });
+  it.each([undefined, "", "  "])(
+    "defaults to networking enabled when unset or blank: %j",
+    (network) => {
+      expect(
+        sandboxProviderConfigsFromEnv({
+          ...BASE,
+          AMIKA_HOSTD_ENABLED: "true",
+          AMIKA_HOSTD_NETWORK: network,
+        }).amikaHostd,
+      ).toEqual({ apiUrl: undefined, network: true });
+    },
+  );
+
+  it.each(["false", "0", " OFF "])(
+    "allows an explicit network opt-out: %s",
+    (network) => {
+      expect(
+        sandboxProviderConfigsFromEnv({
+          ...BASE,
+          AMIKA_HOSTD_ENABLED: "true",
+          AMIKA_HOSTD_NETWORK: network,
+        }).amikaHostd?.network,
+      ).toBe(false);
+    },
+  );
 });

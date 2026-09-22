@@ -42,9 +42,12 @@ const TRUE_TOKENS = new Set(["1", "true", "on"]);
 const FALSE_TOKENS = new Set(["0", "false", "off"]);
 
 /** Lenient env boolean: `1`/`true`/`on` → true, `0`/`false`/`off` → false. */
-function parseBooleanLike(value: string | undefined): boolean {
+function parseBooleanLike(
+  value: string | undefined,
+  defaultValue = false,
+): boolean {
   const normalized = value?.trim().toLowerCase();
-  if (!normalized) return false;
+  if (!normalized) return defaultValue;
   if (TRUE_TOKENS.has(normalized)) return true;
   if (FALSE_TOKENS.has(normalized)) return false;
   return false;
@@ -118,7 +121,7 @@ export function sandboxProviderConfigsFromEnv(
   const amikaHostd: AmikaHostdConfig | null = isEnabled(env.AMIKA_HOSTD_ENABLED)
     ? {
         apiUrl: env.AMIKA_HOSTD_API_URL,
-        network: parseBooleanLike(env.AMIKA_HOSTD_NETWORK),
+        network: parseBooleanLike(env.AMIKA_HOSTD_NETWORK, true),
       }
     : null;
 

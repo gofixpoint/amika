@@ -13,7 +13,7 @@ export const createMachineSchema = z.strictObject({
   cpus: z.number().int().min(1).max(255).optional(),
   memoryMb: z.number().int().positive().optional(),
   storageGb: z.number().int().positive().optional(),
-  network: z.boolean().default(false),
+  network: z.boolean().default(true),
   env: envSchema.optional(),
 });
 

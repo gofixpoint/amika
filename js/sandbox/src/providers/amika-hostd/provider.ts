@@ -22,6 +22,7 @@ export default function amikaHostdProvider({
   const smol = smolProvider(
     {
       ...config,
+      network: config.network ?? true,
       apiUrl: config.apiUrl ?? "http://127.0.0.1:3020",
       requestTimeoutMs: config.requestTimeoutMs ?? 310_000,
     },

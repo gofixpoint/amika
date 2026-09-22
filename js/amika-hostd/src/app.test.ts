@@ -58,6 +58,24 @@ describe("machine API", () => {
   });
 
   it.each([
+    [undefined, true],
+    [false, false],
+  ])(
+    "defaults networking on while honoring network=%s",
+    async (network, expected) => {
+      const { app, fetcher } = harness();
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: "ubuntu:24.04", network }),
+      );
+      expect(response.status).toBe(200);
+      expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).network).toBe(
+        expected,
+      );
+    },
+  );
+
+  it.each([
     ["GET", ""],
     ["GET", "/demo"],
     ["POST", "/demo/start"],

@@ -4,6 +4,7 @@ import { createApp } from "../../../../amika-hostd/src/app";
 import { moduleLogger, type SandboxCtx } from "../../logger";
 import { getProviderLabel, isSandboxProviderName } from "../capabilities";
 import { type CreateSandboxProviderInput } from "../provider";
+import type { AmikaHostdConfig } from "./config";
 import amikaHostdProvider, { openAmikaHostdAdapter } from "./provider";
 
 const INPUT: CreateSandboxProviderInput = {
@@ -20,7 +21,7 @@ const MACHINE = {
 };
 const ctx: SandboxCtx = { logger: moduleLogger(), childCtx: () => ctx };
 
-function harness(responses: Response[]) {
+function harness(responses: Response[], config: AmikaHostdConfig = {}) {
   const runtime = vi.fn<typeof fetch>(async () => {
     const response = responses.shift();
     if (!response) throw new Error("Unexpected runtime request");
@@ -30,7 +31,6 @@ function harness(responses: Response[]) {
   const fetcher = vi.fn<typeof fetch>(async (url, init) =>
     app.request(new Request(url, init)),
   );
-  const config = { network: true };
   return {
     runtime,
     fetcher,
@@ -81,6 +81,16 @@ describe("amika-hostd provider", () => {
     });
     expect(runtime.mock.calls[1][0]).toBe(
       "http://127.0.0.1:8080/api/v1/machines/demo/start",
+    );
+  });
+
+  it("preserves an explicit network opt-out through hostd", async () => {
+    const { provider, runtime } = harness([json(MACHINE, 201), json({})], {
+      network: false,
+    });
+    await provider.sandboxes.create(ctx, INPUT);
+    expect(JSON.parse(String(runtime.mock.calls[0][1]?.body)).network).toBe(
+      false,
     );
   });
 
