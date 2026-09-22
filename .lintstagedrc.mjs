@@ -21,7 +21,10 @@ const FORMATTABLE_EXTENSIONS = new Set([
   ".yml",
 ]);
 
-const PACKAGE_BY_PREFIX = [["js/sandbox/", "@amika/sandbox"]];
+const PACKAGE_BY_PREFIX = [
+  ["js/sandbox/", "@amika/sandbox"],
+  ["js/amika-hostd/", "@amika/hostd"],
+];
 
 function normalizePath(path) {
   return path.replaceAll("\\", "/");
