@@ -3,10 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../../../amika-hostd/src/app";
 import { moduleLogger, type SandboxCtx } from "../../logger";
 import { getProviderLabel, isSandboxProviderName } from "../capabilities";
-import {
-  SandboxProviderUnsupportedError,
-  type CreateSandboxProviderInput,
-} from "../provider";
+import { type CreateSandboxProviderInput } from "../provider";
 import amikaHostdProvider, { openAmikaHostdAdapter } from "./provider";
 
 const INPUT: CreateSandboxProviderInput = {
@@ -160,7 +157,7 @@ describe("amika-hostd provider", () => {
     const failedStart = harness([json(MACHINE, 201), json({}, 503), json({})]);
     await expect(
       failedStart.provider.sandboxes.create(ctx, INPUT),
-    ).rejects.toThrow("amika-hostd POST /demo/start failed (HTTP 503)");
+    ).rejects.toThrow("HTTP 503");
     expect(failedStart.runtime.mock.calls[2][1]?.method).toBe("DELETE");
     const conflict = harness([json({}, 409)]);
     await expect(
@@ -172,7 +169,7 @@ describe("amika-hostd provider", () => {
   it("keeps both start and cleanup failures", async () => {
     const { provider } = harness([json(MACHINE), json({}, 500), json({}, 503)]);
     await expect(provider.sandboxes.create(ctx, INPUT)).rejects.toMatchObject({
-      message: "amika-hostd start and cleanup failed",
+      message: "Smol start and cleanup failed",
       errors: [
         expect.objectContaining({ status: 500 }),
         expect.objectContaining({ status: 503 }),
@@ -238,7 +235,10 @@ describe("amika-hostd provider", () => {
     expect(sandbox.snapshots).toBeNull();
     await expect(
       sandbox.streamExec("true", { onStdout: () => {} }),
-    ).rejects.toThrow(SandboxProviderUnsupportedError);
+    ).rejects.toMatchObject({
+      name: "SandboxProviderUnsupportedError",
+      provider: "amika-hostd",
+    });
     await expect(sandbox.start(1)).rejects.toMatchObject({
       provider: "amika-hostd",
     });

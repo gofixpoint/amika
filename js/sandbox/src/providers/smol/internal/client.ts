@@ -20,10 +20,9 @@ export class SmolApiError extends Error {
     readonly status: number,
     method: string,
     path: string,
-    runtime = "smolvm",
   ) {
     // Do not include response bodies: exec errors may contain command input.
-    super(`${runtime} ${method} ${path} failed (HTTP ${status})`);
+    super(`smolvm ${method} ${path} failed (HTTP ${status})`);
     this.name = "SmolApiError";
   }
 }
@@ -35,7 +34,6 @@ export class SmolClient {
   constructor(
     config: SmolConfig,
     private readonly fetcher = fetch,
-    private readonly runtime = "smolvm",
   ) {
     const url = new URL(config.apiUrl ?? "http://127.0.0.1:8080");
     if (
@@ -86,7 +84,7 @@ export class SmolClient {
     );
     if (!response.ok) {
       await response.body?.cancel();
-      throw new SmolApiError(response.status, method, path, this.runtime);
+      throw new SmolApiError(response.status, method, path);
     }
     return response;
   }

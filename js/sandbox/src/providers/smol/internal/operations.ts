@@ -21,7 +21,6 @@ import {
 export function smolOperations(
   config: SmolConfig,
   client = new SmolClient(config),
-  provider: "smol" | "amika-hostd" = "smol",
 ) {
   const adapter = (id: string): SandboxAdapter => ({
     exec: (command, opts) => run(id, command, opts),
@@ -72,7 +71,7 @@ export function smolOperations(
     }
   };
   const start = async (id: string, interval?: number | null) => {
-    rejectTimer(provider, interval, "autoStopInterval");
+    rejectTimer(interval, "autoStopInterval");
     await client.discard(`${machinePath(id)}/start`, "POST");
   };
 
@@ -86,11 +85,11 @@ export function smolOperations(
     ): Promise<CreatedProviderSandbox> => {
       machinePath(input.name);
       if (!input.snapshot.trim())
-        throw new Error(`${provider} requires an OCI image in snapshot`);
+        throw new Error("Smol requires an OCI image in snapshot");
       if (input.services.length)
-        throw new SandboxProviderUnsupportedError(provider, "services");
-      rejectTimer(provider, input.autoStopInterval, "autoStopInterval");
-      rejectTimer(provider, input.autoDeleteInterval, "autoDeleteInterval");
+        throw new SandboxProviderUnsupportedError("smol", "services");
+      rejectTimer(input.autoStopInterval, "autoStopInterval");
+      rejectTimer(input.autoDeleteInterval, "autoDeleteInterval");
       const resources =
         input.resources &&
         z
@@ -125,13 +124,13 @@ export function smolOperations(
         } catch (cleanupError) {
           throw new AggregateError(
             [error, cleanupError],
-            `${provider} start and cleanup failed`,
+            "Smol start and cleanup failed",
           );
         }
         throw error;
       }
       return {
-        provider,
+        provider: "smol",
         providerSandboxId: input.name,
         services: [],
         envVars: input.envVars,
@@ -192,10 +191,9 @@ export function mapSmolState(state: string): SandboxStatus {
 }
 
 function rejectTimer(
-  provider: "smol" | "amika-hostd",
   interval: number | null | undefined,
   operation: string,
 ): void {
   if (interval != null && interval !== 0)
-    throw new SandboxProviderUnsupportedError(provider, operation);
+    throw new SandboxProviderUnsupportedError("smol", operation);
 }
