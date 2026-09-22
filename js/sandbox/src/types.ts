@@ -14,6 +14,7 @@ export const SANDBOX_PROVIDER_NAMES = [
   "freestyle",
   "vercel",
   "smol",
+  "amika-hostd",
 ] as const;
 
 export type SandboxProviderName = (typeof SANDBOX_PROVIDER_NAMES)[number];

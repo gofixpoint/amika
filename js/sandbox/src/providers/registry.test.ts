@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createSandboxProvider, type SandboxProviderDeps } from "./registry";
+import {
+  createSandboxProvider,
+  getSandboxAdapter,
+  type SandboxProviderDeps,
+} from "./registry";
 import { isSandboxProviderName } from "./capabilities";
 import { SandboxProviderUnsupportedError } from "./provider";
 import type { SandboxProviderName } from "../types";
@@ -16,6 +20,7 @@ const DEPS: SandboxProviderDeps = {
   freestyle: { apiKey: "k" },
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
   smol: {},
+  amikaHostd: {},
   resolveSnapshotId: async () => null,
 };
 
@@ -26,6 +31,7 @@ describe("createSandboxProvider construction", () => {
     "freestyle",
     "vercel",
     "smol",
+    "amika-hostd",
   ];
 
   it.each(names)("constructs %s with a coherent object surface", (name) => {
@@ -37,6 +43,18 @@ describe("createSandboxProvider construction", () => {
     for (const ns of [sbox.ssh, sbox.services, sbox.snapshots] as const) {
       expect(ns === null || typeof ns === "object").toBe(true);
     }
+  });
+
+  it("requires the hostd config slice for providers and adapters", async () => {
+    const deps = { ...DEPS, amikaHostd: null };
+    expect(() => createSandboxProvider("amika-hostd", deps)).toThrow(
+      /AMIKA_HOSTD_ENABLED/,
+    );
+    expect(() => getSandboxAdapter("amika-hostd", deps, "demo")).toThrow(
+      /AMIKA_HOSTD_ENABLED/,
+    );
+    const adapter = await getSandboxAdapter("amika-hostd", DEPS, "demo");
+    expect(adapter.exec).toBeTypeOf("function");
   });
 
   it("exposes Smol primitives without claiming full provisioning", async () => {

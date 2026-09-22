@@ -4,7 +4,7 @@
  * The single source of the sandbox provider ENV-VAR CONTRACT
  * (`DAYTONA_API_KEY`, `E2B_ENABLED`, `FREESTYLE_ENABLED`, `VERCEL_TOKEN`, …). The server
  * callers each used to hand-parse the identical set of vars into
- * `{ daytona, e2b, freestyle, vercel, smol }`;
+ * `{ daytona, e2b, freestyle, vercel, smol, amikaHostd }`;
  * they now share this so the credential/enable contract lives in one place and
  * the two can't drift.
  *
@@ -18,6 +18,7 @@
  * Next middleware). Provider construction still takes explicit config via the
  * registry; this is an opt-in convenience for building it.
  */
+import type { AmikaHostdConfig } from "./providers/amika-hostd/config";
 import type { SmolConfig } from "./providers/smol/config";
 import type { DaytonaConfig } from "./providers/daytona/config";
 import type { E2bConfig } from "./providers/e2b/config";
@@ -31,6 +32,7 @@ export interface SandboxProviderConfigs {
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
+  amikaHostd: AmikaHostdConfig | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -64,7 +66,7 @@ function required(env: Env, name: string): string {
 /**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
- * Daytona is always configured (the baseline provider). E2B/Freestyle/Vercel/Smol are
+ * Daytona is always configured (the baseline provider). E2B/Freestyle/Vercel/Smol/AmikaHostd are
  * gated on their `*_ENABLED` variables being exactly `true` and are
  * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
  * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
@@ -113,5 +115,12 @@ export function sandboxProviderConfigsFromEnv(
     ? { apiUrl: env.SMOL_API_URL, network: parseBooleanLike(env.SMOL_NETWORK) }
     : null;
 
-  return { daytona, e2b, freestyle, vercel, smol };
+  const amikaHostd: AmikaHostdConfig | null = isEnabled(env.AMIKA_HOSTD_ENABLED)
+    ? {
+        apiUrl: env.AMIKA_HOSTD_API_URL,
+        network: parseBooleanLike(env.AMIKA_HOSTD_NETWORK),
+      }
+    : null;
+
+  return { daytona, e2b, freestyle, vercel, smol, amikaHostd };
 }

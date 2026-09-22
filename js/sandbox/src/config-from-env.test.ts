@@ -125,3 +125,37 @@ describe("Smol environment configuration", () => {
     ).toEqual({ apiUrl: "http://127.0.0.1:9000", network: true });
   });
 });
+
+describe("Amika host daemon environment configuration", () => {
+  it("is opt-in and keeps its address and networking separate from Smol", () => {
+    expect(sandboxProviderConfigsFromEnv(BASE).amikaHostd).toBeNull();
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, AMIKA_HOSTD_ENABLED: "1" })
+        .amikaHostd,
+    ).toBeNull();
+    const configs = sandboxProviderConfigsFromEnv({
+      ...BASE,
+      AMIKA_HOSTD_ENABLED: " TRUE ",
+      AMIKA_HOSTD_API_URL: "http://host:3020",
+      AMIKA_HOSTD_NETWORK: "on",
+      SMOL_ENABLED: "true",
+      SMOL_API_URL: "http://runtime:8080",
+      SMOL_NETWORK: "off",
+    });
+    expect(configs.amikaHostd).toEqual({
+      apiUrl: "http://host:3020",
+      network: true,
+    });
+    expect(configs.smol).toEqual({
+      apiUrl: "http://runtime:8080",
+      network: false,
+    });
+  });
+
+  it("requires no provider credentials and defaults to networking disabled", () => {
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, AMIKA_HOSTD_ENABLED: "true" })
+        .amikaHostd,
+    ).toEqual({ apiUrl: undefined, network: false });
+  });
+});
