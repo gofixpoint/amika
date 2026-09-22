@@ -21,7 +21,10 @@ const FORMATTABLE_EXTENSIONS = new Set([
   ".yml",
 ]);
 
-const PACKAGE_BY_PREFIX = [["js/sandbox/", "@amika/sandbox"]];
+const PACKAGE_BY_PREFIX = [
+  [".github/actions/run-in-sandbox/", "@amika/run-in-sandbox-action"],
+  ["js/sandbox/", "@amika/sandbox"],
+];
 
 function normalizePath(path) {
   return path.replaceAll("\\", "/");
@@ -29,6 +32,10 @@ function normalizePath(path) {
 
 function shouldFormat(path) {
   const normalizedPath = normalizePath(path);
+  if (normalizedPath.startsWith(".github/actions/run-in-sandbox/dist/")) {
+    return false;
+  }
+
   const fileName = normalizedPath.split("/").at(-1) ?? "";
   if (LOCKFILE_NAMES.has(fileName)) {
     return false;
@@ -57,7 +64,7 @@ function getTouchedPackages(paths) {
 }
 
 export default {
-  "js/**/*": (stagedPaths) => {
+  "{.github/actions/run-in-sandbox,js}/**/*": (stagedPaths) => {
     const pathsToFormat = stagedPaths.filter(shouldFormat);
     if (pathsToFormat.length === 0) {
       return [];
@@ -76,7 +83,7 @@ export default {
     // the file. Bump both repos together.
     return [`pnpm dlx prettier@3.8.3 --write ${quotedPaths}`];
   },
-  "js/**": (stagedPaths) => {
+  "{.github/actions/run-in-sandbox,js}/**": (stagedPaths) => {
     const touchedPackages = getTouchedPackages(stagedPaths);
     if (touchedPackages.length === 0) {
       return [];
