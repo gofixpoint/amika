@@ -18,6 +18,7 @@ function deps(overrides: Partial<SandboxProviderDeps>): SandboxProviderDeps {
     e2b: null,
     freestyle: null,
     vercel: null,
+    smol: {},
     resolveSnapshotId: async () => null,
     ...overrides,
   };
