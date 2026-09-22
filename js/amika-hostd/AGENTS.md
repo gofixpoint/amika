@@ -1,9 +1,8 @@
 # Amika host daemon
 
 `@amika/hostd` is a standalone Node.js service built with Hono. It exposes
-local Smol machine lifecycle, exec, and file operations over HTTP. See
-[README.md](README.md) for setup and the supported API. Authentication is not
-implemented yet.
+local Smol machine lifecycle, exec, and file operations over HTTP.
+Authentication is not implemented yet.
 
 ## Development
 
