@@ -1,14 +1,25 @@
 /** Start the host daemon's HTTP server. */
 import { serve } from "@hono/node-server";
 import { z } from "zod";
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 
 const env = z
   .object({
+    SMOL_API_URL: z.string().optional(),
+    SMOL_REQUEST_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(300_000),
     HOST: z.string().min(1).default("127.0.0.1"),
     PORT: z.coerce.number().int().min(1).max(65535).default(3020),
   })
   .parse(process.env);
+
+const app = createApp({
+  apiUrl: env.SMOL_API_URL,
+  requestTimeoutMs: env.SMOL_REQUEST_TIMEOUT_MS,
+});
 
 const server = serve(
   { fetch: app.fetch, hostname: env.HOST, port: env.PORT },
