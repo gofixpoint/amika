@@ -212,13 +212,37 @@ describe("machine API", () => {
     expect((await app.request(ROOT)).status).toBe(504);
   });
 
-  it("rejects oversized uploads before contacting the runtime", async () => {
+  it.each([
+    ["POST", ROOT],
+    ["POST", `${ROOT}/demo/exec`],
+    ["PUT", `${ROOT}/demo/files/large.bin`],
+  ])(
+    "rejects oversized %s %s before contacting the runtime",
+    async (method, path) => {
+      const { app, fetcher } = harness();
+      const response = await app.request(path, {
+        method,
+        headers: { "Content-Length": String(64 * 1024 * 1024 + 1) },
+        body: "a",
+      });
+      expect(response.status).toBe(413);
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
+
+  it("limits streamed create bodies without Content-Length before JSON parsing", async () => {
     const { app, fetcher } = harness();
-    const response = await app.request(`${ROOT}/demo/files/large.bin`, {
-      method: "PUT",
-      headers: { "Content-Length": String(64 * 1024 * 1024 + 1) },
-      body: "a",
+    const chunk = new Uint8Array(1024 * 1024);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 65; i++) controller.enqueue(chunk);
+        controller.close();
+      },
     });
+    const init = { method: "POST", body, duplex: "half" as const };
+    const response = await app.request(
+      new Request(`http://localhost${ROOT}`, init),
+    );
     expect(response.status).toBe(413);
     expect(fetcher).not.toHaveBeenCalled();
   });
