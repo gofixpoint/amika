@@ -13,6 +13,7 @@ export const SANDBOX_PROVIDER_NAMES = [
   "e2b",
   "freestyle",
   "vercel",
+  "smol",
 ] as const;
 
 export type SandboxProviderName = (typeof SANDBOX_PROVIDER_NAMES)[number];

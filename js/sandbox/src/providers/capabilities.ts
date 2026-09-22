@@ -12,6 +12,7 @@ import type {
   SandboxProviderName,
 } from "./provider";
 import { SANDBOX_PROVIDER_NAMES } from "../types";
+import { smolCapabilities } from "./smol/capabilities";
 import { daytonaCapabilities } from "./daytona/capabilities";
 import { e2bCapabilities } from "./e2b/capabilities";
 import { freestyleCapabilities } from "./freestyle/capabilities";
@@ -24,6 +25,7 @@ export const SANDBOX_PROVIDER_CAPABILITIES: Record<
   SandboxProviderName,
   SandboxProviderCapabilities
 > = {
+  smol: smolCapabilities,
   daytona: daytonaCapabilities,
   e2b: e2bCapabilities,
   freestyle: freestyleCapabilities,
@@ -41,6 +43,7 @@ export const SANDBOX_PROVIDER_DISPLAY: Record<
   SandboxProviderName,
   SandboxProviderDisplay
 > = {
+  smol: { label: "Smol", badgeClassName: "bg-green-700 text-white" },
   daytona: { label: "Daytona", badgeClassName: "bg-gray-900 text-white" },
   e2b: { label: "E2B", badgeClassName: "bg-orange-600 text-white" },
   freestyle: {

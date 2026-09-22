@@ -15,6 +15,7 @@ const DEPS: SandboxProviderDeps = {
   e2b: { apiKey: "k" },
   freestyle: { apiKey: "k" },
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
+  smol: {},
   resolveSnapshotId: async () => null,
 };
 
@@ -24,6 +25,7 @@ describe("createSandboxProvider construction", () => {
     "e2b",
     "freestyle",
     "vercel",
+    "smol",
   ];
 
   it.each(names)("constructs %s with a coherent object surface", (name) => {
@@ -35,6 +37,22 @@ describe("createSandboxProvider construction", () => {
     for (const ns of [sbox.ssh, sbox.services, sbox.snapshots] as const) {
       expect(ns === null || typeof ns === "object").toBe(true);
     }
+  });
+
+  it("exposes Smol primitives without claiming full provisioning", async () => {
+    const provider = createSandboxProvider("smol", DEPS);
+    expect(provider.capabilities.lifecycle).toBe(false);
+    expect(provider.capabilities.exec).toBe(true);
+    expect(provider.capabilities.listSandboxes).toBe(true);
+    const sandbox = provider.sandboxes.get("local");
+    expect(sandbox.services).toBeNull();
+    expect(sandbox.snapshots).toBeNull();
+    await expect(
+      sandbox.streamExec("echo hello", { onStdout: () => {} }),
+    ).rejects.toThrow(SandboxProviderUnsupportedError);
+    expect(() =>
+      createSandboxProvider("smol", { ...DEPS, smol: null }),
+    ).toThrow(/SMOL_ENABLED/);
   });
 
   it("gives the three real providers the full capability set", () => {

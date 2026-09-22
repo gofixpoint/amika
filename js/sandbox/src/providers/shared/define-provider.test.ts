@@ -166,21 +166,19 @@ describe("defineProvider capability reconciliation", () => {
     ).toThrow(/capability "streaming"=true but the definition omits it/);
   });
 
-  it("throws when the lifecycle members aren't enabled together", () => {
-    // run-state ops present but the rest of the lifecycle bundle (services,
-    // cloneRepo) missing — callers reach all three under the `lifecycle` gate.
-    expect(() =>
-      build(
-        { ...ALL_OFF, lifecycle: true },
-        {
-          sandbox: {
-            start: async () => {},
-            stop: async () => {},
-            getState: async () => "running",
-          },
-        },
-      ),
-    ).toThrow(/lifecycle members must be enabled together/);
+  it("allows run-state control without the full provisioning lifecycle", async () => {
+    const provider = build(ALL_OFF, {
+      sandbox: {
+        start: async () => {},
+        stop: async () => {},
+        getState: async () => "stopped",
+      },
+    });
+    expect(provider.capabilities.lifecycle).toBe(false);
+    expect(provider.sandboxes.get("local").services).toBeNull();
+    await expect(provider.sandboxes.get("local").getState()).resolves.toBe(
+      "stopped",
+    );
   });
 
   it("throws when the sandbox run-state ops aren't all present", () => {

@@ -108,3 +108,20 @@ describe("sandboxProviderConfigsFromEnv", () => {
     expect(vercel).toEqual({ apiKey: "vt", teamId: "team", projectId: "proj" });
   });
 });
+
+describe("Smol environment configuration", () => {
+  it("is opt-in and needs no cloud credentials", () => {
+    expect(sandboxProviderConfigsFromEnv(BASE).smol).toBeNull();
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, SMOL_ENABLED: "1" }).smol,
+    ).toBeNull();
+    expect(
+      sandboxProviderConfigsFromEnv({
+        ...BASE,
+        SMOL_ENABLED: "true",
+        SMOL_API_URL: "http://127.0.0.1:9000",
+        SMOL_NETWORK: "on",
+      }).smol,
+    ).toEqual({ apiUrl: "http://127.0.0.1:9000", network: true });
+  });
+});

@@ -25,6 +25,8 @@ import type { SandboxProviderName } from "../types";
 // Defined in the client-safe capabilities module, not here: importing it from
 // this module would pull the provider SDKs below into client bundles.
 import { isSandboxProviderName } from "./capabilities";
+import smolProvider, { openSmolAdapter } from "./smol/provider";
+import type { SmolConfig } from "./smol/config";
 import type { SandboxAdapter } from "./shared/adapter";
 import daytonaProvider from "./daytona/provider";
 import e2bProvider, { openE2bAdapter } from "./e2b/provider";
@@ -44,6 +46,7 @@ export interface SandboxProviderDeps {
   e2b: E2bConfig | null;
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
+  smol: SmolConfig | null;
   /** Resolves an org-scoped snapshot name to its bootable opaque provider id. */
   resolveSnapshotId: SnapshotIdResolver;
 }
@@ -67,6 +70,7 @@ const FREESTYLE_HINT =
   "Freestyle provider is not configured (set FREESTYLE_ENABLED=true and FREESTYLE_API_KEY)";
 const VERCEL_HINT =
   "Vercel provider is not configured (set VERCEL_ENABLED=true and VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID)";
+const SMOL_HINT = "Smol provider is not configured (set SMOL_ENABLED=true)";
 const E2B_HINT =
   "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
 
@@ -77,6 +81,11 @@ const E2B_HINT =
  * adding a name to the union without an entry here fails to compile.
  */
 const PROVIDERS = {
+  smol: {
+    create: (deps) => smolProvider(requireConfig(deps.smol, SMOL_HINT)),
+    openAdapter: (deps, id) =>
+      openSmolAdapter(requireConfig(deps.smol, SMOL_HINT), id),
+  },
   daytona: {
     create: (deps) => daytonaProvider(deps.daytona),
     openAdapter: (deps, id) => openDaytonaAdapter(deps.daytona, id),

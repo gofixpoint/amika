@@ -194,22 +194,10 @@ function assertCapabilitiesMatch(
     );
   }
 
-  // `lifecycle` gates the two things a provisioning run drives together — the
-  // sandbox run-state ops and services (refreshUrls/syncRoutes) — so they must
-  // be present as a unit or absent as a unit. (Cloning is no longer part of
-  // this: `cloneRepo` is an optional provider-native override, surfaced as the
-  // nullable `Sandbox.git`, and providers without it clone over adapter exec.)
-  const lifecycleParts = {
-    runState: def.sandbox.start != null,
-    services: def.services != null,
-  };
-  const lifecycle = lifecycleParts.runState;
-  if (Object.values(lifecycleParts).some((present) => present !== lifecycle)) {
-    throw new Error(
-      `Provider "${def.name}": lifecycle members must be enabled together, ` +
-        `got ${JSON.stringify(lifecycleParts)}`,
-    );
-  }
+  // Full provisioning needs both run-state control and service routing.
+  // A local provider can expose start/stop/state without supporting that
+  // entire workflow; its lifecycle flag stays false.
+  const lifecycle = def.sandbox.start != null && def.services != null;
 
   // Each flag derived from namespace presence; the behavioral sub-flags are
   // mirrored so they compare equal (the author owns them, nothing to derive).
