@@ -90,3 +90,23 @@ jobs:
 
       - name: Test
         run: pnpm run test
+  
+  check-amika-hostd:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js/amika-hostd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+      - run: pnpm run formatcheck
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run test
+      - run: pnpm run build
