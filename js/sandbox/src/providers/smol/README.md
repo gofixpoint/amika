@@ -36,6 +36,7 @@ const provider = createSandboxProvider("smol", {
   e2b: null,
   freestyle: null,
   vercel: null,
+  amikaHostd: null,
   smol: { apiUrl: "http://127.0.0.1:8080", network: true },
   resolveSnapshotId: async () => null, // Unused: Smol takes an image directly.
 });

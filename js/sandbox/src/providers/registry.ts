@@ -15,6 +15,10 @@
  * reads env-var names — see `../config-from-env`); provider construction itself
  * stays env-agnostic and takes the resolved slices.
  */
+import type { AmikaHostdConfig } from "./amika-hostd/config";
+import amikaHostdProvider, {
+  openAmikaHostdAdapter,
+} from "./amika-hostd/provider";
 import type { DaytonaConfig } from "./daytona/config";
 import type { E2bConfig } from "./e2b/config";
 import type { FreestyleConfig } from "./freestyle/config";
@@ -47,6 +51,7 @@ export interface SandboxProviderDeps {
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
+  amikaHostd: AmikaHostdConfig | null;
   /** Resolves an org-scoped snapshot name to its bootable opaque provider id. */
   resolveSnapshotId: SnapshotIdResolver;
 }
@@ -70,6 +75,8 @@ const FREESTYLE_HINT =
   "Freestyle provider is not configured (set FREESTYLE_ENABLED=true and FREESTYLE_API_KEY)";
 const VERCEL_HINT =
   "Vercel provider is not configured (set VERCEL_ENABLED=true and VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID)";
+const AMIKA_HOSTD_HINT =
+  "Amika host daemon provider is not configured (set AMIKA_HOSTD_ENABLED=true)";
 const SMOL_HINT = "Smol provider is not configured (set SMOL_ENABLED=true)";
 const E2B_HINT =
   "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
@@ -81,6 +88,17 @@ const E2B_HINT =
  * adding a name to the union without an entry here fails to compile.
  */
 const PROVIDERS = {
+  "amika-hostd": {
+    create: (deps) =>
+      amikaHostdProvider({
+        config: requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
+      }),
+    openAdapter: (deps, id) =>
+      openAmikaHostdAdapter(
+        requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
+        id,
+      ),
+  },
   smol: {
     create: (deps) => smolProvider(requireConfig(deps.smol, SMOL_HINT)),
     openAdapter: (deps, id) =>
