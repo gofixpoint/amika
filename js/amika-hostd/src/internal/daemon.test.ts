@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   claimPidFile,
+  DaemonError,
   daemonPaths,
   PROCESS_TITLE,
   startInBackground,
@@ -162,13 +163,13 @@ describe("startInBackground", () => {
 
   it("refuses to start while the pidfile names a live process", async () => {
     const files = paths();
-    const release = claimPidFile(files.pidFile);
+    claimPidFile(files.pidFile)();
+    writeFileSync(files.pidFile, "999999\n");
     const spawn = spawning(fakeChild());
     await expect(
       startInBackground(["node"], files, { spawn, isRunning: () => true }),
-    ).rejects.toThrow(`amika-hostd is already running (pid ${process.pid})`);
+    ).rejects.toThrow("amika-hostd is already running (pid 999999)");
     expect(spawn).not.toHaveBeenCalled();
-    release();
   });
 });
 
@@ -208,12 +209,30 @@ describe("claimPidFile", () => {
   });
 });
 
+describe("state directory errors", () => {
+  it("reports an unusable state directory instead of crashing", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "amika-hostd-"));
+    const notADirectory = path.join(dir, "file");
+    writeFileSync(notADirectory, "");
+    const files = daemonPaths({ XDG_STATE_HOME: notADirectory });
+    await expect(
+      startInBackground(["node"], files, { spawn: spawning(fakeChild()) }),
+    ).rejects.toThrow(
+      new DaemonError(`cannot create ${files.logFile}: ENOTDIR`),
+    );
+    expect(() => claimPidFile(files.pidFile)).toThrow(
+      new DaemonError(`cannot create ${files.pidFile}: ENOTDIR`),
+    );
+  });
+});
+
 describe("claimPidFile across processes", () => {
   it("lets exactly one of several daemons starting at once claim it", async () => {
     const { pidFile } = paths();
     const startAt = String(Date.now() + 1_500);
     // Each child reports its outcome, then holds until killed, so the winner
-    // is still alive however late the others reach the claim.
+    // is still alive however late the others reach the claim. The exit timer
+    // only guards against orphans if the test times out before killing them.
     const claim = `
       const { claimPidFile, PROCESS_TITLE } = await import(process.argv[1]);
       process.title = PROCESS_TITLE;
@@ -224,7 +243,7 @@ describe("claimPidFile across processes", () => {
       } catch (error) {
         console.log(error.name);
       }
-      setInterval(() => {}, 1_000);
+      setTimeout(() => process.exit(), 30_000);
     `;
     const children = Array.from({ length: 5 }, () =>
       runNode(claim, [pidFile, startAt]),

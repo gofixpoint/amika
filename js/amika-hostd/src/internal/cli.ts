@@ -1,6 +1,10 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
 import { parseArgs } from "node:util";
 import {
+  AmikaApiError,
+  registerHost as registerHostWithAmika,
+} from "./amika-api.js";
+import {
   ConfigError,
   loadConfigFile as loadConfigFileFromDisk,
   requireSettings,
@@ -12,6 +16,7 @@ import {
   DaemonError,
   claimPidFile as claimPidFileOnDisk,
   daemonPaths,
+  ensureNotRunning,
   notifyReady as notifyParent,
   startInBackground as spawnInBackground,
 } from "./daemon.js";
@@ -23,8 +28,8 @@ import {
 export const USAGE = `Usage: amika-hostd <command> [options]
 
 Commands:
-  up      Start the daemon in the background
-  serve   Run the HTTP server in the foreground
+  up      Register this host with Amika, then start the daemon in the background
+  serve   Run the HTTP server in the foreground without registering
 
 Options:
   --fg           (up) Stay in the foreground instead of backgrounding
@@ -47,6 +52,7 @@ export interface CliDeps {
   claimPidFile?: typeof claimPidFileOnDisk;
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
+  registerHost?: typeof registerHostWithAmika;
 }
 
 /** Run one command and return its exit code. Expected failures never throw. */
@@ -60,14 +66,22 @@ export async function runCli(
       deps.out(USAGE);
       return 0;
     }
-    const config = requireSettings(
-      resolveConfig({
-        flags: parsed.flags,
-        env: deps.env,
-        file: (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env),
-      }),
-      ["secretKey"],
-    );
+    const resolved = resolveConfig({
+      flags: parsed.flags,
+      env: deps.env,
+      file: (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env),
+    });
+    if (parsed.command === "up") {
+      const registration = requireSettings(resolved, [
+        "apiKey",
+        "hostname",
+        "secretKey",
+      ]);
+      // Check first so a second `up` fails without calling Amika.
+      ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
+      await register(registration, deps);
+    }
+    const config = requireSettings(resolved, ["secretKey"]);
     if (parsed.command === "up" && !parsed.fg) {
       await startBackground(parsed.flags, deps);
     } else {
@@ -78,7 +92,8 @@ export async function runCli(
     if (
       error instanceof UsageError ||
       error instanceof ConfigError ||
-      error instanceof DaemonError
+      error instanceof DaemonError ||
+      error instanceof AmikaApiError
     ) {
       deps.err(`amika-hostd: ${error.message}`);
       if (error instanceof UsageError) deps.err(USAGE);
@@ -131,6 +146,25 @@ function parseCommand(args: readonly string[]): ParsedCommand {
     fg: values.fg ?? false,
     flags: { port: values.port, host: values.host },
   };
+}
+
+/**
+ * Register before serving, so an unregistered host never accepts traffic. Only
+ * the hostname and secret are sent; an existing host's secret is never changed.
+ */
+async function register(
+  config: HostdConfigWith<"apiKey" | "hostname" | "secretKey">,
+  deps: CliDeps,
+) {
+  const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
+    { apiUrl: config.apiUrl, apiKey: config.apiKey },
+    { hostname: config.hostname, secretKey: config.secretKey },
+  );
+  deps.out(
+    created
+      ? `Registered host ${host.hostname} with ${config.apiUrl} (${host.id})`
+      : `Host ${host.hostname} is already registered with ${config.apiUrl} (${host.id})`,
+  );
 }
 
 /** Forward the operator's own flags so the child resolves config identically. */
