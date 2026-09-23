@@ -16,6 +16,7 @@
   "dependencies": {
     "@hono/node-server": "1.19.15",
     "hono": "4.13.5",
+    "smol-toml": "1.8.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -24,10 +25,10 @@
     "eslint": "^9",
     "globals": "^16.4.0",
     "prettier": "3.8.3",
+    "tsx": "4.21.0",
     "typescript": "^5",
     "typescript-eslint": "^8.55.0",
     "vite": "7.3.5",
-    "vitest": "4.1.11",
-    "tsx": "4.21.0"
+    "vitest": "4.1.11"
   }
 }

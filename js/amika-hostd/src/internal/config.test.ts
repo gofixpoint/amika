@@ -1,0 +1,197 @@
+/** Cover precedence, aliases, and the TOML boundary of daemon settings. */
+import { describe, expect, it } from "vitest";
+import {
+  ConfigError,
+  DEFAULT_API_URL,
+  configFilePaths,
+  loadConfigFile,
+  requireSettings,
+  resolveConfig,
+} from "./config.js";
+
+function file(contents: string) {
+  return { path: "/etc/amika-hostd/config.toml", contents };
+}
+
+describe("resolveConfig", () => {
+  it("applies defaults when nothing is set", () => {
+    expect(resolveConfig({})).toEqual({
+      apiKey: undefined,
+      apiUrl: DEFAULT_API_URL,
+      hostname: undefined,
+      secretKey: undefined,
+      host: "127.0.0.1",
+      port: 3020,
+      smolApiUrl: undefined,
+      smolRequestTimeoutMs: 300_000,
+      configPath: undefined,
+    });
+  });
+
+  it("reads every setting from TOML except the API key", () => {
+    const config = resolveConfig({
+      file: file(`
+hostname = " builder "
+secret_key = "toml-secret"
+api_url = "http://localhost:3000/"
+host = "0.0.0.0"
+port = 4000
+`),
+    });
+    expect(config).toMatchObject({
+      hostname: "builder",
+      secretKey: "toml-secret",
+      apiUrl: "http://localhost:3000",
+      host: "0.0.0.0",
+      port: 4000,
+      configPath: "/etc/amika-hostd/config.toml",
+    });
+  });
+
+  it("prefers flags over environment over TOML", () => {
+    const toml = file(`port = 4000\nhost = "toml"\nhostname = "toml"`);
+    const env = {
+      AMIKA_HOSTD_PORT: "5000",
+      AMIKA_HOSTD_HOST: "env",
+      AMIKA_HOSTD_HOSTNAME: "env",
+    };
+    expect(resolveConfig({ env, file: toml })).toMatchObject({
+      port: 5000,
+      host: "env",
+      hostname: "env",
+    });
+    expect(
+      resolveConfig({ flags: { port: "6000", host: "flag" }, env, file: toml }),
+    ).toMatchObject({ port: 6000, host: "flag", hostname: "env" });
+  });
+
+  it.each([
+    ["apiKey", "AMIKA_HOSTD_API_KEY", "AMIKA_API_KEY"],
+    ["apiUrl", "AMIKA_HOSTD_API_URL", "AMIKA_API_URL"],
+    ["secretKey", "AMIKA_HOSTD_SECRET_KEY", "AMIKA_SECRET_KEY"],
+  ] as const)("accepts either name for %s", (key, specific, general) => {
+    const value = "http://value.example";
+    expect(resolveConfig({ env: { [specific]: value } })[key]).toBe(value);
+    expect(resolveConfig({ env: { [general]: value } })[key]).toBe(value);
+    expect(
+      resolveConfig({ env: { [specific]: value, [general]: value } })[key],
+    ).toBe(value);
+  });
+
+  it.each([
+    ["AMIKA_HOSTD_API_KEY", "AMIKA_API_KEY"],
+    ["AMIKA_HOSTD_API_URL", "AMIKA_API_URL"],
+    ["AMIKA_HOSTD_SECRET_KEY", "AMIKA_SECRET_KEY"],
+  ])("rejects %s and %s set to different values", (specific, general) => {
+    const env = { [specific]: "http://a.example", [general]: "http://b" };
+    expect(() => resolveConfig({ env })).toThrow(
+      new ConfigError(
+        `Ambiguous configuration: ${specific} and ${general} are set to different values; unset one of them`,
+      ),
+    );
+  });
+
+  it("treats empty environment values as unset", () => {
+    const config = resolveConfig({
+      env: { AMIKA_HOSTD_SECRET_KEY: "", AMIKA_SECRET_KEY: "general" },
+    });
+    expect(config.secretKey).toBe("general");
+  });
+
+  it("rejects an API key in the TOML file without echoing it", () => {
+    const run = () => resolveConfig({ file: file(`api_key = "do-not-print"`) });
+    expect(run).toThrow(ConfigError);
+    expect(run).toThrow(/must not contain api_key; set AMIKA_API_KEY/);
+    expect(run).not.toThrow(/do-not-print/);
+  });
+
+  it("rejects unknown keys and invalid TOML without echoing contents", () => {
+    expect(() => resolveConfig({ file: file(`hostnme = "typo"`) })).toThrow(
+      /invalid settings: hostnme/,
+    );
+    const invalid = () =>
+      resolveConfig({ file: file(`secret_key = "do-not-print`) });
+    expect(invalid).toThrow(/is not valid TOML$/);
+    expect(invalid).not.toThrow(/do-not-print/);
+  });
+
+  it.each(["0", "65536", "80.5", "http"])("rejects port %s", (port) => {
+    expect(() => resolveConfig({ flags: { port } })).toThrow(
+      `Invalid port: ${port}`,
+    );
+  });
+
+  it.each(["not a url", "file:///tmp", "https://user:pass@example.com"])(
+    "rejects API URL %s",
+    (url) => {
+      expect(() => resolveConfig({ env: { AMIKA_API_URL: url } })).toThrow(
+        ConfigError,
+      );
+    },
+  );
+
+  it("rejects a blank hostname", () => {
+    expect(() =>
+      resolveConfig({ env: { AMIKA_HOSTD_HOSTNAME: "   " } }),
+    ).toThrow("hostname must be 1 to 253 characters");
+  });
+});
+
+describe("requireSettings", () => {
+  it("names every missing setting and where to set it", () => {
+    expect(() =>
+      requireSettings(resolveConfig({}), ["apiKey", "hostname", "secretKey"]),
+    ).toThrow(
+      [
+        "Missing required configuration:",
+        "  - API key: set AMIKA_HOSTD_API_KEY or AMIKA_API_KEY (environment only)",
+        "  - hostname: set AMIKA_HOSTD_HOSTNAME or `hostname` in config.toml",
+        "  - secret key: set AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY or `secret_key` in config.toml",
+      ].join("\n"),
+    );
+  });
+
+  it("returns the config once everything is present", () => {
+    const config = resolveConfig({
+      env: { AMIKA_API_KEY: "key", AMIKA_HOSTD_HOSTNAME: "builder" },
+    });
+    expect(requireSettings(config, ["apiKey", "hostname"]).hostname).toBe(
+      "builder",
+    );
+  });
+});
+
+describe("loadConfigFile", () => {
+  it("prefers the user config over /etc and honors XDG_CONFIG_HOME", () => {
+    const env = { XDG_CONFIG_HOME: "/xdg" };
+    expect(configFilePaths(env)).toEqual([
+      "/xdg/amika-hostd/config.toml",
+      "/etc/amika-hostd/config.toml",
+    ]);
+    const files: Record<string, string> = {
+      "/xdg/amika-hostd/config.toml": "user",
+      "/etc/amika-hostd/config.toml": "system",
+    };
+    const read = (path: string) => {
+      if (path in files) return files[path];
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    };
+    expect(loadConfigFile(env, read)?.contents).toBe("user");
+    delete files["/xdg/amika-hostd/config.toml"];
+    expect(loadConfigFile(env, read)).toEqual({
+      path: "/etc/amika-hostd/config.toml",
+      contents: "system",
+    });
+    delete files["/etc/amika-hostd/config.toml"];
+    expect(loadConfigFile(env, read)).toBeUndefined();
+  });
+
+  it("reports unreadable files instead of skipping them", () => {
+    const read = () => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    };
+    expect(() => loadConfigFile({ XDG_CONFIG_HOME: "/xdg" }, read)).toThrow(
+      "Cannot read /xdg/amika-hostd/config.toml: EACCES",
+    );
+  });
+});

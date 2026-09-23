@@ -14,14 +14,36 @@ pnpm install
 pnpm --filter @amika/hostd dev
 ```
 
-The server defaults to `127.0.0.1:3020`. Override `HOST` and `PORT` through the
-environment. No external services or credentials are required.
+The server defaults to `127.0.0.1:3020`. No external services or credentials
+are required to serve locally.
 
 ```bash
 curl http://127.0.0.1:3020/health
 pnpm --filter @amika/hostd build
 pnpm --filter @amika/hostd start
 ```
+
+## Configuration
+
+`src/internal/config.ts` resolves every setting in one place. Each setting takes
+the first source that sets it: CLI flag, then environment, then TOML file.
+
+| Setting    | Flag     | Environment                                   | TOML         | Default                 |
+| ---------- | -------- | --------------------------------------------- | ------------ | ----------------------- |
+| API key    |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)   | required for Amika APIs |
+| API URL    |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`    | `https://app.amika.dev` |
+| Hostname   |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`   |                         |
+| Secret key |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key` |                         |
+| Bind host  | `--host` | `AMIKA_HOSTD_HOST`                            | `host`       | `127.0.0.1`             |
+| Port       | `--port` | `AMIKA_HOSTD_PORT`                            | `port`       | `3020`                  |
+
+Setting both names of an aliased pair to different values is an error, never a
+silent pick. The API key is environment-only: a TOML `api_key` fails startup.
+The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
+(default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
+two are not merged, and unknown keys are rejected. `SMOL_API_URL` and
+`SMOL_REQUEST_TIMEOUT_MS` remain environment-only. Never include a secret or
+file contents in a `ConfigError` message: operators see it verbatim.
 
 ## Checks
 
