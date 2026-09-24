@@ -16,7 +16,12 @@ const ENV = {
   AMIKA_HOSTD_SECRET_KEY: SECRET,
   XDG_STATE_HOME: "/state",
 };
-const HOST = { id: "host_1", hostname: "builder", url: null };
+const HOST = {
+  id: "host_1",
+  hostname: "builder",
+  url: "https://builder.example.com" as string | null,
+};
+const NEW_HOST = { ...HOST, url: null };
 
 /** A state directory whose pidfile names a (pretend-live) daemon. */
 function pidDir(): string {
@@ -44,6 +49,13 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     notifyReady: vi.fn(async (_port: number) => {}),
     isRunning: vi.fn(() => false),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
+    setHostUrl: vi.fn(
+      async (_api, host: { hostname: string }, url: string) => ({
+        ...HOST,
+        hostname: host.hostname,
+        url,
+      }),
+    ),
   } satisfies CliDeps;
   return { deps, out, err, server, release };
 }
@@ -222,7 +234,18 @@ describe("runCli", () => {
     [[], "missing command"],
     [["down"], "unknown command: down"],
     [["up", "extra"], "unexpected argument: extra"],
-    [["serve", "--fg"], "--fg only applies to `up`"],
+    [["serve", "--fg"], "--fg does not apply to `serve`"],
+    [["register-url"], "missing <url>"],
+    [["register-url", "a", "b"], "unexpected argument: b"],
+    [["register-url", "ftp://x"], "not an http(s) URL: ftp://x"],
+    [
+      ["register-url", "https://user:pw@x.example"],
+      "not an http(s) URL: https://user:pw@x.example",
+    ],
+    [
+      ["register-url", "https://x.example", "--port", "1"],
+      "--port does not apply to `register-url`",
+    ],
   ])("rejects %j with usage", async (args, message) => {
     const { deps, err } = harness();
     expect(await runCli(args, deps)).toBe(2);
@@ -239,5 +262,48 @@ describe("runCli", () => {
     const { deps, out } = harness({});
     expect(await runCli(["--help"], deps)).toBe(0);
     expect(out).toEqual([USAGE]);
+  });
+});
+
+describe("register-url", () => {
+  function unregistered() {
+    const h = harness();
+    h.deps.registerHost.mockResolvedValue({ host: NEW_HOST, created: true });
+    return h;
+  }
+
+  it("register-url registers idempotently, then sets the URL", async () => {
+    const { deps, out } = unregistered();
+    expect(await runCli(["register-url", "https://abc.ngrok.app/"], deps)).toBe(
+      0,
+    );
+    expect(deps.setHostUrl).toHaveBeenCalledWith(
+      { apiUrl: "https://app.amika.dev", apiKey: "api-key" },
+      NEW_HOST,
+      "https://abc.ngrok.app",
+    );
+    expect(out).toEqual([
+      "Registered host builder with https://app.amika.dev (host_1)",
+      "Set the public URL of host builder to https://abc.ngrok.app",
+    ]);
+    expect(deps.startInBackground).not.toHaveBeenCalled();
+    expect(deps.startServer).not.toHaveBeenCalled();
+  });
+
+  it("register-url keeps a path the tunnel needs", async () => {
+    const { deps } = unregistered();
+    await runCli(["register-url", "https://example.com/hostd/"], deps);
+    expect(deps.setHostUrl.mock.calls[0][2]).toBe("https://example.com/hostd/");
+  });
+
+  it("register-url requires the same settings as `up`", async () => {
+    const { deps, err } = unregistered();
+    const run = runCli(["register-url", "https://x.example"], {
+      ...deps,
+      env: { AMIKA_HOSTD_SECRET_KEY: SECRET },
+    });
+    expect(await run).toBe(1);
+    expect(err[0]).toContain("API key: set AMIKA_HOSTD_API_KEY");
+    expect(deps.registerHost).not.toHaveBeenCalled();
   });
 });

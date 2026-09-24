@@ -41,6 +41,29 @@ export async function registerHost(
   };
 }
 
+/**
+ * Record the host's internet-facing URL, which completes registration. The
+ * secret is omitted, so Amika keeps the one it already stores.
+ */
+export async function setHostUrl(
+  api: AmikaApiConfig,
+  host: Pick<RegisteredHost, "id" | "hostname">,
+  url: string,
+  fetcher: typeof fetch = fetch,
+): Promise<RegisteredHost> {
+  const response = await send(
+    api,
+    fetcher,
+    "PUT",
+    `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
+    { hostname: host.hostname, url },
+  );
+  if (response.status !== 200) {
+    throw await apiError("set the host URL", response);
+  }
+  return parseHost(response);
+}
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 async function send(

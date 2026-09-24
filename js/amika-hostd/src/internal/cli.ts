@@ -3,6 +3,8 @@ import { parseArgs } from "node:util";
 import {
   AmikaApiError,
   registerHost as registerHostWithAmika,
+  setHostUrl as setHostUrlInAmika,
+  type RegisteredHost,
 } from "./amika-api.js";
 import {
   ConfigError,
@@ -29,8 +31,11 @@ import {
 export const USAGE = `Usage: amika-hostd <command> [options]
 
 Commands:
-  up      Register this host with Amika, then start the daemon in the background
-  serve   Run the HTTP server in the foreground without registering
+  up                  Register this host with Amika, then start the daemon in
+                      the background
+  serve               Run the HTTP server in the foreground without registering
+  register-url <url>  Set this host's internet-facing URL (e.g. an ngrok or
+                      Cloudflare Tunnel URL) to complete registration
 
 Options:
   --fg           (up) Stay in the foreground instead of backgrounding
@@ -54,6 +59,7 @@ export interface CliDeps {
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
   registerHost?: typeof registerHostWithAmika;
+  setHostUrl?: typeof setHostUrlInAmika;
 }
 
 /** Run one command and return its exit code. Expected failures never throw. */
@@ -72,21 +78,26 @@ export async function runCli(
       env: deps.env,
       file: (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env),
     });
-    if (parsed.command === "up") {
-      const registration = requireSettings(resolved, [
-        "apiKey",
-        "hostname",
-        "secretKey",
-      ]);
-      // Check first so a second `up` fails without calling Amika.
-      ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
-      await register(registration, deps);
-    }
-    const config = requireSettings(resolved, ["secretKey"]);
-    if (parsed.command === "up" && !parsed.fg) {
-      await startBackground(parsed.flags, deps);
-    } else {
-      await serveInForeground(config, deps);
+    switch (parsed.command) {
+      case "up": {
+        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
+        // Check first so a second `up` fails without calling Amika.
+        ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
+        await register(config, deps);
+        if (parsed.fg) await serveInForeground(config, deps);
+        else await startBackground(parsed.flags, deps);
+        break;
+      }
+      case "serve":
+        await serveInForeground(requireSettings(resolved, ["secretKey"]), deps);
+        break;
+      case "register-url": {
+        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
+        await saveUrl(config, await register(config, deps), parsed.url, deps);
+        break;
+      }
+      default:
+        assertNever(parsed);
     }
     return 0;
   } catch (error) {
@@ -106,7 +117,15 @@ export async function runCli(
 
 type ParsedCommand =
   | { help: true }
-  | { help: false; command: "up" | "serve"; fg: boolean; flags: HostdFlags };
+  | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
+  | { help: false; command: "serve"; flags: HostdFlags }
+  | { help: false; command: "register-url"; url: string; flags: HostdFlags };
+
+const REGISTRATION_SETTINGS = ["apiKey", "hostname", "secretKey"] as const;
+
+type RegistrationConfig = HostdConfigWith<
+  (typeof REGISTRATION_SETTINGS)[number]
+>;
 
 class UsageError extends Error {}
 
@@ -129,24 +148,63 @@ function parseCommand(args: readonly string[]): ParsedCommand {
   }
   const { values, positionals } = parsed;
   if (values.help) return { help: true };
-  const [command, ...extra] = positionals;
-  if (command !== "up" && command !== "serve") {
-    throw new UsageError(
-      command === undefined ? "missing command" : `unknown command: ${command}`,
-    );
+  const [command, ...rest] = positionals;
+  const flags = { port: values.port, host: values.host };
+  switch (command) {
+    case "up":
+      expectArguments(rest, 0);
+      return { help: false, command, fg: values.fg ?? false, flags };
+    case "serve":
+      rejectOptions(command, values, ["fg"]);
+      expectArguments(rest, 0);
+      return { help: false, command, flags };
+    case "register-url": {
+      rejectOptions(command, values, ["fg", "port", "host"]);
+      expectArguments(rest, 1);
+      const url = parseHostUrl(rest[0]);
+      if (url === undefined) {
+        throw new UsageError(`not an http(s) URL: ${rest[0]}`);
+      }
+      return { help: false, command, url, flags: {} };
+    }
+    case undefined:
+      throw new UsageError("missing command");
+    default:
+      throw new UsageError(`unknown command: ${command}`);
   }
-  if (extra.length > 0) {
-    throw new UsageError(`unexpected argument: ${extra[0]}`);
+}
+
+function expectArguments(rest: string[], count: number) {
+  if (rest.length > count) {
+    throw new UsageError(`unexpected argument: ${rest[count]}`);
   }
-  if (command === "serve" && values.fg) {
-    throw new UsageError("--fg only applies to `up`");
+  if (rest.length < count) throw new UsageError("missing <url>");
+}
+
+function rejectOptions(
+  command: string,
+  values: Record<string, unknown>,
+  names: readonly string[],
+) {
+  const given = names.find((name) => values[name] !== undefined);
+  if (given !== undefined) {
+    throw new UsageError(`--${given} does not apply to \`${command}\``);
   }
-  return {
-    help: false,
-    command,
-    fg: values.fg ?? false,
-    flags: { port: values.port, host: values.host },
-  };
+}
+
+/** Accept only an absolute http(s) URL without embedded credentials. */
+function parseHostUrl(value: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return undefined;
+  }
+  if (!["http:", "https:"].includes(url.protocol)) return undefined;
+  if (url.username || url.password) return undefined;
+  return url.pathname === "/" && !url.search && !url.hash
+    ? url.origin
+    : url.toString();
 }
 
 /**
@@ -154,9 +212,9 @@ function parseCommand(args: readonly string[]): ParsedCommand {
  * the hostname and secret are sent; an existing host's secret is never changed.
  */
 async function register(
-  config: HostdConfigWith<"apiKey" | "hostname" | "secretKey">,
+  config: RegistrationConfig,
   deps: CliDeps,
-) {
+): Promise<RegisteredHost> {
   const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
     { apiUrl: config.apiUrl, apiKey: config.apiKey },
     { hostname: config.hostname, secretKey: config.secretKey },
@@ -174,6 +232,7 @@ async function register(
       "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
     );
   }
+  return host;
 }
 
 /**
@@ -185,6 +244,20 @@ function withoutApiKey(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(
     Object.entries(env).filter(([name]) => !apiKeyNames.includes(name)),
   );
+}
+
+async function saveUrl(
+  config: RegistrationConfig,
+  host: RegisteredHost,
+  url: string,
+  deps: CliDeps,
+) {
+  const saved = await (deps.setHostUrl ?? setHostUrlInAmika)(
+    { apiUrl: config.apiUrl, apiKey: config.apiKey },
+    host,
+    url,
+  );
+  deps.out(`Set the public URL of host ${saved.hostname} to ${saved.url}`);
 }
 
 /** Forward the operator's own flags so the child resolves config identically. */
@@ -245,4 +318,8 @@ function errorCode(error: unknown): string {
   return typeof error === "object" && error !== null && "code" in error
     ? String(error.code)
     : "unknown error";
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled case: ${JSON.stringify(value)}`);
 }

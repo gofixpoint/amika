@@ -42,6 +42,7 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   the daemon alive. If the launching `up` exits before the child is ready, the
   child shuts down too.
   Only `up` registers with Amika; `serve` does not.
+- `amika-hostd register-url <url>` records the host's public URL and exits.
 
 ## Registration
 
@@ -60,6 +61,14 @@ secret would make Amika's requests fail. The background daemon is spawned
 without `AMIKA_API_KEY`/`AMIKA_HOSTD_API_KEY`: it only serves, so the
 background daemon never holds the API key. `up` checks the pidfile before
 registering, so a second `up` fails without calling Amika.
+
+Registration is complete once Amika knows the host's internet-facing URL (an
+ngrok or Cloudflare Tunnel URL, for example). `amika-hostd register-url <url>`
+sets it from the same configuration as `up`: it registers idempotently to learn
+the host's id, then sends `PUT /api/v0beta1/hosts/{id}` with the hostname and
+URL and no secret, so the stored secret is kept. Only absolute http(s) URLs
+without credentials are accepted; a bare origin is normalized without its
+trailing slash, and a path is kept.
 
 Every run claims `amika-hostd.pid` next to the log, atomically, and refuses to
 start while it names a live daemon. The daemon sets `process.title` to
