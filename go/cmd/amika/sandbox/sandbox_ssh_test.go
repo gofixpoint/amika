@@ -238,6 +238,27 @@ func TestOpenSandboxInCodex(t *testing.T) {
 	}
 }
 
+func TestOpenSandboxInPaseo(t *testing.T) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	target := sandboxSSHAlias{
+		alias:       "dylan.paseo-setup.sb_abc.app-amika-dev.amika",
+		sandboxName: "paseo-setup",
+	}
+
+	if err := openSandboxInEditor(cmd, "paseo", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	want := "Open Paseo and click on \"Hosts > Add host > Remote SSH\" in the bottom left.\n\n" +
+		"Copy paste this SSH host:\n\n" +
+		"ssh://amika@dylan.paseo-setup.sb_abc.app-amika-dev.amika\n"
+	if got := out.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 	paths, _ := testSSHPaths(t)
 	repoName := "biz"
