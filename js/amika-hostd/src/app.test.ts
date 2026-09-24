@@ -3,12 +3,30 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 
 const ROOT = "/api/v1/machines";
+const SECRET = "test-secret";
 
 function harness(response = Response.json({ name: "demo", state: "stopped" })) {
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
   return {
-    app: createApp({ apiUrl: "http://runtime:8080" }, fetcher),
+    app: authenticated(
+      createApp({ secretKey: SECRET, apiUrl: "http://runtime:8080" }, fetcher),
+    ),
     fetcher,
+  };
+}
+
+/** Send every request with the daemon's secret, as a legitimate caller would. */
+function authenticated(app: ReturnType<typeof createApp>) {
+  return {
+    request(input: string | Request, init: RequestInit = {}) {
+      if (input instanceof Request) {
+        input.headers.set("Authorization", `Bearer ${SECRET}`);
+        return app.request(input);
+      }
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${SECRET}`);
+      return app.request(input, { ...init, headers });
+    },
   };
 }
 
@@ -226,7 +244,9 @@ describe("machine API", () => {
           { once: true },
         );
       });
-    const app = createApp({ requestTimeoutMs: 5 }, fetcher);
+    const app = authenticated(
+      createApp({ secretKey: SECRET, requestTimeoutMs: 5 }, fetcher),
+    );
     expect((await app.request(ROOT)).status).toBe(504);
   });
 
@@ -279,6 +299,76 @@ describe("machine API", () => {
     "http://runtime/?token=secret",
     "http://runtime/#hash",
   ])("rejects invalid runtime URLs: %s", (apiUrl) => {
-    expect(() => createApp({ apiUrl })).toThrow();
+    expect(() => createApp({ secretKey: SECRET, apiUrl })).toThrow();
+  });
+});
+
+describe("secret key authentication", () => {
+  function unauthenticated() {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));
+    return { app: createApp({ secretKey: SECRET }, fetcher), fetcher };
+  }
+
+  it.each([
+    ["missing", undefined],
+    ["wrong", `Bearer not-${SECRET}`],
+    ["a prefix of the secret", `Bearer ${SECRET.slice(0, -1)}`],
+    ["the secret in another scheme", `Basic ${SECRET}`],
+    ["an empty bearer token", "Bearer "],
+  ])("rejects a %s credential on every route", async (_label, header) => {
+    const { app, fetcher } = unauthenticated();
+    const headers: Record<string, string> = header
+      ? { Authorization: header }
+      : {};
+    for (const [method, path] of [
+      ["GET", "/health"],
+      ["GET", ROOT],
+      ["POST", `${ROOT}/demo/start`],
+      ["GET", "/not-a-route"],
+    ]) {
+      const response = await app.request(path, { method, headers });
+      expect(response.status).toBe(401);
+      expect(response.headers.get("connection")).toBe("close");
+      expect(await response.json()).toEqual({ error: "Unauthorized" });
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects before enforcing the body limit", async () => {
+    const { app, fetcher } = unauthenticated();
+    const response = await app.request(ROOT, {
+      method: "POST",
+      headers: { "Content-Length": String(64 * 1024 * 1024 + 1) },
+      body: "a",
+    });
+    expect(response.status).toBe(401);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a lowercase scheme", `bearer ${SECRET}`],
+    ["extra whitespace", `Bearer \t ${SECRET}  `],
+    ["no scheme", SECRET],
+  ])("accepts the secret with %s", async (_label, header) => {
+    const { app } = unauthenticated();
+    const response = await app.request("/health", {
+      headers: { Authorization: header },
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it("matches the secret exactly", async () => {
+    const { app } = unauthenticated();
+    const wrongCase = await app.request("/health", {
+      headers: { Authorization: `Bearer ${SECRET.toUpperCase()}` },
+    });
+    expect(wrongCase.status).toBe(401);
+  });
+
+  it("does not forward the caller's credential to the runtime", async () => {
+    const { app, fetcher } = harness();
+    await app.request(`${ROOT}/demo`);
+    const init = fetcher.mock.calls[0][1];
+    expect(JSON.stringify(init?.headers ?? {})).not.toContain(SECRET);
   });
 });

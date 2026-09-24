@@ -9,6 +9,8 @@ import {
   resolveConfig,
 } from "./config.js";
 
+const TOML_SECRET = "0123456789abcdef0123456789abcdef";
+
 function file(contents: string) {
   return { path: "/etc/amika-hostd/config.toml", contents };
 }
@@ -32,7 +34,7 @@ describe("resolveConfig", () => {
     const config = resolveConfig({
       file: file(`
 hostname = " builder "
-secret_key = "toml-secret"
+secret_key = "${TOML_SECRET}"
 api_url = "http://localhost:3000/"
 host = "0.0.0.0"
 port = 4000
@@ -40,7 +42,7 @@ port = 4000
     });
     expect(config).toMatchObject({
       hostname: "builder",
-      secretKey: "toml-secret",
+      secretKey: TOML_SECRET,
       apiUrl: "http://localhost:3000",
       host: "0.0.0.0",
       port: 4000,
@@ -70,7 +72,7 @@ port = 4000
     ["apiUrl", "AMIKA_HOSTD_API_URL", "AMIKA_API_URL"],
     ["secretKey", "AMIKA_HOSTD_SECRET_KEY", "AMIKA_SECRET_KEY"],
   ] as const)("accepts either name for %s", (key, specific, general) => {
-    const value = "http://value.example";
+    const value = "http://value.example/0123456789abcdef";
     expect(resolveConfig({ env: { [specific]: value } })[key]).toBe(value);
     expect(resolveConfig({ env: { [general]: value } })[key]).toBe(value);
     expect(
@@ -93,9 +95,9 @@ port = 4000
 
   it("treats empty environment values as unset", () => {
     const config = resolveConfig({
-      env: { AMIKA_HOSTD_SECRET_KEY: "", AMIKA_SECRET_KEY: "general" },
+      env: { AMIKA_HOSTD_SECRET_KEY: "", AMIKA_SECRET_KEY: TOML_SECRET },
     });
-    expect(config.secretKey).toBe("general");
+    expect(config.secretKey).toBe(TOML_SECRET);
   });
 
   it("rejects an API key in the TOML file without echoing it", () => {
@@ -129,6 +131,32 @@ port = 4000
       );
     },
   );
+
+  it.each([
+    ["too short", "a".repeat(31)],
+    ["padded with spaces", ` ${TOML_SECRET} `],
+    ["containing a space", `${TOML_SECRET} x`],
+    ["containing a tab", `${TOML_SECRET}\t`],
+    ["non-ASCII", `${TOML_SECRET}é`],
+  ])("rejects a secret key %s without echoing it", (_, secret) => {
+    for (const run of [
+      () => resolveConfig({ env: { AMIKA_HOSTD_SECRET_KEY: secret } }),
+      () =>
+        resolveConfig({
+          file: file(`secret_key = ${JSON.stringify(secret)}`),
+        }),
+    ]) {
+      expect(run).toThrow(/^secret key must be at least 32 printable ASCII/);
+      expect(run).not.toThrow(TOML_SECRET);
+    }
+  });
+
+  it("accepts a 32-character printable secret key", () => {
+    const secret = "!~" + "a".repeat(30);
+    expect(
+      resolveConfig({ env: { AMIKA_HOSTD_SECRET_KEY: secret } }).secretKey,
+    ).toBe(secret);
+  });
 
   it.each([
     "builder",

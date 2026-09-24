@@ -4,15 +4,16 @@ import { createApp } from "./app.js";
 import {
   ConfigError,
   loadConfigFile,
+  requireSettings,
   resolveConfig,
 } from "./internal/config.js";
 
 let config;
 try {
-  config = resolveConfig({
-    env: process.env,
-    file: loadConfigFile(process.env),
-  });
+  config = requireSettings(
+    resolveConfig({ env: process.env, file: loadConfigFile(process.env) }),
+    ["secretKey"],
+  );
 } catch (error) {
   if (!(error instanceof ConfigError)) throw error;
   console.error(`amika-hostd: ${error.message}`);
@@ -20,6 +21,7 @@ try {
 }
 
 const app = createApp({
+  secretKey: config.secretKey,
   apiUrl: config.smolApiUrl,
   requestTimeoutMs: config.smolRequestTimeoutMs,
 });

@@ -20,7 +20,7 @@ const DEPS: SandboxProviderDeps = {
   freestyle: { apiKey: "k" },
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
   smol: {},
-  amikaHostd: {},
+  amikaHostd: { secretKey: "s" },
   resolveSnapshotId: async () => null,
 };
 

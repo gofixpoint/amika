@@ -74,7 +74,7 @@ export function resolveConfig({
     apiKey: fromEnv("apiKey"),
     apiUrl: parseApiUrl(fromEnv("apiUrl") ?? toml.api_url ?? DEFAULT_API_URL),
     hostname: parseHostname(fromEnv("hostname") ?? toml.hostname),
-    secretKey: fromEnv("secretKey") ?? toml.secret_key,
+    secretKey: parseSecretKey(fromEnv("secretKey") ?? toml.secret_key),
     host: flags.host ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
     port: port === undefined ? DEFAULT_PORT : parsePort(port),
     smolApiUrl: nonEmpty(env.SMOL_API_URL),
@@ -212,6 +212,25 @@ function isDnsHostname(value: string): boolean {
     value.split(".").every((label) => DNS_LABEL.test(label))
   );
 }
+
+/**
+ * The secret travels as a bearer token, and HTTP clients trim header values,
+ * so surrounding whitespace would make it impossible to match. Keep it to
+ * printable ASCII without spaces, long enough to resist guessing on a daemon
+ * reachable from the internet. `@amika/sandbox`'s `amika-hostd` provider
+ * enforces the same rule on the calling side.
+ */
+function parseSecretKey(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!SECRET_KEY.test(value)) {
+    throw new ConfigError(
+      `secret key must be at least 32 printable ASCII characters with no spaces; generate one with \`openssl rand -hex 32\``,
+    );
+  }
+  return value;
+}
+
+const SECRET_KEY = /^[\x21-\x7e]{32,}$/;
 
 function parsePort(value: string | number): number {
   const port = Number(value);

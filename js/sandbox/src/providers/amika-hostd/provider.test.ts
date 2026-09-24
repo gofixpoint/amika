@@ -5,7 +5,10 @@ import { moduleLogger, type SandboxCtx } from "../../logger";
 import { getProviderLabel, isSandboxProviderName } from "../capabilities";
 import { type CreateSandboxProviderInput } from "../provider";
 import type { AmikaHostdConfig } from "./config";
-import amikaHostdProvider, { openAmikaHostdAdapter } from "./provider";
+import amikaHostdProvider, {
+  openAmikaHostdAdapter,
+  withSecretKey,
+} from "./provider";
 
 const INPUT: CreateSandboxProviderInput = {
   name: "demo",
@@ -20,14 +23,18 @@ const MACHINE = {
   storageGb: 20,
 };
 const ctx: SandboxCtx = { logger: moduleLogger(), childCtx: () => ctx };
+const SECRET = "hostd-secret";
 
-function harness(responses: Response[], config: AmikaHostdConfig = {}) {
+function harness(
+  responses: Response[],
+  config: AmikaHostdConfig = { secretKey: SECRET },
+) {
   const runtime = vi.fn<typeof fetch>(async () => {
     const response = responses.shift();
     if (!response) throw new Error("Unexpected runtime request");
     return response;
   });
-  const app = createApp({}, runtime);
+  const app = createApp({ secretKey: SECRET }, runtime);
   const fetcher = vi.fn<typeof fetch>(async (url, init) =>
     app.request(new Request(url, init)),
   );
@@ -86,6 +93,7 @@ describe("amika-hostd provider", () => {
 
   it("preserves an explicit network opt-out through hostd", async () => {
     const { provider, runtime } = harness([json(MACHINE, 201), json({})], {
+      secretKey: SECRET,
       network: false,
     });
     await provider.sandboxes.create(ctx, INPUT);
@@ -254,10 +262,14 @@ describe("amika-hostd provider", () => {
     });
   });
 
-  it("honors a custom hostd URL without authentication", async () => {
+  it("honors a custom hostd URL and authenticates every request", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json(MACHINE));
     const provider = amikaHostdProvider({
-      config: { apiUrl: "http://host:4000/", requestTimeoutMs: 1234 },
+      config: {
+        apiUrl: "http://host:4000/",
+        requestTimeoutMs: 1234,
+        secretKey: SECRET,
+      },
       fetcher,
     });
     expect(await provider.sandboxes.get("demo").getState()).toBe("stopped");
@@ -265,8 +277,31 @@ describe("amika-hostd provider", () => {
       "http://host:4000/api/v1/machines/demo",
       expect.objectContaining({
         signal: expect.any(AbortSignal),
-        headers: undefined,
+        redirect: "error",
       }),
     );
+    const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(headers.get("Authorization")).toBe(`Bearer ${SECRET}`);
+  });
+
+  it("keeps a Request's own headers when adding the secret key", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({}));
+    const request = new Request("http://host/api/v1/machines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Trace": "1" },
+    });
+    await withSecretKey(SECRET, fetcher)(request);
+    const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(Object.fromEntries(headers)).toEqual({
+      authorization: `Bearer ${SECRET}`,
+      "content-type": "application/json",
+      "x-trace": "1",
+    });
+  });
+
+  it("is rejected by hostd with the wrong secret key", async () => {
+    const { provider, runtime } = harness([], { secretKey: "wrong" });
+    await expect(provider.sandboxes.get("demo").getState()).rejects.toThrow();
+    expect(runtime).not.toHaveBeenCalled();
   });
 });

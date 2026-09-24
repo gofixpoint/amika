@@ -16,8 +16,8 @@ interface AmikaHostdDeps {
 
 /** Compose the public Smol resource API without depending on its implementation. */
 export default function amikaHostdProvider({
-  config,
-  fetcher,
+  config: { secretKey, ...config },
+  fetcher = fetch,
 }: AmikaHostdDeps): SandboxProvider {
   const smol = smolProvider(
     {
@@ -26,7 +26,7 @@ export default function amikaHostdProvider({
       apiUrl: config.apiUrl ?? "http://127.0.0.1:3020",
       requestTimeoutMs: config.requestTimeoutMs ?? 310_000,
     },
-    fetcher,
+    withSecretKey(secretKey, fetcher),
   );
   return {
     ...smol,
@@ -54,6 +54,25 @@ export async function openAmikaHostdAdapter(
     exec: (command, opts) => sandbox.exec(command, opts),
     uploadFile: (content, path) => sandbox.writeFile(path, content),
     downloadFile: (path) => sandbox.readFile(path),
+  };
+}
+
+/**
+ * Authenticate every daemon request, whatever headers Smol already set.
+ * Redirects are refused: a `307` would resend the request body, which for
+ * exec carries commands, environment, and stdin, to another location.
+ */
+export function withSecretKey(
+  secretKey: string,
+  fetcher: typeof fetch,
+): typeof fetch {
+  return (input, init) => {
+    // As in `fetch`, init headers replace a Request's own; absent, keep them.
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    headers.set("Authorization", `Bearer ${secretKey}`);
+    return fetcher(input, { ...init, headers, redirect: "error" });
   };
 }
 
