@@ -54,10 +54,11 @@ export async function startInBackground(
     startupTimeoutMs = 30_000,
   }: BackgroundDeps = {},
 ): Promise<{ pid: number; port: number }> {
-  const running = readRunningPid(paths.pidFile, isRunning);
-  if (running !== undefined) throw alreadyRunning(running, paths.pidFile);
-  mkdirSync(path.dirname(paths.logFile), { recursive: true, mode: 0o700 });
-  const log = openSync(paths.logFile, "a", 0o600);
+  ensureNotRunning(paths.pidFile, isRunning);
+  const log = onDisk(paths.logFile, () => {
+    mkdirSync(path.dirname(paths.logFile), { recursive: true, mode: 0o700 });
+    return openSync(paths.logFile, "a", 0o600);
+  });
   let child: ChildProcess;
   try {
     const [command, ...args] = argv;
@@ -110,7 +111,9 @@ export function claimPidFile(
   pidFile: string,
   isRunning: (pid: number) => boolean = isProcessRunning,
 ): () => void {
-  mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 });
+  onDisk(pidFile, () =>
+    mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 }),
+  );
   for (let attempt = 0; ; attempt++) {
     if (createPidFile(pidFile)) break;
     const holder = readPid(pidFile);
@@ -130,6 +133,17 @@ export function claimPidFile(
     // Only remove the file if a newer daemon has not replaced it.
     if (readPid(pidFile) === process.pid) rmSync(pidFile, { force: true });
   };
+}
+
+/** Fail if the pidfile names a live process other than this one. */
+export function ensureNotRunning(
+  pidFile: string,
+  isRunning: (pid: number) => boolean = isProcessRunning,
+): void {
+  const running = readRunningPid(pidFile, isRunning);
+  if (running !== undefined && running !== process.pid) {
+    throw alreadyRunning(running, pidFile);
+  }
 }
 
 export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
@@ -185,6 +199,20 @@ function waitForReady(
     child.once("exit", onExit);
     child.once("error", onError);
   });
+}
+
+/**
+ * Run a step that creates `file` or its directory, reporting a failure (e.g.
+ * `ENOTDIR` when `XDG_STATE_HOME` is a file, or `EACCES`) as a printable
+ * `DaemonError` rather than a stack trace.
+ */
+function onDisk<T>(file: string, step: () => T): T {
+  try {
+    return step();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    throw new DaemonError(`cannot create ${file}: ${code ?? "unknown error"}`);
+  }
 }
 
 /** Link a fully written temp file into place; false if the pidfile exists. */
