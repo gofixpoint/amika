@@ -251,7 +251,9 @@ func TestOpenSandboxInPaseo(t *testing.T) {
 		t.Fatalf("openSandboxInEditor: %v", err)
 	}
 
-	want := "Open Paseo and click on \"Hosts > Add host > Remote SSH\" in the bottom left.\n\n" +
+	want := "Make sure you have Paseo set up in your rig VM. See docs:\n\n" +
+		"https://docs.amika.dev/guides/paseo\n\n" +
+		"Open Paseo and click on \"Hosts > Add host > Remote SSH\" in the bottom left.\n\n" +
 		"Copy paste this SSH host:\n\n" +
 		"ssh://amika@dylan.paseo-setup.sb_abc.app-amika-dev.amika\n"
 	if got := out.String(); got != want {
