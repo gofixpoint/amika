@@ -187,14 +187,30 @@ function parseApiUrl(value: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-/** Match the control plane's hostname rules so registration cannot 400. */
+/**
+ * Match the control plane's hostname rules (a lowercase RFC 1123 hostname) so
+ * registration cannot 400. Mixed case is rejected rather than folded, since a
+ * host's identity is exactly the hostname it registers with.
+ */
 function parseHostname(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const hostname = value.trim();
-  if (hostname.length === 0 || hostname.length > 253) {
-    throw new ConfigError("hostname must be 1 to 253 characters");
+  if (!isDnsHostname(hostname)) {
+    throw new ConfigError(
+      `Invalid hostname: ${JSON.stringify(hostname)}. Use lowercase letters, digits, and hyphens in dot-separated labels (each 1-63 characters, starting and ending with a letter or digit), at most 253 characters in total`,
+    );
   }
   return hostname;
+}
+
+const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+function isDnsHostname(value: string): boolean {
+  return (
+    value.length >= 1 &&
+    value.length <= 253 &&
+    value.split(".").every((label) => DNS_LABEL.test(label))
+  );
 }
 
 function parsePort(value: string | number): number {

@@ -39,6 +39,8 @@ the first source that sets it: CLI flag, then environment, then TOML file.
 
 Setting both names of an aliased pair to different values is an error, never a
 silent pick. The API key is environment-only: a TOML `api_key` fails startup.
+The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
+enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
 two are not merged, and unknown keys are rejected. `SMOL_API_URL` and

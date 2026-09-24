@@ -130,10 +130,34 @@ port = 4000
     },
   );
 
-  it("rejects a blank hostname", () => {
+  it.each([
+    "builder",
+    "build-01",
+    "ci.eu-west.example",
+    "a".repeat(63),
+    `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(61)}`,
+  ])("accepts hostname %s", (hostname) => {
+    expect(
+      resolveConfig({ env: { AMIKA_HOSTD_HOSTNAME: hostname } }).hostname,
+    ).toBe(hostname);
+  });
+
+  it.each([
+    "   ",
+    "Builder",
+    "my_host",
+    "-builder",
+    "builder-",
+    "builder.",
+    ".builder",
+    "a..b",
+    "build er",
+    "a".repeat(64),
+    `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(62)}`,
+  ])("rejects hostname %j", (hostname) => {
     expect(() =>
-      resolveConfig({ env: { AMIKA_HOSTD_HOSTNAME: "   " } }),
-    ).toThrow("hostname must be 1 to 253 characters");
+      resolveConfig({ env: { AMIKA_HOSTD_HOSTNAME: hostname } }),
+    ).toThrow(/^Invalid hostname: /);
   });
 });
 
