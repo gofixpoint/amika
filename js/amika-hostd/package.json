@@ -3,10 +3,13 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "bin": {
+    "amika-hostd": "dist/index.js"
+  },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts serve",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js up --fg",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
