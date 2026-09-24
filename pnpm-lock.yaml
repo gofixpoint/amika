@@ -27,6 +27,9 @@ importers:
       hono:
         specifier: 4.13.5
         version: 4.13.5
+      smol-toml:
+        specifier: 1.8.0
+        version: 1.8.0
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -1778,6 +1781,10 @@ packages:
 
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
+
+  smol-toml@1.8.0:
+    resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
+    engines: {node: '>= 18'}
 
   socket.io-client@4.8.3:
     resolution: {integrity: sha512-uP0bpjWrjQmUt5DTHq9RuoCBdFJF10cdX9X+a368j/Ft0wmaVgxlrjvK3kjvgCODOMMOz9lcaRzxmso0bTWZ/g==}
@@ -3876,6 +3883,8 @@ snapshots:
   shell-quote@1.10.0: {}
 
   siginfo@2.0.0: {}
+
+  smol-toml@1.8.0: {}
 
   socket.io-client@4.8.3:
     dependencies:

@@ -1,30 +1,33 @@
 /** Start the host daemon's HTTP server. */
 import { serve } from "@hono/node-server";
-import { z } from "zod";
 import { createApp } from "./app.js";
+import {
+  ConfigError,
+  loadConfigFile,
+  resolveConfig,
+} from "./internal/config.js";
 
-const env = z
-  .object({
-    SMOL_API_URL: z.string().optional(),
-    SMOL_REQUEST_TIMEOUT_MS: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(300_000),
-    HOST: z.string().min(1).default("127.0.0.1"),
-    PORT: z.coerce.number().int().min(1).max(65535).default(3020),
-  })
-  .parse(process.env);
+let config;
+try {
+  config = resolveConfig({
+    env: process.env,
+    file: loadConfigFile(process.env),
+  });
+} catch (error) {
+  if (!(error instanceof ConfigError)) throw error;
+  console.error(`amika-hostd: ${error.message}`);
+  process.exit(1);
+}
 
 const app = createApp({
-  apiUrl: env.SMOL_API_URL,
-  requestTimeoutMs: env.SMOL_REQUEST_TIMEOUT_MS,
+  apiUrl: config.smolApiUrl,
+  requestTimeoutMs: config.smolRequestTimeoutMs,
 });
 
 const server = serve(
-  { fetch: app.fetch, hostname: env.HOST, port: env.PORT },
+  { fetch: app.fetch, hostname: config.host, port: config.port },
   (info) => {
-    console.log(`amika-hostd listening on http://${env.HOST}:${info.port}`);
+    console.log(`amika-hostd listening on http://${config.host}:${info.port}`);
   },
 );
 
