@@ -44,8 +44,8 @@ COPY sandbox-image/steps/70-hook-assets.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
     && rm -rf /opt/amika-build
 
-ARG CLAUDE_CODE_VERSION=2.1.270
-ARG CODEX_VERSION=0.154.0
+ARG CLAUDE_CODE_VERSION=2.1.281
+ARG CODEX_VERSION=0.156.1
 ARG OPENCODE_VERSION=1.18.30
 ARG PI_VERSION=0.84.4
 COPY sandbox-image/steps/80-agent-clis.sh /opt/amika-build/step.sh
@@ -57,7 +57,7 @@ RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
 ARG AMIKA_VERSION=0.19.2
 ARG AMIKALOG_VERSION=0.2.0
-ARG AMIKAD_VERSION=0.1.0
+ARG AMIKAD_VERSION=0.2.0
 COPY sandbox-image/steps/85-amika-clis.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
