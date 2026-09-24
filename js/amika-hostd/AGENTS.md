@@ -21,8 +21,35 @@ key. No other external services or credentials are required to serve locally.
 ```bash
 curl -H "Authorization: Bearer $AMIKA_HOSTD_SECRET_KEY" http://127.0.0.1:3020/health
 pnpm --filter @amika/hostd build
-pnpm --filter @amika/hostd start
+pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 ```
+
+## Commands
+
+`src/index.ts` is the `amika-hostd` bin; `src/internal/cli.ts` parses commands
+with `node:util` `parseArgs` and takes every side effect as a dependency.
+
+- `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
+  it re-runs itself as `serve` with `detached: true`, appends output to
+  `$XDG_STATE_HOME/amika-hostd/amika-hostd.log` (default `~/.local/state`), and
+  waits for the child's IPC `ready` message, so startup failures print in the
+  caller's terminal. Only the operator's own flags are forwarded; the child
+  inherits the environment and re-reads the TOML file.
+- `amika-hostd up --fg` and `amika-hostd serve` run in the foreground until
+  `SIGINT` or `SIGTERM`. Shutdown waits up to 5 seconds for in-flight requests,
+  then drops the rest, and the process exits a second later even if a request
+  to the Smol runtime is still pending, so a slow client or runtime cannot keep
+  the daemon alive. If the launching `up` exits before the child is ready, the
+  child shuts down too.
+
+Every run claims `amika-hostd.pid` next to the log, atomically, and refuses to
+start while it names a live daemon. The daemon sets `process.title` to
+`amika-hostd`; where `/proc` exists, a pidfile naming any other process is
+treated as stale, since the pidfile outlives reboots and pids are reused. An
+empty `--host` is rejected, since it would bind every interface. Stop a
+background daemon with
+`kill $(cat ~/.local/state/amika-hostd/amika-hostd.pid)`. `build` uses
+`tsconfig.build.json`, which leaves tests out of `dist/`.
 
 ## Configuration
 
@@ -73,4 +100,4 @@ pnpm --filter @amika/hostd test
 
 The test command allows an empty suite until behavior is added. Use `format` to
 apply formatting. `src/app.ts` defines routes without opening a socket;
-`src/index.ts` handles configuration, listening, and shutdown.
+`src/internal/server.ts` binds the listener and bounds shutdown.

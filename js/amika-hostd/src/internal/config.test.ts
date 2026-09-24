@@ -117,11 +117,21 @@ port = 4000
     expect(invalid).not.toThrow(/do-not-print/);
   });
 
-  it.each(["0", "65536", "80.5", "http"])("rejects port %s", (port) => {
-    expect(() => resolveConfig({ flags: { port } })).toThrow(
-      `Invalid port: ${port}`,
+  it.each(["", "  "])("rejects an empty --host %j", (host) => {
+    // An empty bind address would listen on every interface.
+    expect(() => resolveConfig({ flags: { host } })).toThrow(
+      new ConfigError("--host must not be empty"),
     );
   });
+
+  it.each(["0", "65536", "80.5", "http", "0x50", "1e3", " 80", "80 "])(
+    "rejects port %j",
+    (port) => {
+      expect(() => resolveConfig({ flags: { port } })).toThrow(
+        `Invalid port: ${port}`,
+      );
+    },
+  );
 
   it.each(["not a url", "file:///tmp", "https://user:pass@example.com"])(
     "rejects API URL %s",

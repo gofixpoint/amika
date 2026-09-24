@@ -75,7 +75,8 @@ export function resolveConfig({
     apiUrl: parseApiUrl(fromEnv("apiUrl") ?? toml.api_url ?? DEFAULT_API_URL),
     hostname: parseHostname(fromEnv("hostname") ?? toml.hostname),
     secretKey: parseSecretKey(fromEnv("secretKey") ?? toml.secret_key),
-    host: flags.host ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
+    host:
+      parseHostFlag(flags.host) ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
     port: port === undefined ? DEFAULT_PORT : parsePort(port),
     smolApiUrl: nonEmpty(env.SMOL_API_URL),
     smolRequestTimeoutMs: parseTimeout(env.SMOL_REQUEST_TIMEOUT_MS),
@@ -232,8 +233,18 @@ function parseSecretKey(value: string | undefined): string | undefined {
 
 const SECRET_KEY = /^[\x21-\x7e]{32,}$/;
 
+/** An empty `--host` would bind every interface, so reject it. */
+function parseHostFlag(value: string | undefined): string | undefined {
+  if (value !== undefined && value.trim() === "") {
+    throw new ConfigError("--host must not be empty");
+  }
+  return value;
+}
+
 function parsePort(value: string | number): number {
-  const port = Number(value);
+  // `Number` would also accept "0x50", "1e3", and padded values.
+  const port =
+    typeof value === "number" || /^\d+$/.test(value) ? Number(value) : NaN;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new ConfigError(`Invalid port: ${value}`);
   }
