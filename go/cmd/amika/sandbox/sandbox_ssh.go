@@ -22,7 +22,7 @@ import (
 // validateEditor checks that the requested editor is supported.
 func validateEditor(editor string) error {
 	switch editor {
-	case "cursor", "vscode", "claude", "codex":
+	case "cursor", "vscode", "claude", "codex", "paseo":
 		return nil
 	default:
 		return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
@@ -119,7 +119,7 @@ Examples:
 
 // supportedEditors lists the values accepted by `sandbox code --editor` (and by
 // the superseded `sandbox codev1`).
-var supportedEditors = []string{"cursor", "vscode", "claude", "codex"}
+var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "paseo"}
 
 var sandboxCodeV1Cmd = &cobra.Command{
 	Use:   "codev1 <name>",
@@ -136,6 +136,7 @@ Supported --editor values:
   vscode   launch VS Code connected to the sandbox
   claude   register the sandbox as a Claude Desktop SSH environment
   codex    expose the sandbox to Codex as an SSH connection
+  paseo    print instructions for adding the sandbox as a Paseo SSH host
 
 For claude and codex, the command writes the local app config so the sandbox
 appears as a remote environment; select it in the app to start the session.
@@ -145,7 +146,8 @@ Examples:
   amika sandbox codev1 my-sandbox --editor=cursor
   amika sandbox codev1 my-sandbox --editor=vscode
   amika sandbox codev1 my-sandbox --editor=claude
-  amika sandbox codev1 my-sandbox --editor=codex`,
+  amika sandbox codev1 my-sandbox --editor=codex
+  amika sandbox codev1 my-sandbox --editor=paseo`,
 	// Superseded by "sandbox code"; see sandboxSSHV1Cmd for why it stays hidden.
 	Hidden: true,
 	Args:   cobra.ExactArgs(1),
@@ -250,6 +252,8 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 		return openSandboxInClaudeTarget(cmd, paths, target, pathOverride)
 	case "codex":
 		return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
+	case "paseo":
+		return openSandboxInPaseoTarget(cmd, target)
 	default:
 		return fmt.Errorf("unsupported editor %q", editor)
 	}
@@ -398,6 +402,19 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 	}
 	fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder (e.g. %s).\n",
 		target.alias, resolveRemoteWorkspacePath(target.repoName, pathOverride))
+	return nil
+}
+
+// openSandboxInPaseoTarget prints the direct SSH host Paseo should register.
+// Paseo does not currently expose a CLI or deep link for adding a remote host,
+// so the user completes the registration in the desktop app.
+func openSandboxInPaseoTarget(cmd *cobra.Command, target sandboxSSHAlias) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, `Open Paseo and click on "Hosts > Add host > Remote SSH" in the bottom left.`)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Copy paste this SSH host:")
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "ssh://amika@%s\n", target.alias)
 	return nil
 }
 

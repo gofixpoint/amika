@@ -168,6 +168,7 @@ Supported --editor values:
   vscode   launch VS Code connected to the sandbox
   claude   register the sandbox as a Claude Desktop SSH environment
   codex    expose the sandbox to Codex as an SSH connection
+  paseo    print instructions for adding the sandbox as a Paseo SSH host
 
 The command creates a managed SSH alias backed by Amika's WebSocket proxy, then
 hands that alias to the selected editor. It requires an SSH identity from
@@ -178,7 +179,8 @@ Examples:
   amika sandbox code my-sandbox --editor=cursor
   amika sandbox code my-sandbox --editor=vscode
   amika sandbox code my-sandbox --editor=claude
-  amika sandbox code my-sandbox --editor=codex`,
+  amika sandbox code my-sandbox --editor=codex
+  amika sandbox code my-sandbox --editor=paseo`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := output.RejectJSON(cmd); err != nil {
