@@ -410,6 +410,10 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 // so the user completes the registration in the desktop app.
 func openSandboxInPaseoTarget(cmd *cobra.Command, target sandboxSSHAlias) error {
 	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "Make sure you have Paseo set up in your rig VM. See docs:")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "https://docs.amika.dev/guides/paseo")
+	fmt.Fprintln(out)
 	fmt.Fprintln(out, `Open Paseo and click on "Hosts > Add host > Remote SSH" in the bottom left.`)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Copy paste this SSH host:")
