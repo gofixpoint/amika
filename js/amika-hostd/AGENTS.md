@@ -11,14 +11,15 @@ Run commands from the monorepo root:
 
 ```bash
 pnpm install
+export AMIKA_HOSTD_SECRET_KEY=$(openssl rand -hex 32)
 pnpm --filter @amika/hostd dev
 ```
 
-The server defaults to `127.0.0.1:3020`. No external services or credentials
-are required to serve locally.
+The server defaults to `127.0.0.1:3020` and refuses to start without a secret
+key. No other external services or credentials are required to serve locally.
 
 ```bash
-curl http://127.0.0.1:3020/health
+curl -H "Authorization: Bearer $AMIKA_HOSTD_SECRET_KEY" http://127.0.0.1:3020/health
 pnpm --filter @amika/hostd build
 pnpm --filter @amika/hostd start
 ```
@@ -46,6 +47,20 @@ The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 two are not merged, and unknown keys are rejected. `SMOL_API_URL` and
 `SMOL_REQUEST_TIMEOUT_MS` remain environment-only. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
+
+## Authentication
+
+Every route, including `/health` and unknown paths, requires
+`Authorization: Bearer <secret key>` (the scheme the Amika CLI uses for API
+credentials). `src/internal/auth.ts` reads it the same way as amika-mono's
+worker auth (`checkWorkerAuth`): strip a leading `Bearer` scheme, trim, compare
+in constant time, and answer a mismatch with a plain `401`. It runs before the body
+limit, so unauthenticated callers cannot make the daemon buffer a body. The
+caller's credential is never forwarded to the Smol runtime. The
+`@amika/sandbox` `amika-hostd` provider sends the key from
+`AMIKA_HOSTD_SECRET_KEY`. Both sides require at least 32 printable ASCII
+characters with no spaces: HTTP clients trim header values, so a padded key
+could never match.
 
 ## Checks
 

@@ -67,6 +67,20 @@ function required(env: Env, name: string): string {
 }
 
 /**
+ * `amika-hostd` enforces the same rule on its side: the key is sent as a bearer
+ * token, and `Headers` trims values, so a padded key could never match.
+ */
+function hostdSecretKey(env: Env): string {
+  const value = required(env, "AMIKA_HOSTD_SECRET_KEY");
+  if (!/^[\x21-\x7e]{32,}$/.test(value)) {
+    throw new Error(
+      "AMIKA_HOSTD_SECRET_KEY must be at least 32 printable ASCII characters with no spaces",
+    );
+  }
+  return value;
+}
+
+/**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
  * Daytona is always configured (the baseline provider). E2B/Freestyle/Vercel/Smol/AmikaHostd are
@@ -121,6 +135,7 @@ export function sandboxProviderConfigsFromEnv(
   const amikaHostd: AmikaHostdConfig | null = isEnabled(env.AMIKA_HOSTD_ENABLED)
     ? {
         apiUrl: env.AMIKA_HOSTD_API_URL,
+        secretKey: hostdSecretKey(env),
         network: parseBooleanLike(env.AMIKA_HOSTD_NETWORK, true),
       }
     : null;

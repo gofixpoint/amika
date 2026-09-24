@@ -126,6 +126,8 @@ describe("Smol environment configuration", () => {
   });
 });
 
+const HOSTD_SECRET = "0123456789abcdef0123456789abcdef";
+
 describe("Amika host daemon environment configuration", () => {
   it("is opt-in and keeps its address and networking separate from Smol", () => {
     expect(sandboxProviderConfigsFromEnv(BASE).amikaHostd).toBeNull();
@@ -137,6 +139,7 @@ describe("Amika host daemon environment configuration", () => {
       ...BASE,
       AMIKA_HOSTD_ENABLED: " TRUE ",
       AMIKA_HOSTD_API_URL: "http://host:3020",
+      AMIKA_HOSTD_SECRET_KEY: HOSTD_SECRET,
       AMIKA_HOSTD_NETWORK: "on",
       SMOL_ENABLED: "true",
       SMOL_API_URL: "http://runtime:8080",
@@ -144,6 +147,7 @@ describe("Amika host daemon environment configuration", () => {
     });
     expect(configs.amikaHostd).toEqual({
       apiUrl: "http://host:3020",
+      secretKey: HOSTD_SECRET,
       network: true,
     });
     expect(configs.smol).toEqual({
@@ -159,9 +163,14 @@ describe("Amika host daemon environment configuration", () => {
         sandboxProviderConfigsFromEnv({
           ...BASE,
           AMIKA_HOSTD_ENABLED: "true",
+          AMIKA_HOSTD_SECRET_KEY: HOSTD_SECRET,
           AMIKA_HOSTD_NETWORK: network,
         }).amikaHostd,
-      ).toEqual({ apiUrl: undefined, network: true });
+      ).toEqual({
+        apiUrl: undefined,
+        secretKey: HOSTD_SECRET,
+        network: true,
+      });
     },
   );
 
@@ -172,9 +181,33 @@ describe("Amika host daemon environment configuration", () => {
         sandboxProviderConfigsFromEnv({
           ...BASE,
           AMIKA_HOSTD_ENABLED: "true",
+          AMIKA_HOSTD_SECRET_KEY: HOSTD_SECRET,
           AMIKA_HOSTD_NETWORK: network,
         }).amikaHostd?.network,
       ).toBe(false);
     },
   );
+
+  it("requires the daemon's secret key once enabled", () => {
+    expect(() =>
+      sandboxProviderConfigsFromEnv({ ...BASE, AMIKA_HOSTD_ENABLED: "true" }),
+    ).toThrow("Missing required environment variable: AMIKA_HOSTD_SECRET_KEY");
+  });
+
+  it.each([
+    ["too short", "a".repeat(31)],
+    ["padded with spaces", ` ${HOSTD_SECRET} `],
+    ["non-ASCII", `${HOSTD_SECRET}é`],
+  ])("rejects a secret key %s without echoing it", (_, secret) => {
+    const run = () =>
+      sandboxProviderConfigsFromEnv({
+        ...BASE,
+        AMIKA_HOSTD_ENABLED: "true",
+        AMIKA_HOSTD_SECRET_KEY: secret,
+      });
+    expect(run).toThrow(
+      "AMIKA_HOSTD_SECRET_KEY must be at least 32 printable ASCII characters with no spaces",
+    );
+    expect(run).not.toThrow(HOSTD_SECRET);
+  });
 });

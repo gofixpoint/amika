@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
+import { requireSecretKey } from "./internal/auth.js";
 import { SmolRuntime, type SmolRuntimeConfig } from "./internal/smol.js";
 import {
   createMachineSchema,
@@ -11,9 +12,17 @@ import {
   machinePath,
 } from "./internal/requests.js";
 
+export interface AppConfig extends SmolRuntimeConfig {
+  /** Every request, including `/health`, must present this as a bearer token. */
+  secretKey: string;
+}
+
 /** Build routes without opening a socket; the runtime transport is injectable. */
-export function createApp(config: SmolRuntimeConfig = {}, fetcher = fetch) {
-  const runtime = new SmolRuntime(config, fetcher);
+export function createApp(
+  { secretKey, ...runtimeConfig }: AppConfig,
+  fetcher = fetch,
+) {
+  const runtime = new SmolRuntime(runtimeConfig, fetcher);
   const app = new Hono();
   const machines = "/api/v1/machines";
 
@@ -25,6 +34,9 @@ export function createApp(config: SmolRuntimeConfig = {}, fetcher = fetch) {
     // Do not return commands, environment values, or upstream error bodies.
     return c.json({ error: "Internal server error" }, 500);
   });
+  // Authenticate before reading any body, so unauthenticated callers cannot
+  // make the daemon buffer up to the body limit.
+  app.use("*", requireSecretKey(secretKey));
   app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get(machines, () => runtime.request(""));
