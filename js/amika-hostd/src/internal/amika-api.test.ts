@@ -62,7 +62,7 @@ describe("registerHost", () => {
     ],
     [
       403,
-      "the API key is not allowed to register the host (forbidden: details)",
+      "Amika refused to register the host with this API key (forbidden: details)",
     ],
     [409, "failed to register the host (host_hostname_conflict: details)"],
   ])("explains HTTP %i", async (status, message) => {
@@ -74,6 +74,36 @@ describe("registerHost", () => {
     const fetcher = responding(apiErrorBody(status, code, "details"));
     await expect(registerHost(API, INPUT, fetcher)).rejects.toThrow(
       new AmikaApiError(message),
+    );
+  });
+
+  it.each([
+    [
+      401,
+      "Unauthorized",
+      "Amika rejected the API key while trying to register the host (HTTP 401: Unauthorized)",
+    ],
+    [
+      403,
+      "No organization ID",
+      "Amika refused to register the host with this API key (HTTP 403: No organization ID)",
+    ],
+  ])("explains the sign-in check's HTTP %i", async (status, error, message) => {
+    // What the control plane's sign-in check actually sends.
+    const fetcher = responding(Response.json({ error }, { status }));
+    await expect(registerHost(API, INPUT, fetcher)).rejects.toThrow(
+      new AmikaApiError(message),
+    );
+  });
+
+  it("says a redirect was refused rather than that Amika is unreachable", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(
+      new TypeError("fetch failed", {
+        cause: new Error("unexpected redirect"),
+      }),
+    );
+    await expect(registerHost(API, INPUT, fetcher)).rejects.toThrow(
+      /answered with a redirect, which is refused/,
     );
   });
 

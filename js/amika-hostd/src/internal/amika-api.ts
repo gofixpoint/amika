@@ -64,6 +64,11 @@ async function send(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
+    if (isRefusedRedirect(error)) {
+      throw new AmikaApiError(
+        `Amika at ${api.apiUrl} answered with a redirect, which is refused so credentials are not resent; check the API URL (e.g. https rather than http)`,
+      );
+    }
     throw new AmikaApiError(
       `cannot reach Amika at ${api.apiUrl}: ${transportReason(error)}`,
     );
@@ -80,10 +85,14 @@ async function parseHost(response: Response): Promise<RegisteredHost> {
   return parsed.data;
 }
 
-const errorBodySchema = z.object({
-  error_code: z.string(),
-  message: z.string(),
-});
+/**
+ * API errors are `{ error_code, message }`; the sign-in check in front of the
+ * API answers `401`/`403` with just `{ error }` (e.g. "No organization ID").
+ */
+const errorBodySchema = z.union([
+  z.object({ error_code: z.string(), message: z.string() }),
+  z.object({ error: z.string() }),
+]);
 
 async function apiError(
   action: string,
@@ -92,9 +101,11 @@ async function apiError(
   const body = errorBodySchema.safeParse(
     await response.json().catch(() => undefined),
   );
-  const detail = body.success
-    ? `${body.data.error_code}: ${body.data.message}`
-    : `HTTP ${response.status}`;
+  const detail = !body.success
+    ? `HTTP ${response.status}`
+    : "error" in body.data
+      ? `HTTP ${response.status}: ${body.data.error}`
+      : `${body.data.error_code}: ${body.data.message}`;
   switch (response.status) {
     case 401:
       return new AmikaApiError(
@@ -102,11 +113,17 @@ async function apiError(
       );
     case 403:
       return new AmikaApiError(
-        `the API key is not allowed to ${action} (${detail})`,
+        `Amika refused to ${action} with this API key (${detail})`,
       );
     default:
       return new AmikaApiError(`failed to ${action} (${detail})`);
   }
+}
+
+/** `fetch` with `redirect: "error"` fails with this cause on any redirect. */
+function isRefusedRedirect(error: unknown): boolean {
+  const cause = (error as { cause?: { message?: unknown } } | null)?.cause;
+  return cause?.message === "unexpected redirect";
 }
 
 function transportReason(error: unknown): string {

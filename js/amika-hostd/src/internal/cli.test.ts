@@ -58,7 +58,7 @@ describe("runCli", () => {
         pidFile: "/state/amika-hostd/amika-hostd.pid",
         logFile: "/state/amika-hostd/amika-hostd.log",
       },
-      { isRunning: deps.isRunning },
+      { isRunning: deps.isRunning, env: expect.any(Object) },
     );
     expect(deps.startServer).not.toHaveBeenCalled();
     expect(out.slice(0, 2)).toEqual([
@@ -153,9 +153,32 @@ describe("runCli", () => {
     const { deps, out } = harness();
     deps.registerHost.mockResolvedValueOnce({ host: HOST, created: false });
     await runCli(["up", "--fg"], deps);
-    expect(out[0]).toBe(
+    expect(out.slice(0, 2)).toEqual([
       "Host builder is already registered with https://app.amika.dev (host_1)",
-    );
+      "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
+    ]);
+  });
+
+  it("keeps the API key out of the background daemon's environment", async () => {
+    const { deps } = harness({
+      ...ENV,
+      AMIKA_API_KEY: "general-key",
+      AMIKA_HOSTD_API_KEY: "general-key",
+      PATH: "/usr/bin",
+    });
+    await runCli(["up"], deps);
+    const [, , { env }] = deps.startInBackground.mock.calls[0] as unknown as [
+      unknown,
+      unknown,
+      { env: NodeJS.ProcessEnv },
+    ];
+    expect(env).not.toHaveProperty("AMIKA_API_KEY");
+    expect(env).not.toHaveProperty("AMIKA_HOSTD_API_KEY");
+    expect(env).toMatchObject({
+      AMIKA_HOSTD_SECRET_KEY: SECRET,
+      AMIKA_HOSTD_HOSTNAME: "builder",
+      PATH: "/usr/bin",
+    });
   });
 
   it("does not register for `serve`", async () => {

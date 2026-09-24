@@ -52,9 +52,14 @@ creates the host, `200` returns the existing host and leaves its stored secret
 unchanged. Changing the local secret therefore never rotates it in Amika;
 changing the hostname registers a new host. Any other status, a network error,
 or a 30s timeout aborts `up` before a daemon starts, with a message that never
-includes the API key or secret. Redirects are refused so credentials cannot be
-resent to another origin. `up` checks the pidfile before registering, so a
-second `up` fails without calling Amika.
+includes the API key or secret. `401`/`403` from the sign-in check in front of the API carry `{ error }` rather
+than `{ error_code, message }`, and that reason is kept. Redirects are refused
+so credentials cannot be resent to another origin, and the error says so. On
+`200`, `up` warns that Amika kept the stored secret, since a changed local
+secret would make Amika's requests fail. The background daemon is spawned
+without `AMIKA_API_KEY`/`AMIKA_HOSTD_API_KEY`: it only serves, so the
+background daemon never holds the API key. `up` checks the pidfile before
+registering, so a second `up` fails without calling Amika.
 
 Every run claims `amika-hostd.pid` next to the log, atomically, and refuses to
 start while it names a live daemon. The daemon sets `process.title` to

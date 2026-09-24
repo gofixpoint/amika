@@ -38,6 +38,8 @@ export interface BackgroundDeps {
   spawn?: Spawn;
   isRunning?: (pid: number) => boolean;
   startupTimeoutMs?: number;
+  /** The child's environment; defaults to this process's. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -52,6 +54,7 @@ export async function startInBackground(
     spawn = nodeSpawn,
     isRunning = isProcessRunning,
     startupTimeoutMs = 30_000,
+    env = process.env,
   }: BackgroundDeps = {},
 ): Promise<{ pid: number; port: number }> {
   ensureNotRunning(paths.pidFile, isRunning);
@@ -65,6 +68,7 @@ export async function startInBackground(
     child = spawn(command, args, {
       detached: true,
       stdio: ["ignore", log, log, "ipc"],
+      env,
     });
   } finally {
     closeSync(log);

@@ -20,6 +20,7 @@ import {
   claimPidFile,
   DaemonError,
   daemonPaths,
+  ensureNotRunning,
   PROCESS_TITLE,
   startInBackground,
   type Spawn,
@@ -128,6 +129,19 @@ describe("startInBackground", () => {
     expect(readFileSync(files.logFile, "utf8")).toBe("");
   });
 
+  it("starts the child with the given environment", async () => {
+    const child = fakeChild();
+    const spawn = spawning(child);
+    const env = { PATH: "/usr/bin", AMIKA_HOSTD_SECRET_KEY: "secret" };
+    const started = startInBackground(["node", "cli.js", "serve"], paths(), {
+      spawn,
+      env,
+    });
+    child.emit("message", { type: "ready", port: 3020 });
+    await started;
+    expect(spawn.mock.calls[0][2].env).toBe(env);
+  });
+
   it("ignores unrelated messages until the ready message arrives", async () => {
     const child = fakeChild();
     const started = startInBackground(["node"], paths(), {
@@ -206,6 +220,24 @@ describe("claimPidFile", () => {
     writeFileSync(pidFile, "999999\n");
     release();
     expect(readFileSync(pidFile, "utf8")).toBe("999999\n");
+  });
+});
+
+describe("ensureNotRunning", () => {
+  it("ignores a pidfile naming this process", () => {
+    const { pidFile } = paths();
+    const release = claimPidFile(pidFile);
+    expect(() => ensureNotRunning(pidFile, () => true)).not.toThrow();
+    release();
+  });
+
+  it("refuses a pidfile naming another live daemon", () => {
+    const { pidFile } = paths();
+    claimPidFile(pidFile)();
+    writeFileSync(pidFile, "999999\n");
+    expect(() => ensureNotRunning(pidFile, () => true)).toThrow(
+      `amika-hostd is already running (pid 999999); if it is not, remove ${pidFile}`,
+    );
   });
 });
 
