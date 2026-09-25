@@ -89,3 +89,38 @@ func TestHelpNoAliasesForCommandsWithoutAliases(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpAllRevealsGCOnlyForThatInvocation(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"help"}, false},
+		{[]string{"--help"}, false},
+		{[]string{"help", "-a"}, true},
+		{[]string{"help"}, false},
+		{[]string{"help", "--all"}, true},
+	} {
+		out, err := runRootCommandOutput(t, tt.args...)
+		if err != nil {
+			t.Fatalf("%v: %v", tt.args, err)
+		}
+		if got := helpLineContains(out, "gc", "Remove deleted sandboxes"); got != tt.want {
+			t.Fatalf("%v: gc visible = %v, want %v\n%s", tt.args, got, tt.want, out)
+		}
+		if !gcCmd.Hidden {
+			t.Fatal("help changed command visibility permanently")
+		}
+	}
+	out, err := runRootCommandOutput(t, "help", "gc")
+	if err != nil || !strings.Contains(out, "amika gc") {
+		t.Fatalf("direct gc help: %v\n%s", err, out)
+	}
+	out, err = runRootCommandOutput(t, "help", "rig", "-a")
+	if err != nil || !helpLineContains(out, "codev1", "provider-native") {
+		t.Fatalf("nested hidden commands: %v\n%s", err, out)
+	}
+	if _, err := runRootCommandOutput(t, "help", "does-not-exist"); err == nil {
+		t.Fatal("unknown topic accepted")
+	}
+}
