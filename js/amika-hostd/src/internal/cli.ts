@@ -6,6 +6,7 @@ import {
 } from "./amika-api.js";
 import {
   ConfigError,
+  ENV_NAMES,
   loadConfigFile as loadConfigFileFromDisk,
   requireSettings,
   resolveConfig,
@@ -160,10 +161,29 @@ async function register(
     { apiUrl: config.apiUrl, apiKey: config.apiKey },
     { hostname: config.hostname, secretKey: config.secretKey },
   );
-  deps.out(
-    created
-      ? `Registered host ${host.hostname} with ${config.apiUrl} (${host.id})`
-      : `Host ${host.hostname} is already registered with ${config.apiUrl} (${host.id})`,
+  if (created) {
+    deps.out(
+      `Registered host ${host.hostname} with ${config.apiUrl} (${host.id})`,
+    );
+  } else {
+    deps.out(
+      `Host ${host.hostname} is already registered with ${config.apiUrl} (${host.id})`,
+    );
+    // Registration never changes an existing host's secret (see AGENTS.md).
+    deps.out(
+      "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
+    );
+  }
+}
+
+/**
+ * The background daemon only serves; registration happens in `up` itself.
+ * Keep the API key out of the background daemon's environment.
+ */
+function withoutApiKey(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const apiKeyNames: readonly string[] = ENV_NAMES.apiKey;
+  return Object.fromEntries(
+    Object.entries(env).filter(([name]) => !apiKeyNames.includes(name)),
   );
 }
 
@@ -177,7 +197,7 @@ async function startBackground(flags: HostdFlags, deps: CliDeps) {
   const { pid, port } = await (deps.startInBackground ?? spawnInBackground)(
     [...deps.self, "serve", ...forwarded],
     paths,
-    { isRunning: deps.isRunning },
+    { isRunning: deps.isRunning, env: withoutApiKey(deps.env) },
   );
   deps.out(
     `amika-hostd started in the background on port ${port} (pid ${pid})`,
