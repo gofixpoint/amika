@@ -1,6 +1,6 @@
 /** Cover the registration request and how its failures are reported. */
 import { describe, expect, it, vi } from "vitest";
-import { AmikaApiError, registerHost } from "./amika-api.js";
+import { AmikaApiError, registerHost, setHostUrl } from "./amika-api.js";
 
 const API = { apiUrl: "https://app.amika.dev", apiKey: "api-key" };
 const INPUT = { hostname: "builder", secretKey: "host-secret" };
@@ -154,5 +154,42 @@ describe("registerHost", () => {
       );
       expect(String(error)).not.toMatch(/host-secret|api-key/);
     }
+  });
+});
+
+describe("setHostUrl", () => {
+  it("replaces the host's URL while keeping its hostname and stored secret", async () => {
+    const fetcher = responding(
+      Response.json({ ...HOST, url: "https://abc.ngrok.app" }),
+    );
+    expect(
+      await setHostUrl(API, HOST, "https://abc.ngrok.app", fetcher),
+    ).toEqual({
+      id: "host_1",
+      hostname: "builder",
+      url: "https://abc.ngrok.app",
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://app.amika.dev/api/v0beta1/hosts/host_1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          hostname: "builder",
+          url: "https://abc.ngrok.app",
+        }),
+        redirect: "error",
+      }),
+    );
+  });
+
+  it("explains a failure", async () => {
+    const fetcher = responding(
+      apiErrorBody(404, "host_not_found", "Host not found"),
+    );
+    await expect(
+      setHostUrl(API, HOST, "https://abc.ngrok.app", fetcher),
+    ).rejects.toThrow(
+      "failed to set the host URL (host_not_found: Host not found)",
+    );
   });
 });
