@@ -161,12 +161,23 @@ describe("machine API", () => {
     expect(response.headers.has("set-cookie")).toBe(false);
   });
 
+  it("accepts smolvm's minimum memory", async () => {
+    const { app, fetcher } = harness(
+      Response.json({ name: "demo" }, { status: 201 }),
+    );
+    const input = { name: "demo", image: "ubuntu", memoryMb: 64 };
+    expect((await app.request(ROOT, json(input))).status).toBe(201);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     {},
     { name: "../bad", image: "ubuntu" },
     { name: "demo", image: " " },
     { name: "demo", image: "ubuntu", cpus: 0 },
+    { name: "demo", image: "ubuntu", cpus: 17 },
     { name: "demo", image: "ubuntu", memoryMb: 1.5 },
+    { name: "demo", image: "ubuntu", memoryMb: 63 },
     { name: "demo", image: "ubuntu", hostMounts: ["/"] },
   ])(
     "rejects invalid create input without contacting the runtime: %j",

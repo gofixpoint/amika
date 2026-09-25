@@ -94,10 +94,13 @@ export function smolOperations(
         input.resources &&
         z
           .object({
-            vcpus: z.number().int().min(1).max(255),
+            // smolvm's limits (`VmResources::validate`): it supports at most
+            // 16 vCPUs (only macOS actually caps there; we refuse more on
+            // every host) and can't boot a VM with under 64 MiB.
+            vcpus: z.number().int().min(1).max(16),
             memoryGib: z
               .number()
-              .positive()
+              .min(64 / 1024)
               .refine((n) => Number.isSafeInteger(n * 1024)),
             diskGib: z.number().int().positive(),
           })
