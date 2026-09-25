@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import {
   AmikaApiError,
   registerHost as registerHostWithAmika,
+  setHostSizes as setHostSizesInAmika,
   setHostUrl as setHostUrlInAmika,
   type RegisteredHost,
 } from "./amika-api.js";
@@ -60,6 +61,7 @@ export interface CliDeps {
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
   registerHost?: typeof registerHostWithAmika;
+  setHostSizes?: typeof setHostSizesInAmika;
   setHostUrl?: typeof setHostUrlInAmika;
   /**
    * Ask the operator a question; resolves to `undefined` on end of input
@@ -239,16 +241,19 @@ function parseHostUrl(value: string): string | undefined {
 }
 
 /**
- * Register before serving, so an unregistered host never accepts traffic. Only
- * the hostname and secret are sent; an existing host's secret is never changed.
+ * Register before serving, so an unregistered host never accepts traffic. The
+ * hostname, secret and sizes are sent; an existing host's secret is never
+ * changed, but its sizes are replaced with the configured ones.
  */
 async function register(
   config: RegistrationConfig,
   deps: CliDeps,
 ): Promise<RegisteredHost> {
+  const api = { apiUrl: config.apiUrl, apiKey: config.apiKey };
+  const { sizes } = config;
   const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
-    { apiUrl: config.apiUrl, apiKey: config.apiKey },
-    { hostname: config.hostname, secretKey: config.secretKey },
+    api,
+    { hostname: config.hostname, secretKey: config.secretKey, sizes },
   );
   if (created) {
     deps.out(
@@ -262,8 +267,18 @@ async function register(
     deps.out(
       "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
     );
+    // Nor its sizes, so bring those up to date with the config separately.
+    await (deps.setHostSizes ?? setHostSizesInAmika)(api, host, sizes);
+    deps.out(
+      `Updated the sizes of host ${host.hostname} (${describeSizes(sizes)})`,
+    );
   }
   return host;
+}
+
+function describeSizes(sizes: Record<string, unknown>): string {
+  const names = Object.keys(sizes);
+  return names.length === 0 ? "none" : names.join(", ");
 }
 
 /**

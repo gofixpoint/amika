@@ -1,5 +1,6 @@
 /** The Amika control-plane endpoints the daemon calls, authenticated by API key. */
 import { z } from "zod";
+import type { HostSize } from "./config.js";
 
 export interface AmikaApiConfig {
   apiUrl: string;
@@ -25,12 +26,13 @@ export class AmikaApiError extends Error {
  */
 export async function registerHost(
   api: AmikaApiConfig,
-  input: { hostname: string; secretKey: string },
+  input: { hostname: string; secretKey: string; sizes: HostSizes },
   fetcher: typeof fetch = fetch,
 ): Promise<{ host: RegisteredHost; created: boolean }> {
   const response = await send(api, fetcher, "POST", "/api/v0beta1/hosts", {
     hostname: input.hostname,
     secret: input.secretKey,
+    sizes: input.sizes,
   });
   if (response.status !== 200 && response.status !== 201) {
     throw await apiError("register the host", response);
@@ -63,6 +65,32 @@ export async function setHostUrl(
   }
   return parseHost(response);
 }
+
+/**
+ * Replace the sizes Amika stores for this host with the configured ones. An
+ * existing host's registration leaves them unchanged, so this carries edits
+ * to the TOML on later runs.
+ */
+export async function setHostSizes(
+  api: AmikaApiConfig,
+  host: Pick<RegisteredHost, "id" | "hostname">,
+  sizes: HostSizes,
+  fetcher: typeof fetch = fetch,
+): Promise<RegisteredHost> {
+  const response = await send(
+    api,
+    fetcher,
+    "PUT",
+    `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
+    { hostname: host.hostname, sizes },
+  );
+  if (response.status !== 200) {
+    throw await apiError("update the host's sizes", response);
+  }
+  return parseHost(response);
+}
+
+type HostSizes = Record<string, HostSize>;
 
 const REQUEST_TIMEOUT_MS = 30_000;
 

@@ -27,6 +27,7 @@ describe("resolveConfig", () => {
       port: 3020,
       smolApiUrl: undefined,
       smolRequestTimeoutMs: 300_000,
+      sizes: {},
       configPath: undefined,
     });
   });
@@ -116,6 +117,60 @@ port = 4000
       resolveConfig({ file: file(`secret_key = "do-not-print`) });
     expect(invalid).toThrow(/is not valid TOML$/);
     expect(invalid).not.toThrow(/do-not-print/);
+  });
+
+  it("reads sizes from [sizes] tables, in the shape Amika's API takes", () => {
+    const config = resolveConfig({
+      file: file(`
+[sizes.gpu-large]
+vcpus = 8
+memory_gib = 32
+disk_gib = 100
+
+[sizes."small.1"]
+vcpus = 1
+memory_gib = 0.5
+disk_gib = 10
+disk_grow_only = true
+`),
+    });
+    expect(config.sizes).toEqual({
+      "gpu-large": {
+        vcpus: 8,
+        memoryGib: 32,
+        diskGib: 100,
+        diskGrowOnly: false,
+      },
+      "small.1": { vcpus: 1, memoryGib: 0.5, diskGib: 10, diskGrowOnly: true },
+    });
+  });
+
+  it.each([
+    ["an unknown key", "gpus = 1", /invalid settings: sizes\.large\.gpus$/],
+    ["over 255 vCPUs", "vcpus = 256", /invalid settings: sizes\.large\.vcpus$/],
+    [
+      "under 64 MiB of memory",
+      "memory_gib = 0.05",
+      /invalid settings: sizes\.large\.memory_gib$/,
+    ],
+    [
+      "fractional vCPUs",
+      "vcpus = 1.5",
+      /invalid settings: sizes\.large\.vcpus$/,
+    ],
+    [
+      "memory that isn't whole MiB",
+      "memory_gib = 1.0001",
+      /invalid settings: sizes\.large\.memory_gib$/,
+    ],
+    ["zero disk", "disk_gib = 0", /invalid settings: sizes\.large\.disk_gib$/],
+  ])("rejects a size with %s", (_label, line, message) => {
+    const [key] = line.split(" = ");
+    const base = ["vcpus = 4", "memory_gib = 8", "disk_gib = 40"].filter(
+      (entry) => !entry.startsWith(`${key} `),
+    );
+    const table = ["[sizes.large]", ...base, line].join("\n");
+    expect(() => resolveConfig({ file: file(table) })).toThrow(message);
   });
 
   it.each(["", "  "])("rejects an empty --host %j", (host) => {
@@ -291,6 +346,18 @@ describe("config.example.toml", () => {
     expect(
       requireSettings(config, ["apiKey", "hostname", "secretKey"]),
     ).toMatchObject({ hostname: "builder", secretKey: TOML_SECRET });
+  });
+
+  it("documents a size table that resolves as written", () => {
+    const sizes = example.contents.slice(
+      example.contents.indexOf("# [sizes.medium]"),
+    );
+    const contents = sizes.replace(/^# ?/gm, "");
+    expect(resolveConfig({ file: file(contents) })).toMatchObject({
+      sizes: {
+        medium: { vcpus: 4, memoryGib: 8, diskGib: 40, diskGrowOnly: false },
+      },
+    });
   });
 
   it("documents every setting, with defaults that match the code", () => {

@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError } from "./amika-api.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
-import type { HostdConfigWith } from "./config.js";
+import type { HostdConfigFile, HostdConfigWith } from "./config.js";
 import { DaemonError } from "./daemon.js";
 import type { RunningServer } from "./server.js";
 
@@ -42,13 +42,14 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     err: (line: string) => err.push(line),
     self: ["node", "cli.js"],
     shutdownSignal: vi.fn(async () => {}),
-    loadConfigFile: vi.fn(() => undefined),
+    loadConfigFile: vi.fn((): HostdConfigFile | undefined => undefined),
     startServer: vi.fn(async (_config: HostdConfigWith<"secretKey">) => server),
     startInBackground: vi.fn(async () => ({ pid: 77, port: 4000 })),
     claimPidFile: vi.fn(() => release),
     notifyReady: vi.fn(async (_port: number) => {}),
     isRunning: vi.fn(() => false),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
+    setHostSizes: vi.fn(async () => HOST),
     setHostUrl: vi.fn(
       async (_api, host: { hostname: string }, url: string) => ({
         ...HOST,
@@ -156,7 +157,7 @@ describe("runCli", () => {
     expect(deps.startServer).not.toHaveBeenCalled();
   });
 
-  it("registers only the hostname and secret with the resolved API", async () => {
+  it("registers the hostname, secret and sizes with the resolved API", async () => {
     const { deps } = harness({
       ...ENV,
       AMIKA_API_URL: "http://localhost:3000",
@@ -164,8 +165,30 @@ describe("runCli", () => {
     await runCli(["up"], deps);
     expect(deps.registerHost).toHaveBeenCalledWith(
       { apiUrl: "http://localhost:3000", apiKey: "api-key" },
-      { hostname: "builder", secretKey: SECRET },
+      {
+        hostname: "builder",
+        secretKey: SECRET,
+        sizes: {},
+      },
     );
+    // A new host was registered with its sizes; nothing to update.
+    expect(deps.setHostSizes).not.toHaveBeenCalled();
+  });
+
+  it("updates an existing host's sizes from the config", async () => {
+    const { deps, out } = harness();
+    deps.loadConfigFile.mockReturnValue({
+      path: "/etc/amika-hostd/config.toml",
+      contents: `[sizes.large]\nvcpus = 8\nmemory_gib = 32\ndisk_gib = 100`,
+    });
+    deps.registerHost.mockResolvedValueOnce({ host: HOST, created: false });
+    await runCli(["up", "--fg"], deps);
+    expect(deps.setHostSizes).toHaveBeenCalledWith(
+      { apiUrl: "https://app.amika.dev", apiKey: "api-key" },
+      HOST,
+      { large: { vcpus: 8, memoryGib: 32, diskGib: 100, diskGrowOnly: false } },
+    );
+    expect(out).toContain("Updated the sizes of host builder (large)");
   });
 
   it("reports a host that was already registered", async () => {
