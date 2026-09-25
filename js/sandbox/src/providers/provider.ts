@@ -508,7 +508,10 @@ export interface DockerRegistryCapability {
  * {@link SandboxProviderUnsupportedError}.
  */
 export interface SandboxProviderCapabilities {
-  /** Full provisioning lifecycle: initialize, start, stop, rerun-lifecycle. */
+  /**
+   * Full provisioning lifecycle: initialize, start, stop, rerun-lifecycle.
+   * Requires run-state control and `exec`; service routing is `services`.
+   */
   lifecycle: boolean;
   /** Mint/revoke short-lived SSH access. */
   ssh: boolean;

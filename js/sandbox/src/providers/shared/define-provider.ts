@@ -15,7 +15,7 @@
  *       delete,                 // create/delete always required
  *       start, stop, getState,  // run-state control; omit → lifecycle false
  *     },
- *     exec: { run },            // omit → capabilities.exec false
+ *     exec: { run },            // omit → capabilities.exec, lifecycle false
  *     // ...only the namespaces foo backs
  *   }));
  *
@@ -194,10 +194,11 @@ function assertCapabilitiesMatch(
     );
   }
 
-  // Full provisioning needs both run-state control and service routing.
-  // A local provider can expose start/stop/state without supporting that
-  // entire workflow; its lifecycle flag stays false.
-  const lifecycle = def.sandbox.start != null && def.services != null;
+  // Full provisioning needs run-state control, to stop and restart the
+  // sandbox, and exec, which every provisioning step (clone, lifecycle scripts,
+  // agent startup) runs over. Service routing is not part of it: without
+  // `services`, provisioning runs the same steps and mints no service URLs.
+  const lifecycle = def.sandbox.start != null && def.exec != null;
 
   // Each flag derived from namespace presence; the behavioral sub-flags are
   // mirrored so they compare equal (the author owns them, nothing to derive).
