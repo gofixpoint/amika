@@ -1,4 +1,5 @@
 /** Cover precedence, aliases, and the TOML boundary of daemon settings. */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
@@ -255,5 +256,58 @@ describe("loadConfigFile", () => {
     expect(() => loadConfigFile({ XDG_CONFIG_HOME: "/xdg" }, read)).toThrow(
       "Cannot read /xdg/amika-hostd/config.toml: EACCES",
     );
+  });
+});
+
+describe("config.example.toml", () => {
+  const example = file(
+    readFileSync(new URL("../../config.example.toml", import.meta.url), "utf8"),
+  );
+
+  /** Uncomment one documented `key = …` line, failing if it is missing. */
+  function uncomment(contents: string, key: string): string {
+    const line = new RegExp(`^# ${key} = `, "m");
+    expect(contents, `config.example.toml documents ${key}`).toMatch(line);
+    return contents.replace(line, `${key} = `);
+  }
+
+  it("resolves as shipped, leaving the required settings to the operator", () => {
+    const config = resolveConfig({ file: example });
+    expect(config).toMatchObject({ hostname: undefined, secretKey: undefined });
+    expect(() =>
+      requireSettings(config, ["apiKey", "hostname", "secretKey"]),
+    ).toThrow(/hostname: set AMIKA_HOSTD_HOSTNAME[\s\S]*secret key: set/);
+  });
+
+  it("lets the environment supply the required settings", () => {
+    const config = resolveConfig({
+      file: example,
+      env: {
+        AMIKA_API_KEY: "api-key",
+        AMIKA_HOSTD_HOSTNAME: "builder",
+        AMIKA_HOSTD_SECRET_KEY: TOML_SECRET,
+      },
+    });
+    expect(
+      requireSettings(config, ["apiKey", "hostname", "secretKey"]),
+    ).toMatchObject({ hostname: "builder", secretKey: TOML_SECRET });
+  });
+
+  it("documents every setting, with defaults that match the code", () => {
+    let contents = example.contents;
+    for (const key of ["hostname", "secret_key", "api_url", "host", "port"]) {
+      contents = uncomment(contents, key);
+    }
+    contents = contents.replace(
+      'secret_key = "<output of openssl rand -hex 32>"',
+      `secret_key = "${TOML_SECRET}"`,
+    );
+    expect(resolveConfig({ file: file(contents) })).toMatchObject({
+      hostname: "my-host",
+      secretKey: TOML_SECRET,
+      apiUrl: DEFAULT_API_URL,
+      host: "127.0.0.1",
+      port: 3020,
+    });
   });
 });

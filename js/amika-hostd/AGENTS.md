@@ -111,7 +111,9 @@ enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
 two are not merged, and unknown keys are rejected. `SMOL_API_URL` and
-`SMOL_REQUEST_TIMEOUT_MS` remain environment-only. Never include a secret or
+`SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
+is the annotated template for operators; `config.test.ts` resolves it, so keep
+it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
 
 ## Authentication
