@@ -111,6 +111,7 @@ describe("smol operations", () => {
     { name: "../another-machine" },
     { resources: { vcpus: 0, memoryGib: 1, diskGib: 20 } },
     { resources: { vcpus: 1, memoryGib: 63 / 1024, diskGib: 20 } },
+    { resources: { vcpus: 17, memoryGib: 1, diskGib: 20 } },
   ])(
     "rejects unsupported or invalid create input before allocating: %j",
     async (input) => {

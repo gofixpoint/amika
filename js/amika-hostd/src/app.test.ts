@@ -175,6 +175,7 @@ describe("machine API", () => {
     { name: "../bad", image: "ubuntu" },
     { name: "demo", image: " " },
     { name: "demo", image: "ubuntu", cpus: 0 },
+    { name: "demo", image: "ubuntu", cpus: 17 },
     { name: "demo", image: "ubuntu", memoryMb: 1.5 },
     { name: "demo", image: "ubuntu", memoryMb: 63 },
     { name: "demo", image: "ubuntu", hostMounts: ["/"] },

@@ -94,8 +94,9 @@ export function smolOperations(
         input.resources &&
         z
           .object({
-            vcpus: z.number().int().min(1).max(255),
-            // smolvm can't boot a VM with under 64 MiB of memory.
+            // smolvm runs a VM on at most 16 vCPUs, whatever it's asked for,
+            // and can't boot one with under 64 MiB of memory.
+            vcpus: z.number().int().min(1).max(16),
             memoryGib: z
               .number()
               .min(64 / 1024)
