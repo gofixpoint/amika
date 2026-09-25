@@ -95,9 +95,10 @@ export function smolOperations(
         z
           .object({
             vcpus: z.number().int().min(1).max(255),
+            // smolvm can't boot a VM with under 64 MiB of memory.
             memoryGib: z
               .number()
-              .positive()
+              .min(64 / 1024)
               .refine((n) => Number.isSafeInteger(n * 1024)),
             diskGib: z.number().int().positive(),
           })

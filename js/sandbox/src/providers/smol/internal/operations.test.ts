@@ -110,6 +110,7 @@ describe("smol operations", () => {
     { snapshot: "" },
     { name: "../another-machine" },
     { resources: { vcpus: 0, memoryGib: 1, diskGib: 20 } },
+    { resources: { vcpus: 1, memoryGib: 63 / 1024, diskGib: 20 } },
   ])(
     "rejects unsupported or invalid create input before allocating: %j",
     async (input) => {
@@ -118,6 +119,18 @@ describe("smol operations", () => {
       expect(fetcher).not.toHaveBeenCalled();
     },
   );
+
+  it("accepts smolvm's minimum memory", async () => {
+    const { ops, fetcher } = harness([
+      json(MACHINE),
+      json({ ...MACHINE, state: "running" }),
+    ]);
+    await ops.create({
+      ...INPUT,
+      resources: { vcpus: 1, memoryGib: 64 / 1024, diskGib: 20 },
+    });
+    expect(body(fetcher, 0)).toMatchObject({ memoryMb: 64 });
+  });
 
   it("reads stopped state without starting a machine", async () => {
     const { ops, fetcher } = harness([json(MACHINE)]);
