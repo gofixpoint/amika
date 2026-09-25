@@ -59,7 +59,7 @@ function build(
   return defineProvider(capabilities, () => minimalDef(overrides))({});
 }
 
-/** A coherent lifecycle bundle: run-state + services + cloneRepo, together. */
+/** A coherent lifecycle bundle: run-state + exec + cloneRepo, together. */
 const LIFECYCLE_MEMBERS: DefOverrides = {
   cloneRepo: async () => {},
   sandbox: {
@@ -67,10 +67,7 @@ const LIFECYCLE_MEMBERS: DefOverrides = {
     stop: async () => {},
     getState: async () => "running",
   },
-  services: {
-    refreshUrls: async () => ({ services: [] }),
-    syncRoutes: async () => {},
-  },
+  exec: { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
 };
 
 describe("defineProvider metadata + defaults", () => {
@@ -166,7 +163,7 @@ describe("defineProvider capability reconciliation", () => {
     ).toThrow(/capability "streaming"=true but the definition omits it/);
   });
 
-  it("allows run-state control without the full provisioning lifecycle", async () => {
+  it("allows run-state control without exec, and so without lifecycle", async () => {
     const provider = build(ALL_OFF, {
       sandbox: {
         start: async () => {},
@@ -175,10 +172,18 @@ describe("defineProvider capability reconciliation", () => {
       },
     });
     expect(provider.capabilities.lifecycle).toBe(false);
-    expect(provider.sandboxes.get("local").services).toBeNull();
     await expect(provider.sandboxes.get("local").getState()).resolves.toBe(
       "stopped",
     );
+  });
+
+  it("derives lifecycle from run-state and exec, without services", () => {
+    const provider = build(
+      { ...ALL_OFF, lifecycle: true, exec: true },
+      LIFECYCLE_MEMBERS,
+    );
+    expect(provider.capabilities.lifecycle).toBe(true);
+    expect(provider.sandboxes.get("local").services).toBeNull();
   });
 
   it("throws when the sandbox run-state ops aren't all present", () => {
@@ -200,7 +205,7 @@ describe("defineProvider capability reconciliation", () => {
 
   it("accepts a coherent lifecycle provider", () => {
     expect(() =>
-      build({ ...ALL_OFF, lifecycle: true, services: true }, LIFECYCLE_MEMBERS),
+      build({ ...ALL_OFF, lifecycle: true, exec: true }, LIFECYCLE_MEMBERS),
     ).not.toThrow();
   });
 });
@@ -223,7 +228,7 @@ describe("defineProvider object assembly", () => {
 
   it('defaults an omitted sandbox.mapState to () => "unknown"', async () => {
     const provider = build(
-      { ...ALL_OFF, lifecycle: true, services: true },
+      { ...ALL_OFF, lifecycle: true, exec: true },
       LIFECYCLE_MEMBERS,
     );
     const sbox = provider.sandboxes.get("sb_1");
@@ -292,7 +297,7 @@ describe("defineProvider object assembly", () => {
   it("routes git.clone to an author-provided clone primitive", async () => {
     const cloned: unknown[] = [];
     const provider = build(
-      { ...ALL_OFF, lifecycle: true, services: true },
+      { ...ALL_OFF, lifecycle: true, exec: true },
       {
         ...LIFECYCLE_MEMBERS,
         cloneRepo: async (id, input) => {

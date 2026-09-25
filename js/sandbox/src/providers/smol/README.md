@@ -86,9 +86,8 @@ above does not need real cloud credentials.
 Service routing, SSH access, streamed output, snapshots, and automatic
 stop/delete timers are not implemented. Pass an empty service list and omit
 timers (or set them to zero). The full provisioning `lifecycle` capability is
-false because it includes service routing. Consumers that require that flag
-should exclude Smol from their provisioning flows; direct `start`, `stop`, and
-state operations remain available. Nonempty service requests or nonzero timers fail
+true, since it needs only run-state control and exec: provisioning flows run on
+Smol but mint no service URLs. Nonempty service requests or nonzero timers fail
 before a VM is created.
 
 Listings cover the runtime's machines, including machines created outside

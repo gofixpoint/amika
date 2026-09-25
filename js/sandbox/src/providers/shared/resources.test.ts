@@ -439,7 +439,14 @@ describe("Sandbox sub-namespaces", () => {
     // only the raw captures (mirrored by `capabilities.scrubCapture`).
     const { def, spies } = fullDef();
     const provider = defineProvider(
-      { ...ALL_ON, exec: false, streaming: false, scrubCapture: false },
+      // Lifecycle runs over exec, so it goes too.
+      {
+        ...ALL_ON,
+        lifecycle: false,
+        exec: false,
+        streaming: false,
+        scrubCapture: false,
+      },
       () => ({ ...def, exec: null }),
     )({});
     await expect(

@@ -57,9 +57,9 @@ describe("createSandboxProvider construction", () => {
     expect(adapter.exec).toBeTypeOf("function");
   });
 
-  it("exposes Smol primitives without claiming full provisioning", async () => {
+  it("gives Smol full provisioning without service routing", async () => {
     const provider = createSandboxProvider("smol", DEPS);
-    expect(provider.capabilities.lifecycle).toBe(false);
+    expect(provider.capabilities.lifecycle).toBe(true);
     expect(provider.capabilities.exec).toBe(true);
     expect(provider.capabilities.listSandboxes).toBe(true);
     const sandbox = provider.sandboxes.get("local");

@@ -238,7 +238,7 @@ describe("amika-hostd provider", () => {
     expect(isSandboxProviderName("amika-hostd")).toBe(true);
     expect(getProviderLabel("amika-hostd")).toBe("Amika Host");
     expect(provider.capabilities).toMatchObject({
-      lifecycle: false,
+      lifecycle: true,
       exec: true,
       listSandboxes: true,
       ssh: false,
