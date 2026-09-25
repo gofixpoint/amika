@@ -94,8 +94,9 @@ export function smolOperations(
         input.resources &&
         z
           .object({
-            // smolvm runs a VM on at most 16 vCPUs, whatever it's asked for,
-            // and can't boot one with under 64 MiB of memory.
+            // smolvm's limits (`VmResources::validate`): it supports at most
+            // 16 vCPUs (only macOS actually caps there; we refuse more on
+            // every host) and can't boot a VM with under 64 MiB.
             vcpus: z.number().int().min(1).max(16),
             memoryGib: z
               .number()

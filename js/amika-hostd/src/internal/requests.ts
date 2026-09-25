@@ -10,8 +10,9 @@ const envSchema = z.array(
 export const createMachineSchema = z.strictObject({
   name: nameSchema,
   image: z.string().trim().min(1),
-  // smolvm runs a VM on at most 16 vCPUs, whatever it's asked for, and can't
-  // boot one with under 64 MiB (`VmResources::validate`).
+  // smolvm's limits (`VmResources::validate`): it supports at most 16 vCPUs
+  // (only macOS actually caps there; we refuse more on every host) and can't
+  // boot a VM with under 64 MiB.
   cpus: z.number().int().min(1).max(16).optional(),
   memoryMb: z.number().int().min(64).optional(),
   storageGb: z.number().int().positive().optional(),
