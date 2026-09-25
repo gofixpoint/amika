@@ -1,0 +1,60 @@
+# amika-hostd configuration.
+#
+# Copy this file to "${XDG_CONFIG_HOME:-$HOME/.config}/amika-hostd/config.toml",
+# or to /etc/amika-hostd/config.toml for a system-wide install. Only the first
+# file found is read; the two are never merged. It can hold the secret key, so
+# make your copy readable only by the user that runs the daemon:
+#
+#   chmod 600 "${XDG_CONFIG_HOME:-$HOME/.config}/amika-hostd/config.toml"
+#
+# or, for the system-wide file (replace <user> with the daemon's user):
+#
+#   sudo chown <user> /etc/amika-hostd/config.toml
+#   sudo chmod 600 /etc/amika-hostd/config.toml
+#
+# Each setting takes the first source that sets it: command-line flag, then
+# environment, then this file. Unknown keys are rejected.
+
+# --- Required, environment only -----------------------------------------------
+#
+# The Amika API key cannot be set in this file; an `api_key` entry fails
+# startup. Export it as AMIKA_HOSTD_API_KEY or AMIKA_API_KEY before running
+# `amika-hostd up` or `amika-hostd register-url`.
+
+# --- Required -----------------------------------------------------------------
+#
+# Set each of these here (uncomment the line) or in the environment. `up` and
+# `register-url` fail until both are set.
+
+# This host's identity within your Amika organization. No two hosts in an
+# organization can share a hostname, and changing it registers a new host.
+# Lowercase letters, digits, and hyphens in dot-separated labels (each 1-63
+# characters, starting and ending with a letter or digit), at most 253
+# characters in total.
+# Environment: AMIKA_HOSTD_HOSTNAME
+# hostname = "my-host"
+
+# The shared secret Amika presents as `Authorization: Bearer <secret_key>` on
+# every request to this daemon; requests without it are rejected with 401.
+# Amika stores it when the host is first registered, and later runs of `up`
+# never change it. It must be at least 32 printable ASCII characters with no
+# spaces. Generate one with:
+#
+#   openssl rand -hex 32
+#
+# Environment: AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY
+# secret_key = "<output of openssl rand -hex 32>"
+
+# --- Optional -----------------------------------------------------------------
+
+# The Amika API to register with.
+# Environment: AMIKA_HOSTD_API_URL or AMIKA_API_URL
+# api_url = "https://app.amika.dev"
+
+# The address and port the daemon listens on. Expose it to Amika through a
+# tunnel (ngrok, Cloudflare Tunnel, ...) and give Amika that public URL with
+# `amika-hostd register-url <url>`.
+# Flags: --host, --port
+# Environment: AMIKA_HOSTD_HOST, AMIKA_HOSTD_PORT
+# host = "127.0.0.1"
+# port = 3020
