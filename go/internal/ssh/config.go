@@ -31,11 +31,16 @@ type HostEntry struct {
 	User        string `json:"user"`
 	Port        int    `json:"port,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"`
+	// GCScope identifies the endpoint and credentials that last verified this
+	// host exists. Revision protects refreshes racing with garbage collection.
+	GCScope  string `json:"gc_scope,omitempty"`
+	Revision uint64 `json:"revision,omitempty"`
 }
 
 // HostsState is the source of truth from which ~/.ssh/amika.conf is rendered.
 type HostsState struct {
-	Hosts []HostEntry `json:"hosts"`
+	Hosts             []HostEntry        `json:"hosts"`
+	GarbageCollection map[string]GCState `json:"garbage_collection,omitempty"`
 	// SessionConfig holds the key material shared by every environment. State
 	// written before session blocks became per-environment also carried a
 	// ProxyCommand here; that field no longer exists, so decoding drops it and
@@ -59,7 +64,9 @@ type HostsState struct {
 // SessionHostEntry is a concrete direct-WebSocket SSH alias advertised to
 // editors. The alias is self-describing and validated with ParseSessionAlias.
 type SessionHostEntry struct {
-	Alias string `json:"alias"`
+	Alias    string `json:"alias"`
+	GCScope  string `json:"gc_scope,omitempty"`
+	Revision uint64 `json:"revision,omitempty"`
 }
 
 // Alias returns the stable SSH host alias for a sandbox id. Cursor keys its
@@ -211,6 +218,10 @@ func NewHostEntry(sandboxID, sandboxName, destination, expiresAt string) (HostEn
 func (s *HostsState) Upsert(entry HostEntry) {
 	for i, h := range s.Hosts {
 		if h.SandboxID == entry.SandboxID {
+			entry.Revision = h.Revision + 1
+			if entry.GCScope == "" {
+				entry.GCScope = h.GCScope
+			}
 			s.Hosts[i] = entry
 			return
 		}
@@ -224,8 +235,9 @@ func (s *HostsState) Upsert(entry HostEntry) {
 // UpsertSessionHost adds a concrete v2 host alias if it is not already
 // present, keeping entries sorted so the rendered config is deterministic.
 func (s *HostsState) UpsertSessionHost(alias string) {
-	for _, host := range s.SessionHosts {
+	for i, host := range s.SessionHosts {
 		if host.Alias == alias {
+			s.SessionHosts[i].Revision++
 			return
 		}
 	}

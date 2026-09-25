@@ -171,7 +171,7 @@ Examples:
 			return err
 		}
 
-		client, err := getRemoteClient(target)
+		client, err := getEditorClient(target)
 		if err != nil {
 			return err
 		}
@@ -183,8 +183,16 @@ Examples:
 		if err != nil {
 			return err
 		}
+		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
 		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
 	},
+}
+
+// maintainSSHHosts keeps maintenance failures from preventing an editor launch.
+func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient.Client, alias string) {
+	if _, err := ssh.CollectGarbage(paths, client, ssh.GCOptions{KeepAlias: alias}); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not clean up SSH config: %v\n", err)
+	}
 }
 
 // sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the

@@ -198,7 +198,7 @@ Examples:
 		if err != nil {
 			return err
 		}
-		client, err := getRemoteClient(target)
+		client, err := getEditorClient(target)
 		if err != nil {
 			return err
 		}
@@ -207,6 +207,7 @@ Examples:
 		if err != nil {
 			return err
 		}
+		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
 		pathOverride, _ := cmd.Flags().GetString("path")
 		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
 	},
