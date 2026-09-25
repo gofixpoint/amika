@@ -46,10 +46,10 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
 
 ## Registration
 
-Before serving, `up` calls `POST /api/v0beta1/hosts` on the Amika API
-(`src/internal/amika-api.ts`) with `Authorization: Bearer <API key>` and a body
-of only `hostname` and `secret`. The endpoint is idempotent by hostname: `201`
-creates the host, `200` returns the existing host and leaves its stored secret
+Before starting the daemon, `up` calls `POST /api/v0beta1/hosts` on the Amika
+API (`src/internal/amika-api.ts`) with `Authorization: Bearer <API key>` and a
+body of only `hostname` and `secret`. The endpoint is idempotent by hostname:
+`201` creates the host, `200` returns the existing host and leaves its stored secret
 unchanged. Changing the local secret therefore never rotates it in Amika;
 changing the hostname registers a new host. Any other status, a network error,
 or a 30s timeout aborts `up` before a daemon starts, with a message that never
@@ -63,12 +63,23 @@ background daemon never holds the API key. `up` checks the pidfile before
 registering, so a second `up` fails without calling Amika.
 
 Registration is complete once Amika knows the host's internet-facing URL (an
-ngrok or Cloudflare Tunnel URL, for example). `amika-hostd register-url <url>`
-sets it from the same configuration as `up`: it registers idempotently to learn
-the host's id, then sends `PUT /api/v0beta1/hosts/{id}` with the hostname and
-URL and no secret, so the stored secret is kept. Only absolute http(s) URLs
-without credentials are accepted; a bare origin is normalized without its
-trailing slash, and a path is kept.
+ngrok or Cloudflare Tunnel URL, for example). `up` runs in this order: resolve
+config, register the hostname and secret, start the daemon (background, or
+`--fg`), then complete registration. If the host has no URL and stdin and
+stdout are both terminals, `up` asks the operator to expose the now-running
+daemon and enter its public URL, re-asking on an invalid URL. A blank answer or
+end of input (Ctrl-D) skips it. Ctrl-C exits 130: a background daemon keeps
+running, while `--fg` stops. A failed save is reported and the daemon keeps
+running (`up` exits 1 in the background). Without a terminal it prints how to
+finish instead of blocking. If the host already has a URL, `up` reminds the
+operator that Amika expects to reach it there.
+
+`amika-hostd register-url <url>` sets the URL from the same configuration as
+`up`: it registers idempotently to learn the host's id, then sends
+`PUT /api/v0beta1/hosts/{id}` with the hostname and URL and no secret, so the
+stored secret is kept. Only absolute http(s) URLs without credentials are
+accepted; a bare origin is normalized without its trailing slash, and a path is
+kept.
 
 Every run claims `amika-hostd.pid` next to the log, atomically, and refuses to
 start while it names a live daemon. The daemon sets `process.title` to

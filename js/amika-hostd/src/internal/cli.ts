@@ -1,4 +1,5 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
+import { isIPv6 } from "node:net";
 import { parseArgs } from "node:util";
 import {
   AmikaApiError,
@@ -60,6 +61,17 @@ export interface CliDeps {
   isRunning?: (pid: number) => boolean;
   registerHost?: typeof registerHostWithAmika;
   setHostUrl?: typeof setHostUrlInAmika;
+  /**
+   * Ask the operator a question; resolves to `undefined` on end of input
+   * (Ctrl-D) and rejects with `PromptCancelled` on Ctrl-C. Absent when stdin
+   * or stdout is not a terminal, so `up` never blocks.
+   */
+  prompt?: (question: string) => Promise<string | undefined>;
+}
+
+/** The operator pressed Ctrl-C at a prompt; the command stops there. */
+export class PromptCancelled extends Error {
+  override name = "PromptCancelled";
 }
 
 /** Run one command and return its exit code. Expected failures never throw. */
@@ -83,10 +95,25 @@ export async function runCli(
         const config = requireSettings(resolved, REGISTRATION_SETTINGS);
         // Check first so a second `up` fails without calling Amika.
         ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
-        await register(config, deps);
-        if (parsed.fg) await serveInForeground(config, deps);
-        else await startBackground(parsed.flags, deps);
-        break;
+        const host = await register(config, deps);
+        // Start the daemon first, so the operator can expose it (and check the
+        // tunnel reaches it) before giving Amika its public URL.
+        const finish = (port: number) =>
+          completeRegistration(config, host, port, deps);
+        if (parsed.fg) {
+          await serveInForeground(config, deps, finish);
+          break;
+        }
+        const port = await startBackground(parsed.flags, deps);
+        try {
+          return (await finish(port)) ? 0 : 1;
+        } catch (error) {
+          if (!(error instanceof PromptCancelled)) throw error;
+          deps.err(
+            `amika-hostd: cancelled; the daemon is still running. ${FINISH_LATER}`,
+          );
+          return 130;
+        }
       }
       case "serve":
         await serveInForeground(requireSettings(resolved, ["secretKey"]), deps);
@@ -101,6 +128,10 @@ export async function runCli(
     }
     return 0;
   } catch (error) {
+    if (error instanceof PromptCancelled) {
+      deps.err(`amika-hostd: cancelled; the daemon stopped. ${FINISH_LATER}`);
+      return 130;
+    }
     if (
       error instanceof UsageError ||
       error instanceof ConfigError ||
@@ -246,6 +277,61 @@ function withoutApiKey(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   );
 }
 
+const FINISH_LATER =
+  "Run `amika-hostd register-url <url>` to complete registration.";
+
+/**
+ * Registration is complete once Amika knows the host's internet-facing URL.
+ * Runs once the daemon is up: without a URL, ask the operator to expose the
+ * daemon and enter the public URL (or say how to finish without a terminal);
+ * with one, remind them where Amika expects to reach it. Returns false if
+ * saving the URL failed; the daemon keeps running either way.
+ */
+async function completeRegistration(
+  config: RegistrationConfig,
+  host: RegisteredHost,
+  port: number,
+  deps: CliDeps,
+): Promise<boolean> {
+  const local = localUrl(config.host, port);
+  if (host.url !== null) {
+    deps.out(
+      `Amika reaches this host at ${host.url}; make sure it is exposed there and forwards to ${local}.`,
+    );
+    return true;
+  }
+  deps.out(
+    `To complete registration, expose ${local} to the internet (e.g. \`ngrok http ${port}\` or \`cloudflared tunnel --url ${local}\`) and give Amika its public URL.`,
+  );
+  if (!deps.prompt) {
+    deps.out(FINISH_LATER);
+    return true;
+  }
+  for (;;) {
+    const answer = (
+      await deps.prompt("Public URL for this host, or Enter to skip: ")
+    )?.trim();
+    if (!answer) {
+      deps.out(`Skipped. ${FINISH_LATER}`);
+      return true;
+    }
+    const url = parseHostUrl(answer);
+    if (url === undefined) {
+      deps.err(`Not an http(s) URL: ${answer}`);
+      continue;
+    }
+    try {
+      await saveUrl(config, host, url, deps);
+      return true;
+    } catch (error) {
+      if (!(error instanceof AmikaApiError)) throw error;
+      deps.err(`amika-hostd: ${error.message}`);
+      deps.err(`The daemon is still running. ${FINISH_LATER}`);
+      return false;
+    }
+  }
+}
+
 async function saveUrl(
   config: RegistrationConfig,
   host: RegisteredHost,
@@ -277,11 +363,17 @@ async function startBackground(flags: HostdFlags, deps: CliDeps) {
   );
   deps.out(`Logs: ${paths.logFile}`);
   deps.out(`Stop it with: kill $(cat ${paths.pidFile})`);
+  return port;
 }
 
+/**
+ * Serve until a shutdown signal. `afterStart` runs once the server is
+ * listening (e.g. to complete registration); if it throws, the server stops.
+ */
 async function serveInForeground(
   config: HostdConfigWith<"secretKey">,
   deps: CliDeps,
+  afterStart?: (port: number) => Promise<unknown>,
 ) {
   const { pidFile } = daemonPaths(deps.env);
   const claim = deps.claimPidFile ?? claimPidFileOnDisk;
@@ -295,7 +387,7 @@ async function serveInForeground(
       `cannot listen on ${config.host}:${config.port}: ${errorCode(error)}`,
     );
   }
-  deps.out(`amika-hostd listening on http://${config.host}:${server.port}`);
+  deps.out(`amika-hostd listening on ${localUrl(config.host, server.port)}`);
   try {
     await (deps.notifyReady ?? notifyParent)(server.port);
   } catch (error) {
@@ -306,12 +398,24 @@ async function serveInForeground(
     }
     throw error;
   }
+  // Listen for the signal before `afterStart`, so Ctrl-C while it runs (e.g.
+  // during a request to Amika) still shuts down cleanly.
+  const shutdown = deps.shutdownSignal();
   try {
-    await deps.shutdownSignal();
-    await server.close();
+    if (afterStart) await Promise.race([afterStart(server.port), shutdown]);
+    await shutdown;
   } finally {
-    release();
+    try {
+      await server.close();
+    } finally {
+      release();
+    }
   }
+}
+
+/** The daemon's local address as a URL, bracketing an IPv6 literal. */
+function localUrl(host: string, port: number): string {
+  return `http://${isIPv6(host) ? `[${host}]` : host}:${port}`;
 }
 
 function errorCode(error: unknown): string {
