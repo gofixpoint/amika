@@ -140,11 +140,11 @@ export function loadConfigFile(
 
 /**
  * One `[sizes.<name>]` table. Held to the daemon's machine limits, so a size
- * never promises what `POST /api/v1/machines` would refuse: 1-255 vCPUs, and
+ * never promises what `POST /api/v1/machines` would refuse: 1-16 vCPUs, and
  * at least 64 MiB of memory in whole MiB.
  */
 const tomlSizeSchema = z.strictObject({
-  vcpus: z.int().min(1).max(255),
+  vcpus: z.int().min(1).max(16),
   memory_gib: z
     .number()
     .min(64 / 1024)

@@ -65,7 +65,7 @@
 # you like. Each run of `up` or `register-url` sends them to Amika, so edit a
 # table here and run `up` again to change them.
 #
-#   vcpus           virtual CPUs, 1 to 255 (macOS hosts run at most 16)
+#   vcpus           virtual CPUs, 1 to 16
 #   memory_gib      memory in GiB, at least 0.0625 (64 MiB), in whole MiB
 #                   (0.5 is fine)
 #   disk_gib        disk in GiB, a whole number

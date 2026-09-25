@@ -147,7 +147,7 @@ disk_grow_only = true
 
   it.each([
     ["an unknown key", "gpus = 1", /invalid settings: sizes\.large\.gpus$/],
-    ["over 255 vCPUs", "vcpus = 256", /invalid settings: sizes\.large\.vcpus$/],
+    ["over 16 vCPUs", "vcpus = 17", /invalid settings: sizes\.large\.vcpus$/],
     [
       "under 64 MiB of memory",
       "memory_gib = 0.05",
