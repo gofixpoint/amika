@@ -48,10 +48,15 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
 
 Before starting the daemon, `up` calls `POST /api/v0beta1/hosts` on the Amika
 API (`src/internal/amika-api.ts`) with `Authorization: Bearer <API key>` and a
-body of only `hostname` and `secret`. The endpoint is idempotent by hostname:
-`201` creates the host, `200` returns the existing host and leaves its stored secret
-unchanged. Changing the local secret therefore never rotates it in Amika;
-changing the hostname registers a new host. Any other status, a network error,
+body of `hostname`, `secret` and `sizes`. The endpoint is
+idempotent by hostname: `201` creates the host, `200` returns the existing host
+and leaves its stored secret and sizes unchanged. Changing the local secret
+therefore never rotates it in Amika; changing the hostname registers a new
+host. On `200`, `up` then sends `PUT /api/v0beta1/hosts/{id}` with the
+configured `sizes`, so edits to the `[sizes]` tables reach
+Amika on the next `up` (or `register-url`). The config is the source of truth:
+the PUT replaces the host's stored sizes, so a config with no `[sizes]` tables
+clears them. Any other status, a network error,
 or a 30s timeout aborts `up` before a daemon starts, with a message that never
 includes the API key or secret. `401`/`403` from the sign-in check in front of the API carry `{ error }` rather
 than `{ error_code, message }`, and that reason is kept. Redirects are refused

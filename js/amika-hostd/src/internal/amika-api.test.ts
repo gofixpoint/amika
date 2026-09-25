@@ -1,9 +1,19 @@
 /** Cover the registration request and how its failures are reported. */
 import { describe, expect, it, vi } from "vitest";
-import { AmikaApiError, registerHost, setHostUrl } from "./amika-api.js";
+import {
+  AmikaApiError,
+  registerHost,
+  setHostSizes,
+  setHostUrl,
+} from "./amika-api.js";
 
 const API = { apiUrl: "https://app.amika.dev", apiKey: "api-key" };
-const INPUT = { hostname: "builder", secretKey: "host-secret" };
+const LARGE = { vcpus: 8, memoryGib: 32, diskGib: 100, diskGrowOnly: false };
+const INPUT = {
+  hostname: "builder",
+  secretKey: "host-secret",
+  sizes: { large: LARGE },
+};
 const HOST = {
   id: "host_1",
   hostname: "builder",
@@ -25,7 +35,7 @@ function apiErrorBody(status: number, code: string, message: string) {
 }
 
 describe("registerHost", () => {
-  it("posts only the hostname and secret with the API key", async () => {
+  it("posts the hostname, secret and sizes with the API key", async () => {
     const fetcher = responding(Response.json(HOST, { status: 201 }));
     await registerHost(API, INPUT, fetcher);
     expect(fetcher).toHaveBeenCalledWith(
@@ -37,7 +47,11 @@ describe("registerHost", () => {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({ hostname: "builder", secret: "host-secret" }),
+        body: JSON.stringify({
+          hostname: "builder",
+          secret: "host-secret",
+          sizes: { large: LARGE },
+        }),
         redirect: "error",
         signal: expect.any(AbortSignal),
       }),
@@ -190,6 +204,30 @@ describe("setHostUrl", () => {
       setHostUrl(API, HOST, "https://abc.ngrok.app", fetcher),
     ).rejects.toThrow(
       "failed to set the host URL (host_not_found: Host not found)",
+    );
+  });
+});
+
+describe("setHostSizes", () => {
+  it("replaces the host's sizes, keeping its hostname", async () => {
+    const fetcher = responding(Response.json(HOST));
+    await setHostSizes(API, HOST, { large: LARGE }, fetcher);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://app.amika.dev/api/v0beta1/hosts/host_1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ hostname: "builder", sizes: { large: LARGE } }),
+        redirect: "error",
+      }),
+    );
+  });
+
+  it("explains a failure", async () => {
+    const fetcher = responding(
+      apiErrorBody(400, "validation_failed", "Invalid host sizes"),
+    );
+    await expect(setHostSizes(API, HOST, {}, fetcher)).rejects.toThrow(
+      "failed to update the host's sizes (validation_failed: Invalid host sizes)",
     );
   });
 });

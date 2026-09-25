@@ -25,8 +25,18 @@ export interface HostdConfig {
   port: number;
   smolApiUrl?: string;
   smolRequestTimeoutMs: number;
+  /** The rig sizes this host offers, keyed by name. Only read from TOML. */
+  sizes: Record<string, HostSize>;
   /** The TOML file the settings were read from, if one was found. */
   configPath?: string;
+}
+
+/** One rig size, in the shape Amika's hosts API takes. */
+export interface HostSize {
+  vcpus: number;
+  memoryGib: number;
+  diskGib: number;
+  diskGrowOnly: boolean;
 }
 
 export type RequiredSetting = "apiKey" | "hostname" | "secretKey";
@@ -80,6 +90,7 @@ export function resolveConfig({
     port: port === undefined ? DEFAULT_PORT : parsePort(port),
     smolApiUrl: nonEmpty(env.SMOL_API_URL),
     smolRequestTimeoutMs: parseTimeout(env.SMOL_REQUEST_TIMEOUT_MS),
+    sizes: toHostSizes(toml.sizes ?? {}),
     configPath: file?.path,
   };
 }
@@ -127,12 +138,28 @@ export function loadConfigFile(
   return undefined;
 }
 
+/**
+ * One `[sizes.<name>]` table. Held to the daemon's machine limits, so a size
+ * never promises what `POST /api/v1/machines` would refuse: 1-16 vCPUs, and
+ * at least 64 MiB of memory in whole MiB.
+ */
+const tomlSizeSchema = z.strictObject({
+  vcpus: z.int().min(1).max(16),
+  memory_gib: z
+    .number()
+    .min(64 / 1024)
+    .refine((gib) => Number.isSafeInteger(gib * 1024)),
+  disk_gib: z.int().min(1),
+  disk_grow_only: z.boolean().optional(),
+});
+
 const configFileSchema = z.strictObject({
   hostname: z.string().optional(),
   secret_key: z.string().min(1).optional(),
   api_url: z.string().optional(),
   host: z.string().min(1).optional(),
   port: z.number().int().optional(),
+  sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
 });
 
 function parseConfigFile(file: HostdConfigFile) {
@@ -150,14 +177,33 @@ function parseConfigFile(file: HostdConfigFile) {
   }
   const parsed = configFileSchema.safeParse(raw);
   if (!parsed.success) {
+    // Name settings by their dotted path (`sizes.large.vcpus`), never by value.
     const keys = parsed.error.issues.flatMap((issue) =>
-      issue.code === "unrecognized_keys" ? issue.keys : issue.path.map(String),
+      issue.code === "unrecognized_keys"
+        ? issue.keys.map((key) => [...issue.path, key].join("."))
+        : [issue.path.map(String).join(".")],
     );
     throw new ConfigError(
       `${file.path} has invalid settings: ${[...new Set(keys)].join(", ")}`,
     );
   }
   return parsed.data;
+}
+
+function toHostSizes(
+  sizes: Record<string, z.infer<typeof tomlSizeSchema>>,
+): Record<string, HostSize> {
+  return Object.fromEntries(
+    Object.entries(sizes).map(([name, size]) => [
+      name,
+      {
+        vcpus: size.vcpus,
+        memoryGib: size.memory_gib,
+        diskGib: size.disk_gib,
+        diskGrowOnly: size.disk_grow_only ?? false,
+      },
+    ]),
+  );
 }
 
 function readEnv(
