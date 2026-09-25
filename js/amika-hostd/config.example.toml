@@ -63,12 +63,13 @@
 #
 # The sizes rigs on this host can use, one [sizes.<name>] table each, named as
 # you like. Each run of `up` or `register-url` sends them to Amika, so edit a
-# table here and run `up` again to change them.
+# table here and run `up` again to change them. They replace whatever sizes
+# Amika has for this host, so leaving out every table clears them.
 #
 #   vcpus           virtual CPUs, 1 to 16
 #   memory_gib      memory in GiB, at least 0.0625 (64 MiB), in whole MiB
 #                   (0.5 is fine)
-#   disk_gib        disk in GiB, a whole number
+#   disk_gib        disk in GiB, a whole number, at least 1
 #   disk_grow_only  optional, default false; true if a rig's disk can end up
 #                   larger than disk_gib, so Amika shows it as a minimum
 #
