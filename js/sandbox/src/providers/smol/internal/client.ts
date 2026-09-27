@@ -120,7 +120,7 @@ async function errorReason(
   response: Response,
   path: string,
 ): Promise<string | undefined> {
-  if (path.endsWith("/exec")) {
+  if (EXEC_PATH.test(path)) {
     await response.body?.cancel();
     return undefined;
   }
@@ -131,6 +131,10 @@ async function errorReason(
 }
 
 const errorBodySchema = z.object({ error: z.string().min(1) });
+
+// The `/<machine>/exec` endpoint only: a file named `exec` is
+// `/<machine>/files/.../exec`, and its errors are safe to show.
+const EXEC_PATH = /^\/[^/]+\/exec$/;
 
 /** Keep URL normalization from interpreting a machine name as a path. */
 export function machinePath(id: string): string {

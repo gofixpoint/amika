@@ -1,6 +1,6 @@
 /** Verify URL, deadline, and error handling at the local API boundary. */
 import { describe, expect, it, vi } from "vitest";
-import { SmolClient } from "./client";
+import { SmolClient, filePath } from "./client";
 
 describe("SmolClient", () => {
   it("uses the configured runtime and deadline without authentication", async () => {
@@ -70,6 +70,19 @@ describe("SmolClient", () => {
     await expect(
       new SmolClient({}, fetcher).request("/machine/exec", "POST", {}),
     ).rejects.toThrow(/^smolvm POST \/machine\/exec failed \(HTTP 500\)$/);
+  });
+
+  it("surfaces the message for a file named exec", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        Response.json({ error: "Unauthorized" }, { status: 401 }),
+      );
+    await expect(
+      new SmolClient({}, fetcher).request(filePath("machine", "/tmp/exec")),
+    ).rejects.toThrow(
+      /^smolvm GET \/machine\/files\/tmp\/exec failed \(HTTP 401\): Unauthorized$/,
+    );
   });
 
   it("never includes the request body or headers in an error", async () => {
