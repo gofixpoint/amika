@@ -77,3 +77,23 @@
 # vcpus = 4
 # memory_gib = 8
 # disk_gib = 40
+#
+# [sizes.large]
+# vcpus = 8
+# memory_gib = 16
+# disk_gib = 100
+
+# --- Images -------------------------------------------------------------------
+#
+# The image each Amika preset boots on this host, as a full OCI reference.
+# Amika asks for a preset by name, and this host decides which version it
+# runs, so pin a published tag here and edit it to upgrade. A rig asking for a
+# preset that isn't listed fails to create. smolvm pulls an image inside the
+# VM on first use and caches it, so the rig needs network (the default).
+#
+# Tags are the 12-character commit sha of an Amika image release.
+# PLACEHOLDER: replace <sha> with a published tag; no release exists yet.
+#
+# [images]
+# amika-coder = "ghcr.io/gofixpoint/amika-coder:<sha>"
+# amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:<sha>"

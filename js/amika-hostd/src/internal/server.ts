@@ -30,6 +30,8 @@ export function startServer(
     secretKey: config.secretKey,
     apiUrl: config.smolApiUrl,
     requestTimeoutMs: config.smolRequestTimeoutMs,
+    images: config.images,
+    configPath: config.configPath,
   });
   return new Promise((resolve, reject) => {
     // Only the default `http.Server` is used, never HTTP/2.

@@ -28,6 +28,7 @@ describe("resolveConfig", () => {
       smolApiUrl: undefined,
       smolRequestTimeoutMs: 300_000,
       sizes: {},
+      images: {},
       configPath: undefined,
     });
   });
@@ -171,6 +172,38 @@ disk_grow_only = true
     );
     const table = ["[sizes.large]", ...base, line].join("\n");
     expect(() => resolveConfig({ file: file(table) })).toThrow(message);
+  });
+
+  it("reads image references from the [images] table", () => {
+    const config = resolveConfig({
+      file: file(`
+[images]
+amika-coder = "ghcr.io/gofixpoint/amika-coder:0123456789ab"
+amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:0123456789ab "
+`),
+    });
+    expect(config.images).toEqual({
+      "amika-coder": "ghcr.io/gofixpoint/amika-coder:0123456789ab",
+      "amika-coder-plus-docker":
+        "ghcr.io/gofixpoint/amika-coder-plus-docker:0123456789ab",
+    });
+  });
+
+  it.each([
+    ["an empty reference", `amika-coder = ""`, /images\.amika-coder$/],
+    ["a blank reference", `amika-coder = "  "`, /images\.amika-coder$/],
+    ["a non-string reference", `amika-coder = 1`, /images\.amika-coder$/],
+    ["an empty name", `"" = "ghcr.io/x:y"`, /invalid settings: images/],
+  ])("rejects an [images] table with %s", (_label, line, message) => {
+    expect(() => resolveConfig({ file: file(`[images]\n${line}`) })).toThrow(
+      message,
+    );
+  });
+
+  it("rejects images that aren't a table", () => {
+    expect(() =>
+      resolveConfig({ file: file(`images = "ghcr.io/x:y"`) }),
+    ).toThrow(/invalid settings: images$/);
   });
 
   it.each(["", "  "])("rejects an empty --host %j", (host) => {
@@ -348,15 +381,29 @@ describe("config.example.toml", () => {
     ).toMatchObject({ hostname: "builder", secretKey: TOML_SECRET });
   });
 
-  it("documents a size table that resolves as written", () => {
+  it("documents size tables that resolve as written", () => {
     const sizes = example.contents.slice(
       example.contents.indexOf("# [sizes.medium]"),
+      example.contents.indexOf("# --- Images"),
     );
     const contents = sizes.replace(/^# ?/gm, "");
     expect(resolveConfig({ file: file(contents) })).toMatchObject({
       sizes: {
         medium: { vcpus: 4, memoryGib: 8, diskGib: 40, diskGrowOnly: false },
+        large: { vcpus: 8, memoryGib: 16, diskGib: 100, diskGrowOnly: false },
       },
+    });
+  });
+
+  it("documents an [images] table that resolves as written", () => {
+    const images = example.contents.slice(
+      example.contents.indexOf("# [images]"),
+    );
+    const contents = images.replace(/^# ?/gm, "");
+    expect(resolveConfig({ file: file(contents) }).images).toEqual({
+      "amika-coder": "ghcr.io/gofixpoint/amika-coder:<sha>",
+      "amika-coder-plus-docker":
+        "ghcr.io/gofixpoint/amika-coder-plus-docker:<sha>",
     });
   });
 

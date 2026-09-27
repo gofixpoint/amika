@@ -20,6 +20,27 @@ export const createMachineSchema = z.strictObject({
   env: envSchema.optional(),
 });
 
+/**
+ * The image smolvm should boot for a create request's `image`. A name
+ * configured under `[images]` becomes its configured reference. Anything else
+ * that looks like a full OCI reference (it has a registry path or a tag) is
+ * forwarded unchanged, which keeps ad hoc images working for development. A
+ * bare name that isn't configured is refused, so a host never silently pulls
+ * `docker.io/library/<name>` in place of an Amika preset.
+ */
+export function resolveImage(
+  image: string,
+  images: Record<string, string>,
+  configPath: string | undefined,
+): string {
+  if (Object.hasOwn(images, image)) return images[image];
+  if (image.includes("/") || image.includes(":")) return image;
+  const message = `image ${JSON.stringify(image)} is not configured on this host; add it under [images] in ${configPath ?? "the amika-hostd config.toml"}`;
+  throw new HTTPException(400, {
+    res: Response.json({ error: message }, { status: 400 }),
+  });
+}
+
 export const execSchema = z.strictObject({
   command: z.array(z.string()).min(1),
   user: z.string().min(1).optional(),

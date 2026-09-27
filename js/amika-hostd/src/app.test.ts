@@ -75,6 +75,75 @@ describe("machine API", () => {
     );
   });
 
+  describe("image resolution", () => {
+    const CODER = "ghcr.io/gofixpoint/amika-coder:0123456789ab";
+
+    function withImages(configPath?: string) {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(Response.json({ name: "demo" }, { status: 201 }));
+      const app = authenticated(
+        createApp(
+          {
+            secretKey: SECRET,
+            apiUrl: "http://runtime:8080",
+            images: { "amika-coder": CODER },
+            configPath,
+          },
+          fetcher,
+        ),
+      );
+      const forwarded = () =>
+        JSON.parse(String(fetcher.mock.calls[0][1]?.body)).image;
+      return { app, fetcher, forwarded };
+    }
+
+    it("forwards the configured reference for a preset name", async () => {
+      const { app, forwarded } = withImages();
+      const input = { name: "demo", image: "amika-coder", cpus: 2 };
+      expect((await app.request(ROOT, json(input))).status).toBe(201);
+      expect(forwarded()).toBe(CODER);
+    });
+
+    it("refuses a name that isn't configured, naming the config file", async () => {
+      const { app, fetcher } = withImages("/etc/amika-hostd/config.toml");
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: "amika-coder-plus-docker" }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error:
+          'image "amika-coder-plus-docker" is not configured on this host; add it under [images] in /etc/amika-hostd/config.toml',
+      });
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it("refuses an unconfigured name when no config file was found", async () => {
+      const { app } = harness();
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: "amika-coder" }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error:
+          'image "amika-coder" is not configured on this host; add it under [images] in the amika-hostd config.toml',
+      });
+    });
+
+    it.each(["ubuntu:24.04", "ghcr.io/gofixpoint/amika-coder", CODER])(
+      "forwards full reference %s unchanged",
+      async (image) => {
+        const { app, forwarded } = withImages();
+        expect(
+          (await app.request(ROOT, json({ name: "demo", image }))).status,
+        ).toBe(201);
+        expect(forwarded()).toBe(image);
+      },
+    );
+  });
+
   it.each([
     [undefined, true],
     [false, false],
@@ -165,7 +234,7 @@ describe("machine API", () => {
     const { app, fetcher } = harness(
       Response.json({ name: "demo" }, { status: 201 }),
     );
-    const input = { name: "demo", image: "ubuntu", memoryMb: 64 };
+    const input = { name: "demo", image: "ubuntu:24.04", memoryMb: 64 };
     expect((await app.request(ROOT, json(input))).status).toBe(201);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
