@@ -29,6 +29,7 @@ describe("resolveConfig", () => {
       smolRequestTimeoutMs: 300_000,
       sizes: {},
       images: {},
+      defaultSize: undefined,
       configPath: undefined,
     });
   });
@@ -144,6 +145,39 @@ disk_grow_only = true
       },
       "small.1": { vcpus: 1, memoryGib: 0.5, diskGib: 10, diskGrowOnly: true },
     });
+  });
+
+  it("reads the default size, which names one of the [sizes] tables", () => {
+    const config = resolveConfig({
+      file: file(`
+default_size = "large"
+
+[sizes.large]
+vcpus = 8
+memory_gib = 32
+disk_gib = 100
+`),
+    });
+    expect(config.defaultSize).toBe("large");
+  });
+
+  it.each([
+    [
+      "names no [sizes] table",
+      `default_size = "huge"\n[sizes.large]\nvcpus = 8\nmemory_gib = 32\ndisk_gib = 100`,
+      /invalid settings: default_size \(must name one of the \[sizes\.<name>\] tables\)$/,
+    ],
+    [
+      "is set without any sizes",
+      `default_size = "large"`,
+      /invalid settings: default_size \(must name one of the \[sizes\.<name>\] tables\)$/,
+    ],
+    ["is empty", `default_size = ""`, /invalid settings: default_size$/],
+    ["is not a string", `default_size = 1`, /invalid settings: default_size$/],
+  ])("rejects a default size that %s", (_label, contents, message) => {
+    const run = () => resolveConfig({ file: file(contents) });
+    expect(run).toThrow(ConfigError);
+    expect(run).toThrow(message);
   });
 
   it.each([
@@ -381,13 +415,14 @@ describe("config.example.toml", () => {
     ).toMatchObject({ hostname: "builder", secretKey: TOML_SECRET });
   });
 
-  it("documents size tables that resolve as written", () => {
+  it("documents a default size and size tables that resolve as written", () => {
     const sizes = example.contents.slice(
-      example.contents.indexOf("# [sizes.medium]"),
+      example.contents.indexOf("# default_size = "),
       example.contents.indexOf("# --- Images"),
     );
     const contents = sizes.replace(/^# ?/gm, "");
     expect(resolveConfig({ file: file(contents) })).toMatchObject({
+      defaultSize: "large",
       sizes: {
         medium: { vcpus: 4, memoryGib: 8, diskGib: 40, diskGrowOnly: false },
         large: { vcpus: 8, memoryGib: 16, diskGib: 100, diskGrowOnly: false },

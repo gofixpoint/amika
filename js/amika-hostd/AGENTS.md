@@ -48,15 +48,18 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
 
 Before starting the daemon, `up` calls `POST /api/v0beta1/hosts` on the Amika
 API (`src/internal/amika-api.ts`) with `Authorization: Bearer <API key>` and a
-body of `hostname`, `secret` and `sizes`. The endpoint is
+body of `hostname`, `secret`, `sizes` and `default_size`. The endpoint is
 idempotent by hostname: `201` creates the host, `200` returns the existing host
-and leaves its stored secret and sizes unchanged. Changing the local secret
+and leaves its stored secret, sizes and default size unchanged. Changing the local secret
 therefore never rotates it in Amika; changing the hostname registers a new
 host. On `200`, `up` then sends `PUT /api/v0beta1/hosts/{id}` with the
-configured `sizes`, so edits to the `[sizes]` tables reach
+configured `sizes` and `default_size`, so edits to the `[sizes]` tables reach
 Amika on the next `up` (or `register-url`). The config is the source of truth:
 the PUT replaces the host's stored sizes, so a config with no `[sizes]` tables
-clears them. Any other status, a network error,
+clears them. `default_size` is sent as the configured name or as an explicit
+`null`, never omitted, so removing it from the config clears it in Amika too.
+Amika answers `400` when it names none of the host's sizes, which the config
+check rules out locally. Any other status, a network error,
 or a 30s timeout aborts `up` before a daemon starts, with a message that never
 includes the API key or secret. `401`/`403` from the sign-in check in front of the API carry `{ error }` rather
 than `{ error_code, message }`, and that reason is kept. Redirects are refused
@@ -100,19 +103,24 @@ background daemon with
 `src/internal/config.ts` resolves every setting in one place. Each setting takes
 the first source that sets it: CLI flag, then environment, then TOML file.
 
-| Setting    | Flag     | Environment                                   | TOML         | Default                 |
-| ---------- | -------- | --------------------------------------------- | ------------ | ----------------------- |
-| API key    |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)   | required for Amika APIs |
-| API URL    |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`    | `https://app.amika.dev` |
-| Hostname   |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`   |                         |
-| Secret key |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key` |                         |
-| Bind host  | `--host` | `AMIKA_HOSTD_HOST`                            | `host`       | `127.0.0.1`             |
-| Port       | `--port` | `AMIKA_HOSTD_PORT`                            | `port`       | `3020`                  |
+| Setting      | Flag     | Environment                                   | TOML           | Default                 |
+| ------------ | -------- | --------------------------------------------- | -------------- | ----------------------- |
+| API key      |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)     | required for Amika APIs |
+| API URL      |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`      | `https://app.amika.dev` |
+| Hostname     |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`     |                         |
+| Secret key   |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key`   |                         |
+| Bind host    | `--host` | `AMIKA_HOSTD_HOST`                            | `host`         | `127.0.0.1`             |
+| Port         | `--port` | `AMIKA_HOSTD_PORT`                            | `port`         | `3020`                  |
+| Sizes        |          |                                               | `[sizes.*]`    | none                    |
+| Default size |          |                                               | `default_size` | none                    |
 
 Setting both names of an aliased pair to different values is an error, never a
 silent pick. The API key is environment-only: a TOML `api_key` fails startup.
 The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
 enforces, so a bad one fails locally instead of at registration.
+Sizes and the default size are TOML-only. `default_size` is optional and, when
+set, must be a non-empty string naming one of the `[sizes.<name>]` tables;
+anything else fails startup with a `ConfigError` naming the setting.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
 two are not merged, and unknown keys are rejected. `SMOL_API_URL` and

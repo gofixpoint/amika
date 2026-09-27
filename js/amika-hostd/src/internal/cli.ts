@@ -6,6 +6,7 @@ import {
   registerHost as registerHostWithAmika,
   setHostSizes as setHostSizesInAmika,
   setHostUrl as setHostUrlInAmika,
+  type HostSizing,
   type RegisteredHost,
 } from "./amika-api.js";
 import {
@@ -242,18 +243,19 @@ function parseHostUrl(value: string): string | undefined {
 
 /**
  * Register before serving, so an unregistered host never accepts traffic. The
- * hostname, secret and sizes are sent; an existing host's secret is never
- * changed, but its sizes are replaced with the configured ones.
+ * hostname, secret, sizes and default size are sent; an existing host's
+ * secret is never changed, but its sizes and default size are replaced with
+ * the configured ones.
  */
 async function register(
   config: RegistrationConfig,
   deps: CliDeps,
 ): Promise<RegisteredHost> {
   const api = { apiUrl: config.apiUrl, apiKey: config.apiKey };
-  const { sizes } = config;
+  const sizing = { sizes: config.sizes, defaultSize: config.defaultSize };
   const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
     api,
-    { hostname: config.hostname, secretKey: config.secretKey, sizes },
+    { hostname: config.hostname, secretKey: config.secretKey, ...sizing },
   );
   if (created) {
     deps.out(
@@ -267,18 +269,20 @@ async function register(
     deps.out(
       "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
     );
-    // Nor its sizes, so bring those up to date with the config separately.
-    await (deps.setHostSizes ?? setHostSizesInAmika)(api, host, sizes);
+    // Nor its sizes or default size, so bring those up to date separately.
+    await (deps.setHostSizes ?? setHostSizesInAmika)(api, host, sizing);
     deps.out(
-      `Updated the sizes of host ${host.hostname} (${describeSizes(sizes)})`,
+      `Updated the sizes of host ${host.hostname} (${describeSizing(sizing)})`,
     );
   }
   return host;
 }
 
-function describeSizes(sizes: Record<string, unknown>): string {
+function describeSizing({ sizes, defaultSize }: HostSizing): string {
   const names = Object.keys(sizes);
-  return names.length === 0 ? "none" : names.join(", ");
+  if (names.length === 0) return "none";
+  const list = names.join(", ");
+  return defaultSize === undefined ? list : `${list}; default ${defaultSize}`;
 }
 
 /**

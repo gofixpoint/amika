@@ -169,6 +169,7 @@ describe("runCli", () => {
         hostname: "builder",
         secretKey: SECRET,
         sizes: {},
+        defaultSize: undefined,
       },
     );
     // A new host was registered with its sizes; nothing to update.
@@ -186,9 +187,36 @@ describe("runCli", () => {
     expect(deps.setHostSizes).toHaveBeenCalledWith(
       { apiUrl: "https://app.amika.dev", apiKey: "api-key" },
       HOST,
-      { large: { vcpus: 8, memoryGib: 32, diskGib: 100, diskGrowOnly: false } },
+      {
+        sizes: {
+          large: { vcpus: 8, memoryGib: 32, diskGib: 100, diskGrowOnly: false },
+        },
+        defaultSize: undefined,
+      },
     );
     expect(out).toContain("Updated the sizes of host builder (large)");
+  });
+
+  it("registers and updates the configured default size", async () => {
+    const { deps, out } = harness();
+    deps.loadConfigFile.mockReturnValue({
+      path: "/etc/amika-hostd/config.toml",
+      contents: `default_size = "large"\n[sizes.large]\nvcpus = 8\nmemory_gib = 32\ndisk_gib = 100`,
+    });
+    deps.registerHost.mockResolvedValueOnce({ host: HOST, created: false });
+    await runCli(["up", "--fg"], deps);
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ defaultSize: "large" }),
+    );
+    expect(deps.setHostSizes).toHaveBeenCalledWith(
+      expect.anything(),
+      HOST,
+      expect.objectContaining({ defaultSize: "large" }),
+    );
+    expect(out).toContain(
+      "Updated the sizes of host builder (large; default large)",
+    );
   });
 
   it("reports a host that was already registered", async () => {

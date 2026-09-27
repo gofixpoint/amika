@@ -26,13 +26,13 @@ export class AmikaApiError extends Error {
  */
 export async function registerHost(
   api: AmikaApiConfig,
-  input: { hostname: string; secretKey: string; sizes: HostSizes },
+  input: { hostname: string; secretKey: string } & HostSizing,
   fetcher: typeof fetch = fetch,
 ): Promise<{ host: RegisteredHost; created: boolean }> {
   const response = await send(api, fetcher, "POST", "/api/v0beta1/hosts", {
     hostname: input.hostname,
     secret: input.secretKey,
-    sizes: input.sizes,
+    ...sizingBody(input),
   });
   if (response.status !== 200 && response.status !== 201) {
     throw await apiError("register the host", response);
@@ -67,14 +67,14 @@ export async function setHostUrl(
 }
 
 /**
- * Replace the sizes Amika stores for this host with the configured ones. An
- * existing host's registration leaves them unchanged, so this carries edits
- * to the TOML on later runs.
+ * Replace the sizes and default size Amika stores for this host with the
+ * configured ones. An existing host's registration leaves them unchanged, so
+ * this carries edits to the TOML on later runs.
  */
 export async function setHostSizes(
   api: AmikaApiConfig,
   host: Pick<RegisteredHost, "id" | "hostname">,
-  sizes: HostSizes,
+  sizing: HostSizing,
   fetcher: typeof fetch = fetch,
 ): Promise<RegisteredHost> {
   const response = await send(
@@ -82,7 +82,7 @@ export async function setHostSizes(
     fetcher,
     "PUT",
     `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
-    { hostname: host.hostname, sizes },
+    { hostname: host.hostname, ...sizingBody(sizing) },
   );
   if (response.status !== 200) {
     throw await apiError("update the host's sizes", response);
@@ -90,7 +90,20 @@ export async function setHostSizes(
   return parseHost(response);
 }
 
-type HostSizes = Record<string, HostSize>;
+/** The rig sizes a host offers, and which one a rig gets by default. */
+export interface HostSizing {
+  sizes: Record<string, HostSize>;
+  /** A key of `sizes`, or unset for no default. */
+  defaultSize: string | undefined;
+}
+
+/**
+ * An unset default is sent as `null` rather than omitted, so removing it from
+ * the config clears it in Amika, just as the sizes are replaced.
+ */
+function sizingBody({ sizes, defaultSize }: HostSizing) {
+  return { sizes, default_size: defaultSize ?? null };
+}
 
 const REQUEST_TIMEOUT_MS = 30_000;
 

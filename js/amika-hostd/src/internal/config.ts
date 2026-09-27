@@ -32,6 +32,8 @@ export interface HostdConfig {
    * Amika sends (e.g. `amika-coder`). Only read from TOML.
    */
   images: Record<string, string>;
+  /** The size a rig gets when none is asked for; a key of `sizes`. TOML only. */
+  defaultSize?: string;
   /** The TOML file the settings were read from, if one was found. */
   configPath?: string;
 }
@@ -97,6 +99,7 @@ export function resolveConfig({
     smolRequestTimeoutMs: parseTimeout(env.SMOL_REQUEST_TIMEOUT_MS),
     sizes: toHostSizes(toml.sizes ?? {}),
     images: toml.images ?? {},
+    defaultSize: toml.default_size,
     configPath: file?.path,
   };
 }
@@ -159,15 +162,29 @@ const tomlSizeSchema = z.strictObject({
   disk_grow_only: z.boolean().optional(),
 });
 
-const configFileSchema = z.strictObject({
-  hostname: z.string().optional(),
-  secret_key: z.string().min(1).optional(),
-  api_url: z.string().optional(),
-  host: z.string().min(1).optional(),
-  port: z.number().int().optional(),
-  sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
-  images: z.record(z.string().min(1), z.string().trim().min(1)).optional(),
-});
+const configFileSchema = z
+  .strictObject({
+    hostname: z.string().optional(),
+    secret_key: z.string().min(1).optional(),
+    api_url: z.string().optional(),
+    host: z.string().min(1).optional(),
+    port: z.number().int().optional(),
+    default_size: z.string().min(1).optional(),
+    sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
+    images: z.record(z.string().min(1), z.string().trim().min(1)).optional(),
+  })
+  // Amika rejects a default that names none of the host's sizes.
+  .refine(
+    (config) =>
+      config.default_size === undefined ||
+      Object.hasOwn(config.sizes ?? {}, config.default_size),
+    {
+      path: ["default_size"],
+      params: { reason: "must name one of the [sizes.<name>] tables" },
+      // Only once the file is otherwise valid, so a bad value reports once.
+      when: ({ issues }) => issues.length === 0,
+    },
+  );
 
 function parseConfigFile(file: HostdConfigFile) {
   let raw: unknown;
@@ -185,16 +202,23 @@ function parseConfigFile(file: HostdConfigFile) {
   const parsed = configFileSchema.safeParse(raw);
   if (!parsed.success) {
     // Name settings by their dotted path (`sizes.large.vcpus`), never by value.
-    const keys = parsed.error.issues.flatMap((issue) =>
-      issue.code === "unrecognized_keys"
-        ? issue.keys.map((key) => [...issue.path, key].join("."))
-        : [issue.path.map(String).join(".")],
-    );
+    const keys = parsed.error.issues.flatMap(describeIssue);
     throw new ConfigError(
       `${file.path} has invalid settings: ${[...new Set(keys)].join(", ")}`,
     );
   }
   return parsed.data;
+}
+
+/** A setting's dotted path, with the reason when a refinement gives one. */
+function describeIssue(issue: z.core.$ZodIssue): string[] {
+  if (issue.code === "unrecognized_keys") {
+    return issue.keys.map((key) => [...issue.path, key].join("."));
+  }
+  const setting = issue.path.map(String).join(".");
+  const reason: unknown =
+    issue.code === "custom" ? issue.params?.reason : undefined;
+  return [typeof reason === "string" ? `${setting} (${reason})` : setting];
 }
 
 function toHostSizes(

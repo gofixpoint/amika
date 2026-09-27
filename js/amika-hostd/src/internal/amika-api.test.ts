@@ -13,6 +13,7 @@ const INPUT = {
   hostname: "builder",
   secretKey: "host-secret",
   sizes: { large: LARGE },
+  defaultSize: "large",
 };
 const HOST = {
   id: "host_1",
@@ -35,7 +36,7 @@ function apiErrorBody(status: number, code: string, message: string) {
 }
 
 describe("registerHost", () => {
-  it("posts the hostname, secret and sizes with the API key", async () => {
+  it("posts the hostname, secret, sizes and default size with the API key", async () => {
     const fetcher = responding(Response.json(HOST, { status: 201 }));
     await registerHost(API, INPUT, fetcher);
     expect(fetcher).toHaveBeenCalledWith(
@@ -51,11 +52,23 @@ describe("registerHost", () => {
           hostname: "builder",
           secret: "host-secret",
           sizes: { large: LARGE },
+          default_size: "large",
         }),
         redirect: "error",
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("sends an unset default size as null", async () => {
+    const fetcher = responding(Response.json(HOST, { status: 201 }));
+    await registerHost(API, { ...INPUT, defaultSize: undefined }, fetcher);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      hostname: "builder",
+      secret: "host-secret",
+      sizes: { large: LARGE },
+      default_size: null,
+    });
   });
 
   it.each([
@@ -209,24 +222,41 @@ describe("setHostUrl", () => {
 });
 
 describe("setHostSizes", () => {
-  it("replaces the host's sizes, keeping its hostname", async () => {
+  it("replaces the host's sizes and default size, keeping its hostname", async () => {
     const fetcher = responding(Response.json(HOST));
-    await setHostSizes(API, HOST, { large: LARGE }, fetcher);
+    const sizing = { sizes: { large: LARGE }, defaultSize: "large" };
+    await setHostSizes(API, HOST, sizing, fetcher);
     expect(fetcher).toHaveBeenCalledWith(
       "https://app.amika.dev/api/v0beta1/hosts/host_1",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ hostname: "builder", sizes: { large: LARGE } }),
+        body: JSON.stringify({
+          hostname: "builder",
+          sizes: { large: LARGE },
+          default_size: "large",
+        }),
         redirect: "error",
       }),
     );
+  });
+
+  it("clears the default size when none is configured", async () => {
+    const fetcher = responding(Response.json(HOST));
+    const sizing = { sizes: { large: LARGE }, defaultSize: undefined };
+    await setHostSizes(API, HOST, sizing, fetcher);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      hostname: "builder",
+      sizes: { large: LARGE },
+      default_size: null,
+    });
   });
 
   it("explains a failure", async () => {
     const fetcher = responding(
       apiErrorBody(400, "validation_failed", "Invalid host sizes"),
     );
-    await expect(setHostSizes(API, HOST, {}, fetcher)).rejects.toThrow(
+    const sizing = { sizes: {}, defaultSize: undefined };
+    await expect(setHostSizes(API, HOST, sizing, fetcher)).rejects.toThrow(
       "failed to update the host's sizes (validation_failed: Invalid host sizes)",
     );
   });
