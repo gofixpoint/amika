@@ -20,9 +20,12 @@ export class SmolApiError extends Error {
     readonly status: number,
     method: string,
     path: string,
+    /** The response body's `error` message, when it is safe to surface. */
+    reason?: string,
   ) {
-    // Do not include response bodies: exec errors may contain command input.
-    super(`smolvm ${method} ${path} failed (HTTP ${status})`);
+    super(
+      `smolvm ${method} ${path} failed (HTTP ${status})${reason === undefined ? "" : `: ${reason}`}`,
+    );
     this.name = "SmolApiError";
   }
 }
@@ -83,8 +86,12 @@ export class SmolClient {
       },
     );
     if (!response.ok) {
-      await response.body?.cancel();
-      throw new SmolApiError(response.status, method, path);
+      throw new SmolApiError(
+        response.status,
+        method,
+        path,
+        await errorReason(response, path),
+      );
     }
     return response;
   }
@@ -103,6 +110,27 @@ export class SmolClient {
     await response.body?.cancel();
   }
 }
+
+/**
+ * A refused request's `{ error }` message, e.g. amika-hostd's explanation of
+ * a 400. Exec error bodies may echo command input, so they are never read;
+ * nor is any body without a string `error`.
+ */
+async function errorReason(
+  response: Response,
+  path: string,
+): Promise<string | undefined> {
+  if (path.endsWith("/exec")) {
+    await response.body?.cancel();
+    return undefined;
+  }
+  const body = errorBodySchema.safeParse(
+    await response.json().catch(() => undefined),
+  );
+  return body.success ? body.data.error : undefined;
+}
+
+const errorBodySchema = z.object({ error: z.string().min(1) });
 
 /** Keep URL normalization from interpreting a machine name as a path. */
 export function machinePath(id: string): string {

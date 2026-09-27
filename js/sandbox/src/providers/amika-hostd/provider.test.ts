@@ -301,7 +301,11 @@ describe("amika-hostd provider", () => {
 
   it("is rejected by hostd with the wrong secret key", async () => {
     const { provider, runtime } = harness([], { secretKey: "wrong" });
-    await expect(provider.sandboxes.get("demo").getState()).rejects.toThrow();
+    const failure = provider.sandboxes.get("demo").getState();
+    // hostd's reason comes through; the secret that was sent never does.
+    await expect(failure).rejects.toThrow(
+      /^smolvm GET \/demo failed \(HTTP 401\): Unauthorized$/,
+    );
     expect(runtime).not.toHaveBeenCalled();
   });
 });
