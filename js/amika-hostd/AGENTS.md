@@ -117,9 +117,29 @@ The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
 two are not merged, and unknown keys are rejected. `SMOL_API_URL` and
 `SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
-is the annotated template for operators; `config.test.ts` resolves it, so keep
-it in step with the schema. Never include a secret or
+is the annotated template for operators: copy it to one of those paths and
+uncomment what you need. `config.test.ts` resolves it, so keep it in step with
+the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
+
+### Images
+
+`[images]` maps a preset name to the full OCI reference this host boots for it,
+so the host, not Amika, pins the version:
+
+```toml
+[images]
+amika-coder = "ghcr.io/gofixpoint/amika-coder:<12-char sha>"
+amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:<12-char sha>"
+```
+
+On `POST /api/v1/machines`, `resolveImage` (`src/internal/requests.ts`) swaps
+a configured name for its reference before forwarding to smolvm. An `image`
+containing `/` or `:` is taken as a full reference and forwarded unchanged,
+for development. Any other name is refused with a `400` naming the config file
+to edit, so an unconfigured preset never falls through to a Docker Hub pull.
+smolvm pulls the reference inside the VM on first use, which needs the
+machine's network on (the default).
 
 ## Authentication
 

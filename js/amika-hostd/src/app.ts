@@ -10,16 +10,21 @@ import {
   execSchema,
   filePath,
   machinePath,
+  resolveImage,
 } from "./internal/requests.js";
 
 export interface AppConfig extends SmolRuntimeConfig {
   /** Every request, including `/health`, must present this as a bearer token. */
   secretKey: string;
+  /** Preset image names mapped to the OCI references smolvm boots. */
+  images?: Record<string, string>;
+  /** Named in errors for unconfigured images, so operators know what to edit. */
+  configPath?: string;
 }
 
 /** Build routes without opening a socket; the runtime transport is injectable. */
 export function createApp(
-  { secretKey, ...runtimeConfig }: AppConfig,
+  { secretKey, images = {}, configPath, ...runtimeConfig }: AppConfig,
   fetcher = fetch,
 ) {
   const runtime = new SmolRuntime(runtimeConfig, fetcher);
@@ -40,9 +45,11 @@ export function createApp(
   app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get(machines, () => runtime.request(""));
-  app.post(machines, async (c) =>
-    runtime.request("", "POST", createMachineSchema.parse(await c.req.json())),
-  );
+  app.post(machines, async (c) => {
+    const input = createMachineSchema.parse(await c.req.json());
+    const image = resolveImage(input.image, images, configPath);
+    return runtime.request("", "POST", { ...input, image });
+  });
   app.get(`${machines}/:name`, (c) =>
     runtime.request(machinePath(c.req.param("name"))),
   );
