@@ -5,7 +5,7 @@
 #
 # Writes OUT_DIR/amika-hostd_VERSION.tar.gz (default OUT_DIR: dist/release),
 # holding amika-hostd_VERSION/{amika-hostd.mjs,config.example.toml}, plus
-# OUT_DIR/checksums.txt in the `sha256sum` format install.sh verifies. The
+# OUT_DIR/checksums.txt in the `sha256sum` format install-amika-hostd.sh verifies. The
 # bundle is plain JavaScript, so one tarball serves every platform.
 set -eu
 

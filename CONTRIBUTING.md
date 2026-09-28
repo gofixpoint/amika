@@ -146,4 +146,4 @@ The allowlist is always read from `main` to prevent a release branch from approv
 
 ### Updating the install script
 
-After you make a new release, update the install.sh script and change the `DEFAULT_VERSION`, or the separately versioned component's own default (`DEFAULT_AMIKAD_VERSION`, `DEFAULT_AMIKALOG_VERSION`, `DEFAULT_AMIKA_HOSTD_VERSION`).
+After you make a new release, update the install.sh script and change the `DEFAULT_VERSION`, or the separately versioned component's own default (`DEFAULT_AMIKAD_VERSION`, `DEFAULT_AMIKALOG_VERSION`). amika-hostd has its own installer: bump `DEFAULT_VERSION` in `install-amika-hostd.sh`.

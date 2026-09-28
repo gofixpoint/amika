@@ -181,7 +181,7 @@ Compared to **sandbox cloud providers** like E2B, Daytona, Modal, Sail Research:
 Other tools:
 
 - [`amikalog`](./docs/amikalog.md): capture your Claude Code and Codex sessions, alongside the git repo changes
-- [`amika-hostd`](./js/amika-hostd/AGENTS.md): run Rigs on your own machine as smolvm VMs, registered with Amika. Install it, with Node.js and smolvm if missing, using `curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh | sh -s -- --component amika-hostd`
+- [`amika-hostd`](./js/amika-hostd/AGENTS.md): run Rigs on your own machine as smolvm VMs, registered with Amika. Install it, with Node.js and smolvm if missing, using `curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh`
 - [`amikalyze`](./docs/labs/amikalyze.md): experimental guardrails that control which files coding agents can modify
 - [`akfs`](./docs/labs/akfs.md): experimental tooling for treating file contents as structured data that humans and AI agents can work with
 - [`js/sandbox`](./js/sandbox/src/providers/README.md): Typescript package for plugging sandbox providers into Amika

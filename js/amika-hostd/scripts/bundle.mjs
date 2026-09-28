@@ -1,7 +1,7 @@
 /**
  * Bundle the daemon and its npm dependencies into one ESM file that runs under
  * plain `node`, with no `node_modules`. This is the file the release tarball
- * ships and `install.sh --component amika-hostd` installs.
+ * ships and `install-amika-hostd.sh` installs.
  *
  * Usage: node scripts/bundle.mjs [outfile]  (default dist/bundle/amika-hostd.mjs)
  */
@@ -20,7 +20,7 @@ await build({
   bundle: true,
   platform: "node",
   format: "esm",
-  // The minimum Node.js version install.sh accepts (NODE_MIN_MAJOR).
+  // The minimum Node.js version install-amika-hostd.sh accepts (NODE_MIN_MAJOR).
   target: "node22",
   logLevel: "warning",
 });

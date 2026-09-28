@@ -7,10 +7,10 @@ registers itself with the Amika control plane when started with `up`.
 
 ## Installation
 
-On a host, install the released daemon with the repo's install script:
+On a host, install the released daemon with `install-amika-hostd.sh`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install.sh | sh -s -- --component amika-hostd
+curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
 ```
 
 It downloads `amika-hostd_<version>.tar.gz` from the `amika-hostd@v<version>`
@@ -47,7 +47,7 @@ and `AMIKA_INSTALL_DIR`:
 js/amika-hostd/scripts/package-release.sh 0.1.0 /tmp/hostd-release
 HOME=/tmp/hostd-home AMIKA_INSTALL_DIR=/tmp/hostd-bin \
   AMIKA_RELEASE_URL=file:///tmp/hostd-release \
-  sh install.sh --component amika-hostd
+  sh install-amika-hostd.sh
 ```
 
 ## Development

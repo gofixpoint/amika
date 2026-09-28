@@ -178,7 +178,7 @@ jobs:
           if-no-files-found: error
 
   # amika-hostd is one bundled JavaScript file, so it has no Go build matrix:
-  # a single tarball serves every platform (install.sh supplies Node.js).
+  # a single tarball serves every platform (install-amika-hostd.sh supplies Node.js).
   build-hostd:
     needs: metadata
     if: needs.metadata.outputs.component == 'amika-hostd'

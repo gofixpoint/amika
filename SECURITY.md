@@ -77,7 +77,7 @@ In scope:
 - The Go package `go/pkg/amika` and the internal packages it depends on
 - The TypeScript SDK (`sdk/typescript/`) and `@amika/sandbox` (`js/sandbox/`)
 - The sandbox image bundle in `sandbox-image/`
-- The installer (`install.sh`)
+- The installers (`install.sh`, `install-amika-hostd.sh`)
 - our hosted cloud services
 
 Out of scope:
