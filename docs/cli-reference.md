@@ -1,6 +1,8 @@
 # CLI Reference
 
-Complete reference for all `amika` commands, flags, and environment variables.
+Reference for `amika` commands, flags, and environment variables.
+
+`rig` and `sandbox` are aliases for the same command group.
 
 ## Global flags
 
@@ -36,6 +38,27 @@ amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status==
 ```
 
 Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, and `auth logout`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+
+## `amika send`
+
+Send a message to a coding agent and retain the conversation as a chat. Name
+an existing rig with `--rig`, continue a chat with `--session-id`, or omit both
+to create a rig. When creating a rig, repository and branch selection work
+like `rig create`: the current Git repository is detected unless `--git` or
+`--no-git` overrides it.
+
+```bash
+amika send "Fix the tests" --rig my-rig
+amika send "Now update the README" --session-id <session-id>
+amika send "Summarize the code" --rig my-rig --output json
+```
+
+Replies stream to a terminal by default; piped output and JSON are buffered.
+Use `--stream` or `--stream=false` to choose text behavior. Text metadata goes
+to stderr. JSON matches the agent-sessions API response, including `session_id`,
+`sandbox_id`, `agent`, `response`, `is_error`, `is_new_session`,
+`created_sandbox`, and optional `usage`. An agent failure still emits its
+response, then exits unsuccessfully.
 
 ## `amika sandbox`
 
@@ -152,7 +175,11 @@ The `ID` column shows the sandbox id, and `BASE_SNAPSHOT` shows the snapshot it 
 
 ### `amika sandbox connect`
 
-Connect to a running sandbox with an interactive shell, over Amika's SSH transport.
+Open an interactive shell using the same direct WebSocket SSH transport as
+`amika rig ssh <name>`. Use `ssh` when you need SSH options or a remote command;
+`connect` is the shell-only form. Both require an SSH identity configured with
+`amika secret ssh-keygen`. The `rig create --connect` flag uses this transport
+after the rig is ready.
 
 ```bash
 amika sandbox connect dev-sandbox
@@ -294,27 +321,36 @@ amika sandbox code my-sandbox --editor=codex
 
 ### `amika sandbox agent-send`
 
-Send a prompt to an AI agent CLI running inside a sandbox container. The message can be provided as a positional argument or piped via stdin. By default the command waits for the agent to finish and streams the response.
+Send a message to a coding agent in an existing rig and keep the conversation
+as a durable chat. This is the rig-scoped spelling of
+`amika send --rig <name> [message]`, with the same session handling, streaming,
+and JSON response format.
+
+A chat stores the conversation so later sends can continue it. Without
+`--session-id` or `--new-session`, this command continues the latest API chat
+on the rig, or starts one if none exists. It does not adopt a web or Slack chat.
+Text output reports `session_id: <id>` on stderr; JSON output includes
+`session_id`. Use `amika sessions list` to find chats and
+`amika sessions show <id>` to read a conversation.
 
 ```bash
-# Send a message to Claude in a sandbox
-amika sandbox agent-send my-sandbox "Add unit tests for the auth module"
-
-# Pipe a message via stdin
-echo "Fix the failing tests" | amika sandbox agent-send my-sandbox
-
-# Send without waiting for a response
-amika sandbox agent-send my-sandbox "Refactor the API layer" --no-wait
-
-# Use a different agent CLI
-amika sandbox agent-send my-sandbox "Review this code" --agent codex
+amika rig agent-send my-rig "Add unit tests for the auth module"
+echo "Fix the failing tests" | amika rig agent-send my-rig
+amika rig agent-send my-rig "Continue the review" --session-id <session-id>
+amika rig agent-send my-rig "Review this code" --agent codex --output json
 ```
 
-| Flag                  | Default            | Description                                                  |
-| --------------------- | ------------------ | ------------------------------------------------------------ |
-| `--no-wait`           | `false`            | Send the instruction and return immediately without waiting  |
-| `--workdir <path>`    | `$AMIKA_AGENT_CWD` | Working directory inside the container                       |
-| `--agent <name>`      | `claude`           | Agent CLI to use                                             |
+| Flag                  | Default                      | Description                                               |
+| --------------------- | ---------------------------- | --------------------------------------------------------- |
+| `--agent <name>`      | Existing chat or org setting | Coding agent: `claude` or `codex`; falls back to `claude` |
+| `--session-id <id>`   | —                            | Continue a durable chat returned by a prior send          |
+| `--new-session`       | `false`                      | Start a brand-new chat                                    |
+| `--stream[=false]`    | On for a terminal            | Stream text output; JSON is always buffered               |
+
+The old `--no-wait` and `--workdir` flags have been removed. Commands wait for
+the agent's response and use the rig's configured agent working directory. Session IDs
+now identify durable chats returned by `amika send`, rather than the old
+rig-local agent sessions.
 
 ---
 

@@ -147,7 +147,7 @@ describeFunctional("rig functional tests", () => {
           agent: TEST_AGENT_NAME,
         });
         expect(resp.sessionId).not.toBe("");
-        expect(typeof resp.result).toBe("string");
+        expect(typeof resp.response).toBe("string");
         expect(resp.isError).toBe(false);
       },
       LONG_TIMEOUT_MS,

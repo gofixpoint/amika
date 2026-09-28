@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { AmikaHTTPError, extractAgentAuthError } from "@/errors";
+import { AmikaHTTPError } from "@/errors";
 
 describe("AmikaHTTPError.userMessage", () => {
   it("returns 'code: message' when both are present (new envelope)", () => {
@@ -26,40 +26,5 @@ describe("AmikaHTTPError.userMessage", () => {
   it("falls back to the raw body when body isn't valid JSON", () => {
     const err = new AmikaHTTPError(500, "<html>oops</html>");
     expect(err.userMessage()).toBe("<html>oops</html>");
-  });
-});
-
-describe("extractAgentAuthError", () => {
-  it("returns the agent result when an authentication_error is reported", () => {
-    const detailsObj = {
-      is_error: true,
-      result: "anthropic returned authentication_error: invalid x-api-key",
-    };
-    const envelope = {
-      error: "agent run failed",
-      details: JSON.stringify(detailsObj),
-    };
-    const err = new AmikaHTTPError(500, JSON.stringify(envelope));
-    expect(extractAgentAuthError(err)).toMatch(/authentication_error/);
-  });
-
-  it("returns '' when the agent error isn't auth-related", () => {
-    const detailsObj = { is_error: true, result: "rate limited" };
-    const envelope = {
-      error: "agent run failed",
-      details: JSON.stringify(detailsObj),
-    };
-    const err = new AmikaHTTPError(500, JSON.stringify(envelope));
-    expect(extractAgentAuthError(err)).toBe("");
-  });
-
-  it("returns '' for non-HTTP errors", () => {
-    expect(extractAgentAuthError(new Error("network down"))).toBe("");
-  });
-
-  it("returns '' when the body isn't JSON", () => {
-    expect(extractAgentAuthError(new AmikaHTTPError(500, "plain text"))).toBe(
-      "",
-    );
   });
 });

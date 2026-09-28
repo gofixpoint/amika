@@ -1,3 +1,8 @@
+import type {
+  AgentSessionSendRequest,
+  AgentSessionSendResponse,
+} from "@/agent-sessions";
+
 // CamelCase TS mirrors of the Go SDK types in go/internal/apiclient/client.go.
 // Each request/response has explicit toWire/fromWire mappers to translate
 // between the SDK's camelCase developer surface and the snake_case JSON wire
@@ -433,46 +438,14 @@ export interface ProviderSecretListItem {
 
 // ---------- Agent send ----------
 
-export interface AgentSendRequest {
-  message: string;
-  newSession?: boolean;
-  sessionId?: string;
-  agent?: string;
-}
+/** Request for the rig-scoped alias of sendAgentSession. */
+export type AgentSendRequest = Pick<
+  AgentSessionSendRequest,
+  "message" | "newSession" | "sessionId" | "agent"
+>;
 
-export function agentSendRequestToWire(
-  r: AgentSendRequest,
-): Record<string, unknown> {
-  return omitUndefined({
-    message: r.message,
-    new_session: r.newSession,
-    session_id: r.sessionId,
-    agent: r.agent,
-  });
-}
-
-export interface AgentSendResponse {
-  /** The agent's textual response (`response` field on the wire). */
-  result: string;
-  sessionId: string;
-  isError: boolean;
-  isNewSession: boolean;
-  agentSessionId?: string;
-  costUsd?: number;
-}
-
-export function agentSendResponseFromWire(
-  w: Record<string, unknown>,
-): AgentSendResponse {
-  return {
-    result: str(w["response"]),
-    sessionId: str(w["session_id"]),
-    isError: bool(w["is_error"]),
-    isNewSession: bool(w["is_new_session"]),
-    agentSessionId: optionalStr(w["agent_session_id"]),
-    costUsd: optionalNum(w["cost_usd"]),
-  };
-}
+/** The same durable-chat response returned by sendAgentSession. */
+export type AgentSendResponse = AgentSessionSendResponse;
 
 // ---------- Sessions ----------
 

@@ -12,15 +12,7 @@
 //   - delete
 //   - ssh
 //   - code
-//   - agent-send
-//   - sshv1 (hidden; provider-native SSH, superseded by ssh)
-//   - codev1 (hidden; provider-native SSH, superseded by code)
 //
-// ssh and code run over Amika's direct WebSocket SSH transport. Their sshv1 and
-// codev1 predecessors use the provider's own SSH route and stay registered, but
-// hidden, so existing scripts keep working.
-//
-// It also owns sandbox-specific flag parsing, local and remote execution
-// helpers, git-backed mount preparation, rwcopy materialization, cleanup
-// behavior, and command-local tests.
+// Shells and editors use Amika's direct WebSocket SSH transport. The root
+// command adds agent-send using the shared send handler.
 package sandboxcmd

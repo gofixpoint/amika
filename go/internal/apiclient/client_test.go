@@ -3,7 +3,6 @@ package apiclient
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -44,31 +43,10 @@ func TestPathEscapesSandboxName(t *testing.T) {
 			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/stop",
 		},
 		{
-			name:       "GetSSH with slash",
-			call:       func(c *Client) error { _, err := c.GetSSH("a/b"); return err },
-			wantMethod: "POST",
-			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/ssh",
-		},
-		{
-			name:       "RevokeSSH with slash",
-			call:       func(c *Client) error { return c.RevokeSSH("a/b", "tok") },
-			wantMethod: "DELETE",
-			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/ssh",
-		},
-		{
 			name:       "ListSessions with slash",
 			call:       func(c *Client) error { _, err := c.ListSessions("a/b"); return err },
 			wantMethod: "GET",
 			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/sessions",
-		},
-		{
-			name: "AgentSend with slash",
-			call: func(c *Client) error {
-				_, err := c.AgentSend("a/b", AgentSendRequest{Message: "hi"})
-				return err
-			},
-			wantMethod: "POST",
-			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/agent-send",
 		},
 		{
 			name:       "GetSandbox without slash",
@@ -138,133 +116,6 @@ func TestCreateSandboxSnapshotField(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestGetSSHParsesResponse(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"ssh_destination": "user-token@ssh.app.daytona.io",
-			"token":           "tok-123",
-			"expires_at":      "2026-06-04T18:30:00.000Z",
-			"sandbox_id":      "sb_01HXYZ",
-			"sandbox_name":    "my-sandbox",
-			"repo_name":       "my-repo",
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "test-token")
-	info, err := c.GetSSH("my-sandbox")
-	if err != nil {
-		t.Fatalf("GetSSH: %v", err)
-	}
-	if info.SandboxID != "sb_01HXYZ" {
-		t.Errorf("SandboxID = %q, want %q", info.SandboxID, "sb_01HXYZ")
-	}
-	if info.SandboxName != "my-sandbox" {
-		t.Errorf("SandboxName = %q, want %q", info.SandboxName, "my-sandbox")
-	}
-	if info.SSHDestination != "user-token@ssh.app.daytona.io" {
-		t.Errorf("SSHDestination = %q", info.SSHDestination)
-	}
-}
-
-func TestExtractAgentAuthError(t *testing.T) {
-	tests := []struct {
-		name    string
-		err     error
-		wantHit bool
-	}{
-		{
-			name:    "non-HTTPError is ignored",
-			err:     fmt.Errorf("some other error"),
-			wantHit: false,
-		},
-		{
-			name:    "HTTPError without JSON body",
-			err:     &HTTPError{StatusCode: 500, Body: "internal server error"},
-			wantHit: false,
-		},
-		{
-			name: "HTTPError with auth failure in agent result",
-			err: &HTTPError{StatusCode: 500, Body: mustJSON(t, map[string]interface{}{
-				"error": "Agent command failed",
-				"details": mustJSONString(t, map[string]interface{}{
-					"type":     "result",
-					"is_error": true,
-					"result":   `Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}`,
-				}),
-			})},
-			wantHit: true,
-		},
-		{
-			name: "HTTPError with non-auth agent error",
-			err: &HTTPError{StatusCode: 500, Body: mustJSON(t, map[string]interface{}{
-				"error": "Agent command failed",
-				"details": mustJSONString(t, map[string]interface{}{
-					"type":     "result",
-					"is_error": true,
-					"result":   "Some other agent error",
-				}),
-			})},
-			wantHit: false,
-		},
-		{
-			name: "HTTPError with is_error false",
-			err: &HTTPError{StatusCode: 500, Body: mustJSON(t, map[string]interface{}{
-				"error": "Agent command failed",
-				"details": mustJSONString(t, map[string]interface{}{
-					"type":     "result",
-					"is_error": false,
-					"result":   "Failed to authenticate. API Error: 401",
-				}),
-			})},
-			wantHit: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractAgentAuthError(tt.err)
-			if tt.wantHit && got == "" {
-				t.Error("expected auth error to be detected, got empty string")
-			}
-			if !tt.wantHit && got != "" {
-				t.Errorf("expected no auth error, got %q", got)
-			}
-		})
-	}
-}
-
-func TestAgentSendAuthErrorMessage(t *testing.T) {
-	details := mustJSONString(t, map[string]interface{}{
-		"type":     "result",
-		"is_error": true,
-		"result":   `Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}`,
-	})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error":   "Agent command failed",
-			"details": details,
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "test-token")
-	_, err := c.AgentSend("test-sandbox", AgentSendRequest{Message: "hello"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "failed to authenticate with its AI provider") {
-		t.Errorf("error should mention auth provider failure, got: %s", msg)
-	}
-	if !strings.Contains(msg, "expired or been revoked") { //nolint:dupword
-		t.Errorf("error should mention expired credentials, got: %s", msg)
 	}
 }
 
@@ -412,86 +263,6 @@ func TestSecretSummaryParsesFullSchema(t *testing.T) {
 	if s.Description != nil {
 		t.Errorf("Description = %v, want nil", s.Description)
 	}
-}
-
-// TestAgentSendResponseParsesAllFields guards the full AgentSendResponse
-// schema, including the fields the CLI-only Result/legacy shape used to drop
-// (is_new_session, cost_usd).
-func TestAgentSendResponseParsesAllFields(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess_1", "agent_session_id": "agent_sess_1",
-			"response": "done", "is_error": false, "is_new_session": true, "cost_usd": 0.42,
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "test-token")
-	resp, err := c.AgentSend("box", AgentSendRequest{Message: "hi"})
-	if err != nil {
-		t.Fatalf("AgentSend: %v", err)
-	}
-	if resp.Response != "done" || resp.SessionID != "sess_1" || resp.AgentSessionID != "agent_sess_1" {
-		t.Errorf("resp = %+v", resp)
-	}
-	if !resp.IsNewSession {
-		t.Error("IsNewSession = false, want true")
-	}
-	if resp.CostUSD == nil || *resp.CostUSD != 0.42 {
-		t.Errorf("CostUSD = %v, want 0.42", resp.CostUSD)
-	}
-}
-
-// TestAgentSendJobResponse_RoundTrip guards the AgentSendJobResponse mirror
-// type against the async agent-send-jobs schema (job_id/state/
-// agent_session_id/is_new_session/is_error/result_text/created_at/
-// updated_at), including its nullable fields.
-func TestAgentSendJobResponse_RoundTrip(t *testing.T) {
-	const body = `{
-      "job_id": "job_1",
-      "state": "running",
-      "agent_session_id": null,
-      "is_new_session": true,
-      "is_error": false,
-      "result_text": null,
-      "created_at": "2026-01-01T00:00:00Z",
-      "updated_at": "2026-01-01T00:00:00Z"
-    }`
-	var job AgentSendJobResponse
-	if err := json.Unmarshal([]byte(body), &job); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if job.JobID != "job_1" || job.State != "running" {
-		t.Errorf("job = %+v", job)
-	}
-	if job.AgentSessionID != nil || job.ResultText != nil {
-		t.Errorf("nullable fields should be nil: %+v", job)
-	}
-	data, err := json.Marshal(job)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{`"agent_session_id":null`, `"result_text":null`, `"job_id":"job_1"`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("re-encoded JSON missing %q, got: %s", want, got)
-		}
-	}
-}
-
-func mustJSON(t *testing.T, v interface{}) string {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("mustJSON: %v", err)
-	}
-	return string(b)
-}
-
-func mustJSONString(t *testing.T, v interface{}) string {
-	t.Helper()
-	return mustJSON(t, v)
 }
 
 func TestCreateUploadBatch_SendsFilesAndAuth(t *testing.T) {

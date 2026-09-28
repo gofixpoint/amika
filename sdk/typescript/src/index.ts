@@ -1,7 +1,7 @@
 export { AmikaClient } from "@/client";
 export type { AmikaClientOptions } from "@/client";
 
-export { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
+export { AmikaError, AmikaHTTPError } from "@/errors";
 
 export {
   RESERVED_PORT_MAX,

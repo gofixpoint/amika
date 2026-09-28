@@ -89,12 +89,6 @@ func TestResolveRemoteWorkspacePath(t *testing.T) {
 	}
 }
 
-// stubSSHClient implements sshInfoClient for testing.
-type stubSSHClient struct {
-	info    *apiclient.SSHInfo
-	sandbox *apiclient.RemoteSandbox
-}
-
 // stubV2SSHClient implements the APIs `sandbox code` uses before it hands the prepared
 // alias to an editor. Its session method is not reached by this test because
 // prepareSessionTarget is replaced with a recorder.
@@ -108,14 +102,6 @@ func (s *stubV2SSHClient) GetSandbox(_ string) (*apiclient.RemoteSandbox, error)
 
 func (s *stubV2SSHClient) CreateSSHSession(_ string) (*apiclient.SSHSession, error) {
 	return nil, nil
-}
-
-func (s *stubSSHClient) GetSSH(_ string) (*apiclient.SSHInfo, error) {
-	return s.info, nil
-}
-
-func (s *stubSSHClient) GetSandbox(_ string) (*apiclient.RemoteSandbox, error) {
-	return s.sandbox, nil
 }
 
 func testSSHPaths(t *testing.T) (basedir.Paths, string) {
@@ -139,33 +125,15 @@ func TestValidateEditor(t *testing.T) {
 	}
 }
 
-func daytonaInfo() *apiclient.SSHInfo {
-	return &apiclient.SSHInfo{
-		SSHDestination: "-p 2222 tok@ssh.app.daytona.io",
-		SandboxID:      "sb_abc",
-		SandboxName:    "my-sandbox",
-		RepoName:       "biz",
-	}
-}
-
 func TestOpenSandboxInClaude(t *testing.T) {
 	opened := stubOpenApp(t)
 	paths, home := testSSHPaths(t)
-	client := &stubSSHClient{info: daytonaInfo()}
+	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.app-amika-dev.amika", sandboxName: "my-sandbox", repoName: "biz"}
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	if err := openSandboxInClaude(cmd, client, paths, "my-sandbox", ""); err != nil {
+	if err := openSandboxInClaudeTarget(cmd, paths, target, ""); err != nil {
 		t.Fatalf("openSandboxInClaude: %v", err)
-	}
-
-	// The stable alias landed in the managed SSH config.
-	amikaConf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
-	if err != nil {
-		t.Fatalf("read amika.conf: %v", err)
-	}
-	if !bytes.Contains(amikaConf, []byte("Host amika-sb_abc")) {
-		t.Fatalf("amika.conf missing alias:\n%s", amikaConf)
 	}
 
 	// The Claude environment was registered against that alias.
@@ -188,7 +156,7 @@ func TestOpenSandboxInClaude(t *testing.T) {
 		t.Fatalf("expected 1 sshConfigs entry, got %d", len(doc.SSHConfigs))
 	}
 	got := doc.SSHConfigs[0]
-	if got.ID != "amika-sb_abc" || got.SSHHost != "amika-sb_abc" || got.Name != "Amika: my-sandbox" {
+	if got.ID != "my-sandbox.sb_abc.app-amika-dev.amika" || got.SSHHost != "my-sandbox.sb_abc.app-amika-dev.amika" || got.Name != "Amika: my-sandbox" {
 		t.Fatalf("unexpected entry: %+v", got)
 	}
 	if got.StartDirectory != "/home/amika/workspace/biz" {
@@ -202,20 +170,12 @@ func TestOpenSandboxInClaude(t *testing.T) {
 func TestOpenSandboxInCodex(t *testing.T) {
 	opened := stubOpenApp(t)
 	paths, home := testSSHPaths(t)
-	client := &stubSSHClient{info: daytonaInfo()}
+	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.app-amika-dev.amika", sandboxName: "my-sandbox", repoName: "biz"}
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	if err := openSandboxInCodex(cmd, client, paths, "my-sandbox", ""); err != nil {
+	if err := openSandboxInCodexTarget(cmd, paths, target, ""); err != nil {
 		t.Fatalf("openSandboxInCodex: %v", err)
-	}
-
-	amikaConf, err := os.ReadFile(filepath.Join(home, ".ssh", "amika.conf"))
-	if err != nil {
-		t.Fatalf("read amika.conf: %v", err)
-	}
-	if !bytes.Contains(amikaConf, []byte("Host amika-sb_abc")) {
-		t.Fatalf("amika.conf missing alias:\n%s", amikaConf)
 	}
 
 	var cfg struct {
@@ -389,7 +349,7 @@ func TestOpenSandboxInEditorSkipsWindowsWhenNotWSL(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})
-	target := sandboxSSHAlias{alias: "amika-sb_abc", sandboxName: "my-sandbox", repoName: "biz"}
+	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.app-amika-dev.amika", sandboxName: "my-sandbox", repoName: "biz"}
 	// Without WSL the launcher requires the editor CLI locally; the error
 	// names the install hint rather than touching the Windows side.
 	err := openSandboxInEditor(cmd, "vscode", paths, target, "")
@@ -404,11 +364,7 @@ func TestOpenSandboxInEditorSkipsWindowsWhenNotWSL(t *testing.T) {
 	}
 }
 
-// TestSSHCommandNames pins the CLI surface the rename established: the direct
-// WebSocket transport owns the plain `ssh`/`code` names and is listed in help,
-// while the provider-native predecessors stay reachable under `sshv1`/`codev1`
-// but hidden. New() is a once-per-process call, so assert on the command
-// objects rather than building the tree.
+// TestSSHCommandNames preserves the v2 aliases for the current transports.
 func TestSSHCommandNames(t *testing.T) {
 	for _, tt := range []struct {
 		cmd         *cobra.Command
@@ -418,8 +374,6 @@ func TestSSHCommandNames(t *testing.T) {
 	}{
 		{cmd: sandboxSSHV2Cmd, wantName: "ssh", wantHidden: false, wantAliases: []string{"sshv2"}},
 		{cmd: sandboxCodeV2Cmd, wantName: "code", wantHidden: false, wantAliases: []string{"codev2"}},
-		{cmd: sandboxSSHV1Cmd, wantName: "sshv1", wantHidden: true},
-		{cmd: sandboxCodeV1Cmd, wantName: "codev1", wantHidden: true},
 	} {
 		t.Run(tt.wantName, func(t *testing.T) {
 			if got := tt.cmd.Name(); got != tt.wantName {
