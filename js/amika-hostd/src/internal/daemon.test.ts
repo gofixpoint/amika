@@ -21,6 +21,7 @@ import {
   DaemonError,
   daemonPaths,
   ensureNotRunning,
+  isDaemonProcess,
   isDaemonRunning,
   isSmolvmRunning,
   PROCESS_TITLE,
@@ -415,6 +416,21 @@ describe("stopProcess", () => {
     expect(await stopProcess(child.pid!, () => false, { timeoutMs: 100 })).toBe(
       true,
     );
+  });
+});
+
+describe("isDaemonProcess", () => {
+  it("counts only a live process titled amika-hostd", async () => {
+    const daemon = await liveProcess(PROCESS_TITLE);
+    const unrelated = await liveProcess();
+    try {
+      expect(isDaemonProcess(daemon.pid!)).toBe(true);
+      expect(isDaemonProcess(unrelated.pid!)).toBe(false);
+      expect(isDaemonProcess(2 ** 22 + 1)).toBe(false);
+    } finally {
+      daemon.kill();
+      unrelated.kill();
+    }
   });
 });
 

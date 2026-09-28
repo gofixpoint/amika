@@ -10,6 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -45,6 +46,8 @@ export interface SmolvmDeps {
   readyTimeoutMs?: number;
   stopTimeoutMs?: number;
   pollMs?: number;
+  /** Stop waiting for smolvm to serve once this aborts (a shutdown signal). */
+  signal?: AbortSignal;
 }
 
 /** smolvm stops each machine cleanly on shutdown, which can take a while. */
@@ -52,8 +55,9 @@ export const SMOLVM_STOP_TIMEOUT_MS = 60_000;
 
 /**
  * Start `smolvm serve` listening where the daemon expects it (`apiUrl`,
- * i.e. `SMOL_API_URL`), and resolve once it answers `/health`. Fails if
- * anything already answers there: that smolvm is not ours to stop.
+ * i.e. `SMOL_API_URL`), and resolve once it answers `/health`, or as soon as
+ * `signal` aborts, so the caller can stop it. Fails if anything already
+ * answers there: that smolvm is not ours to stop.
  */
 export async function startSmolvm(
   apiUrl: string | undefined,
@@ -67,6 +71,7 @@ export async function startSmolvm(
     readyTimeoutMs = 30_000,
     stopTimeoutMs = SMOLVM_STOP_TIMEOUT_MS,
     pollMs = 200,
+    signal,
   }: SmolvmDeps = {},
 ): Promise<ManagedSmolvm> {
   const { origin, listen } = smolvmListenAddress(apiUrl);
@@ -105,7 +110,15 @@ export async function startSmolvm(
   const exited = exitOf(child);
   const pid = child.pid;
   if (pid !== undefined) {
-    writeFileSync(paths.smolvmPidFile, `${pid}\n`, { mode: 0o600 });
+    try {
+      writeFileSync(paths.smolvmPidFile, `${pid}\n`, { mode: 0o600 });
+    } catch (error) {
+      // Without its pidfile, `down` could never find this smolvm.
+      child.kill("SIGTERM");
+      throw new DaemonError(
+        `cannot write ${paths.smolvmPidFile}: ${(error as NodeJS.ErrnoException).code ?? "unknown error"}`,
+      );
+    }
     void exited.then(() => removePidFile(paths.smolvmPidFile, pid));
   }
 
@@ -132,6 +145,7 @@ export async function startSmolvm(
         `smolvm ${exitReason} during startup; see ${paths.smolvmLogFile}`,
       );
     }
+    if (signal?.aborted) break;
     const status = await probe(origin, fetcher);
     if (status !== undefined && status >= 200 && status < 300) break;
     if (Date.now() >= deadline) {
@@ -154,7 +168,8 @@ export async function startSmolvm(
 
 /**
  * The `--listen` address for `apiUrl`. A managed smolvm serves plain HTTP at
- * the root, so the URL must be `http://host[:port]` with nothing else.
+ * the root, so the URL must be `http://host[:port]` with nothing else, and
+ * `--listen` takes only an IP address, not a hostname such as `localhost`.
  */
 export function smolvmListenAddress(apiUrl = DEFAULT_SMOL_API_URL): {
   origin: string;
@@ -172,14 +187,32 @@ export function smolvmListenAddress(apiUrl = DEFAULT_SMOL_API_URL): {
     url.password ||
     url.pathname !== "/" ||
     url.search ||
-    url.hash
+    url.hash ||
+    isIP(url.hostname.replace(/^\[(.*)\]$/, "$1")) === 0
   ) {
     throw new DaemonError(
-      "SMOL_API_URL must be http://<host>:<port> with no path, since `amika-hostd up` starts smolvm listening there",
+      "SMOL_API_URL must be http://<IP address>:<port> with no path (e.g. http://127.0.0.1:8080), since `amika-hostd up` starts smolvm listening there",
     );
   }
   // `hostname` keeps an IPv6 literal's brackets, as `--listen` expects.
   return { origin: url.origin, listen: `${url.hostname}:${url.port || "80"}` };
+}
+
+/** `/health`'s status, or undefined if nothing answers. */
+async function probe(
+  origin: string,
+  fetcher: typeof fetch,
+): Promise<number | undefined> {
+  try {
+    const response = await fetcher(`${origin}/health`, {
+      signal: AbortSignal.timeout(1_000),
+      redirect: "manual",
+    });
+    await response.body?.cancel();
+    return response.status;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -205,23 +238,6 @@ function isExecutableFile(file: string): boolean {
     return statSync(file).isFile();
   } catch {
     return false;
-  }
-}
-
-/** `/health`'s status, or undefined if nothing answers. */
-async function probe(
-  origin: string,
-  fetcher: typeof fetch,
-): Promise<number | undefined> {
-  try {
-    const response = await fetcher(`${origin}/health`, {
-      signal: AbortSignal.timeout(1_000),
-      redirect: "manual",
-    });
-    await response.body?.cancel();
-    return response.status;
-  } catch {
-    return undefined;
   }
 }
 

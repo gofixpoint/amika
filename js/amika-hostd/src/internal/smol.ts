@@ -1,4 +1,4 @@
-/** Transport to the separately managed, local smolvm serve process. */
+/** Transport to the local `smolvm serve` process that `up` starts. */
 import { z } from "zod";
 
 /** Where smolvm's API is reached unless `SMOL_API_URL` says otherwise. */

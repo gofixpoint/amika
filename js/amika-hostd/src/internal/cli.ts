@@ -22,7 +22,7 @@ import {
   claimPidFile as claimPidFileOnDisk,
   daemonPaths,
   ensureNotRunning,
-  isDaemonRunning,
+  isDaemonProcess,
   isSmolvmRunning as isSmolvmProcess,
   notifyReady as notifyParent,
   readRunningPid,
@@ -438,6 +438,8 @@ async function serveInForeground(
   // Listen for the signal first, so Ctrl-C during startup (or during
   // `afterStart`'s request to Amika) still stops smolvm on the way out.
   const signalled = deps.shutdownSignal();
+  const interrupted = new AbortController();
+  void signalled.then(() => interrupted.abort());
   let runtime: ManagedSmolvm | undefined;
   let server: RunningServer | undefined;
   const stopAll = async () => {
@@ -452,8 +454,15 @@ async function serveInForeground(
     }
   };
   try {
-    if (smolvm) runtime = await startSmolvm(config, paths, deps);
-    server = await listen(config, deps);
+    if (smolvm) {
+      runtime = await startSmolvm(config, paths, deps, interrupted.signal);
+    }
+    if (!interrupted.signal.aborted) server = await listen(config, deps);
+    // Signalled during startup: stop without telling `up` it is ready.
+    if (server === undefined || interrupted.signal.aborted) {
+      await stopAll();
+      return;
+    }
     deps.out(`amika-hostd listening on ${localUrl(config.host, server.port)}`);
     await (deps.notifyReady ?? notifyParent)(server.port);
   } catch (error) {
@@ -488,26 +497,18 @@ async function startSmolvm(
   config: HostdConfigWith<"secretKey">,
   paths: DaemonPaths,
   deps: CliDeps,
+  signal: AbortSignal,
 ): Promise<ManagedSmolvm> {
   const runtime = await (deps.startSmolvm ?? startSmolvmServe)(
     config.smolApiUrl,
     paths,
     withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
+    { signal },
   );
   deps.out(
     `smolvm serving at ${config.smolApiUrl ?? DEFAULT_SMOL_API_URL} (pid ${runtime.pid}); logs: ${paths.smolvmLogFile}`,
   );
   return runtime;
-}
-
-async function stopSmolvm(runtime: ManagedSmolvm | undefined, deps: CliDeps) {
-  if (!runtime?.running) return;
-  deps.out(`Stopping smolvm (pid ${runtime.pid}) and its machines`);
-  if (!(await runtime.stop())) {
-    deps.err(
-      `amika-hostd: smolvm (pid ${runtime.pid}) is still stopping its machines; \`amika-hostd down\` waits for it`,
-    );
-  }
 }
 
 async function listen(
@@ -523,6 +524,16 @@ async function listen(
   }
 }
 
+async function stopSmolvm(runtime: ManagedSmolvm | undefined, deps: CliDeps) {
+  if (!runtime?.running) return;
+  deps.out(`Stopping smolvm (pid ${runtime.pid}) and its machines`);
+  if (!(await runtime.stop())) {
+    deps.err(
+      `amika-hostd: smolvm (pid ${runtime.pid}) is still stopping its machines; \`amika-hostd down\` waits for it`,
+    );
+  }
+}
+
 /** Long enough for the daemon's own shutdown, which includes smolvm's. */
 const DOWN_TIMEOUT_MS = SHUTDOWN_GRACE_MS + SMOLVM_STOP_TIMEOUT_MS + 5_000;
 
@@ -533,11 +544,11 @@ const DOWN_TIMEOUT_MS = SHUTDOWN_GRACE_MS + SMOLVM_STOP_TIMEOUT_MS + 5_000;
 async function down(deps: CliDeps): Promise<number> {
   const paths = daemonPaths(deps.env);
   const stop = deps.stopProcess ?? stopProcessByPid;
-  const isDaemon = deps.isRunning ?? isDaemonRunning;
+  const isDaemon = deps.isRunning ?? isDaemonProcess;
   const isSmolvm = deps.isSmolvmRunning ?? isSmolvmProcess;
   const daemon = readRunningPid(paths.pidFile, isDaemon);
   if (daemon !== undefined) {
-    deps.out(`Stopping amika-hostd (pid ${daemon}) and its smolvm`);
+    deps.out(`Stopping amika-hostd (pid ${daemon})`);
     if (!(await stop(daemon, isDaemon, { timeoutMs: DOWN_TIMEOUT_MS }))) {
       throw new DaemonError(
         `amika-hostd (pid ${daemon}) did not exit within ${DOWN_TIMEOUT_MS / 1000}s; see ${paths.logFile}`,
@@ -556,10 +567,14 @@ async function down(deps: CliDeps): Promise<number> {
     // No daemon is left to remove it when smolvm exits.
     removePidFile(paths.smolvmPidFile, smolvm);
   }
+  const stopped = [
+    ...(daemon === undefined ? [] : ["amika-hostd"]),
+    ...(smolvm === undefined ? [] : ["smolvm"]),
+  ];
   deps.out(
-    daemon === undefined && smolvm === undefined
+    stopped.length === 0
       ? "amika-hostd is not running"
-      : "Stopped amika-hostd and smolvm",
+      : `Stopped ${stopped.join(" and ")}`,
   );
   return 0;
 }

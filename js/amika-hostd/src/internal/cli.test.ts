@@ -8,7 +8,7 @@ import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
 import type { HostdConfigFile, HostdConfigWith } from "./config.js";
 import { DaemonError } from "./daemon.js";
 import type { RunningServer } from "./server.js";
-import type { ManagedSmolvm } from "./smolvm-serve.js";
+import type { ManagedSmolvm, SmolvmDeps } from "./smolvm-serve.js";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
 const ENV = {
@@ -38,6 +38,9 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
   const server: RunningServer = { port: 3020, close: vi.fn(async () => {}) };
   const release = vi.fn();
   let smolvmExit: (reason: string) => void = () => {};
+  // By default the shutdown signal arrives once the daemon is ready.
+  let signalReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => (signalReady = resolve));
   let smolvmRunning = true;
   const smolvm: ManagedSmolvm = {
     pid: 88,
@@ -52,13 +55,17 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     out: (line: string) => out.push(line),
     err: (line: string) => err.push(line),
     self: ["node", "cli.js"],
-    shutdownSignal: vi.fn(async () => {}),
+    shutdownSignal: vi.fn(() => ready),
     loadConfigFile: vi.fn((): HostdConfigFile | undefined => undefined),
     startServer: vi.fn(async (_config: HostdConfigWith<"secretKey">) => server),
     startInBackground: vi.fn(async () => ({ pid: 77, port: 4000 })),
     startSmolvm: vi.fn(
-      async (_url: string | undefined, _paths, _env: NodeJS.ProcessEnv) =>
-        smolvm,
+      async (
+        _url: string | undefined,
+        _paths,
+        _env: NodeJS.ProcessEnv,
+        _options?: SmolvmDeps,
+      ) => smolvm,
     ),
     stopProcess: vi.fn(
       async (
@@ -69,7 +76,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     ),
     isSmolvmRunning: vi.fn(() => false),
     claimPidFile: vi.fn(() => release),
-    notifyReady: vi.fn(async (_port: number) => {}),
+    notifyReady: vi.fn(async (_port: number) => signalReady()),
     isRunning: vi.fn(() => false),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
     setHostSizes: vi.fn(async () => HOST),
@@ -604,6 +611,25 @@ describe("managing smolvm", () => {
     expect(smolvm.stop).not.toHaveBeenCalled();
   });
 
+  it("stops smolvm, without serving, when signalled while it starts", async () => {
+    const { deps, smolvm, release } = harness();
+    deps.shutdownSignal = vi.fn(async () => {});
+    let signal: AbortSignal | undefined;
+    deps.startSmolvm.mockImplementationOnce(
+      async (_url, _paths, _env, options) => {
+        signal = options?.signal;
+        return smolvm;
+      },
+    );
+    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
+    // startSmolvm returns early once this aborts.
+    expect(signal?.aborted).toBe(true);
+    expect(deps.startServer).not.toHaveBeenCalled();
+    expect(deps.notifyReady).not.toHaveBeenCalled();
+    expect(smolvm.stop).toHaveBeenCalled();
+    expect(release).toHaveBeenCalled();
+  });
+
   it("says so when smolvm is still stopping its machines", async () => {
     const { deps, err, smolvm } = harness();
     vi.mocked(smolvm.stop).mockResolvedValueOnce(false);
@@ -641,8 +667,8 @@ describe("down", () => {
       { timeoutMs: expect.any(Number) },
     ]);
     expect(out).toEqual([
-      "Stopping amika-hostd (pid 999999) and its smolvm",
-      "Stopped amika-hostd and smolvm",
+      "Stopping amika-hostd (pid 999999)",
+      "Stopped amika-hostd",
     ]);
   });
 
@@ -653,7 +679,10 @@ describe("down", () => {
     expect(deps.stopProcess.mock.calls.map((call) => call[0])).toEqual([
       888888,
     ]);
-    expect(out[0]).toBe("Stopping smolvm (pid 888888) and its machines");
+    expect(out).toEqual([
+      "Stopping smolvm (pid 888888) and its machines",
+      "Stopped smolvm",
+    ]);
     // No daemon is left to remove its pidfile.
     expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
   });

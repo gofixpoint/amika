@@ -213,13 +213,38 @@ export function openLogFile(file: string): number {
 }
 
 /**
- * Whether `pid` is a live smolvm. Unlike the daemon's own pidfile, a stale
- * smolvm pidfile is acted on (`down` signals it), so a pid whose program
- * cannot be confirmed as smolvm never counts.
+ * Whether `pid` is a live amika-hostd. Pids are reused (the pidfile survives
+ * reboots), so where `/proc` exists the process must carry `PROCESS_TITLE`;
+ * elsewhere any live process counts, and the error says how to recover.
+ */
+export function isDaemonRunning(pid: number): boolean {
+  if (!isAlive(pid)) return false;
+  let cmdline: string;
+  try {
+    cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+  } catch {
+    return true;
+  }
+  return cmdline.split("\0")[0] === PROCESS_TITLE;
+}
+
+/**
+ * Whether `pid` is confirmed to be a live amika-hostd. `down` signals it, so
+ * unlike `isDaemonRunning` a process that cannot be confirmed never counts;
+ * without `/proc`, `ps` shows the title the daemon set.
+ */
+export function isDaemonProcess(pid: number): boolean {
+  return isAlive(pid) && programOf(pid, "command") === PROCESS_TITLE;
+}
+
+/**
+ * Whether `pid` is a live smolvm. `down` signals it, so, as with
+ * `isDaemonProcess`, a pid whose program cannot be confirmed as smolvm never
+ * counts.
  */
 export function isSmolvmRunning(pid: number): boolean {
   if (!isAlive(pid)) return false;
-  const program = programOf(pid);
+  const program = programOf(pid, "comm");
   return (
     program !== undefined && SMOLVM_PROGRAMS.includes(path.basename(program))
   );
@@ -310,7 +335,7 @@ function alreadyRunning(pid: number, pidFile: string): DaemonError {
   );
 }
 
-export function readPid(pidFile: string): number | undefined {
+function readPid(pidFile: string): number | undefined {
   let contents: string;
   try {
     contents = readFileSync(pidFile, "utf8");
@@ -319,22 +344,6 @@ export function readPid(pidFile: string): number | undefined {
   }
   const pid = Number(contents.trim());
   return Number.isInteger(pid) && pid > 0 ? pid : undefined;
-}
-
-/**
- * Whether `pid` is a live amika-hostd. Pids are reused (the pidfile survives
- * reboots), so where `/proc` exists the process must carry `PROCESS_TITLE`;
- * elsewhere any live process counts, and the error says how to recover.
- */
-export function isDaemonRunning(pid: number): boolean {
-  if (!isAlive(pid)) return false;
-  let cmdline: string;
-  try {
-    cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-  } catch {
-    return true;
-  }
-  return cmdline.split("\0")[0] === PROCESS_TITLE;
 }
 
 function isAlive(pid: number): boolean {
@@ -350,19 +359,27 @@ function isAlive(pid: number): boolean {
 /** The smolvm launcher `exec`s `smolvm-bin`, so a running smolvm is either. */
 const SMOLVM_PROGRAMS = ["smolvm", "smolvm-bin"];
 
-/** The program `pid` runs, from `/proc` or else `ps`; undefined if unknown. */
-function programOf(pid: number): string | undefined {
+/**
+ * The program `pid` runs, from `/proc` or else `ps`; undefined if unknown.
+ * `ps` reports it as `comm` (the executable) or as the first word of
+ * `command` (the argv, which `process.title` rewrites).
+ */
+function programOf(
+  pid: number,
+  psField: "comm" | "command",
+): string | undefined {
   try {
     return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0];
   } catch {
     // No /proc (e.g. macOS), or the process just exited.
   }
   try {
-    const comm = execFileSync("ps", ["-o", "comm=", "-p", String(pid)], {
+    const shown = execFileSync("ps", ["-o", `${psField}=`, "-p", String(pid)], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    return comm === "" ? undefined : comm;
+    const program = psField === "command" ? shown.split(/\s+/)[0] : shown;
+    return program === "" ? undefined : program;
   } catch {
     return undefined;
   }

@@ -85,7 +85,8 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   `SIGINT` or `SIGTERM`. Shutdown waits up to 5 seconds for in-flight requests,
   then drops the rest, and the process exits a second later even if a request
   to the Smol runtime is still pending, so a slow client or runtime cannot keep
-  the daemon alive. If the launching `up` exits before the child is ready, the
+  the daemon alive. A daemon running smolvm first waits up to 60s more for it
+  to stop (see [smolvm](#smolvm)). If the launching `up` exits before the child is ready, the
   child shuts down too.
   Only `up` registers with Amika; `serve` does not. `up` (either way) and
   `serve --smolvm` also run smolvm; plain `serve` does not, for development.
@@ -150,7 +151,7 @@ background daemon with `amika-hostd down`. `build` uses
 the daemon and the runtime it forwards to start and stop together, and a host
 is left as it was before `up`:
 
-1. Before claiming anything, it refuses to start if a smolvm from an earlier
+1. Before spawning smolvm, it refuses to start if a smolvm from an earlier
    run is still alive (`smolvm.pid`, next to the daemon's pidfile) or if
    anything already answers `GET /health` at `SMOL_API_URL`: a smolvm it did
    not start is not the daemon's to stop.
@@ -158,11 +159,13 @@ is left as it was before `up`:
    (`~/.smolvm/smolvm` or `~/.local/bin/smolvm`), and runs
    `smolvm serve start --listen <host:port of SMOL_API_URL>`. smolvm's own
    default is a Unix socket, so the address is always passed, and
-   `SMOL_API_URL` must be a plain `http://host:port`. smolvm gets its own
+   `SMOL_API_URL` must be a plain `http://<IP address>[:port]` (port 80 if
+   omitted), since `--listen` takes no hostnames such as `localhost`. smolvm gets its own
    process group, so Ctrl-C on `up --fg` reaches only the daemon; its output
    goes to `smolvm.log`; and it never sees the API key or secret key.
 3. The daemon listens only once smolvm answers `/health` (30s at most), so the
-   background `up` reports a smolvm that fails to start.
+   background `up` reports a smolvm that fails to start. A shutdown signal
+   while it waits stops smolvm and exits without listening.
 4. On shutdown the daemon stops listening first, then sends smolvm `SIGTERM`
    and waits up to 60s. smolvm is started with `SMOLVM_DRAIN_ON_SHUTDOWN=1`,
    so it stops every machine cleanly (disks are kept; nothing is deleted)
@@ -173,10 +176,10 @@ is left as it was before `up`:
    than answer every request with a `502`.
 
 `down` stops the daemon, then any smolvm a daemon left behind (one killed with
-`SIGKILL`, or that timed out stopping it). The smolvm pidfile is acted on, not
-only read, so a pid counts as smolvm only when its program is confirmed to be
-`smolvm` or `smolvm-bin` (the binary the `smolvm` launcher `exec`s), from
-`/proc` or `ps`.
+`SIGKILL`, or that timed out stopping it). Both pidfiles are acted on, not
+only read, so `down` signals a pid only when `/proc` or `ps` confirms its
+program: `amika-hostd` (the daemon's title) for the daemon, and `smolvm` or
+`smolvm-bin` (the binary the `smolvm` launcher `exec`s) for smolvm.
 
 ## Configuration
 

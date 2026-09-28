@@ -60,7 +60,7 @@ describe("smolvmListenAddress", () => {
     [undefined, "http://127.0.0.1:8080", "127.0.0.1:8080"],
     ["http://127.0.0.1:9000/", "http://127.0.0.1:9000", "127.0.0.1:9000"],
     ["http://[::1]:9000", "http://[::1]:9000", "[::1]:9000"],
-    ["http://localhost", "http://localhost", "localhost:80"],
+    ["http://10.0.0.5", "http://10.0.0.5", "10.0.0.5:80"],
   ])("listens where %s points", (url, origin, listen) => {
     expect(smolvmListenAddress(url)).toEqual({ origin, listen });
   });
@@ -70,6 +70,8 @@ describe("smolvmListenAddress", () => {
     "http://127.0.0.1:8080/smol",
     "http://user:pw@127.0.0.1:8080",
     "unix:///run/smolvm.sock",
+    // smolvm's --listen takes only an IP address.
+    "http://localhost:8080",
     "not a url",
   ])("refuses %s", (url) => {
     expect(() => smolvmListenAddress(url)).toThrow(DaemonError);
@@ -177,6 +179,30 @@ describe("startSmolvm", () => {
       "smolvm did not start serving at http://127.0.0.1:8080 within 0.02s",
     );
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("stops a smolvm whose pidfile cannot be written", async () => {
+    const files = paths();
+    // A directory where the pidfile goes makes the write fail.
+    mkdirSync(files.smolvmPidFile, { recursive: true });
+    const child = fakeChild();
+    await expect(
+      startSmolvm(undefined, files, {}, fakeDeps(child)),
+    ).rejects.toThrow(`cannot write ${files.smolvmPidFile}: EISDIR`);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("stops waiting to serve once the signal aborts", async () => {
+    const child = fakeChild();
+    const aborted = new AbortController();
+    aborted.abort();
+    const deps = fakeDeps(child, {
+      fetch: health(undefined),
+      signal: aborted.signal,
+    });
+    const smolvm = await startSmolvm(undefined, paths(), {}, deps);
+    expect(smolvm.running).toBe(true);
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it("gives up waiting on a slow stop without killing smolvm", async () => {
