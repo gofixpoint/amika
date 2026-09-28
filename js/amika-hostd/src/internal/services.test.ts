@@ -192,17 +192,26 @@ describe("createUpgradeHandler", () => {
   it("ends an upgrade that shutdown catches before it connects", async () => {
     let release = () => {};
     const lookup = new Promise<void>((resolve) => (release = resolve));
-    const runtime = new SmolRuntime(
-      { apiUrl: "http://runtime:8080" },
-      vi.fn<typeof fetch>(async () => {
-        await lookup;
-        return Response.json({
-          name: "demo",
-          state: "running",
-          ports: [{ host: 1, guest: 60999 }],
-        });
-      }),
-    );
+    let resolved = () => {};
+    const lookupDone = new Promise<void>((resolve) => (resolved = resolve));
+    const runtime = new SmolRuntime({ apiUrl: "http://runtime:8080" });
+    // Signals once the handler has the port, so the dial assertion below
+    // runs only after the handler could have dialed.
+    vi.spyOn(runtime, "request").mockImplementation(async () => {
+      await lookup;
+      const machine = {
+        name: "demo",
+        state: "running",
+        ports: [{ host: 1, guest: 60999 }],
+      };
+      return {
+        ok: true,
+        json: async () => {
+          resolved();
+          return machine;
+        },
+      } as unknown as Response;
+    });
     const tunnels = new Set<Duplex>();
     const dial = vi.fn<(port: number) => Socket>();
     const server = createHttpServer();
@@ -213,7 +222,7 @@ describe("createUpgradeHandler", () => {
     release();
     await once(socket, "close");
     await vi.waitFor(() => expect(tunnels.size).toBe(0));
-    await lookup;
+    await lookupDone;
     await new Promise((resolve) => setImmediate(resolve));
     expect(dial).not.toHaveBeenCalled();
   });
