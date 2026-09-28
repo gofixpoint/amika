@@ -5,6 +5,51 @@ local VMs and make them accessible through the Amika control plane. The current
 daemon serves `GET /health` and a Smol-compatible `/api/v1/machines` API, and
 registers itself with the Amika control plane when started with `up`.
 
+## Installation
+
+On a host, install the released daemon with `install-amika-hostd.sh`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
+```
+
+It downloads `amika-hostd_<version>.tar.gz` from the `amika-hostd@v<version>`
+GitHub release, verifies it against `checksums.txt`, and installs:
+
+- the bundle and `config.example.toml` into `~/.amika-hostd`
+  (`AMIKA_HOSTD_HOME`), with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR`
+  (default `/usr/local/bin`) that pins the node it runs on;
+- Node.js: the system `node` if it is 22 or newer, otherwise the official
+  Node.js LTS binary (24.21.0, `AMIKA_HOSTD_NODE_VERSION`), verified against
+  `SHASUMS256.txt`, into `~/.amika-hostd/node` (the system node is never
+  touched);
+- smolvm, through its official installer, unless `smolvm` is on `PATH` or in
+  `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
+  (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
+- a config: `config.example.toml` copied to the user config path below, unless
+  a config already exists there or in `/etc`. It is never overwritten.
+
+On Linux it warns, without failing, when `/dev/kvm` is missing or not
+accessible. `--dry-run` prints the plan. The daemon does not start smolvm:
+run `smolvm serve start --listen 127.0.0.1:8080` (the `SMOL_API_URL` default)
+alongside it, then `amika-hostd up`.
+
+The release artifact is one ESM file, built by `pnpm --filter @amika/hostd
+bundle` (`scripts/bundle.mjs`, esbuild with every npm dependency inlined), so
+it runs under plain `node` with no `node_modules`; `src/bundle.test.ts` checks
+that. `scripts/package-release.sh <version> [out-dir]` wraps it and the
+example config in the tarball and writes `checksums.txt`. The Release workflow
+runs it for an `amika-hostd@v*` tag. To test the installer against a local
+build, point `AMIKA_RELEASE_URL` at that directory, with a temporary `HOME`
+and `AMIKA_INSTALL_DIR`:
+
+```bash
+js/amika-hostd/scripts/package-release.sh 0.1.0 /tmp/hostd-release
+HOME=/tmp/hostd-home AMIKA_INSTALL_DIR=/tmp/hostd-bin \
+  AMIKA_RELEASE_URL=file:///tmp/hostd-release \
+  sh install-amika-hostd.sh
+```
+
 ## Development
 
 Run commands from the monorepo root:

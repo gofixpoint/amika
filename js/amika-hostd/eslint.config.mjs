@@ -14,7 +14,7 @@ const eslintConfig = defineConfig([
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["**/*.ts"],
+    files: ["**/*.{ts,mjs}"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",

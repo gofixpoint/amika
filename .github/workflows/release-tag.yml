@@ -21,6 +21,8 @@ name: Create Release Tag
 #   amikad@v1.2.3-rc.1
 #   amikalog@v1.2.3
 #   amikalog@v1.2.3-rc.1
+#   amika-hostd@v1.2.3
+#   amika-hostd@v1.2.3-rc.1
 #   sdk-typescript@v1.2.3
 #   sdk-typescript@v1.2.3-rc.1
 
@@ -36,6 +38,7 @@ on:
           - amika-server
           - amikad
           - amikalog
+          - amika-hostd
           - sdk-typescript
       major:
         description: Major version number
@@ -214,11 +217,30 @@ jobs:
           git checkout "$TARGET_SHA"
 
       - name: Verify Go repository is healthy enough to tag
-        if: inputs.component != 'sdk-typescript'
+        if: inputs.component != 'sdk-typescript' && inputs.component != 'amika-hostd'
         run: |
           make fmtcheck
           make vet
           make test-unit
+
+      - uses: pnpm/action-setup@v4
+        if: inputs.component == 'amika-hostd'
+
+      - uses: actions/setup-node@v4
+        if: inputs.component == 'amika-hostd'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Verify amika-hostd is healthy enough to tag
+        if: inputs.component == 'amika-hostd'
+        working-directory: js/amika-hostd
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run formatcheck
+          pnpm run typecheck
+          pnpm run lint
+          pnpm run test
 
       - name: Verify sdk/typescript/package.json version matches tag
         if: inputs.component == 'sdk-typescript'
