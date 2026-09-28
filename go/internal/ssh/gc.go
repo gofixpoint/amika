@@ -32,9 +32,12 @@ type GCState struct {
 // editor. KeepAlias records ownership and protects the host just prepared,
 // even if the list response predates its creation. The caller must have
 // resolved that host using the same pinned credential passed to CollectGarbage.
+// PruneUnknown removes unscoped hosts absent from the current inventory when
+// their alias matches the current environment (or has no environment).
 type GCOptions struct {
-	Force     bool
-	KeepAlias string
+	Force        bool
+	KeepAlias    string
+	PruneUnknown bool
 }
 
 // GCResult reports concrete host entries, excluding wildcard session settings.
@@ -261,7 +264,7 @@ func collectGarbage(paths basedir.Paths, scope, environment string, list func() 
 					if live[h.SandboxID] {
 						h.GCScope = scope
 					}
-					if h.GCScope == scope && !live[h.SandboxID] && Alias(h.SandboxID) != options.KeepAlias {
+					if (h.GCScope == scope || options.PruneUnknown && h.GCScope == "") && !live[h.SandboxID] && Alias(h.SandboxID) != options.KeepAlias {
 						removed++
 						continue
 					}
@@ -277,7 +280,7 @@ func collectGarbage(paths basedir.Paths, scope, environment string, list func() 
 					if live[parsed.ID] {
 						h.GCScope = scope
 					}
-					if h.GCScope == scope && !live[parsed.ID] && h.Alias != options.KeepAlias {
+					if (h.GCScope == scope || options.PruneUnknown && h.GCScope == "") && !live[parsed.ID] && h.Alias != options.KeepAlias {
 						removed++
 						continue
 					}

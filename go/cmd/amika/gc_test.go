@@ -73,3 +73,32 @@ func TestGCRejectsArguments(t *testing.T) {
 		t.Fatal("gc accepted an argument")
 	}
 }
+
+func TestGCPruneUnknownFlag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "gc-test-key")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	t.Setenv("AMIKA_API_URL", server.URL)
+	paths := basedir.New("")
+	if _, err := ssh.UpsertHost(paths, ssh.HostEntry{SandboxID: "old", HostName: "example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRootCommandOutput(t, "gc", "--prune-unknown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Removed 1 SSH host entries; 0 remain.") {
+		t.Fatalf("output = %q", out)
+	}
+	state, err := ssh.LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Hosts) != 0 {
+		t.Fatalf("unknown host survived: %+v", state.Hosts)
+	}
+}

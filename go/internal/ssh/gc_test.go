@@ -167,6 +167,46 @@ func TestGCPrunesBothHostFormatsAndPreservesOtherScopes(t *testing.T) {
 	assertPerm(t, configPath, 0o600)
 }
 
+func TestGCPruneUnknownOnlyRemovesAbsentHostsInCurrentEnvironment(t *testing.T) {
+	paths := gcTestState(t, HostsState{
+		Hosts: []HostEntry{
+			{SandboxID: "unknown-deleted"},
+			{SandboxID: "unknown-live"},
+			{SandboxID: "other-account", GCScope: "other"},
+		},
+		SessionHosts: []SessionHostEntry{
+			{Alias: "old.unknown-deleted.prod.amika"},
+			{Alias: "live.unknown-live.prod.amika"},
+			{Alias: "staging.unknown-deleted.staging.amika"},
+			{Alias: "other.other-account.prod.amika", GCScope: "other"},
+		},
+	})
+	result, err := collectGarbage(paths, "current", "prod", func() ([]apiclient.RemoteSandbox, error) {
+		return []apiclient.RemoteSandbox{{ID: "unknown-live"}}, nil
+	}, GCOptions{Force: true, PruneUnknown: true}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Removed != 2 || result.Remaining != 5 || result.Unscoped != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	state, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Hosts[0].GCScope != "current" || state.SessionHosts[0].GCScope != "current" {
+		t.Fatalf("live unknown hosts were not assigned the current scope: %+v", state)
+	}
+	configPath, _ := paths.SSHAmikaConfigFile()
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(config), "Host amika-unknown-deleted\n") || strings.Contains(string(config), "Host old.unknown-deleted.prod.amika\n") {
+		t.Fatalf("unknown hosts survived in config: %s", config)
+	}
+}
+
 func TestGCUpdatesBaselineEvenWhenNothingRemoved(t *testing.T) {
 	state := HostsState{}
 	live := []apiclient.RemoteSandbox{}
