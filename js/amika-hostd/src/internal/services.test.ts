@@ -120,6 +120,7 @@ describe("createUpgradeHandler", () => {
       vi.fn<typeof fetch>(async () =>
         Response.json({
           name: "demo",
+          state: "running",
           ports: hostPort === null ? [] : [{ host: hostPort, guest: 60999 }],
         }),
       ),
@@ -186,6 +187,35 @@ describe("createUpgradeHandler", () => {
     const { port } = await hostd(null);
     const socket = await open(port, validPath());
     expect(await read(socket)).toMatch(/^HTTP\/1\.1 404 /);
+  });
+
+  it("ends an upgrade that shutdown catches before it connects", async () => {
+    let release = () => {};
+    const lookup = new Promise<void>((resolve) => (release = resolve));
+    const runtime = new SmolRuntime(
+      { apiUrl: "http://runtime:8080" },
+      vi.fn<typeof fetch>(async () => {
+        await lookup;
+        return Response.json({
+          name: "demo",
+          state: "running",
+          ports: [{ host: 1, guest: 60999 }],
+        });
+      }),
+    );
+    const tunnels = new Set<Duplex>();
+    const dial = vi.fn<(port: number) => Socket>();
+    const server = createHttpServer();
+    server.on("upgrade", createUpgradeHandler(SECRET, runtime, tunnels, dial));
+    const socket = await open(await listen(server), validPath());
+    await vi.waitFor(() => expect(tunnels.size).toBe(1));
+    for (const tunnel of tunnels) tunnel.destroy();
+    release();
+    await once(socket, "close");
+    await vi.waitFor(() => expect(tunnels.size).toBe(0));
+    await lookup;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(dial).not.toHaveBeenCalled();
   });
 
   it("answers 502 when the guest port is closed", async () => {

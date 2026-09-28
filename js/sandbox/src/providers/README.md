@@ -26,7 +26,10 @@ entries:
 
 - `provider.ts` — the SDK-bearing definition. The registry imports the provider
   factory from here, plus (when the provider has one) the re-exported
-  `openAcmeAdapter`.
+  `openAcmeAdapter`. A provider that builds on another's runtime primitives
+  imports them through that provider's `provider.ts`, never its `internal/`:
+  `smol/provider.ts` re-exports `SmolClient` and `smolOperations` for
+  `amika-hostd/`, whose daemon serves a superset of smolvm's API.
 - `config.ts` — the **top-level config slice** the caller constructs. Kept at
   the root (not in `internal/`, not routed through `provider.ts`) so the
   registry and the package barrels import the config type straight from it,

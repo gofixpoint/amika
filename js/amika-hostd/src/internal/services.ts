@@ -11,8 +11,8 @@
  * These routes skip the daemon's secret key, since their callers (the Amika
  * CLI, the web terminal) never hold it. The token stands in for it: the
  * `@amika/sandbox` provider signs `<machine>`, `<port>` and an expiry with the
- * secret key (`signServiceToken`), so a URL opens only the one port it names,
- * and only until it expires.
+ * secret key (`signHostdServiceToken`, mirrored here by `signServiceToken`),
+ * so a URL opens only the one port it names, and only until it expires.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
@@ -36,6 +36,10 @@ export function createUpgradeHandler(
   dial: (port: number) => Socket = (port) => connect(port, "127.0.0.1"),
 ) {
   return (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
+    // Tracked from the start, not once connected, so a shutdown that begins
+    // while the route is still being resolved ends this upgrade too.
+    tunnels.add(socket);
+    socket.on("close", () => tunnels.delete(socket));
     socket.on("error", () => socket.destroy());
     void upgrade(request, socket, head).catch(() => refuse(socket, 502));
   };
@@ -58,7 +62,6 @@ export function createUpgradeHandler(
     let connected = false;
     upstream.once("connect", () => {
       connected = true;
-      tunnels.add(socket);
       upstream.write(requestHead(request, `${route.path}${url.search}`));
       if (head.length) upstream.write(head);
       upstream.pipe(socket);
@@ -69,31 +72,33 @@ export function createUpgradeHandler(
       else refuse(socket, 502);
     });
     upstream.on("close", () => socket.destroy());
-    socket.on("close", () => {
-      tunnels.delete(socket);
-      upstream.destroy();
-    });
+    socket.on("close", () => upstream.destroy());
   }
 }
 
 /**
  * The handshake as the guest should see it: the guest path in place of the
  * service route, and every header exactly as the caller sent it, including
- * `Host`, `Origin`, and the `Authorization` the guest authenticates.
+ * `Host`, `Origin`, and the `Authorization` the guest authenticates. Only
+ * `Proxy-Authorization` is dropped: it was meant for a proxy in front of
+ * hostd, never for the guest.
  */
 function requestHead(request: IncomingMessage, path: string): string {
   const lines = [`${request.method} ${path} HTTP/${request.httpVersion}`];
   for (let i = 0; i < request.rawHeaders.length; i += 2) {
-    lines.push(`${request.rawHeaders[i]}: ${request.rawHeaders[i + 1]}`);
+    const name = request.rawHeaders[i];
+    if (name.toLowerCase() === "proxy-authorization") continue;
+    lines.push(`${name}: ${request.rawHeaders[i + 1]}`);
   }
   return `${lines.join("\r\n")}\r\n\r\n`;
 }
 
-function refuse(socket: Duplex, status: 404 | 502): void {
+const REFUSAL_REASONS = { 404: "Not Found", 502: "Bad Gateway" } as const;
+
+function refuse(socket: Duplex, status: keyof typeof REFUSAL_REASONS): void {
   if (socket.destroyed) return;
-  const reason = status === 404 ? "Not Found" : "Bad Gateway";
   socket.end(
-    `HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+    `HTTP/1.1 ${status} ${REFUSAL_REASONS[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
   );
 }
 
@@ -164,12 +169,15 @@ function serviceMac(
 }
 
 const machinePortsSchema = z.object({
+  state: z.string(),
   ports: z.array(z.object({ host: z.number().int(), guest: z.number().int() })),
 });
 
 /**
  * The host loopback port smolvm published `guestPort` on, or null when the
- * machine does not exist or did not publish it.
+ * machine does not exist, is not running, or did not publish it. A stopped
+ * machine's VM no longer holds its host port, so another machine or process
+ * may have bound it since; only a running machine's mapping is its own.
  */
 export async function resolveHostPort(
   runtime: SmolRuntime,
@@ -184,7 +192,7 @@ export async function resolveHostPort(
   const parsed = machinePortsSchema.safeParse(
     await response.json().catch(() => undefined),
   );
-  if (!parsed.success) return null;
+  if (!parsed.success || parsed.data.state !== "running") return null;
   return parsed.data.ports.find((p) => p.guest === guestPort)?.host ?? null;
 }
 

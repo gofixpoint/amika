@@ -520,6 +520,15 @@ describe("service routes", () => {
     };
   }
 
+  it("answers 404 for a machine that is not running", async () => {
+    const { app, fetcher } = services(
+      Response.json({ ...MACHINE, state: "stopped" }),
+    );
+    const response = await app.request(`${route()}/v1/status`);
+    expect(response.status).toBe(404);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards the guest path, query, body and caller credential", async () => {
     const { app, fetcher } = services(
       Response.json(MACHINE),

@@ -22,7 +22,10 @@ import {
 } from "./internal/services.js";
 
 export interface AppConfig extends SmolRuntimeConfig {
-  /** Every request, including `/health`, must present this as a bearer token. */
+  /**
+   * Every request except the signed `/services/...` routes, including
+   * `/health`, must present this as a bearer token.
+   */
   secretKey: string;
   /** Preset image names mapped to the OCI references smolvm boots. */
   images?: Record<string, string>;

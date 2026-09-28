@@ -321,6 +321,7 @@ describe("amika-hostd provider", () => {
 describe("amika-hostd services", () => {
   const PUBLISHED = {
     ...MACHINE,
+    state: "running",
     ports: [
       { host: 40001, guest: 3000 },
       { host: 40002, guest: 60999 },
