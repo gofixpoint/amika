@@ -34,6 +34,22 @@ func getRemoteClient(target string) (*apiclient.Client, error) {
 	return runmode.NewRemoteClient(), nil
 }
 
+// getEditorClient pins one credential for target resolution and GC ownership
+// recording. A concurrent login must not attribute a verified host to a
+// different account between those two operations.
+func getEditorClient(target string) (*apiclient.Client, error) {
+	client, err := getRemoteClient(target)
+	if err != nil {
+		return nil, err
+	}
+	token, err := client.TokenSource.Token()
+	if err != nil {
+		return nil, err
+	}
+	client.TokenSource = apiclient.NewStaticTokenSource(token)
+	return client, nil
+}
+
 // deref returns the empty string for a nil pointer, or the pointed-to value.
 func deref(s *string) string {
 	if s == nil {
