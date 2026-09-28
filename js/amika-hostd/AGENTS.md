@@ -3,7 +3,9 @@
 `@amika/hostd` is a standalone Node.js service built with Hono. It will manage
 local VMs and make them accessible through the Amika control plane. The current
 daemon serves `GET /health` and a Smol-compatible `/api/v1/machines` API, and
-registers itself with the Amika control plane when started with `up`.
+registers itself with the Amika control plane when started with `up`. `up`
+also starts the `smolvm serve` process the API forwards to, and `down` stops
+both.
 
 ## Installation
 
@@ -30,9 +32,8 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   a config already exists there or in `/etc`. It is never overwritten.
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
-accessible. `--dry-run` prints the plan. The daemon does not start smolvm:
-run `smolvm serve start --listen 127.0.0.1:8080` (the `SMOL_API_URL` default)
-alongside it, then `amika-hostd up`.
+accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
+the daemon: `amika-hostd up` starts smolvm itself (see [smolvm](#smolvm)).
 
 The release artifact is one ESM file, built by `pnpm --filter @amika/hostd
 bundle` (`scripts/bundle.mjs`, esbuild with every npm dependency inlined), so
@@ -75,7 +76,7 @@ pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 with `node:util` `parseArgs` and takes every side effect as a dependency.
 
 - `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
-  it re-runs itself as `serve` with `detached: true`, appends output to
+  it re-runs itself as `serve --smolvm` with `detached: true`, appends output to
   `$XDG_STATE_HOME/amika-hostd/amika-hostd.log` (default `~/.local/state`), and
   waits for the child's IPC `ready` message, so startup failures print in the
   caller's terminal. Only the operator's own flags are forwarded; the child
@@ -86,7 +87,11 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   to the Smol runtime is still pending, so a slow client or runtime cannot keep
   the daemon alive. If the launching `up` exits before the child is ready, the
   child shuts down too.
-  Only `up` registers with Amika; `serve` does not.
+  Only `up` registers with Amika; `serve` does not. `up` (either way) and
+  `serve --smolvm` also run smolvm; plain `serve` does not, for development.
+- `amika-hostd down` sends `SIGTERM` to the daemon named by the pidfile and
+  waits for it to exit, which includes stopping smolvm. It needs no
+  configuration.
 - `amika-hostd register-url <url>` records the host's public URL and exits.
 
 ## Registration
@@ -136,9 +141,42 @@ start while it names a live daemon. The daemon sets `process.title` to
 `amika-hostd`; where `/proc` exists, a pidfile naming any other process is
 treated as stale, since the pidfile outlives reboots and pids are reused. An
 empty `--host` is rejected, since it would bind every interface. Stop a
-background daemon with
-`kill $(cat ~/.local/state/amika-hostd/amika-hostd.pid)`. `build` uses
+background daemon with `amika-hostd down`. `build` uses
 `tsconfig.build.json`, which leaves tests out of `dist/`.
+
+## smolvm
+
+`src/internal/smolvm-serve.ts` runs smolvm for `up` and `serve --smolvm`, so
+the daemon and the runtime it forwards to start and stop together, and a host
+is left as it was before `up`:
+
+1. Before claiming anything, it refuses to start if a smolvm from an earlier
+   run is still alive (`smolvm.pid`, next to the daemon's pidfile) or if
+   anything already answers `GET /health` at `SMOL_API_URL`: a smolvm it did
+   not start is not the daemon's to stop.
+2. It finds `smolvm` on `PATH`, else where the smolvm installer puts it
+   (`~/.smolvm/smolvm` or `~/.local/bin/smolvm`), and runs
+   `smolvm serve start --listen <host:port of SMOL_API_URL>`. smolvm's own
+   default is a Unix socket, so the address is always passed, and
+   `SMOL_API_URL` must be a plain `http://host:port`. smolvm gets its own
+   process group, so Ctrl-C on `up --fg` reaches only the daemon; its output
+   goes to `smolvm.log`; and it never sees the API key or secret key.
+3. The daemon listens only once smolvm answers `/health` (30s at most), so the
+   background `up` reports a smolvm that fails to start.
+4. On shutdown the daemon stops listening first, then sends smolvm `SIGTERM`
+   and waits up to 60s. smolvm is started with `SMOLVM_DRAIN_ON_SHUTDOWN=1`,
+   so it stops every machine cleanly (disks are kept; nothing is deleted)
+   instead of leaving them running, which is its default. It is never killed
+   outright: if it is still stopping machines after 60s, the daemon exits and
+   `down` goes on waiting for it.
+5. If smolvm exits on its own, the daemon stops too, with exit code 1, rather
+   than answer every request with a `502`.
+
+`down` stops the daemon, then any smolvm a daemon left behind (one killed with
+`SIGKILL`, or that timed out stopping it). The smolvm pidfile is acted on, not
+only read, so a pid counts as smolvm only when its program is confirmed to be
+`smolvm` or `smolvm-bin` (the binary the `smolvm` launcher `exec`s), from
+`/proc` or `ps`.
 
 ## Configuration
 
@@ -160,7 +198,8 @@ The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
 enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
-two are not merged, and unknown keys are rejected. `SMOL_API_URL` and
+two are not merged, and unknown keys are rejected. `SMOL_API_URL` (default
+`http://127.0.0.1:8080`, where `up` starts smolvm) and
 `SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
 is the annotated template for operators: copy it to one of those paths and
 uncomment what you need. `config.test.ts` resolves it, so keep it in step with

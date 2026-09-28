@@ -1,6 +1,9 @@
 /** Transport to the separately managed, local smolvm serve process. */
 import { z } from "zod";
 
+/** Where smolvm's API is reached unless `SMOL_API_URL` says otherwise. */
+export const DEFAULT_SMOL_API_URL = "http://127.0.0.1:8080";
+
 export interface SmolRuntimeConfig {
   apiUrl?: string;
   requestTimeoutMs?: number;
@@ -14,7 +17,7 @@ export class SmolRuntime {
     config: SmolRuntimeConfig,
     private readonly fetcher = fetch,
   ) {
-    const url = new URL(config.apiUrl ?? "http://127.0.0.1:8080");
+    const url = new URL(config.apiUrl ?? DEFAULT_SMOL_API_URL);
     if (
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||

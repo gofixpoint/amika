@@ -22,25 +22,40 @@ import {
   claimPidFile as claimPidFileOnDisk,
   daemonPaths,
   ensureNotRunning,
+  isDaemonRunning,
+  isSmolvmRunning as isSmolvmProcess,
   notifyReady as notifyParent,
+  readRunningPid,
+  removePidFile,
   startInBackground as spawnInBackground,
+  stopProcess as stopProcessByPid,
+  type DaemonPaths,
 } from "./daemon.js";
 import {
+  SHUTDOWN_GRACE_MS,
   startServer as startServerOnPort,
   type RunningServer,
 } from "./server.js";
+import { DEFAULT_SMOL_API_URL } from "./smol.js";
+import {
+  SMOLVM_STOP_TIMEOUT_MS,
+  startSmolvm as startSmolvmServe,
+  type ManagedSmolvm,
+} from "./smolvm-serve.js";
 
 export const USAGE = `Usage: amika-hostd <command> [options]
 
 Commands:
-  up                  Register this host with Amika, then start the daemon in
-                      the background
+  up                  Register this host with Amika, then start smolvm and the
+                      daemon in the background
+  down                Stop the daemon and its smolvm, which stops every machine
   serve               Run the HTTP server in the foreground without registering
   register-url <url>  Set this host's internet-facing URL (e.g. an ngrok or
                       Cloudflare Tunnel URL) to complete registration
 
 Options:
   --fg           (up) Stay in the foreground instead of backgrounding
+  --smolvm       (serve) Also start smolvm, and stop it on exit, as \`up\` does
   --port <port>  Port to listen on (AMIKA_HOSTD_PORT, TOML port; default 3020)
   --host <host>  Address to bind (AMIKA_HOSTD_HOST, TOML host; default 127.0.0.1)
   -h, --help     Show this help
@@ -57,6 +72,9 @@ export interface CliDeps {
   loadConfigFile?: typeof loadConfigFileFromDisk;
   startServer?: typeof startServerOnPort;
   startInBackground?: typeof spawnInBackground;
+  startSmolvm?: typeof startSmolvmServe;
+  stopProcess?: typeof stopProcessByPid;
+  isSmolvmRunning?: (pid: number) => boolean;
   claimPidFile?: typeof claimPidFileOnDisk;
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
@@ -87,6 +105,8 @@ export async function runCli(
       deps.out(USAGE);
       return 0;
     }
+    // Stopping needs only the pidfiles, not a valid configuration.
+    if (parsed.command === "down") return await down(deps);
     const resolved = resolveConfig({
       flags: parsed.flags,
       env: deps.env,
@@ -103,7 +123,10 @@ export async function runCli(
         const finish = (port: number) =>
           completeRegistration(config, host, port, deps);
         if (parsed.fg) {
-          await serveInForeground(config, deps, finish);
+          await serveInForeground(config, deps, {
+            smolvm: true,
+            afterStart: finish,
+          });
           break;
         }
         const port = await startBackground(parsed.flags, deps);
@@ -118,7 +141,13 @@ export async function runCli(
         }
       }
       case "serve":
-        await serveInForeground(requireSettings(resolved, ["secretKey"]), deps);
+        await serveInForeground(
+          requireSettings(resolved, ["secretKey"]),
+          deps,
+          {
+            smolvm: parsed.smolvm,
+          },
+        );
         break;
       case "register-url": {
         const config = requireSettings(resolved, REGISTRATION_SETTINGS);
@@ -151,7 +180,8 @@ export async function runCli(
 type ParsedCommand =
   | { help: true }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
-  | { help: false; command: "serve"; flags: HostdFlags }
+  | { help: false; command: "down" }
+  | { help: false; command: "serve"; smolvm: boolean; flags: HostdFlags }
   | { help: false; command: "register-url"; url: string; flags: HostdFlags };
 
 const REGISTRATION_SETTINGS = ["apiKey", "hostname", "secretKey"] as const;
@@ -171,6 +201,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       strict: true,
       options: {
         fg: { type: "boolean" },
+        smolvm: { type: "boolean" },
         port: { type: "string" },
         host: { type: "string" },
         help: { type: "boolean", short: "h" },
@@ -185,14 +216,19 @@ function parseCommand(args: readonly string[]): ParsedCommand {
   const flags = { port: values.port, host: values.host };
   switch (command) {
     case "up":
+      rejectOptions(command, values, ["smolvm"]);
       expectArguments(rest, 0);
       return { help: false, command, fg: values.fg ?? false, flags };
+    case "down":
+      rejectOptions(command, values, ["fg", "smolvm", "port", "host"]);
+      expectArguments(rest, 0);
+      return { help: false, command };
     case "serve":
       rejectOptions(command, values, ["fg"]);
       expectArguments(rest, 0);
-      return { help: false, command, flags };
+      return { help: false, command, smolvm: values.smolvm ?? false, flags };
     case "register-url": {
-      rejectOptions(command, values, ["fg", "port", "host"]);
+      rejectOptions(command, values, ["fg", "smolvm", "port", "host"]);
       expectArguments(rest, 1);
       const url = parseHostUrl(rest[0]);
       if (url === undefined) {
@@ -282,13 +318,15 @@ function describeSizes(sizes: Record<string, unknown>): string {
 }
 
 /**
- * The background daemon only serves; registration happens in `up` itself.
- * Keep the API key out of the background daemon's environment.
+ * `env` without the given variables. The background daemon only serves, so
+ * it never needs the API key; smolvm needs neither it nor the secret key.
  */
-function withoutApiKey(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const apiKeyNames: readonly string[] = ENV_NAMES.apiKey;
+function withoutEnv(
+  env: NodeJS.ProcessEnv,
+  names: readonly string[],
+): NodeJS.ProcessEnv {
   return Object.fromEntries(
-    Object.entries(env).filter(([name]) => !apiKeyNames.includes(name)),
+    Object.entries(env).filter(([name]) => !names.includes(name)),
   );
 }
 
@@ -369,63 +407,161 @@ async function startBackground(flags: HostdFlags, deps: CliDeps) {
     ...(flags.host === undefined ? [] : ["--host", flags.host]),
   ];
   const { pid, port } = await (deps.startInBackground ?? spawnInBackground)(
-    [...deps.self, "serve", ...forwarded],
+    [...deps.self, "serve", "--smolvm", ...forwarded],
     paths,
-    { isRunning: deps.isRunning, env: withoutApiKey(deps.env) },
+    { isRunning: deps.isRunning, env: withoutEnv(deps.env, ENV_NAMES.apiKey) },
   );
   deps.out(
     `amika-hostd started in the background on port ${port} (pid ${pid})`,
   );
   deps.out(`Logs: ${paths.logFile}`);
-  deps.out(`Stop it with: kill $(cat ${paths.pidFile})`);
+  deps.out("Stop it, and smolvm with it, with: amika-hostd down");
   return port;
 }
 
 /**
- * Serve until a shutdown signal. `afterStart` runs once the server is
+ * Serve until a shutdown signal. With `smolvm`, start smolvm first and stop it
+ * last, and stop serving if it exits. `afterStart` runs once the server is
  * listening (e.g. to complete registration); if it throws, the server stops.
  */
 async function serveInForeground(
   config: HostdConfigWith<"secretKey">,
   deps: CliDeps,
-  afterStart?: (port: number) => Promise<unknown>,
+  {
+    smolvm = false,
+    afterStart,
+  }: { smolvm?: boolean; afterStart?: (port: number) => Promise<unknown> } = {},
 ) {
-  const { pidFile } = daemonPaths(deps.env);
+  const paths = daemonPaths(deps.env);
   const claim = deps.claimPidFile ?? claimPidFileOnDisk;
-  const release = claim(pidFile, deps.isRunning);
-  let server: RunningServer;
+  const release = claim(paths.pidFile, deps.isRunning);
+  // Listen for the signal first, so Ctrl-C during startup (or during
+  // `afterStart`'s request to Amika) still stops smolvm on the way out.
+  const signalled = deps.shutdownSignal();
+  let runtime: ManagedSmolvm | undefined;
+  let server: RunningServer | undefined;
+  const stopAll = async () => {
+    try {
+      await server?.close();
+    } finally {
+      try {
+        await stopSmolvm(runtime, deps);
+      } finally {
+        release();
+      }
+    }
+  };
   try {
-    server = await (deps.startServer ?? startServerOnPort)(config);
+    if (smolvm) runtime = await startSmolvm(config, paths, deps);
+    server = await listen(config, deps);
+    deps.out(`amika-hostd listening on ${localUrl(config.host, server.port)}`);
+    await (deps.notifyReady ?? notifyParent)(server.port);
   } catch (error) {
-    release();
+    await stopAll();
+    throw error;
+  }
+  const port = server.port;
+  const shutdown = Promise.race([
+    signalled,
+    ...(runtime
+      ? [
+          runtime.exited.then((reason) => {
+            throw new DaemonError(
+              `smolvm ${reason}, so amika-hostd stopped too; see ${paths.smolvmLogFile}`,
+            );
+          }),
+        ]
+      : []),
+  ]);
+  // Handled below; this only keeps a smolvm exit after `afterStart` throws
+  // from being reported as an unhandled rejection.
+  shutdown.catch(() => {});
+  try {
+    if (afterStart) await Promise.race([afterStart(port), shutdown]);
+    await shutdown;
+  } finally {
+    await stopAll();
+  }
+}
+
+async function startSmolvm(
+  config: HostdConfigWith<"secretKey">,
+  paths: DaemonPaths,
+  deps: CliDeps,
+): Promise<ManagedSmolvm> {
+  const runtime = await (deps.startSmolvm ?? startSmolvmServe)(
+    config.smolApiUrl,
+    paths,
+    withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
+  );
+  deps.out(
+    `smolvm serving at ${config.smolApiUrl ?? DEFAULT_SMOL_API_URL} (pid ${runtime.pid}); logs: ${paths.smolvmLogFile}`,
+  );
+  return runtime;
+}
+
+async function stopSmolvm(runtime: ManagedSmolvm | undefined, deps: CliDeps) {
+  if (!runtime?.running) return;
+  deps.out(`Stopping smolvm (pid ${runtime.pid}) and its machines`);
+  if (!(await runtime.stop())) {
+    deps.err(
+      `amika-hostd: smolvm (pid ${runtime.pid}) is still stopping its machines; \`amika-hostd down\` waits for it`,
+    );
+  }
+}
+
+async function listen(
+  config: HostdConfigWith<"secretKey">,
+  deps: CliDeps,
+): Promise<RunningServer> {
+  try {
+    return await (deps.startServer ?? startServerOnPort)(config);
+  } catch (error) {
     throw new DaemonError(
       `cannot listen on ${config.host}:${config.port}: ${errorCode(error)}`,
     );
   }
-  deps.out(`amika-hostd listening on ${localUrl(config.host, server.port)}`);
-  try {
-    await (deps.notifyReady ?? notifyParent)(server.port);
-  } catch (error) {
-    try {
-      await server.close();
-    } finally {
-      release();
+}
+
+/** Long enough for the daemon's own shutdown, which includes smolvm's. */
+const DOWN_TIMEOUT_MS = SHUTDOWN_GRACE_MS + SMOLVM_STOP_TIMEOUT_MS + 5_000;
+
+/**
+ * Stop the daemon, which stops its smolvm, and then any smolvm a daemon left
+ * behind (one that was killed, or gave up waiting for smolvm to exit).
+ */
+async function down(deps: CliDeps): Promise<number> {
+  const paths = daemonPaths(deps.env);
+  const stop = deps.stopProcess ?? stopProcessByPid;
+  const isDaemon = deps.isRunning ?? isDaemonRunning;
+  const isSmolvm = deps.isSmolvmRunning ?? isSmolvmProcess;
+  const daemon = readRunningPid(paths.pidFile, isDaemon);
+  if (daemon !== undefined) {
+    deps.out(`Stopping amika-hostd (pid ${daemon}) and its smolvm`);
+    if (!(await stop(daemon, isDaemon, { timeoutMs: DOWN_TIMEOUT_MS }))) {
+      throw new DaemonError(
+        `amika-hostd (pid ${daemon}) did not exit within ${DOWN_TIMEOUT_MS / 1000}s; see ${paths.logFile}`,
+      );
     }
-    throw error;
   }
-  // Listen for the signal before `afterStart`, so Ctrl-C while it runs (e.g.
-  // during a request to Amika) still shuts down cleanly.
-  const shutdown = deps.shutdownSignal();
-  try {
-    if (afterStart) await Promise.race([afterStart(server.port), shutdown]);
-    await shutdown;
-  } finally {
-    try {
-      await server.close();
-    } finally {
-      release();
+  const smolvm = readRunningPid(paths.smolvmPidFile, isSmolvm);
+  if (smolvm !== undefined) {
+    deps.out(`Stopping smolvm (pid ${smolvm}) and its machines`);
+    const timeoutMs = SMOLVM_STOP_TIMEOUT_MS;
+    if (!(await stop(smolvm, isSmolvm, { timeoutMs }))) {
+      throw new DaemonError(
+        `smolvm (pid ${smolvm}) is still stopping its machines after ${timeoutMs / 1000}s; see ${paths.smolvmLogFile}, and run \`amika-hostd down\` again to keep waiting`,
+      );
     }
+    // No daemon is left to remove it when smolvm exits.
+    removePidFile(paths.smolvmPidFile, smolvm);
   }
+  deps.out(
+    daemon === undefined && smolvm === undefined
+      ? "amika-hostd is not running"
+      : "Stopped amika-hostd and smolvm",
+  );
+  return 0;
 }
 
 /** The daemon's local address as a URL, bracketing an IPv6 literal. */

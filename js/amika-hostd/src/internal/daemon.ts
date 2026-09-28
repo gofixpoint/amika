@@ -1,5 +1,6 @@
 /** Run the daemon as a detached background process and track it by pidfile. */
 import {
+  execFileSync,
   spawn as nodeSpawn,
   type ChildProcess,
   type SpawnOptions,
@@ -15,6 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 
 /**
@@ -26,6 +28,9 @@ export const PROCESS_TITLE = "amika-hostd";
 export interface DaemonPaths {
   pidFile: string;
   logFile: string;
+  /** The `smolvm serve` process the daemon started, while it runs. */
+  smolvmPidFile: string;
+  smolvmLogFile: string;
 }
 
 export type Spawn = (
@@ -52,16 +57,14 @@ export async function startInBackground(
   paths: DaemonPaths,
   {
     spawn = nodeSpawn,
-    isRunning = isProcessRunning,
-    startupTimeoutMs = 30_000,
+    isRunning = isDaemonRunning,
+    // Startup includes waiting for smolvm to serve.
+    startupTimeoutMs = 60_000,
     env = process.env,
   }: BackgroundDeps = {},
 ): Promise<{ pid: number; port: number }> {
   ensureNotRunning(paths.pidFile, isRunning);
-  const log = onDisk(paths.logFile, () => {
-    mkdirSync(path.dirname(paths.logFile), { recursive: true, mode: 0o700 });
-    return openSync(paths.logFile, "a", 0o600);
-  });
+  const log = openLogFile(paths.logFile);
   let child: ChildProcess;
   try {
     const [command, ...args] = argv;
@@ -113,7 +116,7 @@ export function notifyReady(port: number): Promise<void> {
  */
 export function claimPidFile(
   pidFile: string,
-  isRunning: (pid: number) => boolean = isProcessRunning,
+  isRunning: (pid: number) => boolean = isDaemonRunning,
 ): () => void {
   onDisk(pidFile, () =>
     mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 }),
@@ -135,19 +138,59 @@ export function claimPidFile(
   }
   return () => {
     // Only remove the file if a newer daemon has not replaced it.
-    if (readPid(pidFile) === process.pid) rmSync(pidFile, { force: true });
+    removePidFile(pidFile, process.pid);
   };
 }
 
 /** Fail if the pidfile names a live process other than this one. */
 export function ensureNotRunning(
   pidFile: string,
-  isRunning: (pid: number) => boolean = isProcessRunning,
+  isRunning: (pid: number) => boolean = isDaemonRunning,
 ): void {
   const running = readRunningPid(pidFile, isRunning);
   if (running !== undefined && running !== process.pid) {
     throw alreadyRunning(running, pidFile);
   }
+}
+
+/** The live process a pidfile names, if any. */
+export function readRunningPid(
+  pidFile: string,
+  isRunning: (pid: number) => boolean = isDaemonRunning,
+): number | undefined {
+  const pid = readPid(pidFile);
+  return pid !== undefined && isRunning(pid) ? pid : undefined;
+}
+
+/** Remove the pidfile, unless it has since been claimed by another pid. */
+export function removePidFile(pidFile: string, pid: number): void {
+  if (readPid(pidFile) === pid) rmSync(pidFile, { force: true });
+}
+
+/**
+ * Send `SIGTERM` and wait for the process to exit. Resolves false if it is
+ * still running after `timeoutMs`; it is never killed outright, since smolvm
+ * may still be stopping its machines.
+ */
+export async function stopProcess(
+  pid: number,
+  isRunning: (pid: number) => boolean,
+  { timeoutMs, pollMs = 100 }: { timeoutMs: number; pollMs?: number },
+): Promise<boolean> {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
+    throw new DaemonError(
+      `cannot stop pid ${pid}: ${(error as NodeJS.ErrnoException).code ?? "unknown error"}`,
+    );
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (isRunning(pid)) {
+    if (Date.now() >= deadline) return false;
+    await sleep(pollMs);
+  }
+  return true;
 }
 
 export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
@@ -156,7 +199,30 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
   return {
     pidFile: path.join(dir, "amika-hostd.pid"),
     logFile: path.join(dir, "amika-hostd.log"),
+    smolvmPidFile: path.join(dir, "smolvm.pid"),
+    smolvmLogFile: path.join(dir, "smolvm.log"),
   };
+}
+
+/** Open `file` for appending, creating it and its directory privately. */
+export function openLogFile(file: string): number {
+  return onDisk(file, () => {
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    return openSync(file, "a", 0o600);
+  });
+}
+
+/**
+ * Whether `pid` is a live smolvm. Unlike the daemon's own pidfile, a stale
+ * smolvm pidfile is acted on (`down` signals it), so a pid whose program
+ * cannot be confirmed as smolvm never counts.
+ */
+export function isSmolvmRunning(pid: number): boolean {
+  if (!isAlive(pid)) return false;
+  const program = programOf(pid);
+  return (
+    program !== undefined && SMOLVM_PROGRAMS.includes(path.basename(program))
+  );
 }
 
 /** A background start failure; the message is safe to print. */
@@ -244,15 +310,7 @@ function alreadyRunning(pid: number, pidFile: string): DaemonError {
   );
 }
 
-function readRunningPid(
-  pidFile: string,
-  isRunning: (pid: number) => boolean,
-): number | undefined {
-  const pid = readPid(pidFile);
-  return pid !== undefined && isRunning(pid) ? pid : undefined;
-}
-
-function readPid(pidFile: string): number | undefined {
+export function readPid(pidFile: string): number | undefined {
   let contents: string;
   try {
     contents = readFileSync(pidFile, "utf8");
@@ -268,13 +326,8 @@ function readPid(pidFile: string): number | undefined {
  * reboots), so where `/proc` exists the process must carry `PROCESS_TITLE`;
  * elsewhere any live process counts, and the error says how to recover.
  */
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    // EPERM: the process exists but belongs to another user.
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
-  }
+export function isDaemonRunning(pid: number): boolean {
+  if (!isAlive(pid)) return false;
   let cmdline: string;
   try {
     cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
@@ -282,4 +335,35 @@ function isProcessRunning(pid: number): boolean {
     return true;
   }
   return cmdline.split("\0")[0] === PROCESS_TITLE;
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists but belongs to another user.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** The smolvm launcher `exec`s `smolvm-bin`, so a running smolvm is either. */
+const SMOLVM_PROGRAMS = ["smolvm", "smolvm-bin"];
+
+/** The program `pid` runs, from `/proc` or else `ps`; undefined if unknown. */
+function programOf(pid: number): string | undefined {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0];
+  } catch {
+    // No /proc (e.g. macOS), or the process just exited.
+  }
+  try {
+    const comm = execFileSync("ps", ["-o", "comm=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return comm === "" ? undefined : comm;
+  } catch {
+    return undefined;
+  }
 }
