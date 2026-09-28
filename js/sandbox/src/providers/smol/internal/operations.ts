@@ -18,10 +18,32 @@ import {
   machineSchema,
 } from "./client";
 
+export interface SmolOperationsOptions {
+  /** The provider named in created sandboxes and unsupported-operation errors. */
+  provider?: string;
+  /**
+   * Ask the runtime to publish each requested service's guest port instead of
+   * refusing services. Only amika-hostd, which picks the host side of each
+   * port and routes to it, sets this; plain smolvm requires the caller to pick.
+   */
+  publishServicePorts?: boolean;
+}
+
 export function smolOperations(
   config: SmolConfig,
   client = new SmolClient(config),
+  {
+    provider = "smol",
+    publishServicePorts = false,
+  }: SmolOperationsOptions = {},
 ) {
+  const rejectTimer = (
+    interval: number | null | undefined,
+    operation: string,
+  ): void => {
+    if (interval != null && interval !== 0)
+      throw new SandboxProviderUnsupportedError(provider, operation);
+  };
   const adapter = (id: string): SandboxAdapter => ({
     exec: (command, opts) => run(id, command, opts),
     uploadFile: (content, path) => write(id, path, content),
@@ -86,8 +108,12 @@ export function smolOperations(
       machinePath(input.name);
       if (!input.snapshot.trim())
         throw new Error("Smol requires an OCI image in snapshot");
-      if (input.services.length)
-        throw new SandboxProviderUnsupportedError("smol", "services");
+      if (
+        input.services.length &&
+        (!publishServicePorts ||
+          input.services.some((service) => service.protocol !== "tcp"))
+      )
+        throw new SandboxProviderUnsupportedError(provider, "services");
       rejectTimer(input.autoStopInterval, "autoStopInterval");
       rejectTimer(input.autoDeleteInterval, "autoDeleteInterval");
       const resources =
@@ -118,6 +144,11 @@ export function smolOperations(
           name,
           value,
         })),
+        ports: input.services.length
+          ? [...new Set(input.services.map((s) => s.containerPort))].map(
+              (guest) => ({ guest }),
+            )
+          : undefined,
       });
       try {
         await start(input.name);
@@ -133,9 +164,9 @@ export function smolOperations(
         throw error;
       }
       return {
-        provider: "smol",
+        provider,
         providerSandboxId: input.name,
-        services: [],
+        services: input.services,
         envVars: input.envVars,
       };
     },
@@ -191,12 +222,4 @@ export function mapSmolState(state: string): SandboxStatus {
     default:
       return "unknown";
   }
-}
-
-function rejectTimer(
-  interval: number | null | undefined,
-  operation: string,
-): void {
-  if (interval != null && interval !== 0)
-    throw new SandboxProviderUnsupportedError("smol", operation);
 }

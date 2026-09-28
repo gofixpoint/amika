@@ -6,6 +6,12 @@ import { smolCapabilities } from "./capabilities";
 import { defineProvider } from "../shared/define-provider";
 import { mapSmolState, smolOperations } from "./internal/operations";
 
+// The runtime primitives amika-hostd composes, since hostd serves a superset
+// of smolvm's API; routed through here so the folder root stays the only
+// public entry.
+export { SmolClient, machinePath, machineSchema } from "./internal/client";
+export { mapSmolState, smolOperations } from "./internal/operations";
+
 /** Construct the public resource API, with an injectable HTTP transport. */
 export default function smolProvider(
   config: SmolConfig,
