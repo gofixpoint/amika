@@ -23,6 +23,7 @@ import {
   daemonPaths,
   ensureNotRunning,
   isDaemonProcess,
+  isDaemonRunning,
   isSmolvmRunning as isSmolvmProcess,
   notifyReady as notifyParent,
   readRunningPid,
@@ -505,9 +506,11 @@ async function startSmolvm(
     withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
     { signal },
   );
-  deps.out(
-    `smolvm serving at ${config.smolApiUrl ?? DEFAULT_SMOL_API_URL} (pid ${runtime.pid}); logs: ${paths.smolvmLogFile}`,
-  );
+  if (!signal.aborted) {
+    deps.out(
+      `smolvm serving at ${config.smolApiUrl ?? DEFAULT_SMOL_API_URL} (pid ${runtime.pid}); logs: ${paths.smolvmLogFile}`,
+    );
+  }
   return runtime;
 }
 
@@ -547,6 +550,13 @@ async function down(deps: CliDeps): Promise<number> {
   const isDaemon = deps.isRunning ?? isDaemonProcess;
   const isSmolvm = deps.isSmolvmRunning ?? isSmolvmProcess;
   const daemon = readRunningPid(paths.pidFile, isDaemon);
+  const unconfirmed = readRunningPid(paths.pidFile, isDaemonRunning);
+  if (daemon === undefined && unconfirmed !== undefined) {
+    // `up` refuses to start while this pidfile names a live process.
+    deps.err(
+      `amika-hostd: ${paths.pidFile} names pid ${unconfirmed}, which is not amika-hostd; remove it if it is stale`,
+    );
+  }
   if (daemon !== undefined) {
     deps.out(`Stopping amika-hostd (pid ${daemon})`);
     if (!(await stop(daemon, isDaemon, { timeoutMs: DOWN_TIMEOUT_MS }))) {

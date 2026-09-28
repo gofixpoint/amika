@@ -613,17 +613,19 @@ describe("managing smolvm", () => {
 
   it("stops smolvm, without serving, when signalled while it starts", async () => {
     const { deps, smolvm, release } = harness();
-    deps.shutdownSignal = vi.fn(async () => {});
-    let signal: AbortSignal | undefined;
+    let signal: () => void = () => {};
+    deps.shutdownSignal = vi.fn(
+      () => new Promise<void>((resolve) => (signal = resolve)),
+    );
+    // The signal arrives while smolvm is starting, which then returns early.
     deps.startSmolvm.mockImplementationOnce(
       async (_url, _paths, _env, options) => {
-        signal = options?.signal;
+        signal();
+        await vi.waitFor(() => expect(options?.signal?.aborted).toBe(true));
         return smolvm;
       },
     );
     expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
-    // startSmolvm returns early once this aborts.
-    expect(signal?.aborted).toBe(true);
     expect(deps.startServer).not.toHaveBeenCalled();
     expect(deps.notifyReady).not.toHaveBeenCalled();
     expect(smolvm.stop).toHaveBeenCalled();
@@ -685,6 +687,21 @@ describe("down", () => {
     ]);
     // No daemon is left to remove its pidfile.
     expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
+  });
+
+  it("leaves a pidfile naming another live process, and says so", async () => {
+    const dir = pidDir();
+    writeFileSync(
+      path.join(dir, "amika-hostd", "amika-hostd.pid"),
+      `${process.pid}\n`,
+    );
+    const { deps, out, err } = harness({ XDG_STATE_HOME: dir });
+    expect(await runCli(["down"], deps)).toBe(0);
+    expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(out).toEqual(["amika-hostd is not running"]);
+    if (!existsSync(`/proc/${process.pid}/cmdline`)) {
+      expect(err[0]).toMatch(/names pid \d+, which is not amika-hostd/);
+    }
   });
 
   it("fails when the daemon does not exit", async () => {

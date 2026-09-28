@@ -86,8 +86,8 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   then drops the rest, and the process exits a second later even if a request
   to the Smol runtime is still pending, so a slow client or runtime cannot keep
   the daemon alive. A daemon running smolvm first waits up to 60s more for it
-  to stop (see [smolvm](#smolvm)). If the launching `up` exits before the child is ready, the
-  child shuts down too.
+  to stop (see [smolvm](#smolvm)). If the launching `up` exits before the
+  child is ready, the child shuts down too.
   Only `up` registers with Amika; `serve` does not. `up` (either way) and
   `serve --smolvm` also run smolvm; plain `serve` does not, for development.
 - `amika-hostd down` sends `SIGTERM` to the daemon named by the pidfile and
@@ -160,9 +160,10 @@ is left as it was before `up`:
    `smolvm serve start --listen <host:port of SMOL_API_URL>`. smolvm's own
    default is a Unix socket, so the address is always passed, and
    `SMOL_API_URL` must be a plain `http://<IP address>[:port]` (port 80 if
-   omitted), since `--listen` takes no hostnames such as `localhost`. smolvm gets its own
-   process group, so Ctrl-C on `up --fg` reaches only the daemon; its output
-   goes to `smolvm.log`; and it never sees the API key or secret key.
+   omitted), since `--listen` takes no hostnames such as `localhost`. smolvm
+   gets its own process group, so Ctrl-C on `up --fg` reaches only the
+   daemon; its output goes to `smolvm.log`; and it never sees the API key or
+   secret key.
 3. The daemon listens only once smolvm answers `/health` (30s at most), so the
    background `up` reports a smolvm that fails to start. A shutdown signal
    while it waits stops smolvm and exits without listening.
@@ -179,7 +180,9 @@ is left as it was before `up`:
 `SIGKILL`, or that timed out stopping it). Both pidfiles are acted on, not
 only read, so `down` signals a pid only when `/proc` or `ps` confirms its
 program: `amika-hostd` (the daemon's title) for the daemon, and `smolvm` or
-`smolvm-bin` (the binary the `smolvm` launcher `exec`s) for smolvm.
+`smolvm-bin` (the binary the `smolvm` launcher `exec`s) for smolvm. A daemon
+pidfile naming a live process that is not confirmed is left alone, and `down`
+says to remove it if it is stale, as `up` does.
 
 ## Configuration
 
