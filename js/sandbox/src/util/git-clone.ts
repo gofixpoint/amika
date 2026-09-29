@@ -4,15 +4,10 @@
  * builders, the in-place refresh script, a branch-existence probe, and
  * branch-not-found classification.
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import type { ExecResult } from "../providers/shared/adapter";
 import { shellQuote } from "./shell";
 
-const execFileAsync = promisify(execFile);
-
-// Characters dangerous in shell interpolation contexts. Even when we use
-// `execFileAsync` (no shell), we reject these so downstream code that *does*
-// interpolate into a shell string is safe by construction.
+// Reject shell metacharacters before building guest Git commands.
 const SHELL_METACHAR_RE = /[;`$(){}|&><!"'#]/;
 
 // Characters forbidden by `git check-ref-format` (rule 3): ASCII control
@@ -235,20 +230,25 @@ function gitLsRemoteHeadsArgs(
 }
 
 /**
- * Check whether a branch exists on a remote repository without cloning, via
- * `git ls-remote --heads`. On a network/auth error, returns `true` so the
+ * Check a remote branch through a required guest executor. Never starts a
+ * host-side subprocess. On a network/auth error, returns `true` so the
  * caller treats existence as unknown and falls back to rethrowing the original
  * clone error rather than misreporting the branch as missing.
  */
 export async function checkBranchExistsOnRemote(
+  executeInGuest: (
+    command: string,
+  ) => Promise<Pick<ExecResult, "exitCode" | "stdout">>,
   repoUrl: string,
   githubToken: string | null | undefined,
   branch: string,
 ): Promise<boolean> {
   const args = gitLsRemoteHeadsArgs(repoUrl, githubToken, branch);
   try {
-    const { stdout } = await execFileAsync("git", args);
-    return stdout.trim().length > 0;
+    const result = await executeInGuest(
+      `git ${args.map(shellQuote).join(" ")}`,
+    );
+    return result.exitCode !== 0 || result.stdout.trim().length > 0;
   } catch {
     return true;
   }

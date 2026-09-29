@@ -224,6 +224,7 @@ export async function cloneRepository(
       // Daytona SDK may not produce standard git error messages — verify
       // the branch actually exists on the remote before giving up.
       const exists = await checkBranchExistsOnRemote(
+        (command) => executeCommand(sandbox, command, { cwd: homeDir }),
         githubUrl,
         githubToken,
         branch,
