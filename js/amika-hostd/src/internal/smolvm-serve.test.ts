@@ -60,7 +60,7 @@ describe("smolvmListenAddress", () => {
     [undefined, "http://127.0.0.1:8080", "127.0.0.1:8080"],
     ["http://127.0.0.1:9000/", "http://127.0.0.1:9000", "127.0.0.1:9000"],
     ["http://[::1]:9000", "http://[::1]:9000", "[::1]:9000"],
-    ["http://10.0.0.5", "http://10.0.0.5", "10.0.0.5:80"],
+    ["http://127.0.0.2", "http://127.0.0.2", "127.0.0.2:80"],
   ])("listens where %s points", (url, origin, listen) => {
     expect(smolvmListenAddress(url)).toEqual({ origin, listen });
   });
@@ -72,6 +72,11 @@ describe("smolvmListenAddress", () => {
     "unix:///run/smolvm.sock",
     // smolvm's --listen takes only an IP address.
     "http://localhost:8080",
+    // smolvm's API has no authentication, so it stays on loopback.
+    "http://0.0.0.0:8080",
+    "http://10.0.0.5:8080",
+    "http://[::]:8080",
+    "http://[fe80::1]:8080",
     "not a url",
   ])("refuses %s", (url) => {
     expect(() => smolvmListenAddress(url)).toThrow(DaemonError);

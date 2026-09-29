@@ -160,8 +160,10 @@ is left as it was before `up`:
    `smolvm serve start --listen <host:port of SMOL_API_URL>`. smolvm's own
    default is a Unix socket, so the address is always passed, and
    `SMOL_API_URL` must be a plain `http://<IP address>[:port]` (port 80 if
-   omitted), since `--listen` takes no hostnames such as `localhost`. smolvm
-   gets its own process group, so Ctrl-C on `up --fg` reaches only the
+   omitted), since `--listen` takes no hostnames such as `localhost`. The
+   address must be loopback (`127.0.0.0/8` or `[::1]`): smolvm's API has no
+   authentication, so listening anywhere else would expose it without
+   amika-hostd's bearer check. smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only the
    daemon; its output goes to `smolvm.log`; and it never sees the API key or
    secret key.
 3. The daemon listens only once smolvm answers `/health` (30s at most), so the

@@ -10,7 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -170,6 +170,8 @@ export async function startSmolvm(
  * The `--listen` address for `apiUrl`. A managed smolvm serves plain HTTP at
  * the root, so the URL must be `http://host[:port]` with nothing else, and
  * `--listen` takes only an IP address, not a hostname such as `localhost`.
+ * smolvm's API has no authentication, so the address must also be loopback:
+ * anywhere else would expose it without amika-hostd's bearer check.
  */
 export function smolvmListenAddress(apiUrl = DEFAULT_SMOL_API_URL): {
   origin: string;
@@ -181,6 +183,7 @@ export function smolvmListenAddress(apiUrl = DEFAULT_SMOL_API_URL): {
   } catch {
     url = new URL("invalid:");
   }
+  const address = url.hostname.replace(/^\[(.*)\]$/, "$1");
   if (
     url.protocol !== "http:" ||
     url.username ||
@@ -188,15 +191,24 @@ export function smolvmListenAddress(apiUrl = DEFAULT_SMOL_API_URL): {
     url.pathname !== "/" ||
     url.search ||
     url.hash ||
-    isIP(url.hostname.replace(/^\[(.*)\]$/, "$1")) === 0
+    isIP(address) === 0
   ) {
     throw new DaemonError(
       "SMOL_API_URL must be http://<IP address>:<port> with no path (e.g. http://127.0.0.1:8080), since `amika-hostd up` starts smolvm listening there",
     );
   }
+  if (!LOOPBACK.check(address, isIP(address) === 6 ? "ipv6" : "ipv4")) {
+    throw new DaemonError(
+      "SMOL_API_URL must be a loopback address (127.0.0.0/8 or [::1]), since smolvm's API has no authentication and `amika-hostd up` starts it listening there",
+    );
+  }
   // `hostname` keeps an IPv6 literal's brackets, as `--listen` expects.
   return { origin: url.origin, listen: `${url.hostname}:${url.port || "80"}` };
 }
+
+const LOOPBACK = new BlockList();
+LOOPBACK.addSubnet("127.0.0.0", 8, "ipv4");
+LOOPBACK.addAddress("::1", "ipv6");
 
 /** `/health`'s status, or undefined if nothing answers. */
 async function probe(
