@@ -319,9 +319,11 @@ describe("amika-hostd provider", () => {
 });
 
 describe("amika-hostd services", () => {
+  const CREATED_AT = 1_790_000_000;
   const PUBLISHED = {
     ...MACHINE,
     state: "running",
+    createdAt: CREATED_AT,
     ports: [
       { host: 40001, guest: 3000 },
       { host: 40002, guest: 60999 },
@@ -353,6 +355,7 @@ describe("amika-hostd services", () => {
   it("signs URLs that hostd routes to the published guest port", async () => {
     const { provider, runtime, fetcher } = harness([
       json(PUBLISHED),
+      json(PUBLISHED),
       json({ ok: true }),
     ]);
     const services = provider.sandboxes.get("demo").services!;
@@ -360,12 +363,15 @@ describe("amika-hostd services", () => {
     const url = new URL(refreshed[0].url);
     expect(url.origin).toBe("http://127.0.0.1:3020");
     expect(url.pathname).toMatch(
-      /^\/services\/demo\/60999\/[0-9]+\.[A-Za-z0-9_-]{43}\/$/,
+      new RegExp(
+        `^/services/demo/60999/[0-9]+\\.${CREATED_AT}\\.[A-Za-z0-9_-]{43}/$`,
+      ),
     );
     const expiresAt = Number(url.pathname.split("/")[4].split(".")[0]);
     expect(expiresAt * 1000 - Date.now()).toBeGreaterThan(23 * 3600 * 1000);
 
     // The caller never holds the secret key: only the URL authorizes it.
+    fetcher.mockClear();
     const app = createApp({ secretKey: SECRET }, runtime);
     const response = await app.request(`${url.pathname}v1/status?x=1`, {
       headers: { Authorization: "Bearer connect-token" },
@@ -375,17 +381,19 @@ describe("amika-hostd services", () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(runtime.mock.calls.map(([target]) => target)).toEqual([
       "http://127.0.0.1:8080/api/v1/machines/demo",
+      "http://127.0.0.1:8080/api/v1/machines/demo",
       "http://127.0.0.1:40002/v1/status?x=1",
     ]);
-    const forwarded = new Headers(runtime.mock.calls[1][1]?.headers);
+    const forwarded = new Headers(runtime.mock.calls[2][1]?.headers);
     expect(forwarded.get("Authorization")).toBe("Bearer connect-token");
   });
 
   it("refuses a signed URL for another port or with another key", async () => {
-    const { provider, runtime } = harness([]);
+    const { provider, runtime } = harness([json(PUBLISHED)]);
     const { services: refreshed } = await provider.sandboxes
       .get("demo")
       .services!.refreshAll([WEB]);
+    runtime.mockClear();
     const path = new URL(refreshed[0].url).pathname;
     const app = createApp({ secretKey: SECRET }, runtime);
     const otherPort = path.replace("/3000/", "/60999/");
@@ -395,8 +403,35 @@ describe("amika-hostd services", () => {
     expect(runtime).not.toHaveBeenCalled();
   });
 
+  it("stops routing a URL once its machine is recreated under the same name", async () => {
+    const { provider, runtime } = harness([
+      json(PUBLISHED),
+      json({ ...PUBLISHED, createdAt: CREATED_AT + 600 }),
+    ]);
+    const { services: refreshed } = await provider.sandboxes
+      .get("demo")
+      .services!.refreshAll([AMIKAD]);
+    const app = createApp({ secretKey: SECRET }, runtime);
+    const response = await app.request(new URL(refreshed[0].url).pathname);
+    expect(response.status).toBe(404);
+    // The lookup ran, and nothing reached the recreated machine's port.
+    expect(runtime).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses to sign URLs when smolvm does not report createdAt", async () => {
+    const { createdAt: _, ...legacy } = PUBLISHED;
+    const { provider } = harness([json(legacy)]);
+    await expect(
+      provider.sandboxes.get("demo").services!.refreshAll([AMIKAD]),
+    ).rejects.toThrow("does not report createdAt");
+  });
+
   it("reconciles only to ports published at create", async () => {
-    const { provider } = harness([json(PUBLISHED), json(MACHINE)]);
+    const { provider } = harness([
+      json(PUBLISHED),
+      json(PUBLISHED),
+      json(MACHINE),
+    ]);
     const services = provider.sandboxes.get("demo").services!;
     const { services: refreshed } = await services
       .load([WEB, AMIKAD])

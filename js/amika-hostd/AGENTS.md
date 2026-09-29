@@ -256,14 +256,21 @@ handshake. Upgrades forward every header as sent, including `Host` and
 body. Shutdown ends open tunnels, and upgrades still being set up, at once.
 
 These routes skip the secret key, since their callers never hold it. The token
-takes its place: `<expiresAt>.<base64url HMAC-SHA256>` over the machine, port
-and expiry, keyed with the secret key. The `@amika/sandbox` provider signs it
-(`signHostdServiceToken`) for 24 hours; `src/internal/services.ts`
-(`signServiceToken`, `verifyServiceToken`) must stay identical to it. A bad
-path, a bad or expired token, an unpublished port, and a machine that is not
-running all answer `404`, so the route never confirms which machines exist. A
-stopped machine's VM releases its host port, which another machine or process
-may then bind, so only a running machine's mapping is trusted.
+takes its place: `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>` over the
+machine, its smolvm `createdAt`, the port and the expiry, keyed with the secret
+key. The `@amika/sandbox` provider reads `createdAt` from smolvm and signs the
+token (`signHostdServiceToken`) for 24 hours; `src/internal/services.ts`
+(`signServiceToken`, `verifyServiceToken`) must stay identical to it. hostd
+checks the signature before any runtime call, then requires the machine's
+current `createdAt` to match. A machine deleted and recreated under the same
+name has a new `createdAt`, so the old machine's URLs stop working even though
+tokens are otherwise stateless and cannot be revoked one by one. A bad path, a
+bad or expired token, an unpublished port, another incarnation of the machine,
+and a machine that is not running all answer `404`, so the route never
+confirms which machines exist. A stopped machine's VM releases its host port,
+which another machine or process may then bind, so only a running machine's
+mapping is trusted. Machines on a smolvm that does not report `createdAt` get
+no service URLs.
 
 This is how Amika SSH reaches a hostd machine. The provider declares the
 `services` capability, so the control plane exposes `amikad`'s port (60999) at

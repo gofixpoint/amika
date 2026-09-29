@@ -6,6 +6,9 @@
  * WebSocket upgrades (see `js/amika-hostd/src/internal/services.ts`). The
  * token is signed here with the daemon's secret key, so the URL is the only
  * credential a caller needs and the secret key never leaves the control plane.
+ * It covers the machine's smolvm `createdAt` as well as its name, so a URL
+ * stops working once its machine is deleted, even if another machine is later
+ * created under the same name.
  * This is what backs no-relay SSH: the `amikad` service URL is where the Amika
  * CLI opens its SSH WebSocket.
  */
@@ -35,13 +38,26 @@ export function hostdServices(
       id: string,
       services: SandboxService[],
     ): Promise<RefreshUrlsResult> => {
-      machinePath(id);
+      const { createdAt } = await client.json(machinePath(id), machineSchema);
+      if (createdAt === undefined) {
+        throw new Error(
+          `smolvm does not report createdAt for machine ${id}; upgrade smolvm on the host to route its services`,
+        );
+      }
       const expiresAt = Math.floor(Date.now() / 1000) + HOSTD_SERVICE_URL_TTL_S;
       return {
-        services: services.map((service) => ({
-          ...service,
-          url: `${origin}/services/${id}/${service.containerPort}/${signHostdServiceToken(secretKey, id, service.containerPort, expiresAt)}/`,
-        })),
+        services: services.map((service) => {
+          const token = signHostdServiceToken(secretKey, {
+            machine: id,
+            createdAt,
+            port: service.containerPort,
+            expiresAt,
+          });
+          return {
+            ...service,
+            url: `${origin}/services/${id}/${service.containerPort}/${token}/`,
+          };
+        }),
       };
     },
     /**
@@ -70,18 +86,25 @@ export function hostdServices(
 }
 
 /**
- * The token for one machine port, valid until `expiresAt` (Unix seconds):
- * `<expiresAt>.<base64url HMAC-SHA256>`. Mirrors `signServiceToken` in
+ * The token for one machine incarnation's port, valid until `expiresAt`
+ * (Unix seconds): `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>`.
+ * `createdAt` is the machine's smolvm creation time, which tells a machine
+ * apart from a later one with the same name. Mirrors `signServiceToken` in
  * `@amika/hostd`, which verifies it; the two must stay identical.
  */
 export function signHostdServiceToken(
   secretKey: string,
-  machine: string,
-  port: number,
-  expiresAt: number,
+  {
+    machine,
+    createdAt,
+    port,
+    expiresAt,
+  }: { machine: string; createdAt: number; port: number; expiresAt: number },
 ): string {
   const mac = createHmac("sha256", secretKey)
-    .update(`amika-hostd-service:v1\n${machine}\n${port}\n${expiresAt}`)
+    .update(
+      `amika-hostd-service:v2\n${machine}\n${createdAt}\n${port}\n${expiresAt}`,
+    )
     .digest("base64url");
-  return `${expiresAt}.${mac}`;
+  return `${expiresAt}.${createdAt}.${mac}`;
 }
