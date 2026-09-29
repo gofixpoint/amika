@@ -52,6 +52,14 @@ export interface SandboxProviderDeps {
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
   amikaHostd: AmikaHostdConfig | null;
+  /**
+   * Optional replacement for fetch, used by host daemon operations and adapters.
+   * Callers can enforce which destinations requests may reach. For example,
+   * amika-mono's BYOC fetcher requires public HTTPS, pins connections to a
+   * validated IP, and rejects redirects so customer URLs cannot reach internal
+   * services. The caller owns these restrictions; omitted, this uses normal fetch.
+   */
+  amikaHostdFetcher?: typeof fetch;
   /** Resolves an org-scoped snapshot name to its bootable opaque provider id. */
   resolveSnapshotId: SnapshotIdResolver;
 }
@@ -92,11 +100,13 @@ const PROVIDERS = {
     create: (deps) =>
       amikaHostdProvider({
         config: requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
+        fetcher: deps.amikaHostdFetcher,
       }),
     openAdapter: (deps, id) =>
       openAmikaHostdAdapter(
         requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
         id,
+        deps.amikaHostdFetcher,
       ),
   },
   smol: {

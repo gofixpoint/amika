@@ -4,6 +4,7 @@ import {
   buildGitCheckoutNewBranchCmd,
   buildGitSetPlainRemoteCmd,
   buildRefreshClonedRepoScript,
+  getGithubCloneCredentials,
 } from "./git-clone";
 
 describe("buildGitCheckoutNewBranchCmd", () => {
@@ -86,6 +87,16 @@ describe("buildRefreshClonedRepoScript", () => {
 // credential can end up.
 describe("buildCloneUrl", () => {
   const TOKEN = "ghs_installation_token";
+
+  it.each([
+    "https://github.com\\@evil.example/acme/widgets",
+    "https://github.com\\evil.example@evil.example/acme/widgets",
+  ])("withholds credentials when Git parses a different host: %s", (url) => {
+    // WHATWG sees github.com, but Git treats the backslash as part of userinfo.
+    expect(new URL(url).hostname).toBe("github.com");
+    expect(getGithubCloneCredentials(url, TOKEN)).toBeUndefined();
+    expect(buildCloneUrl(url, TOKEN)).toBe(url);
+  });
 
   it("authenticates an https github.com clone", () => {
     expect(buildCloneUrl("https://github.com/acme/widgets", TOKEN)).toBe(
