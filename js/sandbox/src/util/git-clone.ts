@@ -127,6 +127,9 @@ export function getGithubCloneCredentials(
   githubToken?: string | null,
 ): { username: string; password: string } | undefined {
   if (!githubToken) return undefined;
+  // WHATWG treats backslashes as slashes, but native Git receives the raw URL:
+  // https://github.com\@evil.example can therefore send credentials to evil.example.
+  if (repoUrl.includes("\\")) return undefined;
   try {
     const url = new URL(repoUrl);
     if (

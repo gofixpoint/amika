@@ -117,6 +117,8 @@ describe("native GitHub clone credentials", () => {
     "https://gitlab.com/org/repo.git",
     "https://github.com.evil.example/org/repo.git",
     "https://github.com./org/repo.git",
+    "https://github.com\\@evil.example/org/repo.git",
+    "https://github.com\\evil.example@evil.example/org/repo.git",
     "http://github.com/org/repo.git",
     "ssh://git@github.com/org/repo.git",
     "git@github.com:org/repo.git",
