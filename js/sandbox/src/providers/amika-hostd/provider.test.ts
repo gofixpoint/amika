@@ -353,10 +353,10 @@ describe("amika-hostd services", () => {
   });
 
   it("signs URLs that hostd routes to the published guest port", async () => {
+    // One lookup when the provider signs, one when hostd routes.
     const { provider, runtime, fetcher } = harness([
       json(PUBLISHED),
       json(PUBLISHED),
-      json({ ok: true }),
     ]);
     const services = provider.sandboxes.get("demo").services!;
     const { services: refreshed } = await services.refreshAll([AMIKAD]);
@@ -372,7 +372,8 @@ describe("amika-hostd services", () => {
 
     // The caller never holds the secret key: only the URL authorizes it.
     fetcher.mockClear();
-    const app = createApp({ secretKey: SECRET }, runtime);
+    const forwardHttp = vi.fn(async () => json({ ok: true }));
+    const app = createApp({ secretKey: SECRET }, runtime, { forwardHttp });
     const response = await app.request(`${url.pathname}v1/status?x=1`, {
       headers: { Authorization: "Bearer connect-token" },
     });
@@ -382,10 +383,15 @@ describe("amika-hostd services", () => {
     expect(runtime.mock.calls.map(([target]) => target)).toEqual([
       "http://127.0.0.1:8080/api/v1/machines/demo",
       "http://127.0.0.1:8080/api/v1/machines/demo",
-      "http://127.0.0.1:40002/v1/status?x=1",
     ]);
-    const forwarded = new Headers(runtime.mock.calls[2][1]?.headers);
-    expect(forwarded.get("Authorization")).toBe("Bearer connect-token");
+    expect(forwardHttp).toHaveBeenCalledWith(
+      40002,
+      expect.objectContaining({ path: "/v1/status?x=1" }),
+    );
+    const [[, forwarded]] = forwardHttp.mock.calls as unknown as [
+      [number, { headers: Headers }],
+    ];
+    expect(forwarded.headers.get("Authorization")).toBe("Bearer connect-token");
   });
 
   it("refuses a signed URL for another port or with another key", async () => {

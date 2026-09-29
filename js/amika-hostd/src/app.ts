@@ -4,6 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { requireSecretKey } from "./internal/auth.js";
+import { forwardToGuest, type GuestForwarder } from "./internal/forward.js";
 import { SmolRuntime, type SmolRuntimeConfig } from "./internal/smol.js";
 import {
   createMachineSchema,
@@ -36,13 +37,18 @@ export interface AppConfig extends SmolRuntimeConfig {
 export interface AppDeps {
   /** Picks the host loopback port smolvm publishes a guest port on. */
   allocatePort?: () => Promise<number>;
+  /** Sends a service request to the guest port smolvm published. */
+  forwardHttp?: GuestForwarder;
 }
 
 /** Build routes without opening a socket; the runtime transport is injectable. */
 export function createApp(
   { secretKey, images = {}, configPath, ...runtimeConfig }: AppConfig,
   fetcher = fetch,
-  { allocatePort = freeLoopbackPort }: AppDeps = {},
+  {
+    allocatePort = freeLoopbackPort,
+    forwardHttp = forwardToGuest,
+  }: AppDeps = {},
 ) {
   const runtime = new SmolRuntime(runtimeConfig, fetcher);
   const app = new Hono();
@@ -110,7 +116,7 @@ export function createApp(
     );
   });
   app.all(`${SERVICES_PREFIX}*`, (c) =>
-    proxyService(c.req.raw, secretKey, runtime, fetcher),
+    proxyService(c.req.raw, secretKey, runtime, forwardHttp),
   );
   return app;
 }
@@ -123,7 +129,7 @@ async function proxyService(
   request: Request,
   secretKey: string,
   runtime: SmolRuntime,
-  fetcher: typeof fetch,
+  forwardHttp: GuestForwarder,
 ): Promise<Response> {
   const url = new URL(request.url);
   const route = parseServicePath(url.pathname);
@@ -139,30 +145,23 @@ async function proxyService(
   }
   const headers = new Headers(request.headers);
   stripHopByHopHeaders(headers);
-  headers.delete("host");
+  // The guest sees the host the caller addressed, as on the upgrade path.
+  // A request built without one (only in-process, e.g. tests) names the URL's.
+  if (!headers.has("host")) headers.set("host", url.host);
   let upstream: Response;
   try {
-    upstream = await fetcher(
-      `http://127.0.0.1:${hostPort}${route.path}${url.search}`,
-      {
-        method: request.method,
-        headers,
-        body: request.body,
-        redirect: "manual",
-        signal: request.signal,
-        // Required by Node's fetch to stream a request body.
-        duplex: "half",
-      } as RequestInit,
-    );
+    upstream = await forwardHttp(hostPort, {
+      method: request.method,
+      path: `${route.path}${url.search}`,
+      headers,
+      body: request.body,
+      signal: request.signal,
+    });
   } catch {
     return Response.json({ error: "Service unavailable" }, { status: 502 });
   }
   const responseHeaders = new Headers(upstream.headers);
   stripHopByHopHeaders(responseHeaders);
-  // fetch has already decoded the body, so its encoding and length no
-  // longer describe what is sent on.
-  responseHeaders.delete("content-encoding");
-  responseHeaders.delete("content-length");
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

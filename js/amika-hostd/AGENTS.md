@@ -249,11 +249,12 @@ WebSocket (or any other) upgrades are piped over TCP by `createUpgradeHandler`
 (`src/internal/services.ts`), which `src/internal/server.ts` attaches to the
 listener's `upgrade` event, handshake included, so the guest answers the
 handshake. Upgrades forward every header as sent, including `Host` and
-`Authorization`, except `Proxy-Authorization`. Proxied HTTP forwards
-`Authorization` and drops hop-by-hop headers, but its `Host` becomes
-`127.0.0.1:<host port>`, since fetch cannot send another; the response drops
-`Content-Encoding` and `Content-Length`, since fetch has already decoded the
-body. Shutdown ends open tunnels, and upgrades still being set up, at once.
+`Authorization`, except `Proxy-Authorization`. Proxied HTTP goes over
+`node:http` (`src/internal/forward.ts`), not `fetch`, which always sends its
+own `Host` and decodes compressed bodies: it forwards the caller's `Host` and
+`Authorization`, drops hop-by-hop headers (including any `Connection` names)
+in both directions, and passes bodies through undecoded. Shutdown ends open
+tunnels, and upgrades still being set up, at once.
 
 These routes skip the secret key, since their callers never hold it. The token
 takes its place: `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>` over the

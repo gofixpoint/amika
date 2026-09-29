@@ -1,6 +1,7 @@
 /** Exercise the daemon's HTTP boundary with an injected runtime transport. */
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
+import type { GuestForwarder } from "./internal/forward.js";
 import { signServiceToken } from "./internal/services.js";
 
 const ROOT = "/api/v1/machines";
@@ -510,20 +511,25 @@ describe("service routes", () => {
   ) =>
     `/services/${machine}/${port}/${signServiceToken(SECRET, { machine, createdAt, port, expiresAt })}`;
 
+  /** Runtime lookups and guest requests answered in order from one queue. */
   function services(...responses: (Response | Error)[]) {
-    const fetcher = vi.fn<typeof fetch>(async () => {
+    const next = async () => {
       const response = responses.shift();
       if (!response) throw new Error("Unexpected request");
       if (response instanceof Error) throw response;
       return response;
-    });
+    };
+    const fetcher = vi.fn<typeof fetch>(next);
+    const forward = vi.fn<GuestForwarder>(next);
     // No secret key: service routes are for callers that never hold it.
     return {
       app: createApp(
         { secretKey: SECRET, apiUrl: "http://runtime:8080" },
         fetcher,
+        { forwardHttp: forward },
       ),
       fetcher,
+      forward,
     };
   }
 
@@ -536,8 +542,8 @@ describe("service routes", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards the guest path, query, body and caller credential", async () => {
-    const { app, fetcher } = services(
+  it("forwards the guest path, query, body, Host and caller credential", async () => {
+    const { app, fetcher, forward } = services(
       Response.json(MACHINE),
       new Response("created", {
         status: 201,
@@ -552,6 +558,7 @@ describe("service routes", () => {
     const response = await app.request(`${route()}/v1/items?limit=2`, {
       method: "POST",
       headers: {
+        Host: "hostd.example",
         Authorization: "Bearer guest-token",
         "Proxy-Authorization": "Basic x",
         Connection: "X-Hop",
@@ -563,29 +570,34 @@ describe("service routes", () => {
     expect(response.status).toBe(201);
     expect(await response.text()).toBe("created");
     expect(response.headers.get("x-guest")).toBe("yes");
-    expect(response.headers.get("content-encoding")).toBeNull();
+    // The guest's bytes pass through undecoded, so their encoding stays.
+    expect(response.headers.get("content-encoding")).toBe("gzip");
     expect(response.headers.get("connection")).toBeNull();
     expect(response.headers.get("x-guest-hop")).toBeNull();
-    const [lookup, [target, init]] = fetcher.mock.calls;
-    expect(lookup[0]).toBe(`http://runtime:8080${ROOT}/demo`);
-    expect(target).toBe("http://127.0.0.1:41001/v1/items?limit=2");
-    expect(init?.method).toBe("POST");
-    expect(init?.redirect).toBe("manual");
-    const headers = new Headers(init?.headers);
+    expect(fetcher.mock.calls.map(([target]) => target)).toEqual([
+      `http://runtime:8080${ROOT}/demo`,
+    ]);
+    const [[hostPort, forwarded]] = forward.mock.calls;
+    expect(hostPort).toBe(41001);
+    expect(forwarded.method).toBe("POST");
+    expect(forwarded.path).toBe("/v1/items?limit=2");
+    const headers = forwarded.headers;
+    expect(headers.get("host")).toBe("hostd.example");
     expect(headers.get("authorization")).toBe("Bearer guest-token");
     expect(headers.get("proxy-authorization")).toBeNull();
     expect(headers.get("x-hop")).toBeNull();
-    expect(headers.get("host")).toBeNull();
-    expect(await new Response(init?.body).text()).toBe("payload");
+    expect(await new Response(forwarded.body).text()).toBe("payload");
   });
 
   it("forwards the route root as the guest root", async () => {
-    const { app, fetcher } = services(
+    const { app, forward } = services(
       Response.json(MACHINE),
       new Response("ok"),
     );
     expect((await app.request(route())).status).toBe(200);
-    expect(fetcher.mock.calls[1][0]).toBe("http://127.0.0.1:41001/");
+    expect(forward.mock.calls[0][1].path).toBe("/");
+    // Without a Host header, the one the request URL names.
+    expect(forward.mock.calls[0][1].headers.get("host")).toBe("localhost");
   });
 
   it.each([
@@ -642,7 +654,7 @@ describe("service routes", () => {
   it("returns 502 when the guest port refuses the connection", async () => {
     const { app } = services(
       Response.json(MACHINE),
-      new TypeError("fetch failed"),
+      new Error("connect ECONNREFUSED 127.0.0.1:41001"),
     );
     const response = await app.request(route());
     expect(response.status).toBe(502);
