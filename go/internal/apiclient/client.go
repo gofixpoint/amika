@@ -344,43 +344,6 @@ func (c *Client) WaitForSandbox(name string) (*RemoteSandbox, error) {
 	return c.waitForSandboxState(name, []string{"active", "running", "started"}, "sandbox provisioning failed")
 }
 
-// SSHInfo contains SSH connection details for a remote sandbox.
-type SSHInfo struct {
-	SSHDestination string `json:"ssh_destination"`
-	Token          string `json:"token"`
-	ExpiresAt      string `json:"expires_at"`
-	// SandboxID is the sandbox's immutable identifier. It is used to key a
-	// stable SSH host alias so an editor's Remote-SSH session re-links across
-	// reconnects rather than treating each rotated token as a new host. It may
-	// be empty when talking to an older server that predates this field.
-	SandboxID   string `json:"sandbox_id"`
-	SandboxName string `json:"sandbox_name"`
-	RepoName    string `json:"repo_name"`
-}
-
-// GetSSH retrieves SSH connection details for a remote sandbox.
-func (c *Client) GetSSH(name string) (*SSHInfo, error) {
-	var result SSHInfo
-	if err := c.doJSON("POST", apiBasePath+"/sandboxes/"+url.PathEscape(name)+"/ssh", nil, &result); err != nil {
-		return nil, fmt.Errorf("remote ssh: %w", err)
-	}
-	return &result, nil
-}
-
-// RevokeSSHRequest is the request body for DELETE /api/v0beta1/sandboxes/{id}/ssh.
-type RevokeSSHRequest struct {
-	Token string `json:"token"`
-}
-
-// RevokeSSH revokes an SSH token for a remote sandbox.
-func (c *Client) RevokeSSH(name, token string) error {
-	req := RevokeSSHRequest{Token: token}
-	if err := c.doJSON("DELETE", apiBasePath+"/sandboxes/"+url.PathEscape(name)+"/ssh", req, nil); err != nil {
-		return fmt.Errorf("remote revoke ssh: %w", err)
-	}
-	return nil
-}
-
 // StartSandbox starts (resumes) a sandbox on the remote API.
 // The endpoint returns 202 Accepted with the sandbox in "initializing" state.
 // Use WaitForSandboxStart to poll until the sandbox is active.
@@ -797,62 +760,6 @@ func (c *Client) DeleteProviderSecret(provider, id string) error {
 	return nil
 }
 
-// AgentSendRequest is the request body for POST /api/v0beta1/sandboxes/{id}/agent-send.
-type AgentSendRequest struct {
-	Message    string `json:"message"`
-	NewSession bool   `json:"new_session,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	Agent      string `json:"agent,omitempty"`
-}
-
-// AgentSendResponse mirrors the API's AgentSendResponse schema, returned by
-// POST /api/v0beta1/sandboxes/{id}/agent-send. SessionID, Response, IsError,
-// and IsNewSession are required by the schema (no omitempty); AgentSessionID
-// and CostUSD are optional.
-type AgentSendResponse struct {
-	SessionID      string   `json:"session_id"`
-	Response       string   `json:"response"`
-	IsError        bool     `json:"is_error"`
-	IsNewSession   bool     `json:"is_new_session"`
-	AgentSessionID string   `json:"agent_session_id,omitempty"`
-	CostUSD        *float64 `json:"cost_usd,omitempty"`
-}
-
-// AgentSendJobResponse mirrors the API's AgentSendJobResponse schema,
-// returned by the asynchronous agent-send-jobs endpoints
-// (POST /api/v0beta1/sandboxes/{id}/agent-send-jobs and
-// GET .../agent-send-jobs/{job_id}). AgentSessionID and ResultText are
-// nullable (pointers); CostUSD is the only non-required field.
-type AgentSendJobResponse struct {
-	JobID          string   `json:"job_id"`
-	State          string   `json:"state"`
-	AgentSessionID *string  `json:"agent_session_id"`
-	IsNewSession   bool     `json:"is_new_session"`
-	IsError        bool     `json:"is_error"`
-	ResultText     *string  `json:"result_text"`
-	CostUSD        *float64 `json:"cost_usd,omitempty"`
-	CreatedAt      string   `json:"created_at"`
-	UpdatedAt      string   `json:"updated_at"`
-}
-
-// AgentSend sends a message to an agent inside a remote sandbox.
-// The endpoint is synchronous: it blocks until the agent finishes, so a
-// longer HTTP timeout (10 minutes) is used instead of the default 30 seconds.
-func (c *Client) AgentSend(sandboxName string, req AgentSendRequest) (*AgentSendResponse, error) {
-	saved := c.HTTP.Timeout
-	c.HTTP.Timeout = 10 * time.Minute
-	defer func() { c.HTTP.Timeout = saved }()
-
-	var result AgentSendResponse
-	if err := c.doJSON("POST", apiBasePath+"/sandboxes/"+url.PathEscape(sandboxName)+"/agent-send", req, &result); err != nil {
-		if authErr := extractAgentAuthError(err); authErr != "" {
-			return nil, fmt.Errorf("remote agent-send: agent failed to authenticate with its AI provider: %s\n\nthe sandbox agent's API credentials may have expired or been revoked; recreate the sandbox or update its API keys to restore access", authErr)
-		}
-		return nil, fmt.Errorf("remote agent-send: %w", err)
-	}
-	return &result, nil
-}
-
 // Session represents an agent session on a remote sandbox.
 type Session struct {
 	ID        string                 `json:"id"`
@@ -1037,10 +944,6 @@ func (c *Client) SendAgentSession(req AgentSessionSendRequest) (*AgentSessionSen
 	defer func() { c.HTTP.Timeout = saved }()
 
 	var result AgentSessionSendResponse
-	// Note: no extractAgentAuthError branch here, unlike the older
-	// /sandboxes/{}/agent/send route. This endpoint reports a provider auth
-	// failure as a 200 with is_error set and the agent CLI's own message in
-	// `response` — not as an HTTP error — so there is no error body to inspect.
 	if err := c.doJSON("POST", apiBasePath+"/agent-sessions", req, &result); err != nil {
 		return nil, fmt.Errorf("remote agent-session send: %w", err)
 	}

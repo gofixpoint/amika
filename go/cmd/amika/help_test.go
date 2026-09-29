@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // helpLineContains returns true if any line in output contains all of needles.
@@ -116,9 +118,16 @@ func TestHelpAllRevealsGCOnlyForThatInvocation(t *testing.T) {
 	if err != nil || !strings.Contains(out, "amika gc") {
 		t.Fatalf("direct gc help: %v\n%s", err, out)
 	}
+	rig := findChildCommand(rootCmd, "rig")
+	hidden := &cobra.Command{Use: "hidden-test", Short: "Hidden test command", Hidden: true, Run: func(*cobra.Command, []string) {}}
+	rig.AddCommand(hidden)
+	t.Cleanup(func() { rig.RemoveCommand(hidden) })
 	out, err = runRootCommandOutput(t, "help", "rig", "-a")
-	if err != nil || !helpLineContains(out, "codev1", "provider-native") {
+	if err != nil || !helpLineContains(out, hidden.Name(), hidden.Short) {
 		t.Fatalf("nested hidden commands: %v\n%s", err, out)
+	}
+	if !hidden.Hidden {
+		t.Fatal("help changed nested command visibility permanently")
 	}
 	if _, err := runRootCommandOutput(t, "help", "does-not-exist"); err == nil {
 		t.Fatal("unknown topic accepted")

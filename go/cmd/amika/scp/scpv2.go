@@ -1,17 +1,7 @@
 package scpcmd
 
-// scpv2.go implements `amika scp`: the same operand grammar as the superseded
-// `amika scpv1`, carried over the direct WebSocket transport that backs
-// `amika sandbox ssh` instead of the v1 provider-native SSH access.
-//
-// The transport difference is entirely in how a sandbox reference becomes an
-// scp operand. v1 resolves a sandbox to a concrete host/port/user and spells
-// out connection options on the command line; v2 resolves it to its
-// `<name>.<id>.<environment>.amika` alias (ssh.BuildSessionAlias), whose
-// User, IdentityFile, host-key policy, and ProxyCommand all come from the
-// managed `Host *.amika` block in ~/.ssh/amika.conf. So there are no
-// connection options to prepend here — the operands are rewritten and system
-// scp is handed the rest unchanged.
+// scpv2.go resolves sandbox references to managed SSH aliases and passes the
+// rewritten operands to system scp over Amika's direct WebSocket transport.
 
 import (
 	"fmt"
@@ -43,7 +33,7 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 
 	// Resolved lazily and cached by name: each sandbox is fetched and pinned at
 	// most once, and a copy naming no sandbox performs no API call and needs no
-	// auth (the same contract as `amika scpv1`).
+	// auth.
 	var client *apiclient.Client
 	aliases := map[string]string{}
 	resolve := func(name string) (string, error) {
@@ -175,7 +165,7 @@ Examples:
   # Print the resolved scp command instead of running it
   amika scp --print ./a.txt my-sandbox:a.txt`,
 		Args: cobra.MinimumNArgs(1),
-		// As with `amika scpv1`, every argument is forwarded to system scp, so
+		// Every argument is forwarded to system scp, so
 		// scp's own single-dash options pass through untouched.
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

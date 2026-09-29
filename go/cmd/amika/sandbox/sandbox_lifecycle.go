@@ -11,7 +11,6 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
-	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 	"github.com/spf13/cobra"
 )
@@ -363,8 +362,9 @@ func repoBasenameFromURL(repoURL string) string {
 var sandboxConnectCmd = &cobra.Command{
 	Use:   "connect <name>",
 	Short: "Connect to a sandbox console",
-	Long:  `Connect to a running sandbox and open an interactive shell.`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Open an interactive shell using the same direct WebSocket SSH transport as
+"amika rig ssh". Requires an SSH identity from "amika secret ssh-keygen".`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		// connect opens an interactive shell, so it has no JSON result.
@@ -383,6 +383,10 @@ var sandboxConnectCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return ssh.ExecSSH(client, name, false, nil)
+		sb, err := client.GetSandbox(name)
+		if err != nil {
+			return err
+		}
+		return connectSandbox(client, sb)
 	},
 }

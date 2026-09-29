@@ -539,21 +539,59 @@ func strOrDash(s *string, fallbacks ...string) string {
 }
 
 func init() {
-	sendCmd.Flags().String("agent", "", "Coding agent to use: claude or codex (default: org setting, else claude)")
-	sendCmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
-	sendCmd.Flags().String("rig", "", "Send into a specific rig (id or name)")
-	sendCmd.Flags().Bool("new-session", false, "Start a brand-new chat")
-	gitrepo.AddFlags(sendCmd,
-		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",
-		"Skip git repo auto-detection; create a sandbox without any repo")
-	gitrepo.AddRepoAlias(sendCmd)
-	sendCmd.Flags().String(flagBranch, "", "Check out this git branch in the sandbox, or create it if it doesn't exist (default: the branch checked out locally)")
-	sendCmd.Flags().String(flagNewBranch, "", "Create a new git branch. With --branch, starts from that branch; otherwise from the current checkout")
-	sendCmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
+	addSendFlags(sendCmd)
 	rootCmd.AddCommand(sendCmd)
 
 	sessionsListCmd.Flags().Int("limit", 0, "Maximum chats to list (default: the server's page size, 50)")
 	sessionsCmd.AddCommand(sessionsListCmd)
 	sessionsCmd.AddCommand(sessionsShowCmd)
 	rootCmd.AddCommand(sessionsCmd)
+}
+
+// newRigAgentSendCommand keeps the rig-scoped spelling on the same send path.
+func newRigAgentSendCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agent-send <name> [message]",
+		Short: "Send a message to a coding agent in a rig",
+		Long: `Equivalent to "amika send --rig <name> [message]". Uses the same durable
+chats, streaming behavior, and API response format as "amika send".
+The message can also be piped via stdin.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(args[0]) == "" {
+				return fmt.Errorf("rig name must not be empty")
+			}
+			if target, _ := cmd.Flags().GetString("remote-target"); target != "" {
+				return fmt.Errorf("--remote-target is not yet supported")
+			}
+			if cmd.Flags().Changed("rig") {
+				return fmt.Errorf("pass the rig as the first argument, not --rig")
+			}
+			flag := cmd.Flags().Lookup("rig")
+			previous := flag.Value.String()
+			defer func() { _ = flag.Value.Set(previous) }()
+			if err := flag.Value.Set(args[0]); err != nil {
+				return err
+			}
+			return runSend(cmd, args[1:])
+		},
+	}
+	addSendFlags(cmd)
+	_ = cmd.Flags().MarkHidden("rig")
+	return cmd
+}
+
+// addSendFlags gives both send entry points identical request and output options.
+func addSendFlags(cmd *cobra.Command) {
+	cmd.Flags().String("agent", "", "Coding agent to use: claude or codex (default: org setting, else claude)")
+	cmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
+	cmd.Flags().String("rig", "", "Send into a specific rig (id or name)")
+	cmd.Flags().Bool("new-session", false, "Start a brand-new chat")
+	gitrepo.AddFlags(cmd,
+		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",
+		"Skip git repo auto-detection; create a sandbox without any repo")
+	gitrepo.AddRepoAlias(cmd)
+	cmd.Flags().String(flagBranch, "", "Check out this git branch in the sandbox, or create it if it doesn't exist (default: the branch checked out locally)")
+	cmd.Flags().String(flagNewBranch, "", "Create a new git branch. With --branch, starts from that branch; otherwise from the current checkout")
+	cmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
 }

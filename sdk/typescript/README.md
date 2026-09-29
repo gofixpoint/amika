@@ -36,7 +36,7 @@ const resp = await amika.agentSend(rig.name, {
   message: "Write a hello_world.md file with Hello World! in it",
   agent: "claude",
 });
-console.log(`Agent Response: ${resp.result}`);
+console.log(`Agent Response: ${resp.response}`);
 
 // Tear down
 console.log(`Deleting rig "${rig.name}"`);
@@ -98,18 +98,18 @@ Methods on `AmikaClient` mirror Go's `*apiclient.Client` in shape and HTTP behav
 
 ### Agents and sessions
 
-| Method                                  | Endpoint                                         |
-| --------------------------------------- | ------------------------------------------------ |
-| `agentSend(name, req)`                  | `POST /rigs/{name}/agent-send` (10-min timeout)  |
-| `sendAgentSession(req)`                 | `POST /agent-sessions` (10-min timeout)          |
-| `sendAgentSessionStream(req, handlers)` | `POST /agent-sessions/stream` (SSE)              |
-| `listAgentSessions(limit?)`             | `GET /agent-sessions`                            |
-| `getAgentSession(sessionId)`            | `GET /agent-sessions/{sessionId}`                |
-| `createSession(name, req)`              | `POST /rigs/{name}/sessions`                     |
-| `listSessions(name)`                    | `GET /rigs/{name}/sessions`                      |
-| `getLatestSession(name)`                | `GET /rigs/{name}/sessions/latest` (null on 404) |
-| `getSession(name, sessionId)`           | `GET /rigs/{name}/sessions/{sessionId}`          |
-| `updateSession(name, sessionId, req)`   | `PATCH /rigs/{name}/sessions/{sessionId}`        |
+| Method                                  | Endpoint                                                  |
+| --------------------------------------- | --------------------------------------------------------- |
+| `agentSend(name, req)`                  | `POST /agent-sessions` with `sandbox_id` (10-min timeout) |
+| `sendAgentSession(req)`                 | `POST /agent-sessions` (10-min timeout)                   |
+| `sendAgentSessionStream(req, handlers)` | `POST /agent-sessions/stream` (SSE)                       |
+| `listAgentSessions(limit?)`             | `GET /agent-sessions`                                     |
+| `getAgentSession(sessionId)`            | `GET /agent-sessions/{sessionId}`                         |
+| `createSession(name, req)`              | `POST /rigs/{name}/sessions`                              |
+| `listSessions(name)`                    | `GET /rigs/{name}/sessions`                               |
+| `getLatestSession(name)`                | `GET /rigs/{name}/sessions/latest` (null on 404)          |
+| `getSession(name, sessionId)`           | `GET /rigs/{name}/sessions/{sessionId}`                   |
+| `updateSession(name, sessionId, req)`   | `PATCH /rigs/{name}/sessions/{sessionId}`                 |
 
 ### Snapshots
 
@@ -183,7 +183,7 @@ try {
 }
 ```
 
-`agentSend` automatically detects agent-side auth failures (e.g., Anthropic 401) and rewrites them to a friendlier `AmikaError` explaining how to recover.
+`agentSend(name, req)` delegates to `sendAgentSession({ ...req, rigId: name })` and returns the same response. Read the answer from `response`, accounting from `usage`, and continue the durable chat with `sessionId`. Agent failures, including provider authentication failures, return `isError: true` with details in `response`; HTTP failures throw `AmikaHTTPError`.
 
 ## Development
 

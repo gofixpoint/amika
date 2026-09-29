@@ -1,9 +1,14 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -528,5 +533,147 @@ func TestSendBranchesRequiresRepoForBranchFlags(t *testing.T) {
 
 	if _, err := sendBranches(newCmd(t), gitrepo.Identity{}); err != nil {
 		t.Fatalf("no branch flags: %v", err)
+	}
+}
+
+// Both spellings must route to durable chats and preserve the complete API
+// response, including usage and agent failures, without a legacy envelope.
+func TestRigAgentSendUsesSendAPI(t *testing.T) {
+	for _, isError := range []bool{false, true} {
+		t.Run(fmt.Sprint(isError), func(t *testing.T) {
+			response := fmt.Sprintf(`{"session_id":"chat_1","sandbox_id":"sb_1","agent":"codex","response":"answer","is_error":%t,"is_new_session":false,"created_sandbox":false,"usage":{"cost_usd":0.42}}`, isError)
+			var requests []map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "POST" || r.URL.Path != "/api/v0beta1/agent-sessions" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				var request map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				requests = append(requests, request)
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, response)
+			}))
+			defer server.Close()
+			t.Setenv("AMIKA_API_URL", server.URL)
+			t.Setenv("AMIKA_API_KEY", "test-key")
+			var results []map[string]any
+			for _, args := range [][]string{
+				{"send", "hello", "world", "--rig", "my-rig"},
+				{"rig", "agent-send", "my-rig", "hello", "world"},
+				{"sandbox", "agent-send", "my-rig", "hello", "world"},
+			} {
+				args = append(args, "--agent", "codex", "--session-id", "chat_1", "--output", "json", "--stream")
+				out, err := runRootCommandOutput(t, args...)
+				if (err != nil) != isError {
+					t.Fatalf("error=%v isError=%v", err, isError)
+				}
+				var decoded map[string]any
+				if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+					t.Fatalf("invalid JSON %q: %v", out, err)
+				}
+				results = append(results, decoded)
+			}
+			want := map[string]any{"message": "hello world", "sandbox_id": "my-rig", "agent": "codex", "session_id": "chat_1"}
+			if len(requests) != 3 {
+				t.Fatalf("requests=%d", len(requests))
+			}
+			for _, request := range requests {
+				if !reflect.DeepEqual(request, want) {
+					t.Errorf("request=%v, want %v", request, want)
+				}
+			}
+			for _, result := range results[1:] {
+				if !reflect.DeepEqual(result, results[0]) {
+					t.Errorf("response differs: %v vs %v", result, results[0])
+				}
+			}
+			if results[0]["session_id"] != "chat_1" || results[0]["usage"] == nil {
+				t.Fatalf("missing API fields: %v", results[0])
+			}
+		})
+	}
+}
+
+func TestRigAgentSendRejectsEmptyRig(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+	for _, command := range []string{"rig", "sandbox"} {
+		for _, name := range []string{"", " \t\n"} {
+			t.Run(fmt.Sprintf("%s/%q", command, name), func(t *testing.T) {
+				_, err := runRootCommandOutput(t, command, "agent-send", name, "hello", "--no-git")
+				if err == nil || !strings.Contains(err.Error(), "rig name must not be empty") {
+					t.Fatalf("error=%v, want empty rig rejection", err)
+				}
+			})
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("sent %d requests for an empty rig", requests)
+	}
+}
+
+func TestRemovedCommandsAndAgentFlags(t *testing.T) {
+	for _, name := range []string{"sshv1", "codev1"} {
+		if findChildCommand(findChildCommand(rootCmd, "rig"), name) != nil {
+			t.Errorf("retired command %s is registered", name)
+		}
+	}
+	if findChildCommand(rootCmd, "scpv1") != nil {
+		t.Error("retired scpv1 is registered")
+	}
+	for _, args := range [][]string{{"rig", "agent-send", "box", "hi", "--no-wait"}, {"rig", "agent-send", "box", "hi", "--workdir", "/tmp"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, err := runRootCommandOutput(t, args...)
+			if err == nil || !strings.Contains(err.Error(), "unknown") {
+				t.Fatalf("error=%v, want unknown command or flag", err)
+			}
+		})
+	}
+}
+
+func TestRigAgentSendStreamsPipedMessage(t *testing.T) {
+	input, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = writer.WriteString("  inspect the rig\n")
+	_ = writer.Close()
+	previous := os.Stdin
+	os.Stdin = input
+	t.Cleanup(func() { os.Stdin = previous; _ = input.Close() })
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/api/v0beta1/agent-sessions/stream" {
+			t.Errorf("request=%s", r.URL.Path)
+		}
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		want := map[string]any{"message": "inspect the rig", "sandbox_id": "my-rig", "new_session": true}
+		if !reflect.DeepEqual(request, want) {
+			t.Errorf("request=%v, want %v", request, want)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: delta\ndata: {\"text\":\"ok\"}\n\nevent: done\ndata: {\"session_id\":\"chat_1\",\"response\":\"ok\",\"is_error\":false}\n\n")
+	}))
+	defer server.Close()
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+	_, err = runRootCommandOutput(t, "rig", "agent-send", "my-rig", "--new-session", "--stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d", requests)
 	}
 }

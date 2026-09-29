@@ -252,3 +252,12 @@ func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, name stri
 	}
 	return sandboxSSHAlias{alias: alias, sandboxName: sandbox.Name, repoName: repoName}, nil
 }
+
+// connectSandbox opens an interactive shell using the same transport as rig ssh.
+func connectSandbox(client ssh.SessionCreator, sandbox *apiclient.RemoteSandbox) error {
+	alias, err := prepareSessionTarget(basedir.New(""), client, sandbox.Name, sandbox.ID)
+	if err != nil {
+		return err
+	}
+	return execSessionSSH(alias, []string{alias})
+}

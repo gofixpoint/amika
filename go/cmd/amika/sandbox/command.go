@@ -24,14 +24,8 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxConnectCmd)
 	// `ssh` and `code` are the direct-WebSocket-transport commands; they also
 	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases.
-	// `sshv1` and `codev1` are the provider-native predecessors they replaced,
-	// registered so existing scripts keep working but marked Hidden at their
-	// declarations.
 	sandboxCmd.AddCommand(sandboxSSHV2Cmd)
-	sandboxCmd.AddCommand(sandboxSSHV1Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
-	sandboxCmd.AddCommand(sandboxCodeV1Cmd)
-	sandboxCmd.AddCommand(sandboxAgentSendCmd)
 	sandboxCmd.AddCommand(sandboxBindCmd)
 	sandboxCmd.AddCommand(sandboxBindingsCmd)
 
@@ -66,21 +60,11 @@ func New() *cobra.Command {
 	sandboxCreateCmd.Flags().String("github-auth-mode", "", "GitHub auth mode for the sandbox runtime: pat, app_token, or app-token (unset uses server default)")
 	sandboxListCmd.Flags().BoolP("long", "l", false, "Show additional columns (ID, BASE_SNAPSHOT, PORTS, CREATED)")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
-	sandboxSSHV1Cmd.Flags().BoolP("t", "t", false, "Force pseudo-terminal allocation (like ssh -t)")
-	sandboxSSHV1Cmd.Flags().Bool("revoke", false, "Revoke SSH access for the sandbox")
-	sandboxSSHV1Cmd.Flags().Bool("print", false, "Print the SSH connection string instead of connecting")
 	// `ssh` registers no flags of its own: it forwards everything after the
 	// subcommand to ssh, so ssh's own -t (and every other option) passes
 	// through untouched.
 	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", \"codex\", or \"paseo\"")
 	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
-	sandboxCodeV1Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", \"codex\", or \"paseo\"")
-	sandboxCodeV1Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
-	sandboxAgentSendCmd.Flags().Bool("no-wait", false, "Send the instruction and return immediately without waiting for a response")
-	sandboxAgentSendCmd.Flags().String("workdir", "$AMIKA_AGENT_CWD", "Working directory inside the container (default: $AMIKA_AGENT_CWD)")
-	sandboxAgentSendCmd.Flags().String("agent", "claude", "Agent CLI to use (default \"claude\")")
-	sandboxAgentSendCmd.Flags().String("session-id", "", "Resume an existing agent session by ID")
-	sandboxAgentSendCmd.Flags().Bool("new-session", false, "Start a new agent session")
 	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
 	sandboxBindCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")
 	sandboxBindingsListCmd.Flags().String("rig", "", "Only show bindings for this rig (name or id)")

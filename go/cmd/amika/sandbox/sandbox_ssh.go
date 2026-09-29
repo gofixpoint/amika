@@ -12,8 +12,6 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/appcfg"
 	"github.com/gofixpoint/amika/go/internal/basedir"
-	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/gofixpoint/amika/go/internal/wslbridge"
 	"github.com/spf13/cobra"
@@ -29,164 +27,7 @@ func validateEditor(editor string) error {
 	}
 }
 
-var sandboxSSHV1Cmd = &cobra.Command{
-	Use:   "sshv1 [flags] <name> [-- <command>...]",
-	Short: "SSH into a remote sandbox over provider-native SSH (superseded by \"sandbox ssh\")",
-	Long: `Connect to a remote sandbox over the provider's own SSH route, or revoke SSH
-access. Optionally pass a command to execute on the remote sandbox instead of
-opening an interactive session.
-
-"sandbox ssh" is the supported way to reach a sandbox; it uses Amika's direct
-WebSocket transport. This command is the earlier provider-native route, kept
-and hidden so existing scripts keep working. Prefer "sandbox ssh".
-
-Use -t to force pseudo-terminal allocation, which is useful for running interactive
-programs on the remote sandbox (equivalent to ssh -t).
-
-Use --print to print the SSH connection string instead of connecting.
-
-Examples:
-  amika sandbox sshv1 my-sandbox
-  amika sandbox sshv1 -t my-sandbox -- top
-  amika sandbox sshv1 my-sandbox -- ls -la
-  amika sandbox sshv1 --print my-sandbox
-  amika sandbox sshv1 my-sandbox --revoke`,
-	// Superseded by "sandbox ssh": reachable by name for existing scripts, but
-	// kept out of the help listing so new users land on the current transport.
-	Hidden: true,
-	Args:   cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
-
-		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
-			return err
-		}
-
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
-			return err
-		}
-
-		client, err := getRemoteClient(target)
-		if err != nil {
-			return err
-		}
-
-		// sshv1 delegates to the system ssh binary (or, for --print/--revoke,
-		// prints a raw connection string / performs a one-off API call). None of
-		// these emit a structured result, so --output is not supported here.
-		if err := output.RejectFlag(cmd); err != nil {
-			return err
-		}
-
-		revoke, _ := cmd.Flags().GetBool("revoke")
-		if revoke {
-			info, err := client.GetSSH(name)
-			if err != nil {
-				return err
-			}
-			if info.Token == "" {
-				return fmt.Errorf("no SSH token to revoke for sandbox %q", name)
-			}
-			if err := client.RevokeSSH(name, info.Token); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "SSH access revoked for sandbox %q\n", name)
-			return nil
-		}
-
-		printOnly, _ := cmd.Flags().GetBool("print")
-		if printOnly {
-			info, err := client.GetSSH(name)
-			if err != nil {
-				return err
-			}
-			if info.SSHDestination == "" {
-				return fmt.Errorf("server returned empty SSH destination")
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), info.SSHDestination)
-			return nil
-		}
-
-		forcePTY, _ := cmd.Flags().GetBool("t")
-		var extraArgs []string
-		if len(args) > 1 {
-			extraArgs = args[1:]
-		}
-		return ssh.ExecSSH(client, name, forcePTY, extraArgs)
-	},
-}
-
-// supportedEditors lists the values accepted by `sandbox code --editor` (and by
-// the superseded `sandbox codev1`).
 var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "paseo"}
-
-var sandboxCodeV1Cmd = &cobra.Command{
-	Use:   "codev1 <name>",
-	Short: "Open a remote sandbox in an editor over provider-native SSH (superseded by \"sandbox code\")",
-	Long: `Open a remote sandbox in an editor or coding agent over the provider's own SSH
-route.
-
-"sandbox code" is the supported way to open a sandbox in an editor; it uses
-Amika's direct WebSocket transport. This command is the earlier provider-native
-route, kept and hidden so existing scripts keep working. Prefer "sandbox code".
-
-Supported --editor values:
-  cursor   launch Cursor connected to the sandbox (default)
-  vscode   launch VS Code connected to the sandbox
-  claude   register the sandbox as a Claude Desktop SSH environment
-  codex    expose the sandbox to Codex as an SSH connection
-  paseo    print instructions for adding the sandbox as a Paseo SSH host
-
-For claude and codex, the command writes the local app config so the sandbox
-appears as a remote environment; select it in the app to start the session.
-
-Examples:
-  amika sandbox codev1 my-sandbox
-  amika sandbox codev1 my-sandbox --editor=cursor
-  amika sandbox codev1 my-sandbox --editor=vscode
-  amika sandbox codev1 my-sandbox --editor=claude
-  amika sandbox codev1 my-sandbox --editor=codex
-  amika sandbox codev1 my-sandbox --editor=paseo`,
-	// Superseded by "sandbox code"; see sandboxSSHV1Cmd for why it stays hidden.
-	Hidden: true,
-	Args:   cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
-		// codev1 opens an interactive editor, so it has no JSON result.
-		if err := output.RejectJSON(cmd); err != nil {
-			return err
-		}
-		editor, _ := cmd.Flags().GetString("editor")
-		if err := validateEditor(editor); err != nil {
-			return err
-		}
-
-		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
-			return err
-		}
-
-		target, err := getRemoteTarget(cmd)
-		if err != nil {
-			return err
-		}
-
-		client, err := getEditorClient(target)
-		if err != nil {
-			return err
-		}
-
-		pathOverride, _ := cmd.Flags().GetString("path")
-		paths := basedir.New("")
-
-		sshTarget, err := resolveSandboxSSHAlias(client, paths, name)
-		if err != nil {
-			return err
-		}
-		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
-		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
-	},
-}
 
 // maintainSSHHosts keeps maintenance failures from preventing an editor launch.
 func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient.Client, alias string) {
@@ -196,57 +37,11 @@ func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient
 }
 
 // sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the
-// identity needed to label and locate it, shared by every editor `sandbox code`
-// and `sandbox codev1` can open.
+// identity needed to label and locate it, shared by every editor `sandbox code` opens.
 type sandboxSSHAlias struct {
 	alias       string
 	sandboxName string
 	repoName    string
-}
-
-// sshInfoClient is the subset of apiclient.Client used to resolve SSH aliases.
-type sshInfoClient interface {
-	GetSSH(name string) (*apiclient.SSHInfo, error)
-	GetSandbox(name string) (*apiclient.RemoteSandbox, error)
-}
-
-// resolveSandboxSSHAlias mints provider-native SSH access for the sandbox and
-// upserts it into the Amika-managed SSH config, returning the stable
-// `amika-<id>` Host alias. Every editor `sandbox codev1` opens connects through
-// this single alias. (`sandbox code` uses resolveSandboxV2SSHAlias instead.)
-func resolveSandboxSSHAlias(client sshInfoClient, paths basedir.Paths, name string) (sandboxSSHAlias, error) {
-	info, err := client.GetSSH(name)
-	if err != nil {
-		return sandboxSSHAlias{}, err
-	}
-	if info.SSHDestination == "" {
-		return sandboxSSHAlias{}, fmt.Errorf("server returned empty SSH destination")
-	}
-
-	sandboxID := info.SandboxID
-	sandboxName := info.SandboxName
-	if sandboxID == "" {
-		sb, err := client.GetSandbox(name)
-		if err != nil {
-			return sandboxSSHAlias{}, fmt.Errorf("look up sandbox id: %w", err)
-		}
-		sandboxID = sb.ID
-		sandboxName = sb.Name
-	}
-	if sandboxName == "" {
-		sandboxName = name
-	}
-
-	entry, err := ssh.NewHostEntry(sandboxID, sandboxName, info.SSHDestination, info.ExpiresAt)
-	if err != nil {
-		return sandboxSSHAlias{}, err
-	}
-	alias, err := ssh.UpsertHost(paths, entry)
-	if err != nil {
-		return sandboxSSHAlias{}, fmt.Errorf("write managed SSH config: %w", err)
-	}
-
-	return sandboxSSHAlias{alias: alias, sandboxName: sandboxName, repoName: info.RepoName}, nil
 }
 
 // openSandboxInEditor starts the selected editor with a prepared SSH target.
@@ -348,18 +143,6 @@ func resolveWindowsEditorLauncher(cli string, paths basedir.Paths) (func(args ..
 	return func(args ...string) error { return wslLaunchWindows(exe, args...) }, nil
 }
 
-// openSandboxInClaude registers the sandbox as an SSH environment in Claude
-// Desktop's settings and opens the app so the user can select it. Claude
-// Desktop cannot be pointed at an SSH environment via a deep link, so the user
-// picks it from the environment dropdown to start the remote session.
-func openSandboxInClaude(cmd *cobra.Command, client sshInfoClient, paths basedir.Paths, name, pathOverride string) error {
-	target, err := resolveSandboxSSHAlias(client, paths, name)
-	if err != nil {
-		return err
-	}
-	return openSandboxInClaudeTarget(cmd, paths, target, pathOverride)
-}
-
 // openSandboxInClaudeTarget registers a prepared SSH target in Claude Desktop.
 func openSandboxInClaudeTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
 	host := appcfg.ClaudeSSHHost{
@@ -381,18 +164,6 @@ func openSandboxInClaudeTarget(cmd *cobra.Command, paths basedir.Paths, target s
 	}
 	fmt.Fprintf(out, "In the Code tab, choose %q from the environment dropdown to start the remote session.\n", host.Name)
 	return nil
-}
-
-// openSandboxInCodex enables Codex's remote-connections feature (the SSH alias
-// is already in ~/.ssh/config via the Amika include) and opens the app. Codex
-// has no deep link to connect to a host, so the user enables the alias under
-// Settings > Connections.
-func openSandboxInCodex(cmd *cobra.Command, client sshInfoClient, paths basedir.Paths, name, pathOverride string) error {
-	target, err := resolveSandboxSSHAlias(client, paths, name)
-	if err != nil {
-		return err
-	}
-	return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
 }
 
 // openSandboxInCodexTarget enables Codex remote connections for a prepared SSH target.

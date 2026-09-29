@@ -10,14 +10,12 @@ import {
   listAgentSessionsResponseFromWire,
   readAgentSessionStream,
 } from "@/agent-sessions";
-import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@/errors";
+import { AmikaError, AmikaHTTPError } from "@/errors";
 import { HTTPClient } from "@/http";
 import { StaticTokenSource, type TokenSource } from "@/token";
 import {
   type AgentSendRequest,
   type AgentSendResponse,
-  agentSendRequestToWire,
-  agentSendResponseFromWire,
   type CreateProviderSecretRequest,
   type CreateRigRequest,
   type CreateRigSnapshotRequest,
@@ -393,23 +391,10 @@ export class AmikaClient {
     rigName: string,
     req: AgentSendRequest,
   ): Promise<AgentSendResponse> {
-    try {
-      const data = await this.http.doJSON<Record<string, unknown>>(
-        "POST",
-        `${API_BASE_PATH}/rigs/${encodeURIComponent(rigName)}/agent-send`,
-        agentSendRequestToWire(req),
-        { timeoutMs: AGENT_SEND_TIMEOUT_MS },
-      );
-      return agentSendResponseFromWire(data ?? {});
-    } catch (err) {
-      const authErr = extractAgentAuthError(err);
-      if (authErr) {
-        throw new AmikaError(
-          `remote agent-send: agent failed to authenticate with its AI provider: ${authErr}\n\nthe rig agent's API credentials may have expired or been revoked; recreate the rig or update its API keys to restore access`,
-        );
-      }
-      throw err;
+    if (rigName.trim() === "") {
+      throw new AmikaError("rig name must not be empty");
     }
+    return this.sendAgentSession({ ...req, rigId: rigName });
   }
 
   // ---------- Sessions ----------
@@ -611,7 +596,7 @@ export class AmikaClient {
    * endpoint is synchronous, so it uses the same 10-minute timeout as
    * {@link agentSend}.
    *
-   * Unlike {@link agentSend}, a provider auth failure comes back as a normal
+   * A provider auth failure comes back as a normal
    * response with `isError` set and the agent CLI's own message in `response`,
    * not as an HTTP error.
    */

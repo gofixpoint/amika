@@ -49,8 +49,6 @@ steps:
       stdout_contains: "  ssh         SSH into a remote sandbox"
 
   - name: rig --help does NOT list the superseded sshv1
-    # sshv1/codev1 stay registered for existing scripts but are Hidden, so the
-    # help listing must steer new users to the current transport.
     cmd: [rig, --help]
     expect:
       exit: 0
@@ -68,20 +66,6 @@ steps:
       exit: 0
       stdout_not_contains: "scpv1"
 
-  - name: hidden rig sshv1 --help still works and keeps its own flags
-    # The compatibility promise: a script that called the old provider-native
-    # ssh keeps working under the new name, flags included.
-    cmd: [rig, sshv1, --help]
-    expect:
-      exit: 0
-      stdout_contains: "amika rig sshv1 [flags] <name> [-- <command>...]"
-
-  - name: hidden rig sshv1 --help still documents --revoke
-    cmd: [rig, sshv1, --help]
-    expect:
-      exit: 0
-      stdout_contains: "--revoke"
-
   - name: rig ssh --help defines no flags of its own
     # ssh forwards everything after the subcommand to the ssh binary, so
     # sshv1's --revoke must NOT be one of its flags.
@@ -89,15 +73,3 @@ steps:
     expect:
       exit: 0
       stdout_not_contains: "--revoke"
-
-  - name: hidden rig codev1 --help still works
-    cmd: [rig, codev1, --help]
-    expect:
-      exit: 0
-      stdout_contains: "amika rig codev1 <name> [flags]"
-
-  - name: hidden scpv1 --help still works
-    cmd: [scpv1, --help]
-    expect:
-      exit: 0
-      stdout_contains: "amika scpv1 <source> ... <target>"

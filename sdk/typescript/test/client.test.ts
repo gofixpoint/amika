@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { AmikaClient } from "@/client";
-import { AmikaError, AmikaHTTPError } from "@/errors";
+import { AmikaHTTPError } from "@/errors";
 import { mockFetch } from "./helpers.js";
 
 const BASE = "https://api.example.com";
@@ -315,76 +315,75 @@ describe("AmikaClient secrets", () => {
 });
 
 describe("AmikaClient.agentSend", () => {
-  it("maps response.response → result and includes new_session/session_id in wire body", async () => {
+  it.each(["", " \t\n"])(
+    "rejects a blank rig name %j before sending",
+    async (name) => {
+      const { fetch, calls } = mockFetch([]);
+      await expect(
+        makeClient(fetch).agentSend(name, { message: "hello" }),
+      ).rejects.toThrow("rig name must not be empty");
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("uses the durable agent-sessions API and response format", async () => {
     const { fetch, calls } = mockFetch([
       {
         status: 200,
-        body: { response: "ok", session_id: "s1", is_error: false },
+        body: {
+          session_id: "chat1",
+          sandbox_id: "sb1",
+          agent: "codex",
+          response: "ok",
+          is_error: false,
+          is_new_session: false,
+          created_sandbox: false,
+          usage: { cost_usd: 0.42 },
+        },
       },
     ]);
-    const client = makeClient(fetch);
-    const resp = await client.agentSend("dev", {
+    const resp = await makeClient(fetch).agentSend("org/dev", {
       message: "do it",
-      newSession: true,
-      sessionId: "s1",
-      agent: "claude",
+      sessionId: "chat1",
+      agent: "codex",
     });
-    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/rigs/dev/agent-send`);
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/agent-sessions`);
     expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
       message: "do it",
-      new_session: true,
-      session_id: "s1",
-      agent: "claude",
+      sandbox_id: "org/dev",
+      session_id: "chat1",
+      agent: "codex",
     });
-    expect(resp).toEqual({
-      result: "ok",
-      sessionId: "s1",
+    expect(resp).toMatchObject({
+      response: "ok",
+      sessionId: "chat1",
+      sandboxId: "sb1",
+      agent: "codex",
       isError: false,
       isNewSession: false,
-      agentSessionId: undefined,
-      costUsd: undefined,
+      createdSandbox: false,
+      usage: { costUsd: 0.42 },
     });
   });
 
-  it("decodes the optional accounting fields when the server sends them", async () => {
+  it("returns agent failures in the session response", async () => {
     const { fetch } = mockFetch([
       {
         status: 200,
         body: {
-          response: "ok",
-          session_id: "s1",
-          is_error: false,
-          is_new_session: true,
-          agent_session_id: "as_1",
-          cost_usd: 0.42,
+          session_id: "chat1",
+          sandbox_id: "sb1",
+          agent: "claude",
+          response: "Not logged in",
+          is_error: true,
+          is_new_session: false,
+          created_sandbox: false,
         },
       },
     ]);
     const resp = await makeClient(fetch).agentSend("dev", { message: "hi" });
-    expect(resp).toEqual({
-      result: "ok",
-      sessionId: "s1",
-      isError: false,
-      isNewSession: true,
-      agentSessionId: "as_1",
-      costUsd: 0.42,
-    });
-  });
-
-  it("rewrites agent auth-error HTTP failures to a friendly AmikaError", async () => {
-    const inner = {
-      is_error: true,
-      result: "authentication_error: invalid x-api-key",
-    };
-    const envelope = { error: "agent failed", details: JSON.stringify(inner) };
-    const { fetch } = mockFetch([{ status: 500, body: envelope }]);
-    const client = makeClient(fetch);
-    const err = await client
-      .agentSend("dev", { message: "x" })
-      .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(AmikaError);
-    expect(err).not.toBeInstanceOf(AmikaHTTPError);
-    expect((err as Error).message).toMatch(/authentication_error/);
+    expect(resp.isError).toBe(true);
+    expect(resp.response).toBe("Not logged in");
   });
 });
 
