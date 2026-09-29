@@ -14,7 +14,10 @@ export interface GuestRequest {
   method: string;
   /** Guest path and query, starting with `/`. */
   path: string;
-  /** Sent as given, `Host` included; the caller strips hop-by-hop headers. */
+  /**
+   * Sent as given, `Host` included, except that the body's framing is set to
+   * match `body`; the caller strips hop-by-hop headers.
+   */
   headers: Headers;
   body: ReadableStream<Uint8Array> | null;
   signal?: AbortSignal;
@@ -41,7 +44,7 @@ export const forwardToGuest: GuestForwarder = (
         port: hostPort,
         method,
         path,
-        headers: Object.fromEntries(headers),
+        headers: framedHeaders(headers, body),
         signal,
       },
       (incoming) => {
@@ -85,6 +88,13 @@ export const forwardToGuest: GuestForwarder = (
       },
     );
     outgoing.on("error", reject);
+    // A guest answering `101` with `Connection: Upgrade` makes Node emit
+    // `upgrade` in place of the response callback; with no listener the
+    // socket closes silently and this request would never settle.
+    outgoing.on("upgrade", (_response, socket) => {
+      socket.destroy();
+      reject(new Error("guest answered with a protocol upgrade"));
+    });
     if (body) {
       Readable.fromWeb(body as NodeReadableStream<Uint8Array>)
         .on("error", (error) => outgoing.destroy(error))
@@ -93,6 +103,26 @@ export const forwardToGuest: GuestForwarder = (
       outgoing.end();
     }
   });
+
+/**
+ * Frame the outgoing body to match what is actually sent. The caller has
+ * stripped `Transfer-Encoding`, and Node only chunks some methods by default,
+ * so a streamed `DELETE` or `OPTIONS` body would otherwise go out unframed
+ * and the guest would read it as a second request. Hono hands a `GET` or
+ * `HEAD` no body, so a `Content-Length` it arrived with must go too, or the
+ * guest waits for bytes that never come.
+ */
+function framedHeaders(
+  headers: Headers,
+  body: ReadableStream<Uint8Array> | null,
+): Record<string, string> {
+  const framed = Object.fromEntries(headers);
+  if (!body) delete framed["content-length"];
+  else if (!("content-length" in framed)) {
+    framed["transfer-encoding"] = "chunked";
+  }
+  return framed;
+}
 
 /** Statuses a `Response` may not carry a body for. */
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);

@@ -146,7 +146,8 @@ async function proxyService(
   const headers = new Headers(request.headers);
   stripHopByHopHeaders(headers);
   // The guest sees the host the caller addressed, as on the upgrade path.
-  // A request built without one (only in-process, e.g. tests) names the URL's.
+  // A request without one (built in-process, or an absolute-form request
+  // line) names the URL's.
   if (!headers.has("host")) headers.set("host", url.host);
   let upstream: Response;
   try {

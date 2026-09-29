@@ -69,6 +69,35 @@ describe("forwardToGuest", () => {
     expect(seen.headers?.authorization).toBe("Bearer guest-token");
   });
 
+  it("frames a streamed DELETE body so the guest reads it as one request", async () => {
+    const { port, seen } = await guest((res) => res.end("ok"));
+    const response = await forwardToGuest(port, {
+      method: "DELETE",
+      path: "/items/1",
+      headers: new Headers({ host: "hostd.example" }),
+      body: new Response("GET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n").body,
+    });
+    expect(await response.text()).toBe("ok");
+    expect(seen).toMatchObject({
+      method: "DELETE",
+      url: "/items/1",
+      body: "GET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n",
+    });
+    expect(seen.headers?.["transfer-encoding"]).toBe("chunked");
+  });
+
+  it("drops a Content-Length the dropped body no longer matches", async () => {
+    const { port, seen } = await guest((res) => res.end("ok"));
+    const response = await forwardToGuest(port, {
+      method: "GET",
+      path: "/",
+      headers: new Headers({ host: "hostd.example", "content-length": "5" }),
+      body: null,
+    });
+    expect(await response.text()).toBe("ok");
+    expect(seen.headers?.["content-length"]).toBeUndefined();
+  });
+
   it("passes a compressed body through undecoded", async () => {
     const gzipped = gzipSync("hello");
     const { port } = await guest((res) => {
@@ -153,6 +182,31 @@ describe("forwardToGuest", () => {
       ).rejects.toThrow();
     },
   );
+
+  it("rejects a guest that answers with a protocol upgrade", async () => {
+    const server = createNetServer((socket) => {
+      socket.once("data", () =>
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+        ),
+      );
+    });
+    closers.push(() => server.close());
+    const port = await new Promise<number>((resolve) =>
+      server.listen(0, "127.0.0.1", () =>
+        resolve((server.address() as AddressInfo).port),
+      ),
+    );
+    await expect(
+      forwardToGuest(port, {
+        method: "GET",
+        path: "/",
+        headers: new Headers({ host: "hostd.example" }),
+        body: null,
+      }),
+    ).rejects.toThrow(/upgrade/);
+  });
 
   it("rejects when nothing listens on the port", async () => {
     const closed = await freeLoopbackPort();
