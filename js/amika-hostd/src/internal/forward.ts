@@ -67,6 +67,11 @@ export const forwardToGuest: GuestForwarder = (
               incoming.rawHeaders[i + 1],
             );
           }
+          // A `204` or `205` goes out with no body, so a length the guest
+          // sent with one would leave the caller waiting for bytes that never
+          // come. HEAD and `304` keep theirs: it describes the resource.
+          if (status === 204) responseHeaders.delete("content-length");
+          if (status === 205) responseHeaders.set("content-length", "0");
           resolve(
             new Response(
               bodyless

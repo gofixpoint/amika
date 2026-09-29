@@ -86,7 +86,7 @@ describe("forwardToGuest", () => {
     expect(seen.headers?.["transfer-encoding"]).toBe("chunked");
   });
 
-  it("drops a Content-Length the dropped body no longer matches", async () => {
+  it("drops the Content-Length of a request forwarded without a body", async () => {
     const { port, seen } = await guest((res) => res.end("ok"));
     const response = await forwardToGuest(port, {
       method: "GET",
@@ -156,6 +156,34 @@ describe("forwardToGuest", () => {
     expect(response.status).toBe(status);
     expect(response.body).toBeNull();
   });
+
+  it.each([
+    [204, null],
+    [205, "0"],
+  ])(
+    "corrects the length a guest sent with a bodyless %i",
+    async (status, length) => {
+      const server = createNetServer((socket) => {
+        socket.once("data", () =>
+          socket.end(`HTTP/1.1 ${status} X\r\nContent-Length: 5\r\n\r\nhello`),
+        );
+      });
+      closers.push(() => server.close());
+      const port = await new Promise<number>((resolve) =>
+        server.listen(0, "127.0.0.1", () =>
+          resolve((server.address() as AddressInfo).port),
+        ),
+      );
+      const response = await forwardToGuest(port, {
+        method: "GET",
+        path: "/",
+        headers: new Headers({ host: "hostd.example" }),
+        body: null,
+      });
+      expect(response.body).toBeNull();
+      expect(response.headers.get("content-length")).toBe(length);
+    },
+  );
 
   it.each([600, 999, 101, 199])(
     "rejects a guest status of %i instead of throwing",
