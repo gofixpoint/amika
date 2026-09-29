@@ -10,7 +10,10 @@
  * CLI opens its SSH WebSocket.
  */
 import { createHmac } from "node:crypto";
-import type { RefreshUrlsResult } from "../../provider";
+import {
+  SandboxProviderUnsupportedError,
+  type RefreshUrlsResult,
+} from "../../provider";
 import type { SandboxService } from "../../../types";
 import {
   machinePath,
@@ -48,6 +51,10 @@ export function hostdServices(
      * dead URL.
      */
     syncRoutes: async (id: string, desired: SandboxService[]) => {
+      // As at create: hostd routes HTTP and TCP upgrades, never UDP.
+      if (desired.some((service) => service.protocol !== "tcp")) {
+        throw new SandboxProviderUnsupportedError("amika-hostd", "services");
+      }
       const { ports = [] } = await client.json(machinePath(id), machineSchema);
       const published = new Set(ports.map((port) => port.guest));
       const missing = desired

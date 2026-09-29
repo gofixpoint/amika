@@ -216,10 +216,25 @@ export function freeLoopbackPort(): Promise<number> {
 }
 
 /**
+ * Remove the hop-by-hop headers from `headers` in place: the fixed set below
+ * and any header the `Connection` header nominates (RFC 9110 §7.6.1), such as
+ * `X-Hop` in `Connection: X-Hop`.
+ */
+export function stripHopByHopHeaders(headers: Headers): void {
+  const nominated = (headers.get("connection") ?? "")
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  for (const name of [...HOP_BY_HOP_HEADERS, ...nominated]) {
+    headers.delete(name);
+  }
+}
+
+/**
  * Hop-by-hop headers (RFC 9110 §7.6.1) that describe one connection and must
  * not be forwarded across the proxy.
  */
-export const HOP_BY_HOP_HEADERS = [
+const HOP_BY_HOP_HEADERS = [
   "connection",
   "keep-alive",
   "proxy-authenticate",

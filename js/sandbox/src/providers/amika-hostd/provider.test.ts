@@ -406,4 +406,16 @@ describe("amika-hostd services", () => {
       "does not publish 3000",
     );
   });
+
+  it("refuses to reconcile a published port to UDP", async () => {
+    const { provider, runtime } = harness([]);
+    const services = provider.sandboxes.get("demo").services!;
+    await expect(
+      services.load([{ ...AMIKAD, protocol: "udp" }]).refresh(),
+    ).rejects.toMatchObject({
+      name: "SandboxProviderUnsupportedError",
+      provider: "amika-hostd",
+    });
+    expect(runtime).not.toHaveBeenCalled();
+  });
 });

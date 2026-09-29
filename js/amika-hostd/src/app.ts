@@ -13,11 +13,11 @@ import {
   resolveImage,
 } from "./internal/requests.js";
 import {
-  HOP_BY_HOP_HEADERS,
   SERVICES_PREFIX,
   freeLoopbackPort,
   parseServicePath,
   resolveHostPort,
+  stripHopByHopHeaders,
   verifyServiceToken,
 } from "./internal/services.js";
 
@@ -137,7 +137,7 @@ async function proxyService(
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   const headers = new Headers(request.headers);
-  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
+  stripHopByHopHeaders(headers);
   headers.delete("host");
   let upstream: Response;
   try {
@@ -157,7 +157,7 @@ async function proxyService(
     return Response.json({ error: "Service unavailable" }, { status: 502 });
   }
   const responseHeaders = new Headers(upstream.headers);
-  for (const name of HOP_BY_HOP_HEADERS) responseHeaders.delete(name);
+  stripHopByHopHeaders(responseHeaders);
   // fetch has already decoded the body, so its encoding and length no
   // longer describe what is sent on.
   responseHeaders.delete("content-encoding");

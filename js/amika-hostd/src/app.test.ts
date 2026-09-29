@@ -537,7 +537,8 @@ describe("service routes", () => {
         headers: {
           "X-Guest": "yes",
           "Content-Encoding": "gzip",
-          Connection: "keep-alive",
+          Connection: "keep-alive, X-Guest-Hop",
+          "X-Guest-Hop": "per-connection",
         },
       }),
     );
@@ -546,6 +547,8 @@ describe("service routes", () => {
       headers: {
         Authorization: "Bearer guest-token",
         "Proxy-Authorization": "Basic x",
+        Connection: "X-Hop",
+        "X-Hop": "per-connection",
         "Content-Type": "text/plain",
       },
       body: "payload",
@@ -555,6 +558,7 @@ describe("service routes", () => {
     expect(response.headers.get("x-guest")).toBe("yes");
     expect(response.headers.get("content-encoding")).toBeNull();
     expect(response.headers.get("connection")).toBeNull();
+    expect(response.headers.get("x-guest-hop")).toBeNull();
     const [lookup, [target, init]] = fetcher.mock.calls;
     expect(lookup[0]).toBe(`http://runtime:8080${ROOT}/demo`);
     expect(target).toBe("http://127.0.0.1:41001/v1/items?limit=2");
@@ -563,6 +567,7 @@ describe("service routes", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer guest-token");
     expect(headers.get("proxy-authorization")).toBeNull();
+    expect(headers.get("x-hop")).toBeNull();
     expect(headers.get("host")).toBeNull();
     expect(await new Response(init?.body).text()).toBe("payload");
   });
