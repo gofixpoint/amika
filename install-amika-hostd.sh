@@ -3,8 +3,8 @@ set -eu
 
 # amika-hostd ships as one bundled JavaScript file. It is installed into
 # HOSTD_HOME, with a launcher on INSTALL_DIR that runs it on a suitable node.
-# It needs smolvm's HTTP API (`smolvm serve`) on the same host, which it does
-# not start itself.
+# It needs smolvm on the same host: `amika-hostd up` starts `smolvm serve`,
+# and `amika-hostd down` stops it.
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
@@ -373,7 +373,6 @@ find_smolvm() {
 ensure_smolvm() {
   if [ "$SKIP_SMOLVM" = "true" ]; then
     echo "Skipping smolvm (--skip-smolvm)"
-    find_smolvm || SMOLVM_PATH=""
     return 0
   fi
   if find_smolvm; then
@@ -422,9 +421,6 @@ check_kvm() {
 }
 
 print_next_steps() {
-  smolvm_cmd="${SMOLVM_PATH:-smolvm}"
-  [ "$smolvm_cmd" = "$(command -v smolvm 2>/dev/null || true)" ] && smolvm_cmd="smolvm"
-
   echo ""
   echo "Next steps:"
   if [ "$CONFIG_SEEDED" = "true" ]; then
@@ -436,10 +432,9 @@ print_next_steps() {
   fi
   echo "  2. Export your Amika API key; it is read only from the environment:"
   echo "       export AMIKA_HOSTD_API_KEY=<your Amika API key>"
-  echo "  3. Start smolvm's API and keep it running (amika-hostd does not start it):"
-  echo "       ${smolvm_cmd} serve start --listen 127.0.0.1:8080"
-  echo "  4. Start the daemon:"
+  echo "  3. Start the daemon, which starts smolvm with it:"
   echo "       amika-hostd up"
+  echo "     Stop both, and smolvm's machines, with: amika-hostd down"
 }
 
 # Verify $1 (named $2 in the checksum list) against the sha256sum-format list

@@ -21,8 +21,12 @@ import {
   DaemonError,
   daemonPaths,
   ensureNotRunning,
+  isDaemonProcess,
+  isDaemonRunning,
+  isSmolvmRunning,
   PROCESS_TITLE,
   startInBackground,
+  stopProcess,
   type Spawn,
 } from "./daemon.js";
 
@@ -366,6 +370,82 @@ describe("daemonPaths", () => {
     expect(daemonPaths({ XDG_STATE_HOME: "/state" })).toEqual({
       pidFile: "/state/amika-hostd/amika-hostd.pid",
       logFile: "/state/amika-hostd/amika-hostd.log",
+      smolvmPidFile: "/state/amika-hostd/smolvm.pid",
+      smolvmLogFile: "/state/amika-hostd/smolvm.log",
     });
+  });
+});
+
+describe("stopProcess", () => {
+  const alive = (child: ChildProcess) => (pid: number) =>
+    pid === child.pid && child.exitCode === null && child.signalCode === null;
+
+  it("sends SIGTERM and waits for the process to exit", async () => {
+    const child = await liveProcess();
+    expect(
+      await stopProcess(child.pid!, alive(child), { timeoutMs: 5_000 }),
+    ).toBe(true);
+    expect(child.signalCode).toBe("SIGTERM");
+  });
+
+  it("gives up, without killing it, on a process that keeps running", async () => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `process.on("SIGTERM", () => {}); console.log("up");
+         setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    await once(child.stdout!, "data");
+    try {
+      expect(
+        await stopProcess(child.pid!, alive(child), { timeoutMs: 200 }),
+      ).toBe(false);
+      expect(child.exitCode).toBeNull();
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it("treats a process that is already gone as stopped", async () => {
+    const child = await liveProcess();
+    child.kill("SIGKILL");
+    await once(child, "exit");
+    expect(await stopProcess(child.pid!, () => false, { timeoutMs: 100 })).toBe(
+      true,
+    );
+  });
+});
+
+describe("isDaemonProcess", () => {
+  it("counts only a live process titled amika-hostd", async () => {
+    const daemon = await liveProcess(PROCESS_TITLE);
+    const unrelated = await liveProcess();
+    try {
+      expect(isDaemonProcess(daemon.pid!)).toBe(true);
+      expect(isDaemonProcess(unrelated.pid!)).toBe(false);
+      expect(isDaemonProcess(2 ** 22 + 1)).toBe(false);
+    } finally {
+      daemon.kill();
+      unrelated.kill();
+    }
+  });
+});
+
+describe("isSmolvmRunning", () => {
+  it("does not count a live process running another program", async () => {
+    const child = await liveProcess();
+    try {
+      expect(isSmolvmRunning(child.pid!)).toBe(false);
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("does not count a pid that is not running", () => {
+    expect(isSmolvmRunning(2 ** 22 + 1)).toBe(false);
+    expect(isDaemonRunning(2 ** 22 + 1)).toBe(false);
   });
 });
