@@ -1,47 +1,70 @@
 /** Sandbox resources backed by an Amika host daemon's Smol-compatible API. */
 import type { AmikaHostdConfig } from "./config";
 import { amikaHostdCapabilities } from "./capabilities";
-import {
-  SandboxProviderUnsupportedError,
-  type Sandbox,
-  type SandboxProvider,
-} from "../provider";
+import type { SandboxProvider } from "../provider";
 import type { SandboxAdapter } from "../shared/adapter";
-import smolProvider from "../smol/provider";
+import { defineProvider } from "../shared/define-provider";
+import { SmolClient, mapSmolState, smolOperations } from "../smol/provider";
+import { HOSTD_SERVICE_URL_TTL_S, hostdServices } from "./internal/services";
 
 interface AmikaHostdDeps {
   config: AmikaHostdConfig;
   fetcher?: typeof fetch;
 }
 
-/** Compose the public Smol resource API without depending on its implementation. */
+/**
+ * Smol's machine operations over hostd, which serves a superset of smolvm's
+ * API, plus the service routes only hostd provides.
+ */
 export default function amikaHostdProvider({
-  config: { secretKey, ...config },
+  config,
   fetcher = fetch,
 }: AmikaHostdDeps): SandboxProvider {
-  const smol = smolProvider(
-    {
+  return createProvider({ config, fetcher });
+}
+
+const createProvider = defineProvider(
+  amikaHostdCapabilities,
+  ({
+    config: { secretKey, ...config },
+    fetcher,
+  }: {
+    config: AmikaHostdConfig;
+    fetcher: typeof fetch;
+  }) => {
+    const smolConfig = {
       ...config,
       network: config.network ?? true,
       apiUrl: config.apiUrl ?? "http://127.0.0.1:3020",
       requestTimeoutMs: config.requestTimeoutMs ?? 310_000,
-    },
-    withSecretKey(secretKey, fetcher),
-  );
-  return {
-    ...smol,
-    name: "amika-hostd",
-    capabilities: amikaHostdCapabilities,
-    sandboxes: {
-      create: (ctx, input) =>
-        withHostdErrors(async () =>
-          hostdSandbox(await smol.sandboxes.create(ctx, input)),
-        ),
-      get: (id) => hostdSandbox(smol.sandboxes.get(id)),
-      list: () => withHostdErrors(() => smol.sandboxes.list()),
-    },
-  };
-}
+    };
+    const client = new SmolClient(
+      smolConfig,
+      withSecretKey(secretKey, fetcher),
+    );
+    const ops = smolOperations(smolConfig, client, {
+      provider: "amika-hostd",
+      publishServicePorts: true,
+    });
+    return {
+      name: "amika-hostd",
+      signedUrlTtlSeconds: HOSTD_SERVICE_URL_TTL_S,
+      userHomeDir: "/root",
+      sandbox: {
+        create: (_ctx, input) => ops.create(input),
+        delete: ops.remove,
+        start: ops.start,
+        stop: ops.stop,
+        getState: ops.getState,
+        mapState: mapSmolState,
+      },
+      exec: { stdin: true, run: ops.run },
+      files: { read: ops.read, write: ops.write },
+      listing: { list: ops.list },
+      services: hostdServices(smolConfig.apiUrl, secretKey, client),
+    };
+  },
+);
 
 /** Provision through the same public sandbox methods as other consumers. */
 export async function openAmikaHostdAdapter(
@@ -74,35 +97,4 @@ export function withSecretKey(
     headers.set("Authorization", `Bearer ${secretKey}`);
     return fetcher(input, { ...init, headers, redirect: "error" });
   };
-}
-
-function hostdSandbox(sandbox: Sandbox): Sandbox {
-  return {
-    ...sandbox,
-    provider: "amika-hostd",
-    created: sandbox.created && { ...sandbox.created, provider: "amika-hostd" },
-    start: (interval) => withHostdErrors(() => sandbox.start(interval)),
-    stop: () => withHostdErrors(() => sandbox.stop()),
-    delete: () => withHostdErrors(() => sandbox.delete()),
-    getState: () => withHostdErrors(() => sandbox.getState()),
-    getRuntimeState: () => withHostdErrors(() => sandbox.getRuntimeState()),
-    exec: (command, opts) => withHostdErrors(() => sandbox.exec(command, opts)),
-    streamExec: (command, handlers) =>
-      withHostdErrors(() => sandbox.streamExec(command, handlers)),
-    readFile: (path) => withHostdErrors(() => sandbox.readFile(path)),
-    writeFile: (path, content) =>
-      withHostdErrors(() => sandbox.writeFile(path, content)),
-  };
-}
-
-/** Keep unsupported-operation errors scoped to the provider the caller selected. */
-async function withHostdErrors<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (error instanceof SandboxProviderUnsupportedError) {
-      throw new SandboxProviderUnsupportedError("amika-hostd", error.operation);
-    }
-    throw error;
-  }
 }

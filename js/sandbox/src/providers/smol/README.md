@@ -84,7 +84,9 @@ That shared helper still requires `DAYTONA_API_KEY`; direct configuration as
 above does not need real cloud credentials.
 
 Service routing, SSH access, streamed output, snapshots, and automatic
-stop/delete timers are not implemented. Pass an empty service list and omit
+stop/delete timers are not implemented. (The `amika-hostd` provider reuses
+these operations and adds service routing, and with it SSH; see
+`js/amika-hostd/AGENTS.md`.) Pass an empty service list and omit
 timers (or set them to zero). The full provisioning `lifecycle` capability is
 true, since it needs only run-state control and exec: provisioning flows run on
 Smol but mint no service URLs. Nonempty service requests or nonzero timers fail

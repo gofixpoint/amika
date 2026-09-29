@@ -1,15 +1,20 @@
 /** Open and close the daemon's HTTP listener. */
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
 import { serve } from "@hono/node-server";
 import { createApp } from "../app.js";
 import type { HostdConfigWith } from "./config.js";
+import { createUpgradeHandler } from "./services.js";
+import { SmolRuntime } from "./smol.js";
 
 export interface RunningServer {
   port: number;
   /**
    * Stop accepting connections and resolve once open ones have drained,
-   * cutting off any still open after the shutdown grace period.
+   * cutting off any still open after the shutdown grace period. Service
+   * tunnels (upgraded connections) end at once: they are long-lived by
+   * design, so waiting on them would always run out the grace period.
    */
   close(): Promise<void>;
 }
@@ -26,13 +31,22 @@ export function startServer(
   config: HostdConfigWith<"secretKey">,
   { shutdownGraceMs = SHUTDOWN_GRACE_MS }: { shutdownGraceMs?: number } = {},
 ): Promise<RunningServer> {
-  const app = createApp({
-    secretKey: config.secretKey,
+  const runtimeConfig = {
     apiUrl: config.smolApiUrl,
     requestTimeoutMs: config.smolRequestTimeoutMs,
+  };
+  const app = createApp({
+    ...runtimeConfig,
+    secretKey: config.secretKey,
     images: config.images,
     configPath: config.configPath,
   });
+  const tunnels = new Set<Duplex>();
+  const upgrade = createUpgradeHandler(
+    config.secretKey,
+    new SmolRuntime(runtimeConfig),
+    tunnels,
+  );
   return new Promise((resolve, reject) => {
     // Only the default `http.Server` is used, never HTTP/2.
     const server = serve({
@@ -40,6 +54,7 @@ export function startServer(
       hostname: config.host,
       port: config.port,
     }) as Server;
+    server.on("upgrade", upgrade);
     server.once("error", reject);
     server.once("listening", () => {
       server.off("error", reject);
@@ -57,6 +72,7 @@ export function startServer(
               else done();
             });
             server.closeIdleConnections();
+            for (const tunnel of tunnels) tunnel.destroy();
           }),
       });
     });

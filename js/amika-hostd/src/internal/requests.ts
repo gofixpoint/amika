@@ -18,6 +18,16 @@ export const createMachineSchema = z.strictObject({
   storageGb: z.number().int().positive().optional(),
   network: z.boolean().default(true),
   env: envSchema.optional(),
+  // Guest ports to reach through `/services/...`. hostd, not the caller,
+  // picks the host side, so a caller can never bind an arbitrary host port.
+  ports: z
+    .array(z.strictObject({ guest: z.number().int().min(1).max(65_535) }))
+    .max(16)
+    .refine(
+      (ports) => new Set(ports.map((p) => p.guest)).size === ports.length,
+      "duplicate guest port",
+    )
+    .optional(),
 });
 
 /**
