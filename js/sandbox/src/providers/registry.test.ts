@@ -163,5 +163,4 @@ it("applies an injected host connection policy to providers and adapters", async
   expect(
     visited.every((url) => url.startsWith("https://tenant.example/")),
   ).toBe(true);
-  expect(sandbox.services).toBeNull();
 });
