@@ -37,6 +37,7 @@ describe("startServer", () => {
         JSON.stringify({
           name: "demo",
           state: "running",
+          createdAt: 1_790_000_000,
           ports: [{ host: guestPort, guest: 8000 }],
         }),
       );
@@ -47,7 +48,12 @@ describe("startServer", () => {
       smolApiUrl: `http://127.0.0.1:${smolvmPort}`,
     });
     try {
-      const token = signServiceToken(SECRET, "demo", 8000, 4_000_000_000);
+      const token = signServiceToken(SECRET, {
+        machine: "demo",
+        createdAt: 1_790_000_000,
+        port: 8000,
+        expiresAt: 4_000_000_000,
+      });
       // `fetch` would replace Host, so send it with node:http as a proxy in
       // front of hostd (a tunnel) would.
       const body = await new Promise<string>((resolve, reject) => {
