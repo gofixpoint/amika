@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { moduleLogger, type SandboxCtx } from "../logger";
 import {
   createSandboxProvider,
   getSandboxAdapter,
@@ -114,4 +115,53 @@ describe("createSandboxProvider construction", () => {
       );
     }
   });
+});
+
+it("applies an injected host connection policy to providers and adapters", async () => {
+  const visited: string[] = [];
+  const blockedFetch: typeof fetch = async (input) => {
+    visited.push(String(input));
+    throw new Error("destination rejected");
+  };
+  const deps = {
+    ...DEPS,
+    amikaHostd: { apiUrl: "https://tenant.example", secretKey: "test-secret" },
+    amikaHostdFetcher: blockedFetch,
+  };
+  const provider = createSandboxProvider("amika-hostd", deps);
+  const sandbox = provider.sandboxes.get("demo");
+  // Each operation must encounter the injected policy before any daemon I/O.
+  const ctx: SandboxCtx = { logger: moduleLogger(), childCtx: () => ctx };
+  const operations = [
+    () =>
+      provider.sandboxes.create(ctx, {
+        name: "demo",
+        snapshot: "ubuntu:24.04",
+        services: [],
+      }),
+    () => provider.sandboxes.list(),
+    () => sandbox.getState(),
+    () => sandbox.start(),
+    () => sandbox.stop(),
+    () => sandbox.delete(),
+    () => sandbox.exec("true"),
+    () => sandbox.readFile("/tmp/file"),
+    () => sandbox.writeFile("/tmp/file", "content"),
+  ];
+  for (const operation of operations) {
+    await expect(operation()).rejects.toThrow("destination rejected");
+  }
+  const adapter = await getSandboxAdapter("amika-hostd", deps, "demo");
+  await expect(adapter.exec("true")).rejects.toThrow("destination rejected");
+  await expect(adapter.downloadFile("/tmp/file")).rejects.toThrow(
+    "destination rejected",
+  );
+  await expect(adapter.uploadFile("content", "/tmp/file")).rejects.toThrow(
+    "destination rejected",
+  );
+  expect(visited).toHaveLength(operations.length + 3);
+  expect(
+    visited.every((url) => url.startsWith("https://tenant.example/")),
+  ).toBe(true);
+  expect(sandbox.services).toBeNull();
 });

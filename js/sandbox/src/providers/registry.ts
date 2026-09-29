@@ -52,6 +52,8 @@ export interface SandboxProviderDeps {
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
   amikaHostd: AmikaHostdConfig | null;
+  /** Optional connection policy for host daemon requests, including adapters. */
+  amikaHostdFetcher?: typeof fetch;
   /** Resolves an org-scoped snapshot name to its bootable opaque provider id. */
   resolveSnapshotId: SnapshotIdResolver;
 }
@@ -92,11 +94,13 @@ const PROVIDERS = {
     create: (deps) =>
       amikaHostdProvider({
         config: requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
+        fetcher: deps.amikaHostdFetcher,
       }),
     openAdapter: (deps, id) =>
       openAmikaHostdAdapter(
         requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
         id,
+        deps.amikaHostdFetcher,
       ),
   },
   smol: {
