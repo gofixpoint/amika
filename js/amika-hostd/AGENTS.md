@@ -249,15 +249,22 @@ WebSocket (or any other) upgrades are piped over TCP by `createUpgradeHandler`
 (`src/internal/services.ts`), which `src/internal/server.ts` attaches to the
 listener's `upgrade` event, handshake included, so the guest answers the
 handshake. Upgrades forward every header as sent, including `Host` and
-`Authorization`, except `Proxy-Authorization`. Proxied HTTP goes over
-`node:http` (`src/internal/forward.ts`) rather than `fetch`, since `fetch`
-always sends its own `Host` and decodes compressed bodies. The proxy forwards
-the caller's `Host` and `Authorization`, drops hop-by-hop headers (including
-any `Connection` names) in both directions, and passes bodies through
-undecoded, re-framing a body sent without `Content-Length` as chunked. A
+`Authorization`, except `Proxy-Authorization`. Proxied HTTP goes through
+undici's `request` (`src/internal/forward.ts`) rather than `fetch`, since
+`fetch` always sends its own `Host` and decodes compressed bodies. undici owns
+the framing to the guest: it sets `Content-Length` or chunking to match the
+body, checks a body against its declared length, and rejects a response whose
+framing conflicts, so do not hand-frame requests there. The proxy forwards the
+caller's `Host` and `Authorization`, drops hop-by-hop headers (including any
+`Connection` names) in both directions, drops `Expect` (Node's server has
+already answered `100-continue`), and passes bodies through undecoded. A
 request with neither `Content-Length` nor `Transfer-Encoding` is forwarded
 without a body, so an in-process caller must frame its own. A guest answering
-with a protocol upgrade or a status outside 200-599 gets the caller a 502.
+with a protocol upgrade, conflicting framing, or a status outside 200-599 gets
+the caller a 502; a guest body cut short ends the caller's response early. A
+guest has five minutes to start answering, and a body in progress never times
+out, so event streams stay open. Destroying an undici body emits an `error`,
+so discard one only after listening for it (`discard`), or the daemon crashes.
 Shutdown ends open tunnels, and upgrades still being set up, at once.
 
 These routes skip the secret key, since their callers never hold it. The token

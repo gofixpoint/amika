@@ -22,5 +22,10 @@ await build({
   format: "esm",
   // The minimum Node.js version install-amika-hostd.sh accepts (NODE_MIN_MAJOR).
   target: "node22",
+  // Some dependencies (undici) are CommonJS and `require` Node builtins,
+  // which an ESM bundle cannot do without a real `require` in scope.
+  banner: {
+    js: 'import { createRequire as __amikaCreateRequire } from "node:module"; const require = __amikaCreateRequire(import.meta.url);',
+  },
   logLevel: "warning",
 });

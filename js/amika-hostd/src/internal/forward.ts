@@ -1,24 +1,26 @@
 /**
  * Forward one HTTP request to a guest port published on the host's loopback.
  *
- * This uses `node:http` rather than `fetch` because `fetch` always sends its
- * own `Host` (`127.0.0.1:<port>`) and decodes compressed bodies. Here the
- * guest sees the caller's `Host`, as it does on the upgrade path, and bytes
- * pass through unchanged in both directions.
+ * This uses undici's `request` rather than `fetch` because `fetch` always
+ * sends its own `Host` (`127.0.0.1:<port>`) and decodes compressed bodies.
+ * Here the guest sees the caller's `Host`, as it does on the upgrade path, and
+ * bytes pass through unchanged in both directions. undici, the client `fetch`
+ * is built on, owns the HTTP/1.1 framing to the guest: it sets
+ * `Content-Length` or chunking to match the body it sends, checks a body
+ * against its declared length, and refuses a response whose framing
+ * conflicts, so a guest cannot desynchronize a pooled connection.
  */
-import { request as httpRequest } from "node:http";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { Agent, request } from "undici";
 
 export interface GuestRequest {
   method: string;
   /** Guest path and query, starting with `/`. */
   path: string;
-  /**
-   * Sent as given, `Host` included, except that the body's framing is set to
-   * match `body`; the caller strips hop-by-hop headers.
-   */
+  /** Sent as given, `Host` included; the caller strips hop-by-hop headers. */
   headers: Headers;
+  /** Null when the caller sent no body, so none is forwarded. */
   body: ReadableStream<Uint8Array> | null;
   signal?: AbortSignal;
 }
@@ -30,104 +32,70 @@ export type GuestForwarder = (
 
 /**
  * Resolve with the guest's response once its head arrives, streaming the
- * body after; reject if the guest cannot be reached or fails before
- * answering.
+ * body after; reject if the guest cannot be reached, fails before answering,
+ * or answers with something a `Response` cannot carry.
  */
-export const forwardToGuest: GuestForwarder = (
+export const forwardToGuest: GuestForwarder = async (
   hostPort,
   { method, path, headers, body, signal },
-) =>
-  new Promise((resolve, reject) => {
-    const outgoing = httpRequest(
-      {
-        host: "127.0.0.1",
-        port: hostPort,
-        method,
-        path,
-        headers: framedHeaders(headers, body),
-        signal,
-      },
-      (incoming) => {
-        const status = incoming.statusCode ?? 0;
-        // `Response` throws outside 200-599, and this callback runs from an
-        // event emitter, where a throw would crash hostd: a guest answering
-        // `HTTP/1.1 600` must fail its own request, not the host.
-        if (status < 200 || status > 599) {
-          incoming.destroy();
-          reject(new Error(`guest answered with status ${status}`));
-          return;
-        }
-        const bodyless = method === "HEAD" || NULL_BODY_STATUSES.has(status);
-        if (bodyless) incoming.resume();
-        try {
-          const responseHeaders = new Headers();
-          for (let i = 0; i < incoming.rawHeaders.length; i += 2) {
-            responseHeaders.append(
-              incoming.rawHeaders[i],
-              incoming.rawHeaders[i + 1],
-            );
-          }
-          // A `204` or `205` goes out with no body, so a length the guest
-          // sent with one would leave the caller waiting for bytes that never
-          // come. HEAD and `304` keep theirs: it describes the resource.
-          if (status === 204) responseHeaders.delete("content-length");
-          if (status === 205) responseHeaders.set("content-length", "0");
-          resolve(
-            new Response(
-              bodyless
-                ? null
-                : (Readable.toWeb(incoming) as ReadableStream<Uint8Array>),
-              {
-                status,
-                statusText: incoming.statusMessage,
-                headers: responseHeaders,
-              },
-            ),
-          );
-        } catch (error) {
-          // Any other value `Headers` or `Response` refuses likewise fails
-          // only this request.
-          incoming.destroy();
-          reject(error);
-        }
-      },
-    );
-    outgoing.on("error", reject);
-    // A guest answering `101` with `Connection: Upgrade` makes Node emit
-    // `upgrade` in place of the response callback; with no listener the
-    // socket closes silently and this request would never settle.
-    outgoing.on("upgrade", (_response, socket) => {
-      socket.destroy();
-      reject(new Error("guest answered with a protocol upgrade"));
-    });
-    if (body) {
-      Readable.fromWeb(body as NodeReadableStream<Uint8Array>)
-        .on("error", (error) => outgoing.destroy(error))
-        .pipe(outgoing);
-    } else {
-      outgoing.end();
-    }
+) => {
+  const outgoing = Object.fromEntries(headers);
+  // Node's server has already answered `Expect: 100-continue` itself, and
+  // undici refuses to send the header.
+  delete outgoing.expect;
+  const upstream = await request(`http://127.0.0.1:${hostPort}${path}`, {
+    method,
+    headers: outgoing,
+    body: body && Readable.fromWeb(body as NodeReadableStream<Uint8Array>),
+    signal,
+    dispatcher: guests,
   });
+  const status = upstream.statusCode;
+  const bodyless = method === "HEAD" || NULL_BODY_STATUSES.has(status);
+  try {
+    // `Response` refuses statuses outside 200-599, which a guest can send.
+    if (status < 200 || status > 599) {
+      throw new Error(`guest answered with status ${status}`);
+    }
+    const responseHeaders = new Headers();
+    for (const [name, value] of Object.entries(upstream.headers)) {
+      for (const item of [value ?? []].flat()) {
+        responseHeaders.append(name, item);
+      }
+    }
+    // A `204` or `205` goes out with no body, so a length the guest sent with
+    // one would leave the caller waiting for bytes that never come. HEAD and
+    // `304` keep theirs: it describes the resource.
+    if (status === 204) responseHeaders.delete("content-length");
+    if (status === 205) responseHeaders.set("content-length", "0");
+    const response = new Response(
+      bodyless ? null : (Readable.toWeb(upstream.body) as ReadableStream),
+      { status, statusText: upstream.statusText, headers: responseHeaders },
+    );
+    if (bodyless) discard(upstream.body);
+    return response;
+  } catch (error) {
+    discard(upstream.body);
+    throw error;
+  }
+};
 
 /**
- * Frame the outgoing body to match what is actually sent. The caller has
- * stripped `Transfer-Encoding`, and Node only chunks some methods by default,
- * so a streamed `DELETE` or `OPTIONS` body would otherwise go out unframed
- * and the guest would read it as a second request. Hono hands a `GET`,
- * `HEAD` or `TRACE` no body, so a `Content-Length` it arrived with must go
- * too, or the guest waits for bytes that never come.
+ * Drop a guest body hostd will not send on. Destroying undici's body emits an
+ * `error` (an `AbortError`), and with no listener that is an uncaught
+ * exception that would take the daemon down, so listen first.
  */
-function framedHeaders(
-  headers: Headers,
-  body: ReadableStream<Uint8Array> | null,
-): Record<string, string> {
-  const framed = Object.fromEntries(headers);
-  if (!body) delete framed["content-length"];
-  else if (!("content-length" in framed)) {
-    framed["transfer-encoding"] = "chunked";
-  }
-  return framed;
+function discard(body: Readable): void {
+  body.on("error", () => {});
+  body.destroy();
 }
+
+/**
+ * Keep-alive connections to guest ports, pooled per port. A guest gets five
+ * minutes to start answering, as `fetch` allowed, but a body in progress is
+ * never timed out, since event streams and long polls can idle indefinitely.
+ */
+const guests = new Agent({ headersTimeout: 300_000, bodyTimeout: 0 });
 
 /** Statuses a `Response` may not carry a body for. */
 const NULL_BODY_STATUSES = new Set([204, 205, 304]);

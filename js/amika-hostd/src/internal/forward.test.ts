@@ -236,6 +236,40 @@ describe("forwardToGuest", () => {
     ).rejects.toThrow(/upgrade/);
   });
 
+  it("sends an Expect: 100-continue upload's body without the Expect header", async () => {
+    const { port, seen } = await guest((res) => res.end("ok"));
+    const response = await forwardToGuest(port, {
+      method: "POST",
+      path: "/upload",
+      headers: new Headers({
+        host: "hostd.example",
+        expect: "100-continue",
+        "content-length": "7",
+      }),
+      body: new Response("payload").body,
+    });
+    expect(await response.text()).toBe("ok");
+    expect(seen.body).toBe("payload");
+    expect(seen.headers?.expect).toBeUndefined();
+  });
+
+  it("rejects a guest response with conflicting framing", async () => {
+    // Content-Length and chunked together is how responses get smuggled.
+    const port = await rawGuest(
+      "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    );
+    await expect(get(port)).rejects.toThrow();
+  });
+
+  it("errors the body, not hostd, when a guest sends less than it declared", async () => {
+    const port = await rawGuest(
+      "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort",
+      { end: true },
+    );
+    const response = await get(port);
+    await expect(response.text()).rejects.toThrow();
+  });
+
   it("rejects when nothing listens on the port", async () => {
     const closed = await freeLoopbackPort();
     await expect(
@@ -268,3 +302,29 @@ describe("forwardToGuest", () => {
     expect(closed).toBe(true);
   });
 });
+
+/** A guest that answers the first request with raw bytes, then maybe closes. */
+async function rawGuest(reply: string, { end = false } = {}): Promise<number> {
+  const server = createNetServer((socket) => {
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.write(reply);
+      if (end) socket.end();
+    });
+  });
+  closers.push(() => server.close());
+  return new Promise((resolve) =>
+    server.listen(0, "127.0.0.1", () =>
+      resolve((server.address() as AddressInfo).port),
+    ),
+  );
+}
+
+function get(port: number): Promise<Response> {
+  return forwardToGuest(port, {
+    method: "GET",
+    path: "/",
+    headers: new Headers({ host: "hostd.example" }),
+    body: null,
+  });
+}
