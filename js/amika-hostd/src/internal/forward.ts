@@ -45,28 +45,43 @@ export const forwardToGuest: GuestForwarder = (
         signal,
       },
       (incoming) => {
-        const responseHeaders = new Headers();
-        for (let i = 0; i < incoming.rawHeaders.length; i += 2) {
-          responseHeaders.append(
-            incoming.rawHeaders[i],
-            incoming.rawHeaders[i + 1],
-          );
+        const status = incoming.statusCode ?? 0;
+        // `Response` throws outside 200-599, and this callback runs from an
+        // event emitter, where a throw would crash hostd: a guest answering
+        // `HTTP/1.1 600` must fail its own request, not the host.
+        if (status < 200 || status > 599) {
+          incoming.destroy();
+          reject(new Error(`guest answered with status ${status}`));
+          return;
         }
-        const status = incoming.statusCode ?? 502;
         const bodyless = method === "HEAD" || NULL_BODY_STATUSES.has(status);
         if (bodyless) incoming.resume();
-        resolve(
-          new Response(
-            bodyless
-              ? null
-              : (Readable.toWeb(incoming) as ReadableStream<Uint8Array>),
-            {
-              status,
-              statusText: incoming.statusMessage,
-              headers: responseHeaders,
-            },
-          ),
-        );
+        try {
+          const responseHeaders = new Headers();
+          for (let i = 0; i < incoming.rawHeaders.length; i += 2) {
+            responseHeaders.append(
+              incoming.rawHeaders[i],
+              incoming.rawHeaders[i + 1],
+            );
+          }
+          resolve(
+            new Response(
+              bodyless
+                ? null
+                : (Readable.toWeb(incoming) as ReadableStream<Uint8Array>),
+              {
+                status,
+                statusText: incoming.statusMessage,
+                headers: responseHeaders,
+              },
+            ),
+          );
+        } catch (error) {
+          // Any other value `Headers` or `Response` refuses likewise fails
+          // only this request.
+          incoming.destroy();
+          reject(error);
+        }
       },
     );
     outgoing.on("error", reject);

@@ -4,7 +4,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { forwardToGuest } from "./forward.js";
@@ -127,6 +127,32 @@ describe("forwardToGuest", () => {
     expect(response.status).toBe(status);
     expect(response.body).toBeNull();
   });
+
+  it.each([600, 999, 101, 199])(
+    "rejects a guest status of %i instead of throwing",
+    async (status) => {
+      // A raw socket, since node:http refuses to send most of these itself.
+      const server = createNetServer((socket) => {
+        socket.once("data", () =>
+          socket.end(`HTTP/1.1 ${status} Odd\r\nContent-Length: 0\r\n\r\n`),
+        );
+      });
+      closers.push(() => server.close());
+      const port = await new Promise<number>((resolve) =>
+        server.listen(0, "127.0.0.1", () =>
+          resolve((server.address() as AddressInfo).port),
+        ),
+      );
+      await expect(
+        forwardToGuest(port, {
+          method: "GET",
+          path: "/",
+          headers: new Headers({ host: "hostd.example" }),
+          body: null,
+        }),
+      ).rejects.toThrow();
+    },
+  );
 
   it("rejects when nothing listens on the port", async () => {
     const closed = await freeLoopbackPort();
