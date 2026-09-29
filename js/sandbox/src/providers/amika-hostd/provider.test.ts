@@ -4,6 +4,7 @@ import { createApp } from "../../../../amika-hostd/src/app";
 import { moduleLogger, type SandboxCtx } from "../../logger";
 import { getProviderLabel, isSandboxProviderName } from "../capabilities";
 import { type CreateSandboxProviderInput } from "../provider";
+import type { SandboxService } from "../../types";
 import type { AmikaHostdConfig } from "./config";
 import amikaHostdProvider, {
   openAmikaHostdAdapter,
@@ -22,6 +23,20 @@ const MACHINE = {
   memoryMb: 1536,
   storageGb: 20,
 };
+const WEB: SandboxService = {
+  name: "web",
+  url: "",
+  hostPort: 3000,
+  containerPort: 3000,
+  protocol: "tcp",
+};
+const AMIKAD: SandboxService = {
+  name: "amikad",
+  url: "",
+  hostPort: 60999,
+  containerPort: 60999,
+  protocol: "tcp",
+};
 const ctx: SandboxCtx = { logger: moduleLogger(), childCtx: () => ctx };
 const SECRET = "hostd-secret";
 
@@ -34,7 +49,10 @@ function harness(
     if (!response) throw new Error("Unexpected runtime request");
     return response;
   });
-  const app = createApp({ secretKey: SECRET }, runtime);
+  let nextPort = 40_000;
+  const app = createApp({ secretKey: SECRET }, runtime, {
+    allocatePort: async () => ++nextPort,
+  });
   const fetcher = vi.fn<typeof fetch>(async (url, init) =>
     app.request(new Request(url, init)),
   );
@@ -214,17 +232,7 @@ describe("amika-hostd provider", () => {
   it.each([
     { autoStopInterval: 1 },
     { autoDeleteInterval: 1 },
-    {
-      services: [
-        {
-          name: "web",
-          url: "",
-          hostPort: 3000,
-          containerPort: 3000,
-          protocol: "tcp" as const,
-        },
-      ],
-    },
+    { services: [{ ...WEB, protocol: "udp" as const }] },
   ])("rejects unsupported options before allocation: %j", async (overrides) => {
     const { provider, runtime } = harness([]);
     await expect(
@@ -242,14 +250,14 @@ describe("amika-hostd provider", () => {
       exec: true,
       listSandboxes: true,
       ssh: false,
-      services: false,
+      services: true,
       snapshots: false,
       streaming: false,
       supportsAutoDelete: false,
     });
     const sandbox = provider.sandboxes.get("demo");
     expect(sandbox.ssh).toBeNull();
-    expect(sandbox.services).toBeNull();
+    expect(sandbox.services).not.toBeNull();
     expect(sandbox.snapshots).toBeNull();
     await expect(
       sandbox.streamExec("true", { onStdout: () => {} }),
@@ -306,6 +314,108 @@ describe("amika-hostd provider", () => {
     await expect(failure).rejects.toThrow(
       /^smolvm GET \/demo failed \(HTTP 401\): Unauthorized$/,
     );
+    expect(runtime).not.toHaveBeenCalled();
+  });
+});
+
+describe("amika-hostd services", () => {
+  const PUBLISHED = {
+    ...MACHINE,
+    state: "running",
+    ports: [
+      { host: 40001, guest: 3000 },
+      { host: 40002, guest: 60999 },
+    ],
+  };
+
+  it("publishes each service port once at create and returns the services", async () => {
+    const { provider, runtime } = harness([json(MACHINE, 201), json({})]);
+    const services = [WEB, { ...WEB, name: "web-2" }, AMIKAD];
+    const sandbox = await provider.sandboxes.create(ctx, {
+      ...INPUT,
+      services,
+    });
+    expect(JSON.parse(String(runtime.mock.calls[0][1]?.body)).ports).toEqual([
+      { host: 40001, guest: 3000 },
+      { host: 40002, guest: 60999 },
+    ]);
+    expect(sandbox.created?.services).toEqual(services);
+  });
+
+  it("omits ports for a machine without services", async () => {
+    const { provider, runtime } = harness([json(MACHINE, 201), json({})]);
+    await provider.sandboxes.create(ctx, INPUT);
+    expect(
+      JSON.parse(String(runtime.mock.calls[0][1]?.body)),
+    ).not.toHaveProperty("ports");
+  });
+
+  it("signs URLs that hostd routes to the published guest port", async () => {
+    const { provider, runtime, fetcher } = harness([
+      json(PUBLISHED),
+      json({ ok: true }),
+    ]);
+    const services = provider.sandboxes.get("demo").services!;
+    const { services: refreshed } = await services.refreshAll([AMIKAD]);
+    const url = new URL(refreshed[0].url);
+    expect(url.origin).toBe("http://127.0.0.1:3020");
+    expect(url.pathname).toMatch(
+      /^\/services\/demo\/60999\/[0-9]+\.[A-Za-z0-9_-]{43}\/$/,
+    );
+    const expiresAt = Number(url.pathname.split("/")[4].split(".")[0]);
+    expect(expiresAt * 1000 - Date.now()).toBeGreaterThan(23 * 3600 * 1000);
+
+    // The caller never holds the secret key: only the URL authorizes it.
+    const app = createApp({ secretKey: SECRET }, runtime);
+    const response = await app.request(`${url.pathname}v1/status?x=1`, {
+      headers: { Authorization: "Bearer connect-token" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(runtime.mock.calls.map(([target]) => target)).toEqual([
+      "http://127.0.0.1:8080/api/v1/machines/demo",
+      "http://127.0.0.1:40002/v1/status?x=1",
+    ]);
+    const forwarded = new Headers(runtime.mock.calls[1][1]?.headers);
+    expect(forwarded.get("Authorization")).toBe("Bearer connect-token");
+  });
+
+  it("refuses a signed URL for another port or with another key", async () => {
+    const { provider, runtime } = harness([]);
+    const { services: refreshed } = await provider.sandboxes
+      .get("demo")
+      .services!.refreshAll([WEB]);
+    const path = new URL(refreshed[0].url).pathname;
+    const app = createApp({ secretKey: SECRET }, runtime);
+    const otherPort = path.replace("/3000/", "/60999/");
+    expect((await app.request(otherPort)).status).toBe(404);
+    const otherKey = createApp({ secretKey: "other-secret" }, runtime);
+    expect((await otherKey.request(path)).status).toBe(404);
+    expect(runtime).not.toHaveBeenCalled();
+  });
+
+  it("reconciles only to ports published at create", async () => {
+    const { provider } = harness([json(PUBLISHED), json(MACHINE)]);
+    const services = provider.sandboxes.get("demo").services!;
+    const { services: refreshed } = await services
+      .load([WEB, AMIKAD])
+      .refresh();
+    expect(refreshed.map((s) => s.name)).toEqual(["web", "amikad"]);
+    await expect(services.load([WEB]).refresh()).rejects.toThrow(
+      "does not publish 3000",
+    );
+  });
+
+  it("refuses to reconcile a published port to UDP", async () => {
+    const { provider, runtime } = harness([]);
+    const services = provider.sandboxes.get("demo").services!;
+    await expect(
+      services.load([{ ...AMIKAD, protocol: "udp" }]).refresh(),
+    ).rejects.toMatchObject({
+      name: "SandboxProviderUnsupportedError",
+      provider: "amika-hostd",
+    });
     expect(runtime).not.toHaveBeenCalled();
   });
 });

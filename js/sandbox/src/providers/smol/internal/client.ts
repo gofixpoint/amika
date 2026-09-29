@@ -8,6 +8,10 @@ export const machineSchema = z.object({
   cpus: z.number().positive(),
   memoryMb: z.number().positive(),
   storageGb: z.number().positive().optional(),
+  /** Published guest ports; absent on runtimes that predate them. */
+  ports: z
+    .array(z.object({ host: z.number().int(), guest: z.number().int() }))
+    .optional(),
 });
 export const execSchema = z.object({
   exitCode: z.number().int(),
