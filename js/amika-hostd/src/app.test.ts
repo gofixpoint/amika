@@ -494,14 +494,21 @@ describe("published ports", () => {
 });
 
 describe("service routes", () => {
+  const CREATED_AT = 1_790_000_000;
   const MACHINE = {
     name: "demo",
     state: "running",
+    createdAt: CREATED_AT,
     ports: [{ host: 41001, guest: 60999 }],
   };
   const future = () => Math.floor(Date.now() / 1000) + 3600;
-  const route = (port = 60999, expiresAt = future(), machine = "demo") =>
-    `/services/${machine}/${port}/${signServiceToken(SECRET, machine, port, expiresAt)}`;
+  const route = (
+    port = 60999,
+    expiresAt = future(),
+    machine = "demo",
+    createdAt = CREATED_AT,
+  ) =>
+    `/services/${machine}/${port}/${signServiceToken(SECRET, { machine, createdAt, port, expiresAt })}`;
 
   function services(...responses: (Response | Error)[]) {
     const fetcher = vi.fn<typeof fetch>(async () => {
@@ -591,7 +598,7 @@ describe("service routes", () => {
     [
       "another key's token",
       () =>
-        `/services/demo/60999/${signServiceToken("other", "demo", 60999, future())}`,
+        `/services/demo/60999/${signServiceToken("other", { machine: "demo", createdAt: CREATED_AT, port: 60999, expiresAt: future() })}`,
     ],
     ["a malformed token", () => "/services/demo/60999/not-a-token"],
     ["an invalid machine name", () => "/services/-demo/60999/x"],
@@ -611,6 +618,20 @@ describe("service routes", () => {
     const { app, fetcher } = services(Response.json(MACHINE));
     expect((await app.request(route(3000))).status).toBe(404);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 404 for a machine recreated under the same name", async () => {
+    const { app, fetcher } = services(
+      Response.json({ ...MACHINE, createdAt: CREATED_AT + 60 }),
+    );
+    expect((await app.request(route())).status).toBe(404);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 404 when the runtime does not report createdAt", async () => {
+    const { createdAt: _, ...legacy } = MACHINE;
+    const { app } = services(Response.json(legacy));
+    expect((await app.request(route())).status).toBe(404);
   });
 
   it("returns 404 for a machine the runtime does not know", async () => {

@@ -49,35 +49,60 @@ describe("parseServicePath", () => {
 });
 
 describe("service tokens", () => {
-  const token = signServiceToken(SECRET, "demo", 60999, NOW + 60);
+  const CREATED_AT = NOW - 3600;
+  const token = signServiceToken(SECRET, {
+    machine: "demo",
+    createdAt: CREATED_AT,
+    port: 60999,
+    expiresAt: NOW + 60,
+  });
   const route = { machine: "demo", port: 60999, token };
 
   it("verifies only the machine port it was signed for, until expiry", () => {
-    expect(verifyServiceToken(SECRET, route, NOW)).toBe(true);
-    expect(verifyServiceToken(SECRET, route, NOW + 60)).toBe(false);
-    expect(verifyServiceToken(SECRET, { ...route, port: 22 }, NOW)).toBe(false);
-    expect(verifyServiceToken(SECRET, { ...route, machine: "x" }, NOW)).toBe(
-      false,
-    );
-    expect(verifyServiceToken(`${SECRET}x`, route, NOW)).toBe(false);
+    expect(verifyServiceToken(SECRET, route, NOW)).toEqual({
+      createdAt: CREATED_AT,
+    });
+    expect(verifyServiceToken(SECRET, route, NOW + 60)).toBeNull();
+    expect(verifyServiceToken(SECRET, { ...route, port: 22 }, NOW)).toBeNull();
+    expect(
+      verifyServiceToken(SECRET, { ...route, machine: "x" }, NOW),
+    ).toBeNull();
+    expect(verifyServiceToken(`${SECRET}x`, route, NOW)).toBeNull();
   });
 
-  it("rejects an expiry that was edited after signing", () => {
-    const [, mac] = token.split(".");
-    const extended = { ...route, token: `${NOW + 6000}.${mac}` };
-    expect(verifyServiceToken(SECRET, extended, NOW)).toBe(false);
+  it.each([
+    [
+      "expiry",
+      (exp: string, created: string) => `${Number(exp) + 6000}.${created}`,
+    ],
+    [
+      "incarnation",
+      (exp: string, created: string) => `${exp}.${Number(created) + 1}`,
+    ],
+  ])("rejects an %s edited after signing", (_label, edit) => {
+    const [exp, created, mac] = token.split(".");
+    const edited = { ...route, token: `${edit(exp, created)}.${mac}` };
+    expect(verifyServiceToken(SECRET, edited, NOW)).toBeNull();
+  });
+
+  it("rejects a v1-shaped token", () => {
+    const [exp, , mac] = token.split(".");
+    expect(
+      verifyServiceToken(SECRET, { ...route, token: `${exp}.${mac}` }, NOW),
+    ).toBeNull();
   });
 
   it.each([
     "",
     "abc",
-    `${NOW}.`,
-    `0.${"a".repeat(43)}`,
-    `${NOW}.${"a".repeat(44)}`,
+    `${NOW}.${CREATED_AT}.`,
+    `0.${CREATED_AT}.${"a".repeat(43)}`,
+    `${NOW}.0.${"a".repeat(43)}`,
+    `${NOW}.${CREATED_AT}.${"a".repeat(44)}`,
   ])("rejects malformed token %j", (bad) => {
-    expect(verifyServiceToken(SECRET, { ...route, token: bad }, NOW)).toBe(
-      false,
-    );
+    expect(
+      verifyServiceToken(SECRET, { ...route, token: bad }, NOW),
+    ).toBeNull();
   });
 });
 
@@ -121,6 +146,7 @@ describe("createUpgradeHandler", () => {
         Response.json({
           name: "demo",
           state: "running",
+          createdAt: 1_790_000_000,
           ports: hostPort === null ? [] : [{ host: hostPort, guest: 60999 }],
         }),
       ),
@@ -158,7 +184,7 @@ describe("createUpgradeHandler", () => {
   }
 
   const validPath = (suffix = "/v1/ssh-sessions?x=1") =>
-    `/services/demo/60999/${signServiceToken(SECRET, "demo", 60999, Math.floor(Date.now() / 1000) + 60)}${suffix}`;
+    `/services/demo/60999/${signServiceToken(SECRET, { machine: "demo", createdAt: 1_790_000_000, port: 60999, expiresAt: Math.floor(Date.now() / 1000) + 60 })}${suffix}`;
 
   it("tunnels the handshake and bytes to the guest port", async () => {
     const target = await guest();

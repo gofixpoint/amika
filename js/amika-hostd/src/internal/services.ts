@@ -10,9 +10,12 @@
  *
  * These routes skip the daemon's secret key, since their callers (the Amika
  * CLI, the web terminal) never hold it. The token stands in for it: the
- * `@amika/sandbox` provider signs `<machine>`, `<port>` and an expiry with the
- * secret key (`signHostdServiceToken`, mirrored here by `signServiceToken`),
- * so a URL opens only the one port it names, and only until it expires.
+ * `@amika/sandbox` provider signs `<machine>`, its smolvm `createdAt`,
+ * `<port>` and an expiry with the secret key (`signHostdServiceToken`,
+ * mirrored here by `signServiceToken`). A URL therefore opens only the one
+ * port it names, on the one machine it was signed for, until it expires: a
+ * machine deleted and recreated under the same name has a new `createdAt`, so
+ * the old machine's URLs stop working.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
@@ -51,10 +54,9 @@ export function createUpgradeHandler(
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://hostd");
     const route = parseServicePath(url.pathname);
-    if (!route || !verifyServiceToken(secretKey, route)) {
-      return refuse(socket, 404);
-    }
-    const hostPort = await resolveHostPort(runtime, route.machine, route.port);
+    const signed = route && verifyServiceToken(secretKey, route);
+    if (!route || !signed) return refuse(socket, 404);
+    const hostPort = await resolveHostPort(runtime, route, signed.createdAt);
     if (hostPort === null) return refuse(socket, 404);
     if (socket.destroyed) return;
 
@@ -127,62 +129,87 @@ export function parseServicePath(pathname: string): ServiceRoute | null {
   return { machine: match[1], port, token: match[3], path: match[4] ?? "/" };
 }
 
+/** What a service token is signed over. */
+export interface ServiceTokenClaims {
+  machine: string;
+  /** The machine's smolvm `createdAt` (Unix seconds): which incarnation. */
+  createdAt: number;
+  port: number;
+  /** Unix seconds. */
+  expiresAt: number;
+}
+
 /**
- * The token for one machine port, valid until `expiresAt` (Unix seconds):
- * `<expiresAt>.<base64url HMAC-SHA256>`. Mirrors `signHostdServiceToken` in
- * `@amika/sandbox`'s `amika-hostd` provider; the two must stay identical.
+ * The token for one machine incarnation's port, valid until `expiresAt`:
+ * `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>`. Mirrors
+ * `signHostdServiceToken` in `@amika/sandbox`'s `amika-hostd` provider; the
+ * two must stay identical.
  */
 export function signServiceToken(
   secretKey: string,
-  machine: string,
-  port: number,
-  expiresAt: number,
+  claims: ServiceTokenClaims,
 ): string {
-  return `${expiresAt}.${serviceMac(secretKey, machine, port, expiresAt)}`;
+  return `${claims.expiresAt}.${claims.createdAt}.${serviceMac(secretKey, claims)}`;
 }
 
-/** Whether `token` was signed for this machine port and has not expired. */
+/**
+ * The incarnation `token` was signed for, if it was signed for this machine
+ * port and has not expired; otherwise null. The caller must still check the
+ * machine's current `createdAt` against it, which needs a runtime lookup this
+ * check deliberately comes before.
+ */
 export function verifyServiceToken(
   secretKey: string,
   route: Pick<ServiceRoute, "machine" | "port" | "token">,
   nowSeconds = Math.floor(Date.now() / 1000),
-): boolean {
-  const match = /^([1-9][0-9]{0,11})\.([A-Za-z0-9_-]{43})$/.exec(route.token);
-  if (!match) return false;
-  const expiresAt = Number(match[1]);
-  const expected = Buffer.from(
-    serviceMac(secretKey, route.machine, route.port, expiresAt),
-  );
-  const provided = Buffer.from(match[2]);
-  return timingSafeEqual(expected, provided) && nowSeconds < expiresAt;
+): { createdAt: number } | null {
+  const match =
+    /^([1-9][0-9]{0,11})\.([1-9][0-9]{0,11})\.([A-Za-z0-9_-]{43})$/.exec(
+      route.token,
+    );
+  if (!match) return null;
+  const claims = {
+    machine: route.machine,
+    port: route.port,
+    expiresAt: Number(match[1]),
+    createdAt: Number(match[2]),
+  };
+  const expected = Buffer.from(serviceMac(secretKey, claims));
+  const provided = Buffer.from(match[3]);
+  return timingSafeEqual(expected, provided) && nowSeconds < claims.expiresAt
+    ? { createdAt: claims.createdAt }
+    : null;
 }
 
 function serviceMac(
   secretKey: string,
-  machine: string,
-  port: number,
-  expiresAt: number,
+  { machine, createdAt, port, expiresAt }: ServiceTokenClaims,
 ): string {
   return createHmac("sha256", secretKey)
-    .update(`amika-hostd-service:v1\n${machine}\n${port}\n${expiresAt}`)
+    .update(
+      `amika-hostd-service:v2\n${machine}\n${createdAt}\n${port}\n${expiresAt}`,
+    )
     .digest("base64url");
 }
 
 const machinePortsSchema = z.object({
   state: z.string(),
+  createdAt: z.number().int(),
   ports: z.array(z.object({ host: z.number().int(), guest: z.number().int() })),
 });
 
 /**
- * The host loopback port smolvm published `guestPort` on, or null when the
- * machine does not exist, is not running, or did not publish it. A stopped
- * machine's VM no longer holds its host port, so another machine or process
- * may have bound it since; only a running machine's mapping is its own.
+ * The host loopback port smolvm published the route's port on, or null when
+ * the machine does not exist, is another incarnation than `createdAt` (it was
+ * deleted and recreated under the same name), is not running, or did not
+ * publish it. A stopped machine's VM no longer holds its host port, so
+ * another machine or process may have bound it since; only a running
+ * machine's mapping is its own.
  */
 export async function resolveHostPort(
   runtime: SmolRuntime,
-  machine: string,
-  guestPort: number,
+  { machine, port: guestPort }: Pick<ServiceRoute, "machine" | "port">,
+  createdAt: number,
 ): Promise<number | null> {
   const response = await runtime.request(`/${machine}`);
   if (!response.ok) {
@@ -192,7 +219,13 @@ export async function resolveHostPort(
   const parsed = machinePortsSchema.safeParse(
     await response.json().catch(() => undefined),
   );
-  if (!parsed.success || parsed.data.state !== "running") return null;
+  if (
+    !parsed.success ||
+    parsed.data.createdAt !== createdAt ||
+    parsed.data.state !== "running"
+  ) {
+    return null;
+  }
   return parsed.data.ports.find((p) => p.guest === guestPort)?.host ?? null;
 }
 

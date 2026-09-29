@@ -129,10 +129,11 @@ async function proxyService(
   const route = parseServicePath(url.pathname);
   // One answer for a bad path, a bad token, and an unpublished port, so the
   // route never confirms which machines or ports exist.
-  if (!route || !verifyServiceToken(secretKey, route)) {
+  const signed = route && verifyServiceToken(secretKey, route);
+  if (!route || !signed) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
-  const hostPort = await resolveHostPort(runtime, route.machine, route.port);
+  const hostPort = await resolveHostPort(runtime, route, signed.createdAt);
   if (hostPort === null) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
