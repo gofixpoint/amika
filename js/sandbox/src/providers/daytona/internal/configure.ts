@@ -12,6 +12,7 @@ import { Sandbox } from "@daytonaio/sdk";
 import {
   buildGitCheckoutNewBranchCmd,
   checkBranchExistsOnRemote,
+  getGithubCloneCredentials,
   isBranchNotFoundError,
 } from "../../../util/git-clone";
 import { shellQuote } from "../../../util/shell";
@@ -21,20 +22,6 @@ import {
   getWorkspaceDir,
   getRepoDir,
 } from "./commands";
-
-function getGitCredentials(githubToken?: string | null): {
-  username?: string;
-  password?: string;
-} {
-  if (!githubToken) {
-    return {};
-  }
-
-  return {
-    username: "x-access-token",
-    password: githubToken,
-  };
-}
 
 /**
  * Best-effort shell to stop the Docker daemon and quiesce its on-disk
@@ -206,15 +193,15 @@ export async function cloneRepository(
     { cwd: homeDir },
   );
 
-  const credentials = getGitCredentials(githubToken);
+  const credentials = getGithubCloneCredentials(githubUrl, githubToken);
   try {
     await sandbox.git.clone(
       githubUrl,
       repoDir,
       branch,
       undefined,
-      credentials.username,
-      credentials.password,
+      credentials?.username,
+      credentials?.password,
     );
   } catch (err) {
     if (!branch) {
@@ -239,8 +226,8 @@ export async function cloneRepository(
       repoDir,
       undefined,
       undefined,
-      credentials.username,
-      credentials.password,
+      credentials?.username,
+      credentials?.password,
     );
     await executeCheckedCommand(sandbox, buildGitCheckoutNewBranchCmd(branch), {
       cwd: repoDir,

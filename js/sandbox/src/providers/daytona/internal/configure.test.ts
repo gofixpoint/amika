@@ -111,3 +111,67 @@ describe("native clone guest branch probe", () => {
     },
   );
 });
+
+describe("native GitHub clone credentials", () => {
+  it.each([
+    "https://gitlab.com/org/repo.git",
+    "https://github.com.evil.example/org/repo.git",
+    "https://github.com./org/repo.git",
+    "http://github.com/org/repo.git",
+    "ssh://git@github.com/org/repo.git",
+    "git@github.com:org/repo.git",
+  ])(
+    "does not attach a GitHub token to %s, including branch fallback",
+    async (url) => {
+      const { sandbox, commands } = fakeDaytonaSandbox();
+      const clone = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("SDK clone failure"))
+        .mockResolvedValue(undefined);
+      const native = Object.assign(sandbox as object, {
+        git: { clone },
+      }) as unknown as Parameters<typeof cloneRepository>[0];
+      await cloneRepository(
+        native,
+        "/home/amika",
+        url,
+        "repo",
+        "sentinel-github-token",
+        "feature",
+      );
+      expect(clone).toHaveBeenCalledTimes(2);
+      for (const args of clone.mock.calls) {
+        expect(args[0]).toBe(url);
+        expect(args[4]).toBeUndefined();
+        expect(args[5]).toBeUndefined();
+      }
+      expect(
+        commands.find(({ command }) => command.includes("ls-remote"))?.command,
+      ).not.toContain("sentinel-github-token");
+    },
+  );
+
+  it("authenticates native HTTPS GitHub clones and fallback with the same token", async () => {
+    const { sandbox } = fakeDaytonaSandbox();
+    const clone = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("SDK clone failure"))
+      .mockResolvedValue(undefined);
+    const native = Object.assign(sandbox as object, {
+      git: { clone },
+    }) as unknown as Parameters<typeof cloneRepository>[0];
+    await cloneRepository(
+      native,
+      "/home/amika",
+      "https://github.com/org/repo.git",
+      "repo",
+      "sentinel-github-token",
+      "feature",
+    );
+    expect(clone).toHaveBeenCalledTimes(2);
+    for (const args of clone.mock.calls) {
+      expect(args[4]).toBe("x-access-token");
+      expect(args[5]).toBe("sentinel-github-token");
+    }
+  });
+});

@@ -113,25 +113,32 @@ export function buildCloneUrl(
   repoUrl: string,
   githubToken?: string | null,
 ): string {
-  if (!githubToken) {
-    return repoUrl;
-  }
+  const credentials = getGithubCloneCredentials(repoUrl, githubToken);
+  if (!credentials) return repoUrl;
+  const url = new URL(repoUrl);
+  url.username = credentials.username;
+  url.password = credentials.password;
+  return url.toString();
+}
+
+/** Return native Git credentials only for the same HTTPS GitHub target as URL clones. */
+export function getGithubCloneCredentials(
+  repoUrl: string,
+  githubToken?: string | null,
+): { username: string; password: string } | undefined {
+  if (!githubToken) return undefined;
   try {
     const url = new URL(repoUrl);
     if (
-      url.protocol !== "https:" ||
-      url.hostname.toLowerCase() !== "github.com"
+      url.protocol === "https:" &&
+      url.hostname.toLowerCase() === "github.com"
     ) {
-      return repoUrl;
+      return { username: "x-access-token", password: githubToken };
     }
-    url.username = "x-access-token";
-    url.password = githubToken;
-    return url.toString();
   } catch {
-    // Not a URL at all — an `ext::` transport, a bare path. Nothing to
-    // authenticate, and nothing this should make more usable.
-    return repoUrl;
+    // SCP and other non-URL inputs must not receive a GitHub HTTP credential.
   }
+  return undefined;
 }
 
 /**
