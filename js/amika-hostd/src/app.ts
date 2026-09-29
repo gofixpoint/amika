@@ -143,6 +143,12 @@ async function proxyService(
   if (hostPort === null) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
+  // Hono gives every method but GET and HEAD a body stream, even when the
+  // caller sent none. The caller's own framing says whether one exists, so a
+  // bodyless DELETE or OPTIONS is not forwarded as an empty chunked body.
+  const hasBody =
+    request.headers.has("content-length") ||
+    request.headers.has("transfer-encoding");
   const headers = new Headers(request.headers);
   stripHopByHopHeaders(headers);
   // The guest sees the host the caller addressed, as on the upgrade path.
@@ -155,7 +161,7 @@ async function proxyService(
       method: request.method,
       path: `${route.path}${url.search}`,
       headers,
-      body: request.body,
+      body: hasBody ? request.body : null,
       signal: request.signal,
     });
   } catch {

@@ -108,9 +108,9 @@ export const forwardToGuest: GuestForwarder = (
  * Frame the outgoing body to match what is actually sent. The caller has
  * stripped `Transfer-Encoding`, and Node only chunks some methods by default,
  * so a streamed `DELETE` or `OPTIONS` body would otherwise go out unframed
- * and the guest would read it as a second request. Hono hands a `GET` or
- * `HEAD` no body, so a `Content-Length` it arrived with must go too, or the
- * guest waits for bytes that never come.
+ * and the guest would read it as a second request. Hono hands a `GET`,
+ * `HEAD` or `TRACE` no body, so a `Content-Length` it arrived with must go
+ * too, or the guest waits for bytes that never come.
  */
 function framedHeaders(
   headers: Headers,

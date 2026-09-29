@@ -564,6 +564,8 @@ describe("service routes", () => {
         Connection: "X-Hop",
         "X-Hop": "per-connection",
         "Content-Type": "text/plain",
+        // A socket caller always frames its body; an in-process one must say.
+        "Content-Length": "7",
       },
       body: "payload",
     });

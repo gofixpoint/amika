@@ -25,10 +25,20 @@ async function listen(server: Server): Promise<number> {
 
 describe("startServer", () => {
   it("forwards a service request with the caller's Host", async () => {
-    let seenHost: string | undefined;
+    const seen: { host?: string; framing: string[]; body: string }[] = [];
     const guest = createServer((req, res) => {
-      seenHost = req.headers.host;
-      res.end("from guest");
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        seen.push({
+          host: req.headers.host,
+          framing: ["content-length", "transfer-encoding"].filter(
+            (name) => name in req.headers,
+          ),
+          body,
+        });
+        res.end("from guest");
+      });
     });
     const guestPort = await listen(guest);
     const smolvm = createServer((_req, res) => {
@@ -56,25 +66,41 @@ describe("startServer", () => {
       });
       // `fetch` would replace Host, so send it with node:http as a proxy in
       // front of hostd (a tunnel) would.
-      const body = await new Promise<string>((resolve, reject) => {
-        request(
-          {
-            host: "127.0.0.1",
-            port: server.port,
-            path: `/services/demo/8000/${token}/`,
-            headers: { host: "hostd.example" },
-          },
-          (res) => {
-            let text = "";
-            res.on("data", (chunk) => (text += chunk));
-            res.on("end", () => resolve(text));
-          },
-        )
-          .on("error", reject)
-          .end();
-      });
-      expect(body).toBe("from guest");
-      expect(seenHost).toBe("hostd.example");
+      const send = (method: string, body?: string) =>
+        new Promise<string>((resolve, reject) => {
+          const outgoing = request(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              method,
+              path: `/services/demo/8000/${token}/`,
+              headers: { host: "hostd.example" },
+            },
+            (res) => {
+              let text = "";
+              res.on("data", (chunk) => (text += chunk));
+              res.on("end", () => resolve(text));
+            },
+          ).on("error", reject);
+          if (body !== undefined) {
+            outgoing.setHeader("transfer-encoding", "chunked");
+            outgoing.write(body);
+          }
+          outgoing.end();
+        });
+      expect(await send("GET")).toBe("from guest");
+      // A bodyless DELETE stays bodyless; a chunked one keeps its framing.
+      expect(await send("DELETE")).toBe("from guest");
+      expect(await send("DELETE", "gone")).toBe("from guest");
+      expect(seen).toEqual([
+        { host: "hostd.example", framing: [], body: "" },
+        { host: "hostd.example", framing: [], body: "" },
+        {
+          host: "hostd.example",
+          framing: ["transfer-encoding"],
+          body: "gone",
+        },
+      ]);
     } finally {
       await server.close();
       guest.close();
