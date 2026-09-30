@@ -1,301 +1,295 @@
 # @amika/sdk
 
-Use [Amika](https://github.com/gofixpoint/amika) from TypeScript to create cloud development environments (rigs), wait for their setup to finish, and send work to a coding agent. The SDK calls the cloud API at `https://app.amika.dev/api/v0beta1`. A rig is also called a sandbox in older SDK versions and API fields.
+Run coding-agent work in remote development environments without installing or
+running the agent on your application's machine. Create a
+**rig** (an Amika cloud development environment), wait for its setup to finish,
+and send a prompt. Typed resources keep lifecycle operations next to the data
+returned by the API, with field documentation available in your editor.
 
-## Install
+The SDK requires Node 18 or later and an [Amika account](https://app.amika.dev/signup)
+with an API key. Complete repository access during onboarding and store a Claude
+credential through Amika Settings or the
+[CLI credential workflow](https://github.com/gofixpoint/amika/blob/main/docs/secrets.md#claude-code-credentials).
+Your Amika API key authenticates SDK requests; the Claude credential lets the
+agent run inside the rig. The SDK does not discover local credentials or Git
+repositories automatically.
 
-```bash
+## Install and run
+
+```sh
 npm install @amika/sdk
 ```
 
-## Quick start
-
-Save this as `example.ts` and run it with a TypeScript runner, for example
-`npx tsx example.ts` (the SDK requires Node 18+). Export `AMIKA_API_KEY` first.
-Replace the repository URL with one your Amika account can access.
+Export `AMIKA_API_KEY`, replace the repository URL with one your account can
+access, and run this TypeScript with your application's TypeScript toolchain or
+`npx tsx example.ts`:
 
 ```ts
 import { AmikaClient } from "@amika/sdk";
 
-const amika = new AmikaClient({
-  apiKey: process.env.AMIKA_API_KEY!,
-});
-
-// Create a rig (returns immediately with state "initializing")
-const rig = await amika.createRig({
+const client = new AmikaClient({ apiKey: process.env.AMIKA_API_KEY! });
+const rig = await client.rigs.create({
   name: "hello-amika",
-  repoUrl: "git@github.com:your-org/your-repo.git", // replace with your repository
+  repoUrl: "https://github.com/your-org/your-repo",
   agentCredentials: [{ kind: "claude" }],
 });
-console.log(`Created rig "${rig.name}"`);
+console.log(`Created rig ${rig.name}`);
 
-// Wait for running + successful setup (3s polls, 15-minute deadline).
 await rig.wait();
-
-// Send a prompt to an agent (HTTP timeout is 10 minutes for this endpoint)
-const resp = await amika.sendAgentSession({
-  rigId: rig.id,
+const turn = await rig.send({
+  agent: "claude",
   newSession: true,
   message: "Inspect this repository and reply with a short summary",
-  agent: "claude",
 });
-console.log(`Agent Response: ${resp.response}`);
-if (resp.isError) throw new Error(resp.response);
+console.log(turn.response);
+if (turn.isError) throw new Error(turn.response);
 
-// Delete only after successful completion.
-console.log(`Deleting rig "${rig.name}"`);
+// This summary-only example is finished with the rig.
 await rig.delete();
 ```
 
-If waiting or sending fails, the example leaves the rig available for inspection.
-Its name is printed before waiting; delete it afterward with
-`amika rig delete <name> --force`. If your agent changes files, push or copy them
-out before deleting the rig.
+Creation returns initial metadata before setup finishes. `wait()` resolves when
+the rig is running and setup succeeded. Agent failures can return `isError: true`
+with failure details in `response`, even when the HTTP request succeeds.
 
-## Configuration
+This example leaves the rig available if waiting or sending fails. Inspect it
+through Amika or `client.rigs.get(name)` and delete it when you are finished.
+Omitting `agentCredentials` injects no agent credentials; `{ kind: "claude" }`
+asks the server to select a stored Claude credential.
 
-Export `AMIKA_API_KEY` with an API key from your Amika account before running the quick start. Connect your repository account and store an agent credential in Amika Settings. `{ kind: "claude" }` asks the server to select your default stored Claude credential. The SDK does not load environment variables or credential files itself.
+## Fetch a rig, or construct a handle
 
-`baseUrl` defaults to `https://app.amika.dev`. To use another server, set it to the origin without `/api/v0beta1`; the SDK appends that prefix. The SDK does not read `AMIKA_API_URL` automatically. Prefer `apiKey` for scripts:
+`get()` makes a request immediately and rejects if the rig is missing or
+inaccessible. It returns stopped rigs too, without starting them or waiting.
 
 ```ts
-const amika = new AmikaClient({
-  baseUrl: "https://app.staging-amika.dev", // optional override
-  apiKey: process.env.AMIKA_API_KEY!,
-  // fetch: customFetch, // optional override for tests or polyfills
-});
+const rig = await client.rigs.get("dev");
+console.log(rig.status);
 ```
 
-Provide **exactly one** of `apiKey`, `accessToken`, or `tokenSource`. TypeScript checks this, and the constructor also rejects missing, conflicting, or blank static credentials at runtime. Both static fields authenticate with `Authorization: Bearer …`.
-
-For an access token or a dynamic credential source, use one of these alternatives:
+`handle()` creates a **RigHandle** from a name or ID without a request or an
+existence check. It has operations but no fetched metadata. `fetch()` and
+`wait()` return a **Rig**, which includes metadata and the same operations.
 
 ```ts
-const withAccessToken = new AmikaClient({
-  accessToken: "your-access-token",
-});
-const withTokenSource = new AmikaClient({
-  tokenSource: { token: async () => getTokenFromYourSecretManager() },
-});
+const handle = client.rigs.handle("dev"); // No request or connection.
+await handle.start(); // Request a start.
+const rig = await handle.wait(); // Wait for running + setup success.
+
+await rig.stop();
+await rig.wait({ status: "stopped" });
 ```
 
-`getTokenFromYourSecretManager` represents your own credential-loading code. The SDK calls `token()` for each request.
+For a rig that is already starting or running, `await client.rigs.getAndWait("dev")`
+fetches and waits for readiness in one call. It includes the initial fetch in
+the wait deadline. `get()` returns an ordinary promise: await it before calling
+resource methods.
 
-## API surface
+Fetched data is an observation rather than a live view. `rig.refresh()` and
+`rig.wait()` update and return the same object. After fetching, operations use
+the rig's ID so a later rename does not change their target. `rig.services` is
+an array of fetched service summaries; service operations live on
+`client.services`.
 
-The "Deprecated alias" column lists older sandbox spellings that still work.
+## Waiting and errors
 
-### Rigs
-
-| Method                  | Endpoint                             | Deprecated alias            |
-| ----------------------- | ------------------------------------ | --------------------------- |
-| `listRigs()`            | `GET /rigs`                          | `listSandboxes()`           |
-| `createRig(req)`        | `POST /rigs`                         | `createSandbox(req)`        |
-| `getRig(name)`          | `GET /rigs/{name}`                   | `getSandbox(name)`          |
-| `waitForRig(name)`      | polls `GET /rigs/{name}` until ready | `waitForSandbox(name)`      |
-| `startRig(name)`        | `POST /rigs/{name}/start`            | `startSandbox(name)`        |
-| `waitForRigStart(name)` | polls until ready                    | `waitForSandboxStart(name)` |
-| `stopRig(name)`         | `POST /rigs/{name}/stop`             | `stopSandbox(name)`         |
-| `waitForRigStop(name)`  | polls until `stopped`                | `waitForSandboxStop(name)`  |
-| `deleteRig(name)`       | `DELETE /rigs/{name}`                | `deleteSandbox(name)`       |
-| `listRepositories()`    | `GET /repositories`                  | —                           |
-
-### Services
-
-| Method                                   | Endpoint                                   | Deprecated alias                   |
-| ---------------------------------------- | ------------------------------------------ | ---------------------------------- |
-| `listRigServices(rigRef?)`               | `GET /rig-services`                        | `listSandboxServices(sandboxRef?)` |
-| `createRigService(rigRef, req)`          | `POST /rigs/{ref}/services`                | `createSandboxService()`           |
-| `putRigService(rigRef, serviceRef, req)` | `PUT /rigs/{ref}/services/{serviceRef}`    | `putSandboxService()`              |
-| `deleteRigService(rigRef, serviceRef)`   | `DELETE /rigs/{ref}/services/{serviceRef}` | `deleteSandboxService()`           |
-
-### Secrets
-
-| Method                                | Endpoint                          |
-| ------------------------------------- | --------------------------------- |
-| `listSecrets()`                       | `GET /secrets`                    |
-| `createSecret(req)`                   | `POST /secrets`                   |
-| `updateSecret(id, req)`               | `PUT /secrets/{id}`               |
-| `createProviderSecret(provider, req)` | `POST /secrets/{provider}`        |
-| `listProviderSecrets(provider)`       | `GET /secrets/{provider}`         |
-| `deleteProviderSecret(provider, id)`  | `DELETE /secrets/{provider}/{id}` |
-
-### Agents and sessions
-
-| Method                                  | Endpoint                                                  |
-| --------------------------------------- | --------------------------------------------------------- |
-| `agentSend(name, req)`                  | `POST /agent-sessions` with `sandbox_id` (10-min timeout) |
-| `sendAgentSession(req)`                 | `POST /agent-sessions` (10-min timeout)                   |
-| `sendAgentSessionStream(req, handlers)` | `POST /agent-sessions/stream` (SSE)                       |
-| `listAgentSessions(limit?)`             | `GET /agent-sessions`                                     |
-| `getAgentSession(sessionId)`            | `GET /agent-sessions/{sessionId}`                         |
-| `createSession(name, req)`              | `POST /rigs/{name}/sessions`                              |
-| `listSessions(name)`                    | `GET /rigs/{name}/sessions`                               |
-| `getLatestSession(name)`                | `GET /rigs/{name}/sessions/latest` (null on 404)          |
-| `getSession(name, sessionId)`           | `GET /rigs/{name}/sessions/{sessionId}`                   |
-| `updateSession(name, sessionId, req)`   | `PATCH /rigs/{name}/sessions/{sessionId}`                 |
-
-### Snapshots
-
-| Method                       | Endpoint                           | Deprecated alias                 |
-| ---------------------------- | ---------------------------------- | -------------------------------- |
-| `listRigSnapshots(filters?)` | `GET /rig-snapshots`               | `listSandboxSnapshots(filters?)` |
-| `createRigSnapshot(req)`     | `POST /rig-snapshots`              | `createSandboxSnapshot(req)`     |
-| `getRigSnapshot(ref)`        | `GET /rig-snapshots/{ref}`         | `getSandboxSnapshot(ref)`        |
-| `waitForRigSnapshot(ref)`    | polls until `active` or `failed`   | `waitForSandboxSnapshot(ref)`    |
-| `getRigScrubPreview(ref)`    | `GET /rig-snapshots/scrub-preview` | `getSandboxScrubPreview(ref)`    |
-| `deleteRigSnapshot(ref)`     | `DELETE /rig-snapshots/{ref}`      | `deleteSandboxSnapshot(ref)`     |
-
-Fork a new rig from a captured snapshot by passing its slug as `snapshot` to `createRig({ snapshot })`.
-
-Types are camelCased and translated to/from snake_case on the wire. See `src/types.ts` and `src/agent-sessions.ts` for the full set: `CreateRigRequest`, `RemoteRig`, `Secret`, `CreateProviderSecretRequest`, `AgentSendRequest`, `AgentSendResponse`, `Session`, `RigSnapshot`, `RigServiceResource`, `AgentSessionSendRequest`, `AgentSessionDetail`, etc.
-
-### Nullability
-
-Field optionality mirrors the Go client's struct tags, which in turn follow the API schema. Whether a field can go missing in TypeScript tracks whether it is a pointer in Go:
-
-| Go field            | TypeScript          | Decoding                                                            |
-| ------------------- | ------------------- | ------------------------------------------------------------------- |
-| `string`            | `x: string`         | required, always present                                            |
-| `string,omitempty`  | `x: string`         | may be omitted on the wire, and decodes to `""` exactly as Go does  |
-| `*string`           | `x: string \| null` | always present, and `null` is meaningful (a rig with no repository) |
-| `*string,omitempty` | `x?: string`        | `null` and absent both surface as `undefined`                       |
-
-A non-pointer Go field always lands as a value, so `state` and `status` stay plain strings even though the schema marks them optional. Go cannot tell an omitted `status` from an empty one, and neither should a 1:1 mirror. Slices go the other way, being nilable in Go themselves: `[]string,omitempty` is `x?: string[]`.
-
-Two fields sit outside this rule because they sit outside the schema. `containerId` and `image` are CLI-only extensions that the API never returns, so they are typed optional to say exactly that.
-
-## Waiting and deleting
-
-`createRig`, `getRig`, and `listRigs` return resources with `wait()` and `delete()`. Their sandbox aliases do too. Rig lookup, stop, and delete accept a name or ID; `rigRef` in other methods means that same reference. Each resource carries the usual data fields (`id`, `name`, `status`, `setupStatus`, and so on). Methods and client credentials are not included when the resource is serialized to JSON.
+Rig waits poll every 3 seconds and have a 15-minute total deadline by default.
+The deadline includes token loading, HTTP requests, and poll delays. Waiting
+never creates or starts a rig. HTTP and transport failures, including 404,
+propagate immediately without retries.
 
 ```ts
-const rig = await amika.getRig("my-rig");
-await rig.wait(); // running AND setupStatus === "ok"
-await rig.wait({ pollMs: 1_000, maxWaitMs: 5 * 60_000 });
-
-// Wait for a power-state change initiated separately:
-await amika.stopRig(rig.id);
-await rig.wait({ status: ["stopped", "suspended"] });
-await rig.delete();
-```
-
-`wait()` polls immediately, then every **3 seconds**, with a **15-minute total deadline** including HTTP requests. It refreshes the same resource's fields and returns that resource. `pollMs` and `maxWaitMs` must be positive integer milliseconds no greater than 2,147,483,647.
-
-A status array matches any listed value. When the targets include `running`, setup must also be `ok` by default, even if another listed status matches. For stopped/suspended targets, setup is ignored unless you explicitly pass `setupStatus: "ok"`. The API reports stopped rigs as `suspended`, so the SDK also accepts that status for a `stopped` target. Waiting does not start or stop a rig. `delete()` resolves when the DELETE request succeeds; it does not poll for disappearance.
-
-Provisioning failures, setup failures when setup is required, and deadline expiry throw `AmikaWaitError`. HTTP failures throw `AmikaHTTPError`; other transport failures propagate. Failed requests are not retried. A missing setup status keeps polling until the deadline.
-
-The older client-level `waitForRig`, `waitForRigStart`, and `waitForRigStop` retain their state-only checks, 3-second polling and unlimited total wait. `waitForRigSnapshot` retains its existing behavior too. Use resource `.wait()` when setup readiness and a deadline matter.
-
-`RemoteRig` and `RemoteSandbox` remain plain data types. `Rig` and `Sandbox` add the methods; hand-built mocks of create/get/list methods must now provide `wait` and `delete`.
-
-## Model and effort
-
-Both buffered and streaming sends accept `model` and `effort`:
-
-```ts
-await amika.sendAgentSession({
-  rigId: rig.id,
-  agent: "claude",
-  newSession: true,
-  message: "Review this repository",
-  model: "opus",
-  effort: "high",
-});
-```
-
-Omitting either field inherits the chat's setting (the agent's default for a new chat). Explicit `null` resets it to the agent's default. The server validates which models and effort levels the selected agent supports. Effort values are `low`, `medium`, `high`, `xhigh`, and `max`.
-
-Continue a chat with its returned `sessionId`. For example, omitting `model` keeps
-that chat's selection while `effort: null` clears its effort setting:
-
-```ts
-const first = await amika.sendAgentSession({
-  rigId: rig.id,
-  message: "Review this repository",
-  model: "opus",
-  effort: "high",
-});
-await amika.sendAgentSession({
-  sessionId: first.sessionId,
-  message: "Summarize the findings",
-  effort: null,
-});
-```
-
-## Streaming an agent turn
-
-`sendAgentSessionStream` reads the SSE endpoint and resolves with the same response `sendAgentSession` returns, after forwarding progress to your handlers:
-
-```ts
-const result = await amika.sendAgentSessionStream(
-  { message: "Add a CHANGELOG", repoUrl: "git@github.com:org/proj.git" },
-  {
-    onStatus: (phase, rigId) => console.error(`[${phase}] ${rigId}`),
-    onDelta: (text) => process.stdout.write(text),
-  },
-);
-console.log(`\nsession ${result.sessionId} on rig ${result.sandboxId}`);
-```
-
-The `phase` values are the server's own (`creating_sandbox`, `sandbox_ready`) and still say sandbox.
-
-The server enforces a 300s ceiling on the request, below the client's 10-minute timeout. If it cuts the stream before a terminal frame, the call throws and the turn may still have completed — check `listAgentSessions()` for the session rather than assuming the work was lost.
-
-## Errors
-
-```ts
-import { AmikaError, AmikaHTTPError, AmikaWaitError } from "@amika/sdk";
+import { AmikaHTTPError, AmikaWaitError } from "@amika/sdk";
 
 try {
-  const rig = await amika.getRig("my-rig");
-  await rig.wait();
-} catch (err) {
-  if (err instanceof AmikaWaitError) {
-    console.error(err.reason, err.rigId, err.status, err.setupStatus);
-    // reason: "provisioning", "setup", or "timeout"; fields show the last observation.
-  } else if (err instanceof AmikaHTTPError) {
-    console.error(err.statusCode, err.userMessage());
-    // userMessage() parses { code/error_code, message } if present, else returns the raw body
-  } else if (err instanceof AmikaError) {
-    console.error(err.message);
+  await client.rigs.getAndWait("dev", {
+    status: "running",
+    setupStatus: "ok",
+    pollMs: 1_000,
+    maxWaitMs: 120_000,
+  });
+} catch (error) {
+  if (error instanceof AmikaWaitError) {
+    console.error(error.reason, error.status, error.setupStatus);
+  } else if (error instanceof AmikaHTTPError) {
+    console.error(error.statusCode, error.userMessage());
   } else {
-    throw err;
+    throw error;
   }
 }
 ```
 
-`agentSend(name, req)` delegates to `sendAgentSession({ ...req, rigId: name })` and returns the same response. Read the answer from `response`, accounting from `usage`, and continue the durable chat with `sessionId`. Agent failures, including provider authentication failures, return `isError: true` with details in `response`; HTTP failures throw `AmikaHTTPError`.
+`AmikaWaitError.reason` is `provisioning`, `setup`, or `timeout`. Its fields
+record the last observed rig state; `rigId` is empty if the first fetch never
+completed. Waiting for `running` also requires successful setup by default.
+Waiting for `stopped` accepts `suspended` and does not check setup by default.
+You can supply an array of target statuses; any listed status matches. If the
+array includes `running`, successful setup is required even when a different
+listed status matches.
+
+## Send and continue agent chats
+
+`client.agentSessions.send()` can continue a chat by `sessionId`, target an
+existing rig by `rigId`, or let the server create a rig. `repoUrl` is used only
+when a rig must be created. `rig.send()` supplies the rig reference for you.
+Both buffered and streaming sends have a 10-minute client timeout.
+To choose which credentials a rig receives, create it with `agentCredentials`
+before sending, as in the first example. The send request has no credential
+selection option.
+
+```ts
+const turn = await client.agentSessions.send({
+  message: "Summarize the repository",
+  rigId: rig.id,
+  agent: "claude",
+});
+if (turn.isError) throw new Error(turn.response);
+
+const chat = await client.agentSessions.get(turn.sessionId);
+await chat.sendStream(
+  { message: "Explain the test setup" },
+  { onDelta: (text) => process.stdout.write(text) },
+);
+await chat.refresh(); // Reload the transcript after sending.
+```
+
+Streaming calls await callbacks in order and return the completed turn.
+`onStatus(phase, rigId)` reports lifecycle milestones; the ID can be empty
+before a rig exists. `onDelta(text)` reports incremental reply text. A rejected
+callback fails the send. The server can end a stream before the client timeout;
+if it ends without a terminal result, the SDK throws. Inspect the chat before
+retrying because the turn may still have completed.
+
+`agentSessions.list({ limit })` returns `{ sessions, total }`, newest first.
+Keep `total` when displaying a partial list. `agentSessions.get(id)` returns a
+chat with its transcript and bound `send`, `sendStream`, and `refresh` methods.
+Chat transcripts are stored on the server and can outlive their rigs; keeping
+a chat record does not keep its rig or filesystem alive.
+
+Use `client.rigSessions` only when you need to create or update session status
+and metadata yourself. Creating one of these records does not send a prompt or
+create a chat transcript. Use `client.agentSessions` for agent conversations.
+
+## Snapshots
+
+A snapshot captures a rig's filesystem for later rig creation. Capture returns
+before it finishes; `snapshot.wait()` polls until `active`, rejecting on failure
+or timeout. Snapshot waits default to the same 3-second poll interval and
+15-minute deadline. Snapshot handles also support `fetch()` and `delete()`;
+fetched snapshots add `refresh()`.
+
+```ts
+const snapshot = await client.snapshots.create({
+  rigRef: "dev",
+  name: "project-base",
+  mode: "full",
+});
+await snapshot.wait();
+// snapshot.snapshot is the saved snapshot's slug, such as "project-base".
+const fork = await client.rigs.create({ snapshot: snapshot.snapshot });
+```
+
+Choose capture mode deliberately. `full` keeps the source rig and captures its
+complete filesystem, including credentials. The default, `scrub_and_delete`,
+removes Amika-injected secrets, captures the cleaned filesystem, and deletes the
+source rig. `client.snapshots.previewScrub(rigRef)` previews affected paths and
+environment names without returning secret values. Snapshot failures and
+expired waits throw `AmikaError`; HTTP failures throw `AmikaHTTPError`.
+
+## Configuration
+
+`baseUrl` defaults to `https://app.amika.dev`. An override is the origin without
+`/api/v0beta1`; the SDK appends that prefix. The SDK does not read
+`AMIKA_API_URL` or `AMIKA_API_KEY` itself.
+
+Provide exactly one of `apiKey`, `accessToken`, or `tokenSource`:
+
+```ts
+const client = new AmikaClient({
+  baseUrl: "https://app.staging-amika.dev",
+  tokenSource: { token: async () => getTokenFromYourSecretManager() },
+  // fetch: customFetch, // Optional test or runtime override.
+});
+```
+
+`getTokenFromYourSecretManager` represents your credential-loading code. The
+SDK calls `token()` for each request. Static credentials must be non-empty.
+Ordinary requests have a 30-second timeout; agent sends use 10 minutes.
+
+## API reference in your editor
+
+Import resource interfaces and request, response, and option types directly
+from `@amika/sdk`. Hover fields for defaults and semantics, or use Go to
+Definition. The package includes declarations, declaration maps, and source.
+
+| Collection                | Methods                                           |
+| ------------------------- | ------------------------------------------------- |
+| `client.rigs`             | `create`, `list`, `get`, `handle`, `getAndWait`   |
+| `client.agentSessions`    | `send`, `sendStream`, `list`, `get`               |
+| `client.snapshots`        | `create`, `list`, `get`, `handle`, `previewScrub` |
+| `client.services`         | `list`, `create`, `replace`, `delete`             |
+| `client.secrets`          | `list`, `create`, `update`                        |
+| `client.agentCredentials` | `create`, `list`, `delete`                        |
+| `client.repositories`     | `list`                                            |
+| `client.rigSessions`      | `create`, `list`, `get`, `latest`, `update`       |
+
+Services are published rig ports. Their creation and replacement automatically
+reject ports outside 1–65535 and the reserved range 60899–60999. Secrets and
+agent-credential listings return metadata, never secret values.
+
+Public definitions are organized by domain under `src/`. Start with
+[rig resources](src/rigs/rig.ts), [rig data and creation options](src/rigs/types.ts),
+[agent chats](src/agent-sessions/types.ts), and [snapshots](src/snapshots/snapshot.ts).
+Conversion between API JSON and SDK types is separate from these definitions.
+Shared HTTP, event-stream parsing, validation, and polling code lives under
+`src/internal/`.
+
+## Migration from the flat API
+
+Flat methods such as `createRig`, `getRig`, and `sendAgentSession` still work
+but are deprecated. Prefer `client.rigs.create`, `client.rigs.get`, and
+`client.agentSessions.send`. Sandbox-named methods and types also remain as
+deprecated compatibility aliases. Existing objects typed with `Sandbox*` aliases
+do not need to add the new resource methods or canonical rig field names.
+
+The old `waitForRig`, `waitForRigStart`, and `waitForRigStop` helpers retain their
+original behavior: checking provisioning state without checking setup and
+without a total deadline. The old `waitForRigSnapshot` also retains its unbounded
+wait. Use resource `.wait()` methods for bounded waits and rig setup checks.
+
+Four runtime exports have been retired: `StaticTokenSource`,
+`RESERVED_PORT_MIN`, `RESERVED_PORT_MAX`, and `validateServicePort`. Supply
+`apiKey` or `accessToken` directly, or implement the exported `TokenSource`
+interface. Service write methods perform port validation automatically.
+
+Data keeps the SDK's existing camelCase field names, including compatibility
+fields such as `sandboxId` on chat responses. Optional values may be `undefined`, while required
+nullable fields explicitly contain `null`.
 
 ## Development
 
-```bash
-cd sdk/typescript
+This package has its own pnpm workspace and lockfile. Run commands here:
+
+```sh
 pnpm install
-pnpm typecheck
-pnpm lint
-pnpm formatcheck
-pnpm test
-pnpm build
+pnpm ci
 ```
 
-Tests use [Vitest](https://vitest.dev) with mocked `fetch` — no network or external binaries required.
+`pnpm test` runs offline mocked HTTP tests. `pnpm test:package` builds and checks
+an installed-package layout, including exports, deprecated types, NodeNext and
+Bundler resolution, hover documentation, definition navigation, and shipped
+source maps. `pnpm ci` includes both checks plus linting and formatting.
 
-### Functional tests
+Functional tests use a real server and can create billable resources. They are
+excluded from unit tests and skipped unless `AMIKA_API_URL` is set. Production
+hosts are blocked; use staging or an ephemeral deployment:
 
-The functional tests (named `*.functional.test.ts`, living under `test/functional/`) exercise the SDK against a real Amika server. They are excluded from `pnpm test`, which stays offline, and are skipped entirely when `AMIKA_API_URL` is unset. To run them:
-
-```bash
+```sh
 AMIKA_API_URL=https://app.staging-amika.dev \
 AMIKA_API_TOKEN=amk_… \
 pnpm test:functional
 ```
 
-**Production is banned.** These tests provision and tear down real resources, so pointing `AMIKA_API_URL` at a production host (`app.amika.dev` or `amika.dev`) aborts the run before any test executes. This is a hard ban with no override; always target staging (e.g. `https://app.staging-amika.dev`).
-
-Optional env vars: `AMIKA_TEST_REPO_URL`, `AMIKA_TEST_PRESET`, `AMIKA_TEST_AGENT_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_NAME`, `AMIKA_TEST_AGENT_CREDENTIAL_TYPE`, `AMIKA_TEST_BRANCH`, `AMIKA_TEST_RIG_NAME_PREFIX`, `AMIKA_TEST_PROVIDER`, `AMIKA_TEST_RIG_PROVIDER`. Two of those fall back to a former spelling when unset: `AMIKA_TEST_RIG_PROVIDER` to `AMIKA_TEST_SANDBOX_PROVIDER`, and `AMIKA_TEST_RIG_NAME_PREFIX` to `AMIKA_TEST_SANDBOX_NAME_PREFIX`. `AMIKA_TEST_PROVIDER` names the AI provider and has no alias. See `test/functional/helpers.ts` for details.
-
-The suite provisions a real rig and runs the full lifecycle (create → wait → list → get → sessions → agentSend → stop → start → delete), so a single run takes several minutes and creates billable resources. Rigs are cleaned up in `afterAll`, but the secrets API has no delete endpoint, so test-created secrets accumulate.
-
-`org-resources.functional.test.ts` is the exception: it only reads org-scoped listings, so it provisions nothing and finishes in seconds. Run it alone with `pnpm test:functional org-resources`.
+See [functional test helpers](test/functional/helpers.ts) for optional environment
+settings. Rig tests clean up their rigs; generic-secret tests can leave secrets
+because the current API has no generic-secret deletion endpoint.
