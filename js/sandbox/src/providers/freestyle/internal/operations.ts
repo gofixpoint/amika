@@ -508,7 +508,7 @@ export async function stopFreestyleSandbox(
     await waitForFreestyleVmSuspended(config, providerSandboxId);
   }
   if (state === "suspended" || state === "suspending") {
-    await vm.start();
+    await vm.start({ idleTimeoutSeconds: NEVER_IDLE_TIMEOUT_SECONDS });
   }
   // The guest disconnects before returning an exec status. Treat that error as
   // expected only after confirming the VM actually reached `stopped`.

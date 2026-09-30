@@ -62,7 +62,9 @@ describe("stopFreestyleSandbox", () => {
 
     await stopFreestyleSandbox(config, "vm_1");
 
-    expect(startVm).toHaveBeenCalledTimes(1);
+    expect(startVm).toHaveBeenCalledWith({
+      idleTimeoutSeconds: 365 * 24 * 60 * 60,
+    });
     expect(execVm).toHaveBeenCalledWith({ command: "sudo poweroff" });
     expect(suspendVm).not.toHaveBeenCalled();
   });
@@ -72,7 +74,9 @@ describe("stopFreestyleSandbox", () => {
 
     await stopFreestyleSandbox(config, "vm_1");
 
-    expect(startVm).toHaveBeenCalledTimes(1);
+    expect(startVm).toHaveBeenCalledWith({
+      idleTimeoutSeconds: 365 * 24 * 60 * 60,
+    });
     expect(execVm).toHaveBeenCalledWith({ command: "sudo poweroff" });
   });
 

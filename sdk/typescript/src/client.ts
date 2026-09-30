@@ -175,7 +175,6 @@ export class AmikaClient {
       name,
       ["stopped"],
       "rig stop failed",
-      (rig) => rig.status || rig.state,
     );
   }
 
@@ -681,7 +680,6 @@ async function waitForRigState(
   name: string,
   readyStates: readonly string[],
   failMsg: string,
-  readState: (rig: RemoteRig) => string = (rig) => rig.state,
 ): Promise<RemoteRig> {
   // Match Go: no client-side timeout, just poll until terminal state.
   for (;;) {
@@ -689,7 +687,7 @@ async function waitForRigState(
     if (rig.state === "failed") {
       throw new AmikaError(rig.errorMessage || failMsg);
     }
-    if (readyStates.includes(readState(rig))) return rig;
+    if (readyStates.includes(rig.state)) return rig;
     await sleep(WAIT_POLL_INTERVAL_MS);
   }
 }

@@ -21,7 +21,9 @@ A running VM can still be setting up or have a setup failure.
 VM, regardless of whether Amika or the provider initiated the transition.
 `amika rig stop` turns the VM off. A provider's idle policy may instead suspend
 it; `amika rig start` can bring either settled state back up. Freestyle idle
-suspension is disabled; Freestyle rigs currently have no automatic idle stop.
+suspension is disabled on create and start; Freestyle rigs then have no automatic
+idle stop. Existing running Freestyle rigs keep their previous idle timer until
+their next start.
 
 | `setup_status`     | Meaning                                      |
 | ------------------ | -------------------------------------------- |
@@ -37,6 +39,10 @@ failure in `setup_status`. A successful start normally replaces an earlier
 failure; `git-failed` persists because start does not reclone the primary
 repository. While `setup-running`, agent operations must wait, and stop and
 snapshot are refused. Delete remains available to abort a stuck setup.
+
+E2B reports both kinds of pause as `paused`. Amika pauses E2B rigs without
+memory and reports them as `stopped`; memory-preserving pauses initiated
+outside Amika cannot currently be distinguished through that provider API.
 
 The legacy `state` API field mixes stored orchestration states and raw provider
 states. New clients should use `status` and `setup_status`.

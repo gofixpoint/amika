@@ -212,17 +212,6 @@ describe("AmikaClient.waitForRig", () => {
       vi.useRealTimers();
     }
   });
-
-  it("waitForRigStop reads canonical status when provider state differs", async () => {
-    const { fetch } = mockFetch([
-      {
-        status: 200,
-        body: { name: "dev", state: "paused", status: "stopped" },
-      },
-    ]);
-    const rig = await makeClient(fetch).waitForRigStop("dev");
-    expect(rig.status).toBe("stopped");
-  });
 });
 
 describe("AmikaClient secrets", () => {
