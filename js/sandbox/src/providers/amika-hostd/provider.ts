@@ -5,7 +5,15 @@ import type { SandboxProvider } from "../provider";
 import type { SandboxAdapter } from "../shared/adapter";
 import { defineProvider } from "../shared/define-provider";
 import { SmolClient, mapSmolState, smolOperations } from "../smol/provider";
-import { HOSTD_SERVICE_URL_TTL_S, hostdServices } from "./internal/services";
+import {
+  HOSTD_SERVICE_URL_TTL_S,
+  hostdServiceRoutes,
+  hostdServices,
+} from "./internal/services";
+
+// Callers of a hostd service URL (the control plane) must present the host's
+// secret key in this header; see `./internal/services`.
+export { HOSTD_SERVICE_KEY_HEADER } from "./internal/services";
 
 interface AmikaHostdDeps {
   config: AmikaHostdConfig;
@@ -44,7 +52,7 @@ const createProvider = defineProvider(
     );
     const ops = smolOperations(smolConfig, client, {
       provider: "amika-hostd",
-      publishServicePorts: true,
+      serviceRoutes: hostdServiceRoutes,
     });
     return {
       name: "amika-hostd",
@@ -61,7 +69,7 @@ const createProvider = defineProvider(
       exec: { stdin: true, run: ops.run },
       files: { read: ops.read, write: ops.write },
       listing: { list: ops.list },
-      services: hostdServices(smolConfig.apiUrl, secretKey, client),
+      services: hostdServices(smolConfig.apiUrl, client),
     };
   },
 );

@@ -22,20 +22,20 @@ export interface SmolOperationsOptions {
   /** The provider named in created sandboxes and unsupported-operation errors. */
   provider?: string;
   /**
-   * Ask the runtime to publish each requested service's guest port instead of
-   * refusing services. Only amika-hostd, which picks the host side of each
-   * port and routes to it, sets this; plain smolvm requires the caller to pick.
+   * Accept services instead of refusing them, sending the runtime each one's
+   * route name and guest port. Only amika-hostd, which picks the host side of
+   * each port and routes to it by name, sets this; plain smolvm requires the
+   * caller to pick host ports.
    */
-  publishServicePorts?: boolean;
+  serviceRoutes?: (
+    services: CreateSandboxProviderInput["services"],
+  ) => { name: string; port: number }[];
 }
 
 export function smolOperations(
   config: SmolConfig,
   client = new SmolClient(config),
-  {
-    provider = "smol",
-    publishServicePorts = false,
-  }: SmolOperationsOptions = {},
+  { provider = "smol", serviceRoutes }: SmolOperationsOptions = {},
 ) {
   const rejectTimer = (
     interval: number | null | undefined,
@@ -110,7 +110,7 @@ export function smolOperations(
         throw new Error("Smol requires an OCI image in snapshot");
       if (
         input.services.length &&
-        (!publishServicePorts ||
+        (!serviceRoutes ||
           input.services.some((service) => service.protocol !== "tcp"))
       )
         throw new SandboxProviderUnsupportedError(provider, "services");
@@ -144,11 +144,10 @@ export function smolOperations(
           name,
           value,
         })),
-        ports: input.services.length
-          ? [...new Set(input.services.map((s) => s.containerPort))].map(
-              (guest) => ({ guest }),
-            )
-          : undefined,
+        services:
+          input.services.length && serviceRoutes
+            ? uniqueByName(serviceRoutes(input.services))
+            : undefined,
       });
       try {
         await start(input.name);
@@ -222,4 +221,9 @@ export function mapSmolState(state: string): SandboxStatus {
     default:
       return "unknown";
   }
+}
+
+/** One route per name: the same service listed twice is published once. */
+function uniqueByName<T extends { name: string }>(routes: T[]): T[] {
+  return [...new Map(routes.map((route) => [route.name, route])).values()];
 }

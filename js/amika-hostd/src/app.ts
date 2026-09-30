@@ -10,21 +10,29 @@ import {
   execSchema,
   filePath,
   machinePath,
+  replaceServicesSchema,
   resolveImage,
 } from "./internal/requests.js";
 import {
-  SERVICES_PREFIX,
+  RIGS_PREFIX,
+  SERVICE_KEY_HEADER,
+  authorizeServiceRequest,
   freeLoopbackPort,
+  machinePortsSchema,
   parseServicePath,
   resolveHostPort,
   stripHopByHopHeaders,
-  verifyServiceToken,
 } from "./internal/services.js";
+import {
+  memoryServiceRegistry,
+  type ServiceRegistry,
+} from "./internal/service-registry.js";
 
 export interface AppConfig extends SmolRuntimeConfig {
   /**
-   * Every request except the signed `/services/...` routes, including
-   * `/health`, must present this as a bearer token.
+   * Every request must present this: as a bearer token, or in
+   * `X-Amika-Hostd-Key` on `/rigs/.../services/...` routes, whose
+   * `Authorization` belongs to the guest.
    */
   secretKey: string;
   /** Preset image names mapped to the OCI references smolvm boots. */
@@ -36,13 +44,18 @@ export interface AppConfig extends SmolRuntimeConfig {
 export interface AppDeps {
   /** Picks the host loopback port smolvm publishes a guest port on. */
   allocatePort?: () => Promise<number>;
+  /** Where each machine's service names map to guest ports. */
+  registry?: ServiceRegistry;
 }
 
 /** Build routes without opening a socket; the runtime transport is injectable. */
 export function createApp(
   { secretKey, images = {}, configPath, ...runtimeConfig }: AppConfig,
   fetcher = fetch,
-  { allocatePort = freeLoopbackPort }: AppDeps = {},
+  {
+    allocatePort = freeLoopbackPort,
+    registry = memoryServiceRegistry(),
+  }: AppDeps = {},
 ) {
   const runtime = new SmolRuntime(runtimeConfig, fetcher);
   const app = new Hono();
@@ -58,34 +71,78 @@ export function createApp(
   });
   // Authenticate before reading any body, so unauthenticated callers cannot
   // make the daemon buffer up to the body limit.
-  // Service routes carry their own signed token instead of the secret key
-  // (see `./internal/services.ts`); every other path requires the key.
+  // Service routes take the key in their own header, checked by their
+  // handler before it touches the body (see `./internal/services.ts`).
   const checkSecretKey = requireSecretKey(secretKey);
   app.use("*", (c, next) =>
-    c.req.path.startsWith(SERVICES_PREFIX) ? next() : checkSecretKey(c, next),
+    c.req.path.startsWith(RIGS_PREFIX) ? next() : checkSecretKey(c, next),
   );
   app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get(machines, () => runtime.request(""));
   app.post(machines, async (c) => {
     const input = createMachineSchema.parse(await c.req.json());
-    const image = resolveImage(input.image, images, configPath);
+    const { services, ...machine } = input;
+    const image = resolveImage(machine.image, images, configPath);
+    const guestPorts = [...new Set(services?.map((s) => s.port))];
     const ports =
-      input.ports &&
+      services &&
       (await Promise.all(
-        input.ports.map(async ({ guest }) => ({
+        guestPorts.map(async (guest) => ({
           host: await allocatePort(),
           guest,
         })),
       ));
-    return runtime.request("", "POST", { ...input, image, ports });
+    const response = await runtime.request("", "POST", {
+      ...machine,
+      image,
+      ports,
+    });
+    // Record names only for a machine that now exists, replacing any a
+    // deleted machine of the same name left behind.
+    if (response.ok) {
+      registry.set(
+        machine.name,
+        Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
+      );
+    }
+    return response;
   });
   app.get(`${machines}/:name`, (c) =>
     runtime.request(machinePath(c.req.param("name"))),
   );
-  app.delete(`${machines}/:name`, (c) =>
-    runtime.request(machinePath(c.req.param("name")), "DELETE"),
-  );
+  app.delete(`${machines}/:name`, async (c) => {
+    const name = c.req.param("name");
+    const response = await runtime.request(machinePath(name), "DELETE");
+    if (response.ok || response.status === 404) registry.remove(name);
+    return response;
+  });
+  // Services can be added, renamed and removed after create, but only on
+  // ports smolvm published then: it cannot publish more later.
+  app.put(`${machines}/:name/services`, async (c) => {
+    const name = c.req.param("name");
+    const { services } = replaceServicesSchema.parse(await c.req.json());
+    const response = await runtime.request(machinePath(name));
+    if (!response.ok) return response;
+    const { ports } = machinePortsSchema.parse(await response.json());
+    const published = new Set(ports.map((port) => port.guest));
+    const missing = [
+      ...new Set(services.map((s) => s.port).filter((p) => !published.has(p))),
+    ];
+    if (missing.length) {
+      return c.json(
+        {
+          error: `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
+        },
+        409,
+      );
+    }
+    registry.set(
+      name,
+      Object.fromEntries(services.map((s) => [s.name, s.port])),
+    );
+    return c.body(null, 204);
+  });
   for (const action of ["start", "stop"] as const) {
     app.post(`${machines}/:name/${action}`, (c) =>
       runtime.request(`${machinePath(c.req.param("name"))}/${action}`, "POST"),
@@ -109,8 +166,8 @@ export function createApp(
       new Uint8Array(await c.req.arrayBuffer()),
     );
   });
-  app.all(`${SERVICES_PREFIX}*`, (c) =>
-    proxyService(c.req.raw, secretKey, runtime, fetcher),
+  app.all(`${RIGS_PREFIX}*`, (c) =>
+    proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
   );
   return app;
 }
@@ -123,22 +180,37 @@ async function proxyService(
   request: Request,
   secretKey: string,
   runtime: SmolRuntime,
+  registry: ServiceRegistry,
   fetcher: typeof fetch,
 ): Promise<Response> {
+  const refusal = authorizeServiceRequest(secretKey, {
+    key: request.headers.get(SERVICE_KEY_HEADER),
+    authorization: request.headers.get("authorization"),
+  });
+  if (refusal === 401) {
+    // Close the connection so Node stops reading an unauthenticated body.
+    return Response.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: { Connection: "close" } },
+    );
+  }
+  if (refusal === 400) {
+    return Response.json(
+      {
+        error: `Send the host key in ${SERVICE_KEY_HEADER}, not Authorization, which is forwarded to the guest`,
+      },
+      { status: 400 },
+    );
+  }
   const url = new URL(request.url);
   const route = parseServicePath(url.pathname);
-  // One answer for a bad path, a bad token, and an unpublished port, so the
-  // route never confirms which machines or ports exist.
-  const signed = route && verifyServiceToken(secretKey, route);
-  if (!route || !signed) {
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-  const hostPort = await resolveHostPort(runtime, route, signed.createdAt);
-  if (hostPort === null) {
+  const hostPort = route && (await resolveHostPort(runtime, registry, route));
+  if (!route || hostPort === null) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   const headers = new Headers(request.headers);
   stripHopByHopHeaders(headers);
+  headers.delete(SERVICE_KEY_HEADER);
   headers.delete("host");
   let upstream: Response;
   try {

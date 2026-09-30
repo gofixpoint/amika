@@ -113,6 +113,7 @@ describe("runCli", () => {
         logFile: "/state/amika-hostd/amika-hostd.log",
         smolvmPidFile: "/state/amika-hostd/smolvm.pid",
         smolvmLogFile: "/state/amika-hostd/smolvm.log",
+        servicesFile: "/state/amika-hostd/services.json",
       },
       { isRunning: deps.isRunning, env: expect.any(Object) },
     );
@@ -133,6 +134,7 @@ describe("runCli", () => {
       out.splice(0, args[0] === "up" ? 2 : 0);
       expect(deps.startServer).toHaveBeenCalledWith(
         expect.objectContaining({ host: "0.0.0.0", port: 3020 }),
+        { servicesFile: "/state/amika-hostd/services.json" },
       );
       expect(deps.claimPidFile).toHaveBeenCalledWith(
         "/state/amika-hostd/amika-hostd.pid",

@@ -5,6 +5,10 @@ import type { Duplex } from "node:stream";
 import { serve } from "@hono/node-server";
 import { createApp } from "../app.js";
 import type { HostdConfigWith } from "./config.js";
+import {
+  fileServiceRegistry,
+  memoryServiceRegistry,
+} from "./service-registry.js";
 import { createUpgradeHandler } from "./services.js";
 import { SmolRuntime } from "./smol.js";
 
@@ -29,22 +33,37 @@ export const SHUTDOWN_GRACE_MS = 5_000;
 /** Resolve once the port is bound, or reject if it cannot be (e.g. in use). */
 export function startServer(
   config: HostdConfigWith<"secretKey">,
-  { shutdownGraceMs = SHUTDOWN_GRACE_MS }: { shutdownGraceMs?: number } = {},
+  {
+    shutdownGraceMs = SHUTDOWN_GRACE_MS,
+    servicesFile,
+  }: {
+    shutdownGraceMs?: number;
+    /** Persists service names across restarts; in memory without one. */
+    servicesFile?: string;
+  } = {},
 ): Promise<RunningServer> {
+  const registry = servicesFile
+    ? fileServiceRegistry(servicesFile)
+    : memoryServiceRegistry();
   const runtimeConfig = {
     apiUrl: config.smolApiUrl,
     requestTimeoutMs: config.smolRequestTimeoutMs,
   };
-  const app = createApp({
-    ...runtimeConfig,
-    secretKey: config.secretKey,
-    images: config.images,
-    configPath: config.configPath,
-  });
+  const app = createApp(
+    {
+      ...runtimeConfig,
+      secretKey: config.secretKey,
+      images: config.images,
+      configPath: config.configPath,
+    },
+    fetch,
+    { registry },
+  );
   const tunnels = new Set<Duplex>();
   const upgrade = createUpgradeHandler(
     config.secretKey,
     new SmolRuntime(runtimeConfig),
+    registry,
     tunnels,
   );
   return new Promise((resolve, reject) => {

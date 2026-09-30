@@ -2,109 +2,90 @@
  * Service URLs for amika-hostd machines.
  *
  * hostd publishes each service's guest port when it creates the machine and
- * serves it at `/services/<machine>/<port>/<token>/`, forwarding HTTP and
- * WebSocket upgrades (see `js/amika-hostd/src/internal/services.ts`). The
- * token is signed here with the daemon's secret key, so the URL is the only
- * credential a caller needs and the secret key never leaves the control plane.
- * It covers the machine's smolvm `createdAt` as well as its name, so a URL
- * stops working once its machine is deleted, even if another machine is later
- * created under the same name.
- * This is what backs no-relay SSH: the `amikad` service URL is where the Amika
- * CLI opens its SSH WebSocket.
+ * routes `/rigs/<machine>/services/<name>/...` to it, forwarding HTTP and
+ * WebSocket upgrades (see `js/amika-hostd/src/internal/services.ts`). Those
+ * routes are reached only by the control plane, which presents the host's
+ * secret key in `X-Amika-Hostd-Key` (`HOSTD_SERVICE_KEY_HEADER`), so a URL is
+ * no credential by itself and never expires.
  */
-import { createHmac } from "node:crypto";
 import {
   SandboxProviderUnsupportedError,
   type RefreshUrlsResult,
 } from "../../provider";
 import type { SandboxService } from "../../../types";
-import {
-  machinePath,
-  machineSchema,
-  type SmolClient,
-} from "../../smol/provider";
+import { machinePath, type SmolClient } from "../../smol/provider";
 
-/** Signed service URLs stay valid for 24 hours, as Daytona's and E2B's do. */
-export const HOSTD_SERVICE_URL_TTL_S = 24 * 60 * 60;
+/** The header carrying the host's secret key on service routes. */
+export const HOSTD_SERVICE_KEY_HEADER = "X-Amika-Hostd-Key";
 
-export function hostdServices(
-  apiUrl: string,
-  secretKey: string,
-  client: SmolClient,
-) {
+/**
+ * Service URLs do not expire; a long TTL keeps the control plane from
+ * refreshing them for nothing.
+ */
+export const HOSTD_SERVICE_URL_TTL_S = 365 * 24 * 60 * 60;
+
+export function hostdServices(apiUrl: string, client: SmolClient) {
   const origin = apiUrl.replace(/\/$/, "");
   return {
     refreshUrls: async (
       id: string,
       services: SandboxService[],
     ): Promise<RefreshUrlsResult> => {
-      const { createdAt } = await client.json(machinePath(id), machineSchema);
-      if (createdAt === undefined) {
-        throw new Error(
-          `smolvm does not report createdAt for machine ${id}; upgrade smolvm on the host to route its services`,
-        );
-      }
-      const expiresAt = Math.floor(Date.now() / 1000) + HOSTD_SERVICE_URL_TTL_S;
+      machinePath(id);
+      const routes = hostdServiceRoutes(services);
       return {
-        services: services.map((service) => {
-          const token = signHostdServiceToken(secretKey, {
-            machine: id,
-            createdAt,
-            port: service.containerPort,
-            expiresAt,
-          });
-          return {
-            ...service,
-            url: `${origin}/services/${id}/${service.containerPort}/${token}/`,
-          };
-        }),
+        services: services.map((service, i) => ({
+          ...service,
+          url: `${origin}/rigs/${id}/services/${encodeURIComponent(routes[i].name)}/`,
+        })),
       };
     },
     /**
-     * smolvm publishes ports only when a machine is created, so there are no
-     * routes to add or remove later. A route to a port that was not published
-     * could never work, so reconciling to one fails rather than recording a
-     * dead URL.
+     * Replace hostd's name-to-port map with `desired`, so services added,
+     * renamed or removed after create route (or stop routing) by name.
+     * smolvm publishes ports only at create, so hostd refuses a port it did
+     * not publish rather than record a dead URL.
      */
     syncRoutes: async (id: string, desired: SandboxService[]) => {
       // As at create: hostd routes HTTP and TCP upgrades, never UDP.
       if (desired.some((service) => service.protocol !== "tcp")) {
         throw new SandboxProviderUnsupportedError("amika-hostd", "services");
       }
-      const { ports = [] } = await client.json(machinePath(id), machineSchema);
-      const published = new Set(ports.map((port) => port.guest));
-      const missing = desired
-        .map((service) => service.containerPort)
-        .filter((port) => !published.has(port));
-      if (missing.length) {
-        throw new Error(
-          `amika-hostd publishes service ports only at create; machine ${id} does not publish ${[...new Set(missing)].join(", ")}`,
-        );
-      }
+      const routes = hostdServiceRoutes(desired);
+      await client.discard(`${machinePath(id)}/services`, "PUT", {
+        services: [...new Map(routes.map((r) => [r.name, r])).values()],
+      });
     },
   };
 }
 
 /**
- * The token for one machine incarnation's port, valid until `expiresAt`
- * (Unix seconds): `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>`.
- * `createdAt` is the machine's smolvm creation time, which tells a machine
- * apart from a later one with the same name. Mirrors `signServiceToken` in
- * `@amika/hostd`, which verifies it; the two must stay identical.
+ * The name hostd routes each service by, in input order: the service's own
+ * name, so a route never changes when other services do. hostd routes one
+ * port per name, so a service declaring several ports is refused, as is a
+ * name no URL can carry (`.` and `..` are dot segments, even
+ * percent-encoded).
  */
-export function signHostdServiceToken(
-  secretKey: string,
-  {
-    machine,
-    createdAt,
-    port,
-    expiresAt,
-  }: { machine: string; createdAt: number; port: number; expiresAt: number },
-): string {
-  const mac = createHmac("sha256", secretKey)
-    .update(
-      `amika-hostd-service:v2\n${machine}\n${createdAt}\n${port}\n${expiresAt}`,
-    )
-    .digest("base64url");
-  return `${expiresAt}.${createdAt}.${mac}`;
+export function hostdServiceRoutes(
+  services: SandboxService[],
+): { name: string; port: number }[] {
+  const ports = new Map<string, number>();
+  for (const { name, containerPort } of services) {
+    if (name === "." || name === "..") {
+      throw new Error(
+        `amika-hostd cannot route a service named ${JSON.stringify(name)}`,
+      );
+    }
+    const port = ports.get(name);
+    if (port !== undefined && port !== containerPort) {
+      throw new Error(
+        `amika-hostd routes one port per service name; ${JSON.stringify(name)} declares ${port} and ${containerPort}`,
+      );
+    }
+    ports.set(name, containerPort);
+  }
+  return services.map(({ name, containerPort }) => ({
+    name,
+    port: containerPort,
+  }));
 }

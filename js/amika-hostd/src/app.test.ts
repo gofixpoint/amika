@@ -1,7 +1,7 @@
 /** Exercise the daemon's HTTP boundary with an injected runtime transport. */
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
-import { signServiceToken } from "./internal/services.js";
+import { memoryServiceRegistry } from "./internal/service-registry.js";
 
 const ROOT = "/api/v1/machines";
 const SECRET = "test-secret";
@@ -454,62 +454,183 @@ describe("secret key authentication", () => {
   });
 });
 
-describe("published ports", () => {
-  it("allocates the host side of each requested guest port", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(Response.json({ name: "demo" }, { status: 201 }));
+describe("services at create", () => {
+  function creating(
+    response = Response.json({ name: "demo" }, { status: 201 }),
+  ) {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
+    const registry = memoryServiceRegistry();
     let next = 41_000;
     const app = authenticated(
       createApp({ secretKey: SECRET, apiUrl: "http://runtime:8080" }, fetcher, {
         allocatePort: async () => ++next,
+        registry,
       }),
+    );
+    return { app, fetcher, registry };
+  }
+
+  it("publishes each guest port once and records every name", async () => {
+    const { app, fetcher, registry } = creating();
+    const input = {
+      name: "demo",
+      image: "ubuntu:24.04",
+      services: [
+        { name: "web", port: 3000 },
+        { name: "web-alias", port: 3000 },
+        { name: "amikad", port: 60999 },
+      ],
+    };
+    expect((await app.request(ROOT, json(input))).status).toBe(201);
+    const forwarded = JSON.parse(String(fetcher.mock.calls[0][1]?.body));
+    expect(forwarded.ports).toEqual([
+      { host: 41001, guest: 3000 },
+      { host: 41002, guest: 60999 },
+    ]);
+    expect(forwarded).not.toHaveProperty("services");
+    expect(registry.port("demo", "web")).toBe(3000);
+    expect(registry.port("demo", "web-alias")).toBe(3000);
+    expect(registry.port("demo", "amikad")).toBe(60999);
+  });
+
+  it("records nothing when the runtime refuses the machine", async () => {
+    const { app, registry } = creating(
+      Response.json({ error: "exists" }, { status: 409 }),
     );
     const input = {
       name: "demo",
       image: "ubuntu:24.04",
-      ports: [{ guest: 3000 }, { guest: 60999 }],
+      services: [{ name: "web", port: 3000 }],
     };
-    expect((await app.request(ROOT, json(input))).status).toBe(201);
-    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).ports).toEqual([
-      { host: 41001, guest: 3000 },
-      { host: 41002, guest: 60999 },
-    ]);
+    expect((await app.request(ROOT, json(input))).status).toBe(409);
+    expect(registry.port("demo", "web")).toBeUndefined();
+  });
+
+  it("forgets a deleted machine's services", async () => {
+    const { app, registry } = creating(new Response(null, { status: 204 }));
+    registry.set("demo", { web: 3000 });
+    expect(
+      (await app.request(`${ROOT}/demo`, { method: "DELETE" })).status,
+    ).toBe(204);
+    expect(registry.port("demo", "web")).toBeUndefined();
   });
 
   it.each([
-    [[{ guest: 3000 }, { guest: 3000 }]],
-    [[{ guest: 0 }]],
-    [[{ guest: 3000, host: 22 }]],
-    [Array.from({ length: 17 }, (_, i) => ({ guest: 3000 + i }))],
-  ])("rejects invalid ports without calling the runtime: %j", async (ports) => {
-    const { app, fetcher } = harness();
-    const response = await app.request(
-      ROOT,
-      json({ name: "demo", image: "ubuntu:24.04", ports }),
+    [
+      [
+        { name: "web", port: 3000 },
+        { name: "web", port: 3001 },
+      ],
+    ],
+    [[{ name: "web", port: 0 }]],
+    [[{ name: "", port: 3000 }]],
+    [[{ name: ".", port: 3000 }]],
+    [[{ name: "..", port: 3000 }]],
+    [[{ name: "x".repeat(301), port: 3000 }]],
+    [[{ name: "web", port: 3000, host: 22 }]],
+    [Array.from({ length: 17 }, (_, i) => ({ name: `s${i}`, port: 3000 + i }))],
+  ])(
+    "rejects invalid services without calling the runtime: %j",
+    async (services) => {
+      const { app, fetcher } = harness();
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: "ubuntu:24.04", services }),
+      );
+      expect(response.status).toBe(400);
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("replacing a machine's services", () => {
+  const MACHINE = {
+    name: "demo",
+    state: "running",
+    ports: [
+      { host: 41001, guest: 3000 },
+      { host: 41002, guest: 60999 },
+    ],
+  };
+
+  function replacing(machine: Response) {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(machine);
+    const registry = memoryServiceRegistry();
+    registry.set("demo", { web: 3000, amikad: 60999 });
+    const app = authenticated(
+      createApp({ secretKey: SECRET, apiUrl: "http://runtime:8080" }, fetcher, {
+        registry,
+      }),
     );
-    expect(response.status).toBe(400);
+    const put = (services: unknown) =>
+      app.request(`${ROOT}/demo/services`, {
+        ...json({ services }),
+        method: "PUT",
+      });
+    return { put, registry, fetcher };
+  }
+
+  it("renames, adds and removes names on published ports", async () => {
+    const { put, registry } = replacing(Response.json(MACHINE));
+    const response = await put([
+      { name: "site", port: 3000 },
+      { name: "site-admin", port: 3000 },
+    ]);
+    expect(response.status).toBe(204);
+    expect(registry.port("demo", "site")).toBe(3000);
+    expect(registry.port("demo", "site-admin")).toBe(3000);
+    expect(registry.port("demo", "web")).toBeUndefined();
+    expect(registry.port("demo", "amikad")).toBeUndefined();
+  });
+
+  it("refuses a port smolvm did not publish, keeping the old names", async () => {
+    const { put, registry } = replacing(Response.json(MACHINE));
+    const response = await put([{ name: "api", port: 4000 }]);
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("does not publish 4000");
+    expect(registry.port("demo", "web")).toBe(3000);
+  });
+
+  it("passes on the runtime's 404 for an unknown machine", async () => {
+    const { put, registry } = replacing(
+      Response.json({ error: "nope" }, { status: 404 }),
+    );
+    expect((await put([{ name: "web", port: 3000 }])).status).toBe(404);
+    expect(registry.port("demo", "web")).toBe(3000);
+  });
+
+  it("validates the services before calling the runtime", async () => {
+    const { put, fetcher } = replacing(Response.json(MACHINE));
+    expect((await put([{ name: "..", port: 3000 }])).status).toBe(400);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("requires the bearer secret like the rest of the machine API", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const app = createApp({ secretKey: SECRET }, fetcher);
+    const response = await app.request(`${ROOT}/demo/services`, {
+      method: "PUT",
+      headers: {
+        "X-Amika-Hostd-Key": SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ services: [] }),
+    });
+    expect(response.status).toBe(401);
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
 
 describe("service routes", () => {
-  const CREATED_AT = 1_790_000_000;
   const MACHINE = {
     name: "demo",
     state: "running",
-    createdAt: CREATED_AT,
     ports: [{ host: 41001, guest: 60999 }],
   };
-  const future = () => Math.floor(Date.now() / 1000) + 3600;
-  const route = (
-    port = 60999,
-    expiresAt = future(),
-    machine = "demo",
-    createdAt = CREATED_AT,
-  ) =>
-    `/services/${machine}/${port}/${signServiceToken(SECRET, { machine, createdAt, port, expiresAt })}`;
+  const ROUTE = "/rigs/demo/services/amikad";
 
+  /** Runtime lookups and guest requests answered in order from one queue. */
   function services(...responses: (Response | Error)[]) {
     const fetcher = vi.fn<typeof fetch>(async () => {
       const response = responses.shift();
@@ -517,42 +638,40 @@ describe("service routes", () => {
       if (response instanceof Error) throw response;
       return response;
     });
-    // No secret key: service routes are for callers that never hold it.
-    return {
-      app: createApp(
-        { secretKey: SECRET, apiUrl: "http://runtime:8080" },
-        fetcher,
-      ),
+    const registry = memoryServiceRegistry();
+    registry.set("demo", { amikad: 60999, web: 3000 });
+    const app = createApp(
+      { secretKey: SECRET, apiUrl: "http://runtime:8080" },
       fetcher,
+      { registry },
+    );
+    return {
+      app,
+      fetcher,
+      request: (path: string, init: RequestInit = {}) => {
+        const headers = new Headers(init.headers);
+        headers.set("X-Amika-Hostd-Key", SECRET);
+        return app.request(path, { ...init, headers });
+      },
     };
   }
 
-  it("answers 404 for a machine that is not running", async () => {
-    const { app, fetcher } = services(
-      Response.json({ ...MACHINE, state: "stopped" }),
-    );
-    const response = await app.request(`${route()}/v1/status`);
-    expect(response.status).toBe(404);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-
-  it("forwards the guest path, query, body and caller credential", async () => {
-    const { app, fetcher } = services(
+  it("forwards the guest path, query, body and the guest's credential", async () => {
+    const { request, fetcher } = services(
       Response.json(MACHINE),
       new Response("created", {
         status: 201,
         headers: {
           "X-Guest": "yes",
-          "Content-Encoding": "gzip",
           Connection: "keep-alive, X-Guest-Hop",
           "X-Guest-Hop": "per-connection",
         },
       }),
     );
-    const response = await app.request(`${route()}/v1/items?limit=2`, {
+    const response = await request(`${ROUTE}/v1/items?limit=2`, {
       method: "POST",
       headers: {
-        Authorization: "Bearer guest-token",
+        Authorization: "Bearer connect-token",
         "Proxy-Authorization": "Basic x",
         Connection: "X-Hop",
         "X-Hop": "per-connection",
@@ -563,96 +682,97 @@ describe("service routes", () => {
     expect(response.status).toBe(201);
     expect(await response.text()).toBe("created");
     expect(response.headers.get("x-guest")).toBe("yes");
-    expect(response.headers.get("content-encoding")).toBeNull();
-    expect(response.headers.get("connection")).toBeNull();
     expect(response.headers.get("x-guest-hop")).toBeNull();
     const [lookup, [target, init]] = fetcher.mock.calls;
     expect(lookup[0]).toBe(`http://runtime:8080${ROOT}/demo`);
     expect(target).toBe("http://127.0.0.1:41001/v1/items?limit=2");
     expect(init?.method).toBe("POST");
-    expect(init?.redirect).toBe("manual");
     const headers = new Headers(init?.headers);
-    expect(headers.get("authorization")).toBe("Bearer guest-token");
+    expect(headers.get("authorization")).toBe("Bearer connect-token");
+    // The host key never reaches the guest.
+    expect(headers.get("x-amika-hostd-key")).toBeNull();
     expect(headers.get("proxy-authorization")).toBeNull();
     expect(headers.get("x-hop")).toBeNull();
-    expect(headers.get("host")).toBeNull();
     expect(await new Response(init?.body).text()).toBe("payload");
   });
 
   it("forwards the route root as the guest root", async () => {
-    const { app, fetcher } = services(
+    const { request, fetcher } = services(
       Response.json(MACHINE),
       new Response("ok"),
     );
-    expect((await app.request(route())).status).toBe(200);
+    expect((await request(ROUTE)).status).toBe(200);
     expect(fetcher.mock.calls[1][0]).toBe("http://127.0.0.1:41001/");
   });
 
   it.each([
-    ["an expired token", () => route(60999, Math.floor(Date.now() / 1000) - 1)],
-    ["another port's token", () => route(3000).replace("/3000/", "/60999/")],
-    [
-      "another machine's token",
-      () => route(60999, future(), "other").replace("/other/", "/demo/"),
-    ],
-    [
-      "another key's token",
-      () =>
-        `/services/demo/60999/${signServiceToken("other", { machine: "demo", createdAt: CREATED_AT, port: 60999, expiresAt: future() })}`,
-    ],
-    ["a malformed token", () => "/services/demo/60999/not-a-token"],
-    ["an invalid machine name", () => "/services/-demo/60999/x"],
-    ["an out of range port", () => "/services/demo/70000/x"],
-    ["no token", () => "/services/demo/60999"],
+    ["no key", {}],
+    ["a wrong key", { "X-Amika-Hostd-Key": `not-${SECRET}` }],
+    ["the key only in Authorization", { Authorization: `Bearer ${SECRET}` }],
   ])(
-    "returns 404 without touching the runtime for %s",
-    async (_label, path) => {
+    "returns 401 for %s without touching the runtime",
+    async (_label, headers) => {
       const { app, fetcher } = services();
-      const response = await app.request(path());
-      expect(response.status).toBe(404);
+      const response = await app.request(`${ROUTE}/x`, { headers });
+      expect(response.status).toBe(401);
+      expect(response.headers.get("connection")).toBe("close");
       expect(fetcher).not.toHaveBeenCalled();
     },
   );
 
-  it("returns 404 for a port the machine did not publish", async () => {
-    const { app, fetcher } = services(Response.json(MACHINE));
-    expect((await app.request(route(3000))).status).toBe(404);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+  it("refuses to forward the host key as the guest's Authorization", async () => {
+    const { request, fetcher } = services();
+    const response = await request(ROUTE, {
+      headers: { Authorization: `Bearer ${SECRET}` },
+    });
+    expect(response.status).toBe(400);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("returns 404 for a machine recreated under the same name", async () => {
-    const { app, fetcher } = services(
-      Response.json({ ...MACHINE, createdAt: CREATED_AT + 60 }),
-    );
-    expect((await app.request(route())).status).toBe(404);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
+  it.each([
+    ["an unknown service", "/rigs/demo/services/nope"],
+    ["an unknown machine", "/rigs/other/services/amikad"],
+    ["an invalid machine name", "/rigs/-demo/services/amikad"],
+    ["a path that is not a service route", "/rigs/demo/amikad"],
+  ])(
+    "returns 404 without touching the runtime for %s",
+    async (_label, path) => {
+      const { request, fetcher } = services();
+      expect((await request(path)).status).toBe(404);
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
 
-  it("returns 404 when the runtime does not report createdAt", async () => {
-    const { createdAt: _, ...legacy } = MACHINE;
-    const { app } = services(Response.json(legacy));
-    expect((await app.request(route())).status).toBe(404);
+  it.each([
+    ["is not running", { ...MACHINE, state: "stopped" }],
+    ["did not publish the service's port", { ...MACHINE, ports: [] }],
+  ])("returns 404 when the machine %s", async (_label, machine) => {
+    const { request, fetcher } = services(Response.json(machine));
+    expect((await request("/rigs/demo/services/amikad")).status).toBe(404);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("returns 404 for a machine the runtime does not know", async () => {
-    const { app } = services(Response.json({ error: "nope" }, { status: 404 }));
-    expect((await app.request(route())).status).toBe(404);
+    const { request } = services(
+      Response.json({ error: "nope" }, { status: 404 }),
+    );
+    expect((await request(ROUTE)).status).toBe(404);
   });
 
   it("returns 502 when the guest port refuses the connection", async () => {
-    const { app } = services(
+    const { request } = services(
       Response.json(MACHINE),
       new TypeError("fetch failed"),
     );
-    const response = await app.request(route());
+    const response = await request(ROUTE);
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "Service unavailable" });
   });
 
-  it("keeps requiring the secret key everywhere else", async () => {
-    const { app, fetcher } = services();
-    expect((await app.request("/servicesx/demo")).status).toBe(401);
-    expect((await app.request(`${ROOT}/demo`)).status).toBe(401);
+  it("keeps requiring the bearer secret everywhere else", async () => {
+    const { request, fetcher } = services();
+    // The service-route header does not unlock the machine API.
+    expect((await request(`${ROOT}/demo`)).status).toBe(401);
     expect(fetcher).not.toHaveBeenCalled();
   });
 });

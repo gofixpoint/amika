@@ -1,4 +1,4 @@
-/** Cover service-route tokens and the upgrade tunnel over real sockets. */
+/** Cover service-route auth, parsing, and the upgrade tunnel over real sockets. */
 import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import {
@@ -10,100 +10,76 @@ import {
 } from "node:net";
 import type { Duplex } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { memoryServiceRegistry } from "./service-registry.js";
 import {
+  authorizeServiceRequest,
   createUpgradeHandler,
   freeLoopbackPort,
   parseServicePath,
-  signServiceToken,
-  verifyServiceToken,
 } from "./services.js";
 import { SmolRuntime } from "./smol.js";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
-const NOW = 1_800_000_000;
 
 describe("parseServicePath", () => {
   it("splits the route and keeps the encoded guest path", () => {
-    expect(parseServicePath("/services/demo-1/60999/tok/v1/a%2Fb")).toEqual({
+    expect(parseServicePath("/rigs/demo-1/services/pi_web/v1/a%2Fb")).toEqual({
       machine: "demo-1",
-      port: 60999,
-      token: "tok",
+      service: "pi_web",
       path: "/v1/a%2Fb",
     });
-    expect(parseServicePath("/services/demo/80/tok")?.path).toBe("/");
-    expect(parseServicePath("/services/demo/80/tok/")?.path).toBe("/");
+    expect(parseServicePath("/rigs/demo/services/web")?.path).toBe("/");
+    // Amika service names are free text, carried percent-encoded.
+    expect(
+      parseServicePath("/rigs/demo/services/Coding%20Agent%2Fv2/x"),
+    ).toEqual({ machine: "demo", service: "Coding Agent/v2", path: "/x" });
+    expect(parseServicePath("/rigs/demo/services/web/")?.path).toBe("/");
   });
 
   it.each([
     "/api/v1/machines/demo",
-    "/services/demo/80",
-    "/services/demo/80/",
-    "/services/-demo/80/tok",
-    "/services/de.mo/80/tok",
-    "/services/demo/0/tok",
-    "/services/demo/080/tok",
-    "/services/demo/65536/tok",
+    "/rigs/demo",
+    "/rigs/demo/services",
+    "/rigs/demo/services/",
+    "/rigs/-demo/services/web",
+    "/rigs/de.mo/services/web",
+    "/rigs/demo/services/%E0%A4%A",
+    "/rigs/demo/other/web",
   ])("rejects %s", (path) => {
     expect(parseServicePath(path)).toBeNull();
   });
 });
 
-describe("service tokens", () => {
-  const CREATED_AT = NOW - 3600;
-  const token = signServiceToken(SECRET, {
-    machine: "demo",
-    createdAt: CREATED_AT,
-    port: 60999,
-    expiresAt: NOW + 60,
-  });
-  const route = { machine: "demo", port: 60999, token };
-
-  it("verifies only the machine port it was signed for, until expiry", () => {
-    expect(verifyServiceToken(SECRET, route, NOW)).toEqual({
-      createdAt: CREATED_AT,
-    });
-    expect(verifyServiceToken(SECRET, route, NOW + 60)).toBeNull();
-    expect(verifyServiceToken(SECRET, { ...route, port: 22 }, NOW)).toBeNull();
+describe("authorizeServiceRequest", () => {
+  it("accepts the key in its header, trimmed, and leaves Authorization to the guest", () => {
+    expect(authorizeServiceRequest(SECRET, { key: SECRET })).toBeNull();
+    expect(authorizeServiceRequest(SECRET, { key: ` ${SECRET} ` })).toBeNull();
     expect(
-      verifyServiceToken(SECRET, { ...route, machine: "x" }, NOW),
-    ).toBeNull();
-    expect(verifyServiceToken(`${SECRET}x`, route, NOW)).toBeNull();
-  });
-
-  it.each([
-    [
-      "expiry",
-      (exp: string, created: string) => `${Number(exp) + 6000}.${created}`,
-    ],
-    [
-      "incarnation",
-      (exp: string, created: string) => `${exp}.${Number(created) + 1}`,
-    ],
-  ])("rejects an %s edited after signing", (_label, edit) => {
-    const [exp, created, mac] = token.split(".");
-    const edited = { ...route, token: `${edit(exp, created)}.${mac}` };
-    expect(verifyServiceToken(SECRET, edited, NOW)).toBeNull();
-  });
-
-  it("rejects a v1-shaped token", () => {
-    const [exp, , mac] = token.split(".");
-    expect(
-      verifyServiceToken(SECRET, { ...route, token: `${exp}.${mac}` }, NOW),
+      authorizeServiceRequest(SECRET, {
+        key: SECRET,
+        authorization: "Bearer connect-token",
+      }),
     ).toBeNull();
   });
 
   it.each([
-    "",
-    "abc",
-    `${NOW}.${CREATED_AT}.`,
-    `0.${CREATED_AT}.${"a".repeat(43)}`,
-    `${NOW}.0.${"a".repeat(43)}`,
-    `${NOW}.${CREATED_AT}.${"a".repeat(44)}`,
-  ])("rejects malformed token %j", (bad) => {
-    expect(
-      verifyServiceToken(SECRET, { ...route, token: bad }, NOW),
-    ).toBeNull();
+    ["no key", {}],
+    ["an empty key", { key: "" }],
+    ["a prefix of the key", { key: SECRET.slice(0, -1) }],
+    ["the key repeated", { key: [SECRET, SECRET] }],
+    ["the key only in Authorization", { authorization: `Bearer ${SECRET}` }],
+  ])("refuses %s with 401", (_label, headers) => {
+    expect(authorizeServiceRequest(SECRET, headers)).toBe(401);
   });
+
+  it.each([`Bearer ${SECRET}`, `bearer  ${SECRET}`, SECRET])(
+    "refuses to pass the key on as the guest's Authorization (%s)",
+    (authorization) => {
+      expect(
+        authorizeServiceRequest(SECRET, { key: SECRET, authorization }),
+      ).toBe(400);
+    },
+  );
 });
 
 describe("freeLoopbackPort", () => {
@@ -146,14 +122,16 @@ describe("createUpgradeHandler", () => {
         Response.json({
           name: "demo",
           state: "running",
-          createdAt: 1_790_000_000,
           ports: hostPort === null ? [] : [{ host: hostPort, guest: 60999 }],
         }),
       ),
     );
     const tunnels = new Set<Duplex>();
     const server = createHttpServer();
-    server.on("upgrade", createUpgradeHandler(SECRET, runtime, tunnels));
+    server.on(
+      "upgrade",
+      createUpgradeHandler(SECRET, runtime, registry(), tunnels),
+    );
     return { port: await listen(server), tunnels };
   }
 
@@ -169,12 +147,23 @@ describe("createUpgradeHandler", () => {
     );
   }
 
-  async function open(port: number, path: string): Promise<Socket> {
+  function registry() {
+    const services = memoryServiceRegistry();
+    services.set("demo", { amikad: 60999 });
+    return services;
+  }
+
+  async function open(
+    port: number,
+    path: string,
+    { key = SECRET, authorization = "Bearer connect-token" } = {},
+  ): Promise<Socket> {
     const socket = connect(port, "127.0.0.1");
     closers.push(() => socket.destroy());
     await once(socket, "connect");
+    const keyLine = key ? `X-Amika-Hostd-Key: ${key}\r\n` : "";
     socket.write(
-      `GET ${path} HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAuthorization: Bearer connect-token\r\n\r\n`,
+      `GET ${path} HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n${keyLine}Authorization: ${authorization}\r\n\r\n`,
     );
     return socket;
   }
@@ -184,7 +173,7 @@ describe("createUpgradeHandler", () => {
   }
 
   const validPath = (suffix = "/v1/ssh-sessions?x=1") =>
-    `/services/demo/60999/${signServiceToken(SECRET, { machine: "demo", createdAt: 1_790_000_000, port: 60999, expiresAt: Math.floor(Date.now() / 1000) + 60 })}${suffix}`;
+    `/rigs/demo/services/amikad${suffix}`;
 
   it("tunnels the handshake and bytes to the guest port", async () => {
     const target = await guest();
@@ -201,10 +190,25 @@ describe("createUpgradeHandler", () => {
     await vi.waitFor(() => expect(tunnels.size).toBe(0));
   });
 
-  it("refuses a bad token without reaching the guest", async () => {
+  it.each([
+    ["no key", { key: "" }, 401],
+    ["a wrong key", { key: `not-${SECRET}` }, 401],
+    ["the key as Authorization", { authorization: `Bearer ${SECRET}` }, 400],
+  ])(
+    "refuses %s without reaching the guest",
+    async (_label, headers, status) => {
+      const target = await guest();
+      const { port } = await hostd(target.port);
+      const socket = await open(port, validPath(), headers);
+      expect(await read(socket)).toMatch(new RegExp(`^HTTP/1\\.1 ${status} `));
+      expect(target.handshake()).toBe("");
+    },
+  );
+
+  it("refuses an unknown service without reaching the guest", async () => {
     const target = await guest();
     const { port } = await hostd(target.port);
-    const socket = await open(port, validPath().replace("/60999/", "/3000/"));
+    const socket = await open(port, "/rigs/demo/services/web/");
     expect(await read(socket)).toMatch(/^HTTP\/1\.1 404 /);
     expect(target.handshake()).toBe("");
   });
@@ -241,7 +245,10 @@ describe("createUpgradeHandler", () => {
     const tunnels = new Set<Duplex>();
     const dial = vi.fn<(port: number) => Socket>();
     const server = createHttpServer();
-    server.on("upgrade", createUpgradeHandler(SECRET, runtime, tunnels, dial));
+    server.on(
+      "upgrade",
+      createUpgradeHandler(SECRET, runtime, registry(), tunnels, dial),
+    );
     const socket = await open(await listen(server), validPath());
     await vi.waitFor(() => expect(tunnels.size).toBe(1));
     for (const tunnel of tunnels) tunnel.destroy();

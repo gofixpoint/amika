@@ -14,7 +14,7 @@ export function requireSecretKey(secretKey: string): MiddlewareHandler {
         .header("Authorization")
         ?.replace(/^Bearer\s+/i, "")
         .trim() ?? "";
-    if (!timingSafeStrEqual(provided, secretKey)) {
+    if (!secretMatches(provided, secretKey)) {
       // Close the connection so Node stops reading an unauthenticated body.
       return c.json({ error: "Unauthorized" }, 401, { Connection: "close" });
     }
@@ -26,7 +26,7 @@ export function requireSecretKey(secretKey: string): MiddlewareHandler {
  * Compare two strings without leaking their length or content: HMAC both with
  * a per-call random key so `timingSafeEqual` always sees 32-byte buffers.
  */
-function timingSafeStrEqual(a: string, b: string): boolean {
+export function secretMatches(a: string, b: string): boolean {
   const key = randomBytes(32);
   const aDigest = createHmac("sha256", key).update(a).digest();
   const bDigest = createHmac("sha256", key).update(b).digest();
