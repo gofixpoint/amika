@@ -44,6 +44,7 @@ describe("machine API", () => {
     const { app, fetcher } = harness();
     expect(await (await app.request("/health")).json()).toEqual({
       status: "ok",
+      apis: ["v0beta1"],
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -454,6 +455,45 @@ describe("secret key authentication", () => {
   });
 });
 
+describe("API versions", () => {
+  it.each(["/v0beta1/rigs", "/api/v1/machines"])(
+    "serves the machine API at %s, forwarding to smolvm's",
+    async (prefix) => {
+      const { app, fetcher } = harness(
+        Response.json({ name: "demo" }, { status: 201 }),
+      );
+      const create = await app.request(
+        prefix,
+        json({ name: "demo", image: "ubuntu:24.04" }),
+      );
+      expect(create.status).toBe(201);
+      await app.request(`${prefix}/demo`);
+      await app.request(`${prefix}/demo/start`, { method: "POST" });
+      await app.request(`${prefix}/demo/files/work%20dir/a.txt`);
+      await app.request(`${prefix}/demo/files/b.txt`, {
+        method: "PUT",
+        body: "hi",
+      });
+      expect(fetcher.mock.calls.map(([target]) => target)).toEqual([
+        `http://runtime:8080${ROOT}`,
+        `http://runtime:8080${ROOT}/demo`,
+        `http://runtime:8080${ROOT}/demo/start`,
+        `http://runtime:8080${ROOT}/demo/files/work%20dir/a.txt`,
+        `http://runtime:8080${ROOT}/demo/files/b.txt`,
+      ]);
+    },
+  );
+
+  it("serves service routes only at the versioned path", async () => {
+    const { app, fetcher } = harness();
+    const response = await app.request("/rigs/demo/services/web/", {
+      headers: { "X-Amika-Hostd-Key": SECRET },
+    });
+    expect(response.status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
 describe("services at create", () => {
   function creating(
     response = Response.json({ name: "demo" }, { status: 201 }),
@@ -628,7 +668,7 @@ describe("service routes", () => {
     state: "running",
     ports: [{ host: 41001, guest: 60999 }],
   };
-  const ROUTE = "/rigs/demo/services/amikad";
+  const ROUTE = "/v0beta1/rigs/demo/services/amikad";
 
   /** Runtime lookups and guest requests answered in order from one queue. */
   function services(...responses: (Response | Error)[]) {
@@ -730,10 +770,8 @@ describe("service routes", () => {
   });
 
   it.each([
-    ["an unknown service", "/rigs/demo/services/nope"],
-    ["an unknown machine", "/rigs/other/services/amikad"],
-    ["an invalid machine name", "/rigs/-demo/services/amikad"],
-    ["a path that is not a service route", "/rigs/demo/amikad"],
+    ["an unknown service", "/v0beta1/rigs/demo/services/nope"],
+    ["an unknown machine", "/v0beta1/rigs/other/services/amikad"],
   ])(
     "returns 404 without touching the runtime for %s",
     async (_label, path) => {
@@ -744,11 +782,26 @@ describe("service routes", () => {
   );
 
   it.each([
+    ["an invalid machine name", "/v0beta1/rigs/-demo/services/amikad"],
+    ["an unversioned service path", "/rigs/demo/services/amikad"],
+    ["a machine route", "/v0beta1/rigs/demo"],
+  ])(
+    "treats %s as the machine API, which wants the bearer secret",
+    async (_label, path) => {
+      const { request, fetcher } = services();
+      expect((await request(path)).status).toBe(401);
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["is not running", { ...MACHINE, state: "stopped" }],
     ["did not publish the service's port", { ...MACHINE, ports: [] }],
   ])("returns 404 when the machine %s", async (_label, machine) => {
     const { request, fetcher } = services(Response.json(machine));
-    expect((await request("/rigs/demo/services/amikad")).status).toBe(404);
+    expect((await request("/v0beta1/rigs/demo/services/amikad")).status).toBe(
+      404,
+    );
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 

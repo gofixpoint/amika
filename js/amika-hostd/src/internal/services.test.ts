@@ -23,28 +23,32 @@ const SECRET = "0123456789abcdef0123456789abcdef";
 
 describe("parseServicePath", () => {
   it("splits the route and keeps the encoded guest path", () => {
-    expect(parseServicePath("/rigs/demo-1/services/pi_web/v1/a%2Fb")).toEqual({
+    expect(
+      parseServicePath("/v0beta1/rigs/demo-1/services/pi_web/v1/a%2Fb"),
+    ).toEqual({
       machine: "demo-1",
       service: "pi_web",
       path: "/v1/a%2Fb",
     });
-    expect(parseServicePath("/rigs/demo/services/web")?.path).toBe("/");
+    expect(parseServicePath("/v0beta1/rigs/demo/services/web")?.path).toBe("/");
     // Amika service names are free text, carried percent-encoded.
     expect(
-      parseServicePath("/rigs/demo/services/Coding%20Agent%2Fv2/x"),
+      parseServicePath("/v0beta1/rigs/demo/services/Coding%20Agent%2Fv2/x"),
     ).toEqual({ machine: "demo", service: "Coding Agent/v2", path: "/x" });
-    expect(parseServicePath("/rigs/demo/services/web/")?.path).toBe("/");
+    expect(parseServicePath("/v0beta1/rigs/demo/services/web/")?.path).toBe(
+      "/",
+    );
   });
 
   it.each([
     "/api/v1/machines/demo",
-    "/rigs/demo",
-    "/rigs/demo/services",
-    "/rigs/demo/services/",
-    "/rigs/-demo/services/web",
-    "/rigs/de.mo/services/web",
-    "/rigs/demo/services/%E0%A4%A",
-    "/rigs/demo/other/web",
+    "/v0beta1/rigs/demo",
+    "/v0beta1/rigs/demo/services",
+    "/v0beta1/rigs/demo/services/",
+    "/v0beta1/rigs/-demo/services/web",
+    "/v0beta1/rigs/de.mo/services/web",
+    "/v0beta1/rigs/demo/services/%E0%A4%A",
+    "/v0beta1/rigs/demo/other/web",
   ])("rejects %s", (path) => {
     expect(parseServicePath(path)).toBeNull();
   });
@@ -173,7 +177,7 @@ describe("createUpgradeHandler", () => {
   }
 
   const validPath = (suffix = "/v1/ssh-sessions?x=1") =>
-    `/rigs/demo/services/amikad${suffix}`;
+    `/v0beta1/rigs/demo/services/amikad${suffix}`;
 
   it("tunnels the handshake and bytes to the guest port", async () => {
     const target = await guest();
@@ -208,7 +212,7 @@ describe("createUpgradeHandler", () => {
   it("refuses an unknown service without reaching the guest", async () => {
     const target = await guest();
     const { port } = await hostd(target.port);
-    const socket = await open(port, "/rigs/demo/services/web/");
+    const socket = await open(port, "/v0beta1/rigs/demo/services/web/");
     expect(await read(socket)).toMatch(/^HTTP\/1\.1 404 /);
     expect(target.handshake()).toBe("");
   });

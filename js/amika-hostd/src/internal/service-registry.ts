@@ -3,7 +3,7 @@
  *
  * smolvm publishes guest ports but stores no service names, so hostd records
  * the names a machine was created with and resolves
- * `/rigs/<machine>/services/<name>/...` through them. The file registry keeps
+ * `/v0beta1/rigs/<machine>/services/<name>/...` through them. The file registry keeps
  * the mapping across daemon restarts; it is written whole, atomically, on
  * every change.
  */

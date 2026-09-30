@@ -3,7 +3,7 @@
  *
  * A machine created with `services` gets each guest port published by smolvm
  * on a host loopback port, and hostd records which name maps to which port
- * (`./service-registry.ts`). `/rigs/<machine>/services/<name>/<path>`
+ * (`./service-registry.ts`). `/v0beta1/rigs/<machine>/services/<name>/<path>`
  * forwards HTTP requests and WebSocket upgrades there, with `<path>` as the
  * guest path.
  *
@@ -21,8 +21,6 @@ import { z } from "zod";
 import { secretMatches } from "./auth.js";
 import type { ServiceRegistry } from "./service-registry.js";
 import type { SmolRuntime } from "./smol.js";
-
-export const RIGS_PREFIX = "/rigs/";
 
 /** Carries the host's secret key on service routes; never forwarded. */
 export const SERVICE_KEY_HEADER = "x-amika-hostd-key";
@@ -154,7 +152,7 @@ export interface ServiceRoute {
  */
 export function parseServicePath(pathname: string): ServiceRoute | null {
   const match =
-    /^\/rigs\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/services\/([^/]+)(\/.*)?$/.exec(
+    /^\/v0beta1\/rigs\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/services\/([^/]+)(\/.*)?$/.exec(
       pathname,
     );
   if (!match) return null;

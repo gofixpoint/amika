@@ -1,11 +1,18 @@
-/** Sandbox resources backed by an Amika host daemon's Smol-compatible API. */
+/** Sandbox resources backed by an Amika host daemon's versioned rig API. */
 import type { AmikaHostdConfig } from "./config";
 import { amikaHostdCapabilities } from "./capabilities";
 import type { SandboxProvider } from "../provider";
 import type { SandboxAdapter } from "../shared/adapter";
 import { defineProvider } from "../shared/define-provider";
-import { SmolClient, mapSmolState, smolOperations } from "../smol/provider";
 import {
+  SmolApiError,
+  SmolClient,
+  mapSmolState,
+  smolOperations,
+} from "../smol/provider";
+import {
+  HOSTD_API_VERSION,
+  HOSTD_RIGS_PATH,
   HOSTD_SERVICE_URL_TTL_S,
   hostdServiceRoutes,
   hostdServices,
@@ -49,6 +56,7 @@ const createProvider = defineProvider(
     const client = new SmolClient(
       smolConfig,
       withSecretKey(secretKey, fetcher),
+      HOSTD_RIGS_PATH,
     );
     const ops = smolOperations(smolConfig, client, {
       provider: "amika-hostd",
@@ -59,7 +67,25 @@ const createProvider = defineProvider(
       signedUrlTtlSeconds: HOSTD_SERVICE_URL_TTL_S,
       userHomeDir: "/root",
       sandbox: {
-        create: (_ctx, input) => ops.create(input),
+        create: async (_ctx, input) => {
+          try {
+            return await ops.create(input);
+          } catch (error) {
+            // The collection itself missing means the host predates v0beta1.
+            if (
+              error instanceof SmolApiError &&
+              error.status === 404 &&
+              error.method === "POST" &&
+              error.path === ""
+            ) {
+              throw new Error(
+                `amika-hostd at ${smolConfig.apiUrl} does not serve API ${HOSTD_API_VERSION}; upgrade amika-hostd on that host`,
+                { cause: error },
+              );
+            }
+            throw error;
+          }
+        },
         delete: ops.remove,
         start: ops.start,
         stop: ops.stop,

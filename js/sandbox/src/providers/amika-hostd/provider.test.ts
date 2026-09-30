@@ -95,8 +95,8 @@ describe("amika-hostd provider", () => {
       envVars: { MODE: "test" },
     });
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
-      "http://127.0.0.1:3020/api/v1/machines",
-      "http://127.0.0.1:3020/api/v1/machines/demo/start",
+      "http://127.0.0.1:3020/v0beta1/rigs",
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/start",
     ]);
     expect(JSON.parse(String(runtime.mock.calls[0][1]?.body))).toEqual({
       name: "demo",
@@ -110,6 +110,21 @@ describe("amika-hostd provider", () => {
     expect(runtime.mock.calls[1][0]).toBe(
       "http://127.0.0.1:8080/api/v1/machines/demo/start",
     );
+  });
+
+  it("tells the operator to upgrade a host that predates the versioned API", async () => {
+    // An old hostd has no `/v0beta1/rigs`: its router answers 404.
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({ error: "Not Found" }, { status: 404 }),
+    );
+    const provider = amikaHostdProvider({
+      config: { secretKey: SECRET, apiUrl: "http://old-host:3020" },
+      fetcher,
+    });
+    await expect(provider.sandboxes.create(ctx, INPUT)).rejects.toThrow(
+      "amika-hostd at http://old-host:3020 does not serve API v0beta1; upgrade amika-hostd",
+    );
+    expect(fetcher.mock.calls[0][0]).toBe("http://old-host:3020/v0beta1/rigs");
   });
 
   it("preserves an explicit network opt-out through hostd", async () => {
@@ -285,7 +300,7 @@ describe("amika-hostd provider", () => {
     });
     expect(await provider.sandboxes.get("demo").getState()).toBe("stopped");
     expect(fetcher).toHaveBeenCalledWith(
-      "http://host:4000/api/v1/machines/demo",
+      "http://host:4000/v0beta1/rigs/demo",
       expect.objectContaining({
         signal: expect.any(AbortSignal),
         redirect: "error",
@@ -367,7 +382,9 @@ describe("amika-hostd services", () => {
       .get("demo")
       .services!.refreshAll([AMIKAD]);
     const url = new URL(refreshed[0].url);
-    expect(url.href).toBe("http://127.0.0.1:3020/rigs/demo/services/amikad/");
+    expect(url.href).toBe(
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/services/amikad/",
+    );
     expect(provider.signedUrlTtlSeconds).toBeGreaterThan(300 * 24 * 3600);
 
     // The URL alone is no credential: hostd wants the host key alongside.
@@ -402,7 +419,7 @@ describe("amika-hostd services", () => {
       .get("demo")
       .services!.refreshAll([agent]);
     const url = new URL(refreshed[0].url);
-    expect(url.pathname).toBe("/rigs/demo/services/Coding%20Agent/");
+    expect(url.pathname).toBe("/v0beta1/rigs/demo/services/Coding%20Agent/");
     const response = await app.request(url.pathname, {
       headers: { [HOSTD_SERVICE_KEY_HEADER]: SECRET },
     });
@@ -425,10 +442,10 @@ describe("amika-hostd services", () => {
     const site = { ...WEB, name: "site" };
     const { services: renamed } = await services.load([site, AMIKAD]).refresh();
     expect(renamed[0].url).toBe(
-      "http://127.0.0.1:3020/rigs/demo/services/site/",
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/services/site/",
     );
     const route = (name: string) =>
-      app.request(`/rigs/demo/services/${name}/`, { headers: key });
+      app.request(`/v0beta1/rigs/demo/services/${name}/`, { headers: key });
     expect((await route("web")).status).toBe(404);
     expect((await route("site")).status).toBe(200);
 
@@ -465,8 +482,8 @@ describe("amika-hostd services", () => {
       .load([WEB, AMIKAD])
       .refresh();
     expect(refreshed.map((s) => s.url)).toEqual([
-      "http://127.0.0.1:3020/rigs/demo/services/web/",
-      "http://127.0.0.1:3020/rigs/demo/services/amikad/",
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/services/web/",
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/services/amikad/",
     ]);
     await expect(services.load([WEB]).refresh()).rejects.toThrow(
       "does not publish 3000",
