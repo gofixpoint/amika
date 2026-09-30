@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 
-import { AmikaHTTPError } from "@/errors";
-import { HTTPClient } from "@/http";
-import { StaticTokenSource } from "@/token";
+import { AmikaHTTPError } from "@/index";
+import { HTTPClient } from "@/internal/http";
+import { StaticTokenSource } from "@/internal/token";
 import { mockFetch } from "./helpers.js";
 
 function makeClient(fetchImpl: typeof fetch, timeoutMs?: number): HTTPClient {

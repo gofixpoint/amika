@@ -1,72 +1,100 @@
-export { AmikaClient } from "@/client";
-export type { AmikaClientOptions } from "@/client";
-
-export { AmikaError, AmikaHTTPError, AmikaWaitError } from "@/errors";
-export type { AmikaWaitErrorReason } from "@/errors";
-export type { Rig, Sandbox, RigWaitOptions, RigWaitStatus } from "@/rig";
-
+export { AmikaClient } from "./client.js";
+export { type AmikaClientOptions } from "./options.js";
 export {
-  RESERVED_PORT_MAX,
+  AmikaError,
+  AmikaHTTPError,
+  AmikaWaitError,
+  type AmikaWaitErrorReason,
+} from "./errors.js";
+export {
+  type Rig,
+  type Sandbox,
+  type RigWaitOptions,
+  type RigWaitStatus,
+  type RigHandle,
+  type Rigs,
+} from "./rigs/rig.js";
+export { type TokenSource } from "./token-source.js";
+export {
+  type AgentSessionDetail,
+  type AgentSessionMessage,
+  type AgentSessionSendRequest,
+  type AgentSessionSendResponse,
+  type AgentSessionStreamHandlers,
+  type AgentSessionSummary,
+  type AgentSessionUsage,
+  type ListAgentSessionsResponse,
+  type AgentSendRequest,
+  type AgentSendResponse,
+  type AgentSessions,
+  type AgentSession,
+  type ContinueAgentSessionRequest,
+  type ListAgentSessionsOptions,
+} from "./agent-sessions/types.js";
+export {
+  type AgentCredentialRef,
+  type CreateRigRequest,
+  type MountedSecret,
+  type RemoteRig,
+  type RemoteRigCreator,
+  type RemoteRigService,
+  type ResolvedAgentCredential,
+  type CreateSandboxRequest,
+  type RemoteSandbox,
+  type RemoteSandboxCreator,
+  type RemoteSandboxService,
+} from "./rigs/types.js";
+export {
+  type CreateProviderSecretRequest,
+  type ProviderSecretListItem,
+  type ProviderSecretSummary,
+  type AgentCredentials,
+} from "./agent-credentials/types.js";
+export {
+  type CreateRigSnapshotRequest,
+  type ExperimentalDaytonaSnapshot,
+  type RigScrubPreview,
+  type RigSnapshot,
+  type CreateSandboxSnapshotRequest,
+  type SandboxScrubPreview,
+  type SandboxSnapshot,
+} from "./snapshots/types.js";
+export {
+  type CreateSecretRequest,
+  type Secret,
+  type UpdateSecretRequest,
+  type Secrets,
+} from "./secrets/types.js";
+export {
+  type CreateSessionRequest,
+  type Session,
+  type UpdateSessionRequest,
+  type RigSessions,
+} from "./rig-sessions/types.js";
+export {
+  type RemoteRepository,
+  type Repositories,
+} from "./repositories/types.js";
+export {
+  type RigServiceRequest,
+  type RigServiceResource,
+  type SandboxServiceRequest,
+  type SandboxServiceResource,
+  type Services,
+  type ServiceLookup,
+  type ListServicesOptions,
+} from "./services/types.js";
+export {
+  type Snapshots,
+  type Snapshot,
+  type SnapshotHandle,
+  type SnapshotWaitOptions,
+  type ListRigSnapshotsOptions,
+} from "./snapshots/snapshot.js";
+
+export { StaticTokenSource } from "./internal/token.js";
+export {
   RESERVED_PORT_MIN,
+  RESERVED_PORT_MAX,
   validateServicePort,
-} from "@/types";
-
-export { StaticTokenSource } from "@/token";
-export type { TokenSource } from "@/token";
-
-export type {
-  AgentSessionDetail,
-  AgentSessionMessage,
-  AgentSessionSendRequest,
-  AgentSessionSendResponse,
-  AgentSessionStreamHandlers,
-  AgentSessionSummary,
-  AgentSessionUsage,
-  ListAgentSessionsResponse,
-} from "@/agent-sessions";
-
-export type {
-  AgentCredentialRef,
-  AgentSendRequest,
-  AgentSendResponse,
-  CreateProviderSecretRequest,
-  CreateRigRequest,
-  CreateRigSnapshotRequest,
-  CreateSecretRequest,
-  CreateSessionRequest,
-  ExperimentalDaytonaSnapshot,
-  MountedSecret,
-  ProviderSecretListItem,
-  ProviderSecretSummary,
-  RemoteRepository,
-  RemoteRig,
-  RemoteRigCreator,
-  RemoteRigService,
-  ResolvedAgentCredential,
-  RigScrubPreview,
-  RigServiceRequest,
-  RigServiceResource,
-  RigSnapshot,
-  Secret,
-  Session,
-  UpdateSecretRequest,
-  UpdateSessionRequest,
-} from "@/types";
-
-// Legacy sandbox spellings, kept so code written against earlier releases keeps
-// compiling. Most are plain type aliases of the rig-named type above;
-// `RemoteSandbox`, `SandboxSnapshot`, and `SandboxServiceResource` instead
-// relax that type's rig-spelled fields to optional, and
-// `CreateSandboxSnapshotRequest` keeps `sandboxRef` required. See the notes in
-// `types.ts` — the distinction is what an assignability error will point at.
-export type {
-  CreateSandboxRequest,
-  CreateSandboxSnapshotRequest,
-  RemoteSandbox,
-  RemoteSandboxCreator,
-  RemoteSandboxService,
-  SandboxScrubPreview,
-  SandboxServiceRequest,
-  SandboxServiceResource,
-  SandboxSnapshot,
-} from "@/types";
+} from "./internal/ports.js";

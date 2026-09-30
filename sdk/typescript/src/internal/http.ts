@@ -1,5 +1,5 @@
-import { AmikaError, AmikaHTTPError } from "@/errors";
-import type { TokenSource } from "@/token";
+import { AmikaError, AmikaHTTPError } from "../errors.js";
+import type { TokenSource } from "../token-source.js";
 
 export interface HTTPClientOptions {
   baseUrl: string;
@@ -143,14 +143,20 @@ export class HTTPClient {
     const timeoutMs = requestOptions?.timeoutMs ?? this.defaultTimeoutMs;
     const controller = new AbortController();
     const signal = requestOptions?.signal;
-    const abort = () => controller.abort(signal?.reason);
     signal?.throwIfAborted();
-    signal?.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const release = () => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
     };
+    const abort = () => {
+      release();
+      controller.abort(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      release();
+      controller.abort();
+    }, timeoutMs);
+    signal?.addEventListener("abort", abort, { once: true });
 
     let response: Response;
     try {

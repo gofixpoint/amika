@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { readSSEFrames, type SSEFrame } from "@/sse";
+import { readSSEFrames, type SSEFrame } from "@/internal/sse";
 
 /** Build a body stream that delivers `chunks` verbatim, one read at a time. */
 function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
