@@ -14,7 +14,7 @@ A running VM can still be setting up or have a setup failure.
 | `suspending`   | The VM is pausing while retaining memory state.                 |
 | `suspended`    | The VM is paused with its memory state retained.                |
 | `snapshotting` | A snapshot is being captured.                                   |
-| `failed`       | The VM is gone or unusable.                                     |
+| `failed`       | The VM is unusable or readiness could not be confirmed.         |
 | `unknown`      | The provider cannot identify the VM's current state.            |
 
 `stopping`/`stopped` and `suspending`/`suspended` describe what happens to the
@@ -39,6 +39,9 @@ failure in `setup_status`. A successful start normally replaces an earlier
 failure; `git-failed` persists because start does not reclone the primary
 repository. While `setup-running`, agent operations must wait, and stop and
 snapshot are refused. Delete remains available to abort a stuck setup.
+
+A lifecycle failure that cannot confirm a settled power state reports `failed`.
+The VM and credentials are retained when recoverable, so Start can retry it.
 
 E2B reports both kinds of pause as `paused`. Amika pauses E2B rigs without
 memory and reports them as `stopped`; memory-preserving pauses initiated

@@ -466,7 +466,6 @@ async function waitForFreestyleVmSuspended(
 export async function startFreestyleSandbox(
   config: FreestyleConfig,
   providerSandboxId: string,
-  _autoStopInterval?: number | null,
 ): Promise<void> {
   const client = createFreestyleClient(
     config,

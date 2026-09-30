@@ -61,8 +61,7 @@ export default defineProvider(
       create: (ctx, input) => createFreestyleSandbox(ctx, config, input),
       delete: (id) => deleteFreestyleSandbox(config, id),
 
-      start: (id, autoStopInterval) =>
-        startFreestyleSandbox(config, id, autoStopInterval),
+      start: (id) => startFreestyleSandbox(config, id),
       stop: (id) => stopFreestyleSandbox(config, id),
       getState: (id) => getFreestyleSandboxState(config, id),
       mapState: mapFreestyleSandboxState,
