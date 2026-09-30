@@ -255,6 +255,18 @@ handshake. Upgrades forward every header as sent, including `Host` and
 `Content-Encoding` and `Content-Length`, since fetch has already decoded the
 body. Shutdown ends open tunnels, and upgrades still being set up, at once.
 
+Proxied HTTP goes through `fetch` on purpose, so that fetch owns the HTTP/1.1
+framing (`Content-Length` or chunking) of every message hostd writes. Those
+connections are shared: the tunnel carries many users' requests over a few
+keep-alive connections, and fetch pools connections to each guest across all
+callers, so a message framed wrong spills into someone else's. Do not replace
+fetch with a hand-written `node:http` forwarder, for instance to pass the
+caller's `Host` through; an attempt at that (gofixpoint/amika#503) kept
+turning up framing bugs, including request smuggling and a guest able to crash
+the daemon. Guests seeing `127.0.0.1` is also what dev servers that check
+`Host` (Vite, for one) accept by default. If a guest needs the public host,
+add `X-Forwarded-Host` and `X-Forwarded-Proto` alongside fetch instead.
+
 These routes skip the secret key, since their callers never hold it. The token
 takes its place: `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>` over the
 machine, its smolvm `createdAt`, the port and the expiry, keyed with the secret
