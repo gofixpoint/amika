@@ -436,37 +436,26 @@ describe("amika-hostd services", () => {
     expect((await route("site")).status).toBe(404);
   });
 
-  it("names every port of a multi-port service distinctly", () => {
-    expect(
-      hostdServiceRoutes([
-        { ...WEB, containerPort: 3001 },
-        WEB,
-        { ...WEB, containerPort: 3002 },
-        AMIKAD,
-      ]),
-    ).toEqual([
-      { name: "web-3001", port: 3001 },
-      { name: "web", port: 3000 },
-      { name: "web-3002", port: 3002 },
-      { name: "amikad", port: 60999 },
-    ]);
-  });
-
   it.each([
     [
-      "a generated name that collides with a real one",
-      [
-        WEB,
-        { ...WEB, containerPort: 3001 },
-        { ...WEB, name: "web-3001", containerPort: 4000 },
-      ],
-      'two services as "web-3001"',
+      "a service declaring two ports",
+      [WEB, { ...WEB, containerPort: 3001 }],
+      'one port per service name; "web" declares 3000 and 3001',
     ],
     ["a dot-segment name", [{ ...WEB, name: ".." }], 'named ".."'],
   ])("refuses %s rather than misroute", (_label, services, message) => {
     expect(() => hostdServiceRoutes(services as SandboxService[])).toThrow(
       message,
     );
+  });
+
+  it("routes each service by its own name, whatever else is listed", () => {
+    // Stable across revocations: a route never depends on its siblings.
+    expect(hostdServiceRoutes([WEB, AMIKAD, WEB])).toEqual([
+      { name: "web", port: 3000 },
+      { name: "amikad", port: 60999 },
+      { name: "web", port: 3000 },
+    ]);
   });
 
   it("reconciles only to ports published at create", async () => {

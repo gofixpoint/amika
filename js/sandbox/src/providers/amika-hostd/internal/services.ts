@@ -60,42 +60,32 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
 }
 
 /**
- * The name hostd routes each service by, in input order. A service is
- * routed by its own name, except that a service declaring several ports
- * keeps its name for the lowest one and gets `<name>-<port>` for the rest,
- * since hostd needs one name per port. Throws for a name no URL can carry
- * (`.` and `..` are dot segments, even percent-encoded) and for two routes
- * that would share a name, e.g. `web` on 3001 and a service `web-3001`.
+ * The name hostd routes each service by, in input order: the service's own
+ * name, so a route never changes when other services do. hostd routes one
+ * port per name, so a service declaring several ports is refused, as is a
+ * name no URL can carry (`.` and `..` are dot segments, even
+ * percent-encoded).
  */
 export function hostdServiceRoutes(
   services: SandboxService[],
 ): { name: string; port: number }[] {
-  const dotted = services.find((s) => s.name === "." || s.name === "..");
-  if (dotted) {
-    throw new Error(
-      `amika-hostd cannot route a service named ${JSON.stringify(dotted.name)}`,
-    );
-  }
-  const lowest = new Map<string, number>();
-  for (const { name, containerPort } of services) {
-    lowest.set(
-      name,
-      Math.min(lowest.get(name) ?? containerPort, containerPort),
-    );
-  }
-  const routes = services.map(({ name, containerPort }) => ({
-    name:
-      lowest.get(name) === containerPort ? name : `${name}-${containerPort}`,
-    port: containerPort,
-  }));
   const ports = new Map<string, number>();
-  for (const { name, port } of routes) {
-    if ((ports.get(name) ?? port) !== port) {
+  for (const { name, containerPort } of services) {
+    if (name === "." || name === "..") {
       throw new Error(
-        `amika-hostd would route two services as ${JSON.stringify(name)}; rename one`,
+        `amika-hostd cannot route a service named ${JSON.stringify(name)}`,
       );
     }
-    ports.set(name, port);
+    const port = ports.get(name);
+    if (port !== undefined && port !== containerPort) {
+      throw new Error(
+        `amika-hostd routes one port per service name; ${JSON.stringify(name)} declares ${port} and ${containerPort}`,
+      );
+    }
+    ports.set(name, containerPort);
   }
-  return routes;
+  return services.map(({ name, containerPort }) => ({
+    name,
+    port: containerPort,
+  }));
 }
