@@ -43,7 +43,6 @@ const sandbox: RemoteSandbox = {
   updatedAt: "2026-01-01T00:00:00Z",
   state: "active",
   status: "ready",
-  hasWorkflow: false,
 };
 
 const session: Session = {
@@ -159,7 +158,6 @@ function readsRequiredRemoteSandboxFields(sb: RemoteSandbox): void {
   const createdAt: string = sb.createdAt;
   const state: string = sb.state;
   const status: string = sb.status;
-  const hasWorkflow: boolean = sb.hasWorkflow;
   void [
     id,
     orgId,
@@ -174,7 +172,6 @@ function readsRequiredRemoteSandboxFields(sb: RemoteSandbox): void {
     createdAt,
     state,
     status,
-    hasWorkflow,
   ];
 }
 

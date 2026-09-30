@@ -1,0 +1,146 @@
+package sandboxcmd
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/spf13/cobra"
+)
+
+func newSandboxGetTestRoot() *cobra.Command {
+	root := &cobra.Command{Use: "amika", SilenceUsage: true, SilenceErrors: true}
+	output.AddFlag(root)
+	rig := &cobra.Command{Use: "rig"}
+	rig.AddCommand(&cobra.Command{
+		Use:  "get <rig-ref>",
+		Args: cobra.ExactArgs(1),
+		RunE: runSandboxGet,
+	})
+	root.AddCommand(rig)
+	return root
+}
+
+func TestSandboxGetOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.RequestURI != "/api/v0beta1/sandboxes/org%2Fbox" {
+			t.Errorf("request = %s %s", r.Method, r.RequestURI)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"sb_1","name":"box","org_id":"org_1","hostname":"box.r.acme.o.amika.test","host_id":"host_1","status":"running","has_workflow":false,"secret_names":[],"mounted_secrets":[],"resolved_agent_credentials":[],"agent_credentials":[],"services":[{"name":"web","url":"https://web.example.test","hostPort":3000,"containerPort":3000,"protocol":"tcp","kind":"user"}],"created_at":"2026-09-30T00:00:00Z","updated_at":"2026-09-30T01:00:00Z"}`))
+	}))
+	defer server.Close()
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	for _, format := range []string{"text", "json", "json-pretty"} {
+		t.Run(format, func(t *testing.T) {
+			root := newSandboxGetTestRoot()
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&bytes.Buffer{})
+			root.SetArgs([]string{"rig", "get", "org/box", "--output", format})
+			if err := root.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(out.String(), "has_workflow") {
+				t.Errorf("output includes removed field has_workflow: %s", out.String())
+			}
+			if format == "text" {
+				for _, want := range []string{
+					"id: sb_1\n", "name: box\n", "hostname: box.r.acme.o.amika.test\n",
+					"host_id: host_1\n",
+					"secret_names: []\n", "mounted_secrets: []\n",
+					"resolved_agent_credentials: []\n", "agent_credentials: []\n",
+					"services[0].name: web\n", "services[0].kind: user\n",
+				} {
+					if !strings.Contains(out.String(), want) {
+						t.Errorf("text output missing %q:\n%s", want, out.String())
+					}
+				}
+				return
+			}
+			var got map[string]any
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatalf("decode JSON: %v\n%s", err, out.String())
+			}
+			if got["name"] != "box" || got["hostname"] != "box.r.acme.o.amika.test" || got["host_id"] != "host_1" {
+				t.Errorf("unexpected JSON: %s", out.String())
+			}
+			for _, key := range []string{"secret_names", "mounted_secrets", "resolved_agent_credentials", "agent_credentials"} {
+				if items, ok := got[key].([]any); !ok || len(items) != 0 {
+					t.Errorf("%s: [] lost in JSON: %s", key, out.String())
+				}
+			}
+			services, ok := got["services"].([]any)
+			if !ok || len(services) != 1 || services[0].(map[string]any)["kind"] != "user" {
+				t.Errorf("services lost in JSON: %s", out.String())
+			}
+		})
+	}
+}
+
+func TestWriteSandboxGetTextMissingHostnameAndEmptyServices(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeSandboxGetText(&out, apiclient.RemoteSandbox{
+		ID:       "sb_1",
+		Name:     "box",
+		Services: []apiclient.RemoteSandboxService{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"hostname: -\n", "services: []\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("text output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestWriteSandboxGetTextNestedFieldsAndLineBreaks(t *testing.T) {
+	message := "setup failed\nretry from C:\\repo\r"
+	var out bytes.Buffer
+	if err := writeSandboxGetText(&out, apiclient.RemoteSandbox{
+		ErrorMessage:      &message,
+		SandboxSizeConfig: json.RawMessage(`{"name":"m","vcpus":4,"memoryGib":8,"diskGib":20,"diskGrowOnly":false}`),
+		AgentCredentials:  json.RawMessage(`[{"kind":"codex","name":null,"scope":null,"credential_type":null,"inject_target":null}]`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`error_message: setup failed\nretry from C:\\repo\r`,
+		"sandbox_size_config.vcpus: 4",
+		"sandbox_size_config.diskGrowOnly: false",
+		"agent_credentials[0].kind: codex",
+		"agent_credentials[0].name: -",
+	} {
+		if !strings.Contains(out.String(), want+"\n") {
+			t.Errorf("text output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestSandboxGetMissingRig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"code":"not_found"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	root := newSandboxGetTestRoot()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"rig", "get", "missing", "-o", "json"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("missing rig should fail")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("failed get wrote stdout: %s", out.String())
+	}
+}

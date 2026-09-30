@@ -280,7 +280,6 @@ export interface RemoteRig {
   urlsExpireAt?: string;
   secretNames?: string[];
   mountedSecrets?: MountedSecret[];
-  hasWorkflow: boolean;
   resolvedAgentCredentials?: ResolvedAgentCredential[];
   createdBy?: RemoteRigCreator;
   origin?: string;
@@ -341,7 +340,6 @@ export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
     urlsExpireAt: optionalStr(w["urls_expire_at"]),
     secretNames: optionalStrArray(w["secret_names"]),
     mountedSecrets: optionalArray(w["mounted_secrets"], mountedSecretFromWire),
-    hasWorkflow: bool(w["has_workflow"]),
     resolvedAgentCredentials: w["resolved_agent_credentials"] as
       | ResolvedAgentCredential[]
       | undefined,
