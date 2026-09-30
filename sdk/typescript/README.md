@@ -1,6 +1,6 @@
 # @amika/sdk
 
-TypeScript SDK for [Amika](https://github.com/gofixpoint/amika). Ported from the Go API client at `go/internal/apiclient`, with the same input/output shapes (camelCased) and the same HTTP behavior. Method names and paths diverge: this SDK says rig where Go still says sandbox. Talks to the cloud API at `https://app.amika.dev/api/v0beta1`.
+Use [Amika](https://github.com/gofixpoint/amika) from TypeScript to create cloud development environments (rigs), wait for their setup to finish, and send work to a coding agent. The SDK calls the cloud API at `https://app.amika.dev/api/v0beta1`. A rig is also called a sandbox in older SDK versions and API fields.
 
 ## Install
 
@@ -10,56 +10,83 @@ npm install @amika/sdk
 
 ## Quick start
 
+Save this as `example.ts` and run it with a TypeScript runner, for example
+`npx tsx example.ts` (the SDK requires Node 18+). Export `AMIKA_API_KEY` first.
+Replace the repository URL with one your Amika account can access.
+
 ```ts
 import { AmikaClient } from "@amika/sdk";
 
 const amika = new AmikaClient({
   baseUrl: process.env.AMIKA_API_URL ?? "https://app.amika.dev",
-  accessToken: process.env.AMIKA_API_KEY!,
+  apiKey: process.env.AMIKA_API_KEY!,
 });
 
 // Create a rig (returns immediately with state "initializing")
 const rig = await amika.createRig({
   name: "hello-amika",
-  provider: "daytona",
-  repoUrl: "git@github.com:gofixpoint/example-repo.git",
-  preset: "coder",
+  repoUrl: "git@github.com:your-org/your-repo.git", // replace with your repository
   agentCredentials: [{ kind: "claude" }],
 });
 console.log(`Created rig "${rig.name}"`);
 
-// Wait until it's ready (polls every 3s, no timeout)
-await amika.waitForRig(rig.name);
+// Wait for running + successful setup (3s polls, 15-minute deadline).
+await rig.wait();
 
 // Send a prompt to an agent (HTTP timeout is 10 minutes for this endpoint)
-const resp = await amika.agentSend(rig.name, {
-  message: "Write a hello_world.md file with Hello World! in it",
+const resp = await amika.sendAgentSession({
+  rigId: rig.id,
+  newSession: true,
+  message: "Inspect this repository and reply with a short summary",
   agent: "claude",
 });
 console.log(`Agent Response: ${resp.response}`);
+if (resp.isError) throw new Error(resp.response);
 
-// Tear down
+// Delete only after successful completion.
 console.log(`Deleting rig "${rig.name}"`);
-await amika.deleteRig(rig.name);
+await rig.delete();
 ```
+
+If waiting or sending fails, the example leaves the rig available for inspection.
+Its name is printed before waiting; delete it afterward with
+`amika rig delete <name> --force`. If your agent changes files, push or copy them
+out before deleting the rig.
 
 ## Configuration
 
+Export `AMIKA_API_KEY` with an API key from your Amika account before running the quick start. Connect your repository account and store an agent credential in Amika Settings. `{ kind: "claude" }` asks the server to select your default stored Claude credential. The SDK does not load environment variables or credential files itself.
+
+Set `baseUrl` to the origin, such as `https://app.amika.dev`, without `/api/v0beta1`; the SDK appends that prefix. `AMIKA_API_URL`, if used, follows the same rule. Prefer `apiKey` for scripts:
+
 ```ts
-new AmikaClient({
+const amika = new AmikaClient({
   baseUrl: "https://app.amika.dev",
-  accessToken: "amk_…", // OR
-  tokenSource: { token: () => "…" }, // implement your own (e.g., fetch from a secret manager)
-  fetch: customFetch, // optional: override globalThis.fetch (testing, polyfills)
+  apiKey: process.env.AMIKA_API_KEY!,
+  // fetch: customFetch, // optional override for tests or polyfills
 });
 ```
 
-- `accessToken` and `tokenSource` are mutually exclusive; one is required.
-- The SDK does **not** read `AMIKA_API_KEY` or any on-disk credential file. Callers source the token themselves.
+Provide **exactly one** of `apiKey`, `accessToken`, or `tokenSource`. TypeScript checks this, and the constructor also rejects missing, conflicting, or blank static credentials at runtime. Both static fields authenticate with `Authorization: Bearer …`.
+
+For an access token or a dynamic credential source, use one of these alternatives:
+
+```ts
+const withAccessToken = new AmikaClient({
+  baseUrl: "https://app.amika.dev",
+  accessToken: "your-access-token",
+});
+const withTokenSource = new AmikaClient({
+  baseUrl: "https://app.amika.dev",
+  tokenSource: { token: async () => getTokenFromYourSecretManager() },
+});
+```
+
+`getTokenFromYourSecretManager` represents your own credential-loading code. The SDK calls `token()` for each request.
 
 ## API surface
 
-Methods on `AmikaClient` mirror Go's `*apiclient.Client` in shape and HTTP behavior, though not in name since the rig rename. The "Deprecated alias" column names the pre-rig spelling, which still works.
+The "Deprecated alias" column lists older sandbox spellings that still work.
 
 ### Rigs
 
@@ -141,9 +168,64 @@ A non-pointer Go field always lands as a value, so `state` and `status` stay pla
 
 Two fields sit outside this rule because they sit outside the schema. `containerId` and `image` are CLI-only extensions that the API never returns, so they are typed optional to say exactly that.
 
-## Polling behavior
+## Waiting and deleting
 
-`waitForRig`, `waitForRigStart`, and `waitForRigStop` poll `getRig` every **3 seconds** with **no client-side timeout**, matching Go's `WaitForSandbox`. They throw `AmikaError` if the rig enters `failed` state, including the server's `errorMessage` when present. `waitForRigSnapshot` polls `getRigSnapshot` the same way, returning once the snapshot is `active` and throwing if it ends up `failed`.
+`createRig`, `getRig`, and `listRigs` return resources with `wait()` and `delete()`. Their sandbox aliases do too. Rig lookup, stop, and delete accept a name or ID; `rigRef` in other methods means that same reference. Each resource carries the usual data fields (`id`, `name`, `status`, `setupStatus`, and so on). Methods and client credentials are not included when the resource is serialized to JSON.
+
+```ts
+const rig = await amika.getRig("my-rig");
+await rig.wait(); // running AND setupStatus === "ok"
+await rig.wait({ pollMs: 1_000, maxWaitMs: 5 * 60_000 });
+
+// Wait for a power-state change initiated separately:
+await amika.stopRig(rig.id);
+await rig.wait({ status: ["stopped", "suspended"] });
+await rig.delete();
+```
+
+`wait()` polls immediately, then every **3 seconds**, with a **15-minute total deadline** including HTTP requests. It refreshes the same resource's fields and returns that resource. `pollMs` and `maxWaitMs` must be positive integer milliseconds no greater than 2,147,483,647.
+
+A status array matches any listed value. When the targets include `running`, setup must also be `ok` by default, even if another listed status matches. For stopped/suspended targets, setup is ignored unless you explicitly pass `setupStatus: "ok"`. The API reports stopped rigs as `suspended`, so the SDK also accepts that status for a `stopped` target. Waiting does not start or stop a rig. `delete()` resolves when the DELETE request succeeds; it does not poll for disappearance.
+
+Provisioning failures, setup failures when setup is required, and deadline expiry throw `AmikaWaitError`. HTTP failures throw `AmikaHTTPError`; other transport failures propagate. Failed requests are not retried. A missing setup status keeps polling until the deadline.
+
+The older client-level `waitForRig`, `waitForRigStart`, and `waitForRigStop` retain their state-only checks, 3-second polling and unlimited total wait. `waitForRigSnapshot` retains its existing behavior too. Use resource `.wait()` when setup readiness and a deadline matter.
+
+`RemoteRig` and `RemoteSandbox` remain plain data types. `Rig` and `Sandbox` add the methods; hand-built mocks of create/get/list methods must now provide `wait` and `delete`.
+
+## Model and effort
+
+Both buffered and streaming sends accept `model` and `effort`:
+
+```ts
+await amika.sendAgentSession({
+  rigId: rig.id,
+  agent: "claude",
+  newSession: true,
+  message: "Review this repository",
+  model: "opus",
+  effort: "high",
+});
+```
+
+Omitting either field inherits the chat's setting (the agent's default for a new chat). Explicit `null` resets it to the agent's default. The server validates which models and effort levels the selected agent supports. Effort values are `low`, `medium`, `high`, `xhigh`, and `max`.
+
+Continue a chat with its returned `sessionId`. For example, omitting `model` keeps
+that chat's selection while `effort: null` clears its effort setting:
+
+```ts
+const first = await amika.sendAgentSession({
+  rigId: rig.id,
+  message: "Review this repository",
+  model: "opus",
+  effort: "high",
+});
+await amika.sendAgentSession({
+  sessionId: first.sessionId,
+  message: "Summarize the findings",
+  effort: null,
+});
+```
 
 ## Streaming an agent turn
 
@@ -167,12 +249,16 @@ The server enforces a 300s ceiling on the request, below the client's 10-minute 
 ## Errors
 
 ```ts
-import { AmikaError, AmikaHTTPError, extractAgentAuthError } from "@amika/sdk";
+import { AmikaError, AmikaHTTPError, AmikaWaitError } from "@amika/sdk";
 
 try {
-  await amika.getRig("does-not-exist");
+  const rig = await amika.getRig("my-rig");
+  await rig.wait();
 } catch (err) {
-  if (err instanceof AmikaHTTPError) {
+  if (err instanceof AmikaWaitError) {
+    console.error(err.reason, err.rigId, err.status, err.setupStatus);
+    // reason: "provisioning", "setup", or "timeout"; fields show the last observation.
+  } else if (err instanceof AmikaHTTPError) {
     console.error(err.statusCode, err.userMessage());
     // userMessage() parses { code/error_code, message } if present, else returns the raw body
   } else if (err instanceof AmikaError) {

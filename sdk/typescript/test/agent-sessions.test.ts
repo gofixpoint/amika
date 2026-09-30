@@ -78,6 +78,29 @@ describe("AmikaClient.sendAgentSession", () => {
     });
   });
 
+  it.each([
+    { model: "opus", effort: "high" as const },
+    { model: null, effort: null },
+    {},
+  ])(
+    "preserves model/effort values, resets, and omission in both send APIs",
+    async (settings) => {
+      const { fetch, calls } = mockFetch([
+        { body: DONE_PAYLOAD },
+        { body: sse(["done", DONE_PAYLOAD]) },
+      ]);
+      const client = makeClient(fetch);
+      await client.sendAgentSession({ message: "hi", ...settings });
+      await client.sendAgentSessionStream({ message: "hi", ...settings });
+      for (const call of calls) {
+        expect(JSON.parse(call.body ?? "")).toEqual({
+          message: "hi",
+          ...settings,
+        });
+      }
+    },
+  );
+
   it("sends only the fields that are set", async () => {
     const { fetch, calls } = mockFetch([{ status: 200, body: DONE_PAYLOAD }]);
     await makeClient(fetch).sendAgentSession({ message: "hi" });

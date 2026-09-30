@@ -29,6 +29,10 @@ import {
 export interface AgentSessionSendRequest {
   message: string;
   agent?: string;
+  /** Server-supported model; omitted inherits, null resets to the agent default. */
+  model?: string | null;
+  /** Omitted inherits; null resets. The server validates support for the agent. */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max" | null;
   sessionId?: string;
   rigId?: string;
   /** @deprecated Use {@link AgentSessionSendRequest.rigId}. */
@@ -46,6 +50,8 @@ export function agentSessionSendRequestToWire(
   // Preserves 0.11 for every input, which sent `sandbox_id` whenever it was set.
   const rigId = r.rigId || r.sandboxId;
   if (r.agent !== undefined) out["agent"] = r.agent;
+  if (r.model !== undefined) out["model"] = r.model;
+  if (r.effort !== undefined) out["effort"] = r.effort;
   if (r.sessionId !== undefined) out["session_id"] = r.sessionId;
   if (rigId !== undefined) out["sandbox_id"] = rigId;
   if (r.newSession !== undefined) out["new_session"] = r.newSession;

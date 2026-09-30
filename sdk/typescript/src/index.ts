@@ -1,7 +1,9 @@
 export { AmikaClient } from "@/client";
 export type { AmikaClientOptions } from "@/client";
 
-export { AmikaError, AmikaHTTPError } from "@/errors";
+export { AmikaError, AmikaHTTPError, AmikaWaitError } from "@/errors";
+export type { AmikaWaitErrorReason } from "@/errors";
+export type { Rig, Sandbox, RigWaitOptions, RigWaitStatus } from "@/rig";
 
 export {
   RESERVED_PORT_MAX,
