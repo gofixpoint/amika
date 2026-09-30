@@ -27,16 +27,16 @@ describe("startServer", () => {
     }
   });
 
-  it("routes upgrades to the service tunnel, refusing a bad token", async () => {
+  it("routes upgrades to the service tunnel, refusing a missing key", async () => {
     const server = await startServer(config);
     try {
       const client = connect(server.port, "127.0.0.1");
       await once(client, "connect");
       client.write(
-        "GET /services/demo/60999/bad/v1/ssh-sessions HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+        "GET /rigs/demo/services/amikad/v1/ssh-sessions HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
       );
       const [chunk] = await once(client, "data");
-      expect(String(chunk)).toMatch(/^HTTP\/1\.1 404 /);
+      expect(String(chunk)).toMatch(/^HTTP\/1\.1 401 /);
       client.destroy();
     } finally {
       await server.close();

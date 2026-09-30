@@ -31,6 +31,8 @@ export interface DaemonPaths {
   /** The `smolvm serve` process the daemon started, while it runs. */
   smolvmPidFile: string;
   smolvmLogFile: string;
+  /** Each machine's service names and guest ports (`service-registry.ts`). */
+  servicesFile: string;
 }
 
 export type Spawn = (
@@ -201,6 +203,7 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     logFile: path.join(dir, "amika-hostd.log"),
     smolvmPidFile: path.join(dir, "smolvm.pid"),
     smolvmLogFile: path.join(dir, "smolvm.log"),
+    servicesFile: path.join(dir, "services.json"),
   };
 }
 

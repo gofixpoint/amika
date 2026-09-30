@@ -1,30 +1,31 @@
 /**
- * Public, signed routes to a machine's published guest ports.
+ * Routes from the control plane to a machine's named services.
  *
- * A machine created with `ports` gets each guest port published by smolvm on
- * a host loopback port. `/services/<machine>/<port>/<token>/<path>` forwards
- * HTTP requests and WebSocket upgrades to it, with `<path>` as the guest path.
- * This is how Amika reaches `amikad` for no-relay SSH: its bridge
- * authenticates the SSH client itself, from the `Authorization` header this
- * route forwards unchanged.
+ * A machine created with `services` gets each guest port published by smolvm
+ * on a host loopback port, and hostd records which name maps to which port
+ * (`./service-registry.ts`). `/rigs/<machine>/services/<name>/<path>`
+ * forwards HTTP requests and WebSocket upgrades there, with `<path>` as the
+ * guest path.
  *
- * These routes skip the daemon's secret key, since their callers (the Amika
- * CLI, the web terminal) never hold it. The token stands in for it: the
- * `@amika/sandbox` provider signs `<machine>`, its smolvm `createdAt`,
- * `<port>` and an expiry with the secret key (`signHostdServiceToken`,
- * mirrored here by `signServiceToken`). A URL therefore opens only the one
- * port it names, on the one machine it was signed for, until it expires: a
- * machine deleted and recreated under the same name has a new `createdAt`, so
- * the old machine's URLs stop working.
+ * Only the control plane calls these routes, and it proves itself with the
+ * host's secret key, as on every other route. Here the key travels in
+ * `X-Amika-Hostd-Key` rather than `Authorization`, because `Authorization`
+ * belongs to the guest: `amikad`, for one, authenticates SSH clients with it.
+ * hostd removes the key header before forwarding, and refuses a request that
+ * puts the key in `Authorization`, so the key never reaches a guest.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { connect, createServer, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { z } from "zod";
+import { secretMatches } from "./auth.js";
+import type { ServiceRegistry } from "./service-registry.js";
 import type { SmolRuntime } from "./smol.js";
 
-export const SERVICES_PREFIX = "/services/";
+export const RIGS_PREFIX = "/rigs/";
+
+/** Carries the host's secret key on service routes; never forwarded. */
+export const SERVICE_KEY_HEADER = "x-amika-hostd-key";
 
 /**
  * Handle Node's `upgrade` event: pipe a WebSocket (or any other upgrade)
@@ -35,6 +36,7 @@ export const SERVICES_PREFIX = "/services/";
 export function createUpgradeHandler(
   secretKey: string,
   runtime: SmolRuntime,
+  registry: ServiceRegistry,
   tunnels = new Set<Duplex>(),
   dial: (port: number) => Socket = (port) => connect(port, "127.0.0.1"),
 ) {
@@ -52,11 +54,15 @@ export function createUpgradeHandler(
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
+    const refusal = authorizeServiceRequest(secretKey, {
+      key: request.headers[SERVICE_KEY_HEADER],
+      authorization: request.headers.authorization,
+    });
+    if (refusal) return refuse(socket, refusal);
     const url = new URL(request.url ?? "/", "http://hostd");
     const route = parseServicePath(url.pathname);
-    const signed = route && verifyServiceToken(secretKey, route);
-    if (!route || !signed) return refuse(socket, 404);
-    const hostPort = await resolveHostPort(runtime, route, signed.createdAt);
+    if (!route) return refuse(socket, 404);
+    const hostPort = await resolveHostPort(runtime, registry, route);
     if (hostPort === null) return refuse(socket, 404);
     if (socket.destroyed) return;
 
@@ -82,20 +88,28 @@ export function createUpgradeHandler(
  * The handshake as the guest should see it: the guest path in place of the
  * service route, and every header exactly as the caller sent it, including
  * `Host`, `Origin`, and the `Authorization` the guest authenticates. Only
- * `Proxy-Authorization` is dropped: it was meant for a proxy in front of
- * hostd, never for the guest.
+ * hostd's own key and `Proxy-Authorization` are dropped: both were meant for
+ * hostd or a proxy in front of it, never for the guest.
  */
 function requestHead(request: IncomingMessage, path: string): string {
   const lines = [`${request.method} ${path} HTTP/${request.httpVersion}`];
   for (let i = 0; i < request.rawHeaders.length; i += 2) {
     const name = request.rawHeaders[i];
-    if (name.toLowerCase() === "proxy-authorization") continue;
+    const lower = name.toLowerCase();
+    if (lower === "proxy-authorization" || lower === SERVICE_KEY_HEADER) {
+      continue;
+    }
     lines.push(`${name}: ${request.rawHeaders[i + 1]}`);
   }
   return `${lines.join("\r\n")}\r\n\r\n`;
 }
 
-const REFUSAL_REASONS = { 404: "Not Found", 502: "Bad Gateway" } as const;
+const REFUSAL_REASONS = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  404: "Not Found",
+  502: "Bad Gateway",
+} as const;
 
 function refuse(socket: Duplex, status: keyof typeof REFUSAL_REASONS): void {
   if (socket.destroyed) return;
@@ -104,113 +118,74 @@ function refuse(socket: Duplex, status: keyof typeof REFUSAL_REASONS): void {
   );
 }
 
-/** A parsed, not yet verified, service route. */
+/**
+ * Why a service request is refused, or null to let it through: 401 without
+ * the right key in `X-Amika-Hostd-Key`, 400 when the key is also sent as the
+ * `Authorization` the guest would receive.
+ */
+export function authorizeServiceRequest(
+  secretKey: string,
+  headers: {
+    key?: string | string[] | null;
+    authorization?: string | string[] | null;
+  },
+): 400 | 401 | null {
+  const key = typeof headers.key === "string" ? headers.key.trim() : "";
+  if (!secretMatches(key, secretKey)) return 401;
+  const authorization =
+    typeof headers.authorization === "string"
+      ? headers.authorization.replace(/^Bearer\s+/i, "").trim()
+      : "";
+  return authorization && secretMatches(authorization, secretKey) ? 400 : null;
+}
+
+/** A parsed service route. */
 export interface ServiceRoute {
   machine: string;
-  port: number;
-  token: string;
+  service: string;
   /** The guest-side path, always starting with `/`. */
   path: string;
 }
 
 /**
  * Split a request path into its route parts, or null if it is not a service
- * route. The rest of the path is kept encoded, exactly as the caller sent it.
+ * route. The service name is one percent-encoded path segment, decoded here;
+ * the rest of the path is kept encoded, exactly as the caller sent it.
  */
 export function parseServicePath(pathname: string): ServiceRoute | null {
-  if (!pathname.startsWith(SERVICES_PREFIX)) return null;
   const match =
-    /^\/services\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/([1-9][0-9]{0,4})\/([^/]+)(\/.*)?$/.exec(
+    /^\/rigs\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/services\/([^/]+)(\/.*)?$/.exec(
       pathname,
     );
   if (!match) return null;
-  const port = Number(match[2]);
-  if (port > 65_535) return null;
-  return { machine: match[1], port, token: match[3], path: match[4] ?? "/" };
-}
-
-/** What a service token is signed over. */
-export interface ServiceTokenClaims {
-  machine: string;
-  /** The machine's smolvm `createdAt` (Unix seconds): which incarnation. */
-  createdAt: number;
-  port: number;
-  /** Unix seconds. */
-  expiresAt: number;
-}
-
-/**
- * The token for one machine incarnation's port, valid until `expiresAt`:
- * `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>`. Mirrors
- * `signHostdServiceToken` in `@amika/sandbox`'s `amika-hostd` provider; the
- * two must stay identical.
- */
-export function signServiceToken(
-  secretKey: string,
-  claims: ServiceTokenClaims,
-): string {
-  return `${claims.expiresAt}.${claims.createdAt}.${serviceMac(secretKey, claims)}`;
-}
-
-/**
- * The incarnation `token` was signed for, if it was signed for this machine
- * port and has not expired; otherwise null. The caller must still check the
- * machine's current `createdAt` against it, which needs a runtime lookup this
- * check deliberately comes before.
- */
-export function verifyServiceToken(
-  secretKey: string,
-  route: Pick<ServiceRoute, "machine" | "port" | "token">,
-  nowSeconds = Math.floor(Date.now() / 1000),
-): { createdAt: number } | null {
-  const match =
-    /^([1-9][0-9]{0,11})\.([1-9][0-9]{0,11})\.([A-Za-z0-9_-]{43})$/.exec(
-      route.token,
-    );
-  if (!match) return null;
-  const claims = {
-    machine: route.machine,
-    port: route.port,
-    expiresAt: Number(match[1]),
-    createdAt: Number(match[2]),
-  };
-  const expected = Buffer.from(serviceMac(secretKey, claims));
-  const provided = Buffer.from(match[3]);
-  return timingSafeEqual(expected, provided) && nowSeconds < claims.expiresAt
-    ? { createdAt: claims.createdAt }
-    : null;
-}
-
-function serviceMac(
-  secretKey: string,
-  { machine, createdAt, port, expiresAt }: ServiceTokenClaims,
-): string {
-  return createHmac("sha256", secretKey)
-    .update(
-      `amika-hostd-service:v2\n${machine}\n${createdAt}\n${port}\n${expiresAt}`,
-    )
-    .digest("base64url");
+  let service: string;
+  try {
+    service = decodeURIComponent(match[2]);
+  } catch {
+    return null;
+  }
+  return { machine: match[1], service, path: match[3] ?? "/" };
 }
 
 const machinePortsSchema = z.object({
   state: z.string(),
-  createdAt: z.number().int(),
   ports: z.array(z.object({ host: z.number().int(), guest: z.number().int() })),
 });
 
 /**
- * The host loopback port smolvm published the route's port on, or null when
- * the machine does not exist, is another incarnation than `createdAt` (it was
- * deleted and recreated under the same name), is not running, or did not
- * publish it. A stopped machine's VM no longer holds its host port, so
+ * The host loopback port behind a route, or null when the machine has no
+ * such service, does not exist, is not running, or did not publish the
+ * service's port. A stopped machine's VM no longer holds its host port, so
  * another machine or process may have bound it since; only a running
  * machine's mapping is its own.
  */
 export async function resolveHostPort(
   runtime: SmolRuntime,
-  { machine, port: guestPort }: Pick<ServiceRoute, "machine" | "port">,
-  createdAt: number,
+  registry: ServiceRegistry,
+  { machine, service }: Pick<ServiceRoute, "machine" | "service">,
 ): Promise<number | null> {
+  const guestPort = registry.port(machine, service);
+  if (guestPort === undefined) return null;
   const response = await runtime.request(`/${machine}`);
   if (!response.ok) {
     await response.body?.cancel();
@@ -219,13 +194,7 @@ export async function resolveHostPort(
   const parsed = machinePortsSchema.safeParse(
     await response.json().catch(() => undefined),
   );
-  if (
-    !parsed.success ||
-    parsed.data.createdAt !== createdAt ||
-    parsed.data.state !== "running"
-  ) {
-    return null;
-  }
+  if (!parsed.success || parsed.data.state !== "running") return null;
   return parsed.data.ports.find((p) => p.guest === guestPort)?.host ?? null;
 }
 

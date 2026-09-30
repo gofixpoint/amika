@@ -2,8 +2,8 @@
 
 `@amika/hostd` is a standalone Node.js service built with Hono. It will manage
 local VMs and make them accessible through the Amika control plane. The current
-daemon serves `GET /health`, a Smol-compatible `/api/v1/machines` API, signed
-`/services/...` routes to published guest ports, and
+daemon serves `GET /health`, a Smol-compatible `/api/v1/machines` API,
+`/rigs/<machine>/services/<name>/...` routes to machines' named services, and
 registers itself with the Amika control plane when started with `up`. `up`
 also starts the `smolvm serve` process the API forwards to, and `down` stops
 both.
@@ -236,54 +236,63 @@ machine's network on (the default).
 
 ## Service routes and SSH
 
-A create request may list guest ports as `ports: [{ "guest": 60999 }]` (at most
-16, no duplicates). hostd picks a free host loopback port for each and forwards
-`ports: [{ host, guest }]`, so smolvm publishes the guest port on the host's
-loopback. A caller can never choose the host side. smolvm fixes the mapping at
-create; a port taken by another process before the machine starts fails the
-start.
+Only the Amika control plane calls hostd. It authenticates users itself and
+reaches hostd (through the host's tunnel) with the host's secret key; hostd
+checks that key on every route and routes each request to the right smolvm
+machine.
 
-`/services/<machine>/<port>/<token>/<path>` reaches a published port. HTTP
-requests are proxied with `<path>` and the query as the guest path, and
+A create request may name the machine's services as
+`services: [{ "name": "amikad", "port": 60999 }]` (at most 16, unique names;
+several names may share a port). Names are Amika's service names, which are
+free text up to 255 characters; the provider gives the second and later ports
+of a multi-port service the name `<name>-<port>`. hostd picks a free host
+loopback port for each guest port and forwards `ports: [{ host, guest }]`, so
+smolvm publishes the guest port on the host's loopback. A caller can never
+choose the host side. smolvm fixes the mapping at create; a port taken by
+another process before the machine starts fails the start. smolvm stores no
+names, so hostd records each machine's name-to-port map
+(`src/internal/service-registry.ts`) in `services.json` next to its pidfile,
+written atomically with private permissions, once smolvm has created the
+machine, and drops it when the machine is deleted.
+
+`/rigs/<machine>/services/<name>/<path>` reaches a named service, with the name
+percent-encoded as one path segment. HTTP requests are proxied with `<path>`
+and the query as the guest path, and
 WebSocket (or any other) upgrades are piped over TCP by `createUpgradeHandler`
 (`src/internal/services.ts`), which `src/internal/server.ts` attaches to the
 listener's `upgrade` event, handshake included, so the guest answers the
 handshake. Upgrades forward every header as sent, including `Host` and
-`Authorization`, except `Proxy-Authorization`. Proxied HTTP forwards
-`Authorization` and drops hop-by-hop headers, but its `Host` becomes
+`Authorization`, except `Proxy-Authorization` and hostd's key. Proxied HTTP
+forwards `Authorization` and drops hop-by-hop headers and hostd's key, but its `Host` becomes
 `127.0.0.1:<host port>`, since fetch cannot send another; the response drops
 `Content-Encoding` and `Content-Length`, since fetch has already decoded the
 body. Shutdown ends open tunnels, and upgrades still being set up, at once.
 
-These routes skip the secret key, since their callers never hold it. The token
-takes its place: `<expiresAt>.<createdAt>.<base64url HMAC-SHA256>` over the
-machine, its smolvm `createdAt`, the port and the expiry, keyed with the secret
-key. The `@amika/sandbox` provider reads `createdAt` from smolvm and signs the
-token (`signHostdServiceToken`) for 24 hours; `src/internal/services.ts`
-(`signServiceToken`, `verifyServiceToken`) must stay identical to it. hostd
-checks the signature before any runtime call, then requires the machine's
-current `createdAt` to match. A machine deleted and recreated under the same
-name has a new `createdAt`, so the old machine's URLs stop working even though
-tokens are otherwise stateless and cannot be revoked one by one. A bad path, a
-bad or expired token, an unpublished port, another incarnation of the machine,
-and a machine that is not running all answer `404`, so the route never
-confirms which machines exist. A stopped machine's VM releases its host port,
-which another machine or process may then bind, so only a running machine's
-mapping is trusted. Machines on a smolvm that does not report `createdAt` get
-no service URLs.
+These routes take the host's secret key in `X-Amika-Hostd-Key`, not
+`Authorization`, because `Authorization` belongs to the guest: `amikad`, for
+one, authenticates SSH clients with it. hostd checks the key before it reads
+the path or the body, answering a missing or wrong key with `401`, and never
+forwards the header. A request that also sends the key as `Authorization`
+(`Bearer <key>` or bare) gets `400`, so the key cannot reach a guest through a
+misconfigured caller. An unknown service, a machine that does not exist or is
+not running, and an unpublished port all answer `404`. A stopped machine's VM
+releases its host port, which another machine or process may then bind, so
+only a running machine's mapping is trusted. The `@amika/sandbox` provider
+returns service URLs of this shape that never expire; a URL is no credential
+by itself.
 
 This is how Amika SSH reaches a hostd machine. The provider declares the
 `services` capability, so the control plane exposes `amikad`'s port (60999) at
-create and `amika sandbox ssh` opens its WebSocket at the signed `amikad`
-URL. `amikad` authenticates the connect token and bridges to the guest's
-loopback `sshd`, so SSH options such as `-L` and `-D` port forwarding work.
-Service URLs are only as public as the host's registered URL; the control plane
-requires an `https` one for SSH.
+create, and `amikad` authenticates the connect token and bridges to the
+guest's loopback `sshd`. Since only the control plane holds the key, users'
+own clients (`amika sandbox ssh`, browsers) reach hostd services only through
+the control plane.
 
 ## Authentication
 
-Every route except the signed service routes above, including `/health` and
-unknown paths, requires `Authorization: Bearer <secret key>` (the scheme the Amika CLI uses for API
+Every route except the service routes above, which take the key in
+`X-Amika-Hostd-Key`, including `/health` and unknown paths, requires
+`Authorization: Bearer <secret key>` (the scheme the Amika CLI uses for API
 credentials). `src/internal/auth.ts` reads it the same way as amika-mono's
 worker auth (`checkWorkerAuth`): strip a leading `Bearer` scheme, trim, compare
 in constant time, and answer a mismatch with a plain `401`. It runs before the body

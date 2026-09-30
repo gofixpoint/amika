@@ -458,7 +458,9 @@ async function serveInForeground(
     if (smolvm) {
       runtime = await startSmolvm(config, paths, deps, interrupted.signal);
     }
-    if (!interrupted.signal.aborted) server = await listen(config, deps);
+    if (!interrupted.signal.aborted) {
+      server = await listen(config, paths.servicesFile, deps);
+    }
     // Signalled during startup: stop without telling `up` it is ready.
     if (server === undefined || interrupted.signal.aborted) {
       await stopAll();
@@ -516,10 +518,13 @@ async function startSmolvm(
 
 async function listen(
   config: HostdConfigWith<"secretKey">,
+  servicesFile: string,
   deps: CliDeps,
 ): Promise<RunningServer> {
   try {
-    return await (deps.startServer ?? startServerOnPort)(config);
+    return await (deps.startServer ?? startServerOnPort)(config, {
+      servicesFile,
+    });
   } catch (error) {
     throw new DaemonError(
       `cannot listen on ${config.host}:${config.port}: ${errorCode(error)}`,

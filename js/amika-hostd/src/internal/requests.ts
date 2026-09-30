@@ -18,14 +18,22 @@ export const createMachineSchema = z.strictObject({
   storageGb: z.number().int().positive().optional(),
   network: z.boolean().default(true),
   env: envSchema.optional(),
-  // Guest ports to reach through `/services/...`. hostd, not the caller,
-  // picks the host side, so a caller can never bind an arbitrary host port.
-  ports: z
-    .array(z.strictObject({ guest: z.number().int().min(1).max(65_535) }))
+  // Named guest ports reached through `/rigs/<machine>/services/<name>/...`.
+  // hostd, not the caller, picks the host side of each, so a caller can never
+  // bind an arbitrary host port. Several names may share a port. Names are
+  // Amika's, which allow any text; routes carry them percent-encoded.
+  services: z
+    .array(
+      z.strictObject({
+        name: z.string().min(1).max(300),
+        port: z.number().int().min(1).max(65_535),
+      }),
+    )
     .max(16)
     .refine(
-      (ports) => new Set(ports.map((p) => p.guest)).size === ports.length,
-      "duplicate guest port",
+      (services) =>
+        new Set(services.map((s) => s.name)).size === services.length,
+      "duplicate service name",
     )
     .optional(),
 });
