@@ -167,9 +167,11 @@ export function parseServicePath(pathname: string): ServiceRoute | null {
   return { machine: match[1], service, path: match[3] ?? "/" };
 }
 
-const machinePortsSchema = z.object({
+export const machinePortsSchema = z.object({
   state: z.string(),
-  ports: z.array(z.object({ host: z.number().int(), guest: z.number().int() })),
+  ports: z
+    .array(z.object({ host: z.number().int(), guest: z.number().int() }))
+    .default([]),
 });
 
 /**

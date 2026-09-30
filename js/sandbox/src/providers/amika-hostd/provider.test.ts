@@ -410,6 +410,32 @@ describe("amika-hostd services", () => {
     expect(runtime.mock.calls[3][0]).toBe("http://127.0.0.1:40001/");
   });
 
+  it("routes a renamed service by its new name, and a removed one not at all", async () => {
+    const { app, provider } = harness([
+      json(MACHINE, 201),
+      json({}),
+      json(PUBLISHED), // rename: hostd checks the ports are published
+      json(PUBLISHED), // the new name routes
+      json({ ok: true }),
+      json(PUBLISHED), // revoke: the remaining set
+    ]);
+    const key = { [HOSTD_SERVICE_KEY_HEADER]: SECRET };
+    await provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] });
+    const services = provider.sandboxes.get("demo").services!;
+    const site = { ...WEB, name: "site" };
+    const { services: renamed } = await services.load([site, AMIKAD]).refresh();
+    expect(renamed[0].url).toBe(
+      "http://127.0.0.1:3020/rigs/demo/services/site/",
+    );
+    const route = (name: string) =>
+      app.request(`/rigs/demo/services/${name}/`, { headers: key });
+    expect((await route("web")).status).toBe(404);
+    expect((await route("site")).status).toBe(200);
+
+    await services.load([site, AMIKAD]).get(3000)!.revoke();
+    expect((await route("site")).status).toBe(404);
+  });
+
   it("names every port of a multi-port service distinctly", () => {
     expect(
       hostdServiceRoutes([
@@ -424,6 +450,23 @@ describe("amika-hostd services", () => {
       { name: "web-3002", port: 3002 },
       { name: "amikad", port: 60999 },
     ]);
+  });
+
+  it.each([
+    [
+      "a generated name that collides with a real one",
+      [
+        WEB,
+        { ...WEB, containerPort: 3001 },
+        { ...WEB, name: "web-3001", containerPort: 4000 },
+      ],
+      'two services as "web-3001"',
+    ],
+    ["a dot-segment name", [{ ...WEB, name: ".." }], 'named ".."'],
+  ])("refuses %s rather than misroute", (_label, services, message) => {
+    expect(() => hostdServiceRoutes(services as SandboxService[])).toThrow(
+      message,
+    );
   });
 
   it("reconciles only to ports published at create", async () => {

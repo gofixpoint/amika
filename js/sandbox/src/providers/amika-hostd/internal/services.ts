@@ -13,11 +13,7 @@ import {
   type RefreshUrlsResult,
 } from "../../provider";
 import type { SandboxService } from "../../../types";
-import {
-  machinePath,
-  machineSchema,
-  type SmolClient,
-} from "../../smol/provider";
+import { machinePath, type SmolClient } from "../../smol/provider";
 
 /** The header carrying the host's secret key on service routes. */
 export const HOSTD_SERVICE_KEY_HEADER = "X-Amika-Hostd-Key";
@@ -45,26 +41,20 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
       };
     },
     /**
-     * smolvm publishes ports only when a machine is created, so there are no
-     * routes to add or remove later. A route to a port that was not published
-     * could never work, so reconciling to one fails rather than recording a
-     * dead URL.
+     * Replace hostd's name-to-port map with `desired`, so services added,
+     * renamed or removed after create route (or stop routing) by name.
+     * smolvm publishes ports only at create, so hostd refuses a port it did
+     * not publish rather than record a dead URL.
      */
     syncRoutes: async (id: string, desired: SandboxService[]) => {
       // As at create: hostd routes HTTP and TCP upgrades, never UDP.
       if (desired.some((service) => service.protocol !== "tcp")) {
         throw new SandboxProviderUnsupportedError("amika-hostd", "services");
       }
-      const { ports = [] } = await client.json(machinePath(id), machineSchema);
-      const published = new Set(ports.map((port) => port.guest));
-      const missing = desired
-        .map((service) => service.containerPort)
-        .filter((port) => !published.has(port));
-      if (missing.length) {
-        throw new Error(
-          `amika-hostd publishes service ports only at create; machine ${id} does not publish ${[...new Set(missing)].join(", ")}`,
-        );
-      }
+      const routes = hostdServiceRoutes(desired);
+      await client.discard(`${machinePath(id)}/services`, "PUT", {
+        services: [...new Map(routes.map((r) => [r.name, r])).values()],
+      });
     },
   };
 }
@@ -73,11 +63,19 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
  * The name hostd routes each service by, in input order. A service is
  * routed by its own name, except that a service declaring several ports
  * keeps its name for the lowest one and gets `<name>-<port>` for the rest,
- * since hostd needs one name per port.
+ * since hostd needs one name per port. Throws for a name no URL can carry
+ * (`.` and `..` are dot segments, even percent-encoded) and for two routes
+ * that would share a name, e.g. `web` on 3001 and a service `web-3001`.
  */
 export function hostdServiceRoutes(
   services: SandboxService[],
 ): { name: string; port: number }[] {
+  const dotted = services.find((s) => s.name === "." || s.name === "..");
+  if (dotted) {
+    throw new Error(
+      `amika-hostd cannot route a service named ${JSON.stringify(dotted.name)}`,
+    );
+  }
   const lowest = new Map<string, number>();
   for (const { name, containerPort } of services) {
     lowest.set(
@@ -85,9 +83,19 @@ export function hostdServiceRoutes(
       Math.min(lowest.get(name) ?? containerPort, containerPort),
     );
   }
-  return services.map(({ name, containerPort }) => ({
+  const routes = services.map(({ name, containerPort }) => ({
     name:
       lowest.get(name) === containerPort ? name : `${name}-${containerPort}`,
     port: containerPort,
   }));
+  const ports = new Map<string, number>();
+  for (const { name, port } of routes) {
+    if ((ports.get(name) ?? port) !== port) {
+      throw new Error(
+        `amika-hostd would route two services as ${JSON.stringify(name)}; rename one`,
+      );
+    }
+    ports.set(name, port);
+  }
+  return routes;
 }

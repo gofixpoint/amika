@@ -524,6 +524,8 @@ describe("services at create", () => {
     ],
     [[{ name: "web", port: 0 }]],
     [[{ name: "", port: 3000 }]],
+    [[{ name: ".", port: 3000 }]],
+    [[{ name: "..", port: 3000 }]],
     [[{ name: "x".repeat(301), port: 3000 }]],
     [[{ name: "web", port: 3000, host: 22 }]],
     [Array.from({ length: 17 }, (_, i) => ({ name: `s${i}`, port: 3000 + i }))],
@@ -539,6 +541,85 @@ describe("services at create", () => {
       expect(fetcher).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("replacing a machine's services", () => {
+  const MACHINE = {
+    name: "demo",
+    state: "running",
+    ports: [
+      { host: 41001, guest: 3000 },
+      { host: 41002, guest: 60999 },
+    ],
+  };
+
+  function replacing(machine: Response) {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(machine);
+    const registry = memoryServiceRegistry();
+    registry.set("demo", { web: 3000, amikad: 60999 });
+    const app = authenticated(
+      createApp({ secretKey: SECRET, apiUrl: "http://runtime:8080" }, fetcher, {
+        registry,
+      }),
+    );
+    const put = (services: unknown) =>
+      app.request(`${ROOT}/demo/services`, {
+        ...json({ services }),
+        method: "PUT",
+      });
+    return { put, registry, fetcher };
+  }
+
+  it("renames, adds and removes names on published ports", async () => {
+    const { put, registry } = replacing(Response.json(MACHINE));
+    const response = await put([
+      { name: "site", port: 3000 },
+      { name: "site-admin", port: 3000 },
+    ]);
+    expect(response.status).toBe(204);
+    expect(registry.port("demo", "site")).toBe(3000);
+    expect(registry.port("demo", "site-admin")).toBe(3000);
+    expect(registry.port("demo", "web")).toBeUndefined();
+    expect(registry.port("demo", "amikad")).toBeUndefined();
+  });
+
+  it("refuses a port smolvm did not publish, keeping the old names", async () => {
+    const { put, registry } = replacing(Response.json(MACHINE));
+    const response = await put([{ name: "api", port: 4000 }]);
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("does not publish 4000");
+    expect(registry.port("demo", "web")).toBe(3000);
+  });
+
+  it("passes on the runtime's 404 for an unknown machine", async () => {
+    const { put, registry } = replacing(
+      Response.json({ error: "nope" }, { status: 404 }),
+    );
+    expect((await put([{ name: "web", port: 3000 }])).status).toBe(404);
+    expect(registry.port("demo", "web")).toBe(3000);
+  });
+
+  it("validates the services before calling the runtime", async () => {
+    const { put, fetcher } = replacing(Response.json(MACHINE));
+    expect((await put([{ name: "..", port: 3000 }])).status).toBe(400);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("requires the bearer secret like the rest of the machine API", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const app = createApp({ secretKey: SECRET }, fetcher);
+    const response = await app.request(`${ROOT}/demo/services`, {
+      method: "PUT",
+      headers: {
+        "X-Amika-Hostd-Key": SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ services: [] }),
+    });
+    expect(response.status).toBe(401);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });
 
 describe("service routes", () => {

@@ -253,6 +253,8 @@ the host's secret key; hostd checks the key and routes
 - Create takes `services: [{ name, port }]`. hostd publishes the ports through
   smolvm and keeps each machine's name-to-port map in `services.json`
   (`src/internal/service-registry.ts`), since smolvm stores no names.
+  `PUT /api/v1/machines/<name>/services` replaces the map later (the
+  provider's `syncRoutes`), on ports published at create.
 
 ## Authentication
 

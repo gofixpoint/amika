@@ -7,6 +7,28 @@ const envSchema = z.array(
   z.strictObject({ name: z.string().min(1), value: z.string() }),
 );
 
+// Named guest ports reached through `/rigs/<machine>/services/<name>/...`.
+// hostd, not the caller, picks the host side of each, so a caller can never
+// bind an arbitrary host port. Several names may share a port. Names are
+// Amika's, which allow any text; routes carry them percent-encoded.
+const servicesSchema = z
+  .array(
+    z.strictObject({
+      // `.` and `..` are dot segments, which no URL can carry as a name.
+      name: z
+        .string()
+        .min(1)
+        .max(300)
+        .refine((name) => name !== "." && name !== ".."),
+      port: z.number().int().min(1).max(65_535),
+    }),
+  )
+  .max(16)
+  .refine(
+    (services) => new Set(services.map((s) => s.name)).size === services.length,
+    "duplicate service name",
+  );
+
 export const createMachineSchema = z.strictObject({
   name: nameSchema,
   image: z.string().trim().min(1),
@@ -18,24 +40,12 @@ export const createMachineSchema = z.strictObject({
   storageGb: z.number().int().positive().optional(),
   network: z.boolean().default(true),
   env: envSchema.optional(),
-  // Named guest ports reached through `/rigs/<machine>/services/<name>/...`.
-  // hostd, not the caller, picks the host side of each, so a caller can never
-  // bind an arbitrary host port. Several names may share a port. Names are
-  // Amika's, which allow any text; routes carry them percent-encoded.
-  services: z
-    .array(
-      z.strictObject({
-        name: z.string().min(1).max(300),
-        port: z.number().int().min(1).max(65_535),
-      }),
-    )
-    .max(16)
-    .refine(
-      (services) =>
-        new Set(services.map((s) => s.name)).size === services.length,
-      "duplicate service name",
-    )
-    .optional(),
+  services: servicesSchema.optional(),
+});
+
+/** A machine's full service set, replacing the one it was created with. */
+export const replaceServicesSchema = z.strictObject({
+  services: servicesSchema,
 });
 
 /**

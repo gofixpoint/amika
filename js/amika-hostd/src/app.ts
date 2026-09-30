@@ -10,6 +10,7 @@ import {
   execSchema,
   filePath,
   machinePath,
+  replaceServicesSchema,
   resolveImage,
 } from "./internal/requests.js";
 import {
@@ -17,6 +18,7 @@ import {
   SERVICE_KEY_HEADER,
   authorizeServiceRequest,
   freeLoopbackPort,
+  machinePortsSchema,
   parseServicePath,
   resolveHostPort,
   stripHopByHopHeaders,
@@ -114,6 +116,32 @@ export function createApp(
     const response = await runtime.request(machinePath(name), "DELETE");
     if (response.ok || response.status === 404) registry.remove(name);
     return response;
+  });
+  // Services can be added, renamed and removed after create, but only on
+  // ports smolvm published then: it cannot publish more later.
+  app.put(`${machines}/:name/services`, async (c) => {
+    const name = c.req.param("name");
+    const { services } = replaceServicesSchema.parse(await c.req.json());
+    const response = await runtime.request(machinePath(name));
+    if (!response.ok) return response;
+    const { ports } = machinePortsSchema.parse(await response.json());
+    const published = new Set(ports.map((port) => port.guest));
+    const missing = [
+      ...new Set(services.map((s) => s.port).filter((p) => !published.has(p))),
+    ];
+    if (missing.length) {
+      return c.json(
+        {
+          error: `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
+        },
+        409,
+      );
+    }
+    registry.set(
+      name,
+      Object.fromEntries(services.map((s) => [s.name, s.port])),
+    );
+    return c.body(null, 204);
   });
   for (const action of ["start", "stop"] as const) {
     app.post(`${machines}/:name/${action}`, (c) =>
