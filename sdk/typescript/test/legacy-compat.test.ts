@@ -8,18 +8,15 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { AmikaClient } from "@/client";
-import type {
-  AgentSessionSendResponse,
-  AgentSessionSummary,
-} from "@/agent-sessions";
+import type { AmikaClient } from "@/index";
+import type { AgentSessionSendResponse, AgentSessionSummary } from "@/index";
 import type {
   CreateSandboxSnapshotRequest,
   RemoteSandbox,
   SandboxServiceResource,
   SandboxSnapshot,
   Session,
-} from "@/types";
+} from "@/index";
 
 const sandbox: RemoteSandbox = {
   id: "sbx_1",

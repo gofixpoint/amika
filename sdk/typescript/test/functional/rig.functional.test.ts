@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import type { AmikaClient } from "@/client";
-import { AmikaHTTPError } from "@/errors";
-import type { AgentCredentialRef, RemoteRig } from "@/types";
+import type { AmikaClient } from "@/index";
+import { AmikaHTTPError } from "@/index";
+import type { AgentCredentialRef, RemoteRig } from "@/index";
 
 import {
   describeFunctional,

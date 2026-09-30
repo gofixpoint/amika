@@ -1,8 +1,8 @@
 import { afterAll, describe } from "vitest";
 
-import { AmikaClient } from "@/client";
+import { AmikaClient } from "@/index";
 import { assertNotProdUrl } from "./prod-guard";
-import type { AgentCredentialRef, CreateRigRequest, RemoteRig } from "@/types";
+import type { AgentCredentialRef, CreateRigRequest, RemoteRig } from "@/index";
 
 /**
  * Required env vars to enable functional tests:

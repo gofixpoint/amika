@@ -17,8 +17,8 @@
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { AmikaClient } from "@/client";
-import type { RemoteRig } from "@/types";
+import { AmikaClient } from "@/index";
+import type { RemoteRig } from "@/index";
 
 import {
   LONG_TIMEOUT_MS,
