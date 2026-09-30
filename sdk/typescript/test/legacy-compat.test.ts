@@ -256,17 +256,22 @@ describe("pre-rig literals still satisfy the sandbox-named types", () => {
     expect(withRigFields.providerRigId).toBeNull();
   });
 
-  // The deprecated methods are declared with the legacy types for this reason:
-  // a stand-in built from these fixtures has to satisfy the real method
-  // signature, and a relaxed legacy shape is not assignable to the strict rig
-  // type. Declaring them with `Rig*` return types would break this.
-  it("lets a hand-built stand-in satisfy the deprecated method signatures", async () => {
+  // Data fixtures remain compatible. Resource-returning methods now require
+  // wait/delete too, just like their rig-named counterparts.
+  it("lets a stand-in combine legacy data with resource operations", async () => {
+    const resource = {
+      ...sandbox,
+      wait: async () => {
+        throw new Error("not used by this fixture");
+      },
+      delete: async () => {},
+    };
     const stub: Pick<
       AmikaClient,
       "listSandboxes" | "getSandbox" | "listSandboxSnapshots"
     > = {
-      listSandboxes: () => Promise.resolve([sandbox]),
-      getSandbox: () => Promise.resolve(sandbox),
+      listSandboxes: () => Promise.resolve([resource]),
+      getSandbox: () => Promise.resolve(resource),
       listSandboxSnapshots: () => Promise.resolve([snapshot]),
     };
 

@@ -12,6 +12,7 @@ import {
 } from "@/agent-sessions";
 import { AmikaError, AmikaHTTPError } from "@/errors";
 import { HTTPClient } from "@/http";
+import { createRigResource, type Rig, type Sandbox } from "@/rig";
 import { StaticTokenSource, type TokenSource } from "@/token";
 import {
   type AgentSendRequest,
@@ -61,15 +62,16 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const AGENT_SEND_TIMEOUT_MS = 10 * 60 * 1000;
 const WAIT_POLL_INTERVAL_MS = 3_000;
 
-export interface AmikaClientOptions {
+/** Exactly one credential source is required. API keys are preferred for scripts. */
+export type AmikaClientOptions = {
   baseUrl: string;
-  /** Static access token. Mutually exclusive with `tokenSource`. */
-  accessToken?: string;
-  /** Custom token source. Mutually exclusive with `accessToken`. */
-  tokenSource?: TokenSource;
   /** Override `fetch` for testing or runtime polyfills. */
   fetch?: typeof fetch;
-}
+} & (
+  | { apiKey: string; accessToken?: never; tokenSource?: never }
+  | { apiKey?: never; accessToken: string; tokenSource?: never }
+  | { apiKey?: never; accessToken?: never; tokenSource: TokenSource }
+);
 
 /**
  * AmikaClient calls the remote Amika API with a bearer token. Inputs, return
@@ -86,11 +88,9 @@ export interface AmikaClientOptions {
  * `/rig-snapshots` alongside their `sandbox` originals, so the requests the
  * SDK issues are rig-named throughout.
  *
- * A deprecated method is declared with the legacy sandbox-named types, not the
- * rig ones it forwards to. The decoded value satisfies both, but only the
- * legacy declaration lets an existing mock (a `Pick<AmikaClient, "getSandbox">`
- * returning a hand-built `RemoteSandbox`) still type-check, since a relaxed
- * legacy shape is not assignable to the strict rig type.
+ * Rig results include wait() and delete(). The RemoteRig/RemoteSandbox types
+ * remain plain data shapes; mocks of resource-returning methods must supply
+ * those operations as well.
  */
 export class AmikaClient {
   private readonly http: HTTPClient;
@@ -107,29 +107,27 @@ export class AmikaClient {
 
   // ---------- Rigs ----------
 
-  async listRigs(): Promise<RemoteRig[]> {
+  async listRigs(): Promise<Rig[]> {
     const data = await this.http.doJSON<unknown[]>(
       "GET",
       `${API_BASE_PATH}/rigs`,
     );
-    return mapArray(data, remoteRigFromWire);
+    return mapArray(data, remoteRigFromWire).map((rig) =>
+      this.rigResource(rig),
+    );
   }
 
-  async createRig(req: CreateRigRequest): Promise<RemoteRig> {
+  async createRig(req: CreateRigRequest): Promise<Rig> {
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
       `${API_BASE_PATH}/rigs`,
       createRigRequestToWire(req),
     );
-    return remoteRigFromWire(data ?? {});
+    return this.rigResource(remoteRigFromWire(data ?? {}));
   }
 
-  async getRig(name: string): Promise<RemoteRig> {
-    const data = await this.http.doJSON<Record<string, unknown>>(
-      "GET",
-      `${API_BASE_PATH}/rigs/${encodeURIComponent(name)}`,
-    );
-    return remoteRigFromWire(data ?? {});
+  async getRig(name: string): Promise<Rig> {
+    return this.rigResource(await this.fetchRig(name));
   }
 
   /**
@@ -186,17 +184,17 @@ export class AmikaClient {
   }
 
   /** @deprecated Use {@link AmikaClient.listRigs}. */
-  listSandboxes(): Promise<RemoteSandbox[]> {
+  listSandboxes(): Promise<Sandbox[]> {
     return this.listRigs();
   }
 
   /** @deprecated Use {@link AmikaClient.createRig}. */
-  createSandbox(req: CreateSandboxRequest): Promise<RemoteSandbox> {
+  createSandbox(req: CreateSandboxRequest): Promise<Sandbox> {
     return this.createRig(req);
   }
 
   /** @deprecated Use {@link AmikaClient.getRig}. */
-  getSandbox(name: string): Promise<RemoteSandbox> {
+  getSandbox(name: string): Promise<Sandbox> {
     return this.getRig(name);
   }
 
@@ -661,18 +659,53 @@ export class AmikaClient {
     );
     return agentSessionDetailFromWire(data ?? {});
   }
+
+  private rigResource(data: RemoteRig): Rig {
+    return createRigResource(data, {
+      get: (ref, signal) => this.fetchRig(ref, signal),
+      delete: (ref) => this.deleteRig(ref),
+    });
+  }
+
+  private async fetchRig(
+    ref: string,
+    signal?: AbortSignal,
+  ): Promise<RemoteRig> {
+    const data = await this.http.doJSON<Record<string, unknown>>(
+      "GET",
+      `${API_BASE_PATH}/rigs/${encodeURIComponent(ref)}`,
+      undefined,
+      { signal },
+    );
+    return remoteRigFromWire(data ?? {});
+  }
 }
 
 function resolveTokenSource(options: AmikaClientOptions): TokenSource {
-  if (options.tokenSource && options.accessToken !== undefined) {
-    throw new Error(
-      "AmikaClient: pass either accessToken or tokenSource, not both",
+  const sources = [options.apiKey, options.accessToken, options.tokenSource];
+  if (sources.filter((source) => source !== undefined).length !== 1) {
+    throw new AmikaError(
+      "AmikaClient: provide exactly one of apiKey, accessToken, or tokenSource",
     );
   }
-  if (options.tokenSource) return options.tokenSource;
-  if (options.accessToken !== undefined)
-    return new StaticTokenSource(options.accessToken);
-  throw new Error("AmikaClient: accessToken or tokenSource is required");
+  if (options.tokenSource !== undefined) {
+    if (
+      !options.tokenSource ||
+      typeof options.tokenSource.token !== "function"
+    ) {
+      throw new AmikaError(
+        "AmikaClient: tokenSource must provide a token() method",
+      );
+    }
+    return options.tokenSource;
+  }
+  const token = options.apiKey ?? options.accessToken;
+  if (typeof token !== "string" || token.trim().length === 0) {
+    throw new AmikaError(
+      "AmikaClient: apiKey or accessToken must be a non-empty string",
+    );
+  }
+  return new StaticTokenSource(token);
 }
 
 async function waitForRigState(

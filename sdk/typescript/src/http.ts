@@ -11,6 +11,8 @@ export interface HTTPClientOptions {
 }
 
 export interface RequestOptions {
+  /** Cancel the request, including reading its response body. */
+  signal?: AbortSignal;
   /** Override the default timeout for a single request. */
   timeoutMs?: number;
 }
@@ -140,8 +142,15 @@ export class HTTPClient {
 
     const timeoutMs = requestOptions?.timeoutMs ?? this.defaultTimeoutMs;
     const controller = new AbortController();
+    const signal = requestOptions?.signal;
+    const abort = () => controller.abort(signal?.reason);
+    signal?.throwIfAborted();
+    signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const release = () => clearTimeout(timer);
+    const release = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    };
 
     let response: Response;
     try {
