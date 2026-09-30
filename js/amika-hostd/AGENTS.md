@@ -2,8 +2,9 @@
 
 `@amika/hostd` is a standalone Node.js service built with Hono. It will manage
 local VMs and make them accessible through the Amika control plane. The current
-daemon serves `GET /health`, a Smol-compatible `/api/v1/machines` API,
-`/rigs/<machine>/services/<name>/...` routes to machines' named services, and
+daemon serves `GET /health`, the versioned rig API under `/v0beta1/rigs`
+(machines and their named services), the Smol-compatible `/api/v1/machines`
+API for older control planes, and
 registers itself with the Amika control plane when started with `up`. `up`
 also starts the `smolvm serve` process the API forwards to, and `down` stops
 both.
@@ -226,7 +227,7 @@ amika-coder = "ghcr.io/gofixpoint/amika-coder:<12-char sha>"
 amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:<12-char sha>"
 ```
 
-On `POST /api/v1/machines`, `resolveImage` (`src/internal/requests.ts`) swaps
+On create (`POST /v0beta1/rigs`), `resolveImage` (`src/internal/requests.ts`) swaps
 a configured name for its reference before forwarding to smolvm. An `image`
 containing `/` or `:` is taken as a full reference and forwarded unchanged,
 for development. Any other name is refused with a `400` naming the config file
@@ -244,7 +245,7 @@ user ──▶ amika server (control plane) ──▶ ngrok ──▶ amika-host
 
 Only the amika server calls hostd. It authenticates users itself and sends
 the host's secret key; hostd checks the key and routes
-`/rigs/<machine>/services/<name>/<path>` to that machine's service, over HTTP
+`/v0beta1/rigs/<machine>/services/<name>/<path>` to that machine's service, over HTTP
 (`fetch`) or a piped WebSocket upgrade.
 
 - The key goes in `X-Amika-Hostd-Key`, since `Authorization` belongs to the
@@ -253,8 +254,18 @@ the host's secret key; hostd checks the key and routes
 - Create takes `services: [{ name, port }]`. hostd publishes the ports through
   smolvm and keeps each machine's name-to-port map in `services.json`
   (`src/internal/service-registry.ts`), since smolvm stores no names.
-  `PUT /api/v1/machines/<name>/services` replaces the map later (the
+  `PUT /v0beta1/rigs/<name>/services` replaces the map later (the
   provider's `syncRoutes`), on ports published at create.
+
+## API versions
+
+hostd and the control plane upgrade independently, so hostd's API is
+versioned. `/v0beta1/rigs` is the current API: the machine routes (create,
+get, delete, start, stop, exec, files, services) and the service routes.
+`GET /health` lists the versions served (`{ "status": "ok", "apis":
+["v0beta1"] }`). `/api/v1/machines` serves the same machine routes, without
+service routes, for control planes on providers from before `v0beta1`; remove
+it once none are deployed. Change a version's contract only in a new version.
 
 ## Authentication
 

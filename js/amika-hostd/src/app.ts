@@ -14,7 +14,6 @@ import {
   resolveImage,
 } from "./internal/requests.js";
 import {
-  RIGS_PREFIX,
   SERVICE_KEY_HEADER,
   authorizeServiceRequest,
   freeLoopbackPort,
@@ -31,7 +30,7 @@ import {
 export interface AppConfig extends SmolRuntimeConfig {
   /**
    * Every request must present this: as a bearer token, or in
-   * `X-Amika-Hostd-Key` on `/rigs/.../services/...` routes, whose
+   * `X-Amika-Hostd-Key` on `/v0beta1/rigs/.../services/...` routes, whose
    * `Authorization` belongs to the guest.
    */
   secretKey: string;
@@ -59,7 +58,6 @@ export function createApp(
 ) {
   const runtime = new SmolRuntime(runtimeConfig, fetcher);
   const app = new Hono();
-  const machines = "/api/v1/machines";
 
   app.onError((error, c) => {
     if (error instanceof HTTPException) return error.getResponse();
@@ -75,102 +73,128 @@ export function createApp(
   // handler before it touches the body (see `./internal/services.ts`).
   const checkSecretKey = requireSecretKey(secretKey);
   app.use("*", (c, next) =>
-    c.req.path.startsWith(RIGS_PREFIX) ? next() : checkSecretKey(c, next),
+    parseServicePath(c.req.path) ? next() : checkSecretKey(c, next),
   );
-  app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
-  app.get("/health", (c) => c.json({ status: "ok" }));
-  app.get(machines, () => runtime.request(""));
-  app.post(machines, async (c) => {
-    const input = createMachineSchema.parse(await c.req.json());
-    const { services, ...machine } = input;
-    const image = resolveImage(machine.image, images, configPath);
-    const guestPorts = [...new Set(services?.map((s) => s.port))];
-    const ports =
-      services &&
-      (await Promise.all(
-        guestPorts.map(async (guest) => ({
-          host: await allocatePort(),
-          guest,
-        })),
-      ));
-    const response = await runtime.request("", "POST", {
-      ...machine,
-      image,
-      ports,
-    });
-    // Record names only for a machine that now exists, replacing any a
-    // deleted machine of the same name left behind.
-    if (response.ok) {
-      registry.set(
-        machine.name,
-        Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
-      );
-    }
-    return response;
-  });
-  app.get(`${machines}/:name`, (c) =>
-    runtime.request(machinePath(c.req.param("name"))),
-  );
-  app.delete(`${machines}/:name`, async (c) => {
-    const name = c.req.param("name");
-    const response = await runtime.request(machinePath(name), "DELETE");
-    if (response.ok || response.status === 404) registry.remove(name);
-    return response;
-  });
-  // Services can be added, renamed and removed after create, but only on
-  // ports smolvm published then: it cannot publish more later.
-  app.put(`${machines}/:name/services`, async (c) => {
-    const name = c.req.param("name");
-    const { services } = replaceServicesSchema.parse(await c.req.json());
-    const response = await runtime.request(machinePath(name));
-    if (!response.ok) return response;
-    const { ports } = machinePortsSchema.parse(await response.json());
-    const published = new Set(ports.map((port) => port.guest));
-    const missing = [
-      ...new Set(services.map((s) => s.port).filter((p) => !published.has(p))),
-    ];
-    if (missing.length) {
-      return c.json(
-        {
-          error: `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
-        },
-        409,
-      );
-    }
-    registry.set(
-      name,
-      Object.fromEntries(services.map((s) => [s.name, s.port])),
-    );
-    return c.body(null, 204);
-  });
-  for (const action of ["start", "stop"] as const) {
-    app.post(`${machines}/:name/${action}`, (c) =>
-      runtime.request(`${machinePath(c.req.param("name"))}/${action}`, "POST"),
-    );
-  }
-  app.post(`${machines}/:name/exec`, async (c) =>
-    runtime.request(
-      `${machinePath(c.req.param("name"))}/exec`,
-      "POST",
-      execSchema.parse(await c.req.json()),
-    ),
-  );
-  app.get(`${machines}/:name/files/*`, (c) =>
-    runtime.request(filePath(c.req.param("name"), c.req.path)),
-  );
-  app.put(`${machines}/:name/files/*`, async (c) => {
-    const path = filePath(c.req.param("name"), c.req.path);
-    return runtime.request(
-      path,
-      "PUT",
-      new Uint8Array(await c.req.arrayBuffer()),
-    );
-  });
-  app.all(`${RIGS_PREFIX}*`, (c) =>
+  // `apis` names the versioned APIs this daemon serves, so a control plane
+  // can tell what a host speaks before relying on it.
+  app.get("/health", (c) => c.json({ status: "ok", apis: [API_VERSION] }));
+  // Service routes are registered first, so `/<rig>/services/<name>/...`
+  // never falls through to a machine route.
+  app.all(`${RIGS_ROUTE}/:name/services/:service/*`, (c) =>
     proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
   );
+  app.all(`${RIGS_ROUTE}/:name/services/:service`, (c) =>
+    proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
+  );
+  // The machine API, at its versioned path and at the unversioned path
+  // control planes on providers older than `v0beta1` still call.
+  for (const machines of [RIGS_ROUTE, LEGACY_MACHINES_ROUTE]) {
+    machineRoutes(machines);
+  }
   return app;
+
+  function machineRoutes(machines: string) {
+    app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
+    app.get(machines, () => runtime.request(""));
+    app.post(machines, async (c) => {
+      const input = createMachineSchema.parse(await c.req.json());
+      const { services, ...machine } = input;
+      const image = resolveImage(machine.image, images, configPath);
+      const guestPorts = [...new Set(services?.map((s) => s.port))];
+      const ports =
+        services &&
+        (await Promise.all(
+          guestPorts.map(async (guest) => ({
+            host: await allocatePort(),
+            guest,
+          })),
+        ));
+      const response = await runtime.request("", "POST", {
+        ...machine,
+        image,
+        ports,
+      });
+      // Record names only for a machine that now exists, replacing any a
+      // deleted machine of the same name left behind.
+      if (response.ok) {
+        registry.set(
+          machine.name,
+          Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
+        );
+      }
+      return response;
+    });
+    app.get(`${machines}/:name`, (c) =>
+      runtime.request(machinePath(c.req.param("name"))),
+    );
+    app.delete(`${machines}/:name`, async (c) => {
+      const name = c.req.param("name");
+      const response = await runtime.request(machinePath(name), "DELETE");
+      if (response.ok || response.status === 404) registry.remove(name);
+      return response;
+    });
+    // Services can be added, renamed and removed after create, but only on
+    // ports smolvm published then: it cannot publish more later.
+    app.put(`${machines}/:name/services`, async (c) => {
+      const name = c.req.param("name");
+      const { services } = replaceServicesSchema.parse(await c.req.json());
+      const response = await runtime.request(machinePath(name));
+      if (!response.ok) return response;
+      const { ports } = machinePortsSchema.parse(await response.json());
+      const published = new Set(ports.map((port) => port.guest));
+      const missing = [
+        ...new Set(
+          services.map((s) => s.port).filter((p) => !published.has(p)),
+        ),
+      ];
+      if (missing.length) {
+        return c.json(
+          {
+            error: `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
+          },
+          409,
+        );
+      }
+      registry.set(
+        name,
+        Object.fromEntries(services.map((s) => [s.name, s.port])),
+      );
+      return c.body(null, 204);
+    });
+    for (const action of ["start", "stop"] as const) {
+      app.post(`${machines}/:name/${action}`, (c) =>
+        runtime.request(
+          `${machinePath(c.req.param("name"))}/${action}`,
+          "POST",
+        ),
+      );
+    }
+    app.post(`${machines}/:name/exec`, async (c) =>
+      runtime.request(
+        `${machinePath(c.req.param("name"))}/exec`,
+        "POST",
+        execSchema.parse(await c.req.json()),
+      ),
+    );
+    app.get(`${machines}/:name/files/*`, (c) =>
+      runtime.request(filePath(c.req.param("name"), c.req.path, machines)),
+    );
+    app.put(`${machines}/:name/files/*`, async (c) => {
+      const path = filePath(c.req.param("name"), c.req.path, machines);
+      return runtime.request(
+        path,
+        "PUT",
+        new Uint8Array(await c.req.arrayBuffer()),
+      );
+    });
+  }
 }
+
+/** The versioned API this daemon serves. */
+export const API_VERSION = "v0beta1";
+const RIGS_ROUTE = `/${API_VERSION}/rigs`;
+/** The Smol-compatible machine API, served until no control plane needs it. */
+const LEGACY_MACHINES_ROUTE = "/api/v1/machines";
 
 /**
  * Forward one HTTP request to a machine's published guest port. WebSocket

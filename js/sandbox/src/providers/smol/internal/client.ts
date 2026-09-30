@@ -22,8 +22,9 @@ export const execSchema = z.object({
 export class SmolApiError extends Error {
   constructor(
     readonly status: number,
-    method: string,
-    path: string,
+    readonly method: string,
+    /** Relative to the client's machines path; `""` is the collection. */
+    readonly path: string,
     /** The response body's `error` message, when it is safe to surface. */
     reason?: string,
   ) {
@@ -41,6 +42,8 @@ export class SmolClient {
   constructor(
     config: SmolConfig,
     private readonly fetcher = fetch,
+    /** Where the machine API lives: smolvm's path, or a compatible one. */
+    private readonly machinesPath = "/api/v1/machines",
   ) {
     const url = new URL(config.apiUrl ?? "http://127.0.0.1:8080");
     if (
@@ -69,7 +72,7 @@ export class SmolClient {
   ): Promise<Response> {
     const binary = Buffer.isBuffer(body);
     const response = await this.fetcher(
-      `${this.baseUrl}/api/v1/machines${path}`,
+      `${this.baseUrl}${this.machinesPath}${path}`,
       {
         method,
         headers:

@@ -7,7 +7,7 @@ const envSchema = z.array(
   z.strictObject({ name: z.string().min(1), value: z.string() }),
 );
 
-// Named guest ports reached through `/rigs/<machine>/services/<name>/...`.
+// Named guest ports reached through `/v0beta1/rigs/<machine>/services/<name>/...`.
 // hostd, not the caller, picks the host side of each, so a caller can never
 // bind an arbitrary host port. Several names may share a port. Names are
 // Amika's, which allow any text; routes carry them percent-encoded.
@@ -82,9 +82,14 @@ export function machinePath(name: string): string {
 }
 
 /** Decode once, validate, then encode each component for the upstream URL. */
-export function filePath(name: string, requestPath: string): string {
+export function filePath(
+  name: string,
+  requestPath: string,
+  machinesRoute: string,
+): string {
   const prefix = machinePath(name);
-  const encoded = requestPath.split("/").slice(6).join("/");
+  // Everything after `<machinesRoute>/<name>/files/`, still encoded.
+  const encoded = requestPath.slice(`${machinesRoute}${prefix}/files/`.length);
   let path: string;
   try {
     path = decodeURIComponent(encoded);

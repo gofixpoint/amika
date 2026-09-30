@@ -2,7 +2,7 @@
  * Service URLs for amika-hostd machines.
  *
  * hostd publishes each service's guest port when it creates the machine and
- * routes `/rigs/<machine>/services/<name>/...` to it, forwarding HTTP and
+ * routes `/v0beta1/rigs/<machine>/services/<name>/...` to it, forwarding HTTP and
  * WebSocket upgrades (see `js/amika-hostd/src/internal/services.ts`). Those
  * routes are reached only by the control plane, which presents the host's
  * secret key in `X-Amika-Hostd-Key` (`HOSTD_SERVICE_KEY_HEADER`), so a URL is
@@ -14,6 +14,14 @@ import {
 } from "../../provider";
 import type { SandboxService } from "../../../types";
 import { machinePath, type SmolClient } from "../../smol/provider";
+
+/**
+ * The versioned hostd API this provider speaks. hostd lists the versions it
+ * serves in `GET /health` (`apis`); its unversioned Smol-compatible
+ * `/api/v1/machines` remains only for control planes on older providers.
+ */
+export const HOSTD_API_VERSION = "v0beta1";
+export const HOSTD_RIGS_PATH = `/${HOSTD_API_VERSION}/rigs`;
 
 /** The header carrying the host's secret key on service routes. */
 export const HOSTD_SERVICE_KEY_HEADER = "X-Amika-Hostd-Key";
@@ -36,7 +44,7 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
       return {
         services: services.map((service, i) => ({
           ...service,
-          url: `${origin}/rigs/${id}/services/${encodeURIComponent(routes[i].name)}/`,
+          url: `${origin}${HOSTD_RIGS_PATH}/${id}/services/${encodeURIComponent(routes[i].name)}/`,
         })),
       };
     },
