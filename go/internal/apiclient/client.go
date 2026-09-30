@@ -99,6 +99,7 @@ type RemoteSandboxService struct {
 	HostPort      int    `json:"hostPort"`
 	ContainerPort int    `json:"containerPort"`
 	Protocol      string `json:"protocol"`
+	Kind          string `json:"kind,omitempty"`
 }
 
 // RemoteSandbox mirrors the API's Sandbox schema (see
@@ -112,6 +113,7 @@ type RemoteSandboxService struct {
 // emitted rather than the field being omitted; fields the schema marks
 // `required` are always present in the encoded output (no `omitempty`).
 // Non-required fields may use `omitempty`.
+// Optional slices use `omitzero` to retain explicit empty arrays.
 type RemoteSandbox struct {
 	// --- required fields (schema "required": always present, never omitted) ---
 
@@ -140,6 +142,7 @@ type RemoteSandbox struct {
 	SnapshotName             *string                   `json:"snapshot_name,omitempty"`
 	SandboxPreset            *string                   `json:"sandbox_preset,omitempty"`
 	SandboxSize              *string                   `json:"sandbox_size,omitempty"`
+	SandboxSizeConfig        json.RawMessage           `json:"sandbox_size_config,omitempty"`
 	GithubAuthMode           *string                   `json:"github_auth_mode,omitempty"`
 	GithubCredProvisioned    *bool                     `json:"github_credential_provisioned,omitempty"`
 	ErrorMessage             *string                   `json:"error_message,omitempty"`
@@ -147,12 +150,18 @@ type RemoteSandbox struct {
 	Status                   string                    `json:"status,omitempty"`
 	SetupStatus              *string                   `json:"setup_status,omitempty"`
 	URLsExpireAt             *string                   `json:"urls_expire_at,omitempty"`
-	SecretNames              []string                  `json:"secret_names,omitempty"`
-	MountedSecrets           []MountedSecret           `json:"mounted_secrets,omitempty"`
-	HasWorkflow              bool                      `json:"has_workflow,omitempty"`
-	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitempty"`
+	SecretNames              []string                  `json:"secret_names,omitzero"`
+	MountedSecrets           []MountedSecret           `json:"mounted_secrets,omitzero"`
+	ResolvedAgentCredentials []ResolvedAgentCredential `json:"resolved_agent_credentials,omitzero"`
 	CreatedBy                *RemoteSandboxCreator     `json:"created_by,omitempty"`
 	Origin                   *string                   `json:"origin,omitempty"`
+	// HostID identifies the BYOC machine; Hostname is the rig's own DNS name.
+	// Older servers may not return Hostname.
+	HostID           *string         `json:"host_id,omitempty"`
+	Hostname         *string         `json:"hostname,omitempty"`
+	AgentCWD         *string         `json:"agent_cwd,omitempty"`
+	SSHKeyStatus     string          `json:"ssh_key_status,omitempty"`
+	AgentCredentials json.RawMessage `json:"agent_credentials,omitempty"`
 }
 
 // RemoteSandboxCreator describes the human who created a remote sandbox, as
@@ -197,7 +206,7 @@ func (c *Client) CreateSandbox(req CreateSandboxRequest) (*RemoteSandbox, error)
 	return &result, nil
 }
 
-// GetSandbox fetches a single sandbox by name from the remote API.
+// GetSandbox fetches a single sandbox by name or ID from the remote API.
 func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
 	var result RemoteSandbox
 	if err := c.doJSON("GET", apiBasePath+"/sandboxes/"+url.PathEscape(name), nil, &result); err != nil {

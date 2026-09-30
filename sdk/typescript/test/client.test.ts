@@ -766,7 +766,7 @@ describe("AmikaClient rig decoding", () => {
       credentialType: "api_key",
       provider: "claude",
     });
-    expect(rig.hasWorkflow).toBe(true);
+    expect(rig).not.toHaveProperty("hasWorkflow");
     expect(rig.createdBy).toEqual({ name: "Jakub", email: null });
     expect(rig.origin).toBe("cli");
   });
@@ -795,7 +795,7 @@ describe("AmikaClient rig decoding", () => {
     expect(rig.services).toEqual([]);
     expect(rig.errorMessage).toBeUndefined();
     expect(rig.mountedSecrets).toBeUndefined();
-    expect(rig.hasWorkflow).toBe(false);
+    expect(rig).not.toHaveProperty("hasWorkflow");
   });
 
   it("sends github_auth_mode when createRig is given one", async () => {
