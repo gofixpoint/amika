@@ -30,7 +30,8 @@
     "formatcheck": "pnpm exec prettier --check .",
     "test": "vitest run",
     "test:functional": "vitest run --config vitest.functional.config.ts",
-    "ci": "pnpm run typecheck && pnpm run lint && pnpm run formatcheck && pnpm run build && pnpm test"
+    "ci": "pnpm run typecheck && pnpm run lint && pnpm run formatcheck && pnpm run build && pnpm test && node scripts/check-package.mjs",
+    "test:package": "pnpm run build && node scripts/check-package.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
