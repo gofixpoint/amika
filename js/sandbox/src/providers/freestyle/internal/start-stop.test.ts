@@ -112,9 +112,12 @@ describe("startFreestyleSandbox", () => {
   it("resumes immediately when the VM is suspended", async () => {
     queueStates("suspended");
 
-    await startFreestyleSandbox(config, "vm_1");
+    await startFreestyleSandbox(config, "vm_1", 30);
 
     expect(startVm).toHaveBeenCalledTimes(1);
+    expect(startVm).toHaveBeenCalledWith({
+      idleTimeoutSeconds: 365 * 24 * 60 * 60,
+    });
   });
 
   it("waits for an in-flight suspend to settle before resuming", async () => {

@@ -20,7 +20,8 @@ A running VM can still be setting up or have a setup failure.
 `stopping`/`stopped` and `suspending`/`suspended` describe what happens to the
 VM, regardless of whether Amika or the provider initiated the transition.
 `amika rig stop` turns the VM off. A provider's idle policy may instead suspend
-it; `amika rig start` can bring either settled state back up.
+it; `amika rig start` can bring either settled state back up. Freestyle idle
+suspension is disabled; Freestyle rigs currently have no automatic idle stop.
 
 | `setup_status`     | Meaning                                      |
 | ------------------ | -------------------------------------------- |

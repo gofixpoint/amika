@@ -38,31 +38,8 @@ import { resolveFreestyleSnapshotRef } from "./snapshot-operations";
  */
 export const FREESTYLE_URL_TTL_S = 365 * 24 * 60 * 60;
 
-/**
- * "Never idle-suspend" expressed as a very large timeout. `vm.start` only
- * accepts a numeric `idleTimeoutSeconds` (no `null`), so a 1-year timeout is the
- * effective never — the VM won't suspend within any real session.
- */
+/** Freestyle only offers idle suspension, so keep its idle timer effectively off. */
 const NEVER_IDLE_TIMEOUT_SECONDS = 365 * 24 * 60 * 60;
-
-/**
- * Translate Daytona-style `auto_stop_interval` (minutes) into Freestyle's
- * `idleTimeoutSeconds`, applied identically at create and on every restart so
- * the user's choice survives stop/start (Freestyle resets idle timeout per
- * start otherwise):
- *   - `0`  → "never" (a 1-year timeout; the API has no null on start)
- *   - `>0` → seconds
- *   - absent/`null` → `undefined` (omit the field → Freestyle default)
- */
-function freestyleIdleTimeoutSeconds(
-  autoStopInterval?: number | null,
-): number | undefined {
-  if (autoStopInterval === 0) return NEVER_IDLE_TIMEOUT_SECONDS;
-  if (autoStopInterval != null && autoStopInterval > 0) {
-    return autoStopInterval * 60;
-  }
-  return undefined;
-}
 
 /**
  * Deterministic preview domain for a (vm, port). Stable across restarts and
@@ -79,10 +56,6 @@ export async function createFreestyleSandbox(
   input: CreateSandboxProviderInput,
 ): Promise<CreatedProviderSandbox> {
   const client = createFreestyleClient(config);
-
-  const idleTimeoutSeconds = freestyleIdleTimeoutSeconds(
-    input.autoStopInterval,
-  );
 
   // Freestyle's `vms.create` has no label facet (unlike Daytona, which stamps
   // `amika-org-id`), so org-gate the VM by folding the org id into its name.
@@ -129,7 +102,7 @@ export async function createFreestyleSandbox(
         snapshotId,
         name: vmName,
         persistence: { type: "persistent" },
-        ...(idleTimeoutSeconds !== undefined ? { idleTimeoutSeconds } : {}),
+        idleTimeoutSeconds: NEVER_IDLE_TIMEOUT_SECONDS,
       }),
   );
 
@@ -493,7 +466,7 @@ async function waitForFreestyleVmSuspended(
 export async function startFreestyleSandbox(
   config: FreestyleConfig,
   providerSandboxId: string,
-  autoStopInterval?: number | null,
+  _autoStopInterval?: number | null,
 ): Promise<void> {
   const client = createFreestyleClient(
     config,
@@ -510,12 +483,8 @@ export async function startFreestyleSandbox(
   } else if (state === "stopping") {
     await waitForFreestyleVmStopped(config, providerSandboxId);
   }
-  // Freestyle resets idle timeout per start, so re-apply the persisted choice
-  // (omitting the field falls back to the provider default).
-  const idleTimeoutSeconds = freestyleIdleTimeoutSeconds(autoStopInterval);
-  await vm.start(
-    idleTimeoutSeconds !== undefined ? { idleTimeoutSeconds } : {},
-  );
+  // Freestyle resets its idle timeout on start; keep suspension disabled.
+  await vm.start({ idleTimeoutSeconds: NEVER_IDLE_TIMEOUT_SECONDS });
 }
 
 export async function stopFreestyleSandbox(

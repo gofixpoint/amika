@@ -376,8 +376,7 @@ export async function startVercelSandbox(
   // no-op so the VM is live before the lifecycle restart proceeds.
   await sandbox.runCommand({ cmd: "true" });
   // Re-apply the persisted auto-stop choice as the session timeout (Vercel does
-  // not carry a per-sandbox idle policy across sessions), mirroring how
-  // Freestyle re-applies its idle timeout on every start.
+  // not carry a per-sandbox idle policy across sessions).
   await sandbox.update({ timeout: vercelTimeoutMs(autoStopInterval) });
 }
 
