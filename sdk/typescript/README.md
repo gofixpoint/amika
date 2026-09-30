@@ -18,7 +18,6 @@ Replace the repository URL with one your Amika account can access.
 import { AmikaClient } from "@amika/sdk";
 
 const amika = new AmikaClient({
-  baseUrl: process.env.AMIKA_API_URL ?? "https://app.amika.dev",
   apiKey: process.env.AMIKA_API_KEY!,
 });
 
@@ -57,11 +56,11 @@ out before deleting the rig.
 
 Export `AMIKA_API_KEY` with an API key from your Amika account before running the quick start. Connect your repository account and store an agent credential in Amika Settings. `{ kind: "claude" }` asks the server to select your default stored Claude credential. The SDK does not load environment variables or credential files itself.
 
-Set `baseUrl` to the origin, such as `https://app.amika.dev`, without `/api/v0beta1`; the SDK appends that prefix. `AMIKA_API_URL`, if used, follows the same rule. Prefer `apiKey` for scripts:
+`baseUrl` defaults to `https://app.amika.dev`. To use another server, set it to the origin without `/api/v0beta1`; the SDK appends that prefix. The SDK does not read `AMIKA_API_URL` automatically. Prefer `apiKey` for scripts:
 
 ```ts
 const amika = new AmikaClient({
-  baseUrl: "https://app.amika.dev",
+  baseUrl: "https://app.staging-amika.dev", // optional override
   apiKey: process.env.AMIKA_API_KEY!,
   // fetch: customFetch, // optional override for tests or polyfills
 });
@@ -73,11 +72,9 @@ For an access token or a dynamic credential source, use one of these alternative
 
 ```ts
 const withAccessToken = new AmikaClient({
-  baseUrl: "https://app.amika.dev",
   accessToken: "your-access-token",
 });
 const withTokenSource = new AmikaClient({
-  baseUrl: "https://app.amika.dev",
   tokenSource: { token: async () => getTokenFromYourSecretManager() },
 });
 ```
