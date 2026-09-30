@@ -32,11 +32,16 @@ import {
   e2bRouteSyncCommand,
   getE2bSandboxState,
   listE2bSandboxes,
+  mapE2bSandboxState,
   refreshE2bUrls,
   startE2bSandbox,
   stopE2bSandbox,
   syncE2bRoutes,
 } from "./operations";
+
+it("maps Amika's filesystem-only E2B pause to stopped", () => {
+  expect(mapE2bSandboxState("paused")).toBe("stopped");
+});
 
 const CONFIG = { apiKey: "e2b_test" };
 

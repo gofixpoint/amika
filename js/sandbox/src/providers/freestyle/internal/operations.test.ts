@@ -197,7 +197,8 @@ describe("mapFreestyleSandboxState", () => {
       running: "running",
       suspending: "suspending",
       suspended: "suspended",
-      stopped: "suspended",
+      stopping: "stopping",
+      stopped: "stopped",
       lost: "failed",
     };
     for (const [raw, expected] of Object.entries(cases)) {

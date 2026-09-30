@@ -123,7 +123,8 @@ export function mapE2bSandboxState(state: string): SandboxStatus {
     case "running":
       return "running";
     case "paused":
-      return "suspended";
+      // Amika pauses E2B with keepMemory: false, including idle timeout.
+      return "stopped";
     default:
       return "unknown";
   }

@@ -138,7 +138,7 @@ describe("smol operations", () => {
     expect(await ops.getState(INPUT.name)).toBe("stopped");
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][1]?.method).toBe("GET");
-    expect(mapSmolState("stopped")).toBe("suspended");
+    expect(mapSmolState("stopped")).toBe("stopped");
     expect(mapSmolState("new-state")).toBe("unknown");
   });
 

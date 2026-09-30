@@ -130,7 +130,7 @@ describe("amika-hostd provider", () => {
     ]);
     const sandbox = provider.sandboxes.get("demo");
     await sandbox.stop();
-    expect(await sandbox.getRuntimeState()).toBe("suspended");
+    expect(await sandbox.getRuntimeState()).toBe("stopped");
     await sandbox.start();
     expect(await provider.sandboxes.list()).toEqual([
       {

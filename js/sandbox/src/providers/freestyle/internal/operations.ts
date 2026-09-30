@@ -379,8 +379,8 @@ export async function listFreestyleSandboxes(
 /**
  * Map a raw Freestyle VM state into the canonical lifecycle vocabulary. Raw
  * values are the `freestyle` SDK's VM `state` union plus the synthesized
- * `"unknown"` for a VM absent from the list. `stopped` and `suspended` both
- * read as `suspended` (either is resumable via start); `lost` is terminal.
+ * `"unknown"` for a VM absent from the list. `stopped` discards memory while
+ * `suspended` retains it; `lost` is terminal.
  */
 export function mapFreestyleSandboxState(rawState: string): SandboxStatus {
   switch (rawState) {
@@ -393,8 +393,11 @@ export function mapFreestyleSandboxState(rawState: string): SandboxStatus {
     case "suspending":
       return "suspending";
     case "suspended":
-    case "stopped":
       return "suspended";
+    case "stopping":
+      return "stopping";
+    case "stopped":
+      return "stopped";
     case "lost":
       return "failed";
     default:
@@ -524,27 +527,24 @@ export async function stopFreestyleSandbox(
     FREESTYLE_CONTROL_PLANE_TIMEOUT_MS,
   );
   const vm = client.vms.ref({ vmId: providerSandboxId });
-  // Suspend rather than stop. `vm.stop` is a cold power-off, and resuming a
-  // `stopped` VM via `vm.start` cold-boots it — which wedges it in `starting`
-  // forever, stranding the sandbox in `initializing`. `vm.suspend` snapshots the
-  // VM to disk (the same warm path the idle timeout uses), and `vm.start`
-  // resumes from that layer reliably. `suspend` is present in the
-  // freestyle@0.1.63 runtime but absent from its published types (like
-  // `vm.user`), so it is typed locally here. Safe because Amika creates VMs with
-  // `persistence: "persistent"`; an `ephemeral` VM can carry `deleteEvent:
-  // "OnSuspend"` and would be deleted by a suspend.
+  // Power off from inside the guest: Freestyle's lifecycle guidance uses this
+  // path for a fresh cold boot. A stopped VM keeps disk but discards memory.
   const state = await getFreestyleSandboxState(config, providerSandboxId);
-  // Already idle (or being made idle by an earlier request) — nothing to do but
-  // let it settle. `vm.suspend` on an already-suspended VM is a 409.
-  if (state !== "suspended" && state !== "stopped" && state !== "suspending") {
-    await (vm as typeof vm & { suspend(): Promise<unknown> }).suspend();
+  if (state === "stopped") return;
+  if (state === "stopping") {
+    await waitForFreestyleVmStopped(config, providerSandboxId);
+    return;
   }
-  // `vm.suspend` resolves once accepted, not once suspended; wait so the row
-  // isn't marked `stopped` while the VM is still suspending (a resume issued
-  // right after would otherwise race the in-flight suspend).
-  if (state !== "stopped") {
+  if (state === "suspending") {
     await waitForFreestyleVmSuspended(config, providerSandboxId);
   }
+  if (state === "suspended" || state === "suspending") {
+    await vm.start();
+  }
+  // The guest disconnects before returning an exec status. Treat that error as
+  // expected only after confirming the VM actually reached `stopped`.
+  await vm.exec({ command: "sudo poweroff" }).catch(() => {});
+  await waitForFreestyleVmStopped(config, providerSandboxId);
 }
 
 export async function deleteFreestyleSandbox(

@@ -60,7 +60,9 @@ describe("deriveSandboxStatus", () => {
 
   it("maps settled row states to the canonical vocabulary", () => {
     expect(deriveSandboxStatus({ state: "stopping" })).toBe("stopping");
-    expect(deriveSandboxStatus({ state: "stopped" })).toBe("suspended");
+    expect(deriveSandboxStatus({ state: "stopped" })).toBe("stopped");
+    expect(deriveSandboxStatus({ state: "suspending" })).toBe("suspending");
+    expect(deriveSandboxStatus({ state: "suspended" })).toBe("suspended");
     expect(deriveSandboxStatus({ state: "snapshotting" })).toBe("snapshotting");
     expect(deriveSandboxStatus({ state: "failed" })).toBe("failed");
     expect(deriveSandboxStatus({ state: "errored" })).toBe("failed");

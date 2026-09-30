@@ -49,7 +49,7 @@ export const VERCEL_URL_TTL_S = 365 * 24 * 60 * 60;
  * Default session timeout for a sandbox. Vercel's own default is 5 minutes,
  * which is far too short for an interactive agent session, so a freshly created
  * sandbox is given this window. Vercel sandboxes are persistent (auto-snapshot
- * on stop, resume on the next call), so the timeout behaves like an idle-suspend
+ * on stop, resume on the next call), so the timeout behaves like an idle-stop
  * interval rather than a hard delete — work can always resume afterwards.
  */
 const VERCEL_DEFAULT_TIMEOUT_MS = 45 * 60 * 1000;
@@ -339,8 +339,8 @@ export async function listVercelSandboxes(
 /**
  * Map a raw Vercel sandbox status into the canonical lifecycle vocabulary.
  * Raw values are the `@vercel/sandbox` status union plus the synthesized
- * `"unknown"` for a missing/deleted sandbox. `stopped` reads as `suspended`
- * (persistent sandboxes resume from their last snapshot); `aborted` is
+ * `"unknown"` for a missing/deleted sandbox. `stopped` discards memory
+ * (persistent sandboxes resume from their last filesystem snapshot); `aborted` is
  * terminal like `failed`.
  */
 export function mapVercelSandboxState(rawState: string): SandboxStatus {
@@ -354,7 +354,7 @@ export function mapVercelSandboxState(rawState: string): SandboxStatus {
     case "stopping":
       return "stopping";
     case "stopped":
-      return "suspended";
+      return "stopped";
     case "failed":
     case "aborted":
       return "failed";

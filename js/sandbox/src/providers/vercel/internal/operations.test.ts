@@ -320,7 +320,7 @@ describe("mapVercelSandboxState", () => {
       running: "running",
       snapshotting: "snapshotting",
       stopping: "stopping",
-      stopped: "suspended",
+      stopped: "stopped",
       failed: "failed",
       aborted: "failed",
     };
