@@ -15,6 +15,14 @@ function makeClient(fetchImpl: typeof fetch): AmikaClient {
 }
 
 describe("AmikaClient construction", () => {
+  it("uses the production API URL when baseUrl is omitted", async () => {
+    const { fetch, calls } = mockFetch([{ body: [] }]);
+
+    await new AmikaClient({ apiKey: "key", fetch }).listRigs();
+
+    expect(calls[0]?.url).toBe("https://app.amika.dev/api/v0beta1/rigs");
+  });
+
   it.each([
     {},
     { apiKey: "key", accessToken: "token" },

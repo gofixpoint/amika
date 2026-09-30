@@ -57,6 +57,7 @@ import {
 } from "@/types";
 
 const API_BASE_PATH = "/api/v0beta1";
+const DEFAULT_BASE_URL = "https://app.amika.dev";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const AGENT_SEND_TIMEOUT_MS = 10 * 60 * 1000;
@@ -64,7 +65,8 @@ const WAIT_POLL_INTERVAL_MS = 3_000;
 
 /** Exactly one credential source is required. API keys are preferred for scripts. */
 export type AmikaClientOptions = {
-  baseUrl: string;
+  /** API base URL. Defaults to https://app.amika.dev. */
+  baseUrl?: string;
   /** Override `fetch` for testing or runtime polyfills. */
   fetch?: typeof fetch;
 } & (
@@ -98,7 +100,7 @@ export class AmikaClient {
   constructor(options: AmikaClientOptions) {
     const tokenSource = resolveTokenSource(options);
     this.http = new HTTPClient({
-      baseUrl: options.baseUrl,
+      baseUrl: options.baseUrl ?? DEFAULT_BASE_URL,
       tokenSource,
       timeoutMs: DEFAULT_TIMEOUT_MS,
       fetch: options.fetch,
