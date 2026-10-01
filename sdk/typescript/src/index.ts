@@ -66,12 +66,6 @@ export {
   type Secrets,
 } from "./secrets/types.js";
 export {
-  type CreateSessionRequest,
-  type Session,
-  type UpdateSessionRequest,
-  type RigSessions,
-} from "./rig-sessions/types.js";
-export {
   type RemoteRepository,
   type Repositories,
 } from "./repositories/types.js";

@@ -4,7 +4,6 @@ import { type Snapshots } from "./snapshots/snapshot.js";
 import { type Services } from "./services/types.js";
 import { type Secrets } from "./secrets/types.js";
 import { type AgentCredentials } from "./agent-credentials/types.js";
-import { type RigSessions } from "./rig-sessions/types.js";
 import { type Repositories } from "./repositories/types.js";
 
 import { LegacyClient } from "./legacy/client.js";
@@ -18,7 +17,6 @@ import { createSnapshots } from "./snapshots/client.js";
 import { createServices } from "./services/client.js";
 import { createSecrets } from "./secrets/client.js";
 import { createAgentCredentials } from "./agent-credentials/client.js";
-import { createRigSessions } from "./rig-sessions/client.js";
 import { createRepositories } from "./repositories/client.js";
 
 /**
@@ -42,8 +40,6 @@ export class AmikaClient extends LegacyClient {
   readonly secrets: Secrets;
   /** Manage stored credentials for agent providers such as Claude and Codex. */
   readonly agentCredentials: AgentCredentials;
-  /** Manage lower-level session records. Use agentSessions for durable chats and prompts. */
-  readonly rigSessions: RigSessions;
   /** List repositories known to your organization. */
   readonly repositories: Repositories;
 
@@ -60,7 +56,6 @@ export class AmikaClient extends LegacyClient {
     this.services = createServices(http);
     this.secrets = createSecrets(http);
     this.agentCredentials = createAgentCredentials(http);
-    this.rigSessions = createRigSessions(http);
     this.repositories = createRepositories(http);
   }
 }

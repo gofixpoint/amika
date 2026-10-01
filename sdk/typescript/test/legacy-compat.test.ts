@@ -15,7 +15,6 @@ import type {
   RemoteSandbox,
   SandboxServiceResource,
   SandboxSnapshot,
-  Session,
 } from "@/index";
 
 const sandbox: RemoteSandbox = {
@@ -40,19 +39,6 @@ const sandbox: RemoteSandbox = {
   updatedAt: "2026-01-01T00:00:00Z",
   state: "active",
   status: "ready",
-};
-
-const session: Session = {
-  id: "s1",
-  sandboxId: "sbx_1",
-  orgId: "org_1",
-  agentName: "claude",
-  status: "running",
-  startedAt: "2026-01-01T00:00:00Z",
-  endedAt: null,
-  metadata: {},
-  createdAt: "2026-01-01T00:00:00Z",
-  updatedAt: "2026-01-01T00:00:00Z",
 };
 
 const service: SandboxServiceResource = {
@@ -206,28 +192,16 @@ function readsRequiredSnapshotFields(snap: SandboxSnapshot): void {
   ];
 }
 
-function readsRequiredSessionFields(
-  sess: Session,
-  sum: AgentSessionSummary,
-): void {
-  const sandboxId: string = sess.sandboxId;
-  const agentName: string = sess.agentName;
-  const summarySandboxId: string = sum.sandboxId;
-  const summarySandboxName: string | null = sum.sandboxName;
-  void [sandboxId, agentName, summarySandboxId, summarySandboxName];
-}
-
 describe("pre-rig literals still satisfy the sandbox-named types", () => {
   it("accepts fixtures carrying no rig-spelled field", () => {
     expect([
       sandbox,
-      session,
       service,
       snapshot,
       sendResponse,
       summary,
       captureRequest,
-    ]).toHaveLength(7);
+    ]).toHaveLength(6);
   });
 
   it("keeps every field 0.11 declared required readable at its old type", () => {
@@ -235,7 +209,6 @@ describe("pre-rig literals still satisfy the sandbox-named types", () => {
     readsRequiredRemoteSandboxFields(sandbox);
     readsRequiredServiceFields(service);
     readsRequiredSnapshotFields(snapshot);
-    readsRequiredSessionFields(session, summary);
     expect(true).toBe(true);
   });
 

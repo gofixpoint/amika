@@ -176,6 +176,8 @@ export interface AgentSessionStreamHandlers {
 export interface ListAgentSessionsOptions {
   /** Maximum chats to return; omitted or non-positive uses the server default of 50. */
   limit?: number;
+  /** Keep only chats on this rig, by name or ID. An unknown rig throws AmikaHTTPError (404); a value matching one rig's ID and another's name throws (409). */
+  rigRef?: string;
 }
 
 /** AgentSessions operations available on AmikaClient. */
@@ -189,7 +191,7 @@ export interface AgentSessions {
     handlers?: AgentSessionStreamHandlers,
   ): Promise<AgentSessionSendResponse>;
 
-  /** List durable agent chats, newest first. Omitting limit uses the server default (50). Preserve total when displaying a partial page. */
+  /** List durable agent chats, newest first, optionally only those on one rig. Omitting limit uses the server default (50). Preserve total when displaying a partial page. */
   list(options?: ListAgentSessionsOptions): Promise<ListAgentSessionsResponse>;
 
   /** Fetch a durable agent chat and its full message history. Returned operations are bound to its session ID. */

@@ -54,8 +54,11 @@ class AgentSessionsClient implements AgentSessions {
   async list(
     options?: ListAgentSessionsOptions,
   ): Promise<ListAgentSessionsResponse> {
+    const params = new URLSearchParams();
     const limit = options?.limit;
-    const qs = limit && limit > 0 ? `?limit=${limit}` : "";
+    if (limit && limit > 0) params.set("limit", String(limit));
+    if (options?.rigRef) params.set("sandbox", options.rigRef);
+    const qs = params.size > 0 ? `?${params}` : "";
     const data = await this.http.doJSON<Record<string, unknown>>(
       "GET",
       `${API_BASE_PATH}/agent-sessions${qs}`,

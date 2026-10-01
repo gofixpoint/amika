@@ -189,6 +189,20 @@ describe("AmikaClient.listAgentSessions", () => {
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/agent-sessions`);
     expect(page.sessions).toEqual([]);
   });
+
+  it("filters by rig as sandbox alongside limit", async () => {
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: { sessions: [], total: 0 } },
+      { status: 200, body: { sessions: [], total: 0 } },
+    ]);
+    const client = makeClient(fetch);
+    await client.agentSessions.list({ rigRef: "dev box", limit: 5 });
+    await client.agentSessions.list({ rigRef: "" });
+    expect(calls[0]?.url).toBe(
+      `${BASE}/api/v0beta1/agent-sessions?limit=5&sandbox=dev+box`,
+    );
+    expect(calls[1]?.url).toBe(`${BASE}/api/v0beta1/agent-sessions`);
+  });
 });
 
 describe("AmikaClient.getAgentSession", () => {

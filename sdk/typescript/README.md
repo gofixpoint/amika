@@ -160,15 +160,12 @@ callback fails the send. The server can end a stream before the client timeout;
 if it ends without a terminal result, the SDK throws. Inspect the chat before
 retrying because the turn may still have completed.
 
-`agentSessions.list({ limit })` returns `{ sessions, total }`, newest first.
-Keep `total` when displaying a partial list. `agentSessions.get(id)` returns a
+`agentSessions.list({ limit, rigRef })` returns `{ sessions, total }`, newest
+first. Pass `rigRef` (a rig name or ID) to list only that rig's chats. Keep
+`total` when displaying a partial list. `agentSessions.get(id)` returns a
 chat with its transcript and bound `send`, `sendStream`, and `refresh` methods.
 Chat transcripts are stored on the server and can outlive their rigs; keeping
 a chat record does not keep its rig or filesystem alive.
-
-Use `client.rigSessions` only when you need to create or update session status
-and metadata yourself. Creating one of these records does not send a prompt or
-create a chat transcript. Use `client.agentSessions` for agent conversations.
 
 ## Snapshots
 
@@ -231,7 +228,6 @@ Definition. The package includes declarations, declaration maps, and source.
 | `client.secrets`          | `list`, `create`, `update`                        |
 | `client.agentCredentials` | `create`, `list`, `delete`                        |
 | `client.repositories`     | `list`                                            |
-| `client.rigSessions`      | `create`, `list`, `get`, `latest`, `update`       |
 
 Services are published rig ports. Their creation and replacement automatically
 reject ports outside 1–65535 and the reserved range 60899–60999. Secrets and
@@ -251,6 +247,12 @@ but are deprecated. Prefer `client.rigs.create`, `client.rigs.get`, and
 `client.agentSessions.send`. Sandbox-named methods and types also remain as
 deprecated compatibility aliases. Existing objects typed with `Sandbox*` aliases
 do not need to add the new resource methods or canonical rig field names.
+
+The flat session-record methods (`createSession`, `listSessions`,
+`getLatestSession`, `getSession`, `updateSession`) and their `Session`,
+`CreateSessionRequest`, and `UpdateSessionRequest` types have been removed. To
+find a rig's chats, use `client.agentSessions.list({ rigRef })`, then
+`client.agentSessions.get(id)` for one chat's transcript.
 
 The old `waitForRig`, `waitForRigStart`, and `waitForRigStop` helpers retain their
 original behavior: checking provisioning state without checking setup and

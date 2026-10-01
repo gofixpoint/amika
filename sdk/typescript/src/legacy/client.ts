@@ -33,12 +33,6 @@ import {
   type ProviderSecretListItem,
 } from "../agent-credentials/types.js";
 import {
-  type RigSessions,
-  type CreateSessionRequest,
-  type Session,
-  type UpdateSessionRequest,
-} from "../rig-sessions/types.js";
-import {
   type Repositories,
   type RemoteRepository,
 } from "../repositories/types.js";
@@ -70,7 +64,6 @@ export abstract class LegacyClient {
   abstract readonly services: Services;
   abstract readonly secrets: Secrets;
   abstract readonly agentCredentials: AgentCredentials;
-  abstract readonly rigSessions: RigSessions;
   abstract readonly repositories: Repositories;
 
   /** @deprecated Use client.rigs.list through the grouped API. */
@@ -282,38 +275,6 @@ export abstract class LegacyClient {
     if (rigName.trim() === "")
       throw new AmikaError("rig name must not be empty");
     return this.rigs.handle(rigName).send(req);
-  }
-
-  /** @deprecated Use client.rigSessions.create through the grouped API. */
-  async createSession(
-    rigName: string,
-    req: CreateSessionRequest,
-  ): Promise<Session> {
-    return this.rigSessions.create(rigName, req);
-  }
-
-  /** @deprecated Use client.rigSessions.list through the grouped API. */
-  async listSessions(rigName: string): Promise<Session[]> {
-    return this.rigSessions.list(rigName);
-  }
-
-  /** @deprecated Use client.rigSessions.latest through the grouped API. */
-  async getLatestSession(rigName: string): Promise<Session | null> {
-    return this.rigSessions.latest(rigName);
-  }
-
-  /** @deprecated Use client.rigSessions.get through the grouped API. */
-  async getSession(rigName: string, sessionId: string): Promise<Session> {
-    return this.rigSessions.get(rigName, sessionId);
-  }
-
-  /** @deprecated Use client.rigSessions.update through the grouped API. */
-  async updateSession(
-    rigName: string,
-    sessionId: string,
-    req: UpdateSessionRequest,
-  ): Promise<Session> {
-    return this.rigSessions.update(rigName, sessionId, req);
   }
 
   /** @deprecated Use client.snapshots.list through the grouped API. */
