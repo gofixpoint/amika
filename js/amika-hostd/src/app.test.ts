@@ -760,6 +760,17 @@ describe("service routes", () => {
     },
   );
 
+  it("requires the key for plain HTTP to amikad's SSH path", async () => {
+    // Only the WebSocket upgrade there skips the key (see services.ts).
+    const { app, fetcher } = services();
+    const response = await app.request(
+      "/v0beta1/rigs/demo/services/amikad/v1/ssh-sessions",
+      { headers: { Authorization: "Bearer connect-token" } },
+    );
+    expect(response.status).toBe(401);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("refuses to forward the host key as the guest's Authorization", async () => {
     const { request, fetcher } = services();
     const response = await request(ROUTE, {

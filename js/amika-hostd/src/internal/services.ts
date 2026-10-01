@@ -13,6 +13,9 @@
  * belongs to the guest: `amikad`, for one, authenticates SSH clients with it.
  * hostd removes the key header before forwarding, and refuses a request that
  * puts the key in `Authorization`, so the key never reaches a guest.
+ *
+ * The one exception is amikad's SSH WebSocket (`isAmikadSshUpgrade`), which
+ * the user's CLI opens directly with a connect token amikad verifies.
  */
 import type { IncomingMessage } from "node:http";
 import { connect, createServer, type Socket } from "node:net";
@@ -24,6 +27,10 @@ import type { SmolRuntime } from "./smol.js";
 
 /** Carries the host's secret key on service routes; never forwarded. */
 export const SERVICE_KEY_HEADER = "x-amika-hostd-key";
+
+/** amikad's service name and guest port, as Amika registers them. */
+export const AMIKAD_SERVICE = "amikad";
+export const AMIKAD_PORT = 60999;
 
 /**
  * Handle Node's `upgrade` event: pipe a WebSocket (or any other upgrade)
@@ -52,14 +59,31 @@ export function createUpgradeHandler(
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
-    const refusal = authorizeServiceRequest(secretKey, {
-      key: request.headers[SERVICE_KEY_HEADER],
-      authorization: request.headers.authorization,
-    });
-    if (refusal) return refuse(socket, refusal);
     const url = new URL(request.url ?? "/", "http://hostd");
     const route = parseServicePath(url.pathname);
+    const headers = {
+      key: request.headers[SERVICE_KEY_HEADER],
+      authorization: request.headers.authorization,
+    };
+    // amikad's SSH upgrade may skip the key; a keyed request is the control
+    // plane's and routes like any other.
+    const keyless =
+      route !== null &&
+      isAmikadSshUpgrade(request, url) &&
+      authorizeServiceRequest(secretKey, headers) === 401;
+    const refusal = authorizeServiceRequest(secretKey, headers, {
+      requireKey: !keyless,
+    });
+    if (refusal) return refuse(socket, refusal);
     if (!route) return refuse(socket, 404);
+    // Only the rig's own amikad, on the port Amika registers it at, answers
+    // a request that skipped the key.
+    if (
+      keyless &&
+      registry.port(route.machine, AMIKAD_SERVICE) !== AMIKAD_PORT
+    ) {
+      return refuse(socket, 404);
+    }
     const hostPort = await resolveHostPort(runtime, registry, route);
     if (hostPort === null) return refuse(socket, 404);
     if (socket.destroyed) return;
@@ -80,6 +104,37 @@ export function createUpgradeHandler(
     upstream.on("close", () => socket.destroy());
     socket.on("close", () => upstream.destroy());
   }
+}
+
+/**
+ * Whether this upgrade is the one service request that needs no host key:
+ * the SSH WebSocket a user's `amika sandbox ssh` opens to the rig's amikad,
+ * exactly `GET /v0beta1/rigs/<rig>/services/amikad/v1/ssh-sessions`, no query,
+ * as a WebSocket upgrade. The control plane hands the CLI that URL and the
+ * rig's connect token, never the host key; amikad verifies the token before
+ * it accepts the WebSocket, and sshd then checks the user's SSH key. Every
+ * other path, method, service and plain HTTP request still needs the key.
+ */
+export function isAmikadSshUpgrade(
+  request: IncomingMessage,
+  url: URL,
+): boolean {
+  const route = parseServicePath(url.pathname);
+  if (
+    request.method !== "GET" ||
+    url.search !== "" ||
+    route === null ||
+    // The literal path, not just its decoding, so no encoded variant counts.
+    url.pathname !==
+      `/v0beta1/rigs/${route.machine}/services/${AMIKAD_SERVICE}/v1/ssh-sessions`
+  ) {
+    return false;
+  }
+  const upgrade = request.headers.upgrade?.trim().toLowerCase();
+  const connection = (request.headers.connection ?? "")
+    .split(",")
+    .map((token) => token.trim().toLowerCase());
+  return upgrade === "websocket" && connection.includes("upgrade");
 }
 
 /**
@@ -118,7 +173,8 @@ function refuse(socket: Duplex, status: keyof typeof REFUSAL_REASONS): void {
 
 /**
  * Why a service request is refused, or null to let it through: 401 without
- * the right key in `X-Amika-Hostd-Key`, 400 when the key is also sent as the
+ * the right key in `X-Amika-Hostd-Key` (unless `requireKey` is false, for
+ * amikad's SSH upgrade), 400 when the key is also sent as the
  * `Authorization` the guest would receive.
  */
 export function authorizeServiceRequest(
@@ -127,9 +183,10 @@ export function authorizeServiceRequest(
     key?: string | string[] | null;
     authorization?: string | string[] | null;
   },
+  { requireKey = true }: { requireKey?: boolean } = {},
 ): 400 | 401 | null {
   const key = typeof headers.key === "string" ? headers.key.trim() : "";
-  if (!secretMatches(key, secretKey)) return 401;
+  if (requireKey && !secretMatches(key, secretKey)) return 401;
   const authorization =
     typeof headers.authorization === "string"
       ? headers.authorization.replace(/^Bearer\s+/i, "").trim()
