@@ -291,6 +291,16 @@ describe("createUpgradeHandler", () => {
     });
   });
 
+  it("routes a keyed SSH upgrade to amikad on any registered port", async () => {
+    // The port check constrains only the keyless exception.
+    const target = await guest();
+    const { port } = await hostd(target.port, {
+      services: { amikad: 2222 },
+    });
+    const socket = await open(port, validPath("/v1/ssh-sessions"));
+    expect(await read(socket)).toBe("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+  });
+
   it("refuses an unknown service without reaching the guest", async () => {
     const target = await guest();
     const { port } = await hostd(target.port);

@@ -61,21 +61,25 @@ export function createUpgradeHandler(
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://hostd");
     const route = parseServicePath(url.pathname);
-    const sshUpgrade = route !== null && isAmikadSshUpgrade(request, url);
-    const refusal = authorizeServiceRequest(
-      secretKey,
-      {
-        key: request.headers[SERVICE_KEY_HEADER],
-        authorization: request.headers.authorization,
-      },
-      { requireKey: !sshUpgrade },
-    );
+    const headers = {
+      key: request.headers[SERVICE_KEY_HEADER],
+      authorization: request.headers.authorization,
+    };
+    // amikad's SSH upgrade may skip the key; a keyed request is the control
+    // plane's and routes like any other.
+    const keyless =
+      route !== null &&
+      isAmikadSshUpgrade(request, url) &&
+      authorizeServiceRequest(secretKey, headers) === 401;
+    const refusal = authorizeServiceRequest(secretKey, headers, {
+      requireKey: !keyless,
+    });
     if (refusal) return refuse(socket, refusal);
     if (!route) return refuse(socket, 404);
     // Only the rig's own amikad, on the port Amika registers it at, answers
     // a request that skipped the key.
     if (
-      sshUpgrade &&
+      keyless &&
       registry.port(route.machine, AMIKAD_SERVICE) !== AMIKAD_PORT
     ) {
       return refuse(socket, 404);
