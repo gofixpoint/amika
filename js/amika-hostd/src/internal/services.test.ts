@@ -119,14 +119,26 @@ describe("createUpgradeHandler", () => {
     };
   }
 
-  async function hostd(hostPort: number | null) {
+  async function hostd(
+    hostPort: number | null,
+    {
+      services = { amikad: 60999 } as Record<string, number>,
+      state = "running",
+    } = {},
+  ) {
     const runtime = new SmolRuntime(
       { apiUrl: "http://runtime:8080" },
       vi.fn<typeof fetch>(async () =>
         Response.json({
           name: "demo",
-          state: "running",
-          ports: hostPort === null ? [] : [{ host: hostPort, guest: 60999 }],
+          state,
+          ports:
+            hostPort === null
+              ? []
+              : Object.values(services).map((guest) => ({
+                  host: hostPort,
+                  guest,
+                })),
         }),
       ),
     );
@@ -134,7 +146,7 @@ describe("createUpgradeHandler", () => {
     const server = createHttpServer();
     server.on(
       "upgrade",
-      createUpgradeHandler(SECRET, runtime, registry(), tunnels),
+      createUpgradeHandler(SECRET, runtime, registry(services), tunnels),
     );
     return { port: await listen(server), tunnels };
   }
@@ -151,23 +163,28 @@ describe("createUpgradeHandler", () => {
     );
   }
 
-  function registry() {
-    const services = memoryServiceRegistry();
-    services.set("demo", { amikad: 60999 });
-    return services;
+  function registry(services: Record<string, number> = { amikad: 60999 }) {
+    const registry = memoryServiceRegistry();
+    registry.set("demo", services);
+    return registry;
   }
 
   async function open(
     port: number,
     path: string,
-    { key = SECRET, authorization = "Bearer connect-token" } = {},
+    {
+      key = SECRET,
+      authorization = "Bearer connect-token",
+      method = "GET",
+      upgrade = "websocket",
+    } = {},
   ): Promise<Socket> {
     const socket = connect(port, "127.0.0.1");
     closers.push(() => socket.destroy());
     await once(socket, "connect");
     const keyLine = key ? `X-Amika-Hostd-Key: ${key}\r\n` : "";
     socket.write(
-      `GET ${path} HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n${keyLine}Authorization: ${authorization}\r\n\r\n`,
+      `${method} ${path} HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: ${upgrade}\r\n${keyLine}Authorization: ${authorization}\r\n\r\n`,
     );
     return socket;
   }
@@ -208,6 +225,71 @@ describe("createUpgradeHandler", () => {
       expect(target.handshake()).toBe("");
     },
   );
+
+  describe("amikad's SSH upgrade without the key", () => {
+    const sshPath = validPath("/v1/ssh-sessions");
+
+    it("tunnels it with the caller's connect token", async () => {
+      const target = await guest();
+      const { port } = await hostd(target.port);
+      const socket = await open(port, sshPath, { key: "" });
+      expect(await read(socket)).toBe(
+        "HTTP/1.1 101 Switching Protocols\r\n\r\n",
+      );
+      expect(target.handshake()).toBe(
+        "GET /v1/ssh-sessions HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAuthorization: Bearer connect-token\r\n\r\n",
+      );
+    });
+
+    it.each([
+      ["a query", validPath("/v1/ssh-sessions?x=1"), {}],
+      ["another amikad path", validPath("/v1/status"), {}],
+      ["a trailing slash", validPath("/v1/ssh-sessions/"), {}],
+      ["an encoded path", validPath("/v1/ssh%2Dsessions"), {}],
+      [
+        "an encoded service name",
+        "/v0beta1/rigs/demo/services/amik%61d/v1/ssh-sessions",
+        {},
+      ],
+      [
+        "another service",
+        "/v0beta1/rigs/demo/services/web/v1/ssh-sessions",
+        {},
+      ],
+      ["another method", sshPath, { method: "POST" }],
+      ["another protocol", sshPath, { upgrade: "h2c" }],
+    ])("still requires the key with %s", async (_label, path, headers) => {
+      const target = await guest();
+      const { port } = await hostd(target.port, {
+        services: { amikad: 60999, web: 8080 },
+      });
+      const socket = await open(port, path, { key: "", ...headers });
+      expect(await read(socket)).toMatch(/^HTTP\/1\.1 401 /);
+      expect(target.handshake()).toBe("");
+    });
+
+    it("refuses the key passed on as Authorization", async () => {
+      const target = await guest();
+      const { port } = await hostd(target.port);
+      const socket = await open(port, sshPath, {
+        key: "",
+        authorization: `Bearer ${SECRET}`,
+      });
+      expect(await read(socket)).toMatch(/^HTTP\/1\.1 400 /);
+      expect(target.handshake()).toBe("");
+    });
+
+    it.each([
+      ["amikad registered on another port", { services: { amikad: 2222 } }],
+      ["a stopped rig", { state: "stopped" }],
+    ])("refuses %s", async (_label, options) => {
+      const target = await guest();
+      const { port } = await hostd(target.port, options);
+      const socket = await open(port, sshPath, { key: "" });
+      expect(await read(socket)).toMatch(/^HTTP\/1\.1 404 /);
+      expect(target.handshake()).toBe("");
+    });
+  });
 
   it("refuses an unknown service without reaching the guest", async () => {
     const target = await guest();

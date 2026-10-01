@@ -251,6 +251,11 @@ the host's secret key; hostd checks the key and routes
 - The key goes in `X-Amika-Hostd-Key`, since `Authorization` belongs to the
   guest (`amikad` checks SSH connect tokens with it). hostd never forwards
   the key.
+- One request needs no key: the SSH WebSocket that `amika sandbox ssh`
+  opens, exactly `GET .../services/amikad/v1/ssh-sessions` as an upgrade,
+  to a running rig whose `amikad` is on port 60999. `amikad` checks the
+  connect token the control plane gave the CLI; the key never leaves the
+  control plane. Everything else still needs the key.
 - Create takes `services: [{ name, port }]`. hostd publishes the ports through
   smolvm and keeps each machine's name-to-port map in `services.json`
   (`src/internal/service-registry.ts`), since smolvm stores no names.

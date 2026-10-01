@@ -33,7 +33,7 @@ describe("startServer", () => {
       const client = connect(server.port, "127.0.0.1");
       await once(client, "connect");
       client.write(
-        "GET /v0beta1/rigs/demo/services/amikad/v1/ssh-sessions HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+        "GET /v0beta1/rigs/demo/services/amikad/v1/status HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
       );
       const [chunk] = await once(client, "data");
       expect(String(chunk)).toMatch(/^HTTP\/1\.1 401 /);
