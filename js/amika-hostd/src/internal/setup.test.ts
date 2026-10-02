@@ -17,6 +17,7 @@ import {
 const PATH = "/config/amika-hostd/config.toml";
 const OLD_SECRET = "a".repeat(64);
 const NEW_SECRET = "b".repeat(64);
+const HOST = { id: "host_1", hostname: "builder", url: null };
 
 function harness({
   answers = [],
@@ -57,6 +58,10 @@ function harness({
     }),
     systemHostname: () => "Jakubs-MacBook-Pro.local",
     generateSecretKey: vi.fn(() => NEW_SECRET),
+    registerHost: vi.fn(async () => ({ host: HOST, created: false })),
+    setHostSecret: vi.fn(
+      async (_api: unknown, _host: unknown, _secret: string) => HOST,
+    ),
   } satisfies SetupDeps;
   const config = () =>
     resolveConfig({ file: { path: PATH, contents: written[PATH] } });
@@ -109,12 +114,18 @@ describe("runSetup", () => {
   });
 
   it("a rerun keeps everything by default and leaves sizes alone", async () => {
-    const h = harness({ answers: ["", ""], file: CONFIGURED, storedKey: "k" });
+    const h = harness({
+      answers: ["", "", ""],
+      file: CONFIGURED,
+      storedKey: "k",
+    });
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      "Regenerate the secret key Amika uses to reach this host? [y/N] ",
       "Update the stored Amika API key? [y/N] ",
     ]);
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
     expect(h.written[PATH]).toBe(CONFIGURED);
     expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
     expect(h.deps.promptSecret).not.toHaveBeenCalled();
@@ -123,7 +134,7 @@ describe("runSetup", () => {
 
   it("replaces the stored API key when asked", async () => {
     const h = harness({
-      answers: ["", "y"],
+      answers: ["", "", "y"],
       secrets: ["amk_new"],
       file: CONFIGURED,
       storedKey: "amk_old",
@@ -134,7 +145,7 @@ describe("runSetup", () => {
 
   it("says a new hostname registers a new host", async () => {
     const h = harness({
-      answers: ["other", ""],
+      answers: ["other", "", ""],
       file: CONFIGURED,
       storedKey: "k",
     });
@@ -144,6 +155,113 @@ describe("runSetup", () => {
       secretKey: OLD_SECRET,
     });
     expect(h.out.join("\n")).toContain("registers a new host");
+  });
+
+  it("regenerating the secret writes it, then sends it to Amika", async () => {
+    const h = harness({
+      answers: ["", "y", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
+    await runSetup(h.deps);
+    const api = { apiUrl: "https://app.amika.dev", apiKey: "amk_new" };
+    expect(h.deps.registerHost).toHaveBeenCalledWith(
+      api,
+      expect.objectContaining({ hostname: "builder", secretKey: NEW_SECRET }),
+    );
+    expect(h.deps.setHostSecret).toHaveBeenCalledWith(api, HOST, NEW_SECRET);
+    expect(h.deps.writeConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
+      h.deps.setHostSecret.mock.invocationCallOrder[0],
+    );
+    expect(h.config().secretKey).toBe(NEW_SECRET);
+    expect(h.out).toContain(
+      "Sent the new secret key for host builder to Amika.",
+    );
+    expect(h.out).toContain(
+      "If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up.",
+    );
+  });
+
+  /** A rerun that regenerates the secret of the registered host `builder`. */
+  const rotating = () =>
+    harness({ answers: ["", "y", ""], file: CONFIGURED, storedKey: "k" });
+
+  it("registers a host Amika does not know yet with the new secret", async () => {
+    const h = rotating();
+    h.deps.registerHost.mockResolvedValueOnce({ host: HOST, created: true });
+    await runSetup(h.deps);
+    expect(h.deps.setHostSecret).not.toHaveBeenCalled();
+    expect(h.out).toContain(
+      "Registered host builder with https://app.amika.dev",
+    );
+  });
+
+  it("puts the old secret back in the file when sending it fails", async () => {
+    const h = rotating();
+    h.deps.setHostSecret.mockRejectedValueOnce(
+      new Error("cannot reach Amika: timed out"),
+    );
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      `cannot reach Amika: timed out; ${PATH} still has the old secret key. If Amika's requests to this host start failing, run \`amika-hostd setup\` again and regenerate it.`,
+    );
+    expect(h.written[PATH]).toBe(CONFIGURED);
+  });
+
+  it("never sends a new secret it could not write", async () => {
+    const h = rotating();
+    h.deps.writeConfigFile.mockImplementationOnce(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      `Cannot write ${PATH}: EACCES`,
+    );
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
+    expect(h.deps.setHostSecret).not.toHaveBeenCalled();
+  });
+
+  it("does not offer to regenerate a secret the environment overrides", async () => {
+    const h = harness({
+      answers: ["", ""],
+      file: CONFIGURED,
+      storedKey: "k",
+      env: { AMIKA_HOSTD_SECRET_KEY: "c".repeat(64) },
+    });
+    await runSetup(h.deps);
+    expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
+      "Hostname [builder]: ",
+      "Update the stored Amika API key? [y/N] ",
+    ]);
+    expect(h.config().secretKey).toBe(OLD_SECRET);
+    expect(h.deps.setHostSecret).not.toHaveBeenCalled();
+  });
+
+  it("sends a new secret for the hostname the environment sets", async () => {
+    const h = harness({
+      answers: ["", "y", ""],
+      file: CONFIGURED,
+      storedKey: "k",
+      env: { AMIKA_HOSTD_HOSTNAME: "prod-box" },
+    });
+    await runSetup(h.deps);
+    expect(h.deps.registerHost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ hostname: "prod-box", secretKey: NEW_SECRET }),
+    );
+  });
+
+  it("a new hostname with a new secret registers afresh on `up` instead", async () => {
+    const h = harness({
+      answers: ["other", "y", ""],
+      file: CONFIGURED,
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
+    expect(h.config()).toMatchObject({
+      hostname: "other",
+      secretKey: NEW_SECRET,
+    });
   });
 
   it("saves the environment's secret, not a new one, when the file has none", async () => {

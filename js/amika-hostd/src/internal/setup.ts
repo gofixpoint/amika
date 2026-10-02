@@ -7,6 +7,10 @@
 import { randomBytes } from "node:crypto";
 import { hostname as osHostname } from "node:os";
 import {
+  registerHost as registerHostWithAmika,
+  setHostSecret as setHostSecretInAmika,
+} from "./amika-api.js";
+import {
   ConfigError,
   envName,
   configFilePaths,
@@ -14,6 +18,7 @@ import {
   isValidSecretKey,
   loadConfigFile as loadConfigFileFromDisk,
   resolveConfig,
+  type HostdConfig,
   type HostdConfigFile,
   type HostSize,
 } from "./config.js";
@@ -37,6 +42,8 @@ export interface SetupDeps {
   writeConfigFile?: (file: string, contents: string) => void;
   systemHostname?: () => string;
   generateSecretKey?: () => string;
+  registerHost?: typeof registerHostWithAmika;
+  setHostSecret?: typeof setHostSecretInAmika;
 }
 
 /**
@@ -87,7 +94,10 @@ export async function runSetup(
     );
   }
 
+  const generate =
+    deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"));
   let secretKey = saved.secretKey;
+  let rotated = false;
   const secretFromEnv = envName(deps.env, "secretKey");
   if (secretKey === undefined && effective.secretKey !== undefined) {
     // The host may already be registered with the environment's secret, and
@@ -97,10 +107,22 @@ export async function runSetup(
       `Saved the secret key from ${secretFromEnv} to the file, since Amika may already know it.`,
     );
   } else if (secretKey === undefined) {
-    secretKey = (
-      deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"))
-    )();
+    secretKey = generate();
     deps.out("Generated a new secret key.");
+  } else if (secretFromEnv !== undefined) {
+    // The daemon would keep using the environment's secret, so a new one in
+    // the file, and in Amika, would only lock Amika out.
+    deps.out(
+      `Keeping the secret key: ${secretFromEnv} overrides it, so change that instead.`,
+    );
+  } else if (
+    await confirm(
+      "Regenerate the secret key Amika uses to reach this host? [y/N] ",
+      deps,
+    )
+  ) {
+    secretKey = generate();
+    rotated = true;
   }
 
   const apiKey = await askApiKey(deps);
@@ -110,8 +132,24 @@ export async function runSetup(
     secretKey,
     addDefaults: firstRun && Object.keys(saved.sizes).length === 0,
   });
-  // Check the result parses before anything changes.
+  // Check the result parses before anything changes, here or in Amika.
   const written = resolveConfig({ file: { path: configPath, contents } });
+
+  // Registration never changes a stored secret, so a new one has to reach
+  // Amika now, for the hostname `up` will register: the environment's if it
+  // sets one. A new hostname registers afresh with it on the next `up`.
+  const hostnameFromEnv = envName(deps.env, "hostname") !== undefined;
+  const target = hostnameFromEnv ? effective.hostname : hostname;
+  const sendNewSecret =
+    rotated && (hostnameFromEnv || hostname === saved.hostname);
+  const apiKeyForSecret = sendNewSecret
+    ? (apiKey ?? effective.apiKey ?? deps.credentials.get())
+    : undefined;
+  if (sendNewSecret && apiKeyForSecret === undefined) {
+    throw new ConfigError(
+      "Amika needs the new secret key, but no API key is set; nothing was changed",
+    );
+  }
   // The key first: a keychain command is the step likeliest to be stopped
   // (an unlock prompt), and then the config is still untouched.
   if (apiKey !== undefined) {
@@ -122,9 +160,35 @@ export async function runSetup(
       throw error;
     }
   }
-  writeConfig(deps.writeConfigFile ?? writePrivateFile, configPath, contents);
+  // Write first, so a file setup cannot write never leaves Amika holding a
+  // secret this host does not have.
+  const write = deps.writeConfigFile ?? writePrivateFile;
+  writeConfig(write, configPath, contents);
   if (apiKey !== undefined) {
     deps.out(`Stored the API key in ${deps.credentials.description}.`);
+  }
+  if (sendNewSecret && target !== undefined && apiKeyForSecret !== undefined) {
+    const api = { apiUrl: effective.apiUrl, apiKey: apiKeyForSecret };
+    try {
+      const created = await sendSecret(
+        api,
+        written,
+        { hostname: target, secretKey },
+        deps,
+      );
+      deps.out(
+        created
+          ? `Registered host ${target} with ${api.apiUrl}`
+          : `Sent the new secret key for host ${target} to Amika.`,
+      );
+    } catch (error) {
+      // Put the old secret back in the file. Whether Amika applied the new
+      // one is unknown, so say how to recover if it did.
+      if (file !== undefined) writeConfig(write, configPath, file.contents);
+      throw new ConfigError(
+        `${(error as Error).message}; ${configPath} still has the old secret key. If Amika's requests to this host start failing, run \`amika-hostd setup\` again and regenerate it.`,
+      );
+    }
   }
 
   deps.out("");
@@ -137,6 +201,11 @@ export async function runSetup(
   for (const line of describeImages(written.images)) deps.out(`  ${line}`);
   deps.out(`Edit ${configPath} to change these settings.`);
   warnAboutEnvironment(deps);
+  if (rotated) {
+    deps.out(
+      "If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up.",
+    );
+  }
   deps.out("");
   if (!fromUp) {
     deps.out("Start the daemon with `amika-hostd up`.");
@@ -208,6 +277,29 @@ async function confirm(question: string, deps: SetupDeps): Promise<boolean> {
     }
     if (answer === "y" || answer === "yes") return true;
   }
+}
+
+/**
+ * Give Amika `input.secretKey` for this hostname: registering it if new,
+ * else replacing the stored secret. Returns whether it registered the host.
+ */
+async function sendSecret(
+  api: { apiUrl: string; apiKey: string },
+  config: HostdConfig,
+  input: { hostname: string; secretKey: string },
+  deps: SetupDeps,
+): Promise<boolean> {
+  const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
+    api,
+    { ...input, sizes: config.sizes },
+  );
+  if (created) return true;
+  await (deps.setHostSecret ?? setHostSecretInAmika)(
+    api,
+    host,
+    input.secretKey,
+  );
+  return false;
 }
 
 /**
