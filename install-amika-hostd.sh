@@ -350,10 +350,44 @@ seed_config() {
     return 0
   fi
   mkdir -p "$(dirname "$CONFIG_PATH")"
-  # It will hold the secret key, so only the daemon's user may read it.
-  (umask 077 && cp "${HOSTD_HOME}/config.example.toml" "$CONFIG_PATH")
+  secret="$(generate_secret)"
+  # Fill in this machine's hostname only when it is one Amika accepts
+  # (src/internal/config.ts); otherwise leave the line for the operator.
+  host_name="$(hostname 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  host_line='# hostname = "my-host"'
+  if is_valid_hostname "$host_name"; then
+    host_line="hostname = \"${host_name}\""
+  else
+    host_name=""
+  fi
+  # It holds the secret key, so only the daemon's user may read it.
+  (
+    umask 077
+    sed -e "s/^secret_key = \"REPLACE_ME\"\$/secret_key = \"${secret}\"/" \
+      -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
+      "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
+  )
   CONFIG_SEEDED=true
-  echo "Wrote an example config to ${CONFIG_PATH}"
+  CONFIG_HOSTNAME="$host_name"
+  echo "Wrote a config to ${CONFIG_PATH}"
+}
+
+# 32 random bytes as hex, the form `openssl rand -hex 32` prints.
+generate_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  else
+    od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
+  fi
+}
+
+# Lowercase letters, digits, and hyphens in dot-separated labels of 1-63
+# characters that start and end with a letter or digit, at most 253 in total.
+is_valid_hostname() {
+  [ -n "$1" ] && [ "${#1}" -le 253 ] || return 1
+  printf '%s\n' "$1" | tr '.' '\n' |
+    grep -Evq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' && return 1
+  return 0
 }
 
 find_smolvm() {
@@ -423,11 +457,12 @@ check_kvm() {
 print_next_steps() {
   echo ""
   echo "Next steps:"
-  if [ "$CONFIG_SEEDED" = "true" ]; then
-    echo "  1. Edit ${CONFIG_PATH}: set hostname and secret_key"
-    echo "     (openssl rand -hex 32), and uncomment and fill in [sizes] and [images]."
+  if [ "$CONFIG_SEEDED" = "true" ] && [ -n "$CONFIG_HOSTNAME" ]; then
+    echo "  1. Review ${CONFIG_PATH}: it registers this host as ${CONFIG_HOSTNAME}."
+  elif [ "$CONFIG_SEEDED" = "true" ]; then
+    echo "  1. Edit ${CONFIG_PATH}: uncomment and set hostname."
   else
-    echo "  1. Check ${CONFIG_PATH}: hostname, secret_key, [sizes] and [images]"
+    echo "  1. Check ${CONFIG_PATH}: hostname, secret_key, [sizes] and [preset_images]"
     echo "     (compare with ${HOSTD_HOME}/config.example.toml)."
   fi
   echo "  2. Export your Amika API key; it is read only from the environment:"

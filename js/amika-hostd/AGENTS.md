@@ -30,8 +30,11 @@ GitHub release, verifies it against `checksums.txt`, and installs:
 - smolvm, through its official installer, unless `smolvm` is on `PATH` or in
   `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
   (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
-- a config: `config.example.toml` copied to the user config path below, unless
-  a config already exists there or in `/etc`. It is never overwritten.
+- a config: `config.example.toml` copied to the user config path below, with
+  `secret_key` set to a generated `openssl rand -hex 32` and `hostname` set to
+  this machine's lowercased `hostname` (left commented when it isn't a valid
+  hostname), unless a config already exists there or in `/etc`. It is never
+  overwritten.
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
@@ -211,18 +214,20 @@ The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 two are not merged, and unknown keys are rejected. `SMOL_API_URL` (default
 `http://127.0.0.1:8080`, where `up` starts smolvm) and
 `SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
-is the annotated template for operators: copy it to one of those paths and
-uncomment what you need. `config.test.ts` resolves it, so keep it in step with
-the schema. Never include a secret or
+is the template the installer seeds: every setting with a default is a live
+line, `secret_key = "REPLACE_ME"` deliberately fails validation until replaced,
+and only `hostname` is commented. Keep its comments short. `config.test.ts`
+resolves it as seeded, so keep it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
 
 ### Images
 
-`[images]` maps a preset name to the full OCI reference this host boots for it,
-so the host, not Amika, pins the version:
+`[preset_images]` maps a preset name to the full OCI reference this host boots for it,
+so the host, not Amika, pins the version. amika-hostd 0.1.0 called the table
+`[images]`; that name is still read, and setting both is an error:
 
 ```toml
-[images]
+[preset_images]
 amika-coder = "ghcr.io/gofixpoint/amika-coder:<12-char sha>"
 amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:<12-char sha>"
 ```
