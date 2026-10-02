@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** `amika-hostd` command-line entry point. */
 import { createInterface } from "node:readline/promises";
+import { Writable } from "node:stream";
 import { PromptCancelled, runCli } from "./internal/cli.js";
 import { PROCESS_TITLE } from "./internal/daemon.js";
 
@@ -19,8 +20,26 @@ const shutdownSignal = () =>
  * with `PromptCancelled` on Ctrl-C, which readline would otherwise treat as
  * closing input and so as skipping the question.
  */
-async function prompt(question: string): Promise<string | undefined> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+async function prompt(
+  question: string,
+  { hidden = false }: { hidden?: boolean } = {},
+): Promise<string | undefined> {
+  // A hidden answer is typed into an output that drops everything after the
+  // question, so the terminal never echoes it.
+  let muted = false;
+  const output = hidden
+    ? new Writable({
+        write(chunk, encoding, done) {
+          if (!muted) process.stdout.write(chunk, encoding);
+          done();
+        },
+      })
+    : process.stdout;
+  const rl = createInterface({
+    input: process.stdin,
+    output,
+    terminal: true,
+  });
   const cancelled = new Promise<never>((_, reject) =>
     rl.once("SIGINT", () => {
       process.stdout.write("\n");
@@ -31,9 +50,12 @@ async function prompt(question: string): Promise<string | undefined> {
     rl.once("close", () => resolve(undefined)),
   );
   try {
-    return await Promise.race([rl.question(question), cancelled, closed]);
+    const answer = rl.question(question);
+    muted = hidden;
+    return await Promise.race([answer, cancelled, closed]);
   } finally {
     rl.close();
+    if (hidden) process.stdout.write("\n");
   }
 }
 
@@ -54,7 +76,12 @@ process.exitCode = await runCli(process.argv.slice(2), {
   err: (line) => console.error(stamp(line)),
   self: [process.execPath, ...process.execArgv, process.argv[1]],
   shutdownSignal,
-  prompt: process.stdin.isTTY && process.stdout.isTTY ? prompt : undefined,
+  ...(process.stdin.isTTY && process.stdout.isTTY
+    ? {
+        prompt: (question: string) => prompt(question),
+        promptSecret: (question: string) => prompt(question, { hidden: true }),
+      }
+    : {}),
 });
 
 // A request still waiting on the Smol runtime (up to its 5-minute timeout)

@@ -18,6 +18,7 @@ import {
   type HostdConfigWith,
   type HostdFlags,
 } from "./config.js";
+import { apiKeyStore, type CredentialStore } from "./credentials.js";
 import {
   DaemonError,
   claimPidFile as claimPidFileOnDisk,
@@ -50,8 +51,8 @@ import {
 export const USAGE = `Usage: amika-hostd <command> [options]
 
 Commands:
-  setup               Set this host's hostname and secret key, and write
-                      default rig sizes to the config file
+  setup               Set this host's hostname, secret key and Amika API key,
+                      and write default rig sizes to the config file
   up                  Register this host with Amika, then start smolvm and the
                       daemon in the background (running setup first if needed)
   down                Stop the daemon and its smolvm, which stops every machine
@@ -92,6 +93,10 @@ export interface CliDeps {
    * is not a terminal, so `up` never blocks.
    */
   prompt?: Prompt;
+  /** `prompt` without echoing the answer; absent without a terminal. */
+  promptSecret?: Prompt;
+  /** Where `setup` keeps the API key; defaults to `apiKeyStore(env)`. */
+  credentials?: CredentialStore;
   writeConfigFile?: SetupDeps["writeConfigFile"];
   systemHostname?: SetupDeps["systemHostname"];
   generateSecretKey?: SetupDeps["generateSecretKey"];
@@ -119,18 +124,19 @@ export async function runCli(
         env: deps.env,
         file: (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env),
       });
-    let resolved = resolve();
+    const resolved = resolve();
     switch (parsed.command) {
       case "up": {
         // Check first so a second `up` fails without calling Amika.
         ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
-        if (!hasSetupSettings(resolved) && deps.prompt) {
+        let withKey = withStoredApiKey(resolved, deps);
+        if (!hasSettings(withKey) && deps.prompt && deps.promptSecret) {
           deps.out("amika-hostd is not set up yet, so running setup first.");
           const code = await setup(deps, { fromUp: true });
           if (code !== 0) return code;
-          resolved = resolve();
+          withKey = withStoredApiKey(resolve(), deps);
         }
-        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
+        const config = requireSettings(withKey, REGISTRATION_SETTINGS);
         const host = await register(config, deps);
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
@@ -164,7 +170,10 @@ export async function runCli(
         );
         break;
       case "register-url": {
-        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
+        const config = requireSettings(
+          withStoredApiKey(resolved, deps),
+          REGISTRATION_SETTINGS,
+        );
         await saveUrl(config, await register(config, deps), parsed.url, deps);
         break;
       }
@@ -212,13 +221,21 @@ async function setup(
   deps: CliDeps,
   options: { fromUp?: boolean } = {},
 ): Promise<number> {
-  if (!deps.prompt) {
+  if (!deps.prompt || !deps.promptSecret) {
     throw new ConfigError(
       "`amika-hostd setup` asks questions, so run it in a terminal",
     );
   }
   try {
-    await runSetup({ ...deps, prompt: deps.prompt }, options);
+    await runSetup(
+      {
+        ...deps,
+        prompt: deps.prompt,
+        promptSecret: deps.promptSecret,
+        credentials: credentials(deps),
+      },
+      options,
+    );
     return 0;
   } catch (error) {
     if (!(error instanceof PromptCancelled)) throw error;
@@ -227,9 +244,21 @@ async function setup(
   }
 }
 
-/** Whether the settings `setup` writes are all present. */
-function hasSetupSettings(config: HostdConfig): boolean {
-  return config.hostname !== undefined && config.secretKey !== undefined;
+function credentials(deps: CliDeps): CredentialStore {
+  return deps.credentials ?? apiKeyStore(deps.env);
+}
+
+/**
+ * The environment's API key wins; without one, use the key `setup` stored.
+ * The background daemon never reads either, since only `up` registers.
+ */
+function withStoredApiKey(config: HostdConfig, deps: CliDeps): HostdConfig {
+  if (config.apiKey !== undefined) return config;
+  return { ...config, apiKey: credentials(deps).get() };
+}
+
+function hasSettings(config: HostdConfig): boolean {
+  return REGISTRATION_SETTINGS.every((key) => config[key] !== undefined);
 }
 
 function parseCommand(args: readonly string[]): ParsedCommand {

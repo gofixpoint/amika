@@ -458,15 +458,14 @@ print_next_steps() {
   echo ""
   echo "Next steps:"
   if [ -n "${CONFIG_HOSTNAME:-}" ]; then
-    echo "  1. Confirm this host registers as ${CONFIG_HOSTNAME}, and finish"
-    echo "     ${CONFIG_PATH}:"
+    echo "  1. Store your Amika API key, and confirm this host registers as"
+    echo "     ${CONFIG_HOSTNAME} (set in ${CONFIG_PATH}):"
   else
-    echo "  1. Set this host's hostname and finish ${CONFIG_PATH}:"
+    echo "  1. Store your Amika API key, and set or confirm this host's hostname"
+    echo "     in ${CONFIG_PATH}:"
   fi
   echo "       amika-hostd setup"
-  echo "  2. Export your Amika API key; it is read only from the environment:"
-  echo "       export AMIKA_HOSTD_API_KEY=<your Amika API key>"
-  echo "  3. Start the daemon, which starts smolvm with it (and runs setup first"
+  echo "  2. Start the daemon, which starts smolvm with it (and runs setup first"
   echo "     if you skipped step 1):"
   echo "       amika-hostd up"
   echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."

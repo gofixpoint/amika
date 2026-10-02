@@ -324,7 +324,7 @@ function parseTimeout(value: string | undefined): number {
 function describeSetting(key: RequiredSetting): string {
   switch (key) {
     case "apiKey":
-      return `API key: set ${ENV_NAMES.apiKey.join(" or ")} (environment only)`;
+      return `API key: run \`amika-hostd setup\`, or set ${ENV_NAMES.apiKey.join(" or ")}`;
     case "hostname":
       return `hostname: run \`amika-hostd setup\`, or set ${ENV_NAMES.hostname[0]} or \`hostname\` in config.toml`;
     case "secretKey":

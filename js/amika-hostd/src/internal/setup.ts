@@ -1,7 +1,8 @@
 /**
- * `amika-hostd setup`: ask for the hostname, generate the secret key, and
- * write them, with default rig sizes and preset images on the first run, to
- * the TOML config. Running it again offers to change the hostname.
+ * `amika-hostd setup`: ask for the hostname and API key, generate the secret
+ * key, and write them, with default rig sizes and preset images on the first
+ * run, to the TOML config and the API key store. Running it again offers to
+ * change each one.
  */
 import { randomBytes } from "node:crypto";
 import { hostname as osHostname } from "node:os";
@@ -16,14 +17,22 @@ import {
   type HostdConfigFile,
   type HostSize,
 } from "./config.js";
+import {
+  KeychainInterrupted,
+  isValidApiKey,
+  type CredentialStore,
+} from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
-import type { Prompt } from "./prompt.js";
+import { PromptCancelled, type Prompt } from "./prompt.js";
 
 export interface SetupDeps {
   env: NodeJS.ProcessEnv;
   out: (line: string) => void;
   err: (line: string) => void;
   prompt: Prompt;
+  /** Like `prompt`, without echoing what the operator types. */
+  promptSecret: Prompt;
+  credentials: CredentialStore;
   loadConfigFile?: typeof loadConfigFileFromDisk;
   writeConfigFile?: (file: string, contents: string) => void;
   systemHostname?: () => string;
@@ -94,14 +103,29 @@ export async function runSetup(
     deps.out("Generated a new secret key.");
   }
 
+  const apiKey = await askApiKey(deps);
+
   const contents = renderConfig(file?.contents, {
     hostname,
     secretKey,
     addDefaults: firstRun && Object.keys(saved.sizes).length === 0,
   });
-  // Check the result parses before writing it.
+  // Check the result parses before anything changes.
   const written = resolveConfig({ file: { path: configPath, contents } });
+  // The key first: a keychain command is the step likeliest to be stopped
+  // (an unlock prompt), and then the config is still untouched.
+  if (apiKey !== undefined) {
+    try {
+      deps.credentials.set(apiKey);
+    } catch (error) {
+      if (error instanceof KeychainInterrupted) throw new PromptCancelled();
+      throw error;
+    }
+  }
   writeConfig(deps.writeConfigFile ?? writePrivateFile, configPath, contents);
+  if (apiKey !== undefined) {
+    deps.out(`Stored the API key in ${deps.credentials.description}.`);
+  }
 
   deps.out("");
   deps.out(`Wrote ${configPath}:`);
@@ -113,11 +137,6 @@ export async function runSetup(
   for (const line of describeImages(written.images)) deps.out(`  ${line}`);
   deps.out(`Edit ${configPath} to change these settings.`);
   warnAboutEnvironment(deps);
-  if (!ENV_NAMES.apiKey.some((name) => deps.env[name])) {
-    deps.out(
-      `\`amika-hostd up\` also needs your Amika API key: export ${ENV_NAMES.apiKey[0]}=<your Amika API key>`,
-    );
-  }
   deps.out("");
   if (!fromUp) {
     deps.out("Start the daemon with `amika-hostd up`.");
@@ -142,6 +161,52 @@ async function askHostname(
     deps.err(
       `Invalid hostname: ${JSON.stringify(hostname)}. Use lowercase letters, digits, and hyphens in dot-separated labels.`,
     );
+  }
+}
+
+/**
+ * The new API key to store, or `undefined` to keep the stored one (or the
+ * environment's, which takes precedence over any stored key).
+ */
+async function askApiKey(deps: SetupDeps): Promise<string | undefined> {
+  const fromEnv = ENV_NAMES.apiKey.find((name) => deps.env[name]);
+  if (fromEnv !== undefined) {
+    deps.out(
+      `Using the API key from ${fromEnv}; unset it to use a stored key instead.`,
+    );
+    return undefined;
+  }
+  if (
+    deps.credentials.get() !== undefined &&
+    !(await confirm("Update the stored Amika API key? [y/N] ", deps))
+  ) {
+    return undefined;
+  }
+  for (;;) {
+    const answer = (
+      await deps.promptSecret("Amika API key (input is hidden): ")
+    )?.trim();
+    if (answer === undefined) throw stopped();
+    if (answer === "") continue;
+    if (isValidApiKey(answer)) return answer;
+    deps.err(
+      "That is not an API key: it must be printable ASCII with no spaces or quotes.",
+    );
+  }
+}
+
+async function confirm(question: string, deps: SetupDeps): Promise<boolean> {
+  for (;;) {
+    const answer = (await deps.prompt(question))?.trim().toLowerCase();
+    if (
+      answer === undefined ||
+      answer === "" ||
+      answer === "n" ||
+      answer === "no"
+    ) {
+      return false;
+    }
+    if (answer === "y" || answer === "yes") return true;
   }
 }
 
