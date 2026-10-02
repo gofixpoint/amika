@@ -90,6 +90,30 @@ export async function setHostSizes(
   return parseHost(response);
 }
 
+/**
+ * Replace the secret Amika stores for this host, which registration never
+ * changes. Amika expires its rigs' cached service URLs with it, so the next
+ * request to the host carries the new secret.
+ */
+export async function setHostSecret(
+  api: AmikaApiConfig,
+  host: Pick<RegisteredHost, "id" | "hostname">,
+  secretKey: string,
+  fetcher: typeof fetch = fetch,
+): Promise<RegisteredHost> {
+  const response = await send(
+    api,
+    fetcher,
+    "PUT",
+    `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
+    { hostname: host.hostname, secret: secretKey },
+  );
+  if (response.status !== 200) {
+    throw await apiError("update the host's secret key", response);
+  }
+  return parseHost(response);
+}
+
 type HostSizes = Record<string, HostSize>;
 
 const REQUEST_TIMEOUT_MS = 30_000;

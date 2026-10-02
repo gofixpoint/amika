@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AmikaApiError,
   registerHost,
+  setHostSecret,
   setHostSizes,
   setHostUrl,
 } from "./amika-api.js";
@@ -229,5 +230,32 @@ describe("setHostSizes", () => {
     await expect(setHostSizes(API, HOST, {}, fetcher)).rejects.toThrow(
       "failed to update the host's sizes (validation_failed: Invalid host sizes)",
     );
+  });
+});
+
+describe("setHostSecret", () => {
+  it("replaces the host's stored secret, keeping its hostname", async () => {
+    const fetcher = responding(Response.json(HOST));
+    await setHostSecret(API, HOST, "new-secret", fetcher);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://app.amika.dev/api/v0beta1/hosts/host_1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ hostname: "builder", secret: "new-secret" }),
+        redirect: "error",
+      }),
+    );
+  });
+
+  it("reports a refusal without the secret", async () => {
+    const fetcher = responding(
+      apiErrorBody(404, "host_not_found", "Host not found"),
+    );
+    const error = await setHostSecret(API, HOST, "new-secret", fetcher).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(AmikaApiError);
+    expect(String(error)).toContain("update the host's secret key");
+    expect(String(error)).not.toContain("new-secret");
   });
 });

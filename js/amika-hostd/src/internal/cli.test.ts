@@ -94,6 +94,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     credentials: memoryStore(),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
     setHostSizes: vi.fn(async () => HOST),
+    setHostSecret: vi.fn(async () => HOST),
     setHostUrl: vi.fn(
       async (_api, host: { hostname: string }, url: string) => ({
         ...HOST,
