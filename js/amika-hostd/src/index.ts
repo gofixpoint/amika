@@ -38,11 +38,15 @@ async function prompt(question: string): Promise<string | undefined> {
 }
 
 // `up` spawns the background daemon with an IPC channel and sends its output
-// to the log file, so timestamp each line there. Checked before the daemon
-// disconnects from `up`.
-const stamp: (line: string) => string = process.channel
-  ? (line) => `${new Date().toISOString()} ${line}`
-  : (line) => line;
+// to the log file, so timestamp each line there, including every line of a
+// multiline message. Checked before the daemon disconnects from `up`.
+const stamp: (text: string) => string = process.channel
+  ? (text) => {
+      const now = new Date().toISOString();
+      // Blank lines, such as the one `USAGE` ends with, stay unstamped.
+      return text.replace(/^(?!$)/gm, `${now} `);
+    }
+  : (text) => text;
 
 process.exitCode = await runCli(process.argv.slice(2), {
   env: process.env,
