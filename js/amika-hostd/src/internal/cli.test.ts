@@ -584,6 +584,12 @@ describe("managing smolvm", () => {
     );
   });
 
+  it("plain `serve` forwards to SMOL_API_URL or the fixed default", async () => {
+    const { deps } = harness();
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(deps.startServer.mock.calls[0][0].smolApiUrl).toBeUndefined();
+  });
+
   it("starts smolvm for `serve` only with --smolvm", async () => {
     const { deps } = harness();
     await runCli(["serve"], deps);
@@ -664,6 +670,10 @@ describe("down", () => {
   function running() {
     const dir = pidDir();
     writeFileSync(path.join(dir, "amika-hostd", "smolvm.pid"), "888888\n");
+    writeFileSync(
+      path.join(dir, "amika-hostd", "smolvm.url"),
+      "http://127.0.0.1:23020\n",
+    );
     const h = harness({ XDG_STATE_HOME: dir });
     return { ...h, dir };
   }
@@ -702,8 +712,20 @@ describe("down", () => {
       "Stopping smolvm (pid 888888) and its machines",
       "Stopped smolvm",
     ]);
-    // No daemon is left to remove its pidfile.
+    // No daemon is left to remove its pidfile or URL file.
     expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
+    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.url"))).toBe(false);
+  });
+
+  it("removes smolvm files a dead run left behind", async () => {
+    const { deps, out, dir } = running();
+    // Far above any real pid, so certainly not running.
+    writeFileSync(path.join(dir, "amika-hostd", "smolvm.pid"), "999999999\n");
+    expect(await runCli(["down"], deps)).toBe(0);
+    expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(out).toEqual(["amika-hostd is not running"]);
+    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
+    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.url"))).toBe(false);
   });
 
   it("leaves a pidfile naming another live process, and says so", async () => {

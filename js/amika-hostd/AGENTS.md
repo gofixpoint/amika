@@ -96,6 +96,10 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   child is ready, the child shuts down too.
   Only `up` registers with Amika; `serve` does not. `up` (either way) and
   `serve --smolvm` also run smolvm; plain `serve` does not, for development.
+  Plain `serve` forwards to `SMOL_API_URL`, else to a fixed
+  `http://127.0.0.1:23020` (it does no port scan), so run a hand-started
+  smolvm there with `smolvm serve start --listen 127.0.0.1:23020` or point
+  `SMOL_API_URL` at it.
 - `amika-hostd down` sends `SIGTERM` to the daemon named by the pidfile and
   waits for it to exit, which includes stopping smolvm. It needs no
   configuration.
@@ -174,22 +178,26 @@ is left as it was before `up`:
    speak HTTP (an editor's language server, say). With `SMOL_API_URL` set, it
    uses that port or fails naming it. Unset, it starts at 23020 and moves to
    the next port while the port is held, or while smolvm exits with
-   `Address already in use` (another program won the race), giving up only
-   once every port up to 65535 is taken. It never shares a port, and it refuses
-   to start at all when the holder is a smolvm (both `/health` and
-   `/api/v1/machines` answer 2xx): a smolvm it did not start would expose
-   unrelated VMs, and is not the daemon's to stop or drain. The daemon forwards
-   to the chosen URL, which is also written to `smolvm.url` beside `smolvm.pid`
-   while smolvm runs.
+   `Address already in use` (another program won the race), giving up only once
+   every port up to 65535 is taken. A shutdown signal stops the scan. It never
+   shares a port, and it refuses to start at all when a held port it tries, or
+   `127.0.0.1:8080` (where smolvm's docs run it by hand), is a smolvm (both
+   `/health` and `/api/v1/machines` answer 2xx): a smolvm it did not start
+   would expose unrelated VMs, and is not the daemon's to stop or drain. A
+   smolvm elsewhere (another port the scan never reaches, or a Unix socket)
+   goes unnoticed. The daemon forwards to the chosen URL, which is also written
+   to `smolvm.url` beside `smolvm.pid` while smolvm runs.
 
    smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only
    the daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the
    log carries no ANSI color codes; and it never sees the API key or secret
    key.
 
-4. The daemon listens only once smolvm answers `/health` (30s at most), so the
-   background `up` reports a smolvm that fails to start. A shutdown signal
-   while it waits stops smolvm and exits without listening.
+4. The daemon listens only once smolvm answers `/health` (30s at most) and is
+   still running half a second later (a program that won the race for the port
+   answers too, until smolvm fails to bind), so the background `up` reports a
+   smolvm that fails to start. A shutdown signal while it waits stops smolvm
+   and exits without listening.
 5. On shutdown the daemon stops listening first, then sends smolvm `SIGTERM`
    and waits up to 60s. smolvm is started with `SMOLVM_DRAIN_ON_SHUTDOWN=1`,
    so it stops every machine cleanly (disks are kept; nothing is deleted)
@@ -228,10 +236,11 @@ The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
 enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
-two are not merged, and unknown keys are rejected. `SMOL_API_URL` (where `up` starts smolvm;
-by default the first free port from `http://127.0.0.1:23020`, see
-[smolvm](#smolvm)) and
-`SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
+two are not merged, and unknown keys are rejected. `SMOL_API_URL` (where `up`
+and `serve --smolvm` start smolvm, by default the first free port from
+`http://127.0.0.1:23020`, see [smolvm](#smolvm); plain `serve` forwards to a
+fixed `http://127.0.0.1:23020`) and `SMOL_REQUEST_TIMEOUT_MS` remain
+environment-only. `config.example.toml`
 is the template the installer seeds: every setting with a default is a live
 line, `secret_key = "REPLACE_ME"` deliberately fails validation until replaced,
 and only `hostname` is commented. Keep its comments short. `config.test.ts`

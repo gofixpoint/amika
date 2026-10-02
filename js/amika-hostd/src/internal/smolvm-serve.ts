@@ -54,7 +54,16 @@ export interface SmolvmDeps {
   readyTimeoutMs?: number;
   stopTimeoutMs?: number;
   pollMs?: number;
-  /** Stop waiting for smolvm to serve once this aborts (a shutdown signal). */
+  /**
+   * How long smolvm must stay up after first answering before the answer is
+   * trusted: a program that won the race for the port answers too, until
+   * smolvm fails to bind and exits.
+   */
+  bindSettleMs?: number;
+  /**
+   * Stop looking for a port, or waiting for smolvm to serve, once this
+   * aborts (a shutdown signal).
+   */
   signal?: AbortSignal;
 }
 
@@ -62,11 +71,18 @@ export interface SmolvmDeps {
 export const SMOLVM_STOP_TIMEOUT_MS = 60_000;
 
 /**
+ * Where smolvm's own docs have people run it by hand. A smolvm there is not
+ * one amika-hostd started, even though the scan from 23020 never reaches it.
+ */
+const USUAL_SMOLVM_URL = "http://127.0.0.1:8080";
+
+/**
  * Start `smolvm serve` and resolve once it answers `/health`, or as soon as
  * `signal` aborts, so the caller can stop it. It listens at `apiUrl` (i.e.
  * `SMOL_API_URL`) and fails if that port is taken. Without one, it starts at
  * the default port and moves to the next while the port is taken. A port
  * that is taken is never shared: whatever holds it is not ours to stop.
+ * Resolves undefined if `signal` aborts before smolvm is spawned.
  */
 export async function startSmolvm(
   apiUrl: string | undefined,
@@ -81,9 +97,10 @@ export async function startSmolvm(
     readyTimeoutMs = 30_000,
     stopTimeoutMs = SMOLVM_STOP_TIMEOUT_MS,
     pollMs = 200,
+    bindSettleMs = 500,
     signal,
   }: SmolvmDeps = {},
-): Promise<ManagedSmolvm> {
+): Promise<ManagedSmolvm | undefined> {
   const first = smolvmListenAddress(apiUrl);
   const leftover = readRunningPid(paths.smolvmPidFile, isRunning);
   if (leftover !== undefined) {
@@ -173,8 +190,8 @@ export async function startSmolvm(
       if (signal?.aborted) break;
       if (isHealthy(await probe(address.origin, fetcher))) {
         // A program that took the port first would also answer, so give
-        // smolvm a moment to fail to bind before trusting the answer.
-        await sleep(pollMs);
+        // smolvm time to fail to bind before trusting the answer.
+        await sleep(bindSettleMs);
         if (exitReason === undefined) break;
         continue;
       }
@@ -197,22 +214,35 @@ export async function startSmolvm(
     };
   };
 
+  const refuseForeignSmolvm = async (origin: string) => {
+    // A smolvm someone else runs shares this host's machines, so starting a
+    // second one on another port could reach (and on shutdown drain) them.
+    if (await looksLikeSmolvm(origin, fetcher)) {
+      throw new DaemonError(
+        `a smolvm that amika-hostd did not start is already serving at ${origin}; stop it first, since amika-hostd runs its own`,
+      );
+    }
+  };
+  const usual = smolvmListenAddress(USUAL_SMOLVM_URL);
+  if (
+    usual.origin !== first.origin &&
+    (await isPortInUse(usual.address, usual.port))
+  ) {
+    await refuseForeignSmolvm(usual.origin);
+  }
+
   // Without SMOL_API_URL, any free port from the default up will do.
   const attempts = apiUrl === undefined ? 65_536 - first.port : 1;
   for (let i = 0; i < attempts; i++) {
+    // The scan can be long; a shutdown signal must not wait it out.
+    if (signal?.aborted) return undefined;
     const address = withPort(first, first.port + i);
     if (!(await isPortInUse(address.address, address.port))) {
       const started = await launch(address);
       if (started !== ADDRESS_IN_USE) return started;
     }
-    // The port is held, or was taken since the check. A smolvm someone else
-    // runs shares this host's machines, so starting a second one on another
-    // port could reach (and on shutdown drain) them: stop here instead.
-    if (await looksLikeSmolvm(address.origin, fetcher)) {
-      throw new DaemonError(
-        `a smolvm that amika-hostd did not start is already serving at ${address.origin}; stop it first, since amika-hostd runs its own`,
-      );
-    }
+    // The port is held, or was taken since the check.
+    await refuseForeignSmolvm(address.origin);
     if (apiUrl !== undefined) {
       throw new DaemonError(
         `another program is already listening at ${address.origin} (SMOL_API_URL); stop it, or set SMOL_API_URL to a free port`,

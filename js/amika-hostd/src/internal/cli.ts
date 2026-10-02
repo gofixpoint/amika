@@ -505,14 +505,14 @@ async function startSmolvm(
   paths: DaemonPaths,
   deps: CliDeps,
   signal: AbortSignal,
-): Promise<ManagedSmolvm> {
+): Promise<ManagedSmolvm | undefined> {
   const runtime = await (deps.startSmolvm ?? startSmolvmServe)(
     config.smolApiUrl,
     paths,
     withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
     { signal },
   );
-  if (!signal.aborted) {
+  if (runtime !== undefined && !signal.aborted) {
     deps.out(
       `smolvm serving at ${runtime.apiUrl} (pid ${runtime.pid}); logs: ${paths.smolvmLogFile}`,
     );

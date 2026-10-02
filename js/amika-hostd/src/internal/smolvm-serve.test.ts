@@ -64,6 +64,16 @@ const devServerOn23020 = route((url) =>
     : 200,
 );
 
+/** Every port but 8080, where smolvm's docs run it by hand, is taken. */
+const allButUsual = async (_host: string, port: number) => port !== 8080;
+
+/** `startSmolvm`, failing the test if it resolves without a smolvm. */
+async function mustStart(...args: Parameters<typeof startSmolvm>) {
+  const smolvm = await startSmolvm(...args);
+  if (smolvm === undefined) throw new Error("smolvm was not started");
+  return smolvm;
+}
+
 function fakeDeps(child = fakeChild(), overrides: SmolvmDeps = {}) {
   return {
     spawn: vi.fn<Spawn>(() => child),
@@ -72,6 +82,7 @@ function fakeDeps(child = fakeChild(), overrides: SmolvmDeps = {}) {
     findSmolvm: () => "/opt/smolvm/smolvm",
     isSmolvmRunning: () => false,
     pollMs: 1,
+    bindSettleMs: 1,
     ...overrides,
   } satisfies SmolvmDeps;
 }
@@ -137,7 +148,7 @@ describe("startSmolvm", () => {
   it("spawns smolvm detached with drain on, and waits until it serves", async () => {
     const files = paths();
     const deps = fakeDeps();
-    const smolvm = await startSmolvm(
+    const smolvm = await mustStart(
       "http://127.0.0.1:9000",
       files,
       { KEEP: "1" },
@@ -161,7 +172,7 @@ describe("startSmolvm", () => {
 
   it("refuses when another program holds SMOL_API_URL's port", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async () => true),
+      isPortInUse: vi.fn(allButUsual),
     });
     await expect(
       startSmolvm("http://127.0.0.1:9000", paths(), {}, deps),
@@ -175,11 +186,13 @@ describe("startSmolvm", () => {
   it("moves past taken ports when SMOL_API_URL is unset", async () => {
     const files = paths();
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async (_host: string, port: number) => port < 23022),
+      isPortInUse: vi.fn(
+        async (_host: string, port: number) => port >= 23020 && port < 23022,
+      ),
       // Whatever holds 23020 and 23021 is not a smolvm.
       fetch: health(404, 404, 200),
     });
-    const smolvm = await startSmolvm(undefined, files, {}, deps);
+    const smolvm = await mustStart(undefined, files, {}, deps);
     expect(deps.spawn).toHaveBeenCalledTimes(1);
     expect(deps.spawn).toHaveBeenCalledWith(
       "/opt/smolvm/smolvm",
@@ -194,19 +207,41 @@ describe("startSmolvm", () => {
 
   it("refuses to start beside a smolvm it did not start", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async () => true),
+      isPortInUse: vi.fn(allButUsual),
       fetch: health(200),
     });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
       "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:23020",
     );
-    expect(deps.isPortInUse).toHaveBeenCalledTimes(1);
+    // 8080, then 23020.
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(2);
     expect(deps.spawn).not.toHaveBeenCalled();
+  });
+
+  it("refuses to start beside a smolvm run by hand on 8080", async () => {
+    const deps = fakeDeps(fakeChild(), {
+      isPortInUse: vi.fn(async (_host: string, port: number) => port === 8080),
+      fetch: health(200),
+    });
+    await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
+      "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:8080",
+    );
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+
+  it("starts as usual when 8080 holds something other than smolvm", async () => {
+    const deps = fakeDeps(fakeChild(), {
+      isPortInUse: vi.fn(async (_host: string, port: number) => port === 8080),
+      // Cursor, say: it answers no HTTP at all.
+      fetch: health(undefined, 200),
+    });
+    const smolvm = await mustStart(undefined, paths(), {}, deps);
+    expect(smolvm.apiUrl).toBe("http://127.0.0.1:23020");
   });
 
   it("refuses a smolvm it did not start at SMOL_API_URL too", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async () => true),
+      isPortInUse: vi.fn(allButUsual),
       fetch: health(200),
     });
     await expect(
@@ -221,7 +256,7 @@ describe("startSmolvm", () => {
       isPortInUse: vi.fn(async (_host: string, port: number) => port === 23020),
       fetch: devServerOn23020,
     });
-    const smolvm = await startSmolvm(undefined, paths(), {}, deps);
+    const smolvm = await mustStart(undefined, paths(), {}, deps);
     expect(smolvm.apiUrl).toBe("http://127.0.0.1:23021");
   });
 
@@ -260,13 +295,14 @@ describe("startSmolvm", () => {
 
   it("gives up once every port it tries is taken", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async () => true),
+      isPortInUse: vi.fn(allButUsual),
       fetch: health(404),
     });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
       "ports 23020-65535 on 127.0.0.1 are all in use",
     );
-    expect(deps.isPortInUse).toHaveBeenCalledTimes(65_536 - 23_020);
+    // 8080, then every port from 23020 up.
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(1 + 65_536 - 23_020);
     expect(deps.spawn).not.toHaveBeenCalled();
   });
 
@@ -296,7 +332,7 @@ describe("startSmolvm", () => {
     const spawn = loseFirstBind(files);
     // The program that won the race for 23020 answers too, but is not smolvm.
     const deps = fakeDeps(fakeChild(), { spawn, fetch: devServerOn23020 });
-    const smolvm = await startSmolvm(undefined, files, {}, deps);
+    const smolvm = await mustStart(undefined, files, {}, deps);
     expect(spawn.mock.calls.map(([, args]) => args[3])).toEqual([
       "127.0.0.1:23020",
       "127.0.0.1:23021",
@@ -419,21 +455,41 @@ describe("startSmolvm", () => {
 
   it("stops waiting to serve once the signal aborts", async () => {
     const child = fakeChild();
-    const aborted = new AbortController();
-    aborted.abort();
+    const shutdown = new AbortController();
     const deps = fakeDeps(child, {
+      // The signal arrives once smolvm is spawned, while it starts up.
+      spawn: vi.fn<Spawn>(() => {
+        shutdown.abort();
+        return child;
+      }),
       fetch: health(undefined),
-      signal: aborted.signal,
+      signal: shutdown.signal,
     });
-    const smolvm = await startSmolvm(undefined, paths(), {}, deps);
+    const smolvm = await mustStart(undefined, paths(), {}, deps);
     expect(smolvm.running).toBe(true);
     expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("stops looking for a port once the signal aborts", async () => {
+    const shutdown = new AbortController();
+    const deps = fakeDeps(fakeChild(), {
+      isPortInUse: vi.fn(async (_host: string, port: number) => {
+        if (port === 23_030) shutdown.abort();
+        return true;
+      }),
+      fetch: health(404),
+      signal: shutdown.signal,
+    });
+    expect(await startSmolvm(undefined, paths(), {}, deps)).toBeUndefined();
+    // 8080, then 23020 to 23030, and no further.
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(12);
+    expect(deps.spawn).not.toHaveBeenCalled();
   });
 
   it("gives up waiting on a slow stop without killing smolvm", async () => {
     const child = fakeChild();
     const deps = fakeDeps(child, { stopTimeoutMs: 20 });
-    const smolvm = await startSmolvm(undefined, paths(), {}, deps);
+    const smolvm = await mustStart(undefined, paths(), {}, deps);
     expect(await smolvm.stop()).toBe(false);
     expect(child.kill).toHaveBeenCalledTimes(1);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
@@ -463,7 +519,7 @@ process.on("SIGTERM", () => {
 `,
     );
     chmodSync(fake, 0o755);
-    const smolvm = await startSmolvm(
+    const smolvm = await mustStart(
       `http://127.0.0.1:${port}`,
       files,
       {},
