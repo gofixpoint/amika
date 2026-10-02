@@ -91,6 +91,7 @@ describe("runSetup", () => {
     // A new secret on a first run reaches Amika when `up` registers.
     expect(h.deps.registerHost).not.toHaveBeenCalled();
     expect(h.out).toContain("Rig sizes:");
+    expect(h.out).toContain("  tiny    1 vCPU, 2 GiB memory, 10 GiB disk");
     expect(h.out).toContain("  small   2 vCPUs, 4 GiB memory, 16 GiB disk");
     expect(h.out).toContain(`Edit ${PATH} to change these settings.`);
     expect(h.out.slice(-2)).toEqual([

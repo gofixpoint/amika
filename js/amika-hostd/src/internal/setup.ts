@@ -402,7 +402,7 @@ function describeSizes(sizes: Record<string, HostSize>): string[] {
   const width = Math.max(...entries.map(([name]) => name.length));
   return entries.map(
     ([name, size]) =>
-      `${name.padEnd(width)}  ${size.vcpus} vCPUs, ${size.memoryGib} GiB memory, ${size.diskGib} GiB disk`,
+      `${name.padEnd(width)}  ${size.vcpus} vCPU${size.vcpus === 1 ? "" : "s"}, ${size.memoryGib} GiB memory, ${size.diskGib} GiB disk`,
   );
 }
 
