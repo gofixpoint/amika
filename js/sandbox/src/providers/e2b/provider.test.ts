@@ -78,7 +78,7 @@ describe("E2B lifecycle mapping", () => {
 
   it("maps E2B states to Amika states", () => {
     expect(mapE2bSandboxState("running")).toBe("running");
-    expect(mapE2bSandboxState("paused")).toBe("suspended");
+    expect(mapE2bSandboxState("paused")).toBe("stopped");
     expect(mapE2bSandboxState("destroyed")).toBe("unknown");
   });
 });

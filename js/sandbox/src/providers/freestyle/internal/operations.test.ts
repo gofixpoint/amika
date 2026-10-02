@@ -90,6 +90,18 @@ describe("createFreestyleSandbox org gating", () => {
     });
   });
 
+  it("keeps provider idle suspension disabled even with an auto-stop interval", async () => {
+    await createFreestyleSandbox(
+      ctx(),
+      config,
+      createInput({ autoStopInterval: 30 }),
+    );
+
+    expect(createVm.mock.calls[0][0]).toMatchObject({
+      idleTimeoutSeconds: 365 * 24 * 60 * 60,
+    });
+  });
+
   it("falls back to the bare name when no org label is present", async () => {
     await createFreestyleSandbox(
       ctx(),
@@ -197,7 +209,8 @@ describe("mapFreestyleSandboxState", () => {
       running: "running",
       suspending: "suspending",
       suspended: "suspended",
-      stopped: "suspended",
+      stopping: "stopping",
+      stopped: "stopped",
       lost: "failed",
     };
     for (const [raw, expected] of Object.entries(cases)) {

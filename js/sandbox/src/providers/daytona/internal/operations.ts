@@ -89,7 +89,8 @@ export async function getDaytonaSandboxState(
  * Raw values are the `@daytonaio/sdk` `SandboxState` enum. Judgment calls:
  * `forking` keeps the source running, so it reads as `running`; `archiving`/
  * `archived` happen to an already-stopped sandbox, so both read as
- * `suspended`; `resizing` is a transition back toward up, so `starting`.
+ * `stopped`; `pausing`/`paused` retain memory; `resizing` is a transition back
+ * toward up, so `starting`.
  */
 export function mapDaytonaSandboxState(rawState: string): SandboxStatus {
   switch (rawState) {
@@ -109,12 +110,14 @@ export function mapDaytonaSandboxState(rawState: string): SandboxStatus {
     case "snapshotting":
       return "snapshotting";
     case "stopping":
-    case "pausing":
       return "stopping";
+    case "pausing":
+      return "suspending";
     case "stopped":
-    case "paused":
     case "archiving":
     case "archived":
+      return "stopped";
+    case "paused":
       return "suspended";
     case "error":
     case "build_failed":

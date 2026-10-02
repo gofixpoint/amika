@@ -593,7 +593,7 @@ export interface SandboxCapability {
   ): Promise<CreatedProviderSandbox>;
   delete(providerSandboxId: string): Promise<void>;
 
-  // Run-state control: start (power on / resume), stop (suspend), read the raw
+  // Run-state control: start (power on / resume), stop (power off), read the raw
   // run state, and map it to the canonical status vocabulary. Present as a unit
   // on a lifecycle provider; all absent on a create/delete-only one.
   start?(

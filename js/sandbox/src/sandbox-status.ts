@@ -24,6 +24,7 @@
  *        ├── snapshotting
  *        ├── starting
  *        ├── stopping
+ *        ├── stopped
  *        ├── suspended
  *        └── suspending
  *
@@ -32,8 +33,13 @@
  * setup script, or system setup (credentials, env, API key) failed — but whose
  * VM is up — is `running` with the failure recorded in the setup track.
  *
+ * `stopping`/`stopped` mean a cold power-off that discards memory;
+ * `suspending`/`suspended` mean memory is retained. These meanings do not
+ * depend on who initiated the transition.
+ *
  * The persisted `state` uses its own vocabulary (`initializing`,
- * `active`, `stopping`, `stopped`, `snapshotting`, `failed`); this module owns
+ * `active`, `stopping`, `stopped`, `suspending`, `suspended`,
+ * `snapshotting`, `failed`); this module owns
  * the translation into the canonical statuses so persisted rows and mid-deploy
  * version skew all keep working. `snapshotting` is not part of the
  * create/resume taxonomy above but
@@ -53,6 +59,7 @@ export const SANDBOX_STATUS_VALUES = [
   "starting",
   "running",
   "stopping",
+  "stopped",
   "suspending",
   "suspended",
   "snapshotting",
@@ -139,6 +146,10 @@ export function deriveSandboxStatus(
     case "stopping":
       return "stopping";
     case "stopped":
+      return "stopped";
+    case "suspending":
+      return "suspending";
+    case "suspended":
       return "suspended";
     case "snapshotting":
       return "snapshotting";

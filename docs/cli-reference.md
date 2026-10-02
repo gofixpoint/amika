@@ -152,6 +152,8 @@ amika sandbox create --name dev-sandbox --snapshot amika-mono-base
 ### `amika sandbox list`
 
 List all tracked sandboxes.
+See [Rig lifecycle and status](rig-lifecycle.md) for the `status` and
+`setup_status` values returned by the API and JSON output.
 
 ```bash
 amika sandbox list
@@ -206,7 +208,8 @@ amika sandbox delete dev-sandbox --force
 
 ### `amika sandbox stop`
 
-Stop one or more running sandboxes without removing them.
+Power off one or more rigs without removing their persistent disks. Memory
+state is discarded; see [Rig lifecycle and status](rig-lifecycle.md).
 
 ```bash
 amika sandbox stop dev-sandbox

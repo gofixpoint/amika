@@ -215,7 +215,7 @@ export function mapSmolState(state: string): SandboxStatus {
     case "started":
       return "starting";
     case "stopped":
-      return "suspended";
+      return "stopped";
     case "failed":
       return "failed";
     default:
