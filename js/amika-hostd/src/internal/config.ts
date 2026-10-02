@@ -96,7 +96,7 @@ export function resolveConfig({
     smolApiUrl: nonEmpty(env.SMOL_API_URL),
     smolRequestTimeoutMs: parseTimeout(env.SMOL_REQUEST_TIMEOUT_MS),
     sizes: toHostSizes(toml.sizes ?? {}),
-    images: toml.images ?? {},
+    images: toml.preset_images ?? {},
     configPath: file?.path,
   };
 }
@@ -166,7 +166,9 @@ const configFileSchema = z.strictObject({
   host: z.string().min(1).optional(),
   port: z.number().int().optional(),
   sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
-  images: z.record(z.string().min(1), z.string().trim().min(1)).optional(),
+  preset_images: z
+    .record(z.string().min(1), z.string().trim().min(1))
+    .optional(),
 });
 
 function parseConfigFile(file: HostdConfigFile) {

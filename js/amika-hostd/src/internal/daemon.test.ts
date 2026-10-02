@@ -369,12 +369,22 @@ describe("daemonPaths", () => {
   it("lives under XDG_STATE_HOME", () => {
     expect(daemonPaths({ XDG_STATE_HOME: "/state" })).toEqual({
       pidFile: "/state/amika-hostd/amika-hostd.pid",
-      logFile: "/state/amika-hostd/amika-hostd.log",
+      logFile: "/state/amika-hostd/log/amika-hostd.log",
       smolvmPidFile: "/state/amika-hostd/smolvm.pid",
       smolvmUrlFile: "/state/amika-hostd/smolvm.url",
-      smolvmLogFile: "/state/amika-hostd/smolvm.log",
+      smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
       servicesFile: "/state/amika-hostd/services.json",
     });
+  });
+
+  it("falls back to HOME without XDG_STATE_HOME", () => {
+    const paths = daemonPaths({ XDG_STATE_HOME: "", HOME: "/home/op" });
+    expect(paths.logFile).toBe(
+      "/home/op/.local/state/amika-hostd/log/amika-hostd.log",
+    );
+    expect(paths.pidFile).toBe(
+      "/home/op/.local/state/amika-hostd/amika-hostd.pid",
+    );
   });
 });
 

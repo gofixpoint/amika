@@ -208,15 +208,21 @@ export async function stopProcess(
   return true;
 }
 
+/**
+ * Where the daemon keeps its state: `$XDG_STATE_HOME/amika-hostd`, else
+ * `$HOME/.local/state/amika-hostd`, with the logs in its `log` directory.
+ */
 export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
-  const stateHome = env.XDG_STATE_HOME || path.join(homedir(), ".local/state");
+  const stateHome =
+    env.XDG_STATE_HOME || path.join(env.HOME || homedir(), ".local/state");
   const dir = path.join(stateHome, "amika-hostd");
+  const logDir = path.join(dir, "log");
   return {
     pidFile: path.join(dir, "amika-hostd.pid"),
-    logFile: path.join(dir, "amika-hostd.log"),
+    logFile: path.join(logDir, "amika-hostd.log"),
     smolvmPidFile: path.join(dir, "smolvm.pid"),
     smolvmUrlFile: path.join(dir, "smolvm.url"),
-    smolvmLogFile: path.join(dir, "smolvm.log"),
+    smolvmLogFile: path.join(logDir, "smolvm.log"),
     servicesFile: path.join(dir, "services.json"),
   };
 }

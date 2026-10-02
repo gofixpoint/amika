@@ -174,10 +174,10 @@ disk_grow_only = true
     expect(() => resolveConfig({ file: file(table) })).toThrow(message);
   });
 
-  it("reads image references from the [images] table", () => {
+  it("reads image references from the [preset_images] table", () => {
     const config = resolveConfig({
       file: file(`
-[images]
+[preset_images]
 amika-coder = "ghcr.io/gofixpoint/amika-coder:0123456789ab"
 amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:0123456789ab "
 `),
@@ -190,19 +190,29 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
   });
 
   it.each([
-    ["an empty reference", `amika-coder = ""`, /images\.amika-coder$/],
-    ["a blank reference", `amika-coder = "  "`, /images\.amika-coder$/],
-    ["a non-string reference", `amika-coder = 1`, /images\.amika-coder$/],
-    ["an empty name", `"" = "ghcr.io/x:y"`, /invalid settings: images/],
-  ])("rejects an [images] table with %s", (_label, line, message) => {
-    expect(() => resolveConfig({ file: file(`[images]\n${line}`) })).toThrow(
-      message,
-    );
+    ["an empty reference", `amika-coder = ""`, /preset_images\.amika-coder$/],
+    ["a blank reference", `amika-coder = "  "`, /preset_images\.amika-coder$/],
+    [
+      "a non-string reference",
+      `amika-coder = 1`,
+      /preset_images\.amika-coder$/,
+    ],
+    ["an empty name", `"" = "ghcr.io/x:y"`, /invalid settings: preset_images/],
+  ])("rejects a [preset_images] table with %s", (_label, line, message) => {
+    expect(() =>
+      resolveConfig({ file: file(`[preset_images]\n${line}`) }),
+    ).toThrow(message);
   });
 
-  it("rejects images that aren't a table", () => {
+  it("rejects preset_images that aren't a table", () => {
     expect(() =>
-      resolveConfig({ file: file(`images = "ghcr.io/x:y"`) }),
+      resolveConfig({ file: file(`preset_images = "ghcr.io/x:y"`) }),
+    ).toThrow(/invalid settings: preset_images$/);
+  });
+
+  it("rejects the 0.1.0 [images] table", () => {
+    expect(() =>
+      resolveConfig({ file: file(`[images]\namika-coder = "ghcr.io/x:y"`) }),
     ).toThrow(/invalid settings: images$/);
   });
 
@@ -352,19 +362,22 @@ describe("config.example.toml", () => {
     readFileSync(new URL("../../config.example.toml", import.meta.url), "utf8"),
   );
 
-  /** Uncomment one documented `key = …` line, failing if it is missing. */
-  function uncomment(contents: string, key: string): string {
-    const line = new RegExp(`^# ${key} = `, "m");
-    expect(contents, `config.example.toml documents ${key}`).toMatch(line);
-    return contents.replace(line, `${key} = `);
-  }
+  /** The example as the installer seeds it: a generated secret and hostname. */
+  const seeded = file(
+    example.contents
+      .replace('secret_key = "REPLACE_ME"', `secret_key = "${TOML_SECRET}"`)
+      .replace('# hostname = "my-host"', 'hostname = "my-host"'),
+  );
 
-  it("resolves as shipped, leaving the required settings to the operator", () => {
-    const config = resolveConfig({ file: example });
-    expect(config).toMatchObject({ hostname: undefined, secretKey: undefined });
-    expect(() =>
-      requireSettings(config, ["apiKey", "hostname", "secretKey"]),
-    ).toThrow(/hostname: set AMIKA_HOSTD_HOSTNAME[\s\S]*secret key: set/);
+  it("documents the lines the installer fills in", () => {
+    expect(example.contents).toMatch(/^secret_key = "REPLACE_ME"$/m);
+    expect(example.contents).toMatch(/^# hostname = "my-host"$/m);
+  });
+
+  it("refuses to start until the placeholder secret is replaced", () => {
+    expect(() => resolveConfig({ file: example })).toThrow(
+      /secret key must be at least 32/,
+    );
   });
 
   it("lets the environment supply the required settings", () => {
@@ -381,47 +394,25 @@ describe("config.example.toml", () => {
     ).toMatchObject({ hostname: "builder", secretKey: TOML_SECRET });
   });
 
-  it("documents size tables that resolve as written", () => {
-    const sizes = example.contents.slice(
-      example.contents.indexOf("# [sizes.medium]"),
-      example.contents.indexOf("# --- Images"),
-    );
-    const contents = sizes.replace(/^# ?/gm, "");
-    expect(resolveConfig({ file: file(contents) })).toMatchObject({
-      sizes: {
-        medium: { vcpus: 4, memoryGib: 8, diskGib: 40, diskGrowOnly: false },
-        large: { vcpus: 8, memoryGib: 16, diskGib: 100, diskGrowOnly: false },
-      },
-    });
-  });
-
-  it("documents an [images] table that resolves as written", () => {
-    const images = example.contents.slice(
-      example.contents.indexOf("# [images]"),
-    );
-    const contents = images.replace(/^# ?/gm, "");
-    expect(resolveConfig({ file: file(contents) }).images).toEqual({
-      "amika-coder": "ghcr.io/gofixpoint/amika-coder:<sha>",
-      "amika-coder-plus-docker":
-        "ghcr.io/gofixpoint/amika-coder-plus-docker:<sha>",
-    });
-  });
-
-  it("documents every setting, with defaults that match the code", () => {
-    let contents = example.contents;
-    for (const key of ["hostname", "secret_key", "api_url", "host", "port"]) {
-      contents = uncomment(contents, key);
-    }
-    contents = contents.replace(
-      'secret_key = "<output of openssl rand -hex 32>"',
-      `secret_key = "${TOML_SECRET}"`,
-    );
-    expect(resolveConfig({ file: file(contents) })).toMatchObject({
+  it("resolves once seeded, with defaults that match the code", () => {
+    expect(resolveConfig({ file: seeded })).toMatchObject({
       hostname: "my-host",
       secretKey: TOML_SECRET,
       apiUrl: DEFAULT_API_URL,
       host: "127.0.0.1",
       port: 3020,
+      sizes: {
+        tiny: { vcpus: 1, memoryGib: 2, diskGib: 10, diskGrowOnly: false },
+        small: { vcpus: 2, memoryGib: 4, diskGib: 16, diskGrowOnly: false },
+        medium: { vcpus: 4, memoryGib: 8, diskGib: 24, diskGrowOnly: false },
+        large: { vcpus: 8, memoryGib: 16, diskGib: 40, diskGrowOnly: false },
+        xlarge: { vcpus: 16, memoryGib: 24, diskGib: 40, diskGrowOnly: false },
+      },
+      images: {
+        "amika-coder": "ghcr.io/gofixpoint/amika-coder:latest",
+        "amika-coder-plus-docker":
+          "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+      },
     });
   });
 });

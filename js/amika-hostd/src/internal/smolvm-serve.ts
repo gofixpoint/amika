@@ -115,8 +115,9 @@ export async function startSmolvm(
         // daemon, which then stops smolvm after its own listener.
         detached: true,
         stdio: ["ignore", log, log],
-        // Stop running machines on shutdown rather than leave them behind.
-        env: { ...env, SMOLVM_DRAIN_ON_SHUTDOWN: "1" },
+        // Stop running machines on shutdown rather than leave them behind,
+        // and keep ANSI color codes out of smolvm.log.
+        env: { ...env, SMOLVM_DRAIN_ON_SHUTDOWN: "1", NO_COLOR: "1" },
       });
     } finally {
       closeSync(log);

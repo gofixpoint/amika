@@ -1,99 +1,62 @@
 # amika-hostd configuration.
 #
-# Copy this file to "${XDG_CONFIG_HOME:-$HOME/.config}/amika-hostd/config.toml",
-# or to /etc/amika-hostd/config.toml for a system-wide install. Only the first
-# file found is read; the two are never merged. It can hold the secret key, so
-# make your copy readable only by the user that runs the daemon:
-#
-#   chmod 600 "${XDG_CONFIG_HOME:-$HOME/.config}/amika-hostd/config.toml"
-#
-# or, for the system-wide file (replace <user> with the daemon's user):
-#
-#   sudo chown <user> /etc/amika-hostd/config.toml
-#   sudo chmod 600 /etc/amika-hostd/config.toml
-#
-# Each setting takes the first source that sets it: command-line flag, then
-# environment, then this file. Unknown keys are rejected.
+# Settings here can be overridden by environment variables and flags. Keep this
+# file readable only by you (chmod 600): it holds the secret key. The Amika API
+# key can't go here; export AMIKA_HOSTD_API_KEY instead.
 
-# --- Required, environment only -----------------------------------------------
-#
-# The Amika API key cannot be set in this file; an `api_key` entry fails
-# startup. Export it as AMIKA_HOSTD_API_KEY or AMIKA_API_KEY before running
-# `amika-hostd up` or `amika-hostd register-url`.
-
-# --- Required -----------------------------------------------------------------
-#
-# Set each of these here (uncomment the line) or in the environment. `up` and
-# `register-url` fail until both are set.
-
-# This host's identity within your Amika organization. No two hosts in an
-# organization can share a hostname, and changing it registers a new host.
-# Lowercase letters, digits, and hyphens in dot-separated labels (each 1-63
-# characters, starting and ending with a letter or digit), at most 253
-# characters in total.
-# Environment: AMIKA_HOSTD_HOSTNAME
+# This host's name in your Amika organization. Changing it registers a new host.
+# Lowercase letters, digits, hyphens, and dots.
 # hostname = "my-host"
 
-# The shared secret Amika presents as `Authorization: Bearer <secret_key>` on
-# every request to this daemon; requests without it are rejected with 401.
-# Amika stores it when the host is first registered, and later runs of `up`
-# never change it. It must be at least 32 printable ASCII characters with no
-# spaces. Generate one with:
-#
-#   openssl rand -hex 32
-#
-# Environment: AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY
-# secret_key = "<output of openssl rand -hex 32>"
+# This secret authenticates requests from the Amika control plane to your
+# amika-hostd instance. Generate one with `openssl rand -hex 32`.
+secret_key = "REPLACE_ME"
 
-# --- Optional -----------------------------------------------------------------
+api_url = "https://app.amika.dev"
 
-# The Amika API to register with.
-# Environment: AMIKA_HOSTD_API_URL or AMIKA_API_URL
-# api_url = "https://app.amika.dev"
-
-# The address and port the daemon listens on. Expose it to Amika through a
-# tunnel (ngrok, Cloudflare Tunnel, ...) and give Amika that public URL with
-# `amika-hostd register-url <url>`.
-# Flags: --host, --port
-# Environment: AMIKA_HOSTD_HOST, AMIKA_HOSTD_PORT
-# host = "127.0.0.1"
-# port = 3020
+# The address the daemon listens on. Expose it to Amika through a tunnel and
+# run `amika-hostd register-url <public-url>`.
+host = "127.0.0.1"
+port = 3020
 
 # --- Rig sizes ----------------------------------------------------------------
 #
-# The sizes rigs on this host can use, one [sizes.<name>] table each, named as
-# you like. Each run of `up` or `register-url` sends them to Amika, so edit a
-# table here and run `up` again to change them. They replace whatever sizes
-# Amika has for this host, so leaving out every table clears them.
-#
-#   vcpus           virtual CPUs, 1 to 16
-#   memory_gib      memory in GiB, at least 0.0625 (64 MiB), in whole MiB
-#                   (0.5 is fine)
-#   disk_gib        disk in GiB, a whole number, at least 1
-#   disk_grow_only  optional, default false; true if a rig's disk can end up
-#                   larger than disk_gib, so Amika shows it as a minimum
-#
-# [sizes.medium]
-# vcpus = 4
-# memory_gib = 8
-# disk_gib = 40
-#
-# [sizes.large]
-# vcpus = 8
-# memory_gib = 16
-# disk_gib = 100
+# The sizes rigs on this host can use. Amika's sizes for this host are replaced
+# with these on every `up`. memory_gib can be fractional (0.5); vcpus is 1-16.
+# Add `disk_grow_only = true` to a size if its disk can end up larger than
+# disk_gib, so Amika shows disk_gib as a minimum.
 
-# --- Images -------------------------------------------------------------------
+[sizes.tiny]
+vcpus = 1
+memory_gib = 2
+disk_gib = 10
+
+[sizes.small]
+vcpus = 2
+memory_gib = 4
+disk_gib = 16
+
+[sizes.medium]
+vcpus = 4
+memory_gib = 8
+disk_gib = 24
+
+[sizes.large]
+vcpus = 8
+memory_gib = 16
+disk_gib = 40
+
+[sizes.xlarge]
+vcpus = 16
+memory_gib = 24
+disk_gib = 40
+
+# --- Preset images ------------------------------------------------------------
 #
-# The image each Amika preset boots on this host, as a full OCI reference.
-# Amika asks for a preset by name, and this host decides which version it
-# runs, so pin a published tag here and edit it to upgrade. A rig asking for a
-# preset that isn't listed fails to create. smolvm pulls an image inside the
-# VM on first use and caches it, so the rig needs network (the default).
-#
-# Tags are the 12-character commit sha of an Amika image release.
-# PLACEHOLDER: replace <sha> with a published tag; no release exists yet.
-#
-# [images]
-# amika-coder = "ghcr.io/gofixpoint/amika-coder:<sha>"
-# amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:<sha>"
+# The image each Amika preset boots on this host. `:latest` follows each
+# release; pin a 12-character commit SHA instead to hold a version still.
+# smolvm caches a pulled image in the VM, so `:latest` can lag a release.
+
+[preset_images]
+amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
+amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"

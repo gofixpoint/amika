@@ -20,18 +20,22 @@ curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika
 It downloads `amika-hostd_<version>.tar.gz` from the `amika-hostd@v<version>`
 GitHub release, verifies it against `checksums.txt`, and installs:
 
-- the bundle and `config.example.toml` into `~/.amika-hostd`
-  (`AMIKA_HOSTD_HOME`), with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR`
-  (default `/usr/local/bin`) that pins the node it runs on;
+- the bundle and `config.example.toml` into `$XDG_DATA_HOME/amika-hostd`
+  (default `~/.local/share/amika-hostd`; override with `AMIKA_HOSTD_HOME`),
+  with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR` (default
+  `/usr/local/bin`) that pins the node it runs on;
 - Node.js: the system `node` if it is 22 or newer, otherwise the official
   Node.js LTS binary (24.21.0, `AMIKA_HOSTD_NODE_VERSION`), verified against
-  `SHASUMS256.txt`, into `~/.amika-hostd/node` (the system node is never
-  touched);
+  `SHASUMS256.txt`, into `node/` in that same directory (the system node is
+  never touched);
 - smolvm, through its official installer, unless `smolvm` is on `PATH` or in
   `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
   (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
-- a config: `config.example.toml` copied to the user config path below, unless
-  a config already exists there or in `/etc`. It is never overwritten.
+- a config: `config.example.toml` copied to the user config path below, with
+  `secret_key` set to a generated `openssl rand -hex 32` and `hostname` set to
+  this machine's lowercased `hostname` (left commented when it isn't a valid
+  hostname), unless a config already exists there or in `/etc`. It is never
+  overwritten.
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
@@ -78,9 +82,9 @@ pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 with `node:util` `parseArgs` and takes every side effect as a dependency.
 
 - `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
-  it re-runs itself as `serve --smolvm` with `detached: true`, appends output to
-  `$XDG_STATE_HOME/amika-hostd/amika-hostd.log` (default `~/.local/state`), and
-  waits for the child's IPC `ready` message, so startup failures print in the
+  it re-runs itself as `serve --smolvm` with `detached: true`, appends output, each line
+  timestamped, to `$XDG_STATE_HOME/amika-hostd/log/amika-hostd.log` (else
+  `$HOME/.local/state/...`), and waits for the child's IPC `ready` message, so startup failures print in the
   caller's terminal. Only the operator's own flags are forwarded; the child
   inherits the environment and re-reads the TOML file.
 - `amika-hostd up --fg` and `amika-hostd serve` run in the foreground until
@@ -139,7 +143,7 @@ stored secret is kept. Only absolute http(s) URLs without credentials are
 accepted; a bare origin is normalized without its trailing slash, and a path is
 kept.
 
-Every run claims `amika-hostd.pid` next to the log, atomically, and refuses to
+Every run claims `amika-hostd.pid` in that state directory, atomically, and refuses to
 start while it names a live daemon. The daemon sets `process.title` to
 `amika-hostd`; where `/proc` exists, a pidfile naming any other process is
 treated as stale, since the pidfile outlives reboots and pids are reused. An
@@ -174,7 +178,8 @@ is left as it was before `up`:
    address must be loopback (`127.0.0.0/8` or `[::1]`): smolvm's API has no
    authentication, so listening anywhere else would expose it without
    amika-hostd's bearer check. smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only the
-   daemon; its output goes to `smolvm.log`; and it never sees the API key or
+   daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the log carries
+   no ANSI color codes; and it never sees the API key or
    secret key.
 4. The daemon listens only once smolvm answers `/health` (30s at most), so the
    background `up` reports a smolvm that fails to start. A shutdown signal
@@ -220,21 +225,28 @@ two are not merged, and unknown keys are rejected. `SMOL_API_URL` (where `up` st
 by default the first free port from `http://127.0.0.1:8080`, see
 [smolvm](#smolvm)) and
 `SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
-is the annotated template for operators: copy it to one of those paths and
-uncomment what you need. `config.test.ts` resolves it, so keep it in step with
-the schema. Never include a secret or
+is the template the installer seeds: every setting with a default is a live
+line, `secret_key = "REPLACE_ME"` deliberately fails validation until replaced,
+and only `hostname` is commented. Keep its comments short. `config.test.ts`
+resolves it as seeded, so keep it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
 
 ### Images
 
-`[images]` maps a preset name to the full OCI reference this host boots for it,
+`[preset_images]` maps a preset name to the full OCI reference this host boots for it,
 so the host, not Amika, pins the version:
 
 ```toml
-[images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:<12-char sha>"
-amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:<12-char sha>"
+[preset_images]
+amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
+amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
 ```
+
+The seeded config tracks `:latest`, which every image release moves. A host
+that needs a fixed version pins the release's 12-character commit SHA instead.
+Because `:latest` is a moving tag, smolvm's in-VM image cache can keep serving
+the previously pulled digest, so an upgrade is not guaranteed to take effect
+until that cache is cleared.
 
 On create (`POST /v0beta1/rigs`), `resolveImage` (`src/internal/requests.ts`) swaps
 a configured name for its reference before forwarding to smolvm. An `image`

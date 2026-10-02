@@ -111,10 +111,10 @@ describe("runCli", () => {
       ["node", "cli.js", "serve", "--smolvm", "--port", "4000"],
       {
         pidFile: "/state/amika-hostd/amika-hostd.pid",
-        logFile: "/state/amika-hostd/amika-hostd.log",
+        logFile: "/state/amika-hostd/log/amika-hostd.log",
         smolvmPidFile: "/state/amika-hostd/smolvm.pid",
         smolvmUrlFile: "/state/amika-hostd/smolvm.url",
-        smolvmLogFile: "/state/amika-hostd/smolvm.log",
+        smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
         servicesFile: "/state/amika-hostd/services.json",
       },
       { isRunning: deps.isRunning, env: expect.any(Object) },
@@ -433,7 +433,7 @@ describe("completing registration", () => {
       deps.prompt!.mock.invocationCallOrder[0],
     );
     expect(out.slice(1)).toEqual([
-      "smolvm serving at http://127.0.0.1:8080 (pid 88); logs: /state/amika-hostd/smolvm.log",
+      "smolvm serving at http://127.0.0.1:8080 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
       "amika-hostd listening on http://127.0.0.1:3020",
       EXPOSE.replaceAll("4000", "3020"),
       "Set the public URL of host builder to https://abc.ngrok.app",
@@ -580,7 +580,7 @@ describe("managing smolvm", () => {
       expect.anything(),
     );
     expect(out[0]).toBe(
-      "smolvm serving at http://127.0.0.1:8081 (pid 88); logs: /state/amika-hostd/smolvm.log",
+      "smolvm serving at http://127.0.0.1:8081 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
     );
   });
 
@@ -621,7 +621,7 @@ describe("managing smolvm", () => {
     smolvmExit("exited with code 1");
     expect(await cli).toBe(1);
     expect(err).toEqual([
-      "amika-hostd: smolvm exited with code 1, so amika-hostd stopped too; see /state/amika-hostd/smolvm.log",
+      "amika-hostd: smolvm exited with code 1, so amika-hostd stopped too; see /state/amika-hostd/log/smolvm.log",
     ]);
     expect(server.close).toHaveBeenCalled();
     // It is already gone, so there is nothing to stop.
@@ -727,7 +727,7 @@ describe("down", () => {
     deps.stopProcess.mockResolvedValueOnce(false);
     expect(await runCli(["down"], deps)).toBe(1);
     expect(err).toEqual([
-      `amika-hostd: amika-hostd (pid 999999) did not exit within 70s; see ${path.join(dir, "amika-hostd", "amika-hostd.log")}`,
+      `amika-hostd: amika-hostd (pid 999999) did not exit within 70s; see ${path.join(dir, "amika-hostd", "log", "amika-hostd.log")}`,
     ]);
   });
 
