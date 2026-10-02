@@ -131,10 +131,13 @@ config written from scratch also gets the example's default `[sizes]` and
 result and where to edit it. The new contents are parsed before anything is
 written, and the file is replaced atomically with mode `0600`.
 
-Registration never changes a stored secret, so a regenerated one is sent to
-Amika during setup (register, then `PUT /api/v0beta1/hosts/{id}` with
-`secret`) before the file is written. If that fails, nothing changes. A new
-hostname skips this, since `up` registers it as a new host.
+Registration never changes a stored secret, so setup sends a regenerated one
+to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with `secret`) for the
+hostname `up` will use, the environment's if it sets one. It writes the file
+first, so a file it cannot write never leaves Amika with a secret the host
+lacks, and puts the file back if Amika refuses. A new hostname skips this,
+since `up` registers it as a new host. A secret key set in the environment is
+never regenerated: the daemon would keep using it.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing and it has a terminal; without one it fails, naming `setup`. Ctrl-C

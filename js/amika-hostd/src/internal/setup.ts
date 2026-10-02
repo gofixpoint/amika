@@ -96,9 +96,16 @@ export async function runSetup(
     deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"));
   let secretKey = saved.secretKey;
   let rotated = false;
+  const secretFromEnv = ENV_NAMES.secretKey.find((name) => deps.env[name]);
   if (secretKey === undefined) {
     secretKey = generate();
     deps.out("Generated a new secret key.");
+  } else if (secretFromEnv !== undefined) {
+    // The daemon would keep using the environment's secret, so a new one in
+    // the file, and in Amika, would only lock Amika out.
+    deps.out(
+      `Keeping the secret key: ${secretFromEnv} overrides it, so change that instead.`,
+    );
   } else if (
     await confirm(
       "Regenerate the secret key Amika uses to reach this host? [y/N] ",
@@ -120,26 +127,38 @@ export async function runSetup(
   const written = resolveConfig({ file: { path: configPath, contents } });
 
   // Registration never changes a stored secret, so a new one has to reach
-  // Amika now. A new hostname registers afresh with it on the next `up`.
-  if (rotated && hostname === saved.hostname) {
-    const key = apiKey ?? effective.apiKey ?? deps.credentials.get();
-    if (key === undefined) {
-      throw new ConfigError(
-        "Amika needs the new secret key, but no API key is set; nothing was changed",
-      );
-    }
-    await sendSecret(
-      { apiUrl: effective.apiUrl, apiKey: key },
-      written,
-      { hostname, secretKey },
-      deps,
+  // Amika now, for the hostname `up` will register: the environment's if it
+  // sets one. A new hostname registers afresh with it on the next `up`.
+  const hostnameFromEnv = ENV_NAMES.hostname.some((name) => deps.env[name]);
+  const target = hostnameFromEnv ? effective.hostname : hostname;
+  const sendNewSecret =
+    rotated && (hostnameFromEnv || hostname === saved.hostname);
+  const apiKeyForSecret = sendNewSecret
+    ? (apiKey ?? effective.apiKey ?? deps.credentials.get())
+    : undefined;
+  if (sendNewSecret && apiKeyForSecret === undefined) {
+    throw new ConfigError(
+      "Amika needs the new secret key, but no API key is set; nothing was changed",
     );
   }
 
-  try {
-    (deps.writeConfigFile ?? writePrivateFile)(configPath, contents);
-  } catch (error) {
-    throw new ConfigError(`Cannot write ${configPath}: ${errorCode(error)}`);
+  // Write first, so a file setup cannot write never leaves Amika holding a
+  // secret this host does not have; if Amika then refuses it, put the file
+  // back as it was.
+  const write = deps.writeConfigFile ?? writePrivateFile;
+  writeConfig(write, configPath, contents);
+  if (sendNewSecret && target !== undefined && apiKeyForSecret !== undefined) {
+    try {
+      await sendSecret(
+        { apiUrl: effective.apiUrl, apiKey: apiKeyForSecret },
+        written,
+        { hostname: target, secretKey },
+        deps,
+      );
+    } catch (error) {
+      if (file !== undefined) writeConfig(write, configPath, file.contents);
+      throw error;
+    }
   }
   if (apiKey !== undefined) {
     deps.credentials.set(apiKey);
@@ -409,6 +428,18 @@ function warnAboutEnvironment(deps: SetupDeps) {
         `Note: ${name} is set in your environment and overrides the ${setting} in the file.`,
       );
     }
+  }
+}
+
+function writeConfig(
+  write: (file: string, contents: string) => void,
+  file: string,
+  contents: string,
+) {
+  try {
+    write(file, contents);
+  } catch (error) {
+    throw new ConfigError(`Cannot write ${file}: ${errorCode(error)}`);
   }
 }
 
