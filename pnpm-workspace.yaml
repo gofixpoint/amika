@@ -29,6 +29,3 @@ overrides:
   hono: "4.13.9"
   js-yaml: "4.3.2"
   undici: "7.29.1"
-  # e2b pulls undici 8 in under an alias, which the `undici` key above does
-  # not reach.
-  undici8: "npm:undici@8.11.2"
