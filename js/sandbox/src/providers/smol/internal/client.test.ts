@@ -33,7 +33,7 @@ describe("SmolClient", () => {
 
   it("surfaces the error message of a refused request", async () => {
     const error =
-      'image "amika-coder" is not configured on this host; add it under [images] in /etc/amika-hostd/config.toml';
+      'image "amika-coder" is not configured on this host; add it under [preset_images] in /etc/amika-hostd/config.toml';
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(Response.json({ error }, { status: 400 }));
