@@ -183,6 +183,23 @@ export function removeSmolvmFiles(paths: DaemonPaths, pid: number): void {
 }
 
 /**
+ * Remove smolvm's pidfile and URL file when the pid they name has exited
+ * (after a reboot, say). A live process is left alone even if it cannot be
+ * confirmed as smolvm, since its pidfile is how `down` finds it.
+ */
+export function removeStaleSmolvmFiles(paths: DaemonPaths): void {
+  const pid = readPid(paths.smolvmPidFile);
+  if (pid !== undefined && isAlive(pid)) return;
+  for (const file of [paths.smolvmUrlFile, paths.smolvmPidFile]) {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // Best effort: the next write reports a file that cannot be replaced.
+    }
+  }
+}
+
+/**
  * Send `SIGTERM` and wait for the process to exit. Resolves false if it is
  * still running after `timeoutMs`; it is never killed outright, since smolvm
  * may still be stopping its machines.

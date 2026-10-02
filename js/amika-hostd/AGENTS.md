@@ -158,29 +158,35 @@ the daemon and the runtime it forwards to start and stop together, and a host
 is left as it was before `up`:
 
 1. Before spawning smolvm, it refuses to start if a smolvm from an earlier
-   run is still alive (`smolvm.pid`, next to the daemon's pidfile).
-2. It picks a port nothing else holds, checked with a plain TCP connect, since
-   the holder may not speak HTTP (an editor's language server on 8080, say).
-   With `SMOL_API_URL` set, it uses that port or fails naming it. Unset, it
-   starts at 8080 and moves to the next port while the port is held, or while
-   smolvm exits with `Address already in use` (another program won the race),
-   giving up after 10 ports. It never reuses a server already on the port, and
-   refuses to start at all if a held port answers `GET /health` with a 2xx: a
-   smolvm it did not start would expose unrelated VMs, and is not the daemon's
-   to stop (or drain). The daemon forwards to the chosen URL, which is also written to
-   `smolvm.url` beside `smolvm.pid` while smolvm runs.
-3. It finds `smolvm` on `PATH`, else where the smolvm installer puts it
-   (`~/.smolvm/smolvm` or `~/.local/bin/smolvm`), and runs
-   `smolvm serve start --listen <host:port>`. smolvm's own
-   default is a Unix socket, so the address is always passed, and
+   run is still alive (`smolvm.pid`, next to the daemon's pidfile). Files an
+   earlier run left naming a pid that has exited are removed.
+2. It finds `smolvm` on `PATH`, else where the smolvm installer puts it
+   (`~/.smolvm/smolvm` or `~/.local/bin/smolvm`).
+3. It picks a port and runs `smolvm serve start --listen <host:port>`.
+   smolvm's own default is a Unix socket, so the address is always passed.
    `SMOL_API_URL` must be a plain `http://<IP address>[:port]` (port 80 if
    omitted), since `--listen` takes no hostnames such as `localhost`. The
    address must be loopback (`127.0.0.0/8` or `[::1]`): smolvm's API has no
    authentication, so listening anywhere else would expose it without
-   amika-hostd's bearer check. smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only the
-   daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the log carries
-   no ANSI color codes; and it never sees the API key or
-   secret key.
+   amika-hostd's bearer check.
+
+   A port is free when a plain TCP connect is refused, since the holder may
+   not speak HTTP (an editor's language server on 8080, say). With
+   `SMOL_API_URL` set, it uses that port or fails naming it. Unset, it starts
+   at 8080 and moves to the next port while the port is held, or while
+   smolvm exits with `Address already in use` (another program won the
+   race), giving up after 10 ports. It never shares a port, and it refuses to
+   start at all when the holder is a smolvm (both `/health` and
+   `/api/v1/machines` answer 2xx): a smolvm it did not start would expose
+   unrelated VMs, and is not the daemon's to stop or drain. The daemon
+   forwards to the chosen URL, which is also written to `smolvm.url` beside
+   `smolvm.pid` while smolvm runs.
+
+   smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only
+   the daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the
+   log carries no ANSI color codes; and it never sees the API key or secret
+   key.
+
 4. The daemon listens only once smolvm answers `/health` (30s at most), so the
    background `up` reports a smolvm that fails to start. A shutdown signal
    while it waits stops smolvm and exits without listening.
@@ -199,7 +205,8 @@ only read, so `down` signals a pid only when `/proc` or `ps` confirms its
 program: `amika-hostd` (the daemon's title) for the daemon, and `smolvm` or
 `smolvm-bin` (the binary the `smolvm` launcher `exec`s) for smolvm. A daemon
 pidfile naming a live process that is not confirmed is left alone, and `down`
-says to remove it if it is stale, as `up` does.
+says to remove it if it is stale, as `up` does. A `smolvm.pid` and
+`smolvm.url` naming a pid that has exited are removed.
 
 ## Configuration
 

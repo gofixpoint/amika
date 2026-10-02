@@ -28,6 +28,7 @@ import {
   notifyReady as notifyParent,
   readRunningPid,
   removeSmolvmFiles,
+  removeStaleSmolvmFiles,
   startInBackground as spawnInBackground,
   stopProcess as stopProcessByPid,
   type DaemonPaths,
@@ -584,6 +585,9 @@ async function down(deps: CliDeps): Promise<number> {
     }
     // No daemon is left to remove them when smolvm exits.
     removeSmolvmFiles(paths, smolvm);
+  } else {
+    // Left by a run that never got to clean up (a reboot, say).
+    removeStaleSmolvmFiles(paths);
   }
   const stopped = [
     ...(daemon === undefined ? [] : ["amika-hostd"]),

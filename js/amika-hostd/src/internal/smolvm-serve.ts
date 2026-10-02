@@ -8,7 +8,8 @@ import {
   closeSync,
   constants,
   fstatSync,
-  readFileSync,
+  openSync,
+  readSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -22,6 +23,7 @@ import {
   openLogFile,
   readRunningPid,
   removeSmolvmFiles,
+  removeStaleSmolvmFiles,
   type DaemonPaths,
   type Spawn,
 } from "./daemon.js";
@@ -95,6 +97,9 @@ export async function startSmolvm(
       `a smolvm started by an earlier amika-hostd is still running (pid ${leftover}); stop it with \`amika-hostd down\``,
     );
   }
+  // Whatever an earlier run left behind (after a reboot, say) names no live
+  // smolvm, so it must not outlive this run if this one fails to start.
+  removeStaleSmolvmFiles(paths);
   const binary = find(env);
   if (binary === undefined) {
     throw new DaemonError(
@@ -207,11 +212,13 @@ export async function startSmolvm(
     if (!(await isPortInUse(address.address, address.port))) {
       const started = await launch(address);
       if (started !== ADDRESS_IN_USE) return started;
-    } else if (isHealthy(await probe(address.origin, fetcher))) {
-      // Likely a smolvm someone else runs. Starting a second one beside it
-      // could reach (and on shutdown drain) its machines, so stop here.
+    }
+    // The port is held, or was taken since the check. A smolvm someone else
+    // runs shares this host's machines, so starting a second one on another
+    // port could reach (and on shutdown drain) them: stop here instead.
+    if (await looksLikeSmolvm(address.origin, fetcher)) {
       throw new DaemonError(
-        `a server already answers ${address.origin}/health, likely a smolvm amika-hostd did not start; stop it first, since amika-hostd runs its own`,
+        `a smolvm that amika-hostd did not start is already serving at ${address.origin}; stop it first, since amika-hostd runs its own`,
       );
     }
     if (apiUrl !== undefined) {
@@ -230,16 +237,42 @@ const ADDRESS_IN_USE = Symbol("address in use");
 
 /**
  * Whether smolvm's output since `offset` says it could not bind its port:
- * `Address already in use (os error 48)` on macOS, `98` on Linux.
+ * `Address already in use (os error 48)` on macOS, `98` on Linux. The log
+ * is appended to across runs, so only this run's start of it is read.
  */
 function failedToBind(logFile: string, offset: number): boolean {
+  let fd: number;
   try {
-    return /address already in use/i.test(
-      readFileSync(logFile).subarray(offset).toString("utf8"),
-    );
+    fd = openSync(logFile, "r");
   } catch {
     return false;
   }
+  try {
+    const output = Buffer.alloc(BIND_ERROR_WINDOW);
+    const read = readSync(fd, output, 0, output.length, offset);
+    return /address already in use/i.test(output.toString("utf8", 0, read));
+  } catch {
+    return false;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** smolvm reports a failed bind as soon as it starts, well within this. */
+const BIND_ERROR_WINDOW = 64 * 1024;
+
+/**
+ * Whether `origin` serves smolvm's API rather than some other program that
+ * happens to answer `/health` (a dev server on 8080, say).
+ */
+async function looksLikeSmolvm(
+  origin: string,
+  fetcher: typeof fetch,
+): Promise<boolean> {
+  return (
+    isHealthy(await probe(origin, fetcher)) &&
+    isHealthy(await probe(origin, fetcher, "/api/v1/machines"))
+  );
 }
 
 /**
@@ -325,13 +358,14 @@ function isHealthy(status: number | undefined): boolean {
   return status !== undefined && status >= 200 && status < 300;
 }
 
-/** `/health`'s status, or undefined if nothing answers. */
+/** `GET path`'s status, or undefined if nothing answers. */
 async function probe(
   origin: string,
   fetcher: typeof fetch,
+  path = "/health",
 ): Promise<number | undefined> {
   try {
-    const response = await fetcher(`${origin}/health`, {
+    const response = await fetcher(`${origin}${path}`, {
       signal: AbortSignal.timeout(1_000),
       redirect: "manual",
     });
