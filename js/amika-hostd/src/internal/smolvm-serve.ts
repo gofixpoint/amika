@@ -7,10 +7,12 @@ import {
   accessSync,
   closeSync,
   constants,
+  fstatSync,
+  readFileSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { BlockList, isIP } from "node:net";
+import { BlockList, connect, isIP } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -18,8 +20,8 @@ import {
   DaemonError,
   isSmolvmRunning,
   openLogFile,
-  removePidFile,
   readRunningPid,
+  removeSmolvmFiles,
   type DaemonPaths,
   type Spawn,
 } from "./daemon.js";
@@ -27,6 +29,8 @@ import { DEFAULT_SMOL_API_URL } from "./smol.js";
 
 export interface ManagedSmolvm {
   pid: number;
+  /** Where smolvm serves, which the daemon must forward to. */
+  apiUrl: string;
   /** Resolves, with why, once smolvm has exited for any reason. */
   exited: Promise<string>;
   /** False once smolvm has exited. */
@@ -41,6 +45,8 @@ export interface ManagedSmolvm {
 export interface SmolvmDeps {
   spawn?: Spawn;
   fetch?: typeof fetch;
+  /** Whether anything accepts TCP connections at `host:port`. */
+  isPortInUse?: (host: string, port: number) => Promise<boolean>;
   findSmolvm?: (env: NodeJS.ProcessEnv) => string | undefined;
   isSmolvmRunning?: (pid: number) => boolean;
   readyTimeoutMs?: number;
@@ -54,10 +60,17 @@ export interface SmolvmDeps {
 export const SMOLVM_STOP_TIMEOUT_MS = 60_000;
 
 /**
- * Start `smolvm serve` listening where the daemon expects it (`apiUrl`,
- * i.e. `SMOL_API_URL`), and resolve once it answers `/health`, or as soon as
- * `signal` aborts, so the caller can stop it. Fails if anything already
- * answers there: that smolvm is not ours to stop.
+ * Ports tried, from the default's, when `SMOL_API_URL` is unset and another
+ * program already holds the default port.
+ */
+export const SMOLVM_PORT_ATTEMPTS = 10;
+
+/**
+ * Start `smolvm serve` and resolve once it answers `/health`, or as soon as
+ * `signal` aborts, so the caller can stop it. It listens at `apiUrl` (i.e.
+ * `SMOL_API_URL`) and fails if that port is taken. Without one, it starts at
+ * the default port and moves to the next while the port is taken. A port
+ * that is taken is never shared: whatever holds it is not ours to stop.
  */
 export async function startSmolvm(
   apiUrl: string | undefined,
@@ -66,6 +79,7 @@ export async function startSmolvm(
   {
     spawn = nodeSpawn,
     fetch: fetcher = fetch,
+    isPortInUse = isTcpPortInUse,
     findSmolvm: find = findSmolvm,
     isSmolvmRunning: isRunning = isSmolvmRunning,
     readyTimeoutMs = 30_000,
@@ -74,16 +88,11 @@ export async function startSmolvm(
     signal,
   }: SmolvmDeps = {},
 ): Promise<ManagedSmolvm> {
-  const { origin, listen } = smolvmListenAddress(apiUrl);
+  const first = smolvmListenAddress(apiUrl);
   const leftover = readRunningPid(paths.smolvmPidFile, isRunning);
   if (leftover !== undefined) {
     throw new DaemonError(
       `a smolvm started by an earlier amika-hostd is still running (pid ${leftover}); stop it with \`amika-hostd down\``,
-    );
-  }
-  if ((await probe(origin, fetcher)) !== undefined) {
-    throw new DaemonError(
-      `something is already listening at ${origin} (SMOL_API_URL); amika-hostd starts its own smolvm there, so stop it first`,
     );
   }
   const binary = find(env);
@@ -93,77 +102,162 @@ export async function startSmolvm(
     );
   }
 
-  const log = openLogFile(paths.smolvmLogFile);
-  let child: ChildProcess;
-  try {
-    child = spawn(binary, ["serve", "start", "--listen", listen], {
-      // Its own process group, so Ctrl-C on `up --fg` reaches only the
-      // daemon, which then stops smolvm after its own listener.
-      detached: true,
-      stdio: ["ignore", log, log],
-      // Stop running machines on shutdown rather than leave them behind.
-      env: { ...env, SMOLVM_DRAIN_ON_SHUTDOWN: "1" },
-    });
-  } finally {
-    closeSync(log);
-  }
-  const exited = exitOf(child);
-  const pid = child.pid;
-  if (pid !== undefined) {
+  /** Start smolvm at `address`, or report that it could not bind there. */
+  const launch = async (
+    address: SmolvmAddress,
+  ): Promise<ManagedSmolvm | typeof ADDRESS_IN_USE> => {
+    const log = openLogFile(paths.smolvmLogFile);
+    const logStart = fstatSync(log).size;
+    let child: ChildProcess;
     try {
-      writeFileSync(paths.smolvmPidFile, `${pid}\n`, { mode: 0o600 });
-    } catch (error) {
-      // Without its pidfile, `down` could never find this smolvm.
+      child = spawn(binary, ["serve", "start", "--listen", address.listen], {
+        // Its own process group, so Ctrl-C on `up --fg` reaches only the
+        // daemon, which then stops smolvm after its own listener.
+        detached: true,
+        stdio: ["ignore", log, log],
+        // Stop running machines on shutdown rather than leave them behind.
+        env: { ...env, SMOLVM_DRAIN_ON_SHUTDOWN: "1" },
+      });
+    } finally {
+      closeSync(log);
+    }
+    const exited = exitOf(child);
+    const pid = child.pid;
+    if (pid !== undefined) {
+      const files: [string, string][] = [
+        [paths.smolvmPidFile, `${pid}\n`],
+        [paths.smolvmUrlFile, `${address.origin}\n`],
+      ];
+      for (const [file, contents] of files) {
+        try {
+          writeFileSync(file, contents, { mode: 0o600 });
+        } catch (error) {
+          // Without its pidfile, `down` could never find this smolvm.
+          child.kill("SIGTERM");
+          removeSmolvmFiles(paths, pid);
+          throw new DaemonError(
+            `cannot write ${file}: ${(error as NodeJS.ErrnoException).code ?? "unknown error"}`,
+          );
+        }
+      }
+      void exited.then(() => removeSmolvmFiles(paths, pid));
+    }
+
+    let exitReason: string | undefined;
+    void exited.then((reason) => (exitReason = reason));
+    const stop = async () => {
+      if (exitReason !== undefined) return true;
       child.kill("SIGTERM");
-      throw new DaemonError(
-        `cannot write ${paths.smolvmPidFile}: ${(error as NodeJS.ErrnoException).code ?? "unknown error"}`,
-      );
-    }
-    void exited.then(() => removePidFile(paths.smolvmPidFile, pid));
-  }
+      const timeout = new AbortController();
+      const stopped = await Promise.race([
+        exited.then(() => true),
+        sleep(stopTimeoutMs, false, { signal: timeout.signal }).catch(
+          () => true,
+        ),
+      ]);
+      timeout.abort();
+      // Let the daemon exit; smolvm carries on stopping its machines.
+      if (!stopped) child.unref();
+      return stopped;
+    };
 
-  let exitReason: string | undefined;
-  void exited.then((reason) => (exitReason = reason));
-  const stop = async () => {
-    if (exitReason !== undefined) return true;
-    child.kill("SIGTERM");
-    const timeout = new AbortController();
-    const stopped = await Promise.race([
-      exited.then(() => true),
-      sleep(stopTimeoutMs, false, { signal: timeout.signal }).catch(() => true),
-    ]);
-    timeout.abort();
-    // Let the daemon exit; smolvm carries on stopping its machines.
-    if (!stopped) child.unref();
-    return stopped;
+    const deadline = Date.now() + readyTimeoutMs;
+    for (;;) {
+      if (exitReason !== undefined) {
+        // Taken since the check: another program won the race for the port.
+        if (failedToBind(paths.smolvmLogFile, logStart)) return ADDRESS_IN_USE;
+        throw new DaemonError(
+          `smolvm ${exitReason} during startup; see ${paths.smolvmLogFile}`,
+        );
+      }
+      if (signal?.aborted) break;
+      if (isHealthy(await probe(address.origin, fetcher))) {
+        // A program that took the port first would also answer, so give
+        // smolvm a moment to fail to bind before trusting the answer.
+        await sleep(pollMs);
+        if (exitReason === undefined) break;
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        await stop();
+        throw new DaemonError(
+          `smolvm did not start serving at ${address.origin} within ${readyTimeoutMs / 1000}s; see ${paths.smolvmLogFile}`,
+        );
+      }
+      await sleep(pollMs);
+    }
+    return {
+      pid: pid as number,
+      apiUrl: address.origin,
+      exited,
+      get running() {
+        return exitReason === undefined;
+      },
+      stop,
+    };
   };
 
-  const deadline = Date.now() + readyTimeoutMs;
-  for (;;) {
-    if (exitReason !== undefined) {
+  const attempts =
+    apiUrl === undefined
+      ? Math.min(SMOLVM_PORT_ATTEMPTS, 65_536 - first.port)
+      : 1;
+  for (let i = 0; i < attempts; i++) {
+    const address = withPort(first, first.port + i);
+    if (!(await isPortInUse(address.address, address.port))) {
+      const started = await launch(address);
+      if (started !== ADDRESS_IN_USE) return started;
+    } else if (isHealthy(await probe(address.origin, fetcher))) {
+      // Likely a smolvm someone else runs. Starting a second one beside it
+      // could reach (and on shutdown drain) its machines, so stop here.
       throw new DaemonError(
-        `smolvm ${exitReason} during startup; see ${paths.smolvmLogFile}`,
+        `a server already answers ${address.origin}/health, likely a smolvm amika-hostd did not start; stop it first, since amika-hostd runs its own`,
       );
     }
-    if (signal?.aborted) break;
-    const status = await probe(origin, fetcher);
-    if (status !== undefined && status >= 200 && status < 300) break;
-    if (Date.now() >= deadline) {
-      await stop();
+    if (apiUrl !== undefined) {
       throw new DaemonError(
-        `smolvm did not start serving at ${origin} within ${readyTimeoutMs / 1000}s; see ${paths.smolvmLogFile}`,
+        `another program is already listening at ${address.origin} (SMOL_API_URL); stop it, or set SMOL_API_URL to a free port`,
       );
     }
-    await sleep(pollMs);
   }
-  return {
-    pid: pid as number,
-    exited,
-    get running() {
-      return exitReason === undefined;
-    },
-    stop,
-  };
+  const last = first.port + attempts - 1;
+  throw new DaemonError(
+    `ports ${first.port}-${last} on ${first.address} are all in use, so smolvm has nowhere to listen; set SMOL_API_URL to a free port (e.g. http://127.0.0.1:8090)`,
+  );
+}
+
+const ADDRESS_IN_USE = Symbol("address in use");
+
+/**
+ * Whether smolvm's output since `offset` says it could not bind its port:
+ * `Address already in use (os error 48)` on macOS, `98` on Linux.
+ */
+function failedToBind(logFile: string, offset: number): boolean {
+  try {
+    return /address already in use/i.test(
+      readFileSync(logFile).subarray(offset).toString("utf8"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether anything accepts a TCP connection at `host:port`. Any listener
+ * counts, not only an HTTP server: smolvm cannot bind a port another program
+ * (an editor's language server, say) holds.
+ */
+export function isTcpPortInUse(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host, port, timeout: 1_000 });
+    const done = (inUse: boolean) => {
+      socket.destroy();
+      resolve(inUse);
+    };
+    socket.once("connect", () => done(true));
+    // A loopback port that neither accepts nor refuses is held by something.
+    socket.once("timeout", () => done(true));
+    socket.on("error", () => done(false));
+  });
 }
 
 /**
@@ -173,10 +267,9 @@ export async function startSmolvm(
  * smolvm's API has no authentication, so the address must also be loopback:
  * anywhere else would expose it without amika-hostd's bearer check.
  */
-export function smolvmListenAddress(apiUrl = DEFAULT_SMOL_API_URL): {
-  origin: string;
-  listen: string;
-} {
+export function smolvmListenAddress(
+  apiUrl = DEFAULT_SMOL_API_URL,
+): SmolvmAddress {
   let url: URL;
   try {
     url = new URL(apiUrl);
@@ -202,13 +295,34 @@ export function smolvmListenAddress(apiUrl = DEFAULT_SMOL_API_URL): {
       "SMOL_API_URL must be a loopback address (127.0.0.0/8 or [::1]), since smolvm's API has no authentication and `amika-hostd up` starts it listening there",
     );
   }
-  // `hostname` keeps an IPv6 literal's brackets, as `--listen` expects.
-  return { origin: url.origin, listen: `${url.hostname}:${url.port || "80"}` };
+  return withPort({ address }, Number(url.port || "80"));
+}
+
+/** Where smolvm listens: `address` (unbracketed) is what a socket connects to. */
+export interface SmolvmAddress {
+  origin: string;
+  listen: string;
+  address: string;
+  port: number;
+}
+
+function withPort(
+  { address }: { address: string },
+  port: number,
+): SmolvmAddress {
+  // `--listen` and URLs take an IPv6 literal in brackets.
+  const host = isIP(address) === 6 ? `[${address}]` : address;
+  const listen = `${host}:${port}`;
+  return { origin: new URL(`http://${listen}`).origin, listen, address, port };
 }
 
 const LOOPBACK = new BlockList();
 LOOPBACK.addSubnet("127.0.0.0", 8, "ipv4");
 LOOPBACK.addAddress("::1", "ipv6");
+
+function isHealthy(status: number | undefined): boolean {
+  return status !== undefined && status >= 200 && status < 300;
+}
 
 /** `/health`'s status, or undefined if nothing answers. */
 async function probe(

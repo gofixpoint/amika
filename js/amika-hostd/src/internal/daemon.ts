@@ -30,6 +30,8 @@ export interface DaemonPaths {
   logFile: string;
   /** The `smolvm serve` process the daemon started, while it runs. */
   smolvmPidFile: string;
+  /** The URL that smolvm serves at, written next to its pidfile. */
+  smolvmUrlFile: string;
   smolvmLogFile: string;
   /** Each machine's service names and guest ports (`service-registry.ts`). */
   servicesFile: string;
@@ -169,6 +171,17 @@ export function removePidFile(pidFile: string, pid: number): void {
   if (readPid(pidFile) === pid) rmSync(pidFile, { force: true });
 }
 
+/** Remove smolvm's pidfile and the URL beside it, if they are `pid`'s. */
+export function removeSmolvmFiles(paths: DaemonPaths, pid: number): void {
+  if (readPid(paths.smolvmPidFile) !== pid) return;
+  try {
+    rmSync(paths.smolvmUrlFile, { force: true });
+  } catch {
+    // Only informational; the pidfile is what `up` and `down` act on.
+  }
+  rmSync(paths.smolvmPidFile, { force: true });
+}
+
 /**
  * Send `SIGTERM` and wait for the process to exit. Resolves false if it is
  * still running after `timeoutMs`; it is never killed outright, since smolvm
@@ -202,6 +215,7 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     pidFile: path.join(dir, "amika-hostd.pid"),
     logFile: path.join(dir, "amika-hostd.log"),
     smolvmPidFile: path.join(dir, "smolvm.pid"),
+    smolvmUrlFile: path.join(dir, "smolvm.url"),
     smolvmLogFile: path.join(dir, "smolvm.log"),
     servicesFile: path.join(dir, "services.json"),
   };

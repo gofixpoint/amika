@@ -2,6 +2,7 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -16,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DaemonError, daemonPaths, type Spawn } from "./daemon.js";
 import {
   findSmolvm,
+  isTcpPortInUse,
   smolvmListenAddress,
   startSmolvm,
   type SmolvmDeps,
@@ -48,6 +50,7 @@ function fakeDeps(child = fakeChild(), overrides: SmolvmDeps = {}) {
   return {
     spawn: vi.fn<Spawn>(() => child),
     fetch: health(undefined, 200),
+    isPortInUse: vi.fn(async () => false),
     findSmolvm: () => "/opt/smolvm/smolvm",
     isSmolvmRunning: () => false,
     pollMs: 1,
@@ -62,7 +65,7 @@ describe("smolvmListenAddress", () => {
     ["http://[::1]:9000", "http://[::1]:9000", "[::1]:9000"],
     ["http://127.0.0.2", "http://127.0.0.2", "127.0.0.2:80"],
   ])("listens where %s points", (url, origin, listen) => {
-    expect(smolvmListenAddress(url)).toEqual({ origin, listen });
+    expect(smolvmListenAddress(url)).toMatchObject({ origin, listen });
   });
 
   it.each([
@@ -132,14 +135,117 @@ describe("startSmolvm", () => {
       }),
     );
     expect(readFileSync(files.smolvmPidFile, "utf8")).toBe("4242\n");
+    expect(readFileSync(files.smolvmUrlFile, "utf8")).toBe(
+      "http://127.0.0.1:9000\n",
+    );
+    expect(smolvm.apiUrl).toBe("http://127.0.0.1:9000");
   });
 
-  it("refuses when something already answers at the URL", async () => {
-    const deps = fakeDeps(fakeChild(), { fetch: health(404) });
-    await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
-      "something is already listening at http://127.0.0.1:8080",
+  it("refuses when another program holds SMOL_API_URL's port", async () => {
+    const deps = fakeDeps(fakeChild(), {
+      isPortInUse: vi.fn(async () => true),
+    });
+    await expect(
+      startSmolvm("http://127.0.0.1:9000", paths(), {}, deps),
+    ).rejects.toThrow(
+      "another program is already listening at http://127.0.0.1:9000 (SMOL_API_URL)",
     );
+    expect(deps.isPortInUse).toHaveBeenCalledWith("127.0.0.1", 9000);
     expect(deps.spawn).not.toHaveBeenCalled();
+  });
+
+  it("moves past taken ports when SMOL_API_URL is unset", async () => {
+    const files = paths();
+    const deps = fakeDeps(fakeChild(), {
+      isPortInUse: vi.fn(async (_host: string, port: number) => port < 8082),
+      // Whatever holds 8080 and 8081 is not a smolvm.
+      fetch: health(404, 404, 200),
+    });
+    const smolvm = await startSmolvm(undefined, files, {}, deps);
+    expect(deps.spawn).toHaveBeenCalledTimes(1);
+    expect(deps.spawn).toHaveBeenCalledWith(
+      "/opt/smolvm/smolvm",
+      ["serve", "start", "--listen", "127.0.0.1:8082"],
+      expect.anything(),
+    );
+    expect(smolvm.apiUrl).toBe("http://127.0.0.1:8082");
+    expect(readFileSync(files.smolvmUrlFile, "utf8")).toBe(
+      "http://127.0.0.1:8082\n",
+    );
+  });
+
+  it("refuses to start beside a smolvm it did not start", async () => {
+    const deps = fakeDeps(fakeChild(), {
+      isPortInUse: vi.fn(async () => true),
+      fetch: health(200),
+    });
+    await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
+      "a server already answers http://127.0.0.1:8080/health",
+    );
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(1);
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+
+  it("gives up once every port it tries is taken", async () => {
+    const deps = fakeDeps(fakeChild(), {
+      isPortInUse: vi.fn(async () => true),
+      fetch: health(404),
+    });
+    await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
+      "ports 8080-8089 on 127.0.0.1 are all in use",
+    );
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(10);
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+
+  /** A spawn whose first smolvm fails to bind, as if it lost a race. */
+  function loseFirstBind(files: ReturnType<typeof paths>) {
+    const children = [fakeChild(), fakeChild()];
+    children[1].pid = 4343;
+    let spawned = 0;
+    const spawn = vi.fn<Spawn>(() => {
+      const child = children[spawned++];
+      if (child === children[0]) {
+        setImmediate(() => {
+          appendFileSync(
+            files.smolvmLogFile,
+            "Error: io operation failed: Address already in use (os error 48)\n",
+          );
+          child.emit("exit", 1, null);
+        });
+      }
+      return child;
+    });
+    return spawn;
+  }
+
+  it("tries the next port when smolvm cannot bind", async () => {
+    const files = paths();
+    const spawn = loseFirstBind(files);
+    // The program that won the race for 8080 answers too.
+    const deps = fakeDeps(fakeChild(), { spawn, fetch: health(200) });
+    const smolvm = await startSmolvm(undefined, files, {}, deps);
+    expect(spawn.mock.calls.map(([, args]) => args[3])).toEqual([
+      "127.0.0.1:8080",
+      "127.0.0.1:8081",
+    ]);
+    expect(smolvm.pid).toBe(4343);
+    expect(smolvm.apiUrl).toBe("http://127.0.0.1:8081");
+    expect(readFileSync(files.smolvmPidFile, "utf8")).toBe("4343\n");
+  });
+
+  it("fails clearly when smolvm cannot bind SMOL_API_URL", async () => {
+    const files = paths();
+    const deps = fakeDeps(fakeChild(), {
+      spawn: loseFirstBind(files),
+      fetch: health(undefined),
+    });
+    await expect(
+      startSmolvm("http://127.0.0.1:9000", files, {}, deps),
+    ).rejects.toThrow(
+      "another program is already listening at http://127.0.0.1:9000",
+    );
+    expect(deps.spawn).toHaveBeenCalledTimes(1);
   });
 
   it("refuses while a smolvm from an earlier run is still up", async () => {
@@ -171,6 +277,7 @@ describe("startSmolvm", () => {
       `smolvm exited with code 2 during startup; see ${files.smolvmLogFile}`,
     );
     expect(existsSync(files.smolvmPidFile)).toBe(false);
+    expect(existsSync(files.smolvmUrlFile)).toBe(false);
   });
 
   it("stops a smolvm that never starts serving", async () => {
@@ -195,6 +302,17 @@ describe("startSmolvm", () => {
       startSmolvm(undefined, files, {}, fakeDeps(child)),
     ).rejects.toThrow(`cannot write ${files.smolvmPidFile}: EISDIR`);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("removes the pidfile when the URL file cannot be written", async () => {
+    const files = paths();
+    mkdirSync(files.smolvmUrlFile, { recursive: true });
+    const child = fakeChild();
+    await expect(
+      startSmolvm(undefined, files, {}, fakeDeps(child)),
+    ).rejects.toThrow(`cannot write ${files.smolvmUrlFile}: EISDIR`);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(existsSync(files.smolvmPidFile)).toBe(false);
   });
 
   it("stops waiting to serve once the signal aborts", async () => {
@@ -255,10 +373,30 @@ process.on("SIGTERM", () => {
     expect(await smolvm.stop()).toBe(true);
     expect(await smolvm.exited).toBe("exited with code 0");
     await vi.waitFor(() => expect(existsSync(files.smolvmPidFile)).toBe(false));
+    expect(existsSync(files.smolvmUrlFile)).toBe(false);
     expect(readFileSync(files.smolvmLogFile, "utf8")).toBe(
       "drain=1\nstopping machines\n",
     );
   }, 20_000);
+});
+
+describe("isTcpPortInUse", () => {
+  it("sees any listener, not only an HTTP server", async () => {
+    // The probe hangs up at once, which resets this end.
+    const server = createServer((socket) =>
+      socket.on("error", () => {}).end("not http"),
+    );
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as { port: number };
+    try {
+      expect(await isTcpPortInUse("127.0.0.1", port)).toBe(true);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    expect(await isTcpPortInUse("127.0.0.1", port)).toBe(false);
+  });
 });
 
 function freePort(): Promise<number> {

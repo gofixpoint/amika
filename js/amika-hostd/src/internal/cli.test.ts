@@ -44,6 +44,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
   let smolvmRunning = true;
   const smolvm: ManagedSmolvm = {
     pid: 88,
+    apiUrl: "http://127.0.0.1:8080",
     exited: new Promise((resolve) => (smolvmExit = resolve)),
     get running() {
       return smolvmRunning;
@@ -112,6 +113,7 @@ describe("runCli", () => {
         pidFile: "/state/amika-hostd/amika-hostd.pid",
         logFile: "/state/amika-hostd/amika-hostd.log",
         smolvmPidFile: "/state/amika-hostd/smolvm.pid",
+        smolvmUrlFile: "/state/amika-hostd/smolvm.url",
         smolvmLogFile: "/state/amika-hostd/smolvm.log",
         servicesFile: "/state/amika-hostd/services.json",
       },
@@ -567,6 +569,19 @@ describe("managing smolvm", () => {
       order(vi.mocked(smolvm.stop)),
     );
     expect(order(vi.mocked(smolvm.stop))).toBeLessThan(order(release));
+  });
+
+  it("forwards to the port smolvm ended up on", async () => {
+    const { deps, out, smolvm } = harness();
+    smolvm.apiUrl = "http://127.0.0.1:8081";
+    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
+    expect(deps.startServer).toHaveBeenCalledWith(
+      expect.objectContaining({ smolApiUrl: "http://127.0.0.1:8081" }),
+      expect.anything(),
+    );
+    expect(out[0]).toBe(
+      "smolvm serving at http://127.0.0.1:8081 (pid 88); logs: /state/amika-hostd/smolvm.log",
+    );
   });
 
   it("starts smolvm for `serve` only with --smolvm", async () => {
