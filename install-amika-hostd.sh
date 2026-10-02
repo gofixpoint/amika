@@ -2,7 +2,7 @@
 set -eu
 
 # amika-hostd ships as one bundled JavaScript file. It is installed into
-# HOSTD_HOME, with a launcher on INSTALL_DIR that runs it on a suitable node.
+# HOSTD_HOME (default $XDG_DATA_HOME/amika-hostd), with a launcher on INSTALL_DIR that runs it on a suitable node.
 # It needs smolvm on the same host: `amika-hostd up` starts `smolvm serve`,
 # and `amika-hostd down` stops it.
 
@@ -12,7 +12,9 @@ DEFAULT_VERSION="0.1.0"
 INSTALL_VERSION=""
 DRY_RUN=false
 
-HOSTD_HOME="${AMIKA_HOSTD_HOME:-${HOME:-}/.amika-hostd}"
+HOSTD_HOME="${AMIKA_HOSTD_HOME:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/amika-hostd}"
+# Where installers before the move to XDG put these files.
+LEGACY_HOSTD_HOME="${HOME:-}/.amika-hostd"
 NODE_MIN_MAJOR=22
 NODE_VERSION="${AMIKA_HOSTD_NODE_VERSION:-24.21.0}"
 SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
@@ -42,7 +44,8 @@ Flags:
 Environment variables:
   AMIKA_INSTALL_DIR          Launcher directory (default: /usr/local/bin)
   AMIKA_HOSTD_HOME           amika-hostd's files and private Node.js
-                             (default: ~/.amika-hostd)
+                             (default: \$XDG_DATA_HOME/amika-hostd, which is
+                             ~/.local/share/amika-hostd by default)
   AMIKA_HOSTD_NODE_VERSION   Node.js version to download when the system node
                              is missing or too old (default: ${NODE_VERSION})
   SMOLVM_VERSION             Same as --smolvm-version
@@ -180,14 +183,38 @@ install_hostd() {
   install_launcher
   echo "amika-hostd ${VERSION} installed to ${INSTALL_DIR}/amika-hostd"
 
+  remove_legacy_home
   seed_config
   ensure_smolvm
   check_kvm
   print_next_steps
 }
 
+# Remove the files an older installer put in ~/.amika-hostd. The launcher
+# written above no longer points there, so they are stale copies.
+remove_legacy_home() {
+  legacy_home_is_stale || return 0
+  rm -rf "${LEGACY_HOSTD_HOME}/amika-hostd.mjs" \
+    "${LEGACY_HOSTD_HOME}/config.example.toml" \
+    "${LEGACY_HOSTD_HOME}/node" \
+    "${LEGACY_HOSTD_HOME}/.node-staging"
+  # Keep the directory if anything else was put in it.
+  rmdir "$LEGACY_HOSTD_HOME" 2>/dev/null || true
+  echo "Removed the old install files from ${LEGACY_HOSTD_HOME}"
+}
+
+legacy_home_is_stale() {
+  [ -n "${HOME:-}" ] && [ -d "$LEGACY_HOSTD_HOME" ] || return 1
+  # AMIKA_HOSTD_HOME may still name the old directory.
+  [ "$(cd "$LEGACY_HOSTD_HOME" && pwd -P)" != "$(cd "$HOSTD_HOME" 2>/dev/null && pwd -P)" ]
+}
+
 describe_plan() {
   echo "  Files:        ${HOSTD_HOME}/amika-hostd.mjs (run by the launcher above)"
+  if legacy_home_is_stale; then
+    echo "  Old files:    would remove amika-hostd.mjs, config.example.toml and node/"
+    echo "                from ${LEGACY_HOSTD_HOME}"
+  fi
   if find_system_node; then
     echo "  Node.js:      use system node v${FOUND_NODE_VERSION} at ${FOUND_NODE}"
   elif find_private_node; then
@@ -435,6 +462,10 @@ print_next_steps() {
   echo "  3. Start the daemon, which starts smolvm with it:"
   echo "       amika-hostd up"
   echo "     Stop both, and smolvm's machines, with: amika-hostd down"
+  echo ""
+  echo "If you're a human, run \`amika-hostd setup\`."
+  echo ""
+  echo "If you're an agent, run \`amika-hostd setup --skill\` and follow the instructions output."
 }
 
 # Verify $1 (named $2 in the checksum list) against the sha256sum-format list
