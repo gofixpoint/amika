@@ -228,9 +228,15 @@ so the host, not Amika, pins the version:
 
 ```toml
 [preset_images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:<12-char sha>"
-amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:<12-char sha>"
+amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
+amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
 ```
+
+The seeded config tracks `:latest`, which every image release moves. A host
+that needs a fixed version pins the release's 12-character commit SHA instead.
+Because `:latest` is a moving tag, smolvm's in-VM image cache can keep serving
+the previously pulled digest, so an upgrade is not guaranteed to take effect
+until that cache is cleared.
 
 On create (`POST /v0beta1/rigs`), `resolveImage` (`src/internal/requests.ts`) swaps
 a configured name for its reference before forwarding to smolvm. An `image`

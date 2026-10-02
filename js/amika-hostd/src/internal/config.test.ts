@@ -409,9 +409,9 @@ describe("config.example.toml", () => {
         xlarge: { vcpus: 16, memoryGib: 24, diskGib: 40, diskGrowOnly: false },
       },
       images: {
-        "amika-coder": "ghcr.io/gofixpoint/amika-coder:b0ee8be7e76a",
+        "amika-coder": "ghcr.io/gofixpoint/amika-coder:latest",
         "amika-coder-plus-docker":
-          "ghcr.io/gofixpoint/amika-coder-plus-docker:b0ee8be7e76a",
+          "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
       },
     });
   });
