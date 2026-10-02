@@ -327,13 +327,11 @@ async function applyChanges(changes: Changes, deps: SetupDeps) {
   const undo: Undo[] = [];
   try {
     if (changes.apiKey !== undefined) {
-      const previous = deps.credentials.get();
+      // Where the key is kept now, exactly, so an undo puts it back there.
+      const previous = deps.credentials.snapshot();
       undo.push({
         failure: `the new API key may still be in ${deps.credentials.description}`,
-        run: () =>
-          previous === undefined
-            ? deps.credentials.remove()
-            : deps.credentials.set(previous),
+        run: () => deps.credentials.restore(previous),
       });
       deps.credentials.set(changes.apiKey);
       await checkpoint();

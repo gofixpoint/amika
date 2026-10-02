@@ -307,6 +307,78 @@ describe("apiKeyStore when Ctrl-C kills the keychain command", () => {
   );
 });
 
+describe("apiKeyStore snapshot and restore", () => {
+  const DESKTOP = { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" };
+
+  it("refuses to snapshot a keychain it cannot read", () => {
+    const store = apiKeyStore(DESKTOP, {
+      platform: "linux",
+      ...files(),
+      run: keychain({ locked: true }).run,
+    });
+    expect(() => store.snapshot()).toThrow(
+      /Cannot read your desktop keyring \(Secret Service\) to see whether it already holds an API key/,
+    );
+  });
+
+  it("puts a key that lived only in the file back in the file", () => {
+    const fs = files({ [FILE]: "amk_old\n" });
+    const fake = keychain();
+    const store = apiKeyStore(DESKTOP, {
+      platform: "linux",
+      ...fs,
+      run: fake.run,
+    });
+    const before = store.snapshot();
+    store.set("amk_new");
+    expect(fake.stored()).toBe("amk_new");
+    store.restore(before);
+    // Back where it was: not moved into the keychain, the file kept.
+    expect(fake.stored()).toBeUndefined();
+    expect(fs.contents[FILE]).toBe("amk_old\n");
+    expect(store.get()).toBe("amk_old");
+  });
+
+  it("puts a keychain key back in the keychain", () => {
+    const fs = files();
+    const fake = keychain({ initial: "amk_old" });
+    const store = apiKeyStore(DESKTOP, {
+      platform: "linux",
+      ...fs,
+      run: fake.run,
+    });
+    const before = store.snapshot();
+    store.set("amk_new");
+    store.restore(before);
+    expect(fake.stored()).toBe("amk_old");
+    expect(fs.contents[FILE]).toBeUndefined();
+  });
+
+  it("removes a key that was not there before", () => {
+    const fs = files();
+    const fake = keychain();
+    const store = apiKeyStore(DESKTOP, {
+      platform: "linux",
+      ...fs,
+      run: fake.run,
+    });
+    const before = store.snapshot();
+    store.set("amk_new");
+    store.restore(before);
+    expect(fake.stored()).toBeUndefined();
+    expect(store.get()).toBeUndefined();
+  });
+
+  it("restores the file alone without a keychain", () => {
+    const fs = files({ [FILE]: "amk_old\n" });
+    const store = apiKeyStore(ENV, { platform: "linux", ...fs, run: vi.fn() });
+    const before = store.snapshot();
+    store.set("amk_new");
+    store.restore(before);
+    expect(fs.contents[FILE]).toBe("amk_old\n");
+  });
+});
+
 describe("isValidApiKey", () => {
   it.each(["amk_live_abc123", "a.b-c~d"])("accepts %j", (key) => {
     expect(isValidApiKey(key)).toBe(true);

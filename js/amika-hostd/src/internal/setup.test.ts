@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError } from "./amika-api.js";
 import { KeychainInterrupted } from "./credentials.js";
-import { resolveConfig, type HostdConfigFile } from "./config.js";
+import { ConfigError, resolveConfig, type HostdConfigFile } from "./config.js";
 import { PromptCancelled } from "./prompt.js";
 import {
   DEFAULT_PRESET_IMAGES,
@@ -47,6 +47,10 @@ function harness({
     }),
     remove: vi.fn(() => {
       store.value = undefined;
+    }),
+    snapshot: vi.fn((): { file?: string } => ({ file: store.value })),
+    restore: vi.fn((snapshot: { file?: string }) => {
+      store.value = snapshot.file;
     }),
   };
   const deps = {
@@ -295,8 +299,27 @@ describe("runSetup", () => {
     await expect(runSetup(h.deps)).rejects.toThrow(
       `Cannot write ${PATH}: EACCES; setup changed nothing`,
     );
-    expect(h.store.remove).toHaveBeenCalled();
+    expect(h.store.restore).toHaveBeenCalledWith({ file: undefined });
     expect(h.store.value).toBeUndefined();
+  });
+
+  it("changes nothing when it cannot tell what key is stored now", async () => {
+    const h = harness({
+      answers: ["", "", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
+    h.store.snapshot.mockImplementationOnce(() => {
+      throw new ConfigError(
+        "Cannot read your desktop keyring to see whether it already holds an API key; unlock it and run `amika-hostd setup` again",
+      );
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      /unlock it and run `amika-hostd setup` again; setup changed nothing$/,
+    );
+    expect(h.store.set).not.toHaveBeenCalled();
+    expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
   });
 
   it("deletes a config file it created when undoing", async () => {

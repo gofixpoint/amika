@@ -146,7 +146,10 @@ the first change to the last, and cancels the Amika request. On any failure,
 or Ctrl-C at any point in that step, it undoes what it has done in
 reverse: Amika gets the old secret again unless it plainly refused the new
 one, the file is restored (or deleted, if setup created it), and the previous
-API key is put back (or removed). `AmikaApiError.refused` marks a plain
+API key is put back exactly where it was, keychain or file (or removed). To
+do that, setup snapshots both places before storing a new key, and refuses
+to start if the keychain cannot be read, since it might hold a key an undo
+would lose. `AmikaApiError.refused` marks a plain
 refusal: an error status below 500 or a refused redirect, never a timeout, a
 lost connection, a 5xx, a 2xx other than the expected one, or an unreadable
 answer. Ctrl-C then exits 130 with

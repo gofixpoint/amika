@@ -23,6 +23,20 @@ export interface CredentialStore {
   set(value: string): void;
   /** Delete the stored key; throws `ConfigError` if it is still readable. */
   remove(): void;
+  /**
+   * Record exactly where a key is kept now, so `restore` can put it back as
+   * it was. Throws `ConfigError` if the keychain cannot be read, since it
+   * might hold a key that an undo would then lose.
+   */
+  snapshot(): CredentialSnapshot;
+  restore(snapshot: CredentialSnapshot): void;
+}
+
+/** What the keychain and the fallback file each held, from `snapshot`. */
+export interface CredentialSnapshot {
+  /** `undefined`: no keychain, or nothing in it. */
+  readonly keychain?: string;
+  readonly file?: string;
 }
 
 /** The result of running a program, as `spawnSync` reports it. */
@@ -89,15 +103,21 @@ export function apiKeyStore(
 ): CredentialStore {
   const file = fileStore(apiKeyFilePath(env), deps);
   const keychain = systemKeychain(env, deps);
+  const removeFile = () => {
+    if (!file.remove()) {
+      throw new ConfigError(`Cannot remove the API key in ${file.path}`);
+    }
+  };
   if (keychain === undefined) {
     return {
       description: file.description,
       get: file.get,
       set: file.set,
-      remove() {
-        if (!file.remove()) {
-          throw new ConfigError(`Cannot remove the API key in ${file.path}`);
-        }
+      remove: removeFile,
+      snapshot: () => ({ file: file.get() }),
+      restore(snapshot) {
+        if (snapshot.file === undefined) removeFile();
+        else file.set(snapshot.file);
       },
     };
   }
@@ -136,9 +156,38 @@ export function apiKeyStore(
       ensureGone(
         `Cannot remove the API key from ${keychain.description}; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
       );
-      if (!file.remove()) {
-        throw new ConfigError(`Cannot remove the API key in ${file.path}`);
+      removeFile();
+    },
+    snapshot() {
+      const found = keychain.lookup();
+      if (found.state === "unknown") {
+        throw new ConfigError(
+          `Cannot read ${keychain.description} to see whether it already holds an API key; unlock it and run \`amika-hostd setup\` again`,
+        );
       }
+      return {
+        keychain: found.state === "found" ? found.value : undefined,
+        file: file.get(),
+      };
+    },
+    // Put each place back exactly, rather than through `set`, which would
+    // move a key that lived only in the file into the keychain.
+    restore(snapshot) {
+      if (snapshot.keychain === undefined) {
+        ensureGone(
+          `Cannot remove the API key from ${keychain.description}; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
+        );
+      } else if (!keychain.set(snapshot.keychain)) {
+        throw new ConfigError(
+          `Cannot put the previous API key back in ${keychain.description}`,
+        );
+      }
+      if (snapshot.file === undefined) removeFile();
+      else file.set(snapshot.file);
+      description =
+        snapshot.keychain === undefined && snapshot.file !== undefined
+          ? file.description
+          : keychain.description;
     },
   };
 }

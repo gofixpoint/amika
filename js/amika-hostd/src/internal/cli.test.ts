@@ -44,6 +44,10 @@ function memoryStore(value?: string) {
     remove: vi.fn(() => {
       store.value = undefined;
     }),
+    snapshot: vi.fn((): { file?: string } => ({ file: store.value })),
+    restore: vi.fn((snapshot: { file?: string }) => {
+      store.value = snapshot.file;
+    }),
   };
   return store;
 }
