@@ -73,6 +73,7 @@ confirmation flags, and commands that reject JSON output.
 | Capture a base environment                 | `amika snapshot --help`                                                   |
 | Fork from a snapshot                       | `amika rig create --snapshot <name>`                                      |
 | List the org's own hosts                   | `amika host list`                                                         |
+| Run a rig on one of those hosts            | `amika rig create --host <hostname>`                                      |
 | Authenticate in a headless environment     | Set `AMIKA_API_KEY`                                                       |
 
 ## Critical facts

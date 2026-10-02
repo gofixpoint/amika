@@ -1,6 +1,7 @@
 package apiclient
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,27 @@ const hostsJSON = `[
   {"id":"host_2","hostname":"beta.lan","url":null,"org_id":"org_1","sizes":{},
    "created_at":"2026-01-03T00:00:00Z","updated_at":"2026-01-03T00:00:00Z"}
 ]`
+
+// Every cloud create goes through this struct, so host_id has to vanish when
+// no host was named: the server's `host_id` is `z.string().min(1).optional()`
+// and rejects an empty string, which would 400 every `amika rig create`.
+func TestCreateSandboxRequest_JSONOmitsHostIDWhenEmpty(t *testing.T) {
+	data, err := json.Marshal(CreateSandboxRequest{Name: "my-sandbox"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "host_id") {
+		t.Errorf("expected host_id to be omitted when empty, got: %s", string(data))
+	}
+
+	data, err = json.Marshal(CreateSandboxRequest{Name: "my-sandbox", HostID: "host_1"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"host_id":"host_1"`) {
+		t.Errorf("expected host_id to be sent when set, got: %s", string(data))
+	}
+}
 
 func TestHostRequestPaths(t *testing.T) {
 	tests := []struct {

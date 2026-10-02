@@ -35,12 +35,17 @@ size, environment, setup, repository, snapshot, and credential options.
 
 ## The organization's own hosts
 
-An organization can register hosts of its own (bring-your-own-compute).
+An organization can register hosts of its own (bring-your-own-compute). A rig
+runs on Amika Cloud unless `--host` names one of them, by hostname or id.
+There is no `--host` value that selects Amika Cloud; omit the flag. With
+`--host`, `--size` names one of that host's own sizes, and `--snapshot` is
+refused.
 
 ```bash
 amika host list                       # HOSTNAME, URL, SIZES ("hosts" is an alias)
 amika host list -o json               # ids, timestamps, per-size resources
 amika host get alpha.lan              # the sizes that host offers
+amika rig create --host alpha.lan --size small
 amika host delete alpha.lan --force   # refused while rigs still run on it
 ```
 

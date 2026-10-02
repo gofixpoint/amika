@@ -125,6 +125,9 @@ amika sandbox create --name dev-sandbox \
 
 # Fork from a captured snapshot
 amika sandbox create --name dev-sandbox --snapshot amika-mono-base
+
+# Run it on one of your organization's own hosts, at one of that host's sizes
+amika sandbox create --name dev-sandbox --host alpha.lan --size small
 ```
 
 #### Flags
@@ -133,7 +136,8 @@ amika sandbox create --name dev-sandbox --snapshot amika-mono-base
 | ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--name <name>`         | auto-generated       | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`)                                    |
 | `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `coder-plus-docker`. See [presets.md](presets.md)                                          |
-| `--size <size>`         | `m`                  | Sandbox size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers                                       |
+| `--size <size>`         | `m`                  | Sandbox size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m` |
+| `--host <hostname\|id>` |                      | Run the rig on one of your organization's own hosts rather than on Amika Cloud. See [`amika host`](#amika-host). Cannot be combined with `--snapshot`. The create fails if the control plane did not put the rig on that host |
 | `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory |
 | `--no-git`              | `false`              | Skip git auto-detection; create a sandbox without mounting any repo                                                                  |
 | `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                                 |
@@ -363,6 +367,8 @@ Inspect and retire your organization's own hosts (bring-your-own-compute). `host
 
 Adding a host is not among these commands, and deliberately: a host registers itself from the machine, where its secret already lives. `amika-hostd up` posts the hostname, secret, and sizes to the control plane, and `amika-hostd register-url <url>` records the URL the control plane reaches it on. These commands are the control-plane view of the records that leaves behind.
 
+A rig runs on Amika Cloud unless `amika rig create --host` names one of these hosts. There is no `--host` value that selects Amika Cloud; omit the flag.
+
 ```bash
 # List the organization's hosts
 amika host list            # "hosts" and "ls" are aliases
@@ -380,7 +386,7 @@ Lists `HOSTNAME`, `URL`, and `SIZES`. A host shows `-` for a URL it has not regi
 
 ### `amika host get <hostname-or-id>`
 
-Shows one host's details and the sizes it offers its rigs.
+Shows one host's details and the sizes it offers its rigs. Those size names, not the cloud size vocabulary, are what `rig create --host ... --size ...` accepts.
 
 ### `amika host delete <hostname-or-id> [...]`
 
