@@ -2,7 +2,8 @@
 set -eu
 
 # amika-hostd ships as one bundled JavaScript file. It is installed into
-# HOSTD_HOME, with a launcher on INSTALL_DIR that runs it on a suitable node.
+# HOSTD_HOME (default $XDG_DATA_HOME/amika-hostd), with a launcher on
+# INSTALL_DIR that runs it on a suitable node.
 # It needs smolvm on the same host: `amika-hostd up` starts `smolvm serve`,
 # and `amika-hostd down` stops it.
 
@@ -12,7 +13,7 @@ DEFAULT_VERSION="0.1.0"
 INSTALL_VERSION=""
 DRY_RUN=false
 
-HOSTD_HOME="${AMIKA_HOSTD_HOME:-${HOME:-}/.amika-hostd}"
+HOSTD_HOME="${AMIKA_HOSTD_HOME:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/amika-hostd}"
 NODE_MIN_MAJOR=22
 NODE_VERSION="${AMIKA_HOSTD_NODE_VERSION:-24.21.0}"
 SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
@@ -42,7 +43,8 @@ Flags:
 Environment variables:
   AMIKA_INSTALL_DIR          Launcher directory (default: /usr/local/bin)
   AMIKA_HOSTD_HOME           amika-hostd's files and private Node.js
-                             (default: ~/.amika-hostd)
+                             (default: \$XDG_DATA_HOME/amika-hostd, which is
+                             ~/.local/share/amika-hostd by default)
   AMIKA_HOSTD_NODE_VERSION   Node.js version to download when the system node
                              is missing or too old (default: ${NODE_VERSION})
   SMOLVM_VERSION             Same as --smolvm-version
@@ -470,6 +472,10 @@ print_next_steps() {
   echo "  3. Start the daemon, which starts smolvm with it:"
   echo "       amika-hostd up"
   echo "     Stop both, and smolvm's machines, with: amika-hostd down"
+  echo ""
+  echo "If you're a human, run \`amika-hostd setup\`."
+  echo ""
+  echo "If you're an agent, run \`amika-hostd setup --skill\` and follow the instructions output."
 }
 
 # Verify $1 (named $2 in the checksum list) against the sha256sum-format list

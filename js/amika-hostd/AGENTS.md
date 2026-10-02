@@ -20,13 +20,14 @@ curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika
 It downloads `amika-hostd_<version>.tar.gz` from the `amika-hostd@v<version>`
 GitHub release, verifies it against `checksums.txt`, and installs:
 
-- the bundle and `config.example.toml` into `~/.amika-hostd`
-  (`AMIKA_HOSTD_HOME`), with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR`
-  (default `/usr/local/bin`) that pins the node it runs on;
+- the bundle and `config.example.toml` into `$XDG_DATA_HOME/amika-hostd`
+  (default `~/.local/share/amika-hostd`; override with `AMIKA_HOSTD_HOME`),
+  with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR` (default
+  `/usr/local/bin`) that pins the node it runs on;
 - Node.js: the system `node` if it is 22 or newer, otherwise the official
   Node.js LTS binary (24.21.0, `AMIKA_HOSTD_NODE_VERSION`), verified against
-  `SHASUMS256.txt`, into `~/.amika-hostd/node` (the system node is never
-  touched);
+  `SHASUMS256.txt`, into `node/` in that same directory (the system node is
+  never touched);
 - smolvm, through its official installer, unless `smolvm` is on `PATH` or in
   `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
   (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
