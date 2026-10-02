@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@hono/node-server": "1.19.15",
-    "hono": "4.13.5",
+    "hono": "4.13.9",
     "smol-toml": "1.8.0",
     "zod": "4.4.3"
   },

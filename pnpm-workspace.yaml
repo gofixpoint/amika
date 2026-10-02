@@ -16,8 +16,16 @@ allowBuilds:
   protobufjs: false
 
 # Moved from the root package.json's `pnpm` field, which pnpm 11 no longer
-# reads. Pins a transitive dep below the 7-day package-age gate in CI.
+# reads. Pins transitive deps: some below the 7-day package-age gate in CI,
+# others up onto a patched release when the direct dependent still asks for a
+# vulnerable range.
 overrides:
   "@bufbuild/protobuf": "2.13.0"
+  "@grpc/grpc-js": "1.14.5"
+  axios: "1.20.0"
+  brace-expansion@1: "1.1.21"
+  brace-expansion@5: "5.0.12"
   esbuild: "0.28.1"
+  hono: "4.13.9"
   js-yaml: "4.3.2"
+  undici: "7.29.1"
