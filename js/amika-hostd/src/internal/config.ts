@@ -96,7 +96,7 @@ export function resolveConfig({
     smolApiUrl: nonEmpty(env.SMOL_API_URL),
     smolRequestTimeoutMs: parseTimeout(env.SMOL_REQUEST_TIMEOUT_MS),
     sizes: toHostSizes(toml.sizes ?? {}),
-    images: presetImages(file, toml),
+    images: toml.preset_images ?? {},
     configPath: file?.path,
   };
 }
@@ -159,8 +159,6 @@ const tomlSizeSchema = z.strictObject({
   disk_grow_only: z.boolean().optional(),
 });
 
-const imagesSchema = z.record(z.string().min(1), z.string().trim().min(1));
-
 const configFileSchema = z.strictObject({
   hostname: z.string().optional(),
   secret_key: z.string().min(1).optional(),
@@ -168,9 +166,9 @@ const configFileSchema = z.strictObject({
   host: z.string().min(1).optional(),
   port: z.number().int().optional(),
   sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
-  preset_images: imagesSchema.optional(),
-  /** The name `preset_images` had in amika-hostd 0.1.0; still read. */
-  images: imagesSchema.optional(),
+  preset_images: z
+    .record(z.string().min(1), z.string().trim().min(1))
+    .optional(),
 });
 
 function parseConfigFile(file: HostdConfigFile) {
@@ -199,18 +197,6 @@ function parseConfigFile(file: HostdConfigFile) {
     );
   }
   return parsed.data;
-}
-
-function presetImages(
-  file: HostdConfigFile | undefined,
-  toml: ReturnType<typeof parseConfigFile>,
-): Record<string, string> {
-  if (toml.preset_images && toml.images) {
-    throw new ConfigError(
-      `${file?.path} sets both [preset_images] and [images]; rename [images] to [preset_images] and merge them`,
-    );
-  }
-  return toml.preset_images ?? toml.images ?? {};
 }
 
 function toHostSizes(

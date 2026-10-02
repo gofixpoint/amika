@@ -210,18 +210,10 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
     ).toThrow(/invalid settings: preset_images$/);
   });
 
-  it("still reads the 0.1.0 [images] table", () => {
-    const config = resolveConfig({
-      file: file(`[images]\namika-coder = "ghcr.io/x:y"`),
-    });
-    expect(config.images).toEqual({ "amika-coder": "ghcr.io/x:y" });
-  });
-
-  it("rejects [images] alongside [preset_images]", () => {
-    const contents = `[images]\na = "x:1"\n[preset_images]\nb = "y:1"`;
-    expect(() => resolveConfig({ file: file(contents) })).toThrow(
-      /sets both \[preset_images\] and \[images\]/,
-    );
+  it("rejects the 0.1.0 [images] table", () => {
+    expect(() =>
+      resolveConfig({ file: file(`[images]\namika-coder = "ghcr.io/x:y"`) }),
+    ).toThrow(/invalid settings: images$/);
   });
 
   it.each(["", "  "])("rejects an empty --host %j", (host) => {

@@ -223,8 +223,7 @@ file contents in a `ConfigError` message: operators see it verbatim.
 ### Images
 
 `[preset_images]` maps a preset name to the full OCI reference this host boots for it,
-so the host, not Amika, pins the version. amika-hostd 0.1.0 called the table
-`[images]`; that name is still read, and setting both is an error:
+so the host, not Amika, pins the version:
 
 ```toml
 [preset_images]
