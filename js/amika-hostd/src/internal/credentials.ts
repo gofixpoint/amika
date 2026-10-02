@@ -15,6 +15,22 @@ export interface CredentialStore {
   readonly description: string;
   get(): string | undefined;
   set(value: string): void;
+  /** Delete the stored key; throws `ConfigError` if it is still readable. */
+  remove(): void;
+  /**
+   * Record exactly where a key is kept now, so `restore` can put it back as
+   * it was. Throws `ConfigError` if the keychain cannot be read, since it
+   * might hold a key that an undo would then lose.
+   */
+  snapshot(): CredentialSnapshot;
+  restore(snapshot: CredentialSnapshot): void;
+}
+
+/** What the keychain and the fallback file each held, from `snapshot`. */
+export interface CredentialSnapshot {
+  /** `undefined`: no keychain, or nothing in it. */
+  readonly keychain?: string;
+  readonly file?: string;
 }
 
 /** The result of running a program, as `spawnSync` reports it. */
@@ -81,8 +97,23 @@ export function apiKeyStore(
 ): CredentialStore {
   const file = fileStore(apiKeyFilePath(env), deps);
   const keychain = systemKeychain(env, deps);
+  const removeFile = () => {
+    if (!file.remove()) {
+      throw new ConfigError(`Cannot remove the API key in ${file.path}`);
+    }
+  };
   if (keychain === undefined) {
-    return { description: file.description, get: file.get, set: file.set };
+    return {
+      description: file.description,
+      get: file.get,
+      set: file.set,
+      remove: removeFile,
+      snapshot: () => ({ file: file.get() }),
+      restore(snapshot) {
+        if (snapshot.file === undefined) removeFile();
+        else file.set(snapshot.file);
+      },
+    };
   }
   let description = keychain.description;
   // Reads try the keychain first, so a key it may still hold would shadow
@@ -114,6 +145,76 @@ export function apiKeyStore(
       // overwrite it with the new key rather than leave the old one there.
       if (!file.remove()) file.set(value);
       description = keychain.description;
+    },
+    remove() {
+      ensureGone(
+        `Cannot remove the API key from ${keychain.description}; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
+      );
+      removeFile();
+    },
+    snapshot() {
+      const found = keychain.lookup();
+      if (found.state === "unknown") {
+        throw new ConfigError(
+          `Cannot read ${keychain.description} to see whether it already holds an API key; unlock it and run \`amika-hostd setup\` again`,
+        );
+      }
+      return {
+        keychain: found.state === "found" ? found.value : undefined,
+        file: file.get(),
+      };
+    },
+    // Put each place back exactly, rather than through `set`, which would
+    // move a key that lived only in the file into the keychain. Both places
+    // are tried even if one fails, so a keychain fault never leaves the file
+    // holding the new key; and a keychain key that cannot go back there is
+    // kept readable in the file rather than lost.
+    restore(snapshot) {
+      const errors: string[] = [];
+      let fileValue = snapshot.file;
+      let inKeychain = false;
+      const keepInFile = (error: unknown) => {
+        if (snapshot.keychain === undefined) {
+          errors.push((error as Error).message);
+          return;
+        }
+        fileValue = snapshot.keychain;
+        try {
+          ensureGone(
+            `Cannot remove the new API key from ${keychain.description}`,
+          );
+        } catch (removeError) {
+          errors.push((removeError as Error).message);
+        }
+      };
+      try {
+        if (snapshot.keychain === undefined) {
+          ensureGone(
+            `Cannot remove the API key from ${keychain.description}; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
+          );
+        } else if (keychain.set(snapshot.keychain)) {
+          inKeychain = true;
+        } else {
+          keepInFile(
+            new ConfigError(
+              `Cannot put the previous API key back in ${keychain.description}`,
+            ),
+          );
+        }
+      } catch (error) {
+        keepInFile(error);
+      }
+      try {
+        if (fileValue === undefined) removeFile();
+        else file.set(fileValue);
+      } catch (error) {
+        errors.push((error as Error).message);
+      }
+      description =
+        inKeychain || fileValue === undefined
+          ? keychain.description
+          : file.description;
+      if (errors.length > 0) throw new ConfigError(errors.join("; "));
     },
   };
 }

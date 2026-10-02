@@ -146,23 +146,45 @@ without asking. A config written from scratch also gets the example's default
 which `setup.test.ts` keeps in step with `config.example.toml`). It prints
 the result and where to edit it. The new contents are parsed before anything
 is written, and the file is replaced atomically with mode `0600`
-(`src/internal/private-file.ts`). A new API key is stored first, so a keychain
-command stopped by Ctrl-C (say, at an unlock prompt) leaves the config
-untouched.
+(`src/internal/private-file.ts`).
 
 Registration never changes a stored secret, so setup sends a regenerated one
 to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with `secret`) for the
 hostname `up` will use, the environment's if it sets one. It writes the file
 first, so a file it cannot write never leaves Amika with a secret the host
-lacks, and puts the old secret back in the file if sending fails. A new
-hostname skips this, since `up` registers it as a new host. A secret key set
-in the environment is never regenerated: the daemon would keep using it.
+lacks. A new hostname skips this, since `up` registers it as a new host. A
+secret key set in the environment is never regenerated: the daemon would keep
+using it.
+
+Setup applies its changes as one step (`applyChanges`), in order: store the
+API key, write the file, send a regenerated secret to Amika. It listens for
+`SIGINT` from the first change to the last, and cancels the Amika request. On
+any failure, or Ctrl-C at any point in that step, it undoes what it has done
+in reverse: Amika gets the old secret again unless it plainly refused the new
+one, the file is restored (or deleted, if setup created it), and the previous
+API key is put back exactly where it was, keychain or file (or removed). To do
+that, setup snapshots both places before storing a new key, and refuses to
+start if the keychain cannot be read, since it might hold a key an undo would
+lose. `AmikaApiError.refused` marks a plain refusal: a 4xx or a refused
+redirect, never a timeout, a lost connection, a 5xx, a 2xx other than the
+expected one, or an unreadable answer. Ctrl-C then exits 130 with nothing
+changed, and a second Ctrl-C stops at once. If an undo fails too, setup names
+what may be left changed; if Amika cannot be given the old secret back, the
+file keeps the new one, the likelier match after an unanswered request.
+
+Node runs a `SIGINT` listener only between turns of the event loop, never
+during a synchronous step such as a keychain command or a file write, and
+learns of a signal only when it polls for I/O, so setup yields twice
+(`setImmediate`) after each step before checking for Ctrl-C. A keychain
+command killed by Ctrl-C raises `KeychainInterrupted` (see below), which
+setup treats as an interrupt too.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing and it has a terminal; without one it fails, naming `setup`. Like
 setup, it reads a `secret_key` too short to use (the example's `REPLACE_ME`)
 as missing, so a hand-copied example gets set up rather than rejected; other
-commands still reject it. Ctrl-C at a question exits 130 and changes nothing.
+commands still reject it. Ctrl-C at a question, or while setup applies its
+changes, exits 130 and changes nothing.
 
 ### API key storage
 
