@@ -5,6 +5,8 @@ import type { HostSize } from "./config.js";
 export interface AmikaApiConfig {
   apiUrl: string;
   apiKey: string;
+  /** Cancels the request, on top of its own timeout. */
+  signal?: AbortSignal;
 }
 
 export const registeredHostSchema = z.object({
@@ -17,6 +19,17 @@ export type RegisteredHost = z.infer<typeof registeredHostSchema>;
 /** An Amika API failure; the message is safe to print. */
 export class AmikaApiError extends Error {
   override name = "AmikaApiError";
+  /**
+   * True when Amika answered and turned the request down, so it changed
+   * nothing. False when the outcome is unknown: the request may have been
+   * applied even though no usable answer came back.
+   */
+  readonly refused: boolean;
+
+  constructor(message: string, { refused = false } = {}) {
+    super(message);
+    this.refused = refused;
+  }
 }
 
 /**
@@ -90,6 +103,30 @@ export async function setHostSizes(
   return parseHost(response);
 }
 
+/**
+ * Replace the secret Amika stores for this host, which registration never
+ * changes. Amika expires its rigs' cached service URLs with it, so the next
+ * request to the host carries the new secret.
+ */
+export async function setHostSecret(
+  api: AmikaApiConfig,
+  host: Pick<RegisteredHost, "id" | "hostname">,
+  secretKey: string,
+  fetcher: typeof fetch = fetch,
+): Promise<RegisteredHost> {
+  const response = await send(
+    api,
+    fetcher,
+    "PUT",
+    `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
+    { hostname: host.hostname, secret: secretKey },
+  );
+  if (response.status !== 200) {
+    throw await apiError("update the host's secret key", response);
+  }
+  return parseHost(response);
+}
+
 type HostSizes = Record<string, HostSize>;
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -112,12 +149,16 @@ async function send(
       body: JSON.stringify(body),
       // A redirect would resend the API key and secret to another origin.
       redirect: "error",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        ...(api.signal ? [api.signal] : []),
+      ]),
     });
   } catch (error) {
     if (isRefusedRedirect(error)) {
       throw new AmikaApiError(
         `Amika at ${api.apiUrl} answered with a redirect, which is refused so credentials are not resent; check the API URL (e.g. https rather than http)`,
+        { refused: true },
       );
     }
     throw new AmikaApiError(
@@ -161,13 +202,20 @@ async function apiError(
     case 401:
       return new AmikaApiError(
         `Amika rejected the API key while trying to ${action} (${detail})`,
+        { refused: true },
       );
     case 403:
       return new AmikaApiError(
         `Amika refused to ${action} with this API key (${detail})`,
+        { refused: true },
       );
     default:
-      return new AmikaApiError(`failed to ${action} (${detail})`);
+      // Only a 4xx says the request was turned down. A 5xx may come from a
+      // proxy after the server applied it, and an unexpected 2xx or 3xx may
+      // mean it was applied too.
+      return new AmikaApiError(`failed to ${action} (${detail})`, {
+        refused: response.status >= 400 && response.status < 500,
+      });
   }
 }
 

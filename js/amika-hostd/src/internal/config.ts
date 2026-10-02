@@ -261,7 +261,8 @@ function parseHostname(value: string | undefined): string | undefined {
 
 const DNS_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-function isDnsHostname(value: string): boolean {
+/** Whether `value` is a hostname Amika accepts for a host. */
+export function isDnsHostname(value: string): boolean {
   return (
     value.length >= 1 &&
     value.length <= 253 &&
@@ -278,12 +279,17 @@ function isDnsHostname(value: string): boolean {
  */
 function parseSecretKey(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  if (!SECRET_KEY.test(value)) {
+  if (!isValidSecretKey(value)) {
     throw new ConfigError(
       `secret key must be at least 32 printable ASCII characters with no spaces; generate one with \`openssl rand -hex 32\``,
     );
   }
   return value;
+}
+
+/** Whether `value` is a usable secret key (see `parseSecretKey`). */
+export function isValidSecretKey(value: string): boolean {
+  return SECRET_KEY.test(value);
 }
 
 const SECRET_KEY = /^[\x21-\x7e]{32,}$/;
@@ -318,11 +324,11 @@ function parseTimeout(value: string | undefined): number {
 function describeSetting(key: RequiredSetting): string {
   switch (key) {
     case "apiKey":
-      return `API key: set ${ENV_NAMES.apiKey.join(" or ")} (environment only)`;
+      return `API key: run \`amika-hostd setup\`, or set ${ENV_NAMES.apiKey.join(" or ")}`;
     case "hostname":
-      return `hostname: set ${ENV_NAMES.hostname[0]} or \`hostname\` in config.toml`;
+      return `hostname: run \`amika-hostd setup\`, or set ${ENV_NAMES.hostname[0]} or \`hostname\` in config.toml`;
     case "secretKey":
-      return `secret key: set ${ENV_NAMES.secretKey.join(" or ")} or \`secret_key\` in config.toml`;
+      return `secret key: run \`amika-hostd setup\`, or set ${ENV_NAMES.secretKey.join(" or ")} or \`secret_key\` in config.toml`;
     default:
       return assertNever(key);
   }
