@@ -4,11 +4,23 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError } from "./amika-api.js";
-import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
+import {
+  MACHINE_STOP_TIMEOUT_MS,
+  PromptCancelled,
+  runCli,
+  USAGE,
+  type CliDeps,
+} from "./cli.js";
 import type { HostdConfigFile, HostdConfigWith } from "./config.js";
 import { DaemonError } from "./daemon.js";
 import type { RunningServer } from "./server.js";
-import type { ManagedSmolvm, SmolvmDeps } from "./smolvm-serve.js";
+import {
+  RuntimeError,
+  type HostAvailability,
+  type MachineRuntime,
+  type NativeEngine,
+  type NativeMachine,
+} from "./smol.js";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
 const ENV = {
@@ -37,19 +49,21 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
   const err: string[] = [];
   const server: RunningServer = { port: 3020, close: vi.fn(async () => {}) };
   const release = vi.fn();
-  let smolvmExit: (reason: string) => void = () => {};
   // By default the shutdown signal arrives once the daemon is ready.
   let signalReady: () => void = () => {};
   const ready = new Promise<void>((resolve) => (signalReady = resolve));
-  let smolvmRunning = true;
-  const smolvm: ManagedSmolvm = {
-    pid: 88,
-    exited: new Promise((resolve) => (smolvmExit = resolve)),
-    get running() {
-      return smolvmRunning;
-    },
-    stop: vi.fn(async () => true),
-  };
+  // A host that can run machines; the real engine is never loaded.
+  const engine = {
+    checkHost: vi.fn((): HostAvailability => ({ available: true })),
+    create: vi.fn((): NativeMachine => {
+      throw new Error("unexpected create");
+    }),
+    connect: vi.fn((): NativeMachine => {
+      throw new Error("unexpected connect");
+    }),
+    list: vi.fn(async () => []),
+    boot: vi.fn(async () => {}),
+  } satisfies NativeEngine;
   const deps = {
     env,
     out: (line: string) => out.push(line),
@@ -57,16 +71,15 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     self: ["node", "cli.js"],
     shutdownSignal: vi.fn(() => ready),
     loadConfigFile: vi.fn((): HostdConfigFile | undefined => undefined),
-    startServer: vi.fn(async (_config: HostdConfigWith<"secretKey">) => server),
-    startInBackground: vi.fn(async () => ({ pid: 77, port: 4000 })),
-    startSmolvm: vi.fn(
+    startServer: vi.fn(
       async (
-        _url: string | undefined,
-        _paths,
-        _env: NodeJS.ProcessEnv,
-        _options?: SmolvmDeps,
-      ) => smolvm,
+        _config: HostdConfigWith<"secretKey">,
+        _runtime: MachineRuntime,
+        _options?: { servicesFile?: string },
+      ) => server,
     ),
+    startInBackground: vi.fn(async () => ({ pid: 77, port: 4000 })),
+    loadEngine: vi.fn((): NativeEngine => engine),
     stopProcess: vi.fn(
       async (
         _pid: number,
@@ -74,7 +87,6 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
         _options: { timeoutMs: number },
       ) => true,
     ),
-    isSmolvmRunning: vi.fn(() => false),
     claimPidFile: vi.fn(() => release),
     notifyReady: vi.fn(async (_port: number) => signalReady()),
     isRunning: vi.fn(() => false),
@@ -88,38 +100,25 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
       }),
     ),
   } satisfies CliDeps;
-  return {
-    deps,
-    out,
-    err,
-    server,
-    release,
-    smolvm,
-    smolvmExit: (reason: string) => {
-      smolvmRunning = false;
-      smolvmExit(reason);
-    },
-  };
+  return { deps, out, err, server, release, engine };
 }
 
 describe("runCli", () => {
   it("backgrounds `up` by default, forwarding only the given flags", async () => {
-    const { deps, out } = harness();
+    const { deps, out, engine } = harness();
     expect(await runCli(["up", "--port", "4000"], deps)).toBe(0);
     expect(deps.startInBackground).toHaveBeenCalledWith(
-      ["node", "cli.js", "serve", "--smolvm", "--port", "4000"],
+      ["node", "cli.js", "serve", "--port", "4000"],
       {
         pidFile: "/state/amika-hostd/amika-hostd.pid",
         logFile: "/state/amika-hostd/log/amika-hostd.log",
-        smolvmPidFile: "/state/amika-hostd/smolvm.pid",
-        smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
         servicesFile: "/state/amika-hostd/services.json",
       },
       { isRunning: deps.isRunning, env: expect.any(Object) },
     );
     expect(deps.startServer).not.toHaveBeenCalled();
-    // The background daemon starts smolvm, not `up` itself.
-    expect(deps.startSmolvm).not.toHaveBeenCalled();
+    // `up` checks the host can run machines; the background daemon runs them.
+    expect(engine.checkHost).toHaveBeenCalled();
     expect(out.slice(0, 2)).toEqual([
       "Registered host builder with https://app.amika.dev (host_1)",
       "amika-hostd started in the background on port 4000 (pid 77)",
@@ -131,9 +130,10 @@ describe("runCli", () => {
     async (...args) => {
       const { deps, out, server, release } = harness();
       expect(await runCli([...args, "--host", "0.0.0.0"], deps)).toBe(0);
-      out.splice(0, args[0] === "up" ? 2 : 0);
+      out.splice(0, args[0] === "up" ? 1 : 0);
       expect(deps.startServer).toHaveBeenCalledWith(
         expect.objectContaining({ host: "0.0.0.0", port: 3020 }),
+        expect.objectContaining({ stopAll: expect.any(Function) }),
         { servicesFile: "/state/amika-hostd/services.json" },
       );
       expect(deps.claimPidFile).toHaveBeenCalledWith(
@@ -146,7 +146,6 @@ describe("runCli", () => {
         ...(args[0] === "up"
           ? [
               "Amika reaches this host at https://builder.example.com; make sure it is exposed there and forwards to http://0.0.0.0:3020.",
-              "Stopping smolvm (pid 88) and its machines",
             ]
           : []),
       ]);
@@ -312,7 +311,6 @@ describe("runCli", () => {
     [["start"], "unknown command: start"],
     [["down", "extra"], "unexpected argument: extra"],
     [["down", "--port", "1"], "--port does not apply to `down`"],
-    [["up", "--smolvm"], "--smolvm does not apply to `up`"],
     [["up", "extra"], "unexpected argument: extra"],
     [["serve", "--fg"], "--fg does not apply to `serve`"],
     [["register-url"], "missing <url>"],
@@ -332,10 +330,14 @@ describe("runCli", () => {
     expect(err).toEqual([`amika-hostd: ${message}`, USAGE]);
   });
 
-  it("rejects unknown options with usage", async () => {
+  it.each([
+    [["up", "--prot", "1"], "--prot"],
+    // smolvm runs in-process now; the flag that started it is gone.
+    [["serve", "--smolvm"], "--smolvm"],
+  ])("rejects unknown options with usage: %j", async (args, option) => {
     const { deps, err } = harness();
-    expect(await runCli(["up", "--prot", "1"], deps)).toBe(2);
-    expect(err[0]).toMatch(/Unknown option '--prot'/);
+    expect(await runCli(args, deps)).toBe(2);
+    expect(err[0]).toContain(`Unknown option '${option}'`);
   });
 
   it("prints help without requiring configuration", async () => {
@@ -431,11 +433,9 @@ describe("completing registration", () => {
       deps.prompt!.mock.invocationCallOrder[0],
     );
     expect(out.slice(1)).toEqual([
-      "smolvm serving at http://127.0.0.1:8080 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
       "amika-hostd listening on http://127.0.0.1:3020",
       EXPOSE.replaceAll("4000", "3020"),
       "Set the public URL of host builder to https://abc.ngrok.app",
-      "Stopping smolvm (pid 88) and its machines",
     ]);
     expect(deps.shutdownSignal).toHaveBeenCalled();
     expect(server.close).toHaveBeenCalled();
@@ -494,8 +494,8 @@ describe("completing registration", () => {
   ])("`up --fg --host %s` prints a usable local URL", async (host, url) => {
     const { deps, out } = unregistered();
     expect(await runCli(["up", "--fg", "--host", host], deps)).toBe(0);
-    expect(out[2]).toBe(`amika-hostd listening on ${url}`);
-    expect(out[3]).toContain(`expose ${url} to the internet`);
+    expect(out[1]).toBe(`amika-hostd listening on ${url}`);
+    expect(out[2]).toContain(`expose ${url} to the internet`);
   });
 
   it("`up` with a registered URL starts the daemon and says where it is expected", async () => {
@@ -543,112 +543,197 @@ describe("completing registration", () => {
   });
 });
 
-describe("managing smolvm", () => {
-  it("`up --fg` starts smolvm before serving and stops it after", async () => {
-    const { deps, server, release, smolvm } = harness({
-      ...ENV,
-      AMIKA_HOSTD_SECRET_KEY: undefined,
-      AMIKA_SECRET_KEY: SECRET,
-      SMOL_API_URL: "http://127.0.0.1:9090",
-      OTHER: "kept",
+describe("the machine engine", () => {
+  /** A machine handle as the native engine would return it. */
+  function handle(name: string, state = "running") {
+    return {
+      name,
+      state: vi.fn(() => state),
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+      exec: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
+      readFile: vi.fn(async () => Buffer.alloc(0)),
+      writeFile: vi.fn(async () => {}),
+    } satisfies NativeMachine;
+  }
+
+  /** The runtime `serve` handed the server; startServer has to have run. */
+  function runtimeOf(deps: ReturnType<typeof harness>["deps"]) {
+    return deps.startServer.mock.calls[0][1];
+  }
+
+  it.each([
+    [
+      "the host check fails",
+      { available: false, code: "KVM_UNAVAILABLE", reason: "/dev/kvm missing" },
+      "/dev/kvm missing",
+    ],
+    [
+      "the host check gives only a code",
+      { available: false, code: "KVM_UNAVAILABLE" },
+      "KVM_UNAVAILABLE",
+    ],
+    ["the host check gives no reason", { available: false }, "unknown reason"],
+  ] as const)(
+    "`up` refuses before registering when %s",
+    async (_label, availability, reason) => {
+      const { deps, err, engine } = harness();
+      engine.checkHost.mockReturnValue(availability);
+      expect(await runCli(["up"], deps)).toBe(1);
+      expect(err).toEqual([
+        `amika-hostd: this host cannot run machines: ${reason}`,
+      ]);
+      expect(deps.registerHost).not.toHaveBeenCalled();
+      expect(deps.startInBackground).not.toHaveBeenCalled();
+      expect(deps.startServer).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([["up"], ["up", "--fg"]])(
+    "`%s` refuses before registering when the engine cannot load",
+    async (...args) => {
+      const { deps, err } = harness();
+      deps.loadEngine.mockImplementation(() => {
+        throw new Error("cannot find module smolmachines");
+      });
+      expect(await runCli(args, deps)).toBe(1);
+      expect(err).toEqual([
+        "amika-hostd: this host cannot run machines: cannot find module smolmachines",
+      ]);
+      expect(deps.registerHost).not.toHaveBeenCalled();
+      expect(deps.claimPidFile).not.toHaveBeenCalled();
+      expect(deps.startServer).not.toHaveBeenCalled();
+    },
+  );
+
+  it("`serve` warns on a host that cannot run machines, then serves", async () => {
+    const { deps, err, engine } = harness();
+    engine.checkHost.mockReturnValue({
+      available: false,
+      reason: "/dev/kvm missing",
     });
-    expect(await runCli(["up", "--fg"], deps)).toBe(0);
-    const [url, paths, env] = deps.startSmolvm.mock.calls[0];
-    expect(url).toBe("http://127.0.0.1:9090");
-    expect(paths.smolvmPidFile).toBe("/state/amika-hostd/smolvm.pid");
-    // smolvm needs neither the API key nor the secret key.
-    expect(env).not.toHaveProperty("AMIKA_API_KEY");
-    expect(env).not.toHaveProperty("AMIKA_SECRET_KEY");
-    expect(env.OTHER).toBe("kept");
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(err).toEqual([
+      "amika-hostd: warning: this host cannot run machines: /dev/kvm missing",
+    ]);
+    expect(deps.startServer).toHaveBeenCalled();
+    expect(deps.notifyReady).toHaveBeenCalledWith(3020);
+  });
+
+  it("`serve` without an engine answers machine requests with 503", async () => {
+    const { deps, err } = harness();
+    deps.loadEngine.mockImplementation(() => {
+      throw new Error("no native addon");
+    });
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(err).toEqual([
+      "amika-hostd: warning: this host cannot run machines: no native addon",
+    ]);
+    const failure = await runtimeOf(deps)
+      .list()
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RuntimeError);
+    expect((failure as RuntimeError).status).toBe(503);
+  });
+
+  it("serves with a runtime over the loaded engine", async () => {
+    const { deps, engine } = harness();
+    const machine = handle("demo");
+    engine.create.mockReturnValue(machine);
+    engine.list.mockResolvedValue([
+      { name: "demo", state: "running", labels: { "amika-hostd": "1" } },
+    ] as never);
+    // Create a machine while serving, as a request would.
+    deps.startServer.mockImplementationOnce(async (_config, runtime) => {
+      await runtime.create({ name: "demo", image: "img", network: true });
+      return { port: 3020, close: vi.fn(async () => {}) };
+    });
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(engine.create).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "demo", image: "img" }),
+    );
+    // Shutdown stopped the machine the daemon was running.
+    expect(machine.stop).toHaveBeenCalled();
+  });
+
+  it("stops every machine on shutdown, after the server and before the pidfile", async () => {
+    const { deps, server, release } = harness();
+    let stopAll: ReturnType<typeof vi.spyOn> | undefined;
+    deps.startServer.mockImplementationOnce(async (_config, runtime) => {
+      stopAll = vi.spyOn(runtime, "stopAll");
+      return server;
+    });
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(stopAll).toHaveBeenCalledTimes(1);
     const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
       fn.mock.invocationCallOrder[0];
-    expect(order(deps.startSmolvm)).toBeLessThan(order(deps.startServer));
-    expect(order(vi.mocked(server.close))).toBeLessThan(
-      order(vi.mocked(smolvm.stop)),
-    );
-    expect(order(vi.mocked(smolvm.stop))).toBeLessThan(order(release));
+    expect(order(vi.mocked(server.close))).toBeLessThan(order(stopAll!));
+    expect(order(stopAll!)).toBeLessThan(order(release));
   });
 
-  it("starts smolvm for `serve` only with --smolvm", async () => {
-    const { deps } = harness();
-    await runCli(["serve"], deps);
-    expect(deps.startSmolvm).not.toHaveBeenCalled();
-    await runCli(["serve", "--smolvm"], deps);
-    expect(deps.startSmolvm).toHaveBeenCalledTimes(1);
-  });
-
-  it("serves nothing and releases the pidfile when smolvm cannot start", async () => {
-    const { deps, err, release } = harness();
-    deps.startSmolvm.mockRejectedValueOnce(
-      new DaemonError("smolvm not found on PATH"),
-    );
-    expect(await runCli(["serve", "--smolvm"], deps)).toBe(1);
-    expect(err).toEqual(["amika-hostd: smolvm not found on PATH"]);
-    expect(deps.startServer).not.toHaveBeenCalled();
+  it("stops machines and releases the pidfile when the daemon cannot listen", async () => {
+    const { deps, release } = harness();
+    let stopAll: ReturnType<typeof vi.spyOn> | undefined;
+    deps.startServer.mockImplementationOnce(async (_config, runtime) => {
+      stopAll = vi.spyOn(runtime, "stopAll");
+      throw Object.assign(new Error("in use"), { code: "EADDRINUSE" });
+    });
+    expect(await runCli(["serve"], deps)).toBe(1);
+    expect(stopAll).toHaveBeenCalled();
     expect(release).toHaveBeenCalled();
   });
 
-  it("stops smolvm when the daemon cannot listen", async () => {
-    const { deps, release, smolvm } = harness();
-    deps.startServer.mockRejectedValueOnce(
-      Object.assign(new Error("in use"), { code: "EADDRINUSE" }),
-    );
-    expect(await runCli(["serve", "--smolvm"], deps)).toBe(1);
-    expect(smolvm.stop).toHaveBeenCalled();
-    expect(release).toHaveBeenCalled();
-  });
-
-  it("stops serving when smolvm exits on its own", async () => {
-    const { deps, err, server, smolvm, smolvmExit } = harness();
-    deps.shutdownSignal = vi.fn(() => new Promise<void>(() => {}));
-    const cli = runCli(["serve", "--smolvm"], deps);
-    await vi.waitFor(() => expect(deps.notifyReady).toHaveBeenCalled());
-    smolvmExit("exited with code 1");
-    expect(await cli).toBe(1);
-    expect(err).toEqual([
-      "amika-hostd: smolvm exited with code 1, so amika-hostd stopped too; see /state/amika-hostd/log/smolvm.log",
-    ]);
-    expect(server.close).toHaveBeenCalled();
-    // It is already gone, so there is nothing to stop.
-    expect(smolvm.stop).not.toHaveBeenCalled();
-  });
-
-  it("stops smolvm, without serving, when signalled while it starts", async () => {
-    const { deps, smolvm, release } = harness();
+  it("stops, without reporting ready, when signalled while starting", async () => {
+    const { deps, server, release } = harness();
     let signal: () => void = () => {};
     deps.shutdownSignal = vi.fn(
       () => new Promise<void>((resolve) => (signal = resolve)),
     );
-    // The signal arrives while smolvm is starting, which then returns early.
-    deps.startSmolvm.mockImplementationOnce(
-      async (_url, _paths, _env, options) => {
-        signal();
-        await vi.waitFor(() => expect(options?.signal?.aborted).toBe(true));
-        return smolvm;
-      },
-    );
-    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
-    expect(deps.startServer).not.toHaveBeenCalled();
+    let stopAll: ReturnType<typeof vi.spyOn> | undefined;
+    deps.startServer.mockImplementationOnce(async (_config, runtime) => {
+      stopAll = vi.spyOn(runtime, "stopAll");
+      signal();
+      // Let the signal's handler run before the server reports it listens.
+      await new Promise((resolve) => setImmediate(resolve));
+      return server;
+    });
+    expect(await runCli(["serve"], deps)).toBe(0);
     expect(deps.notifyReady).not.toHaveBeenCalled();
-    expect(smolvm.stop).toHaveBeenCalled();
+    expect(server.close).toHaveBeenCalled();
+    expect(stopAll).toHaveBeenCalled();
     expect(release).toHaveBeenCalled();
   });
 
-  it("says so when smolvm is still stopping its machines", async () => {
-    const { deps, err, smolvm } = harness();
-    vi.mocked(smolvm.stop).mockResolvedValueOnce(false);
-    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
-    expect(err).toEqual([
-      "amika-hostd: smolvm (pid 88) is still stopping its machines; `amika-hostd down` waits for it",
-    ]);
+  it("exits anyway, and says so, when machines are still stopping after the timeout", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { deps, err, release } = harness();
+      let stopAll: ReturnType<typeof vi.spyOn> | undefined;
+      deps.startServer.mockImplementationOnce(async (_config, runtime) => {
+        stopAll = vi
+          .spyOn(runtime, "stopAll")
+          .mockReturnValue(new Promise(() => {}));
+        return { port: 3020, close: vi.fn(async () => {}) };
+      });
+      const cli = runCli(["serve"], deps);
+      await vi.waitFor(() => expect(stopAll).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(MACHINE_STOP_TIMEOUT_MS);
+      expect(await cli).toBe(0);
+      expect(err).toEqual([
+        "amika-hostd: machines were still stopping after 60s; exiting anyway",
+      ]);
+      expect(release).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
 describe("down", () => {
-  /** A state directory whose pidfiles name a daemon and a smolvm. */
+  /** A state directory whose pidfile names a daemon. */
   function running() {
     const dir = pidDir();
-    writeFileSync(path.join(dir, "amika-hostd", "smolvm.pid"), "888888\n");
     const h = harness({ XDG_STATE_HOME: dir });
     return { ...h, dir };
   }
@@ -660,7 +745,7 @@ describe("down", () => {
     expect(deps.stopProcess).not.toHaveBeenCalled();
   });
 
-  it("stops the daemon, which stops its smolvm", async () => {
+  it("stops the daemon, which stops its machines", async () => {
     const { deps, out } = running();
     deps.isRunning.mockReturnValue(true);
     expect(await runCli(["down"], deps)).toBe(0);
@@ -671,24 +756,9 @@ describe("down", () => {
       { timeoutMs: expect.any(Number) },
     ]);
     expect(out).toEqual([
-      "Stopping amika-hostd (pid 999999)",
+      "Stopping amika-hostd (pid 999999) and its machines",
       "Stopped amika-hostd",
     ]);
-  });
-
-  it("stops a smolvm the daemon left behind", async () => {
-    const { deps, out, dir } = running();
-    deps.isSmolvmRunning.mockReturnValue(true);
-    expect(await runCli(["down"], deps)).toBe(0);
-    expect(deps.stopProcess.mock.calls.map((call) => call[0])).toEqual([
-      888888,
-    ]);
-    expect(out).toEqual([
-      "Stopping smolvm (pid 888888) and its machines",
-      "Stopped smolvm",
-    ]);
-    // No daemon is left to remove its pidfile.
-    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
   });
 
   it("leaves a pidfile naming another live process, and says so", async () => {

@@ -16,10 +16,42 @@ import {
   createUpgradeHandler,
   freeLoopbackPort,
   parseServicePath,
+  resolveHostPort,
 } from "./services.js";
-import { SmolRuntime } from "./smol.js";
+import { RuntimeError, type MachineInfo, type MachineRuntime } from "./smol.js";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
+
+/** A runtime that reports machines through `get`; nothing else is called. */
+function runtimeWith(get: MachineRuntime["get"]): MachineRuntime {
+  const unexpected = async () => {
+    throw new Error("unexpected runtime call");
+  };
+  return {
+    list: unexpected,
+    get,
+    create: unexpected,
+    start: unexpected,
+    stop: unexpected,
+    remove: unexpected,
+    exec: unexpected,
+    readFile: unexpected,
+    writeFile: unexpected,
+    stopAll: unexpected,
+  };
+}
+
+function machine(overrides: Partial<MachineInfo>): MachineInfo {
+  return {
+    name: "demo",
+    state: "running",
+    cpus: 4,
+    memoryMb: 8192,
+    storageGb: 20,
+    ports: [],
+    ...overrides,
+  };
+}
 
 describe("parseServicePath", () => {
   it("splits the route and keeps the encoded guest path", () => {
@@ -86,6 +118,52 @@ describe("authorizeServiceRequest", () => {
   );
 });
 
+describe("resolveHostPort", () => {
+  const route = { machine: "demo", service: "web" };
+  function registry() {
+    const registry = memoryServiceRegistry();
+    registry.set("demo", { web: 3000 });
+    return registry;
+  }
+
+  it("maps a running machine's guest port to its host port", async () => {
+    const get = vi.fn(async (_name: string) =>
+      machine({ ports: [{ host: 41001, guest: 3000 }] }),
+    );
+    expect(await resolveHostPort(runtimeWith(get), registry(), route)).toBe(
+      41001,
+    );
+    expect(get).toHaveBeenCalledWith("demo");
+  });
+
+  it("asks the runtime nothing for an unregistered service", async () => {
+    const get = vi.fn(async () => machine({}));
+    expect(
+      await resolveHostPort(runtimeWith(get), registry(), {
+        ...route,
+        service: "nope",
+      }),
+    ).toBeNull();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("treats a runtime failure as no such machine", async () => {
+    const runtime = runtimeWith(async () => {
+      throw new RuntimeError(404, "machine demo not found");
+    });
+    expect(await resolveHostPort(runtime, registry(), route)).toBeNull();
+  });
+
+  it("lets an unexpected error through", async () => {
+    const runtime = runtimeWith(async () => {
+      throw new TypeError("bug");
+    });
+    await expect(resolveHostPort(runtime, registry(), route)).rejects.toThrow(
+      "bug",
+    );
+  });
+});
+
 describe("freeLoopbackPort", () => {
   it("returns a port that can be bound on loopback", async () => {
     const port = await freeLoopbackPort();
@@ -126,21 +204,17 @@ describe("createUpgradeHandler", () => {
       state = "running",
     } = {},
   ) {
-    const runtime = new SmolRuntime(
-      { apiUrl: "http://runtime:8080" },
-      vi.fn<typeof fetch>(async () =>
-        Response.json({
-          name: "demo",
-          state,
-          ports:
-            hostPort === null
-              ? []
-              : Object.values(services).map((guest) => ({
-                  host: hostPort,
-                  guest,
-                })),
-        }),
-      ),
+    const runtime = runtimeWith(async () =>
+      machine({
+        state,
+        ports:
+          hostPort === null
+            ? []
+            : Object.values(services).map((guest) => ({
+                host: hostPort,
+                guest,
+              })),
+      }),
     );
     const tunnels = new Set<Duplex>();
     const server = createHttpServer();
@@ -320,23 +394,12 @@ describe("createUpgradeHandler", () => {
     const lookup = new Promise<void>((resolve) => (release = resolve));
     let resolved = () => {};
     const lookupDone = new Promise<void>((resolve) => (resolved = resolve));
-    const runtime = new SmolRuntime({ apiUrl: "http://runtime:8080" });
     // Signals once the handler has the port, so the dial assertion below
     // runs only after the handler could have dialed.
-    vi.spyOn(runtime, "request").mockImplementation(async () => {
+    const runtime = runtimeWith(async () => {
       await lookup;
-      const machine = {
-        name: "demo",
-        state: "running",
-        ports: [{ host: 1, guest: 60999 }],
-      };
-      return {
-        ok: true,
-        json: async () => {
-          resolved();
-          return machine;
-        },
-      } as unknown as Response;
+      resolved();
+      return machine({ ports: [{ host: 1, guest: 60999 }] });
     });
     const tunnels = new Set<Duplex>();
     const dial = vi.fn<(port: number) => Socket>();
@@ -354,6 +417,16 @@ describe("createUpgradeHandler", () => {
     await lookupDone;
     await new Promise((resolve) => setImmediate(resolve));
     expect(dial).not.toHaveBeenCalled();
+  });
+
+  it("answers 502 when the runtime lookup fails unexpectedly", async () => {
+    const server = createHttpServer();
+    const runtime = runtimeWith(async () => {
+      throw new TypeError("bug");
+    });
+    server.on("upgrade", createUpgradeHandler(SECRET, runtime, registry()));
+    const socket = await open(await listen(server), validPath());
+    expect(await read(socket)).toMatch(/^HTTP\/1\.1 502 /);
   });
 
   it("answers 502 when the guest port is closed", async () => {

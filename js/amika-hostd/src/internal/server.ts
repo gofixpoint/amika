@@ -10,7 +10,7 @@ import {
   memoryServiceRegistry,
 } from "./service-registry.js";
 import { createUpgradeHandler } from "./services.js";
-import { SmolRuntime } from "./smol.js";
+import type { MachineRuntime } from "./smol.js";
 
 export interface RunningServer {
   port: number;
@@ -33,6 +33,7 @@ export const SHUTDOWN_GRACE_MS = 5_000;
 /** Resolve once the port is bound, or reject if it cannot be (e.g. in use). */
 export function startServer(
   config: HostdConfigWith<"secretKey">,
+  runtime: MachineRuntime,
   {
     shutdownGraceMs = SHUTDOWN_GRACE_MS,
     servicesFile,
@@ -45,24 +46,20 @@ export function startServer(
   const registry = servicesFile
     ? fileServiceRegistry(servicesFile)
     : memoryServiceRegistry();
-  const runtimeConfig = {
-    apiUrl: config.smolApiUrl,
-    requestTimeoutMs: config.smolRequestTimeoutMs,
-  };
   const app = createApp(
     {
-      ...runtimeConfig,
       secretKey: config.secretKey,
       images: config.images,
       configPath: config.configPath,
+      requestTimeoutMs: config.smolRequestTimeoutMs,
     },
-    fetch,
+    runtime,
     { registry },
   );
   const tunnels = new Set<Duplex>();
   const upgrade = createUpgradeHandler(
     config.secretKey,
-    new SmolRuntime(runtimeConfig),
+    runtime,
     registry,
     tunnels,
   );

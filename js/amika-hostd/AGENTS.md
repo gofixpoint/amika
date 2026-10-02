@@ -5,9 +5,11 @@ local VMs and make them accessible through the Amika control plane. The current
 daemon serves `GET /health`, the versioned rig API under `/v0beta1/rigs`
 (machines and their named services), the Smol-compatible `/api/v1/machines`
 API for older control planes, and
-registers itself with the Amika control plane when started with `up`. `up`
-also starts the `smolvm serve` process the API forwards to, and `down` stops
-both.
+registers itself with the Amika control plane when started with `up`. It runs
+machines with smolvm's engine embedded in the daemon process, through the
+[`smolmachines`](https://www.npmjs.com/package/smolmachines) SDK, so no
+`smolvm` binary or server runs beside it; `down` stops the daemon and its
+machines.
 
 ## Installation
 
@@ -28,9 +30,14 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   Node.js LTS binary (24.21.0, `AMIKA_HOSTD_NODE_VERSION`), verified against
   `SHASUMS256.txt`, into `node/` in that same directory (the system node is
   never touched);
-- smolvm, through its official installer, unless `smolvm` is on `PATH` or in
-  `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
-  (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
+- the machine engine: the `smolmachines` SDK the release carries, into
+  `node_modules/` in that same directory, plus this platform's engine
+  package (`smolmachines-linux-x64-gnu`, `-linux-arm64-gnu` or
+  `-darwin-arm64`: native addon, boot helper, hypervisor libraries and guest
+  rootfs, over 100 MB) downloaded from npm (`AMIKA_HOSTD_NPM_REGISTRY`) and
+  verified against the release's `engines.sha256`. Any other platform, or
+  Linux with a C library other than glibc 2.34+, fails before anything is
+  downloaded;
 - a config: `config.example.toml` copied to the user config path below, with
   `secret_key` set to a generated `openssl rand -hex 32` and `hostname` set to
   this machine's lowercased `hostname` (left commented when it isn't a valid
@@ -39,13 +46,19 @@ GitHub release, verifies it against `checksums.txt`, and installs:
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
-the daemon: `amika-hostd up` starts smolvm itself (see [smolvm](#smolvm)).
+the daemon (see [Machine engine](#machine-engine)).
 
-The release artifact is one ESM file, built by `pnpm --filter @amika/hostd
-bundle` (`scripts/bundle.mjs`, esbuild with every npm dependency inlined), so
-it runs under plain `node` with no `node_modules`; `src/bundle.test.ts` checks
-that. `scripts/package-release.sh <version> [out-dir]` wraps it and the
-example config in the tarball and writes `checksums.txt`. The Release workflow
+The daemon is one ESM file, built by `pnpm --filter @amika/hostd bundle`
+(`scripts/bundle.mjs`, esbuild with every npm dependency inlined except
+`smolmachines`, which finds its native files on disk beside its own and so is
+installed in `node_modules`). The bundle loads `smolmachines` only when a
+command needs the engine (`up` and `serve` check it at startup), so `--help`
+runs under plain `node` with no `node_modules`; `src/bundle.test.ts` checks
+that. `scripts/package-release.sh <version>
+[out-dir]` wraps the bundle, the example config, the `smolmachines` package
+at the exact version `package.json` pins, and `engines.sha256` (each
+platform's engine package, fetched with `npm pack`) in one tarball for every
+platform, and writes `checksums.txt`. The Release workflow
 runs it for an `amika-hostd@v*` tag. To test the installer against a local
 build, point `AMIKA_RELEASE_URL` at that directory, with a temporary `HOME`
 and `AMIKA_INSTALL_DIR`:
@@ -82,22 +95,23 @@ pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 with `node:util` `parseArgs` and takes every side effect as a dependency.
 
 - `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
-  it re-runs itself as `serve --smolvm` with `detached: true`, appends output, each line
+  it re-runs itself as `serve` with `detached: true`, appends output, each line
   timestamped, to `$XDG_STATE_HOME/amika-hostd/log/amika-hostd.log` (else
   `$HOME/.local/state/...`), and waits for the child's IPC `ready` message, so startup failures print in the
   caller's terminal. Only the operator's own flags are forwarded; the child
   inherits the environment and re-reads the TOML file.
 - `amika-hostd up --fg` and `amika-hostd serve` run in the foreground until
   `SIGINT` or `SIGTERM`. Shutdown waits up to 5 seconds for in-flight requests,
-  then drops the rest, and the process exits a second later even if a request
-  to the Smol runtime is still pending, so a slow client or runtime cannot keep
-  the daemon alive. A daemon running smolvm first waits up to 60s more for it
-  to stop (see [smolvm](#smolvm)). If the launching `up` exits before the
-  child is ready, the child shuts down too.
-  Only `up` registers with Amika; `serve` does not. `up` (either way) and
-  `serve --smolvm` also run smolvm; plain `serve` does not, for development.
+  then drops the rest, and the process exits a second later even if a
+  machine request is still pending, so a slow client or machine cannot keep
+  the daemon alive. Before that it waits up to 60s more for its machines to
+  stop (see [Machine engine](#machine-engine)). If the launching `up` exits
+  before the child is ready, the child shuts down too.
+  Only `up` registers with Amika; `serve` does not. `up` refuses to start,
+  before registering, on a host that cannot run machines; `serve` only warns,
+  for development, and answers machine requests with errors.
 - `amika-hostd down` sends `SIGTERM` to the daemon named by the pidfile and
-  waits for it to exit, which includes stopping smolvm. It needs no
+  waits for it to exit, which includes stopping its machines. It needs no
   configuration.
 - `amika-hostd register-url <url>` records the host's public URL and exits.
 
@@ -151,47 +165,53 @@ empty `--host` is rejected, since it would bind every interface. Stop a
 background daemon with `amika-hostd down`. `build` uses
 `tsconfig.build.json`, which leaves tests out of `dist/`.
 
-## smolvm
+## Machine engine
 
-`src/internal/smolvm-serve.ts` runs smolvm for `up` and `serve --smolvm`, so
-the daemon and the runtime it forwards to start and stop together, and a host
-is left as it was before `up`:
+`src/internal/smol.ts` runs machines with smolvm's engine, embedded through
+the `smolmachines` SDK (pinned exactly in `package.json`). The engine keeps
+its machines in a database shared with the `smol` CLI and every other
+embedder on the host, so:
 
-1. Before spawning smolvm, it refuses to start if a smolvm from an earlier
-   run is still alive (`smolvm.pid`, next to the daemon's pidfile) or if
-   anything already answers `GET /health` at `SMOL_API_URL`: a smolvm it did
-   not start is not the daemon's to stop.
-2. It finds `smolvm` on `PATH`, else where the smolvm installer puts it
-   (`~/.smolvm/smolvm` or `~/.local/bin/smolvm`), and runs
-   `smolvm serve start --listen <host:port of SMOL_API_URL>`. smolvm's own
-   default is a Unix socket, so the address is always passed, and
-   `SMOL_API_URL` must be a plain `http://<IP address>[:port]` (port 80 if
-   omitted), since `--listen` takes no hostnames such as `localhost`. The
-   address must be loopback (`127.0.0.0/8` or `[::1]`): smolvm's API has no
-   authentication, so listening anywhere else would expose it without
-   amika-hostd's bearer check. smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only the
-   daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the log carries
-   no ANSI color codes; and it never sees the API key or
-   secret key.
-3. The daemon listens only once smolvm answers `/health` (30s at most), so the
-   background `up` reports a smolvm that fails to start. A shutdown signal
-   while it waits stops smolvm and exits without listening.
-4. On shutdown the daemon stops listening first, then sends smolvm `SIGTERM`
-   and waits up to 60s. smolvm is started with `SMOLVM_DRAIN_ON_SHUTDOWN=1`,
-   so it stops every machine cleanly (disks are kept; nothing is deleted)
-   instead of leaving them running, which is its default. It is never killed
-   outright: if it is still stopping machines after 60s, the daemon exits and
-   `down` goes on waiting for it.
-5. If smolvm exits on its own, the daemon stops too, with exit code 1, rather
-   than answer every request with a `502`.
+1. hostd labels each machine it creates (`amika-hostd`, plus its cpus,
+   memory, disk size and published ports) and sees only labeled machines:
+   anyone else's are a `404`. The labels also let it describe a machine it
+   is not running without booting it.
+2. Machines are persistent (records and disks outlive stop and daemon
+   restarts) but not detached: if the daemon dies the engine reaps their VMs,
+   and on shutdown the daemon stops them cleanly first (disks are kept;
+   nothing is deleted), giving up after 60s. A later daemon starts them
+   again on demand.
 
-`down` stops the daemon, then any smolvm a daemon left behind (one killed with
-`SIGKILL`, or that timed out stopping it). Both pidfiles are acted on, not
-only read, so `down` signals a pid only when `/proc` or `ps` confirms its
-program: `amika-hostd` (the daemon's title) for the daemon, and `smolvm` or
-`smolvm-bin` (the binary the `smolvm` launcher `exec`s) for smolvm. A daemon
-pidfile naming a live process that is not confirmed is left alone, and `down`
-says to remove it if it is stale, as `up` does.
+hostd drives the SDK's native machine handle, which it loads by path from
+the installed package, not its `Machine` class: `Machine.create` and
+`Machine.connect` wait until every published port accepts connections and
+delete a new machine whose ports do not within two minutes, while a rig's
+services need not be listening for it to exist. The handle has its own
+gaps, which `smol.ts` fills:
+
+- Create only records a machine; `start` boots it. Exec and file access boot
+  a stopped machine first, as `smolvm serve` did.
+- The engine's `connect` boots a stopped machine synchronously, and is the
+  only way to get a handle on one an earlier daemon left behind. hostd always
+  boots on a worker thread first (immediate for a running machine), then
+  reattaches on the main thread, so the daemon keeps serving meanwhile.
+  Deleting such a machine therefore boots it first, and fails while it cannot
+  boot; create refuses (`503`) on a host that cannot run machines, so `serve`
+  without KVM never records one.
+- Lifecycle steps on one machine (attach, boot, stop, delete) run one at a
+  time, so concurrent requests never boot it twice; execs and file transfers
+  run concurrently once it is up. A failed boot on a host that cannot run
+  machines answers `503`.
+- Shutdown stops every owned machine that is running, with or without a
+  handle, after any boot still in flight for it.
+- Exec takes no stdin, so a request's `stdin` is written to a guest temp file
+  readable only by the command's user and redirected in with `/bin/sh`.
+- Engine errors carry a `[CODE]`, mapped to the status `smolvm serve`
+  answered (`NOT_FOUND` 404, `CONFLICT` 409, and so on). Their messages can
+  echo commands, so callers only ever see a fixed message.
+
+`SMOL_REQUEST_TIMEOUT_MS` (default 300000) bounds how long a machine request
+waits before answering `504`; the engine call itself carries on.
 
 ## Configuration
 
@@ -213,9 +233,8 @@ The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
 enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
-two are not merged, and unknown keys are rejected. `SMOL_API_URL` (default
-`http://127.0.0.1:8080`, where `up` starts smolvm) and
-`SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
+two are not merged, and unknown keys are rejected. `SMOL_REQUEST_TIMEOUT_MS`
+remains environment-only. `config.example.toml`
 is the template the installer seeds: every setting with a default is a live
 line, `secret_key = "REPLACE_ME"` deliberately fails validation until replaced,
 and only `hostname` is commented. Keep its comments short. `config.test.ts`
@@ -235,16 +254,16 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
 
 The seeded config tracks `:latest`, which every image release moves. A host
 that needs a fixed version pins the release's 12-character commit SHA instead.
-Because `:latest` is a moving tag, smolvm's in-VM image cache can keep serving
+Because `:latest` is a moving tag, the engine's in-VM image cache can keep serving
 the previously pulled digest, so an upgrade is not guaranteed to take effect
 until that cache is cleared.
 
 On create (`POST /v0beta1/rigs`), `resolveImage` (`src/internal/requests.ts`) swaps
-a configured name for its reference before forwarding to smolvm. An `image`
+a configured name for its reference before creating the machine. An `image`
 containing `/` or `:` is taken as a full reference and forwarded unchanged,
 for development. Any other name is refused with a `400` naming the config file
 to edit, so an unconfigured preset never falls through to a Docker Hub pull.
-smolvm pulls the reference inside the VM on first use, which needs the
+The engine pulls the reference inside the VM on first boot, which needs the
 machine's network on (the default).
 
 ## Service routes
@@ -268,9 +287,10 @@ the host's secret key; hostd checks the key and routes
   to a running rig whose `amikad` is on port 60999. `amikad` checks the
   connect token the control plane gave the CLI; the key never leaves the
   control plane. Everything else still needs the key.
-- Create takes `services: [{ name, port }]`. hostd publishes the ports through
-  smolvm and keeps each machine's name-to-port map in `services.json`
-  (`src/internal/service-registry.ts`), since smolvm stores no names.
+- Create takes `services: [{ name, port }]`. hostd publishes each port on a
+  host loopback port it picks and keeps each machine's name-to-port map in
+  `services.json` (`src/internal/service-registry.ts`), since the engine
+  stores no names.
   `PUT /v0beta1/rigs/<name>/services` replaces the map later (the
   provider's `syncRoutes`), on ports published at create.
 
@@ -293,7 +313,7 @@ credentials). `src/internal/auth.ts` reads it the same way as amika-mono's
 worker auth (`checkWorkerAuth`): strip a leading `Bearer` scheme, trim, compare
 in constant time, and answer a mismatch with a plain `401`. It runs before the body
 limit, so unauthenticated callers cannot make the daemon buffer a body. The
-caller's credential is never forwarded to the Smol runtime. The
+caller's credential is never passed to a machine. The
 `@amika/sandbox` `amika-hostd` provider sends the key from
 `AMIKA_HOSTD_SECRET_KEY`. Both sides require at least 32 printable ASCII
 characters with no spaces: HTTP clients trim header values, so a padded key

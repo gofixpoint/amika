@@ -57,7 +57,7 @@ process.exitCode = await runCli(process.argv.slice(2), {
   prompt: process.stdin.isTTY && process.stdout.isTTY ? prompt : undefined,
 });
 
-// A request still waiting on the Smol runtime (up to its 5-minute timeout)
+// A machine request still running in the engine (past its 5-minute timeout)
 // would otherwise keep the process alive after the server has shut down.
 // The delay lets pending output flush; an idle process exits before it.
 setTimeout(() => process.exit(), EXIT_GRACE_MS).unref();

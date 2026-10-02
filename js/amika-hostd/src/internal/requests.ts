@@ -1,4 +1,4 @@
-/** Validate the supported subset of the smolvm machine API. */
+/** Validate the machine API's requests, the supported subset of smolvm's. */
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 
@@ -77,26 +77,29 @@ export const execSchema = z.strictObject({
   stdin: z.string().optional(),
 });
 
-export function machinePath(name: string): string {
-  return `/${nameSchema.parse(name)}`;
+/** A machine name from a route, validated. */
+export function machineName(name: string): string {
+  return nameSchema.parse(name);
 }
 
-/** Decode once, validate, then encode each component for the upstream URL. */
+/**
+ * The guest path a files route names: everything after
+ * `<machinesRoute>/<name>/files/`, decoded once and validated, as an absolute
+ * path.
+ */
 export function filePath(
   name: string,
   requestPath: string,
   machinesRoute: string,
 ): string {
-  const prefix = machinePath(name);
-  // Everything after `<machinesRoute>/<name>/files/`, still encoded.
-  const encoded = requestPath.slice(`${machinesRoute}${prefix}/files/`.length);
+  const prefix = `${machinesRoute}/${machineName(name)}/files/`;
   let path: string;
   try {
-    path = decodeURIComponent(encoded);
+    path = decodeURIComponent(requestPath.slice(prefix.length));
   } catch {
     throw new HTTPException(400, { message: "Invalid file path" });
   }
-  const parts = z
+  return `/${z
     .string()
     .min(1)
     .refine((value) => !value.includes("\0"))
@@ -104,7 +107,5 @@ export function filePath(
       (value) =>
         !value.split("/").some((part) => part === "." || part === ".."),
     )
-    .parse(path)
-    .split("/");
-  return `${prefix}/files/${parts.map(encodeURIComponent).join("/")}`;
+    .parse(path)}`;
 }

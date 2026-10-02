@@ -25,7 +25,6 @@ describe("resolveConfig", () => {
       secretKey: undefined,
       host: "127.0.0.1",
       port: 3020,
-      smolApiUrl: undefined,
       smolRequestTimeoutMs: 300_000,
       sizes: {},
       images: {},

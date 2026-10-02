@@ -4,12 +4,12 @@ import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { requireSecretKey } from "./internal/auth.js";
-import { SmolRuntime, type SmolRuntimeConfig } from "./internal/smol.js";
+import { RuntimeError, type MachineRuntime } from "./internal/smol.js";
 import {
   createMachineSchema,
   execSchema,
   filePath,
-  machinePath,
+  machineName,
   replaceServicesSchema,
   resolveImage,
 } from "./internal/requests.js";
@@ -17,7 +17,6 @@ import {
   SERVICE_KEY_HEADER,
   authorizeServiceRequest,
   freeLoopbackPort,
-  machinePortsSchema,
   parseServicePath,
   resolveHostPort,
   stripHopByHopHeaders,
@@ -27,36 +26,80 @@ import {
   type ServiceRegistry,
 } from "./internal/service-registry.js";
 
-export interface AppConfig extends SmolRuntimeConfig {
+export interface AppConfig {
   /**
    * Every request must present this: as a bearer token, or in
    * `X-Amika-Hostd-Key` on `/v0beta1/rigs/.../services/...` routes, whose
    * `Authorization` belongs to the guest.
    */
   secretKey: string;
-  /** Preset image names mapped to the OCI references smolvm boots. */
+  /** Preset image names mapped to the OCI references machines boot. */
   images?: Record<string, string>;
   /** Named in errors for unconfigured images, so operators know what to edit. */
   configPath?: string;
+  /**
+   * How long a machine API request waits on the runtime before answering
+   * 504. The runtime call itself carries on (an image pull, say).
+   */
+  requestTimeoutMs?: number;
 }
 
 export interface AppDeps {
-  /** Picks the host loopback port smolvm publishes a guest port on. */
+  /** Picks the host loopback port a guest port is published on. */
   allocatePort?: () => Promise<number>;
   /** Where each machine's service names map to guest ports. */
   registry?: ServiceRegistry;
+  /** Reaches a machine's published guest ports for service routes. */
+  fetch?: typeof fetch;
 }
 
-/** Build routes without opening a socket; the runtime transport is injectable. */
+/** Build routes without opening a socket; the runtime is injectable. */
 export function createApp(
-  { secretKey, images = {}, configPath, ...runtimeConfig }: AppConfig,
-  fetcher = fetch,
+  {
+    secretKey,
+    images = {},
+    configPath,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  }: AppConfig,
+  runtime: MachineRuntime,
   {
     allocatePort = freeLoopbackPort,
     registry = memoryServiceRegistry(),
+    fetch: fetcher = fetch,
   }: AppDeps = {},
 ) {
-  const runtime = new SmolRuntime(runtimeConfig, fetcher);
+  const timeoutMs = z.number().int().positive().parse(requestTimeoutMs);
+  /**
+   * Answer with a runtime call's result, or with its failure's status and a
+   * fixed message: engine errors can echo commands and environment values.
+   */
+  const call = async (run: () => Promise<Response>): Promise<Response> => {
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    });
+    const result = run();
+    // A call that fails after the deadline is answered already.
+    result.catch(() => {});
+    try {
+      const response = await Promise.race([result, timedOut]);
+      if (response === "timeout") {
+        return Response.json(
+          { error: "Smol runtime request timed out" },
+          { status: 504 },
+        );
+      }
+      return response;
+    } catch (error) {
+      if (error instanceof HTTPException) throw error;
+      return Response.json(
+        { error: "Smol runtime request failed" },
+        { status: error instanceof RuntimeError ? error.status : 500 },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const app = new Hono();
 
   app.onError((error, c) => {
@@ -95,7 +138,9 @@ export function createApp(
 
   function machineRoutes(machines: string) {
     app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
-    app.get(machines, () => runtime.request(""));
+    app.get(machines, () =>
+      call(async () => Response.json({ machines: await runtime.list() })),
+    );
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());
       const { services, ...machine } = input;
@@ -109,86 +154,99 @@ export function createApp(
             guest,
           })),
         ));
-      const response = await runtime.request("", "POST", {
-        ...machine,
-        image,
-        ports,
-      });
-      // Record names only for a machine that now exists, replacing any a
-      // deleted machine of the same name left behind.
-      if (response.ok) {
+      return call(async () => {
+        const created = await runtime.create({ ...machine, image, ports });
+        // Record names only for a machine that now exists, replacing any a
+        // deleted machine of the same name left behind.
         registry.set(
           machine.name,
           Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
         );
-      }
-      return response;
+        return Response.json(created, { status: 201 });
+      });
     });
-    app.get(`${machines}/:name`, (c) =>
-      runtime.request(machinePath(c.req.param("name"))),
-    );
-    app.delete(`${machines}/:name`, async (c) => {
-      const name = c.req.param("name");
-      const response = await runtime.request(machinePath(name), "DELETE");
-      if (response.ok || response.status === 404) registry.remove(name);
-      return response;
+    app.get(`${machines}/:name`, (c) => {
+      const name = machineName(c.req.param("name"));
+      return call(async () => Response.json(await runtime.get(name)));
+    });
+    app.delete(`${machines}/:name`, (c) => {
+      const name = machineName(c.req.param("name"));
+      return call(async () => {
+        try {
+          await runtime.remove(name);
+        } catch (error) {
+          if (error instanceof RuntimeError && error.status === 404) {
+            registry.remove(name);
+          }
+          throw error;
+        }
+        registry.remove(name);
+        return new Response(null, { status: 204 });
+      });
     });
     // Services can be added, renamed and removed after create, but only on
-    // ports smolvm published then: it cannot publish more later.
+    // ports published then: a machine cannot publish more later.
     app.put(`${machines}/:name/services`, async (c) => {
-      const name = c.req.param("name");
+      const name = machineName(c.req.param("name"));
       const { services } = replaceServicesSchema.parse(await c.req.json());
-      const response = await runtime.request(machinePath(name));
-      if (!response.ok) return response;
-      const { ports } = machinePortsSchema.parse(await response.json());
-      const published = new Set(ports.map((port) => port.guest));
-      const missing = [
-        ...new Set(
-          services.map((s) => s.port).filter((p) => !published.has(p)),
-        ),
-      ];
-      if (missing.length) {
-        return c.json(
-          {
-            error: `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
-          },
-          409,
+      return call(async () => {
+        const { ports } = await runtime.get(name);
+        const published = new Set(ports.map((port) => port.guest));
+        const missing = [
+          ...new Set(
+            services.map((s) => s.port).filter((p) => !published.has(p)),
+          ),
+        ];
+        if (missing.length) {
+          return Response.json(
+            {
+              error: `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
+            },
+            { status: 409 },
+          );
+        }
+        registry.set(
+          name,
+          Object.fromEntries(services.map((s) => [s.name, s.port])),
         );
-      }
-      registry.set(
-        name,
-        Object.fromEntries(services.map((s) => [s.name, s.port])),
-      );
-      return c.body(null, 204);
+        return new Response(null, { status: 204 });
+      });
     });
     for (const action of ["start", "stop"] as const) {
-      app.post(`${machines}/:name/${action}`, (c) =>
-        runtime.request(
-          `${machinePath(c.req.param("name"))}/${action}`,
-          "POST",
-        ),
-      );
+      app.post(`${machines}/:name/${action}`, (c) => {
+        const name = machineName(c.req.param("name"));
+        return call(async () => Response.json(await runtime[action](name)));
+      });
     }
-    app.post(`${machines}/:name/exec`, async (c) =>
-      runtime.request(
-        `${machinePath(c.req.param("name"))}/exec`,
-        "POST",
-        execSchema.parse(await c.req.json()),
-      ),
-    );
-    app.get(`${machines}/:name/files/*`, (c) =>
-      runtime.request(filePath(c.req.param("name"), c.req.path, machines)),
-    );
-    app.put(`${machines}/:name/files/*`, async (c) => {
-      const path = filePath(c.req.param("name"), c.req.path, machines);
-      return runtime.request(
-        path,
-        "PUT",
-        new Uint8Array(await c.req.arrayBuffer()),
+    app.post(`${machines}/:name/exec`, async (c) => {
+      const name = machineName(c.req.param("name"));
+      const request = execSchema.parse(await c.req.json());
+      return call(async () => Response.json(await runtime.exec(name, request)));
+    });
+    app.get(`${machines}/:name/files/*`, (c) => {
+      const name = machineName(c.req.param("name"));
+      const path = filePath(name, c.req.path, machines);
+      return call(
+        async () =>
+          new Response(new Uint8Array(await runtime.readFile(name, path)), {
+            headers: { "Content-Type": "application/octet-stream" },
+          }),
       );
+    });
+    app.put(`${machines}/:name/files/*`, async (c) => {
+      const name = machineName(c.req.param("name"));
+      const path = filePath(name, c.req.path, machines);
+      const data = new Uint8Array(await c.req.arrayBuffer());
+      return call(async () => {
+        await runtime.writeFile(name, path, data);
+        return new Response(null, { status: 204 });
+      });
     });
   }
 }
+
+/** Bounds a runtime call, including an image pull on first boot. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
 
 /** The versioned API this daemon serves. */
 export const API_VERSION = "v0beta1";
@@ -203,7 +261,7 @@ const LEGACY_MACHINES_ROUTE = "/api/v1/machines";
 async function proxyService(
   request: Request,
   secretKey: string,
-  runtime: SmolRuntime,
+  runtime: MachineRuntime,
   registry: ServiceRegistry,
   fetcher: typeof fetch,
 ): Promise<Response> {
