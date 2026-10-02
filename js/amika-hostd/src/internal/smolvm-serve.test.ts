@@ -109,6 +109,7 @@ describe("smolvmListenAddress", () => {
     "http://10.0.0.5:8080",
     "http://[::]:8080",
     "http://[fe80::1]:8080",
+    "http://127.0.0.1:0",
     "not a url",
   ])("refuses %s", (url) => {
     expect(() => smolvmListenAddress(url)).toThrow(DaemonError);
@@ -523,7 +524,12 @@ process.on("SIGTERM", () => {
       `http://127.0.0.1:${port}`,
       files,
       {},
-      { findSmolvm: () => fake },
+      {
+        findSmolvm: () => fake,
+        // Ignore whatever this machine runs on 8080 (a smolvm, say).
+        isPortInUse: (host, port) =>
+          port === 8080 ? Promise.resolve(false) : isTcpPortInUse(host, port),
+      },
     );
     expect(readFileSync(files.smolvmPidFile, "utf8")).toBe(`${smolvm.pid}\n`);
     const response = await fetch(`http://127.0.0.1:${port}/health`);

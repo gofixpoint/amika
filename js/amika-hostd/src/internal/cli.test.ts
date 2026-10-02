@@ -66,7 +66,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
         _paths,
         _env: NodeJS.ProcessEnv,
         _options?: SmolvmDeps,
-      ) => smolvm,
+      ): Promise<ManagedSmolvm | undefined> => smolvm,
     ),
     stopProcess: vi.fn(
       async (
@@ -652,6 +652,27 @@ describe("managing smolvm", () => {
     expect(deps.startServer).not.toHaveBeenCalled();
     expect(deps.notifyReady).not.toHaveBeenCalled();
     expect(smolvm.stop).toHaveBeenCalled();
+    expect(release).toHaveBeenCalled();
+  });
+
+  it("serves nothing when signalled before smolvm is spawned", async () => {
+    const { deps, out, release } = harness();
+    let signal: () => void = () => {};
+    deps.shutdownSignal = vi.fn(
+      () => new Promise<void>((resolve) => (signal = resolve)),
+    );
+    // Signalled during the port scan: no smolvm was ever started.
+    deps.startSmolvm.mockImplementationOnce(
+      async (_url, _paths, _env, options) => {
+        signal();
+        await vi.waitFor(() => expect(options?.signal?.aborted).toBe(true));
+        return undefined;
+      },
+    );
+    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
+    expect(deps.startServer).not.toHaveBeenCalled();
+    expect(deps.notifyReady).not.toHaveBeenCalled();
+    expect(out).toEqual([]);
     expect(release).toHaveBeenCalled();
   });
 

@@ -340,6 +340,8 @@ export function smolvmListenAddress(
     url.pathname !== "/" ||
     url.search ||
     url.hash ||
+    // Port 0 would have smolvm pick a port the daemon never learns.
+    url.port === "0" ||
     isIP(address) === 0
   ) {
     throw new DaemonError(
