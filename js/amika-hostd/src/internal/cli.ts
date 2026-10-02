@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import {
   AmikaApiError,
   registerHost as registerHostWithAmika,
+  setHostSecret as setHostSecretInAmika,
   setHostSizes as setHostSizesInAmika,
   setHostUrl as setHostUrlInAmika,
   type RegisteredHost,
@@ -14,9 +15,11 @@ import {
   loadConfigFile as loadConfigFileFromDisk,
   requireSettings,
   resolveConfig,
+  type HostdConfig,
   type HostdConfigWith,
   type HostdFlags,
 } from "./config.js";
+import { apiKeyStore, type CredentialStore } from "./credentials.js";
 import {
   DaemonError,
   claimPidFile as claimPidFileOnDisk,
@@ -37,6 +40,8 @@ import {
   startServer as startServerOnPort,
   type RunningServer,
 } from "./server.js";
+import { PromptCancelled, type Prompt } from "./prompt.js";
+import { runSetup, type SetupDeps } from "./setup.js";
 import { DEFAULT_SMOL_API_URL } from "./smol.js";
 import {
   SMOLVM_STOP_TIMEOUT_MS,
@@ -47,8 +52,10 @@ import {
 export const USAGE = `Usage: amika-hostd <command> [options]
 
 Commands:
+  setup               Set this host's hostname, secret key and Amika API key,
+                      and write default rig sizes to the config file
   up                  Register this host with Amika, then start smolvm and the
-                      daemon in the background
+                      daemon in the background (running setup first if needed)
   down                Stop the daemon and its smolvm, which stops every machine
   serve               Run the HTTP server in the foreground without registering
   register-url <url>  Set this host's internet-facing URL (e.g. an ngrok or
@@ -81,19 +88,23 @@ export interface CliDeps {
   isRunning?: (pid: number) => boolean;
   registerHost?: typeof registerHostWithAmika;
   setHostSizes?: typeof setHostSizesInAmika;
+  setHostSecret?: typeof setHostSecretInAmika;
   setHostUrl?: typeof setHostUrlInAmika;
   /**
-   * Ask the operator a question; resolves to `undefined` on end of input
-   * (Ctrl-D) and rejects with `PromptCancelled` on Ctrl-C. Absent when stdin
-   * or stdout is not a terminal, so `up` never blocks.
+   * Ask the operator a question (see `Prompt`). Absent when stdin or stdout
+   * is not a terminal, so `up` never blocks.
    */
-  prompt?: (question: string) => Promise<string | undefined>;
+  prompt?: Prompt;
+  /** `prompt` without echoing the answer; absent without a terminal. */
+  promptSecret?: Prompt;
+  /** Where `setup` keeps the API key; defaults to `apiKeyStore(env)`. */
+  credentials?: CredentialStore;
+  writeConfigFile?: SetupDeps["writeConfigFile"];
+  systemHostname?: SetupDeps["systemHostname"];
+  generateSecretKey?: SetupDeps["generateSecretKey"];
 }
 
-/** The operator pressed Ctrl-C at a prompt; the command stops there. */
-export class PromptCancelled extends Error {
-  override name = "PromptCancelled";
-}
+export { PromptCancelled };
 
 /** Run one command and return its exit code. Expected failures never throw. */
 export async function runCli(
@@ -108,16 +119,26 @@ export async function runCli(
     }
     // Stopping needs only the pidfiles, not a valid configuration.
     if (parsed.command === "down") return await down(deps);
-    const resolved = resolveConfig({
-      flags: parsed.flags,
-      env: deps.env,
-      file: (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env),
-    });
+    if (parsed.command === "setup") return await setup(deps);
+    const resolve = () =>
+      resolveConfig({
+        flags: parsed.flags,
+        env: deps.env,
+        file: (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env),
+      });
+    const resolved = resolve();
     switch (parsed.command) {
       case "up": {
-        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
         // Check first so a second `up` fails without calling Amika.
         ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
+        let withKey = withStoredApiKey(resolved, deps);
+        if (!hasSettings(withKey) && deps.prompt && deps.promptSecret) {
+          deps.out("amika-hostd is not set up yet, so running setup first.");
+          const code = await setup(deps, { fromUp: true });
+          if (code !== 0) return code;
+          withKey = withStoredApiKey(resolve(), deps);
+        }
+        const config = requireSettings(withKey, REGISTRATION_SETTINGS);
         const host = await register(config, deps);
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
@@ -151,7 +172,10 @@ export async function runCli(
         );
         break;
       case "register-url": {
-        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
+        const config = requireSettings(
+          withStoredApiKey(resolved, deps),
+          REGISTRATION_SETTINGS,
+        );
         await saveUrl(config, await register(config, deps), parsed.url, deps);
         break;
       }
@@ -180,6 +204,7 @@ export async function runCli(
 
 type ParsedCommand =
   | { help: true }
+  | { help: false; command: "setup" }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
   | { help: false; command: "serve"; smolvm: boolean; flags: HostdFlags }
@@ -192,6 +217,51 @@ type RegistrationConfig = HostdConfigWith<
 >;
 
 class UsageError extends Error {}
+
+/** Run `setup`, reporting Ctrl-C as a setup that changed nothing. */
+async function setup(
+  deps: CliDeps,
+  options: { fromUp?: boolean } = {},
+): Promise<number> {
+  if (!deps.prompt || !deps.promptSecret) {
+    throw new ConfigError(
+      "`amika-hostd setup` asks questions, so run it in a terminal",
+    );
+  }
+  try {
+    await runSetup(
+      {
+        ...deps,
+        prompt: deps.prompt,
+        promptSecret: deps.promptSecret,
+        credentials: credentials(deps),
+      },
+      options,
+    );
+    return 0;
+  } catch (error) {
+    if (!(error instanceof PromptCancelled)) throw error;
+    deps.err("amika-hostd: setup cancelled; nothing was changed.");
+    return 130;
+  }
+}
+
+function credentials(deps: CliDeps): CredentialStore {
+  return deps.credentials ?? apiKeyStore(deps.env);
+}
+
+/**
+ * The environment's API key wins; without one, use the key `setup` stored.
+ * The background daemon never reads either, since only `up` registers.
+ */
+function withStoredApiKey(config: HostdConfig, deps: CliDeps): HostdConfig {
+  if (config.apiKey !== undefined) return config;
+  return { ...config, apiKey: credentials(deps).get() };
+}
+
+function hasSettings(config: HostdConfig): boolean {
+  return REGISTRATION_SETTINGS.every((key) => config[key] !== undefined);
+}
 
 function parseCommand(args: readonly string[]): ParsedCommand {
   let parsed;
@@ -216,6 +286,10 @@ function parseCommand(args: readonly string[]): ParsedCommand {
   const [command, ...rest] = positionals;
   const flags = { port: values.port, host: values.host };
   switch (command) {
+    case "setup":
+      rejectOptions(command, values, ["fg", "smolvm", "port", "host"]);
+      expectArguments(rest, 0);
+      return { help: false, command };
     case "up":
       rejectOptions(command, values, ["smolvm"]);
       expectArguments(rest, 0);
@@ -354,6 +428,7 @@ async function completeRegistration(
     );
     return true;
   }
+  deps.out("");
   deps.out(
     `To complete registration, expose ${local} to the internet (e.g. \`ngrok http ${port}\` or \`cloudflared tunnel --url ${local}\`) and give Amika its public URL.`,
   );
@@ -416,7 +491,7 @@ async function startBackground(flags: HostdFlags, deps: CliDeps) {
     `amika-hostd started in the background on port ${port} (pid ${pid})`,
   );
   deps.out(`Logs: ${paths.logFile}`);
-  deps.out("Stop it, and smolvm with it, with: amika-hostd down");
+  deps.out("To stop the daemon and its VMs, run `amika-hostd down`.");
   return port;
 }
 

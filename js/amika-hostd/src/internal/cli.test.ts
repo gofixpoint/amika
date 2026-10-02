@@ -32,6 +32,19 @@ function pidDir(): string {
   return dir;
 }
 
+/** A credential store that never touches the keychain or disk. */
+function memoryStore(value?: string) {
+  const store = {
+    description: "the test store",
+    value,
+    get: vi.fn(() => store.value),
+    set: vi.fn((next: string) => {
+      store.value = next;
+    }),
+  };
+  return store;
+}
+
 function harness(env: NodeJS.ProcessEnv = ENV) {
   const out: string[] = [];
   const err: string[] = [];
@@ -78,8 +91,10 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     claimPidFile: vi.fn(() => release),
     notifyReady: vi.fn(async (_port: number) => signalReady()),
     isRunning: vi.fn(() => false),
+    credentials: memoryStore(),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
     setHostSizes: vi.fn(async () => HOST),
+    setHostSecret: vi.fn(async () => HOST),
     setHostUrl: vi.fn(
       async (_api, host: { hostname: string }, url: string) => ({
         ...HOST,
@@ -279,8 +294,8 @@ describe("runCli", () => {
   it("requires the API key and hostname for `up`", async () => {
     const { deps, err } = harness({ AMIKA_HOSTD_SECRET_KEY: SECRET });
     expect(await runCli(["up"], deps)).toBe(1);
-    expect(err[0]).toContain("API key: set AMIKA_HOSTD_API_KEY");
-    expect(err[0]).toContain("hostname: set AMIKA_HOSTD_HOSTNAME");
+    expect(err[0]).toContain("API key: run `amika-hostd setup`");
+    expect(err[0]).toContain("hostname: run `amika-hostd setup`");
     expect(deps.registerHost).not.toHaveBeenCalled();
   });
 
@@ -386,7 +401,7 @@ describe("completing registration", () => {
       env: { AMIKA_HOSTD_SECRET_KEY: SECRET },
     });
     expect(await run).toBe(1);
-    expect(err[0]).toContain("API key: set AMIKA_HOSTD_API_KEY");
+    expect(err[0]).toContain("API key: run `amika-hostd setup`");
     expect(deps.registerHost).not.toHaveBeenCalled();
   });
 
@@ -418,6 +433,7 @@ describe("completing registration", () => {
       "amika-hostd started in the background on port 4000 (pid 77)",
     ]);
     expect(out.slice(4)).toEqual([
+      "",
       EXPOSE,
       "Set the public URL of host builder to https://abc.trycloudflare.com",
     ]);
@@ -433,6 +449,7 @@ describe("completing registration", () => {
     expect(out.slice(1)).toEqual([
       "smolvm serving at http://127.0.0.1:8080 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
       "amika-hostd listening on http://127.0.0.1:3020",
+      "",
       EXPOSE.replaceAll("4000", "3020"),
       "Set the public URL of host builder to https://abc.ngrok.app",
       "Stopping smolvm (pid 88) and its machines",
@@ -495,7 +512,8 @@ describe("completing registration", () => {
     const { deps, out } = unregistered();
     expect(await runCli(["up", "--fg", "--host", host], deps)).toBe(0);
     expect(out[2]).toBe(`amika-hostd listening on ${url}`);
-    expect(out[3]).toContain(`expose ${url} to the internet`);
+    expect(out[3]).toBe("");
+    expect(out[4]).toContain(`expose ${url} to the internet`);
   });
 
   it("`up` with a registered URL starts the daemon and says where it is expected", async () => {
@@ -723,5 +741,114 @@ describe("down", () => {
       contents: "not toml [",
     });
     expect(await runCli(["down"], deps)).toBe(0);
+  });
+});
+
+describe("setup", () => {
+  const CONFIG_PATH = "/config/amika-hostd/config.toml";
+
+  /** A harness whose config file `setup` writes, and `up` then reads. */
+  function unconfigured(answers: (string | undefined)[], keys: string[] = []) {
+    const h = harness({ XDG_STATE_HOME: "/state", XDG_CONFIG_HOME: "/config" });
+    const files: Record<string, string> = {};
+    const deps = {
+      ...h.deps,
+      prompt: vi.fn(async (_question: string) => answers.shift()),
+      promptSecret: vi.fn(async (_question: string) => keys.shift()),
+      loadConfigFile: vi.fn((): HostdConfigFile | undefined =>
+        CONFIG_PATH in files
+          ? { path: CONFIG_PATH, contents: files[CONFIG_PATH] }
+          : undefined,
+      ),
+      writeConfigFile: vi.fn((file: string, contents: string) => {
+        files[file] = contents;
+      }),
+      systemHostname: () => "builder",
+      generateSecretKey: () => SECRET,
+    };
+    return { ...h, deps, files };
+  }
+
+  it("`setup` writes the config and stores the API key", async () => {
+    const { deps, files, out } = unconfigured([""], ["amk_123"]);
+    expect(await runCli(["setup"], deps)).toBe(0);
+    expect(files[CONFIG_PATH]).toContain('hostname = "builder"');
+    expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
+    expect(deps.credentials.value).toBe("amk_123");
+    expect(out.at(-1)).toBe(
+      "To stop the daemon and its VMs, run `amika-hostd down`.",
+    );
+    expect(deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("`setup` needs a terminal", async () => {
+    const { deps, err } = harness({});
+    expect(await runCli(["setup"], deps)).toBe(1);
+    expect(err).toEqual([
+      "amika-hostd: `amika-hostd setup` asks questions, so run it in a terminal",
+    ]);
+  });
+
+  it("`setup` takes no options", async () => {
+    const { deps } = harness({});
+    expect(await runCli(["setup", "--port", "1"], deps)).toBe(2);
+  });
+
+  it("`setup` reports Ctrl-C as a change to nothing", async () => {
+    const { deps, err } = unconfigured([]);
+    deps.prompt.mockRejectedValueOnce(new PromptCancelled());
+    expect(await runCli(["setup"], deps)).toBe(130);
+    expect(err).toEqual(["amika-hostd: setup cancelled; nothing was changed."]);
+    expect(deps.writeConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("`up` runs setup first when unconfigured, then registers with the stored key", async () => {
+    const { deps, out } = unconfigured([""], ["amk_123"]);
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(out[0]).toBe(
+      "amika-hostd is not set up yet, so running setup first.",
+    );
+    expect(out.join("\n")).not.toContain("Start the daemon with");
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      { apiUrl: "https://app.amika.dev", apiKey: "amk_123" },
+      expect.objectContaining({ hostname: "builder", secretKey: SECRET }),
+    );
+    expect(deps.startInBackground).toHaveBeenCalled();
+  });
+
+  it("`up` uses a stored API key without running setup", async () => {
+    const { deps } = harness({
+      AMIKA_HOSTD_HOSTNAME: "builder",
+      AMIKA_HOSTD_SECRET_KEY: SECRET,
+      XDG_STATE_HOME: "/state",
+    });
+    deps.credentials.value = "amk_stored";
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(deps.registerHost.mock.calls[0]).toEqual([
+      { apiUrl: "https://app.amika.dev", apiKey: "amk_stored" },
+      expect.anything(),
+    ]);
+  });
+
+  it("the environment's API key wins over the stored one", async () => {
+    const { deps } = harness();
+    deps.credentials.value = "amk_stored";
+    await runCli(["up"], deps);
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "api-key" }),
+      expect.anything(),
+    );
+    expect(deps.credentials.get).not.toHaveBeenCalled();
+  });
+
+  it("the background daemon never gets the stored API key", async () => {
+    const { deps } = unconfigured([""], ["amk_123"]);
+    await runCli(["up"], deps);
+    const env = deps.startInBackground.mock.calls[0] as unknown as [
+      unknown,
+      unknown,
+      { env: NodeJS.ProcessEnv },
+    ];
+    expect(Object.values(env[2].env)).not.toContain("amk_123");
   });
 });
