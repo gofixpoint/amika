@@ -41,6 +41,8 @@ const AMIKAD: SandboxService = {
 };
 const ctx: SandboxCtx = { logger: moduleLogger(), childCtx: () => ctx };
 const SECRET = "hostd-secret";
+/** Where hostd forwards to smolvm; set so tests do not depend on its default. */
+const SMOL_API_URL = "http://127.0.0.1:23020";
 
 function harness(
   responses: Response[],
@@ -52,7 +54,7 @@ function harness(
     return response;
   });
   let nextPort = 40_000;
-  const app = createApp({ secretKey: SECRET }, runtime, {
+  const app = createApp({ secretKey: SECRET, apiUrl: SMOL_API_URL }, runtime, {
     allocatePort: async () => ++nextPort,
   });
   const fetcher = vi.fn<typeof fetch>(async (url, init) =>
@@ -108,7 +110,7 @@ describe("amika-hostd provider", () => {
       env: [{ name: "MODE", value: "test" }],
     });
     expect(runtime.mock.calls[1][0]).toBe(
-      "http://127.0.0.1:8080/api/v1/machines/demo/start",
+      `${SMOL_API_URL}/api/v1/machines/demo/start`,
     );
   });
 
@@ -398,7 +400,7 @@ describe("amika-hostd services", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
     expect(runtime.mock.calls.map(([target]) => target).slice(2)).toEqual([
-      "http://127.0.0.1:8080/api/v1/machines/demo",
+      `${SMOL_API_URL}/api/v1/machines/demo`,
       "http://127.0.0.1:40002/v1/status?x=1",
     ]);
     const forwarded = new Headers(runtime.mock.calls[3][1]?.headers);

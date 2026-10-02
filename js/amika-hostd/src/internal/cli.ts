@@ -27,7 +27,8 @@ import {
   isSmolvmRunning as isSmolvmProcess,
   notifyReady as notifyParent,
   readRunningPid,
-  removePidFile,
+  removeSmolvmFiles,
+  removeStaleSmolvmFiles,
   startInBackground as spawnInBackground,
   stopProcess as stopProcessByPid,
   type DaemonPaths,
@@ -37,7 +38,6 @@ import {
   startServer as startServerOnPort,
   type RunningServer,
 } from "./server.js";
-import { DEFAULT_SMOL_API_URL } from "./smol.js";
 import {
   SMOLVM_STOP_TIMEOUT_MS,
   startSmolvm as startSmolvmServe,
@@ -459,7 +459,11 @@ async function serveInForeground(
       runtime = await startSmolvm(config, paths, deps, interrupted.signal);
     }
     if (!interrupted.signal.aborted) {
-      server = await listen(config, paths.servicesFile, deps);
+      // Forward to wherever smolvm ended up, which may not be the default.
+      const serving = runtime
+        ? { ...config, smolApiUrl: runtime.apiUrl }
+        : config;
+      server = await listen(serving, paths.servicesFile, deps);
     }
     // Signalled during startup: stop without telling `up` it is ready.
     if (server === undefined || interrupted.signal.aborted) {
@@ -501,16 +505,16 @@ async function startSmolvm(
   paths: DaemonPaths,
   deps: CliDeps,
   signal: AbortSignal,
-): Promise<ManagedSmolvm> {
+): Promise<ManagedSmolvm | undefined> {
   const runtime = await (deps.startSmolvm ?? startSmolvmServe)(
     config.smolApiUrl,
     paths,
     withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
     { signal },
   );
-  if (!signal.aborted) {
+  if (runtime !== undefined && !signal.aborted) {
     deps.out(
-      `smolvm serving at ${config.smolApiUrl ?? DEFAULT_SMOL_API_URL} (pid ${runtime.pid}); logs: ${paths.smolvmLogFile}`,
+      `smolvm serving at ${runtime.apiUrl} (pid ${runtime.pid}); logs: ${paths.smolvmLogFile}`,
     );
   }
   return runtime;
@@ -579,8 +583,11 @@ async function down(deps: CliDeps): Promise<number> {
         `smolvm (pid ${smolvm}) is still stopping its machines after ${timeoutMs / 1000}s; see ${paths.smolvmLogFile}, and run \`amika-hostd down\` again to keep waiting`,
       );
     }
-    // No daemon is left to remove it when smolvm exits.
-    removePidFile(paths.smolvmPidFile, smolvm);
+    // No daemon is left to remove them when smolvm exits.
+    removeSmolvmFiles(paths, smolvm);
+  } else {
+    // Left by a run that never got to clean up (a reboot, say).
+    removeStaleSmolvmFiles(paths);
   }
   const stopped = [
     ...(daemon === undefined ? [] : ["amika-hostd"]),

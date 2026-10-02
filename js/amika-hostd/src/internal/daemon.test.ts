@@ -371,6 +371,7 @@ describe("daemonPaths", () => {
       pidFile: "/state/amika-hostd/amika-hostd.pid",
       logFile: "/state/amika-hostd/log/amika-hostd.log",
       smolvmPidFile: "/state/amika-hostd/smolvm.pid",
+      smolvmUrlFile: "/state/amika-hostd/smolvm.url",
       smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
       servicesFile: "/state/amika-hostd/services.json",
     });

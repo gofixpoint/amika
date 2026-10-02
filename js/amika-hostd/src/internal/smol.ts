@@ -2,7 +2,7 @@
 import { z } from "zod";
 
 /** Where smolvm's API is reached unless `SMOL_API_URL` says otherwise. */
-export const DEFAULT_SMOL_API_URL = "http://127.0.0.1:8080";
+export const DEFAULT_SMOL_API_URL = "http://127.0.0.1:23020";
 
 export interface SmolRuntimeConfig {
   apiUrl?: string;

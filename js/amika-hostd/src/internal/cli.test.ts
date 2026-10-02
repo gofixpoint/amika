@@ -44,6 +44,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
   let smolvmRunning = true;
   const smolvm: ManagedSmolvm = {
     pid: 88,
+    apiUrl: "http://127.0.0.1:23020",
     exited: new Promise((resolve) => (smolvmExit = resolve)),
     get running() {
       return smolvmRunning;
@@ -65,7 +66,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
         _paths,
         _env: NodeJS.ProcessEnv,
         _options?: SmolvmDeps,
-      ) => smolvm,
+      ): Promise<ManagedSmolvm | undefined> => smolvm,
     ),
     stopProcess: vi.fn(
       async (
@@ -112,6 +113,7 @@ describe("runCli", () => {
         pidFile: "/state/amika-hostd/amika-hostd.pid",
         logFile: "/state/amika-hostd/log/amika-hostd.log",
         smolvmPidFile: "/state/amika-hostd/smolvm.pid",
+        smolvmUrlFile: "/state/amika-hostd/smolvm.url",
         smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
         servicesFile: "/state/amika-hostd/services.json",
       },
@@ -431,7 +433,7 @@ describe("completing registration", () => {
       deps.prompt!.mock.invocationCallOrder[0],
     );
     expect(out.slice(1)).toEqual([
-      "smolvm serving at http://127.0.0.1:8080 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
+      "smolvm serving at http://127.0.0.1:23020 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
       "amika-hostd listening on http://127.0.0.1:3020",
       EXPOSE.replaceAll("4000", "3020"),
       "Set the public URL of host builder to https://abc.ngrok.app",
@@ -569,6 +571,25 @@ describe("managing smolvm", () => {
     expect(order(vi.mocked(smolvm.stop))).toBeLessThan(order(release));
   });
 
+  it("forwards to the port smolvm ended up on", async () => {
+    const { deps, out, smolvm } = harness();
+    smolvm.apiUrl = "http://127.0.0.1:23021";
+    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
+    expect(deps.startServer).toHaveBeenCalledWith(
+      expect.objectContaining({ smolApiUrl: "http://127.0.0.1:23021" }),
+      expect.anything(),
+    );
+    expect(out[0]).toBe(
+      "smolvm serving at http://127.0.0.1:23021 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
+    );
+  });
+
+  it("plain `serve` forwards to SMOL_API_URL or the fixed default", async () => {
+    const { deps } = harness();
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(deps.startServer.mock.calls[0][0].smolApiUrl).toBeUndefined();
+  });
+
   it("starts smolvm for `serve` only with --smolvm", async () => {
     const { deps } = harness();
     await runCli(["serve"], deps);
@@ -634,6 +655,27 @@ describe("managing smolvm", () => {
     expect(release).toHaveBeenCalled();
   });
 
+  it("serves nothing when signalled before smolvm is spawned", async () => {
+    const { deps, out, release } = harness();
+    let signal: () => void = () => {};
+    deps.shutdownSignal = vi.fn(
+      () => new Promise<void>((resolve) => (signal = resolve)),
+    );
+    // Signalled during the port scan: no smolvm was ever started.
+    deps.startSmolvm.mockImplementationOnce(
+      async (_url, _paths, _env, options) => {
+        signal();
+        await vi.waitFor(() => expect(options?.signal?.aborted).toBe(true));
+        return undefined;
+      },
+    );
+    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
+    expect(deps.startServer).not.toHaveBeenCalled();
+    expect(deps.notifyReady).not.toHaveBeenCalled();
+    expect(out).toEqual([]);
+    expect(release).toHaveBeenCalled();
+  });
+
   it("says so when smolvm is still stopping its machines", async () => {
     const { deps, err, smolvm } = harness();
     vi.mocked(smolvm.stop).mockResolvedValueOnce(false);
@@ -649,6 +691,10 @@ describe("down", () => {
   function running() {
     const dir = pidDir();
     writeFileSync(path.join(dir, "amika-hostd", "smolvm.pid"), "888888\n");
+    writeFileSync(
+      path.join(dir, "amika-hostd", "smolvm.url"),
+      "http://127.0.0.1:23020\n",
+    );
     const h = harness({ XDG_STATE_HOME: dir });
     return { ...h, dir };
   }
@@ -687,8 +733,20 @@ describe("down", () => {
       "Stopping smolvm (pid 888888) and its machines",
       "Stopped smolvm",
     ]);
-    // No daemon is left to remove its pidfile.
+    // No daemon is left to remove its pidfile or URL file.
     expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
+    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.url"))).toBe(false);
+  });
+
+  it("removes smolvm files a dead run left behind", async () => {
+    const { deps, out, dir } = running();
+    // Far above any real pid, so certainly not running.
+    writeFileSync(path.join(dir, "amika-hostd", "smolvm.pid"), "999999999\n");
+    expect(await runCli(["down"], deps)).toBe(0);
+    expect(deps.stopProcess).not.toHaveBeenCalled();
+    expect(out).toEqual(["amika-hostd is not running"]);
+    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
+    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.url"))).toBe(false);
   });
 
   it("leaves a pidfile naming another live process, and says so", async () => {
