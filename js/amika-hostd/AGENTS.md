@@ -78,9 +78,9 @@ pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 with `node:util` `parseArgs` and takes every side effect as a dependency.
 
 - `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
-  it re-runs itself as `serve --smolvm` with `detached: true`, appends output to
-  `$XDG_STATE_HOME/amika-hostd/amika-hostd.log` (default `~/.local/state`), and
-  waits for the child's IPC `ready` message, so startup failures print in the
+  it re-runs itself as `serve --smolvm` with `detached: true`, appends output, each line
+  timestamped, to `$XDG_STATE_HOME/amika-hostd/log/amika-hostd.log` (else
+  `$HOME/.local/state/...`), and waits for the child's IPC `ready` message, so startup failures print in the
   caller's terminal. Only the operator's own flags are forwarded; the child
   inherits the environment and re-reads the TOML file.
 - `amika-hostd up --fg` and `amika-hostd serve` run in the foreground until
@@ -139,7 +139,7 @@ stored secret is kept. Only absolute http(s) URLs without credentials are
 accepted; a bare origin is normalized without its trailing slash, and a path is
 kept.
 
-Every run claims `amika-hostd.pid` next to the log, atomically, and refuses to
+Every run claims `amika-hostd.pid` in that state directory, atomically, and refuses to
 start while it names a live daemon. The daemon sets `process.title` to
 `amika-hostd`; where `/proc` exists, a pidfile naming any other process is
 treated as stale, since the pidfile outlives reboots and pids are reused. An
@@ -166,7 +166,8 @@ is left as it was before `up`:
    address must be loopback (`127.0.0.0/8` or `[::1]`): smolvm's API has no
    authentication, so listening anywhere else would expose it without
    amika-hostd's bearer check. smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only the
-   daemon; its output goes to `smolvm.log`; and it never sees the API key or
+   daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the log carries
+   no ANSI color codes; and it never sees the API key or
    secret key.
 3. The daemon listens only once smolvm answers `/health` (30s at most), so the
    background `up` reports a smolvm that fails to start. A shutdown signal

@@ -37,10 +37,17 @@ async function prompt(question: string): Promise<string | undefined> {
   }
 }
 
+// `up` spawns the background daemon with an IPC channel and sends its output
+// to the log file, so timestamp each line there. Checked before the daemon
+// disconnects from `up`.
+const stamp: (line: string) => string = process.channel
+  ? (line) => `${new Date().toISOString()} ${line}`
+  : (line) => line;
+
 process.exitCode = await runCli(process.argv.slice(2), {
   env: process.env,
-  out: (line) => console.log(line),
-  err: (line) => console.error(line),
+  out: (line) => console.log(stamp(line)),
+  err: (line) => console.error(stamp(line)),
   self: [process.execPath, ...process.execArgv, process.argv[1]],
   shutdownSignal,
   prompt: process.stdin.isTTY && process.stdout.isTTY ? prompt : undefined,
