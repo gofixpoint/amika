@@ -194,10 +194,15 @@ install_hostd() {
 # written above no longer points there, so they are stale copies.
 remove_legacy_home() {
   legacy_home_is_stale || return 0
-  rm -rf "${LEGACY_HOSTD_HOME}/amika-hostd.mjs" \
+  # Best effort: the new install already works, so a failure here (say, a
+  # root-owned directory from a sudo install) must not abort the rest.
+  if ! rm -rf "${LEGACY_HOSTD_HOME}/amika-hostd.mjs" \
     "${LEGACY_HOSTD_HOME}/config.example.toml" \
     "${LEGACY_HOSTD_HOME}/node" \
-    "${LEGACY_HOSTD_HOME}/.node-staging"
+    "${LEGACY_HOSTD_HOME}/.node-staging"; then
+    echo "Warning: could not remove the old install files from ${LEGACY_HOSTD_HOME}; remove them yourself." >&2
+    return 0
+  fi
   # Keep the directory if anything else was put in it.
   rmdir "$LEGACY_HOSTD_HOME" 2>/dev/null || true
   echo "Removed the old install files from ${LEGACY_HOSTD_HOME}"
