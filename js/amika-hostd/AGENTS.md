@@ -23,8 +23,7 @@ GitHub release, verifies it against `checksums.txt`, and installs:
 - the bundle and `config.example.toml` into `$XDG_DATA_HOME/amika-hostd`
   (default `~/.local/share/amika-hostd`; override with `AMIKA_HOSTD_HOME`),
   with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR` (default
-  `/usr/local/bin`) that pins the node it runs on. A reinstall removes the
-  copies older installers left in `~/.amika-hostd`;
+  `/usr/local/bin`) that pins the node it runs on;
 - Node.js: the system `node` if it is 22 or newer, otherwise the official
   Node.js LTS binary (24.21.0, `AMIKA_HOSTD_NODE_VERSION`), verified against
   `SHASUMS256.txt`, into `node/` in that same directory (the system node is
