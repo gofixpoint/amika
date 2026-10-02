@@ -180,6 +180,23 @@ describe("runSetup", () => {
     expect(h.deps.setHostSecret).not.toHaveBeenCalled();
   });
 
+  it("saves the environment's secret, not a new one, when the file has none", async () => {
+    const envSecret = "c".repeat(64);
+    const h = harness({
+      answers: ["", ""],
+      file: 'hostname = "builder"\n',
+      storedKey: "k",
+      env: { AMIKA_HOSTD_SECRET_KEY: envSecret },
+    });
+    await runSetup(h.deps);
+    expect(h.config().secretKey).toBe(envSecret);
+    expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
+    expect(h.deps.setHostSecret).not.toHaveBeenCalled();
+    expect(h.out).toContain(
+      "Saved the secret key from AMIKA_HOSTD_SECRET_KEY to the file, since Amika may already know it.",
+    );
+  });
+
   it("does not offer to regenerate a secret the environment overrides", async () => {
     const h = harness({
       answers: ["", ""],

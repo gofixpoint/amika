@@ -34,8 +34,12 @@ function files(initial: Record<string, string> = {}) {
 }
 
 /** A fake keychain program that keeps one value, or refuses to store it. */
-function keychain({ broken = false } = {}) {
-  let stored: string | undefined;
+function keychain({
+  broken = false,
+  initial,
+  undeletable = false,
+}: { broken?: boolean; initial?: string; undeletable?: boolean } = {}) {
+  let stored = initial;
   const run = vi.fn(
     (command: string, args: readonly string[], input?: string): RunResult => {
       const reading =
@@ -44,6 +48,10 @@ function keychain({ broken = false } = {}) {
         return stored === undefined
           ? { status: 44, stdout: "" }
           : { status: 0, stdout: `${stored}\n` };
+      }
+      if (args[0] === "delete-generic-password" || args[0] === "clear") {
+        if (!undeletable) stored = undefined;
+        return { status: undeletable ? 1 : 0, stdout: "" };
       }
       if (broken) return { status: 1, stdout: "" };
       stored =
@@ -110,6 +118,44 @@ describe("apiKeyStore", () => {
     expect(fs.contents[FILE]).toBe("amk_123\n");
     expect(store.description).toContain(FILE);
     expect(store.get()).toBe("amk_123");
+  });
+});
+
+describe("apiKeyStore when the keychain refuses a new key", () => {
+  it("removes the old keychain key so the file's new one is read", () => {
+    const fs = files();
+    const fake = keychain({ broken: true, initial: "amk_old" });
+    const store = apiKeyStore(ENV, {
+      platform: "darwin",
+      ...fs,
+      run: fake.run,
+    });
+    store.set("amk_new");
+    expect(fake.stored()).toBeUndefined();
+    expect(fs.contents[FILE]).toBe("amk_new\n");
+    expect(store.get()).toBe("amk_new");
+    // A store created later, as `up` does, reads the new key too.
+    expect(
+      apiKeyStore(ENV, { platform: "darwin", ...fs, run: fake.run }).get(),
+    ).toBe("amk_new");
+  });
+
+  it("refuses rather than leave the old key shadowing the new one", () => {
+    const fs = files();
+    const fake = keychain({
+      broken: true,
+      initial: "amk_old",
+      undeletable: true,
+    });
+    const store = apiKeyStore(ENV, {
+      platform: "darwin",
+      ...fs,
+      run: fake.run,
+    });
+    expect(() => store.set("amk_new")).toThrow(
+      /Cannot replace the API key in your macOS login keychain/,
+    );
+    expect(fs.contents[FILE]).toBeUndefined();
   });
 });
 

@@ -116,7 +116,8 @@ and asks, in order:
    hostname made valid (lowercased, `.local` dropped, other characters turned
    into `-`), re-asking until it is valid;
 2. on a rerun, whether to regenerate the secret key; a first run generates
-   one (`randomBytes(32)`, hex) without asking;
+   one (`randomBytes(32)`, hex) without asking, unless the environment sets
+   one, which is saved to the file instead (Amika may already know it);
 3. the Amika API key, with input hidden, or on a rerun whether to replace
    the stored one. An API key in the environment is used instead, and setup
    does not ask.
@@ -157,7 +158,9 @@ during setup exits 130 and changes nothing.
   `$XDG_CONFIG_HOME/amika-hostd/api-key`, mode `0600`, the way `gh` and
   Docker fall back when no keyring is available.
 
-Reads try the keychain first, then the file. The background daemon never
+Reads try the keychain first, then the file. So when the keychain refuses a
+new key, the old one is deleted from it before the file is written, and
+setup fails if it cannot be. The background daemon never
 reads the API key, from either.
 
 The secret key stays in `config.toml` (mode `0600`) rather than a keychain:

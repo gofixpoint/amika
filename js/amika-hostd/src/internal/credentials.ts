@@ -83,6 +83,14 @@ export function apiKeyStore(
     get: () => keychain.get() ?? file.get(),
     set(value) {
       if (!keychain.set(value)) {
+        // Reads try the keychain first, so an old key it still holds would
+        // shadow the new one in the file. Remove it, or refuse.
+        keychain.remove();
+        if (keychain.get() !== undefined) {
+          throw new ConfigError(
+            `Cannot replace the API key in ${keychain.description}; remove the "${SERVICE}" item there and run \`amika-hostd setup\` again`,
+          );
+        }
         file.set(value);
         description = file.description;
         return;
@@ -100,6 +108,8 @@ interface Keychain {
   get(): string | undefined;
   /** False if the keychain could not store it. */
   set(value: string): boolean;
+  /** Delete the stored key, if any; best effort. */
+  remove(): void;
 }
 
 function systemKeychain(
@@ -133,6 +143,15 @@ function systemKeychain(
           );
           return this.get() === value;
         },
+        remove() {
+          run("security", [
+            "delete-generic-password",
+            "-s",
+            SERVICE,
+            "-a",
+            ACCOUNT,
+          ]);
+        },
       };
     case "linux":
       // The Secret Service lives on the desktop session's D-Bus; a headless
@@ -164,6 +183,9 @@ function systemKeychain(
             value,
           );
           return result.status === 0 && this.get() === value;
+        },
+        remove() {
+          run("secret-tool", ["clear", "service", SERVICE, "account", ACCOUNT]);
         },
       };
     default:

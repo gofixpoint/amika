@@ -97,7 +97,14 @@ export async function runSetup(
   let secretKey = saved.secretKey;
   let rotated = false;
   const secretFromEnv = ENV_NAMES.secretKey.find((name) => deps.env[name]);
-  if (secretKey === undefined) {
+  if (secretKey === undefined && effective.secretKey !== undefined) {
+    // The host may already be registered with the environment's secret, and
+    // a fresh one would be unknown to Amika once the override is dropped.
+    secretKey = effective.secretKey;
+    deps.out(
+      `Saved the secret key from ${secretFromEnv} to the file, since Amika may already know it.`,
+    );
+  } else if (secretKey === undefined) {
     secretKey = generate();
     deps.out("Generated a new secret key.");
   } else if (secretFromEnv !== undefined) {
