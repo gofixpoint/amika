@@ -116,7 +116,8 @@ machine's own hostname made valid (lowercased, `.local` dropped, other
 characters turned into `-`), re-asking until it is valid. When the file has
 no secret key it generates one (`randomBytes(32)`, hex), unless the
 environment sets one, which is saved to the file instead (Amika may already
-know it). An existing secret key is kept. Then it asks for the Amika API
+know it). On a rerun it asks whether to regenerate the secret key. Then it
+asks for the Amika API
 key, with input hidden, or on a rerun whether to replace the stored one; an
 API key in the environment is used instead, and setup does not ask.
 
@@ -132,6 +133,14 @@ is written, and the file is replaced atomically with mode `0600`
 (`src/internal/private-file.ts`). A new API key is stored first, so a keychain
 command stopped by Ctrl-C (say, at an unlock prompt) leaves the config
 untouched.
+
+Registration never changes a stored secret, so setup sends a regenerated one
+to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with `secret`) for the
+hostname `up` will use, the environment's if it sets one. It writes the file
+first, so a file it cannot write never leaves Amika with a secret the host
+lacks, and puts the old secret back in the file if sending fails. A new
+hostname skips this, since `up` registers it as a new host. A secret key set
+in the environment is never regenerated: the daemon would keep using it.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing and it has a terminal; without one it fails, naming `setup`. Ctrl-C
