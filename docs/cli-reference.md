@@ -37,7 +37,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `auth login --api-key-file`, and `auth logout`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, and `auth logout`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika send`
 
@@ -354,6 +354,41 @@ The old `--no-wait` and `--workdir` flags have been removed. Commands wait for
 the agent's response and use the rig's configured agent working directory. Session IDs
 now identify durable chats returned by `amika send`, rather than the old
 rig-local agent sessions.
+
+---
+
+## `amika host`
+
+Inspect and retire your organization's own hosts (bring-your-own-compute). `hosts` is an alias.
+
+Adding a host is not among these commands, and deliberately: a host registers itself from the machine, where its secret already lives. `amika-hostd up` posts the hostname, secret, and sizes to the control plane, and `amika-hostd register-url <url>` records the URL the control plane reaches it on. These commands are the control-plane view of the records that leaves behind.
+
+```bash
+# List the organization's hosts
+amika host list            # "hosts" and "ls" are aliases
+
+# Show one host and the sizes it offers, by hostname or id
+amika host get alpha.lan
+
+# Delete a host and its stored secret
+amika host delete alpha.lan
+```
+
+### `amika host list`
+
+Lists `HOSTNAME`, `URL`, and `SIZES`. A host shows `-` for a URL it has not registered yet, and such a host cannot take rigs. Ids and timestamps are not columns: a host is addressed by hostname wherever these commands take one, and `amika host get` or `-o json` has the rest for the host you care about.
+
+### `amika host get <hostname-or-id>`
+
+Shows one host's details and the sizes it offers its rigs.
+
+### `amika host delete <hostname-or-id> [...]`
+
+Deletes each host and its stored secret. `rm` and `remove` are aliases. A host that still has rigs on it is refused; delete those rigs first. The machine itself is untouched, so stop its daemon with `amika-hostd down` or it will register itself again on the next `amika-hostd up`.
+
+| Flag            | Default | Description              |
+| --------------- | ------- | ------------------------ |
+| `-f`, `--force` | `false` | Skip confirmation prompt |
 
 ---
 

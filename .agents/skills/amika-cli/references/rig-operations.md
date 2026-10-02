@@ -1,4 +1,4 @@
-# Rig lifecycle, agents, auth, and secrets
+# Rig lifecycle, hosts, agents, auth, and secrets
 
 ## Authentication
 
@@ -32,6 +32,21 @@ amika rig create --snapshot my-project-base
 
 Use `amika rig create --help` for the current flags, including preset,
 size, environment, setup, repository, snapshot, and credential options.
+
+## The organization's own hosts
+
+An organization can register hosts of its own (bring-your-own-compute).
+
+```bash
+amika host list                       # HOSTNAME, URL, SIZES ("hosts" is an alias)
+amika host list -o json               # ids, timestamps, per-size resources
+amika host get alpha.lan              # the sizes that host offers
+amika host delete alpha.lan --force   # refused while rigs still run on it
+```
+
+Hosts register themselves when `amika-hostd up` runs on the machine, which is
+also where the secret lives, so there is no way to add one from this CLI. A
+host listed without a URL has not finished registering and cannot take rigs.
 
 ## Agent credentials and secrets
 

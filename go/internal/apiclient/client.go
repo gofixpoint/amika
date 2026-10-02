@@ -1379,6 +1379,94 @@ func (c *Client) DownloadFromSignedURL(signedURL string) ([]byte, error) {
 	return body, nil
 }
 
+// Host is one of an organization's own hosts (bring-your-own-compute), as
+// returned by the /api/v0beta1/hosts endpoints. It mirrors the API's Host
+// schema; the host's stored secret is never part of it.
+type Host struct {
+	// ID is the host's "host_<uuid>" identifier, the only form the API's
+	// per-host routes accept.
+	ID string `json:"id"`
+	// Hostname is the name the host registered itself under.
+	Hostname string `json:"hostname"`
+	// URL is where the control plane reaches the host's daemon, or nil while
+	// registration is incomplete. Such a host cannot take a rig yet.
+	URL *string `json:"url"`
+	// OrgID is the organization the host belongs to.
+	OrgID string `json:"org_id"`
+	// Sizes are the sizes the host offers its rigs, keyed by the names the
+	// host chose.
+	Sizes map[string]HostSize `json:"sizes"`
+	// CreatedAt is when the host was first registered.
+	CreatedAt string `json:"created_at"`
+	// UpdatedAt is when the host was last replaced or re-registered.
+	UpdatedAt string `json:"updated_at"`
+}
+
+// HostSize is one size a host offers its rigs. Unlike the rest of the API,
+// its fields are camelCase, matching the control plane's stored shape.
+type HostSize struct {
+	// VCPUs is the rig's virtual CPU count.
+	VCPUs int `json:"vcpus"`
+	// MemoryGiB is the rig's memory in GiB.
+	MemoryGiB float64 `json:"memoryGib"`
+	// DiskGiB is the rig's disk in GiB.
+	DiskGiB int `json:"diskGib"`
+	// DiskGrowOnly reports that the disk is a minimum the rig may exceed.
+	DiskGrowOnly bool `json:"diskGrowOnly"`
+}
+
+// ListHosts fetches the organization's own hosts from the remote API. It
+// returns an empty slice when the organization has none, and a 404 when the
+// deployment has bring-your-own-compute turned off.
+func (c *Client) ListHosts() ([]Host, error) {
+	var result []Host
+	if err := c.doJSON("GET", apiBasePath+"/hosts", nil, &result); err != nil {
+		return nil, fmt.Errorf("remote list hosts: %w", err)
+	}
+	return result, nil
+}
+
+// DeleteHost deletes one of the organization's hosts, and its stored secret,
+// by its "host_<uuid>" id. The API refuses with 409 while any rig still runs
+// on the host.
+func (c *Client) DeleteHost(id string) error {
+	if err := c.doJSON("DELETE", apiBasePath+"/hosts/"+url.PathEscape(id), nil, nil); err != nil {
+		return fmt.Errorf("remote delete host: %w", err)
+	}
+	return nil
+}
+
+// FindHost resolves a host by id or by hostname. The API's per-host routes
+// take only ids, but a person knows their hosts by hostname, so every CLI
+// surface that names a host goes through here or through MatchHost.
+func (c *Client) FindHost(ref string) (*Host, error) {
+	hosts, err := c.ListHosts()
+	if err != nil {
+		return nil, err
+	}
+	return MatchHost(hosts, ref)
+}
+
+// MatchHost resolves a host by id or by hostname within a listing the caller
+// already holds, so a command naming several hosts pays for one GET rather
+// than one per name. An unmatched ref reports the hostnames that do exist,
+// since the usual cause is a typo.
+func MatchHost(hosts []Host, ref string) (*Host, error) {
+	for i := range hosts {
+		if hosts[i].ID == ref || hosts[i].Hostname == ref {
+			return &hosts[i], nil
+		}
+	}
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("no host %q: this organization has no hosts of its own", ref)
+	}
+	names := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		names = append(names, h.Hostname)
+	}
+	return nil, fmt.Errorf("no host %q; this organization's hosts are: %s", ref, strings.Join(names, ", "))
+}
+
 func (c *Client) doJSON(method, path string, body interface{}, out interface{}) error {
 	var bodyReader io.Reader
 	if body != nil {
