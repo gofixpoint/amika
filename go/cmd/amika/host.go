@@ -33,7 +33,8 @@ var hostCmd = &cobra.Command{
 
 A host registers itself when ` + "`amika-hostd up`" + ` runs on the machine, which is
 also where its secret lives, so these commands inspect and retire hosts rather
-than add them.`,
+than add them. Rigs run on Amika Cloud unless ` + "`amika rig create --host`" + ` names
+one of these hosts.`,
 }
 
 var hostListCmd = &cobra.Command{

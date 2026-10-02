@@ -57,6 +57,12 @@ type CreateSandboxRequest struct {
 	Branch             string               `json:"branch,omitempty"`
 	NewBranchName      string               `json:"new_branch_name,omitempty"`
 	GithubAuthMode     string               `json:"github_auth_mode,omitempty"`
+	// HostID runs the rig on one of the organization's own hosts
+	// (bring-your-own-compute) instead of an Amika Cloud provider. Empty is
+	// omitted, which is how a rig lands on Amika Cloud. With it set, Size
+	// names one of that host's own sizes, and the API refuses Provider,
+	// Snapshot, and the lifecycle timers.
+	HostID string `json:"host_id,omitempty"`
 	// Snapshot forks the new sandbox from a captured snapshot slug (remote
 	// only). nil omits the field so the server applies its default snapshot
 	// chain (repo default, else preset/size); a non-nil value boots from that
@@ -1394,7 +1400,8 @@ type Host struct {
 	// OrgID is the organization the host belongs to.
 	OrgID string `json:"org_id"`
 	// Sizes are the sizes the host offers its rigs, keyed by the names the
-	// host chose.
+	// host chose. Its keys, not the cloud size vocabulary, are what
+	// `rig create --host` accepts for --size.
 	Sizes map[string]HostSize `json:"sizes"`
 	// CreatedAt is when the host was first registered.
 	CreatedAt string `json:"created_at"`

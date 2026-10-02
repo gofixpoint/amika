@@ -46,7 +46,8 @@ func New() *cobra.Command {
 	gitrepo.AddFlags(sandboxCreateCmd,
 		"Mount a git repo into the sandbox. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.",
 		"Skip git repo auto-detection; create a sandbox without mounting any repo.")
-	sandboxCreateCmd.Flags().String("size", "", "Sandbox size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\")")
+	sandboxCreateCmd.Flags().String("host", "", "Run the rig on one of your organization's own hosts, by hostname or id (see \"amika host list\"). Omit it to run on Amika Cloud.")
+	sandboxCreateCmd.Flags().String("size", "", "Sandbox size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\"). With --host, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB.")
 	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the sandbox from a captured snapshot slug")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")
