@@ -4,7 +4,7 @@ GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 GOFMT_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
 E2E_API_TIMEOUT ?= 45m
-E2E_SANDBOX_PROVIDER ?= daytona
+E2E_SANDBOX_PROVIDER ?= e2b
 # Keep in sync with the version in .github/workflows/zizmor.yml.
 ZIZMOR_VERSION = 1.25.2
 

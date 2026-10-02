@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { AmikaClient } from "@/index";
 import { AmikaHTTPError } from "@/index";
-import type { AgentCredentialRef, RemoteRig } from "@/index";
+import type { RemoteRig } from "@/index";
 
 import {
   describeFunctional,
@@ -10,12 +10,9 @@ import {
   LONG_TIMEOUT_MS,
   makeClient,
   provisionRig,
+  resolveAgentCredential,
   TEST_AGENT_NAME,
 } from "@test/functional/helpers";
-
-const ENV_CRED_NAME = process.env["AMIKA_TEST_AGENT_CREDENTIAL_NAME"];
-const ENV_CRED_TYPE = (process.env["AMIKA_TEST_AGENT_CREDENTIAL_TYPE"] ??
-  "api_key") as "oauth" | "api_key";
 
 describeFunctional("rig functional tests", () => {
   let client: AmikaClient;
@@ -25,30 +22,7 @@ describeFunctional("rig functional tests", () => {
     client = makeClient();
     await ensureGitHubToken(client);
 
-    let credential: AgentCredentialRef;
-    if (ENV_CRED_NAME) {
-      // Explicit env override takes precedence.
-      credential = {
-        kind: TEST_AGENT_NAME,
-        name: ENV_CRED_NAME,
-        type: ENV_CRED_TYPE,
-      };
-    } else {
-      // Default: require an existing api_key on the org; fail fast if none.
-      const secrets = await client.listProviderSecrets(TEST_AGENT_NAME);
-      const apiKeySecret = secrets.find((s) => s.type === "api_key");
-      if (!apiKeySecret) {
-        throw new Error(
-          `No api_key credential found for provider "${TEST_AGENT_NAME}". ` +
-            "Add one before running the functional suite.",
-        );
-      }
-      credential = {
-        kind: TEST_AGENT_NAME,
-        type: "api_key",
-        ...(apiKeySecret.name ? { name: apiKeySecret.name } : {}),
-      };
-    }
+    const credential = await resolveAgentCredential(client);
 
     rig = await provisionRig(client, {
       agentCredentials: [credential],
@@ -62,7 +36,7 @@ describeFunctional("rig functional tests", () => {
       // method instead of cascading into every other test.
       expect(rig.id).not.toBe("");
       expect(rig.name).not.toBe("");
-      expect(["active", "running", "started"]).toContain(rig.state);
+      expect(rig.status).toBe("running");
       expect(rig.createdAt).not.toBe("");
     });
   });
@@ -72,7 +46,7 @@ describeFunctional("rig functional tests", () => {
       const got = await client.getRig(rig.name);
       expect(got.name).toBe(rig.name);
       expect(got.id).toBe(rig.id);
-      expect(["active", "running", "started"]).toContain(got.state);
+      expect(got.status).toBe("running");
       // repo_url is nullable in the schema; created_at is required.
       expect(got.repoUrl === null || typeof got.repoUrl === "string").toBe(
         true,
@@ -127,7 +101,7 @@ describeFunctional("rig functional tests", () => {
       async () => {
         await client.stopRig(rig.name);
         const stopped = await client.waitForRigStop(rig.name);
-        expect(stopped.state).toBe("stopped");
+        expect(stopped.status).toBe("stopped");
       },
       LONG_TIMEOUT_MS,
     );
@@ -137,7 +111,7 @@ describeFunctional("rig functional tests", () => {
       async () => {
         await client.startRig(rig.name);
         const started = await client.waitForRigStart(rig.name);
-        expect(["active", "running", "started"]).toContain(started.state);
+        expect(started.status).toBe("running");
       },
       LONG_TIMEOUT_MS,
     );

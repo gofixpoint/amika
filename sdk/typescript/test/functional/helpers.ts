@@ -13,22 +13,26 @@ import type { AgentCredentialRef, CreateRigRequest, RemoteRig } from "@/index";
  *                                          value so no-auth servers also work
  *   AMIKA_TEST_REPO_URL                  — repo URL passed to createRig
  *                                          (default: https://github.com/gofixpoint/example-repo)
- *   AMIKA_TEST_RIG_PROVIDER              — infrastructure provider on createRig (default: "docker")
+ *   AMIKA_TEST_RIG_PROVIDER              — infrastructure provider on createRig
+ *                                          (default: "e2b", Amika's default cloud)
  *   AMIKA_TEST_PRESET                    — rig preset (default: "coder")
  *   AMIKA_TEST_AGENT_NAME                — agent name for sessions / agentSend (default: "claude")
- *   AMIKA_TEST_AGENT_CREDENTIAL_NAME     — credential `name` injected into the rig
- *   AMIKA_TEST_AGENT_CREDENTIAL_TYPE     — "oauth" or "api_key"
+ *   AMIKA_TEST_AGENT_CREDENTIAL_NAME     — name of an existing agent credential
+ *                                          to inject into the rig
+ *   AMIKA_TEST_AGENT_CREDENTIAL_TYPE     — "oauth" or "api_key" (default: "api_key")
  *   AMIKA_TEST_RIG_NAME_PREFIX           — prefix used for generated rig names (default: "ts-sdk-fn")
  *   AMIKA_TEST_BRANCH                    — branch checked out in the rig
  *   AMIKA_TEST_GITHUB_TOKEN              — GitHub PAT registered before provisioning
  *                                          a rig (servers that gate rig
  *                                          creation on a per-user GitHub token)
  *   AMIKA_TEST_PROVIDER                  — AI provider used in secrets.test.ts (default: "claude")
- *   AMIKA_TEST_PROVIDER_SECRET_VALUE     — real provider API key for the secrets
- *                                          round-trip test; required when the
+ *   AMIKA_TEST_PROVIDER_SECRET_VALUE     — real provider API key. The secrets
+ *                                          round-trip test sends it when the
  *                                          target server validates keys upstream
- *                                          (e.g. Anthropic). Falls back to a
- *                                          placeholder otherwise.
+ *                                          (e.g. Anthropic) and falls back to a
+ *                                          placeholder otherwise. The rig suite
+ *                                          registers it as a temporary agent
+ *                                          credential (see resolveAgentCredential).
  *
  * `||` rather than `??` on the two fallbacks below, matching the rule the SDK
  * itself follows: a set-but-empty rig var falls through to the legacy var and
@@ -74,7 +78,7 @@ export const TEST_REPO_URL =
 export const TEST_RIG_PROVIDER =
   process.env["AMIKA_TEST_RIG_PROVIDER"] ||
   process.env["AMIKA_TEST_SANDBOX_PROVIDER"] ||
-  "docker";
+  "e2b";
 export const TEST_PRESET = process.env["AMIKA_TEST_PRESET"] ?? "coder";
 export const TEST_GITHUB_TOKEN = process.env["AMIKA_TEST_GITHUB_TOKEN"];
 export const TEST_AGENT_NAME = process.env["AMIKA_TEST_AGENT_NAME"] ?? "claude";
@@ -85,9 +89,8 @@ const RIG_NAME_PREFIX =
   "ts-sdk-fn";
 
 const agentCredentialName = process.env["AMIKA_TEST_AGENT_CREDENTIAL_NAME"];
-const agentCredentialType = process.env["AMIKA_TEST_AGENT_CREDENTIAL_TYPE"] as
-  | "oauth"
-  | "api_key";
+const agentCredentialType = (process.env["AMIKA_TEST_AGENT_CREDENTIAL_TYPE"] ||
+  "api_key") as "oauth" | "api_key";
 
 /** A short suffix so concurrent test runs don't collide on resource names. */
 export function uniqueSuffix(): string {
@@ -138,6 +141,46 @@ export function buildCreateRigRequest(
 }
 
 const PROVIDER_SECRET_VALUE = process.env["AMIKA_TEST_PROVIDER_SECRET_VALUE"];
+
+/**
+ * Pick the agent credential a rig suite injects, in order:
+ *   1. AMIKA_TEST_AGENT_CREDENTIAL_NAME (with _TYPE): an existing credential.
+ *   2. AMIKA_TEST_PROVIDER_SECRET_VALUE: registered for this run, then deleted.
+ *   3. The first api_key credential the org already holds for TEST_AGENT_NAME.
+ * Throws with the env vars to set when none applies, so a missing credential
+ * fails setup loudly instead of skipping the agent coverage.
+ */
+export async function resolveAgentCredential(
+  client: AmikaClient,
+): Promise<AgentCredentialRef> {
+  if (agentCredentialName) {
+    return {
+      kind: TEST_AGENT_NAME,
+      name: agentCredentialName,
+      type: agentCredentialType,
+    };
+  }
+  const registered = await ensureAgentCredential(client);
+  if (registered) return registered;
+
+  const secrets = await client.listProviderSecrets(TEST_AGENT_NAME);
+  const apiKeySecret = secrets.find((s) => s.type === "api_key");
+  if (!apiKeySecret) {
+    throw new Error(
+      `No api_key credential found for agent "${TEST_AGENT_NAME}" in the ` +
+        "target org. Set AMIKA_TEST_PROVIDER_SECRET_VALUE to a real " +
+        `${TEST_AGENT_NAME} API key to register a temporary one, set ` +
+        "AMIKA_TEST_AGENT_CREDENTIAL_NAME (and AMIKA_TEST_AGENT_CREDENTIAL_TYPE " +
+        "if it is not api_key) to use an existing credential, or add an " +
+        `api_key credential for "${TEST_AGENT_NAME}" to the org.`,
+    );
+  }
+  return {
+    kind: TEST_AGENT_NAME,
+    type: "api_key",
+    ...(apiKeySecret.name ? { name: apiKeySecret.name } : {}),
+  };
+}
 
 /**
  * If AMIKA_TEST_PROVIDER_SECRET_VALUE is set, register it as a provider secret
