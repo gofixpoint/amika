@@ -128,7 +128,7 @@ describe("startSmolvm", () => {
       ["serve", "start", "--listen", "127.0.0.1:9000"],
       expect.objectContaining({
         detached: true,
-        env: { KEEP: "1", SMOLVM_DRAIN_ON_SHUTDOWN: "1" },
+        env: { KEEP: "1", SMOLVM_DRAIN_ON_SHUTDOWN: "1", NO_COLOR: "1" },
       }),
     );
     expect(readFileSync(files.smolvmPidFile, "utf8")).toBe("4242\n");
