@@ -53,9 +53,10 @@ disk_gib = 40
 
 # --- Preset images ------------------------------------------------------------
 #
-# The image each Amika preset boots on this host. Edit a tag to upgrade.
-# Tags are pinned commit SHAs until a :latest tag is published.
+# The image each Amika preset boots on this host. `:latest` follows each
+# release; pin a 12-character commit SHA instead to hold a version still.
+# smolvm caches a pulled image in the VM, so `:latest` can lag a release.
 
 [preset_images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:b0ee8be7e76a"
-amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:b0ee8be7e76a"
+amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
+amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
