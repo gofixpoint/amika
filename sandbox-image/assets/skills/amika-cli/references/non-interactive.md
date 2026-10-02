@@ -21,6 +21,7 @@ JSON mode never prompts. Pass the bypass flag when required:
 | Command                 | Required flag                                  |
 | ----------------------- | ---------------------------------------------- |
 | `rig delete`            | `--force`                                      |
+| `host delete`           | `--force` / `-f`                               |
 | `snapshot create`       | `--no-interactive`, plus `--mode` and `--name` |
 | `snapshot delete`       | `--force` / `-f`                               |
 | `service delete`        | `--force` / `-f`                               |

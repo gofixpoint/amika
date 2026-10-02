@@ -1,18 +1,18 @@
 ---
 name: amika-cli
-description: "Drive the `amika` CLI to create, inspect, and operate Amika rigs and agent chat sessions non-interactively. Use when a task involves `amika rig`, `amika send`, `amika auth`, `amika secret`, `amika service`, `amika snapshot`, or `amika scp`, including discovering and debugging services from inside an Amika rig."
+description: "Drive the `amika` CLI to create, inspect, and operate Amika rigs, the organization's own hosts, and agent chat sessions non-interactively. Use when a task involves `amika rig`, `amika host`, `amika send`, `amika auth`, `amika secret`, `amika service`, `amika snapshot`, or `amika scp`, including listing or retiring bring-your-own-compute hosts and discovering and debugging services from inside an Amika rig."
 ---
 
 # Using the `amika` CLI
 
-Use `amika` to operate hosted Amika rigs and agent chat sessions without
-hanging on prompts or interactive sessions. Hosted rigs are the default
-target. Run `amika <command> --help` before relying on a flag in a reference
+Use `amika` to operate hosted Amika rigs, the organization's own hosts, and
+agent chat sessions without hanging on prompts or interactive sessions.
+Hosted rigs are the default target. Run `amika <command> --help` before relying on a flag in a reference
 because the installed binary is authoritative.
 
 Read only the reference relevant to the task:
 
-- [Rig lifecycle, agents, auth, and secrets](references/rig-operations.md)
+- [Rig lifecycle, hosts, agents, auth, and secrets](references/rig-operations.md)
 - [Services, repository config, and snapshots](references/services-config-snapshots.md)
 - [SSH and file transfer](references/connectivity.md)
 - [Structured output and non-interactive behavior](references/non-interactive.md)
@@ -72,6 +72,7 @@ confirmation flags, and commands that reject JSON output.
 | Manage service exposure                    | `amika service --help`                                                    |
 | Capture a base environment                 | `amika snapshot --help`                                                   |
 | Fork from a snapshot                       | `amika rig create --snapshot <name>`                                      |
+| List the org's own hosts                   | `amika host list`                                                         |
 | Authenticate in a headless environment     | Set `AMIKA_API_KEY`                                                       |
 
 ## Critical facts
