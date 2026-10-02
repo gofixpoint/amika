@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import type { AmikaClient } from "@/client";
-import { AmikaHTTPError } from "@/errors";
-import type { AgentCredentialRef, RemoteRig } from "@/types";
+import type { AmikaClient } from "@/index";
+import { AmikaHTTPError } from "@/index";
+import type { AgentCredentialRef, RemoteRig } from "@/index";
 
 import {
   describeFunctional,
@@ -95,47 +95,6 @@ describeFunctional("rig functional tests", () => {
     });
   });
 
-  describe("sessions", () => {
-    let sessionId: string;
-
-    it("createSession returns a session for the configured agent", async () => {
-      const session = await client.createSession(rig.name, {
-        agentName: TEST_AGENT_NAME,
-        metadata: { source: "ts-sdk-functional" },
-      });
-      expect(session.id).not.toBe("");
-      expect(session.agentName).toBe(TEST_AGENT_NAME);
-      expect(session.sandboxId).toBe(rig.id);
-      sessionId = session.id;
-    });
-
-    it("listSessions returns the created session in the envelope", async () => {
-      const sessions = await client.listSessions(rig.name);
-      expect(sessions.length).toBeGreaterThanOrEqual(1);
-      expect(sessions.some((s) => s.id === sessionId)).toBe(true);
-    });
-
-    it("getSession returns the session by id", async () => {
-      const session = await client.getSession(rig.name, sessionId);
-      expect(session.id).toBe(sessionId);
-      expect(session.sandboxId).toBe(rig.id);
-    });
-
-    it("getLatestSession returns a session (non-null)", async () => {
-      const latest = await client.getLatestSession(rig.name);
-      expect(latest).not.toBeNull();
-      expect(latest?.sandboxId).toBe(rig.id);
-    });
-
-    it("updateSession can mutate metadata", async () => {
-      const updated = await client.updateSession(rig.name, sessionId, {
-        metadata: { source: "ts-sdk-functional", updated: true },
-      });
-      expect(updated.id).toBe(sessionId);
-      expect(updated.metadata["updated"]).toBe(true);
-    });
-  });
-
   describe("agent send", () => {
     it(
       "agentSend returns a response and a session id",
@@ -149,6 +108,12 @@ describeFunctional("rig functional tests", () => {
         expect(resp.sessionId).not.toBe("");
         expect(typeof resp.response).toBe("string");
         expect(resp.isError).toBe(false);
+
+        const onRig = await client.agentSessions.list({ rigRef: rig.name });
+        expect(onRig.sessions.some((s) => s.sessionId === resp.sessionId)).toBe(
+          true,
+        );
+        expect(onRig.sessions.every((s) => s.sandboxId === rig.id)).toBe(true);
       },
       LONG_TIMEOUT_MS,
     );

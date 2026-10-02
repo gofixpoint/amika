@@ -1,3 +1,4 @@
+/** Base error for SDK validation, lifecycle failures, and HTTP errors. */
 export class AmikaError extends Error {
   override name = "AmikaError";
 }
@@ -8,12 +9,17 @@ export type AmikaWaitErrorReason = "provisioning" | "setup" | "timeout";
 /** A failed lifecycle operation or expired wait, with the last observed state. */
 export class AmikaWaitError extends AmikaError {
   override name = "AmikaWaitError";
+  /** Last observed rig ID; empty if the first fetch did not complete. */
   readonly rigId: string;
+  /** Last observed lifecycle status; empty before the first response. */
   readonly status: string;
+  /** Last observed provisioning state; empty before the first response. */
   readonly state: string;
+  /** Last observed setup status, when known. */
   readonly setupStatus: string | undefined;
 
   constructor(
+    /** Whether waiting failed because of provisioning, setup, or its deadline. */
     readonly reason: AmikaWaitErrorReason,
     message: string,
     rig: { id: string; status: string; state: string; setupStatus?: string },
@@ -35,12 +41,13 @@ interface APIErrorResponse {
 
 /**
  * AmikaHTTPError is thrown when the server responds with a non-2xx status.
- * Mirrors Go's `apiclient.HTTPError`: carries the raw status and body so
- * callers can inspect or parse structured error information.
+ * Carries the status and raw response body for inspecting structured errors.
  */
 export class AmikaHTTPError extends AmikaError {
   override name = "AmikaHTTPError";
+  /** HTTP status code returned by the API. */
   readonly statusCode: number;
+  /** Raw response body; use userMessage() for a readable API error. */
   readonly body: string;
 
   constructor(statusCode: number, body: string) {
@@ -52,7 +59,7 @@ export class AmikaHTTPError extends AmikaError {
   /**
    * Extract the human-readable message from a structured API error response,
    * prefixing the stable error code when present. Falls back to the raw body
-   * if parsing fails. Mirrors Go's `HTTPError.UserMessage()`.
+   * if parsing fails.
    */
   userMessage(): string {
     return userMessageFromBody(this.body);

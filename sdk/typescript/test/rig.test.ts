@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AmikaClient } from "@/client";
-import { AmikaError, AmikaHTTPError, AmikaWaitError } from "@/errors";
-import type { RigWaitOptions } from "@/rig";
+import { AmikaClient } from "@/index";
+import { AmikaError, AmikaHTTPError, AmikaWaitError } from "@/index";
+import type { RigWaitOptions } from "@/index";
 import { mockFetch } from "./helpers.js";
 
 const BASE = "https://api.example.com";

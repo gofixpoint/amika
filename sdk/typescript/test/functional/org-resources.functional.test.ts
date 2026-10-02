@@ -3,7 +3,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import type { AmikaClient } from "@/client";
+import type { AmikaClient } from "@/index";
 
 import { describeFunctional, makeClient } from "@test/functional/helpers";
 

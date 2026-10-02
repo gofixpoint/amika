@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { AmikaHTTPError } from "@/errors";
+import { AmikaHTTPError } from "@/index";
 
 describe("AmikaHTTPError.userMessage", () => {
   it("returns 'code: message' when both are present (new envelope)", () => {
