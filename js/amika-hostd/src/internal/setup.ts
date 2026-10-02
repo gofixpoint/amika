@@ -6,8 +6,10 @@
 import { randomBytes } from "node:crypto";
 import { hostname as osHostname } from "node:os";
 import {
+  AmikaApiError,
   registerHost as registerHostWithAmika,
   setHostSecret as setHostSecretInAmika,
+  type AmikaApiConfig,
 } from "./amika-api.js";
 import {
   ConfigError,
@@ -26,7 +28,7 @@ import {
   writePrivateFile,
   type CredentialStore,
 } from "./credentials.js";
-import type { Prompt } from "./prompt.js";
+import { PromptCancelled, type Prompt } from "./prompt.js";
 
 export interface SetupDeps {
   env: NodeJS.ProcessEnv;
@@ -42,6 +44,12 @@ export interface SetupDeps {
   generateSecretKey?: () => string;
   registerHost?: typeof registerHostWithAmika;
   setHostSecret?: typeof setHostSecretInAmika;
+  /**
+   * Call `handler` on Ctrl-C until the returned function is called; defaults
+   * to a `SIGINT` listener. Only the step that changes the secret in Amika
+   * listens, so it can be rolled back.
+   */
+  onInterrupt?: (handler: () => void) => () => void;
 }
 
 /**
@@ -150,22 +158,28 @@ export async function runSetup(
   }
 
   // Write first, so a file setup cannot write never leaves Amika holding a
-  // secret this host does not have; if Amika then refuses it, put the file
-  // back as it was.
+  // secret this host does not have.
   const write = deps.writeConfigFile ?? writePrivateFile;
   writeConfig(write, configPath, contents);
-  if (sendNewSecret && target !== undefined && apiKeyForSecret !== undefined) {
-    try {
-      await sendSecret(
-        { apiUrl: effective.apiUrl, apiKey: apiKeyForSecret },
-        written,
-        { hostname: target, secretKey },
-        deps,
-      );
-    } catch (error) {
-      if (file !== undefined) writeConfig(write, configPath, file.contents);
-      throw error;
-    }
+  if (
+    sendNewSecret &&
+    target !== undefined &&
+    apiKeyForSecret !== undefined &&
+    file !== undefined &&
+    saved.secretKey !== undefined
+  ) {
+    await rotateInAmika(
+      {
+        api: { apiUrl: effective.apiUrl, apiKey: apiKeyForSecret },
+        config: written,
+        hostname: target,
+        secretKey,
+        previous: { contents: file.contents, secretKey: saved.secretKey },
+        configPath,
+        write,
+      },
+      deps,
+    );
   }
   if (apiKey !== undefined) {
     deps.credentials.set(apiKey);
@@ -260,28 +274,114 @@ async function confirm(question: string, deps: SetupDeps): Promise<boolean> {
   }
 }
 
+/** What `rotateInAmika` changes, and what it puts back on failure. */
+interface Rotation {
+  api: { apiUrl: string; apiKey: string };
+  config: HostdConfig;
+  hostname: string;
+  secretKey: string;
+  previous: { contents: string; secretKey: string };
+  configPath: string;
+  write: (file: string, contents: string) => void;
+}
+
+/**
+ * Send the new secret, already in the file, to Amika. If that fails or the
+ * operator presses Ctrl-C, roll back: restore the file, and unless Amika
+ * plainly refused (so changed nothing), send it the old secret again, since
+ * the new one may have been applied. A second Ctrl-C stops at once.
+ */
+async function rotateInAmika(rotation: Rotation, deps: SetupDeps) {
+  const interrupted = new AbortController();
+  const stopListening = (deps.onInterrupt ?? onSigint)(() => {
+    stopListening();
+    deps.err(
+      "Interrupted; putting the old secret key back. Press Ctrl-C again to stop now.",
+    );
+    interrupted.abort();
+  });
+  try {
+    const created = await sendSecret(
+      { ...rotation.api, signal: interrupted.signal },
+      rotation.config,
+      { hostname: rotation.hostname, secretKey: rotation.secretKey },
+      deps,
+    );
+    deps.out(
+      created
+        ? `Registered host ${rotation.hostname} with ${rotation.api.apiUrl}`
+        : `Sent the new secret key for host ${rotation.hostname} to Amika.`,
+    );
+    if (interrupted.signal.aborted) {
+      deps.err(
+        "Too late to stop: the new secret key is already in the file and in Amika.",
+      );
+    }
+  } catch (error) {
+    await rollBack(rotation, error, interrupted.signal.aborted, deps);
+  } finally {
+    stopListening();
+  }
+}
+
+async function rollBack(
+  rotation: Rotation,
+  error: unknown,
+  interrupted: boolean,
+  deps: SetupDeps,
+): Promise<never> {
+  writeConfig(rotation.write, rotation.configPath, rotation.previous.contents);
+  const reason = error instanceof Error ? error.message : String(error);
+  // Only an answer from Amika turning the request down proves it changed
+  // nothing; anything else may have applied the new secret.
+  const refused =
+    !interrupted && error instanceof AmikaApiError && error.refused;
+  if (!refused) {
+    try {
+      await sendSecret(
+        rotation.api,
+        rotation.config,
+        { hostname: rotation.hostname, secretKey: rotation.previous.secretKey },
+        deps,
+      );
+    } catch (restoreError) {
+      throw new ConfigError(
+        `${interrupted ? "setup was interrupted" : reason}, and putting the old secret key back in Amika failed too (${(restoreError as Error).message}). Amika may not have the secret key in ${rotation.configPath}: run \`amika-hostd setup\` again and regenerate it.`,
+      );
+    }
+  }
+  if (interrupted) throw new PromptCancelled();
+  throw new ConfigError(
+    `${reason}; the old secret key is still in ${rotation.configPath} and Amika, so nothing changed`,
+  );
+}
+
+/**
+ * Give Amika `input.secretKey` for this hostname: registering it if new,
+ * else replacing the stored secret. Returns whether it registered the host.
+ */
 async function sendSecret(
-  api: { apiUrl: string; apiKey: string },
+  api: AmikaApiConfig,
   config: HostdConfig,
   input: { hostname: string; secretKey: string },
   deps: SetupDeps,
-) {
+): Promise<boolean> {
   const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
     api,
     { ...input, sizes: config.sizes },
   );
-  if (created) {
-    deps.out(
-      `Registered host ${host.hostname} with ${api.apiUrl} (${host.id})`,
-    );
-    return;
-  }
+  if (created) return true;
   await (deps.setHostSecret ?? setHostSecretInAmika)(
     api,
     host,
     input.secretKey,
   );
-  deps.out(`Sent the new secret key for host ${host.hostname} to Amika.`);
+  return false;
+}
+
+function onSigint(handler: () => void): () => void {
+  process.on("SIGINT", handler);
+  return () => process.off("SIGINT", handler);
 }
 
 /**

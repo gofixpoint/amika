@@ -136,9 +136,18 @@ Registration never changes a stored secret, so setup sends a regenerated one
 to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with `secret`) for the
 hostname `up` will use, the environment's if it sets one. It writes the file
 first, so a file it cannot write never leaves Amika with a secret the host
-lacks, and puts the file back if Amika refuses. A new hostname skips this,
-since `up` registers it as a new host. A secret key set in the environment is
-never regenerated: the daemon would keep using it.
+lacks. A new hostname skips this, since `up` registers it as a new host. A
+secret key set in the environment is never regenerated: the daemon would keep
+using it.
+
+If sending fails, or the operator presses Ctrl-C while it runs (setup listens
+for `SIGINT` only then, and cancels the request), setup rolls back: it
+restores the file, and unless Amika plainly refused, it sends the old secret
+again, since the new one may have been applied. `AmikaApiError.refused` marks
+a plain refusal: an error status below 500 or a refused redirect, never a
+timeout, a lost connection, a 5xx or an unreadable answer. Ctrl-C then exits
+130 with nothing changed, and a second Ctrl-C stops at once. If restoring
+Amika fails too, setup says the two may disagree and to regenerate.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing and it has a terminal; without one it fails, naming `setup`. Ctrl-C

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { AmikaApiError } from "./amika-api.js";
 import { resolveConfig, type HostdConfigFile } from "./config.js";
 import { PromptCancelled } from "./prompt.js";
 import {
@@ -34,6 +35,8 @@ function harness({
   const out: string[] = [];
   const err: string[] = [];
   const written: Record<string, string> = {};
+  /** Ctrl-C, while setup listens for it. */
+  const interrupt: { handler?: () => void } = {};
   const store = {
     description: "the test store",
     value: storedKey,
@@ -58,11 +61,20 @@ function harness({
     systemHostname: () => "Jakubs-MacBook-Pro.local",
     generateSecretKey: vi.fn(() => NEW_SECRET),
     registerHost: vi.fn(async () => ({ host: HOST, created: false })),
-    setHostSecret: vi.fn(async () => HOST),
+    setHostSecret: vi.fn(
+      async (_api: { signal?: AbortSignal }, _host: unknown, _secret: string) =>
+        HOST,
+    ),
+    onInterrupt: vi.fn((handler: () => void) => {
+      interrupt.handler = handler;
+      return () => {
+        interrupt.handler = undefined;
+      };
+    }),
   } satisfies SetupDeps;
   const config = () =>
     resolveConfig({ file: { path: PATH, contents: written[PATH] } });
-  return { deps, out, err, written, store, config };
+  return { deps, out, err, written, store, config, interrupt };
 }
 
 const CONFIGURED = `hostname = "builder"
@@ -137,15 +149,15 @@ describe("runSetup", () => {
       storedKey: "amk_old",
     });
     await runSetup(h.deps);
+    const api = expect.objectContaining({
+      apiUrl: "https://app.amika.dev",
+      apiKey: "amk_new",
+    });
     expect(h.deps.registerHost).toHaveBeenCalledWith(
-      { apiUrl: "https://app.amika.dev", apiKey: "amk_new" },
+      api,
       expect.objectContaining({ hostname: "builder", secretKey: NEW_SECRET }),
     );
-    expect(h.deps.setHostSecret).toHaveBeenCalledWith(
-      { apiUrl: "https://app.amika.dev", apiKey: "amk_new" },
-      HOST,
-      NEW_SECRET,
-    );
+    expect(h.deps.setHostSecret).toHaveBeenCalledWith(api, HOST, NEW_SECRET);
     expect(h.deps.writeConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
       h.deps.setHostSecret.mock.invocationCallOrder[0],
     );
@@ -153,15 +165,97 @@ describe("runSetup", () => {
     expect(h.store.value).toBe("amk_new");
   });
 
-  it("restores the file when Amika refuses the new secret", async () => {
-    const h = harness({
-      answers: ["", "y", ""],
-      file: CONFIGURED,
-      storedKey: "k",
-    });
-    h.deps.setHostSecret.mockRejectedValueOnce(new Error("HTTP 500"));
-    await expect(runSetup(h.deps)).rejects.toThrow("HTTP 500");
+  /** A rerun that regenerates the secret of the registered host `builder`. */
+  const rotating = () =>
+    harness({ answers: ["", "y", ""], file: CONFIGURED, storedKey: "k" });
+  const secretsSent = (h: ReturnType<typeof harness>) =>
+    h.deps.setHostSecret.mock.calls.map(([, , secret]) => secret);
+
+  it("restores only the file when Amika refuses the new secret", async () => {
+    const h = rotating();
+    h.deps.setHostSecret.mockRejectedValueOnce(
+      new AmikaApiError("failed to update the host's secret key (HTTP 404)", {
+        refused: true,
+      }),
+    );
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      `failed to update the host's secret key (HTTP 404); the old secret key is still in ${PATH} and Amika, so nothing changed`,
+    );
     expect(h.written[PATH]).toBe(CONFIGURED);
+    // Amika answered no, so it still has the old secret; nothing to undo.
+    expect(secretsSent(h)).toEqual([NEW_SECRET]);
+    expect(h.store.set).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a timeout", new AmikaApiError("cannot reach Amika: timed out")],
+    ["a 502", new AmikaApiError("failed (HTTP 502)", { refused: false })],
+    ["an unexpected error", new Error("boom")],
+  ])(
+    "after %s, which may have applied it, puts the old secret back in Amika too",
+    async (_name, failure) => {
+      const h = rotating();
+      h.deps.setHostSecret.mockRejectedValueOnce(failure);
+      await expect(runSetup(h.deps)).rejects.toThrow(/so nothing changed$/);
+      expect(h.written[PATH]).toBe(CONFIGURED);
+      expect(secretsSent(h)).toEqual([NEW_SECRET, OLD_SECRET]);
+    },
+  );
+
+  it("says how to recover when putting the old secret back fails", async () => {
+    const h = rotating();
+    h.deps.setHostSecret
+      .mockRejectedValueOnce(new AmikaApiError("cannot reach Amika: timed out"))
+      .mockRejectedValueOnce(
+        new AmikaApiError("cannot reach Amika: timed out"),
+      );
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      /putting the old secret key back in Amika failed too .* run `amika-hostd setup` again and regenerate it/,
+    );
+    expect(h.written[PATH]).toBe(CONFIGURED);
+  });
+
+  it("rolls back both sides on Ctrl-C while Amika is being updated", async () => {
+    const h = rotating();
+    // The request hangs until Ctrl-C cancels it.
+    h.deps.setHostSecret.mockImplementationOnce(
+      (api) =>
+        new Promise((_, reject) => {
+          api.signal?.addEventListener("abort", () =>
+            reject(new AmikaApiError("cannot reach Amika: aborted")),
+          );
+          h.interrupt.handler?.();
+        }),
+    );
+    await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
+    expect(h.written[PATH]).toBe(CONFIGURED);
+    expect(secretsSent(h)).toEqual([NEW_SECRET, OLD_SECRET]);
+    expect(h.err).toContain(
+      "Interrupted; putting the old secret key back. Press Ctrl-C again to stop now.",
+    );
+    // A second Ctrl-C is not caught, so it stops setup at once.
+    expect(h.interrupt.handler).toBeUndefined();
+    expect(h.store.set).not.toHaveBeenCalled();
+  });
+
+  it("keeps a change Ctrl-C arrived too late to stop", async () => {
+    const h = rotating();
+    h.deps.setHostSecret.mockImplementationOnce(async () => {
+      h.interrupt.handler?.();
+      return HOST;
+    });
+    await runSetup(h.deps);
+    expect(h.config().secretKey).toBe(NEW_SECRET);
+    expect(h.err).toContain(
+      "Too late to stop: the new secret key is already in the file and in Amika.",
+    );
+  });
+
+  it("listens for Ctrl-C only while Amika is being updated", async () => {
+    const h = rotating();
+    await runSetup(h.deps);
+    expect(h.deps.onInterrupt).toHaveBeenCalledTimes(1);
+    expect(h.interrupt.handler).toBeUndefined();
   });
 
   it("never sends a new secret it could not write", async () => {
