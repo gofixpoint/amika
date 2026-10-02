@@ -44,6 +44,9 @@ function harness({
     set: vi.fn((value: string) => {
       store.value = value;
     }),
+    remove: vi.fn(() => {
+      store.value = undefined;
+    }),
   };
   const deps = {
     env: { XDG_CONFIG_HOME: "/config", ...env },
@@ -171,20 +174,25 @@ describe("runSetup", () => {
   const secretsSent = (h: ReturnType<typeof harness>) =>
     h.deps.setHostSecret.mock.calls.map(([, , secret]) => secret);
 
-  it("restores only the file when Amika refuses the new secret", async () => {
-    const h = rotating();
+  it("restores the file and key, not Amika, when Amika refuses the new secret", async () => {
+    const h = harness({
+      answers: ["", "y", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
     h.deps.setHostSecret.mockRejectedValueOnce(
       new AmikaApiError("failed to update the host's secret key (HTTP 404)", {
         refused: true,
       }),
     );
     await expect(runSetup(h.deps)).rejects.toThrow(
-      `failed to update the host's secret key (HTTP 404); the old secret key is still in ${PATH} and Amika, so nothing changed`,
+      "failed to update the host's secret key (HTTP 404); setup changed nothing",
     );
     expect(h.written[PATH]).toBe(CONFIGURED);
+    expect(h.store.value).toBe("amk_old");
     // Amika answered no, so it still has the old secret; nothing to undo.
     expect(secretsSent(h)).toEqual([NEW_SECRET]);
-    expect(h.store.set).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -196,13 +204,13 @@ describe("runSetup", () => {
     async (_name, failure) => {
       const h = rotating();
       h.deps.setHostSecret.mockRejectedValueOnce(failure);
-      await expect(runSetup(h.deps)).rejects.toThrow(/so nothing changed$/);
+      await expect(runSetup(h.deps)).rejects.toThrow(/setup changed nothing$/);
       expect(h.written[PATH]).toBe(CONFIGURED);
       expect(secretsSent(h)).toEqual([NEW_SECRET, OLD_SECRET]);
     },
   );
 
-  it("says how to recover when putting the old secret back fails", async () => {
+  it("says what may be left changed when undoing fails", async () => {
     const h = rotating();
     h.deps.setHostSecret
       .mockRejectedValueOnce(new AmikaApiError("cannot reach Amika: timed out"))
@@ -210,13 +218,18 @@ describe("runSetup", () => {
         new AmikaApiError("cannot reach Amika: timed out"),
       );
     await expect(runSetup(h.deps)).rejects.toThrow(
-      /putting the old secret key back in Amika failed too .* run `amika-hostd setup` again and regenerate it/,
+      /undoing setup's changes failed: Amika may not have the secret key in .*: run `amika-hostd setup` again and regenerate it/,
     );
     expect(h.written[PATH]).toBe(CONFIGURED);
   });
 
-  it("rolls back both sides on Ctrl-C while Amika is being updated", async () => {
-    const h = rotating();
+  it("rolls back everything on Ctrl-C while Amika is being updated", async () => {
+    const h = harness({
+      answers: ["", "y", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
     // The request hangs until Ctrl-C cancels it.
     h.deps.setHostSecret.mockImplementationOnce(
       (api) =>
@@ -229,29 +242,78 @@ describe("runSetup", () => {
     );
     await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
     expect(h.written[PATH]).toBe(CONFIGURED);
+    expect(h.store.value).toBe("amk_old");
     expect(secretsSent(h)).toEqual([NEW_SECRET, OLD_SECRET]);
     expect(h.err).toContain(
-      "Interrupted; putting the old secret key back. Press Ctrl-C again to stop now.",
+      "Interrupted; undoing setup's changes. Press Ctrl-C again to stop now.",
     );
     // A second Ctrl-C is not caught, so it stops setup at once.
     expect(h.interrupt.handler).toBeUndefined();
-    expect(h.store.set).not.toHaveBeenCalled();
   });
 
-  it("keeps a change Ctrl-C arrived too late to stop", async () => {
+  it("rolls back on Ctrl-C while the API key is being stored", async () => {
+    const h = harness({
+      answers: ["", "y", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
+    // A keychain command blocks (e.g. on an unlock prompt) and Ctrl-C lands.
+    h.store.set.mockImplementationOnce((value: string) => {
+      h.store.value = value;
+      h.interrupt.handler?.();
+    });
+    await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
+    expect(h.store.value).toBe("amk_old");
+    expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("undoes even a change Amika already confirmed when Ctrl-C follows it", async () => {
     const h = rotating();
     h.deps.setHostSecret.mockImplementationOnce(async () => {
       h.interrupt.handler?.();
       return HOST;
     });
-    await runSetup(h.deps);
-    expect(h.config().secretKey).toBe(NEW_SECRET);
-    expect(h.err).toContain(
-      "Too late to stop: the new secret key is already in the file and in Amika.",
-    );
+    await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
+    expect(h.written[PATH]).toBe(CONFIGURED);
+    expect(secretsSent(h)).toEqual([NEW_SECRET, OLD_SECRET]);
   });
 
-  it("listens for Ctrl-C only while Amika is being updated", async () => {
+  it("removes a key it stored when there was none before", async () => {
+    const h = harness({
+      answers: [""],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+    });
+    h.deps.writeConfigFile.mockImplementationOnce(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      `Cannot write ${PATH}: EACCES; setup changed nothing`,
+    );
+    expect(h.store.remove).toHaveBeenCalled();
+    expect(h.store.value).toBeUndefined();
+  });
+
+  it("deletes a config file it created when undoing", async () => {
+    // A first run: no config file, and no stored key.
+    const h = harness({ answers: [""], secrets: ["amk_new"] });
+    const removeConfigFile = vi.fn();
+    h.deps.writeConfigFile.mockImplementationOnce(
+      (file: string, contents: string) => {
+        h.written[file] = contents;
+        h.interrupt.handler?.();
+      },
+    );
+    await expect(
+      runSetup({ ...h.deps, removeConfigFile }),
+    ).rejects.toBeInstanceOf(PromptCancelled);
+    expect(removeConfigFile).toHaveBeenCalledWith(PATH);
+    expect(h.store.value).toBeUndefined();
+  });
+
+  it("listens for Ctrl-C only while setup applies its changes", async () => {
     const h = rotating();
     await runSetup(h.deps);
     expect(h.deps.onInterrupt).toHaveBeenCalledTimes(1);

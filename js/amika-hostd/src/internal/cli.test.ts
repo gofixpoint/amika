@@ -41,6 +41,9 @@ function memoryStore(value?: string) {
     set: vi.fn((next: string) => {
       store.value = next;
     }),
+    remove: vi.fn(() => {
+      store.value = undefined;
+    }),
   };
   return store;
 }

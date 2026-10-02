@@ -4,6 +4,7 @@
  * config. Running it again offers to change each one.
  */
 import { randomBytes } from "node:crypto";
+import { rmSync } from "node:fs";
 import { hostname as osHostname } from "node:os";
 import {
   AmikaApiError,
@@ -40,6 +41,8 @@ export interface SetupDeps {
   credentials: CredentialStore;
   loadConfigFile?: typeof loadConfigFileFromDisk;
   writeConfigFile?: (file: string, contents: string) => void;
+  /** Deletes a config file setup created, when undoing; defaults to `rm -f`. */
+  removeConfigFile?: (file: string) => void;
   systemHostname?: () => string;
   generateSecretKey?: () => string;
   registerHost?: typeof registerHostWithAmika;
@@ -157,34 +160,26 @@ export async function runSetup(
     );
   }
 
-  // Write first, so a file setup cannot write never leaves Amika holding a
-  // secret this host does not have.
-  const write = deps.writeConfigFile ?? writePrivateFile;
-  writeConfig(write, configPath, contents);
-  if (
-    sendNewSecret &&
-    target !== undefined &&
-    apiKeyForSecret !== undefined &&
-    file !== undefined &&
-    saved.secretKey !== undefined
-  ) {
-    await rotateInAmika(
-      {
-        api: { apiUrl: effective.apiUrl, apiKey: apiKeyForSecret },
-        config: written,
-        hostname: target,
-        secretKey,
-        previous: { contents: file.contents, secretKey: saved.secretKey },
-        configPath,
-        write,
-      },
-      deps,
-    );
-  }
-  if (apiKey !== undefined) {
-    deps.credentials.set(apiKey);
-    deps.out(`Stored the API key in ${deps.credentials.description}.`);
-  }
+  await applyChanges(
+    {
+      apiKey,
+      config: { path: configPath, contents, previous: file?.contents },
+      rotation:
+        sendNewSecret &&
+        target !== undefined &&
+        apiKeyForSecret !== undefined &&
+        saved.secretKey !== undefined
+          ? {
+              api: { apiUrl: effective.apiUrl, apiKey: apiKeyForSecret },
+              config: written,
+              hostname: target,
+              secretKey,
+              previousSecretKey: saved.secretKey,
+            }
+          : undefined,
+    },
+    deps,
+  );
 
   deps.out("");
   deps.out(`Wrote ${configPath}:`);
@@ -274,86 +269,155 @@ async function confirm(question: string, deps: SetupDeps): Promise<boolean> {
   }
 }
 
-/** What `rotateInAmika` changes, and what it puts back on failure. */
-interface Rotation {
-  api: { apiUrl: string; apiKey: string };
-  config: HostdConfig;
-  hostname: string;
-  secretKey: string;
-  previous: { contents: string; secretKey: string };
-  configPath: string;
-  write: (file: string, contents: string) => void;
+/** Everything setup changes, applied by `applyChanges`. */
+interface Changes {
+  /** A new API key to store, if the operator gave one. */
+  apiKey?: string;
+  config: { path: string; contents: string; previous?: string };
+  /** A regenerated secret Amika must get, and the one it replaces. */
+  rotation?: {
+    api: { apiUrl: string; apiKey: string };
+    config: HostdConfig;
+    hostname: string;
+    secretKey: string;
+    previousSecretKey: string;
+  };
 }
 
+/** One applied change and how to put it back. */
+interface Undo {
+  /** What may be left changed if undoing fails, for the error message. */
+  failure: string;
+  run: () => void | Promise<void>;
+}
+
+class Interrupted extends Error {}
+
 /**
- * Send the new secret, already in the file, to Amika. If that fails or the
- * operator presses Ctrl-C, roll back: restore the file, and unless Amika
- * plainly refused (so changed nothing), send it the old secret again, since
- * the new one may have been applied. A second Ctrl-C stops at once.
+ * Store the API key, write the config, then send a regenerated secret to
+ * Amika, as one change: on any failure, or Ctrl-C at any point, undo the
+ * steps already taken in reverse, so nothing is left half done. Amika gets
+ * the old secret back unless it plainly refused the new one, since anything
+ * else may have applied it. The key goes first and Amika last, so the step
+ * likeliest to fail locally needs no remote undo. A second Ctrl-C stops at
+ * once.
  */
-async function rotateInAmika(rotation: Rotation, deps: SetupDeps) {
+async function applyChanges(changes: Changes, deps: SetupDeps) {
   const interrupted = new AbortController();
   const stopListening = (deps.onInterrupt ?? onSigint)(() => {
     stopListening();
     deps.err(
-      "Interrupted; putting the old secret key back. Press Ctrl-C again to stop now.",
+      "Interrupted; undoing setup's changes. Press Ctrl-C again to stop now.",
     );
     interrupted.abort();
   });
+  // A synchronous step (a keychain command, a file write) cannot be stopped
+  // part way, so Ctrl-C during one is acted on as soon as it returns.
+  const checkpoint = () => {
+    if (interrupted.signal.aborted) throw new Interrupted();
+  };
+  // Each undo is registered before its step runs, so a step that fails part
+  // way (the keychain fallback, say) is still put back.
+  const undo: Undo[] = [];
   try {
-    const created = await sendSecret(
-      { ...rotation.api, signal: interrupted.signal },
-      rotation.config,
-      { hostname: rotation.hostname, secretKey: rotation.secretKey },
-      deps,
-    );
-    deps.out(
-      created
-        ? `Registered host ${rotation.hostname} with ${rotation.api.apiUrl}`
-        : `Sent the new secret key for host ${rotation.hostname} to Amika.`,
-    );
-    if (interrupted.signal.aborted) {
-      deps.err(
-        "Too late to stop: the new secret key is already in the file and in Amika.",
+    if (changes.apiKey !== undefined) {
+      const previous = deps.credentials.get();
+      undo.push({
+        failure: `the new API key may still be in ${deps.credentials.description}`,
+        run: () =>
+          previous === undefined
+            ? deps.credentials.remove()
+            : deps.credentials.set(previous),
+      });
+      deps.credentials.set(changes.apiKey);
+      checkpoint();
+    }
+
+    const { config } = changes;
+    const write = deps.writeConfigFile ?? writePrivateFile;
+    undo.push({
+      failure: `${config.path} may still have the new settings`,
+      run: () =>
+        config.previous === undefined
+          ? (deps.removeConfigFile ?? removeFile)(config.path)
+          : writeConfig(write, config.path, config.previous),
+    });
+    writeConfig(write, config.path, config.contents);
+    checkpoint();
+
+    const { rotation } = changes;
+    if (rotation !== undefined) {
+      const restoreAmika: Undo = {
+        failure: `Amika may not have the secret key in ${config.path}: run \`amika-hostd setup\` again and regenerate it`,
+        run: async () => {
+          await sendSecret(
+            rotation.api,
+            rotation.config,
+            {
+              hostname: rotation.hostname,
+              secretKey: rotation.previousSecretKey,
+            },
+            deps,
+          );
+        },
+      };
+      let created: boolean;
+      try {
+        created = await sendSecret(
+          { ...rotation.api, signal: interrupted.signal },
+          rotation.config,
+          { hostname: rotation.hostname, secretKey: rotation.secretKey },
+          deps,
+        );
+      } catch (error) {
+        // Only Amika answering no proves it kept the old secret.
+        const refused =
+          !interrupted.signal.aborted &&
+          error instanceof AmikaApiError &&
+          error.refused;
+        if (!refused) undo.push(restoreAmika);
+        throw error;
+      }
+      undo.push(restoreAmika);
+      checkpoint();
+      deps.out(
+        created
+          ? `Registered host ${rotation.hostname} with ${rotation.api.apiUrl}`
+          : `Sent the new secret key for host ${rotation.hostname} to Amika.`,
       );
     }
   } catch (error) {
-    await rollBack(rotation, error, interrupted.signal.aborted, deps);
+    const wasInterrupted = interrupted.signal.aborted;
+    const reason = wasInterrupted
+      ? "setup was interrupted"
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    const failures: string[] = [];
+    for (const step of undo.reverse()) {
+      try {
+        await step.run();
+      } catch (undoError) {
+        failures.push(`${step.failure} (${(undoError as Error).message})`);
+      }
+    }
+    if (failures.length > 0) {
+      throw new ConfigError(
+        `${reason}, and undoing setup's changes failed: ${failures.join("; ")}`,
+      );
+    }
+    if (wasInterrupted) throw new PromptCancelled();
+    throw new ConfigError(`${reason}; setup changed nothing`);
   } finally {
     stopListening();
   }
+  if (changes.apiKey !== undefined) {
+    deps.out(`Stored the API key in ${deps.credentials.description}.`);
+  }
 }
 
-async function rollBack(
-  rotation: Rotation,
-  error: unknown,
-  interrupted: boolean,
-  deps: SetupDeps,
-): Promise<never> {
-  writeConfig(rotation.write, rotation.configPath, rotation.previous.contents);
-  const reason = error instanceof Error ? error.message : String(error);
-  // Only an answer from Amika turning the request down proves it changed
-  // nothing; anything else may have applied the new secret.
-  const refused =
-    !interrupted && error instanceof AmikaApiError && error.refused;
-  if (!refused) {
-    try {
-      await sendSecret(
-        rotation.api,
-        rotation.config,
-        { hostname: rotation.hostname, secretKey: rotation.previous.secretKey },
-        deps,
-      );
-    } catch (restoreError) {
-      throw new ConfigError(
-        `${interrupted ? "setup was interrupted" : reason}, and putting the old secret key back in Amika failed too (${(restoreError as Error).message}). Amika may not have the secret key in ${rotation.configPath}: run \`amika-hostd setup\` again and regenerate it.`,
-      );
-    }
-  }
-  if (interrupted) throw new PromptCancelled();
-  throw new ConfigError(
-    `${reason}; the old secret key is still in ${rotation.configPath} and Amika, so nothing changed`,
-  );
+function removeFile(file: string) {
+  rmSync(file, { force: true });
 }
 
 /**

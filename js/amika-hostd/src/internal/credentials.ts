@@ -20,6 +20,8 @@ export interface CredentialStore {
   readonly description: string;
   get(): string | undefined;
   set(value: string): void;
+  /** Delete the stored key; throws `ConfigError` if it is still readable. */
+  remove(): void;
 }
 
 /** The result of running a program, as `spawnSync` reports it. */
@@ -74,7 +76,18 @@ export function apiKeyStore(
 ): CredentialStore {
   const file = fileStore(apiKeyFilePath(env), deps);
   const keychain = systemKeychain(env, deps);
-  if (keychain === undefined) return file;
+  if (keychain === undefined) {
+    return {
+      description: file.description,
+      get: file.get,
+      set: file.set,
+      remove() {
+        if (!file.remove()) {
+          throw new ConfigError(`Cannot remove the API key in ${file.path}`);
+        }
+      },
+    };
+  }
   let description = keychain.description;
   return {
     get description() {
@@ -95,10 +108,20 @@ export function apiKeyStore(
         description = file.description;
         return;
       }
-      // A key left in the file would only resurface if the keychain did not
-      // answer, so remove it rather than keep a stale copy on disk.
-      file.remove();
+      // A key left in the file is read wherever the keychain is not (an SSH
+      // session without the Secret Service, say), so remove it, or else
+      // overwrite it with the new key rather than leave the old one there.
+      if (!file.remove()) file.set(value);
       description = keychain.description;
+    },
+    remove() {
+      keychain.remove();
+      const fileRemoved = file.remove();
+      if (keychain.get() !== undefined || !fileRemoved) {
+        throw new ConfigError(
+          `Cannot remove the API key from ${keychain.description} or ${file.path}`,
+        );
+      }
     },
   };
 }
@@ -199,6 +222,7 @@ function fileStore(file: string, deps: CredentialDeps) {
   const removeFile =
     deps.removeFile ?? ((name) => rmSync(name, { force: true }));
   return {
+    path: file,
     description: `${file} (readable only by you)`,
     get(): string | undefined {
       try {
@@ -215,11 +239,13 @@ function fileStore(file: string, deps: CredentialDeps) {
         throw new ConfigError(`Cannot write ${file}: ${errorCode(error)}`);
       }
     },
-    remove() {
+    /** Delete the file; false if it may still be there. */
+    remove(): boolean {
       try {
         removeFile(file);
+        return true;
       } catch {
-        // Best effort: the keychain copy is read first either way.
+        return false;
       }
     },
   };

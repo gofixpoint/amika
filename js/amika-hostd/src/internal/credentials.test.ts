@@ -159,6 +159,77 @@ describe("apiKeyStore when the keychain refuses a new key", () => {
   });
 });
 
+describe("apiKeyStore keeping the fallback file in step", () => {
+  it("overwrites a fallback key it cannot delete after a keychain write", () => {
+    const fs = files({ [FILE]: "amk_old\n" });
+    fs.removeFile.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    const fake = keychain();
+    const store = apiKeyStore(ENV, {
+      platform: "darwin",
+      ...fs,
+      run: fake.run,
+    });
+    store.set("amk_new");
+    expect(fake.stored()).toBe("amk_new");
+    // A session without the keychain reads the file, so it must not be stale.
+    expect(fs.contents[FILE]).toBe("amk_new\n");
+  });
+
+  it("fails if a fallback key it can neither delete nor overwrite remains", () => {
+    const fs = files({ [FILE]: "amk_old\n" });
+    fs.removeFile.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    fs.writeFile.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    const store = apiKeyStore(ENV, {
+      platform: "darwin",
+      ...fs,
+      run: keychain().run,
+    });
+    expect(() => store.set("amk_new")).toThrow(`Cannot write ${FILE}: EACCES`);
+  });
+});
+
+describe("apiKeyStore.remove", () => {
+  it("deletes the key from the keychain and the file", () => {
+    const fs = files({ [FILE]: "amk_old\n" });
+    const fake = keychain({ initial: "amk_old" });
+    const store = apiKeyStore(ENV, {
+      platform: "darwin",
+      ...fs,
+      run: fake.run,
+    });
+    store.remove();
+    expect(fake.stored()).toBeUndefined();
+    expect(store.get()).toBeUndefined();
+  });
+
+  it("fails if the keychain still has the key", () => {
+    const fake = keychain({ initial: "amk_old", undeletable: true });
+    const store = apiKeyStore(ENV, {
+      platform: "darwin",
+      ...files(),
+      run: fake.run,
+    });
+    expect(() => store.remove()).toThrow(/Cannot remove the API key/);
+  });
+
+  it("fails without a keychain if the file cannot be deleted", () => {
+    const fs = files({ [FILE]: "amk_old\n" });
+    fs.removeFile.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    const store = apiKeyStore(ENV, { platform: "linux", ...fs, run: vi.fn() });
+    expect(() => store.remove()).toThrow(
+      `Cannot remove the API key in ${FILE}`,
+    );
+  });
+});
+
 describe("isValidApiKey", () => {
   it.each(["amk_live_abc123", "a.b-c~d"])("accepts %j", (key) => {
     expect(isValidApiKey(key)).toBe(true);

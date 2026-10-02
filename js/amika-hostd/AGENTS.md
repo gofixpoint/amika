@@ -140,14 +140,18 @@ lacks. A new hostname skips this, since `up` registers it as a new host. A
 secret key set in the environment is never regenerated: the daemon would keep
 using it.
 
-If sending fails, or the operator presses Ctrl-C while it runs (setup listens
-for `SIGINT` only then, and cancels the request), setup rolls back: it
-restores the file, and unless Amika plainly refused, it sends the old secret
-again, since the new one may have been applied. `AmikaApiError.refused` marks
-a plain refusal: an error status below 500 or a refused redirect, never a
-timeout, a lost connection, a 5xx or an unreadable answer. Ctrl-C then exits
-130 with nothing changed, and a second Ctrl-C stops at once. If restoring
-Amika fails too, setup says the two may disagree and to regenerate.
+Setup applies its changes as one step, in order: store the API key, write
+the file, send a regenerated secret to Amika. It listens for `SIGINT` from
+the first change to the last, and cancels the Amika request. On any failure,
+or Ctrl-C at any point in that step (acted on as soon as a synchronous
+keychain command or file write returns), it undoes what it has done in
+reverse: Amika gets the old secret again unless it plainly refused the new
+one, the file is restored (or deleted, if setup created it), and the previous
+API key is put back (or removed). `AmikaApiError.refused` marks a plain
+refusal: an error status below 500 or a refused redirect, never a timeout, a
+lost connection, a 5xx or an unreadable answer. Ctrl-C then exits 130 with
+nothing changed, and a second Ctrl-C stops at once. If an undo fails too,
+setup names what may be left changed.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing and it has a terminal; without one it fails, naming `setup`. Ctrl-C
@@ -169,7 +173,9 @@ during setup exits 130 and changes nothing.
 
 Reads try the keychain first, then the file. So when the keychain refuses a
 new key, the old one is deleted from it before the file is written, and
-setup fails if it cannot be. The background daemon never
+setup fails if it cannot be. When the keychain takes the key, the file is
+deleted, or overwritten with the new key if it cannot be, since a session
+without the keychain reads it. The background daemon never
 reads the API key, from either.
 
 The secret key stays in `config.toml` (mode `0600`) rather than a keychain:
