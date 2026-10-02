@@ -2,7 +2,8 @@
 #
 # Settings here can be overridden by environment variables and flags. Keep this
 # file readable only by you (chmod 600): it holds the secret key. The Amika API
-# key can't go here; export AMIKA_HOSTD_API_KEY instead.
+# key can't go here: `amika-hostd setup` stores it in your keychain (or a file
+# only you can read), and an exported AMIKA_HOSTD_API_KEY overrides it.
 
 # This host's name in your Amika organization. Changing it registers a new host.
 # Lowercase letters, digits, hyphens, and dots.
