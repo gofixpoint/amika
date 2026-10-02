@@ -143,15 +143,24 @@ using it.
 Setup applies its changes as one step, in order: store the API key, write
 the file, send a regenerated secret to Amika. It listens for `SIGINT` from
 the first change to the last, and cancels the Amika request. On any failure,
-or Ctrl-C at any point in that step (acted on as soon as a synchronous
-keychain command or file write returns), it undoes what it has done in
+or Ctrl-C at any point in that step, it undoes what it has done in
 reverse: Amika gets the old secret again unless it plainly refused the new
 one, the file is restored (or deleted, if setup created it), and the previous
 API key is put back (or removed). `AmikaApiError.refused` marks a plain
 refusal: an error status below 500 or a refused redirect, never a timeout, a
-lost connection, a 5xx or an unreadable answer. Ctrl-C then exits 130 with
+lost connection, a 5xx, a 2xx other than the expected one, or an unreadable
+answer. Ctrl-C then exits 130 with
 nothing changed, and a second Ctrl-C stops at once. If an undo fails too,
-setup names what may be left changed.
+setup names what may be left changed; if Amika cannot be given the old secret
+back, the file keeps the new one, the likelier match after an unanswered
+request.
+
+Node runs a `SIGINT` listener only between turns of the event loop, never
+during a synchronous step such as a keychain command or a file write, so
+setup yields (`setImmediate`) after each step before checking for Ctrl-C.
+Ctrl-C also reaches the keychain program, which is in the same process
+group; a keychain command killed by `SIGINT` raises `KeychainInterrupted`
+rather than counting as a refusal to fall back to the file from.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing and it has a terminal; without one it fails, naming `setup`. Ctrl-C
@@ -173,7 +182,9 @@ during setup exits 130 and changes nothing.
 
 Reads try the keychain first, then the file. So when the keychain refuses a
 new key, the old one is deleted from it before the file is written, and
-setup fails if it cannot be. When the keychain takes the key, the file is
+setup fails unless the keychain then reports the key as not found (`security`
+exit 44, a silent `secret-tool` exit 1). A locked or unreachable keychain
+cannot be checked, so it never counts as empty. When the keychain takes the key, the file is
 deleted, or overwritten with the new key if it cannot be, since a session
 without the keychain reads it. The background daemon never
 reads the API key, from either.

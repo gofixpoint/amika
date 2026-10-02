@@ -25,6 +25,7 @@ import {
   type HostSize,
 } from "./config.js";
 import {
+  KeychainInterrupted,
   isValidApiKey,
   writePrivateFile,
   type CredentialStore,
@@ -312,10 +313,15 @@ async function applyChanges(changes: Changes, deps: SetupDeps) {
     interrupted.abort();
   });
   // A synchronous step (a keychain command, a file write) cannot be stopped
-  // part way, so Ctrl-C during one is acted on as soon as it returns.
-  const checkpoint = () => {
+  // part way, and Node runs the SIGINT listener only once the event loop
+  // gets a turn, so yield after each step before checking.
+  const checkpoint = async () => {
+    await nextTurn();
     if (interrupted.signal.aborted) throw new Interrupted();
   };
+  // Set if Amika could not be given the old secret back, so it may hold the
+  // new one: the file then keeps the new one too, the likelier match.
+  let amikaMayHaveNewSecret = false;
   // Each undo is registered before its step runs, so a step that fails part
   // way (the keychain fallback, say) is still put back.
   const undo: Undo[] = [];
@@ -330,35 +336,44 @@ async function applyChanges(changes: Changes, deps: SetupDeps) {
             : deps.credentials.set(previous),
       });
       deps.credentials.set(changes.apiKey);
-      checkpoint();
+      await checkpoint();
     }
 
     const { config } = changes;
     const write = deps.writeConfigFile ?? writePrivateFile;
     undo.push({
       failure: `${config.path} may still have the new settings`,
-      run: () =>
-        config.previous === undefined
-          ? (deps.removeConfigFile ?? removeFile)(config.path)
-          : writeConfig(write, config.path, config.previous),
+      run: () => {
+        if (amikaMayHaveNewSecret) return;
+        if (config.previous === undefined) {
+          (deps.removeConfigFile ?? removeFile)(config.path);
+        } else {
+          writeConfig(write, config.path, config.previous);
+        }
+      },
     });
     writeConfig(write, config.path, config.contents);
-    checkpoint();
+    await checkpoint();
 
     const { rotation } = changes;
     if (rotation !== undefined) {
       const restoreAmika: Undo = {
-        failure: `Amika may not have the secret key in ${config.path}: run \`amika-hostd setup\` again and regenerate it`,
+        failure: `Amika may have the new secret key, so ${config.path} keeps it; if Amika's requests to this host fail, run \`amika-hostd setup\` again and regenerate it`,
         run: async () => {
-          await sendSecret(
-            rotation.api,
-            rotation.config,
-            {
-              hostname: rotation.hostname,
-              secretKey: rotation.previousSecretKey,
-            },
-            deps,
-          );
+          try {
+            await sendSecret(
+              rotation.api,
+              rotation.config,
+              {
+                hostname: rotation.hostname,
+                secretKey: rotation.previousSecretKey,
+              },
+              deps,
+            );
+          } catch (error) {
+            amikaMayHaveNewSecret = true;
+            throw error;
+          }
         },
       };
       let created: boolean;
@@ -379,7 +394,7 @@ async function applyChanges(changes: Changes, deps: SetupDeps) {
         throw error;
       }
       undo.push(restoreAmika);
-      checkpoint();
+      await checkpoint();
       deps.out(
         created
           ? `Registered host ${rotation.hostname} with ${rotation.api.apiUrl}`
@@ -387,7 +402,10 @@ async function applyChanges(changes: Changes, deps: SetupDeps) {
       );
     }
   } catch (error) {
-    const wasInterrupted = interrupted.signal.aborted;
+    // Let a Ctrl-C that killed a keychain command reach the listener first.
+    await nextTurn();
+    const wasInterrupted =
+      interrupted.signal.aborted || error instanceof KeychainInterrupted;
     const reason = wasInterrupted
       ? "setup was interrupted"
       : error instanceof Error
@@ -414,6 +432,10 @@ async function applyChanges(changes: Changes, deps: SetupDeps) {
   if (changes.apiKey !== undefined) {
     deps.out(`Stored the API key in ${deps.credentials.description}.`);
   }
+}
+
+function nextTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function removeFile(file: string) {
@@ -503,11 +525,13 @@ export function renderConfig(
     const line = `${key} = ${JSON.stringify(value)}`;
     const top = lines.slice(0, topEnd);
     // A live line, else the commented-out one the example documents.
-    const live = top.findIndex((l) => new RegExp(`^\\s*${key}\\s*=`).test(l));
+    // The key bare or quoted (`"hostname" = ...`), as TOML allows.
+    const name = `(${key}|"${key}"|'${key}')`;
+    const live = top.findIndex((l) => new RegExp(`^\\s*${name}\\s*=`).test(l));
     const at =
       live !== -1
         ? live
-        : top.findIndex((l) => new RegExp(`^#\\s*${key}\\s*=`).test(l));
+        : top.findIndex((l) => new RegExp(`^#\\s*${name}\\s*=`).test(l));
     if (at === -1) missing.push(line);
     else lines[at] = line;
   }
@@ -561,8 +585,9 @@ function renderPresetImages(images: Record<string, string>): string[] {
  * in place.
  */
 function withoutInvalidSecret(file: HostdConfigFile): HostdConfigFile {
-  const line = /^\s*secret_key\s*=\s*"([^"]*)"\s*(#.*)?$/m;
-  const value = line.exec(file.contents)?.[1];
+  const line =
+    /^\s*(?:secret_key|"secret_key"|'secret_key')\s*=\s*(["'])(.*?)\1\s*(#.*)?$/m;
+  const value = line.exec(file.contents)?.[2];
   if (value === undefined || isValidSecretKey(value)) return file;
   return { ...file, contents: file.contents.replace(line, "") };
 }

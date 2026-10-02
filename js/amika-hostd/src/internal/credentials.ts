@@ -5,6 +5,7 @@
  * never needs it.
  */
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   mkdirSync,
   readFileSync,
@@ -28,7 +29,19 @@ export interface CredentialStore {
 export interface RunResult {
   status: number | null;
   stdout: string;
+  stderr?: string;
+  /** The signal that killed it, e.g. `SIGINT` from the operator's Ctrl-C. */
+  signal?: NodeJS.Signals | null;
   error?: Error;
+}
+
+/**
+ * A keychain command was killed by Ctrl-C. The terminal sends it to the
+ * whole foreground process group, so it reaches the keychain program too;
+ * this is reported rather than read as a failure to fall back from.
+ */
+export class KeychainInterrupted extends ConfigError {
+  override name = "KeychainInterrupted";
 }
 
 export type Runner = (
@@ -89,21 +102,26 @@ export function apiKeyStore(
     };
   }
   let description = keychain.description;
+  // Reads try the keychain first, so a key it may still hold would shadow
+  // one in the file. Only "not there" proves it does not; a locked keychain
+  // (say, over SSH to a Mac) can neither be changed nor checked.
+  const ensureGone = (message: string) => {
+    keychain.remove();
+    if (keychain.lookup().state !== "absent") throw new ConfigError(message);
+  };
   return {
     get description() {
       return description;
     },
-    get: () => keychain.get() ?? file.get(),
+    get() {
+      const found = keychain.lookup();
+      return found.state === "found" ? found.value : file.get();
+    },
     set(value) {
       if (!keychain.set(value)) {
-        // Reads try the keychain first, so an old key it still holds would
-        // shadow the new one in the file. Remove it, or refuse.
-        keychain.remove();
-        if (keychain.get() !== undefined) {
-          throw new ConfigError(
-            `Cannot replace the API key in ${keychain.description}; remove the "${SERVICE}" item there and run \`amika-hostd setup\` again`,
-          );
-        }
+        ensureGone(
+          `Cannot store the API key in ${keychain.description}, or make sure an old one is not left there; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
+        );
         file.set(value);
         description = file.description;
         return;
@@ -115,20 +133,26 @@ export function apiKeyStore(
       description = keychain.description;
     },
     remove() {
-      keychain.remove();
-      const fileRemoved = file.remove();
-      if (keychain.get() !== undefined || !fileRemoved) {
-        throw new ConfigError(
-          `Cannot remove the API key from ${keychain.description} or ${file.path}`,
-        );
+      ensureGone(
+        `Cannot remove the API key from ${keychain.description}; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
+      );
+      if (!file.remove()) {
+        throw new ConfigError(`Cannot remove the API key in ${file.path}`);
       }
     },
   };
 }
 
+/** What a keychain holds for amika-hostd, as far as it could tell. */
+type Lookup =
+  | { state: "found"; value: string }
+  | { state: "absent" }
+  /** Locked, unreachable, or timed out: it may hold a key. */
+  | { state: "unknown" };
+
 interface Keychain {
   description: string;
-  get(): string | undefined;
+  lookup(): Lookup;
   /** False if the keychain could not store it. */
   set(value: string): boolean;
   /** Delete the stored key, if any; best effort. */
@@ -144,36 +168,45 @@ function systemKeychain(
     case "darwin":
       return {
         description: "your macOS login keychain",
-        get() {
-          const result = run("security", [
-            "find-generic-password",
-            "-s",
-            SERVICE,
-            "-a",
-            ACCOUNT,
-            "-w",
-          ]);
-          return result.status === 0 ? nonEmpty(result.stdout) : undefined;
+        lookup() {
+          const result = checked(
+            run("security", [
+              "find-generic-password",
+              "-s",
+              SERVICE,
+              "-a",
+              ACCOUNT,
+              "-w",
+            ]),
+          );
+          // 44 is errSecItemNotFound; anything else (a locked keychain, a
+          // dismissed prompt) leaves the answer unknown.
+          if (result.status === 44) return { state: "absent" };
+          return found(result);
         },
         set(value) {
           // `security -i` reads the command from stdin, which keeps the key
           // out of the process list. Its exit status does not report a failed
           // command, so read the key back to confirm it was stored.
-          run(
-            "security",
-            ["-i"],
-            `add-generic-password -U -s ${SERVICE} -a ${ACCOUNT} -l "${LABEL}" -w "${value}"\n`,
+          checked(
+            run(
+              "security",
+              ["-i"],
+              `add-generic-password -U -s ${SERVICE} -a ${ACCOUNT} -l "${LABEL}" -w "${value}"\n`,
+            ),
           );
-          return this.get() === value;
+          return isValue(this.lookup(), value);
         },
         remove() {
-          run("security", [
-            "delete-generic-password",
-            "-s",
-            SERVICE,
-            "-a",
-            ACCOUNT,
-          ]);
+          checked(
+            run("security", [
+              "delete-generic-password",
+              "-s",
+              SERVICE,
+              "-a",
+              ACCOUNT,
+            ]),
+          );
         },
       };
     case "linux":
@@ -182,33 +215,52 @@ function systemKeychain(
       if (!env.DBUS_SESSION_BUS_ADDRESS) return undefined;
       return {
         description: "your desktop keyring (Secret Service)",
-        get() {
-          const result = run("secret-tool", [
-            "lookup",
-            "service",
-            SERVICE,
-            "account",
-            ACCOUNT,
-          ]);
-          return result.status === 0 ? nonEmpty(result.stdout) : undefined;
-        },
-        set(value) {
-          const result = run(
-            "secret-tool",
-            [
-              "store",
-              `--label=${LABEL}`,
+        lookup() {
+          const result = checked(
+            run("secret-tool", [
+              "lookup",
               "service",
               SERVICE,
               "account",
               ACCOUNT,
-            ],
-            value,
+            ]),
           );
-          return result.status === 0 && this.get() === value;
+          // Without secret-tool there is no keyring to hold a key.
+          if (errorCode(result.error) === "ENOENT") return { state: "absent" };
+          // `lookup` exits 1 both for "no such item" and for errors, which
+          // it explains on stderr; a silent 1 means the item is not there.
+          if (result.status === 1 && !result.stderr?.trim()) {
+            return { state: "absent" };
+          }
+          return found(result);
+        },
+        set(value) {
+          const result = checked(
+            run(
+              "secret-tool",
+              [
+                "store",
+                `--label=${LABEL}`,
+                "service",
+                SERVICE,
+                "account",
+                ACCOUNT,
+              ],
+              value,
+            ),
+          );
+          return result.status === 0 && isValue(this.lookup(), value);
         },
         remove() {
-          run("secret-tool", ["clear", "service", SERVICE, "account", ACCOUNT]);
+          checked(
+            run("secret-tool", [
+              "clear",
+              "service",
+              SERVICE,
+              "account",
+              ACCOUNT,
+            ]),
+          );
         },
       };
     default:
@@ -257,9 +309,11 @@ function fileStore(file: string, deps: CredentialDeps) {
  */
 export function writePrivateFile(file: string, contents: string) {
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temporary = `${file}.${process.pid}.tmp`;
-  writeFileSync(temporary, contents, { mode: 0o600 });
+  // A fresh, unguessable name created exclusively, so the mode applies and no
+  // existing file (or link) is written through.
+  const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
   try {
+    writeFileSync(temporary, contents, { mode: 0o600, flag: "wx" });
     renameSync(temporary, file);
   } catch (error) {
     rmSync(temporary, { force: true });
@@ -276,13 +330,32 @@ function runProgram(
     input,
     encoding: "utf8",
     timeout: KEYCHAIN_TIMEOUT_MS,
-    stdio: ["pipe", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
   return {
     status: result.status,
     stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    signal: result.signal,
     error: result.error,
   };
+}
+
+/** `result`, unless the operator's Ctrl-C killed the program. */
+function checked(result: RunResult): RunResult {
+  if (result.signal === "SIGINT") {
+    throw new KeychainInterrupted("the keychain command was interrupted");
+  }
+  return result;
+}
+
+function found(result: RunResult): Lookup {
+  const value = result.status === 0 ? nonEmpty(result.stdout) : undefined;
+  return value === undefined ? { state: "unknown" } : { state: "found", value };
+}
+
+function isValue(lookup: Lookup, value: string): boolean {
+  return lookup.state === "found" && lookup.value === value;
 }
 
 function nonEmpty(value: string): string | undefined {

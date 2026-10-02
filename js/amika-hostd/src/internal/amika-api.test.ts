@@ -243,8 +243,15 @@ describe("AmikaApiError.refused", () => {
     [409, true],
     [500, false],
     [502, false],
-  ])("is %j for HTTP %i", async (status, refused) => {
-    const fetcher = responding(apiErrorBody(status, "x", "details"));
+    [202, false],
+    [204, false],
+  ])("for HTTP %i is %j", async (status, refused) => {
+    // A 204 carries no body.
+    const fetcher = responding(
+      status === 204
+        ? new Response(null, { status })
+        : apiErrorBody(status, "x", "details"),
+    );
     await expect(setHostSecret(API, HOST, "s", fetcher)).rejects.toMatchObject({
       refused,
     });

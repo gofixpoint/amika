@@ -210,9 +210,11 @@ async function apiError(
         { refused: true },
       );
     default:
-      // A 5xx may come from a proxy after the server applied the request.
+      // Only a 4xx says the request was turned down. A 5xx may come from a
+      // proxy after the server applied it, and an unexpected 2xx or 3xx may
+      // mean it was applied too.
       return new AmikaApiError(`failed to ${action} (${detail})`, {
-        refused: response.status < 500,
+        refused: response.status >= 400 && response.status < 500,
       });
   }
 }

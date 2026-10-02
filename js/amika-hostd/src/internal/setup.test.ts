@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError } from "./amika-api.js";
+import { KeychainInterrupted } from "./credentials.js";
 import { resolveConfig, type HostdConfigFile } from "./config.js";
 import { PromptCancelled } from "./prompt.js";
 import {
@@ -218,9 +219,11 @@ describe("runSetup", () => {
         new AmikaApiError("cannot reach Amika: timed out"),
       );
     await expect(runSetup(h.deps)).rejects.toThrow(
-      /undoing setup's changes failed: Amika may not have the secret key in .*: run `amika-hostd setup` again and regenerate it/,
+      /undoing setup's changes failed: Amika may have the new secret key, so .* keeps it; if Amika's requests to this host fail, run `amika-hostd setup` again and regenerate it/,
     );
-    expect(h.written[PATH]).toBe(CONFIGURED);
+    // Amika may hold the new secret after an unanswered request, so the file
+    // keeps it rather than lose it everywhere locally.
+    expect(h.config().secretKey).toBe(NEW_SECRET);
   });
 
   it("rolls back everything on Ctrl-C while Amika is being updated", async () => {
@@ -311,6 +314,61 @@ describe("runSetup", () => {
     ).rejects.toBeInstanceOf(PromptCancelled);
     expect(removeConfigFile).toHaveBeenCalledWith(PATH);
     expect(h.store.value).toBeUndefined();
+  });
+
+  /**
+   * Ctrl-C as it really arrives: Node runs the SIGINT listener on a later
+   * turn of the event loop, never inside the synchronous step it interrupts.
+   */
+  const ctrlCLater = (h: ReturnType<typeof harness>) =>
+    setImmediate(() => h.interrupt.handler?.());
+
+  it("acts on Ctrl-C that arrives during a blocking keychain command", async () => {
+    // No regenerated secret, so nothing else in setup awaits.
+    const h = harness({
+      answers: ["", "", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
+    h.store.set.mockImplementationOnce((value: string) => {
+      h.store.value = value;
+      ctrlCLater(h);
+    });
+    await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
+    expect(h.store.value).toBe("amk_old");
+    expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("acts on Ctrl-C that arrives during the config write", async () => {
+    const h = harness({
+      answers: ["", "", ""],
+      file: CONFIGURED,
+      storedKey: "k",
+    });
+    h.deps.writeConfigFile.mockImplementationOnce(
+      (file: string, contents: string) => {
+        h.written[file] = contents;
+        ctrlCLater(h);
+      },
+    );
+    await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
+    expect(h.written[PATH]).toBe(CONFIGURED);
+  });
+
+  it("treats a keychain command killed by Ctrl-C as an interrupt", async () => {
+    const h = harness({
+      answers: ["", "", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
+    h.store.set.mockImplementationOnce(() => {
+      throw new KeychainInterrupted("the keychain command was interrupted");
+    });
+    await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
+    expect(h.store.value).toBe("amk_old");
+    expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
   });
 
   it("listens for Ctrl-C only while setup applies its changes", async () => {
@@ -460,6 +518,16 @@ describe("renderConfig", () => {
     );
   });
 
+  it("replaces a quoted key in place rather than adding a second one", () => {
+    const contents = renderConfig(`"hostname" = "old"\n'secret_key' = 'x'\n`, {
+      ...values,
+      addDefaults: false,
+    });
+    expect(contents).toBe(
+      `hostname = "builder"\nsecret_key = "${NEW_SECRET}"\n`,
+    );
+  });
+
   it("writes a new file with the default sizes and preset images", () => {
     const contents = renderConfig(undefined, { ...values, addDefaults: true });
     expect(resolveConfig({ file: { path: PATH, contents } })).toMatchObject({
@@ -482,6 +550,16 @@ describe("renderConfig", () => {
 });
 
 describe("runSetup on the shipped example", () => {
+  it("also replaces a single-quoted placeholder secret", async () => {
+    const h = harness({
+      answers: ["builder"],
+      secrets: ["amk_123"],
+      file: "secret_key = 'REPLACE_ME'\n",
+    });
+    await runSetup(h.deps);
+    expect(h.config().secretKey).toBe(NEW_SECRET);
+  });
+
   it("replaces the placeholder secret without asking", async () => {
     const h = harness({
       answers: ["builder"],

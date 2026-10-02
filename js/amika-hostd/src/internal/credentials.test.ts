@@ -7,6 +7,7 @@ import {
   apiKeyFilePath,
   apiKeyStore,
   isValidApiKey,
+  KeychainInterrupted,
   writePrivateFile,
   type RunResult,
 } from "./credentials.js";
@@ -34,28 +35,47 @@ function files(initial: Record<string, string> = {}) {
 }
 
 /** A fake keychain program that keeps one value, or refuses to store it. */
+/**
+ * A fake `security` / `secret-tool` that keeps one value. It answers "not
+ * found" as each really does (exit 44; a silent exit 1), and can refuse to
+ * store, refuse to delete, be locked (every command fails, so nothing can be
+ * checked), or be killed by Ctrl-C while storing.
+ */
 function keychain({
   broken = false,
   initial,
   undeletable = false,
-}: { broken?: boolean; initial?: string; undeletable?: boolean } = {}) {
+  locked = false,
+  interruptStore = false,
+}: {
+  broken?: boolean;
+  initial?: string;
+  undeletable?: boolean;
+  locked?: boolean;
+  interruptStore?: boolean;
+} = {}) {
   let stored = initial;
   const run = vi.fn(
     (command: string, args: readonly string[], input?: string): RunResult => {
+      const macOS = command === "security";
+      if (locked) {
+        return macOS
+          ? { status: 51, stdout: "" }
+          : { status: 1, stdout: "", stderr: "Cannot unlock the keyring" };
+      }
       const reading =
         args[0] === "find-generic-password" || args[0] === "lookup";
       if (reading) {
-        return stored === undefined
-          ? { status: 44, stdout: "" }
-          : { status: 0, stdout: `${stored}\n` };
+        if (stored !== undefined) return { status: 0, stdout: `${stored}\n` };
+        return macOS ? { status: 44, stdout: "" } : { status: 1, stdout: "" };
       }
       if (args[0] === "delete-generic-password" || args[0] === "clear") {
         if (!undeletable) stored = undefined;
         return { status: undeletable ? 1 : 0, stdout: "" };
       }
+      if (interruptStore) return { status: null, stdout: "", signal: "SIGINT" };
       if (broken) return { status: 1, stdout: "" };
-      stored =
-        command === "security" ? /-w "([^"]*)"/.exec(input ?? "")?.[1] : input;
+      stored = macOS ? /-w "([^"]*)"/.exec(input ?? "")?.[1] : input;
       return { status: 0, stdout: "" };
     },
   );
@@ -153,7 +173,7 @@ describe("apiKeyStore when the keychain refuses a new key", () => {
       run: fake.run,
     });
     expect(() => store.set("amk_new")).toThrow(
-      /Cannot replace the API key in your macOS login keychain/,
+      /Cannot store the API key in your macOS login keychain/,
     );
     expect(fs.contents[FILE]).toBeUndefined();
   });
@@ -228,6 +248,63 @@ describe("apiKeyStore.remove", () => {
       `Cannot remove the API key in ${FILE}`,
     );
   });
+});
+
+describe("apiKeyStore with a keychain it cannot check", () => {
+  it.each(["darwin", "linux"] as const)(
+    "on %s, refuses to fall back while a locked keychain may hold an old key",
+    (platform) => {
+      const fs = files();
+      const store = apiKeyStore(
+        { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" },
+        { platform, ...fs, run: keychain({ locked: true }).run },
+      );
+      expect(() => store.set("amk_new")).toThrow(/unlock it, or remove/);
+      expect(fs.contents[FILE]).toBeUndefined();
+      expect(() => store.remove()).toThrow(/Cannot remove the API key/);
+    },
+  );
+
+  it("still reads the file when the keychain cannot answer", () => {
+    const store = apiKeyStore(ENV, {
+      platform: "darwin",
+      ...files({ [FILE]: "amk_file\n" }),
+      run: keychain({ locked: true }).run,
+    });
+    expect(store.get()).toBe("amk_file");
+  });
+
+  it("falls back to the file when secret-tool is not installed", () => {
+    const fs = files();
+    const missing = Object.assign(new Error("spawn secret-tool ENOENT"), {
+      code: "ENOENT",
+    });
+    const store = apiKeyStore(
+      { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" },
+      {
+        platform: "linux",
+        ...fs,
+        run: () => ({ status: null, stdout: "", error: missing }),
+      },
+    );
+    store.set("amk_new");
+    expect(fs.contents[FILE]).toBe("amk_new\n");
+  });
+});
+
+describe("apiKeyStore when Ctrl-C kills the keychain command", () => {
+  it.each(["darwin", "linux"] as const)(
+    "on %s, reports the interrupt instead of falling back to the file",
+    (platform) => {
+      const fs = files();
+      const store = apiKeyStore(
+        { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" },
+        { platform, ...fs, run: keychain({ interruptStore: true }).run },
+      );
+      expect(() => store.set("amk_new")).toThrow(KeychainInterrupted);
+      expect(fs.contents[FILE]).toBeUndefined();
+    },
+  );
 });
 
 describe("isValidApiKey", () => {
