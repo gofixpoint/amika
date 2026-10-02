@@ -62,12 +62,6 @@ export interface SmolvmDeps {
 export const SMOLVM_STOP_TIMEOUT_MS = 60_000;
 
 /**
- * Ports tried, from the default's, when `SMOL_API_URL` is unset and another
- * program already holds the default port.
- */
-export const SMOLVM_PORT_ATTEMPTS = 10;
-
-/**
  * Start `smolvm serve` and resolve once it answers `/health`, or as soon as
  * `signal` aborts, so the caller can stop it. It listens at `apiUrl` (i.e.
  * `SMOL_API_URL`) and fails if that port is taken. Without one, it starts at
@@ -203,10 +197,8 @@ export async function startSmolvm(
     };
   };
 
-  const attempts =
-    apiUrl === undefined
-      ? Math.min(SMOLVM_PORT_ATTEMPTS, 65_536 - first.port)
-      : 1;
+  // Without SMOL_API_URL, any free port from the default up will do.
+  const attempts = apiUrl === undefined ? 65_536 - first.port : 1;
   for (let i = 0; i < attempts; i++) {
     const address = withPort(first, first.port + i);
     if (!(await isPortInUse(address.address, address.port))) {
@@ -229,7 +221,7 @@ export async function startSmolvm(
   }
   const last = first.port + attempts - 1;
   throw new DaemonError(
-    `ports ${first.port}-${last} on ${first.address} are all in use, so smolvm has nowhere to listen; set SMOL_API_URL to a free port (e.g. http://127.0.0.1:8090)`,
+    `ports ${first.port}-${last} on ${first.address} are all in use, so smolvm has nowhere to listen; set SMOL_API_URL to a free port`,
   );
 }
 
@@ -263,7 +255,7 @@ const BIND_ERROR_WINDOW = 64 * 1024;
 
 /**
  * Whether `origin` serves smolvm's API rather than some other program that
- * happens to answer `/health` (a dev server on 8080, say).
+ * happens to answer `/health` (a dev server, say).
  */
 async function looksLikeSmolvm(
   origin: string,
@@ -321,7 +313,7 @@ export function smolvmListenAddress(
     isIP(address) === 0
   ) {
     throw new DaemonError(
-      "SMOL_API_URL must be http://<IP address>:<port> with no path (e.g. http://127.0.0.1:8080), since `amika-hostd up` starts smolvm listening there",
+      "SMOL_API_URL must be http://<IP address>:<port> with no path (e.g. http://127.0.0.1:23020), since `amika-hostd up` starts smolvm listening there",
     );
   }
   if (!LOOPBACK.check(address, isIP(address) === 6 ? "ipv6" : "ipv4")) {

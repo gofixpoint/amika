@@ -170,17 +170,17 @@ is left as it was before `up`:
    authentication, so listening anywhere else would expose it without
    amika-hostd's bearer check.
 
-   A port is free when a plain TCP connect is refused, since the holder may
-   not speak HTTP (an editor's language server on 8080, say). With
-   `SMOL_API_URL` set, it uses that port or fails naming it. Unset, it starts
-   at 8080 and moves to the next port while the port is held, or while
-   smolvm exits with `Address already in use` (another program won the
-   race), giving up after 10 ports. It never shares a port, and it refuses to
-   start at all when the holder is a smolvm (both `/health` and
+   A port is free when a plain TCP connect is refused, since the holder may not
+   speak HTTP (an editor's language server, say). With `SMOL_API_URL` set, it
+   uses that port or fails naming it. Unset, it starts at 23020 and moves to
+   the next port while the port is held, or while smolvm exits with
+   `Address already in use` (another program won the race), giving up only
+   once every port up to 65535 is taken. It never shares a port, and it refuses
+   to start at all when the holder is a smolvm (both `/health` and
    `/api/v1/machines` answer 2xx): a smolvm it did not start would expose
-   unrelated VMs, and is not the daemon's to stop or drain. The daemon
-   forwards to the chosen URL, which is also written to `smolvm.url` beside
-   `smolvm.pid` while smolvm runs.
+   unrelated VMs, and is not the daemon's to stop or drain. The daemon forwards
+   to the chosen URL, which is also written to `smolvm.url` beside `smolvm.pid`
+   while smolvm runs.
 
    smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only
    the daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the
@@ -229,7 +229,7 @@ enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
 (default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
 two are not merged, and unknown keys are rejected. `SMOL_API_URL` (where `up` starts smolvm;
-by default the first free port from `http://127.0.0.1:8080`, see
+by default the first free port from `http://127.0.0.1:23020`, see
 [smolvm](#smolvm)) and
 `SMOL_REQUEST_TIMEOUT_MS` remain environment-only. `config.example.toml`
 is the template the installer seeds: every setting with a default is a live

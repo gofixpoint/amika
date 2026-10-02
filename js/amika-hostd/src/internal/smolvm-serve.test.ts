@@ -55,9 +55,9 @@ function route(statusOf: (url: string) => number | undefined) {
   }) as unknown as typeof fetch;
 }
 
-/** A dev server on 8080 that answers `/health` but is not smolvm. */
-const devServerOn8080 = route((url) =>
-  url.startsWith("http://127.0.0.1:8080/")
+/** A dev server on 23020 that answers `/health` but is not smolvm. */
+const devServerOn23020 = route((url) =>
+  url.startsWith("http://127.0.0.1:23020/")
     ? url.endsWith("/health")
       ? 200
       : 404
@@ -78,7 +78,7 @@ function fakeDeps(child = fakeChild(), overrides: SmolvmDeps = {}) {
 
 describe("smolvmListenAddress", () => {
   it.each([
-    [undefined, "http://127.0.0.1:8080", "127.0.0.1:8080"],
+    [undefined, "http://127.0.0.1:23020", "127.0.0.1:23020"],
     ["http://127.0.0.1:9000/", "http://127.0.0.1:9000", "127.0.0.1:9000"],
     ["http://[::1]:9000", "http://[::1]:9000", "[::1]:9000"],
     ["http://127.0.0.2", "http://127.0.0.2", "127.0.0.2:80"],
@@ -175,20 +175,20 @@ describe("startSmolvm", () => {
   it("moves past taken ports when SMOL_API_URL is unset", async () => {
     const files = paths();
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async (_host: string, port: number) => port < 8082),
-      // Whatever holds 8080 and 8081 is not a smolvm.
+      isPortInUse: vi.fn(async (_host: string, port: number) => port < 23022),
+      // Whatever holds 23020 and 23021 is not a smolvm.
       fetch: health(404, 404, 200),
     });
     const smolvm = await startSmolvm(undefined, files, {}, deps);
     expect(deps.spawn).toHaveBeenCalledTimes(1);
     expect(deps.spawn).toHaveBeenCalledWith(
       "/opt/smolvm/smolvm",
-      ["serve", "start", "--listen", "127.0.0.1:8082"],
+      ["serve", "start", "--listen", "127.0.0.1:23022"],
       expect.anything(),
     );
-    expect(smolvm.apiUrl).toBe("http://127.0.0.1:8082");
+    expect(smolvm.apiUrl).toBe("http://127.0.0.1:23022");
     expect(readFileSync(files.smolvmUrlFile, "utf8")).toBe(
-      "http://127.0.0.1:8082\n",
+      "http://127.0.0.1:23022\n",
     );
   });
 
@@ -198,7 +198,7 @@ describe("startSmolvm", () => {
       fetch: health(200),
     });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
-      "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:8080",
+      "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:23020",
     );
     expect(deps.isPortInUse).toHaveBeenCalledTimes(1);
     expect(deps.spawn).not.toHaveBeenCalled();
@@ -218,11 +218,11 @@ describe("startSmolvm", () => {
 
   it("moves past a server that answers /health but is not smolvm", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async (_host: string, port: number) => port === 8080),
-      fetch: devServerOn8080,
+      isPortInUse: vi.fn(async (_host: string, port: number) => port === 23020),
+      fetch: devServerOn23020,
     });
     const smolvm = await startSmolvm(undefined, paths(), {}, deps);
-    expect(smolvm.apiUrl).toBe("http://127.0.0.1:8081");
+    expect(smolvm.apiUrl).toBe("http://127.0.0.1:23021");
   });
 
   it("clears files a dead smolvm left behind, even if startup fails", async () => {
@@ -230,7 +230,7 @@ describe("startSmolvm", () => {
     mkdirSync(path.dirname(files.smolvmPidFile), { recursive: true });
     // Far above any real pid, so certainly not running.
     writeFileSync(files.smolvmPidFile, "999999999\n");
-    writeFileSync(files.smolvmUrlFile, "http://127.0.0.1:8080\n");
+    writeFileSync(files.smolvmUrlFile, "http://127.0.0.1:23020\n");
     const deps = fakeDeps(fakeChild(), {
       isPortInUse: vi.fn(async () => true),
       fetch: health(404),
@@ -246,7 +246,7 @@ describe("startSmolvm", () => {
     const files = paths();
     mkdirSync(path.dirname(files.smolvmPidFile), { recursive: true });
     writeFileSync(files.smolvmPidFile, `${process.pid}\n`);
-    writeFileSync(files.smolvmUrlFile, "http://127.0.0.1:8080\n");
+    writeFileSync(files.smolvmUrlFile, "http://127.0.0.1:23020\n");
     const deps = fakeDeps(fakeChild(), {
       isPortInUse: vi.fn(async () => true),
       fetch: health(404),
@@ -264,9 +264,9 @@ describe("startSmolvm", () => {
       fetch: health(404),
     });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
-      "ports 8080-8089 on 127.0.0.1 are all in use",
+      "ports 23020-65535 on 127.0.0.1 are all in use",
     );
-    expect(deps.isPortInUse).toHaveBeenCalledTimes(10);
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(65_536 - 23_020);
     expect(deps.spawn).not.toHaveBeenCalled();
   });
 
@@ -294,15 +294,15 @@ describe("startSmolvm", () => {
   it("tries the next port when smolvm cannot bind", async () => {
     const files = paths();
     const spawn = loseFirstBind(files);
-    // The program that won the race for 8080 answers too, but is not smolvm.
-    const deps = fakeDeps(fakeChild(), { spawn, fetch: devServerOn8080 });
+    // The program that won the race for 23020 answers too, but is not smolvm.
+    const deps = fakeDeps(fakeChild(), { spawn, fetch: devServerOn23020 });
     const smolvm = await startSmolvm(undefined, files, {}, deps);
     expect(spawn.mock.calls.map(([, args]) => args[3])).toEqual([
-      "127.0.0.1:8080",
-      "127.0.0.1:8081",
+      "127.0.0.1:23020",
+      "127.0.0.1:23021",
     ]);
     expect(smolvm.pid).toBe(4343);
-    expect(smolvm.apiUrl).toBe("http://127.0.0.1:8081");
+    expect(smolvm.apiUrl).toBe("http://127.0.0.1:23021");
     expect(readFileSync(files.smolvmPidFile, "utf8")).toBe("4343\n");
   });
 
@@ -313,7 +313,7 @@ describe("startSmolvm", () => {
       fetch: health(200),
     });
     await expect(startSmolvm(undefined, files, {}, deps)).rejects.toThrow(
-      "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:8080",
+      "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:23020",
     );
     expect(deps.spawn).toHaveBeenCalledTimes(1);
   });
@@ -390,7 +390,7 @@ describe("startSmolvm", () => {
       stopTimeoutMs: 20,
     });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
-      "smolvm did not start serving at http://127.0.0.1:8080 within 0.02s",
+      "smolvm did not start serving at http://127.0.0.1:23020 within 0.02s",
     );
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });

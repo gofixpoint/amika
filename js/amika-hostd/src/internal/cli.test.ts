@@ -44,7 +44,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
   let smolvmRunning = true;
   const smolvm: ManagedSmolvm = {
     pid: 88,
-    apiUrl: "http://127.0.0.1:8080",
+    apiUrl: "http://127.0.0.1:23020",
     exited: new Promise((resolve) => (smolvmExit = resolve)),
     get running() {
       return smolvmRunning;
@@ -433,7 +433,7 @@ describe("completing registration", () => {
       deps.prompt!.mock.invocationCallOrder[0],
     );
     expect(out.slice(1)).toEqual([
-      "smolvm serving at http://127.0.0.1:8080 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
+      "smolvm serving at http://127.0.0.1:23020 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
       "amika-hostd listening on http://127.0.0.1:3020",
       EXPOSE.replaceAll("4000", "3020"),
       "Set the public URL of host builder to https://abc.ngrok.app",
@@ -573,14 +573,14 @@ describe("managing smolvm", () => {
 
   it("forwards to the port smolvm ended up on", async () => {
     const { deps, out, smolvm } = harness();
-    smolvm.apiUrl = "http://127.0.0.1:8081";
+    smolvm.apiUrl = "http://127.0.0.1:23021";
     expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
     expect(deps.startServer).toHaveBeenCalledWith(
-      expect.objectContaining({ smolApiUrl: "http://127.0.0.1:8081" }),
+      expect.objectContaining({ smolApiUrl: "http://127.0.0.1:23021" }),
       expect.anything(),
     );
     expect(out[0]).toBe(
-      "smolvm serving at http://127.0.0.1:8081 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
+      "smolvm serving at http://127.0.0.1:23021 (pid 88); logs: /state/amika-hostd/log/smolvm.log",
     );
   });
 
