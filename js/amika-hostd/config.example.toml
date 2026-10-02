@@ -9,7 +9,8 @@
 # hostname = "my-host"
 
 # This secret authenticates requests from the Amika control plane to your
-# amika-hostd instance. Generate one with `openssl rand -hex 32`.
+# amika-hostd instance. `amika-hostd setup` generates one; by hand, use
+# `openssl rand -hex 32`.
 secret_key = "REPLACE_ME"
 
 api_url = "https://app.amika.dev"
