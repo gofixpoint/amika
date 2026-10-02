@@ -87,9 +87,11 @@ describe("registerHost", () => {
       409: "host_hostname_conflict",
     }[status] as string;
     const fetcher = responding(apiErrorBody(status, code, "details"));
-    await expect(registerHost(API, INPUT, fetcher)).rejects.toThrow(
-      new AmikaApiError(message),
+    const thrown = await registerHost(API, INPUT, fetcher).catch(
+      (caught: unknown) => caught,
     );
+    expect(thrown).toBeInstanceOf(AmikaApiError);
+    expect(thrown).toMatchObject({ message, refused: true });
   });
 
   it.each([
@@ -106,9 +108,11 @@ describe("registerHost", () => {
   ])("explains the sign-in check's HTTP %i", async (status, error, message) => {
     // What the control plane's sign-in check actually sends.
     const fetcher = responding(Response.json({ error }, { status }));
-    await expect(registerHost(API, INPUT, fetcher)).rejects.toThrow(
-      new AmikaApiError(message),
+    const thrown = await registerHost(API, INPUT, fetcher).catch(
+      (caught: unknown) => caught,
     );
+    expect(thrown).toBeInstanceOf(AmikaApiError);
+    expect(thrown).toMatchObject({ message, refused: true });
   });
 
   it("says a redirect was refused rather than that Amika is unreachable", async () => {
@@ -230,6 +234,63 @@ describe("setHostSizes", () => {
     await expect(setHostSizes(API, HOST, {}, fetcher)).rejects.toThrow(
       "failed to update the host's sizes (validation_failed: Invalid host sizes)",
     );
+  });
+});
+
+describe("AmikaApiError.refused", () => {
+  it.each([
+    [404, true],
+    [409, true],
+    [500, false],
+    [502, false],
+    [202, false],
+    [204, false],
+  ])("for HTTP %i is %j", async (status, refused) => {
+    // A 204 carries no body.
+    const fetcher = responding(
+      status === 204
+        ? new Response(null, { status })
+        : apiErrorBody(status, "x", "details"),
+    );
+    await expect(setHostSecret(API, HOST, "s", fetcher)).rejects.toMatchObject({
+      refused,
+    });
+  });
+
+  it("is false when Amika cannot be reached, since the request may have landed", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new TypeError("fetch failed"));
+    await expect(setHostSecret(API, HOST, "s", fetcher)).rejects.toMatchObject({
+      refused: false,
+    });
+  });
+
+  it("is false for an unreadable answer to a request that succeeded", async () => {
+    const fetcher = responding(Response.json({ nope: true }));
+    await expect(setHostSecret(API, HOST, "s", fetcher)).rejects.toMatchObject({
+      refused: false,
+    });
+  });
+
+  it("cancels the request when the caller's signal aborts", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(
+      (_url, init) =>
+        new Promise((_, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          ),
+        ),
+    );
+    const request = setHostSecret(
+      { ...API, signal: controller.signal },
+      HOST,
+      "s",
+      fetcher,
+    );
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ refused: false });
   });
 });
 
