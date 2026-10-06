@@ -490,10 +490,13 @@ async function execWithStdin(
   ) => Promise<ExecResult>,
 ): Promise<ExecResult> {
   const file = `/tmp/.amika-hostd-stdin-${randomUUID()}`;
-  await native(() =>
-    handle.writeFile(file, Buffer.from(request.stdin ?? ""), { mode: 0o600 }),
-  );
   try {
+    // Inside the try: a write that fails partway may still leave the file.
+    await native(() =>
+      handle.writeFile(file, Buffer.from(request.stdin ?? ""), {
+        mode: 0o600,
+      }),
+    );
     const owner = await exec(
       handle,
       ["/bin/sh", "-c", 'echo "$(id -u):$(id -g)"'],

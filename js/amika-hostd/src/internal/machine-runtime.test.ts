@@ -640,6 +640,20 @@ describe("embeddedRuntime", () => {
       expect(commands).toEqual(["/bin/sh", "chown", "rm"]);
     });
 
+    it("removes the file, and runs nothing, when staging it fails", async () => {
+      const { runtime, handle } = await withStdin("1000:1000");
+      handle.writeFile.mockRejectedValueOnce(
+        new Error("[SMOLVM_ERROR] disk full"),
+      );
+      await expect(runtime.exec("demo", REQUEST)).rejects.toMatchObject({
+        status: 500,
+      });
+      const file = handle.writeFile.mock.calls[0][0];
+      expect(handle.exec.mock.calls.map(([command]) => command)).toEqual([
+        ["rm", "-f", file],
+      ]);
+    });
+
     it("keeps the command's error when removing the file fails too", async () => {
       const { runtime, handle } = await withStdin("0:0");
       handle.exec.mockImplementation(async (command) => {
