@@ -77,5 +77,7 @@ These come from the public API, which the provider does not work around:
 - **No ordering beyond the engine's.** The engine serializes lifecycle calls
   on one machine, but a stop or delete can land while an exec or file
   transfer on that machine is running, and cut it off.
+- Published forwards are TCP only: UDP services are refused at create and when
+  reconciling routes.
 - No streaming exec, SSH, snapshots or auto-stop/delete timers. File reads are
   UTF-8 text, as the provider contract defines them.

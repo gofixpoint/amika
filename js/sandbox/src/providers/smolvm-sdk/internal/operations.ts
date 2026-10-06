@@ -327,6 +327,10 @@ export function smolvmSdkOperations(
       // engine can neither publish nor unpublish one later. So the routes
       // already match the desired set exactly when its ports are the
       // published ones; anything else is refused rather than reported done.
+      // Published forwards are TCP, so a service switched to UDP on the same
+      // port would be advertised over a forward that cannot carry it.
+      if (desired.some((service) => service.protocol !== "tcp"))
+        throw new SandboxProviderUnsupportedError(PROVIDER, "udp services");
       const published = new Set(
         publishedPorts(await summary(id)).map((p) => p.guest),
       );
@@ -353,6 +357,11 @@ export function mapSmolvmSdkState(state: string): SandboxStatus {
       return "starting";
     case "stopping":
       return "stopping";
+    // Paused through the `smol` CLI or the SDK: execution saved, VM stopped.
+    case "pausing":
+      return "suspending";
+    case "paused":
+      return "suspended";
     case "stopped":
       return "stopped";
     case "created":

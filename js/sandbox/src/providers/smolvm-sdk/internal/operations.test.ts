@@ -281,7 +281,9 @@ describe("smolvmSdkOperations", () => {
       ["stopped", "stopped"],
       ["created", "creating"],
       ["failed", "failed"],
-      ["paused", "unknown"],
+      ["pausing", "suspending"],
+      ["paused", "suspended"],
+      ["frozen", "unknown"],
     ])("maps %s to %s", (raw, status) => {
       expect(mapSmolvmSdkState(raw)).toBe(status);
     });
@@ -516,6 +518,15 @@ describe("smolvmSdkOperations", () => {
         service("site", 3000),
         service("site-admin", 3000),
       ]);
+    });
+
+    it("refuses a service switched to UDP on a published port", async () => {
+      // The port set is unchanged, but the published forward is TCP.
+      const { ops, sdk } = harness(published);
+      await expect(
+        ops.syncRoutes("demo", [{ ...service("site", 3000), protocol: "udp" }]),
+      ).rejects.toBeInstanceOf(SandboxProviderUnsupportedError);
+      expect(sdk.list).not.toHaveBeenCalled();
     });
 
     it("refuses a port the machine did not publish", async () => {
