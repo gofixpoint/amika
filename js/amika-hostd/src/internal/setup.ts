@@ -255,11 +255,12 @@ function renderPresetImages(images: Record<string, string>): string[] {
 }
 
 /**
- * `file` without a top-level `secret_key` that could never be used, for
- * reading what setup should keep. The written file still replaces that line
- * in place.
+ * `file` without a top-level `secret_key` that could never be used (the
+ * example's `REPLACE_ME`, say), for reading what setup should keep and for
+ * `up` deciding whether setup is needed. The written file still replaces
+ * that line in place.
  */
-function withoutInvalidSecret(file: HostdConfigFile): HostdConfigFile {
+export function withoutInvalidSecret(file: HostdConfigFile): HostdConfigFile {
   const line =
     /^\s*(?:secret_key|"secret_key"|'secret_key')\s*=\s*(["'])(.*?)\1\s*(#.*)?$/m;
   const value = line.exec(file.contents)?.[2];

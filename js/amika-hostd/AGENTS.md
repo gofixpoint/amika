@@ -134,7 +134,10 @@ is written, and the file is replaced atomically with mode `0600`
 (`src/internal/private-file.ts`).
 
 `up` runs setup first whenever the hostname or secret key is missing and it
-has a terminal; without one it fails, naming `setup`. Ctrl-C during setup
+has a terminal; without one it fails, naming `setup`. Like setup, it reads a
+`secret_key` too short to use (the example's `REPLACE_ME`) as missing, so a
+hand-copied example gets set up rather than rejected; other commands still
+reject it. Ctrl-C during setup
 exits 130 and changes nothing, since setup writes only after its last
 question.
 

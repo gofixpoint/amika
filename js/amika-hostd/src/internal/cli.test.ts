@@ -1,5 +1,11 @@
 /** Cover command parsing and dispatch with every side effect injected. */
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -881,6 +887,43 @@ describe("setup", () => {
     });
     expect(await runCli(["up"], deps)).toBe(1);
     expect(err[0]).toContain("hostname: run `amika-hostd setup`");
+  });
+
+  /** The example config as copied by hand: its `REPLACE_ME` secret intact. */
+  const EXAMPLE = readFileSync(
+    path.join(import.meta.dirname, "../../config.example.toml"),
+    "utf8",
+  );
+
+  it("`up` runs setup to replace a placeholder secret instead of failing", async () => {
+    const { deps, files } = unconfigured(["builder"], {
+      AMIKA_API_KEY: "api-key",
+    });
+    files[CONFIG_PATH] = EXAMPLE;
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ hostname: "builder", secretKey: SECRET }),
+    );
+  });
+
+  it("`up` without a terminal names setup for a placeholder secret", async () => {
+    const { deps, err } = harness({
+      AMIKA_API_KEY: "api-key",
+      AMIKA_HOSTD_HOSTNAME: "builder",
+      XDG_STATE_HOME: "/state",
+    });
+    deps.loadConfigFile.mockReturnValue({ path: "/c.toml", contents: EXAMPLE });
+    expect(await runCli(["up"], deps)).toBe(1);
+    expect(err[0]).toContain("secret key: run `amika-hostd setup`");
+  });
+
+  it("other commands still reject a placeholder secret outright", async () => {
+    const { deps, err } = harness({ XDG_STATE_HOME: "/state" });
+    deps.loadConfigFile.mockReturnValue({ path: "/c.toml", contents: EXAMPLE });
+    expect(await runCli(["serve"], deps)).toBe(1);
+    expect(err[0]).toMatch(/secret key must be at least 32/);
   });
 
   it("`up` stops if setup is cancelled", async () => {

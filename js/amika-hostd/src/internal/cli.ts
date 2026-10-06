@@ -40,7 +40,7 @@ import {
   type RunningServer,
 } from "./server.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
-import { runSetup, type SetupDeps } from "./setup.js";
+import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
 import {
   SMOLVM_STOP_TIMEOUT_MS,
   startSmolvm as startSmolvmServe,
@@ -113,13 +113,17 @@ export async function runCli(
     // Stopping needs only the pidfiles, not a valid configuration.
     if (parsed.command === "down") return await down(deps);
     if (parsed.command === "setup") return await setup(deps);
-    const resolve = () =>
-      resolveConfig({
+    // `up` reads a placeholder secret (the example's `REPLACE_ME`) as unset,
+    // as setup does, so it can run setup to replace it rather than fail.
+    const resolve = ({ tolerant = false } = {}) => {
+      const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+      return resolveConfig({
         flags: parsed.flags,
         env: deps.env,
-        file: (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env),
+        file: tolerant && file ? withoutInvalidSecret(file) : file,
       });
-    let resolved = resolve();
+    };
+    let resolved = resolve({ tolerant: parsed.command === "up" });
     switch (parsed.command) {
       case "up": {
         // Check first so a second `up` fails without calling Amika.
