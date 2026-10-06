@@ -304,7 +304,9 @@ describe("embeddedRuntime", () => {
       expect(engine.boot).toHaveBeenCalledWith("demo");
       expect(engine.connect).toHaveBeenCalledWith("demo");
       expect(order(engine.boot)).toBeLessThan(order(engine.connect));
-      expect(handles[0].start).not.toHaveBeenCalled();
+      // `start` is awaited even on the booted machine; the engine answers
+      // it at once.
+      expect(order(engine.connect)).toBeLessThan(order(handles[0].start));
       // The handle is kept, so later calls neither boot nor attach again.
       await runtime.start("demo");
       expect(engine.boot).toHaveBeenCalledTimes(1);
@@ -319,7 +321,7 @@ describe("embeddedRuntime", () => {
       ]);
       await runtime.start("demo");
       expect(order(engine.boot)).toBeLessThan(order(engine.connect));
-      expect(handles[0].start).not.toHaveBeenCalled();
+      expect(order(engine.connect)).toBeLessThan(order(handles[0].start));
     });
 
     it("boots a machine once for concurrent requests", async () => {
@@ -693,8 +695,25 @@ describe("embeddedRuntime", () => {
         "/a b.bin",
         Buffer.from([0, 255]),
       );
-      // Already running, so not started again.
-      expect(handle.start).toHaveBeenCalledTimes(1);
+      // Each transfer awaits `start`, which a running machine answers at once.
+      expect(handle.start).toHaveBeenCalledTimes(2);
+    });
+
+    it("never reads the machine's state, which blocks on a transfer", async () => {
+      // The engine's `state()` is synchronous and waits on the machine's
+      // lock, which a file transfer holds throughout; called here it would
+      // block the event loop until the transfer ended.
+      const { runtime, handles } = harness();
+      await runtime.create({ name: "demo", image: "img", network: true });
+      const [handle] = handles;
+      handle.state.mockClear();
+      handle.state.mockImplementation(() => {
+        throw new Error("state() called on the event loop");
+      });
+      await runtime.exec("demo", { command: ["true"] });
+      await runtime.readFile("demo", "/etc/hostname");
+      await runtime.writeFile("demo", "/a", new Uint8Array([1]));
+      expect(handle.state).not.toHaveBeenCalled();
     });
 
     it("maps a missing guest file to 404", async () => {

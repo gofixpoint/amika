@@ -385,10 +385,18 @@ export function embeddedRuntime(
     handles.set(name, handle);
     return handle;
   };
-  /** A running machine's handle. Call it only from a queued step. */
+  /**
+   * A running machine's handle. Call it only from a queued step.
+   *
+   * It always awaits `start`, which the engine answers at once for a running
+   * machine, rather than checking `state()` first: `state()` is synchronous
+   * and waits on the machine's lock, which a file transfer holds throughout,
+   * so it would block the event loop, and every request, until the transfer
+   * ends. `start` waits for that lock off the event loop.
+   */
   const boot = async (name: string): Promise<NativeMachine> => {
     const handle = await attach(name);
-    if (handle.state() !== "running") await native(() => handle.start());
+    await native(() => handle.start());
     return handle;
   };
   const stop = async (name: string, state?: string) => {
