@@ -21,6 +21,7 @@
     "@hono/node-server": "1.19.15",
     "hono": "4.13.9",
     "smol-toml": "1.8.0",
+    "smolmachines": "1.22.2",
     "zod": "4.4.3"
   },
   "devDependencies": {

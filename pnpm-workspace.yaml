@@ -15,6 +15,14 @@ allowBuilds:
   esbuild: true
   protobufjs: false
 
+# amika-hostd embeds the newest smolmachines (smolvm's engine) release, which
+# is younger than pnpm's release-age gate. Drop these once it is a week old.
+minimumReleaseAgeExclude:
+  - smolmachines-darwin-arm64@1.22.2
+  - smolmachines-linux-arm64-gnu@1.22.2
+  - smolmachines-linux-x64-gnu@1.22.2
+  - smolmachines@1.22.2
+
 # Moved from the root package.json's `pnpm` field, which pnpm 11 no longer
 # reads. Pins transitive deps: some below the 7-day package-age gate in CI,
 # others up onto a patched release when the direct dependent still asks for a
