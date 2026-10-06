@@ -53,6 +53,21 @@ export class SmolvmSdkUnpublishedPortError extends Error {
   }
 }
 
+/**
+ * A route reconcile that would drop a published port: the engine cannot
+ * unpublish one, so its forward would keep accepting connections. Carries a
+ * `CONFLICT` code.
+ */
+export class SmolvmSdkUnrevocablePortError extends Error {
+  override name = "SmolvmSdkUnrevocablePortError";
+  readonly code = "CONFLICT";
+  constructor(id: string, ports: number[]) {
+    super(
+      `smolvm machines cannot unpublish ports; machine ${id} still publishes ${ports.join(", ")}`,
+    );
+  }
+}
+
 /** The host cannot run machines (no KVM, say). Carries the SDK's code. */
 export class SmolvmSdkUnavailableError extends Error {
   override name = "SmolvmSdkUnavailableError";
@@ -150,7 +165,9 @@ export function smolvmSdkOperations(
     const machine = await running(id);
     const options = { env: opts?.env, workdir: opts?.cwd, user: ROOT };
     if (opts?.input === undefined) {
-      return machine.exec(["/bin/sh", "-c", command], options);
+      return execResult(
+        await machine.exec(["/bin/sh", "-c", command], options),
+      );
     }
     return execWithStdin(machine, command, opts.input, options);
   };
@@ -306,17 +323,18 @@ export function smolvmSdkOperations(
       id: string,
       desired: SandboxService[],
     ): Promise<void> => {
-      // Services are reached by published port, so there are no routes to
-      // reconcile, only ports that had to be published at create.
+      // Services are reached by the ports published at create, and the
+      // engine can neither publish nor unpublish one later. So the routes
+      // already match the desired set exactly when its ports are the
+      // published ones; anything else is refused rather than reported done.
       const published = new Set(
         publishedPorts(await summary(id)).map((p) => p.guest),
       );
-      const missing = [
-        ...new Set(
-          desired.map((s) => s.containerPort).filter((p) => !published.has(p)),
-        ),
-      ];
+      const wanted = new Set(desired.map((s) => s.containerPort));
+      const missing = [...wanted].filter((p) => !published.has(p));
       if (missing.length) throw new SmolvmSdkUnpublishedPortError(id, missing);
+      const dropped = [...published].filter((p) => !wanted.has(p));
+      if (dropped.length) throw new SmolvmSdkUnrevocablePortError(id, dropped);
     },
     /** Stop every machine this process holds a handle on, keeping disks. */
     stopAll: async (): Promise<void> => {
@@ -362,15 +380,30 @@ async function execWithStdin(
   try {
     // Inside the try: a write that fails partway may still leave the file.
     await machine.writeFile(file, Buffer.from(input), 0o600);
-    return await machine.exec(
-      ["/bin/sh", "-c", 'exec /bin/sh -c "$1" < "$0"', file, command],
-      options,
+    return execResult(
+      await machine.exec(
+        ["/bin/sh", "-c", 'exec /bin/sh -c "$1" < "$0"', file, command],
+        options,
+      ),
     );
   } finally {
     await machine
       .exec(["rm", "-f", file], { user: options.user })
       .catch(() => {});
   }
+}
+
+/**
+ * The provider contract's result: the SDK's carries byte copies of both
+ * streams, truncation flags and helpers besides, which a caller serializing
+ * the result must not emit.
+ */
+function execResult({
+  exitCode,
+  stdout,
+  stderr,
+}: SandboxExecResult): SandboxExecResult {
+  return { exitCode, stdout, stderr };
 }
 
 /**

@@ -23,6 +23,7 @@ export {
   SmolvmSdkNotFoundError,
   SmolvmSdkUnavailableError,
   SmolvmSdkUnpublishedPortError,
+  SmolvmSdkUnrevocablePortError,
   mapSmolvmSdkState,
   smolvmSdkOperations,
 } from "./internal/operations";

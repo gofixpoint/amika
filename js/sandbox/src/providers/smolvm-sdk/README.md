@@ -44,7 +44,10 @@ the gap:
   in labels too, with the caller's labels (the org id is read back from them).
 - Each service's guest port is published on a host loopback port the provider
   picks; its URL is `http://127.0.0.1:<host port>`. Ports are published only
-  at create, so `syncRoutes` accepts only services on published ports.
+  at create and cannot be unpublished, so `syncRoutes` succeeds only when the
+  desired services' ports are exactly the published ones: it refuses a new
+  port, and it refuses to revoke the last service on a port, whose forward
+  would keep accepting connections.
 - Commands run as root under `/bin/sh -c`; the home directory is `/root`.
   Exec takes no stdin, so `input` is staged in a root-only guest temp file and
   redirected in.

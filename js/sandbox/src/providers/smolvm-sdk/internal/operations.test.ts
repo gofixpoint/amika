@@ -7,6 +7,7 @@ import {
   SmolvmSdkNotFoundError,
   SmolvmSdkUnavailableError,
   SmolvmSdkUnpublishedPortError,
+  SmolvmSdkUnrevocablePortError,
   mapSmolvmSdkState,
   smolvmSdkOperations,
 } from "./operations";
@@ -407,6 +408,28 @@ describe("smolvmSdkOperations", () => {
       expect(order(handle.start)).toBeLessThan(order(handle.exec));
     });
 
+    it.each([
+      ["without stdin", undefined],
+      ["with stdin", "input"],
+    ])("returns only the contract's fields %s", async (_label, input) => {
+      const { ops, handles } = harness();
+      await ops.create(INPUT);
+      // The SDK's result carries byte copies, flags and helpers besides.
+      handles[0].exec.mockResolvedValue({
+        exitCode: 0,
+        stdout: "out",
+        stderr: "",
+        stdoutBytes: new Uint8Array([111, 117, 116]),
+        stdoutTruncated: false,
+        output: "out",
+      } as never);
+      expect(await ops.run("demo", "echo out", { input })).toStrictEqual({
+        exitCode: 0,
+        stdout: "out",
+        stderr: "",
+      });
+    });
+
     it("stages stdin in a root-only guest file and removes it", async () => {
       const { ops, handles } = harness();
       await ops.create(INPUT);
@@ -485,12 +508,34 @@ describe("smolvmSdkOperations", () => {
       expect(services[1]).toEqual(service("other", 4000));
     });
 
-    it("accepts routes on published ports and refuses others", async () => {
+    it("accepts routes on exactly the published ports", async () => {
       const { ops } = harness(published);
       await ops.syncRoutes("demo", [service("site", 3000)]);
+      // Revoking one of two services on a port leaves the port routed.
+      await ops.syncRoutes("demo", [
+        service("site", 3000),
+        service("site-admin", 3000),
+      ]);
+    });
+
+    it("refuses a port the machine did not publish", async () => {
+      const { ops } = harness(published);
       await expect(
-        ops.syncRoutes("demo", [service("api", 4000)]),
+        ops.syncRoutes("demo", [service("site", 3000), service("api", 4000)]),
       ).rejects.toBeInstanceOf(SmolvmSdkUnpublishedPortError);
+    });
+
+    it("refuses to drop a published port, which would stay open", async () => {
+      const { ops } = harness(published);
+      const failure = await ops
+        .syncRoutes("demo", [])
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(SmolvmSdkUnrevocablePortError);
+      expect(failure).toMatchObject({
+        code: "CONFLICT",
+        message:
+          "smolvm machines cannot unpublish ports; machine demo still publishes 3000",
+      });
     });
   });
 
