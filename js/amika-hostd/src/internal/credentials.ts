@@ -1,6 +1,7 @@
 /**
- * Keep the Amika API key that `amika-hostd setup` asks for, in the macOS
- * keychain on a Mac, and otherwise in a file only its owner can read. Only `setup`, `up` and `register-url` read it; the background daemon
+ * Keep the Amika API key that `amika-hostd setup` asks for, in the system
+ * keychain where one is usable, and otherwise in a file only its owner can
+ * read. Only `setup`, `up` and `register-url` read it; the background daemon
  * never needs it.
  */
 import { spawnSync } from "node:child_process";
@@ -52,7 +53,7 @@ export interface CredentialDeps {
 const SERVICE = "amika-hostd";
 const ACCOUNT = "api-key";
 const LABEL = "Amika API key for amika-hostd";
-/** Long enough for a keychain to ask the operator to unlock it. */
+/** Long enough for a desktop keyring to ask the operator to unlock it. */
 const KEYCHAIN_TIMEOUT_MS = 60_000;
 
 /**
@@ -70,8 +71,9 @@ export function apiKeyFilePath(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * The API key store for this machine: the macOS login keychain on a Mac,
- * else a mode-0600 file. Reads try the keychain first.
+ * The API key store for this machine: the macOS login keychain, or the
+ * Secret Service (GNOME Keyring, KWallet) through `secret-tool` on a Linux
+ * desktop session; else a mode-0600 file. Reads try the keychain first.
  */
 export function apiKeyStore(
   env: NodeJS.ProcessEnv,
@@ -101,15 +103,15 @@ export function apiKeyStore(
     set(value) {
       if (!keychain.set(value)) {
         ensureGone(
-          `Cannot store the API key in ${keychain.description}, or make sure an old one is not left there; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
+          `Cannot store the API key in ${keychain.description}, or make sure an old one is not left there; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again${keychain.hint ? `. ${keychain.hint}` : ""}`,
         );
         file.set(value);
         description = file.description;
         return;
       }
-      // A key left in the file is read whenever the keychain cannot answer
-      // (locked, say), so remove it, or else overwrite it with the new key
-      // rather than leave the old one there.
+      // A key left in the file is read wherever the keychain is not (an SSH
+      // session without the Secret Service, say), so remove it, or else
+      // overwrite it with the new key rather than leave the old one there.
       if (!file.remove()) file.set(value);
       description = keychain.description;
     },
@@ -125,6 +127,8 @@ type Lookup =
 
 interface Keychain {
   description: string;
+  /** Added to a refusal: how to use the file instead, if there is a way. */
+  hint?: string;
   lookup(): Lookup;
   /** False if the keychain could not store it. */
   set(value: string): boolean;
@@ -177,6 +181,64 @@ function systemKeychain(
               "-s",
               SERVICE,
               "-a",
+              ACCOUNT,
+            ]),
+          );
+        },
+      };
+    case "linux":
+      // The Secret Service lives on the desktop session's D-Bus; a headless
+      // host has no session bus. An SSH or systemd session can have one with
+      // no Secret Service on it: then every lookup is "unknown", and setup
+      // refuses rather than guess, since a keyring that is only unreachable
+      // from here may still hold an old key that would shadow the file.
+      if (!env.DBUS_SESSION_BUS_ADDRESS?.trim()) return undefined;
+      return {
+        description: "your desktop keyring (Secret Service)",
+        hint: "If this machine has no desktop keyring, run `amika-hostd setup` with DBUS_SESSION_BUS_ADDRESS unset to keep the key in a file only you can read",
+        lookup() {
+          const result = checked(
+            run("secret-tool", [
+              "lookup",
+              "service",
+              SERVICE,
+              "account",
+              ACCOUNT,
+            ]),
+          );
+          // Without secret-tool there is no keyring to hold a key.
+          if (errorCode(result.error) === "ENOENT") return { state: "absent" };
+          // `lookup` exits 1 both for "no such item" and for errors, which
+          // it explains on stderr; a silent 1 means the item is not there.
+          if (result.status === 1 && !result.stderr?.trim()) {
+            return { state: "absent" };
+          }
+          return found(result);
+        },
+        set(value) {
+          const result = checked(
+            run(
+              "secret-tool",
+              [
+                "store",
+                `--label=${LABEL}`,
+                "service",
+                SERVICE,
+                "account",
+                ACCOUNT,
+              ],
+              value,
+            ),
+          );
+          return result.status === 0 && isValue(this.lookup(), value);
+        },
+        remove() {
+          checked(
+            run("secret-tool", [
+              "clear",
+              "service",
+              SERVICE,
+              "account",
               ACCOUNT,
             ]),
           );

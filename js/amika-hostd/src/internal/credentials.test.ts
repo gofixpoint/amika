@@ -30,11 +30,12 @@ function files(initial: Record<string, string> = {}) {
   };
 }
 
+/** A fake keychain program that keeps one value, or refuses to store it. */
 /**
- * A fake `security` that keeps one value. It answers "not found" as the real
- * one does (exit 44), and can refuse to store, refuse to delete, be locked
- * (every command fails, so nothing can be checked), or be killed by Ctrl-C
- * while storing.
+ * A fake `security` / `secret-tool` that keeps one value. It answers "not
+ * found" as each really does (exit 44; a silent exit 1), and can refuse to
+ * store, refuse to delete, be locked (every command fails, so nothing can be
+ * checked), or be killed by Ctrl-C while storing.
  */
 function keychain({
   broken = false,
@@ -51,20 +52,26 @@ function keychain({
 } = {}) {
   let stored = initial;
   const run = vi.fn(
-    (_command: string, args: readonly string[], input?: string): RunResult => {
-      if (locked) return { status: 51, stdout: "" };
-      if (args[0] === "find-generic-password") {
-        return stored === undefined
-          ? { status: 44, stdout: "" }
-          : { status: 0, stdout: `${stored}\n` };
+    (command: string, args: readonly string[], input?: string): RunResult => {
+      const macOS = command === "security";
+      if (locked) {
+        return macOS
+          ? { status: 51, stdout: "" }
+          : { status: 1, stdout: "", stderr: "Cannot unlock the keyring" };
       }
-      if (args[0] === "delete-generic-password") {
+      const reading =
+        args[0] === "find-generic-password" || args[0] === "lookup";
+      if (reading) {
+        if (stored !== undefined) return { status: 0, stdout: `${stored}\n` };
+        return macOS ? { status: 44, stdout: "" } : { status: 1, stdout: "" };
+      }
+      if (args[0] === "delete-generic-password" || args[0] === "clear") {
         if (!undeletable) stored = undefined;
         return { status: undeletable ? 1 : 0, stdout: "" };
       }
       if (interruptStore) return { status: null, stdout: "", signal: "SIGINT" };
       if (broken) return { status: 1, stdout: "" };
-      stored = /-w "([^"]*)"/.exec(input ?? "")?.[1];
+      stored = macOS ? /-w "([^"]*)"/.exec(input ?? "")?.[1] : input;
       return { status: 0, stdout: "" };
     },
   );
@@ -91,7 +98,62 @@ describe("apiKeyStore", () => {
     expect(fs.contents[FILE]).toBeUndefined();
   });
 
-  it("keeps the key in an owner-only file on Linux", () => {
+  it("uses the Secret Service on a Linux desktop session", () => {
+    const fake = keychain();
+    const store = apiKeyStore(
+      { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" },
+      { platform: "linux", ...files(), run: fake.run },
+    );
+    store.set("amk_123");
+    const stores = fake.run.mock.calls.filter(
+      ([, args]) => args[0] === "store",
+    );
+    expect(stores).toEqual([
+      ["secret-tool", expect.arrayContaining(["store"]), "amk_123"],
+    ]);
+    expect(fake.stored()).toBe("amk_123");
+    expect(store.get()).toBe("amk_123");
+  });
+
+  it.each([
+    "secret-tool: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files",
+    "secret-tool: Could not connect: No such file or directory",
+  ])(
+    "refuses, saying how to use the file, when no keyring answers (%j)",
+    (stderr) => {
+      // A keyring only unreachable from this session may still hold an old
+      // key that would shadow the file, so setup does not guess.
+      const fs = files();
+      const run = vi.fn(
+        (): RunResult => ({ status: 1, stdout: "", stderr: `${stderr}\n` }),
+      );
+      const store = apiKeyStore(
+        { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" },
+        { platform: "linux", ...fs, run },
+      );
+      expect(() => store.set("amk_123")).toThrow(
+        /run `amika-hostd setup` with DBUS_SESSION_BUS_ADDRESS unset to keep the key in a file/,
+      );
+      expect(fs.contents[FILE]).toBeUndefined();
+    },
+  );
+
+  it.each(["", "   "])(
+    "uses the file when DBUS_SESSION_BUS_ADDRESS is %j",
+    (bus) => {
+      const fs = files();
+      const run = vi.fn();
+      const store = apiKeyStore(
+        { ...ENV, DBUS_SESSION_BUS_ADDRESS: bus },
+        { platform: "linux", ...fs, run },
+      );
+      store.set("amk_123");
+      expect(run).not.toHaveBeenCalled();
+      expect(fs.contents[FILE]).toBe("amk_123\n");
+    },
+  );
+
+  it("falls back to an owner-only file without a desktop session", () => {
     const fs = files();
     const run = vi.fn();
     const store = apiKeyStore(ENV, { platform: "linux", ...fs, run });
@@ -192,16 +254,18 @@ describe("apiKeyStore keeping the fallback file in step", () => {
 });
 
 describe("apiKeyStore with a keychain it cannot check", () => {
-  it("refuses to fall back while a locked keychain may hold an old key", () => {
-    const fs = files();
-    const store = apiKeyStore(ENV, {
-      platform: "darwin",
-      ...fs,
-      run: keychain({ locked: true }).run,
-    });
-    expect(() => store.set("amk_new")).toThrow(/unlock it, or remove/);
-    expect(fs.contents[FILE]).toBeUndefined();
-  });
+  it.each(["darwin", "linux"] as const)(
+    "on %s, refuses to fall back while a locked keychain may hold an old key",
+    (platform) => {
+      const fs = files();
+      const store = apiKeyStore(
+        { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" },
+        { platform, ...fs, run: keychain({ locked: true }).run },
+      );
+      expect(() => store.set("amk_new")).toThrow(/unlock it, or remove/);
+      expect(fs.contents[FILE]).toBeUndefined();
+    },
+  );
 
   it("still reads the file when the keychain cannot answer", () => {
     const store = apiKeyStore(ENV, {
@@ -211,19 +275,38 @@ describe("apiKeyStore with a keychain it cannot check", () => {
     });
     expect(store.get()).toBe("amk_file");
   });
+
+  it("falls back to the file when secret-tool is not installed", () => {
+    const fs = files();
+    const missing = Object.assign(new Error("spawn secret-tool ENOENT"), {
+      code: "ENOENT",
+    });
+    const store = apiKeyStore(
+      { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" },
+      {
+        platform: "linux",
+        ...fs,
+        run: () => ({ status: null, stdout: "", error: missing }),
+      },
+    );
+    store.set("amk_new");
+    expect(fs.contents[FILE]).toBe("amk_new\n");
+  });
 });
 
 describe("apiKeyStore when Ctrl-C kills the keychain command", () => {
-  it("reports the interrupt instead of falling back to the file", () => {
-    const fs = files();
-    const store = apiKeyStore(ENV, {
-      platform: "darwin",
-      ...fs,
-      run: keychain({ interruptStore: true }).run,
-    });
-    expect(() => store.set("amk_new")).toThrow(KeychainInterrupted);
-    expect(fs.contents[FILE]).toBeUndefined();
-  });
+  it.each(["darwin", "linux"] as const)(
+    "on %s, reports the interrupt instead of falling back to the file",
+    (platform) => {
+      const fs = files();
+      const store = apiKeyStore(
+        { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" },
+        { platform, ...fs, run: keychain({ interruptStore: true }).run },
+      );
+      expect(() => store.set("amk_new")).toThrow(KeychainInterrupted);
+      expect(fs.contents[FILE]).toBeUndefined();
+    },
+  );
 });
 
 describe("isValidApiKey", () => {

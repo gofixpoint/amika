@@ -163,17 +163,24 @@ commands still reject it. Ctrl-C at a question exits 130 and changes nothing.
 - **macOS**: the login keychain (`security`, service `amika-hostd`, account
   `api-key`). The key is written through `security -i` on stdin, so it never
   appears in the process list, and read back to confirm it was stored.
-- **Otherwise** (Linux, or a keychain that refused):
+- **Linux desktop** (`DBUS_SESSION_BUS_ADDRESS` set): the Secret Service via
+  `secret-tool`, which takes the key on stdin. An SSH or systemd session can
+  have a session bus with no Secret Service on it. Setup then refuses rather
+  than fall back to the file, since a keyring only unreachable from that
+  session may still hold an old key that would shadow the file's, and its
+  message says to run setup with `DBUS_SESSION_BUS_ADDRESS` unset to choose
+  the file.
+- **Otherwise** (headless Linux, an SSH session, or a keychain that refused):
   `$XDG_CONFIG_HOME/amika-hostd/api-key`, mode `0600`, the way `gh` and
   Docker fall back when no keyring is available.
 
 Reads try the keychain first, then the file. So when the keychain refuses a
 new key, the old one is deleted from it before the file is written, and setup
 fails unless the keychain then reports the key as not found (`security` exit
-44). A locked keychain (say, over SSH to a Mac) cannot be checked, so it never
-counts as empty. When the keychain takes the key, the file is deleted, or
-overwritten with the new key if it cannot be, since a read the keychain cannot
-answer falls back to it. Ctrl-C reaches the keychain program
+44, a silent `secret-tool` exit 1). A locked or unreachable keychain cannot be
+checked, so it never counts as empty. When the keychain takes the key, the
+file is deleted, or overwritten with the new key if it cannot be, since a
+session without the keychain reads it. Ctrl-C reaches the keychain program
 too, since it is in the same process group; a keychain command killed by
 `SIGINT` raises `KeychainInterrupted` rather than counting as a refusal to
 fall back to the file from. The background daemon never reads the API key,
