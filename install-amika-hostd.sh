@@ -536,6 +536,11 @@ print_next_steps() {
     echo "     in ${CONFIG_PATH}:"
   fi
   echo "       amika-hostd setup"
+  if [ "$OS" = "linux" ] && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    echo "     This machine has no desktop keyring for amika-hostd's secrets; to keep"
+    echo "     them in files only you can read, first add secret_store = \"file\" to"
+    echo "     ${CONFIG_PATH}."
+  fi
   echo "  2. Start the daemon, which starts smolvm with it (and runs setup first"
   echo "     if you skipped step 1):"
   echo "       amika-hostd up"

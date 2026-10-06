@@ -107,11 +107,20 @@ describe("openSecrets with the keychain store", () => {
     );
   });
 
-  it("has no keychain on Linux", () => {
-    expect(() =>
-      openSecrets("keychain", ENV, { platform: "linux", run: vi.fn() }),
-    ).toThrow(/^No keychain/);
-  });
+  it.each(["", "   "])(
+    "has no keychain on Linux without a session bus (%j)",
+    (bus) => {
+      const run = vi.fn();
+      expect(() =>
+        openSecrets(
+          "keychain",
+          { ...ENV, DBUS_SESSION_BUS_ADDRESS: bus },
+          { platform: "linux", run },
+        ),
+      ).toThrow(/^No keychain/);
+      expect(run).not.toHaveBeenCalled();
+    },
+  );
 });
 
 /** The login keychain the fake `security` reports, with a space in it. */
@@ -311,6 +320,81 @@ describe("the macOS keychain", () => {
   it("reports a command killed by Ctrl-C", () => {
     expect(() => open(security({ interrupt: true })).apiKey.get()).toThrow(
       KeychainInterrupted,
+    );
+  });
+});
+
+/**
+ * A fake `secret-tool` keeping items by account. It answers "not found" as
+ * the real one does (a silent exit 1), and can be unreachable or locked
+ * (exit 1 with an explanation on stderr), or not installed.
+ */
+function secretTool({
+  stderr,
+  missing = false,
+}: { stderr?: string; missing?: boolean } = {}) {
+  const items = new Map<string, string>();
+  const run = vi.fn(
+    (_command: string, args: readonly string[], input?: string): RunResult => {
+      if (missing) {
+        const error = Object.assign(new Error("spawn secret-tool ENOENT"), {
+          code: "ENOENT",
+        });
+        return { status: null, stdout: "", error };
+      }
+      if (stderr) return { status: 1, stdout: "", stderr };
+      const account = args[args.indexOf("account") + 1];
+      if (args[0] === "lookup") {
+        const value = items.get(account);
+        return value === undefined
+          ? { status: 1, stdout: "", stderr: "" }
+          : { status: 0, stdout: value };
+      }
+      items.set(account, input ?? "");
+      return { status: 0, stdout: "" };
+    },
+  );
+  return { run, items };
+}
+
+describe("the Linux Secret Service", () => {
+  const DESKTOP = { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" };
+  const open = (fake: ReturnType<typeof secretTool>) =>
+    openSecrets("keychain", DESKTOP, { platform: "linux", run: fake.run });
+
+  it("keeps both secrets in the keyring, passing them on stdin", () => {
+    const fake = secretTool();
+    const secrets = open(fake);
+    secrets.apiKey.set("amk_123");
+    secrets.secretKey?.set("s".repeat(64));
+    expect(fake.items).toEqual(
+      new Map([
+        ["api-key", "amk_123"],
+        ["secret-key", "s".repeat(64)],
+      ]),
+    );
+    expect(secrets.secretKey?.get()).toBe("s".repeat(64));
+    for (const [, args] of fake.run.mock.calls) {
+      expect(args.join(" ")).not.toContain("amk_123");
+    }
+  });
+
+  it("reads a missing item as unset", () => {
+    expect(open(secretTool()).apiKey.get()).toBeUndefined();
+  });
+
+  it.each([
+    "secret-tool: Cannot get secret of a locked object",
+    "secret-tool: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files",
+  ])("refuses a keyring it cannot read (%j), never falling back", (stderr) => {
+    expect(() => open(secretTool({ stderr })).apiKey.get()).toThrow(
+      /^Cannot read the Amika API key for amika-hostd from your desktop keyring \(Secret Service\); unlock it .* or set `secret_store = "file"`/,
+    );
+  });
+
+  it("says to install secret-tool, or choose files, when it is missing", () => {
+    expect(() => open(secretTool({ missing: true })).apiKey.get()).toThrow(
+      /^secret-tool is not installed.*or set `secret_store = "file"`/,
     );
   });
 });

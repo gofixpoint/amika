@@ -119,7 +119,7 @@ export function openSecrets(
     return { kind, apiKey: fileSecret(apiKeyFilePath(env), deps) };
   }
   const keychain =
-    deps.keychain === undefined ? systemKeychain(deps) : deps.keychain;
+    deps.keychain === undefined ? systemKeychain(env, deps) : deps.keychain;
   if (!keychain) {
     throw new ConfigError(
       `No keychain on this machine to keep amika-hostd's secrets in. To keep them in files only you can read instead, set \`secret_store = "file"\` in ${configFilePaths(env)[0]}, or ${ENV_NAMES.secretStore[0]}=file`,
@@ -138,11 +138,20 @@ export function openSecrets(
 }
 
 /** This platform's keychain, if amika-hostd supports one here. */
-function systemKeychain(deps: CredentialDeps): Keychain | undefined {
+function systemKeychain(
+  env: NodeJS.ProcessEnv,
+  deps: CredentialDeps,
+): Keychain | undefined {
   const run = deps.run ?? runProgram;
   switch (deps.platform ?? process.platform) {
     case "darwin":
       return macOSKeychain(run);
+    case "linux":
+      // The Secret Service lives on the desktop session's D-Bus; a headless
+      // host (or a plain SSH session) has no session bus, so no keychain.
+      return env.DBUS_SESSION_BUS_ADDRESS?.trim()
+        ? secretServiceKeychain(run)
+        : undefined;
     default:
       return undefined;
   }
@@ -229,6 +238,62 @@ function macOSKeychain(run: Runner): Keychain {
  */
 function quoted(text: string): string {
   return `"${text.replace(/["\\]/g, (char) => `\\${char}`)}"`;
+}
+
+/**
+ * The Secret Service (GNOME Keyring, KWallet) on a Linux desktop session,
+ * through `secret-tool`. Items carry attributes `service=amika-hostd` and
+ * `account=<secret>`.
+ */
+function secretServiceKeychain(run: Runner): Keychain {
+  const description = "your desktop keyring (Secret Service)";
+  const attributes = (name: SecretName) => [
+    "service",
+    SERVICE,
+    "account",
+    name,
+  ];
+  const usable = (result: RunResult) => {
+    if (errorCode(result.error) === "ENOENT") {
+      throw new ConfigError(
+        `secret-tool is not installed, so amika-hostd cannot use ${description}; install it (libsecret-tools, or libsecret), or set \`secret_store = "file"\` to keep secrets in files`,
+      );
+    }
+    return result;
+  };
+  const refuse = (what: string) =>
+    new ConfigError(
+      `Cannot ${what} ${description}; unlock it and run \`amika-hostd setup\` again, or set \`secret_store = "file"\` to keep secrets in files`,
+    );
+  return {
+    description,
+    get(name) {
+      const result = usable(
+        checked(run("secret-tool", ["lookup", ...attributes(name)])),
+      );
+      const value = result.status === 0 ? result.stdout.trim() : "";
+      if (value !== "") return value;
+      // `lookup` exits 1 both for "no such item" and for errors, which it
+      // explains on stderr; only a silent 1 means the item is not there.
+      if (result.status === 1 && !result.stderr?.trim()) return undefined;
+      throw refuse(`read the ${LABELS[name]} from`);
+    },
+    set(name, value) {
+      // `store` reads the value from stdin, off the process list.
+      const result = usable(
+        checked(
+          run(
+            "secret-tool",
+            ["store", `--label=${LABELS[name]}`, ...attributes(name)],
+            value,
+          ),
+        ),
+      );
+      if (result.status !== 0 || this.get(name) !== value) {
+        throw refuse(`store the ${LABELS[name]} in`);
+      }
+    },
+  };
 }
 
 function runProgram(

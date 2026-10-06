@@ -179,9 +179,16 @@ chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
   in through `security -i` on stdin, so they never appear in the process
   list, and are read back to confirm they were stored. Exit 44 means "not
   there"; any other failure (a locked keychain, over SSH say) is an error
-  that says to unlock it or choose files. On a machine where amika-hostd
-  supports no keychain, every command that needs a secret refuses, naming
-  `secret_store = "file"`; it never falls back to a file on its own.
+  that says to unlock it or choose files. On a Linux desktop session
+  (`DBUS_SESSION_BUS_ADDRESS` set and not blank) it is the Secret Service
+  (GNOME Keyring, KWallet), through `secret-tool`, which takes values on
+  stdin; items carry `service=amika-hostd` and `account=<secret>`. Only a
+  silent exit 1 from `secret-tool lookup` means "not there"; one explained on
+  stderr (a locked keyring, or no Secret Service on that bus) is an error.
+  On a machine where amika-hostd supports no keychain (headless Linux, or a
+  plain SSH session, with no session bus), every command that needs a secret
+  refuses, naming `secret_store = "file"`; it never falls back to a file on
+  its own.
 - **`file`**, chosen explicitly: the API key in
   `$XDG_CONFIG_HOME/amika-hostd/api-key` and the secret key as `secret_key` in
   the TOML file, both mode `0600`. That is how `gh` and Docker keep

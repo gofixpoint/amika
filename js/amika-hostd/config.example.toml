@@ -9,8 +9,9 @@
 
 # Where `amika-hostd setup` keeps this host's secrets: the Amika API key, and
 # the secret key that authenticates Amika's requests to this daemon. By
-# default they live in the system keychain (the macOS login keychain), and
-# setup refuses on a machine without one amika-hostd can use.
+# default they live in the system keychain (the macOS login keychain, or the
+# Secret Service on a Linux desktop), and setup refuses on a machine without
+# one, such as a headless server.
 # Set "file" to keep them in plain files only you can read instead: the API key
 # in ~/.config/amika-hostd/api-key, and the secret key in this file as
 # secret_key.
