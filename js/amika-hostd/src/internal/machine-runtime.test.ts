@@ -88,9 +88,19 @@ function fakeEngine(initial: MachineRecord[] = []) {
 }
 
 /** A runtime over a fake engine, with machines as an earlier daemon left them. */
-function harness(initial: MachineRecord[] = []) {
+function harness(
+  initial: MachineRecord[] = [],
+  options?: Parameters<typeof embeddedRuntime>[1],
+) {
   const fake = fakeEngine(initial);
-  return { ...fake, runtime: embeddedRuntime(() => fake.engine) };
+  return { ...fake, runtime: embeddedRuntime(() => fake.engine, options) };
+}
+
+/** A promise and the function that settles it. */
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
 }
 
 const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
@@ -771,6 +781,91 @@ describe("embeddedRuntime", () => {
         runtime.create({ name: "demo", image: "img", network: true }),
       ).resolves.toMatchObject({ name: "demo" });
       expect(load).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("leases", () => {
+    /** A running machine whose next exec waits until `finish` is called. */
+    async function busy(options?: Parameters<typeof embeddedRuntime>[1]) {
+      const h = harness(
+        [{ name: "demo", state: "running", labels: OWNED }],
+        options,
+      );
+      await h.runtime.start("demo");
+      const [handle] = h.handles;
+      const command = deferred<ExecResult>();
+      handle.exec.mockReturnValueOnce(command.promise);
+      const running = h.runtime.exec("demo", { command: ["sleep", "1"] });
+      await vi.waitFor(() => expect(handle.exec).toHaveBeenCalled());
+      return { ...h, handle, running, finish: () => command.resolve(OK) };
+    }
+
+    it("makes a stop wait for an exec in flight", async () => {
+      const { runtime, handle, running, finish } = await busy();
+      const stopped = runtime.stop("demo");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(handle.stop).not.toHaveBeenCalled();
+      finish();
+      await expect(running).resolves.toEqual(OK);
+      await expect(stopped).resolves.toMatchObject({ state: "stopped" });
+      expect(order(handle.exec)).toBeLessThan(order(handle.stop));
+    });
+
+    it("makes a delete wait for a file transfer in flight", async () => {
+      const { runtime, handles } = harness([
+        { name: "demo", state: "running", labels: OWNED },
+      ]);
+      await runtime.start("demo");
+      const [handle] = handles;
+      const transfer = deferred<Buffer<ArrayBuffer>>();
+      handle.readFile.mockReturnValueOnce(transfer.promise);
+      const read = runtime.readFile("demo", "/etc/hostname");
+      await vi.waitFor(() => expect(handle.readFile).toHaveBeenCalled());
+      const removed = runtime.remove("demo");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(handle.delete).not.toHaveBeenCalled();
+      transfer.resolve(Buffer.from("x"));
+      await expect(read).resolves.toEqual(Buffer.from("x"));
+      await removed;
+      expect(handle.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets execs run alongside each other", async () => {
+      const { runtime, running, finish } = await busy();
+      await expect(
+        runtime.exec("demo", { command: ["true"] }),
+      ).resolves.toEqual(OK);
+      finish();
+      await running;
+    });
+
+    it("stops anyway once the grace period runs out", async () => {
+      const { runtime, handle, finish } = await busy({ leaseGraceMs: 5 });
+      await expect(runtime.stop("demo")).resolves.toMatchObject({
+        state: "stopped",
+      });
+      expect(handle.stop).toHaveBeenCalledTimes(1);
+      finish();
+    });
+
+    it("never holds up shutdown", async () => {
+      const { runtime, handle, finish } = await busy();
+      await runtime.stopAll();
+      expect(handle.stop).toHaveBeenCalledTimes(1);
+      finish();
+    });
+
+    it("releases a lease whose boot failed", async () => {
+      const { runtime, engine } = harness([
+        { name: "demo", state: "stopped", labels: OWNED },
+      ]);
+      engine.boot.mockRejectedValueOnce(new Error("[SMOLVM_ERROR] boot"));
+      await expect(
+        runtime.exec("demo", { command: ["true"] }),
+      ).rejects.toMatchObject({ status: 500 });
+      await expect(runtime.stop("demo")).resolves.toMatchObject({
+        state: "stopped",
+      });
     });
   });
 

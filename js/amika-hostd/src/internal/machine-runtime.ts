@@ -262,6 +262,7 @@ const portsLabelSchema = z
  */
 export function embeddedRuntime(
   loadEngine: () => NativeEngine = loadNativeEngine,
+  { leaseGraceMs = LEASE_GRACE_MS }: { leaseGraceMs?: number } = {},
 ): MachineRuntime {
   // Loaded on first use, so a host that cannot run machines still serves
   // the rest of the API, answering machine requests with 503.
@@ -279,8 +280,8 @@ export function embeddedRuntime(
   const handles = new Map<string, NativeMachine>();
   // The tail of each machine's queue of lifecycle steps (attach, boot, stop,
   // delete), so concurrent requests for one machine never boot it twice or
-  // interleave a start with a delete. Execs and file transfers run
-  // concurrently once their machine is up.
+  // interleave a start with a delete. Execs and file transfers queue only to
+  // boot their machine, then run concurrently under a lease.
   const queues = new Map<string, Promise<unknown>>();
   const serially = <T>(name: string, step: () => Promise<T>): Promise<T> => {
     const result = (queues.get(name) ?? Promise.resolve()).then(step, step);
@@ -290,6 +291,56 @@ export function embeddedRuntime(
       if (queues.get(name) === tail) queues.delete(name);
     });
     return result;
+  };
+  // The execs and file transfers each machine is running. They run
+  // concurrently with each other; a stop or delete waits for them (see
+  // `settled`) rather than cut a command or transfer off.
+  const leases = new Map<string, Set<Promise<void>>>();
+  /**
+   * Run `operation` on a running machine under a lease taken inside the
+   * queued step that boots it, so no stop or delete queued behind that step
+   * can slip in before the lease is held.
+   */
+  const leased = async <T>(
+    name: string,
+    operation: (handle: NativeMachine) => Promise<T>,
+  ): Promise<T> => {
+    let release = () => {};
+    const done = new Promise<void>((resolve) => (release = resolve));
+    const handle = await explained(() =>
+      serially(name, async () => {
+        const booted = await boot(name);
+        const active = leases.get(name) ?? new Set();
+        active.add(done);
+        leases.set(name, active);
+        return booted;
+      }),
+    );
+    try {
+      return await operation(handle);
+    } finally {
+      release();
+      const active = leases.get(name);
+      active?.delete(done);
+      if (active?.size === 0) leases.delete(name);
+    }
+  };
+  /**
+   * Wait, from a queued stop or delete, for the machine's leased operations,
+   * but no longer than `leaseGraceMs`: an exec has no time limit in the
+   * guest, and one that never ends must not block deleting its machine.
+   */
+  const settled = async (name: string): Promise<void> => {
+    const active = leases.get(name);
+    if (!active?.size) return;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.all(active),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, leaseGraceMs);
+      }),
+    ]);
+    clearTimeout(timer);
   };
   /**
    * A failed boot reports a generic engine error; when this host cannot run
@@ -340,8 +391,6 @@ export function embeddedRuntime(
     if (handle.state() !== "running") await native(() => handle.start());
     return handle;
   };
-  const running = (name: string): Promise<NativeMachine> =>
-    serially(name, () => boot(name));
   const stop = async (name: string, state?: string) => {
     const handle = handles.get(name);
     if (handle) {
@@ -425,6 +474,7 @@ export function embeddedRuntime(
     stop: (name) =>
       explained(() =>
         serially(name, async () => {
+          await settled(name);
           await stop(name);
           return describe(name);
         }),
@@ -434,26 +484,24 @@ export function embeddedRuntime(
         serially(name, async () => {
           // The engine deletes only through a handle, and the only handle on
           // a stopped machine from an earlier run comes from booting it.
+          await settled(name);
           const handle = await attach(name);
           await native(() => handle.delete());
           handles.delete(name);
         }),
       ),
-    exec: async (name, request) => {
-      const handle = await explained(() => running(name));
-      if (request.stdin === undefined) {
-        return exec(handle, request.command, request);
-      }
-      return execWithStdin(handle, request, exec);
-    },
-    readFile: async (name, filePath) => {
-      const handle = await explained(() => running(name));
-      return native(() => handle.readFile(filePath));
-    },
-    writeFile: async (name, filePath, data) => {
-      const handle = await explained(() => running(name));
-      await native(() => handle.writeFile(filePath, Buffer.from(data)));
-    },
+    exec: (name, request) =>
+      leased(name, (handle) =>
+        request.stdin === undefined
+          ? exec(handle, request.command, request)
+          : execWithStdin(handle, request, exec),
+      ),
+    readFile: (name, filePath) =>
+      leased(name, (handle) => native(() => handle.readFile(filePath))),
+    writeFile: (name, filePath, data) =>
+      leased(name, async (handle) => {
+        await native(() => handle.writeFile(filePath, Buffer.from(data)));
+      }),
     stopAll: async () => {
       // An engine never loaded never booted anything.
       if (!loaded) return;
@@ -462,7 +510,9 @@ export function embeddedRuntime(
         listed.filter(isOwned).map((machine) => [machine.name, machine.state]),
       );
       for (const name of handles.keys()) states.set(name, undefined);
-      // Each waits behind any boot still in flight for its machine.
+      // Each waits behind any boot still in flight for its machine, but not
+      // for execs or transfers: the daemon is going away, and the caller
+      // bounds how long stopping may take.
       await Promise.allSettled(
         [...states].map(([name, state]) =>
           serially(name, () => stop(name, state)),
@@ -471,6 +521,12 @@ export function embeddedRuntime(
     },
   };
 }
+
+/**
+ * How long a stop or delete waits for the machine's execs and file transfers
+ * to finish before going ahead anyway.
+ */
+export const LEASE_GRACE_MS = 30_000;
 
 /** States in which a machine's VM may be running and should be stopped. */
 const ACTIVE_STATES = new Set(["running", "starting"]);
