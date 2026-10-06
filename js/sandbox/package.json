@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
-    "./config-env": "./src/config-from-env.ts"
+    "./config-env": "./src/config-from-env.ts",
+    "./smolvm-sdk": "./src/providers/smolvm-sdk/provider.ts"
   },
   "scripts": {
     "lint": "eslint .",

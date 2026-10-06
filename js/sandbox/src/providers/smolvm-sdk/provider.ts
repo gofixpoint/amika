@@ -10,9 +10,12 @@ import { smolMachines, type SmolMachines } from "./internal/client";
 import { mapSmolvmSdkState, smolvmSdkOperations } from "./internal/operations";
 
 // The runtime primitives amika-hostd serves its machine API over, routed
-// through here so the folder root stays the only public entry.
+// through here so the folder root stays the only public entry. The package
+// exposes this module as `@amika/sandbox/smolvm-sdk`, so hostd imports this
+// provider alone rather than every vendor SDK behind the barrel.
 export {
   smolErrorCode as smolvmSdkErrorCode,
+  smolMachines,
   type SmolMachine,
   type SmolMachines,
 } from "./internal/client";
