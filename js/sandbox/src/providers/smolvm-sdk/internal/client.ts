@@ -6,6 +6,7 @@
  * so importing this module is cheap on hosts that never use the provider.
  */
 import { Machine } from "smolmachines";
+import { z } from "zod";
 import type {
   ConnectOptions,
   ListOptions,
@@ -49,12 +50,11 @@ export const smolMachines: SmolMachines = Machine;
  */
 export const LOCAL: ConnectOptions = { target: "local", handleSignals: false };
 
+/** The part of an SDK error (`SmolError`) callers branch on: its code. */
+const smolErrorSchema = z.object({ code: z.string() });
+
 /** An SDK error's code (`SmolError.code`), or `""` for any other error. */
 export function smolErrorCode(error: unknown): string {
-  return typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof error.code === "string"
-    ? error.code
-    : "";
+  const parsed = smolErrorSchema.safeParse(error);
+  return parsed.success ? parsed.data.code : "";
 }
