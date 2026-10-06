@@ -334,12 +334,14 @@ export function embeddedRuntime(
     handles.set(name, handle);
     return handle;
   };
+  /** A running machine's handle. Call it only from a queued step. */
+  const boot = async (name: string): Promise<NativeMachine> => {
+    const handle = await attach(name);
+    if (handle.state() !== "running") await native(() => handle.start());
+    return handle;
+  };
   const running = (name: string): Promise<NativeMachine> =>
-    serially(name, async () => {
-      const handle = await attach(name);
-      if (handle.state() !== "running") await native(() => handle.start());
-      return handle;
-    });
+    serially(name, () => boot(name));
   const stop = async (name: string, state?: string) => {
     const handle = handles.get(name);
     if (handle) {
@@ -411,14 +413,22 @@ export function embeddedRuntime(
         handles.set(machine.name, handle);
         return describe(machine.name);
       }),
-    start: async (name) => {
-      await explained(() => running(name));
-      return describe(name);
-    },
-    stop: async (name) => {
-      await explained(() => serially(name, () => stop(name)));
-      return describe(name);
-    },
+    // Each answers from inside its queued step, so a delete queued behind
+    // it cannot remove the machine before the answer is read.
+    start: (name) =>
+      explained(() =>
+        serially(name, async () => {
+          await boot(name);
+          return describe(name);
+        }),
+      ),
+    stop: (name) =>
+      explained(() =>
+        serially(name, async () => {
+          await stop(name);
+          return describe(name);
+        }),
+      ),
     remove: (name) =>
       explained(() =>
         serially(name, async () => {

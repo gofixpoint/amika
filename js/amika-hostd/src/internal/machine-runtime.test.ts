@@ -325,6 +325,35 @@ describe("embeddedRuntime", () => {
       expect(engine.connect).toHaveBeenCalledTimes(1);
     });
 
+    it.each(["start", "stop"] as const)(
+      "answers a %s queued before a delete with the machine it acted on",
+      async (action) => {
+        const { runtime, engine, machines } = harness([
+          {
+            name: "demo",
+            state: action === "start" ? "stopped" : "running",
+            labels: OWNED,
+          },
+        ]);
+        // Listing takes a tick, as the engine's does, which leaves room for
+        // the delete to run if the lookup escaped the queue.
+        engine.list.mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve));
+          return [...machines.values()].map((m) => ({ ...m }));
+        });
+        const acted = runtime[action]("demo");
+        const removed = runtime.remove("demo");
+        await expect(acted).resolves.toMatchObject({
+          name: "demo",
+          state: action === "start" ? "running" : "stopped",
+        });
+        await removed;
+        await expect(runtime.get("demo")).rejects.toMatchObject({
+          status: 404,
+        });
+      },
+    );
+
     it("never attaches after a concurrent delete", async () => {
       const { runtime, engine } = harness([
         { name: "demo", state: "stopped", labels: OWNED },
