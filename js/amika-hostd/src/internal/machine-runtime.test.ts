@@ -37,6 +37,7 @@ function fakeSdk(initial: MachineRecord[] = []) {
   function handleFor(record: MachineRecord) {
     return {
       start: vi.fn(async () => void (record.state = "running")),
+      resume: vi.fn(async () => void (record.state = "running")),
       stop: vi.fn(async () => void (record.state = "stopped")),
       delete: vi.fn(async () => void machines.delete(record.name)),
       exec: vi.fn(

@@ -556,6 +556,7 @@ describe("the machine engine", () => {
   function handle() {
     return {
       start: vi.fn(async () => {}),
+      resume: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       delete: vi.fn(async () => {}),
       exec: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
