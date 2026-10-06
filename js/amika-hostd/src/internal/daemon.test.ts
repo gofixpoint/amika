@@ -23,7 +23,6 @@ import {
   ensureNotRunning,
   isDaemonProcess,
   isDaemonRunning,
-  isSmolvmRunning,
   PROCESS_TITLE,
   startInBackground,
   stopProcess,
@@ -370,10 +369,9 @@ describe("daemonPaths", () => {
     expect(daemonPaths({ XDG_STATE_HOME: "/state" })).toEqual({
       pidFile: "/state/amika-hostd/amika-hostd.pid",
       logFile: "/state/amika-hostd/log/amika-hostd.log",
-      smolvmPidFile: "/state/amika-hostd/smolvm.pid",
-      smolvmUrlFile: "/state/amika-hostd/smolvm.url",
-      smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
       servicesFile: "/state/amika-hostd/services.json",
+      legacySmolvmPidFile: "/state/amika-hostd/smolvm.pid",
+      legacySmolvmUrlFile: "/state/amika-hostd/smolvm.url",
     });
   });
 
@@ -446,18 +444,8 @@ describe("isDaemonProcess", () => {
   });
 });
 
-describe("isSmolvmRunning", () => {
-  it("does not count a live process running another program", async () => {
-    const child = await liveProcess();
-    try {
-      expect(isSmolvmRunning(child.pid!)).toBe(false);
-    } finally {
-      child.kill();
-    }
-  });
-
+describe("isDaemonRunning", () => {
   it("does not count a pid that is not running", () => {
-    expect(isSmolvmRunning(2 ** 22 + 1)).toBe(false);
     expect(isDaemonRunning(2 ** 22 + 1)).toBe(false);
   });
 });

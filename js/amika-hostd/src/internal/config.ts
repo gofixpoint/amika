@@ -23,7 +23,6 @@ export interface HostdConfig {
   secretKey?: string;
   host: string;
   port: number;
-  smolApiUrl?: string;
   smolRequestTimeoutMs: number;
   /** The rig sizes this host offers, keyed by name. Only read from TOML. */
   sizes: Record<string, HostSize>;
@@ -93,7 +92,6 @@ export function resolveConfig({
     host:
       parseHostFlag(flags.host) ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
     port: port === undefined ? DEFAULT_PORT : parsePort(port),
-    smolApiUrl: nonEmpty(env.SMOL_API_URL),
     smolRequestTimeoutMs: parseTimeout(env.SMOL_REQUEST_TIMEOUT_MS),
     sizes: toHostSizes(toml.sizes ?? {}),
     images: toml.preset_images ?? {},

@@ -49,6 +49,13 @@ case "$engine_version" in
     exit 1
     ;;
 esac
+# The smolvm-sdk provider hostd runs on was built against @amika/sandbox's
+# pin; ship the same engine.
+sandbox_version="$(node -p 'require(process.argv[1]).dependencies.smolmachines' "${package_dir}/../sandbox/package.json")"
+if [ "$sandbox_version" != "$engine_version" ]; then
+  echo "Error: smolmachines is pinned to ${engine_version} in amika-hostd but ${sandbox_version} in @amika/sandbox; pin both to the same version" >&2
+  exit 1
+fi
 
 rm -rf "$staging_dir"
 mkdir -p "$staging_dir/node_modules/smolmachines"

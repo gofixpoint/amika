@@ -14,12 +14,45 @@ import { memoryServiceRegistry } from "./service-registry.js";
 import {
   authorizeServiceRequest,
   createUpgradeHandler,
-  freeLoopbackPort,
   parseServicePath,
+  resolveHostPort,
 } from "./services.js";
-import { SmolRuntime } from "./smol.js";
+import type { MachineRuntime } from "./machine-runtime.js";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
+
+/** A runtime that reports host ports through `hostPort`; nothing else is called. */
+function runtimeWith(hostPort: MachineRuntime["hostPort"]): MachineRuntime {
+  const unexpected = async () => {
+    throw new Error("unexpected runtime call");
+  };
+  return {
+    list: unexpected,
+    get: unexpected,
+    create: unexpected,
+    start: unexpected,
+    stop: unexpected,
+    remove: unexpected,
+    exec: unexpected,
+    readFile: unexpected,
+    writeFile: unexpected,
+    checkServices: unexpected,
+    hostPort,
+    stopAll: unexpected,
+  };
+}
+
+/** A loopback port nothing listens on: bound, then released. */
+function closedLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => resolve(port));
+    });
+  });
+}
 
 describe("parseServicePath", () => {
   it("splits the route and keeps the encoded guest path", () => {
@@ -86,14 +119,48 @@ describe("authorizeServiceRequest", () => {
   );
 });
 
-describe("freeLoopbackPort", () => {
-  it("returns a port that can be bound on loopback", async () => {
-    const port = await freeLoopbackPort();
-    const server = createServer();
-    await new Promise<void>((resolve) =>
-      server.listen(port, "127.0.0.1", resolve),
+describe("resolveHostPort", () => {
+  const route = { machine: "demo", service: "web" };
+  function registry() {
+    const registry = memoryServiceRegistry();
+    registry.set("demo", { web: 3000 });
+    return registry;
+  }
+
+  it("asks the runtime for the registered guest port's host port", async () => {
+    const hostPort = vi.fn(
+      async (_name: string, _guestPort: number): Promise<number | null> =>
+        41001,
     );
-    await new Promise((resolve) => server.close(resolve));
+    expect(
+      await resolveHostPort(runtimeWith(hostPort), registry(), route),
+    ).toBe(41001);
+    expect(hostPort).toHaveBeenCalledWith("demo", 3000);
+  });
+
+  it("passes on the runtime's null for a port it cannot reach", async () => {
+    const runtime = runtimeWith(async () => null);
+    expect(await resolveHostPort(runtime, registry(), route)).toBeNull();
+  });
+
+  it("asks the runtime nothing for an unregistered service", async () => {
+    const hostPort = vi.fn(async () => 41001);
+    expect(
+      await resolveHostPort(runtimeWith(hostPort), registry(), {
+        ...route,
+        service: "nope",
+      }),
+    ).toBeNull();
+    expect(hostPort).not.toHaveBeenCalled();
+  });
+
+  it("lets an unexpected error through", async () => {
+    const runtime = runtimeWith(async () => {
+      throw new TypeError("bug");
+    });
+    await expect(resolveHostPort(runtime, registry(), route)).rejects.toThrow(
+      "bug",
+    );
   });
 });
 
@@ -126,21 +193,11 @@ describe("createUpgradeHandler", () => {
       state = "running",
     } = {},
   ) {
-    const runtime = new SmolRuntime(
-      { apiUrl: "http://runtime:8080" },
-      vi.fn<typeof fetch>(async () =>
-        Response.json({
-          name: "demo",
-          state,
-          ports:
-            hostPort === null
-              ? []
-              : Object.values(services).map((guest) => ({
-                  host: hostPort,
-                  guest,
-                })),
-        }),
-      ),
+    // As the real runtime does: a host port only for a running machine's
+    // published guest port. Every registered port is published here.
+    const published = new Set(Object.values(services));
+    const runtime = runtimeWith(async (_name, guestPort) =>
+      state === "running" && published.has(guestPort) ? hostPort : null,
     );
     const tunnels = new Set<Duplex>();
     const server = createHttpServer();
@@ -320,23 +377,12 @@ describe("createUpgradeHandler", () => {
     const lookup = new Promise<void>((resolve) => (release = resolve));
     let resolved = () => {};
     const lookupDone = new Promise<void>((resolve) => (resolved = resolve));
-    const runtime = new SmolRuntime({ apiUrl: "http://runtime:8080" });
     // Signals once the handler has the port, so the dial assertion below
     // runs only after the handler could have dialed.
-    vi.spyOn(runtime, "request").mockImplementation(async () => {
+    const runtime = runtimeWith(async () => {
       await lookup;
-      const machine = {
-        name: "demo",
-        state: "running",
-        ports: [{ host: 1, guest: 60999 }],
-      };
-      return {
-        ok: true,
-        json: async () => {
-          resolved();
-          return machine;
-        },
-      } as unknown as Response;
+      resolved();
+      return 1;
     });
     const tunnels = new Set<Duplex>();
     const dial = vi.fn<(port: number) => Socket>();
@@ -356,8 +402,18 @@ describe("createUpgradeHandler", () => {
     expect(dial).not.toHaveBeenCalled();
   });
 
+  it("answers 502 when the runtime lookup fails unexpectedly", async () => {
+    const server = createHttpServer();
+    const runtime = runtimeWith(async () => {
+      throw new TypeError("bug");
+    });
+    server.on("upgrade", createUpgradeHandler(SECRET, runtime, registry()));
+    const socket = await open(await listen(server), validPath());
+    expect(await read(socket)).toMatch(/^HTTP\/1\.1 502 /);
+  });
+
   it("answers 502 when the guest port is closed", async () => {
-    const closed = await freeLoopbackPort();
+    const closed = await closedLoopbackPort();
     const { port } = await hostd(closed);
     const socket = await open(port, validPath());
     expect(await read(socket)).toMatch(/^HTTP\/1\.1 502 /);
