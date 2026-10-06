@@ -26,6 +26,7 @@ function deps(apiKey: string | null): SandboxProviderDeps {
     freestyle: null,
     vercel: null,
     smol: null,
+    smolvmSdk: null,
     amikaHostd: null,
     resolveSnapshotId: async () => null,
   };

@@ -126,6 +126,27 @@ describe("Smol environment configuration", () => {
   });
 });
 
+describe("embedded smolvm environment configuration", () => {
+  it("is opt-in, needs no credentials, and keeps networking off by default", () => {
+    expect(sandboxProviderConfigsFromEnv(BASE).smolvmSdk).toBeNull();
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, SMOLVM_SDK_ENABLED: "1" })
+        .smolvmSdk,
+    ).toBeNull();
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, SMOLVM_SDK_ENABLED: "true" })
+        .smolvmSdk,
+    ).toEqual({ network: false });
+    expect(
+      sandboxProviderConfigsFromEnv({
+        ...BASE,
+        SMOLVM_SDK_ENABLED: "true",
+        SMOLVM_SDK_NETWORK: "on",
+      }).smolvmSdk,
+    ).toEqual({ network: true });
+  });
+});
+
 const HOSTD_SECRET = "0123456789abcdef0123456789abcdef";
 
 describe("Amika host daemon environment configuration", () => {

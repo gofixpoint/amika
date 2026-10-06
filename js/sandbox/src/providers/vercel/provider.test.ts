@@ -26,6 +26,7 @@ function vercelDeps(vercel: VercelConfig | null): SandboxProviderDeps {
     freestyle: null,
     vercel,
     smol: null,
+    smolvmSdk: null,
     amikaHostd: null,
     resolveSnapshotId: async () => null,
   };

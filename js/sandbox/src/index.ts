@@ -43,6 +43,7 @@ export type { AmikaHostdConfig } from "./providers/amika-hostd/config";
 // control-plane code that dials hostd service URLs itself.
 export { HOSTD_SERVICE_KEY_HEADER } from "./providers/amika-hostd/provider";
 export type { SmolConfig } from "./providers/smol/config";
+export type { SmolvmSdkConfig } from "./providers/smolvm-sdk/config";
 // Server-only env → config-slice factory (the single provider env-var contract).
 export {
   sandboxProviderConfigsFromEnv,

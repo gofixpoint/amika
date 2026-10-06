@@ -21,6 +21,7 @@ const DEPS: SandboxProviderDeps = {
   freestyle: { apiKey: "k" },
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
   smol: {},
+  smolvmSdk: {},
   amikaHostd: { secretKey: "s" },
   resolveSnapshotId: async () => null,
 };
@@ -32,6 +33,7 @@ describe("createSandboxProvider construction", () => {
     "freestyle",
     "vercel",
     "smol",
+    "smolvm-sdk",
     "amika-hostd",
   ];
 

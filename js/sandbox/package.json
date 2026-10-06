@@ -22,6 +22,7 @@
     "e2b": "2.51.0",
     "freestyle": "^0.1.63",
     "p-retry": "^7.1.1",
+    "smolmachines": "1.22.2",
     "zod": "4.4.3"
   },
   "devDependencies": {

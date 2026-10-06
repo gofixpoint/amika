@@ -31,6 +31,8 @@ import type { SandboxProviderName } from "../types";
 import { isSandboxProviderName } from "./capabilities";
 import smolProvider, { openSmolAdapter } from "./smol/provider";
 import type { SmolConfig } from "./smol/config";
+import smolvmSdkProvider, { openSmolvmSdkAdapter } from "./smolvm-sdk/provider";
+import type { SmolvmSdkConfig } from "./smolvm-sdk/config";
 import type { SandboxAdapter } from "./shared/adapter";
 import daytonaProvider from "./daytona/provider";
 import e2bProvider, { openE2bAdapter } from "./e2b/provider";
@@ -51,6 +53,7 @@ export interface SandboxProviderDeps {
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
+  smolvmSdk: SmolvmSdkConfig | null;
   amikaHostd: AmikaHostdConfig | null;
   /**
    * Optional replacement for fetch, used by host daemon operations and adapters.
@@ -86,6 +89,8 @@ const VERCEL_HINT =
 const AMIKA_HOSTD_HINT =
   "Amika host daemon provider is not configured (set AMIKA_HOSTD_ENABLED=true)";
 const SMOL_HINT = "Smol provider is not configured (set SMOL_ENABLED=true)";
+const SMOLVM_SDK_HINT =
+  "Embedded smolvm provider is not configured (set SMOLVM_SDK_ENABLED=true)";
 const E2B_HINT =
   "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
 
@@ -113,6 +118,12 @@ const PROVIDERS = {
     create: (deps) => smolProvider(requireConfig(deps.smol, SMOL_HINT)),
     openAdapter: (deps, id) =>
       openSmolAdapter(requireConfig(deps.smol, SMOL_HINT), id),
+  },
+  "smolvm-sdk": {
+    create: (deps) =>
+      smolvmSdkProvider(requireConfig(deps.smolvmSdk, SMOLVM_SDK_HINT)),
+    openAdapter: (deps, id) =>
+      openSmolvmSdkAdapter(requireConfig(deps.smolvmSdk, SMOLVM_SDK_HINT), id),
   },
   daytona: {
     create: (deps) => daytonaProvider(deps.daytona),

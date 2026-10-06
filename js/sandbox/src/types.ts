@@ -14,6 +14,7 @@ export const SANDBOX_PROVIDER_NAMES = [
   "freestyle",
   "vercel",
   "smol",
+  "smolvm-sdk",
   "amika-hostd",
 ] as const;
 
