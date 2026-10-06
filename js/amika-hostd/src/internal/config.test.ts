@@ -306,8 +306,8 @@ describe("requireSettings", () => {
       [
         "Missing required configuration:",
         "  - API key: set AMIKA_HOSTD_API_KEY or AMIKA_API_KEY (environment only)",
-        "  - hostname: set AMIKA_HOSTD_HOSTNAME or `hostname` in config.toml",
-        "  - secret key: set AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY or `secret_key` in config.toml",
+        "  - hostname: run `amika-hostd setup`, or set AMIKA_HOSTD_HOSTNAME or `hostname` in config.toml",
+        "  - secret key: run `amika-hostd setup`, or set AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY or `secret_key` in config.toml",
       ].join("\n"),
     );
   });

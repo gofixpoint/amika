@@ -45,6 +45,9 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   hostname), unless a config already exists there or in `/etc`. It is never
   overwritten.
 
+Its closing steps point the operator at `amika-hostd setup`, then
+`amika-hostd up` (which runs setup itself if it was skipped).
+
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
 the daemon: `amika-hostd up` starts smolvm itself (see [smolvm](#smolvm)).
@@ -93,6 +96,8 @@ pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 `src/index.ts` is the `amika-hostd` bin; `src/internal/cli.ts` parses commands
 with `node:util` `parseArgs` and takes every side effect as a dependency.
 
+- `amika-hostd setup` asks for the hostname, generates the secret key, and
+  writes them (see [Setup](#setup)).
 - `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
   it re-runs itself as `serve --smolvm` with `detached: true`, appends output, each line
   timestamped, to `$XDG_STATE_HOME/amika-hostd/log/amika-hostd.log` (else
@@ -116,6 +121,43 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   waits for it to exit, which includes stopping smolvm. It needs no
   configuration.
 - `amika-hostd register-url <url>` records the host's public URL and exits.
+
+## Setup
+
+`src/internal/setup.ts` runs `amika-hostd setup`, which needs a terminal. It
+edits the TOML file `up` reads (the first that exists, else the user path).
+
+It asks for the hostname, defaulting to the configured one, or else the
+machine's own hostname made valid (lowercased, `.local` dropped, other
+characters turned into `-`), re-asking until it is valid. When the file has
+no secret key it generates one (`randomBytes(32)`, hex), unless the
+environment sets one, which is saved to the file instead (Amika may already
+know it). An existing secret key is kept.
+
+It then replaces `hostname` and `secret_key` in place (a live line, bare or
+quoted, else the commented `# key = ...` one; otherwise it adds them above the
+first table), keeping everything else in the file. A `secret_key` too short
+to use, such as the example's `REPLACE_ME`, counts as unset and is replaced
+without asking. A config written from scratch also gets the example's default
+`[sizes]` and `[preset_images]` (`DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES`,
+which `setup.test.ts` keeps in step with `config.example.toml`). It prints
+the result and where to edit it. The new contents are parsed before anything
+is written, and the file is replaced atomically with mode `0600`
+(`src/internal/private-file.ts`).
+
+`up` runs setup first whenever the hostname or secret key is missing and it
+has a terminal; without one it fails, naming `setup`. Like setup, it reads a
+`secret_key` too short to use (the example's `REPLACE_ME`) as missing, so a
+hand-copied example gets set up rather than rejected; other commands still
+reject it. Ctrl-C during setup
+exits 130 and changes nothing, since setup writes only after its last
+question.
+
+The secret key stays in `config.toml` (mode `0600`) rather than a keychain:
+the detached daemon reads it on every start, with no one there to unlock a
+keychain. This is how other unattended daemons keep their keys: WireGuard's
+`PrivateKey` in `/etc/wireguard/*.conf`, `tailscaled`'s state file, `sshd`'s
+host keys.
 
 ## Registration
 

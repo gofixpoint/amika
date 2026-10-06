@@ -421,7 +421,6 @@ config_paths() {
 # has a config to read. Never overwrites one.
 seed_config() {
   config_paths
-  CONFIG_SEEDED=false
   if [ -e "$CONFIG_PATH" ]; then
     echo "Keeping existing config at ${CONFIG_PATH}"
     return 0
@@ -449,7 +448,6 @@ seed_config() {
       -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
       "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
   )
-  CONFIG_SEEDED=true
   CONFIG_HOSTNAME="$host_name"
   echo "Wrote a config to ${CONFIG_PATH}"
 }
@@ -539,19 +537,19 @@ check_kvm() {
 print_next_steps() {
   echo ""
   echo "Next steps:"
-  if [ "$CONFIG_SEEDED" = "true" ] && [ -n "$CONFIG_HOSTNAME" ]; then
-    echo "  1. Review ${CONFIG_PATH}: it registers this host as ${CONFIG_HOSTNAME}."
-  elif [ "$CONFIG_SEEDED" = "true" ]; then
-    echo "  1. Edit ${CONFIG_PATH}: uncomment and set hostname."
+  if [ -n "${CONFIG_HOSTNAME:-}" ]; then
+    echo "  1. Confirm this host registers as ${CONFIG_HOSTNAME}, and finish"
+    echo "     ${CONFIG_PATH}:"
   else
-    echo "  1. Check ${CONFIG_PATH}: hostname, secret_key, [sizes] and [preset_images]"
-    echo "     (compare with ${HOSTD_HOME}/config.example.toml)."
+    echo "  1. Set this host's hostname and finish ${CONFIG_PATH}:"
   fi
+  echo "       amika-hostd setup"
   echo "  2. Export your Amika API key; it is read only from the environment:"
   echo "       export AMIKA_HOSTD_API_KEY=<your Amika API key>"
-  echo "  3. Start the daemon, which starts smolvm with it:"
+  echo "  3. Start the daemon, which starts smolvm with it (and runs setup first"
+  echo "     if you skipped step 1):"
   echo "       amika-hostd up"
-  echo "     Stop both, and smolvm's machines, with: amika-hostd down"
+  echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."
   echo ""
   echo "If you're a human, run \`amika-hostd setup\`."
   echo ""
