@@ -4,9 +4,8 @@ set -eu
 # amika-hostd ships as one bundled JavaScript file. It is installed into
 # HOSTD_HOME (default $XDG_DATA_HOME/amika-hostd), with a launcher on
 # INSTALL_DIR that runs it on a suitable node.
-# It needs smolvm on the same host: `amika-hostd up` starts `smolvm serve`,
-# and `amika-hostd down` stops it. It also installs the smolmachines SDK
-# (smolvm's engine, embedded) the release carries, plus this platform's
+# It runs machines with smolvm's engine, embedded through the smolmachines
+# SDK: the release carries the SDK, and the installer adds this platform's
 # engine package from npm, checked against the release's engines.sha256.
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
@@ -22,33 +21,25 @@ NPM_REGISTRY="${AMIKA_HOSTD_NPM_REGISTRY:-https://registry.npmjs.org}"
 NPM_REGISTRY="${NPM_REGISTRY%/}"
 # The smolmachines engine runs on Linux with glibc 2.34 or newer.
 GLIBC_MIN="2.34"
-SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
-SMOLVM_VERSION="${SMOLVM_VERSION:-}"
-SKIP_SMOLVM=false
 
 usage() {
   cat <<EOF
 install-amika-hostd.sh — install the amika-hostd BYOC host daemon
 
 Installs amika-hostd from its GitHub release, plus the Node.js ${NODE_MIN_MAJOR}+
-and smolvm it needs. It uses the system node if it is new enough, and otherwise
-downloads Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node. If smolvm is
-missing, it runs the official smolvm installer. It also installs the
-smolmachines engine (smolvm, embedded) for this platform.
+it needs and the smolmachines engine (smolvm, embedded) for this platform. It
+uses the system node if it is new enough, and otherwise downloads Node.js
+${NODE_VERSION} into ${HOSTD_HOME}/node.
 
 Supported hosts: Linux x86_64 or arm64 with glibc ${GLIBC_MIN}+, and macOS on
 Apple silicon.
 
 Usage:
   sh install-amika-hostd.sh [--help] [--install-version VERSION] [--dry-run]
-                            [--smolvm-version VERSION] [--skip-smolvm]
 
 Flags:
   --install-version     Install a specific version (default: ${DEFAULT_VERSION})
   --dry-run             Show what would be done without downloading or installing
-  --smolvm-version      Install this smolvm version if smolvm is missing
-                        (default: latest)
-  --skip-smolvm         Do not install smolvm
 
 Environment variables:
   AMIKA_INSTALL_DIR          Launcher directory (default: /usr/local/bin)
@@ -57,7 +48,6 @@ Environment variables:
                              ~/.local/share/amika-hostd by default)
   AMIKA_HOSTD_NODE_VERSION   Node.js version to download when the system node
                              is missing or too old (default: ${NODE_VERSION})
-  SMOLVM_VERSION             Same as --smolvm-version
   AMIKA_HOSTD_NPM_REGISTRY   npm registry to fetch the engine package from
                              (default: https://registry.npmjs.org)
   AMIKA_RELEASE_URL          Testing only: fetch the archive and checksums.txt
@@ -66,7 +56,7 @@ Environment variables:
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
-  sh install-amika-hostd.sh --install-version 0.1.0 --skip-smolvm
+  sh install-amika-hostd.sh --install-version 0.1.0
   AMIKA_INSTALL_DIR=~/.local/bin sh install-amika-hostd.sh
 EOF
 }
@@ -119,17 +109,6 @@ parse_args() {
         fi
         INSTALL_VERSION="$2"
         shift
-        ;;
-      --smolvm-version)
-        if [ "$#" -lt 2 ]; then
-          echo "Error: --smolvm-version requires a value" >&2
-          exit 1
-        fi
-        SMOLVM_VERSION="$2"
-        shift
-        ;;
-      --skip-smolvm)
-        SKIP_SMOLVM=true
         ;;
       --dry-run)
         DRY_RUN=true
@@ -189,6 +168,7 @@ download_and_extract() {
 }
 
 install_hostd() {
+  refuse_while_running
   mkdir -p "$HOSTD_HOME"
   install -m 0644 "$BUNDLE_PATH" "${HOSTD_HOME}/amika-hostd.mjs"
   install -m 0644 "${ARCHIVE_DIR}/config.example.toml" \
@@ -201,9 +181,23 @@ install_hostd() {
   echo "amika-hostd ${VERSION} installed to ${INSTALL_DIR}/amika-hostd"
 
   seed_config
-  ensure_smolvm
   check_kvm
   print_next_steps
+}
+
+# A running daemon has the engine's native addon loaded, and boots machines
+# with the helper and libraries beside it, so they are never swapped under it.
+refuse_while_running() {
+  pid_file="${XDG_STATE_HOME:-${HOME}/.local/state}/amika-hostd/amika-hostd.pid"
+  [ -f "$pid_file" ] || return 0
+  pid="$(tr -d '[:space:]' < "$pid_file")"
+  case "$pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "Error: amika-hostd is running (pid ${pid}); stop it with \`amika-hostd down\` and re-run the installer" >&2
+    exit 1
+  fi
 }
 
 # The npm package carrying this platform's engine (native addon, boot helper,
@@ -276,13 +270,6 @@ describe_plan() {
     echo "  Node.js:      no node ${NODE_MIN_MAJOR}+ found; would download"
     echo "                ${NODE_BASE_URL}/${NODE_ARCHIVE}"
     echo "                into ${HOSTD_HOME}/node"
-  fi
-  if [ "$SKIP_SMOLVM" = "true" ]; then
-    echo "  smolvm:       skipped (--skip-smolvm)"
-  elif find_smolvm; then
-    echo "  smolvm:       found at ${SMOLVM_PATH}"
-  else
-    echo "  smolvm:       not found; would run ${SMOLVM_INSTALL_URL} (version: ${SMOLVM_VERSION:-latest})"
   fi
   echo "  Engine:       ${ENGINE_PACKAGE}, the version the release pins, from"
   echo "                ${NPM_REGISTRY}, into ${HOSTD_HOME}/node_modules"
@@ -470,65 +457,18 @@ is_valid_hostname() {
   return 0
 }
 
-find_smolvm() {
-  SMOLVM_PATH="$(command -v smolvm 2>/dev/null || true)"
-  [ -n "$SMOLVM_PATH" ] && return 0
-  for candidate in "${HOME}/.smolvm/smolvm" "${HOME}/.local/bin/smolvm"; do
-    if [ -x "$candidate" ]; then
-      SMOLVM_PATH="$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-# Run the official smolvm installer (into ~/.smolvm, no sudo) if smolvm is
-# missing.
-ensure_smolvm() {
-  if [ "$SKIP_SMOLVM" = "true" ]; then
-    echo "Skipping smolvm (--skip-smolvm)"
-    return 0
-  fi
-  if find_smolvm; then
-    echo "Found smolvm at ${SMOLVM_PATH}"
-    return 0
-  fi
-
-  if ! command -v bash >/dev/null 2>&1; then
-    echo "Error: the smolvm installer needs bash. Install bash, or install smolvm yourself and re-run with --skip-smolvm:" >&2
-    echo "  curl -sSL ${SMOLVM_INSTALL_URL} | bash" >&2
-    exit 1
-  fi
-
-  echo "Installing smolvm (version: ${SMOLVM_VERSION:-latest})..."
-  fetch_url "$SMOLVM_INSTALL_URL" > "${TMPDIR_INSTALL}/smolvm-install.sh"
-  if [ -n "$SMOLVM_VERSION" ]; then
-    set -- --version "$SMOLVM_VERSION"
-  else
-    set --
-  fi
-  if ! bash "${TMPDIR_INSTALL}/smolvm-install.sh" "$@" </dev/null; then
-    echo "Error: the smolvm installer failed. amika-hostd is installed; install smolvm and re-run, or pass --skip-smolvm." >&2
-    exit 1
-  fi
-  if ! find_smolvm; then
-    echo "Error: smolvm was installed but not found at ~/.smolvm/smolvm or ~/.local/bin/smolvm" >&2
-    exit 1
-  fi
-}
-
-# smolvm runs VMs with KVM on Linux. A missing or inaccessible /dev/kvm is
-# worth a warning, not a failed install: the host may be fixed afterwards.
+# The engine runs VMs with KVM on Linux. A missing or inaccessible /dev/kvm
+# is worth a warning, not a failed install: the host may be fixed afterwards.
 check_kvm() {
   [ "$OS" = "linux" ] || return 0
   if [ ! -e /dev/kvm ]; then
     echo "" >&2
-    echo "Warning: /dev/kvm not found. smolvm needs KVM to run VMs on Linux." >&2
+    echo "Warning: /dev/kvm not found. amika-hostd needs KVM to run VMs on Linux." >&2
     echo "  Enable hardware virtualization (in firmware, or nested virtualization" >&2
     echo "  on a cloud VM) and load the module: sudo modprobe kvm_intel (or kvm_amd)" >&2
   elif [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
     echo "" >&2
-    echo "Warning: ${USER:-this user} cannot access /dev/kvm, which smolvm needs to run VMs." >&2
+    echo "Warning: ${USER:-this user} cannot access /dev/kvm, which amika-hostd needs to run VMs." >&2
     echo "  Fix it with: sudo usermod -aG kvm \$USER" >&2
     echo "  then log out and back in." >&2
   fi
@@ -546,8 +486,7 @@ print_next_steps() {
   echo "       amika-hostd setup"
   echo "  2. Export your Amika API key; it is read only from the environment:"
   echo "       export AMIKA_HOSTD_API_KEY=<your Amika API key>"
-  echo "  3. Start the daemon, which starts smolvm with it (and runs setup first"
-  echo "     if you skipped step 1):"
+  echo "  3. Start the daemon (it runs setup first if you skipped step 1):"
   echo "       amika-hostd up"
   echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."
   echo ""

@@ -28,11 +28,6 @@ export const PROCESS_TITLE = "amika-hostd";
 export interface DaemonPaths {
   pidFile: string;
   logFile: string;
-  /** The `smolvm serve` process the daemon started, while it runs. */
-  smolvmPidFile: string;
-  /** The URL that smolvm serves at, written next to its pidfile. */
-  smolvmUrlFile: string;
-  smolvmLogFile: string;
   /** Each machine's service names and guest ports (`service-registry.ts`). */
   servicesFile: string;
 }
@@ -62,7 +57,6 @@ export async function startInBackground(
   {
     spawn = nodeSpawn,
     isRunning = isDaemonRunning,
-    // Startup includes waiting for smolvm to serve.
     startupTimeoutMs = 60_000,
     env = process.env,
   }: BackgroundDeps = {},
@@ -171,38 +165,10 @@ export function removePidFile(pidFile: string, pid: number): void {
   if (readPid(pidFile) === pid) rmSync(pidFile, { force: true });
 }
 
-/** Remove smolvm's pidfile and the URL beside it, if they are `pid`'s. */
-export function removeSmolvmFiles(paths: DaemonPaths, pid: number): void {
-  if (readPid(paths.smolvmPidFile) !== pid) return;
-  try {
-    rmSync(paths.smolvmUrlFile, { force: true });
-  } catch {
-    // Only informational; the pidfile is what `up` and `down` act on.
-  }
-  rmSync(paths.smolvmPidFile, { force: true });
-}
-
-/**
- * Remove smolvm's pidfile and URL file when the pid they name has exited
- * (after a reboot, say). A live process is left alone even if it cannot be
- * confirmed as smolvm, since its pidfile is how `down` finds it.
- */
-export function removeStaleSmolvmFiles(paths: DaemonPaths): void {
-  const pid = readPid(paths.smolvmPidFile);
-  if (pid !== undefined && isAlive(pid)) return;
-  for (const file of [paths.smolvmUrlFile, paths.smolvmPidFile]) {
-    try {
-      rmSync(file, { force: true });
-    } catch {
-      // Best effort: the next write reports a file that cannot be replaced.
-    }
-  }
-}
-
 /**
  * Send `SIGTERM` and wait for the process to exit. Resolves false if it is
- * still running after `timeoutMs`; it is never killed outright, since smolvm
- * may still be stopping its machines.
+ * still running after `timeoutMs`; it is never killed outright, since it may
+ * still be stopping its machines.
  */
 export async function stopProcess(
   pid: number,
@@ -237,9 +203,6 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
   return {
     pidFile: path.join(dir, "amika-hostd.pid"),
     logFile: path.join(logDir, "amika-hostd.log"),
-    smolvmPidFile: path.join(dir, "smolvm.pid"),
-    smolvmUrlFile: path.join(dir, "smolvm.url"),
-    smolvmLogFile: path.join(logDir, "smolvm.log"),
     servicesFile: path.join(dir, "services.json"),
   };
 }
@@ -275,19 +238,6 @@ export function isDaemonRunning(pid: number): boolean {
  */
 export function isDaemonProcess(pid: number): boolean {
   return isAlive(pid) && programOf(pid, "command") === PROCESS_TITLE;
-}
-
-/**
- * Whether `pid` is a live smolvm. `down` signals it, so, as with
- * `isDaemonProcess`, a pid whose program cannot be confirmed as smolvm never
- * counts.
- */
-export function isSmolvmRunning(pid: number): boolean {
-  if (!isAlive(pid)) return false;
-  const program = programOf(pid, "comm");
-  return (
-    program !== undefined && SMOLVM_PROGRAMS.includes(path.basename(program))
-  );
 }
 
 /** A background start failure; the message is safe to print. */
@@ -395,9 +345,6 @@ function isAlive(pid: number): boolean {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
-
-/** The smolvm launcher `exec`s `smolvm-bin`, so a running smolvm is either. */
-const SMOLVM_PROGRAMS = ["smolvm", "smolvm-bin"];
 
 /**
  * The program `pid` runs, from `/proc` or else `ps`; undefined if unknown.

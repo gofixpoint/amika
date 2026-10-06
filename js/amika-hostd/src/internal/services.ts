@@ -1,8 +1,8 @@
 /**
  * Routes from the control plane to a machine's named services.
  *
- * A machine created with `services` gets each guest port published by smolvm
- * on a host loopback port, and hostd records which name maps to which port
+ * A machine created with `services` gets each guest port published on a host
+ * loopback port, and hostd records which name maps to which port
  * (`./service-registry.ts`). `/v0beta1/rigs/<machine>/services/<name>/<path>`
  * forwards HTTP requests and WebSocket upgrades there, with `<path>` as the
  * guest path.
@@ -20,10 +20,9 @@
 import type { IncomingMessage } from "node:http";
 import { connect, createServer, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
-import { z } from "zod";
 import { secretMatches } from "./auth.js";
 import type { ServiceRegistry } from "./service-registry.js";
-import type { SmolRuntime } from "./smol.js";
+import { RuntimeError, type MachineRuntime } from "./machine-runtime.js";
 
 /** Carries the host's secret key on service routes; never forwarded. */
 export const SERVICE_KEY_HEADER = "x-amika-hostd-key";
@@ -40,7 +39,7 @@ export const AMIKAD_PORT = 60999;
  */
 export function createUpgradeHandler(
   secretKey: string,
-  runtime: SmolRuntime,
+  runtime: MachineRuntime,
   registry: ServiceRegistry,
   tunnels = new Set<Duplex>(),
   dial: (port: number) => Socket = (port) => connect(port, "127.0.0.1"),
@@ -222,13 +221,6 @@ export function parseServicePath(pathname: string): ServiceRoute | null {
   return { machine: match[1], service, path: match[3] ?? "/" };
 }
 
-export const machinePortsSchema = z.object({
-  state: z.string(),
-  ports: z
-    .array(z.object({ host: z.number().int(), guest: z.number().int() }))
-    .default([]),
-});
-
 /**
  * The host loopback port behind a route, or null when the machine has no
  * such service, does not exist, is not running, or did not publish the
@@ -237,28 +229,27 @@ export const machinePortsSchema = z.object({
  * machine's mapping is its own.
  */
 export async function resolveHostPort(
-  runtime: SmolRuntime,
+  runtime: MachineRuntime,
   registry: ServiceRegistry,
   { machine, service }: Pick<ServiceRoute, "machine" | "service">,
 ): Promise<number | null> {
   const guestPort = registry.port(machine, service);
   if (guestPort === undefined) return null;
-  const response = await runtime.request(`/${machine}`);
-  if (!response.ok) {
-    await response.body?.cancel();
-    return null;
+  let info;
+  try {
+    info = await runtime.get(machine);
+  } catch (error) {
+    if (error instanceof RuntimeError) return null;
+    throw error;
   }
-  const parsed = machinePortsSchema.safeParse(
-    await response.json().catch(() => undefined),
-  );
-  if (!parsed.success || parsed.data.state !== "running") return null;
-  return parsed.data.ports.find((p) => p.guest === guestPort)?.host ?? null;
+  if (info.state !== "running") return null;
+  return info.ports.find((p) => p.guest === guestPort)?.host ?? null;
 }
 
 /**
- * A free port on the host's loopback interface for smolvm to publish a guest
- * port on. The port is released before smolvm binds it, so another process
- * can take it first, and smolvm then fails to start the machine.
+ * A free port on the host's loopback interface to publish a guest port on.
+ * The port is released before the machine's VM binds it, so another process
+ * can take it first, and the machine then fails to start.
  */
 export function freeLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
