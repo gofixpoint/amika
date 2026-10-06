@@ -226,14 +226,31 @@ export function providerRuntime(
       await call(() => sandboxes.get(name).writeFile(path, Buffer.from(data)));
     },
     checkServices: async (name, services) => {
-      // Reconciling the routes is where the provider refuses a port the
-      // machine did not publish.
-      await call(async () => {
-        await sandboxes
+      // hostd routes by name, so replacing the names never reconciles the
+      // provider's routes (which refuses to drop a port it cannot unpublish):
+      // a dropped name is simply no longer routed, and its port stays
+      // published on loopback, unreachable through hostd. Only a port the
+      // machine did not publish is refused; the provider reports a host port
+      // just for published ones.
+      const refreshed = await call(async () => {
+        await describe(name);
+        return sandboxes
           .get(name)
-          .services?.load(services.map(sandboxService))
-          .refresh();
+          .services?.refreshAll(services.map(sandboxService));
       });
+      const missing = [
+        ...new Set(
+          (refreshed?.services ?? [])
+            .filter((service) => !service.hostPort)
+            .map((service) => service.containerPort),
+        ),
+      ];
+      if (missing.length) {
+        throw new RuntimeError(
+          409,
+          `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
+        );
+      }
     },
     hostPort: async (name, guestPort) => {
       try {

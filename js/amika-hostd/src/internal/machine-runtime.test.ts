@@ -411,6 +411,22 @@ describe("providerRuntime", () => {
       await expect(runtime.checkServices("demo", [])).resolves.toBeUndefined();
     });
 
+    it("lets names on a published port be dropped, as hostd routes by name", async () => {
+      // The provider cannot unpublish a port and refuses to reconcile routes
+      // that drop one; hostd only stops routing the dropped name.
+      const { runtime } = harness();
+      await runtime.create({
+        ...create,
+        services: [
+          { name: "web", port: 3000 },
+          { name: "amikad", port: 60999 },
+        ],
+      });
+      await expect(
+        runtime.checkServices("demo", [{ name: "amikad", port: 60999 }]),
+      ).resolves.toBeUndefined();
+    });
+
     it("refuses an unpublished port with 409, naming it", async () => {
       const { runtime } = await published();
       const error = await runtime

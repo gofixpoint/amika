@@ -240,9 +240,12 @@ provider's resource surface, translating to and from `smolvm serve`'s shapes:
   Commands run as root, so an exec `user` other than `root`, `0` or `0:0` is
   refused (`400`).
 - Responses report no `ports`: host ports are the provider's. Service routes
-  ask it for a running machine's host port (`services.refreshAll`), and
-  `PUT .../services` reconciles through it (`services.load(...).refresh()`),
-  which refuses (`409`) a port the machine did not publish at create.
+  ask it for a running machine's host port (`services.refreshAll`).
+  `PUT .../services` checks the same way that every port is one the machine
+  published at create, refusing (`409`) any other. It never reconciles the
+  provider's routes, which refuses to drop a port it cannot unpublish: hostd
+  routes by name, so a dropped name is simply no longer routed, and its port
+  stays published on loopback, unreachable through hostd.
 - The provider treats deleting a missing machine as success; hostd answers
   `404` for one, as `smolvm serve` did.
 - Errors carry the SDK's code, mapped to the status `smolvm serve` answered
