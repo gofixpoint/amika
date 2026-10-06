@@ -11,7 +11,11 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError } from "./amika-api.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
-import type { HostdConfigFile, HostdConfigWith } from "./config.js";
+import {
+  ConfigError,
+  type HostdConfigFile,
+  type HostdConfigWith,
+} from "./config.js";
 import { DaemonError } from "./daemon.js";
 import type { RunningServer } from "./server.js";
 import type { ManagedSmolvm, SmolvmDeps } from "./smolvm-serve.js";
@@ -39,9 +43,9 @@ function pidDir(): string {
 }
 
 /** A credential store that never touches the keychain or disk. */
-function memoryStore(value?: string) {
+function memoryStore(value?: string, description = "the test store") {
   const store = {
-    description: "the test store",
+    description,
     value,
     get: vi.fn(() => store.value),
     set: vi.fn((next: string) => {
@@ -49,6 +53,22 @@ function memoryStore(value?: string) {
     }),
   };
   return store;
+}
+
+/**
+ * Fake secret stores that never touch a keychain or disk: `credentials` holds
+ * the API key in either store, and `keychainSecret` the secret key when the
+ * config chooses the keychain (with the file store it is in config.toml).
+ */
+function memorySecrets() {
+  const credentials = memoryStore();
+  const keychainSecret = memoryStore(undefined, "the test keychain");
+  const openSecrets = vi.fn((kind: "keychain" | "file") =>
+    kind === "file"
+      ? { kind, apiKey: credentials }
+      : { kind, apiKey: credentials, secretKey: keychainSecret },
+  );
+  return { credentials, keychainSecret, openSecrets };
 }
 
 function harness(env: NodeJS.ProcessEnv = ENV) {
@@ -98,7 +118,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     claimPidFile: vi.fn(() => release),
     notifyReady: vi.fn(async (_port: number) => signalReady()),
     isRunning: vi.fn(() => false),
-    credentials: memoryStore(),
+    ...memorySecrets(),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
     setHostSizes: vi.fn(async () => HOST),
     setHostUrl: vi.fn(
@@ -128,7 +148,15 @@ describe("runCli", () => {
     const { deps, out } = harness();
     expect(await runCli(["up", "--port", "4000"], deps)).toBe(0);
     expect(deps.startInBackground).toHaveBeenCalledWith(
-      ["node", "cli.js", "serve", "--smolvm", "--port", "4000"],
+      [
+        "node",
+        "cli.js",
+        "serve",
+        "--smolvm",
+        "--secret-key-from-up",
+        "--port",
+        "4000",
+      ],
       {
         pidFile: "/state/amika-hostd/amika-hostd.pid",
         logFile: "/state/amika-hostd/log/amika-hostd.log",
@@ -137,7 +165,7 @@ describe("runCli", () => {
         smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
         servicesFile: "/state/amika-hostd/services.json",
       },
-      { isRunning: deps.isRunning, env: expect.any(Object) },
+      { isRunning: deps.isRunning, env: expect.any(Object), secretKey: SECRET },
     );
     expect(deps.startServer).not.toHaveBeenCalled();
     // The background daemon starts smolvm, not `up` itself.
@@ -270,7 +298,7 @@ describe("runCli", () => {
     ]);
   });
 
-  it("keeps the API key out of the background daemon's environment", async () => {
+  it("keeps both secrets out of the background daemon's environment", async () => {
     const { deps } = harness({
       ...ENV,
       AMIKA_API_KEY: "general-key",
@@ -285,8 +313,9 @@ describe("runCli", () => {
     ];
     expect(env).not.toHaveProperty("AMIKA_API_KEY");
     expect(env).not.toHaveProperty("AMIKA_HOSTD_API_KEY");
+    // The secret key goes over IPC instead.
+    expect(env).not.toHaveProperty("AMIKA_HOSTD_SECRET_KEY");
     expect(env).toMatchObject({
-      AMIKA_HOSTD_SECRET_KEY: SECRET,
       AMIKA_HOSTD_HOSTNAME: "builder",
       PATH: "/usr/bin",
     });
@@ -840,16 +869,41 @@ describe("setup", () => {
     return { ...h, deps, files };
   }
 
-  it("`setup` writes the config and stores the API key", async () => {
+  it("`setup` keeps both secrets in the keychain by default", async () => {
     const { deps, files, out } = unconfigured([""], ["amk_123"]);
     expect(await runCli(["setup"], deps)).toBe(0);
     expect(files[CONFIG_PATH]).toContain('hostname = "builder"');
-    expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
+    expect(files[CONFIG_PATH]).not.toMatch(/^\s*secret_key\s*=/m);
+    expect(deps.keychainSecret.value).toBe(SECRET);
     expect(deps.credentials.value).toBe("amk_123");
+    expect(deps.openSecrets).toHaveBeenCalledWith("keychain", deps.env);
     expect(out.at(-1)).toBe(
       "To stop the daemon and its VMs, run `amika-hostd down`.",
     );
     expect(deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("`setup` keeps the secret key in the config with the file store", async () => {
+    const { deps, files } = unconfigured([""], ["amk_123"], {
+      AMIKA_HOSTD_SECRET_STORE: "file",
+    });
+    expect(await runCli(["setup"], deps)).toBe(0);
+    expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
+    expect(deps.keychainSecret.value).toBeUndefined();
+    expect(deps.credentials.value).toBe("amk_123");
+  });
+
+  it("`setup` refuses before asking anything when there is no keychain", async () => {
+    const { deps, err } = unconfigured([""], ["amk_123"]);
+    deps.openSecrets.mockImplementation(() => {
+      throw new ConfigError(
+        'No keychain on this machine to keep amika-hostd\'s secrets in. To keep them in files only you can read instead, set `secret_store = "file"`',
+      );
+    });
+    expect(await runCli(["setup"], deps)).toBe(1);
+    expect(err[0]).toMatch(/^amika-hostd: No keychain on this machine/);
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.writeConfigFile).not.toHaveBeenCalled();
   });
 
   it("`setup` needs a terminal", async () => {
@@ -906,11 +960,11 @@ describe("setup", () => {
     expect(err[0]).toContain("API key: run `amika-hostd setup`");
   });
 
-  /** The example config as copied by hand: its `REPLACE_ME` secret intact. */
-  const EXAMPLE = readFileSync(
+  /** A config copied by hand from an older example: `REPLACE_ME` intact. */
+  const EXAMPLE = `secret_key = "REPLACE_ME"\n${readFileSync(
     path.join(import.meta.dirname, "../../config.example.toml"),
     "utf8",
-  );
+  )}`;
 
   it("`up` runs setup to replace a placeholder secret instead of failing", async () => {
     const { deps, files } = unconfigured(["builder"], [], {
@@ -918,7 +972,8 @@ describe("setup", () => {
     });
     files[CONFIG_PATH] = EXAMPLE;
     expect(await runCli(["up"], deps)).toBe(0);
-    expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
+    expect(files[CONFIG_PATH]).not.toMatch(/^\s*secret_key\s*=/m);
+    expect(deps.keychainSecret.value).toBe(SECRET);
     expect(deps.registerHost).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ hostname: "builder", secretKey: SECRET }),
@@ -941,6 +996,97 @@ describe("setup", () => {
     deps.loadConfigFile.mockReturnValue({ path: "/c.toml", contents: EXAMPLE });
     expect(await runCli(["serve"], deps)).toBe(1);
     expect(err[0]).toMatch(/secret key must be at least 32/);
+  });
+
+  it("`up` without a terminal says to move a secret_key into the keychain", async () => {
+    const { deps, err } = harness({
+      AMIKA_API_KEY: "api-key",
+      AMIKA_HOSTD_HOSTNAME: "builder",
+      XDG_STATE_HOME: "/state",
+    });
+    deps.loadConfigFile.mockReturnValue({
+      path: "/c.toml",
+      contents: `secret_key = "${SECRET}"\n`,
+    });
+    expect(await runCli(["up"], deps)).toBe(1);
+    expect(err[0]).toBe(
+      'amika-hostd: /c.toml holds secret_key, but secrets are kept in the keychain: run `amika-hostd setup` to move it into the test keychain, or set `secret_store = "file"` to keep it in the file',
+    );
+    expect(deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("`up` uses the secret key from the keychain", async () => {
+    const { deps } = harness({
+      AMIKA_API_KEY: "api-key",
+      AMIKA_HOSTD_HOSTNAME: "builder",
+      XDG_STATE_HOME: "/state",
+    });
+    deps.keychainSecret.value = SECRET;
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ secretKey: SECRET }),
+    );
+    expect(deps.startInBackground).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ secretKey: SECRET }),
+    );
+  });
+
+  it("the environment's secret key wins over the keychain's", async () => {
+    const { deps } = harness();
+    deps.keychainSecret.value = "k".repeat(64);
+    await runCli(["up"], deps);
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ secretKey: SECRET }),
+    );
+    expect(deps.keychainSecret.get).not.toHaveBeenCalled();
+  });
+
+  it("`register-url` reads both secrets from the keychain", async () => {
+    const { deps } = harness({ AMIKA_HOSTD_HOSTNAME: "builder" });
+    deps.credentials.value = "amk_stored";
+    deps.keychainSecret.value = SECRET;
+    expect(await runCli(["register-url", "https://x.example"], deps)).toBe(0);
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "amk_stored" }),
+      expect.objectContaining({ secretKey: SECRET }),
+    );
+  });
+
+  it("a daemon `up` started takes the secret key from it, not the keychain", async () => {
+    const { deps } = harness({ XDG_STATE_HOME: "/state" });
+    const receiveSecretKey = vi.fn(async () => SECRET);
+    expect(
+      await runCli(["serve", "--smolvm", "--secret-key-from-up"], {
+        ...deps,
+        receiveSecretKey,
+      }),
+    ).toBe(0);
+    expect(receiveSecretKey).toHaveBeenCalled();
+    expect(deps.openSecrets).not.toHaveBeenCalled();
+    expect(deps.startServer).toHaveBeenCalledWith(
+      expect.objectContaining({ secretKey: SECRET }),
+      expect.anything(),
+    );
+  });
+
+  it("`serve` run by hand reads the secret key from the keychain", async () => {
+    const { deps } = harness({ XDG_STATE_HOME: "/state" });
+    deps.keychainSecret.value = SECRET;
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(deps.credentials.get).not.toHaveBeenCalled();
+    expect(deps.startServer).toHaveBeenCalledWith(
+      expect.objectContaining({ secretKey: SECRET }),
+      expect.anything(),
+    );
+  });
+
+  it("only `serve` takes --secret-key-from-up", async () => {
+    const { deps } = harness();
+    expect(await runCli(["up", "--secret-key-from-up"], deps)).toBe(2);
   });
 
   it("`up` stops if setup is cancelled", async () => {

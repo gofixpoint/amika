@@ -431,7 +431,6 @@ seed_config() {
     return 0
   fi
   mkdir -p "$(dirname "$CONFIG_PATH")"
-  secret="$(generate_secret)"
   # Fill in this machine's hostname only when it is one Amika accepts
   # (src/internal/config.ts); otherwise leave the line for the operator.
   host_name="$(hostname 2>/dev/null | tr '[:upper:]' '[:lower:]')"
@@ -441,24 +440,15 @@ seed_config() {
   else
     host_name=""
   fi
-  # It holds the secret key, so only the daemon's user may read it.
+  # No secrets go in it (`amika-hostd setup` keeps them in the keychain, or in
+  # files with `secret_store = "file"`), but keep it to the daemon's user.
   (
     umask 077
-    sed -e "s/^secret_key = \"REPLACE_ME\"\$/secret_key = \"${secret}\"/" \
-      -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
+    sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
       "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
   )
   CONFIG_HOSTNAME="$host_name"
   echo "Wrote a config to ${CONFIG_PATH}"
-}
-
-# 32 random bytes as hex, the form `openssl rand -hex 32` prints.
-generate_secret() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-  else
-    od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
-  fi
 }
 
 # Lowercase letters, digits, and hyphens in dot-separated labels of 1-63

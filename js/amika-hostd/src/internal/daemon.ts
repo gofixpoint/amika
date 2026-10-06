@@ -49,6 +49,11 @@ export interface BackgroundDeps {
   startupTimeoutMs?: number;
   /** The child's environment; defaults to this process's. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The secret key to hand the child over IPC (see `receiveSecretKey`), so
+   * it never reads the keychain or the secret key from its environment.
+   */
+  secretKey?: string;
 }
 
 /**
@@ -65,6 +70,7 @@ export async function startInBackground(
     // Startup includes waiting for smolvm to serve.
     startupTimeoutMs = 60_000,
     env = process.env,
+    secretKey,
   }: BackgroundDeps = {},
 ): Promise<{ pid: number; port: number }> {
   ensureNotRunning(paths.pidFile, isRunning);
@@ -80,10 +86,61 @@ export async function startInBackground(
   } finally {
     closeSync(log);
   }
+  if (secretKey !== undefined) {
+    child.send?.({ type: "secret-key", secretKey } satisfies SecretKeyMessage);
+  }
   const port = await waitForReady(child, startupTimeoutMs, paths.logFile);
   child.disconnect?.();
   child.unref();
   return { pid: child.pid as number, port };
+}
+
+/** How long a background child waits for `up` to hand it the secret key. */
+const SECRET_KEY_TIMEOUT_MS = 10_000;
+
+/**
+ * Wait for the secret key the launching `up` sends over IPC (see
+ * `startInBackground`). `up` read it from the secret store, where an unlock
+ * prompt can reach the operator; the detached child has no one to prompt.
+ */
+export function receiveSecretKey(
+  timeoutMs = SECRET_KEY_TIMEOUT_MS,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!process.connected) {
+      reject(
+        new DaemonError(
+          "no launching `amika-hostd up` to get the secret key from",
+        ),
+      );
+      return;
+    }
+    const fail = (reason: string) => {
+      cleanup();
+      reject(new DaemonError(reason));
+    };
+    const onMessage = (message: unknown) => {
+      const parsed = secretKeyMessageSchema.safeParse(message);
+      if (!parsed.success) return;
+      cleanup();
+      resolve(parsed.data.secretKey);
+    };
+    const onDisconnect = () =>
+      fail(
+        "the launching `amika-hostd up` exited before sending the secret key",
+      );
+    const timer = setTimeout(
+      () => fail("the launching `amika-hostd up` sent no secret key"),
+      timeoutMs,
+    );
+    function cleanup() {
+      clearTimeout(timer);
+      process.off("message", onMessage);
+      process.off("disconnect", onDisconnect);
+    }
+    process.on("message", onMessage);
+    process.once("disconnect", onDisconnect);
+  });
 }
 
 /**
@@ -300,6 +357,13 @@ const readyMessageSchema = z.object({
   port: z.number().int(),
 });
 type ReadyMessage = z.infer<typeof readyMessageSchema>;
+
+const secretKeyMessageSchema = z.object({
+  type: z.literal("secret-key"),
+  secretKey: z.string().min(1),
+});
+
+type SecretKeyMessage = z.infer<typeof secretKeyMessageSchema>;
 
 function waitForReady(
   child: ChildProcess,
