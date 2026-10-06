@@ -1,8 +1,9 @@
 /**
- * Keep the Amika API key that `amika-hostd setup` asks for, in a file only
- * its owner can read. Only `setup`, `up` and `register-url` read it; the
- * background daemon never needs it.
+ * Keep the Amika API key that `amika-hostd setup` asks for, in the macOS
+ * keychain on a Mac, and otherwise in a file only its owner can read. Only `setup`, `up` and `register-url` read it; the background daemon
+ * never needs it.
  */
+import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { ConfigError, configFilePaths } from "./config.js";
@@ -15,32 +16,175 @@ export interface CredentialStore {
   set(value: string): void;
 }
 
+/** The result of running a program, as `spawnSync` reports it. */
+export interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr?: string;
+  /** The signal that killed it, e.g. `SIGINT` from the operator's Ctrl-C. */
+  signal?: NodeJS.Signals | null;
+  error?: Error;
+}
+
+/**
+ * A keychain command was killed by Ctrl-C. The terminal sends it to the
+ * whole foreground process group, so it reaches the keychain program too;
+ * this is reported rather than read as a failure to fall back from.
+ */
+export class KeychainInterrupted extends ConfigError {
+  override name = "KeychainInterrupted";
+}
+
+export type Runner = (
+  command: string,
+  args: readonly string[],
+  input?: string,
+) => RunResult;
+
 export interface CredentialDeps {
+  platform?: NodeJS.Platform;
+  run?: Runner;
   readFile?: (file: string) => string;
   writeFile?: (file: string, contents: string) => void;
   removeFile?: (file: string) => void;
 }
 
+const SERVICE = "amika-hostd";
+const ACCOUNT = "api-key";
+const LABEL = "Amika API key for amika-hostd";
+/** Long enough for a keychain to ask the operator to unlock it. */
+const KEYCHAIN_TIMEOUT_MS = 60_000;
+
 /**
- * API keys are sent as bearer tokens, so keep them to printable ASCII without
- * spaces, quotes or backslashes.
+ * API keys are sent as bearer tokens and, on macOS, quoted into a `security`
+ * command, so keep them to printable ASCII without spaces, quotes or
+ * backslashes.
  */
 export function isValidApiKey(value: string): boolean {
   return /^[\x21-\x7e]+$/.test(value) && !/["'\\]/.test(value);
 }
 
-/** The file the API key is kept in, next to `config.toml`. */
+/** The file the API key falls back to, next to `config.toml`. */
 export function apiKeyFilePath(env: NodeJS.ProcessEnv): string {
   return path.join(path.dirname(configFilePaths(env)[0]), "api-key");
 }
 
-/** The API key store for this machine: a mode-0600 file. */
+/**
+ * The API key store for this machine: the macOS login keychain on a Mac,
+ * else a mode-0600 file. Reads try the keychain first.
+ */
 export function apiKeyStore(
   env: NodeJS.ProcessEnv,
   deps: CredentialDeps = {},
 ): CredentialStore {
   const file = fileStore(apiKeyFilePath(env), deps);
-  return { description: file.description, get: file.get, set: file.set };
+  const keychain = systemKeychain(env, deps);
+  if (keychain === undefined) {
+    return { description: file.description, get: file.get, set: file.set };
+  }
+  let description = keychain.description;
+  // Reads try the keychain first, so a key it may still hold would shadow
+  // one in the file. Only "not there" proves it does not; a locked keychain
+  // (say, over SSH to a Mac) can neither be changed nor checked.
+  const ensureGone = (message: string) => {
+    keychain.remove();
+    if (keychain.lookup().state !== "absent") throw new ConfigError(message);
+  };
+  return {
+    get description() {
+      return description;
+    },
+    get() {
+      const found = keychain.lookup();
+      return found.state === "found" ? found.value : file.get();
+    },
+    set(value) {
+      if (!keychain.set(value)) {
+        ensureGone(
+          `Cannot store the API key in ${keychain.description}, or make sure an old one is not left there; unlock it, or remove its "${SERVICE}" item, and run \`amika-hostd setup\` again`,
+        );
+        file.set(value);
+        description = file.description;
+        return;
+      }
+      // A key left in the file is read whenever the keychain cannot answer
+      // (locked, say), so remove it, or else overwrite it with the new key
+      // rather than leave the old one there.
+      if (!file.remove()) file.set(value);
+      description = keychain.description;
+    },
+  };
+}
+
+/** What a keychain holds for amika-hostd, as far as it could tell. */
+type Lookup =
+  | { state: "found"; value: string }
+  | { state: "absent" }
+  /** Locked, unreachable, or timed out: it may hold a key. */
+  | { state: "unknown" };
+
+interface Keychain {
+  description: string;
+  lookup(): Lookup;
+  /** False if the keychain could not store it. */
+  set(value: string): boolean;
+  /** Delete the stored key, if any; best effort. */
+  remove(): void;
+}
+
+function systemKeychain(
+  env: NodeJS.ProcessEnv,
+  deps: CredentialDeps,
+): Keychain | undefined {
+  const run = deps.run ?? runProgram;
+  switch (deps.platform ?? process.platform) {
+    case "darwin":
+      return {
+        description: "your macOS login keychain",
+        lookup() {
+          const result = checked(
+            run("security", [
+              "find-generic-password",
+              "-s",
+              SERVICE,
+              "-a",
+              ACCOUNT,
+              "-w",
+            ]),
+          );
+          // 44 is errSecItemNotFound; anything else (a locked keychain, a
+          // dismissed prompt) leaves the answer unknown.
+          if (result.status === 44) return { state: "absent" };
+          return found(result);
+        },
+        set(value) {
+          // `security -i` reads the command from stdin, which keeps the key
+          // out of the process list. Its exit status does not report a failed
+          // command, so read the key back to confirm it was stored.
+          checked(
+            run(
+              "security",
+              ["-i"],
+              `add-generic-password -U -s ${SERVICE} -a ${ACCOUNT} -l "${LABEL}" -w "${value}"\n`,
+            ),
+          );
+          return isValue(this.lookup(), value);
+        },
+        remove() {
+          checked(
+            run("security", [
+              "delete-generic-password",
+              "-s",
+              SERVICE,
+              "-a",
+              ACCOUNT,
+            ]),
+          );
+        },
+      };
+    default:
+      return undefined;
+  }
 }
 
 function fileStore(file: string, deps: CredentialDeps) {
@@ -76,6 +220,43 @@ function fileStore(file: string, deps: CredentialDeps) {
       }
     },
   };
+}
+
+function runProgram(
+  command: string,
+  args: readonly string[],
+  input?: string,
+): RunResult {
+  const result = spawnSync(command, args, {
+    input,
+    encoding: "utf8",
+    timeout: KEYCHAIN_TIMEOUT_MS,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    signal: result.signal,
+    error: result.error,
+  };
+}
+
+/** `result`, unless the operator's Ctrl-C killed the program. */
+function checked(result: RunResult): RunResult {
+  if (result.signal === "SIGINT") {
+    throw new KeychainInterrupted("the keychain command was interrupted");
+  }
+  return result;
+}
+
+function found(result: RunResult): Lookup {
+  const value = result.status === 0 ? nonEmpty(result.stdout) : undefined;
+  return value === undefined ? { state: "unknown" } : { state: "found", value };
+}
+
+function isValue(lookup: Lookup, value: string): boolean {
+  return lookup.state === "found" && lookup.value === value;
 }
 
 function nonEmpty(value: string): string | undefined {

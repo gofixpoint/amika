@@ -145,8 +145,9 @@ without asking. A config written from scratch also gets the example's default
 which `setup.test.ts` keeps in step with `config.example.toml`). It prints
 the result and where to edit it. The new contents are parsed before anything
 is written, and the file is replaced atomically with mode `0600`
-(`src/internal/private-file.ts`). A new API key is stored first, so a key that
-cannot be stored leaves the config untouched.
+(`src/internal/private-file.ts`). A new API key is stored first, so a keychain
+command stopped by Ctrl-C (say, at an unlock prompt) leaves the config
+untouched.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing and it has a terminal; without one it fails, naming `setup`. Like
@@ -156,11 +157,27 @@ commands still reject it. Ctrl-C at a question exits 130 and changes nothing.
 
 ### API key storage
 
-`src/internal/credentials.ts` keeps the API key that setup asks for in
-`$XDG_CONFIG_HOME/amika-hostd/api-key`, mode `0600`, next to the config, the
-way `gh` and Docker keep credentials when no keyring is available. `up` and
-`register-url` read it when the environment sets none. The background daemon
-never reads the API key.
+`src/internal/credentials.ts` keeps the API key that setup asks for, and
+`up` and `register-url` read it when the environment sets none:
+
+- **macOS**: the login keychain (`security`, service `amika-hostd`, account
+  `api-key`). The key is written through `security -i` on stdin, so it never
+  appears in the process list, and read back to confirm it was stored.
+- **Otherwise** (Linux, or a keychain that refused):
+  `$XDG_CONFIG_HOME/amika-hostd/api-key`, mode `0600`, the way `gh` and
+  Docker fall back when no keyring is available.
+
+Reads try the keychain first, then the file. So when the keychain refuses a
+new key, the old one is deleted from it before the file is written, and setup
+fails unless the keychain then reports the key as not found (`security` exit
+44). A locked keychain (say, over SSH to a Mac) cannot be checked, so it never
+counts as empty. When the keychain takes the key, the file is deleted, or
+overwritten with the new key if it cannot be, since a read the keychain cannot
+answer falls back to it. Ctrl-C reaches the keychain program
+too, since it is in the same process group; a keychain command killed by
+`SIGINT` raises `KeychainInterrupted` rather than counting as a refusal to
+fall back to the file from. The background daemon never reads the API key,
+from either.
 
 The secret key stays in `config.toml` (mode `0600`) rather than a keychain:
 the detached daemon reads it on every start, with no one there to unlock a

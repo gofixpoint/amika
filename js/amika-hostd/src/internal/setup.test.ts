@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveConfig, type HostdConfigFile } from "./config.js";
+import { KeychainInterrupted } from "./credentials.js";
 import { PromptCancelled } from "./prompt.js";
 import {
   DEFAULT_PRESET_IMAGES,
@@ -207,6 +208,15 @@ describe("runSetup", () => {
     expect(h.store.set.mock.invocationCallOrder[0]).toBeLessThan(
       h.deps.writeConfigFile.mock.invocationCallOrder[0],
     );
+  });
+
+  it("treats a keychain command killed by Ctrl-C as a cancel, before the config is touched", async () => {
+    const h = harness({ answers: [""], secrets: ["amk_123"] });
+    h.store.set.mockImplementationOnce(() => {
+      throw new KeychainInterrupted("the keychain command was interrupted");
+    });
+    await expect(runSetup(h.deps)).rejects.toBeInstanceOf(PromptCancelled);
+    expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -17,9 +17,13 @@ import {
   type HostdConfigFile,
   type HostSize,
 } from "./config.js";
-import { isValidApiKey, type CredentialStore } from "./credentials.js";
+import {
+  KeychainInterrupted,
+  isValidApiKey,
+  type CredentialStore,
+} from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
-import type { Prompt } from "./prompt.js";
+import { PromptCancelled, type Prompt } from "./prompt.js";
 
 export interface SetupDeps {
   env: NodeJS.ProcessEnv;
@@ -108,9 +112,16 @@ export async function runSetup(
   });
   // Check the result parses before anything changes.
   const written = resolveConfig({ file: { path: configPath, contents } });
-  // The key first, so a key that cannot be stored leaves the config
-  // untouched.
-  if (apiKey !== undefined) deps.credentials.set(apiKey);
+  // The key first: a keychain command is the step likeliest to be stopped
+  // (an unlock prompt), and then the config is still untouched.
+  if (apiKey !== undefined) {
+    try {
+      deps.credentials.set(apiKey);
+    } catch (error) {
+      if (error instanceof KeychainInterrupted) throw new PromptCancelled();
+      throw error;
+    }
+  }
   writeConfig(deps.writeConfigFile ?? writePrivateFile, configPath, contents);
   if (apiKey !== undefined) {
     deps.out(`Stored the API key in ${deps.credentials.description}.`);
