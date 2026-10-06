@@ -96,8 +96,8 @@ pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 `src/index.ts` is the `amika-hostd` bin; `src/internal/cli.ts` parses commands
 with `node:util` `parseArgs` and takes every side effect as a dependency.
 
-- `amika-hostd setup` asks for the hostname, generates the secret key, and
-  writes them (see [Setup](#setup)).
+- `amika-hostd setup` asks for the hostname and API key, generates the secret
+  key, and writes them (see [Setup](#setup)).
 - `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
   it re-runs itself as `serve --smolvm` with `detached: true`, appends output, each line
   timestamped, to `$XDG_STATE_HOME/amika-hostd/log/amika-hostd.log` (else
@@ -132,7 +132,9 @@ machine's own hostname made valid (lowercased, `.local` dropped, other
 characters turned into `-`), re-asking until it is valid. When the file has
 no secret key it generates one (`randomBytes(32)`, hex), unless the
 environment sets one, which is saved to the file instead (Amika may already
-know it). An existing secret key is kept.
+know it). An existing secret key is kept. Then it asks for the Amika API
+key, with input hidden, or on a rerun whether to replace the stored one; an
+API key in the environment is used instead, and setup does not ask.
 
 It then replaces `hostname` and `secret_key` in place (a live line, bare or
 quoted, else the commented `# key = ...` one; otherwise it adds them above the
@@ -143,15 +145,22 @@ without asking. A config written from scratch also gets the example's default
 which `setup.test.ts` keeps in step with `config.example.toml`). It prints
 the result and where to edit it. The new contents are parsed before anything
 is written, and the file is replaced atomically with mode `0600`
-(`src/internal/private-file.ts`).
+(`src/internal/private-file.ts`). A new API key is stored first, so a key that
+cannot be stored leaves the config untouched.
 
-`up` runs setup first whenever the hostname or secret key is missing and it
-has a terminal; without one it fails, naming `setup`. Like setup, it reads a
-`secret_key` too short to use (the example's `REPLACE_ME`) as missing, so a
-hand-copied example gets set up rather than rejected; other commands still
-reject it. Ctrl-C during setup
-exits 130 and changes nothing, since setup writes only after its last
-question.
+`up` runs setup first whenever the hostname, secret key or API key is
+missing and it has a terminal; without one it fails, naming `setup`. Like
+setup, it reads a `secret_key` too short to use (the example's `REPLACE_ME`)
+as missing, so a hand-copied example gets set up rather than rejected; other
+commands still reject it. Ctrl-C at a question exits 130 and changes nothing.
+
+### API key storage
+
+`src/internal/credentials.ts` keeps the API key that setup asks for in
+`$XDG_CONFIG_HOME/amika-hostd/api-key`, mode `0600`, next to the config, the
+way `gh` and Docker keep credentials when no keyring is available. `up` and
+`register-url` read it when the environment sets none. The background daemon
+never reads the API key.
 
 The secret key stays in `config.toml` (mode `0600`) rather than a keychain:
 the detached daemon reads it on every start, with no one there to unlock a
@@ -277,7 +286,7 @@ the first source that sets it: CLI flag, then environment, then TOML file.
 
 | Setting    | Flag     | Environment                                   | TOML         | Default                 |
 | ---------- | -------- | --------------------------------------------- | ------------ | ----------------------- |
-| API key    |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)   | required for Amika APIs |
+| API key    |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)   | stored by `setup`       |
 | API URL    |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`    | `https://app.amika.dev` |
 | Hostname   |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`   |                         |
 | Secret key |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key` |                         |
@@ -285,7 +294,11 @@ the first source that sets it: CLI flag, then environment, then TOML file.
 | Port       | `--port` | `AMIKA_HOSTD_PORT`                            | `port`       | `3020`                  |
 
 Setting both names of an aliased pair to different values is an error, never a
-silent pick. The API key is environment-only: a TOML `api_key` fails startup.
+silent pick. A blank variable (empty, or only whitespace) sets nothing; code
+that asks which variable sets a setting uses `envName`, which applies the same
+rule, rather than testing `env[name]` itself. The API key never comes from TOML: a TOML `api_key` fails
+startup. Without one in the environment, the key `setup` stored is used (see
+[API key storage](#api-key-storage)).
 The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
 enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`

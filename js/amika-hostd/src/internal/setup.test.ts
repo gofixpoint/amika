@@ -19,21 +19,35 @@ const NEW_SECRET = "b".repeat(64);
 
 function harness({
   answers = [],
+  secrets = [],
   file,
+  storedKey,
   env = {},
 }: {
   answers?: (string | undefined)[];
+  secrets?: (string | undefined)[];
   file?: string;
+  storedKey?: string;
   env?: NodeJS.ProcessEnv;
 }) {
   const out: string[] = [];
   const err: string[] = [];
   const written: Record<string, string> = {};
+  const store = {
+    description: "the test store",
+    value: storedKey,
+    get: vi.fn(() => store.value),
+    set: vi.fn((value: string) => {
+      store.value = value;
+    }),
+  };
   const deps = {
     env: { XDG_CONFIG_HOME: "/config", ...env },
     out: (line: string) => out.push(line),
     err: (line: string) => err.push(line),
     prompt: vi.fn(async (_question: string) => answers.shift()),
+    promptSecret: vi.fn(async (_question: string) => secrets.shift()),
+    credentials: store,
     loadConfigFile: vi.fn((): HostdConfigFile | undefined =>
       file === undefined ? undefined : { path: PATH, contents: file },
     ),
@@ -45,7 +59,7 @@ function harness({
   } satisfies SetupDeps;
   const config = () =>
     resolveConfig({ file: { path: PATH, contents: written[PATH] } });
-  return { deps, out, err, written, config };
+  return { deps, out, err, written, store, config };
 }
 
 const CONFIGURED = `hostname = "builder"
@@ -58,8 +72,8 @@ disk_gib = 5
 `;
 
 describe("runSetup", () => {
-  it("first run: suggests the machine's hostname and generates a secret", async () => {
-    const h = harness({ answers: [""] });
+  it("first run: suggests the machine's hostname, generates a secret, stores the key", async () => {
+    const h = harness({ answers: [""], secrets: ["amk_123"] });
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls[0][0]).toBe(
       "Hostname [jakubs-macbook-pro]: ",
@@ -70,38 +84,59 @@ describe("runSetup", () => {
       sizes: DEFAULT_SIZES,
       images: DEFAULT_PRESET_IMAGES,
     });
+    expect(h.store.set).toHaveBeenCalledWith("amk_123");
+    expect(h.out).toContain("Stored the API key in the test store.");
     expect(h.out).toContain("Rig sizes:");
     expect(h.out).toContain("  tiny    1 vCPU, 2 GiB memory, 10 GiB disk");
     expect(h.out).toContain("  small   2 vCPUs, 4 GiB memory, 16 GiB disk");
     expect(h.out).toContain(`Edit ${PATH} to change these settings.`);
-    expect(h.out).toContain(
-      "`amika-hostd up` also needs your Amika API key: export AMIKA_HOSTD_API_KEY=<your Amika API key>",
-    );
     expect(h.out.slice(-2)).toEqual([
       "Start the daemon with `amika-hostd up`.",
       "To stop the daemon and its VMs, run `amika-hostd down`.",
     ]);
   });
 
-  it("re-asks for an invalid hostname", async () => {
-    const h = harness({ answers: ["Not Valid", "builder"] });
+  it("re-asks for an invalid hostname and an empty or invalid API key", async () => {
+    const h = harness({
+      answers: ["Not Valid", "builder"],
+      secrets: ["", "has space", "amk_123"],
+    });
     await runSetup(h.deps);
     expect(h.config().hostname).toBe("builder");
-    expect(h.err).toHaveLength(1);
+    expect(h.err).toHaveLength(2);
+    expect(h.store.value).toBe("amk_123");
   });
 
   it("a rerun keeps everything by default and leaves sizes alone", async () => {
-    const h = harness({ answers: [""], file: CONFIGURED });
+    const h = harness({ answers: ["", ""], file: CONFIGURED, storedKey: "k" });
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      "Update the stored Amika API key? [y/N] ",
     ]);
     expect(h.written[PATH]).toBe(CONFIGURED);
     expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
+    expect(h.deps.promptSecret).not.toHaveBeenCalled();
+    expect(h.store.set).not.toHaveBeenCalled();
+  });
+
+  it("replaces the stored API key when asked", async () => {
+    const h = harness({
+      answers: ["", "y"],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
+    await runSetup(h.deps);
+    expect(h.store.value).toBe("amk_new");
   });
 
   it("says a new hostname registers a new host", async () => {
-    const h = harness({ answers: ["other"], file: CONFIGURED });
+    const h = harness({
+      answers: ["other", ""],
+      file: CONFIGURED,
+      storedKey: "k",
+    });
     await runSetup(h.deps);
     expect(h.config()).toMatchObject({
       hostname: "other",
@@ -113,8 +148,9 @@ describe("runSetup", () => {
   it("saves the environment's secret, not a new one, when the file has none", async () => {
     const envSecret = "c".repeat(64);
     const h = harness({
-      answers: [""],
+      answers: ["", ""],
       file: 'hostname = "builder"\n',
+      storedKey: "k",
       env: { AMIKA_HOSTD_SECRET_KEY: envSecret },
     });
     await runSetup(h.deps);
@@ -138,14 +174,49 @@ describe("runSetup", () => {
     expect(h.out).toContain(
       "Note: AMIKA_HOSTD_HOSTNAME is set in your environment and overrides the hostname in the file.",
     );
-    // The environment already has the API key `up` needs.
-    expect(h.out.join("\n")).not.toContain("also needs your Amika API key");
   });
 
-  it("changes nothing when input ends early", async () => {
-    const h = harness({ answers: [undefined] });
+  it("does not ask for an API key the environment provides", async () => {
+    const h = harness({
+      answers: [""],
+      env: { AMIKA_HOSTD_API_KEY: "amk_env" },
+    });
+    await runSetup(h.deps);
+    expect(h.deps.promptSecret).not.toHaveBeenCalled();
+    expect(h.store.set).not.toHaveBeenCalled();
+    expect(h.out).toContain(
+      "Using the API key from AMIKA_HOSTD_API_KEY; unset it to use a stored key instead.",
+    );
+  });
+
+  it("asks for the API key when its variable is set but blank", async () => {
+    const h = harness({
+      answers: [""],
+      secrets: ["amk_123"],
+      env: { AMIKA_HOSTD_API_KEY: "   " },
+    });
+    await runSetup(h.deps);
+    expect(h.deps.promptSecret).toHaveBeenCalled();
+    expect(h.store.value).toBe("amk_123");
+    expect(h.out.join("\n")).not.toContain("Using the API key from");
+  });
+
+  it("stores the API key before writing the config", async () => {
+    const h = harness({ answers: [""], secrets: ["amk_123"] });
+    await runSetup(h.deps);
+    expect(h.store.set.mock.invocationCallOrder[0]).toBeLessThan(
+      h.deps.writeConfigFile.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([
+    ["the hostname", { answers: [undefined] }],
+    ["the API key", { answers: [""], secrets: [undefined] }],
+  ])("changes nothing when input ends at %s", async (_at, input) => {
+    const h = harness(input);
     await expect(runSetup(h.deps)).rejects.toThrow(/nothing was changed/);
     expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
+    expect(h.store.set).not.toHaveBeenCalled();
   });
 
   it("lets Ctrl-C through to the caller", async () => {
@@ -156,7 +227,7 @@ describe("runSetup", () => {
   });
 
   it("reports a config it cannot write", async () => {
-    const h = harness({ answers: [""] });
+    const h = harness({ answers: [""], secrets: ["amk_123"] });
     h.deps.writeConfigFile.mockImplementationOnce(() => {
       throw Object.assign(new Error("denied"), { code: "EACCES" });
     });
@@ -166,7 +237,7 @@ describe("runSetup", () => {
   });
 
   it("leaves telling the operator to run `up` to `up` itself", async () => {
-    const h = harness({ answers: [""] });
+    const h = harness({ answers: [""], secrets: ["amk_123"] });
     await runSetup(h.deps, { fromUp: true });
     expect(h.out.join("\n")).not.toContain("Start the daemon");
   });
@@ -235,6 +306,7 @@ describe("runSetup on the shipped example", () => {
   it("also replaces a single-quoted placeholder secret", async () => {
     const h = harness({
       answers: ["builder"],
+      secrets: ["amk_123"],
       file: "secret_key = 'REPLACE_ME'\n",
     });
     await runSetup(h.deps);
@@ -244,6 +316,7 @@ describe("runSetup on the shipped example", () => {
   it("replaces the placeholder secret without asking", async () => {
     const h = harness({
       answers: ["builder"],
+      secrets: ["amk_123"],
       file: EXAMPLE,
     });
     await runSetup(h.deps);

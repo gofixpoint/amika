@@ -5,6 +5,7 @@ import {
   ConfigError,
   DEFAULT_API_URL,
   configFilePaths,
+  envName,
   loadConfigFile,
   requireSettings,
   resolveConfig,
@@ -280,7 +281,6 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
   });
 
   it.each([
-    "   ",
     "Builder",
     "my_host",
     "-builder",
@@ -296,6 +296,29 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
       resolveConfig({ env: { AMIKA_HOSTD_HOSTNAME: hostname } }),
     ).toThrow(/^Invalid hostname: /);
   });
+
+  it("rejects a blank hostname in the file", () => {
+    expect(() =>
+      resolveConfig({
+        file: { path: "/c.toml", contents: 'hostname = "   "' },
+      }),
+    ).toThrow(/^Invalid hostname: /);
+  });
+
+  it("treats a blank environment variable as unset, like an empty one", () => {
+    const config = resolveConfig({
+      env: { AMIKA_HOSTD_HOSTNAME: "   ", AMIKA_HOSTD_API_KEY: " \t" },
+      file: { path: "/c.toml", contents: 'hostname = "builder"' },
+    });
+    expect(config).toMatchObject({ hostname: "builder", apiKey: undefined });
+  });
+
+  it("names the variable that sets a setting, skipping blank ones", () => {
+    expect(
+      envName({ AMIKA_HOSTD_API_KEY: "  ", AMIKA_API_KEY: "k" }, "apiKey"),
+    ).toBe("AMIKA_API_KEY");
+    expect(envName({ AMIKA_HOSTD_API_KEY: "  " }, "apiKey")).toBeUndefined();
+  });
 });
 
 describe("requireSettings", () => {
@@ -305,7 +328,7 @@ describe("requireSettings", () => {
     ).toThrow(
       [
         "Missing required configuration:",
-        "  - API key: set AMIKA_HOSTD_API_KEY or AMIKA_API_KEY (environment only)",
+        "  - API key: run `amika-hostd setup`, or set AMIKA_HOSTD_API_KEY or AMIKA_API_KEY",
         "  - hostname: run `amika-hostd setup`, or set AMIKA_HOSTD_HOSTNAME or `hostname` in config.toml",
         "  - secret key: run `amika-hostd setup`, or set AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY or `secret_key` in config.toml",
       ].join("\n"),

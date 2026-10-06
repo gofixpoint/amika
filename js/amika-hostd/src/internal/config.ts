@@ -215,6 +215,18 @@ function toHostSizes(
   );
 }
 
+/**
+ * The environment variable that sets `key`, as `resolveConfig` reads it: the
+ * first of its names that is set and not blank. Use it rather than testing
+ * `env[name]` directly, so callers agree with the resolved config.
+ */
+export function envName(
+  env: NodeJS.ProcessEnv,
+  key: keyof typeof ENV_NAMES,
+): string | undefined {
+  return ENV_NAMES[key].find((name) => nonEmpty(env[name]) !== undefined);
+}
+
 function readEnv(
   env: NodeJS.ProcessEnv,
   key: keyof typeof ENV_NAMES,
@@ -324,7 +336,7 @@ function parseTimeout(value: string | undefined): number {
 function describeSetting(key: RequiredSetting): string {
   switch (key) {
     case "apiKey":
-      return `API key: set ${ENV_NAMES.apiKey.join(" or ")} (environment only)`;
+      return `API key: run \`amika-hostd setup\`, or set ${ENV_NAMES.apiKey.join(" or ")}`;
     case "hostname":
       return `hostname: run \`amika-hostd setup\`, or set ${ENV_NAMES.hostname[0]} or \`hostname\` in config.toml`;
     case "secretKey":
@@ -334,8 +346,9 @@ function describeSetting(key: RequiredSetting): string {
   }
 }
 
+/** `value`, unless it is unset or blank: a blank variable sets nothing. */
 function nonEmpty(value: string | undefined): string | undefined {
-  return value === undefined || value === "" ? undefined : value;
+  return value === undefined || value.trim() === "" ? undefined : value;
 }
 
 function isMissingFile(error: unknown): boolean {
