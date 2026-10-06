@@ -56,6 +56,7 @@ describe("smolvm-sdk provider wiring", () => {
   it("serves the resource surface over the SDK", async () => {
     const machine = {
       start: vi.fn(async () => {}),
+      resume: vi.fn(async () => {}),
       stop: vi.fn(async () => {}),
       delete: vi.fn(async () => {}),
       exec: vi.fn(async () => ({ exitCode: 0, stdout: "hi\n", stderr: "" })),

@@ -41,7 +41,12 @@ function fakeSdk(initial: MachineRecord[] = []) {
   const handles: Handle[] = [];
   const handleFor = (record: MachineRecord): Handle => {
     const handle: Handle = {
-      start: vi.fn(async () => void (record.state = "running")),
+      start: vi.fn(async () => {
+        // As the engine does: a paused machine refuses a fresh boot.
+        if (record.state === "paused") throw smolError("CONFLICT");
+        record.state = "running";
+      }),
+      resume: vi.fn(async () => void (record.state = "running")),
       stop: vi.fn(async () => void (record.state = "stopped")),
       delete: vi.fn(async () => void machines.delete(record.name)),
       exec: vi.fn(
@@ -259,6 +264,28 @@ describe("smolvmSdkOperations", () => {
       expect(sdk.list).toHaveBeenCalledWith(LOCAL, { labels: OWNED });
     });
 
+    it.each(["0x10", "1e3", "0", "-2", " 2", "2.5", ""])(
+      "falls back to the default for a size label of %j",
+      async (cpus) => {
+        const { ops } = harness([
+          {
+            name: "demo",
+            state: "running",
+            labels: {
+              ...OWNED,
+              "amika-smolvm-sdk.cpus": cpus,
+              "amika-smolvm-sdk.memory-mb": "1024",
+            },
+          },
+        ]);
+        expect((await ops.list())[0].sizing).toEqual({
+          vcpus: 4,
+          memoryGib: 1,
+          diskGib: 20,
+        });
+      },
+    );
+
     it("falls back to defaults for unreadable labels", async () => {
       const { ops } = harness([
         {
@@ -298,6 +325,29 @@ describe("smolvmSdkOperations", () => {
       await ops.stop("demo");
       await ops.start("demo");
       expect(handles[0].start).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["start", "exec", "read"] as const)(
+      "resumes a held, paused machine on %s instead of booting it",
+      async (operation) => {
+        const { ops, machines, handles } = harness();
+        await ops.create(INPUT);
+        // Paused through the smol CLI, say.
+        machines.get("demo")!.state = "paused";
+        if (operation === "start") await ops.start("demo");
+        if (operation === "exec") await ops.run("demo", "true");
+        if (operation === "read") await ops.read("demo", "/a");
+        expect(handles[0].resume).toHaveBeenCalledTimes(1);
+        expect(handles[0].start).not.toHaveBeenCalled();
+      },
+    );
+
+    it("leaves a paused machine alone on stop", async () => {
+      const { ops, machines, handles } = harness();
+      await ops.create(INPUT);
+      machines.get("demo")!.state = "paused";
+      await ops.stop("demo");
+      expect(handles[0].stop).not.toHaveBeenCalled();
     });
 
     it("connects to a machine an earlier process left, which boots it", async () => {

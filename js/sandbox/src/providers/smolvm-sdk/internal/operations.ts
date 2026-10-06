@@ -148,12 +148,18 @@ export function smolvmSdkOperations(
     handles.set(id, machine);
     return machine;
   };
-  /** A handle on a running machine, starting it if it is stopped. */
+  /**
+   * A handle on a running machine, starting it if it is stopped and resuming
+   * it if it is paused: a paused machine refuses a fresh boot. With no
+   * handle held, `connect` boots a stopped machine but refuses a paused one
+   * (`CONFLICT`).
+   */
   const running = async (id: string): Promise<SmolMachine> => {
     const { state } = await summary(id);
     const held = handles.get(id);
     if (!held) return handle(id);
-    if (state !== "running") await held.start();
+    if (state === "paused") await held.resume();
+    else if (state !== "running") await held.start();
     return held;
   };
 
@@ -281,6 +287,9 @@ export function smolvmSdkOperations(
     stop: async (id: string): Promise<void> => {
       const { state } = await summary(id);
       const held = handles.get(id);
+      // A paused machine's VM is already stopped, its execution saved; the
+      // engine refuses to stop it again.
+      if (state === "paused") return;
       if (held) {
         await held.stop();
       } else if (ACTIVE_STATES.has(state)) {
@@ -450,15 +459,30 @@ function publishedPorts(
   return ports.success ? ports.data : [];
 }
 
+/**
+ * A size label as the provider writes it: a positive decimal integer. Any
+ * other value, including one the provider never writes (`0x10`, `1e3`), or a
+ * missing label falls back to smolvm's default rather than a guess.
+ */
+const sizeLabel = (fallback: number) =>
+  z
+    .string()
+    .regex(/^[1-9][0-9]{0,8}$/)
+    .transform(Number)
+    .catch(fallback);
+
+const sizeLabelsSchema = z.object({
+  [LABELS.cpus]: sizeLabel(DEFAULT_CPUS),
+  [LABELS.memoryMb]: sizeLabel(DEFAULT_MEMORY_MB),
+  [LABELS.storageGb]: sizeLabel(DEFAULT_STORAGE_GB),
+});
+
 function sizesOf(machine: MachineSummary) {
-  const number = (key: string, fallback: number) => {
-    const value = Number(machine.labels[key]);
-    return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-  };
+  const sizes = sizeLabelsSchema.parse(machine.labels);
   return {
-    cpus: number(LABELS.cpus, DEFAULT_CPUS),
-    memoryMb: number(LABELS.memoryMb, DEFAULT_MEMORY_MB),
-    storageGb: number(LABELS.storageGb, DEFAULT_STORAGE_GB),
+    cpus: sizes[LABELS.cpus],
+    memoryMb: sizes[LABELS.memoryMb],
+    storageGb: sizes[LABELS.storageGb],
   };
 }
 

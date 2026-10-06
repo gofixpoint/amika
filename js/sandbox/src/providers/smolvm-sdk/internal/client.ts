@@ -31,6 +31,8 @@ export interface SmolMachines {
  */
 export interface SmolMachine {
   start(): Promise<void>;
+  /** Restore execution saved by a pause (through the `smol` CLI, say). */
+  resume(): Promise<void>;
   stop(): Promise<void>;
   delete(): Promise<void>;
   exec(

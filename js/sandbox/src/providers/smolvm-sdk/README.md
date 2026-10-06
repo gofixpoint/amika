@@ -51,6 +51,9 @@ the gap:
 - Commands run as root under `/bin/sh -c`; the home directory is `/root`.
   Exec takes no stdin, so `input` is staged in a root-only guest temp file and
   redirected in.
+- A machine paused through the `smol` CLI or the SDK reports `suspended`.
+  Start, exec and file access resume it (a paused machine refuses a fresh
+  boot), and stop leaves it alone, since its VM is already stopped.
 - A machine's `state()` blocks the event loop while a file transfer holds the
   machine's lock, so the provider never calls it and reads state from
   `Machine.list`.
@@ -74,6 +77,9 @@ These come from the public API, which the provider does not work around:
 - **Connect boots, on the event loop.** The only handle on a machine an
   earlier process left behind comes from `Machine.connect`, which boots a
   stopped machine synchronously. Deleting such a machine boots it first.
+- **A paused machine needs a held handle.** `Machine.connect` refuses a
+  machine with saved execution, so one paused while this process holds no
+  handle on it cannot be resumed, stopped or deleted here (`CONFLICT`).
 - **No ordering beyond the engine's.** The engine serializes lifecycle calls
   on one machine, but a stop or delete can land while an exec or file
   transfer on that machine is running, and cut it off.
