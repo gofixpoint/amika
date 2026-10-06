@@ -251,8 +251,10 @@ gaps, which `machine-runtime.ts` fills:
   without KVM never records one.
 - Lifecycle steps on one machine (attach, boot, stop, delete) run one at a
   time, so concurrent requests never boot it twice; execs and file transfers
-  run concurrently once it is up. A failed boot on a host that cannot run
-  machines answers `503`.
+  run concurrently once it is up, each holding a lease until its engine call
+  returns. A stop or delete waits for those leases, for up to 30 seconds
+  (`LEASE_GRACE_MS`; an exec has no time limit in the guest), then goes ahead.
+  A failed boot on a host that cannot run machines answers `503`.
 - Shutdown stops every owned machine that is running, with or without a
   handle, after any boot still in flight for it.
 - Exec takes no stdin, so a request's `stdin` is written to a guest temp file
