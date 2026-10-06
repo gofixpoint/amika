@@ -30,6 +30,13 @@ export interface DaemonPaths {
   logFile: string;
   /** Each machine's service names and guest ports (`service-registry.ts`). */
   servicesFile: string;
+  /**
+   * The `smolvm serve` an amika-hostd from before the embedded engine ran,
+   * and the URL it served at. Only `down` reads them, to stop a smolvm such
+   * a daemon left behind (one killed, or that timed out draining it).
+   */
+  legacySmolvmPidFile: string;
+  legacySmolvmUrlFile: string;
 }
 
 export type Spawn = (
@@ -204,6 +211,8 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     pidFile: path.join(dir, "amika-hostd.pid"),
     logFile: path.join(logDir, "amika-hostd.log"),
     servicesFile: path.join(dir, "services.json"),
+    legacySmolvmPidFile: path.join(dir, "smolvm.pid"),
+    legacySmolvmUrlFile: path.join(dir, "smolvm.url"),
   };
 }
 
@@ -238,6 +247,40 @@ export function isDaemonRunning(pid: number): boolean {
  */
 export function isDaemonProcess(pid: number): boolean {
   return isAlive(pid) && programOf(pid, "command") === PROCESS_TITLE;
+}
+
+/**
+ * Whether `pid` is a live smolvm. `down` signals it, so, as with
+ * `isDaemonProcess`, a pid whose program cannot be confirmed as smolvm never
+ * counts. The smolvm launcher `exec`s `smolvm-bin`, so either name counts.
+ */
+export function isLegacySmolvmProcess(pid: number): boolean {
+  if (!isAlive(pid)) return false;
+  const program = programOf(pid, "comm");
+  return (
+    program !== undefined &&
+    ["smolvm", "smolvm-bin"].includes(path.basename(program))
+  );
+}
+
+/**
+ * Remove the legacy smolvm pidfile and URL file, unless the pidfile names a
+ * live process other than `stopped` (the smolvm `down` just stopped): a live
+ * process stays findable by them, even if it cannot be confirmed as smolvm.
+ */
+export function removeLegacySmolvmFiles(
+  paths: DaemonPaths,
+  stopped?: number,
+): void {
+  const pid = readPid(paths.legacySmolvmPidFile);
+  if (pid !== undefined && pid !== stopped && isAlive(pid)) return;
+  for (const file of [paths.legacySmolvmUrlFile, paths.legacySmolvmPidFile]) {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // Best effort: nothing reads them any more but `down`.
+    }
+  }
 }
 
 /** A background start failure; the message is safe to print. */

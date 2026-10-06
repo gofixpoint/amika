@@ -25,8 +25,10 @@ import {
   ensureNotRunning,
   isDaemonProcess,
   isDaemonRunning,
+  isLegacySmolvmProcess,
   notifyReady as notifyParent,
   readRunningPid,
+  removeLegacySmolvmFiles,
   startInBackground as spawnInBackground,
   stopProcess as stopProcessByPid,
 } from "./daemon.js";
@@ -77,6 +79,8 @@ export interface CliDeps {
   /** Loads the machine engine; tests inject a fake. */
   loadEngine?: () => NativeEngine;
   stopProcess?: typeof stopProcessByPid;
+  /** Confirms a legacy `smolvm serve` pid; tests inject a fake. */
+  isLegacySmolvm?: (pid: number) => boolean;
   claimPidFile?: typeof claimPidFileOnDisk;
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
@@ -574,7 +578,10 @@ async function stopMachines(runtime: MachineRuntime, deps: CliDeps) {
 /** Long enough for the daemon's own shutdown, which includes its machines'. */
 const DOWN_TIMEOUT_MS = SHUTDOWN_GRACE_MS + MACHINE_STOP_TIMEOUT_MS + 5_000;
 
-/** Stop the daemon, which stops its machines. */
+/**
+ * Stop the daemon, which stops its machines, and then any `smolvm serve` an
+ * amika-hostd from before the embedded engine left behind.
+ */
 async function down(deps: CliDeps): Promise<number> {
   const paths = daemonPaths(deps.env);
   const stop = deps.stopProcess ?? stopProcessByPid;
@@ -587,18 +594,56 @@ async function down(deps: CliDeps): Promise<number> {
       `amika-hostd: ${paths.pidFile} names pid ${unconfirmed}, which is not amika-hostd; remove it if it is stale`,
     );
   }
-  if (daemon === undefined) {
-    deps.out("amika-hostd is not running");
-    return 0;
+  if (daemon !== undefined) {
+    deps.out(`Stopping amika-hostd (pid ${daemon}) and its machines`);
+    if (!(await stop(daemon, isDaemon, { timeoutMs: DOWN_TIMEOUT_MS }))) {
+      throw new DaemonError(
+        `amika-hostd (pid ${daemon}) did not exit within ${DOWN_TIMEOUT_MS / 1000}s; see ${paths.logFile}`,
+      );
+    }
   }
-  deps.out(`Stopping amika-hostd (pid ${daemon}) and its machines`);
-  if (!(await stop(daemon, isDaemon, { timeoutMs: DOWN_TIMEOUT_MS }))) {
+  const smolvm = await stopLegacySmolvm(paths, deps);
+  const stopped = [
+    ...(daemon === undefined ? [] : ["amika-hostd"]),
+    ...(smolvm ? ["the smolvm an earlier amika-hostd left running"] : []),
+  ];
+  deps.out(
+    stopped.length === 0
+      ? "amika-hostd is not running"
+      : `Stopped ${stopped.join(" and ")}`,
+  );
+  return 0;
+}
+
+/**
+ * Stop the `smolvm serve` an amika-hostd from before the embedded engine
+ * left behind, if `smolvm.pid` names one, and remove its files. smolvm stops
+ * its machines on `SIGTERM` (that daemon started it draining), which can
+ * take a while. Returns whether one was stopped.
+ */
+async function stopLegacySmolvm(
+  paths: ReturnType<typeof daemonPaths>,
+  deps: CliDeps,
+): Promise<boolean> {
+  const isSmolvm = deps.isLegacySmolvm ?? isLegacySmolvmProcess;
+  const pid = readRunningPid(paths.legacySmolvmPidFile, isSmolvm);
+  if (pid === undefined) {
+    // Left by a run that never got to clean up (a reboot, say).
+    removeLegacySmolvmFiles(paths);
+    return false;
+  }
+  deps.out(
+    `Stopping the smolvm an earlier amika-hostd left running (pid ${pid}) and its machines`,
+  );
+  const stop = deps.stopProcess ?? stopProcessByPid;
+  const timeoutMs = MACHINE_STOP_TIMEOUT_MS;
+  if (!(await stop(pid, isSmolvm, { timeoutMs }))) {
     throw new DaemonError(
-      `amika-hostd (pid ${daemon}) did not exit within ${DOWN_TIMEOUT_MS / 1000}s; see ${paths.logFile}`,
+      `smolvm (pid ${pid}) is still stopping its machines after ${timeoutMs / 1000}s; run \`amika-hostd down\` again to keep waiting`,
     );
   }
-  deps.out("Stopped amika-hostd");
-  return 0;
+  removeLegacySmolvmFiles(paths, pid);
+  return true;
 }
 
 /** The daemon's local address as a URL, bracketing an IPv6 literal. */

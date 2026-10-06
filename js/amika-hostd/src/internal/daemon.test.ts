@@ -370,6 +370,8 @@ describe("daemonPaths", () => {
       pidFile: "/state/amika-hostd/amika-hostd.pid",
       logFile: "/state/amika-hostd/log/amika-hostd.log",
       servicesFile: "/state/amika-hostd/services.json",
+      legacySmolvmPidFile: "/state/amika-hostd/smolvm.pid",
+      legacySmolvmUrlFile: "/state/amika-hostd/smolvm.url",
     });
   });
 

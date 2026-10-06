@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -96,6 +97,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     claimPidFile: vi.fn(() => release),
     notifyReady: vi.fn(async (_port: number) => signalReady()),
     isRunning: vi.fn(() => false),
+    isLegacySmolvm: vi.fn((_pid: number) => false),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
     setHostSizes: vi.fn(async () => HOST),
     setHostUrl: vi.fn(
@@ -119,6 +121,8 @@ describe("runCli", () => {
         pidFile: "/state/amika-hostd/amika-hostd.pid",
         logFile: "/state/amika-hostd/log/amika-hostd.log",
         servicesFile: "/state/amika-hostd/services.json",
+        legacySmolvmPidFile: "/state/amika-hostd/smolvm.pid",
+        legacySmolvmUrlFile: "/state/amika-hostd/smolvm.url",
       },
       { isRunning: deps.isRunning, env: expect.any(Object) },
     );
@@ -793,6 +797,63 @@ describe("down", () => {
     expect(err).toEqual([
       `amika-hostd: amika-hostd (pid 999999) did not exit within 70s; see ${path.join(dir, "amika-hostd", "log", "amika-hostd.log")}`,
     ]);
+  });
+
+  describe("a smolvm an earlier amika-hostd left running", () => {
+    /** A state directory whose smolvm.pid and smolvm.url name `pid`. */
+    function leftover(pid: number) {
+      const dir = pidDir();
+      const stateDir = path.join(dir, "amika-hostd");
+      rmSync(path.join(stateDir, "amika-hostd.pid"), { force: true });
+      writeFileSync(path.join(stateDir, "smolvm.pid"), `${pid}\n`);
+      writeFileSync(
+        path.join(stateDir, "smolvm.url"),
+        "http://127.0.0.1:23020\n",
+      );
+      const h = harness({ XDG_STATE_HOME: dir });
+      return { ...h, stateDir };
+    }
+
+    it("is stopped, and its files removed", async () => {
+      const { deps, out, stateDir } = leftover(process.pid);
+      deps.isLegacySmolvm.mockReturnValue(true);
+      expect(await runCli(["down"], deps)).toBe(0);
+      expect(deps.stopProcess.mock.calls).toEqual([
+        [process.pid, deps.isLegacySmolvm, { timeoutMs: 60_000 }],
+      ]);
+      expect(out).toEqual([
+        `Stopping the smolvm an earlier amika-hostd left running (pid ${process.pid}) and its machines`,
+        "Stopped the smolvm an earlier amika-hostd left running",
+      ]);
+      expect(existsSync(path.join(stateDir, "smolvm.pid"))).toBe(false);
+      expect(existsSync(path.join(stateDir, "smolvm.url"))).toBe(false);
+    });
+
+    it("is waited for again when it is still stopping its machines", async () => {
+      const { deps, err, stateDir } = leftover(process.pid);
+      deps.isLegacySmolvm.mockReturnValue(true);
+      deps.stopProcess.mockResolvedValueOnce(false);
+      expect(await runCli(["down"], deps)).toBe(1);
+      expect(err[0]).toMatch(/still stopping its machines after 60s/);
+      expect(existsSync(path.join(stateDir, "smolvm.pid"))).toBe(true);
+    });
+
+    it("leaves a live process it cannot confirm as smolvm, files included", async () => {
+      const { deps, out, stateDir } = leftover(process.pid);
+      expect(await runCli(["down"], deps)).toBe(0);
+      expect(deps.stopProcess).not.toHaveBeenCalled();
+      expect(out).toEqual(["amika-hostd is not running"]);
+      expect(existsSync(path.join(stateDir, "smolvm.pid"))).toBe(true);
+    });
+
+    it("removes the files of one that has exited", async () => {
+      // Far above any real pid, so certainly not running.
+      const { deps, stateDir } = leftover(2 ** 22 + 1);
+      expect(await runCli(["down"], deps)).toBe(0);
+      expect(deps.stopProcess).not.toHaveBeenCalled();
+      expect(existsSync(path.join(stateDir, "smolvm.pid"))).toBe(false);
+      expect(existsSync(path.join(stateDir, "smolvm.url"))).toBe(false);
+    });
   });
 
   it("does not need a valid configuration", async () => {

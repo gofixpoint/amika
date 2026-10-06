@@ -48,7 +48,10 @@ Its closing steps point the operator at `amika-hostd setup`, then
 `amika-hostd up` (which runs setup itself if it was skipped).
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
-accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
+accessible. It refuses to run while the daemon is up, since it replaces the
+engine files the daemon has loaded; as `down` does, it counts the pidfile's
+process only once `/proc` or `ps` confirms it is `amika-hostd`, so a reused
+pid never blocks it. `--dry-run` prints the plan. Nothing else needs to run alongside
 the daemon (see [Machine engine](#machine-engine)).
 
 The daemon is one ESM file, built by `pnpm --filter @amika/hostd bundle`
@@ -117,7 +120,13 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   for development, and answers machine requests with errors.
 - `amika-hostd down` sends `SIGTERM` to the daemon named by the pidfile and
   waits for it to exit, which includes stopping its machines. It needs no
-  configuration.
+  configuration. It also stops a `smolvm serve` that an amika-hostd from
+  before the embedded engine left running (one killed, or that timed out
+  draining it), named by `smolvm.pid` beside the daemon's pidfile and
+  confirmed as `smolvm` or `smolvm-bin` before it is signaled (60s, then
+  run `down` again to keep waiting), and removes that pidfile and
+  `smolvm.url`; files naming a pid that has exited are just removed. Run it
+  before upgrading such a host.
 - `amika-hostd register-url <url>` records the host's public URL and exits.
 
 ## Setup

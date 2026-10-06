@@ -194,7 +194,16 @@ refuse_while_running() {
   case "$pid" in
     ''|*[!0-9]*) return 0 ;;
   esac
-  if kill -0 "$pid" 2>/dev/null; then
+  kill -0 "$pid" 2>/dev/null || return 0
+  # The pidfile outlives reboots and pids are reused, so count the process
+  # only if it is the daemon, which sets its title to `amika-hostd`, as
+  # `amika-hostd down` checks before signaling it.
+  if [ -r "/proc/${pid}/cmdline" ]; then
+    program="$(tr '\000' '\n' < "/proc/${pid}/cmdline" | head -n 1)"
+  else
+    program="$(ps -o command= -p "$pid" 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ "$program" = "amika-hostd" ]; then
     echo "Error: amika-hostd is running (pid ${pid}); stop it with \`amika-hostd down\` and re-run the installer" >&2
     exit 1
   fi
