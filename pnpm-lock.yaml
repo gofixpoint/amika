@@ -36,6 +36,9 @@ importers:
       smol-toml:
         specifier: 1.8.0
         version: 1.8.0
+      smolmachines:
+        specifier: 1.22.2
+        version: 1.22.2
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -1794,6 +1797,30 @@ packages:
   smol-toml@1.8.0:
     resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
     engines: {node: '>= 18'}
+
+  smolmachines-darwin-arm64@1.22.2:
+    resolution: {integrity: sha512-rTSHHjgz9Gq7WYjsNpJrvhd3rVRmZ9jEaR2MyFbUqm5/gTXEAkDktuCFbR3xjkMWLWTSh6mLyeJ4ZmZFEpT4/A==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [darwin]
+
+  smolmachines-linux-arm64-gnu@1.22.2:
+    resolution: {integrity: sha512-HXSBD10vdXknYYy68xaS6P7Z6vb8mN7W2+1KwzCdP6xlD7DurRGnzT+/sw9ag8CVoph2pPUXpS1le5ToXbOf+w==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  smolmachines-linux-x64-gnu@1.22.2:
+    resolution: {integrity: sha512-isTaanbtQY4pV5iHRAgXqp0VNb5CaHC1ijy3/1OY/C5Iq9XB25fRUXbTLgpVLpLaolNlw8hU5HgCXY5aALHm+Q==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  smolmachines@1.22.2:
+    resolution: {integrity: sha512-fLZ7WV0Jyr6GKRWC6szEP/pNPVUE2u0oT4H9iE4ENyfpP4fkIgLcW8UpsSXepdmGQUT/vlOdIQYPsjihfAbkMA==}
+    engines: {node: '>=18'}
 
   socket.io-client@4.8.3:
     resolution: {integrity: sha512-uP0bpjWrjQmUt5DTHq9RuoCBdFJF10cdX9X+a368j/Ft0wmaVgxlrjvK3kjvgCODOMMOz9lcaRzxmso0bTWZ/g==}
@@ -3894,6 +3921,21 @@ snapshots:
   siginfo@2.0.0: {}
 
   smol-toml@1.8.0: {}
+
+  smolmachines-darwin-arm64@1.22.2:
+    optional: true
+
+  smolmachines-linux-arm64-gnu@1.22.2:
+    optional: true
+
+  smolmachines-linux-x64-gnu@1.22.2:
+    optional: true
+
+  smolmachines@1.22.2:
+    optionalDependencies:
+      smolmachines-darwin-arm64: 1.22.2
+      smolmachines-linux-arm64-gnu: 1.22.2
+      smolmachines-linux-x64-gnu: 1.22.2
 
   socket.io-client@4.8.3:
     dependencies:

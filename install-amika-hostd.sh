@@ -5,7 +5,9 @@ set -eu
 # HOSTD_HOME (default $XDG_DATA_HOME/amika-hostd), with a launcher on
 # INSTALL_DIR that runs it on a suitable node.
 # It needs smolvm on the same host: `amika-hostd up` starts `smolvm serve`,
-# and `amika-hostd down` stops it.
+# and `amika-hostd down` stops it. It also installs the smolmachines SDK
+# (smolvm's engine, embedded) the release carries, plus this platform's
+# engine package from npm, checked against the release's engines.sha256.
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
@@ -16,6 +18,10 @@ DRY_RUN=false
 HOSTD_HOME="${AMIKA_HOSTD_HOME:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/amika-hostd}"
 NODE_MIN_MAJOR=22
 NODE_VERSION="${AMIKA_HOSTD_NODE_VERSION:-24.21.0}"
+NPM_REGISTRY="${AMIKA_HOSTD_NPM_REGISTRY:-https://registry.npmjs.org}"
+NPM_REGISTRY="${NPM_REGISTRY%/}"
+# The smolmachines engine runs on Linux with glibc 2.34 or newer.
+GLIBC_MIN="2.34"
 SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
 SMOLVM_VERSION="${SMOLVM_VERSION:-}"
 SKIP_SMOLVM=false
@@ -27,7 +33,11 @@ install-amika-hostd.sh — install the amika-hostd BYOC host daemon
 Installs amika-hostd from its GitHub release, plus the Node.js ${NODE_MIN_MAJOR}+
 and smolvm it needs. It uses the system node if it is new enough, and otherwise
 downloads Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node. If smolvm is
-missing, it runs the official smolvm installer.
+missing, it runs the official smolvm installer. It also installs the
+smolmachines engine (smolvm, embedded) for this platform.
+
+Supported hosts: Linux x86_64 or arm64 with glibc ${GLIBC_MIN}+, and macOS on
+Apple silicon.
 
 Usage:
   sh install-amika-hostd.sh [--help] [--install-version VERSION] [--dry-run]
@@ -48,6 +58,8 @@ Environment variables:
   AMIKA_HOSTD_NODE_VERSION   Node.js version to download when the system node
                              is missing or too old (default: ${NODE_VERSION})
   SMOLVM_VERSION             Same as --smolvm-version
+  AMIKA_HOSTD_NPM_REGISTRY   npm registry to fetch the engine package from
+                             (default: https://registry.npmjs.org)
   AMIKA_RELEASE_URL          Testing only: fetch the archive and checksums.txt
                              from this base URL (e.g. file:///path/to/dir)
                              instead of the GitHub release
@@ -62,6 +74,7 @@ EOF
 main() {
   parse_args "$@"
   detect_platform
+  engine_package
 
   VERSION="${INSTALL_VERSION:-$DEFAULT_VERSION}"
   VERSION="${VERSION#v}"
@@ -159,23 +172,28 @@ download_and_extract() {
 
   echo "Downloading ${DOWNLOAD_URL}..."
   fetch_url "$DOWNLOAD_URL" > "${TMPDIR_INSTALL}/${ARCHIVE_NAME}"
-  verify_checksum "${TMPDIR_INSTALL}/${ARCHIVE_NAME}" "$ARCHIVE_NAME" "$CHECKSUMS_URL"
+  fetch_url "$CHECKSUMS_URL" > "${TMPDIR_INSTALL}/checksums.txt"
+  verify_checksum "${TMPDIR_INSTALL}/${ARCHIVE_NAME}" "$ARCHIVE_NAME" "${TMPDIR_INSTALL}/checksums.txt"
 
   echo "Extracting..."
   tar -xzf "${TMPDIR_INSTALL}/${ARCHIVE_NAME}" -C "$TMPDIR_INSTALL"
 
-  BUNDLE_PATH="${TMPDIR_INSTALL}/${ARCHIVE_BASE}/amika-hostd.mjs"
-  if [ ! -f "$BUNDLE_PATH" ]; then
-    echo "Error: expected file not found at ${ARCHIVE_BASE}/amika-hostd.mjs in archive" >&2
-    exit 1
-  fi
+  ARCHIVE_DIR="${TMPDIR_INSTALL}/${ARCHIVE_BASE}"
+  BUNDLE_PATH="${ARCHIVE_DIR}/amika-hostd.mjs"
+  for expected in amika-hostd.mjs engines.sha256 node_modules/smolmachines/package.json; do
+    if [ ! -f "${ARCHIVE_DIR}/${expected}" ]; then
+      echo "Error: expected file not found at ${ARCHIVE_BASE}/${expected} in archive" >&2
+      exit 1
+    fi
+  done
 }
 
 install_hostd() {
   mkdir -p "$HOSTD_HOME"
   install -m 0644 "$BUNDLE_PATH" "${HOSTD_HOME}/amika-hostd.mjs"
-  install -m 0644 "${TMPDIR_INSTALL}/${ARCHIVE_BASE}/config.example.toml" \
+  install -m 0644 "${ARCHIVE_DIR}/config.example.toml" \
     "${HOSTD_HOME}/config.example.toml"
+  install_engine
 
   ensure_node
   write_launcher
@@ -186,6 +204,65 @@ install_hostd() {
   ensure_smolvm
   check_kvm
   print_next_steps
+}
+
+# The npm package carrying this platform's engine (native addon, boot helper,
+# hypervisor libraries and guest rootfs). Sets ENGINE_PACKAGE, or exits on a
+# host the engine does not support, before anything is downloaded.
+engine_package() {
+  case "${OS}/${ARCH}" in
+    linux/amd64)  ENGINE_PACKAGE="smolmachines-linux-x64-gnu" ;;
+    linux/arm64)  ENGINE_PACKAGE="smolmachines-linux-arm64-gnu" ;;
+    darwin/arm64) ENGINE_PACKAGE="smolmachines-darwin-arm64" ;;
+    *)
+      echo "Error: amika-hostd's machine engine (smolmachines) does not support ${OS}/${ARCH}" >&2
+      exit 1
+      ;;
+  esac
+  [ "$OS" = "linux" ] || return 0
+  glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)"
+  if [ -z "$glibc" ]; then
+    echo "Error: amika-hostd's machine engine (smolmachines) needs glibc ${GLIBC_MIN} or newer; this host's C library is not glibc (musl?)" >&2
+    exit 1
+  fi
+  if ! version_at_least "$glibc" "$GLIBC_MIN"; then
+    echo "Error: amika-hostd's machine engine (smolmachines) needs glibc ${GLIBC_MIN} or newer; this host has ${glibc}" >&2
+    exit 1
+  fi
+}
+
+# Succeed if dotted version $1 is at least $2 (major.minor).
+version_at_least() {
+  have_major="${1%%.*}"; have_minor="${1#*.}"; have_minor="${have_minor%%.*}"
+  want_major="${2%%.*}"; want_minor="${2#*.}"; want_minor="${want_minor%%.*}"
+  [ "$have_major" -gt "$want_major" ] ||
+    { [ "$have_major" -eq "$want_major" ] && [ "$have_minor" -ge "$want_minor" ]; }
+}
+
+# Install the smolmachines SDK the release carries, then download this
+# platform's engine package from npm, verify it against the release's
+# engines.sha256 and unpack it beside the SDK, where the SDK looks for it.
+install_engine() {
+  ENGINE_ARCHIVE="$(awk -v prefix="${ENGINE_PACKAGE}-" 'index($2, prefix) == 1 {print $2}' "${ARCHIVE_DIR}/engines.sha256")"
+  if [ -z "$ENGINE_ARCHIVE" ]; then
+    echo "Error: this release has no ${ENGINE_PACKAGE} engine" >&2
+    exit 1
+  fi
+  engine_url="${NPM_REGISTRY}/${ENGINE_PACKAGE}/-/${ENGINE_ARCHIVE}"
+  echo "Downloading ${engine_url}..."
+  fetch_url "$engine_url" > "${TMPDIR_INSTALL}/${ENGINE_ARCHIVE}"
+  verify_checksum "${TMPDIR_INSTALL}/${ENGINE_ARCHIVE}" "$ENGINE_ARCHIVE" "${ARCHIVE_DIR}/engines.sha256"
+
+  staging="${HOSTD_HOME}/.node_modules-staging"
+  rm -rf "$staging"
+  mkdir -p "${staging}/${ENGINE_PACKAGE}"
+  cp -R "${ARCHIVE_DIR}/node_modules/smolmachines" "${staging}/smolmachines"
+  tar -xzf "${TMPDIR_INSTALL}/${ENGINE_ARCHIVE}" -C "${staging}/${ENGINE_PACKAGE}" --strip-components=1
+  # Replace the whole directory, so an engine from an earlier release or
+  # another platform never lingers.
+  rm -rf "${HOSTD_HOME}/node_modules"
+  mv "$staging" "${HOSTD_HOME}/node_modules"
+  echo "Installed the ${ENGINE_PACKAGE} engine (${ENGINE_ARCHIVE%.tgz})"
 }
 
 describe_plan() {
@@ -207,6 +284,8 @@ describe_plan() {
   else
     echo "  smolvm:       not found; would run ${SMOLVM_INSTALL_URL} (version: ${SMOLVM_VERSION:-latest})"
   fi
+  echo "  Engine:       ${ENGINE_PACKAGE}, the version the release pins, from"
+  echo "                ${NPM_REGISTRY}, into ${HOSTD_HOME}/node_modules"
   config_paths
   if [ -e "$CONFIG_PATH" ]; then
     echo "  Config:       keep existing ${CONFIG_PATH}"
@@ -275,7 +354,8 @@ install_private_node() {
   node_dist_names
   echo "Downloading ${NODE_BASE_URL}/${NODE_ARCHIVE}..."
   fetch_url "${NODE_BASE_URL}/${NODE_ARCHIVE}" > "${TMPDIR_INSTALL}/${NODE_ARCHIVE}"
-  verify_checksum "${TMPDIR_INSTALL}/${NODE_ARCHIVE}" "$NODE_ARCHIVE" "${NODE_BASE_URL}/SHASUMS256.txt"
+  fetch_url "${NODE_BASE_URL}/SHASUMS256.txt" > "${TMPDIR_INSTALL}/SHASUMS256.txt"
+  verify_checksum "${TMPDIR_INSTALL}/${NODE_ARCHIVE}" "$NODE_ARCHIVE" "${TMPDIR_INSTALL}/SHASUMS256.txt"
 
   staging="${HOSTD_HOME}/.node-staging"
   rm -rf "$staging"
@@ -479,19 +559,16 @@ print_next_steps() {
 }
 
 # Verify $1 (named $2 in the checksum list) against the sha256sum-format list
-# at $3.
+# in the file $3.
 verify_checksum() {
   archive_path="$1"
   archive_name="$2"
-  checksums_url="$3"
-  checksums_path="${TMPDIR_INSTALL}/checksums-${archive_name}.txt"
+  checksums_path="$3"
 
   echo "Verifying checksum..."
-  fetch_url "$checksums_url" > "$checksums_path"
-
   checksum_line="$(grep "  ${archive_name}\$" "$checksums_path" || true)"
   if [ -z "$checksum_line" ]; then
-    echo "Error: checksum for ${archive_name} not found in $(basename "$checksums_url")" >&2
+    echo "Error: checksum for ${archive_name} not found in $(basename "$checksums_path")" >&2
     exit 1
   fi
 

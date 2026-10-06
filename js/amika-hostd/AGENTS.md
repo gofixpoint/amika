@@ -31,6 +31,14 @@ GitHub release, verifies it against `checksums.txt`, and installs:
 - smolvm, through its official installer, unless `smolvm` is on `PATH` or in
   `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
   (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
+- the machine engine the daemon is moving to: the `smolmachines` SDK
+  (smolvm's engine, embedded) the release carries, into `node_modules/` in
+  that same directory, plus this platform's engine package
+  (`smolmachines-linux-x64-gnu`, `-linux-arm64-gnu` or `-darwin-arm64`:
+  native addon, boot helper, hypervisor libraries and guest rootfs, over
+  100 MB) downloaded from npm (`AMIKA_HOSTD_NPM_REGISTRY`) and verified
+  against the release's `engines.sha256`. Any other platform, or Linux with a
+  C library other than glibc 2.34+, fails before anything is downloaded;
 - a config: `config.example.toml` copied to the user config path below, with
   `secret_key` set to a generated `openssl rand -hex 32` and `hostname` set to
   this machine's lowercased `hostname` (left commented when it isn't a valid
@@ -41,11 +49,15 @@ On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
 the daemon: `amika-hostd up` starts smolvm itself (see [smolvm](#smolvm)).
 
-The release artifact is one ESM file, built by `pnpm --filter @amika/hostd
-bundle` (`scripts/bundle.mjs`, esbuild with every npm dependency inlined), so
-it runs under plain `node` with no `node_modules`; `src/bundle.test.ts` checks
-that. `scripts/package-release.sh <version> [out-dir]` wraps it and the
-example config in the tarball and writes `checksums.txt`. The Release workflow
+The daemon is one ESM file, built by `pnpm --filter @amika/hostd bundle`
+(`scripts/bundle.mjs`, esbuild with every npm dependency inlined except
+`smolmachines`, which finds its native files on disk beside its own and so is
+installed in `node_modules`), so it runs under plain `node` with no
+`node_modules`; `src/bundle.test.ts` checks that. `scripts/package-release.sh
+<version> [out-dir]` wraps the bundle, the example config, the `smolmachines`
+package at the exact version `package.json` pins, and `engines.sha256` (each
+platform's engine package, fetched with `npm pack`) in one tarball for every
+platform, and writes `checksums.txt`. The Release workflow
 runs it for an `amika-hostd@v*` tag. To test the installer against a local
 build, point `AMIKA_RELEASE_URL` at that directory, with a temporary `HOME`
 and `AMIKA_INSTALL_DIR`:
