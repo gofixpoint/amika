@@ -329,7 +329,10 @@ surface drops: each machine's published `ports`, the machine smolvm answers a
 start or stop with (so a successful start never hinges on a second request
 whose failure would make a create through hostd delete the machine), exec as
 argv with any `user`, and a file's exact bytes and type (JSON for a
-directory), streamed through rather than buffered.
+directory), streamed through rather than buffered. Machine and exec replies
+are validated only for the fields hostd reads and otherwise passed through
+whole, so smolvm's other fields (a machine's `image`, `network`, `mounts`;
+exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
 
 - The provider's network setting is per provider, so hostd builds one with
   networking and one without, and creates each machine on the one its request

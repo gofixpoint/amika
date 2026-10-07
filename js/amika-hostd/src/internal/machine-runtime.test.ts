@@ -22,6 +22,7 @@ interface Port {
 
 /** A machine as `smolvm serve` reports it. */
 interface SmolMachine {
+  [field: string]: unknown;
   name: string;
   state: string;
   cpus: number;
@@ -336,6 +337,20 @@ describe("providerRuntime", () => {
       ]);
     });
 
+    it("passes on every field smolvm reports, not just the ones hostd reads", async () => {
+      const extra = {
+        image: "alpine:3",
+        network: false,
+        pid: 4242,
+        mounts: [{ source: "/src", target: "/work", readonly: true }],
+      };
+      const { runtime } = harness([machine({ state: "running", ...extra })]);
+      expect(await runtime.get("demo")).toMatchObject(extra);
+      expect((await runtime.list())[0]).toMatchObject(extra);
+      expect(await runtime.stop("demo")).toMatchObject(extra);
+      expect(await runtime.start("demo")).toMatchObject(extra);
+    });
+
     it("gets one machine", async () => {
       const { runtime } = harness([machine({ state: "running" })]);
       expect(await runtime.get("demo")).toEqual({
@@ -424,6 +439,21 @@ describe("providerRuntime", () => {
       const { runtime, received } = harness([machine()]);
       await runtime.exec("demo", { command: ["id"] });
       expect(received[0]!.body).toEqual({ command: ["id"] });
+    });
+
+    it("passes on smolvm's exact output bytes alongside the decoded text", async () => {
+      const reply = {
+        exitCode: 0,
+        stdout: "\uFFFDPNG",
+        stderr: "",
+        stdoutB64: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64"),
+        stderrB64: "",
+      };
+      const smolvm = vi.fn<typeof fetch>(async () => Response.json(reply));
+      const runtime = providerRuntime({ apiUrl: API_URL, fetch: smolvm });
+      expect(await runtime.exec("demo", { command: ["cat", "a.png"] })).toEqual(
+        reply,
+      );
     });
 
     it("passes on a failing command's exit code and output", async () => {

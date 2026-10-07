@@ -22,8 +22,12 @@ import smolProvider, {
 } from "@amika/sandbox/smol";
 import { z } from "zod";
 
-/** A machine as the machine API reports it, in `smolvm serve`'s shape. */
+/**
+ * A machine as the machine API reports it: `smolvm serve`'s whole object,
+ * every field it sends (image, network, mounts, ...) passed through.
+ */
 export interface MachineInfo {
+  [field: string]: unknown;
   name: string;
   state: string;
   cpus: number;
@@ -73,10 +77,15 @@ export interface ExecRequest {
   stdin?: string;
 }
 
+/** smolvm's exec result, every field it sends passed through. */
 export interface ExecResult {
+  [field: string]: unknown;
   exitCode: number;
+  /** Decoded as UTF-8, lossily; `stdoutB64` carries the exact bytes. */
   stdout: string;
   stderr: string;
+  stdoutB64?: string;
+  stderrB64?: string;
 }
 
 /** Everything the machine API asks of the runtime. */
@@ -165,7 +174,7 @@ export function providerRuntime({
     }
   };
   const describe = async (name: string): Promise<MachineInfo> =>
-    info(await call(() => client.json(machinePath(name), machineSchema)));
+    info(await call(() => client.json(machinePath(name), smolvmMachine)));
 
   return {
     list: async () =>
@@ -205,13 +214,13 @@ export function providerRuntime({
     start: async (name) =>
       info(
         await call(() =>
-          client.json(`${machinePath(name)}/start`, machineSchema, "POST"),
+          client.json(`${machinePath(name)}/start`, smolvmMachine, "POST"),
         ),
       ),
     stop: async (name) =>
       info(
         await call(() =>
-          client.json(`${machinePath(name)}/stop`, machineSchema, "POST"),
+          client.json(`${machinePath(name)}/stop`, smolvmMachine, "POST"),
         ),
       ),
     remove: async (name) => {
@@ -225,7 +234,7 @@ export function providerRuntime({
     // user, and forwards both to smolvm unchanged.
     exec: (name, request) =>
       call(() =>
-        client.json(`${machinePath(name)}/exec`, execSchema, "POST", {
+        client.json(`${machinePath(name)}/exec`, smolvmExec, "POST", {
           command: request.command,
           user: request.user,
           workdir: request.workdir,
@@ -289,17 +298,18 @@ export function providerRuntime({
   };
 }
 
-const machinesSchema = z.object({ machines: z.array(machineSchema) });
+/**
+ * smolvm's replies, validated for what hostd reads and otherwise passed
+ * through whole: the machine API answers in `smolvm serve`'s shapes, so a
+ * field hostd does not know of (a machine's image or network, exec's exact
+ * output bytes) still reaches the caller.
+ */
+const smolvmMachine = machineSchema.loose();
+const smolvmExec = execSchema.loose();
+const machinesSchema = z.object({ machines: z.array(smolvmMachine) });
 
-function info(machine: z.infer<typeof machineSchema>): MachineInfo {
-  return {
-    name: machine.name,
-    state: machine.state,
-    cpus: machine.cpus,
-    memoryMb: machine.memoryMb,
-    storageGb: machine.storageGb,
-    ports: machine.ports ?? [],
-  };
+function info(machine: z.infer<typeof smolvmMachine>): MachineInfo {
+  return { ...machine, ports: machine.ports ?? [] };
 }
 
 /** A service as the provider takes it; the provider fills in host and URL. */
