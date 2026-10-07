@@ -440,8 +440,8 @@ seed_config() {
   else
     host_name=""
   fi
-  # No secrets go in it (`amika-hostd setup` keeps them in the keychain, or in
-  # files with `secret_store = "file"`), but keep it to the daemon's user.
+  # `amika-hostd setup` adds the secret key to it (unless secrets are kept in
+  # the keychain), so only the daemon's user may read it.
   (
     umask 077
     sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \

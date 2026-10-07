@@ -26,7 +26,7 @@ describe("resolveConfig", () => {
       secretKey: undefined,
       secretKeyFrom: undefined,
       secretKeyInFile: false,
-      secretStore: "keychain",
+      secretStore: "file",
       host: "127.0.0.1",
       port: 3020,
       smolApiUrl: undefined,
@@ -327,17 +327,17 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
 });
 
 describe("secret store", () => {
-  it("is the keychain unless the file or environment chooses files", () => {
-    expect(resolveConfig({}).secretStore).toBe("keychain");
+  it("is files unless the file or environment chooses the keychain", () => {
+    expect(resolveConfig({}).secretStore).toBe("file");
     expect(
-      resolveConfig({ file: file('secret_store = "file"') }).secretStore,
-    ).toBe("file");
+      resolveConfig({ file: file('secret_store = "keychain"') }).secretStore,
+    ).toBe("keychain");
     expect(
       resolveConfig({
-        env: { AMIKA_HOSTD_SECRET_STORE: "keychain" },
-        file: file('secret_store = "file"'),
+        env: { AMIKA_HOSTD_SECRET_STORE: "file" },
+        file: file('secret_store = "keychain"'),
       }).secretStore,
-    ).toBe("keychain");
+    ).toBe("file");
   });
 
   it.each([
@@ -444,12 +444,12 @@ describe("config.example.toml", () => {
     expect(example.contents).toMatch(/^# hostname = "my-host"$/m);
   });
 
-  it("holds no secret, and keeps secrets in the keychain by default", () => {
+  it("holds no secret, and documents the default secret store", () => {
     expect(example.contents).not.toMatch(/^\s*secret_key\s*=/m);
-    expect(example.contents).toMatch(/^# secret_store = "keychain"$/m);
+    expect(example.contents).toMatch(/^# secret_store = "file"$/m);
     expect(resolveConfig({ file: example })).toMatchObject({
       secretKey: undefined,
-      secretStore: "keychain",
+      secretStore: "file",
     });
   });
 
@@ -470,7 +470,7 @@ describe("config.example.toml", () => {
   it("resolves once seeded, with defaults that match the code", () => {
     expect(resolveConfig({ file: seeded })).toMatchObject({
       hostname: "my-host",
-      secretStore: "keychain",
+      secretStore: "file",
       apiUrl: DEFAULT_API_URL,
       host: "127.0.0.1",
       port: 3020,

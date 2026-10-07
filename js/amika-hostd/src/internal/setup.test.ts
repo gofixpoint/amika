@@ -356,6 +356,23 @@ describe("runSetup with the keychain store", () => {
     expect(h.written[PATH]).not.toMatch(/secret_key/);
   });
 
+  it("gives a recreated config the defaults, though the keychain kept the secret", async () => {
+    // config.toml was deleted; the keychain still has the host's secret key.
+    const h = harness({
+      kind: "keychain",
+      answers: ["builder", ""],
+      storedKey: "k",
+      storedSecret: OLD_SECRET,
+    });
+    await runSetup(h.deps);
+    expect(h.config()).toMatchObject({
+      hostname: "builder",
+      sizes: DEFAULT_SIZES,
+      images: DEFAULT_PRESET_IMAGES,
+    });
+    expect(h.keychainSecret.set).not.toHaveBeenCalled();
+  });
+
   it("leaves a secret already in the keychain alone on a rerun", async () => {
     const h = harness({
       kind: "keychain",

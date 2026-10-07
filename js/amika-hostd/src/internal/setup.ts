@@ -135,7 +135,10 @@ export async function runSetup(
     hostname,
     // In the keychain, the file keeps no secret key at all.
     secretKey: keychainSecret ? undefined : secretKey,
-    addDefaults: firstRun && Object.keys(saved.sizes).length === 0,
+    // A config written from scratch always gets them, even when a secret
+    // survived in the keychain (the file was deleted, say).
+    addDefaults:
+      (file === undefined || firstRun) && Object.keys(saved.sizes).length === 0,
   });
   // Check the result parses before anything changes.
   const written = resolveConfig({ file: { path: configPath, contents } });

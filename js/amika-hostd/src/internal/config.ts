@@ -16,10 +16,16 @@ export interface HostdFlags {
 }
 
 /**
- * Where hostd keeps its secrets (the Amika API key and the secret key): the
- * system keychain, by default, or plain files only their owner can read.
+ * Where hostd keeps its secrets (the Amika API key and the secret key): plain
+ * files only their owner can read, or the system keychain.
  */
 export type SecretStoreKind = "keychain" | "file";
+
+/**
+ * Files, until amika-hostd supports a system keychain to make the default:
+ * choosing "keychain" here, with no keychain to use, refuses.
+ */
+export const DEFAULT_SECRET_STORE: SecretStoreKind = "file";
 
 export interface HostdConfig {
   /**
@@ -120,7 +126,7 @@ export function resolveConfig({
           : undefined,
     secretKeyInFile: toml.secret_key !== undefined,
     secretStore: parseSecretStore(
-      fromEnv("secretStore") ?? toml.secret_store ?? "keychain",
+      fromEnv("secretStore") ?? toml.secret_store ?? DEFAULT_SECRET_STORE,
     ),
     host:
       parseHostFlag(flags.host) ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
@@ -344,7 +350,7 @@ const SECRET_KEY = /^[\x21-\x7e]{32,}$/;
 function parseSecretStore(value: string): SecretStoreKind {
   if (value === "keychain" || value === "file") return value;
   throw new ConfigError(
-    `Invalid secret store: ${JSON.stringify(value)}. Use "keychain" (the default) or "file"`,
+    `Invalid secret store: ${JSON.stringify(value)}. Use "file" or "keychain"`,
   );
 }
 

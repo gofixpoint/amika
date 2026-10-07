@@ -869,8 +869,10 @@ describe("setup", () => {
     return { ...h, deps, files };
   }
 
-  it("`setup` keeps both secrets in the keychain by default", async () => {
-    const { deps, files, out } = unconfigured([""], ["amk_123"]);
+  it("`setup` keeps both secrets in the keychain when chosen", async () => {
+    const { deps, files, out } = unconfigured([""], ["amk_123"], {
+      AMIKA_HOSTD_SECRET_STORE: "keychain",
+    });
     expect(await runCli(["setup"], deps)).toBe(0);
     expect(files[CONFIG_PATH]).toContain('hostname = "builder"');
     expect(files[CONFIG_PATH]).not.toMatch(/^\s*secret_key\s*=/m);
@@ -883,10 +885,8 @@ describe("setup", () => {
     expect(deps.registerHost).not.toHaveBeenCalled();
   });
 
-  it("`setup` keeps the secret key in the config with the file store", async () => {
-    const { deps, files } = unconfigured([""], ["amk_123"], {
-      AMIKA_HOSTD_SECRET_STORE: "file",
-    });
+  it("`setup` keeps the secret key in the config with the file store, the default", async () => {
+    const { deps, files } = unconfigured([""], ["amk_123"]);
     expect(await runCli(["setup"], deps)).toBe(0);
     expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
     expect(deps.keychainSecret.value).toBeUndefined();
@@ -969,6 +969,7 @@ describe("setup", () => {
   it("`up` runs setup to replace a placeholder secret instead of failing", async () => {
     const { deps, files } = unconfigured(["builder"], [], {
       AMIKA_API_KEY: "api-key",
+      AMIKA_HOSTD_SECRET_STORE: "keychain",
     });
     files[CONFIG_PATH] = EXAMPLE;
     expect(await runCli(["up"], deps)).toBe(0);
@@ -1001,6 +1002,7 @@ describe("setup", () => {
   it("`up` without a terminal says to move a secret_key into the keychain", async () => {
     const { deps, err } = harness({
       AMIKA_API_KEY: "api-key",
+      AMIKA_HOSTD_SECRET_STORE: "keychain",
       AMIKA_HOSTD_HOSTNAME: "builder",
       XDG_STATE_HOME: "/state",
     });
@@ -1027,6 +1029,7 @@ describe("setup", () => {
     async (_where, env, inKeychain) => {
       const { deps, err } = harness({
         AMIKA_API_KEY: "api-key",
+        AMIKA_HOSTD_SECRET_STORE: "keychain",
         XDG_STATE_HOME: "/state",
         ...env,
       });
@@ -1049,6 +1052,7 @@ describe("setup", () => {
   it("`up` with a terminal runs setup to clear an unused secret_key", async () => {
     const { deps, files } = unconfigured([""], [], {
       AMIKA_API_KEY: "api-key",
+      AMIKA_HOSTD_SECRET_STORE: "keychain",
     });
     files[CONFIG_PATH] =
       `hostname = "builder"\nsecret_key = "${"f".repeat(64)}"\n`;
@@ -1093,6 +1097,7 @@ describe("setup", () => {
   it("`up` uses the secret key from the keychain", async () => {
     const { deps } = harness({
       AMIKA_API_KEY: "api-key",
+      AMIKA_HOSTD_SECRET_STORE: "keychain",
       AMIKA_HOSTD_HOSTNAME: "builder",
       XDG_STATE_HOME: "/state",
     });
@@ -1121,7 +1126,10 @@ describe("setup", () => {
   });
 
   it("`register-url` reads both secrets from the keychain", async () => {
-    const { deps } = harness({ AMIKA_HOSTD_HOSTNAME: "builder" });
+    const { deps } = harness({
+      AMIKA_HOSTD_HOSTNAME: "builder",
+      AMIKA_HOSTD_SECRET_STORE: "keychain",
+    });
     deps.credentials.value = "amk_stored";
     deps.keychainSecret.value = SECRET;
     expect(await runCli(["register-url", "https://x.example"], deps)).toBe(0);
@@ -1149,7 +1157,10 @@ describe("setup", () => {
   });
 
   it("`serve` run by hand reads the secret key from the keychain", async () => {
-    const { deps } = harness({ XDG_STATE_HOME: "/state" });
+    const { deps } = harness({
+      XDG_STATE_HOME: "/state",
+      AMIKA_HOSTD_SECRET_STORE: "keychain",
+    });
     deps.keychainSecret.value = SECRET;
     expect(await runCli(["serve"], deps)).toBe(0);
     expect(deps.credentials.get).not.toHaveBeenCalled();
