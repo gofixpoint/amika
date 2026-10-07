@@ -1,8 +1,9 @@
 /**
  * Where hostd keeps its secrets: the Amika API key `amika-hostd setup` asks
- * for, and the secret key Amika presents to the daemon. By default they live
- * in the system keychain; with `secret_store = "file"` they live in plain
- * files only their owner can read. The two are never mixed: a read never
+ * for, and the secret key Amika presents to the daemon. By default
+ * (`DEFAULT_SECRET_STORE`) they live in plain files only their owner can
+ * read; with `secret_store = "keychain"` they live in the system keychain,
+ * where amika-hostd supports one. The two are never mixed: a read never
  * falls back from one to the other, so a key left in one cannot shadow a
  * newer one in the other.
  */
