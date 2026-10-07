@@ -171,14 +171,16 @@ that cannot be stored (a locked keychain, say) leaves the config untouched.
 
 Registration never changes a stored secret, so setup sends a regenerated
 secret key to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with
-`secret`, `setHostSecret`) for the hostname `up` will use: the environment's
-if it sets one. It stores the new key and writes the config first, so a key
-this host could not keep never reaches Amika. If sending fails, it puts the
-old key back where it keeps it (the keychain item, or `secret_key` in the
-file) and says how to recover in case Amika applied the new one anyway; if the
-old key cannot be put back, it says the new one stayed. A new hostname skips
-the send, since `up` registers it as a new host. A secret key set in the
-environment is never regenerated: the daemon would keep using it. After
+`secret`, `setHostSecret`) for every hostname `up` may register: the one it
+writes, which may be new or one Amika already knows, and the environment's
+while it overrides that. It stores the new key and writes the config first, so
+a key this host could not keep never reaches Amika; if the config cannot be
+written, the old key goes back in the keychain and nothing is sent. If sending
+fails, it puts the old key back where it keeps it (the keychain item, or
+`secret_key` in the file), names the hosts Amika already took the new key for,
+and says how to recover in case Amika applied it for the one that failed; if
+the old key cannot be put back, it says the new one stayed. A secret key set
+in the environment is never regenerated: the daemon would keep using it. After
 regenerating, setup says to restart a running daemon, which keeps the key `up`
 handed it.
 

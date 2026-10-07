@@ -81,7 +81,12 @@ function harness({
     }),
     systemHostname: () => "Jakubs-MacBook-Pro.local",
     generateSecretKey: vi.fn(() => NEW_SECRET),
-    registerHost: vi.fn(async () => ({ host: HOST, created: false })),
+    registerHost: vi.fn(
+      async (
+        _api: { apiUrl: string; apiKey: string },
+        _input: { hostname: string; secretKey: string },
+      ) => ({ host: HOST, created: false }),
+    ),
     setHostSecret: vi.fn(async () => HOST),
   } satisfies SetupDeps;
   const config = () =>
@@ -346,20 +351,49 @@ describe("regenerating the secret key", () => {
     );
   });
 
-  it("does not send it for a new hostname, which up registers afresh", async () => {
+  it("sends it for a new hostname too, which Amika may already know", async () => {
     const h = rerun({ answers: ["newhost", "y", ""] });
     await runSetup(h.deps);
     expect(h.keychainSecret.value).toBe(NEW_SECRET);
-    expect(h.deps.registerHost).not.toHaveBeenCalled();
-  });
-
-  it("sends it for the environment's hostname, which up registers", async () => {
-    const h = rerun({ env: { AMIKA_HOSTD_HOSTNAME: "from-env" } });
-    await runSetup(h.deps);
+    expect(h.deps.registerHost).toHaveBeenCalledOnce();
     expect(h.deps.registerHost).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ hostname: "from-env", secretKey: NEW_SECRET }),
+      expect.objectContaining({ hostname: "newhost", secretKey: NEW_SECRET }),
     );
+  });
+
+  it("sends it for the environment's hostname and the file's, which up registers once that is unset", async () => {
+    const h = rerun({ env: { AMIKA_HOSTD_HOSTNAME: "from-env" } });
+    await runSetup(h.deps);
+    expect(
+      h.deps.registerHost.mock.calls.map(([, input]) => input.hostname),
+    ).toEqual(["from-env", "builder"]);
+    for (const [, input] of h.deps.registerHost.mock.calls) {
+      expect(input.secretKey).toBe(NEW_SECRET);
+    }
+  });
+
+  it("names the hosts Amika already has the new key for when a later one fails", async () => {
+    const h = rerun({ env: { AMIKA_HOSTD_HOSTNAME: "from-env" } });
+    h.deps.setHostSecret
+      .mockResolvedValueOnce(HOST)
+      .mockRejectedValueOnce(new Error("Amika is down"));
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      "Amika is down; the test keychain (secret key) has the old secret key again, but Amika already has the new one for from-env: run `amika-hostd setup` again and regenerate it, so Amika and this host agree.",
+    );
+    expect(h.keychainSecret.value).toBe(OLD_SECRET);
+  });
+
+  it("puts the old key back in the keychain when the config cannot be written, sending nothing", async () => {
+    const h = rerun();
+    h.deps.writeConfigFile.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      `Cannot write ${PATH}: EACCES; the test keychain (secret key) still has the old secret key, and nothing was sent to Amika.`,
+    );
+    expect(h.keychainSecret.value).toBe(OLD_SECRET);
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
   });
 
   it("never offers to regenerate a secret key the environment sets", async () => {
@@ -391,7 +425,7 @@ describe("regenerating the secret key", () => {
     const h = rerun();
     h.deps.setHostSecret.mockRejectedValue(new Error("Amika is down"));
     await expect(runSetup(h.deps)).rejects.toThrow(
-      "Amika is down; the test keychain (secret key) still has the old secret key. If Amika's requests to this host start failing, run `amika-hostd setup` again and regenerate it.",
+      "Amika is down; the test keychain (secret key) still has the old secret key. If Amika's requests to this host start failing, run `amika-hostd setup` again and regenerate it, so Amika and this host agree.",
     );
     expect(h.keychainSecret.value).toBe(OLD_SECRET);
   });
