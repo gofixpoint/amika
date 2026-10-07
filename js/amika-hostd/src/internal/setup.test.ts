@@ -382,6 +382,44 @@ describe("runSetup with the keychain store", () => {
     expect(h.out).toContain("  secret    (in the test keychain (secret key))");
   });
 
+  it("rewrites the file's secret_store when the environment chose the keychain, and says so", async () => {
+    const h = harness({
+      kind: "keychain",
+      answers: ["", ""],
+      file: `secret_store = "file"\n${CONFIGURED}`,
+      storedKey: "k",
+      env: { AMIKA_HOSTD_SECRET_STORE: "keychain" },
+    });
+    await runSetup(h.deps);
+    expect(h.keychainSecret.value).toBe(OLD_SECRET);
+    expect(h.written[PATH]).toBe(
+      `secret_store = "keychain"\n${CONFIGURED.replace(`secret_key = "${OLD_SECRET}"\n`, "")}`,
+    );
+    expect(h.out).toContain(
+      `Changed secret_store in ${PATH} from "file" to "keychain", where setup kept the secrets.`,
+    );
+    expect(h.out).toContain(
+      "Note: AMIKA_HOSTD_SECRET_STORE is set in your environment and overrides the secret store in the file.",
+    );
+  });
+
+  it("rewrites the file's secret_store when the environment chose files", async () => {
+    const h = harness({
+      answers: ["", ""],
+      file: 'hostname = "builder"\nsecret_store = "keychain"\n',
+      storedKey: "k",
+      env: { AMIKA_HOSTD_SECRET_STORE: "file" },
+    });
+    await runSetup(h.deps);
+    expect(h.config()).toMatchObject({
+      secretStore: "file",
+      secretKey: NEW_SECRET,
+    });
+    expect(h.out).toContain(
+      `Changed secret_store in ${PATH} from "keychain" to "file", where setup kept the secrets.`,
+    );
+  });
+
   it("moves a secret_key from the file into the keychain", async () => {
     const h = harness({
       kind: "keychain",
