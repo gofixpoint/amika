@@ -435,15 +435,22 @@ describe("the Linux Secret Service", () => {
     );
   });
 
-  it("says when no keyring answers on the session bus, without saying to unlock it", () => {
-    const fake = secretTool({
-      stderr:
-        "secret-tool: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files",
-    });
-    expect(() => open(fake).apiKey.get()).toThrow(
-      `No desktop keyring (Secret Service) answers on this session's D-Bus (secret-tool: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files), so amika-hostd has nowhere to keep its secrets; ${FILES}`,
-    );
-  });
+  it.each([
+    // dbus-daemon, with the D-Bus error name stripped as libsecret does.
+    "secret-tool: The name org.freedesktop.secrets was not provided by any .service files",
+    // dbus-broker.
+    "secret-tool: The name is not activatable",
+    "secret-tool: Could not activate remote peer 'org.freedesktop.secrets': activation request failed: unknown unit",
+    "secret-tool: Message recipient disconnected from message bus without replying",
+    "secret-tool: Could not connect: No such file or directory",
+  ])(
+    "says no keyring answers on the session bus (%j), without saying to unlock it",
+    (stderr) => {
+      expect(() => open(secretTool({ stderr })).apiKey.get()).toThrow(
+        `No desktop keyring (Secret Service) answers on this session's D-Bus (${stderr}), so amika-hostd has nowhere to keep its secrets; ${FILES}`,
+      );
+    },
+  );
 
   it("refuses a keyring it cannot read, saying what secret-tool said", () => {
     expect(() =>

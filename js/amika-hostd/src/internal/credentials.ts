@@ -270,11 +270,9 @@ function secretServiceKeychain(run: Runner): Keychain {
       );
     }
     // A session bus with no keyring daemon on it, as over SSH to a server.
-    if (
-      /ServiceUnknown|NoReply|Could not connect|Cannot autolaunch/i.test(
-        result.stderr ?? "",
-      )
-    ) {
+    // libsecret strips the D-Bus error name (`ServiceUnknown`) and prints
+    // only its message, which depends on the bus (dbus-daemon, dbus-broker).
+    if (NO_SECRET_SERVICE.test(result.stderr ?? "")) {
       throw new ConfigError(
         `No desktop keyring (Secret Service) answers on this session's D-Bus (${detail(result)}), so amika-hostd has nowhere to keep its secrets; ${files}`,
       );
@@ -339,6 +337,14 @@ function secretServiceKeychain(run: Runner): Keychain {
     },
   };
 }
+
+/**
+ * What `secret-tool` prints when nothing answers for the Secret Service:
+ * no such service (dbus-daemon, dbus-broker), one that went away without
+ * replying or never replied, or a bus it could not connect to at all.
+ */
+const NO_SECRET_SERVICE =
+  /not provided by any \.service files|is not activatable|Could not activate remote peer|disconnected from message bus without replying|Did not receive a reply|Could not connect/i;
 
 /** What a failed program said, for an error message; never its stdout. */
 function detail(result: RunResult): string {

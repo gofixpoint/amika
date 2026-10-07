@@ -116,6 +116,19 @@ export async function runSetup(
       `Saved the secret key from ${secretFromEnv} to ${secretHome}, since Amika may already know it.`,
     );
   } else {
+    // A host set up before should have its secret key in the keychain. It
+    // may be there but locked, and not every keyring can say so (a locked
+    // KeePassXC database hides its items), so ask before replacing it.
+    if (keychainSecret && saved.hostname !== undefined) {
+      deps.out(
+        `No secret key found in ${secretHome}. If it is there but locked, unlock it and run setup again, rather than replace the secret key Amika may know.`,
+      );
+      if (!(await confirm("Generate a new secret key? [y/N] ", deps))) {
+        throw new ConfigError(
+          `Stopped without changing anything; unlock ${secretHome} and run \`amika-hostd setup\` again`,
+        );
+      }
+    }
     secretKey = (
       deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"))
     )();

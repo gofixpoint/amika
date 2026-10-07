@@ -281,10 +281,48 @@ describe("runSetup with the keychain store", () => {
     );
   });
 
+  it("asks before replacing a secret key it cannot find, for a host set up before", async () => {
+    const h = harness({
+      kind: "keychain",
+      answers: ["", "y", ""],
+      file: 'hostname = "builder"\n',
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
+      "Hostname [builder]: ",
+      "Generate a new secret key? [y/N] ",
+      "Update the stored Amika API key? [y/N] ",
+    ]);
+    expect(h.out).toContain(
+      "No secret key found in the test keychain (secret key). If it is there but locked, unlock it and run setup again, rather than replace the secret key Amika may know.",
+    );
+    expect(h.keychainSecret.value).toBe(NEW_SECRET);
+  });
+
+  it.each([[""], ["n"], [undefined]])(
+    "changes nothing when the operator does not confirm (%j)",
+    async (answer) => {
+      const h = harness({
+        kind: "keychain",
+        answers: ["", answer],
+        file: 'hostname = "builder"\n',
+        storedKey: "k",
+      });
+      await expect(runSetup(h.deps)).rejects.toThrow(
+        "Stopped without changing anything; unlock the test keychain (secret key) and run `amika-hostd setup` again",
+      );
+      expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
+      expect(h.keychainSecret.set).not.toHaveBeenCalled();
+      expect(h.store.set).not.toHaveBeenCalled();
+      expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
+    },
+  );
+
   it("warns that Amika may hold an older secret for a host it already knows", async () => {
     const h = harness({
       kind: "keychain",
-      answers: ["", ""],
+      answers: ["", "y", ""],
       file: 'hostname = "builder"\n',
       storedKey: "k",
     });
@@ -302,6 +340,7 @@ describe("runSetup with the keychain store", () => {
     });
     await runSetup(h.deps);
     expect(h.out.join("\n")).not.toContain("already registered");
+    expect(h.out.join("\n")).not.toContain("No secret key found");
   });
 
   it("keeps the secret key in the keychain, never in the file", async () => {
