@@ -320,13 +320,13 @@ says to remove it if it is stale, as `up` does. A `smolvm.pid` and
 sandbox provider from the workspace's `@amika/sandbox`
 (`js/sandbox/src/providers/smol`, imported as `@amika/sandbox/smol`), pointed
 at the smolvm this daemon started (or `SMOL_API_URL` for plain `serve`).
-Lifecycle, exec, file writes and service ports go through the provider's
-resource surface, translated to and from `smolvm serve`'s shapes, which the
-control plane's `amika-hostd` provider expects. Machine info (get and list)
-and file reads go through the provider's exported smolvm client instead,
-because the machine API's contract carries what the resource surface drops:
-each machine's published `ports`, and a file's exact bytes and type (JSON for
-a directory).
+Lifecycle, file writes and service ports go through the provider's resource
+surface, translated to and from `smolvm serve`'s shapes, which the control
+plane's `amika-hostd` provider expects. Machine info (get and list), exec and
+file reads go through the provider's exported smolvm client instead, because
+the machine API's contract carries what the resource surface drops: each
+machine's published `ports`, exec as argv with any `user`, and a file's
+exact bytes and type (JSON for a directory).
 
 - The provider's network setting is per provider, so hostd builds one with
   networking and one without, and creates each machine on the one its request
@@ -334,9 +334,6 @@ a directory).
 - Create also starts the machine (the provider's create does both); a create
   that sizes only some of cpus, memory and disk gets smolvm's defaults (4,
   8192 MiB, 20 GiB) for the rest.
-- Exec takes argv; hostd shell-quotes it for the provider's `/bin/sh -c`.
-  Commands run as root, so an exec `user` other than `root`, `0` or `0:0` is
-  refused (`400`).
 - Host ports are picked and published by the provider. Service routes
   ask it for a running machine's host port (`services.refreshAll`), and
   `PUT .../services` checks the same way that every port is one the machine

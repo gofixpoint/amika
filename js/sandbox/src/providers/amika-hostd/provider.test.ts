@@ -321,13 +321,12 @@ describe("amika-hostd provider", () => {
         env: { A: "b" },
       }),
     ).toEqual(result);
-    // hostd runs the control plane's argv, itself a shell command, through
-    // the smol provider's own `/bin/sh -c`.
+    // hostd forwards the control plane's argv and user to smolvm unchanged.
     expect(received[0]).toEqual({
       method: "POST",
       path: "/demo/exec",
       body: {
-        command: ["/bin/sh", "-c", "'/bin/sh' '-c' 'cat'"],
+        command: ["/bin/sh", "-c", "cat"],
         user: "root",
         workdir: "/workspace",
         env: [{ name: "A", value: "b" }],

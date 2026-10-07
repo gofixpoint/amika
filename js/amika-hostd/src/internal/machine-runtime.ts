@@ -3,16 +3,17 @@
  * `@amika/sandbox`, talking to the `smolvm serve` process hostd runs
  * (`./smolvm-serve.ts`).
  *
- * Lifecycle, exec, file writes and service ports go through the provider's
- * resource surface. Machine info and file reads go through the provider's
- * exported smolvm client instead, so they reach callers exactly as smolvm
- * answers them: the resource surface reports no published ports and reads
- * files as text, and the machine API's contract carries both ports and
- * arbitrary bytes.
+ * Lifecycle, file writes and service ports go through the provider's
+ * resource surface. Machine info, exec and file reads go through the
+ * provider's exported smolvm client instead, so they behave exactly as
+ * smolvm's own API: the resource surface reports no published ports, takes
+ * exec as a root shell string and reads files as text, while the machine
+ * API's contract carries ports, argv with any user, and arbitrary bytes.
  */
 import smolProvider, {
   SmolApiError,
   SmolClient,
+  execSchema,
   filePath,
   machinePath,
   machineSchema,
@@ -117,9 +118,6 @@ const DEFAULT_CPUS = 4;
 const DEFAULT_MEMORY_MB = 8192;
 const DEFAULT_STORAGE_GB = 20;
 
-/** The provider runs every command as root. */
-const ROOT_USERS = new Set(["root", "0", "0:0"]);
-
 /**
  * The machine runtime over the `smol` provider. The provider's network
  * setting is per provider, so there is one for each; both reach the same
@@ -209,23 +207,19 @@ export function providerRuntime({
       await describe(name);
       await call(() => sandboxes.get(name).delete());
     },
-    exec: async (name, request) => {
-      if (request.user !== undefined && !ROOT_USERS.has(request.user)) {
-        throw new RuntimeError(
-          400,
-          "commands run as root; exec as another user is not supported",
-        );
-      }
-      return call(() =>
-        sandboxes.get(name).exec(request.command.map(shellQuote).join(" "), {
-          cwd: request.workdir,
-          env:
-            request.env &&
-            Object.fromEntries(request.env.map((e) => [e.name, e.value])),
-          input: request.stdin,
+    // Through the client, not the resource surface, which takes a shell
+    // string and always runs as root: the machine API takes argv and any
+    // user, and forwards both to smolvm unchanged.
+    exec: (name, request) =>
+      call(() =>
+        client.json(`${machinePath(name)}/exec`, execSchema, "POST", {
+          command: request.command,
+          user: request.user,
+          workdir: request.workdir,
+          env: request.env,
+          stdin: request.stdin,
         }),
-      );
-    },
+      ),
     readFile: (name, path) =>
       call(async () => {
         const response = await client.request(filePath(name, path));
@@ -304,11 +298,6 @@ function sandboxService({ name, port }: ServicePort) {
     url: "",
     protocol: "tcp" as const,
   };
-}
-
-/** Quote one argv entry for the provider's `/bin/sh -c`. */
-function shellQuote(arg: string): string {
-  return `'${arg.replaceAll("'", `'\\''`)}'`;
 }
 
 /** The provider's create takes a request context; hostd logs nothing there. */

@@ -12,6 +12,7 @@ import { mapSmolState, smolOperations } from "./internal/operations";
 export {
   SmolApiError,
   SmolClient,
+  execSchema,
   filePath,
   machinePath,
   machineSchema,

@@ -2,7 +2,6 @@
  * Cover the runtime over the `smol` provider, itself over a fake
  * `smolvm serve` reached through an injected `fetch`; no VM ever boots.
  */
-import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -378,34 +377,36 @@ describe("providerRuntime", () => {
   });
 
   describe("exec", () => {
-    it("runs the command as root under /bin/sh, quoting each argument", async () => {
+    it("forwards argv, user, workdir, env and stdin to smolvm unchanged", async () => {
       const { runtime, received } = harness([machine({ state: "running" })]);
       const argv = ["printf", "%s|", "it's", "a b", "$HOME", ""];
       const result = await runtime.exec("demo", {
         command: argv,
+        user: "ubuntu",
         workdir: "/work",
         env: [{ name: "MODE", value: "test" }],
         stdin: "input",
       });
       expect(result).toEqual({ exitCode: 0, stdout: "out", stderr: "err" });
-      const script = `'printf' '%s|' 'it'\\''s' 'a b' '$HOME' ''`;
       expect(received).toEqual([
         {
           method: "POST",
           path: "/demo/exec",
           body: {
-            command: ["/bin/sh", "-c", script],
-            user: "root",
+            command: argv,
+            user: "ubuntu",
             workdir: "/work",
             env: [{ name: "MODE", value: "test" }],
             stdin: "input",
           },
         },
       ]);
-      // A shell runs exactly the argv that was asked for.
-      expect(
-        execFileSync("/bin/sh", ["-c", script], { encoding: "utf8" }),
-      ).toBe("it's|a b|$HOME||");
+    });
+
+    it("leaves the user to smolvm when the request names none", async () => {
+      const { runtime, received } = harness([machine()]);
+      await runtime.exec("demo", { command: ["id"] });
+      expect(received[0]!.body).toEqual({ command: ["id"] });
     });
 
     it("passes on a failing command's exit code and output", async () => {
@@ -416,22 +417,6 @@ describe("providerRuntime", () => {
         stdout: "",
         stderr: "boom",
       });
-    });
-
-    it.each(["root", "0", "0:0"])("accepts user %s", async (user) => {
-      const { runtime, received } = harness([machine()]);
-      await runtime.exec("demo", { command: ["id"], user });
-      expect(received[0]!.body).toMatchObject({ user: "root" });
-    });
-
-    it("refuses another user with 400, sending nothing", async () => {
-      const { runtime, received } = harness([machine()]);
-      const error = await failure(
-        runtime.exec("demo", { command: ["id"], user: "ubuntu" }),
-      );
-      expect(error.status).toBe(400);
-      expect(error.message).toContain("root");
-      expect(received).toEqual([]);
     });
 
     it("passes on smolvm's 404 for a missing machine", async () => {
