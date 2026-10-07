@@ -223,14 +223,15 @@ describe("providerRuntime", () => {
       ]);
     });
 
-    it("fills smolvm's defaults into a partly sized machine", async () => {
+    it("sends only the sizes a partly sized machine names", async () => {
+      // smolvm picks the rest itself, from the image's manifest when it has
+      // one: a packed image's sizes, or a checkpoint's, which refuses others.
       const { runtime, received } = harness();
       await runtime.create({ ...create, memoryMb: 2048 });
-      expect(received[0]!.body).toMatchObject({
-        cpus: 4,
-        memoryMb: 2048,
-        storageGb: 20,
-      });
+      const body = received[0]!.body as Record<string, unknown>;
+      expect(body.memoryMb).toBe(2048);
+      expect(body).not.toHaveProperty("cpus");
+      expect(body).not.toHaveProperty("storageGb");
     });
 
     it("leaves an unsized machine's sizes to smolvm", async () => {

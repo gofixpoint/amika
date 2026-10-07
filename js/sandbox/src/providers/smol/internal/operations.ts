@@ -8,6 +8,7 @@ import {
   type CreatedProviderSandbox,
   type ExecCommandOptions,
   type RefreshUrlsResult,
+  type SandboxResources,
 } from "../../provider";
 import type { SandboxService } from "../../../types";
 import type { SandboxAdapter } from "../../shared/adapter";
@@ -34,6 +35,16 @@ export interface SmolOperationsOptions {
     services: CreateSandboxProviderInput["services"],
   ) => { name: string; port: number }[];
 }
+
+/**
+ * A create, whose resources may name only some sizes: smolvm picks each one
+ * left out, from the image's manifest when it has one (a packed image's or a
+ * checkpoint's own sizes) or its defaults. The provider interface always
+ * passes all three; amika-hostd forwards a request's partial sizes as given.
+ */
+export type SmolCreateInput = Omit<CreateSandboxProviderInput, "resources"> & {
+  resources?: Partial<SandboxResources>;
+};
 
 export function smolOperations(
   config: SmolConfig,
@@ -108,9 +119,7 @@ export function smolOperations(
     run,
     read,
     write,
-    create: async (
-      input: CreateSandboxProviderInput,
-    ): Promise<CreatedProviderSandbox> => {
+    create: async (input: SmolCreateInput): Promise<CreatedProviderSandbox> => {
       machinePath(input.name);
       if (!input.snapshot.trim())
         throw new Error("Smol requires an OCI image in snapshot");
@@ -125,12 +134,13 @@ export function smolOperations(
             // smolvm's limits (`VmResources::validate`): it supports at most
             // 16 vCPUs (only macOS actually caps there; we refuse more on
             // every host) and can't boot a VM with under 64 MiB.
-            vcpus: z.number().int().min(1).max(16),
+            vcpus: z.number().int().min(1).max(16).optional(),
             memoryGib: z
               .number()
               .min(64 / 1024)
-              .refine((n) => Number.isSafeInteger(n * 1024)),
-            diskGib: z.number().int().positive(),
+              .refine((n) => Number.isSafeInteger(n * 1024))
+              .optional(),
+            diskGib: z.number().int().positive().optional(),
           })
           .parse(input.resources);
       // For plain smolvm, publish each service's guest port on a host
@@ -150,7 +160,10 @@ export function smolOperations(
         name: input.name,
         image: input.snapshot,
         cpus: resources?.vcpus,
-        memoryMb: resources && resources.memoryGib * 1024,
+        memoryMb:
+          resources?.memoryGib === undefined
+            ? undefined
+            : resources.memoryGib * 1024,
         storageGb: resources?.diskGib,
         network: config.network ?? false,
         env: Object.entries(input.envVars ?? {}).map(([name, value]) => ({

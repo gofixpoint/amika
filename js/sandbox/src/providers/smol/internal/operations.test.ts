@@ -230,6 +230,26 @@ describe("smol operations", () => {
     expect(body(fetcher, 0)).toMatchObject({ memoryMb: 64 });
   });
 
+  it.each([
+    [{ diskGib: 40 }, { storageGb: 40 }],
+    [{ vcpus: 2 }, { cpus: 2 }],
+    [{ memoryGib: 0.5 }, { memoryMb: 512 }],
+  ])(
+    "sends only the sizes a create names, leaving smolvm the rest: %j",
+    async (resources, sent) => {
+      const { ops, fetcher } = harness([
+        json(MACHINE),
+        json({ ...MACHINE, state: "running" }),
+      ]);
+      await ops.create({ ...INPUT, resources });
+      const created = body(fetcher, 0) as Record<string, unknown>;
+      expect(created).toMatchObject(sent);
+      for (const field of ["cpus", "memoryMb", "storageGb"]) {
+        if (!(field in sent)) expect(created).not.toHaveProperty(field);
+      }
+    },
+  );
+
   it("reads stopped state without starting a machine", async () => {
     const { ops, fetcher } = harness([json(MACHINE)]);
     expect(await ops.getState(INPUT.name)).toBe("stopped");

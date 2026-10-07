@@ -3,8 +3,9 @@
  * `@amika/sandbox`, talking to the `smolvm serve` process hostd runs
  * (`./smolvm-serve.ts`).
  *
- * Create, delete, file writes and service ports go through the provider's
- * resource surface. Machine info, start and stop, exec and file reads go
+ * Create goes through the provider's create operation, which takes a
+ * request's sizes as given. Delete, file writes and service ports go through
+ * the provider's resource surface. Machine info, start and stop, exec and file reads go
  * through the provider's exported smolvm client instead, so they behave
  * exactly as smolvm's own API: the resource surface reports no published
  * ports, answers a start or stop with nothing, takes exec as a root shell
@@ -19,6 +20,7 @@ import smolProvider, {
   filePath,
   machinePath,
   machineSchema,
+  smolOperations,
 } from "@amika/sandbox/smol";
 import { z } from "zod";
 
@@ -127,15 +129,10 @@ export interface ProviderRuntimeConfig {
   fetch?: typeof fetch;
 }
 
-/** smolvm's defaults, for a create that sizes only some dimensions. */
-const DEFAULT_CPUS = 4;
-const DEFAULT_MEMORY_MB = 8192;
-const DEFAULT_STORAGE_GB = 20;
-
 /**
  * The machine runtime over the `smol` provider. The provider's network
- * setting is per provider, so there is one for each; both reach the same
- * smolvm.
+ * setting is per provider, so create has one set of operations for each; all
+ * reach the same smolvm.
  */
 export function providerRuntime({
   apiUrl,
@@ -146,11 +143,21 @@ export function providerRuntime({
   // (commands, environment, stdin) and uploaded files to wherever it points.
   const fetcher: typeof fetch = (input, init) =>
     baseFetch(input, { ...init, redirect: "error" });
-  const provider = (network: boolean) =>
-    smolProvider({ apiUrl, network, requestTimeoutMs }, fetcher);
-  const providers = { networked: provider(true), offline: provider(false) };
-  const { sandboxes } = providers.networked;
+  const { sandboxes } = smolProvider({ apiUrl, requestTimeoutMs }, fetcher);
   const client = new SmolClient({ apiUrl, requestTimeoutMs }, fetcher);
+  // The resource surface's create takes all three sizes or none; these
+  // operations take only those a request names, so smolvm still picks the
+  // rest from the image (a packed image's or a checkpoint's own sizes).
+  const creators = {
+    networked: smolOperations(
+      { apiUrl, network: true, requestTimeoutMs },
+      client,
+    ),
+    offline: smolOperations(
+      { apiUrl, network: false, requestTimeoutMs },
+      client,
+    ),
+  };
   /**
    * Run a provider call, passing on smolvm's status for a request it
    * refused, as hostd did when it forwarded requests itself.
@@ -181,24 +188,19 @@ export function providerRuntime({
       (await call(() => client.json("", machinesSchema))).machines.map(info),
     get: describe,
     create: async (machine) => {
-      const sized =
-        machine.cpus !== undefined ||
-        machine.memoryMb !== undefined ||
-        machine.storageGb !== undefined;
-      const { sandboxes: target } = machine.network
-        ? providers.networked
-        : providers.offline;
+      const target = machine.network ? creators.networked : creators.offline;
       await call(() =>
-        target.create(CTX, {
+        target.create({
           name: machine.name,
           snapshot: machine.image,
-          resources: sized
-            ? {
-                vcpus: machine.cpus ?? DEFAULT_CPUS,
-                memoryGib: (machine.memoryMb ?? DEFAULT_MEMORY_MB) / 1024,
-                diskGib: machine.storageGb ?? DEFAULT_STORAGE_GB,
-              }
-            : undefined,
+          resources: {
+            vcpus: machine.cpus,
+            memoryGib:
+              machine.memoryMb === undefined
+                ? undefined
+                : machine.memoryMb / 1024,
+            diskGib: machine.storageGb,
+          },
           envVars:
             machine.env &&
             Object.fromEntries(machine.env.map((e) => [e.name, e.value])),
@@ -322,15 +324,3 @@ function sandboxService({ name, port }: ServicePort) {
     protocol: "tcp" as const,
   };
 }
-
-/** The provider's create takes a request context; hostd logs nothing there. */
-const CTX = {
-  logger: {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    child: () => CTX.logger,
-  },
-  childCtx: () => CTX,
-};

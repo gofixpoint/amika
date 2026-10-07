@@ -21,6 +21,7 @@ export {
   SmolPortsError,
   mapSmolState,
   smolOperations,
+  type SmolCreateInput,
 } from "./internal/operations";
 
 /** Construct the public resource API, with an injectable HTTP transport. */

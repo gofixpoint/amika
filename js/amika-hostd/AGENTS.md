@@ -334,12 +334,15 @@ are validated only for the fields hostd reads and otherwise passed through
 whole, so smolvm's other fields (a machine's `image`, `network`, `mounts`;
 exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
 
-- The provider's network setting is per provider, so hostd builds one with
-  networking and one without, and creates each machine on the one its request
-  asks for.
-- Create also starts the machine (the provider's create does both); a create
-  that sizes only some of cpus, memory and disk gets smolvm's defaults (4,
-  8192 MiB, 20 GiB) for the rest.
+- The provider's network setting is per provider, so hostd builds create
+  operations with networking and without, and creates each machine with the
+  one its request asks for.
+- Create also starts the machine (the provider's create does both). It goes
+  through the provider's create operation (`smolOperations`) rather than its
+  resource surface, whose create takes all three of cpus, memory and disk or
+  none: hostd sends only the sizes a request names, so smolvm picks the rest
+  itself, from the image's manifest when it has one (a packed image's sizes,
+  or a checkpoint's, which refuses any others) or its defaults.
 - Host ports are picked and published by the provider. Service routes
   ask it for a running machine's host port (`services.refreshAll`), and
   `PUT .../services` checks the same way that every port is one the machine
