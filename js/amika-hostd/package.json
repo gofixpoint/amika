@@ -8,9 +8,8 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts serve",
-    "build": "tsc -p tsconfig.build.json",
-    "bundle": "node scripts/bundle.mjs",
-    "start": "node dist/index.js up --fg",
+    "build": "node scripts/bundle.mjs",
+    "start": "node dist/bundle/amika-hostd.mjs up --fg",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -18,6 +17,7 @@
     "formatcheck": "prettier --check ."
   },
   "dependencies": {
+    "@amika/sandbox": "workspace:*",
     "@hono/node-server": "1.19.15",
     "hono": "4.13.9",
     "smol-toml": "1.9.0",

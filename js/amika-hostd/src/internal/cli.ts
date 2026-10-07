@@ -41,9 +41,11 @@ import {
   startServer as startServerOnPort,
   type RunningServer,
 } from "./server.js";
+import { providerRuntime } from "./machine-runtime.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
 import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
 import {
+  DEFAULT_SMOL_API_URL,
   SMOLVM_STOP_TIMEOUT_MS,
   startSmolvm as startSmolvmServe,
   type ManagedSmolvm,
@@ -739,8 +741,14 @@ async function listen(
   servicesFile: string,
   deps: CliDeps,
 ): Promise<RunningServer> {
+  // Machines run through the `smol` provider, on the smolvm this daemon
+  // started (or `SMOL_API_URL`, for plain `serve`).
+  const runtime = providerRuntime({
+    apiUrl: config.smolApiUrl ?? DEFAULT_SMOL_API_URL,
+    requestTimeoutMs: config.smolRequestTimeoutMs,
+  });
   try {
-    return await (deps.startServer ?? startServerOnPort)(config, {
+    return await (deps.startServer ?? startServerOnPort)(config, runtime, {
       servicesFile,
     });
   } catch (error) {

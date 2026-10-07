@@ -1,6 +1,14 @@
-/** Exercise sandbox resources through the real hostd routes and a fake runtime. */
+/**
+ * Exercise sandbox resources through the real hostd routes and machine
+ * runtime: this provider, then hostd's app, then the `smol` provider hostd
+ * runs machines through, then a fake `smolvm serve`.
+ */
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../../../amika-hostd/src/app";
+// hostd's app exports no runtime, so this contract test reaches for the one
+// its daemon builds.
+// eslint-disable-next-line local/no-cross-package-internal -- see above
+import { providerRuntime } from "../../../../amika-hostd/src/internal/machine-runtime";
 import { moduleLogger, type SandboxCtx } from "../../logger";
 import { getProviderLabel, isSandboxProviderName } from "../capabilities";
 import { type CreateSandboxProviderInput } from "../provider";
@@ -18,7 +26,23 @@ const INPUT: CreateSandboxProviderInput = {
   snapshot: "ubuntu:24.04",
   services: [],
 };
-const MACHINE = {
+
+interface Port {
+  host: number;
+  guest: number;
+}
+
+/** A machine as `smolvm serve` reports it. */
+interface SmolMachine {
+  name: string;
+  state: string;
+  cpus: number;
+  memoryMb: number;
+  storageGb: number;
+  ports?: Port[];
+}
+
+const MACHINE: SmolMachine = {
   name: "demo",
   state: "stopped",
   cpus: 2,
@@ -41,49 +65,154 @@ const AMIKAD: SandboxService = {
 };
 const ctx: SandboxCtx = { logger: moduleLogger(), childCtx: () => ctx };
 const SECRET = "hostd-secret";
-/** Where hostd forwards to smolvm; set so tests do not depend on its default. */
+/** Where hostd reaches smolvm; set so tests do not depend on its default. */
 const SMOL_API_URL = "http://127.0.0.1:23020";
+const SMOL_MACHINES = "/api/v1/machines";
 
-function harness(
-  responses: Response[],
-  config: AmikaHostdConfig = { secretKey: SECRET },
+/** A request smolvm received, by method and path under its machines API. */
+interface Received {
+  method: string;
+  path: string;
+  body?: unknown;
+}
+
+/**
+ * An in-memory `smolvm serve`, answering the machine routes as smolvm does.
+ * `respond` overrides a request, e.g. to fail it; undefined falls through.
+ */
+function fakeSmolvm(
+  initial: SmolMachine[],
+  respond?: (request: Received) => Response | undefined,
 ) {
-  const runtime = vi.fn<typeof fetch>(async () => {
-    const response = responses.shift();
-    if (!response) throw new Error("Unexpected runtime request");
-    return response;
+  const machines = new Map(initial.map((m) => [m.name, { ...m }]));
+  const files = new Map<string, Buffer>();
+  const received: Received[] = [];
+  let execResult = { exitCode: 0, stdout: "", stderr: "" };
+  const notFound = () => Response.json({ error: "not found" }, { status: 404 });
+  const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
+    const url = new URL(String(input));
+    expect(url.origin).toBe(SMOL_API_URL);
+    const path = url.pathname.slice(SMOL_MACHINES.length);
+    const method = init.method ?? "GET";
+    const binary =
+      new Headers(init.headers).get("content-type") ===
+      "application/octet-stream";
+    const raw = init.body as string | Uint8Array | undefined;
+    const request: Received = { method, path };
+    if (raw !== undefined) {
+      request.body = binary
+        ? Buffer.from(raw as Uint8Array)
+        : JSON.parse(raw as string);
+    }
+    received.push(request);
+    const override = respond?.(request);
+    if (override) return override;
+    if (path === "") {
+      if (method === "GET") {
+        return Response.json({ machines: [...machines.values()] });
+      }
+      const body = request.body as Partial<SmolMachine> & { name: string };
+      if (machines.has(body.name)) {
+        return Response.json({ error: "exists" }, { status: 409 });
+      }
+      const created: SmolMachine = {
+        name: body.name,
+        state: "created",
+        cpus: body.cpus ?? 4,
+        memoryMb: body.memoryMb ?? 8192,
+        storageGb: body.storageGb ?? 20,
+        ports: body.ports ?? [],
+      };
+      machines.set(created.name, created);
+      return Response.json(created, { status: 201 });
+    }
+    const [, name, action, ...rest] = path.split("/");
+    const record = machines.get(decodeURIComponent(name!));
+    if (!record) return notFound();
+    const file = decodeURIComponent(`/${rest.join("/")}`);
+    switch (`${method} ${action ?? ""}`) {
+      case "GET ":
+        return Response.json(record);
+      case "DELETE ":
+        machines.delete(record.name);
+        return new Response(null, { status: 204 });
+      case "POST start":
+        record.state = "running";
+        return Response.json(record);
+      case "POST stop":
+        record.state = "stopped";
+        return Response.json(record);
+      case "POST exec":
+        return Response.json(execResult);
+      case "GET files": {
+        const contents = files.get(file);
+        if (!contents) return notFound();
+        return new Response(new Uint8Array(contents), {
+          headers: { "Content-Type": "application/octet-stream" },
+        });
+      }
+      case "PUT files":
+        files.set(file, request.body as Buffer);
+        return new Response(null, { status: 204 });
+    }
+    return Response.json({ error: "no such route" }, { status: 405 });
   });
-  let nextPort = 40_000;
-  const app = createApp({ secretKey: SECRET, apiUrl: SMOL_API_URL }, runtime, {
-    allocatePort: async () => ++nextPort,
-  });
+  return {
+    smolvm: fetcher,
+    machines,
+    files,
+    received,
+    setExecResult: (result: typeof execResult) => (execResult = result),
+  };
+}
+
+function harness({
+  config = { secretKey: SECRET },
+  machines = [],
+  respond,
+}: {
+  config?: AmikaHostdConfig;
+  machines?: SmolMachine[];
+  respond?: (request: Received) => Response | undefined;
+} = {}) {
+  const fake = fakeSmolvm(machines, respond);
+  // What hostd's service routes reach a machine's published ports with.
+  const guest = vi.fn<typeof fetch>(async () => Response.json({ ok: true }));
+  const app = createApp(
+    { secretKey: SECRET },
+    providerRuntime({ apiUrl: SMOL_API_URL, fetch: fake.smolvm }),
+    { fetch: guest },
+  );
   const fetcher = vi.fn<typeof fetch>(async (url, init) =>
     app.request(new Request(url, init)),
   );
   return {
+    ...fake,
     app,
-    runtime,
+    guest,
     fetcher,
     config,
     provider: amikaHostdProvider({ config, fetcher }),
   };
 }
 
-function json(body: unknown, status = 200) {
-  return Response.json(body, { status });
+/** smolvm's requests as `METHOD path`, optionally only those that change things. */
+function calls(received: Received[], { writes = false } = {}) {
+  return received
+    .filter((r) => !writes || r.method !== "GET")
+    .map((r) => `${r.method} ${r.path}`);
 }
-function file(contents: string) {
-  return new Response(contents, {
-    headers: { "Content-Type": "application/octet-stream" },
-  });
+
+/** The host port smolvm published a machine's guest port on. */
+function published(machine: SmolMachine | undefined, guest: number) {
+  const host = machine?.ports?.find((p) => p.guest === guest)?.host;
+  expect(host).toBeGreaterThan(0);
+  return host!;
 }
 
 describe("amika-hostd provider", () => {
   it("creates and starts through hostd with the correct provider identity", async () => {
-    const { provider, runtime, fetcher } = harness([
-      json(MACHINE, 201),
-      json({}),
-    ]);
+    const { provider, received, fetcher, machines } = harness();
     const sandbox = await provider.sandboxes.create(ctx, {
       ...INPUT,
       resources: { vcpus: 2, memoryGib: 1.5, diskGib: 20 },
@@ -100,18 +229,27 @@ describe("amika-hostd provider", () => {
       "http://127.0.0.1:3020/v0beta1/rigs",
       "http://127.0.0.1:3020/v0beta1/rigs/demo/start",
     ]);
-    expect(JSON.parse(String(runtime.mock.calls[0][1]?.body))).toEqual({
-      name: "demo",
-      image: "ubuntu:24.04",
-      cpus: 2,
-      memoryMb: 1536,
-      storageGb: 20,
-      network: true,
-      env: [{ name: "MODE", value: "test" }],
+    expect(received[0]).toEqual({
+      method: "POST",
+      path: "",
+      body: {
+        name: "demo",
+        image: "ubuntu:24.04",
+        cpus: 2,
+        memoryMb: 1536,
+        storageGb: 20,
+        network: true,
+        env: [{ name: "MODE", value: "test" }],
+      },
     });
-    expect(runtime.mock.calls[1][0]).toBe(
-      `${SMOL_API_URL}/api/v1/machines/demo/start`,
-    );
+    // hostd's create starts the machine too; the control plane's start then
+    // starts it again, harmlessly.
+    expect(calls(received, { writes: true })).toEqual([
+      "POST ",
+      "POST /demo/start",
+      "POST /demo/start",
+    ]);
+    expect(machines.get("demo")?.state).toBe("running");
   });
 
   it("tells the operator to upgrade a host that predates the versioned API", async () => {
@@ -130,28 +268,20 @@ describe("amika-hostd provider", () => {
   });
 
   it("preserves an explicit network opt-out through hostd", async () => {
-    const { provider, runtime } = harness([json(MACHINE, 201), json({})], {
-      secretKey: SECRET,
-      network: false,
+    const { provider, received } = harness({
+      config: { secretKey: SECRET, network: false },
     });
     await provider.sandboxes.create(ctx, INPUT);
-    expect(JSON.parse(String(runtime.mock.calls[0][1]?.body)).network).toBe(
-      false,
-    );
+    expect((received[0].body as { network: boolean }).network).toBe(false);
   });
 
   it("stops, observes state, restarts, lists, and deletes without implicit starts", async () => {
-    const { provider, runtime } = harness([
-      json({}),
-      json(MACHINE),
-      json({}),
-      json({ machines: [MACHINE] }),
-      new Response(null, { status: 204 }),
-    ]);
+    const { provider, received, machines } = harness({
+      machines: [{ ...MACHINE, state: "running" }],
+    });
     const sandbox = provider.sandboxes.get("demo");
     await sandbox.stop();
     expect(await sandbox.getRuntimeState()).toBe("stopped");
-    await sandbox.start();
     expect(await provider.sandboxes.list()).toEqual([
       {
         providerSandboxId: "demo",
@@ -160,29 +290,29 @@ describe("amika-hostd provider", () => {
         sizing: { vcpus: 2, memoryGib: 1.5, diskGib: 20 },
       },
     ]);
+    await sandbox.start();
     await sandbox.delete();
-    expect(
-      runtime.mock.calls.map(([url, opts]) => [
-        new URL(String(url)).pathname,
-        opts?.method,
-      ]),
-    ).toEqual([
-      ["/api/v1/machines/demo/stop", "POST"],
-      ["/api/v1/machines/demo", "GET"],
-      ["/api/v1/machines/demo/start", "POST"],
-      ["/api/v1/machines", "GET"],
-      ["/api/v1/machines/demo", "DELETE"],
+    expect(machines.size).toBe(0);
+    // hostd reads the machine back after each change, and checks it exists
+    // before deleting it.
+    expect(calls(received)).toEqual([
+      "POST /demo/stop",
+      "GET ",
+      "GET ",
+      "GET ",
+      "POST /demo/start",
+      "GET ",
+      "GET ",
+      "DELETE /demo",
     ]);
   });
 
   it("executes commands with stdin and transfers files through the adapter", async () => {
     const result = { exitCode: 4, stdout: "out", stderr: "err" };
-    const { provider, runtime, fetcher, config } = harness([
-      json(result),
-      json({}),
-      file("hello"),
-      json(result),
-    ]);
+    const { provider, received, fetcher, config, files, setExecResult } =
+      harness({ machines: [{ ...MACHINE, state: "running" }] });
+    setExecResult(result);
+    files.set("/workspace/a.txt", Buffer.from("hello"));
     const sandbox = provider.sandboxes.get("demo");
     expect(
       await sandbox.exec("cat", {
@@ -191,39 +321,88 @@ describe("amika-hostd provider", () => {
         env: { A: "b" },
       }),
     ).toEqual(result);
-    expect(JSON.parse(String(runtime.mock.calls[0][1]?.body))).toEqual({
-      command: ["/bin/sh", "-c", "cat"],
-      user: "root",
-      workdir: "/workspace",
-      env: [{ name: "A", value: "b" }],
-      stdin: "stdin",
+    // hostd runs the control plane's argv, itself a shell command, through
+    // the smol provider's own `/bin/sh -c`.
+    expect(received[0]).toEqual({
+      method: "POST",
+      path: "/demo/exec",
+      body: {
+        command: ["/bin/sh", "-c", "'/bin/sh' '-c' 'cat'"],
+        user: "root",
+        workdir: "/workspace",
+        env: [{ name: "A", value: "b" }],
+        stdin: "stdin",
+      },
     });
     const adapter = await openAmikaHostdAdapter(config, "demo", fetcher);
     const bytes = Buffer.from([0, 255, 128]);
     await adapter.uploadFile(bytes, "/workspace/a #?.bin");
-    expect(runtime.mock.calls[1][1]?.body).toEqual(bytes);
-    expect(runtime.mock.calls[1][0]).toContain(
-      "/files/workspace/a%20%23%3F.bin",
-    );
+    expect(received[1]).toEqual({
+      method: "PUT",
+      path: "/demo/files/workspace/a%20%23%3F.bin",
+      body: bytes,
+    });
+    expect(files.get("/workspace/a #?.bin")).toEqual(bytes);
     expect(await adapter.downloadFile("/workspace/a.txt")).toBe("hello");
     expect(await adapter.exec("false")).toEqual(result);
   });
 
   it("cleans up failed starts but never deletes a conflicting machine", async () => {
-    const failedStart = harness([json(MACHINE, 201), json({}, 503), json({})]);
+    // hostd's own start, right after create, fails: hostd removes it.
+    const hostdStart = harness({
+      respond: ({ method, path }) =>
+        method === "POST" && path === "/demo/start"
+          ? Response.json({}, { status: 503 })
+          : undefined,
+    });
+    await expect(
+      hostdStart.provider.sandboxes.create(ctx, INPUT),
+    ).rejects.toThrow("HTTP 503");
+    expect(calls(hostdStart.received, { writes: true })).toEqual([
+      "POST ",
+      "POST /demo/start",
+      "DELETE /demo",
+    ]);
+    expect(hostdStart.machines.size).toBe(0);
+
+    // The control plane's start fails: it removes the machine through hostd.
+    let starts = 0;
+    const failedStart = harness({
+      respond: ({ method, path }) =>
+        method === "POST" && path === "/demo/start" && ++starts === 2
+          ? Response.json({}, { status: 503 })
+          : undefined,
+    });
     await expect(
       failedStart.provider.sandboxes.create(ctx, INPUT),
     ).rejects.toThrow("HTTP 503");
-    expect(failedStart.runtime.mock.calls[2][1]?.method).toBe("DELETE");
-    const conflict = harness([json({}, 409)]);
+    expect(calls(failedStart.received, { writes: true })).toEqual([
+      "POST ",
+      "POST /demo/start",
+      "POST /demo/start",
+      "DELETE /demo",
+    ]);
+    expect(failedStart.machines.size).toBe(0);
+
+    const conflict = harness({ machines: [MACHINE] });
     await expect(
       conflict.provider.sandboxes.create(ctx, INPUT),
     ).rejects.toThrow("HTTP 409");
-    expect(conflict.runtime).toHaveBeenCalledTimes(1);
+    expect(calls(conflict.received)).toEqual(["POST "]);
+    expect(conflict.machines.has("demo")).toBe(true);
   });
 
   it("keeps both start and cleanup failures", async () => {
-    const { provider } = harness([json(MACHINE), json({}, 500), json({}, 503)]);
+    let starts = 0;
+    const { provider } = harness({
+      respond: ({ method, path }) => {
+        if (method === "POST" && path === "/demo/start" && ++starts === 2) {
+          return Response.json({}, { status: 500 });
+        }
+        if (method === "DELETE") return Response.json({}, { status: 503 });
+        return undefined;
+      },
+    });
     await expect(provider.sandboxes.create(ctx, INPUT)).rejects.toMatchObject({
       message: "Smol start and cleanup failed",
       errors: [
@@ -234,19 +413,20 @@ describe("amika-hostd provider", () => {
   });
 
   it("treats 404 as absent only for state, read, and delete", async () => {
-    const { provider } = harness([
-      json({}, 404),
-      json({}, 404),
-      json({}, 404),
-      json({}, 404),
-      json({}, 500),
-    ]);
+    const { provider, received } = harness({
+      respond: ({ path }) =>
+        path === "/demo/files/broken"
+          ? Response.json({}, { status: 500 })
+          : undefined,
+    });
     const sandbox = provider.sandboxes.get("demo");
     expect(await sandbox.getState()).toBe("unknown");
     expect(await sandbox.readFile("/missing")).toBeNull();
     await sandbox.delete();
     await expect(sandbox.start()).rejects.toThrow("HTTP 404");
     await expect(sandbox.readFile("/broken")).rejects.toThrow("HTTP 500");
+    // hostd never deletes a machine smolvm does not list.
+    expect(calls(received, { writes: true })).toEqual(["POST /demo/start"]);
   });
 
   it.each([
@@ -254,15 +434,15 @@ describe("amika-hostd provider", () => {
     { autoDeleteInterval: 1 },
     { services: [{ ...WEB, protocol: "udp" as const }] },
   ])("rejects unsupported options before allocation: %j", async (overrides) => {
-    const { provider, runtime } = harness([]);
+    const { provider, smolvm } = harness();
     await expect(
       provider.sandboxes.create(ctx, { ...INPUT, ...overrides }),
     ).rejects.toMatchObject({ provider: "amika-hostd" });
-    expect(runtime).not.toHaveBeenCalled();
+    expect(smolvm).not.toHaveBeenCalled();
   });
 
   it("has client-safe metadata and accurately limited capabilities", async () => {
-    const { provider } = harness([]);
+    const { provider } = harness();
     expect(isSandboxProviderName("amika-hostd")).toBe(true);
     expect(getProviderLabel("amika-hostd")).toBe("Amika Host");
     expect(provider.capabilities).toMatchObject({
@@ -291,7 +471,9 @@ describe("amika-hostd provider", () => {
   });
 
   it("honors a custom hostd URL and authenticates every request", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json(MACHINE));
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json(MACHINE));
     const provider = amikaHostdProvider({
       config: {
         apiUrl: "http://host:4000/",
@@ -313,7 +495,7 @@ describe("amika-hostd provider", () => {
   });
 
   it("keeps a Request's own headers when adding the secret key", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(json({}));
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({}));
     const request = new Request("http://host/api/v1/machines", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Trace": "1" },
@@ -328,57 +510,41 @@ describe("amika-hostd provider", () => {
   });
 
   it("is rejected by hostd with the wrong secret key", async () => {
-    const { provider, runtime } = harness([], { secretKey: "wrong" });
+    const { provider, smolvm } = harness({ config: { secretKey: "wrong" } });
     const failure = provider.sandboxes.get("demo").getState();
     // hostd's reason comes through; the secret that was sent never does.
     await expect(failure).rejects.toThrow(
       /^smolvm GET \/demo failed \(HTTP 401\): Unauthorized$/,
     );
-    expect(runtime).not.toHaveBeenCalled();
+    expect(smolvm).not.toHaveBeenCalled();
   });
 });
 
 describe("amika-hostd services", () => {
-  const PUBLISHED = {
-    ...MACHINE,
-    state: "running",
-    ports: [
-      { host: 40001, guest: 3000 },
-      { host: 40002, guest: 60999 },
-    ],
-  };
-
-  it("sends each service's name and port at create and returns the services", async () => {
-    const { provider, runtime } = harness([json(MACHINE, 201), json({})]);
+  it("publishes each service's port once at create and returns the services", async () => {
+    const { provider, received, machines } = harness();
     const services = [WEB, { ...WEB, name: "web-alias" }, AMIKAD];
     const sandbox = await provider.sandboxes.create(ctx, {
       ...INPUT,
       services,
     });
-    // hostd turns the names into published ports for smolvm.
-    const body = JSON.parse(String(runtime.mock.calls[0][1]?.body));
-    expect(body.ports).toEqual([
-      { host: 40001, guest: 3000 },
-      { host: 40002, guest: 60999 },
-    ]);
+    // hostd hands the names' ports to the smol provider, which publishes
+    // each guest port once on a loopback port it picks.
+    const body = received[0].body as { ports: Port[] };
+    expect(body.ports.map((p) => p.guest)).toEqual([3000, 60999]);
     expect(body).not.toHaveProperty("services");
+    expect(machines.get("demo")?.ports).toEqual(body.ports);
     expect(sandbox.created?.services).toEqual(services);
   });
 
   it("sends no services for a machine without any", async () => {
-    const { provider, runtime } = harness([json(MACHINE, 201), json({})]);
+    const { provider, received } = harness();
     await provider.sandboxes.create(ctx, INPUT);
-    const body = JSON.parse(String(runtime.mock.calls[0][1]?.body));
-    expect(body).not.toHaveProperty("ports");
+    expect(received[0].body).not.toHaveProperty("ports");
   });
 
   it("returns stable URLs that hostd routes by name with the host key", async () => {
-    const { app, provider, runtime } = harness([
-      json(MACHINE, 201),
-      json({}),
-      json(PUBLISHED),
-      json({ ok: true }),
-    ]);
+    const { app, provider, guest, machines } = harness();
     await provider.sandboxes.create(ctx, { ...INPUT, services: [AMIKAD] });
     const { services: refreshed } = await provider.sandboxes
       .get("demo")
@@ -399,22 +565,17 @@ describe("amika-hostd services", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
-    expect(runtime.mock.calls.map(([target]) => target).slice(2)).toEqual([
-      `${SMOL_API_URL}/api/v1/machines/demo`,
-      "http://127.0.0.1:40002/v1/status?x=1",
+    const port = published(machines.get("demo"), 60999);
+    expect(guest.mock.calls.map(([target]) => target)).toEqual([
+      `http://127.0.0.1:${port}/v1/status?x=1`,
     ]);
-    const forwarded = new Headers(runtime.mock.calls[3][1]?.headers);
+    const forwarded = new Headers(guest.mock.calls[0][1]?.headers);
     expect(forwarded.get("Authorization")).toBe("Bearer connect-token");
     expect(forwarded.get(HOSTD_SERVICE_KEY_HEADER)).toBeNull();
   });
 
   it("routes a service whose name is free text", async () => {
-    const { app, provider, runtime } = harness([
-      json(MACHINE, 201),
-      json({}),
-      json(PUBLISHED),
-      json({ ok: true }),
-    ]);
+    const { app, provider, guest, machines } = harness();
     const agent = { ...WEB, name: "Coding Agent" };
     await provider.sandboxes.create(ctx, { ...INPUT, services: [agent] });
     const { services: refreshed } = await provider.sandboxes
@@ -426,20 +587,29 @@ describe("amika-hostd services", () => {
       headers: { [HOSTD_SERVICE_KEY_HEADER]: SECRET },
     });
     expect(response.status).toBe(200);
-    expect(runtime.mock.calls[3][0]).toBe("http://127.0.0.1:40001/");
+    expect(guest.mock.calls[0][0]).toBe(
+      `http://127.0.0.1:${published(machines.get("demo"), 3000)}/`,
+    );
+  });
+
+  it("routes nothing for a stopped machine", async () => {
+    const { app, provider, guest } = harness();
+    await provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] });
+    await provider.sandboxes.get("demo").stop();
+    const response = await app.request("/v0beta1/rigs/demo/services/web/", {
+      headers: { [HOSTD_SERVICE_KEY_HEADER]: SECRET },
+    });
+    expect(response.status).toBe(404);
+    expect(guest).not.toHaveBeenCalled();
   });
 
   it("routes a renamed service by its new name, and a removed one not at all", async () => {
-    const { app, provider } = harness([
-      json(MACHINE, 201),
-      json({}),
-      json(PUBLISHED), // rename: hostd checks the ports are published
-      json(PUBLISHED), // the new name routes
-      json({ ok: true }),
-      json(PUBLISHED), // revoke: the remaining set
-    ]);
+    const { app, provider } = harness();
     const key = { [HOSTD_SERVICE_KEY_HEADER]: SECRET };
-    await provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] });
+    await provider.sandboxes.create(ctx, {
+      ...INPUT,
+      services: [WEB, AMIKAD],
+    });
     const services = provider.sandboxes.get("demo").services!;
     const site = { ...WEB, name: "site" };
     const { services: renamed } = await services.load([site, AMIKAD]).refresh();
@@ -453,6 +623,7 @@ describe("amika-hostd services", () => {
 
     await services.load([site, AMIKAD]).get(3000)!.revoke();
     expect((await route("site")).status).toBe(404);
+    expect((await route("amikad")).status).toBe(200);
   });
 
   it.each([
@@ -478,7 +649,19 @@ describe("amika-hostd services", () => {
   });
 
   it("reconciles only to ports published at create", async () => {
-    const { provider } = harness([json(PUBLISHED), json(MACHINE)]);
+    const { provider } = harness({
+      machines: [
+        {
+          ...MACHINE,
+          state: "running",
+          ports: [
+            { host: 40001, guest: 3000 },
+            { host: 40002, guest: 60999 },
+          ],
+        },
+        { ...MACHINE, name: "bare" },
+      ],
+    });
     const services = provider.sandboxes.get("demo").services!;
     const { services: refreshed } = await services
       .load([WEB, AMIKAD])
@@ -487,13 +670,13 @@ describe("amika-hostd services", () => {
       "http://127.0.0.1:3020/v0beta1/rigs/demo/services/web/",
       "http://127.0.0.1:3020/v0beta1/rigs/demo/services/amikad/",
     ]);
-    await expect(services.load([WEB]).refresh()).rejects.toThrow(
-      "does not publish 3000",
-    );
+    await expect(
+      provider.sandboxes.get("bare").services!.load([WEB]).refresh(),
+    ).rejects.toThrow("machine bare does not publish 3000");
   });
 
   it("refuses to reconcile a published port to UDP", async () => {
-    const { provider, runtime } = harness([]);
+    const { provider, smolvm } = harness();
     const services = provider.sandboxes.get("demo").services!;
     await expect(
       services.load([{ ...AMIKAD, protocol: "udp" }]).refresh(),
@@ -501,6 +684,6 @@ describe("amika-hostd services", () => {
       name: "SandboxProviderUnsupportedError",
       provider: "amika-hostd",
     });
-    expect(runtime).not.toHaveBeenCalled();
+    expect(smolvm).not.toHaveBeenCalled();
   });
 });

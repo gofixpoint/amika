@@ -27,7 +27,9 @@ import {
   type DaemonPaths,
   type Spawn,
 } from "./daemon.js";
-import { DEFAULT_SMOL_API_URL } from "./smol.js";
+
+/** Where smolvm's API is reached unless `SMOL_API_URL` says otherwise. */
+export const DEFAULT_SMOL_API_URL = "http://127.0.0.1:23020";
 
 export interface ManagedSmolvm {
   pid: number;
