@@ -12,6 +12,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/runmode"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -20,8 +21,11 @@ var sandboxGetCmd = &cobra.Command{
 	Short: "Get a rig by name or ID",
 	Long: `Get one rig by name or ID. Text output prints one key: value per line.
 Nested objects and arrays use dotted keys and numbered indexes.
-The hostname is the rig's DNS name when the API provides it.
-JSON output uses the API response schema.`,
+
+hostname is the rig's DNS name, when the API provides it. ssh_host is the
+rig's SSH alias from ~/.ssh/amika.conf (ending in .amika, not resolvable
+through DNS), usable with ssh, scp, or an editor's Remote-SSH.
+JSON output uses the API response schema plus ssh_host.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSandboxGet,
 }
@@ -46,17 +50,37 @@ func runSandboxGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	result := normalizeSandboxJSON(*rig)
+	result := sandboxGetResult{
+		RemoteSandbox: normalizeSandboxJSON(*rig),
+		SSHHost:       sandboxSSHHost(*rig),
+	}
 	if format.IsJSON() {
 		return format.JSON(cmd.OutOrStdout(), result)
 	}
 	return writeSandboxGetText(cmd.OutOrStdout(), result)
 }
 
-// writeSandboxGetText renders every field in the API mirror so text output
+// sandboxGetResult is the API's GetSandboxResponse plus ssh_host, which the
+// CLI derives because the alias embeds a slug of its own AMIKA_API_URL.
+type sandboxGetResult struct {
+	apiclient.RemoteSandbox
+	SSHHost *string `json:"ssh_host"`
+}
+
+// sandboxSSHHost returns the alias `rig ssh` connects to without preparing a
+// session, or nil when the rig's name cannot form one.
+func sandboxSSHHost(rig apiclient.RemoteSandbox) *string {
+	alias, err := ssh.SessionAlias(rig.Name, rig.ID)
+	if err != nil {
+		return nil
+	}
+	return &alias
+}
+
+// writeSandboxGetText renders every field in the result so text output
 // remains useful as the response grows. A missing hostname is explicit for
 // older API servers that do not yet return the guest's DNS hostname.
-func writeSandboxGetText(w io.Writer, rig apiclient.RemoteSandbox) error {
+func writeSandboxGetText(w io.Writer, rig sandboxGetResult) error {
 	encoded, err := json.Marshal(rig)
 	if err != nil {
 		return err
@@ -69,7 +93,7 @@ func writeSandboxGetText(w io.Writer, rig apiclient.RemoteSandbox) error {
 		values["hostname"] = nil
 	}
 	// Lead with identity and status, then print the remaining fields by name.
-	for _, key := range []string{"id", "name", "hostname", "status", "setup_status"} {
+	for _, key := range []string{"id", "name", "hostname", "ssh_host", "status", "setup_status"} {
 		if value, ok := values[key]; ok {
 			if err := writeSandboxValue(w, key, value); err != nil {
 				return err

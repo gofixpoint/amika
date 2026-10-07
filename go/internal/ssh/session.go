@@ -126,6 +126,16 @@ func BuildSessionAlias(name, id, environment string) (string, error) {
 	return alias, nil
 }
 
+// SessionAlias returns a sandbox's v2 host alias on the control plane
+// AMIKA_API_URL names: the host `rig ssh` connects to and amika.conf matches.
+func SessionAlias(name, id string) (string, error) {
+	environment, err := config.EnvironmentSlug()
+	if err != nil {
+		return "", err
+	}
+	return BuildSessionAlias(name, id, environment)
+}
+
 // ParseSessionAlias pops the environment and sandbox id off the right so dotted
 // sandbox names remain intact.
 func ParseSessionAlias(alias string) (SandboxAlias, error) {
@@ -480,11 +490,7 @@ func PrepareSessionTarget(
 	sandboxName string,
 	sandboxID string,
 ) (string, error) {
-	environment, err := config.EnvironmentSlug()
-	if err != nil {
-		return "", err
-	}
-	alias, err := BuildSessionAlias(sandboxName, sandboxID, environment)
+	alias, err := SessionAlias(sandboxName, sandboxID)
 	if err != nil {
 		return "", err
 	}
