@@ -182,13 +182,20 @@ chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
   that says to unlock it or choose files. On a Linux desktop session
   (`DBUS_SESSION_BUS_ADDRESS` set and not blank) it is the Secret Service
   (GNOME Keyring, KWallet), through `secret-tool`, which takes values on
-  stdin; items carry `service=amika-hostd` and `account=<secret>`. Only a
-  silent exit 1 from `secret-tool lookup` means "not there"; one explained on
-  stderr (a locked keyring, or no Secret Service on that bus) is an error.
-  On a machine where amika-hostd supports no keychain (headless Linux, or a
-  plain SSH session, with no session bus), every command that needs a secret
-  refuses, naming `secret_store = "file"`; it never falls back to a file on
-  its own.
+  stdin; items carry `service=amika-hostd` and `account=<secret>`.
+  `secret-tool lookup` exits 1 silently both for no item and for a locked one
+  whose unlock prompt was dismissed, so a silent exit 1 is confirmed with
+  `secret-tool search --all` (which lists locked items without unlocking
+  them, and whose output is never shown): an item there is refused as
+  locked, so setup never replaces a secret key it could not read. Any other
+  failure is an error quoting secret-tool's stderr; a session bus with no
+  keyring daemon on it, as over SSH to a server, says to choose files rather
+  than to unlock anything. On a machine where amika-hostd supports no
+  keychain (Linux with no desktop or user session, so no
+  `DBUS_SESSION_BUS_ADDRESS`), every command that needs a secret refuses,
+  naming `secret_store = "file"`; it never falls back to a file on its own.
+  A bus GLib could find without that variable (under `sudo -u`, say) is not
+  used.
 - **`file`**, chosen explicitly: the API key in
   `$XDG_CONFIG_HOME/amika-hostd/api-key` and the secret key as `secret_key` in
   the TOML file, both mode `0600`. That is how `gh` and Docker keep

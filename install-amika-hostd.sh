@@ -536,10 +536,13 @@ print_next_steps() {
     echo "     in ${CONFIG_PATH}:"
   fi
   echo "       amika-hostd setup"
-  if [ "$OS" = "linux" ] && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
-    echo "     This machine has no desktop keyring for amika-hostd's secrets; to keep"
-    echo "     them in files only you can read, first add secret_store = \"file\" to"
-    echo "     ${CONFIG_PATH}."
+  if [ "$OS" = "linux" ] && { [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] ||
+    ! command -v secret-tool >/dev/null 2>&1; }; then
+    echo "     amika-hostd keeps its secrets in the desktop keyring through"
+    echo "     secret-tool, and this session has no desktop session or no"
+    echo "     secret-tool. Install secret-tool (libsecret-tools) on a desktop, or"
+    echo "     keep the secrets in files only you can read: first add"
+    echo "     secret_store = \"file\" to ${CONFIG_PATH}."
   fi
   echo "  2. Start the daemon, which starts smolvm with it (and runs setup first"
   echo "     if you skipped step 1):"

@@ -325,14 +325,29 @@ describe("the macOS keychain", () => {
 });
 
 /**
- * A fake `secret-tool` keeping items by account. It answers "not found" as
- * the real one does (a silent exit 1), and can be unreachable or locked
- * (exit 1 with an explanation on stderr), or not installed.
+ * A fake `secret-tool` keeping items by account. Like the real one, `lookup`
+ * exits 1 silently both for no item and for a locked one (`locked`), while
+ * `search --all` lists locked items too. It can also fail every command
+ * with an explanation on stderr, refuse to store, keep a stale item that
+ * `lookup` finds first (`shadow`), drop what it stores, hang, or be missing.
  */
 function secretTool({
   stderr,
   missing = false,
-}: { stderr?: string; missing?: boolean } = {}) {
+  locked = false,
+  refuseStore = false,
+  shadow,
+  dropStore = false,
+  hang = false,
+}: {
+  stderr?: string;
+  missing?: boolean;
+  locked?: boolean;
+  refuseStore?: boolean;
+  shadow?: string;
+  dropStore?: boolean;
+  hang?: boolean;
+} = {}) {
   const items = new Map<string, string>();
   const run = vi.fn(
     (_command: string, args: readonly string[], input?: string): RunResult => {
@@ -342,16 +357,38 @@ function secretTool({
         });
         return { status: null, stdout: "", error };
       }
+      if (hang) {
+        const error = Object.assign(new Error("spawnSync ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+        });
+        return { status: null, stdout: "", signal: "SIGTERM", error };
+      }
       if (stderr) return { status: 1, stdout: "", stderr };
       const account = args[args.indexOf("account") + 1];
-      if (args[0] === "lookup") {
-        const value = items.get(account);
-        return value === undefined
-          ? { status: 1, stdout: "", stderr: "" }
-          : { status: 0, stdout: value };
+      const value = items.get(account);
+      switch (args[0]) {
+        case "lookup": {
+          const found = shadow ?? value;
+          return found === undefined || locked
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: found };
+        }
+        case "search":
+          // A locked item is listed without its secret.
+          return {
+            status: 0,
+            stdout:
+              value === undefined
+                ? ""
+                : `[/org/freedesktop/secrets/collection/login/1]\nlabel = ${account}\n`,
+          };
+        default:
+          if (refuseStore) {
+            return { status: 1, stdout: "", stderr: "secret-tool: Cancelled" };
+          }
+          if (!dropStore) items.set(account, input ?? "");
+          return { status: 0, stdout: "" };
       }
-      items.set(account, input ?? "");
-      return { status: 0, stdout: "" };
     },
   );
   return { run, items };
@@ -361,6 +398,7 @@ describe("the Linux Secret Service", () => {
   const DESKTOP = { ...ENV, DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus" };
   const open = (fake: ReturnType<typeof secretTool>) =>
     openSecrets("keychain", DESKTOP, { platform: "linux", run: fake.run });
+  const FILES = 'set `secret_store = "file"` to keep secrets in files';
 
   it("keeps both secrets in the keyring, passing them on stdin", () => {
     const fake = secretTool();
@@ -376,19 +414,73 @@ describe("the Linux Secret Service", () => {
     expect(secrets.secretKey?.get()).toBe("s".repeat(64));
     for (const [, args] of fake.run.mock.calls) {
       expect(args.join(" ")).not.toContain("amk_123");
+      expect(args.join(" ")).not.toContain("s".repeat(64));
     }
   });
 
-  it("reads a missing item as unset", () => {
-    expect(open(secretTool()).apiKey.get()).toBeUndefined();
+  it("reads a missing item as unset, after checking it is not just locked", () => {
+    const fake = secretTool();
+    expect(open(fake).apiKey.get()).toBeUndefined();
+    expect(fake.run.mock.calls.map(([, args]) => args.slice(0, 2))).toEqual([
+      ["lookup", "service"],
+      ["search", "--all"],
+    ]);
   });
 
-  it.each([
-    "secret-tool: Cannot get secret of a locked object",
-    "secret-tool: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files",
-  ])("refuses a keyring it cannot read (%j), never falling back", (stderr) => {
-    expect(() => open(secretTool({ stderr })).apiKey.get()).toThrow(
-      /^Cannot read the Amika API key for amika-hostd from your desktop keyring \(Secret Service\); unlock it .* or set `secret_store = "file"`/,
+  it("refuses a locked item, rather than read it as unset", () => {
+    const fake = secretTool({ locked: true });
+    fake.items.set("secret-key", "s".repeat(64));
+    expect(() => open(fake).secretKey?.get()).toThrow(
+      `The amika-hostd secret key is in your desktop keyring (Secret Service), but it is locked; unlock it and run \`amika-hostd setup\` again, or ${FILES}`,
+    );
+  });
+
+  it("says when no keyring answers on the session bus, without saying to unlock it", () => {
+    const fake = secretTool({
+      stderr:
+        "secret-tool: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files",
+    });
+    expect(() => open(fake).apiKey.get()).toThrow(
+      `No desktop keyring (Secret Service) answers on this session's D-Bus (secret-tool: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.secrets was not provided by any .service files), so amika-hostd has nowhere to keep its secrets; ${FILES}`,
+    );
+  });
+
+  it("refuses a keyring it cannot read, saying what secret-tool said", () => {
+    expect(() =>
+      open(
+        secretTool({ stderr: "secret-tool: Something broke\nmore" }),
+      ).apiKey.get(),
+    ).toThrow(
+      `Cannot read the Amika API key for amika-hostd from your desktop keyring (Secret Service) (secret-tool: Something broke); unlock it and run \`amika-hostd setup\` again, or ${FILES}`,
+    );
+  });
+
+  it("refuses a store secret-tool reports failed", () => {
+    expect(() =>
+      open(secretTool({ refuseStore: true })).apiKey.set("amk_123"),
+    ).toThrow(
+      /^Cannot store the Amika API key for amika-hostd in your desktop keyring \(Secret Service\) \(secret-tool: Cancelled\)/,
+    );
+  });
+
+  it("refuses a store that did not stick", () => {
+    expect(() =>
+      open(secretTool({ dropStore: true })).apiKey.set("amk_123"),
+    ).toThrow(
+      /^Stored the Amika API key for amika-hostd in your desktop keyring \(Secret Service\), but cannot find it there/,
+    );
+  });
+
+  it("names a stale item that shadows the one just stored", () => {
+    const fake = secretTool({ shadow: "amk_old" });
+    expect(() => open(fake).apiKey.set("amk_123")).toThrow(
+      /^Another Amika API key for amika-hostd in your desktop keyring \(Secret Service\) shadows the one just stored; delete the stale one \(see `secret-tool search --all service amika-hostd account api-key`\)/,
+    );
+  });
+
+  it("says secret-tool did not finish, rather than read the item as unset", () => {
+    expect(() => open(secretTool({ hang: true })).apiKey.get()).toThrow(
+      /^secret-tool did not finish \(SIGTERM\)/,
     );
   });
 

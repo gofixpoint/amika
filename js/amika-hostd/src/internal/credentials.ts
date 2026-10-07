@@ -147,8 +147,9 @@ function systemKeychain(
     case "darwin":
       return macOSKeychain(run);
     case "linux":
-      // The Secret Service lives on the desktop session's D-Bus; a headless
-      // host (or a plain SSH session) has no session bus, so no keychain.
+      // The Secret Service lives on the session's D-Bus. Without a session bus
+      // (no desktop or user session) there is no keychain. With one but no
+      // keyring daemon on it, as over SSH to a server, secret-tool says so.
       return env.DBUS_SESSION_BUS_ADDRESS?.trim()
         ? secretServiceKeychain(run)
         : undefined;
@@ -247,53 +248,102 @@ function quoted(text: string): string {
  */
 function secretServiceKeychain(run: Runner): Keychain {
   const description = "your desktop keyring (Secret Service)";
+  const files = 'set `secret_store = "file"` to keep secrets in files';
   const attributes = (name: SecretName) => [
     "service",
     SERVICE,
     "account",
     name,
   ];
-  const usable = (result: RunResult) => {
-    if (errorCode(result.error) === "ENOENT") {
+  /** Run `secret-tool`, refusing if it is missing, hung, or has no service. */
+  const secretTool = (args: readonly string[], input?: string): RunResult => {
+    const result = checked(run("secret-tool", args, input));
+    const code = errorCode(result.error);
+    if (code === "ENOENT") {
       throw new ConfigError(
-        `secret-tool is not installed, so amika-hostd cannot use ${description}; install it (libsecret-tools, or libsecret), or set \`secret_store = "file"\` to keep secrets in files`,
+        `secret-tool is not installed, so amika-hostd cannot use ${description}; install it (libsecret-tools, or libsecret) if this session has a desktop keyring, or ${files}`,
+      );
+    }
+    if (result.error || result.signal) {
+      throw new ConfigError(
+        `secret-tool did not finish (${result.signal ?? code}), so amika-hostd cannot use ${description}; answer or dismiss any keyring prompt and run \`amika-hostd setup\` again, or ${files}`,
+      );
+    }
+    // A session bus with no keyring daemon on it, as over SSH to a server.
+    if (
+      /ServiceUnknown|NoReply|Could not connect|Cannot autolaunch/i.test(
+        result.stderr ?? "",
+      )
+    ) {
+      throw new ConfigError(
+        `No desktop keyring (Secret Service) answers on this session's D-Bus (${detail(result)}), so amika-hostd has nowhere to keep its secrets; ${files}`,
       );
     }
     return result;
   };
-  const refuse = (what: string) =>
+  const refuse = (what: string, result: RunResult) =>
     new ConfigError(
-      `Cannot ${what} ${description}; unlock it and run \`amika-hostd setup\` again, or set \`secret_store = "file"\` to keep secrets in files`,
+      `Cannot ${what} ${description} (${detail(result)}); unlock it and run \`amika-hostd setup\` again, or ${files}`,
     );
+  /**
+   * Whether an item exists, locked or not. `search --all` lists locked items
+   * without unlocking them; it prints each match (with the secret, for an
+   * unlocked one), so only whether it printed anything is kept.
+   */
+  const exists = (name: SecretName): boolean => {
+    const result = secretTool(["search", "--all", ...attributes(name)]);
+    if (result.status !== 0) {
+      throw refuse(`look for the ${LABELS[name]} in`, result);
+    }
+    return result.stdout.trim() !== "";
+  };
   return {
     description,
     get(name) {
-      const result = usable(
-        checked(run("secret-tool", ["lookup", ...attributes(name)])),
-      );
+      const result = secretTool(["lookup", ...attributes(name)]);
       const value = result.status === 0 ? result.stdout.trim() : "";
       if (value !== "") return value;
-      // `lookup` exits 1 both for "no such item" and for errors, which it
-      // explains on stderr; only a silent 1 means the item is not there.
-      if (result.status === 1 && !result.stderr?.trim()) return undefined;
-      throw refuse(`read the ${LABELS[name]} from`);
+      if (result.status !== 1 || result.stderr?.trim()) {
+        throw refuse(`read the ${LABELS[name]} from`, result);
+      }
+      // A silent exit 1 means no item, but also a locked one whose unlock
+      // prompt was dismissed; reading that as unset would have setup replace
+      // the secret key, so check that nothing is there.
+      if (!exists(name)) return undefined;
+      throw new ConfigError(
+        `The ${LABELS[name]} is in ${description}, but it is locked; unlock it and run \`amika-hostd setup\` again, or ${files}`,
+      );
     },
     set(name, value) {
       // `store` reads the value from stdin, off the process list.
-      const result = usable(
-        checked(
-          run(
-            "secret-tool",
-            ["store", `--label=${LABELS[name]}`, ...attributes(name)],
-            value,
-          ),
-        ),
+      const result = secretTool(
+        ["store", `--label=${LABELS[name]}`, ...attributes(name)],
+        value,
       );
-      if (result.status !== 0 || this.get(name) !== value) {
-        throw refuse(`store the ${LABELS[name]} in`);
+      if (result.status !== 0) {
+        throw refuse(`store the ${LABELS[name]} in`, result);
+      }
+      const stored = this.get(name);
+      if (stored === undefined) {
+        throw new ConfigError(
+          `Stored the ${LABELS[name]} in ${description}, but cannot find it there; run \`amika-hostd setup\` again, or ${files}`,
+        );
+      }
+      // `lookup` returns the first match across the keyring's collections,
+      // which can be an older item outside the one `store` wrote to.
+      if (stored !== value) {
+        throw new ConfigError(
+          `Another ${LABELS[name]} in ${description} shadows the one just stored; delete the stale one (see \`secret-tool search --all service ${SERVICE} account ${name}\`) and run \`amika-hostd setup\` again, or ${files}`,
+        );
       }
     },
   };
+}
+
+/** What a failed program said, for an error message; never its stdout. */
+function detail(result: RunResult): string {
+  const said = result.stderr?.trim().split("\n")[0];
+  return said || `exit status ${result.status}`;
 }
 
 function runProgram(
