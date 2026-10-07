@@ -1143,6 +1143,7 @@ describe("setup", () => {
     expect(deps.startServer).toHaveBeenCalledWith(
       expect.objectContaining({ secretKey: SECRET }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -1205,6 +1206,7 @@ describe("setup", () => {
     expect(deps.startServer).toHaveBeenCalledWith(
       expect.objectContaining({ secretKey: SECRET }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -1218,6 +1220,7 @@ describe("setup", () => {
     expect(deps.credentials.get).not.toHaveBeenCalled();
     expect(deps.startServer).toHaveBeenCalledWith(
       expect.objectContaining({ secretKey: SECRET }),
+      expect.anything(),
       expect.anything(),
     );
   });
