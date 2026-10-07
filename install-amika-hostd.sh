@@ -540,10 +540,6 @@ print_next_steps() {
   echo "     if you skipped step 1):"
   echo "       amika-hostd up"
   echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."
-  echo ""
-  echo "If you're a human, run \`amika-hostd setup\`."
-  echo ""
-  echo "If you're an agent, run \`amika-hostd setup --skill\` and follow the instructions output."
 }
 
 # Verify $1 (named $2 in the checksum list) against the sha256sum-format list
