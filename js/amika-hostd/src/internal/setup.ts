@@ -322,7 +322,15 @@ export async function runSetup(
     }
   }
   if (apiKey !== undefined && deferApiKey) {
-    deps.secrets.apiKey.set(apiKey);
+    try {
+      deps.secrets.apiKey.set(apiKey);
+    } catch (error) {
+      // Amika and this host already agree on the new key, so a running
+      // daemon still needs the restart a rerun would not mention.
+      throw new ConfigError(
+        `Amika and this host now have the new secret key, but the API key you entered could not be saved: ${(error as Error).message}. ${RESTART} Run \`amika-hostd setup\` again to store the API key.`,
+      );
+    }
     deps.out(`Stored the API key in ${deps.secrets.apiKey.description}.`);
   }
 
@@ -340,11 +348,7 @@ export async function runSetup(
   for (const line of describeImages(written.images)) deps.out(`  ${line}`);
   deps.out(`Edit ${configPath} to change these settings.`);
   warnAboutEnvironment(deps, secretHome);
-  if (replaced !== undefined) {
-    deps.out(
-      "If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up.",
-    );
-  }
+  if (replaced !== undefined) deps.out(RESTART);
   deps.out("");
   if (!fromUp) {
     deps.out("Start the daemon with `amika-hostd up`.");
@@ -411,6 +415,9 @@ function restoreSecret(
     `${error.message}; ${secretHome} still has the old secret key. If Amika's requests to this host start failing, ${again}.`,
   );
 }
+
+const RESTART =
+  "If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up.";
 
 /** Whether a stored value exists and is not `value`. */
 function differs(value: string | undefined, stored: string | undefined) {

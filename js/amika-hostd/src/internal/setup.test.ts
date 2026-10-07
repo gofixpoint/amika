@@ -502,7 +502,19 @@ describe("regenerating the secret key", () => {
     expect(h.out).toContain("Stored the API key in the test store.");
   });
 
-  it("does not save a new API key Amika refused, so a rerun asks for it again", async () => {
+  it("still says to restart the daemon when the API key cannot be saved after Amika took the new secret key", async () => {
+    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_new"] });
+    h.store.set.mockImplementation(() => {
+      throw new Error("Cannot store the API key: locked");
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      "Amika and this host now have the new secret key, but the API key you entered could not be saved: Cannot store the API key: locked. If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up. Run `amika-hostd setup` again to store the API key.",
+    );
+    expect(h.keychainSecret.value).toBe(NEW_SECRET);
+    expect(h.deps.setHostSecret).toHaveBeenCalled();
+  });
+
+  it("does not save a new API key Amika refused, so a rerun starts from the old one", async () => {
     const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_typo"] });
     h.deps.registerHost.mockRejectedValue(
       new Error("Amika rejected the API key"),
