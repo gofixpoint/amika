@@ -4,7 +4,7 @@ import type { SandboxProviderCapabilities } from "../provider";
 export const smolCapabilities: SandboxProviderCapabilities = {
   lifecycle: true,
   ssh: false,
-  services: false,
+  services: true,
   exec: true,
   listSandboxes: true,
   streaming: false,
