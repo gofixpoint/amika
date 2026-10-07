@@ -155,8 +155,10 @@ stored first, so a secret that cannot be stored (a locked keychain, say)
 leaves the config untouched.
 
 `up` runs setup first whenever the hostname, secret key or API key is
-missing, or a `secret_key` in the file needs moving into the keychain, and it
-has a terminal; without one it fails, naming `setup`. Like setup, it reads a
+missing, or the file still holds a `secret_key` while secrets are kept in the
+keychain, and it has a terminal; without one it fails, naming `setup`, or,
+when another secret key is in effect (the keychain's, or the environment's),
+warns that the file's is unused and carries on. Like setup, it reads a
 `secret_key` too short to use as missing, so a hand-copied old example gets
 set up rather than rejected; other commands still reject it. Ctrl-C at a
 question exits 130 and changes nothing.
@@ -179,14 +181,20 @@ chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
 
 The two are never mixed: a read never falls back from one store to the other,
 so a key left in one cannot shadow a newer one in the other. The environment
-(`AMIKA_HOSTD_API_KEY`, `AMIKA_HOSTD_SECRET_KEY`) overrides either store.
+(`AMIKA_HOSTD_API_KEY`, `AMIKA_HOSTD_SECRET_KEY`) overrides either store, and
+the store is opened only for a secret the environment does not set, so a
+command whose secrets are all exported runs on a machine with no keychain.
+Setup is the exception: it stores secrets, so it always opens the store. When
+setup generates a secret key for a host that already has a hostname, it warns
+that Amika may still hold the one the host first registered with.
 
 A person always starts the daemon, with `up`, so `up` reads the secrets (an
 unlock prompt can reach them) and hands the secret key to the background
 daemon over the IPC channel it already uses to wait for "ready"
 (`receiveSecretKey` in `src/internal/daemon.ts`, behind the internal
-`serve --secret-key-from-up`). Neither secret goes in the daemon's
-environment, and the daemon never reads the store; smolvm and rigs get
+`serve --secret-key-from-up`, which reads the file as `up` does, so a
+placeholder `secret_key` there cannot stop it). Neither secret goes in the
+daemon's environment, and the daemon never reads the store; smolvm and rigs get
 neither. `serve` run by hand reads the secret key from the store itself, and
 never the API key.
 

@@ -25,6 +25,7 @@ describe("resolveConfig", () => {
       hostname: undefined,
       secretKey: undefined,
       secretKeyFrom: undefined,
+      secretKeyInFile: false,
       secretStore: "keychain",
       host: "127.0.0.1",
       port: 3020,
@@ -109,7 +110,9 @@ port = 4000
   it("rejects an API key in the TOML file without echoing it", () => {
     const run = () => resolveConfig({ file: file(`api_key = "do-not-print"`) });
     expect(run).toThrow(ConfigError);
-    expect(run).toThrow(/must not contain api_key; set AMIKA_API_KEY/);
+    expect(run).toThrow(
+      /must not contain api_key; run `amika-hostd setup` to store it, or set AMIKA_HOSTD_API_KEY/,
+    );
     expect(run).not.toThrow(/do-not-print/);
   });
 

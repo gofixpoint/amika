@@ -134,14 +134,20 @@ export async function runCli(
         file: tolerant && file ? withoutInvalidSecret(file) : file,
       });
     };
-    const resolved = resolve({ tolerant: parsed.command === "up" });
+    // So does the daemon `up` starts: it uses the secret key `up` hands it,
+    // so a placeholder left in the file must not stop it.
+    const resolved = resolve({
+      tolerant:
+        parsed.command === "up" ||
+        (parsed.command === "serve" && parsed.secretKeyFromUp),
+    });
     switch (parsed.command) {
       case "up": {
         // Check first so a second `up` fails without calling Amika.
         ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
         let filled = withSecrets(resolved, deps);
         if (
-          (!hasSettings(filled.config) || filled.misplacedSecret) &&
+          (!hasSettings(filled.config) || filled.strayFileSecret) &&
           deps.prompt &&
           deps.promptSecret
         ) {
@@ -151,7 +157,7 @@ export async function runCli(
           filled = withSecrets(resolve(), deps);
         }
         const config = requireSettings(
-          placedSecrets(filled),
+          placedSecrets(filled, deps),
           REGISTRATION_SETTINGS,
         );
         const host = await register(config, deps);
@@ -185,7 +191,10 @@ export async function runCli(
           : undefined;
         const config =
           secretKey === undefined
-            ? placedSecrets(withSecrets(resolved, deps, { apiKey: false }))
+            ? placedSecrets(
+                withSecrets(resolved, deps, { apiKey: false }),
+                deps,
+              )
             : { ...resolved, secretKey };
         await serveInForeground(requireSettings(config, ["secretKey"]), deps, {
           smolvm: parsed.smolvm,
@@ -194,7 +203,7 @@ export async function runCli(
       }
       case "register-url": {
         const config = requireSettings(
-          placedSecrets(withSecrets(resolved, deps)),
+          placedSecrets(withSecrets(resolved, deps), deps),
           REGISTRATION_SETTINGS,
         );
         await saveUrl(config, await register(config, deps), parsed.url, deps);
@@ -289,50 +298,64 @@ function secretsFor(config: HostdConfig, deps: CliDeps): Secrets {
 interface Filled {
   config: HostdConfig;
   /**
-   * The config file holds a `secret_key`, but secrets are kept in the
-   * keychain and it has none: setup moves it there.
+   * With the keychain store, the config file still holds a `secret_key`,
+   * which is never used: setup moves it into the keychain, or removes it.
    */
-  misplacedSecret?: { configPath: string; store: string };
+  strayFileSecret?: string;
 }
 
 /**
  * Fill in the secrets the environment does not set from the secret store
- * the config chose. The environment always wins. In the keychain, a
- * `secret_key` left in the config file is never used: setup moves it in.
- * The background daemon never calls this; `up` hands it the secret key.
+ * the config chose. The environment always wins, and the store is opened
+ * only for a secret it does not set, so exported secrets work on a machine
+ * with no keychain. In the keychain, a `secret_key` left in the config file
+ * is never used. The background daemon never calls this; `up` hands it the
+ * secret key.
  */
 function withSecrets(
   config: HostdConfig,
   deps: CliDeps,
   { apiKey: wantApiKey = true } = {},
 ): Filled {
-  const secrets = secretsFor(config, deps);
-  const apiKey = wantApiKey
-    ? (config.apiKey ?? secrets.apiKey.get())
-    : config.apiKey;
-  if (!secrets.secretKey) return { config: { ...config, apiKey } };
-  const inFile = config.secretKeyFrom === "file";
-  const secretKey =
-    (inFile ? undefined : config.secretKey) ?? secrets.secretKey.get();
+  const keychain = config.secretStore === "keychain";
+  let apiKey = config.apiKey;
+  let secretKey =
+    keychain && config.secretKeyFrom === "file" ? undefined : config.secretKey;
+  const needApiKey = wantApiKey && apiKey === undefined;
+  // With the file store a secret key not set by now is simply missing.
+  const needSecretKey = keychain && secretKey === undefined;
+  if (needApiKey || needSecretKey) {
+    const secrets = secretsFor(config, deps);
+    if (needApiKey) apiKey = secrets.apiKey.get();
+    if (needSecretKey) secretKey = secrets.secretKey?.get();
+  }
   return {
     config: { ...config, apiKey, secretKey },
-    misplacedSecret:
-      inFile && secretKey === undefined
-        ? {
-            configPath: config.configPath ?? "the config file",
-            store: secrets.secretKey.description,
-          }
+    strayFileSecret:
+      keychain && config.secretKeyInFile
+        ? (config.configPath ?? "the config file")
         : undefined,
   };
 }
 
-/** `filled.config`, or a refusal naming setup if its secret is misplaced. */
-function placedSecrets({ config, misplacedSecret }: Filled): HostdConfig {
-  if (misplacedSecret) {
+/**
+ * `filled.config`, after dealing with a stray `secret_key` in the file: a
+ * refusal naming setup if there is no other secret key, else a warning, so
+ * it is not left in plain text unnoticed.
+ */
+function placedSecrets(
+  { config, strayFileSecret }: Filled,
+  deps: CliDeps,
+): HostdConfig {
+  if (strayFileSecret === undefined) return config;
+  if (config.secretKey === undefined) {
     throw new ConfigError(
-      `${misplacedSecret.configPath} holds secret_key, but secrets are kept in the keychain: run \`amika-hostd setup\` to move it into ${misplacedSecret.store}, or set \`secret_store = "file"\` to keep it in the file`,
+      `${strayFileSecret} holds secret_key, but secrets are kept in the keychain: run \`amika-hostd setup\` to move it there, or set \`secret_store = "file"\` to keep it in the file`,
     );
   }
+  deps.err(
+    `amika-hostd: ${strayFileSecret} still holds a secret_key, which is not used since secrets are kept in the keychain; run \`amika-hostd setup\` to remove it.`,
+  );
   return config;
 }
 

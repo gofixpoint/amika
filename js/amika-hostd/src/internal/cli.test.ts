@@ -1010,9 +1010,84 @@ describe("setup", () => {
     });
     expect(await runCli(["up"], deps)).toBe(1);
     expect(err[0]).toBe(
-      'amika-hostd: /c.toml holds secret_key, but secrets are kept in the keychain: run `amika-hostd setup` to move it into the test keychain, or set `secret_store = "file"` to keep it in the file',
+      'amika-hostd: /c.toml holds secret_key, but secrets are kept in the keychain: run `amika-hostd setup` to move it there, or set `secret_store = "file"` to keep it in the file',
     );
     expect(deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the keychain", { AMIKA_HOSTD_HOSTNAME: "builder" }, SECRET],
+    [
+      "the environment",
+      { AMIKA_HOSTD_HOSTNAME: "builder", AMIKA_HOSTD_SECRET_KEY: SECRET },
+      undefined,
+    ],
+  ])(
+    "`up` without a terminal warns about an unused secret_key when %s has the key",
+    async (_where, env, inKeychain) => {
+      const { deps, err } = harness({
+        AMIKA_API_KEY: "api-key",
+        XDG_STATE_HOME: "/state",
+        ...env,
+      });
+      deps.keychainSecret.value = inKeychain;
+      deps.loadConfigFile.mockReturnValue({
+        path: "/c.toml",
+        contents: `secret_key = "${"f".repeat(64)}"\n`,
+      });
+      expect(await runCli(["up"], deps)).toBe(0);
+      expect(err).toContain(
+        "amika-hostd: /c.toml still holds a secret_key, which is not used since secrets are kept in the keychain; run `amika-hostd setup` to remove it.",
+      );
+      expect(deps.registerHost).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ secretKey: SECRET }),
+      );
+    },
+  );
+
+  it("`up` with a terminal runs setup to clear an unused secret_key", async () => {
+    const { deps, files } = unconfigured([""], [], {
+      AMIKA_API_KEY: "api-key",
+    });
+    files[CONFIG_PATH] =
+      `hostname = "builder"\nsecret_key = "${"f".repeat(64)}"\n`;
+    deps.keychainSecret.value = SECRET;
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(files[CONFIG_PATH]).not.toMatch(/^\s*secret_key\s*=/m);
+    expect(deps.keychainSecret.value).toBe(SECRET);
+  });
+
+  it.each([["serve"], ["register-url", "https://x.example"], ["up"]])(
+    "`%s` needs no keychain when the secrets are exported",
+    async (...args) => {
+      // ENV exports the API key, the hostname and the secret key.
+      const { deps } = harness();
+      deps.openSecrets.mockImplementation(() => {
+        throw new ConfigError("No keychain on this machine");
+      });
+      expect(await runCli(args, deps)).toBe(0);
+      expect(deps.openSecrets).not.toHaveBeenCalled();
+    },
+  );
+
+  it("the daemon `up` starts ignores a placeholder secret_key in the file", async () => {
+    const { deps } = harness({ XDG_STATE_HOME: "/state" });
+    deps.loadConfigFile.mockReturnValue({
+      path: "/c.toml",
+      contents: 'secret_store = "file"\nsecret_key = "REPLACE_ME"\n',
+    });
+    const receiveSecretKey = vi.fn(async () => SECRET);
+    expect(
+      await runCli(["serve", "--smolvm", "--secret-key-from-up"], {
+        ...deps,
+        receiveSecretKey,
+      }),
+    ).toBe(0);
+    expect(deps.startServer).toHaveBeenCalledWith(
+      expect.objectContaining({ secretKey: SECRET }),
+      expect.anything(),
+    );
   });
 
   it("`up` uses the secret key from the keychain", async () => {

@@ -268,6 +268,42 @@ describe("runSetup", () => {
 });
 
 describe("runSetup with the keychain store", () => {
+  it("names the keychain when the environment overrides its secret key", async () => {
+    const h = harness({
+      kind: "keychain",
+      answers: [""],
+      secrets: ["amk_123"],
+      env: { AMIKA_HOSTD_SECRET_KEY: "c".repeat(64) },
+    });
+    await runSetup(h.deps);
+    expect(h.out).toContain(
+      "Note: AMIKA_HOSTD_SECRET_KEY is set in your environment and overrides the secret key in the test keychain (secret key).",
+    );
+  });
+
+  it("warns that Amika may hold an older secret for a host it already knows", async () => {
+    const h = harness({
+      kind: "keychain",
+      answers: ["", ""],
+      file: 'hostname = "builder"\n',
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.out).toContain(
+      "If builder is already registered with Amika, Amika keeps the secret key it registered with and will be rejected until this host has that one; set it with AMIKA_HOSTD_SECRET_KEY and run setup again.",
+    );
+  });
+
+  it("does not warn on a true first run", async () => {
+    const h = harness({
+      kind: "keychain",
+      answers: [""],
+      secrets: ["amk_123"],
+    });
+    await runSetup(h.deps);
+    expect(h.out.join("\n")).not.toContain("already registered");
+  });
+
   it("keeps the secret key in the keychain, never in the file", async () => {
     const h = harness({
       kind: "keychain",

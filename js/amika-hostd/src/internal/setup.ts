@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { hostname as osHostname } from "node:os";
 import {
   ConfigError,
+  ENV_NAMES,
   envName,
   configFilePaths,
   isDnsHostname,
@@ -119,6 +120,13 @@ export async function runSetup(
       deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"))
     )();
     deps.out("Generated a new secret key.");
+    if (saved.hostname !== undefined) {
+      // Registration never changes a stored secret, so a host Amika already
+      // knows keeps the old one there (a switch of `secret_store`, say).
+      deps.out(
+        `If ${saved.hostname} is already registered with Amika, Amika keeps the secret key it registered with and will be rejected until this host has that one; set it with ${ENV_NAMES.secretKey[0]} and run setup again.`,
+      );
+    }
   }
 
   const apiKey = await askApiKey(deps);
@@ -158,7 +166,7 @@ export async function runSetup(
   deps.out("Images:");
   for (const line of describeImages(written.images)) deps.out(`  ${line}`);
   deps.out(`Edit ${configPath} to change these settings.`);
-  warnAboutEnvironment(deps);
+  warnAboutEnvironment(deps, secretHome);
   deps.out("");
   if (!fromUp) {
     deps.out("Start the daemon with `amika-hostd up`.");
@@ -396,15 +404,15 @@ function describeImages(images: Record<string, string>): string[] {
   return entries.map(([name, image]) => `${name.padEnd(width)}  ${image}`);
 }
 
-function warnAboutEnvironment(deps: SetupDeps) {
-  for (const [setting, key] of [
-    ["hostname", "hostname"],
-    ["secret key", "secretKey"],
+function warnAboutEnvironment(deps: SetupDeps, secretHome: string) {
+  for (const [setting, key, home] of [
+    ["hostname", "hostname", "the file"],
+    ["secret key", "secretKey", secretHome],
   ] as const) {
     const name = envName(deps.env, key);
     if (name !== undefined) {
       deps.out(
-        `Note: ${name} is set in your environment and overrides the ${setting} in the file.`,
+        `Note: ${name} is set in your environment and overrides the ${setting} in ${home}.`,
       );
     }
   }

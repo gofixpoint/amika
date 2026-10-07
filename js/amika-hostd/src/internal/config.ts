@@ -35,6 +35,11 @@ export interface HostdConfig {
    */
   secretKey?: string;
   secretKeyFrom?: "env" | "file";
+  /**
+   * The TOML file holds a usable `secret_key`, whether or not it is the one
+   * in effect: with the keychain store it never is (setup moves it there).
+   */
+  secretKeyInFile: boolean;
   secretStore: SecretStoreKind;
   host: string;
   port: number;
@@ -113,6 +118,7 @@ export function resolveConfig({
         : toml.secret_key !== undefined
           ? "file"
           : undefined,
+    secretKeyInFile: toml.secret_key !== undefined,
     secretStore: parseSecretStore(
       fromEnv("secretStore") ?? toml.secret_store ?? "keychain",
     ),
@@ -210,7 +216,7 @@ function parseConfigFile(file: HostdConfigFile) {
   }
   if (typeof raw === "object" && raw !== null && "api_key" in raw) {
     throw new ConfigError(
-      `${file.path} must not contain api_key; set ${ENV_NAMES.apiKey[1]} in the environment instead`,
+      `${file.path} must not contain api_key; run \`amika-hostd setup\` to store it, or set ${ENV_NAMES.apiKey[0]} in the environment`,
     );
   }
   const parsed = configFileSchema.safeParse(raw);
