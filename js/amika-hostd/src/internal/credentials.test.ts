@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   apiKeyFilePath,
   isValidApiKey,
+  KeychainInterrupted,
   openSecrets,
   type Keychain,
+  type RunResult,
   type SecretName,
 } from "./credentials.js";
 
@@ -105,8 +107,98 @@ describe("openSecrets with the keychain store", () => {
     );
   });
 
-  it("has no keychain on this platform yet", () => {
-    expect(() => openSecrets("keychain", ENV)).toThrow(/^No keychain/);
+  it("has no keychain on Linux", () => {
+    expect(() =>
+      openSecrets("keychain", ENV, { platform: "linux", run: vi.fn() }),
+    ).toThrow(/^No keychain/);
+  });
+});
+
+/**
+ * A fake `security` keeping generic passwords by account. It answers "not
+ * found" as the real one does (exit 44), and can be locked (every command
+ * fails), refuse to store, or be killed by Ctrl-C.
+ */
+function security({
+  locked = false,
+  refuseStore = false,
+  interrupt = false,
+}: { locked?: boolean; refuseStore?: boolean; interrupt?: boolean } = {}) {
+  const items = new Map<string, string>();
+  const run = vi.fn(
+    (_command: string, args: readonly string[], input?: string): RunResult => {
+      if (interrupt) return { status: null, stdout: "", signal: "SIGINT" };
+      if (locked) return { status: 51, stdout: "" };
+      if (args[0] === "find-generic-password") {
+        const value = items.get(args[args.indexOf("-a") + 1]);
+        return value === undefined
+          ? { status: 44, stdout: "" }
+          : { status: 0, stdout: `${value}\n` };
+      }
+      // `security -i`: the command arrives on stdin.
+      const command = /-a (\S+) .* -w "([^"]*)"/.exec(input ?? "");
+      if (!refuseStore && command) items.set(command[1], command[2]);
+      return { status: 0, stdout: "" };
+    },
+  );
+  return { run, items };
+}
+
+describe("the macOS keychain", () => {
+  const open = (fake: ReturnType<typeof security>) =>
+    openSecrets("keychain", ENV, { platform: "darwin", run: fake.run });
+
+  it("keeps both secrets as login-keychain items, off the command line", () => {
+    const fake = security();
+    const secrets = open(fake);
+    secrets.apiKey.set("amk_123");
+    secrets.secretKey?.set("s".repeat(64));
+    expect(fake.items).toEqual(
+      new Map([
+        ["api-key", "amk_123"],
+        ["secret-key", "s".repeat(64)],
+      ]),
+    );
+    expect(secrets.apiKey.get()).toBe("amk_123");
+    expect(secrets.apiKey.description).toBe(
+      "your macOS login keychain (Amika API key)",
+    );
+    for (const [, args] of fake.run.mock.calls) {
+      expect(args.join(" ")).not.toContain("amk_123");
+    }
+  });
+
+  it("reads a missing item as unset", () => {
+    expect(open(security()).apiKey.get()).toBeUndefined();
+  });
+
+  it("refuses a keychain it cannot read, saying how to fix it", () => {
+    expect(() => open(security({ locked: true })).apiKey.get()).toThrow(
+      'Cannot read the Amika API key for amika-hostd from your macOS login keychain; unlock it and run `amika-hostd setup` again, or set `secret_store = "file"` to keep secrets in files',
+    );
+  });
+
+  it("fails if the item did not stick", () => {
+    expect(() =>
+      open(security({ refuseStore: true })).apiKey.set("amk_123"),
+    ).toThrow(/^Cannot store the Amika API key for amika-hostd in/);
+  });
+
+  it.each(['has"quote', "back\\slash", "has space"])(
+    "refuses to quote %j into a security command",
+    (value) => {
+      const fake = security();
+      expect(() => open(fake).secretKey?.set(value)).toThrow(
+        /spaces, quotes or backslashes/,
+      );
+      expect(fake.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports a command killed by Ctrl-C", () => {
+    expect(() => open(security({ interrupt: true })).apiKey.get()).toThrow(
+      KeychainInterrupted,
+    );
   });
 });
 

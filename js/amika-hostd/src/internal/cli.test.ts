@@ -869,10 +869,8 @@ describe("setup", () => {
     return { ...h, deps, files };
   }
 
-  it("`setup` keeps both secrets in the keychain when chosen", async () => {
-    const { deps, files, out } = unconfigured([""], ["amk_123"], {
-      AMIKA_HOSTD_SECRET_STORE: "keychain",
-    });
+  it("`setup` keeps both secrets in the keychain by default", async () => {
+    const { deps, files, out } = unconfigured([""], ["amk_123"]);
     expect(await runCli(["setup"], deps)).toBe(0);
     expect(files[CONFIG_PATH]).toContain('hostname = "builder"');
     expect(files[CONFIG_PATH]).not.toMatch(/^\s*secret_key\s*=/m);
@@ -885,8 +883,10 @@ describe("setup", () => {
     expect(deps.registerHost).not.toHaveBeenCalled();
   });
 
-  it("`setup` keeps the secret key in the config with the file store, the default", async () => {
-    const { deps, files } = unconfigured([""], ["amk_123"]);
+  it("`setup` keeps the secret key in the config with the file store", async () => {
+    const { deps, files } = unconfigured([""], ["amk_123"], {
+      AMIKA_HOSTD_SECRET_STORE: "file",
+    });
     expect(await runCli(["setup"], deps)).toBe(0);
     expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
     expect(deps.keychainSecret.value).toBeUndefined();

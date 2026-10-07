@@ -1,7 +1,7 @@
 /**
  * `amika-hostd setup`: ask for the hostname and API key, generate the secret
  * key, and write them, with default rig sizes and preset images on the first
- * run: the secrets to the secret store (files, or the keychain), the rest
+ * run: the secrets to the secret store (the keychain, by default), the rest
  * to the TOML config. Running it again offers to change the hostname and API
  * key.
  */
