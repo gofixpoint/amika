@@ -26,7 +26,7 @@ describe("resolveConfig", () => {
       secretKey: undefined,
       secretKeyFrom: undefined,
       secretKeyInFile: false,
-      secretStore: "file",
+      secretStore: "keychain",
       host: "127.0.0.1",
       port: 3020,
       smolApiUrl: undefined,
@@ -327,17 +327,17 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
 });
 
 describe("secret store", () => {
-  it("is files unless the file or environment chooses the keychain", () => {
-    expect(resolveConfig({}).secretStore).toBe("file");
+  it("is the keychain unless the file or environment chooses files", () => {
+    expect(resolveConfig({}).secretStore).toBe("keychain");
     expect(
-      resolveConfig({ file: file('secret_store = "keychain"') }).secretStore,
-    ).toBe("keychain");
+      resolveConfig({ file: file('secret_store = "file"') }).secretStore,
+    ).toBe("file");
     expect(
       resolveConfig({
-        env: { AMIKA_HOSTD_SECRET_STORE: "file" },
-        file: file('secret_store = "keychain"'),
+        env: { AMIKA_HOSTD_SECRET_STORE: "keychain" },
+        file: file('secret_store = "file"'),
       }).secretStore,
-    ).toBe("file");
+    ).toBe("keychain");
   });
 
   it.each([
@@ -446,10 +446,10 @@ describe("config.example.toml", () => {
 
   it("holds no secret, and documents the default secret store", () => {
     expect(example.contents).not.toMatch(/^\s*secret_key\s*=/m);
-    expect(example.contents).toMatch(/^# secret_store = "file"$/m);
+    expect(example.contents).toMatch(/^# secret_store = "keychain"$/m);
     expect(resolveConfig({ file: example })).toMatchObject({
       secretKey: undefined,
-      secretStore: "file",
+      secretStore: "keychain",
     });
   });
 
@@ -470,7 +470,7 @@ describe("config.example.toml", () => {
   it("resolves once seeded, with defaults that match the code", () => {
     expect(resolveConfig({ file: seeded })).toMatchObject({
       hostname: "my-host",
-      secretStore: "file",
+      secretStore: "keychain",
       apiUrl: DEFAULT_API_URL,
       host: "127.0.0.1",
       port: 3020,

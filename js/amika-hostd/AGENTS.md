@@ -127,8 +127,8 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
 `src/internal/setup.ts` runs `amika-hostd setup`, which needs a terminal. It
 edits the TOML file `up` reads (the first that exists, else the user path),
 and keeps the secrets in the secret store (see [Secret storage](#secret-storage)).
-It opens the store first, so with `secret_store = "keychain"` on a machine
-with no keychain it refuses before asking anything.
+It opens the store first, so with the keychain store on a machine with no
+keychain it refuses before asking anything.
 
 It asks for the hostname, defaulting to the configured one, or else the
 machine's own hostname made valid (lowercased, `.local` dropped, other
@@ -170,15 +170,22 @@ to call Amika, and the secret key, which Amika presents on every request to
 the daemon. `src/internal/credentials.ts` keeps both in one of two stores,
 chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
 
-- **`file`** (the default, `DEFAULT_SECRET_STORE`, until amika-hostd supports
-  a system keychain): the API key in `$XDG_CONFIG_HOME/amika-hostd/api-key`
-  and the secret key as `secret_key` in the TOML file, both mode `0600`. That
-  is how `gh` and Docker keep credentials without a keyring, and how
-  WireGuard and `sshd` keep their keys.
-- **`keychain`**, chosen explicitly: both are items in the system keychain. On
-  a machine where amika-hostd supports no keychain (so far, every machine),
-  every command that needs a secret refuses, naming `secret_store = "file"`;
-  it never falls back to a file on its own.
+- **`keychain`** (the default, `DEFAULT_SECRET_STORE`): both are items in
+  the system keychain. On macOS that is the login keychain, through `security` (service
+  `amika-hostd`, one account per secret: `api-key`, `secret-key`), named
+  explicitly in every command (from `security login-keychain`), since
+  without one `security` uses the default keychain, which a user can change
+  to another, separately locked or temporary, one. Values go
+  in through `security -i` on stdin, so they never appear in the process
+  list, and are read back to confirm they were stored. Exit 44 means "not
+  there"; any other failure (a locked keychain, over SSH say) is an error
+  that says to unlock it or choose files. On a machine where amika-hostd
+  supports no keychain, every command that needs a secret refuses, naming
+  `secret_store = "file"`; it never falls back to a file on its own.
+- **`file`**, chosen explicitly: the API key in
+  `$XDG_CONFIG_HOME/amika-hostd/api-key` and the secret key as `secret_key` in
+  the TOML file, both mode `0600`. That is how `gh` and Docker keep
+  credentials without a keyring, and how WireGuard and `sshd` keep their keys.
 
 The two are never mixed: a read never falls back from one store to the other,
 so a key left in one cannot shadow a newer one in the other. The environment
@@ -321,7 +328,7 @@ the first source that sets it: CLI flag, then environment, then TOML file.
 | API URL      |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`                      | `https://app.amika.dev` |
 | Hostname     |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`                     |                         |
 | Secret key   |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key` (file store only) | in the secret store     |
-| Secret store |          | `AMIKA_HOSTD_SECRET_STORE`                    | `secret_store`                 | `file`                  |
+| Secret store |          | `AMIKA_HOSTD_SECRET_STORE`                    | `secret_store`                 | `keychain`              |
 | Bind host    | `--host` | `AMIKA_HOSTD_HOST`                            | `host`                         | `127.0.0.1`             |
 | Port         | `--port` | `AMIKA_HOSTD_PORT`                            | `port`                         | `3020`                  |
 
@@ -342,7 +349,7 @@ fixed `http://127.0.0.1:23020`) and `SMOL_REQUEST_TIMEOUT_MS` remain
 environment-only. `config.example.toml`
 is the template the installer seeds: every setting with a default is a live
 line, and only `hostname` and `secret_store` are commented. It holds no
-`secret_key`: setup generates one. Keep its comments short. `config.test.ts`
+`secret_key`, since the secrets live in the keychain by default. Keep its comments short. `config.test.ts`
 resolves it as seeded, so keep it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
 

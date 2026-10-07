@@ -16,6 +16,7 @@ import {
   type HostdConfigFile,
   type HostdConfigWith,
 } from "./config.js";
+import { openSecrets as openSecretStore } from "./credentials.js";
 import { DaemonError } from "./daemon.js";
 import type { RunningServer } from "./server.js";
 import type { ManagedSmolvm, SmolvmDeps } from "./smolvm-serve.js";
@@ -869,10 +870,8 @@ describe("setup", () => {
     return { ...h, deps, files };
   }
 
-  it("`setup` keeps both secrets in the keychain when chosen", async () => {
-    const { deps, files, out } = unconfigured([""], ["amk_123"], {
-      AMIKA_HOSTD_SECRET_STORE: "keychain",
-    });
+  it("`setup` keeps both secrets in the keychain by default", async () => {
+    const { deps, files, out } = unconfigured([""], ["amk_123"]);
     expect(await runCli(["setup"], deps)).toBe(0);
     expect(files[CONFIG_PATH]).toContain('hostname = "builder"');
     expect(files[CONFIG_PATH]).not.toMatch(/^\s*secret_key\s*=/m);
@@ -885,8 +884,10 @@ describe("setup", () => {
     expect(deps.registerHost).not.toHaveBeenCalled();
   });
 
-  it("`setup` keeps the secret key in the config with the file store, the default", async () => {
-    const { deps, files } = unconfigured([""], ["amk_123"]);
+  it("`setup` keeps the secret key in the config with the file store", async () => {
+    const { deps, files } = unconfigured([""], ["amk_123"], {
+      AMIKA_HOSTD_SECRET_STORE: "file",
+    });
     expect(await runCli(["setup"], deps)).toBe(0);
     expect(files[CONFIG_PATH]).toContain(`secret_key = "${SECRET}"`);
     expect(deps.keychainSecret.value).toBeUndefined();
@@ -902,6 +903,23 @@ describe("setup", () => {
     });
     expect(await runCli(["setup"], deps)).toBe(1);
     expect(err[0]).toMatch(/^amika-hostd: No keychain on this machine/);
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.writeConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("`setup` on Linux refuses with the real secret store, naming the override", async () => {
+    const { deps, err } = unconfigured([""], ["amk_123"]);
+    const run = vi.fn();
+    const linux: CliDeps = {
+      ...deps,
+      openSecrets: (kind, env) =>
+        openSecretStore(kind, env, { platform: "linux", run }),
+    };
+    expect(await runCli(["setup"], linux)).toBe(1);
+    expect(err[0]).toMatch(
+      /^amika-hostd: No keychain on this machine .* set `secret_store = "file"` in .*config\.toml, or AMIKA_HOSTD_SECRET_STORE=file$/,
+    );
+    expect(run).not.toHaveBeenCalled();
     expect(deps.prompt).not.toHaveBeenCalled();
     expect(deps.writeConfigFile).not.toHaveBeenCalled();
   });

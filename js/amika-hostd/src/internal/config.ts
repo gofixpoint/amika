@@ -22,10 +22,10 @@ export interface HostdFlags {
 export type SecretStoreKind = "keychain" | "file";
 
 /**
- * Files, until amika-hostd supports a system keychain to make the default:
- * choosing "keychain" here, with no keychain to use, refuses.
+ * The keychain, where amika-hostd supports one (macOS). Where it does not,
+ * commands that need a secret refuse, naming `secret_store = "file"`.
  */
-export const DEFAULT_SECRET_STORE: SecretStoreKind = "file";
+export const DEFAULT_SECRET_STORE: SecretStoreKind = "keychain";
 
 export interface HostdConfig {
   /**

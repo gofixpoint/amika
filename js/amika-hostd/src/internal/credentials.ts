@@ -1,12 +1,13 @@
 /**
  * Where hostd keeps its secrets: the Amika API key `amika-hostd setup` asks
  * for, and the secret key Amika presents to the daemon. By default
- * (`DEFAULT_SECRET_STORE`) they live in plain files only their owner can
- * read; with `secret_store = "keychain"` they live in the system keychain,
- * where amika-hostd supports one. The two are never mixed: a read never
+ * (`DEFAULT_SECRET_STORE`) they live in the system keychain; with
+ * `secret_store = "file"` they live in plain files only their owner can
+ * read. The two are never mixed: a read never
  * falls back from one to the other, so a key left in one cannot shadow a
  * newer one in the other.
  */
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -52,9 +53,44 @@ export type SecretName = "api-key" | "secret-key";
 export interface CredentialDeps {
   /** The system keychain; defaults to this platform's (see `systemKeychain`). */
   keychain?: Keychain | null;
+  platform?: NodeJS.Platform;
+  /** Runs the keychain's command-line tool. */
+  run?: Runner;
   readFile?: (file: string) => string;
   writeFile?: (file: string, contents: string) => void;
 }
+
+/** The result of running a program, as `spawnSync` reports it. */
+export interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr?: string;
+  /** The signal that killed it, e.g. `SIGINT` from the operator's Ctrl-C. */
+  signal?: NodeJS.Signals | null;
+  error?: Error;
+}
+
+export type Runner = (
+  command: string,
+  args: readonly string[],
+  input?: string,
+) => RunResult;
+
+/**
+ * A keychain command was killed by Ctrl-C. The terminal sends it to the
+ * whole foreground process group, so it reaches the keychain program too.
+ */
+export class KeychainInterrupted extends ConfigError {
+  override name = "KeychainInterrupted";
+}
+
+const SERVICE = "amika-hostd";
+const LABELS: Record<SecretName, string> = {
+  "api-key": "Amika API key for amika-hostd",
+  "secret-key": "amika-hostd secret key",
+};
+/** Long enough for a keychain to ask the operator to unlock it. */
+const KEYCHAIN_TIMEOUT_MS = 60_000;
 
 /**
  * API keys are sent as bearer tokens, so keep them to printable ASCII without
@@ -83,7 +119,7 @@ export function openSecrets(
     return { kind, apiKey: fileSecret(apiKeyFilePath(env), deps) };
   }
   const keychain =
-    deps.keychain === undefined ? systemKeychain() : deps.keychain;
+    deps.keychain === undefined ? systemKeychain(deps) : deps.keychain;
   if (!keychain) {
     throw new ConfigError(
       `No keychain on this machine to keep amika-hostd's secrets in. To keep them in files only you can read instead, set \`secret_store = "file"\` in ${configFilePaths(env)[0]}, or ${ENV_NAMES.secretStore[0]}=file`,
@@ -101,12 +137,126 @@ export function openSecrets(
   };
 }
 
+/** This platform's keychain, if amika-hostd supports one here. */
+function systemKeychain(deps: CredentialDeps): Keychain | undefined {
+  const run = deps.run ?? runProgram;
+  switch (deps.platform ?? process.platform) {
+    case "darwin":
+      return macOSKeychain(run);
+    default:
+      return undefined;
+  }
+}
+
 /**
- * This platform's keychain, if amika-hostd supports one here. None yet: the
- * file store, chosen explicitly, is the only one.
+ * The macOS login keychain, through `security`. Items are generic passwords
+ * under service `amika-hostd`, one account per secret. Every command names
+ * the login keychain: without one, `security` uses the default keychain,
+ * which a user can change to another (separately locked, or temporary) one.
  */
-function systemKeychain(): Keychain | undefined {
-  return undefined;
+function macOSKeychain(run: Runner): Keychain {
+  const description = "your macOS login keychain";
+  const refuse = (what: string) =>
+    new ConfigError(
+      `Cannot ${what} ${description}; unlock it and run \`amika-hostd setup\` again, or set \`secret_store = "file"\` to keep secrets in files`,
+    );
+  let loginKeychain: string | undefined;
+  /** The login keychain's path, as `security login-keychain` prints it. */
+  const login = (): string => {
+    if (loginKeychain !== undefined) return loginKeychain;
+    const result = checked(run("security", ["login-keychain"]));
+    // It prints the path quoted and indented: `    "/Users/…/login.keychain-db"`.
+    const path = /"(.+)"/.exec(result.stdout)?.[1] ?? result.stdout.trim();
+    if (result.status !== 0 || path === "") {
+      // Unlocking cannot help here: there is no login keychain to unlock.
+      throw new ConfigError(
+        `Cannot find ${description}, so amika-hostd has nowhere to keep its secrets; set \`secret_store = "file"\` to keep them in files`,
+      );
+    }
+    loginKeychain = path;
+    return path;
+  };
+  return {
+    description,
+    get(name) {
+      const result = checked(
+        run("security", [
+          "find-generic-password",
+          "-s",
+          SERVICE,
+          "-a",
+          name,
+          "-w",
+          login(),
+        ]),
+      );
+      const value = result.status === 0 ? result.stdout.trim() : "";
+      if (value !== "") return value;
+      // 44 is errSecItemNotFound; anything else (a locked keychain, a
+      // dismissed prompt) is a keychain that cannot be read.
+      if (result.status === 44) return undefined;
+      throw refuse(`read the ${LABELS[name]} from`);
+    },
+    set(name, value) {
+      // The value is quoted into a `security -i` command; nothing a secret or
+      // API key may hold (printable ASCII without spaces) needs more, but
+      // quotes and backslashes would.
+      if (!/^[\x21-\x7e]+$/.test(value) || /["\\]/.test(value)) {
+        throw new ConfigError(
+          `The ${LABELS[name]} has spaces, quotes or backslashes, so it cannot go in ${description}; set \`secret_store = "file"\` to keep it in a file`,
+        );
+      }
+      // `security -i` reads the command from stdin, which keeps the value
+      // out of the process list. Its exit status does not report a failed
+      // command, so read the value back to confirm it was stored.
+      checked(
+        run(
+          "security",
+          ["-i"],
+          `add-generic-password -U -s ${SERVICE} -a ${name} -l "${LABELS[name]}" -w "${value}" ${quoted(login())}\n`,
+        ),
+      );
+      if (this.get(name) !== value)
+        throw refuse(`store the ${LABELS[name]} in`);
+    },
+  };
+}
+
+/**
+ * `text` as one double-quoted word for a `security -i` command line, whose
+ * parser takes `\\` and `\"` as escapes inside quotes. For the keychain path,
+ * which can hold spaces.
+ */
+function quoted(text: string): string {
+  return `"${text.replace(/["\\]/g, (char) => `\\${char}`)}"`;
+}
+
+function runProgram(
+  command: string,
+  args: readonly string[],
+  input?: string,
+): RunResult {
+  const result = spawnSync(command, args, {
+    input,
+    encoding: "utf8",
+    timeout: KEYCHAIN_TIMEOUT_MS,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    signal: result.signal,
+    error: result.error,
+  };
+}
+
+/** `result`, unless the operator's Ctrl-C killed the program. */
+function checked(result: RunResult): RunResult {
+  if (result.signal === "SIGINT") {
+    throw new KeychainInterrupted("the keychain command was interrupted");
+  }
+  return result;
 }
 
 function fileSecret(file: string, deps: CredentialDeps): Secret {
