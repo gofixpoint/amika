@@ -12,6 +12,8 @@ import { mapSmolState, smolOperations } from "./internal/operations";
 export {
   SmolApiError,
   SmolClient,
+  execSchema,
+  filePath,
   machinePath,
   machineSchema,
 } from "./internal/client";
@@ -19,6 +21,7 @@ export {
   SmolPortsError,
   mapSmolState,
   smolOperations,
+  type SmolCreateInput,
 } from "./internal/operations";
 
 /** Construct the public resource API, with an injectable HTTP transport. */

@@ -18,6 +18,7 @@ import {
 } from "./config.js";
 import { openSecrets as openSecretStore } from "./credentials.js";
 import { DaemonError } from "./daemon.js";
+import type { MachineRuntime } from "./machine-runtime.js";
 import type { RunningServer } from "./server.js";
 import type { ManagedSmolvm, SmolvmDeps } from "./smolvm-serve.js";
 
@@ -98,7 +99,13 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     self: ["node", "cli.js"],
     shutdownSignal: vi.fn(() => ready),
     loadConfigFile: vi.fn((): HostdConfigFile | undefined => undefined),
-    startServer: vi.fn(async (_config: HostdConfigWith<"secretKey">) => server),
+    startServer: vi.fn(
+      async (
+        _config: HostdConfigWith<"secretKey">,
+        _runtime: MachineRuntime,
+        _options?: { servicesFile?: string },
+      ) => server,
+    ),
     startInBackground: vi.fn(async () => ({ pid: 77, port: 4000 })),
     startSmolvm: vi.fn(
       async (
@@ -144,6 +151,29 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
   };
 }
 
+/**
+ * Run a command, then list machines through the runtime it handed
+ * `startServer`, returning the URL that listing requested. The runtime takes
+ * the global `fetch` when it is built, so it is stubbed around both.
+ */
+async function smolvmUrl(
+  args: string[],
+  deps: ReturnType<typeof harness>["deps"],
+): Promise<string> {
+  const fetcher = vi.fn(async (_url: string | URL | Request) =>
+    Response.json({ machines: [] }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    expect(await runCli(args, deps)).toBe(0);
+    expect(await deps.startServer.mock.calls[0][1].list()).toEqual([]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  return String(fetcher.mock.calls[0][0]);
+}
+
 describe("runCli", () => {
   it("backgrounds `up` by default, forwarding only the given flags", async () => {
     const { deps, out } = harness();
@@ -185,6 +215,7 @@ describe("runCli", () => {
       out.splice(0, args[0] === "up" ? 2 : 0);
       expect(deps.startServer).toHaveBeenCalledWith(
         expect.objectContaining({ host: "0.0.0.0", port: 3020 }),
+        expect.anything(),
         { servicesFile: "/state/amika-hostd/services.json" },
       );
       expect(deps.claimPidFile).toHaveBeenCalledWith(
@@ -627,9 +658,12 @@ describe("managing smolvm", () => {
   it("forwards to the port smolvm ended up on", async () => {
     const { deps, out, smolvm } = harness();
     smolvm.apiUrl = "http://127.0.0.1:23021";
-    expect(await runCli(["serve", "--smolvm"], deps)).toBe(0);
+    expect(await smolvmUrl(["serve", "--smolvm"], deps)).toBe(
+      "http://127.0.0.1:23021/api/v1/machines",
+    );
     expect(deps.startServer).toHaveBeenCalledWith(
       expect.objectContaining({ smolApiUrl: "http://127.0.0.1:23021" }),
+      expect.anything(),
       expect.anything(),
     );
     expect(out[0]).toBe(
@@ -637,10 +671,28 @@ describe("managing smolvm", () => {
     );
   });
 
+  it("`up --fg` runs machines on the smolvm it started", async () => {
+    const { deps, smolvm } = harness({
+      ...ENV,
+      SMOL_API_URL: "http://127.0.0.1:9090",
+    });
+    smolvm.apiUrl = "http://127.0.0.1:9091";
+    expect(await smolvmUrl(["up", "--fg"], deps)).toBe(
+      "http://127.0.0.1:9091/api/v1/machines",
+    );
+  });
+
   it("plain `serve` forwards to SMOL_API_URL or the fixed default", async () => {
     const { deps } = harness();
-    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(await smolvmUrl(["serve"], deps)).toBe(
+      "http://127.0.0.1:23020/api/v1/machines",
+    );
     expect(deps.startServer.mock.calls[0][0].smolApiUrl).toBeUndefined();
+
+    const custom = harness({ ...ENV, SMOL_API_URL: "http://127.0.0.1:9090" });
+    expect(await smolvmUrl(["serve"], custom.deps)).toBe(
+      "http://127.0.0.1:9090/api/v1/machines",
+    );
   });
 
   it("starts smolvm for `serve` only with --smolvm", async () => {
@@ -1109,6 +1161,7 @@ describe("setup", () => {
     expect(deps.startServer).toHaveBeenCalledWith(
       expect.objectContaining({ secretKey: SECRET }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -1171,6 +1224,7 @@ describe("setup", () => {
     expect(deps.startServer).toHaveBeenCalledWith(
       expect.objectContaining({ secretKey: SECRET }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -1184,6 +1238,7 @@ describe("setup", () => {
     expect(deps.credentials.get).not.toHaveBeenCalled();
     expect(deps.startServer).toHaveBeenCalledWith(
       expect.objectContaining({ secretKey: SECRET }),
+      expect.anything(),
       expect.anything(),
     );
   });

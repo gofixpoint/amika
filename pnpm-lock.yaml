@@ -29,6 +29,9 @@ importers:
 
   js/amika-hostd:
     dependencies:
+      '@amika/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
       '@hono/node-server':
         specifier: 1.19.15
         version: 1.19.15(hono@4.13.9)

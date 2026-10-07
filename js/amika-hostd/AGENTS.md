@@ -6,8 +6,9 @@ daemon serves `GET /health`, the versioned rig API under `/v0beta1/rigs`
 (machines and their named services), the Smol-compatible `/api/v1/machines`
 API for older control planes, and
 registers itself with the Amika control plane when started with `up`. `up`
-also starts the `smolvm serve` process the API forwards to, and `down` stops
-both.
+also starts the `smolvm serve` process the API runs machines on (through the
+`smol` sandbox provider; see [Machine runtime](#machine-runtime)), and `down`
+stops both.
 
 ## Installation
 
@@ -52,11 +53,15 @@ On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. `--dry-run` prints the plan. Nothing else needs to run alongside
 the daemon: `amika-hostd up` starts smolvm itself (see [smolvm](#smolvm)).
 
-The daemon is one ESM file, built by `pnpm --filter @amika/hostd bundle`
-(`scripts/bundle.mjs`, esbuild with every npm dependency inlined except
-`smolmachines`, which finds its native files on disk beside its own and so is
-installed in `node_modules`), so it runs under plain `node` with no
-`node_modules`; `src/bundle.test.ts` checks that. `scripts/package-release.sh
+The daemon is one ESM file, built by `pnpm --filter @amika/hostd build`
+(`scripts/bundle.mjs`, esbuild with every npm dependency inlined, including
+the `smol` provider from the workspace's `@amika/sandbox`), so it runs under
+plain `node` with no `node_modules`; `src/bundle.test.ts` checks that. The
+bundle leaves `smolmachines` external (it finds its native files on disk
+beside its own), but the daemon does not load it yet: it is shipped for the
+planned move from `smolvm serve` to that embedded engine. `@amika/sandbox` is
+TypeScript source resolved bundler-style, so hostd typechecks with
+`moduleResolution: "bundler"` and has no `tsc` emit. `scripts/package-release.sh
 <version> [out-dir]` wraps the bundle, the example config, the `smolmachines`
 package at the exact version `package.json` pins, and `engines.sha256` (each
 platform's engine package, fetched with `npm pack`) in one tarball for every
@@ -87,8 +92,8 @@ key. No other external services or credentials are required to serve locally.
 
 ```bash
 curl -H "Authorization: Bearer $AMIKA_HOSTD_SECRET_KEY" http://127.0.0.1:3020/health
-pnpm --filter @amika/hostd build
-pnpm --filter @amika/hostd start   # node dist/index.js up --fg
+pnpm --filter @amika/hostd build   # dist/bundle/amika-hostd.mjs
+pnpm --filter @amika/hostd start   # node dist/bundle/amika-hostd.mjs up --fg
 ```
 
 ## Commands
@@ -253,8 +258,7 @@ start while it names a live daemon. The daemon sets `process.title` to
 `amika-hostd`; where `/proc` exists, a pidfile naming any other process is
 treated as stale, since the pidfile outlives reboots and pids are reused. An
 empty `--host` is rejected, since it would bind every interface. Stop a
-background daemon with `amika-hostd down`. `build` uses
-`tsconfig.build.json`, which leaves tests out of `dist/`.
+background daemon with `amika-hostd down`.
 
 ## smolvm
 
@@ -316,6 +320,51 @@ program: `amika-hostd` (the daemon's title) for the daemon, and `smolvm` or
 pidfile naming a live process that is not confirmed is left alone, and `down`
 says to remove it if it is stale, as `up` does. A `smolvm.pid` and
 `smolvm.url` naming a pid that has exited are removed.
+
+## Machine runtime
+
+`src/internal/machine-runtime.ts` serves the machine API through the `smol`
+sandbox provider from the workspace's `@amika/sandbox`
+(`js/sandbox/src/providers/smol`, imported as `@amika/sandbox/smol`), pointed
+at the smolvm this daemon started (or `SMOL_API_URL` for plain `serve`).
+Create, delete, file writes and service ports go through the provider's
+resource surface, translated to and from `smolvm serve`'s shapes, which the
+control plane's `amika-hostd` provider expects. Machine info (get and list),
+start and stop, exec and file reads go through the provider's exported smolvm
+client instead, because the machine API's contract carries what the resource
+surface drops: each machine's published `ports`, the machine smolvm answers a
+start or stop with (so a successful start never hinges on a second request
+whose failure would make a create through hostd delete the machine), exec as
+argv with any `user`, and a file's exact bytes and type (JSON for a
+directory), streamed through rather than buffered. Machine and exec replies
+are validated only for the fields hostd reads and otherwise passed through
+whole, so smolvm's other fields (a machine's `image`, `network`, `mounts`;
+exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
+
+- The provider's network setting is per provider, so hostd builds create
+  operations with networking and without, and creates each machine with the
+  one its request asks for.
+- Create also starts the machine (the provider's create does both). It goes
+  through the provider's create operation (`smolOperations`) rather than its
+  resource surface, whose create takes all three of cpus, memory and disk or
+  none: hostd sends only the sizes a request names, so smolvm picks the rest
+  itself, from the image's manifest when it has one (a packed image's sizes,
+  or a checkpoint's, which refuses any others) or its defaults.
+- Host ports are picked and published by the provider. Service routes
+  ask it for a running machine's host port (`services.refreshAll`), and
+  `PUT .../services` checks the same way that every port is one the machine
+  published at create, refusing (`409`) any other. It never reconciles the
+  provider's routes, which refuses to drop a port smolvm cannot unpublish:
+  hostd routes by name, so a dropped name is simply no longer routed, and its
+  port stays published on loopback, unreachable through hostd.
+- The provider treats deleting a missing machine as success; hostd answers
+  `404` for one, as `smolvm serve` does.
+- Every request to smolvm refuses redirects (`redirect: "error"`), so exec
+  bodies (commands, environment, stdin) and uploaded files are never resent to
+  wherever something answering at `SMOL_API_URL` points them.
+- A request smolvm refuses keeps smolvm's status; a timeout answers `504` and
+  an unreachable smolvm `502`. Messages stay fixed, since they can echo
+  commands.
 
 ## Configuration
 
@@ -399,9 +448,10 @@ the host's secret key; hostd checks the key and routes
   to a running rig whose `amikad` is on port 60999. `amikad` checks the
   connect token the control plane gave the CLI; the key never leaves the
   control plane. Everything else still needs the key.
-- Create takes `services: [{ name, port }]`. hostd publishes the ports through
-  smolvm and keeps each machine's name-to-port map in `services.json`
-  (`src/internal/service-registry.ts`), since smolvm stores no names.
+- Create takes `services: [{ name, port }]`. The `smol` provider publishes
+  each port on a host loopback port it picks, and hostd keeps each machine's
+  name-to-port map in `services.json` (`src/internal/service-registry.ts`),
+  since smolvm stores no names.
   `PUT /v0beta1/rigs/<name>/services` replaces the map later (the
   provider's `syncRoutes`), on ports published at create.
 
