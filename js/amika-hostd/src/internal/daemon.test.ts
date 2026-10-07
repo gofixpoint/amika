@@ -112,7 +112,10 @@ async function liveProcess(title?: string): Promise<ChildProcess> {
 const hasProc = existsSync(`/proc/${process.pid}/cmdline`);
 
 describe("receiveSecretKey", () => {
-  /** A child that waits for the secret key and prints it, or the error. */
+  /**
+   * A child that asks for the secret key and prints it, or the error. Its
+   * request arrives as a message once it is waiting.
+   */
   function receiver(timeoutMs = 5000) {
     return runNode(
       `const { receiveSecretKey } = await import(process.argv[1]);
@@ -125,8 +128,10 @@ describe("receiveSecretKey", () => {
     );
   }
 
-  it("takes the secret key the launching `up` sends", async () => {
+  it("asks the launching `up` for the secret key, and takes it", async () => {
     const child = receiver();
+    const [request] = await once(child, "message");
+    expect(request).toEqual({ type: "want-secret-key" });
     child.send({ type: "secret-key", secretKey: "s".repeat(64) });
     expect(await finished(child)).toEqual({
       stdout: `key:${"s".repeat(64)}`,
@@ -136,6 +141,8 @@ describe("receiveSecretKey", () => {
 
   it("fails if `up` goes away without sending it", async () => {
     const child = receiver();
+    // Once it has asked; disconnecting before that is the case below.
+    await once(child, "message");
     child.disconnect();
     const { stdout, code } = await finished(child);
     expect(code).toBe(1);
@@ -173,12 +180,15 @@ describe("startInBackground", () => {
       env,
       secretKey: "s".repeat(64),
     });
-    child.emit("message", { type: "ready", port: 3020 });
-    await started;
+    // Nothing is sent until the child asks, so it cannot arrive too early.
+    expect(child.send).not.toHaveBeenCalled();
+    child.emit("message", { type: "want-secret-key" });
     expect(child.send).toHaveBeenCalledWith({
       type: "secret-key",
       secretKey: "s".repeat(64),
     });
+    child.emit("message", { type: "ready", port: 3020 });
+    await started;
   });
 
   it("sends nothing without a secret key", async () => {
@@ -186,6 +196,7 @@ describe("startInBackground", () => {
     const started = startInBackground(["node"], paths(), {
       spawn: spawning(child),
     });
+    child.emit("message", { type: "want-secret-key" });
     child.emit("message", { type: "ready", port: 3020 });
     await started;
     expect(child.send).not.toHaveBeenCalled();

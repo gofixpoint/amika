@@ -86,10 +86,20 @@ export async function startInBackground(
   } finally {
     closeSync(log);
   }
-  if (secretKey !== undefined) {
+  // The child asks once it is listening, so the key cannot arrive before
+  // anything is there to take it.
+  const answer = (message: unknown) => {
+    if (secretKey === undefined) return;
+    if (!secretKeyRequestSchema.safeParse(message).success) return;
     child.send?.({ type: "secret-key", secretKey } satisfies SecretKeyMessage);
+  };
+  child.on("message", answer);
+  let port: number;
+  try {
+    port = await waitForReady(child, startupTimeoutMs, paths.logFile);
+  } finally {
+    child.off("message", answer);
   }
-  const port = await waitForReady(child, startupTimeoutMs, paths.logFile);
   child.disconnect?.();
   child.unref();
   return { pid: child.pid as number, port };
@@ -99,7 +109,7 @@ export async function startInBackground(
 const SECRET_KEY_TIMEOUT_MS = 10_000;
 
 /**
- * Wait for the secret key the launching `up` sends over IPC (see
+ * Ask the launching `up` for the secret key over IPC, and wait for it (see
  * `startInBackground`). `up` read it from the secret store, where an unlock
  * prompt can reach the operator; the detached child has no one to prompt.
  */
@@ -140,6 +150,13 @@ export function receiveSecretKey(
     }
     process.on("message", onMessage);
     process.once("disconnect", onDisconnect);
+    // Ask only now that the answer has somewhere to go.
+    process.send?.(
+      { type: "want-secret-key" } satisfies SecretKeyRequest,
+      (error) => {
+        if (error) onDisconnect();
+      },
+    );
   });
 }
 
@@ -364,6 +381,10 @@ const secretKeyMessageSchema = z.object({
 });
 
 type SecretKeyMessage = z.infer<typeof secretKeyMessageSchema>;
+
+const secretKeyRequestSchema = z.object({ type: z.literal("want-secret-key") });
+
+type SecretKeyRequest = z.infer<typeof secretKeyRequestSchema>;
 
 function waitForReady(
   child: ChildProcess,
