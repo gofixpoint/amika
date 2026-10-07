@@ -412,6 +412,39 @@ describe("regenerating the secret key", () => {
     expect(h.keychainSecret.value).toBe(OLD_SECRET);
   });
 
+  it.each([
+    ["AMIKA_HOSTD_API_URL", { AMIKA_HOSTD_API_URL: "https://other.amika.dev" }],
+    ["AMIKA_API_URL", { AMIKA_API_URL: "https://other.amika.dev" }],
+  ])(
+    "does not offer to regenerate while %s points at another Amika",
+    async (name, env) => {
+      const h = rerun({ answers: ["", ""], env });
+      await runSetup(h.deps);
+      expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
+        "Hostname [builder]: ",
+        "Update the stored Amika API key? [y/N] ",
+      ]);
+      expect(h.out).toContain(
+        `Not offering to regenerate the secret key: ${name} points at https://other.amika.dev, not https://app.amika.dev, which \`up\` uses without it. Set api_url in ${PATH}, or unset ${name}, to regenerate it.`,
+      );
+      expect(h.keychainSecret.value).toBe(OLD_SECRET);
+      expect(h.deps.registerHost).not.toHaveBeenCalled();
+    },
+  );
+
+  it("offers to regenerate when the environment's API URL matches the file's", async () => {
+    const h = rerun({
+      file: `${MARKED}api_url = "https://other.amika.dev"\n`,
+      env: { AMIKA_HOSTD_API_URL: "https://other.amika.dev" },
+    });
+    await runSetup(h.deps);
+    expect(h.keychainSecret.value).toBe(NEW_SECRET);
+    expect(h.deps.registerHost).toHaveBeenCalledWith(
+      expect.objectContaining({ apiUrl: "https://other.amika.dev" }),
+      expect.anything(),
+    );
+  });
+
   it("stops before changing anything when no API key is given to send it with", async () => {
     const h = rerun({ answers: ["", "y"], storedKey: undefined, secrets: [] });
     // No stored key, so setup asks for one; giving none stops it there.
