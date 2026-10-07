@@ -432,6 +432,42 @@ describe("regenerating the secret key", () => {
     },
   );
 
+  it.each(["AMIKA_HOSTD_API_KEY", "AMIKA_API_KEY"])(
+    "does not offer to regenerate while %s differs from the stored API key",
+    async (name) => {
+      const h = rerun({ answers: [""], env: { [name]: "amk_other_org" } });
+      await runSetup(h.deps);
+      expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
+        "Hostname [builder]: ",
+      ]);
+      expect(h.out).toContain(
+        `Not offering to regenerate the secret key: ${name} differs from the API key in the test store, which \`up\` uses without it, and may be for another organization. Unset ${name} to regenerate it.`,
+      );
+      expect(h.keychainSecret.value).toBe(OLD_SECRET);
+      expect(h.deps.registerHost).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["matches the stored one", "amk_stored"],
+    ["is the only one", undefined],
+  ])(
+    "offers to regenerate when the environment's API key %s, sending with it",
+    async (_, storedKey) => {
+      const h = rerun({
+        answers: ["", "y"],
+        storedKey,
+        env: { AMIKA_HOSTD_API_KEY: "amk_stored" },
+      });
+      await runSetup(h.deps);
+      expect(h.keychainSecret.value).toBe(NEW_SECRET);
+      expect(h.deps.registerHost).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: "amk_stored" }),
+        expect.anything(),
+      );
+    },
+  );
+
   it("offers to regenerate when the environment's API URL matches the file's", async () => {
     const h = rerun({
       file: `${MARKED}api_url = "https://other.amika.dev"\n`,

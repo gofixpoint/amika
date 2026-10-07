@@ -184,10 +184,12 @@ entered in the same run is saved only once Amika has taken the new secret key
 with it, so one Amika refuses (a typo, say) is not kept for the next run. A
 secret key set in the environment is never regenerated: the daemon would keep
 using it. Nor is one while `AMIKA_HOSTD_API_URL` (or `AMIKA_API_URL`) points
-at another Amika than the file's `api_url` (or the default): one API key is
-for one Amika, and `up` goes back to the file's once the variable is unset,
-where the host would keep the old key. After regenerating, setup says to
-restart a running daemon, which keeps the key `up` handed it.
+at another Amika than the file's `api_url` (or the default), or an API key in
+the environment differs from the stored one (it may be another
+organization's): the new key would reach only the environment's Amika or
+organization, and `up` goes back to the stored ones once the variable is
+unset, where the host would keep the old key. After regenerating, setup says
+to restart a running daemon, which keeps the key `up` handed it.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the

@@ -121,6 +121,7 @@ export async function runSetup(
       );
     }
     const apiUrlFromEnv = envName(deps.env, "apiUrl");
+    const apiKeyFromEnv = envName(deps.env, "apiKey");
     if (secretFromEnv !== undefined) {
       // The daemon would keep using the environment's secret, so a new one
       // here, and in Amika, would only lock Amika out.
@@ -136,6 +137,15 @@ export async function runSetup(
       // one. One API key is for one Amika, so it cannot go to both.
       deps.out(
         `Not offering to regenerate the secret key: ${apiUrlFromEnv} points at ${effective.apiUrl}, not ${saved.apiUrl}, which \`up\` uses without it. Set api_url in ${configPath}, or unset ${apiUrlFromEnv}, to regenerate it.`,
+      );
+    } else if (
+      apiKeyFromEnv !== undefined &&
+      differs(effective.apiKey, deps.secrets.apiKey.get())
+    ) {
+      // The same for an API key: one from another organization would send
+      // the new key there, while `up` goes back to the stored one's.
+      deps.out(
+        `Not offering to regenerate the secret key: ${apiKeyFromEnv} differs from the API key in ${deps.secrets.apiKey.description}, which \`up\` uses without it, and may be for another organization. Unset ${apiKeyFromEnv} to regenerate it.`,
       );
     } else if (
       await confirm(
@@ -400,6 +410,11 @@ function restoreSecret(
   return new ConfigError(
     `${error.message}; ${secretHome} still has the old secret key. If Amika's requests to this host start failing, ${again}.`,
   );
+}
+
+/** Whether a stored value exists and is not `value`. */
+function differs(value: string | undefined, stored: string | undefined) {
+  return stored !== undefined && stored !== value;
 }
 
 function capitalize(text: string): string {
