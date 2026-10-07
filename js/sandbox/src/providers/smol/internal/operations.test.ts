@@ -2,7 +2,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CreateSandboxProviderInput } from "../../provider";
 import { SmolClient } from "./client";
-import { mapSmolState, smolOperations } from "./operations";
+import { SandboxProviderUnsupportedError } from "../../provider";
+import type { SandboxService } from "../../../types";
+import { SmolPortsError, mapSmolState, smolOperations } from "./operations";
 
 const INPUT: CreateSandboxProviderInput = {
   name: "local-test",
@@ -35,6 +37,101 @@ function json(data: unknown, status = 200) {
 function body(fetcher: ReturnType<typeof harness>["fetcher"], index: number) {
   return JSON.parse(String(fetcher.mock.calls[index][1]?.body));
 }
+
+function service(name: string, containerPort: number): SandboxService {
+  return { name, url: "", hostPort: 0, containerPort, protocol: "tcp" };
+}
+
+describe("smol services", () => {
+  it("publishes each service's guest port once, on host ports it picks", async () => {
+    const { ops, fetcher } = harness([
+      json(MACHINE),
+      json({ ...MACHINE, state: "running" }),
+    ]);
+    const created = await ops.create({
+      ...INPUT,
+      services: [
+        service("web", 3000),
+        service("web-alias", 3000),
+        { ...service("amikad", 60999), urlScheme: "https" },
+      ],
+    });
+    const { ports, services } = body(fetcher, 0);
+    expect(services).toBeUndefined();
+    expect(ports.map((p: { guest: number }) => p.guest)).toEqual([3000, 60999]);
+    const [web, amikad] = ports as { host: number }[];
+    expect(web.host).not.toBe(amikad.host);
+    expect(created.services.map((s) => [s.hostPort, s.url])).toEqual([
+      [web.host, `http://127.0.0.1:${web.host}`],
+      [web.host, `http://127.0.0.1:${web.host}`],
+      [amikad.host, `https://127.0.0.1:${amikad.host}`],
+    ]);
+  });
+
+  it("leaves publishing to amika-hostd when it routes services by name", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => json(MACHINE));
+    const config = { network: true };
+    const ops = smolOperations(config, new SmolClient(config, fetcher), {
+      serviceRoutes: (services) =>
+        services.map((s) => ({ name: s.name, port: s.containerPort })),
+    });
+    await ops.create({ ...INPUT, services: [service("web", 3000)] });
+    const sent = body(fetcher as never, 0);
+    expect(sent.ports).toBeUndefined();
+    expect(sent.services).toEqual([{ name: "web", port: 3000 }]);
+  });
+
+  const PUBLISHED = { ...MACHINE, ports: [{ host: 41001, guest: 3000 }] };
+
+  it("refreshes local URLs from the machine's published ports", async () => {
+    const { ops } = harness([json(PUBLISHED)]);
+    const { services } = await ops.refreshUrls(INPUT.name, [
+      service("web", 3000),
+      service("other", 4000),
+    ]);
+    expect(services[0]).toMatchObject({
+      hostPort: 41001,
+      url: "http://127.0.0.1:41001",
+    });
+    expect(services[1]).toEqual(service("other", 4000));
+  });
+
+  it("accepts routes on exactly the published ports", async () => {
+    const { ops } = harness([json(PUBLISHED), json(PUBLISHED)]);
+    await ops.syncRoutes(INPUT.name, [service("site", 3000)]);
+    // Revoking one of two services on a port leaves the port routed.
+    await ops.syncRoutes(INPUT.name, [
+      service("site", 3000),
+      service("admin", 3000),
+    ]);
+  });
+
+  it.each([
+    [
+      "a port the machine did not publish",
+      [service("api", 4000)],
+      "does not publish 4000",
+    ],
+    ["dropping a published port", [], "still publishes 3000"],
+  ])("refuses %s", async (_label, desired, message) => {
+    const { ops } = harness([json(PUBLISHED)]);
+    const failure = await ops
+      .syncRoutes(INPUT.name, desired)
+      .catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(SmolPortsError);
+    expect((failure as Error).message).toContain(message);
+  });
+
+  it("refuses a service switched to UDP without asking smolvm", async () => {
+    const { ops, fetcher } = harness([]);
+    await expect(
+      ops.syncRoutes(INPUT.name, [
+        { ...service("dns", 3000), protocol: "udp" },
+      ]),
+    ).rejects.toBeInstanceOf(SandboxProviderUnsupportedError);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
 
 describe("smol operations", () => {
   it("creates and starts an image machine with resources and environment", async () => {
@@ -99,11 +196,11 @@ describe("smol operations", () => {
     {
       services: [
         {
-          name: "web",
+          name: "dns",
           url: "",
-          hostPort: 3000,
-          containerPort: 3000,
-          protocol: "tcp" as const,
+          hostPort: 0,
+          containerPort: 53,
+          protocol: "udp" as const,
         },
       ],
     },

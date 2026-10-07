@@ -83,14 +83,18 @@ optionally `SMOL_API_URL` (default `http://127.0.0.1:8080`) and `SMOL_NETWORK=tr
 That shared helper still requires `DAYTONA_API_KEY`; direct configuration as
 above does not need real cloud credentials.
 
-Service routing, SSH access, streamed output, snapshots, and automatic
-stop/delete timers are not implemented. (The `amika-hostd` provider reuses
-these operations and adds service routing, and with it SSH; see
-`js/amika-hostd/AGENTS.md`.) Pass an empty service list and omit
-timers (or set them to zero). The full provisioning `lifecycle` capability is
-true, since it needs only run-state control and exec: provisioning flows run on
-Smol but mint no service URLs. Nonempty service requests or nonzero timers fail
-before a VM is created.
+Services are TCP ports published at create: the provider picks a free host
+loopback port for each service's guest port and passes the mapping to smolvm,
+and the service's URL is `http://127.0.0.1:<host port>` (so it is reachable
+only from the smolvm host). smolvm cannot publish or unpublish a port later,
+so `syncRoutes` succeeds only when the desired services' ports are exactly the
+published ones, and UDP services are refused. (The `amika-hostd` provider
+reuses these operations but leaves publishing to hostd, which routes services
+by name; see `js/amika-hostd/AGENTS.md`.)
+
+SSH access, streamed output, snapshots, and automatic stop/delete timers are
+not implemented; omit timers (or set them to zero). Nonzero timers fail before
+a VM is created.
 
 Listings cover the runtime's machines, including machines created outside
 Amika. Smol has no provider label support: `labels` are not persisted and

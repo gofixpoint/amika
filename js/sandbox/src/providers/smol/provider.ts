@@ -15,7 +15,11 @@ export {
   machinePath,
   machineSchema,
 } from "./internal/client";
-export { mapSmolState, smolOperations } from "./internal/operations";
+export {
+  SmolPortsError,
+  mapSmolState,
+  smolOperations,
+} from "./internal/operations";
 
 /** Construct the public resource API, with an injectable HTTP transport. */
 export default function smolProvider(
@@ -47,6 +51,7 @@ const createProvider = defineProvider(
       },
       exec: { stdin: true, run: ops.run },
       files: { read: ops.read, write: ops.write },
+      services: { refreshUrls: ops.refreshUrls, syncRoutes: ops.syncRoutes },
       listing: { list: ops.list },
     };
   },
