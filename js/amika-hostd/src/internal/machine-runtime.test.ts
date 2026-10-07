@@ -3,6 +3,9 @@
  * `smolvm serve` reached through an injected `fetch`; no VM ever boots.
  */
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeError, providerRuntime } from "./machine-runtime.js";
 
@@ -134,6 +137,8 @@ function fakeSmolvm(
   );
   return {
     fetch: fetcher as typeof fetch,
+    /** The same fake, typed as a mock so tests can read its calls. */
+    fetchMock: fetcher,
     machines,
     files,
     received,
@@ -434,6 +439,54 @@ describe("providerRuntime", () => {
       expect(
         (await failure(runtime.exec("demo", { command: ["id"] }))).status,
       ).toBe(404);
+    });
+  });
+
+  describe("redirects", () => {
+    it("asks for redirects to fail on every smolvm request", async () => {
+      const { runtime, fetchMock: smolvm } = harness([
+        machine({ state: "running" }),
+      ]);
+      await runtime.get("demo");
+      await runtime.exec("demo", { command: ["cat"], stdin: "secret" });
+      await runtime.writeFile("demo", "/a", Buffer.from("bytes"));
+      await runtime.readFile("demo", "/a");
+      await runtime.create({ ...create, name: "fresh" });
+      expect(smolvm.mock.calls.length).toBeGreaterThan(5);
+      for (const [, init] of smolvm.mock.calls) {
+        expect(init?.redirect).toBe("error");
+      }
+    });
+
+    it("never resends a request to where smolvm redirects it", async () => {
+      // Something other than smolvm answering at its address, redirecting.
+      const elsewhere = vi.fn();
+      const target = createServer((_req, res) => {
+        elsewhere();
+        res.end("{}");
+      });
+      const redirector = createServer((_req, res) => {
+        const { port } = target.address() as AddressInfo;
+        res.writeHead(307, { Location: `http://127.0.0.1:${port}/` }).end();
+      });
+      target.listen(0, "127.0.0.1");
+      redirector.listen(0, "127.0.0.1");
+      await Promise.all([
+        once(target, "listening"),
+        once(redirector, "listening"),
+      ]);
+      try {
+        const { port } = redirector.address() as AddressInfo;
+        const runtime = providerRuntime({ apiUrl: `http://127.0.0.1:${port}` });
+        const error = await failure(
+          runtime.exec("demo", { command: ["cat"], stdin: "secret" }),
+        );
+        expect(error.status).toBe(502);
+        expect(elsewhere).not.toHaveBeenCalled();
+      } finally {
+        target.close();
+        redirector.close();
+      }
     });
   });
 

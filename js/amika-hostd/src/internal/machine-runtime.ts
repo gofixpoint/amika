@@ -128,8 +128,12 @@ const ROOT_USERS = new Set(["root", "0", "0:0"]);
 export function providerRuntime({
   apiUrl,
   requestTimeoutMs,
-  fetch: fetcher = fetch,
+  fetch: baseFetch = fetch,
 }: ProviderRuntimeConfig): MachineRuntime {
+  // Never follow a redirect from smolvm: it would resend exec bodies
+  // (commands, environment, stdin) and uploaded files to wherever it points.
+  const fetcher: typeof fetch = (input, init) =>
+    baseFetch(input, { ...init, redirect: "error" });
   const provider = (network: boolean) =>
     smolProvider({ apiUrl, network, requestTimeoutMs }, fetcher);
   const providers = { networked: provider(true), offline: provider(false) };

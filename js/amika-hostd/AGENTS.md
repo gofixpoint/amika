@@ -346,6 +346,9 @@ a directory).
   port stays published on loopback, unreachable through hostd.
 - The provider treats deleting a missing machine as success; hostd answers
   `404` for one, as `smolvm serve` does.
+- Every request to smolvm refuses redirects (`redirect: "error"`), so exec
+  bodies (commands, environment, stdin) and uploaded files are never resent to
+  wherever something answering at `SMOL_API_URL` points them.
 - A request smolvm refuses keeps smolvm's status; a timeout answers `504` and
   an unreachable smolvm `502`. Messages stay fixed, since they can echo
   commands.
