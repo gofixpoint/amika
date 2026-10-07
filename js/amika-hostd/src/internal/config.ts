@@ -22,8 +22,9 @@ export interface HostdFlags {
 export type SecretStoreKind = "keychain" | "file";
 
 /**
- * The keychain, where amika-hostd supports one (macOS). Where it does not,
- * commands that need a secret refuse, naming `secret_store = "file"`.
+ * The keychain, where amika-hostd supports one (macOS, and Linux with a
+ * session bus). Where it does not, commands that need a secret refuse,
+ * naming `secret_store = "file"`.
  */
 export const DEFAULT_SECRET_STORE: SecretStoreKind = "keychain";
 
@@ -47,6 +48,12 @@ export interface HostdConfig {
    */
   secretKeyInFile: boolean;
   secretStore: SecretStoreKind;
+  /**
+   * The TOML file sets `secret_store` itself. Setup writes it when it keeps
+   * the secret key in the keychain, so with "keychain" it marks a host whose
+   * secret key setup stored there.
+   */
+  secretStoreInFile: boolean;
   host: string;
   port: number;
   smolApiUrl?: string;
@@ -128,6 +135,7 @@ export function resolveConfig({
     secretStore: parseSecretStore(
       fromEnv("secretStore") ?? toml.secret_store ?? DEFAULT_SECRET_STORE,
     ),
+    secretStoreInFile: toml.secret_store !== undefined,
     host:
       parseHostFlag(flags.host) ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
     port: port === undefined ? DEFAULT_PORT : parsePort(port),

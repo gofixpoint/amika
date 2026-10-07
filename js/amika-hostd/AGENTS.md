@@ -139,8 +139,12 @@ It asks for the hostname, defaulting to the configured one, or else the
 machine's own hostname made valid (lowercased, `.local` dropped, other
 characters turned into `-`), re-asking until it is valid. When the host has no
 secret key it generates one (`randomBytes(32)`, hex), unless the environment
-sets one, which is saved instead (Amika may already know it). An existing
-secret key is kept. Then it asks for the Amika API key, with input hidden, or
+sets one, which is saved instead (Amika may already know it). With the
+keychain store, setup writes `secret_store = "keychain"` to mark that the
+keychain holds this host's secret key; when the file has that line but the
+keychain shows no key, setup first asks whether to generate one, since the
+key may be in a keychain that is only locked. (The hostname is no such mark:
+the installer seeds it.) An existing secret key is kept. Then it asks for the Amika API key, with input hidden, or
 on a rerun whether to replace the stored one; an API key in the environment is
 used instead, and setup does not ask.
 
@@ -184,9 +188,26 @@ chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
   in through `security -i` on stdin, so they never appear in the process
   list, and are read back to confirm they were stored. Exit 44 means "not
   there"; any other failure (a locked keychain, over SSH say) is an error
-  that says to unlock it or choose files. On a machine where amika-hostd
-  supports no keychain, every command that needs a secret refuses, naming
-  `secret_store = "file"`; it never falls back to a file on its own.
+  that says to unlock it or choose files. On a Linux desktop session
+  (`DBUS_SESSION_BUS_ADDRESS` set and not blank) it is the Secret Service
+  (GNOME Keyring, KWallet), through `secret-tool`, which takes values on
+  stdin; items carry `service=amika-hostd` and `account=<secret>`.
+  `secret-tool lookup` exits 1 silently both for no item and for a locked one
+  whose unlock prompt was dismissed, so a silent exit 1 is confirmed with
+  `secret-tool search --all` (which lists locked items without unlocking
+  them on GNOME Keyring and KWallet, and whose output is never shown): an
+  item there is refused as locked. KeePassXC hides a locked database's items
+  from the search too, so setup also asks before generating a new secret key
+  when config.toml has the `secret_store = "keychain"` setup wrote but the
+  keychain shows no secret key, and changes nothing on "no". Any other
+  failure is an error quoting secret-tool's stderr; a session bus with no
+  keyring daemon on it, as over SSH to a server, says to choose files rather
+  than to unlock anything. On a machine where amika-hostd supports no
+  keychain (Linux with no desktop or user session, so no
+  `DBUS_SESSION_BUS_ADDRESS`), every command that needs a secret refuses,
+  naming `secret_store = "file"`; it never falls back to a file on its own.
+  A bus GLib could find without that variable (under `sudo -u`, say) is not
+  used.
 - **`file`**, chosen explicitly: the API key in
   `$XDG_CONFIG_HOME/amika-hostd/api-key` and the secret key as `secret_key` in
   the TOML file, both mode `0600`. That is how `gh` and Docker keep

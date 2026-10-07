@@ -27,6 +27,7 @@ describe("resolveConfig", () => {
       secretKeyFrom: undefined,
       secretKeyInFile: false,
       secretStore: "keychain",
+      secretStoreInFile: false,
       host: "127.0.0.1",
       port: 3020,
       smolApiUrl: undefined,

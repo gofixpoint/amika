@@ -16,7 +16,10 @@ import {
   type HostdConfigFile,
   type HostdConfigWith,
 } from "./config.js";
-import { openSecrets as openSecretStore } from "./credentials.js";
+import {
+  openSecrets as openSecretStore,
+  type RunResult,
+} from "./credentials.js";
 import { DaemonError } from "./daemon.js";
 import type { MachineRuntime } from "./machine-runtime.js";
 import type { RunningServer } from "./server.js";
@@ -959,7 +962,7 @@ describe("setup", () => {
     expect(deps.writeConfigFile).not.toHaveBeenCalled();
   });
 
-  it("`setup` on Linux refuses with the real secret store, naming the override", async () => {
+  it("`setup` on Linux without a session bus refuses with the real secret store, naming the override", async () => {
     const { deps, err } = unconfigured([""], ["amk_123"]);
     const run = vi.fn();
     const linux: CliDeps = {
@@ -973,6 +976,33 @@ describe("setup", () => {
     );
     expect(run).not.toHaveBeenCalled();
     expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.writeConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("`setup` on a locked Linux keyring refuses, rather than replace the secret key", async () => {
+    const { deps, err } = unconfigured([""], ["amk_123"], {
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/bus",
+    });
+    // A locked item: `lookup` exits 1 silently, `search --all` still lists it.
+    const run = vi.fn(
+      (_command: string, args: readonly string[]): RunResult =>
+        args[0] === "search"
+          ? {
+              status: 0,
+              stdout: "[/org/freedesktop/secrets/collection/login/1]\n",
+            }
+          : { status: 1, stdout: "", stderr: "" },
+    );
+    const linux: CliDeps = {
+      ...deps,
+      openSecrets: (kind, env) =>
+        openSecretStore(kind, env, { platform: "linux", run }),
+    };
+    expect(await runCli(["setup"], linux)).toBe(1);
+    expect(err[0]).toMatch(
+      /^amika-hostd: The amika-hostd secret key is in your desktop keyring \(Secret Service\), but it is locked/,
+    );
+    expect(run.mock.calls.map(([, args]) => args[0])).not.toContain("store");
     expect(deps.writeConfigFile).not.toHaveBeenCalled();
   });
 
