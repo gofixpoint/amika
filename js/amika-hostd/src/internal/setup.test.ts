@@ -421,6 +421,42 @@ describe("regenerating the secret key", () => {
     expect(h.deps.registerHost).not.toHaveBeenCalled();
   });
 
+  it("saves a new API key only once Amika has taken the new secret key with it", async () => {
+    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_new"] });
+    h.deps.registerHost.mockImplementation(async (api) => {
+      expect(api.apiKey).toBe("amk_new");
+      expect(h.store.value).toBe("amk_stored");
+      return { host: HOST, created: false };
+    });
+    await runSetup(h.deps);
+    expect(h.store.value).toBe("amk_new");
+    expect(h.out).toContain("Stored the API key in the test store.");
+  });
+
+  it("does not save a new API key Amika refused, so a rerun asks for it again", async () => {
+    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_typo"] });
+    h.deps.registerHost.mockRejectedValue(
+      new Error("Amika rejected the API key"),
+    );
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      /^Amika rejected the API key; the test keychain \(secret key\) still has the old secret key\. .* The API key you entered was not saved either\.$/,
+    );
+    expect(h.store.set).not.toHaveBeenCalled();
+    expect(h.store.value).toBe("amk_stored");
+    expect(h.keychainSecret.value).toBe(OLD_SECRET);
+  });
+
+  it("does not save a new API key when the config cannot be written", async () => {
+    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_new"] });
+    h.deps.writeConfigFile.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      /nothing was sent to Amika\. The API key you entered was not saved either\.$/,
+    );
+    expect(h.store.set).not.toHaveBeenCalled();
+  });
+
   it("puts the old key back in the keychain when Amika fails", async () => {
     const h = rerun();
     h.deps.setHostSecret.mockRejectedValue(new Error("Amika is down"));

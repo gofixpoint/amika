@@ -179,10 +179,12 @@ written, the old key goes back in the keychain and nothing is sent. If sending
 fails, it puts the old key back where it keeps it (the keychain item, or
 `secret_key` in the file), names the hosts Amika already took the new key for,
 and says how to recover in case Amika applied it for the one that failed; if
-the old key cannot be put back, it says the new one stayed. A secret key set
-in the environment is never regenerated: the daemon would keep using it. After
-regenerating, setup says to restart a running daemon, which keeps the key `up`
-handed it.
+the old key cannot be put back, it says the new one stayed. A new API key
+entered in the same run is saved only once Amika has taken the new secret key
+with it, so one Amika refuses (a typo, say) is not kept for the next run. A
+secret key set in the environment is never regenerated: the daemon would keep
+using it. After regenerating, setup says to restart a running daemon, which
+keeps the key `up` handed it.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the

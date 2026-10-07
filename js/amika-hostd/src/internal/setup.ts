@@ -236,7 +236,18 @@ export async function runSetup(
   // say) leaves the config untouched; then the config. Both before Amika, so
   // a secret this host could not keep never reaches Amika.
   const write = deps.writeConfigFile ?? writePrivateFile;
-  if (apiKey !== undefined) deps.secrets.apiKey.set(apiKey);
+  // A new API key that sends a regenerated secret key is kept only once
+  // Amika has taken it: if Amika refuses it (a typo, say), a rerun must not
+  // find it stored and keep it by default.
+  const deferApiKey = old !== undefined && apiKey !== undefined;
+  /** `error` from storing or sending the new key, noting a dropped API key. */
+  const failed = (error: ConfigError) =>
+    deferApiKey
+      ? new ConfigError(
+          `${error.message} The API key you entered was not saved either.`,
+        )
+      : error;
+  if (apiKey !== undefined && !deferApiKey) deps.secrets.apiKey.set(apiKey);
   const storesSecret = keychainSecret && secretKey !== storedSecret;
   if (storesSecret) keychainSecret.set(secretKey);
   try {
@@ -245,11 +256,13 @@ export async function runSetup(
     // A regenerated key already in the keychain would be one Amika never
     // got; put the old one back.
     if (old === undefined || !storesSecret) throw error;
-    throw restoreSecret(
-      error as Error,
-      secretHome,
-      () => restore(false),
-      undefined,
+    throw failed(
+      restoreSecret(
+        error as Error,
+        secretHome,
+        () => restore(false),
+        undefined,
+      ),
     );
   }
   if (changedStore !== undefined) {
@@ -257,7 +270,7 @@ export async function runSetup(
       `Changed secret_store in ${configPath} from "${changedStore}" to "${store}", where setup kept the secrets.`,
     );
   }
-  if (apiKey !== undefined) {
+  if (apiKey !== undefined && !deferApiKey) {
     deps.out(`Stored the API key in ${deps.secrets.apiKey.description}.`);
   }
   if (storesSecret) {
@@ -281,14 +294,15 @@ export async function runSetup(
             : `Sent the new secret key for host ${target} to Amika.`,
         );
       } catch (error) {
-        throw restoreSecret(
-          error as Error,
-          secretHome,
-          () => restore(true),
-          sent,
+        throw failed(
+          restoreSecret(error as Error, secretHome, () => restore(true), sent),
         );
       }
     }
+  }
+  if (apiKey !== undefined && deferApiKey) {
+    deps.secrets.apiKey.set(apiKey);
+    deps.out(`Stored the API key in ${deps.secrets.apiKey.description}.`);
   }
 
   deps.out("");
