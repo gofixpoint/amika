@@ -8,7 +8,8 @@
 # hostname = "my-host"
 
 # Where `amika-hostd setup` keeps this host's secrets: the Amika API key, and
-# the secret key that authenticates Amika's requests to this daemon. By
+# the secret key that authenticates Amika's requests to this daemon (setup
+# generates it, and on a rerun can regenerate it and send it to Amika). By
 # default they live in the system keychain (the macOS login keychain, or the
 # Secret Service on a Linux desktop), and setup refuses on a machine without
 # one, such as a server with no desktop session.

@@ -148,10 +148,10 @@ installer seeds it.) When the environment chooses a store
 (`AMIKA_HOSTD_SECRET_STORE`) other than the one the file alone would (its
 `secret_store`, else the keychain default), setup writes `secret_store` to
 match where it kept the secrets, so the choice outlasts the variable, and says
-so when it replaces a different one. An existing secret key is kept. Then it
-asks for the Amika API key, with input hidden, or on a rerun whether to
-replace the stored one; an API key in the environment is used instead, and
-setup does not ask.
+so when it replaces a different one. An existing secret key is kept, but on a
+rerun setup asks whether to regenerate it. Then it asks for the Amika API key,
+with input hidden, or on a rerun whether to replace the stored one; an API key
+in the environment is used instead, and setup does not ask.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping
@@ -168,6 +168,19 @@ result and where to edit it. The new contents are parsed before anything is
 written, and the file is replaced atomically with mode `0600`
 (`src/internal/private-file.ts`). The secrets are stored first, so a secret
 that cannot be stored (a locked keychain, say) leaves the config untouched.
+
+Registration never changes a stored secret, so setup sends a regenerated
+secret key to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with
+`secret`, `setHostSecret`) for the hostname `up` will use: the environment's
+if it sets one. It stores the new key and writes the config first, so a key
+this host could not keep never reaches Amika. If sending fails, it puts the
+old key back where it keeps it (the keychain item, or `secret_key` in the
+file) and says how to recover in case Amika applied the new one anyway; if the
+old key cannot be put back, it says the new one stayed. A new hostname skips
+the send, since `up` registers it as a new host. A secret key set in the
+environment is never regenerated: the daemon would keep using it. After
+regenerating, setup says to restart a running daemon, which keeps the key `up`
+handed it.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the
