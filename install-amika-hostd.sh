@@ -431,7 +431,6 @@ seed_config() {
     return 0
   fi
   mkdir -p "$(dirname "$CONFIG_PATH")"
-  secret="$(generate_secret)"
   # Fill in this machine's hostname only when it is one Amika accepts
   # (src/internal/config.ts); otherwise leave the line for the operator.
   host_name="$(hostname 2>/dev/null | tr '[:upper:]' '[:lower:]')"
@@ -441,24 +440,15 @@ seed_config() {
   else
     host_name=""
   fi
-  # It holds the secret key, so only the daemon's user may read it.
+  # `amika-hostd setup` adds the secret key to it (unless secrets are kept in
+  # the keychain), so only the daemon's user may read it.
   (
     umask 077
-    sed -e "s/^secret_key = \"REPLACE_ME\"\$/secret_key = \"${secret}\"/" \
-      -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
+    sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
       "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
   )
   CONFIG_HOSTNAME="$host_name"
   echo "Wrote a config to ${CONFIG_PATH}"
-}
-
-# 32 random bytes as hex, the form `openssl rand -hex 32` prints.
-generate_secret() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 32
-  else
-    od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
-  fi
 }
 
 # Lowercase letters, digits, and hyphens in dot-separated labels of 1-63
@@ -538,15 +528,14 @@ print_next_steps() {
   echo ""
   echo "Next steps:"
   if [ -n "${CONFIG_HOSTNAME:-}" ]; then
-    echo "  1. Confirm this host registers as ${CONFIG_HOSTNAME}, and finish"
-    echo "     ${CONFIG_PATH}:"
+    echo "  1. Store your Amika API key, and confirm this host registers as"
+    echo "     ${CONFIG_HOSTNAME} (set in ${CONFIG_PATH}):"
   else
-    echo "  1. Set this host's hostname and finish ${CONFIG_PATH}:"
+    echo "  1. Store your Amika API key, and set or confirm this host's hostname"
+    echo "     in ${CONFIG_PATH}:"
   fi
   echo "       amika-hostd setup"
-  echo "  2. Export your Amika API key; it is read only from the environment:"
-  echo "       export AMIKA_HOSTD_API_KEY=<your Amika API key>"
-  echo "  3. Start the daemon, which starts smolvm with it (and runs setup first"
+  echo "  2. Start the daemon, which starts smolvm with it (and runs setup first"
   echo "     if you skipped step 1):"
   echo "       amika-hostd up"
   echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."

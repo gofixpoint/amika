@@ -1,13 +1,16 @@
 /**
- * `amika-hostd setup`: ask for the hostname, generate the secret key, and
- * write them, with default rig sizes and preset images on the first run, to
- * the TOML config. Running it again offers to change the hostname.
+ * `amika-hostd setup`: ask for the hostname and API key, generate the secret
+ * key, and write them, with default rig sizes and preset images on the first
+ * run: the secrets to the secret store (files, or the keychain), the rest
+ * to the TOML config. Running it again offers to change the hostname and API
+ * key.
  */
 import { randomBytes } from "node:crypto";
 import { hostname as osHostname } from "node:os";
 import {
   ConfigError,
   ENV_NAMES,
+  envName,
   configFilePaths,
   isDnsHostname,
   isValidSecretKey,
@@ -16,6 +19,7 @@ import {
   type HostdConfigFile,
   type HostSize,
 } from "./config.js";
+import { isValidApiKey, type Secrets } from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
 import type { Prompt } from "./prompt.js";
 
@@ -24,6 +28,10 @@ export interface SetupDeps {
   out: (line: string) => void;
   err: (line: string) => void;
   prompt: Prompt;
+  /** Like `prompt`, without echoing what the operator types. */
+  promptSecret: Prompt;
+  /** The store the config chose, already opened (see `openSecrets`). */
+  secrets: Secrets;
   loadConfigFile?: typeof loadConfigFileFromDisk;
   writeConfigFile?: (file: string, contents: string) => void;
   systemHostname?: () => string;
@@ -65,8 +73,15 @@ export async function runSetup(
   const usable = file && withoutInvalidSecret(file);
   const saved = resolveConfig({ file: usable });
   const effective = resolveConfig({ env: deps.env, file: usable });
+  // In the keychain, the secret key is an item there; a `secret_key` still
+  // in the file (an older setup's) is moved in. With the file store it stays
+  // in the file.
+  const keychainSecret = deps.secrets.secretKey;
+  const storedSecret = keychainSecret?.get();
   const firstRun =
-    saved.hostname === undefined && saved.secretKey === undefined;
+    saved.hostname === undefined &&
+    saved.secretKey === undefined &&
+    storedSecret === undefined;
 
   deps.out(`Setting up amika-hostd in ${configPath}`);
   deps.out("");
@@ -78,46 +93,83 @@ export async function runSetup(
     );
   }
 
-  let secretKey = saved.secretKey;
-  const secretFromEnv = ENV_NAMES.secretKey.find((name) => deps.env[name]);
-  if (secretKey === undefined && effective.secretKey !== undefined) {
+  const secretHome = keychainSecret?.description ?? configPath;
+  const secretFromEnv = envName(deps.env, "secretKey");
+  // The keychain's own item wins over one left in the file: setup put it
+  // there, so it is the one Amika has been sent.
+  const current = storedSecret ?? saved.secretKey;
+  let secretKey: string;
+  if (current !== undefined) {
+    secretKey = current;
+    if (keychainSecret && saved.secretKey !== undefined) {
+      deps.out(
+        storedSecret === undefined
+          ? `Moving the secret key from ${configPath} into ${secretHome}.`
+          : `Removing the secret_key in ${configPath}: ${secretHome} holds this host's secret key.`,
+      );
+    }
+  } else if (effective.secretKey !== undefined) {
     // The host may already be registered with the environment's secret, and
     // a fresh one would be unknown to Amika once the override is dropped.
     secretKey = effective.secretKey;
     deps.out(
-      `Saved the secret key from ${secretFromEnv} to the file, since Amika may already know it.`,
+      `Saved the secret key from ${secretFromEnv} to ${secretHome}, since Amika may already know it.`,
     );
-  } else if (secretKey === undefined) {
+  } else {
     secretKey = (
       deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"))
     )();
     deps.out("Generated a new secret key.");
+    if (saved.hostname !== undefined) {
+      // Registration never changes a stored secret, so a host Amika already
+      // knows keeps the old one there (a switch of `secret_store`, say).
+      deps.out(
+        `If ${saved.hostname} is already registered with Amika, Amika keeps the secret key it registered with and will be rejected until this host has that one; set it with ${ENV_NAMES.secretKey[0]} and run setup again.`,
+      );
+    }
   }
+
+  const apiKey = await askApiKey(deps);
 
   const contents = renderConfig(file?.contents, {
     hostname,
-    secretKey,
-    addDefaults: firstRun && Object.keys(saved.sizes).length === 0,
+    // In the keychain, the file keeps no secret key at all.
+    secretKey: keychainSecret ? undefined : secretKey,
+    // A config written from scratch always gets them, even when a secret
+    // survived in the keychain (the file was deleted, say).
+    addDefaults:
+      (file === undefined || firstRun) && Object.keys(saved.sizes).length === 0,
   });
-  // Check the result parses before writing it.
+  // Check the result parses before anything changes.
   const written = resolveConfig({ file: { path: configPath, contents } });
+  // The secrets first, so a secret that cannot be stored (a locked keychain,
+  // say) leaves the config untouched.
+  if (apiKey !== undefined) deps.secrets.apiKey.set(apiKey);
+  if (keychainSecret && secretKey !== storedSecret) {
+    keychainSecret.set(secretKey);
+  }
   writeConfig(deps.writeConfigFile ?? writePrivateFile, configPath, contents);
+  if (apiKey !== undefined) {
+    deps.out(`Stored the API key in ${deps.secrets.apiKey.description}.`);
+  }
+  if (keychainSecret && secretKey !== storedSecret) {
+    deps.out(`Stored the secret key in ${secretHome}.`);
+  }
 
   deps.out("");
   deps.out(`Wrote ${configPath}:`);
   deps.out(`  hostname  ${hostname}`);
-  deps.out("  secret    (stored in the file, readable only by you)");
+  deps.out(
+    keychainSecret
+      ? `  secret    (in ${secretHome})`
+      : "  secret    (in the file, readable only by you)",
+  );
   deps.out("Rig sizes:");
   for (const line of describeSizes(written.sizes)) deps.out(`  ${line}`);
   deps.out("Images:");
   for (const line of describeImages(written.images)) deps.out(`  ${line}`);
   deps.out(`Edit ${configPath} to change these settings.`);
-  warnAboutEnvironment(deps);
-  if (!ENV_NAMES.apiKey.some((name) => deps.env[name])) {
-    deps.out(
-      `\`amika-hostd up\` also needs your Amika API key: export ${ENV_NAMES.apiKey[0]}=<your Amika API key>`,
-    );
-  }
+  warnAboutEnvironment(deps, secretHome);
   deps.out("");
   if (!fromUp) {
     deps.out("Start the daemon with `amika-hostd up`.");
@@ -142,6 +194,52 @@ async function askHostname(
     deps.err(
       `Invalid hostname: ${JSON.stringify(hostname)}. Use lowercase letters, digits, and hyphens in dot-separated labels.`,
     );
+  }
+}
+
+/**
+ * The new API key to store, or `undefined` to keep the stored one (or the
+ * environment's, which takes precedence over any stored key).
+ */
+async function askApiKey(deps: SetupDeps): Promise<string | undefined> {
+  const fromEnv = envName(deps.env, "apiKey");
+  if (fromEnv !== undefined) {
+    deps.out(
+      `Using the API key from ${fromEnv}; unset it to use a stored key instead.`,
+    );
+    return undefined;
+  }
+  if (
+    deps.secrets.apiKey.get() !== undefined &&
+    !(await confirm("Update the stored Amika API key? [y/N] ", deps))
+  ) {
+    return undefined;
+  }
+  for (;;) {
+    const answer = (
+      await deps.promptSecret("Amika API key (input is hidden): ")
+    )?.trim();
+    if (answer === undefined) throw stopped();
+    if (answer === "") continue;
+    if (isValidApiKey(answer)) return answer;
+    deps.err(
+      "That is not an API key: it must be printable ASCII with no spaces or quotes.",
+    );
+  }
+}
+
+async function confirm(question: string, deps: SetupDeps): Promise<boolean> {
+  for (;;) {
+    const answer = (await deps.prompt(question))?.trim().toLowerCase();
+    if (
+      answer === undefined ||
+      answer === "" ||
+      answer === "n" ||
+      answer === "no"
+    ) {
+      return false;
+    }
+    if (answer === "y" || answer === "yes") return true;
   }
 }
 
@@ -180,29 +278,49 @@ export function renderConfig(
     hostname,
     secretKey,
     addDefaults,
-  }: { hostname: string; secretKey: string; addDefaults: boolean },
+  }: {
+    hostname: string;
+    /** `undefined` to keep no secret key in the file (the keychain has it). */
+    secretKey: string | undefined;
+    addDefaults: boolean;
+  },
 ): string {
   const lines =
     contents === undefined
       ? [
-          "# amika-hostd configuration, written by `amika-hostd setup`. It holds",
-          "# the secret key, so keep it readable only by you (mode 600).",
+          "# amika-hostd configuration, written by `amika-hostd setup`.",
+          ...(secretKey === undefined
+            ? []
+            : [
+                "# It holds the secret key, so keep it readable only by you (mode 600).",
+              ]),
           "# Every setting is described in ~/.local/share/amika-hostd/config.example.toml.",
         ]
       : contents.replace(/\s+$/, "").split("\n");
+  // The key bare or quoted (`"hostname" = ...`), as TOML allows.
+  const keyPattern = (key: string) => `(${key}|"${key}"|'${key}')`;
+  const liveLine = (key: string) => new RegExp(`^\\s*${keyPattern(key)}\\s*=`);
+  const topEndOf = () => {
+    const start = lines.findIndex((line) => /^\s*\[/.test(line));
+    return start === -1 ? lines.length : start;
+  };
+  if (secretKey === undefined) {
+    const at = lines
+      .slice(0, topEndOf())
+      .findIndex((l) => liveLine("secret_key").test(l));
+    if (at !== -1) lines.splice(at, 1);
+  }
   const tableStart = lines.findIndex((line) => /^\s*\[/.test(line));
-  const topEnd = tableStart === -1 ? lines.length : tableStart;
+  const topEnd = topEndOf();
   const missing: string[] = [];
-  for (const [key, value] of [
-    ["hostname", hostname],
-    ["secret_key", secretKey],
-  ] as const) {
+  const settings: [string, string][] = [["hostname", hostname]];
+  if (secretKey !== undefined) settings.push(["secret_key", secretKey]);
+  for (const [key, value] of settings) {
     const line = `${key} = ${JSON.stringify(value)}`;
     const top = lines.slice(0, topEnd);
     // A live line, else the commented-out one the example documents.
-    // The key bare or quoted (`"hostname" = ...`), as TOML allows.
-    const name = `(${key}|"${key}"|'${key}')`;
-    const live = top.findIndex((l) => new RegExp(`^\\s*${name}\\s*=`).test(l));
+    const name = keyPattern(key);
+    const live = top.findIndex((l) => liveLine(key).test(l));
     const at =
       live !== -1
         ? live
@@ -289,15 +407,15 @@ function describeImages(images: Record<string, string>): string[] {
   return entries.map(([name, image]) => `${name.padEnd(width)}  ${image}`);
 }
 
-function warnAboutEnvironment(deps: SetupDeps) {
-  for (const [setting, names] of [
-    ["hostname", ENV_NAMES.hostname],
-    ["secret key", ENV_NAMES.secretKey],
+function warnAboutEnvironment(deps: SetupDeps, secretHome: string) {
+  for (const [setting, key, home] of [
+    ["hostname", "hostname", "the file"],
+    ["secret key", "secretKey", secretHome],
   ] as const) {
-    const name = names.find((candidate) => deps.env[candidate]);
+    const name = envName(deps.env, key);
     if (name !== undefined) {
       deps.out(
-        `Note: ${name} is set in your environment and overrides the ${setting} in the file.`,
+        `Note: ${name} is set in your environment and overrides the ${setting} in ${home}.`,
       );
     }
   }

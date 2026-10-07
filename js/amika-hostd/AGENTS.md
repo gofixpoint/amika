@@ -40,10 +40,10 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   against the release's `engines.sha256`. Any other platform, or Linux with a
   C library other than glibc 2.34+, fails before anything is downloaded;
 - a config: `config.example.toml` copied to the user config path below, with
-  `secret_key` set to a generated `openssl rand -hex 32` and `hostname` set to
-  this machine's lowercased `hostname` (left commented when it isn't a valid
-  hostname), unless a config already exists there or in `/etc`. It is never
-  overwritten.
+  `hostname` set to this machine's lowercased `hostname` (left commented when
+  it isn't a valid hostname), unless a config already exists there or in
+  `/etc`. It is never overwritten, and it holds no secret: `amika-hostd setup`
+  keeps the secrets (see [Secret storage](#secret-storage)).
 
 Its closing steps point the operator at `amika-hostd setup`, then
 `amika-hostd up` (which runs setup itself if it was skipped).
@@ -96,8 +96,8 @@ pnpm --filter @amika/hostd start   # node dist/index.js up --fg
 `src/index.ts` is the `amika-hostd` bin; `src/internal/cli.ts` parses commands
 with `node:util` `parseArgs` and takes every side effect as a dependency.
 
-- `amika-hostd setup` asks for the hostname, generates the secret key, and
-  writes them (see [Setup](#setup)).
+- `amika-hostd setup` asks for the hostname and API key, generates the secret
+  key, and writes them (see [Setup](#setup)).
 - `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
   it re-runs itself as `serve --smolvm` with `detached: true`, appends output, each line
   timestamped, to `$XDG_STATE_HOME/amika-hostd/log/amika-hostd.log` (else
@@ -125,39 +125,79 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
 ## Setup
 
 `src/internal/setup.ts` runs `amika-hostd setup`, which needs a terminal. It
-edits the TOML file `up` reads (the first that exists, else the user path).
+edits the TOML file `up` reads (the first that exists, else the user path),
+and keeps the secrets in the secret store (see [Secret storage](#secret-storage)).
+It opens the store first, so with `secret_store = "keychain"` on a machine
+with no keychain it refuses before asking anything.
 
 It asks for the hostname, defaulting to the configured one, or else the
 machine's own hostname made valid (lowercased, `.local` dropped, other
-characters turned into `-`), re-asking until it is valid. When the file has
-no secret key it generates one (`randomBytes(32)`, hex), unless the
-environment sets one, which is saved to the file instead (Amika may already
-know it). An existing secret key is kept.
+characters turned into `-`), re-asking until it is valid. When the host has no
+secret key it generates one (`randomBytes(32)`, hex), unless the environment
+sets one, which is saved instead (Amika may already know it). An existing
+secret key is kept. Then it asks for the Amika API key, with input hidden, or
+on a rerun whether to replace the stored one; an API key in the environment is
+used instead, and setup does not ask.
 
-It then replaces `hostname` and `secret_key` in place (a live line, bare or
-quoted, else the commented `# key = ...` one; otherwise it adds them above the
-first table), keeping everything else in the file. A `secret_key` too short
-to use, such as the example's `REPLACE_ME`, counts as unset and is replaced
-without asking. A config written from scratch also gets the example's default
-`[sizes]` and `[preset_images]` (`DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES`,
-which `setup.test.ts` keeps in step with `config.example.toml`). It prints
-the result and where to edit it. The new contents are parsed before anything
-is written, and the file is replaced atomically with mode `0600`
-(`src/internal/private-file.ts`).
+It then writes `hostname` in place (a live line, bare or quoted, else the
+commented `# hostname = ...` one; otherwise above the first table), keeping
+everything else in the file. With the file store it writes `secret_key` the
+same way; with the keychain it removes any `secret_key` line instead, moving
+that secret into the keychain if the keychain has none (the keychain's own
+item wins otherwise). A `secret_key` too short to use, such as an old
+example's `REPLACE_ME`, counts as unset. A config written from scratch also
+gets the example's default `[sizes]` and `[preset_images]` (`DEFAULT_SIZES`
+and `DEFAULT_PRESET_IMAGES`, which `setup.test.ts` keeps in step with
+`config.example.toml`). It prints the result and where to edit it. The new
+contents are parsed before anything is written, and the file is replaced
+atomically with mode `0600` (`src/internal/private-file.ts`). The secrets are
+stored first, so a secret that cannot be stored (a locked keychain, say)
+leaves the config untouched.
 
-`up` runs setup first whenever the hostname or secret key is missing and it
-has a terminal; without one it fails, naming `setup`. Like setup, it reads a
-`secret_key` too short to use (the example's `REPLACE_ME`) as missing, so a
-hand-copied example gets set up rather than rejected; other commands still
-reject it. Ctrl-C during setup
-exits 130 and changes nothing, since setup writes only after its last
-question.
+`up` runs setup first whenever the hostname, secret key or API key is
+missing, or the file still holds a `secret_key` while secrets are kept in the
+keychain, and it has a terminal; without one it fails, naming `setup`, or,
+when another secret key is in effect (the keychain's, or the environment's),
+warns that the file's is unused and carries on. Like setup, it reads a
+`secret_key` too short to use as missing, so a hand-copied old example gets
+set up rather than rejected; other commands still reject it. Ctrl-C at a
+question exits 130 and changes nothing.
 
-The secret key stays in `config.toml` (mode `0600`) rather than a keychain:
-the detached daemon reads it on every start, with no one there to unlock a
-keychain. This is how other unattended daemons keep their keys: WireGuard's
-`PrivateKey` in `/etc/wireguard/*.conf`, `tailscaled`'s state file, `sshd`'s
-host keys.
+### Secret storage
+
+hostd has two secrets: the Amika API key, which `up` and `register-url` use
+to call Amika, and the secret key, which Amika presents on every request to
+the daemon. `src/internal/credentials.ts` keeps both in one of two stores,
+chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
+
+- **`file`** (the default, `DEFAULT_SECRET_STORE`, until amika-hostd supports
+  a system keychain): the API key in `$XDG_CONFIG_HOME/amika-hostd/api-key`
+  and the secret key as `secret_key` in the TOML file, both mode `0600`. That
+  is how `gh` and Docker keep credentials without a keyring, and how
+  WireGuard and `sshd` keep their keys.
+- **`keychain`**, chosen explicitly: both are items in the system keychain. On
+  a machine where amika-hostd supports no keychain (so far, every machine),
+  every command that needs a secret refuses, naming `secret_store = "file"`;
+  it never falls back to a file on its own.
+
+The two are never mixed: a read never falls back from one store to the other,
+so a key left in one cannot shadow a newer one in the other. The environment
+(`AMIKA_HOSTD_API_KEY`, `AMIKA_HOSTD_SECRET_KEY`) overrides either store, and
+the store is opened only for a secret the environment does not set, so a
+command whose secrets are all exported runs on a machine with no keychain.
+Setup is the exception: it stores secrets, so it always opens the store. When
+setup generates a secret key for a host that already has a hostname, it warns
+that Amika may still hold the one the host first registered with.
+
+A person always starts the daemon, with `up`, so `up` reads the secrets (an
+unlock prompt can reach them) and hands the secret key to the background
+daemon over the IPC channel it already uses to wait for "ready"
+(`receiveSecretKey` in `src/internal/daemon.ts`, behind the internal
+`serve --secret-key-from-up`, which reads the file as `up` does, so a
+placeholder `secret_key` there cannot stop it). Neither secret goes in the
+daemon's environment, and the daemon never reads the store; smolvm and rigs get
+neither. `serve` run by hand reads the secret key from the store itself, and
+never the API key.
 
 ## Registration
 
@@ -275,17 +315,22 @@ says to remove it if it is stale, as `up` does. A `smolvm.pid` and
 `src/internal/config.ts` resolves every setting in one place. Each setting takes
 the first source that sets it: CLI flag, then environment, then TOML file.
 
-| Setting    | Flag     | Environment                                   | TOML         | Default                 |
-| ---------- | -------- | --------------------------------------------- | ------------ | ----------------------- |
-| API key    |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)   | required for Amika APIs |
-| API URL    |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`    | `https://app.amika.dev` |
-| Hostname   |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`   |                         |
-| Secret key |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key` |                         |
-| Bind host  | `--host` | `AMIKA_HOSTD_HOST`                            | `host`       | `127.0.0.1`             |
-| Port       | `--port` | `AMIKA_HOSTD_PORT`                            | `port`       | `3020`                  |
+| Setting      | Flag     | Environment                                   | TOML                           | Default                 |
+| ------------ | -------- | --------------------------------------------- | ------------------------------ | ----------------------- |
+| API key      |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)                     | in the secret store     |
+| API URL      |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`                      | `https://app.amika.dev` |
+| Hostname     |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`                     |                         |
+| Secret key   |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key` (file store only) | in the secret store     |
+| Secret store |          | `AMIKA_HOSTD_SECRET_STORE`                    | `secret_store`                 | `file`                  |
+| Bind host    | `--host` | `AMIKA_HOSTD_HOST`                            | `host`                         | `127.0.0.1`             |
+| Port         | `--port` | `AMIKA_HOSTD_PORT`                            | `port`                         | `3020`                  |
 
 Setting both names of an aliased pair to different values is an error, never a
-silent pick. The API key is environment-only: a TOML `api_key` fails startup.
+silent pick. A blank variable (empty, or only whitespace) sets nothing; code
+that asks which variable sets a setting uses `envName`, which applies the same
+rule, rather than testing `env[name]` itself. The API key never comes from TOML: a TOML `api_key` fails
+startup. Without one in the environment, the key `setup` stored is used (see
+[Secret storage](#secret-storage)).
 The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
 enforces, so a bad one fails locally instead of at registration.
 The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
@@ -296,8 +341,8 @@ and `serve --smolvm` start smolvm, by default the first free port from
 fixed `http://127.0.0.1:23020`) and `SMOL_REQUEST_TIMEOUT_MS` remain
 environment-only. `config.example.toml`
 is the template the installer seeds: every setting with a default is a live
-line, `secret_key = "REPLACE_ME"` deliberately fails validation until replaced,
-and only `hostname` is commented. Keep its comments short. `config.test.ts`
+line, and only `hostname` and `secret_store` are commented. It holds no
+`secret_key`: setup generates one. Keep its comments short. `config.test.ts`
 resolves it as seeded, so keep it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
 

@@ -38,6 +38,7 @@ function paths() {
 function fakeChild() {
   const child = Object.assign(new EventEmitter(), {
     pid: 4242,
+    send: vi.fn(() => true),
     disconnect: vi.fn(),
     unref: vi.fn(),
     kill: vi.fn(),
@@ -110,7 +111,97 @@ async function liveProcess(title?: string): Promise<ChildProcess> {
 
 const hasProc = existsSync(`/proc/${process.pid}/cmdline`);
 
+describe("receiveSecretKey", () => {
+  /**
+   * A child that asks for the secret key and prints it, or the error. Its
+   * request arrives as a message once it is waiting.
+   */
+  function receiver(timeoutMs = 5000) {
+    return runNode(
+      `const { receiveSecretKey } = await import(process.argv[1]);
+       receiveSecretKey(${timeoutMs}).then(
+         (key) => { console.log("key:" + key); process.exit(0); },
+         (error) => { console.log("error:" + error.message); process.exit(1); },
+       );`,
+      [],
+      { stdio: ["ignore", "pipe", "inherit", "ipc"] },
+    );
+  }
+
+  it("asks the launching `up` for the secret key, and takes it", async () => {
+    const child = receiver();
+    const [request] = await once(child, "message");
+    expect(request).toEqual({ type: "want-secret-key" });
+    child.send({ type: "secret-key", secretKey: "s".repeat(64) });
+    expect(await finished(child)).toEqual({
+      stdout: `key:${"s".repeat(64)}`,
+      code: 0,
+    });
+  });
+
+  it("fails if `up` goes away without sending it", async () => {
+    const child = receiver();
+    // Once it has asked; disconnecting before that is the case below.
+    await once(child, "message");
+    child.disconnect();
+    const { stdout, code } = await finished(child);
+    expect(code).toBe(1);
+    expect(stdout).toBe(
+      "error:the launching `amika-hostd up` exited before sending the secret key",
+    );
+  });
+
+  it("fails if nothing arrives in time", async () => {
+    const child = receiver(50);
+    const { stdout, code } = await finished(child);
+    expect(code).toBe(1);
+    expect(stdout).toBe(
+      "error:the launching `amika-hostd up` sent no secret key",
+    );
+  });
+
+  it("fails without a launching `up` at all", async () => {
+    const child = runNode(
+      `const { receiveSecretKey } = await import(process.argv[1]);
+       receiveSecretKey().catch((error) => console.log(error.message));`,
+    );
+    expect((await finished(child)).stdout).toBe(
+      "no launching `amika-hostd up` to get the secret key from",
+    );
+  });
+});
+
 describe("startInBackground", () => {
+  it("hands the child the secret key over IPC, not its environment", async () => {
+    const child = fakeChild();
+    const env = { PATH: "/usr/bin" };
+    const started = startInBackground(["node", "cli.js", "serve"], paths(), {
+      spawn: spawning(child),
+      env,
+      secretKey: "s".repeat(64),
+    });
+    // Nothing is sent until the child asks, so it cannot arrive too early.
+    expect(child.send).not.toHaveBeenCalled();
+    child.emit("message", { type: "want-secret-key" });
+    expect(child.send).toHaveBeenCalledWith({
+      type: "secret-key",
+      secretKey: "s".repeat(64),
+    });
+    child.emit("message", { type: "ready", port: 3020 });
+    await started;
+  });
+
+  it("sends nothing without a secret key", async () => {
+    const child = fakeChild();
+    const started = startInBackground(["node"], paths(), {
+      spawn: spawning(child),
+    });
+    child.emit("message", { type: "want-secret-key" });
+    child.emit("message", { type: "ready", port: 3020 });
+    await started;
+    expect(child.send).not.toHaveBeenCalled();
+  });
+
   it("detaches, logs to the log file, and resolves on the ready message", async () => {
     const child = fakeChild();
     const spawn = spawning(child);

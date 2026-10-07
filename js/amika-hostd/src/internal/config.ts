@@ -15,12 +15,38 @@ export interface HostdFlags {
   port?: string;
 }
 
+/**
+ * Where hostd keeps its secrets (the Amika API key and the secret key): plain
+ * files only their owner can read, or the system keychain.
+ */
+export type SecretStoreKind = "keychain" | "file";
+
+/**
+ * Files, until amika-hostd supports a system keychain to make the default:
+ * choosing "keychain" here, with no keychain to use, refuses.
+ */
+export const DEFAULT_SECRET_STORE: SecretStoreKind = "file";
+
 export interface HostdConfig {
-  /** Only ever read from the environment; never from the TOML file. */
+  /**
+   * From the environment; else the secret store fills it in (see
+   * `credentials.ts`). Never from the TOML file.
+   */
   apiKey?: string;
   apiUrl: string;
   hostname?: string;
+  /**
+   * From the environment, or `secret_key` in the TOML file; else the secret
+   * store fills it in. `secretKeyFrom` says which, if either.
+   */
   secretKey?: string;
+  secretKeyFrom?: "env" | "file";
+  /**
+   * The TOML file holds a usable `secret_key`, whether or not it is the one
+   * in effect: with the keychain store it never is (setup moves it there).
+   */
+  secretKeyInFile: boolean;
+  secretStore: SecretStoreKind;
   host: string;
   port: number;
   smolApiUrl?: string;
@@ -68,6 +94,7 @@ export const ENV_NAMES = {
   apiUrl: ["AMIKA_HOSTD_API_URL", "AMIKA_API_URL"],
   hostname: ["AMIKA_HOSTD_HOSTNAME"],
   secretKey: ["AMIKA_HOSTD_SECRET_KEY", "AMIKA_SECRET_KEY"],
+  secretStore: ["AMIKA_HOSTD_SECRET_STORE"],
   host: ["AMIKA_HOSTD_HOST"],
   port: ["AMIKA_HOSTD_PORT"],
 } as const;
@@ -85,11 +112,22 @@ export function resolveConfig({
   const toml = file ? parseConfigFile(file) : {};
   const fromEnv = (key: keyof typeof ENV_NAMES) => readEnv(env, key);
   const port = flags.port ?? fromEnv("port") ?? toml.port;
+  const envSecret = fromEnv("secretKey");
   return {
     apiKey: fromEnv("apiKey"),
     apiUrl: parseApiUrl(fromEnv("apiUrl") ?? toml.api_url ?? DEFAULT_API_URL),
     hostname: parseHostname(fromEnv("hostname") ?? toml.hostname),
-    secretKey: parseSecretKey(fromEnv("secretKey") ?? toml.secret_key),
+    secretKey: parseSecretKey(envSecret ?? toml.secret_key),
+    secretKeyFrom:
+      envSecret !== undefined
+        ? "env"
+        : toml.secret_key !== undefined
+          ? "file"
+          : undefined,
+    secretKeyInFile: toml.secret_key !== undefined,
+    secretStore: parseSecretStore(
+      fromEnv("secretStore") ?? toml.secret_store ?? DEFAULT_SECRET_STORE,
+    ),
     host:
       parseHostFlag(flags.host) ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
     port: port === undefined ? DEFAULT_PORT : parsePort(port),
@@ -111,7 +149,9 @@ export function requireSettings<K extends RequiredSetting>(
     throw new ConfigError(
       [
         "Missing required configuration:",
-        ...missing.map((key) => `  - ${describeSetting(key)}`),
+        ...missing.map(
+          (key) => `  - ${describeSetting(key, config.secretStore)}`,
+        ),
       ].join("\n"),
     );
   }
@@ -162,6 +202,7 @@ const tomlSizeSchema = z.strictObject({
 const configFileSchema = z.strictObject({
   hostname: z.string().optional(),
   secret_key: z.string().min(1).optional(),
+  secret_store: z.string().optional(),
   api_url: z.string().optional(),
   host: z.string().min(1).optional(),
   port: z.number().int().optional(),
@@ -181,7 +222,7 @@ function parseConfigFile(file: HostdConfigFile) {
   }
   if (typeof raw === "object" && raw !== null && "api_key" in raw) {
     throw new ConfigError(
-      `${file.path} must not contain api_key; set ${ENV_NAMES.apiKey[1]} in the environment instead`,
+      `${file.path} must not contain api_key; run \`amika-hostd setup\` to store it, or set ${ENV_NAMES.apiKey[0]} in the environment`,
     );
   }
   const parsed = configFileSchema.safeParse(raw);
@@ -213,6 +254,18 @@ function toHostSizes(
       },
     ]),
   );
+}
+
+/**
+ * The environment variable that sets `key`, as `resolveConfig` reads it: the
+ * first of its names that is set and not blank. Use it rather than testing
+ * `env[name]` directly, so callers agree with the resolved config.
+ */
+export function envName(
+  env: NodeJS.ProcessEnv,
+  key: keyof typeof ENV_NAMES,
+): string | undefined {
+  return ENV_NAMES[key].find((name) => nonEmpty(env[name]) !== undefined);
 }
 
 function readEnv(
@@ -294,6 +347,13 @@ export function isValidSecretKey(value: string): boolean {
 
 const SECRET_KEY = /^[\x21-\x7e]{32,}$/;
 
+function parseSecretStore(value: string): SecretStoreKind {
+  if (value === "keychain" || value === "file") return value;
+  throw new ConfigError(
+    `Invalid secret store: ${JSON.stringify(value)}. Use "file" or "keychain"`,
+  );
+}
+
 /** An empty `--host` would bind every interface, so reject it. */
 function parseHostFlag(value: string | undefined): string | undefined {
   if (value !== undefined && value.trim() === "") {
@@ -321,21 +381,24 @@ function parseTimeout(value: string | undefined): number {
   return timeout;
 }
 
-function describeSetting(key: RequiredSetting): string {
+function describeSetting(key: RequiredSetting, store: SecretStoreKind): string {
   switch (key) {
     case "apiKey":
-      return `API key: set ${ENV_NAMES.apiKey.join(" or ")} (environment only)`;
+      return `API key: run \`amika-hostd setup\`, or set ${ENV_NAMES.apiKey.join(" or ")}`;
     case "hostname":
       return `hostname: run \`amika-hostd setup\`, or set ${ENV_NAMES.hostname[0]} or \`hostname\` in config.toml`;
     case "secretKey":
-      return `secret key: run \`amika-hostd setup\`, or set ${ENV_NAMES.secretKey.join(" or ")} or \`secret_key\` in config.toml`;
+      return store === "file"
+        ? `secret key: run \`amika-hostd setup\`, or set ${ENV_NAMES.secretKey.join(" or ")} or \`secret_key\` in config.toml`
+        : `secret key: run \`amika-hostd setup\`, or set ${ENV_NAMES.secretKey.join(" or ")}`;
     default:
       return assertNever(key);
   }
 }
 
+/** `value`, unless it is unset or blank: a blank variable sets nothing. */
 function nonEmpty(value: string | undefined): string | undefined {
-  return value === undefined || value === "" ? undefined : value;
+  return value === undefined || value.trim() === "" ? undefined : value;
 }
 
 function isMissingFile(error: unknown): boolean {

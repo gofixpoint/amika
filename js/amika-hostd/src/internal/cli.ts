@@ -18,6 +18,7 @@ import {
   type HostdConfigWith,
   type HostdFlags,
 } from "./config.js";
+import { openSecrets as openSecretStore, type Secrets } from "./credentials.js";
 import {
   DaemonError,
   claimPidFile as claimPidFileOnDisk,
@@ -27,6 +28,7 @@ import {
   isDaemonRunning,
   isSmolvmRunning as isSmolvmProcess,
   notifyReady as notifyParent,
+  receiveSecretKey as receiveSecretKeyFromUp,
   readRunningPid,
   removeSmolvmFiles,
   removeStaleSmolvmFiles,
@@ -50,8 +52,8 @@ import {
 export const USAGE = `Usage: amika-hostd <command> [options]
 
 Commands:
-  setup               Set this host's hostname and secret key, and write
-                      default rig sizes to the config file
+  setup               Set this host's hostname, secret key and Amika API key,
+                      and write default rig sizes to the config file
   up                  Register this host with Amika, then start smolvm and the
                       daemon in the background (running setup first if needed)
   down                Stop the daemon and its smolvm, which stops every machine
@@ -92,6 +94,15 @@ export interface CliDeps {
    * is not a terminal, so `up` never blocks.
    */
   prompt?: Prompt;
+  /** `prompt` without echoing the answer; absent without a terminal. */
+  promptSecret?: Prompt;
+  /** Opens the secret store the config chose; defaults to `openSecrets`. */
+  openSecrets?: (
+    kind: HostdConfig["secretStore"],
+    env: NodeJS.ProcessEnv,
+  ) => Secrets;
+  /** How a background daemon gets the secret key from the `up` that started it. */
+  receiveSecretKey?: () => Promise<string>;
   writeConfigFile?: SetupDeps["writeConfigFile"];
   systemHostname?: SetupDeps["systemHostname"];
   generateSecretKey?: SetupDeps["generateSecretKey"];
@@ -123,18 +134,32 @@ export async function runCli(
         file: tolerant && file ? withoutInvalidSecret(file) : file,
       });
     };
-    let resolved = resolve({ tolerant: parsed.command === "up" });
+    // So does the daemon `up` starts: it uses the secret key `up` hands it,
+    // so a placeholder left in the file must not stop it.
+    const resolved = resolve({
+      tolerant:
+        parsed.command === "up" ||
+        (parsed.command === "serve" && parsed.secretKeyFromUp),
+    });
     switch (parsed.command) {
       case "up": {
         // Check first so a second `up` fails without calling Amika.
         ensureNotRunning(daemonPaths(deps.env).pidFile, deps.isRunning);
-        if (!hasSetupSettings(resolved) && deps.prompt) {
+        let filled = withSecrets(resolved, deps);
+        if (
+          (!hasSettings(filled.config) || filled.strayFileSecret) &&
+          deps.prompt &&
+          deps.promptSecret
+        ) {
           deps.out("amika-hostd is not set up yet, so running setup first.");
           const code = await setup(deps, { fromUp: true });
           if (code !== 0) return code;
-          resolved = resolve();
+          filled = withSecrets(resolve(), deps);
         }
-        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
+        const config = requireSettings(
+          placedSecrets(filled, deps),
+          REGISTRATION_SETTINGS,
+        );
         const host = await register(config, deps);
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
@@ -147,7 +172,7 @@ export async function runCli(
           });
           break;
         }
-        const port = await startBackground(parsed.flags, deps);
+        const port = await startBackground(parsed.flags, config, deps);
         try {
           return (await finish(port)) ? 0 : 1;
         } catch (error) {
@@ -158,17 +183,29 @@ export async function runCli(
           return 130;
         }
       }
-      case "serve":
-        await serveInForeground(
-          requireSettings(resolved, ["secretKey"]),
-          deps,
-          {
-            smolvm: parsed.smolvm,
-          },
-        );
+      case "serve": {
+        // A daemon `up` started gets the secret key from it; run by hand, it
+        // reads the secret store itself.
+        const secretKey = parsed.secretKeyFromUp
+          ? await (deps.receiveSecretKey ?? receiveSecretKeyFromUp)()
+          : undefined;
+        const config =
+          secretKey === undefined
+            ? placedSecrets(
+                withSecrets(resolved, deps, { apiKey: false }),
+                deps,
+              )
+            : { ...resolved, secretKey };
+        await serveInForeground(requireSettings(config, ["secretKey"]), deps, {
+          smolvm: parsed.smolvm,
+        });
         break;
+      }
       case "register-url": {
-        const config = requireSettings(resolved, REGISTRATION_SETTINGS);
+        const config = requireSettings(
+          placedSecrets(withSecrets(resolved, deps), deps),
+          REGISTRATION_SETTINGS,
+        );
         await saveUrl(config, await register(config, deps), parsed.url, deps);
         break;
       }
@@ -200,7 +237,13 @@ type ParsedCommand =
   | { help: false; command: "setup" }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
-  | { help: false; command: "serve"; smolvm: boolean; flags: HostdFlags }
+  | {
+      help: false;
+      command: "serve";
+      smolvm: boolean;
+      secretKeyFromUp: boolean;
+      flags: HostdFlags;
+    }
   | { help: false; command: "register-url"; url: string; flags: HostdFlags };
 
 const REGISTRATION_SETTINGS = ["apiKey", "hostname", "secretKey"] as const;
@@ -216,13 +259,21 @@ async function setup(
   deps: CliDeps,
   options: { fromUp?: boolean } = {},
 ): Promise<number> {
-  if (!deps.prompt) {
+  if (!deps.prompt || !deps.promptSecret) {
     throw new ConfigError(
       "`amika-hostd setup` asks questions, so run it in a terminal",
     );
   }
   try {
-    await runSetup({ ...deps, prompt: deps.prompt }, options);
+    await runSetup(
+      {
+        ...deps,
+        prompt: deps.prompt,
+        promptSecret: deps.promptSecret,
+        secrets: secretsFor(resolveTolerant(deps), deps),
+      },
+      options,
+    );
     return 0;
   } catch (error) {
     if (!(error instanceof PromptCancelled)) throw error;
@@ -231,9 +282,85 @@ async function setup(
   }
 }
 
-/** Whether the settings `setup` writes are all present. */
-function hasSetupSettings(config: HostdConfig): boolean {
-  return config.hostname !== undefined && config.secretKey !== undefined;
+/** The config as `up` and `setup` read it: a placeholder secret as unset. */
+function resolveTolerant(deps: CliDeps): HostdConfig {
+  const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  return resolveConfig({
+    env: deps.env,
+    file: file && withoutInvalidSecret(file),
+  });
+}
+
+function secretsFor(config: HostdConfig, deps: CliDeps): Secrets {
+  return (deps.openSecrets ?? openSecretStore)(config.secretStore, deps.env);
+}
+
+interface Filled {
+  config: HostdConfig;
+  /**
+   * With the keychain store, the config file still holds a `secret_key`,
+   * which is never used: setup moves it into the keychain, or removes it.
+   */
+  strayFileSecret?: string;
+}
+
+/**
+ * Fill in the secrets the environment does not set from the secret store
+ * the config chose. The environment always wins, and the store is opened
+ * only for a secret it does not set, so exported secrets work on a machine
+ * with no keychain. In the keychain, a `secret_key` left in the config file
+ * is never used. The background daemon never calls this; `up` hands it the
+ * secret key.
+ */
+function withSecrets(
+  config: HostdConfig,
+  deps: CliDeps,
+  { apiKey: wantApiKey = true } = {},
+): Filled {
+  const keychain = config.secretStore === "keychain";
+  let apiKey = config.apiKey;
+  let secretKey =
+    keychain && config.secretKeyFrom === "file" ? undefined : config.secretKey;
+  const needApiKey = wantApiKey && apiKey === undefined;
+  // With the file store a secret key not set by now is simply missing.
+  const needSecretKey = keychain && secretKey === undefined;
+  if (needApiKey || needSecretKey) {
+    const secrets = secretsFor(config, deps);
+    if (needApiKey) apiKey = secrets.apiKey.get();
+    if (needSecretKey) secretKey = secrets.secretKey?.get();
+  }
+  return {
+    config: { ...config, apiKey, secretKey },
+    strayFileSecret:
+      keychain && config.secretKeyInFile
+        ? (config.configPath ?? "the config file")
+        : undefined,
+  };
+}
+
+/**
+ * `filled.config`, after dealing with a stray `secret_key` in the file: a
+ * refusal naming setup if there is no other secret key, else a warning, so
+ * it is not left in plain text unnoticed.
+ */
+function placedSecrets(
+  { config, strayFileSecret }: Filled,
+  deps: CliDeps,
+): HostdConfig {
+  if (strayFileSecret === undefined) return config;
+  if (config.secretKey === undefined) {
+    throw new ConfigError(
+      `${strayFileSecret} holds secret_key, but secrets are kept in the keychain: run \`amika-hostd setup\` to move it there, or set \`secret_store = "file"\` to keep it in the file`,
+    );
+  }
+  deps.err(
+    `amika-hostd: ${strayFileSecret} still holds a secret_key, which is not used since secrets are kept in the keychain; run \`amika-hostd setup\` to remove it.`,
+  );
+  return config;
+}
+
+function hasSettings(config: HostdConfig): boolean {
+  return REGISTRATION_SETTINGS.every((key) => config[key] !== undefined);
 }
 
 function parseCommand(args: readonly string[]): ParsedCommand {
@@ -248,6 +375,8 @@ function parseCommand(args: readonly string[]): ParsedCommand {
         smolvm: { type: "boolean" },
         port: { type: "string" },
         host: { type: "string" },
+        // Internal: how `up` starts the background daemon (see startBackground).
+        "secret-key-from-up": { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -260,23 +389,47 @@ function parseCommand(args: readonly string[]): ParsedCommand {
   const flags = { port: values.port, host: values.host };
   switch (command) {
     case "setup":
-      rejectOptions(command, values, ["fg", "smolvm", "port", "host"]);
+      rejectOptions(command, values, [
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+      ]);
       expectArguments(rest, 0);
       return { help: false, command };
     case "up":
-      rejectOptions(command, values, ["smolvm"]);
+      rejectOptions(command, values, ["smolvm", "secret-key-from-up"]);
       expectArguments(rest, 0);
       return { help: false, command, fg: values.fg ?? false, flags };
     case "down":
-      rejectOptions(command, values, ["fg", "smolvm", "port", "host"]);
+      rejectOptions(command, values, [
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+      ]);
       expectArguments(rest, 0);
       return { help: false, command };
     case "serve":
       rejectOptions(command, values, ["fg"]);
       expectArguments(rest, 0);
-      return { help: false, command, smolvm: values.smolvm ?? false, flags };
+      return {
+        help: false,
+        command,
+        smolvm: values.smolvm ?? false,
+        secretKeyFromUp: values["secret-key-from-up"] ?? false,
+        flags,
+      };
     case "register-url": {
-      rejectOptions(command, values, ["fg", "smolvm", "port", "host"]);
+      rejectOptions(command, values, [
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+      ]);
       expectArguments(rest, 1);
       const url = parseHostUrl(rest[0]);
       if (url === undefined) {
@@ -448,17 +601,30 @@ async function saveUrl(
   deps.out(`Set the public URL of host ${saved.hostname} to ${saved.url}`);
 }
 
-/** Forward the operator's own flags so the child resolves config identically. */
-async function startBackground(flags: HostdFlags, deps: CliDeps) {
+/**
+ * Forward the operator's own flags so the child resolves config identically,
+ * and hand it the secret key over IPC: `up` read it from the secret store,
+ * where an unlock prompt can reach the operator. Neither secret goes in the
+ * child's environment.
+ */
+async function startBackground(
+  flags: HostdFlags,
+  config: HostdConfigWith<"secretKey">,
+  deps: CliDeps,
+) {
   const paths = daemonPaths(deps.env);
   const forwarded = [
     ...(flags.port === undefined ? [] : ["--port", flags.port]),
     ...(flags.host === undefined ? [] : ["--host", flags.host]),
   ];
   const { pid, port } = await (deps.startInBackground ?? spawnInBackground)(
-    [...deps.self, "serve", "--smolvm", ...forwarded],
+    [...deps.self, "serve", "--smolvm", "--secret-key-from-up", ...forwarded],
     paths,
-    { isRunning: deps.isRunning, env: withoutEnv(deps.env, ENV_NAMES.apiKey) },
+    {
+      isRunning: deps.isRunning,
+      env: withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
+      secretKey: config.secretKey,
+    },
   );
   deps.out(
     `amika-hostd started in the background on port ${port} (pid ${pid})`,

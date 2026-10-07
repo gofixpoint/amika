@@ -5,6 +5,7 @@ import {
   ConfigError,
   DEFAULT_API_URL,
   configFilePaths,
+  envName,
   loadConfigFile,
   requireSettings,
   resolveConfig,
@@ -23,6 +24,9 @@ describe("resolveConfig", () => {
       apiUrl: DEFAULT_API_URL,
       hostname: undefined,
       secretKey: undefined,
+      secretKeyFrom: undefined,
+      secretKeyInFile: false,
+      secretStore: "file",
       host: "127.0.0.1",
       port: 3020,
       smolApiUrl: undefined,
@@ -106,7 +110,9 @@ port = 4000
   it("rejects an API key in the TOML file without echoing it", () => {
     const run = () => resolveConfig({ file: file(`api_key = "do-not-print"`) });
     expect(run).toThrow(ConfigError);
-    expect(run).toThrow(/must not contain api_key; set AMIKA_API_KEY/);
+    expect(run).toThrow(
+      /must not contain api_key; run `amika-hostd setup` to store it, or set AMIKA_HOSTD_API_KEY/,
+    );
     expect(run).not.toThrow(/do-not-print/);
   });
 
@@ -280,7 +286,6 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
   });
 
   it.each([
-    "   ",
     "Builder",
     "my_host",
     "-builder",
@@ -296,6 +301,65 @@ amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:012345678
       resolveConfig({ env: { AMIKA_HOSTD_HOSTNAME: hostname } }),
     ).toThrow(/^Invalid hostname: /);
   });
+
+  it("rejects a blank hostname in the file", () => {
+    expect(() =>
+      resolveConfig({
+        file: { path: "/c.toml", contents: 'hostname = "   "' },
+      }),
+    ).toThrow(/^Invalid hostname: /);
+  });
+
+  it("treats a blank environment variable as unset, like an empty one", () => {
+    const config = resolveConfig({
+      env: { AMIKA_HOSTD_HOSTNAME: "   ", AMIKA_HOSTD_API_KEY: " \t" },
+      file: { path: "/c.toml", contents: 'hostname = "builder"' },
+    });
+    expect(config).toMatchObject({ hostname: "builder", apiKey: undefined });
+  });
+
+  it("names the variable that sets a setting, skipping blank ones", () => {
+    expect(
+      envName({ AMIKA_HOSTD_API_KEY: "  ", AMIKA_API_KEY: "k" }, "apiKey"),
+    ).toBe("AMIKA_API_KEY");
+    expect(envName({ AMIKA_HOSTD_API_KEY: "  " }, "apiKey")).toBeUndefined();
+  });
+});
+
+describe("secret store", () => {
+  it("is files unless the file or environment chooses the keychain", () => {
+    expect(resolveConfig({}).secretStore).toBe("file");
+    expect(
+      resolveConfig({ file: file('secret_store = "keychain"') }).secretStore,
+    ).toBe("keychain");
+    expect(
+      resolveConfig({
+        env: { AMIKA_HOSTD_SECRET_STORE: "file" },
+        file: file('secret_store = "keychain"'),
+      }).secretStore,
+    ).toBe("file");
+  });
+
+  it.each([
+    ["the file", { file: file('secret_store = "vault"') }],
+    ["the environment", { env: { AMIKA_HOSTD_SECRET_STORE: "plain" } }],
+  ])("rejects an unknown store in %s", (_where, input) => {
+    expect(() => resolveConfig(input)).toThrow(/^Invalid secret store: /);
+  });
+
+  it("records where the secret key came from", () => {
+    expect(resolveConfig({}).secretKeyFrom).toBeUndefined();
+    expect(
+      resolveConfig({ file: file(`secret_key = "${TOML_SECRET}"`) })
+        .secretKeyFrom,
+    ).toBe("file");
+    expect(
+      resolveConfig({
+        env: { AMIKA_HOSTD_SECRET_KEY: TOML_SECRET },
+        file: file(`secret_key = "${TOML_SECRET}"`),
+      }).secretKeyFrom,
+    ).toBe("env");
+  });
 });
 
 describe("requireSettings", () => {
@@ -305,11 +369,20 @@ describe("requireSettings", () => {
     ).toThrow(
       [
         "Missing required configuration:",
-        "  - API key: set AMIKA_HOSTD_API_KEY or AMIKA_API_KEY (environment only)",
+        "  - API key: run `amika-hostd setup`, or set AMIKA_HOSTD_API_KEY or AMIKA_API_KEY",
         "  - hostname: run `amika-hostd setup`, or set AMIKA_HOSTD_HOSTNAME or `hostname` in config.toml",
-        "  - secret key: run `amika-hostd setup`, or set AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY or `secret_key` in config.toml",
+        "  - secret key: run `amika-hostd setup`, or set AMIKA_HOSTD_SECRET_KEY or AMIKA_SECRET_KEY",
       ].join("\n"),
     );
+  });
+
+  it("names the config file for the secret key only with the file store", () => {
+    expect(() =>
+      requireSettings(
+        resolveConfig({ env: { AMIKA_HOSTD_SECRET_STORE: "file" } }),
+        ["secretKey"],
+      ),
+    ).toThrow(/or `secret_key` in config\.toml$/);
   });
 
   it("returns the config once everything is present", () => {
@@ -362,22 +435,22 @@ describe("config.example.toml", () => {
     readFileSync(new URL("../../config.example.toml", import.meta.url), "utf8"),
   );
 
-  /** The example as the installer seeds it: a generated secret and hostname. */
+  /** The example as the installer seeds it: with this machine's hostname. */
   const seeded = file(
-    example.contents
-      .replace('secret_key = "REPLACE_ME"', `secret_key = "${TOML_SECRET}"`)
-      .replace('# hostname = "my-host"', 'hostname = "my-host"'),
+    example.contents.replace('# hostname = "my-host"', 'hostname = "my-host"'),
   );
 
-  it("documents the lines the installer fills in", () => {
-    expect(example.contents).toMatch(/^secret_key = "REPLACE_ME"$/m);
+  it("documents the line the installer fills in", () => {
     expect(example.contents).toMatch(/^# hostname = "my-host"$/m);
   });
 
-  it("refuses to start until the placeholder secret is replaced", () => {
-    expect(() => resolveConfig({ file: example })).toThrow(
-      /secret key must be at least 32/,
-    );
+  it("holds no secret, and documents the default secret store", () => {
+    expect(example.contents).not.toMatch(/^\s*secret_key\s*=/m);
+    expect(example.contents).toMatch(/^# secret_store = "file"$/m);
+    expect(resolveConfig({ file: example })).toMatchObject({
+      secretKey: undefined,
+      secretStore: "file",
+    });
   });
 
   it("lets the environment supply the required settings", () => {
@@ -397,7 +470,7 @@ describe("config.example.toml", () => {
   it("resolves once seeded, with defaults that match the code", () => {
     expect(resolveConfig({ file: seeded })).toMatchObject({
       hostname: "my-host",
-      secretKey: TOML_SECRET,
+      secretStore: "file",
       apiUrl: DEFAULT_API_URL,
       host: "127.0.0.1",
       port: 3020,

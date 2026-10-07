@@ -1,17 +1,20 @@
 # amika-hostd configuration.
 #
 # Settings here can be overridden by environment variables and flags. Keep this
-# file readable only by you (chmod 600): it holds the secret key. The Amika API
-# key can't go here; export AMIKA_HOSTD_API_KEY instead.
+# file readable only by you (chmod 600).
 
 # This host's name in your Amika organization. Changing it registers a new host.
 # Lowercase letters, digits, hyphens, and dots.
 # hostname = "my-host"
 
-# This secret authenticates requests from the Amika control plane to your
-# amika-hostd instance. `amika-hostd setup` generates one; by hand, use
-# `openssl rand -hex 32`.
-secret_key = "REPLACE_ME"
+# Where `amika-hostd setup` keeps this host's secrets: the Amika API key, and
+# the secret key that authenticates Amika's requests to this daemon. By
+# default they live in plain files only you can read: the API key in
+# ~/.config/amika-hostd/api-key, and the secret key in this file as
+# secret_key. Set "keychain" to keep both in the system keychain instead,
+# where amika-hostd supports one; setup refuses where it does not.
+# Environment: AMIKA_HOSTD_SECRET_STORE
+# secret_store = "file"
 
 api_url = "https://app.amika.dev"
 
