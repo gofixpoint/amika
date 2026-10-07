@@ -145,11 +145,13 @@ keychain holds this host's secret key; when the file has that line but the
 keychain shows no key, setup first asks whether to generate one, since the key
 may be in a keychain that is only locked. (The hostname is no such mark: the
 installer seeds it.) When the environment chooses a store
-(`AMIKA_HOSTD_SECRET_STORE`) other than the file's `secret_store`, setup
-rewrites the file's to match where it kept the secrets, and says so. An
-existing secret key is kept. Then it asks for the Amika API key, with input
-hidden, or on a rerun whether to replace the stored one; an API key in the
-environment is used instead, and setup does not ask.
+(`AMIKA_HOSTD_SECRET_STORE`) other than the one the file alone would (its
+`secret_store`, else the keychain default), setup writes `secret_store` to
+match where it kept the secrets, so the choice outlasts the variable, and says
+so when it replaces a different one. An existing secret key is kept. Then it
+asks for the Amika API key, with input hidden, or on a rerun whether to
+replace the stored one; an API key in the environment is used instead, and
+setup does not ask.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping

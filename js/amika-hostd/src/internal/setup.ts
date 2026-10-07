@@ -151,10 +151,11 @@ export async function runSetup(
 
   const apiKey = await askApiKey(deps);
 
-  // The file names the store setup used whenever it names one, so a store
-  // chosen from the environment carries over once that is unset. With the
-  // keychain it always does: that marks a host whose secret key setup stored
-  // there (see above).
+  // The file names the store setup used whenever the file alone (its own
+  // setting, else the default) would choose another, so a store chosen from
+  // the environment carries over once that is unset. With the keychain it
+  // always does: that marks a host whose secret key setup stored there (see
+  // above).
   const store = deps.secrets.kind;
   const changedStore =
     saved.secretStoreInFile && saved.secretStore !== store
@@ -163,7 +164,7 @@ export async function runSetup(
   const contents = renderConfig(file?.contents, {
     hostname,
     secretStore:
-      store === "keychain" || changedStore !== undefined ? store : undefined,
+      store === "keychain" || saved.secretStore !== store ? store : undefined,
     // In the keychain, the file keeps no secret key at all.
     secretKey: keychainSecret ? undefined : secretKey,
     // A config written from scratch always gets them, even when a secret

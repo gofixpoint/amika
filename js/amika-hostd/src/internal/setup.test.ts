@@ -132,13 +132,15 @@ describe("runSetup", () => {
   });
 
   it("a rerun keeps everything by default and leaves sizes alone", async () => {
-    const h = harness({ answers: ["", ""], file: CONFIGURED, storedKey: "k" });
+    // The file store is chosen in the file, as setup leaves it.
+    const file = `secret_store = "file"\n${CONFIGURED}`;
+    const h = harness({ answers: ["", ""], file, storedKey: "k" });
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
       "Update the stored Amika API key? [y/N] ",
     ]);
-    expect(h.written[PATH]).toBe(CONFIGURED);
+    expect(h.written[PATH]).toBe(file);
     expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
     expect(h.deps.promptSecret).not.toHaveBeenCalled();
     expect(h.store.set).not.toHaveBeenCalled();
@@ -401,6 +403,41 @@ describe("runSetup with the keychain store", () => {
     expect(h.out).toContain(
       "Note: AMIKA_HOSTD_SECRET_STORE is set in your environment and overrides the secret store in the file.",
     );
+  });
+
+  it.each([
+    ["no config", undefined],
+    [
+      "the installer's seeded config",
+      EXAMPLE.replace('# hostname = "my-host"', 'hostname = "builder"'),
+    ],
+  ])(
+    'writes secret_store = "file" when the environment chose files for %s',
+    async (_, file) => {
+      const h = harness({
+        answers: [""],
+        secrets: ["amk_123"],
+        file,
+        env: { AMIKA_HOSTD_SECRET_STORE: "file" },
+      });
+      await runSetup(h.deps);
+      // Without the variable, the file alone still chooses files.
+      expect(h.config()).toMatchObject({
+        secretStore: "file",
+        secretKey: NEW_SECRET,
+      });
+      expect(h.out.join("\n")).not.toContain("Changed secret_store");
+    },
+  );
+
+  it('keeps a file\'s own secret_store = "file" as its only one', async () => {
+    const h = harness({
+      answers: [""],
+      secrets: ["amk_123"],
+      file: 'secret_store = "file"\n',
+    });
+    await runSetup(h.deps);
+    expect(h.written[PATH].match(/secret_store/g)).toHaveLength(1);
   });
 
   it("rewrites the file's secret_store when the environment chose files", async () => {
