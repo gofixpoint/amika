@@ -151,10 +151,20 @@ export async function runSetup(
 
   const apiKey = await askApiKey(deps);
 
+  // The file names the store setup used whenever the file alone (its own
+  // setting, else the default) would choose another, so a store chosen from
+  // the environment carries over once that is unset. With the keychain it
+  // always does: that marks a host whose secret key setup stored there (see
+  // above).
+  const store = deps.secrets.kind;
+  const changedStore =
+    saved.secretStoreInFile && saved.secretStore !== store
+      ? saved.secretStore
+      : undefined;
   const contents = renderConfig(file?.contents, {
     hostname,
-    // Marks that the keychain holds this host's secret key (see above).
-    secretStore: keychainSecret ? "keychain" : undefined,
+    secretStore:
+      store === "keychain" || saved.secretStore !== store ? store : undefined,
     // In the keychain, the file keeps no secret key at all.
     secretKey: keychainSecret ? undefined : secretKey,
     // A config written from scratch always gets them, even when a secret
@@ -171,6 +181,11 @@ export async function runSetup(
     keychainSecret.set(secretKey);
   }
   writeConfig(deps.writeConfigFile ?? writePrivateFile, configPath, contents);
+  if (changedStore !== undefined) {
+    deps.out(
+      `Changed secret_store in ${configPath} from "${changedStore}" to "${store}", where setup kept the secrets.`,
+    );
+  }
   if (apiKey !== undefined) {
     deps.out(`Stored the API key in ${deps.secrets.apiKey.description}.`);
   }
@@ -287,10 +302,11 @@ export function suggestHostname(raw: string): string | undefined {
 }
 
 /**
- * Set `hostname` and `secret_key` in `contents`, keeping everything else the
- * operator wrote. An existing top-level line, or else a commented-out
- * `# key = ...` one, is replaced in place; otherwise both go before the first
- * table, where top-level keys must be. With
+ * Set `hostname`, and `secret_key` and `secret_store` when given, in
+ * `contents`, keeping everything else the operator wrote. An existing
+ * top-level line, or else a commented-out `# key = ...` one, is replaced in
+ * place; otherwise the setting goes under the `hostname` line, or with no such
+ * line before the first table, where top-level keys must be. With
  * `addDefaults`, append the default sizes and, unless the file already
  * mentions `[preset_images]`, the default preset images.
  */
@@ -443,6 +459,7 @@ function describeImages(images: Record<string, string>): string[] {
 function warnAboutEnvironment(deps: SetupDeps, secretHome: string) {
   for (const [setting, key, home] of [
     ["hostname", "hostname", "the file"],
+    ["secret store", "secretStore", "the file"],
     ["secret key", "secretKey", secretHome],
   ] as const) {
     const name = envName(deps.env, key);

@@ -142,26 +142,32 @@ secret key it generates one (`randomBytes(32)`, hex), unless the environment
 sets one, which is saved instead (Amika may already know it). With the
 keychain store, setup writes `secret_store = "keychain"` to mark that the
 keychain holds this host's secret key; when the file has that line but the
-keychain shows no key, setup first asks whether to generate one, since the
-key may be in a keychain that is only locked. (The hostname is no such mark:
-the installer seeds it.) An existing secret key is kept. Then it asks for the Amika API key, with input hidden, or
-on a rerun whether to replace the stored one; an API key in the environment is
-used instead, and setup does not ask.
+keychain shows no key, setup first asks whether to generate one, since the key
+may be in a keychain that is only locked. (The hostname is no such mark: the
+installer seeds it.) When the environment chooses a store
+(`AMIKA_HOSTD_SECRET_STORE`) other than the one the file alone would (its
+`secret_store`, else the keychain default), setup writes `secret_store` to
+match where it kept the secrets, so the choice outlasts the variable, and says
+so when it replaces a different one. An existing secret key is kept. Then it
+asks for the Amika API key, with input hidden, or on a rerun whether to
+replace the stored one; an API key in the environment is used instead, and
+setup does not ask.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping
 everything else in the file. With the file store it writes `secret_key` the
-same way; with the keychain it removes any `secret_key` line instead, moving
-that secret into the keychain if the keychain has none (the keychain's own
-item wins otherwise). A `secret_key` too short to use, such as an old
-example's `REPLACE_ME`, counts as unset. A config written from scratch also
-gets the example's default `[sizes]` and `[preset_images]` (`DEFAULT_SIZES`
-and `DEFAULT_PRESET_IMAGES`, which `setup.test.ts` keeps in step with
-`config.example.toml`). It prints the result and where to edit it. The new
-contents are parsed before anything is written, and the file is replaced
-atomically with mode `0600` (`src/internal/private-file.ts`). The secrets are
-stored first, so a secret that cannot be stored (a locked keychain, say)
-leaves the config untouched.
+same way, except that a setting with no line of its own goes under the
+`hostname` line; so does `secret_store`. With the keychain it removes any
+`secret_key` line instead, moving that secret into the keychain if the
+keychain has none (the keychain's own item wins otherwise). A `secret_key` too
+short to use, such as an old example's `REPLACE_ME`, counts as unset. A config
+written from scratch also gets the example's default `[sizes]` and
+`[preset_images]` (`DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES`, which
+`setup.test.ts` keeps in step with `config.example.toml`). It prints the
+result and where to edit it. The new contents are parsed before anything is
+written, and the file is replaced atomically with mode `0600`
+(`src/internal/private-file.ts`). The secrets are stored first, so a secret
+that cannot be stored (a locked keychain, say) leaves the config untouched.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the

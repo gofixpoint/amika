@@ -1081,6 +1081,26 @@ describe("setup", () => {
     );
   });
 
+  it("`up` sets up a fresh install from the installer's config without asking about the secret key", async () => {
+    // The installer seeds the example with this machine's hostname.
+    const seeded = readFileSync(
+      path.join(import.meta.dirname, "../../config.example.toml"),
+      "utf8",
+    ).replace('# hostname = "my-host"', 'hostname = "builder"');
+    const { deps, files } = unconfigured([""], ["amk_123"]);
+    files[CONFIG_PATH] = seeded;
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(deps.prompt.mock.calls.map(([question]) => question)).toEqual([
+      "Hostname [builder]: ",
+    ]);
+    expect(deps.keychainSecret.value).toBe(SECRET);
+    expect(files[CONFIG_PATH]).toMatch(/^secret_store = "keychain"$/m);
+    expect(deps.registerHost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ hostname: "builder", secretKey: SECRET }),
+    );
+  });
+
   it("`up` without a terminal names setup for a placeholder secret", async () => {
     const { deps, err } = harness({
       AMIKA_API_KEY: "api-key",
