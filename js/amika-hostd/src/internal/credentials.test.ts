@@ -114,34 +114,59 @@ describe("openSecrets with the keychain store", () => {
   });
 });
 
+/** The login keychain the fake `security` reports, with a space in it. */
+const LOGIN = "/Users/op/Library/Keychains/login keychain.keychain-db";
+
 /**
- * A fake `security` keeping generic passwords by account. It answers "not
- * found" as the real one does (exit 44), and can be locked (every command
- * fails), refuse to store, or be killed by Ctrl-C.
+ * A fake `security` keeping generic passwords by account, in the login
+ * keychain (`items`) or, for a command that names none, in a different
+ * default keychain (`elsewhere`). It answers "not found" as the real one
+ * does (exit 44), and can be locked (every command fails), refuse to store,
+ * be killed by Ctrl-C, or have no login keychain.
  */
 function security({
   locked = false,
   refuseStore = false,
   interrupt = false,
-}: { locked?: boolean; refuseStore?: boolean; interrupt?: boolean } = {}) {
+  noLoginKeychain = false,
+}: {
+  locked?: boolean;
+  refuseStore?: boolean;
+  interrupt?: boolean;
+  noLoginKeychain?: boolean;
+} = {}) {
   const items = new Map<string, string>();
+  const elsewhere = new Map<string, string>();
   const run = vi.fn(
     (_command: string, args: readonly string[], input?: string): RunResult => {
       if (interrupt) return { status: null, stdout: "", signal: "SIGINT" };
+      // Reporting the login keychain's path works even while it is locked.
+      if (args[0] === "login-keychain") {
+        return noLoginKeychain
+          ? { status: 50, stdout: "" }
+          : { status: 0, stdout: `    "${LOGIN}"\n` };
+      }
       if (locked) return { status: 51, stdout: "" };
       if (args[0] === "find-generic-password") {
-        const value = items.get(args[args.indexOf("-a") + 1]);
+        const keychain = args.at(-1) === LOGIN ? items : elsewhere;
+        const value = keychain.get(args[args.indexOf("-a") + 1]);
         return value === undefined
           ? { status: 44, stdout: "" }
           : { status: 0, stdout: `${value}\n` };
       }
-      // `security -i`: the command arrives on stdin.
-      const command = /-a (\S+) .* -w "([^"]*)"/.exec(input ?? "");
-      if (!refuseStore && command) items.set(command[1], command[2]);
+      // `security -i`: the command arrives on stdin, the keychain last.
+      const command =
+        /-a (\S+) .* -w "([^"]*)"(?: "((?:[^"\\]|\\.)*)")?\n$/.exec(
+          input ?? "",
+        );
+      if (!refuseStore && command) {
+        const keychain = command[3]?.replace(/\\(.)/g, "$1");
+        (keychain === LOGIN ? items : elsewhere).set(command[1], command[2]);
+      }
       return { status: 0, stdout: "" };
     },
   );
-  return { run, items };
+  return { run, items, elsewhere };
 }
 
 describe("the macOS keychain", () => {
@@ -170,6 +195,41 @@ describe("the macOS keychain", () => {
 
   it("reads a missing item as unset", () => {
     expect(open(security()).apiKey.get()).toBeUndefined();
+  });
+
+  it("names the login keychain, not whichever is the default", () => {
+    const fake = security();
+    // An item in another keychain the user made the default is not read.
+    fake.elsewhere.set("api-key", "amk_other");
+    const secrets = open(fake);
+    expect(secrets.apiKey.get()).toBeUndefined();
+    secrets.apiKey.set("amk_123");
+    expect(fake.items.get("api-key")).toBe("amk_123");
+    expect(fake.elsewhere.get("api-key")).toBe("amk_other");
+    const finds = fake.run.mock.calls.filter(
+      ([, args]) => args[0] === "find-generic-password",
+    );
+    for (const [, args] of finds) expect(args.at(-1)).toBe(LOGIN);
+  });
+
+  it("asks for the login keychain once", () => {
+    const fake = security();
+    const secrets = open(fake);
+    secrets.apiKey.set("amk_123");
+    secrets.secretKey?.set("s".repeat(64));
+    secrets.apiKey.get();
+    const lookups = fake.run.mock.calls.filter(
+      ([, args]) => args[0] === "login-keychain",
+    );
+    expect(lookups).toHaveLength(1);
+  });
+
+  it("refuses without a login keychain, rather than use another", () => {
+    const fake = security({ noLoginKeychain: true });
+    expect(() => open(fake).apiKey.get()).toThrow(
+      /^Cannot find your macOS login keychain; unlock it .* or set `secret_store = "file"`/,
+    );
+    expect(fake.elsewhere.size).toBe(0);
   });
 
   it("refuses a keychain it cannot read, saying how to fix it", () => {

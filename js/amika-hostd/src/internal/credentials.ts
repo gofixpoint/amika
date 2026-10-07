@@ -150,7 +150,9 @@ function systemKeychain(deps: CredentialDeps): Keychain | undefined {
 
 /**
  * The macOS login keychain, through `security`. Items are generic passwords
- * under service `amika-hostd`, one account per secret.
+ * under service `amika-hostd`, one account per secret. Every command names
+ * the login keychain: without one, `security` uses the default keychain,
+ * which a user can change to another (separately locked, or temporary) one.
  */
 function macOSKeychain(run: Runner): Keychain {
   const description = "your macOS login keychain";
@@ -158,6 +160,17 @@ function macOSKeychain(run: Runner): Keychain {
     new ConfigError(
       `Cannot ${what} ${description}; unlock it and run \`amika-hostd setup\` again, or set \`secret_store = "file"\` to keep secrets in files`,
     );
+  let loginKeychain: string | undefined;
+  /** The login keychain's path, as `security login-keychain` prints it. */
+  const login = (): string => {
+    if (loginKeychain !== undefined) return loginKeychain;
+    const result = checked(run("security", ["login-keychain"]));
+    // It prints the path quoted and indented: `    "/Users/…/login.keychain-db"`.
+    const path = /"(.+)"/.exec(result.stdout)?.[1] ?? result.stdout.trim();
+    if (result.status !== 0 || path === "") throw refuse("find");
+    loginKeychain = path;
+    return path;
+  };
   return {
     description,
     get(name) {
@@ -169,6 +182,7 @@ function macOSKeychain(run: Runner): Keychain {
           "-a",
           name,
           "-w",
+          login(),
         ]),
       );
       const value = result.status === 0 ? result.stdout.trim() : "";
@@ -194,13 +208,22 @@ function macOSKeychain(run: Runner): Keychain {
         run(
           "security",
           ["-i"],
-          `add-generic-password -U -s ${SERVICE} -a ${name} -l "${LABELS[name]}" -w "${value}"\n`,
+          `add-generic-password -U -s ${SERVICE} -a ${name} -l "${LABELS[name]}" -w "${value}" ${quoted(login())}\n`,
         ),
       );
       if (this.get(name) !== value)
         throw refuse(`store the ${LABELS[name]} in`);
     },
   };
+}
+
+/**
+ * `text` as one double-quoted word for a `security -i` command line, whose
+ * parser takes `\\` and `\"` as escapes inside quotes. For the keychain path,
+ * which can hold spaces.
+ */
+function quoted(text: string): string {
+  return `"${text.replace(/["\\]/g, (char) => `\\${char}`)}"`;
 }
 
 function runProgram(

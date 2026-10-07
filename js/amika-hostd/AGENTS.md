@@ -172,7 +172,10 @@ chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
 
 - **`keychain`** (the default, `DEFAULT_SECRET_STORE`): both are items in
   the system keychain. On macOS that is the login keychain, through `security` (service
-  `amika-hostd`, one account per secret: `api-key`, `secret-key`). Values go
+  `amika-hostd`, one account per secret: `api-key`, `secret-key`), named
+  explicitly in every command (from `security login-keychain`), since
+  without one `security` uses the default keychain, which a user can change
+  to another, separately locked or temporary, one. Values go
   in through `security -i` on stdin, so they never appear in the process
   list, and are read back to confirm they were stored. Exit 44 means "not
   there"; any other failure (a locked keychain, over SSH say) is an error
