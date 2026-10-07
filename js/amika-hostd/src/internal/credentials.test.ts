@@ -227,7 +227,7 @@ describe("the macOS keychain", () => {
   it("refuses without a login keychain, rather than use another", () => {
     const fake = security({ noLoginKeychain: true });
     expect(() => open(fake).apiKey.get()).toThrow(
-      /^Cannot find your macOS login keychain; unlock it .* or set `secret_store = "file"`/,
+      'Cannot find your macOS login keychain, so amika-hostd has nowhere to keep its secrets; set `secret_store = "file"` to keep them in files',
     );
     expect(fake.elsewhere.size).toBe(0);
   });
@@ -254,6 +254,59 @@ describe("the macOS keychain", () => {
       expect(fake.run).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    [
+      "is missing",
+      {
+        status: null,
+        stdout: "",
+        error: Object.assign(new Error("spawn security ENOENT"), {
+          code: "ENOENT",
+        }),
+      },
+    ],
+    [
+      "times out",
+      {
+        status: null,
+        stdout: "",
+        signal: "SIGTERM" as const,
+        error: Object.assign(new Error("spawnSync security ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+        }),
+      },
+    ],
+  ])(
+    "refuses when security %s, rather than read the item as unset",
+    (_, failed) => {
+      const fake = security();
+      const secrets = open(fake);
+      secrets.apiKey.set("amk_123");
+      fake.run.mockImplementation((): RunResult => failed);
+      expect(() => secrets.apiKey.get()).toThrow(
+        /^Cannot read the Amika API key for amika-hostd from your macOS login keychain/,
+      );
+      expect(() => secrets.secretKey?.set("s".repeat(64))).toThrow(
+        /^Cannot read the amika-hostd secret key from/,
+      );
+    },
+  );
+
+  it("refuses when security cannot even report the login keychain", () => {
+    const run = vi.fn(
+      (): RunResult => ({
+        status: null,
+        stdout: "",
+        error: Object.assign(new Error("spawn security ENOENT"), {
+          code: "ENOENT",
+        }),
+      }),
+    );
+    expect(() =>
+      openSecrets("keychain", ENV, { platform: "darwin", run }).apiKey.get(),
+    ).toThrow(/^Cannot find your macOS login keychain/);
+  });
 
   it("reports a command killed by Ctrl-C", () => {
     expect(() => open(security({ interrupt: true })).apiKey.get()).toThrow(

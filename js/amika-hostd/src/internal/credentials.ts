@@ -167,7 +167,12 @@ function macOSKeychain(run: Runner): Keychain {
     const result = checked(run("security", ["login-keychain"]));
     // It prints the path quoted and indented: `    "/Users/…/login.keychain-db"`.
     const path = /"(.+)"/.exec(result.stdout)?.[1] ?? result.stdout.trim();
-    if (result.status !== 0 || path === "") throw refuse("find");
+    if (result.status !== 0 || path === "") {
+      // Unlocking cannot help here: there is no login keychain to unlock.
+      throw new ConfigError(
+        `Cannot find ${description}, so amika-hostd has nowhere to keep its secrets; set \`secret_store = "file"\` to keep them in files`,
+      );
+    }
     loginKeychain = path;
     return path;
   };

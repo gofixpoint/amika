@@ -16,6 +16,7 @@ import {
   type HostdConfigFile,
   type HostdConfigWith,
 } from "./config.js";
+import { openSecrets as openSecretStore } from "./credentials.js";
 import { DaemonError } from "./daemon.js";
 import type { RunningServer } from "./server.js";
 import type { ManagedSmolvm, SmolvmDeps } from "./smolvm-serve.js";
@@ -902,6 +903,23 @@ describe("setup", () => {
     });
     expect(await runCli(["setup"], deps)).toBe(1);
     expect(err[0]).toMatch(/^amika-hostd: No keychain on this machine/);
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.writeConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("`setup` on Linux refuses with the real secret store, naming the override", async () => {
+    const { deps, err } = unconfigured([""], ["amk_123"]);
+    const run = vi.fn();
+    const linux: CliDeps = {
+      ...deps,
+      openSecrets: (kind, env) =>
+        openSecretStore(kind, env, { platform: "linux", run }),
+    };
+    expect(await runCli(["setup"], linux)).toBe(1);
+    expect(err[0]).toMatch(
+      /^amika-hostd: No keychain on this machine .* set `secret_store = "file"` in .*config\.toml, or AMIKA_HOSTD_SECRET_STORE=file$/,
+    );
+    expect(run).not.toHaveBeenCalled();
     expect(deps.prompt).not.toHaveBeenCalled();
     expect(deps.writeConfigFile).not.toHaveBeenCalled();
   });
