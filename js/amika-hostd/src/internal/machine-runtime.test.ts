@@ -6,7 +6,11 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
-import { RuntimeError, providerRuntime } from "./machine-runtime.js";
+import {
+  type FileContents,
+  RuntimeError,
+  providerRuntime,
+} from "./machine-runtime.js";
 
 const API_URL = "http://127.0.0.1:23020";
 const ROOT = "/api/v1/machines";
@@ -162,6 +166,11 @@ function writes(received: Received[]) {
 }
 
 /** The error a runtime call fails with. */
+/** A read file's bytes, drained from its stream. */
+async function bytes(file: FileContents): Promise<Buffer> {
+  return Buffer.from(await new Response(file.body).arrayBuffer());
+}
+
 async function failure(call: Promise<unknown>): Promise<RuntimeError> {
   const error = await call.catch((e: unknown) => e);
   expect(error).toBeInstanceOf(RuntimeError);
@@ -357,6 +366,14 @@ describe("providerRuntime", () => {
       ]);
     });
 
+    it("answers a start with the machine smolvm returns, reading nothing back", async () => {
+      const { runtime, received } = harness([machine()]);
+      expect((await runtime.start("demo")).state).toBe("running");
+      expect(received.map((r) => `${r.method} ${r.path}`)).toEqual([
+        "POST /demo/start",
+      ]);
+    });
+
     it("passes on smolvm's 404 for starting a missing machine", async () => {
       const { runtime } = harness();
       expect((await failure(runtime.start("demo"))).status).toBe(404);
@@ -487,17 +504,18 @@ describe("providerRuntime", () => {
         },
       ]);
       expect(files.get("/etc/motd")?.toString()).toBe("hello");
-      expect(await runtime.readFile("demo", "/etc/motd")).toEqual({
-        data: Buffer.from("hello"),
-        contentType: "application/octet-stream",
-      });
+      const file = await runtime.readFile("demo", "/etc/motd");
+      expect(file.contentType).toBe("application/octet-stream");
+      expect(await bytes(file)).toEqual(Buffer.from("hello"));
     });
 
     it("reads bytes that are not UTF-8 unchanged", async () => {
       const { runtime, files } = harness([machine()]);
-      const bytes = Buffer.from([0x00, 0xff, 0xfe, 0x80, 0x0a]);
-      files.set("/bin/blob", bytes);
-      expect((await runtime.readFile("demo", "/bin/blob")).data).toEqual(bytes);
+      const blob = Buffer.from([0x00, 0xff, 0xfe, 0x80, 0x0a]);
+      files.set("/bin/blob", blob);
+      expect(await bytes(await runtime.readFile("demo", "/bin/blob"))).toEqual(
+        blob,
+      );
     });
 
     it("keeps smolvm's type for what it reads, a directory's JSON included", async () => {
@@ -506,7 +524,31 @@ describe("providerRuntime", () => {
       const runtime = providerRuntime({ apiUrl: API_URL, fetch: smolvm });
       const file = await runtime.readFile("demo", "/etc");
       expect(file.contentType).toBe("application/json");
-      expect(JSON.parse(file.data.toString())).toEqual(listing);
+      expect(JSON.parse((await bytes(file)).toString())).toEqual(listing);
+    });
+
+    it("streams what smolvm sends, before the file has all arrived", async () => {
+      let finish!: () => void;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(Buffer.from("first"));
+          finish = () => {
+            controller.enqueue(Buffer.from(" rest"));
+            controller.close();
+          };
+        },
+      });
+      const smolvm = vi.fn<typeof fetch>(async () => new Response(body));
+      const runtime = providerRuntime({ apiUrl: API_URL, fetch: smolvm });
+      const reader = (await runtime.readFile("demo", "/big")).body!.getReader();
+      expect(Buffer.from((await reader.read()).value!).toString()).toBe(
+        "first",
+      );
+      finish();
+      expect(Buffer.from((await reader.read()).value!).toString()).toBe(
+        " rest",
+      );
+      expect((await reader.read()).done).toBe(true);
     });
 
     it("answers 404 for a missing file", async () => {

@@ -37,7 +37,7 @@ function fakeRuntime() {
     remove: vi.fn(async () => {}),
     exec: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
     readFile: vi.fn(async () => ({
-      data: Buffer.alloc(0),
+      body: null,
       contentType: "application/octet-stream",
     })),
     writeFile: vi.fn(async () => {}),

@@ -293,15 +293,14 @@ describe("amika-hostd provider", () => {
     await sandbox.start();
     await sandbox.delete();
     expect(machines.size).toBe(0);
-    // hostd reads the machine back after each change, and checks it exists
-    // before deleting it; the listing is the provider's own.
+    // hostd answers a start or stop with smolvm's machine, reading nothing
+    // back, and checks the machine exists before deleting it; the state reads
+    // and the listing are the provider's own.
     expect(calls(received)).toEqual([
       "POST /demo/stop",
       "GET /demo",
-      "GET /demo",
       "GET ",
       "POST /demo/start",
-      "GET /demo",
       "GET /demo",
       "DELETE /demo",
     ]);

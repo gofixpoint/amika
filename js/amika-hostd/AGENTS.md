@@ -320,13 +320,16 @@ says to remove it if it is stale, as `up` does. A `smolvm.pid` and
 sandbox provider from the workspace's `@amika/sandbox`
 (`js/sandbox/src/providers/smol`, imported as `@amika/sandbox/smol`), pointed
 at the smolvm this daemon started (or `SMOL_API_URL` for plain `serve`).
-Lifecycle, file writes and service ports go through the provider's resource
-surface, translated to and from `smolvm serve`'s shapes, which the control
-plane's `amika-hostd` provider expects. Machine info (get and list), exec and
-file reads go through the provider's exported smolvm client instead, because
-the machine API's contract carries what the resource surface drops: each
-machine's published `ports`, exec as argv with any `user`, and a file's
-exact bytes and type (JSON for a directory).
+Create, delete, file writes and service ports go through the provider's
+resource surface, translated to and from `smolvm serve`'s shapes, which the
+control plane's `amika-hostd` provider expects. Machine info (get and list),
+start and stop, exec and file reads go through the provider's exported smolvm
+client instead, because the machine API's contract carries what the resource
+surface drops: each machine's published `ports`, the machine smolvm answers a
+start or stop with (so a successful start never hinges on a second request
+whose failure would make a create through hostd delete the machine), exec as
+argv with any `user`, and a file's exact bytes and type (JSON for a
+directory), streamed through rather than buffered.
 
 - The provider's network setting is per provider, so hostd builds one with
   networking and one without, and creates each machine on the one its request

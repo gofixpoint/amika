@@ -209,8 +209,9 @@ export function createApp(
       const path = filePath(name, c.req.path, machines);
       return call(async () => {
         // smolvm's bytes and type as it sent them: JSON for a directory.
+        // Streamed through, never buffered.
         const file = await runtime.readFile(name, path);
-        return new Response(new Uint8Array(file.data), {
+        return new Response(file.body, {
           headers: { "Content-Type": file.contentType },
         });
       });

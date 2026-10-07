@@ -3,12 +3,14 @@
  * `@amika/sandbox`, talking to the `smolvm serve` process hostd runs
  * (`./smolvm-serve.ts`).
  *
- * Lifecycle, file writes and service ports go through the provider's
- * resource surface. Machine info, exec and file reads go through the
- * provider's exported smolvm client instead, so they behave exactly as
- * smolvm's own API: the resource surface reports no published ports, takes
- * exec as a root shell string and reads files as text, while the machine
- * API's contract carries ports, argv with any user, and arbitrary bytes.
+ * Create, delete, file writes and service ports go through the provider's
+ * resource surface. Machine info, start and stop, exec and file reads go
+ * through the provider's exported smolvm client instead, so they behave
+ * exactly as smolvm's own API: the resource surface reports no published
+ * ports, answers a start or stop with nothing, takes exec as a root shell
+ * string and reads files as text, while the machine API's contract carries
+ * ports and the machine a start or stop leaves, argv with any user, and
+ * arbitrary bytes, streamed.
  */
 import smolProvider, {
   SmolApiError,
@@ -32,9 +34,12 @@ export interface MachineInfo {
   ports: { host: number; guest: number }[];
 }
 
-/** A file's bytes, and the type smolvm gave them (JSON for a directory). */
+/**
+ * A file's bytes as smolvm streams them, and the type it gave them (JSON for
+ * a directory). Streamed, so hostd never holds a whole file in memory.
+ */
 export interface FileContents {
-  data: Buffer;
+  body: ReadableStream<Uint8Array> | null;
   contentType: string;
 }
 
@@ -193,14 +198,22 @@ export function providerRuntime({
       );
       return describe(machine.name);
     },
-    start: async (name) => {
-      await call(() => sandboxes.get(name).start());
-      return describe(name);
-    },
-    stop: async (name) => {
-      await call(() => sandboxes.get(name).stop());
-      return describe(name);
-    },
+    // smolvm answers a start or stop with the machine, so a successful one
+    // never hinges on a second request: a failed read-back would report a
+    // running machine as not started, and a create through hostd would then
+    // delete it.
+    start: async (name) =>
+      info(
+        await call(() =>
+          client.json(`${machinePath(name)}/start`, machineSchema, "POST"),
+        ),
+      ),
+    stop: async (name) =>
+      info(
+        await call(() =>
+          client.json(`${machinePath(name)}/stop`, machineSchema, "POST"),
+        ),
+      ),
     remove: async (name) => {
       // The provider treats a missing machine as already deleted; answer
       // 404 for one anyway, as `smolvm serve` does.
@@ -224,7 +237,7 @@ export function providerRuntime({
       call(async () => {
         const response = await client.request(filePath(name, path));
         return {
-          data: Buffer.from(await response.arrayBuffer()),
+          body: response.body,
           contentType:
             response.headers.get("content-type") ?? "application/octet-stream",
         };

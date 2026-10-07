@@ -43,7 +43,7 @@ function fakeRuntime(machine: MachineInfo = MACHINE) {
     ),
     readFile: vi.fn(
       async (_name: string, _path: string): Promise<FileContents> => ({
-        data: Buffer.alloc(0),
+        body: null,
         contentType: "application/octet-stream",
       }),
     ),
@@ -259,7 +259,7 @@ describe("machine API", () => {
       bytes,
     );
     runtime.readFile.mockResolvedValueOnce({
-      data: Buffer.from(bytes),
+      body: new Response(bytes).body,
       contentType: "application/octet-stream",
     });
     const response = await app.request(path);
