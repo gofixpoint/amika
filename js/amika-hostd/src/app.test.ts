@@ -7,6 +7,7 @@ import {
   type CreateMachine,
   type ExecRequest,
   type ExecResult,
+  type FileContents,
   type MachineInfo,
   type MachineRuntime,
   type ServicePort,
@@ -21,6 +22,7 @@ const MACHINE: MachineInfo = {
   cpus: 4,
   memoryMb: 8192,
   storageGb: 20,
+  ports: [],
 };
 
 /** A runtime whose every call succeeds with `machine`, recording its calls. */
@@ -39,7 +41,12 @@ function fakeRuntime(machine: MachineInfo = MACHINE) {
         stderr: "",
       }),
     ),
-    readFile: vi.fn(async (_name: string, _path: string) => Buffer.alloc(0)),
+    readFile: vi.fn(
+      async (_name: string, _path: string): Promise<FileContents> => ({
+        data: Buffer.alloc(0),
+        contentType: "application/octet-stream",
+      }),
+    ),
     writeFile: vi.fn(
       async (_name: string, _path: string, _data: Uint8Array) => {},
     ),
@@ -251,7 +258,10 @@ describe("machine API", () => {
       "/workspace/a #?%.bin",
       bytes,
     );
-    runtime.readFile.mockResolvedValueOnce(Buffer.from(bytes));
+    runtime.readFile.mockResolvedValueOnce({
+      data: Buffer.from(bytes),
+      contentType: "application/octet-stream",
+    });
     const response = await app.request(path);
     expect(response.status).toBe(200);
     expect(runtime.readFile).toHaveBeenCalledWith(

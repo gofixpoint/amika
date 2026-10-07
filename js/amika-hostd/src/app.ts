@@ -207,12 +207,13 @@ export function createApp(
     app.get(`${machines}/:name/files/*`, (c) => {
       const name = machineName(c.req.param("name"));
       const path = filePath(name, c.req.path, machines);
-      return call(
-        async () =>
-          new Response(new Uint8Array(await runtime.readFile(name, path)), {
-            headers: { "Content-Type": "application/octet-stream" },
-          }),
-      );
+      return call(async () => {
+        // smolvm's bytes and type as it sent them: JSON for a directory.
+        const file = await runtime.readFile(name, path);
+        return new Response(new Uint8Array(file.data), {
+          headers: { "Content-Type": file.contentType },
+        });
+      });
     });
     app.put(`${machines}/:name/files/*`, async (c) => {
       const name = machineName(c.req.param("name"));

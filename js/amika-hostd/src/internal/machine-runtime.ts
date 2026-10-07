@@ -3,11 +3,21 @@
  * `@amika/sandbox`, talking to the `smolvm serve` process hostd runs
  * (`./smolvm-serve.ts`).
  *
- * Routes go through the provider's resource surface (create, start, stop,
- * delete, state, exec, files, services, listing), translated to and from the
- * machine API's `smolvm serve` shapes.
+ * Lifecycle, exec, file writes and service ports go through the provider's
+ * resource surface. Machine info and file reads go through the provider's
+ * exported smolvm client instead, so they reach callers exactly as smolvm
+ * answers them: the resource surface reports no published ports and reads
+ * files as text, and the machine API's contract carries both ports and
+ * arbitrary bytes.
  */
-import smolProvider, { SmolApiError } from "@amika/sandbox/smol";
+import smolProvider, {
+  SmolApiError,
+  SmolClient,
+  filePath,
+  machinePath,
+  machineSchema,
+} from "@amika/sandbox/smol";
+import { z } from "zod";
 
 /** A machine as the machine API reports it, in `smolvm serve`'s shape. */
 export interface MachineInfo {
@@ -15,7 +25,16 @@ export interface MachineInfo {
   state: string;
   cpus: number;
   memoryMb: number;
-  storageGb: number;
+  /** Absent on smolvm versions that predate it. */
+  storageGb?: number;
+  /** Published guest ports and the host ports they are reached on. */
+  ports: { host: number; guest: number }[];
+}
+
+/** A file's bytes, and the type smolvm gave them (JSON for a directory). */
+export interface FileContents {
+  data: Buffer;
+  contentType: string;
 }
 
 export interface EnvVar {
@@ -65,7 +84,7 @@ export interface MachineRuntime {
   remove(name: string): Promise<void>;
   /** Exec and file access boot a stopped machine first, as smolvm's do. */
   exec(name: string, request: ExecRequest): Promise<ExecResult>;
-  readFile(name: string, path: string): Promise<Buffer>;
+  readFile(name: string, path: string): Promise<FileContents>;
   writeFile(name: string, path: string, data: Uint8Array): Promise<void>;
   /** Refuse (409) services on ports the machine did not publish at create. */
   checkServices(name: string, services: ServicePort[]): Promise<void>;
@@ -115,6 +134,7 @@ export function providerRuntime({
     smolProvider({ apiUrl, network, requestTimeoutMs }, fetcher);
   const providers = { networked: provider(true), offline: provider(false) };
   const { sandboxes } = providers.networked;
+  const client = new SmolClient({ apiUrl, requestTimeoutMs }, fetcher);
   /**
    * Run a provider call, passing on smolvm's status for a request it
    * refused, as hostd did when it forwarded requests itself.
@@ -137,29 +157,12 @@ export function providerRuntime({
       throw new RuntimeError(500, message);
     }
   };
-  const describe = async (name: string): Promise<MachineInfo> => {
-    const listing = (await call(() => sandboxes.list())).find(
-      (machine) => machine.providerSandboxId === name,
-    );
-    if (!listing) throw new RuntimeError(404, `machine ${name} not found`);
-    return {
-      name,
-      state: listing.state,
-      cpus: listing.sizing.vcpus,
-      memoryMb: listing.sizing.memoryGib * 1024,
-      storageGb: listing.sizing.diskGib,
-    };
-  };
+  const describe = async (name: string): Promise<MachineInfo> =>
+    info(await call(() => client.json(machinePath(name), machineSchema)));
 
   return {
     list: async () =>
-      (await call(() => sandboxes.list())).map((listing) => ({
-        name: listing.providerSandboxId,
-        state: listing.state,
-        cpus: listing.sizing.vcpus,
-        memoryMb: listing.sizing.memoryGib * 1024,
-        storageGb: listing.sizing.diskGib,
-      })),
+      (await call(() => client.json("", machinesSchema))).machines.map(info),
     get: describe,
     create: async (machine) => {
       const sized =
@@ -219,11 +222,15 @@ export function providerRuntime({
         }),
       );
     },
-    readFile: async (name, path) => {
-      const contents = await call(() => sandboxes.get(name).readFile(path));
-      if (contents === null) throw new RuntimeError(404, `${path} not found`);
-      return Buffer.from(contents);
-    },
+    readFile: (name, path) =>
+      call(async () => {
+        const response = await client.request(filePath(name, path));
+        return {
+          data: Buffer.from(await response.arrayBuffer()),
+          contentType:
+            response.headers.get("content-type") ?? "application/octet-stream",
+        };
+      }),
     writeFile: async (name, path, data) => {
       await call(() => sandboxes.get(name).writeFile(path, Buffer.from(data)));
     },
@@ -268,6 +275,19 @@ export function providerRuntime({
         return null;
       }
     },
+  };
+}
+
+const machinesSchema = z.object({ machines: z.array(machineSchema) });
+
+function info(machine: z.infer<typeof machineSchema>): MachineInfo {
+  return {
+    name: machine.name,
+    state: machine.state,
+    cpus: machine.cpus,
+    memoryMb: machine.memoryMb,
+    storageGb: machine.storageGb,
+    ports: machine.ports ?? [],
   };
 }
 

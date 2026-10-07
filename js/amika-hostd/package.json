@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "amika-hostd": "dist/index.js"
+    "amika-hostd": "dist/bundle/amika-hostd.mjs"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts serve",

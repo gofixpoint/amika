@@ -24,6 +24,7 @@ const MACHINE: MachineInfo = {
   cpus: 4,
   memoryMb: 8192,
   storageGb: 20,
+  ports: [],
 };
 
 function fakeRuntime() {
@@ -35,7 +36,10 @@ function fakeRuntime() {
     stop: vi.fn(async () => MACHINE),
     remove: vi.fn(async () => {}),
     exec: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
-    readFile: vi.fn(async () => Buffer.alloc(0)),
+    readFile: vi.fn(async () => ({
+      data: Buffer.alloc(0),
+      contentType: "application/octet-stream",
+    })),
     writeFile: vi.fn(async () => {}),
     checkServices: vi.fn(async () => {}),
     hostPort: vi.fn(async (): Promise<number | null> => null),

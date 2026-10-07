@@ -319,10 +319,14 @@ says to remove it if it is stale, as `up` does. A `smolvm.pid` and
 `src/internal/machine-runtime.ts` serves the machine API through the `smol`
 sandbox provider from the workspace's `@amika/sandbox`
 (`js/sandbox/src/providers/smol`, imported as `@amika/sandbox/smol`), pointed
-at the smolvm this daemon started (or `SMOL_API_URL` for plain `serve`). It
-uses the provider's resource surface and translates to and from
-`smolvm serve`'s shapes, which the control plane's `amika-hostd` provider
-expects:
+at the smolvm this daemon started (or `SMOL_API_URL` for plain `serve`).
+Lifecycle, exec, file writes and service ports go through the provider's
+resource surface, translated to and from `smolvm serve`'s shapes, which the
+control plane's `amika-hostd` provider expects. Machine info (get and list)
+and file reads go through the provider's exported smolvm client instead,
+because the machine API's contract carries what the resource surface drops:
+each machine's published `ports`, and a file's exact bytes and type (JSON for
+a directory).
 
 - The provider's network setting is per provider, so hostd builds one with
   networking and one without, and creates each machine on the one its request
@@ -332,8 +336,8 @@ expects:
   8192 MiB, 20 GiB) for the rest.
 - Exec takes argv; hostd shell-quotes it for the provider's `/bin/sh -c`.
   Commands run as root, so an exec `user` other than `root`, `0` or `0:0` is
-  refused (`400`). File reads come back as text.
-- Responses report no `ports`: host ports are the provider's. Service routes
+  refused (`400`).
+- Host ports are picked and published by the provider. Service routes
   ask it for a running machine's host port (`services.refreshAll`), and
   `PUT .../services` checks the same way that every port is one the machine
   published at create, refusing (`409`) any other. It never reconciles the

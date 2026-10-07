@@ -186,6 +186,7 @@ describe("providerRuntime", () => {
         cpus: 2,
         memoryMb: 1024,
         storageGb: 10,
+        ports: [],
       });
       expect(writes(received)).toEqual([
         {
@@ -291,7 +292,7 @@ describe("providerRuntime", () => {
   });
 
   describe("list and get", () => {
-    it("lists machines in smolvm's shape", async () => {
+    it("lists machines in smolvm's shape, published ports included", async () => {
       const { runtime } = harness([
         machine({ ports: [{ host: 40000, guest: 3000 }] }),
         machine({
@@ -309,6 +310,7 @@ describe("providerRuntime", () => {
           cpus: 4,
           memoryMb: 8192,
           storageGb: 20,
+          ports: [{ host: 40000, guest: 3000 }],
         },
         {
           name: "other",
@@ -316,6 +318,7 @@ describe("providerRuntime", () => {
           cpus: 2,
           memoryMb: 512,
           storageGb: 5,
+          ports: [],
         },
       ]);
     });
@@ -328,6 +331,7 @@ describe("providerRuntime", () => {
         cpus: 4,
         memoryMb: 8192,
         storageGb: 20,
+        ports: [],
       });
     });
 
@@ -335,7 +339,6 @@ describe("providerRuntime", () => {
       const { runtime } = harness([machine({ name: "other" })]);
       const error = await failure(runtime.get("demo"));
       expect(error.status).toBe(404);
-      expect(error.message).toBe("machine demo not found");
     });
   });
 
@@ -446,16 +449,32 @@ describe("providerRuntime", () => {
         },
       ]);
       expect(files.get("/etc/motd")?.toString()).toBe("hello");
-      expect((await runtime.readFile("demo", "/etc/motd")).toString()).toBe(
-        "hello",
-      );
+      expect(await runtime.readFile("demo", "/etc/motd")).toEqual({
+        data: Buffer.from("hello"),
+        contentType: "application/octet-stream",
+      });
+    });
+
+    it("reads bytes that are not UTF-8 unchanged", async () => {
+      const { runtime, files } = harness([machine()]);
+      const bytes = Buffer.from([0x00, 0xff, 0xfe, 0x80, 0x0a]);
+      files.set("/bin/blob", bytes);
+      expect((await runtime.readFile("demo", "/bin/blob")).data).toEqual(bytes);
+    });
+
+    it("keeps smolvm's type for what it reads, a directory's JSON included", async () => {
+      const listing = { entries: [{ name: "a", kind: "file", size: 1 }] };
+      const smolvm = vi.fn<typeof fetch>(async () => Response.json(listing));
+      const runtime = providerRuntime({ apiUrl: API_URL, fetch: smolvm });
+      const file = await runtime.readFile("demo", "/etc");
+      expect(file.contentType).toBe("application/json");
+      expect(JSON.parse(file.data.toString())).toEqual(listing);
     });
 
     it("answers 404 for a missing file", async () => {
       const { runtime } = harness([machine()]);
       const error = await failure(runtime.readFile("demo", "/missing"));
       expect(error.status).toBe(404);
-      expect(error.message).toBe("/missing not found");
     });
   });
 
