@@ -18,6 +18,7 @@ import {
   resolveConfig,
   type HostdConfigFile,
   type HostSize,
+  type SecretStoreKind,
 } from "./config.js";
 import { isValidApiKey, type Secrets } from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
@@ -116,10 +117,16 @@ export async function runSetup(
       `Saved the secret key from ${secretFromEnv} to ${secretHome}, since Amika may already know it.`,
     );
   } else {
-    // A host set up before should have its secret key in the keychain. It
-    // may be there but locked, and not every keyring can say so (a locked
-    // KeePassXC database hides its items), so ask before replacing it.
-    if (keychainSecret && saved.hostname !== undefined) {
+    // Setup marks the file when it stores the secret key in the keychain
+    // (`secret_store = "keychain"`; the installer's seeded hostname is no
+    // sign of that). With the mark, the key should be there; it may be
+    // there but locked, and not every keyring can say so (a locked KeePassXC
+    // database hides its items), so ask before replacing it.
+    if (
+      keychainSecret &&
+      saved.secretStoreInFile &&
+      saved.secretStore === "keychain"
+    ) {
       deps.out(
         `No secret key found in ${secretHome}. If it is there but locked, unlock it and run setup again, rather than replace the secret key Amika may know.`,
       );
@@ -146,6 +153,8 @@ export async function runSetup(
 
   const contents = renderConfig(file?.contents, {
     hostname,
+    // Marks that the keychain holds this host's secret key (see above).
+    secretStore: keychainSecret ? "keychain" : undefined,
     // In the keychain, the file keeps no secret key at all.
     secretKey: keychainSecret ? undefined : secretKey,
     // A config written from scratch always gets them, even when a secret
@@ -290,11 +299,14 @@ export function renderConfig(
   {
     hostname,
     secretKey,
+    secretStore,
     addDefaults,
   }: {
     hostname: string;
     /** `undefined` to keep no secret key in the file (the keychain has it). */
     secretKey: string | undefined;
+    /** `secret_store` to set, if any; `undefined` leaves the file's as is. */
+    secretStore?: SecretStoreKind;
     addDefaults: boolean;
   },
 ): string {
@@ -328,6 +340,7 @@ export function renderConfig(
   const missing: string[] = [];
   const settings: [string, string][] = [["hostname", hostname]];
   if (secretKey !== undefined) settings.push(["secret_key", secretKey]);
+  if (secretStore !== undefined) settings.push(["secret_store", secretStore]);
   for (const [key, value] of settings) {
     const line = `${key} = ${JSON.stringify(value)}`;
     const top = lines.slice(0, topEnd);
@@ -341,7 +354,14 @@ export function renderConfig(
     if (at === -1) missing.push(line);
     else lines[at] = line;
   }
-  if (missing.length > 0 && tableStart === -1) {
+  // Settings the file has no line for go under its hostname line, if it has
+  // one, rather than apart from it.
+  const hostnameAt = lines
+    .slice(0, topEnd)
+    .findIndex((l) => liveLine("hostname").test(l));
+  if (missing.length > 0 && hostnameAt !== -1) {
+    lines.splice(hostnameAt + 1, 0, ...missing);
+  } else if (missing.length > 0 && tableStart === -1) {
     lines.push("", ...missing);
   } else if (missing.length > 0) {
     // Above the table's own comments and the blank lines before them.

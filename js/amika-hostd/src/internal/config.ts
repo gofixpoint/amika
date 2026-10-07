@@ -48,6 +48,12 @@ export interface HostdConfig {
    */
   secretKeyInFile: boolean;
   secretStore: SecretStoreKind;
+  /**
+   * The TOML file sets `secret_store` itself. Setup writes it when it keeps
+   * the secret key in the keychain, so with "keychain" it marks a host whose
+   * secret key setup stored there.
+   */
+  secretStoreInFile: boolean;
   host: string;
   port: number;
   smolApiUrl?: string;
@@ -129,6 +135,7 @@ export function resolveConfig({
     secretStore: parseSecretStore(
       fromEnv("secretStore") ?? toml.secret_store ?? DEFAULT_SECRET_STORE,
     ),
+    secretStoreInFile: toml.secret_store !== undefined,
     host:
       parseHostFlag(flags.host) ?? fromEnv("host") ?? toml.host ?? DEFAULT_HOST,
     port: port === undefined ? DEFAULT_PORT : parsePort(port),

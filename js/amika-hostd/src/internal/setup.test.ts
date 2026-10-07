@@ -281,11 +281,30 @@ describe("runSetup with the keychain store", () => {
     );
   });
 
+  it("does not ask on the installer's seeded config, which already has a hostname", async () => {
+    const h = harness({
+      kind: "keychain",
+      answers: [""],
+      secrets: ["amk_123"],
+      file: EXAMPLE.replace('# hostname = "my-host"', 'hostname = "builder"'),
+    });
+    await runSetup(h.deps);
+    expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
+      "Hostname [builder]: ",
+    ]);
+    expect(h.keychainSecret.value).toBe(NEW_SECRET);
+    // Setup marks the file, so a later run knows the keychain has the key.
+    expect(h.config()).toMatchObject({
+      secretStore: "keychain",
+      secretStoreInFile: true,
+    });
+  });
+
   it("asks before replacing a secret key it cannot find, for a host set up before", async () => {
     const h = harness({
       kind: "keychain",
       answers: ["", "y", ""],
-      file: 'hostname = "builder"\n',
+      file: 'hostname = "builder"\nsecret_store = "keychain"\n',
       storedKey: "k",
     });
     await runSetup(h.deps);
@@ -306,7 +325,7 @@ describe("runSetup with the keychain store", () => {
       const h = harness({
         kind: "keychain",
         answers: ["", answer],
-        file: 'hostname = "builder"\n',
+        file: 'hostname = "builder"\nsecret_store = "keychain"\n',
         storedKey: "k",
       });
       await expect(runSetup(h.deps)).rejects.toThrow(
@@ -323,7 +342,7 @@ describe("runSetup with the keychain store", () => {
     const h = harness({
       kind: "keychain",
       answers: ["", "y", ""],
-      file: 'hostname = "builder"\n',
+      file: 'hostname = "builder"\nsecret_store = "keychain"\n',
       storedKey: "k",
     });
     await runSetup(h.deps);
@@ -374,7 +393,10 @@ describe("runSetup with the keychain store", () => {
     expect(h.keychainSecret.value).toBe(OLD_SECRET);
     expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
     expect(h.written[PATH]).toBe(
-      CONFIGURED.replace(`secret_key = "${OLD_SECRET}"\n`, ""),
+      CONFIGURED.replace(
+        `secret_key = "${OLD_SECRET}"\n`,
+        'secret_store = "keychain"\n',
+      ),
     );
     expect(h.out).toContain(
       `Moving the secret key from ${PATH} into the test keychain (secret key).`,
@@ -416,14 +438,16 @@ describe("runSetup with the keychain store", () => {
     const h = harness({
       kind: "keychain",
       answers: ["", ""],
-      file: 'hostname = "builder"\n',
+      file: 'hostname = "builder"\nsecret_store = "keychain"\n',
       storedKey: "k",
       storedSecret: OLD_SECRET,
     });
     await runSetup(h.deps);
     expect(h.keychainSecret.set).not.toHaveBeenCalled();
     expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
-    expect(h.written[PATH]).toBe('hostname = "builder"\n');
+    expect(h.written[PATH]).toBe(
+      'hostname = "builder"\nsecret_store = "keychain"\n',
+    );
   });
 
   it("drops the example's placeholder secret and keeps a new one in the keychain", async () => {
@@ -512,7 +536,7 @@ describe("renderConfig", () => {
       { ...values, addDefaults: false },
     );
     expect(contents).toBe(
-      `# mine\nhostname = "builder"\nport = 4000\nsecret_key = "${NEW_SECRET}"\n\n[preset_images]\na = "x/y:z"\n`,
+      `# mine\nhostname = "builder"\nsecret_key = "${NEW_SECRET}"\nport = 4000\n\n[preset_images]\na = "x/y:z"\n`,
     );
   });
 

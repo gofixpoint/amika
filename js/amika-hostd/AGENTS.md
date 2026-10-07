@@ -135,9 +135,11 @@ machine's own hostname made valid (lowercased, `.local` dropped, other
 characters turned into `-`), re-asking until it is valid. When the host has no
 secret key it generates one (`randomBytes(32)`, hex), unless the environment
 sets one, which is saved instead (Amika may already know it). With the
-keychain store, a host set up before (one with a hostname) first asks whether
-to generate one, since its key may be in a keychain that is only locked. An
-existing secret key is kept. Then it asks for the Amika API key, with input hidden, or
+keychain store, setup writes `secret_store = "keychain"` to mark that the
+keychain holds this host's secret key; when the file has that line but the
+keychain shows no key, setup first asks whether to generate one, since the
+key may be in a keychain that is only locked. (The hostname is no such mark:
+the installer seeds it.) An existing secret key is kept. Then it asks for the Amika API key, with input hidden, or
 on a rerun whether to replace the stored one; an API key in the environment is
 used instead, and setup does not ask.
 
@@ -191,8 +193,8 @@ chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
   them on GNOME Keyring and KWallet, and whose output is never shown): an
   item there is refused as locked. KeePassXC hides a locked database's items
   from the search too, so setup also asks before generating a new secret key
-  for a host it set up before (config.toml has a hostname, the keychain no
-  secret key), and changes nothing on "no". Any other
+  when config.toml has the `secret_store = "keychain"` setup wrote but the
+  keychain shows no secret key, and changes nothing on "no". Any other
   failure is an error quoting secret-tool's stderr; a session bus with no
   keyring daemon on it, as over SSH to a server, says to choose files rather
   than to unlock anything. On a machine where amika-hostd supports no
