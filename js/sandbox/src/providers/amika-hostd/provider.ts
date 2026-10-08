@@ -1,4 +1,5 @@
 /** Sandbox resources backed by an Amika host daemon's versioned rig API. */
+import { DEFAULT_HOME_DIR } from "../../constants";
 import type { AmikaHostdConfig } from "./config";
 import { amikaHostdCapabilities } from "./capabilities";
 import type { SandboxProvider } from "../provider";
@@ -65,7 +66,7 @@ const createProvider = defineProvider(
     return {
       name: "amika-hostd",
       signedUrlTtlSeconds: HOSTD_SERVICE_URL_TTL_S,
-      userHomeDir: "/root",
+      userHomeDir: DEFAULT_HOME_DIR,
       sandbox: {
         create: async (_ctx, input) => {
           try {

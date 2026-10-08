@@ -1,4 +1,5 @@
 /** Local smol machines provider, backed by a separately managed smolvm serve. */
+import { DEFAULT_HOME_DIR } from "../../constants";
 import type { SandboxProvider } from "../provider";
 import { SmolClient } from "./internal/client";
 import type { SmolConfig } from "./config";
@@ -43,7 +44,7 @@ const createProvider = defineProvider(
     return {
       name: "smol",
       signedUrlTtlSeconds: 0,
-      userHomeDir: "/root",
+      userHomeDir: DEFAULT_HOME_DIR,
       sandbox: {
         create: (_ctx, input) => ops.create(input),
         delete: ops.remove,
