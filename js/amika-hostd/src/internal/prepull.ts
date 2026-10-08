@@ -14,7 +14,7 @@
  */
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import type { ProviderRuntime } from "./machine-runtime.js";
+import { RuntimeError, type ProviderRuntime } from "./machine-runtime.js";
 import { writePrivateFile } from "./private-file.js";
 
 /** Names the throwaway machines, so a run cut short can clean them up. */
@@ -40,17 +40,58 @@ export interface ConfiguredImage {
   presets: string[];
 }
 
-const stateSchema = z.object({ images: z.array(z.string()) });
+/**
+ * `prepull.json`: the images pulled before, which only decide what `up`
+ * announces, and the throwaway machines hostd created and has not yet
+ * deleted. Only machines named here are ever deleted or hidden as hostd's:
+ * a rig that merely shares the prefix (one created before the prefix was
+ * reserved) is left alone.
+ */
+const stateSchema = z.object({
+  images: z.array(z.string()),
+  machines: z.array(z.string()).optional(),
+});
 
-/** The image references pulled so far; a missing or unreadable file is none. */
-export function pulledImages(stateFile: string): Set<string> {
+type PrepullState = Required<z.infer<typeof stateSchema>>;
+
+/** The state file's contents; a missing or unreadable file is empty. */
+function readState(stateFile: string): PrepullState {
   try {
-    return new Set(
-      stateSchema.parse(JSON.parse(readFileSync(stateFile, "utf8"))).images,
+    const state = stateSchema.parse(
+      JSON.parse(readFileSync(stateFile, "utf8")),
     );
+    return { images: state.images, machines: state.machines ?? [] };
   } catch {
-    return new Set();
+    return { images: [], machines: [] };
   }
+}
+
+function updateState(
+  stateFile: string,
+  change: (state: PrepullState) => PrepullState,
+) {
+  const next = change(readState(stateFile));
+  writePrivateFile(
+    stateFile,
+    `${JSON.stringify(
+      {
+        images: [...new Set(next.images)],
+        machines: [...new Set(next.machines)],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+/** The image references pulled so far. */
+export function pulledImages(stateFile: string): Set<string> {
+  return new Set(readState(stateFile).images);
+}
+
+/** The throwaway machines hostd created and has not deleted yet. */
+export function prepullMachines(stateFile: string): Set<string> {
+  return new Set(readState(stateFile).machines);
 }
 
 /**
@@ -74,14 +115,6 @@ export function pendingImages(
   return configuredImages(images).filter(({ image }) => !pulled.has(image));
 }
 
-function recordPulled(stateFile: string, image: string) {
-  const images = [...pulledImages(stateFile), image];
-  writePrivateFile(
-    stateFile,
-    `${JSON.stringify({ images: [...new Set(images)] }, null, 2)}\n`,
-  );
-}
-
 export interface PrepullOptions {
   images: Record<string, string>;
   stateFile: string;
@@ -96,7 +129,7 @@ export interface PrepullOptions {
 
 /**
  * Make sure each configured image is cached, one at a time, first deleting
- * any throwaway machine a run cut short left behind. Never throws: a failed
+ * the throwaway machines a run cut short left behind. Never throws: a failed
  * check is logged and tried again on the next start, and until then a rig of
  * that image pulls it inside its own VM if its seed is missing.
  */
@@ -109,33 +142,67 @@ export async function prepullImages({
   signal,
   now = Date.now,
 }: PrepullOptions): Promise<void> {
+  const forget = (name: string) => {
+    try {
+      updateState(stateFile, (state) => ({
+        ...state,
+        machines: state.machines.filter((machine) => machine !== name),
+      }));
+    } catch (error) {
+      err(`amika-hostd: could not update ${stateFile}: ${errorMessage(error)}`);
+    }
+  };
+  /** Delete a machine hostd created, and forget it once it is gone. */
   const remove = async (name: string) => {
     try {
       await runtime.remove(name);
     } catch (error) {
-      err(
-        `amika-hostd: could not delete pre-pull machine ${name}: ${reason(error)}`,
-      );
-    }
-  };
-  try {
-    for (const machine of await runtime.list()) {
-      if (machine.name.startsWith(PREPULL_MACHINE_PREFIX)) {
-        await remove(machine.name);
+      if (!(error instanceof RuntimeError && error.status === 404)) {
+        err(
+          `amika-hostd: could not delete pre-pull machine ${name}: ${errorMessage(error)}; the next \`amika-hostd up\` tries again`,
+        );
+        return;
       }
     }
+    forget(name);
+  };
+  // Every machine's name, so a throwaway one never takes a rig's.
+  let taken: Set<string>;
+  try {
+    taken = new Set((await runtime.list()).map((machine) => machine.name));
   } catch (error) {
     err(
-      `amika-hostd: could not list machines before pre-pulling: ${reason(error)}`,
+      `amika-hostd: could not list machines, so no image is pre-pulled: ${errorMessage(error)}`,
     );
+    return;
   }
-  for (const [index, { image, presets }] of configuredImages(
-    images,
-  ).entries()) {
+  for (const name of prepullMachines(stateFile)) {
+    await remove(name);
+    taken.delete(name);
+  }
+  let next = 0;
+  const freeName = () => {
+    while (taken.has(`${PREPULL_MACHINE_PREFIX}${next}`)) next++;
+    return `${PREPULL_MACHINE_PREFIX}${next++}`;
+  };
+  for (const { image, presets } of configuredImages(images)) {
     if (signal?.aborted) return;
-    const name = `${PREPULL_MACHINE_PREFIX}${index}`;
+    const name = freeName();
     const started = now();
     out(`Checking that ${image} (${presets.join(", ")}) is cached`);
+    // Recorded first, so a run cut short leaves a machine the next one
+    // knows to delete; one hostd cannot record, it never creates.
+    try {
+      updateState(stateFile, (state) => ({
+        ...state,
+        machines: [...state.machines, name],
+      }));
+    } catch (error) {
+      err(
+        `amika-hostd: could not cache ${image}: cannot update ${stateFile}: ${errorMessage(error)}`,
+      );
+      continue;
+    }
     try {
       // A disk smolvm seeds, so this create attaches the image's seed, and
       // builds it first if it is missing.
@@ -145,27 +212,42 @@ export async function prepullImages({
         storageGb: SMOLVM_SEED_MIN_DISK_GIB,
       });
     } catch (error) {
+      // The daemon stopping cuts the request short; that is no failure, and
+      // the next start deletes the machine it recorded.
+      if (signal?.aborted) return;
       err(
-        `amika-hostd: could not cache ${image}: ${reason(error)}; rigs of it may pull it themselves, and the next \`amika-hostd up\` tries again`,
+        `amika-hostd: could not cache ${image}: ${errorMessage(error)}; rigs of it may pull it themselves, and the next \`amika-hostd up\` tries again`,
       );
-      // A create that failed after making the machine leaves it behind.
-      if (!signal?.aborted) await remove(name);
+      if (error instanceof RuntimeError && error.status === 409) {
+        // Someone else's machine took the name first: never delete it.
+        taken.add(name);
+        forget(name);
+      } else {
+        // A create that failed after making the machine leaves it behind.
+        await remove(name);
+      }
       continue;
     }
     await remove(name);
     try {
-      recordPulled(stateFile, image);
+      updateState(stateFile, (state) => ({
+        ...state,
+        images: [...state.images, image],
+      }));
     } catch (error) {
       err(
-        `amika-hostd: could not record the pre-pull of ${image} in ${stateFile}: ${reason(error)}; the next \`amika-hostd up\` pulls it again`,
+        `amika-hostd: could not record the pre-pull of ${image} in ${stateFile}: ${errorMessage(error)}; the next \`amika-hostd up\` announces it again`,
       );
     }
+    // smolvm logs, but does not report, a seed it could not build, so this
+    // is as far as hostd can tell.
     out(
-      `${image} is cached (${Math.round((now() - started) / 1000)}s); new rigs of it start from smolvm's image cache`,
+      `Checked ${image} (${Math.round((now() - started) / 1000)}s); if its rigs still download it, see smolvm.log`,
     );
   }
 }
 
-function reason(error: unknown): string {
+/** An error's message, for a log line. */
+export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

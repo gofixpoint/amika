@@ -520,8 +520,9 @@ creates of one image share a single build.
 - **smolvm 1.24.0 or newer** (`MIN_SMOLVM_VERSION`) grows a seed to a larger
   disk and, when `smolvm serve` starts, refreshes the seeds of images machines
   used in the last week. `up` warns when `smolvm --version` reports an older
-  one; it says nothing when smolvm cannot be run. Like `smolvm serve`, that
-  command never sees the API key or the secret key.
+  one; it says nothing when smolvm cannot be run. The check runs alongside
+  registration, and like `smolvm serve` it never sees the API key or the
+  secret key.
 - **Pre-pull.** Once a daemon running its own smolvm is ready, it makes sure
   every configured image is in the cache, on every start, in the background
   and one at a time (`prepullImages`): it creates an unstarted throwaway
@@ -537,20 +538,30 @@ creates of one image share a single build.
   and a reinstall loses them, and smolvm keeps no other copy of an image.
   smolvm logs, but does not report, a seed it fails to build, so a create
   that succeeds is no proof the image is cached.
-  - Each image pulled is recorded in `prepull.json` in the state directory,
-    which only decides what `up` announces. That file, not `config.toml`,
-    holds this state: setup owns the config and rejects keys it does not
-    know.
+  - `prepull.json` in the state directory records the images pulled
+    before, which only decide what `up` announces, and the throwaway
+    machines hostd created and has not yet deleted. That file, not
+    `config.toml`, holds this state: setup owns the config and rejects keys
+    it does not know.
   - A failure is logged and retried on the next start; until then a rig of
     that image pulls it itself if its seed is missing.
-  - Leftover `amika-hostd-prepull-*` machines from a run cut short are
-    deleted first. The prefix is hostd's own: a create naming it is refused
-    (`400`), and the machine list leaves those machines out, so Amika never
-    sees them as rigs.
+  - Each throwaway machine is recorded before it is created, and forgotten
+    once deleted, so the machines a run cut short left behind are deleted
+    first. Only recorded machines are ever deleted, or left out of the
+    machine list (`hiddenMachines`) so Amika never sees them as rigs: a rig
+    that merely shares the prefix, made before it was reserved, is left
+    alone, and a throwaway machine takes the first `<n>` no machine has. A
+    create naming the prefix is refused (`400`). A create smolvm refuses as
+    taken (`409`) is never cleaned up, since the machine is someone else's.
+    If smolvm cannot list its machines, nothing is pre-pulled, since no name
+    is known to be free.
   - Each create may take an hour (`PREPULL_TIMEOUT_MS`), since smolvm builds
-    a missing seed before answering. The pre-pull stops before the next
-    image whenever the daemon stops, and an error from it is logged, never
-    fatal to the daemon.
+    a missing seed before answering. The pre-pull stops whenever the daemon
+    stops, quietly, leaving a machine it was creating recorded for the next
+    start to delete; any other error from it is logged, never fatal to the
+    daemon. Rig creates keep their own timeout (`SMOL_REQUEST_TIMEOUT_MS`),
+    so a rig created while its image is still downloading may time out,
+    which the announcement says.
 - **The announcement.** `up` reads `prepull.json` before starting the daemon
   and, once it is ready, lists the images never pulled before and where
   progress is logged (the log file, or the terminal under `--fg`). It prints

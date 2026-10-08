@@ -7,6 +7,7 @@ import { RuntimeError, type MachineInfo } from "./machine-runtime.js";
 import {
   pendingImages,
   prepullImages,
+  prepullMachines,
   pulledImages,
   type PrepullOptions,
 } from "./prepull.js";
@@ -15,12 +16,12 @@ const CODER = "ghcr.io/gofixpoint/amika-coder:latest";
 const DOCKER = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest";
 const IMAGES = { "amika-coder": CODER, coder: CODER, "with-docker": DOCKER };
 
-function stateFile(images?: string[]): string {
+function stateFile(images?: string[], machines?: string[]): string {
   const file = path.join(
     mkdtempSync(path.join(tmpdir(), "amika-hostd-")),
     "prepull.json",
   );
-  if (images) writeFileSync(file, JSON.stringify({ images }));
+  if (images) writeFileSync(file, JSON.stringify({ images, machines }));
   return file;
 }
 
@@ -86,7 +87,7 @@ describe("pendingImages", () => {
 });
 
 describe("prepullImages", () => {
-  it("caches each image through an unstarted throwaway machine, and records it", async () => {
+  it("caches each image through an unstarted throwaway machine", async () => {
     const { runtime, names } = fakeRuntime(["rig-1"]);
     const file = stateFile();
     const { done, out, err } = run(runtime, file);
@@ -106,15 +107,32 @@ describe("prepullImages", () => {
       runtime.createUnstarted.mock.invocationCallOrder[1],
     );
     expect([...names]).toEqual(["rig-1"]);
-    expect(pulledImages(file)).toEqual(new Set([CODER, DOCKER]));
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      images: [CODER, DOCKER],
+      machines: [],
+    });
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(out).toEqual([
       `Checking that ${CODER} (amika-coder, coder) is cached`,
-      `${CODER} is cached (30s); new rigs of it start from smolvm's image cache`,
+      `Checked ${CODER} (30s); if its rigs still download it, see smolvm.log`,
       `Checking that ${DOCKER} (with-docker) is cached`,
-      `${DOCKER} is cached (30s); new rigs of it start from smolvm's image cache`,
+      `Checked ${DOCKER} (30s); if its rigs still download it, see smolvm.log`,
     ]);
     expect(err).toEqual([]);
+  });
+
+  it("records each machine before creating it", async () => {
+    const { runtime } = fakeRuntime();
+    const file = stateFile();
+    const recorded: Set<string>[] = [];
+    runtime.createUnstarted.mockImplementation(async () => {
+      recorded.push(prepullMachines(file));
+    });
+    await run(runtime, file).done;
+    expect(recorded).toEqual([
+      new Set(["amika-hostd-prepull-0"]),
+      new Set(["amika-hostd-prepull-1"]),
+    ]);
   });
 
   it("checks images pulled before too, so smolvm refills an evicted one", async () => {
@@ -125,11 +143,43 @@ describe("prepullImages", () => {
     expect(pulledImages(file)).toEqual(new Set([CODER, DOCKER]));
   });
 
-  it("deletes throwaway machines an earlier run left behind", async () => {
-    const { runtime, names } = fakeRuntime(["amika-hostd-prepull-3", "rig-1"]);
-    await run(runtime, stateFile([CODER, DOCKER])).done;
-    expect(runtime.remove).toHaveBeenCalledWith("amika-hostd-prepull-3");
-    expect([...names]).toEqual(["rig-1"]);
+  it("deletes only the machines an earlier run recorded, never a rig sharing the prefix", async () => {
+    const { runtime, names } = fakeRuntime([
+      "amika-hostd-prepull-0",
+      "amika-hostd-prepull-3",
+      "rig-1",
+    ]);
+    const file = stateFile([CODER, DOCKER], ["amika-hostd-prepull-3"]);
+    await run(runtime, file).done;
+    expect(runtime.remove).not.toHaveBeenCalledWith("amika-hostd-prepull-0");
+    // The rig's name is taken, so the throwaway machines skip it.
+    expect(
+      runtime.createUnstarted.mock.calls.map(([{ name }]) => name),
+    ).toEqual(["amika-hostd-prepull-1", "amika-hostd-prepull-2"]);
+    expect([...names].sort()).toEqual(["amika-hostd-prepull-0", "rig-1"]);
+    expect(prepullMachines(file)).toEqual(new Set());
+  });
+
+  it("keeps a recorded machine it could not delete, to try again", async () => {
+    const { runtime } = fakeRuntime(["amika-hostd-prepull-3"]);
+    runtime.remove.mockRejectedValueOnce(new RuntimeError(502, "unreachable"));
+    const file = stateFile([], ["amika-hostd-prepull-3"]);
+    const { done, err } = run(runtime, file);
+    await done;
+    expect(err[0]).toBe(
+      "amika-hostd: could not delete pre-pull machine amika-hostd-prepull-3: unreachable; the next `amika-hostd up` tries again",
+    );
+    expect(prepullMachines(file)).toEqual(new Set(["amika-hostd-prepull-3"]));
+  });
+
+  it("forgets a recorded machine that is already gone", async () => {
+    const { runtime } = fakeRuntime();
+    runtime.remove.mockRejectedValueOnce(new RuntimeError(404, "not found"));
+    const file = stateFile([], ["amika-hostd-prepull-3"]);
+    const { done, err } = run(runtime, file);
+    await done;
+    expect(err).toEqual([]);
+    expect(prepullMachines(file)).toEqual(new Set());
   });
 
   it("leaves a failed pull unrecorded, cleans up, and goes on", async () => {
@@ -149,29 +199,45 @@ describe("prepullImages", () => {
     expect(names.size).toBe(0);
   });
 
-  it("never throws, even when smolvm cannot list or delete machines", async () => {
+  it("never deletes a machine whose name another took first", async () => {
+    const { runtime } = fakeRuntime();
+    runtime.createUnstarted.mockRejectedValueOnce(
+      new RuntimeError(409, "machine amika-hostd-prepull-0 already exists"),
+    );
+    const file = stateFile();
+    await run(runtime, file).done;
+    expect(runtime.remove).not.toHaveBeenCalledWith("amika-hostd-prepull-0");
+    expect(
+      runtime.createUnstarted.mock.calls.map(([{ name }]) => name),
+    ).toEqual(["amika-hostd-prepull-0", "amika-hostd-prepull-1"]);
+    expect(prepullMachines(file)).toEqual(new Set());
+  });
+
+  it("pre-pulls nothing when smolvm cannot list its machines", async () => {
     const { runtime } = fakeRuntime();
     runtime.list.mockRejectedValue(new RuntimeError(502, "unreachable"));
-    runtime.remove.mockRejectedValue(new RuntimeError(502, "unreachable"));
     const file = stateFile();
     const { done, err } = run(runtime, file);
     await expect(done).resolves.toBeUndefined();
-    expect(err[0]).toBe(
-      "amika-hostd: could not list machines before pre-pulling: unreachable",
-    );
-    // The image was pulled, so it is recorded even though its machine stayed.
-    expect(pulledImages(file)).toEqual(new Set([CODER, DOCKER]));
+    expect(err).toEqual([
+      "amika-hostd: could not list machines, so no image is pre-pulled: unreachable",
+    ]);
+    expect(runtime.createUnstarted).not.toHaveBeenCalled();
   });
 
-  it("stops before the next image once the daemon is stopping", async () => {
+  it("stops quietly once the daemon is stopping, leaving its machine recorded", async () => {
     const { runtime } = fakeRuntime();
     const stopping = new AbortController();
     runtime.createUnstarted.mockImplementationOnce(async () => {
       stopping.abort();
+      throw new TypeError("fetch failed");
     });
     const file = stateFile();
-    await run(runtime, file, { signal: stopping.signal }).done;
+    const { done, err } = run(runtime, file, { signal: stopping.signal });
+    await done;
+    expect(err).toEqual([]);
     expect(runtime.createUnstarted).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ images: [CODER] });
+    expect(runtime.remove).not.toHaveBeenCalled();
+    expect(prepullMachines(file)).toEqual(new Set(["amika-hostd-prepull-0"]));
   });
 });

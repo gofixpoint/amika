@@ -228,7 +228,10 @@ describe("runCli", () => {
       expect(deps.startServer).toHaveBeenCalledWith(
         expect.objectContaining({ host: "0.0.0.0", port: 3020 }),
         expect.anything(),
-        { servicesFile: "/state/amika-hostd/services.json" },
+        {
+          servicesFile: "/state/amika-hostd/services.json",
+          hiddenMachines: expect.any(Function),
+        },
       );
       expect(deps.claimPidFile).toHaveBeenCalledWith(
         "/state/amika-hostd/amika-hostd.pid",

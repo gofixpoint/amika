@@ -313,15 +313,24 @@ describe("machine API", () => {
     expectUntouched(runtime);
   });
 
-  it("lists no pre-pull machine as a rig", async () => {
+  it("lists none of hostd's own pre-pull machines as rigs", async () => {
     const runtime = fakeRuntime();
+    // A rig that only shares the prefix (made before it was reserved) stays.
+    const sharesPrefix = { ...MACHINE, name: "amika-hostd-prepull-7" };
     runtime.list.mockResolvedValue([
       MACHINE,
       { ...MACHINE, name: "amika-hostd-prepull-0" },
+      sharesPrefix,
     ]);
-    const { app } = harness(runtime);
+    const app = authenticated(
+      createApp({ secretKey: SECRET }, runtime, {
+        hiddenMachines: () => new Set(["amika-hostd-prepull-0"]),
+      }),
+    );
     const response = await app.request(ROOT);
-    expect(await response.json()).toEqual({ machines: [MACHINE] });
+    expect(await response.json()).toEqual({
+      machines: [MACHINE, sharesPrefix],
+    });
   });
 
   it("rejects malformed JSON without echoing input", async () => {

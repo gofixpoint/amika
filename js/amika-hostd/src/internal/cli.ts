@@ -52,6 +52,8 @@ import {
   SMOLVM_SEED_MIN_DISK_GIB,
   pendingImages,
   prepullImages,
+  prepullMachines,
+  errorMessage,
   type ConfiguredImage,
   type PrepullOptions,
 } from "./prepull.js";
@@ -210,8 +212,10 @@ export async function runCli(
           REGISTRATION_SETTINGS,
         );
         warnUncachedSizes(config, deps);
-        await warnOldSmolvm(deps);
+        // Alongside registration, so a slow smolvm never delays it.
+        const checkedSmolvm = warnOldSmolvm(deps);
         const host = await register(config, deps);
+        await checkedSmolvm;
         // Read before the daemon starts, which records each image it pulls.
         const pending = pendingImages(
           config.images,
@@ -819,14 +823,12 @@ async function serveInForeground(
   const signalled = deps.shutdownSignal();
   const interrupted = new AbortController();
   void signalled.then(() => interrupted.abort());
-  // Stops the pre-pull however the daemon stops, not only on a signal, so
-  // it never goes on against a smolvm that is gone.
-  const stopping = new AbortController();
-  void signalled.then(() => stopping.abort());
   let runtime: ManagedSmolvm | undefined;
   let server: RunningServer | undefined;
   const stopAll = async () => {
-    stopping.abort();
+    // However the daemon stops, not only on a signal, so the pre-pull never
+    // goes on against a smolvm that is gone.
+    interrupted.abort();
     try {
       await server?.close();
     } finally {
@@ -846,7 +848,7 @@ async function serveInForeground(
       const serving = runtime
         ? { ...config, smolApiUrl: runtime.apiUrl }
         : config;
-      server = await listen(serving, paths.servicesFile, deps);
+      server = await listen(serving, paths, deps);
     }
     // Signalled during startup: stop without telling `up` it is ready.
     if (server === undefined || interrupted.signal.aborted) {
@@ -862,11 +864,11 @@ async function serveInForeground(
         stateFile: paths.prepullFile,
         out: deps.out,
         err: deps.err,
-        signal: stopping.signal,
+        signal: interrupted.signal,
       }).catch((error: unknown) => {
         // Never let the background pull take the daemon down with it.
         deps.err(
-          `amika-hostd: pre-pulling images stopped: ${error instanceof Error ? error.message : String(error)}`,
+          `amika-hostd: pre-pulling images stopped: ${errorMessage(error)}`,
         );
       });
     }
@@ -929,7 +931,7 @@ function announcePrepull(
     deps.out(`  ${presets.join(", ").padEnd(width)}  ${image}`);
   }
   deps.out(
-    "Each is several GB. A rig created before its image has downloaded waits for it; after that, rigs start without downloading it again.",
+    "Each is several GB. Once an image has downloaded, its rigs start without downloading it again; a rig created before then may take minutes, or time out.",
   );
   // In the foreground the daemon reports progress here, not in the log.
   deps.out(
@@ -989,7 +991,7 @@ async function startSmolvm(
 
 async function listen(
   config: HostdConfigWith<"secretKey">,
-  servicesFile: string,
+  paths: DaemonPaths,
   deps: CliDeps,
 ): Promise<RunningServer> {
   // Machines run through the `smol` provider, on the smolvm this daemon
@@ -1000,7 +1002,8 @@ async function listen(
   });
   try {
     return await (deps.startServer ?? startServerOnPort)(config, runtime, {
-      servicesFile,
+      servicesFile: paths.servicesFile,
+      hiddenMachines: () => prepullMachines(paths.prepullFile),
     });
   } catch (error) {
     throw new DaemonError(
