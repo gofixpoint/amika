@@ -8,6 +8,10 @@
 import { randomBytes } from "node:crypto";
 import { hostname as osHostname } from "node:os";
 import {
+  registerHost as registerHostWithAmika,
+  setHostSecret as setHostSecretInAmika,
+} from "./amika-api.js";
+import {
   ConfigError,
   ENV_NAMES,
   envName,
@@ -16,6 +20,7 @@ import {
   isValidSecretKey,
   loadConfigFile as loadConfigFileFromDisk,
   resolveConfig,
+  type HostdConfig,
   type HostdConfigFile,
   type HostSize,
   type SecretStoreKind,
@@ -37,6 +42,8 @@ export interface SetupDeps {
   writeConfigFile?: (file: string, contents: string) => void;
   systemHostname?: () => string;
   generateSecretKey?: () => string;
+  registerHost?: typeof registerHostWithAmika;
+  setHostSecret?: typeof setHostSecretInAmika;
 }
 
 /**
@@ -99,7 +106,11 @@ export async function runSetup(
   // The keychain's own item wins over one left in the file: setup put it
   // there, so it is the one Amika has been sent.
   const current = storedSecret ?? saved.secretKey;
+  const generate =
+    deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"));
   let secretKey: string;
+  /** The secret key a regeneration replaced, to put back if Amika fails. */
+  let replaced: string | undefined;
   if (current !== undefined) {
     secretKey = current;
     if (keychainSecret && saved.secretKey !== undefined) {
@@ -108,6 +119,27 @@ export async function runSetup(
           ? `Moving the secret key from ${configPath} into ${secretHome}.`
           : `Removing the secret_key in ${configPath}: ${secretHome} holds this host's secret key.`,
       );
+    }
+    // A new key goes to the Amika, organization and hostname this run
+    // reaches, and `up` goes back to the stored ones once the environment no
+    // longer overrides them, where the host would keep the old key; and the
+    // daemon would keep using an overriding secret key. So regenerate only
+    // without overrides.
+    const overrides = (["secretKey", "hostname", "apiUrl", "apiKey"] as const)
+      .map((key) => envName(deps.env, key))
+      .filter((name) => name !== undefined);
+    if (overrides.length > 0) {
+      deps.out(
+        `Not offering to regenerate the secret key while ${overrides.join(", ")} ${overrides.length === 1 ? "is" : "are"} set; unset ${overrides.length === 1 ? "it" : "them"} to regenerate it.`,
+      );
+    } else if (
+      await confirm(
+        "Regenerate the secret key Amika uses to reach this host? [y/N] ",
+        deps,
+      )
+    ) {
+      replaced = current;
+      secretKey = generate();
     }
   } else if (effective.secretKey !== undefined) {
     // The host may already be registered with the environment's secret, and
@@ -136,9 +168,7 @@ export async function runSetup(
         );
       }
     }
-    secretKey = (
-      deps.generateSecretKey ?? (() => randomBytes(32).toString("hex"))
-    )();
+    secretKey = generate();
     deps.out("Generated a new secret key.");
     if (saved.hostname !== undefined) {
       // Registration never changes a stored secret, so a host Amika already
@@ -161,36 +191,103 @@ export async function runSetup(
     saved.secretStoreInFile && saved.secretStore !== store
       ? saved.secretStore
       : undefined;
-  const contents = renderConfig(file?.contents, {
-    hostname,
-    secretStore:
-      store === "keychain" || saved.secretStore !== store ? store : undefined,
-    // In the keychain, the file keeps no secret key at all.
-    secretKey: keychainSecret ? undefined : secretKey,
-    // A config written from scratch always gets them, even when a secret
-    // survived in the keychain (the file was deleted, say).
-    addDefaults:
-      (file === undefined || firstRun) && Object.keys(saved.sizes).length === 0,
-  });
-  // Check the result parses before anything changes.
+  const render = (secret: string) =>
+    renderConfig(file?.contents, {
+      hostname,
+      secretStore:
+        store === "keychain" || saved.secretStore !== store ? store : undefined,
+      // In the keychain, the file keeps no secret key at all.
+      secretKey: keychainSecret ? undefined : secret,
+      // A config written from scratch always gets them, even when a secret
+      // survived in the keychain (the file was deleted, say).
+      addDefaults:
+        (file === undefined || firstRun) &&
+        Object.keys(saved.sizes).length === 0,
+    });
+  const contents = render(secretKey);
+  // Check the result parses before anything changes, here or in Amika.
   const written = resolveConfig({ file: { path: configPath, contents } });
+
+  const write = deps.writeConfigFile ?? writePrivateFile;
+  const old = replaced;
+  // A new API key entered alongside a regeneration is saved only once Amika
+  // has taken the new secret key with it, so one Amika refuses (a typo, say)
+  // is not kept for the next run.
+  const deferApiKey = old !== undefined && apiKey !== undefined;
+
   // The secrets first, so a secret that cannot be stored (a locked keychain,
-  // say) leaves the config untouched.
-  if (apiKey !== undefined) deps.secrets.apiKey.set(apiKey);
-  if (keychainSecret && secretKey !== storedSecret) {
-    keychainSecret.set(secretKey);
+  // say) leaves the config untouched; then the config.
+  if (apiKey !== undefined && !deferApiKey) deps.secrets.apiKey.set(apiKey);
+  const storesSecret = keychainSecret && secretKey !== storedSecret;
+  if (old === undefined) {
+    if (storesSecret) keychainSecret.set(secretKey);
+    writeConfig(write, configPath, contents);
+  } else {
+    // A regenerated key: stored here, then sent to Amika, which keeps the
+    // secret a host registered with until told otherwise. If any step fails,
+    // the old key goes back, so this host keeps the key Amika has.
+    // The stored API key, read before anything changes: setup asked for one
+    // if there was none.
+    const sendWith = apiKey ?? deps.secrets.apiKey.get();
+    if (sendWith === undefined) {
+      throw new ConfigError("No Amika API key is set; nothing was changed");
+    }
+    let wroteConfig = false;
+    let sending = false;
+    try {
+      if (storesSecret) keychainSecret.set(secretKey);
+      writeConfig(write, configPath, contents);
+      wroteConfig = true;
+      sending = true;
+      const created = await sendSecret(
+        { apiUrl: effective.apiUrl, apiKey: sendWith },
+        written,
+        { hostname, secretKey },
+        deps,
+      );
+      deps.out(
+        created
+          ? `Registered host ${hostname} with ${effective.apiUrl}`
+          : `Sent the new secret key for host ${hostname} to Amika.`,
+      );
+    } catch (error) {
+      const restored = restoreSecret(
+        error as Error,
+        secretHome,
+        () => {
+          if (keychainSecret) keychainSecret.set(old);
+          else if (wroteConfig) writeConfig(write, configPath, render(old));
+        },
+        sending,
+      );
+      throw deferApiKey
+        ? new ConfigError(
+            `${restored.message} The API key you entered was not saved either.`,
+          )
+        : restored;
+    }
   }
-  writeConfig(deps.writeConfigFile ?? writePrivateFile, configPath, contents);
   if (changedStore !== undefined) {
     deps.out(
       `Changed secret_store in ${configPath} from "${changedStore}" to "${store}", where setup kept the secrets.`,
     );
   }
-  if (apiKey !== undefined) {
-    deps.out(`Stored the API key in ${deps.secrets.apiKey.description}.`);
-  }
-  if (keychainSecret && secretKey !== storedSecret) {
+  if (storesSecret) {
     deps.out(`Stored the secret key in ${secretHome}.`);
+  }
+  if (apiKey !== undefined) {
+    if (deferApiKey) {
+      try {
+        deps.secrets.apiKey.set(apiKey);
+      } catch (error) {
+        // Amika and this host already agree on the new key, so a running
+        // daemon still needs the restart a rerun would not mention.
+        throw new ConfigError(
+          `Amika and this host now have the new secret key, but the API key you entered could not be saved: ${(error as Error).message}. ${RESTART} Run \`amika-hostd setup\` again to store the API key.`,
+        );
+      }
+    }
+    deps.out(`Stored the API key in ${deps.secrets.apiKey.description}.`);
   }
 
   deps.out("");
@@ -207,12 +304,67 @@ export async function runSetup(
   for (const line of describeImages(written.images)) deps.out(`  ${line}`);
   deps.out(`Edit ${configPath} to change these settings.`);
   warnAboutEnvironment(deps, secretHome);
+  // `up` runs setup only with the daemon stopped.
+  if (replaced !== undefined && !fromUp) deps.out(RESTART);
   deps.out("");
   if (!fromUp) {
     deps.out("Start the daemon with `amika-hostd up`.");
     deps.out("To stop the daemon and its VMs, run `amika-hostd down`.");
   }
 }
+
+/**
+ * Give Amika `input.secretKey` for this hostname: registering it if new,
+ * else replacing the stored secret. Returns whether it registered the host.
+ */
+async function sendSecret(
+  api: { apiUrl: string; apiKey: string },
+  config: HostdConfig,
+  input: { hostname: string; secretKey: string },
+  deps: SetupDeps,
+): Promise<boolean> {
+  const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
+    api,
+    { ...input, sizes: config.sizes },
+  );
+  if (created) return true;
+  await (deps.setHostSecret ?? setHostSecretInAmika)(
+    api,
+    host,
+    input.secretKey,
+  );
+  return false;
+}
+
+/**
+ * Storing or sending the regenerated secret key failed: put the old one back
+ * where setup keeps it. Once it was being sent, whether Amika applied it is
+ * unknown, so the error says how to recover if it did.
+ */
+function restoreSecret(
+  error: Error,
+  secretHome: string,
+  restore: () => void,
+  sent: boolean,
+): ConfigError {
+  const again =
+    "run `amika-hostd setup` again and regenerate it, so Amika and this host agree";
+  try {
+    restore();
+  } catch {
+    return new ConfigError(
+      `${error.message}; the new secret key is still in ${secretHome}, since the old one could not be put back: ${again}.`,
+    );
+  }
+  return new ConfigError(
+    sent
+      ? `${error.message}; ${secretHome} has the old secret key again. If Amika's requests to this host start failing, ${again}.`
+      : `${error.message}; ${secretHome} has the old secret key again, and nothing was sent to Amika.`,
+  );
+}
+
+const RESTART =
+  "If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up.";
 
 async function askHostname(
   current: string | undefined,

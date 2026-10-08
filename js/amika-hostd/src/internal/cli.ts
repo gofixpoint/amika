@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import {
   AmikaApiError,
   registerHost as registerHostWithAmika,
+  setHostSecret as setHostSecretInAmika,
   setHostSizes as setHostSizesInAmika,
   setHostUrl as setHostUrlInAmika,
   type RegisteredHost,
@@ -90,6 +91,7 @@ export interface CliDeps {
   isRunning?: (pid: number) => boolean;
   registerHost?: typeof registerHostWithAmika;
   setHostSizes?: typeof setHostSizesInAmika;
+  setHostSecret?: typeof setHostSecretInAmika;
   setHostUrl?: typeof setHostUrlInAmika;
   /**
    * Ask the operator a question (see `Prompt`). Absent when stdin or stdout
