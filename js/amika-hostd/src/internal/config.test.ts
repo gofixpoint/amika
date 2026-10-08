@@ -476,8 +476,8 @@ describe("config.example.toml", () => {
       host: "127.0.0.1",
       port: 3020,
       sizes: {
-        tiny: { vcpus: 1, memoryGib: 2, diskGib: 10, diskGrowOnly: false },
-        small: { vcpus: 2, memoryGib: 4, diskGib: 16, diskGrowOnly: false },
+        tiny: { vcpus: 1, memoryGib: 2, diskGib: 20, diskGrowOnly: false },
+        small: { vcpus: 2, memoryGib: 4, diskGib: 20, diskGrowOnly: false },
         medium: { vcpus: 4, memoryGib: 8, diskGib: 24, diskGrowOnly: false },
         large: { vcpus: 8, memoryGib: 16, diskGib: 40, diskGrowOnly: false },
         xlarge: { vcpus: 16, memoryGib: 24, diskGib: 40, diskGrowOnly: false },

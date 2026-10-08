@@ -51,6 +51,11 @@ export interface AppDeps {
   registry?: ServiceRegistry;
   /** Reaches a machine's published guest ports for service routes. */
   fetch?: typeof fetch;
+  /**
+   * hostd's own throwaway machines (`prepull.ts`), left out of the machine
+   * list so Amika never sees them as rigs.
+   */
+  hiddenMachines?: () => ReadonlySet<string>;
 }
 
 /** Build routes without opening a socket; the runtime is injectable. */
@@ -62,7 +67,11 @@ export function createApp(
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   }: AppConfig,
   runtime: MachineRuntime,
-  { registry = memoryServiceRegistry(), fetch: fetcher = fetch }: AppDeps = {},
+  {
+    registry = memoryServiceRegistry(),
+    fetch: fetcher = fetch,
+    hiddenMachines = () => new Set(),
+  }: AppDeps = {},
 ) {
   const timeoutMs = z.number().int().positive().parse(requestTimeoutMs);
   /**
@@ -142,8 +151,17 @@ export function createApp(
 
   function machineRoutes(machines: string) {
     app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
+    // hostd's own pre-pull machines are no rigs of Amika's.
     app.get(machines, () =>
-      call(async () => Response.json({ machines: await runtime.list() })),
+      call(async () => {
+        const listed = await runtime.list();
+        // Read after listing: a machine is recorded before it is created, so
+        // any machine the list shows is already named here.
+        const hidden = hiddenMachines();
+        return Response.json({
+          machines: listed.filter((machine) => !hidden.has(machine.name)),
+        });
+      }),
     );
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());

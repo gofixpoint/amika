@@ -2,7 +2,12 @@
  * Start and stop the `smolvm serve` process behind `amika-hostd up`, so the
  * daemon and the runtime it forwards to come and go together.
  */
-import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import {
+  execFile,
+  spawn as nodeSpawn,
+  type ChildProcess,
+} from "node:child_process";
+import { promisify } from "node:util";
 import {
   accessSync,
   closeSync,
@@ -417,6 +422,54 @@ export function findSmolvm(env: NodeJS.ProcessEnv): string | undefined {
     path.join(home, ".smolvm", "smolvm"),
     path.join(home, ".local", "bin", "smolvm"),
   ].find(isExecutableFile);
+}
+
+/**
+ * The oldest smolvm whose image cache serves every rig: it seeds a machine
+ * with a disk larger than its 20 GiB template (growing the seed), and
+ * `smolvm serve` refreshes recently used images' seeds when it starts.
+ */
+export const MIN_SMOLVM_VERSION = "1.24.0";
+
+/**
+ * The version `smolvm --version` reports (`smolvm 1.25.0`), or undefined when
+ * smolvm cannot be found or run, or prints something else.
+ */
+export async function smolvmVersion(
+  env: NodeJS.ProcessEnv,
+  {
+    find = findSmolvm,
+    run = async (binary: string) =>
+      (
+        await promisify(execFile)(binary, ["--version"], {
+          encoding: "utf8",
+          env,
+          timeout: 10_000,
+        })
+      ).stdout,
+  }: {
+    find?: (env: NodeJS.ProcessEnv) => string | undefined;
+    run?: (binary: string) => Promise<string>;
+  } = {},
+): Promise<string | undefined> {
+  const binary = find(env);
+  if (binary === undefined) return undefined;
+  try {
+    return /\b(\d+\.\d+\.\d+)\b/.exec(await run(binary))?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether dotted version `version` comes before `minimum`. */
+export function isOlderVersion(version: string, minimum: string): boolean {
+  const parts = (v: string) => v.split(".").map(Number);
+  const [a, b] = [parts(version), parts(minimum)];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff < 0;
+  }
+  return false;
 }
 
 function isExecutableFile(file: string): boolean {

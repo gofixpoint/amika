@@ -491,9 +491,8 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
 
 The seeded config tracks `:latest`, which every image release moves. A host
 that needs a fixed version pins the release's 12-character commit SHA instead.
-Because `:latest` is a moving tag, smolvm's in-VM image cache can keep serving
-the previously pulled digest, so an upgrade is not guaranteed to take effect
-until that cache is cleared.
+smolvm's image cache (below) is keyed by the digest a reference points to, so
+a moved tag is pulled again rather than served stale.
 
 On create (`POST /v0beta1/rigs`), `resolveImage` (`src/internal/requests.ts`) swaps
 a configured name for its reference before forwarding to smolvm. An `image`
@@ -502,6 +501,78 @@ for development. Any other name is refused with a `400` naming the config file
 to edit, so an unconfigured preset never falls through to a Docker Hub pull.
 smolvm pulls the reference inside the VM on first use, which needs the
 machine's network on (the default).
+
+### Image cache
+
+An image is several GB, and without a cache every rig downloads its own copy
+into its own disk, so a rig can sit in "Creating" for minutes, and rigs
+created together split the bandwidth. smolvm caches a pulled registry image as
+a shared, read-only "seed": a new machine of that image starts from a
+copy-on-write overlay of it (an APFS clone on macOS) instead of pulling. Seeds
+are keyed by the digest the reference points to, resolved on the host with
+smolvm's registry credentials (its own config, then Docker's), and concurrent
+creates of one image share a single build.
+
+- **Disks under 20 GiB are never cached.** smolvm seeds only a disk at least
+  as large as its 20 GiB template (`SMOLVM_SEED_MIN_DISK_GIB` in
+  `src/internal/prepull.ts`); a smaller one is the template shrunk with
+  `resize2fs`, and pulls its image every time. So the default `tiny` and
+  `small` sizes have 20 GiB disks (`DEFAULT_SIZES`), and `up` warns about any
+  configured size under 20 GiB. Lower them once smolvm can seed smaller disks.
+- **smolvm 1.24.0 or newer** (`MIN_SMOLVM_VERSION`) grows a seed to a larger
+  disk and, when `smolvm serve` starts, refreshes the seeds of images machines
+  used in the last week. `up` warns when `smolvm --version` reports an older
+  one; it says nothing when smolvm cannot be run. The check runs alongside
+  registration, and like `smolvm serve` it never sees the API key or the
+  secret key.
+- **Pre-pull.** Once a daemon running its own smolvm is ready, it makes sure
+  every configured image is in the cache, on every start, in the background
+  and one at a time (`prepullImages`): it creates an unstarted throwaway
+  machine `amika-hostd-prepull-<random>` (`createUnstarted`: a 20 GiB disk, so
+  smolvm seeds it, and network on) and deletes it. smolvm attaches a seed at
+  create without booting the VM, building it first when it is missing, so a
+  cached image costs one registry request to resolve its digest (well under
+  a second), and a new image, a moved tag, or a seed smolvm evicted or lost
+  is downloaded then rather than by the next rig. Checking every time,
+  rather than once, matters because smolvm's cache is not permanent: it
+  evicts unused seeds over its 20 GiB cap, a smolvm upgrade makes every seed
+  stale (its own startup refresh covers only images used in the last week),
+  and a reinstall loses them, and smolvm keeps no other copy of an image.
+  smolvm logs, but does not report, a seed it fails to build, so a create
+  that succeeds is no proof the image is cached.
+  - `prepull.json` in the state directory records the images pulled
+    before, which only decide what `up` announces, and the throwaway
+    machines hostd created and has not yet deleted. That file, not
+    `config.toml`, holds this state: setup owns the config and rejects keys
+    it does not know.
+  - A failure is logged and retried on the next start; until then a rig of
+    that image pulls it itself if its seed is missing.
+  - Each throwaway machine is recorded before it is created, and forgotten
+    once deleted, so the machines a run cut short left behind are deleted
+    first. Only recorded machines are ever deleted, and only hostd's own
+    are left out of the machine list (`hiddenMachines`) so Amika never sees
+    them as rigs: a rig that merely shares the prefix, made before it was
+    reserved, is left alone. The list hides the recorded machines plus every
+    name this daemon's pre-pull has used or cleaned up (`used`), kept after
+    the machine is deleted, so a list smolvm answered mid-create or mid-delete never
+    shows one. A create naming the prefix is refused (`400`). The rest of a
+    throwaway machine's name is 16 random hex digits, so it never takes
+    another machine's name, nor that of one hostd could not delete. A create
+    smolvm still refuses as taken (`409`) is never cleaned up, since the
+    machine is someone else's.
+  - Each create may take an hour (`PREPULL_TIMEOUT_MS`), since smolvm builds
+    a missing seed before answering. The pre-pull stops whenever the daemon
+    stops, quietly, leaving a machine it was creating recorded for the next
+    start to delete; any other error from it is logged, never fatal to the
+    daemon. Rig creates keep their own timeout (`SMOL_REQUEST_TIMEOUT_MS`),
+    so a rig created while its image is still downloading may time out,
+    which the announcement says.
+- **The announcement.** `up` reads `prepull.json` before starting the daemon
+  and, once it is ready, lists the images never pulled before and where
+  progress is logged (the log file, or the terminal under `--fg`). It prints
+  nothing when every image is recorded, so the message appears on the first
+  `up`, and again only for a new image or one whose pull failed. A routine
+  check of cached images is not announced.
 
 ## Service routes
 

@@ -465,6 +465,7 @@ describe("daemonPaths", () => {
       smolvmUrlFile: "/state/amika-hostd/smolvm.url",
       smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
       servicesFile: "/state/amika-hostd/services.json",
+      prepullFile: "/state/amika-hostd/prepull.json",
     });
   });
 

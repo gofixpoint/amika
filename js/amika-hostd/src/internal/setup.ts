@@ -56,9 +56,13 @@ export interface SetupDeps {
  * host can run rigs right away. They match `config.example.toml`, which the
  * installer seeds (`setup.test.ts` checks).
  */
+// tiny and small have 20 GiB disks, not the 10 and 16 GiB they had, because
+// smolvm caches an image only for a disk of at least its 20 GiB template
+// (`SMOLVM_SEED_MIN_DISK_GIB`); a smaller one downloads its image on every
+// create. Lower them again once smolvm can cache images for smaller disks.
 export const DEFAULT_SIZES: Record<string, HostSize> = {
-  tiny: { vcpus: 1, memoryGib: 2, diskGib: 10, diskGrowOnly: false },
-  small: { vcpus: 2, memoryGib: 4, diskGib: 16, diskGrowOnly: false },
+  tiny: { vcpus: 1, memoryGib: 2, diskGib: 20, diskGrowOnly: false },
+  small: { vcpus: 2, memoryGib: 4, diskGib: 20, diskGrowOnly: false },
   medium: { vcpus: 4, memoryGib: 8, diskGib: 24, diskGrowOnly: false },
   large: { vcpus: 8, memoryGib: 16, diskGib: 40, diskGrowOnly: false },
   xlarge: { vcpus: 16, memoryGib: 24, diskGib: 40, diskGrowOnly: false },

@@ -162,6 +162,19 @@ function surfaceable(
   return `${cut}…`;
 }
 
+/**
+ * The runtime over smolvm, which can also create a machine without booting
+ * it: smolvm attaches (building it first if need be) its image's cached
+ * seed at create, so this fills the cache without starting a VM.
+ */
+export interface ProviderRuntime extends MachineRuntime {
+  createUnstarted(machine: {
+    name: string;
+    image: string;
+    storageGb: number;
+  }): Promise<void>;
+}
+
 export interface ProviderRuntimeConfig {
   /** Where the `smolvm serve` hostd started listens. */
   apiUrl: string;
@@ -180,7 +193,7 @@ export function providerRuntime({
   apiUrl,
   requestTimeoutMs,
   fetch: baseFetch = fetch,
-}: ProviderRuntimeConfig): MachineRuntime {
+}: ProviderRuntimeConfig): ProviderRuntime {
   // Never follow a redirect from smolvm: it would resend exec bodies
   // (commands, environment, stdin) and uploaded files to wherever it points.
   const fetcher: typeof fetch = (input, init) =>
@@ -268,6 +281,11 @@ export function providerRuntime({
         (machine.env ?? []).map((e) => e.value),
       );
       return describe(machine.name);
+    },
+    createUnstarted: async ({ name, image, storageGb }) => {
+      await call(() =>
+        client.discard("", "POST", { name, image, storageGb, network: true }),
+      );
     },
     // smolvm answers a start or stop with the machine, so a successful one
     // never hinges on a second request: a failed read-back would report a

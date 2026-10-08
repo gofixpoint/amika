@@ -37,10 +37,13 @@ export function startServer(
   {
     shutdownGraceMs = SHUTDOWN_GRACE_MS,
     servicesFile,
+    hiddenMachines,
   }: {
     shutdownGraceMs?: number;
     /** Persists service names across restarts; in memory without one. */
     servicesFile?: string;
+    /** Machines left out of the machine list (see `AppDeps`). */
+    hiddenMachines?: () => ReadonlySet<string>;
   } = {},
 ): Promise<RunningServer> {
   const registry = servicesFile
@@ -54,7 +57,7 @@ export function startServer(
       requestTimeoutMs: config.smolRequestTimeoutMs,
     },
     runtime,
-    { registry },
+    { registry, hiddenMachines },
   );
   const tunnels = new Set<Duplex>();
   const upgrade = createUpgradeHandler(

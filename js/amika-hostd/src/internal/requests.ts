@@ -1,6 +1,7 @@
 /** Validate the machine API's requests, the supported subset of smolvm's. */
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
+import { PREPULL_MACHINE_PREFIX } from "./prepull.js";
 
 const nameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/);
 const envSchema = z.array(
@@ -30,7 +31,11 @@ const servicesSchema = z
   );
 
 export const createMachineSchema = z.strictObject({
-  name: nameSchema,
+  // The prefix names hostd's own throwaway machines, which it deletes.
+  name: nameSchema.refine(
+    (name) => !name.startsWith(PREPULL_MACHINE_PREFIX),
+    `names starting with ${PREPULL_MACHINE_PREFIX} are reserved`,
+  ),
   image: z.string().trim().min(1),
   // smolvm's limits (`VmResources::validate`): it supports at most 16 vCPUs
   // (only macOS actually caps there; we refuse more on every host) and can't

@@ -47,12 +47,25 @@ import {
   type RunningServer,
 } from "./server.js";
 import { providerRuntime } from "./machine-runtime.js";
+import {
+  PREPULL_TIMEOUT_MS,
+  SMOLVM_SEED_MIN_DISK_GIB,
+  pendingImages,
+  prepullImages,
+  prepullMachines,
+  errorMessage,
+  type ConfiguredImage,
+  type PrepullOptions,
+} from "./prepull.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
 import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
 import { setupSkill, type SkillContext } from "./setup-skill.js";
 import {
   DEFAULT_SMOL_API_URL,
+  MIN_SMOLVM_VERSION,
   SMOLVM_STOP_TIMEOUT_MS,
+  isOlderVersion,
+  smolvmVersion as readSmolvmVersion,
   startSmolvm as startSmolvmServe,
   type ManagedSmolvm,
 } from "./smolvm-serve.js";
@@ -96,6 +109,16 @@ export interface CliDeps {
   startServer?: typeof startServerOnPort;
   startInBackground?: typeof spawnInBackground;
   startSmolvm?: typeof startSmolvmServe;
+  /** The installed smolvm's version, for `up`'s warning about an old one. */
+  smolvmVersion?: (env: NodeJS.ProcessEnv) => Promise<string | undefined>;
+  /**
+   * Make sure the preset images are in smolvm's cache, once the daemon that
+   * started smolvm is ready; defaults to `prepullImages` on that smolvm.
+   */
+  prepull?: (
+    apiUrl: string,
+    options: Omit<PrepullOptions, "runtime">,
+  ) => Promise<void>;
   stopProcess?: typeof stopProcessByPid;
   isSmolvmRunning?: (pid: number) => boolean;
   claimPidFile?: typeof claimPidFileOnDisk;
@@ -188,11 +211,22 @@ export async function runCli(
           placedSecrets(filled, deps),
           REGISTRATION_SETTINGS,
         );
+        warnUncachedSizes(config, deps);
+        // Alongside registration, so a slow smolvm never delays it.
+        const checkedSmolvm = warnOldSmolvm(deps);
         const host = await register(config, deps);
+        await checkedSmolvm;
+        // Read before the daemon starts, which records each image it pulls.
+        const pending = pendingImages(
+          config.images,
+          daemonPaths(deps.env).prepullFile,
+        );
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
-        const finish = (port: number) =>
-          completeRegistration(config, host, port, deps);
+        const finish = (port: number) => {
+          announcePrepull(pending, deps, { foreground: parsed.fg });
+          return completeRegistration(config, host, port, deps);
+        };
         if (parsed.fg) {
           await serveInForeground(config, deps, {
             smolvm: true,
@@ -791,7 +825,13 @@ async function serveInForeground(
   void signalled.then(() => interrupted.abort());
   let runtime: ManagedSmolvm | undefined;
   let server: RunningServer | undefined;
+  // Every throwaway machine name the pre-pull uses. Each is random, so
+  // hiding them all, deleted or not, never hides a rig.
+  const usedPrepullNames = new Set<string>();
   const stopAll = async () => {
+    // However the daemon stops, not only on a signal, so the pre-pull never
+    // goes on against a smolvm that is gone.
+    interrupted.abort();
     try {
       await server?.close();
     } finally {
@@ -811,7 +851,7 @@ async function serveInForeground(
       const serving = runtime
         ? { ...config, smolApiUrl: runtime.apiUrl }
         : config;
-      server = await listen(serving, paths.servicesFile, deps);
+      server = await listen(serving, paths, usedPrepullNames, deps);
     }
     // Signalled during startup: stop without telling `up` it is ready.
     if (server === undefined || interrupted.signal.aborted) {
@@ -820,6 +860,22 @@ async function serveInForeground(
     }
     deps.out(`amika-hostd listening on ${localUrl(config.host, server.port)}`);
     await (deps.notifyReady ?? notifyParent)(server.port);
+    // Only a daemon running its own smolvm fills that smolvm's image cache.
+    if (runtime) {
+      (deps.prepull ?? prepullOn)(runtime.apiUrl, {
+        images: config.images,
+        stateFile: paths.prepullFile,
+        out: deps.out,
+        err: deps.err,
+        signal: interrupted.signal,
+        used: usedPrepullNames,
+      }).catch((error: unknown) => {
+        // Never let the background pull take the daemon down with it.
+        deps.err(
+          `amika-hostd: pre-pulling images stopped: ${errorMessage(error)}`,
+        );
+      });
+    }
   } catch (error) {
     await stopAll();
     throw error;
@@ -848,6 +904,75 @@ async function serveInForeground(
   }
 }
 
+/** `prepullImages` on the smolvm at `apiUrl`, waiting out a whole download. */
+function prepullOn(
+  apiUrl: string,
+  options: Omit<PrepullOptions, "runtime">,
+): Promise<void> {
+  return prepullImages({
+    ...options,
+    runtime: providerRuntime({ apiUrl, requestTimeoutMs: PREPULL_TIMEOUT_MS }),
+  });
+}
+
+/**
+ * Tell the operator the daemon is downloading images it never pulled
+ * before: on the first `up`, and again for an image added to the config, or
+ * one whose earlier pull failed.
+ */
+function announcePrepull(
+  pending: ConfiguredImage[],
+  deps: CliDeps,
+  { foreground }: { foreground: boolean },
+) {
+  if (pending.length === 0) return;
+  const width = Math.max(
+    ...pending.map(({ presets }) => presets.join(", ").length),
+  );
+  deps.out("");
+  deps.out("Downloading this host's rig images in the background:");
+  for (const { image, presets } of pending) {
+    deps.out(`  ${presets.join(", ").padEnd(width)}  ${image}`);
+  }
+  deps.out(
+    "Each is several GB. Once an image has downloaded, its rigs start without downloading it again; a rig created before then may take minutes, or time out.",
+  );
+  // In the foreground the daemon reports progress here, not in the log.
+  deps.out(
+    foreground
+      ? "Progress is reported below."
+      : `Progress: ${daemonPaths(deps.env).logFile}`,
+  );
+}
+
+/**
+ * smolvm caches an image only for rigs with at least its 20 GiB template
+ * disk, so a smaller size downloads its image on every create.
+ */
+function warnUncachedSizes(config: HostdConfig, deps: CliDeps) {
+  const small = Object.entries(config.sizes)
+    .filter(([, size]) => size.diskGib < SMOLVM_SEED_MIN_DISK_GIB)
+    .map(([name, size]) => `${name} (${size.diskGib} GiB)`);
+  if (small.length === 0) return;
+  deps.err(
+    `amika-hostd: rigs of size ${small.join(", ")} download their image on every create, since smolvm caches images only for disks of at least ${SMOLVM_SEED_MIN_DISK_GIB} GiB; set disk_gib = ${SMOLVM_SEED_MIN_DISK_GIB} or more in ${config.configPath ?? "the config file"} to start them from the cache.`,
+  );
+}
+
+/** Warn when smolvm's image cache does not yet serve every rig size. */
+async function warnOldSmolvm(deps: CliDeps) {
+  // smolvm never sees the API key or the secret key.
+  const version = await (deps.smolvmVersion ?? readSmolvmVersion)(
+    withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
+  );
+  if (version === undefined || !isOlderVersion(version, MIN_SMOLVM_VERSION)) {
+    return;
+  }
+  deps.err(
+    `amika-hostd: smolvm ${version} is older than ${MIN_SMOLVM_VERSION}, so rigs with disks larger than 20 GiB download their image on every create; update it with \`curl -sSL https://smolmachines.com/install.sh | bash\`.`,
+  );
+}
+
 async function startSmolvm(
   config: HostdConfigWith<"secretKey">,
   paths: DaemonPaths,
@@ -870,7 +995,8 @@ async function startSmolvm(
 
 async function listen(
   config: HostdConfigWith<"secretKey">,
-  servicesFile: string,
+  paths: DaemonPaths,
+  usedPrepullNames: ReadonlySet<string>,
   deps: CliDeps,
 ): Promise<RunningServer> {
   // Machines run through the `smol` provider, on the smolvm this daemon
@@ -881,7 +1007,12 @@ async function listen(
   });
   try {
     return await (deps.startServer ?? startServerOnPort)(config, runtime, {
-      servicesFile,
+      servicesFile: paths.servicesFile,
+      // This run's throwaway machines, deleted or not, so a list caught
+      // mid-create or mid-delete still hides them, and any an earlier run
+      // left behind.
+      hiddenMachines: () =>
+        new Set([...usedPrepullNames, ...prepullMachines(paths.prepullFile)]),
     });
   } catch (error) {
     throw new DaemonError(
