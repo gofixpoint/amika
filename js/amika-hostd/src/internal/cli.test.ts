@@ -1015,7 +1015,154 @@ describe("setup", () => {
     ]);
   });
 
-  it("`setup` takes no options", async () => {
+  describe("--non-interactive", () => {
+    /** An unconfigured host whose stdin holds `stdin`. */
+    const piped = (stdin: string) => {
+      const h = unconfigured([]);
+      const deps = { ...h.deps, readStdin: vi.fn(async () => stdin) };
+      return { ...h, deps };
+    };
+
+    it("sets the host up with no questions, keeping both secrets in the keychain", async () => {
+      const { deps, files } = piped("amk_123\n");
+      expect(
+        await runCli(
+          ["setup", "--non-interactive", "--hostname", "my-host"],
+          deps,
+        ),
+      ).toBe(0);
+      expect(deps.prompt).not.toHaveBeenCalled();
+      expect(deps.promptSecret).not.toHaveBeenCalled();
+      expect(files[CONFIG_PATH]).toContain('hostname = "my-host"');
+      expect(files[CONFIG_PATH]).toContain('secret_store = "keychain"');
+      expect(files[CONFIG_PATH]).toContain("[sizes.tiny]");
+      expect(deps.keychainSecret.value).toBe(SECRET);
+      expect(deps.credentials.value).toBe("amk_123");
+    });
+
+    it("defaults to this machine's hostname", async () => {
+      const { deps, files } = piped("amk_123");
+      expect(await runCli(["setup", "--non-interactive"], deps)).toBe(0);
+      expect(files[CONFIG_PATH]).toContain('hostname = "builder"');
+    });
+
+    it("keeps what is set up on a rerun, reading nothing from stdin", async () => {
+      const { deps, files } = piped("");
+      deps.credentials.value = "amk_stored";
+      deps.keychainSecret.value = SECRET;
+      files[CONFIG_PATH] = 'hostname = "builder"\nsecret_store = "keychain"\n';
+      expect(await runCli(["setup", "--non-interactive"], deps)).toBe(0);
+      expect(deps.keychainSecret.set).not.toHaveBeenCalled();
+      expect(deps.credentials.set).not.toHaveBeenCalled();
+      expect(deps.readStdin).not.toHaveBeenCalled();
+      expect(deps.registerHost).not.toHaveBeenCalled();
+    });
+
+    it("stops, changing nothing, without an API key on stdin", async () => {
+      const { deps, err } = piped("");
+      expect(await runCli(["setup", "--non-interactive"], deps)).toBe(1);
+      expect(err).toContain(
+        "amika-hostd: pipe the Amika API key into `amika-hostd setup --non-interactive`",
+      );
+      expect(deps.writeConfigFile).not.toHaveBeenCalled();
+      expect(deps.keychainSecret.set).not.toHaveBeenCalled();
+    });
+
+    it("stops, changing nothing, on an invalid hostname", async () => {
+      const { deps, err } = piped("amk_123");
+      expect(
+        await runCli(
+          ["setup", "--non-interactive", "--hostname", "Not_Valid"],
+          deps,
+        ),
+      ).toBe(1);
+      expect(err.join("\n")).toContain('Invalid hostname: "Not_Valid"');
+      expect(err).toContain(
+        "amika-hostd: pass this host's name with --hostname",
+      );
+      expect(deps.writeConfigFile).not.toHaveBeenCalled();
+    });
+
+    it("never replaces a secret key the keychain may only be hiding", async () => {
+      const { deps, err } = piped("amk_123");
+      // Marked as keeping its key in the keychain, which shows none.
+      deps.loadConfigFile.mockReturnValue({
+        path: CONFIG_PATH,
+        contents: 'hostname = "builder"\nsecret_store = "keychain"\n',
+      });
+      expect(await runCli(["setup", "--non-interactive"], deps)).toBe(1);
+      expect(err.join("\n")).toContain("Stopped without changing anything");
+      expect(deps.keychainSecret.set).not.toHaveBeenCalled();
+    });
+
+    it("uses an API key from the environment, reading nothing from stdin and storing nothing", async () => {
+      const { deps } = piped("amk_ignored");
+      deps.env = { ...deps.env, AMIKA_API_KEY: "amk_env" };
+      expect(await runCli(["setup", "--non-interactive"], deps)).toBe(0);
+      expect(deps.readStdin).not.toHaveBeenCalled();
+      expect(deps.credentials.set).not.toHaveBeenCalled();
+    });
+
+    it("stops, changing nothing, on an invalid API key, without echoing it", async () => {
+      const { deps, err, out } = piped("not a key");
+      expect(await runCli(["setup", "--non-interactive"], deps)).toBe(1);
+      expect(deps.writeConfigFile).not.toHaveBeenCalled();
+      expect([...err, ...out].join("\n")).not.toContain("not a key");
+    });
+
+    it("does not take --skill with --non-interactive", async () => {
+      const { deps } = harness();
+      expect(
+        await runCli(["setup", "--skill", "--non-interactive"], deps),
+      ).toBe(2);
+    });
+
+    it("needs --non-interactive for --hostname", async () => {
+      const { deps, err } = harness();
+      expect(await runCli(["setup", "--hostname", "x"], deps)).toBe(2);
+      expect(err[0]).toBe("amika-hostd: --hostname needs --non-interactive");
+    });
+  });
+
+  it("`setup --skill` prints instructions for an agent, without a terminal", async () => {
+    const { deps, out } = harness({
+      XDG_CONFIG_HOME: "/config",
+      XDG_STATE_HOME: "/state",
+    });
+    expect(await runCli(["setup", "--skill"], deps)).toBe(0);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/^---\nname: amika-hostd-setup\n/);
+    expect(out[0]).toContain("/config/amika-hostd/config.toml");
+    expect(out[0]).toContain("/state/amika-hostd/log/amika-hostd.log");
+    expect(deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("`setup --skill` uses the configured address, even with a placeholder secret or an invalid config", async () => {
+    const { deps, out } = harness({});
+    deps.loadConfigFile.mockReturnValue({
+      path: "/c.toml",
+      contents: 'secret_key = "REPLACE_ME"\nhost = "0.0.0.0"\nport = 4100\n',
+    });
+    expect(await runCli(["setup", "--skill"], deps)).toBe(0);
+    expect(out[0]).toContain("cloudflared tunnel --url http://127.0.0.1:4100");
+    deps.loadConfigFile.mockReturnValue({
+      path: "/etc/x.toml",
+      contents: "not toml [",
+    });
+    expect(await runCli(["setup", "--skill"], deps)).toBe(0);
+    expect(out[1]).toContain("    /etc/x.toml");
+  });
+
+  it.each([
+    ["up", "--skill"],
+    ["down", "--non-interactive"],
+    ["serve", "--hostname=x"],
+  ])("only `setup` takes its options (%s %s)", async (command, option) => {
+    const { deps } = harness();
+    expect(await runCli([command, option], deps)).toBe(2);
+  });
+
+  it("`setup` takes no daemon options", async () => {
     const { deps } = harness({});
     expect(await runCli(["setup", "--port", "1"], deps)).toBe(2);
   });
