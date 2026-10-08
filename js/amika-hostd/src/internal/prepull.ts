@@ -12,6 +12,7 @@
  * a missing one is downloaded. `prepull.json` records the images pulled
  * before, so `up` can say when a download is coming.
  */
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { RuntimeError, type ProviderRuntime } from "./machine-runtime.js";
@@ -119,12 +120,14 @@ export interface PrepullOptions {
   images: Record<string, string>;
   stateFile: string;
   /** Runs the throwaway machines; give it `PREPULL_TIMEOUT_MS`. */
-  runtime: Pick<ProviderRuntime, "list" | "remove" | "createUnstarted">;
+  runtime: Pick<ProviderRuntime, "remove" | "createUnstarted">;
   out: (line: string) => void;
   err: (line: string) => void;
   /** Stops before the next image once this aborts (the daemon is stopping). */
   signal?: AbortSignal;
   now?: () => number;
+  /** Ends each throwaway machine's name; random, so no other machine has it. */
+  newSuffix?: () => string;
 }
 
 /**
@@ -141,6 +144,7 @@ export async function prepullImages({
   err,
   signal,
   now = Date.now,
+  newSuffix = () => randomBytes(8).toString("hex"),
 }: PrepullOptions): Promise<void> {
   const forget = (name: string) => {
     try {
@@ -153,10 +157,10 @@ export async function prepullImages({
     }
   };
   /**
-   * Delete a machine hostd created, and forget it once it is gone. Returns
-   * whether it is gone; one that is not stays recorded, to try again.
+   * Delete a machine hostd created, and forget it once it is gone; one that
+   * is not stays recorded, to try again.
    */
-  const remove = async (name: string): Promise<boolean> => {
+  const remove = async (name: string) => {
     try {
       await runtime.remove(name);
     } catch (error) {
@@ -164,34 +168,16 @@ export async function prepullImages({
         err(
           `amika-hostd: could not delete pre-pull machine ${name}: ${errorMessage(error)}; the next \`amika-hostd up\` tries again`,
         );
-        return false;
+        return;
       }
     }
     forget(name);
-    return true;
   };
-  // Every machine's name, so a throwaway one never takes a rig's.
-  let taken: Set<string>;
-  try {
-    taken = new Set((await runtime.list()).map((machine) => machine.name));
-  } catch (error) {
-    err(
-      `amika-hostd: could not list machines, so no image is pre-pulled: ${errorMessage(error)}`,
-    );
-    return;
-  }
-  for (const name of prepullMachines(stateFile)) {
-    // A machine that could not be deleted still holds its name.
-    if (await remove(name)) taken.delete(name);
-  }
-  let next = 0;
-  const freeName = () => {
-    while (taken.has(`${PREPULL_MACHINE_PREFIX}${next}`)) next++;
-    return `${PREPULL_MACHINE_PREFIX}${next++}`;
-  };
+  for (const name of prepullMachines(stateFile)) await remove(name);
   for (const { image, presets } of configuredImages(images)) {
     if (signal?.aborted) return;
-    const name = freeName();
+    // A random name never takes a rig's, nor one hostd could not delete.
+    const name = `${PREPULL_MACHINE_PREFIX}${newSuffix()}`;
     const started = now();
     out(`Checking that ${image} (${presets.join(", ")}) is cached`);
     // Recorded first, so a run cut short leaves a machine the next one
@@ -223,8 +209,8 @@ export async function prepullImages({
         `amika-hostd: could not cache ${image}: ${errorMessage(error)}; rigs of it may pull it themselves, and the next \`amika-hostd up\` tries again`,
       );
       if (error instanceof RuntimeError && error.status === 409) {
-        // Someone else's machine took the name first: never delete it.
-        taken.add(name);
+        // Another machine took the random name first (no accident, so
+        // unlikely as that is): never delete it.
         forget(name);
       } else {
         // A create that failed after making the machine leaves it behind.

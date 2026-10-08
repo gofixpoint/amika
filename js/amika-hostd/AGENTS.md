@@ -526,7 +526,7 @@ creates of one image share a single build.
 - **Pre-pull.** Once a daemon running its own smolvm is ready, it makes sure
   every configured image is in the cache, on every start, in the background
   and one at a time (`prepullImages`): it creates an unstarted throwaway
-  machine `amika-hostd-prepull-<n>` (`createUnstarted`: a 20 GiB disk, so
+  machine `amika-hostd-prepull-<random>` (`createUnstarted`: a 20 GiB disk, so
   smolvm seeds it, and network on) and deletes it. smolvm attaches a seed at
   create without booting the VM, building it first when it is missing, so a
   cached image costs one registry request to resolve its digest (well under
@@ -550,11 +550,11 @@ creates of one image share a single build.
     first. Only recorded machines are ever deleted, or left out of the
     machine list (`hiddenMachines`) so Amika never sees them as rigs: a rig
     that merely shares the prefix, made before it was reserved, is left
-    alone, and a throwaway machine takes the first `<n>` no machine has. A
-    create naming the prefix is refused (`400`). A create smolvm refuses as
-    taken (`409`) is never cleaned up, since the machine is someone else's.
-    If smolvm cannot list its machines, nothing is pre-pulled, since no name
-    is known to be free.
+    alone. A create naming the prefix is refused (`400`). The rest of a
+    throwaway machine's name is 16 random hex digits, so it never takes
+    another machine's name, nor that of one hostd could not delete. A create
+    smolvm still refuses as taken (`409`) is never cleaned up, since the
+    machine is someone else's.
   - Each create may take an hour (`PREPULL_TIMEOUT_MS`), since smolvm builds
     a missing seed before answering. The pre-pull stops whenever the daemon
     stops, quietly, leaving a machine it was creating recorded for the next
