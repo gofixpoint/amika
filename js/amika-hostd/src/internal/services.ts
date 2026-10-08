@@ -16,10 +16,18 @@
  *
  * The one exception is amikad's SSH WebSocket (`isAmikadSshUpgrade`), which
  * the user's CLI opens directly with a connect token amikad verifies.
+ *
+ * Browsers reach a service through a signed service link instead,
+ * `/v0beta1/rigs/<machine>/service-links/<name>/<expiry>.<signature>/<path>`,
+ * which the control plane mints from the same secret key and hostd verifies
+ * without calling it (`@amika/sandbox/hostd-service-links`). A link grants one
+ * service of one machine until its expiry, and forwards exactly as the keyed
+ * route does.
  */
 import type { IncomingMessage } from "node:http";
 import { connect, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
+import { verifyServiceLink } from "@amika/sandbox/hostd-service-links";
 import { secretMatches } from "./auth.js";
 import type { ServiceRegistry } from "./service-registry.js";
 import type { MachineRuntime } from "./machine-runtime.js";
@@ -59,7 +67,8 @@ export function createUpgradeHandler(
     head: Buffer,
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://hostd");
-    const route = parseServicePath(url.pathname);
+    const link = parseServiceLinkPath(url.pathname);
+    const route = link ?? parseServicePath(url.pathname);
     const headers = {
       key: request.headers[SERVICE_KEY_HEADER],
       authorization: request.headers.authorization,
@@ -67,12 +76,13 @@ export function createUpgradeHandler(
     // amikad's SSH upgrade may skip the key; a keyed request is the control
     // plane's and routes like any other.
     const keyless =
+      !link &&
       route !== null &&
       isAmikadSshUpgrade(request, url) &&
       authorizeServiceRequest(secretKey, headers) === 401;
-    const refusal = authorizeServiceRequest(secretKey, headers, {
-      requireKey: !keyless,
-    });
+    const refusal = link
+      ? await authorizeServiceLinkRequest(secretKey, link, headers)
+      : authorizeServiceRequest(secretKey, headers, { requireKey: !keyless });
     if (refusal) return refuse(socket, refusal);
     if (!route) return refuse(socket, 404);
     // Only the rig's own amikad, on the port Amika registers it at, answers
@@ -219,6 +229,60 @@ export function parseServicePath(pathname: string): ServiceRoute | null {
     return null;
   }
   return { machine: match[1], service, path: match[3] ?? "/" };
+}
+
+/** A parsed service-link route: a service route plus its signed token. */
+export interface ServiceLinkRoute extends ServiceRoute {
+  /** `<expiry>.<signature>`, as the control plane minted it. */
+  token: string;
+}
+
+/**
+ * Split a service-link path into its route parts and token, or null if it is
+ * not one. As in `parseServicePath`, the service name is decoded and the
+ * guest path is kept encoded.
+ */
+export function parseServiceLinkPath(
+  pathname: string,
+): ServiceLinkRoute | null {
+  const match =
+    /^\/v0beta1\/rigs\/([a-zA-Z0-9][a-zA-Z0-9_-]*)\/service-links\/([^/]+)\/([^/]+)(\/.*)?$/.exec(
+      pathname,
+    );
+  if (!match) return null;
+  let service: string;
+  try {
+    service = decodeURIComponent(match[2]);
+  } catch {
+    return null;
+  }
+  return {
+    machine: match[1],
+    service,
+    token: match[3],
+    path: match[4] ?? "/",
+  };
+}
+
+/**
+ * Why a service-link request is refused, or null to let it through: 401
+ * unless the link's token is a signature over its machine and service that
+ * has not expired, 400 when the host key is sent as the `Authorization` the
+ * guest would receive. The host key header is not needed, nor checked.
+ */
+export async function authorizeServiceLinkRequest(
+  secretKey: string,
+  link: ServiceLinkRoute,
+  headers: { authorization?: string | string[] | null },
+  nowS = Math.floor(Date.now() / 1000),
+): Promise<400 | 401 | null> {
+  const problem = await verifyServiceLink(
+    secretKey,
+    { rig: link.machine, service: link.service, token: link.token },
+    nowS,
+  );
+  if (problem) return 401;
+  return authorizeServiceRequest(secretKey, headers, { requireKey: false });
 }
 
 /**
