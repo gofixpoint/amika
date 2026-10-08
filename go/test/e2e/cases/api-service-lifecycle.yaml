@@ -47,7 +47,7 @@ steps:
       cleanup: [service, delete, --rig, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
 
   - name: list services and confirm ours is present
-    cmd: [service, list, --rig-name, "{{sandbox_name}}", -o, json]
+    cmd: [service, list, --rig, "{{sandbox_name}}", -o, json]
     expect:
       exit: 0
       stdout_contains: e2e-svc

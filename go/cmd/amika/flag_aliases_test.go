@@ -27,6 +27,7 @@ func TestRigFlagsAcceptTheLegacySandboxSpelling(t *testing.T) {
 		{[]string{"send"}, "sandbox"},
 		{[]string{"service", "create"}, "sandbox"},
 		{[]string{"service", "delete"}, "sandbox"},
+		{[]string{"service", "list"}, "sandbox"},
 		{[]string{"service", "list"}, "sandbox-name"},
 		{[]string{"snapshot", "create"}, "sandbox"},
 		{[]string{"snapshot", "list"}, "sandbox"},

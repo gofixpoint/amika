@@ -27,8 +27,10 @@ func resetServiceFlags(t *testing.T) {
 	if err := serviceCmd.PersistentFlags().Set("remote-target", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := serviceListCmd.Flags().Set("rig-name", ""); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{"rig", "rig-name"} {
+		if err := serviceListCmd.Flags().Set(f, ""); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, f := range []string{"rig", "name", "url-scheme"} {
 		if err := serviceCreateCmd.Flags().Set(f, ""); err != nil {
@@ -47,7 +49,7 @@ func resetServiceFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Set marks a flag Changed, and that bit distinguishes an explicitly empty
-	// --rig-name (match nothing) from an absent one (match everything).
+	// --rig (match nothing) from an absent one (match everything).
 	for _, fs := range []*pflag.FlagSet{
 		serviceCmd.PersistentFlags(),
 		serviceListCmd.Flags(),
@@ -58,27 +60,102 @@ func resetServiceFlags(t *testing.T) {
 	}
 }
 
-func TestServiceListCommand_EmptyRigNameMatchesNothing(t *testing.T) {
+func TestServiceListCommand_EmptyRigMatchesNothing(t *testing.T) {
+	for _, flag := range []string{"--rig", "--rig-name"} {
+		t.Run(flag, func(t *testing.T) {
+			resetServiceFlags(t)
+			t.Setenv("AMIKA_API_KEY", "test-key")
+
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				_ = json.NewEncoder(w).Encode([]apiclient.RemoteSandbox{{Name: "keep"}})
+			}))
+			defer srv.Close()
+			t.Setenv("AMIKA_API_URL", srv.URL)
+
+			out, err := runRootCommand("service", "list", flag, "")
+			if err != nil {
+				t.Fatalf("service list failed: %v", err)
+			}
+			if !strings.Contains(out, "No services found.") {
+				t.Fatalf("an empty %s must match no rig; got:\n%s", flag, out)
+			}
+			if requests != 0 {
+				t.Fatalf("an empty %s made %d API requests, want none", flag, requests)
+			}
+		})
+	}
+}
+
+// --rig resolves its value as an id first and a name second, the same way
+// the other --rig flags do; the hidden --rig-name accepts the same values.
+func TestServiceListCommand_RigFilterMatchesIDOrName(t *testing.T) {
+	svc := func(name string) []apiclient.RemoteSandboxService {
+		return []apiclient.RemoteSandboxService{{Name: name, HostPort: 1, ContainerPort: 2}}
+	}
+	sandboxes := []apiclient.RemoteSandbox{
+		{ID: "sb-1", Name: "alpha", Services: svc("svc-alpha")},
+		// Named like sb-1's id: an id match must win over this name match.
+		{ID: "sb-2", Name: "sb-1", Services: svc("svc-shadow")},
+		{ID: "sb-3", Name: "beta", Services: svc("svc-beta")},
+	}
+
+	cases := []struct {
+		flag, ref string
+		want      string
+	}{
+		{"--rig", "beta", "svc-beta"},
+		{"--rig", "sb-3", "svc-beta"},
+		{"--rig", "sb-1", "svc-alpha"},
+		{"--rig-name", "beta", "svc-beta"},
+		{"--rig-name", "sb-3", "svc-beta"},
+		{"--sandbox-name", "beta", "svc-beta"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag+"="+tc.ref, func(t *testing.T) {
+			resetServiceFlags(t)
+			t.Setenv("AMIKA_API_KEY", "test-key")
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(sandboxes)
+			}))
+			defer srv.Close()
+			t.Setenv("AMIKA_API_URL", srv.URL)
+
+			out, err := runRootCommandOutput(t, "service", "list", tc.flag, tc.ref, "-o", "json")
+			if err != nil {
+				t.Fatalf("service list failed: %v", err)
+			}
+			var items []serviceListItem
+			if err := json.Unmarshal([]byte(out), &items); err != nil {
+				t.Fatalf("decode %q: %v", out, err)
+			}
+			if len(items) != 1 || items[0].Service != tc.want {
+				t.Fatalf("%s %s listed %+v, want only %s", tc.flag, tc.ref, items, tc.want)
+			}
+		})
+	}
+}
+
+func TestServiceListCommand_RigAndRigNameAreExclusive(t *testing.T) {
 	resetServiceFlags(t)
-	t.Setenv("AMIKA_API_KEY", "test-key")
+	_, err := runRootCommandOutput(t, "service", "list", "--rig", "a", "--rig-name", "b")
+	if err == nil {
+		t.Fatal("expected --rig and --rig-name together to be rejected")
+	}
+}
 
-	requests := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		_ = json.NewEncoder(w).Encode([]apiclient.RemoteSandbox{{Name: "keep"}})
-	}))
-	defer srv.Close()
-	t.Setenv("AMIKA_API_URL", srv.URL)
-
-	out, err := runRootCommand("service", "list", "--rig-name", "")
+func TestServiceListCommand_HelpHidesRigName(t *testing.T) {
+	resetServiceFlags(t)
+	out, err := runRootCommandOutput(t, "service", "list", "--help")
 	if err != nil {
-		t.Fatalf("service list failed: %v", err)
+		t.Fatalf("service list --help failed: %v", err)
 	}
-	if !strings.Contains(out, "No services found.") {
-		t.Fatalf("an empty --rig-name must match no rig; got:\n%s", out)
+	if !strings.Contains(out, "--rig ") {
+		t.Fatalf("help must advertise --rig; got:\n%s", out)
 	}
-	if requests != 0 {
-		t.Fatalf("an empty --rig-name made %d API requests, want none", requests)
+	if strings.Contains(out, "--rig-name") {
+		t.Fatalf("help must not advertise --rig-name; got:\n%s", out)
 	}
 }
 

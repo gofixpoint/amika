@@ -212,7 +212,13 @@ var serviceListCmd = &cobra.Command{
 	Short:   "List services across sandboxes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		rigName, _ := cmd.Flags().GetString("rig-name")
+		// --rig-name is the hidden pre-ID spelling of --rig; a name is still a
+		// valid --rig value, so both feed the same name-or-id filter.
+		rigFlag := "rig"
+		if cmd.Flags().Changed("rig-name") {
+			rigFlag = "rig-name"
+		}
+		rigRef, _ := cmd.Flags().GetString(rigFlag)
 
 		// Validate --remote-target up front, unconditionally, matching the
 		// sandbox command: a bad value fails the same way regardless of auth
@@ -227,12 +233,12 @@ var serviceListCmd = &cobra.Command{
 
 		var rows []serviceRow
 		var err error
-		if cmd.Flags().Changed("rig-name") && strings.TrimSpace(rigName) == "" {
-			// An explicitly empty --rig-name names no rig, so it matches no
-			// rig. An omitted filter continues to list every rig.
+		if cmd.Flags().Changed(rigFlag) && strings.TrimSpace(rigRef) == "" {
+			// An explicitly empty --rig names no rig, so it matches no rig. An
+			// omitted filter continues to list every rig.
 			rows = nil
 		} else {
-			rows, err = remoteServiceRows(rigName)
+			rows, err = remoteServiceRows(rigRef)
 		}
 		if err != nil {
 			return err
@@ -273,20 +279,43 @@ var serviceListCmd = &cobra.Command{
 // remoteServiceRows fetches services from the remote API. The list endpoint
 // returns each sandbox's provisioned services (name, port, and generated URL),
 // so no local state is involved.
-func remoteServiceRows(sandboxName string) ([]serviceRow, error) {
+//
+// A non-empty rigRef keeps only the rig it names, resolved the way
+// resolveSandboxID does: an exact ID match wins, otherwise rigs are matched by
+// name. A ref matching no rig yields no rows rather than an error, as befits a
+// list filter.
+func remoteServiceRows(rigRef string) ([]serviceRow, error) {
 	sandboxes, err := runmode.NewRemoteClient().ListSandboxes()
 	if err != nil {
 		return nil, err
 	}
 
+	if rigRef != "" {
+		sandboxes = filterSandboxesByRef(sandboxes, rigRef)
+	}
+
 	var rows []serviceRow
 	for _, sb := range sandboxes {
-		if sandboxName != "" && sb.Name != sandboxName {
-			continue
-		}
 		rows = append(rows, groupRemoteServices(sb.Name, sb.Services)...)
 	}
 	return rows, nil
+}
+
+// filterSandboxesByRef returns the sandbox whose ID is ref, or, when no ID
+// matches, every sandbox named ref.
+func filterSandboxesByRef(sandboxes []apiclient.RemoteSandbox, ref string) []apiclient.RemoteSandbox {
+	for _, sb := range sandboxes {
+		if sb.ID == ref {
+			return []apiclient.RemoteSandbox{sb}
+		}
+	}
+	var matches []apiclient.RemoteSandbox
+	for _, sb := range sandboxes {
+		if sb.Name == ref {
+			matches = append(matches, sb)
+		}
+	}
+	return matches
 }
 
 // groupRemoteServices collapses a sandbox's flat service entries into one row
@@ -360,7 +389,12 @@ func init() {
 	serviceCmd.PersistentFlags().MarkHidden("local")
 	serviceCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	serviceCmd.PersistentFlags().MarkHidden("remote-target")
-	serviceListCmd.Flags().String("rig-name", "", "Filter services to a specific rig")
+	serviceListCmd.Flags().String("rig", "", "Filter services to a specific rig (name or id)")
+	// --rig-name predates --rig accepting an id; it stays accepted (along with
+	// its legacy --sandbox-name spelling) but is no longer advertised.
+	serviceListCmd.Flags().String("rig-name", "", "Filter services to a specific rig (name or id)")
+	_ = serviceListCmd.Flags().MarkHidden("rig-name")
+	serviceListCmd.MarkFlagsMutuallyExclusive("rig", "rig-name")
 
 	serviceCreateCmd.Flags().String("rig", "", "Rig to create the service on (name or id)")
 	serviceCreateCmd.Flags().String("name", "", "Service name (a single DNS label)")

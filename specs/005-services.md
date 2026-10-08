@@ -284,7 +284,7 @@ type Info struct {
 ### Command structure
 
 ```
-amika service list [--sandbox-name <name>]
+amika service list [--rig <name-or-id>]
 ```
 
 New top-level command `amika service` with subcommand `list`.
@@ -292,7 +292,7 @@ New top-level command `amika service` with subcommand `list`.
 ### Behavior
 
 1. Load all sandboxes from the store.
-2. If `--sandbox-name` is provided, filter to that sandbox.
+2. If `--rig` is provided, filter to the sandbox with that id, or else to the sandboxes with that name.
 3. For each sandbox with services, print each service's port bindings.
 
 ### Output format
@@ -317,9 +317,9 @@ If no services are found, print "No services found."
 
 The `amika service` command group is designed for future subcommands:
 
-- `amika service stop <name> --sandbox-name <sandbox>` — stop a service process
-- `amika service restart <name> --sandbox-name <sandbox>` — restart a service process
-- `amika service logs <name> --sandbox-name <sandbox>` — tail service logs
+- `amika service stop <name> --rig <sandbox>` — stop a service process
+- `amika service restart <name> --rig <sandbox>` — restart a service process
+- `amika service logs <name> --rig <sandbox>` — tail service logs
 
 These are **not implemented** in this spec. They will require process lifecycle management inside the container (a non-goal of this spec).
 
@@ -481,7 +481,7 @@ func registerListServices(api huma.API, service amika.Service) {
 
 1. `amika service list` with no sandboxes prints "No services found."
 2. `amika service list` with a sandbox that has services prints correct table.
-3. `amika service list --sandbox-name <name>` filters to the specified sandbox.
+3. `amika service list --rig <name>` filters to the specified sandbox.
 
 ### HTTP API tests
 
@@ -502,7 +502,7 @@ func registerListServices(api huma.API, service amika.Service) {
 2. Service ports are resolved to host port bindings and published on the container.
 3. Service metadata is stored in `sandbox.Info.Services` and persists in `sandboxes.jsonl`.
 4. `amika service list` displays services with their port mappings in the expected table format.
-5. `amika service list --sandbox-name <name>` filters to one sandbox.
+5. `amika service list --rig <name>` filters to one sandbox.
 6. The `Sandbox` response type in `pkg/amika` includes `Services`.
 7. `GET /v1/services` endpoint returns service info.
 8. Existing sandboxes without services continue to work (backward compatibility).
