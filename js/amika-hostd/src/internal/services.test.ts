@@ -9,11 +9,14 @@ import {
   type Socket,
 } from "node:net";
 import type { Duplex } from "node:stream";
+import { signServiceLink } from "@amika/sandbox/hostd-service-links";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryServiceRegistry } from "./service-registry.js";
 import {
+  authorizeServiceLinkRequest,
   authorizeServiceRequest,
   createUpgradeHandler,
+  parseServiceLinkPath,
   parseServicePath,
   resolveHostPort,
 } from "./services.js";
@@ -83,6 +86,71 @@ describe("parseServicePath", () => {
     "/v0beta1/rigs/demo/other/web",
   ])("rejects %s", (path) => {
     expect(parseServicePath(path)).toBeNull();
+  });
+});
+
+describe("parseServiceLinkPath", () => {
+  it("splits the route, decodes the service and keeps the guest path", () => {
+    expect(
+      parseServiceLinkPath(
+        "/v0beta1/rigs/demo/service-links/Coding%20Agent%2Fv2/1.sig/a%2Fb",
+      ),
+    ).toEqual({
+      machine: "demo",
+      service: "Coding Agent/v2",
+      token: "1.sig",
+      path: "/a%2Fb",
+    });
+    expect(
+      parseServiceLinkPath("/v0beta1/rigs/demo/service-links/web/1.sig")?.path,
+    ).toBe("/");
+  });
+
+  it.each([
+    "/v0beta1/rigs/demo/services/web/1.sig",
+    "/v0beta1/rigs/demo/service-links/web",
+    "/v0beta1/rigs/demo/service-links/web/",
+    "/v0beta1/rigs/-demo/service-links/web/1.sig",
+    "/v0beta1/rigs/demo/service-links/%E0%A4%A/1.sig",
+  ])("rejects %s", (path) => {
+    expect(parseServiceLinkPath(path)).toBeNull();
+  });
+});
+
+describe("authorizeServiceLinkRequest", () => {
+  const NOW = 1_791_417_600;
+  const route = async (expiresAt = NOW + 60) => ({
+    machine: "demo",
+    service: "web",
+    path: "/",
+    token: await signServiceLink(SECRET, {
+      rig: "demo",
+      service: "web",
+      expiresAt,
+    }),
+  });
+
+  it("accepts an unexpired link with no key", async () => {
+    expect(
+      await authorizeServiceLinkRequest(SECRET, await route(), {}, NOW),
+    ).toBeNull();
+  });
+
+  it("refuses an expired link with 401", async () => {
+    expect(
+      await authorizeServiceLinkRequest(SECRET, await route(NOW), {}, NOW),
+    ).toBe(401);
+  });
+
+  it("refuses the host key as Authorization with 400", async () => {
+    expect(
+      await authorizeServiceLinkRequest(
+        SECRET,
+        await route(),
+        { authorization: `Bearer ${SECRET}` },
+        NOW,
+      ),
+    ).toBe(400);
   });
 });
 
@@ -344,6 +412,50 @@ describe("createUpgradeHandler", () => {
       const socket = await open(port, sshPath, { key: "" });
       expect(await read(socket)).toMatch(/^HTTP\/1\.1 404 /);
       expect(target.handshake()).toBe("");
+    });
+  });
+
+  describe("through a service link", () => {
+    const linkPath = async (
+      service = "web",
+      expiresAt = Math.floor(Date.now() / 1000) + 60,
+    ) =>
+      `/v0beta1/rigs/demo/service-links/${service}/${await signServiceLink(
+        SECRET,
+        { rig: "demo", service, expiresAt },
+      )}/hmr?x=1`;
+
+    it("tunnels it with no key, as the guest path", async () => {
+      const target = await guest();
+      const { port } = await hostd(target.port, { services: { web: 5173 } });
+      const socket = await open(port, await linkPath(), { key: "" });
+      expect(await read(socket)).toBe(
+        "HTTP/1.1 101 Switching Protocols\r\n\r\n",
+      );
+      expect(target.handshake()).toMatch(/^GET \/hmr\?x=1 HTTP\/1\.1\r\n/);
+    });
+
+    it.each([
+      ["an expired link", () => linkPath("web", 1)],
+      [
+        "another service's link",
+        async () => (await linkPath("api")).replace("/api/", "/web/"),
+      ],
+    ])("refuses %s without reaching the guest", async (_label, path) => {
+      const target = await guest();
+      const { port } = await hostd(target.port, {
+        services: { web: 5173, api: 8080 },
+      });
+      const socket = await open(port, await path(), { key: "" });
+      expect(await read(socket)).toMatch(/^HTTP\/1\.1 401 /);
+      expect(target.handshake()).toBe("");
+    });
+
+    it("refuses a valid link to an unknown service", async () => {
+      const target = await guest();
+      const { port } = await hostd(target.port);
+      const socket = await open(port, await linkPath(), { key: "" });
+      expect(await read(socket)).toMatch(/^HTTP\/1\.1 404 /);
     });
   });
 

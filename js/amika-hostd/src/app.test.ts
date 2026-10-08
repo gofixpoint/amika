@@ -1,4 +1,5 @@
 /** Exercise the daemon's HTTP boundary with an injected machine runtime. */
+import { signServiceLink } from "@amika/sandbox/hostd-service-links";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import { memoryServiceRegistry } from "./internal/service-registry.js";
@@ -897,5 +898,150 @@ describe("service routes", () => {
     expect((await request(`${ROOT}/demo`)).status).toBe(401);
     expectUntouched(runtime);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("service-link routes", () => {
+  const HOST_PORT = 41002;
+  const NOW_S = Math.floor(Date.now() / 1000);
+
+  function links(
+    hostPort: number | null = HOST_PORT,
+    ...responses: Response[]
+  ) {
+    const runtime = fakeRuntime();
+    runtime.hostPort.mockResolvedValue(hostPort);
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected request");
+      return response;
+    });
+    const registry = memoryServiceRegistry();
+    registry.set("demo", { frontend: 4102, "Coding Agent/v2": 4103 });
+    const app = createApp({ secretKey: SECRET }, runtime, {
+      registry,
+      fetch: fetcher,
+    });
+    return { app, runtime, fetcher };
+  }
+
+  async function link(
+    service = "frontend",
+    { rig = "demo", expiresAt = NOW_S + 3600, secret = SECRET } = {},
+  ) {
+    const token = await signServiceLink(secret, { rig, service, expiresAt });
+    return `/v0beta1/rigs/${rig}/service-links/${encodeURIComponent(service)}/${token}`;
+  }
+
+  it("forwards with no key, stripping the link prefix and token", async () => {
+    const { app, runtime, fetcher } = links(
+      HOST_PORT,
+      new Response("asset", { headers: { "Content-Type": "text/javascript" } }),
+    );
+    const response = await app.request(`${await link()}/assets/app.js?v=3`, {
+      headers: { Cookie: "guest=1" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("asset");
+    expect(runtime.hostPort).toHaveBeenCalledWith("demo", 4102);
+    const [[target, init]] = fetcher.mock.calls;
+    expect(target).toBe("http://127.0.0.1:41002/assets/app.js?v=3");
+    expect(new Headers(init?.headers).get("cookie")).toBe("guest=1");
+  });
+
+  it("forwards the link root as the guest root", async () => {
+    const { app, fetcher } = links(
+      HOST_PORT,
+      new Response("ok"),
+      new Response("ok"),
+    );
+    expect((await app.request(await link())).status).toBe(200);
+    expect((await app.request(`${await link()}/`)).status).toBe(200);
+    expect(fetcher.mock.calls.map(([target]) => target)).toEqual([
+      "http://127.0.0.1:41002/",
+      "http://127.0.0.1:41002/",
+    ]);
+  });
+
+  it("routes an encoded service name", async () => {
+    const { app, runtime } = links(HOST_PORT, new Response("ok"));
+    expect((await app.request(await link("Coding Agent/v2"))).status).toBe(200);
+    expect(runtime.hostPort).toHaveBeenCalledWith("demo", 4103);
+  });
+
+  it("never forwards the host key header", async () => {
+    const { app, fetcher } = links(HOST_PORT, new Response("ok"));
+    await app.request(await link(), {
+      headers: { "X-Amika-Hostd-Key": SECRET },
+    });
+    const [[, init]] = fetcher.mock.calls;
+    expect(new Headers(init?.headers).get("x-amika-hostd-key")).toBeNull();
+  });
+
+  it.each([
+    ["an expired link", () => link("frontend", { expiresAt: NOW_S - 1 })],
+    ["another host's link", () => link("frontend", { secret: "other-secret" })],
+    [
+      "another service's link",
+      async () =>
+        (await link("Coding Agent/v2")).replace(
+          encodeURIComponent("Coding Agent/v2"),
+          "frontend",
+        ),
+    ],
+    [
+      "another rig's link",
+      async () =>
+        (await link("frontend", { rig: "other" })).replace("other", "demo"),
+    ],
+    [
+      "a malformed token",
+      async () => "/v0beta1/rigs/demo/service-links/frontend/1.x",
+    ],
+  ])(
+    "returns 401 for %s without touching the runtime",
+    async (_label, path) => {
+      const { app, runtime, fetcher } = links();
+      const response = await app.request(`${await path()}/x`);
+      expect(response.status).toBe(401);
+      expect(response.headers.get("connection")).toBe("close");
+      expectUntouched(runtime);
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses to forward the host key as the guest's Authorization", async () => {
+    const { app, runtime, fetcher } = links();
+    const response = await app.request(await link(), {
+      headers: { Authorization: `Bearer ${SECRET}` },
+    });
+    expect(response.status).toBe(400);
+    expectUntouched(runtime);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for a valid link to a service the rig no longer has", async () => {
+    const { app, runtime, fetcher } = links();
+    expect((await app.request(await link("removed"))).status).toBe(404);
+    expectUntouched(runtime);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the rig is stopped", async () => {
+    const { app, fetcher } = links(null);
+    expect((await app.request(await link())).status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("does not unlock the keyed service route or the machine API", async () => {
+    const { app, runtime } = links();
+    const token = (await link()).split("/").at(-1)!;
+    for (const path of [
+      `/v0beta1/rigs/demo/services/frontend/${token}/`,
+      `/v0beta1/rigs/demo/${token}`,
+    ]) {
+      expect((await app.request(path)).status).toBe(401);
+    }
+    expectUntouched(runtime);
   });
 });

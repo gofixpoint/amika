@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
     "./config-env": "./src/config-from-env.ts",
-    "./smol": "./src/providers/smol/provider.ts"
+    "./smol": "./src/providers/smol/provider.ts",
+    "./hostd-service-links": "./src/providers/amika-hostd/service-links.ts"
   },
   "scripts": {
     "lint": "eslint .",

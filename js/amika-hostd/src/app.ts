@@ -18,7 +18,9 @@ import {
 } from "./internal/requests.js";
 import {
   SERVICE_KEY_HEADER,
+  authorizeServiceLinkRequest,
   authorizeServiceRequest,
+  parseServiceLinkPath,
   parseServicePath,
   resolveHostPort,
   stripHopByHopHeaders,
@@ -32,7 +34,8 @@ export interface AppConfig {
   /**
    * Every request must present this: as a bearer token, or in
    * `X-Amika-Hostd-Key` on `/v0beta1/rigs/.../services/...` routes, whose
-   * `Authorization` belongs to the guest.
+   * `Authorization` belongs to the guest. `/v0beta1/rigs/.../service-links/...`
+   * routes present a link signed with a key derived from it instead.
    */
   secretKey: string;
   /** Preset image names mapped to the OCI references machines boot. */
@@ -108,11 +111,14 @@ export function createApp(
   });
   // Authenticate before reading any body, so unauthenticated callers cannot
   // make the daemon buffer up to the body limit.
-  // Service routes take the key in their own header, checked by their
-  // handler before it touches the body (see `./internal/services.ts`).
+  // Service routes take the key in their own header, and service-link
+  // routes a signed link, checked by their handler before it touches the
+  // body (see `./internal/services.ts`).
   const checkSecretKey = requireSecretKey(secretKey);
   app.use("*", (c, next) =>
-    parseServicePath(c.req.path) ? next() : checkSecretKey(c, next),
+    parseServicePath(c.req.path) || parseServiceLinkPath(c.req.path)
+      ? next()
+      : checkSecretKey(c, next),
   );
   // `apis` names the versioned APIs this daemon serves, so a control plane
   // can tell what a host speaks before relying on it.
@@ -123,6 +129,12 @@ export function createApp(
     proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
   );
   app.all(`${RIGS_ROUTE}/:name/services/:service`, (c) =>
+    proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
+  );
+  app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token/*`, (c) =>
+    proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
+  );
+  app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token`, (c) =>
     proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
   );
   // The machine API, at its versioned path and at the unversioned path
@@ -248,10 +260,15 @@ async function proxyService(
   registry: ServiceRegistry,
   fetcher: typeof fetch,
 ): Promise<Response> {
-  const refusal = authorizeServiceRequest(secretKey, {
+  const url = new URL(request.url);
+  const link = parseServiceLinkPath(url.pathname);
+  const headers = {
     key: request.headers.get(SERVICE_KEY_HEADER),
     authorization: request.headers.get("authorization"),
-  });
+  };
+  const refusal = link
+    ? await authorizeServiceLinkRequest(secretKey, link, headers)
+    : authorizeServiceRequest(secretKey, headers);
   if (refusal === 401) {
     // Close the connection so Node stops reading an unauthenticated body.
     return Response.json(
@@ -267,23 +284,22 @@ async function proxyService(
       { status: 400 },
     );
   }
-  const url = new URL(request.url);
-  const route = parseServicePath(url.pathname);
+  const route = link ?? parseServicePath(url.pathname);
   const hostPort = route && (await resolveHostPort(runtime, registry, route));
   if (!route || hostPort === null) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
-  const headers = new Headers(request.headers);
-  stripHopByHopHeaders(headers);
-  headers.delete(SERVICE_KEY_HEADER);
-  headers.delete("host");
+  const forwarded = new Headers(request.headers);
+  stripHopByHopHeaders(forwarded);
+  forwarded.delete(SERVICE_KEY_HEADER);
+  forwarded.delete("host");
   let upstream: Response;
   try {
     upstream = await fetcher(
       `http://127.0.0.1:${hostPort}${route.path}${url.search}`,
       {
         method: request.method,
-        headers,
+        headers: forwarded,
         body: request.body,
         redirect: "manual",
         signal: request.signal,

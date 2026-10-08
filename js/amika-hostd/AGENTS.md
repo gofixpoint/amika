@@ -479,12 +479,25 @@ machine's network on (the default).
 user ──▶ amika server (control plane) ──▶ ngrok ──▶ amika-hostd ──▶ smolvm machine
          authenticates users,                        checks the key,
          sends the host key                          routes to the machine's service
+
+browser ─────────────────────────────────▶ ngrok ──▶ amika-hostd ──▶ smolvm machine
+         signed link from the amika server           checks the link
 ```
 
-Only the amika server calls hostd. It authenticates users itself and sends
-the host's secret key; hostd checks the key and routes
+The amika server authenticates users itself and sends the host's secret key;
+hostd checks the key and routes
 `/v0beta1/rigs/<machine>/services/<name>/<path>` to that machine's service, over HTTP
 (`fetch`) or a piped WebSocket upgrade.
+
+Browsers, which cannot send a header on a navigation and must never hold the
+host key, use a signed service link instead:
+`/v0beta1/rigs/<machine>/service-links/<name>/<expiry>.<signature>/<path>`.
+The `amika-hostd` provider mints it on the control plane and hostd verifies
+it locally, both with `@amika/sandbox/hostd-service-links`: the signature is
+an HMAC-SHA256 over the machine, service and expiry, under a key derived from
+the host's secret key. hostd answers `401` for a bad or expired link and
+forwards a good one exactly as the keyed route does. Regenerating the secret
+key invalidates every link; removing a service makes its links `404`.
 
 - The key goes in `X-Amika-Hostd-Key`, since `Authorization` belongs to the
   guest (`amikad` checks SSH connect tokens with it). hostd never forwards
@@ -505,7 +518,8 @@ the host's secret key; hostd checks the key and routes
 
 hostd and the control plane upgrade independently, so hostd's API is
 versioned. `/v0beta1/rigs` is the current API: the machine routes (create,
-get, delete, start, stop, exec, files, services) and the service routes.
+get, delete, start, stop, exec, files, services), the service routes and
+the service-link routes.
 `GET /health` lists the versions served (`{ "status": "ok", "apis":
 ["v0beta1"] }`). `/api/v1/machines` serves the same machine routes, without
 service routes, for control planes on providers from before `v0beta1`; remove
@@ -514,7 +528,8 @@ it once none are deployed. Change a version's contract only in a new version.
 ## Authentication
 
 Every route, including `/health` and unknown paths, requires the secret key:
-in `X-Amika-Hostd-Key` on service routes, otherwise as
+in `X-Amika-Hostd-Key` on service routes, as a signed link on service-link
+routes (see [Service routes](#service-routes)), otherwise as
 `Authorization: Bearer <secret key>` (the scheme the Amika CLI uses for API
 credentials). `src/internal/auth.ts` reads it the same way as amika-mono's
 worker auth (`checkWorkerAuth`): strip a leading `Bearer` scheme, trim, compare
