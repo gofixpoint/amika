@@ -116,9 +116,9 @@ export class RuntimeError extends Error {
     readonly status: number,
     message: string,
     /**
-     * smolvm's own reason, one line and capped, when the machine API may
-     * pass it on: never an exec's, which may echo the command, nor one
-     * that repeats a value the request sent in confidence.
+     * smolvm's own reason, one line and capped, for the machine API to
+     * pass on: never an exec's, which may echo the command. A create's has
+     * its env values replaced by `[redacted]`.
      */
     readonly reason?: string,
   ) {
@@ -129,33 +129,27 @@ export class RuntimeError extends Error {
 /** The longest smolvm reason the machine API passes on. */
 export const MAX_REASON_LENGTH = 500;
 
-/** `text` as one line: control characters and whitespace runs as a space. */
-function oneLine(text: string): string {
-  return text.replace(/[\p{Cc}\s]+/gu, " ").trim();
-}
+/** Env values shorter than this are left in a reason: none is a secret. */
+const MIN_REDACTED_LENGTH = 4;
 
 /**
- * smolvm's reason as one line, cut to `MAX_REASON_LENGTH`, or nothing when
- * it repeats any of `secrets`. Each secret is looked for in the whole reason
- * before it is cut, as sent, as one line and JSON-escaped, so neither the cut
- * nor smolvm quoting it hides a repeat.
+ * smolvm's reason as one line, cut to `MAX_REASON_LENGTH`, with each of
+ * `secrets` in it replaced by `[redacted]` first, so the cut never leaves
+ * part of one behind.
  */
 function surfaceable(
   reason: string | undefined,
   secrets: readonly string[],
 ): string | undefined {
-  if (reason === undefined) return undefined;
-  const line = oneLine(reason);
+  let redacted = reason ?? "";
+  // Longest first, so a value inside another is not left half-replaced.
+  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+    if (secret.length >= MIN_REDACTED_LENGTH) {
+      redacted = redacted.replaceAll(secret, "[redacted]");
+    }
+  }
+  const line = redacted.replace(/[\p{Cc}\s]+/gu, " ").trim();
   if (!line) return undefined;
-  const repeats = secrets.some((secret) => {
-    const flat = oneLine(secret);
-    return (
-      (secret && reason.includes(secret)) ||
-      (flat && line.includes(flat)) ||
-      (secret && reason.includes(JSON.stringify(secret).slice(1, -1)))
-    );
-  });
-  if (repeats) return undefined;
   return line.length > MAX_REASON_LENGTH
     ? `${line.slice(0, MAX_REASON_LENGTH - 1)}…`
     : line;
@@ -205,7 +199,7 @@ export function providerRuntime({
    */
   const call = async <T>(
     run: () => Promise<T>,
-    /** Values the request sent in confidence, never passed on in a reason. */
+    /** Values the request sent in confidence, redacted from a reason. */
     secrets: readonly string[] = [],
   ): Promise<T> => {
     try {

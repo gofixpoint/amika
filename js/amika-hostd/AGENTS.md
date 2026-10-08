@@ -410,8 +410,10 @@ exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
   an unreachable smolvm `502`. The answer is `Smol runtime request failed`,
   followed by smolvm's own reason (`: resize2fs not found`) as one line cut
   to 500 characters, so an operator sees why a start or an image pull failed.
-  The reason is withheld for exec, whose errors can echo the command, and for
-  a create whose reason repeats one of its environment values.
+  The reason is withheld for exec, whose errors can echo the command. A
+  create's reason has each of its env values (4 characters or longer)
+  replaced by `[redacted]`; a later start or stop cannot, since smolvm never
+  reports a machine's env.
 
 ## Configuration
 

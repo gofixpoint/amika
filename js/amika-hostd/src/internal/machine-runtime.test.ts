@@ -308,49 +308,61 @@ describe("providerRuntime", () => {
       expect(machines.has("demo")).toBe(false);
     });
 
-    it("withholds a failed start's reason when it repeats an env value", async () => {
-      const { runtime } = harness([], (method, path) =>
-        method === "POST" && path === "/demo/start"
-          ? Response.json(
-              { error: "bad env TOKEN=hunter2-secret" },
-              { status: 500 },
-            )
-          : undefined,
-      );
-      const error = await failure(
-        runtime.create({
-          ...create,
-          env: [
-            { name: "EMPTY", value: "" },
-            { name: "TOKEN", value: "hunter2-secret" },
-          ],
-        }),
-      );
-      expect(error.status).toBe(500);
-      expect(error.reason).toBeUndefined();
-    });
     it.each([
       [
-        "across a line break",
-        "line one\nline two",
-        "bad env: line one line two",
+        "a value",
+        ["hunter2-secret"],
+        "bad env TOKEN=hunter2-secret",
+        "bad env TOKEN=[redacted]",
       ],
-      ["past the cut", "hunter2-secret", `${"x".repeat(495)} hunter2-secret`],
-      ["JSON-quoted", 'say "hi"', 'bad env "say \\"hi\\""'],
+      [
+        "a multi-line value",
+        ["line one\nline two"],
+        "bad: line one\nline two",
+        "bad: [redacted]",
+      ],
+      [
+        "a value past the cut",
+        ["hunter2-secret"],
+        `${"x".repeat(493)} hunter2-secret`,
+        `${"x".repeat(493)} [reda…`,
+      ],
+      [
+        "a value inside another",
+        ["abcd", "xxabcdxx"],
+        "bad: xxabcdxx abcd",
+        "bad: [redacted] [redacted]",
+      ],
     ])(
-      "withholds a failed start's reason repeating an env value %s",
-      async (_, value, reason) => {
+      "redacts %s from a failed start's reason",
+      async (_, values, reason, expected) => {
         const { runtime } = harness([], (method, path) =>
           method === "POST" && path === "/demo/start"
             ? Response.json({ error: reason }, { status: 500 })
             : undefined,
         );
         const error = await failure(
-          runtime.create({ ...create, env: [{ name: "TOKEN", value }] }),
+          runtime.create({
+            ...create,
+            env: values.map((value, i) => ({ name: `V${i}`, value })),
+          }),
         );
-        expect(error.reason).toBeUndefined();
+        expect(error.status).toBe(500);
+        expect(error.reason).toBe(expected);
       },
     );
+
+    it("leaves short env values in a reason", async () => {
+      const { runtime } = harness([], (method, path) =>
+        method === "POST" && path === "/demo/start"
+          ? Response.json({ error: "resize2fs not found" }, { status: 500 })
+          : undefined,
+      );
+      const error = await failure(
+        runtime.create({ ...create, env: [{ name: "N", value: "2" }] }),
+      );
+      expect(error.reason).toBe("resize2fs not found");
+    });
   });
 
   describe("list and get", () => {
