@@ -89,33 +89,32 @@ export function smolOperations(
     });
   /**
    * smolvm's files API writes as root and creates missing parents as root, so
-   * create the parent as the exec user first (best-effort: a system path it
-   * cannot create is left to the write), then hand the file to that user, as
-   * Freestyle's adapter does. A file left root-owned breaks the lifecycle's
-   * later work on it as that user (`chmod 600 ~/.git-credentials`, the
-   * agent reading its config), so a failed chown fails the write.
+   * create the parent as the exec user first, then hand the file to that
+   * user, as Freestyle's adapter does. A parent that user cannot create (a
+   * system path) is left to the write; a request that fails outright fails
+   * the write. A file left root-owned breaks the lifecycle's later work on it
+   * as that user (`chmod 600 ~/.git-credentials`, the agent reading its
+   * config), so a failed chown fails the write. `chown -h` changes a symlink
+   * itself, never its target, so a link planted at the path cannot hand the
+   * exec user a file elsewhere.
    */
   const write = async (
     id: string,
     path: string,
     content: Buffer | string,
   ): Promise<void> => {
+    // Validated before any exec, so a bad path never reaches the shell.
+    const url = filePath(id, path);
     const dir = path.slice(0, path.lastIndexOf("/"));
-    if (dir) {
-      try {
-        await run(id, `mkdir -p -- ${shellQuote(dir)}`);
-      } catch {
-        // The write below surfaces a real failure.
-      }
-    }
+    if (dir) await run(id, `mkdir -p -- ${shellQuote(dir)}`);
     await client.discard(
-      filePath(id, path),
+      url,
       "PUT",
       Buffer.isBuffer(content) ? content : Buffer.from(content),
     );
     const chown = await run(
       id,
-      `chown -- ${AMIKA_USER}:${AMIKA_USER} ${shellQuote(path)}`,
+      `chown -h -- ${AMIKA_USER}:${AMIKA_USER} ${shellQuote(path)}`,
       { sudo: true },
     );
     if (chown.exitCode !== 0) {

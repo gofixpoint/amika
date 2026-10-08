@@ -160,9 +160,7 @@ it("applies an injected host connection policy to providers and adapters", async
   await expect(adapter.uploadFile("content", "/tmp/file")).rejects.toThrow(
     "destination rejected",
   );
-  // Each of the two file writes first tries, best-effort, to create the
-  // parent directory as the exec user, then still attempts the write.
-  expect(visited).toHaveLength(operations.length + 3 + 2);
+  expect(visited).toHaveLength(operations.length + 3);
   expect(
     visited.every((url) => url.startsWith("https://tenant.example/")),
   ).toBe(true);

@@ -350,7 +350,11 @@ describe("amika-hostd provider", () => {
       body: bytes,
     });
     expect(received[3]?.body).toMatchObject({
-      command: ["/bin/sh", "-c", "chown -- amika:amika '/workspace/a #?.bin'"],
+      command: [
+        "/bin/sh",
+        "-c",
+        "chown -h -- amika:amika '/workspace/a #?.bin'",
+      ],
       user: "root",
     });
     expect(files.get("/workspace/a #?.bin")).toEqual(bytes);

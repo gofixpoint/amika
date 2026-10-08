@@ -77,7 +77,7 @@ an `amika` user whose home is `/home/amika`, which is also the reported home
 directory. `cwd`, `env`, and `input` are supported on exec, and an `env` that
 sets `HOME` overrides the default. File uploads create parent directories and
 leave the file owned by `amika`: smolvm writes it as root, so the provider
-`chown`s it afterwards, and an upload fails if that does not succeed. The runtime can auto-start stopped machines on exec
+`chown -h`s it afterwards, and an upload fails if that does not succeed. The runtime can auto-start stopped machines on exec
 or file access, but status checks and listings are read-only.
 
 `network` defaults to false. Enable it when using images from a remote registry or workloads needing

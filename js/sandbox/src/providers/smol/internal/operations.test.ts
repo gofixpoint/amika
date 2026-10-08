@@ -331,11 +331,23 @@ describe("smol operations", () => {
       command: [
         "/bin/sh",
         "-c",
-        "chown -- amika:amika '/home/amika/.config/a #?.bin'",
+        "chown -h -- amika:amika '/home/amika/.config/a #?.bin'",
       ],
       user: "root",
     });
     expect(await adapter.downloadFile("/workspace/a.txt")).toBe("hello");
+  });
+
+  it("validates the path before running anything, and fails a write whose mkdir request fails", async () => {
+    const { ops, fetcher } = harness([json({}, 503)]);
+    await expect(ops.write(INPUT.name, "notes.txt", "x")).rejects.toThrow(
+      "absolute",
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+    await expect(ops.write(INPUT.name, "/home/amika/a", "x")).rejects.toThrow(
+      "HTTP 503",
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("fails an upload whose file cannot be handed to the exec user", async () => {
