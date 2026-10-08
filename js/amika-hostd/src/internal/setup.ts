@@ -44,6 +44,11 @@ export interface SetupDeps {
   generateSecretKey?: () => string;
   registerHost?: typeof registerHostWithAmika;
   setHostSecret?: typeof setHostSecretInAmika;
+  /**
+   * Call `handler` on the operator's Ctrl-C until the returned function is
+   * called; defaults to a SIGINT listener.
+   */
+  onInterrupt?: (handler: () => void) => () => void;
 }
 
 /**
@@ -239,11 +244,16 @@ export async function runSetup(
       writeConfig(write, configPath, contents);
       wroteConfig = true;
       sending = true;
-      const created = await sendSecret(
-        { apiUrl: effective.apiUrl, apiKey: sendWith },
-        written,
-        { hostname, secretKey },
-        deps,
+      // Ctrl-C would otherwise end the process mid-request, before the old
+      // key goes back; instead it cancels the request like any failure.
+      const created = await whileInterruptible(deps, (cancel) =>
+        sendSecret(
+          { apiUrl: effective.apiUrl, apiKey: sendWith },
+          written,
+          { hostname, secretKey },
+          deps,
+          cancel,
+        ),
       );
       deps.out(
         created
@@ -322,18 +332,50 @@ async function sendSecret(
   config: HostdConfig,
   input: { hostname: string; secretKey: string },
   deps: SetupDeps,
+  cancel: AbortSignal,
 ): Promise<boolean> {
   const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
     api,
     { ...input, sizes: config.sizes },
+    undefined,
+    cancel,
   );
   if (created) return true;
   await (deps.setHostSecret ?? setHostSecretInAmika)(
     api,
     host,
     input.secretKey,
+    undefined,
+    cancel,
   );
   return false;
+}
+
+/**
+ * Run `work` with a signal that Ctrl-C aborts. If it does, `work`'s failure
+ * is reported as the cancellation. A second Ctrl-C ends the process as usual.
+ */
+async function whileInterruptible<T>(
+  deps: SetupDeps,
+  work: (cancel: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const interrupted = new AbortController();
+  const stop = (deps.onInterrupt ?? onSigint)(() => interrupted.abort());
+  try {
+    return await work(interrupted.signal);
+  } catch (error) {
+    if (!interrupted.signal.aborted) throw error;
+    throw new ConfigError(
+      "Cancelled while sending the new secret key to Amika",
+    );
+  } finally {
+    stop();
+  }
+}
+
+function onSigint(handler: () => void): () => void {
+  process.once("SIGINT", handler);
+  return () => process.off("SIGINT", handler);
 }
 
 /**

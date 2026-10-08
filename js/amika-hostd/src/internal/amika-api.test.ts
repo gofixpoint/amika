@@ -247,6 +247,16 @@ describe("setHostSecret", () => {
     );
   });
 
+  it("stops the request when the caller cancels it", async () => {
+    const fetcher = responding(Response.json(HOST));
+    const cancel = new AbortController();
+    await setHostSecret(API, HOST, "new-secret", fetcher, cancel.signal);
+    const signal = fetcher.mock.calls[0][1]?.signal;
+    expect(signal?.aborted).toBe(false);
+    cancel.abort();
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("reports a refusal without the secret", async () => {
     const fetcher = responding(
       apiErrorBody(404, "host_not_found", "Host not found"),
