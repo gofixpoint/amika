@@ -326,23 +326,45 @@ describe("amika-hostd provider", () => {
       path: "/demo/exec",
       body: {
         command: ["/bin/sh", "-c", "cat"],
-        user: "root",
+        user: "amika",
         workdir: "/workspace",
-        env: [{ name: "A", value: "b" }],
+        env: [
+          { name: "HOME", value: "/home/amika" },
+          { name: "A", value: "b" },
+        ],
         stdin: "stdin",
       },
     });
     const adapter = await openAmikaHostdAdapter(config, "demo", fetcher);
     const bytes = Buffer.from([0, 255, 128]);
+    setExecResult({ exitCode: 0, stdout: "", stderr: "" });
     await adapter.uploadFile(bytes, "/workspace/a #?.bin");
-    expect(received[1]).toEqual({
+    expect(calls(received.slice(1))).toEqual([
+      "POST /demo/exec",
+      "PUT /demo/files/workspace/a%20%23%3F.bin",
+      "POST /demo/exec",
+    ]);
+    expect(received[2]).toEqual({
       method: "PUT",
       path: "/demo/files/workspace/a%20%23%3F.bin",
       body: bytes,
     });
+    expect(received[3]?.body).toMatchObject({
+      command: [
+        "/bin/sh",
+        "-c",
+        "chown -h -- amika:amika '/workspace/a #?.bin'",
+      ],
+      user: "root",
+    });
     expect(files.get("/workspace/a #?.bin")).toEqual(bytes);
     expect(await adapter.downloadFile("/workspace/a.txt")).toBe("hello");
+    setExecResult(result);
     expect(await adapter.exec("false")).toEqual(result);
+  });
+
+  it("reports the amika user's home, as the cloud providers do", () => {
+    expect(harness().provider.userHomeDir).toBe("/home/amika");
   });
 
   it("cleans up failed starts but never deletes a conflicting machine", async () => {

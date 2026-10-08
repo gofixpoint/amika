@@ -4,14 +4,15 @@
  * (`./smolvm-serve.ts`).
  *
  * Create goes through the provider's create operation, which takes a
- * request's sizes as given. Delete, file writes and service ports go through
- * the provider's resource surface. Machine info, start and stop, exec and file reads go
- * through the provider's exported smolvm client instead, so they behave
- * exactly as smolvm's own API: the resource surface reports no published
- * ports, answers a start or stop with nothing, takes exec as a root shell
- * string and reads files as text, while the machine API's contract carries
- * ports and the machine a start or stop leaves, argv with any user, and
- * arbitrary bytes, streamed.
+ * request's sizes as given. Delete and service ports go through the
+ * provider's resource surface. Machine info, start and stop, exec and file
+ * reads and writes go through the provider's exported smolvm client instead,
+ * so they behave exactly as smolvm's own API: the resource surface reports no
+ * published ports, answers a start or stop with nothing, takes exec as a
+ * shell string run as the image's `amika` user, reads files as text and hands
+ * written files to that user, while the machine API's contract carries ports
+ * and the machine a start or stop leaves, argv with any user, and arbitrary
+ * bytes, streamed, written as smolvm writes them.
  */
 import smolProvider, {
   SmolApiError,
@@ -291,7 +292,7 @@ export function providerRuntime({
       await call(() => sandboxes.get(name).delete());
     },
     // Through the client, not the resource surface, which takes a shell
-    // string and always runs as root: the machine API takes argv and any
+    // string and picks the user itself: the machine API takes argv and any
     // user, and forwards both to smolvm unchanged.
     exec: (name, request) =>
       call(() =>
@@ -312,8 +313,13 @@ export function providerRuntime({
             response.headers.get("content-type") ?? "application/octet-stream",
         };
       }),
+    // Through the client too: the resource surface hands each written file
+    // to the `amika` user, which the hostd provider on the calling side
+    // already does, through exec. The machine API writes as smolvm does.
     writeFile: async (name, path, data) => {
-      await call(() => sandboxes.get(name).writeFile(path, Buffer.from(data)));
+      await call(() =>
+        client.discard(filePath(name, path), "PUT", Buffer.from(data)),
+      );
     },
     checkServices: async (name, services) => {
       // hostd routes by name, so replacing the names never reconciles the

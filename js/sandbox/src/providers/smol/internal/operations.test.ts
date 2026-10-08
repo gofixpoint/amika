@@ -274,33 +274,91 @@ describe("smol operations", () => {
         input: "secret",
         cwd: "/workspace",
         env: { VALUE: "a b" },
-        sudo: true,
       }),
     ).toEqual(result);
     expect(body(fetcher, 0)).toEqual({
       command: ["/bin/sh", "-c", 'cat; printf "$VALUE"'],
-      user: "root",
+      user: "amika",
       workdir: "/workspace",
-      env: [{ name: "VALUE", value: "a b" }],
+      env: [
+        { name: "HOME", value: "/home/amika" },
+        { name: "VALUE", value: "a b" },
+      ],
       stdin: "secret",
     });
   });
 
-  it("uploads binary bytes and reads UTF-8 through the provisioning adapter", async () => {
+  it("runs as root with root's home only for sudo, and keeps a caller's HOME", async () => {
+    const result = { exitCode: 0, stdout: "", stderr: "" };
+    const { ops, fetcher } = harness([json(result), json(result)]);
+    await ops.run(INPUT.name, "id", { sudo: true });
+    expect(body(fetcher, 0)).toMatchObject({
+      user: "root",
+      env: [{ name: "HOME", value: "/root" }],
+    });
+    await ops.run(INPUT.name, "id", { env: { HOME: "/tmp/h" } });
+    expect(body(fetcher, 1)).toMatchObject({
+      user: "amika",
+      env: [{ name: "HOME", value: "/tmp/h" }],
+    });
+  });
+
+  it("uploads binary bytes as the exec user and reads UTF-8 through the provisioning adapter", async () => {
+    const ok = { exitCode: 0, stdout: "", stderr: "" };
     const { ops, fetcher } = harness([
+      json(ok),
       json({}),
+      json(ok),
       new Response("hello", {
         headers: { "Content-Type": "application/octet-stream" },
       }),
     ]);
     const adapter = ops.adapter(INPUT.name);
     const content = Buffer.from([0, 255, 128]);
-    await adapter.uploadFile(content, "/workspace/a #?.bin");
-    expect(fetcher.mock.calls[0][0]).toContain(
-      "/files/workspace/a%20%23%3F.bin",
+    await adapter.uploadFile(content, "/home/amika/.config/a #?.bin");
+    // The parent is created as amika, so smolvm's root-run write does not
+    // leave a root-owned directory in its home.
+    expect(body(fetcher, 0)).toMatchObject({
+      command: ["/bin/sh", "-c", "mkdir -p -- '/home/amika/.config'"],
+      user: "amika",
+    });
+    expect(fetcher.mock.calls[1][0]).toContain(
+      "/files/home/amika/.config/a%20%23%3F.bin",
     );
-    expect(fetcher.mock.calls[0][1]?.body).toEqual(new Uint8Array(content));
+    expect(fetcher.mock.calls[1][1]?.body).toEqual(new Uint8Array(content));
+    // smolvm writes the file as root; it is handed to amika afterwards.
+    expect(body(fetcher, 2)).toMatchObject({
+      command: [
+        "/bin/sh",
+        "-c",
+        "chown -h -- amika:amika '/home/amika/.config/a #?.bin'",
+      ],
+      user: "root",
+    });
     expect(await adapter.downloadFile("/workspace/a.txt")).toBe("hello");
+  });
+
+  it("validates the path before running anything, and fails a write whose mkdir request fails", async () => {
+    const { ops, fetcher } = harness([json({}, 503)]);
+    await expect(ops.write(INPUT.name, "notes.txt", "x")).rejects.toThrow(
+      "absolute",
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+    await expect(ops.write(INPUT.name, "/home/amika/a", "x")).rejects.toThrow(
+      "HTTP 503",
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails an upload whose file cannot be handed to the exec user", async () => {
+    const { ops } = harness([
+      json({ exitCode: 1, stdout: "", stderr: "mkdir: denied" }),
+      json({}),
+      json({ exitCode: 1, stdout: "", stderr: "chown: invalid user" }),
+    ]);
+    await expect(ops.write(INPUT.name, "/etc/a.conf", "x")).rejects.toThrow(
+      "Failed to chown /etc/a.conf to amika: chown: invalid user",
+    );
   });
 
   it("returns null only for missing files and rejects directory responses", async () => {

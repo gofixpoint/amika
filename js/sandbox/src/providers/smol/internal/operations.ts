@@ -11,6 +11,9 @@ import {
   type SandboxResources,
 } from "../../provider";
 import type { SandboxService } from "../../../types";
+import { DEFAULT_HOME_DIR } from "../../../constants";
+import { shellQuote } from "../../../util/shell";
+import { execFailureText } from "../../shared/adapter";
 import type { SandboxAdapter } from "../../shared/adapter";
 import type { SandboxStatus } from "../../../sandbox-status";
 import {
@@ -46,6 +49,13 @@ export type SmolCreateInput = Omit<CreateSandboxProviderInput, "resources"> & {
   resources?: Partial<SandboxResources>;
 };
 
+/**
+ * The unprivileged user Amika images provision, which ordinary execs and file
+ * writes run as so repos, agent configs, and credentials land in its home and
+ * are owned by it, as on the cloud providers. `sudo: true` runs as root.
+ */
+const AMIKA_USER = "amika";
+
 export function smolOperations(
   config: SmolConfig,
   client = new SmolClient(config),
@@ -66,20 +76,53 @@ export function smolOperations(
   const run = (id: string, command: string, opts?: ExecCommandOptions) =>
     client.json(`${machinePath(id)}/exec`, execSchema, "POST", {
       command: ["/bin/sh", "-c", command],
-      user: "root",
+      user: opts?.sudo ? "root" : AMIKA_USER,
       workdir: opts?.cwd,
-      env: Object.entries(opts?.env ?? {}).map(([name, value]) => ({
-        name,
-        value,
-      })),
+      // Named explicitly rather than trusting the runtime to derive it from
+      // the user, so a command never writes into another user's home; a
+      // caller's own HOME still wins.
+      env: Object.entries({
+        HOME: opts?.sudo ? "/root" : DEFAULT_HOME_DIR,
+        ...opts?.env,
+      }).map(([name, value]) => ({ name, value })),
       stdin: opts?.input,
     });
-  const write = (id: string, path: string, content: Buffer | string) =>
-    client.discard(
-      filePath(id, path),
+  /**
+   * smolvm's files API writes as root and creates missing parents as root, so
+   * create the parent as the exec user first, then hand the file to that
+   * user, as Freestyle's adapter does. A parent that user cannot create (a
+   * system path) is left to the write; a request that fails outright fails
+   * the write. A file left root-owned breaks the lifecycle's later work on it
+   * as that user (`chmod 600 ~/.git-credentials`, the agent reading its
+   * config), so a failed chown fails the write. `chown -h` changes a symlink
+   * itself, never its target, so a link planted at the path cannot hand the
+   * exec user a file elsewhere.
+   */
+  const write = async (
+    id: string,
+    path: string,
+    content: Buffer | string,
+  ): Promise<void> => {
+    // Validated before any exec, so a bad path never reaches the shell.
+    const url = filePath(id, path);
+    const dir = path.slice(0, path.lastIndexOf("/"));
+    if (dir) await run(id, `mkdir -p -- ${shellQuote(dir)}`);
+    await client.discard(
+      url,
       "PUT",
       Buffer.isBuffer(content) ? content : Buffer.from(content),
     );
+    const chown = await run(
+      id,
+      `chown -h -- ${AMIKA_USER}:${AMIKA_USER} ${shellQuote(path)}`,
+      { sudo: true },
+    );
+    if (chown.exitCode !== 0) {
+      throw new Error(
+        `Failed to chown ${path} to ${AMIKA_USER}: ${execFailureText(chown)}`,
+      );
+    }
+  };
   const read = async (id: string, path: string): Promise<string | null> => {
     try {
       const response = await client.request(filePath(id, path));

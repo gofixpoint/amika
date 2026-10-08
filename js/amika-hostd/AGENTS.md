@@ -396,16 +396,18 @@ says to remove it if it is stale, as `up` does. A `smolvm.pid` and
 sandbox provider from the workspace's `@amika/sandbox`
 (`js/sandbox/src/providers/smol`, imported as `@amika/sandbox/smol`), pointed
 at the smolvm this daemon started (or `SMOL_API_URL` for plain `serve`).
-Create, delete, file writes and service ports go through the provider's
-resource surface, translated to and from `smolvm serve`'s shapes, which the
-control plane's `amika-hostd` provider expects. Machine info (get and list),
-start and stop, exec and file reads go through the provider's exported smolvm
+Create, delete and service ports go through the provider's resource surface,
+translated to and from `smolvm serve`'s shapes, which the control plane's
+`amika-hostd` provider expects. Machine info (get and list), start and stop,
+exec and file reads and writes go through the provider's exported smolvm
 client instead, because the machine API's contract carries what the resource
-surface drops: each machine's published `ports`, the machine smolvm answers a
-start or stop with (so a successful start never hinges on a second request
-whose failure would make a create through hostd delete the machine), exec as
-argv with any `user`, and a file's exact bytes and type (JSON for a
-directory), streamed through rather than buffered. Machine and exec replies
+surface drops or adds: each machine's published `ports`, the machine smolvm
+answers a start or stop with (so a successful start never hinges on a second
+request whose failure would make a create through hostd delete the machine),
+exec as argv with any `user`, a file's exact bytes and type (JSON for a
+directory), streamed through rather than buffered, and a write left as smolvm
+makes it (the resource surface would also hand the file to the `amika` user,
+which the calling `amika-hostd` provider already does over exec). Machine and exec replies
 are validated only for the fields hostd reads and otherwise passed through
 whole, so smolvm's other fields (a machine's `image`, `network`, `mounts`;
 exec's exact `stdoutB64`/`stderrB64`) still reach the caller.

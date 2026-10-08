@@ -49,13 +49,15 @@ const ctx: SandboxCtx = {
 async function example(ctx: SandboxCtx) {
   const sandbox = await provider.sandboxes.create(ctx, {
     name: "local-demo",
-    snapshot: "ubuntu:24.04", // OCI image reference, not an Amika snapshot name.
+    // OCI image reference, not an Amika snapshot name. The image needs an
+    // `amika` user (see below), as Amika's published preset images have.
+    snapshot: "ghcr.io/gofixpoint/amika-coder:latest",
     resources: { vcpus: 2, memoryGib: 2, diskGib: 20 },
     services: [],
   });
   try {
-    await sandbox.writeFile("/workspace/hello.txt", "hello\n");
-    console.log(await sandbox.exec("cat /workspace/hello.txt"));
+    await sandbox.writeFile("/home/amika/hello.txt", "hello\n");
+    console.log(await sandbox.exec("cat /home/amika/hello.txt"));
     await sandbox.stop(); // Preserves disk, not running processes.
     console.log(await sandbox.getState()); // Does not restart the VM.
     await sandbox.start();
@@ -67,10 +69,14 @@ async function example(ctx: SandboxCtx) {
 await example(ctx);
 ```
 
-Commands execute as root using `/bin/sh -c`; images must provide that shell.
-The reported home directory is `/root`. `cwd`, `env`, and `input` are supported
-on exec; `sudo` is redundant because execution already uses root. File uploads
-create parent directories. The runtime can auto-start stopped machines on exec
+Commands execute as the `amika` user with `HOME=/home/amika`, through
+`/bin/sh -c`, the same contract as the cloud providers; `sudo: true` runs a
+command as root with `HOME=/root` instead. Images must provide that shell and
+an `amika` user whose home is `/home/amika`, which is also the reported home
+directory. `cwd`, `env`, and `input` are supported on exec, and an `env` that
+sets `HOME` overrides the default. File uploads create parent directories and
+leave the file owned by `amika`: smolvm writes it as root, so the provider
+`chown -h`s it afterwards, and an upload fails if that does not succeed. The runtime can auto-start stopped machines on exec
 or file access, but status checks and listings are read-only.
 
 `network` defaults to false. Enable it when using images from a remote registry or workloads needing
