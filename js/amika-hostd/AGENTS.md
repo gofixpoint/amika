@@ -551,8 +551,8 @@ creates of one image share a single build.
     are left out of the machine list (`hiddenMachines`) so Amika never sees
     them as rigs: a rig that merely shares the prefix, made before it was
     reserved, is left alone. The list hides the recorded machines plus every
-    name this daemon's pre-pull has used (`used`), kept after the machine
-    is deleted, so a list smolvm answered mid-create or mid-delete never
+    name this daemon's pre-pull has used or cleaned up (`used`), kept after
+    the machine is deleted, so a list smolvm answered mid-create or mid-delete never
     shows one. A create naming the prefix is refused (`400`). The rest of a
     throwaway machine's name is 16 random hex digits, so it never takes
     another machine's name, nor that of one hostd could not delete. A create

@@ -171,6 +171,18 @@ describe("prepullImages", () => {
     expect(prepullMachines(file)).toEqual(new Set());
   });
 
+  it("reports a leftover machine as used before deleting it", async () => {
+    const { runtime } = fakeRuntime(["amika-hostd-prepull-3"]);
+    const used = new Set<string>();
+    let usedAtDelete: Set<string> | undefined;
+    runtime.remove.mockImplementationOnce(async () => {
+      usedAtDelete = new Set(used);
+    });
+    await run(runtime, stateFile([], ["amika-hostd-prepull-3"]), { used }).done;
+    expect(usedAtDelete).toEqual(new Set(["amika-hostd-prepull-3"]));
+    expect(used.has("amika-hostd-prepull-3")).toBe(true);
+  });
+
   it("keeps a recorded machine it could not delete, to try again", async () => {
     const { runtime } = fakeRuntime(["amika-hostd-prepull-3"]);
     runtime.remove.mockRejectedValueOnce(new RuntimeError(502, "unreachable"));

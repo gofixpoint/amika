@@ -180,7 +180,12 @@ export async function prepullImages({
     }
     forget(name);
   };
-  for (const name of prepullMachines(stateFile)) await remove(name);
+  for (const name of prepullMachines(stateFile)) {
+    // Kept as used, so a list caught mid-delete still hides it once
+    // `remove` has forgotten it.
+    used?.add(name);
+    await remove(name);
+  }
   for (const { image, presets } of configuredImages(images)) {
     if (signal?.aborted) return;
     // A random name never takes a rig's, nor one hostd could not delete.
