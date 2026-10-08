@@ -11,11 +11,15 @@ import {
 } from "./amika-api.js";
 import {
   ConfigError,
+  DEFAULT_HOST,
+  DEFAULT_PORT,
   ENV_NAMES,
+  configFilePaths,
   loadConfigFile as loadConfigFileFromDisk,
   requireSettings,
   resolveConfig,
   type HostdConfig,
+  type HostdConfigFile,
   type HostdConfigWith,
   type HostdFlags,
 } from "./config.js";
@@ -45,6 +49,7 @@ import {
 import { providerRuntime } from "./machine-runtime.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
 import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
+import { setupSkill, type SkillContext } from "./setup-skill.js";
 import {
   DEFAULT_SMOL_API_URL,
   SMOLVM_STOP_TIMEOUT_MS,
@@ -65,6 +70,13 @@ Commands:
                       Cloudflare Tunnel URL) to complete registration
 
 Options:
+  --non-interactive
+                 (setup) Ask nothing: take the hostname from --hostname (else
+                 the configured one, or this machine's), the API key from
+                 stdin when none is stored, and keep any secret key
+  --hostname <name>
+                 (setup --non-interactive) This host's name in Amika
+  --skill        (setup) Print how an AI agent sets up this host
   --fg           (up) Stay in the foreground instead of backgrounding
   --smolvm       (serve) Also start smolvm, and stop it on exit, as \`up\` does
   --port <port>  Port to listen on (AMIKA_HOSTD_PORT, TOML port; default 3020)
@@ -100,6 +112,8 @@ export interface CliDeps {
   prompt?: Prompt;
   /** `prompt` without echoing the answer; absent without a terminal. */
   promptSecret?: Prompt;
+  /** All of stdin, for `setup --non-interactive`'s API key. */
+  readStdin?: () => Promise<string>;
   /** Opens the secret store the config chose; defaults to `openSecrets`. */
   openSecrets?: (
     kind: HostdConfig["secretStore"],
@@ -127,7 +141,17 @@ export async function runCli(
     }
     // Stopping needs only the pidfiles, not a valid configuration.
     if (parsed.command === "down") return await down(deps);
-    if (parsed.command === "setup") return await setup(deps);
+    if (parsed.command === "setup") {
+      if (parsed.skill) {
+        deps.out(setupSkill(skillContext(deps)));
+        return 0;
+      }
+      return await setup(
+        parsed.nonInteractive
+          ? { ...deps, ...unattended(deps, parsed.hostname) }
+          : deps,
+      );
+    }
     // `up` reads a placeholder secret (the example's `REPLACE_ME`) as unset,
     // as setup does, so it can run setup to replace it rather than fail.
     const resolve = ({ tolerant = false } = {}) => {
@@ -238,7 +262,13 @@ export async function runCli(
 
 type ParsedCommand =
   | { help: true }
-  | { help: false; command: "setup" }
+  | {
+      help: false;
+      command: "setup";
+      skill: boolean;
+      nonInteractive: boolean;
+      hostname?: string;
+    }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
   | {
@@ -284,6 +314,80 @@ async function setup(
     deps.err("amika-hostd: setup cancelled; nothing was changed.");
     return 130;
   }
+}
+
+/**
+ * Answers to setup's questions for `setup --non-interactive`: the hostname
+ * given (else the default), the API key from stdin, and the default to every
+ * yes/no question, which is no, so a secret key is never regenerated or
+ * replaced. A question asked twice means the first answer was refused, so
+ * it ends setup instead of repeating.
+ */
+function unattended(
+  deps: CliDeps,
+  hostname: string | undefined,
+): Pick<CliDeps, "prompt" | "promptSecret"> {
+  const asked = new Set<string>();
+  const first = (question: string) => {
+    if (asked.has(question)) return false;
+    asked.add(question);
+    return true;
+  };
+  let stdin: Promise<string> | undefined;
+  return {
+    prompt: async (question) => {
+      if (!question.startsWith("Hostname")) return "";
+      if (first(question)) return hostname ?? "";
+      deps.err("amika-hostd: pass this host's name with --hostname");
+      return undefined;
+    },
+    promptSecret: async (question) => {
+      if (first(question)) {
+        return (stdin ??= (deps.readStdin ?? readAllStdin)()).then((key) =>
+          key.trim(),
+        );
+      }
+      deps.err(
+        "amika-hostd: pipe the Amika API key into `amika-hostd setup --non-interactive`",
+      );
+      return undefined;
+    },
+  };
+}
+
+async function readAllStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  let text = "";
+  for await (const chunk of process.stdin) text += String(chunk);
+  return text;
+}
+
+/**
+ * What `setup --skill` names, from this host's config where it can be read.
+ * It needs no valid config: anything unreadable falls back to the defaults.
+ */
+function skillContext(deps: CliDeps): SkillContext {
+  let file: HostdConfigFile | undefined;
+  try {
+    file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+  }
+  let host = DEFAULT_HOST;
+  let port = DEFAULT_PORT;
+  try {
+    ({ host, port } = resolveTolerant(deps));
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+  }
+  // A daemon bound to every interface is reached here through loopback.
+  const reachable =
+    host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "::1" : host;
+  return {
+    configPath: file?.path ?? configFilePaths(deps.env)[0],
+    logFile: daemonPaths(deps.env).logFile,
+    localUrl: localUrl(reachable, port),
+  };
 }
 
 /** The config as `up` and `setup` read it: a placeholder secret as unset. */
@@ -379,6 +483,9 @@ function parseCommand(args: readonly string[]): ParsedCommand {
         smolvm: { type: "boolean" },
         port: { type: "string" },
         host: { type: "string" },
+        "non-interactive": { type: "boolean" },
+        hostname: { type: "string" },
+        skill: { type: "boolean" },
         // Internal: how `up` starts the background daemon (see startBackground).
         "secret-key-from-up": { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -401,13 +508,32 @@ function parseCommand(args: readonly string[]): ParsedCommand {
         "secret-key-from-up",
       ]);
       expectArguments(rest, 0);
-      return { help: false, command };
+      if (values.hostname !== undefined && !values["non-interactive"]) {
+        throw new UsageError("--hostname needs --non-interactive");
+      }
+      if (values.skill && values["non-interactive"]) {
+        throw new UsageError(
+          "--skill and --non-interactive do not go together",
+        );
+      }
+      return {
+        help: false,
+        command,
+        skill: values.skill ?? false,
+        nonInteractive: values["non-interactive"] ?? false,
+        hostname: values.hostname,
+      };
     case "up":
-      rejectOptions(command, values, ["smolvm", "secret-key-from-up"]);
+      rejectOptions(command, values, [
+        ...SETUP_ONLY,
+        "smolvm",
+        "secret-key-from-up",
+      ]);
       expectArguments(rest, 0);
       return { help: false, command, fg: values.fg ?? false, flags };
     case "down":
       rejectOptions(command, values, [
+        ...SETUP_ONLY,
         "fg",
         "smolvm",
         "port",
@@ -417,7 +543,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       expectArguments(rest, 0);
       return { help: false, command };
     case "serve":
-      rejectOptions(command, values, ["fg"]);
+      rejectOptions(command, values, [...SETUP_ONLY, "fg"]);
       expectArguments(rest, 0);
       return {
         help: false,
@@ -428,6 +554,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       };
     case "register-url": {
       rejectOptions(command, values, [
+        ...SETUP_ONLY,
         "fg",
         "smolvm",
         "port",
@@ -454,6 +581,9 @@ function expectArguments(rest: string[], count: number) {
   }
   if (rest.length < count) throw new UsageError("missing <url>");
 }
+
+/** Options only `setup` takes. */
+const SETUP_ONLY = ["non-interactive", "hostname", "skill"] as const;
 
 function rejectOptions(
   command: string,

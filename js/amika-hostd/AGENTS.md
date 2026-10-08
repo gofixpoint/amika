@@ -188,6 +188,25 @@ key would reach the Amika, organization or hostname this run reaches, while
 would keep using an overriding secret key. After regenerating, setup says to
 restart a running daemon, which keeps the key `up` handed it.
 
+`amika-hostd setup --non-interactive` asks nothing, for an AI agent or a
+script. It runs the same setup, answering each question with its default: the
+hostname from `--hostname`, else the configured one or this machine's; no to
+every yes/no question, so it never regenerates or replaces a secret key; and
+the API key from stdin when none is stored or set in the environment. An
+answer setup refuses (an invalid hostname, no API key on stdin) ends it with
+nothing changed, instead of asking again.
+
+`amika-hostd setup --skill` prints, as a SKILL.md document, how an agent sets
+the host up with it: settle the hostname with the operator, pipe the API key
+into `setup --non-interactive`, choose the file store only with the operator's
+consent when there is no keychain, then run `up` and `register-url`
+(`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
+fills in the config and log files and the daemon's local address (from `host`
+and `port`, loopback for a wildcard bind). The installer points agents at it.
+`setup-skill.test.ts` checks that every command and option it uses exists and
+every variable it names is one the config reads, so keep them in step when the
+CLI changes.
+
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the
 keychain, and it has a terminal; without one it fails, naming `setup`, or,
