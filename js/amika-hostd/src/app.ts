@@ -131,10 +131,18 @@ export function createApp(
   app.all(`${RIGS_ROUTE}/:name/services/:service`, (c) =>
     proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
   );
+  // A link missing its trailing slash would resolve the service's relative
+  // URLs one segment up, dropping the token, so it is sent to the full link.
+  // The redirect grants nothing: the full link is verified as usual. It is
+  // registered first because Hono's `/*` also matches the bare path.
+  app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token`, (c) => {
+    const url = new URL(c.req.url);
+    return new Response(null, {
+      status: 308,
+      headers: { Location: `${url.pathname}/${url.search}` },
+    });
+  });
   app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token/*`, (c) =>
-    proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
-  );
-  app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token`, (c) =>
     proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
   );
   // The machine API, at its versioned path and at the unversioned path
@@ -316,6 +324,9 @@ async function proxyService(
   // longer describe what is sent on.
   responseHeaders.delete("content-encoding");
   responseHeaders.delete("content-length");
+  // Every link on the host shares one origin; without this header a service
+  // worker is confined to the path of the link that served its script.
+  if (link) responseHeaders.delete("service-worker-allowed");
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

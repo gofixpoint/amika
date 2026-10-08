@@ -930,7 +930,7 @@ describe("service-link routes", () => {
     { rig = "demo", expiresAt = NOW_S + 3600, secret = SECRET } = {},
   ) {
     const token = await signServiceLink(secret, { rig, service, expiresAt });
-    return `/v0beta1/rigs/${rig}/service-links/${encodeURIComponent(service)}/${token}`;
+    return `/v0beta1/rigs/${rig}/service-links/${encodeURIComponent(service)}/${token}/`;
   }
 
   it("forwards with no key, stripping the link prefix and token", async () => {
@@ -938,7 +938,7 @@ describe("service-link routes", () => {
       HOST_PORT,
       new Response("asset", { headers: { "Content-Type": "text/javascript" } }),
     );
-    const response = await app.request(`${await link()}/assets/app.js?v=3`, {
+    const response = await app.request(`${await link()}assets/app.js?v=3`, {
       headers: { Cookie: "guest=1" },
     });
     expect(response.status).toBe(200);
@@ -950,17 +950,33 @@ describe("service-link routes", () => {
   });
 
   it("forwards the link root as the guest root", async () => {
-    const { app, fetcher } = links(
-      HOST_PORT,
-      new Response("ok"),
-      new Response("ok"),
-    );
+    const { app, fetcher } = links(HOST_PORT, new Response("ok"));
     expect((await app.request(await link())).status).toBe(200);
-    expect((await app.request(`${await link()}/`)).status).toBe(200);
     expect(fetcher.mock.calls.map(([target]) => target)).toEqual([
       "http://127.0.0.1:41002/",
-      "http://127.0.0.1:41002/",
     ]);
+  });
+
+  it("redirects a link missing its trailing slash, keeping the query", async () => {
+    const { app, runtime, fetcher } = links();
+    const path = (await link()).slice(0, -1);
+    const response = await app.request(`${path}?tab=2`);
+    expect(response.status).toBe(308);
+    expect(response.headers.get("location")).toBe(`${path}/?tab=2`);
+    expectUntouched(runtime);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("drops Service-Worker-Allowed so a worker stays inside its link", async () => {
+    const { app } = links(
+      HOST_PORT,
+      new Response("self.onfetch = () => {}", {
+        headers: { "Service-Worker-Allowed": "/", "X-Guest": "yes" },
+      }),
+    );
+    const response = await app.request(`${await link()}sw.js`);
+    expect(response.headers.get("service-worker-allowed")).toBeNull();
+    expect(response.headers.get("x-guest")).toBe("yes");
   });
 
   it("routes an encoded service name", async () => {
@@ -996,13 +1012,13 @@ describe("service-link routes", () => {
     ],
     [
       "a malformed token",
-      async () => "/v0beta1/rigs/demo/service-links/frontend/1.x",
+      async () => "/v0beta1/rigs/demo/service-links/frontend/1.x/",
     ],
   ])(
     "returns 401 for %s without touching the runtime",
     async (_label, path) => {
       const { app, runtime, fetcher } = links();
-      const response = await app.request(`${await path()}/x`);
+      const response = await app.request(`${await path()}x`);
       expect(response.status).toBe(401);
       expect(response.headers.get("connection")).toBe("close");
       expectUntouched(runtime);
@@ -1035,7 +1051,7 @@ describe("service-link routes", () => {
 
   it("does not unlock the keyed service route or the machine API", async () => {
     const { app, runtime } = links();
-    const token = (await link()).split("/").at(-1)!;
+    const token = (await link()).split("/").at(-2)!;
     for (const path of [
       `/v0beta1/rigs/demo/services/frontend/${token}/`,
       `/v0beta1/rigs/demo/${token}`,

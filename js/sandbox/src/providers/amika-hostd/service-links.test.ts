@@ -92,7 +92,7 @@ describe("service links", () => {
     expect(await verify(token)).toBe("malformed");
   });
 
-  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+  it.each([0, -1, 1.5, 1_791_504_000_000, Number.MAX_SAFE_INTEGER + 1])(
     "refuses to sign an expiry of %d",
     async (expiresAt) => {
       await expect(

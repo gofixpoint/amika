@@ -496,7 +496,10 @@ The `amika-hostd` provider mints it on the control plane and hostd verifies
 it locally, both with `@amika/sandbox/hostd-service-links`: the signature is
 an HMAC-SHA256 over the machine, service and expiry, under a key derived from
 the host's secret key. hostd answers `401` for a bad or expired link and
-forwards a good one exactly as the keyed route does. Regenerating the secret
+forwards a good one exactly as the keyed route does, except that it drops
+`Service-Worker-Allowed` from the response (every link shares the host's
+origin, so a service worker must stay inside its own link) and redirects a
+link missing its trailing slash to the full link. Regenerating the secret
 key invalidates every link; removing a service makes its links `404`.
 
 - The key goes in `X-Amika-Hostd-Key`, since `Authorization` belongs to the

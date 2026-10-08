@@ -19,6 +19,13 @@
  * digits only, so a service name containing newlines cannot be read as a
  * different rig, name or expiry.
  *
+ * Every link on a host shares the host's one origin, so links isolate
+ * services only as far as paths can: cookies and storage are shared, and a
+ * service's root-relative URLs (`/assets/app.js`) leave its link. hostd strips
+ * `Service-Worker-Allowed` from link responses, so a service worker a page
+ * registers is confined to its own link. One origin per service would need
+ * wildcard DNS for each host.
+ *
  * Only Web Crypto is used, so this runs wherever the provider does.
  */
 
@@ -30,7 +37,9 @@ const LINK_KEY_LABEL = "amika-hostd service links v1";
 
 /** An HMAC-SHA256 digest is 32 bytes: 43 base64url characters, unpadded. */
 const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+/** Unix seconds, at most 12 digits: a millisecond time is refused. */
 const EXPIRY_PATTERN = /^[1-9][0-9]{0,11}$/;
+const MAX_EXPIRY = 10 ** 12 - 1;
 
 const encoder = new TextEncoder();
 
@@ -53,10 +62,16 @@ export async function signServiceLink(
   secretKey: string,
   claim: ServiceLinkClaim,
 ): Promise<string> {
-  if (!Number.isSafeInteger(claim.expiresAt) || claim.expiresAt <= 0) {
-    throw new Error("A service link's expiry must be a positive Unix time");
+  if (
+    !Number.isSafeInteger(claim.expiresAt) ||
+    claim.expiresAt <= 0 ||
+    claim.expiresAt > MAX_EXPIRY
+  ) {
+    throw new Error(
+      "A service link's expiry must be a positive Unix time in seconds",
+    );
   }
-  const key = await linkKey(secretKey, ["sign"]);
+  const key = await linkKey(secretKey);
   const signature = await crypto.subtle.sign(
     "HMAC",
     key,
@@ -90,7 +105,7 @@ export async function verifyServiceLink(
   // accept only the canonical one.
   if (toBase64Url(signature) !== encoded) return "malformed";
   const expiresAt = Number(expiry);
-  const key = await linkKey(secretKey, ["verify"]);
+  const key = await linkKey(secretKey);
   const valid = await crypto.subtle.verify(
     "HMAC",
     key,
@@ -119,11 +134,27 @@ function signedText({ rig, service, expiresAt }: ServiceLinkClaim): string {
   return `v1\n${rig}\n${service}\n${expiresAt}`;
 }
 
+/**
+ * Derived link keys by secret key. hostd verifies every asset request a page
+ * makes through a link, so the key is derived once, not per request. A
+ * control plane signs for many hosts, so the cache is bounded.
+ */
+const linkKeys = new Map<string, Promise<LinkKey>>();
+const MAX_CACHED_LINK_KEYS = 64;
+
 /** HMAC-SHA256(secretKey, label), imported as an HMAC key. */
-async function linkKey(
-  secretKey: string,
-  usages: ("sign" | "verify")[],
-): Promise<LinkKey> {
+function linkKey(secretKey: string): Promise<LinkKey> {
+  let key = linkKeys.get(secretKey);
+  if (!key) {
+    if (linkKeys.size >= MAX_CACHED_LINK_KEYS) linkKeys.clear();
+    key = deriveLinkKey(secretKey);
+    linkKeys.set(secretKey, key);
+    key.catch(() => linkKeys.delete(secretKey));
+  }
+  return key;
+}
+
+async function deriveLinkKey(secretKey: string): Promise<LinkKey> {
   const secret = await crypto.subtle.importKey(
     "raw",
     encoder.encode(secretKey),
@@ -141,7 +172,7 @@ async function linkKey(
     derived,
     { name: "HMAC", hash: "SHA-256" },
     false,
-    usages,
+    ["sign", "verify"],
   );
 }
 
