@@ -358,6 +358,19 @@ describe("providerRuntime", () => {
       },
     );
 
+    it("passes on a failed start's reason when cleanup fails too", async () => {
+      const { runtime } = harness([], (method, path) =>
+        method === "POST" && path === "/demo/start"
+          ? Response.json({ error: "resize2fs not found" }, { status: 500 })
+          : method === "DELETE" && path === "/demo"
+            ? Response.json({ error: "busy" }, { status: 409 })
+            : undefined,
+      );
+      const error = await failure(runtime.create(create));
+      expect(error.status).toBe(500);
+      expect(error.reason).toBe("resize2fs not found");
+    });
+
     it("leaves short env values in a reason", async () => {
       const { runtime } = harness([], (method, path) =>
         method === "POST" && path === "/demo/start"

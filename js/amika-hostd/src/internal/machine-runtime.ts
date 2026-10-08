@@ -210,7 +210,13 @@ export function providerRuntime({
   ): Promise<T> => {
     try {
       return await run();
-    } catch (error) {
+    } catch (caught) {
+      // A create whose start and cleanup both fail reports the two together
+      // (`AggregateError`); the start's failure is the cause to pass on.
+      const error =
+        caught instanceof AggregateError && caught.errors.length
+          ? (caught.errors[0] as unknown)
+          : caught;
       if (error instanceof RuntimeError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof SmolApiError) {
