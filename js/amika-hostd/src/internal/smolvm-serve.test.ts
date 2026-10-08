@@ -17,8 +17,10 @@ import { describe, expect, it, vi } from "vitest";
 import { DaemonError, daemonPaths, type Spawn } from "./daemon.js";
 import {
   findSmolvm,
+  isOlderVersion,
   isTcpPortInUse,
   smolvmListenAddress,
+  smolvmVersion,
   startSmolvm,
   type SmolvmDeps,
 } from "./smolvm-serve.js";
@@ -573,3 +575,39 @@ function freePort(): Promise<number> {
     });
   });
 }
+
+describe("smolvmVersion", () => {
+  const find = () => "/opt/smolvm";
+
+  it("reads the version smolvm prints", () => {
+    const run = vi.fn(() => "smolvm 1.25.0\n");
+    expect(smolvmVersion({}, { find, run })).toBe("1.25.0");
+    expect(run).toHaveBeenCalledWith("/opt/smolvm");
+  });
+
+  it("is undefined when smolvm is missing, fails, or prints no version", () => {
+    expect(smolvmVersion({}, { find: () => undefined })).toBeUndefined();
+    expect(
+      smolvmVersion(
+        {},
+        {
+          find,
+          run: () => {
+            throw new Error("exited with code 1");
+          },
+        },
+      ),
+    ).toBeUndefined();
+    expect(smolvmVersion({}, { find, run: () => "smolvm" })).toBeUndefined();
+  });
+});
+
+describe("isOlderVersion", () => {
+  it("compares each part as a number", () => {
+    expect(isOlderVersion("1.23.7", "1.24.0")).toBe(true);
+    expect(isOlderVersion("1.9.0", "1.24.0")).toBe(true);
+    expect(isOlderVersion("1.24.0", "1.24.0")).toBe(false);
+    expect(isOlderVersion("1.24.10", "1.24.2")).toBe(false);
+    expect(isOlderVersion("2.0.0", "1.24.0")).toBe(false);
+  });
+});

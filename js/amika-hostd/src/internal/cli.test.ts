@@ -20,8 +20,9 @@ import {
   openSecrets as openSecretStore,
   type RunResult,
 } from "./credentials.js";
-import { DaemonError } from "./daemon.js";
+import { DaemonError, daemonPaths } from "./daemon.js";
 import type { MachineRuntime } from "./machine-runtime.js";
+import type { PrepullOptions } from "./prepull.js";
 import type { RunningServer } from "./server.js";
 import type { ManagedSmolvm, SmolvmDeps } from "./smolvm-serve.js";
 
@@ -126,6 +127,12 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
       ) => true,
     ),
     isSmolvmRunning: vi.fn(() => false),
+    smolvmVersion: vi.fn(
+      (_env: NodeJS.ProcessEnv): string | undefined => "1.25.0",
+    ),
+    prepull: vi.fn(
+      async (_apiUrl: string, _options: Omit<PrepullOptions, "runtime">) => {},
+    ),
     claimPidFile: vi.fn(() => release),
     notifyReady: vi.fn(async (_port: number) => signalReady()),
     isRunning: vi.fn(() => false),
@@ -199,6 +206,7 @@ describe("runCli", () => {
         smolvmUrlFile: "/state/amika-hostd/smolvm.url",
         smolvmLogFile: "/state/amika-hostd/log/smolvm.log",
         servicesFile: "/state/amika-hostd/services.json",
+        prepullFile: "/state/amika-hostd/prepull.json",
       },
       { isRunning: deps.isRunning, env: expect.any(Object), secretKey: SECRET },
     );
@@ -793,6 +801,146 @@ describe("managing smolvm", () => {
       "amika-hostd: smolvm (pid 88) is still stopping its machines; `amika-hostd down` waits for it",
     ]);
   });
+});
+
+describe("pre-pulling images", () => {
+  const IMAGES = `[preset_images]
+amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
+coder = "ghcr.io/gofixpoint/amika-coder:latest"
+amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
+`;
+
+  /** A harness with a real state directory and `contents` as its config. */
+  function configured(contents = IMAGES) {
+    const state = mkdtempSync(path.join(tmpdir(), "amika-hostd-"));
+    const h = harness({ ...ENV, XDG_STATE_HOME: state });
+    h.deps.loadConfigFile.mockReturnValue({
+      path: "/etc/amika-hostd/config.toml",
+      contents,
+    });
+    return {
+      ...h,
+      prepullFile: path.join(state, "amika-hostd", "prepull.json"),
+    };
+  }
+
+  it("`up` says which images the daemon downloads, after it starts", async () => {
+    const { deps, out } = configured();
+    expect(await runCli(["up"], deps)).toBe(0);
+    const start = out.indexOf(
+      "Downloading this host's rig images in the background:",
+    );
+    expect(start).toBeGreaterThan(
+      out.indexOf(
+        "amika-hostd started in the background on port 4000 (pid 77)",
+      ),
+    );
+    expect(out.slice(start + 1, start + 3)).toEqual([
+      "  amika-coder, coder       ghcr.io/gofixpoint/amika-coder:latest",
+      "  amika-coder-plus-docker  ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+    ]);
+    expect(out).toContain(`Progress: ${daemonPaths(deps.env).logFile}`);
+  });
+
+  it("`up` says nothing of images already pulled, and names only new ones", async () => {
+    const { deps, out, prepullFile } = configured();
+    mkdirSync(path.dirname(prepullFile), { recursive: true });
+    writeFileSync(
+      prepullFile,
+      JSON.stringify({ images: ["ghcr.io/gofixpoint/amika-coder:latest"] }),
+    );
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(out).toContain(
+      "  amika-coder-plus-docker  ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+    );
+    expect(out.join("\n")).not.toContain("amika-coder:latest");
+
+    writeFileSync(
+      prepullFile,
+      JSON.stringify({
+        images: [
+          "ghcr.io/gofixpoint/amika-coder:latest",
+          "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+        ],
+      }),
+    );
+    const again = configured();
+    again.deps.env = deps.env;
+    expect(await runCli(["up"], again.deps)).toBe(0);
+    expect(again.out.join("\n")).not.toContain("Downloading");
+  });
+
+  it("the daemon pre-pulls on the smolvm it started, once it is ready", async () => {
+    const { deps, smolvm, prepullFile } = configured();
+    smolvm.apiUrl = "http://127.0.0.1:23021";
+    expect(await runCli(["up", "--fg"], deps)).toBe(0);
+    expect(deps.prepull).toHaveBeenCalledWith("http://127.0.0.1:23021", {
+      images: {
+        "amika-coder": "ghcr.io/gofixpoint/amika-coder:latest",
+        coder: "ghcr.io/gofixpoint/amika-coder:latest",
+        "amika-coder-plus-docker":
+          "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+      },
+      stateFile: prepullFile,
+      out: deps.out,
+      err: deps.err,
+      signal: expect.any(AbortSignal),
+    });
+    expect(deps.prepull.mock.invocationCallOrder[0]).toBeGreaterThan(
+      deps.notifyReady.mock.invocationCallOrder[0],
+    );
+    // Stopping the daemon stops the pre-pull before its next image.
+    expect(deps.prepull.mock.calls[0][1].signal?.aborted).toBe(true);
+  });
+
+  it("plain `serve` runs no smolvm, so pre-pulls nothing", async () => {
+    const { deps } = configured();
+    expect(await runCli(["serve"], deps)).toBe(0);
+    expect(deps.prepull).not.toHaveBeenCalled();
+  });
+
+  it("`up` warns about sizes whose rigs smolvm cannot start from its cache", async () => {
+    const { deps, err } = configured(`[sizes.tiny]
+vcpus = 1
+memory_gib = 2
+disk_gib = 10
+
+[sizes.small]
+vcpus = 2
+memory_gib = 4
+disk_gib = 16
+
+[sizes.medium]
+vcpus = 4
+memory_gib = 8
+disk_gib = 20
+`);
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(err).toContain(
+      "amika-hostd: rigs of size tiny (10 GiB), small (16 GiB) download their image on every create, since smolvm caches images only for disks of at least 20 GiB; set disk_gib = 20 or more in /etc/amika-hostd/config.toml to start them from the cache.",
+    );
+  });
+
+  it("`up` warns about a smolvm older than its image cache needs", async () => {
+    const { deps, err } = configured();
+    deps.smolvmVersion.mockReturnValue("1.23.7");
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(err).toContainEqual(
+      expect.stringContaining(
+        "amika-hostd: smolvm 1.23.7 is older than 1.24.0",
+      ),
+    );
+  });
+
+  it.each(["1.24.0", "1.25.1", undefined])(
+    "`up` does not warn about smolvm %s",
+    async (version) => {
+      const { deps, err } = configured();
+      deps.smolvmVersion.mockReturnValue(version);
+      expect(await runCli(["up"], deps)).toBe(0);
+      expect(err).toEqual([]);
+    },
+  );
 });
 
 describe("down", () => {

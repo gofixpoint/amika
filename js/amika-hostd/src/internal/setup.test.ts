@@ -142,8 +142,8 @@ describe("runSetup", () => {
     expect(h.store.set).toHaveBeenCalledWith("amk_123");
     expect(h.out).toContain("Stored the API key in the test store.");
     expect(h.out).toContain("Rig sizes:");
-    expect(h.out).toContain("  tiny    1 vCPU, 2 GiB memory, 10 GiB disk");
-    expect(h.out).toContain("  small   2 vCPUs, 4 GiB memory, 16 GiB disk");
+    expect(h.out).toContain("  tiny    1 vCPU, 2 GiB memory, 20 GiB disk");
+    expect(h.out).toContain("  small   2 vCPUs, 4 GiB memory, 20 GiB disk");
     expect(h.out).toContain(`Edit ${PATH} to change these settings.`);
     expect(h.out.slice(-2)).toEqual([
       "Start the daemon with `amika-hostd up`.",

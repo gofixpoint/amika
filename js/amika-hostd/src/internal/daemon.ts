@@ -35,6 +35,8 @@ export interface DaemonPaths {
   smolvmLogFile: string;
   /** Each machine's service names and guest ports (`service-registry.ts`). */
   servicesFile: string;
+  /** The preset images already pulled into smolvm's cache (`prepull.ts`). */
+  prepullFile: string;
 }
 
 export type Spawn = (
@@ -315,6 +317,7 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     smolvmUrlFile: path.join(dir, "smolvm.url"),
     smolvmLogFile: path.join(logDir, "smolvm.log"),
     servicesFile: path.join(dir, "services.json"),
+    prepullFile: path.join(dir, "prepull.json"),
   };
 }
 

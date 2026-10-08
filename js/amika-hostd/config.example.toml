@@ -35,16 +35,18 @@ port = 3020
 # with these on every `up`. memory_gib can be fractional (0.5); vcpus is 1-16.
 # Add `disk_grow_only = true` to a size if its disk can end up larger than
 # disk_gib, so Amika shows disk_gib as a minimum.
+# Keep disk_gib at 20 or more: smolvm caches a rig's image only for disks of
+# at least 20 GiB, so a smaller rig downloads its whole image on every create.
 
 [sizes.tiny]
 vcpus = 1
 memory_gib = 2
-disk_gib = 10
+disk_gib = 20
 
 [sizes.small]
 vcpus = 2
 memory_gib = 4
-disk_gib = 16
+disk_gib = 20
 
 [sizes.medium]
 vcpus = 4
@@ -65,7 +67,8 @@ disk_gib = 40
 #
 # The image each Amika preset boots on this host. `:latest` follows each
 # release; pin a 12-character commit SHA instead to hold a version still.
-# smolvm caches a pulled image in the VM, so `:latest` can lag a release.
+# The first `amika-hostd up` downloads each image into smolvm's cache in the
+# background, and later ones download only images added here.
 
 [preset_images]
 amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
