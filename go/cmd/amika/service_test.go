@@ -82,6 +82,29 @@ func TestServiceListCommand_EmptyRigNameMatchesNothing(t *testing.T) {
 	}
 }
 
+func TestServiceListCommand_SelfRigName(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+	t.Setenv("AMIKA_RIG_NAME", "keep")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]apiclient.RemoteSandbox{
+			{Name: "keep", Services: []apiclient.RemoteSandboxService{{Name: "web", HostPort: 3000, ContainerPort: 3000}}},
+			{Name: "drop", Services: []apiclient.RemoteSandboxService{{Name: "api", HostPort: 4000, ContainerPort: 4000}}},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	out, err := runRootCommand("service", "list", "--rig-name", "_self")
+	if err != nil {
+		t.Fatalf("service list failed: %v", err)
+	}
+	if !strings.Contains(out, "web") || strings.Contains(out, "api") {
+		t.Fatalf("--rig-name _self must keep only the current rig's services; got:\n%s", out)
+	}
+}
+
 // --remote-target is unsupported and must be rejected up front, before the
 // auth gate, matching the sandbox command.
 func TestServiceListCommand_RemoteTargetRejected(t *testing.T) {

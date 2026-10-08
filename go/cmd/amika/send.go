@@ -15,6 +15,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -103,7 +104,10 @@ func runSend(cmd *cobra.Command, args []string) error {
 
 	agent, _ := cmd.Flags().GetString("agent")
 	sessionID, _ := cmd.Flags().GetString("session-id")
-	rigRef, _ := cmd.Flags().GetString("rig")
+	rigRef, err := rigself.Flag(cmd, "rig")
+	if err != nil {
+		return err
+	}
 	newSession, _ := cmd.Flags().GetBool("new-session")
 
 	format, err := output.FormatFrom(cmd)

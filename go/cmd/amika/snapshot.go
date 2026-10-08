@@ -14,6 +14,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/spf13/cobra"
 )
 
@@ -58,7 +59,10 @@ func getSnapshotClient() (*apiclient.Client, error) {
 }
 
 func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
-	rigRef, _ := cmd.Flags().GetString("rig")
+	rigRef, err := rigself.Flag(cmd, "rig")
+	if err != nil {
+		return err
+	}
 	name, _ := cmd.Flags().GetString("name")
 	mode, _ := cmd.Flags().GetString("mode")
 	description, _ := cmd.Flags().GetString("description")
@@ -169,7 +173,10 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 
 func runSnapshotList(cmd *cobra.Command, _ []string) error {
 	long, _ := cmd.Flags().GetBool("long")
-	rigRef, _ := cmd.Flags().GetString("rig")
+	rigRef, err := rigself.Flag(cmd, "rig")
+	if err != nil {
+		return err
+	}
 	repoRef, _ := cmd.Flags().GetString("repo")
 
 	client, err := getSnapshotClient()

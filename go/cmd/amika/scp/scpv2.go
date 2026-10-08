@@ -10,6 +10,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -40,13 +41,17 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 		if alias, ok := aliases[name]; ok {
 			return alias, nil
 		}
+		rigName, err := rigself.Resolve(name)
+		if err != nil {
+			return "", err
+		}
 		if client == nil {
 			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 				return "", err
 			}
 			client = runmode.NewRemoteClient()
 		}
-		sandbox, err := client.GetSandbox(name)
+		sandbox, err := client.GetSandbox(rigName)
 		if err != nil {
 			return "", err
 		}

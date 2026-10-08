@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 	"github.com/spf13/cobra"
@@ -21,6 +22,10 @@ var sandboxStartCmd = &cobra.Command{
 	Long:  `Start (resume) one or more stopped sandboxes.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		args, err := rigself.ResolveAll(args)
+		if err != nil {
+			return err
+		}
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -71,6 +76,10 @@ var sandboxStopCmd = &cobra.Command{
 	Long:  `Stop one or more running sandboxes without removing them.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		args, err := rigself.ResolveAll(args)
+		if err != nil {
+			return err
+		}
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -366,7 +375,10 @@ var sandboxConnectCmd = &cobra.Command{
 "amika rig ssh". Requires an SSH identity from "amika secret ssh-keygen".`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
+		name, err := rigself.Resolve(args[0])
+		if err != nil {
+			return err
+		}
 		// connect opens an interactive shell, so it has no JSON result.
 		if err := output.RejectJSON(cmd); err != nil {
 			return err

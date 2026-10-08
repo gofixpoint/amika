@@ -9,6 +9,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/cliargs"
 	"github.com/gofixpoint/amika/go/internal/cliflags"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -126,6 +127,10 @@ Examples:
 		if nameIdx < 0 {
 			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
 		}
+		name, err := rigself.Resolve(forward[nameIdx])
+		if err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
@@ -137,7 +142,7 @@ Examples:
 		if err != nil {
 			return err
 		}
-		sandbox, err := client.GetSandbox(forward[nameIdx])
+		sandbox, err := client.GetSandbox(name)
 		if err != nil {
 			return err
 		}
@@ -190,6 +195,10 @@ Examples:
 		if err := validateEditor(editor); err != nil {
 			return err
 		}
+		name, err := rigself.Resolve(args[0])
+		if err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
@@ -203,7 +212,7 @@ Examples:
 			return err
 		}
 		paths := basedir.New("")
-		sshTarget, err := resolveSandboxV2SSHAlias(client, paths, args[0])
+		sshTarget, err := resolveSandboxV2SSHAlias(client, paths, name)
 		if err != nil {
 			return err
 		}
