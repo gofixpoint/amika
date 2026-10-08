@@ -26,7 +26,7 @@ For any task involving a service, URL, port, preview, or local server, inspect
 the rig's live services first:
 
 ```bash
-amika service list --rig-name "$AMIKA_RIG_NAME" -o json
+amika service list --rig "$AMIKA_RIG_NAME" -o json
 ```
 
 Find the referenced service in that result and use its provisioned `url` and
@@ -64,7 +64,7 @@ confirmation flags, and commands that reject JSON output.
 | Need                                       | Start with                                                                 |
 | ------------------------------------------ | -------------------------------------------------------------------------- |
 | Identify the current rig                   | `$AMIKA_RIG_NAME`                                                         |
-| Find a service URL or port inside a rig    | `amika service list --rig-name "$AMIKA_RIG_NAME" -o json`                |
+| Find a service URL or port inside a rig    | `amika service list --rig "$AMIKA_RIG_NAME" -o json`                     |
 | Create, list, start, stop, or delete rigs | `amika rig --help`                                                        |
 | Run a coding agent                         | `amika send --help`                                                       |
 | Run a command remotely                     | `amika rig ssh <name> <command>`                                          |
