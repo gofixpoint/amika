@@ -547,10 +547,13 @@ creates of one image share a single build.
     that image pulls it itself if its seed is missing.
   - Each throwaway machine is recorded before it is created, and forgotten
     once deleted, so the machines a run cut short left behind are deleted
-    first. Only recorded machines are ever deleted, or left out of the
-    machine list (`hiddenMachines`) so Amika never sees them as rigs: a rig
-    that merely shares the prefix, made before it was reserved, is left
-    alone. A create naming the prefix is refused (`400`). The rest of a
+    first. Only recorded machines are ever deleted, and only hostd's own
+    are left out of the machine list (`hiddenMachines`) so Amika never sees
+    them as rigs: a rig that merely shares the prefix, made before it was
+    reserved, is left alone. The list hides the recorded machines plus every
+    name this daemon's pre-pull has used (`used`), kept after the machine
+    is deleted, so a list smolvm answered mid-create or mid-delete never
+    shows one. A create naming the prefix is refused (`400`). The rest of a
     throwaway machine's name is 16 random hex digits, so it never takes
     another machine's name, nor that of one hostd could not delete. A create
     smolvm still refuses as taken (`409`) is never cleaned up, since the

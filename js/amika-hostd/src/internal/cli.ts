@@ -825,6 +825,9 @@ async function serveInForeground(
   void signalled.then(() => interrupted.abort());
   let runtime: ManagedSmolvm | undefined;
   let server: RunningServer | undefined;
+  // Every throwaway machine name the pre-pull uses. Each is random, so
+  // hiding them all, deleted or not, never hides a rig.
+  const usedPrepullNames = new Set<string>();
   const stopAll = async () => {
     // However the daemon stops, not only on a signal, so the pre-pull never
     // goes on against a smolvm that is gone.
@@ -848,7 +851,7 @@ async function serveInForeground(
       const serving = runtime
         ? { ...config, smolApiUrl: runtime.apiUrl }
         : config;
-      server = await listen(serving, paths, deps);
+      server = await listen(serving, paths, usedPrepullNames, deps);
     }
     // Signalled during startup: stop without telling `up` it is ready.
     if (server === undefined || interrupted.signal.aborted) {
@@ -865,6 +868,7 @@ async function serveInForeground(
         out: deps.out,
         err: deps.err,
         signal: interrupted.signal,
+        used: usedPrepullNames,
       }).catch((error: unknown) => {
         // Never let the background pull take the daemon down with it.
         deps.err(
@@ -992,6 +996,7 @@ async function startSmolvm(
 async function listen(
   config: HostdConfigWith<"secretKey">,
   paths: DaemonPaths,
+  usedPrepullNames: ReadonlySet<string>,
   deps: CliDeps,
 ): Promise<RunningServer> {
   // Machines run through the `smol` provider, on the smolvm this daemon
@@ -1003,7 +1008,11 @@ async function listen(
   try {
     return await (deps.startServer ?? startServerOnPort)(config, runtime, {
       servicesFile: paths.servicesFile,
-      hiddenMachines: () => prepullMachines(paths.prepullFile),
+      // This run's throwaway machines, deleted or not, so a list caught
+      // mid-create or mid-delete still hides them, and any an earlier run
+      // left behind.
+      hiddenMachines: () =>
+        new Set([...usedPrepullNames, ...prepullMachines(paths.prepullFile)]),
     });
   } catch (error) {
     throw new DaemonError(

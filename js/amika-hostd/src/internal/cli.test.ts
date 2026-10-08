@@ -107,7 +107,10 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
       async (
         _config: HostdConfigWith<"secretKey">,
         _runtime: MachineRuntime,
-        _options?: { servicesFile?: string },
+        _options?: {
+          servicesFile?: string;
+          hiddenMachines?: () => ReadonlySet<string>;
+        },
       ) => server,
     ),
     startInBackground: vi.fn(async () => ({ pid: 77, port: 4000 })),
@@ -888,6 +891,7 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
       out: deps.out,
       err: deps.err,
       signal: expect.any(AbortSignal),
+      used: expect.any(Set),
     });
     expect(deps.prepull.mock.invocationCallOrder[0]).toBeGreaterThan(
       deps.notifyReady.mock.invocationCallOrder[0],
@@ -931,6 +935,24 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
     expect(env).not.toHaveProperty("AMIKA_API_KEY");
     expect(env).not.toHaveProperty("AMIKA_HOSTD_SECRET_KEY");
     expect(env.XDG_STATE_HOME).toBe(deps.env.XDG_STATE_HOME);
+  });
+
+  it("hides every throwaway machine the pre-pull used, and any left recorded", async () => {
+    const { deps, prepullFile } = configured();
+    mkdirSync(path.dirname(prepullFile), { recursive: true });
+    writeFileSync(
+      prepullFile,
+      JSON.stringify({ images: [], machines: ["amika-hostd-prepull-left"] }),
+    );
+    // A name used and already deleted, as the pre-pull reports it.
+    deps.prepull.mockImplementation(async (_url, { used }) => {
+      used?.add("amika-hostd-prepull-done");
+    });
+    expect(await runCli(["up", "--fg"], deps)).toBe(0);
+    const { hiddenMachines } = deps.startServer.mock.calls[0][2] ?? {};
+    expect(hiddenMachines?.()).toEqual(
+      new Set(["amika-hostd-prepull-done", "amika-hostd-prepull-left"]),
+    );
   });
 
   it("plain `serve` runs no smolvm, so pre-pulls nothing", async () => {

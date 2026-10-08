@@ -128,6 +128,12 @@ export interface PrepullOptions {
   now?: () => number;
   /** Ends each throwaway machine's name; random, so no other machine has it. */
   newSuffix?: () => string;
+  /**
+   * Gets every throwaway machine name used, before its create, and keeps it
+   * after its delete, so the daemon hides it from a machine list taken at
+   * any point in between (see `hiddenMachines`).
+   */
+  used?: Set<string>;
 }
 
 /**
@@ -145,6 +151,7 @@ export async function prepullImages({
   signal,
   now = Date.now,
   newSuffix = () => randomBytes(8).toString("hex"),
+  used,
 }: PrepullOptions): Promise<void> {
   const forget = (name: string) => {
     try {
@@ -178,6 +185,7 @@ export async function prepullImages({
     if (signal?.aborted) return;
     // A random name never takes a rig's, nor one hostd could not delete.
     const name = `${PREPULL_MACHINE_PREFIX}${newSuffix()}`;
+    used?.add(name);
     const started = now();
     out(`Checking that ${image} (${presets.join(", ")}) is cached`);
     // Recorded first, so a run cut short leaves a machine the next one

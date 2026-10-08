@@ -42,7 +42,7 @@ function fakeRuntime(machines: string[] = []) {
 function run(
   runtime: PrepullOptions["runtime"],
   file: string,
-  options: Partial<Pick<PrepullOptions, "signal" | "newSuffix">> = {},
+  options: Partial<Pick<PrepullOptions, "signal" | "newSuffix" | "used">> = {},
 ) {
   const out: string[] = [];
   const err: string[] = [];
@@ -130,6 +130,23 @@ describe("prepullImages", () => {
       new Set(["amika-hostd-prepull-0"]),
       new Set(["amika-hostd-prepull-1"]),
     ]);
+  });
+
+  it("reports each name before creating it, and keeps it after deleting it", async () => {
+    const { runtime } = fakeRuntime();
+    const used = new Set<string>();
+    const seen: Set<string>[] = [];
+    runtime.createUnstarted.mockImplementation(async () => {
+      seen.push(new Set(used));
+    });
+    await run(runtime, stateFile(), { used }).done;
+    expect(seen).toEqual([
+      new Set(["amika-hostd-prepull-0"]),
+      new Set(["amika-hostd-prepull-0", "amika-hostd-prepull-1"]),
+    ]);
+    expect(used).toEqual(
+      new Set(["amika-hostd-prepull-0", "amika-hostd-prepull-1"]),
+    );
   });
 
   it("checks images pulled before too, so smolvm refills an evicted one", async () => {
