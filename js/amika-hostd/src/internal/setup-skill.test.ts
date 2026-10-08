@@ -64,8 +64,20 @@ describe("setupSkill", () => {
   });
 
   it("tunnels to the daemon's own address", () => {
-    expect(skill).toContain("`ngrok http 4100`");
+    expect(skill).toContain("`ngrok http http://127.0.0.1:4100`");
     expect(skill).toContain("`cloudflared tunnel --url http://127.0.0.1:4100`");
     expect(skill).not.toContain("3020");
+  });
+
+  it("tunnels to a daemon bound to another address, not localhost", () => {
+    const bound = setupSkill({
+      configPath: "/c.toml",
+      logFile: "/l.log",
+      localUrl: "http://192.168.1.20:3020",
+    });
+    expect(bound).toContain("`ngrok http http://192.168.1.20:3020`");
+    expect(bound).toContain(
+      "`cloudflared tunnel --url http://192.168.1.20:3020`",
+    );
   });
 });

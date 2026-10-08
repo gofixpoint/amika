@@ -21,7 +21,6 @@ export function setupSkill({
   logFile,
   localUrl,
 }: SkillContext): string {
-  const port = new URL(localUrl).port || "80";
   return `---
 name: amika-hostd-setup
 description: Set up this machine as an Amika host with amika-hostd, without interactive prompts. Use when asked to set up, register, or start amika-hostd, or to connect this machine to Amika so rigs can run on it.
@@ -93,7 +92,7 @@ not done; the message names what is missing.
 
 Amika reaches the host over the internet. If \`up\` printed "To complete
 registration", expose the daemon's local address with an HTTPS tunnel the
-operator approves, such as \`ngrok http ${port}\` or
+operator approves, such as \`ngrok http ${localUrl}\` or
 \`cloudflared tunnel --url ${localUrl}\`, then give Amika the tunnel's
 public URL:
 
