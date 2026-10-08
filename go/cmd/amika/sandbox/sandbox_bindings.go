@@ -127,6 +127,14 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 	if err := validateSandboxBindingRefKind(rigBy); err != nil {
 		return err
 	}
+	var sandboxRef string
+	if len(args) == 2 {
+		ref, err := rigself.Resolve(strings.TrimSpace(args[0]))
+		if err != nil {
+			return err
+		}
+		sandboxRef = ref
+	}
 	format, err := output.FormatFrom(cmd)
 	if err != nil {
 		return err
@@ -151,10 +159,6 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 	bindingID := strings.TrimSpace(args[0])
 	description := fmt.Sprintf("binding %q", bindingID)
 	if len(args) == 2 {
-		sandboxRef, err := rigself.Resolve(strings.TrimSpace(args[0]))
-		if err != nil {
-			return err
-		}
 		bindingTarget := args[1]
 		if sandboxRef == "" {
 			return fmt.Errorf("a rig reference is required")

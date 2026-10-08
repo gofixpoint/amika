@@ -32,6 +32,10 @@ JSON output uses the API response schema plus ssh_host.`,
 }
 
 func runSandboxGet(cmd *cobra.Command, args []string) error {
+	name, err := rigself.Resolve(args[0])
+	if err != nil {
+		return err
+	}
 	target, err := getRemoteTarget(cmd)
 	if err != nil {
 		return err
@@ -44,10 +48,6 @@ func runSandboxGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	client, err := getRemoteClient(target)
-	if err != nil {
-		return err
-	}
-	name, err := rigself.Resolve(args[0])
 	if err != nil {
 		return err
 	}

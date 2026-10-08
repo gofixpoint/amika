@@ -127,6 +127,10 @@ Examples:
 		if nameIdx < 0 {
 			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
 		}
+		name, err := rigself.Resolve(forward[nameIdx])
+		if err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
@@ -135,10 +139,6 @@ Examples:
 			return err
 		}
 		client, err := newSSHV2Client(target)
-		if err != nil {
-			return err
-		}
-		name, err := rigself.Resolve(forward[nameIdx])
 		if err != nil {
 			return err
 		}
@@ -195,6 +195,10 @@ Examples:
 		if err := validateEditor(editor); err != nil {
 			return err
 		}
+		name, err := rigself.Resolve(args[0])
+		if err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
@@ -208,10 +212,6 @@ Examples:
 			return err
 		}
 		paths := basedir.New("")
-		name, err := rigself.Resolve(args[0])
-		if err != nil {
-			return err
-		}
 		sshTarget, err := resolveSandboxV2SSHAlias(client, paths, name)
 		if err != nil {
 			return err
