@@ -3,8 +3,10 @@
  * runtime: this provider, then hostd's app, then the `smol` provider hostd
  * runs machines through, then a fake `smolvm serve`.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../../../amika-hostd/src/app";
+// eslint-disable-next-line local/no-cross-package-internal -- as below
+import { memoryServiceRegistry } from "../../../../amika-hostd/src/internal/service-registry";
 // hostd's app exports no runtime, so this contract test reaches for the one
 // its daemon builds.
 // eslint-disable-next-line local/no-cross-package-internal -- see above
@@ -541,7 +543,7 @@ describe("amika-hostd services", () => {
     expect(received[0].body).not.toHaveProperty("ports");
   });
 
-  it("returns stable URLs that hostd routes by name with the host key", async () => {
+  it("keeps amikad's keyed URL, which hostd routes only with the host key", async () => {
     const { app, provider, guest, machines } = harness();
     await provider.sandboxes.create(ctx, { ...INPUT, services: [AMIKAD] });
     const { services: refreshed } = await provider.sandboxes
@@ -551,9 +553,8 @@ describe("amika-hostd services", () => {
     expect(url.href).toBe(
       "http://127.0.0.1:3020/v0beta1/rigs/demo/services/amikad/",
     );
-    expect(provider.signedUrlTtlSeconds).toBeGreaterThan(300 * 24 * 3600);
-
     // The URL alone is no credential: hostd wants the host key alongside.
+    // The control plane derives amikad's dials from this URL and sends it.
     expect((await app.request(url.pathname)).status).toBe(401);
     const response = await app.request(`${url.pathname}v1/status?x=1`, {
       headers: {
@@ -572,6 +573,75 @@ describe("amika-hostd services", () => {
     expect(forwarded.get(HOSTD_SERVICE_KEY_HEADER)).toBeNull();
   });
 
+  describe("signed service links", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("hands every other service a link hostd opens with no key", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-08T00:00:00Z"));
+      const { app, provider, guest, machines } = harness();
+      await provider.sandboxes.create(ctx, {
+        ...INPUT,
+        services: [WEB, AMIKAD],
+      });
+      const { services: refreshed } = await provider.sandboxes
+        .get("demo")
+        .services!.refreshAll([WEB, AMIKAD]);
+      const url = new URL(refreshed[0].url);
+      // A day, plus five minutes for a host clock running ahead.
+      const expiry = Date.parse("2026-10-09T00:05:00Z") / 1000;
+      expect(url.href).toMatch(
+        new RegExp(
+          `^http://127\\.0\\.0\\.1:3020/v0beta1/rigs/demo/service-links/web/${expiry}\\.[A-Za-z0-9_-]{43}/$`,
+        ),
+      );
+      expect(provider.signedUrlTtlSeconds).toBe(24 * 3600);
+
+      const response = await app.request(`${url.pathname}assets/app.js?v=1`);
+      expect(response.status).toBe(200);
+      expect(guest.mock.calls.map(([target]) => target)).toEqual([
+        `http://127.0.0.1:${published(machines.get("demo"), 3000)}/assets/app.js?v=1`,
+      ]);
+
+      vi.setSystemTime((expiry - 1) * 1000);
+      expect((await app.request(url.pathname)).status).toBe(200);
+      vi.setSystemTime(expiry * 1000);
+      expect((await app.request(url.pathname)).status).toBe(401);
+    });
+
+    it("refuses a link once the host's secret key changes", async () => {
+      const { app, provider, smolvm } = harness();
+      await provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] });
+      const { services: refreshed } = await provider.sandboxes
+        .get("demo")
+        .services!.refreshAll([WEB]);
+      const path = new URL(refreshed[0].url).pathname;
+      expect((await app.request(path)).status).toBe(200);
+      // The same machine and routes behind a host whose key was regenerated.
+      const registry = memoryServiceRegistry();
+      registry.set("demo", { web: 3000 });
+      const rotated = createApp(
+        { secretKey: `${SECRET}-regenerated` },
+        providerRuntime({ apiUrl: SMOL_API_URL, fetch: smolvm }),
+        { registry, fetch: async () => Response.json({ ok: true }) },
+      );
+      expect((await rotated.request(path)).status).toBe(401);
+    });
+
+    it("signs amikad on another port like any other service", async () => {
+      const { provider } = harness();
+      const other = { ...AMIKAD, containerPort: 2222, hostPort: 2222 };
+      const { services: refreshed } = await provider.sandboxes
+        .get("demo")
+        .services!.refreshAll([other]);
+      expect(refreshed[0].url).toContain(
+        "/v0beta1/rigs/demo/service-links/amikad/",
+      );
+    });
+  });
+
   it("routes a service whose name is free text", async () => {
     const { app, provider, guest, machines } = harness();
     const agent = { ...WEB, name: "Coding Agent" };
@@ -580,10 +650,10 @@ describe("amika-hostd services", () => {
       .get("demo")
       .services!.refreshAll([agent]);
     const url = new URL(refreshed[0].url);
-    expect(url.pathname).toBe("/v0beta1/rigs/demo/services/Coding%20Agent/");
-    const response = await app.request(url.pathname, {
-      headers: { [HOSTD_SERVICE_KEY_HEADER]: SECRET },
-    });
+    expect(url.pathname).toMatch(
+      /^\/v0beta1\/rigs\/demo\/service-links\/Coding%20Agent\/[^/]+\/$/,
+    );
+    const response = await app.request(url.pathname);
     expect(response.status).toBe(200);
     expect(guest.mock.calls[0][0]).toBe(
       `http://127.0.0.1:${published(machines.get("demo"), 3000)}/`,
@@ -611,8 +681,8 @@ describe("amika-hostd services", () => {
     const services = provider.sandboxes.get("demo").services!;
     const site = { ...WEB, name: "site" };
     const { services: renamed } = await services.load([site, AMIKAD]).refresh();
-    expect(renamed[0].url).toBe(
-      "http://127.0.0.1:3020/v0beta1/rigs/demo/services/site/",
+    expect(renamed[0].url).toContain(
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/service-links/site/",
     );
     const route = (name: string) =>
       app.request(`/v0beta1/rigs/demo/services/${name}/`, { headers: key });
@@ -664,10 +734,12 @@ describe("amika-hostd services", () => {
     const { services: refreshed } = await services
       .load([WEB, AMIKAD])
       .refresh();
-    expect(refreshed.map((s) => s.url)).toEqual([
-      "http://127.0.0.1:3020/v0beta1/rigs/demo/services/web/",
+    expect(refreshed[0].url).toContain(
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/service-links/web/",
+    );
+    expect(refreshed[1].url).toBe(
       "http://127.0.0.1:3020/v0beta1/rigs/demo/services/amikad/",
-    ]);
+    );
     await expect(
       provider.sandboxes.get("bare").services!.load([WEB]).refresh(),
     ).rejects.toThrow("machine bare does not publish 3000");

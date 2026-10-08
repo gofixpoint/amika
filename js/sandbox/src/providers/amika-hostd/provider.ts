@@ -18,8 +18,9 @@ import {
   hostdServices,
 } from "./internal/services";
 
-// Callers of a hostd service URL (the control plane) must present the host's
-// secret key in this header; see `./internal/services`.
+// Callers of amikad's hostd service URL (the control plane) must present the
+// host's secret key in this header; every other service URL is a signed link
+// that needs none. See `./internal/services`.
 export { HOSTD_SERVICE_KEY_HEADER } from "./internal/services";
 
 interface AmikaHostdDeps {
@@ -95,7 +96,7 @@ const createProvider = defineProvider(
       exec: { stdin: true, run: ops.run },
       files: { read: ops.read, write: ops.write },
       listing: { list: ops.list },
-      services: hostdServices(smolConfig.apiUrl, client),
+      services: hostdServices(smolConfig.apiUrl, secretKey, client),
     };
   },
 );

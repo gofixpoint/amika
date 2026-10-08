@@ -2,11 +2,19 @@
  * Service URLs for amika-hostd machines.
  *
  * hostd publishes each service's guest port when it creates the machine and
- * routes `/v0beta1/rigs/<machine>/services/<name>/...` to it, forwarding HTTP and
- * WebSocket upgrades (see `js/amika-hostd/src/internal/services.ts`). Those
- * routes are reached only by the control plane, which presents the host's
- * secret key in `X-Amika-Hostd-Key` (`HOSTD_SERVICE_KEY_HEADER`), so a URL is
- * no credential by itself and never expires.
+ * routes to it by name, forwarding HTTP and WebSocket upgrades (see
+ * `js/amika-hostd/src/internal/services.ts`), on two routes:
+ *
+ * - `/v0beta1/rigs/<machine>/service-links/<name>/<expiry>.<signature>/...`,
+ *   a signed service link (`../service-links.ts`). This is the URL every
+ *   service gets, so a browser, curl or webhook can open it with no header.
+ *   It expires, and the control plane mints a new one once
+ *   `signedUrlTtlSeconds` has passed.
+ * - `/v0beta1/rigs/<machine>/services/<name>/...`, which needs the host's
+ *   secret key in `X-Amika-Hostd-Key` (`HOSTD_SERVICE_KEY_HEADER`). amikad
+ *   keeps this URL: the control plane derives its SSH, status and terminal
+ *   dials from it and sends the key, and the CLI's keyless SSH WebSocket
+ *   must be exactly `.../services/amikad/v1/ssh-sessions`.
  */
 import {
   SandboxProviderUnsupportedError,
@@ -14,6 +22,7 @@ import {
 } from "../../provider";
 import type { SandboxService } from "../../../types";
 import { machinePath, type SmolClient } from "../../smol/provider";
+import { serviceLinkPath, signServiceLink } from "../service-links";
 
 /**
  * The versioned hostd API this provider speaks. hostd lists the versions it
@@ -27,12 +36,28 @@ export const HOSTD_RIGS_PATH = `/${HOSTD_API_VERSION}/rigs`;
 export const HOSTD_SERVICE_KEY_HEADER = "X-Amika-Hostd-Key";
 
 /**
- * Service URLs do not expire; a long TTL keeps the control plane from
- * refreshing them for nothing.
+ * How long the control plane treats a service link as current before it
+ * mints a new one: a day, as e2b and Daytona URLs last. A copied link stops
+ * working within this long of being minted.
  */
-export const HOSTD_SERVICE_URL_TTL_S = 365 * 24 * 60 * 60;
+export const HOSTD_SERVICE_URL_TTL_S = 24 * 60 * 60;
 
-export function hostdServices(apiUrl: string, client: SmolClient) {
+/**
+ * Extra life a link gets past `HOSTD_SERVICE_URL_TTL_S`, so a host clock a
+ * few minutes ahead of the control plane's does not refuse a link the
+ * control plane still serves.
+ */
+export const HOSTD_SERVICE_LINK_SLACK_S = 5 * 60;
+
+/** amikad's service name and guest port, as Amika registers them. */
+const AMIKAD_SERVICE = "amikad";
+const AMIKAD_PORT = 60999;
+
+export function hostdServices(
+  apiUrl: string,
+  secretKey: string,
+  client: SmolClient,
+) {
   const origin = apiUrl.replace(/\/$/, "");
   return {
     refreshUrls: async (
@@ -41,11 +66,31 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
     ): Promise<RefreshUrlsResult> => {
       machinePath(id);
       const routes = hostdServiceRoutes(services);
+      const expiresAt =
+        Math.floor(Date.now() / 1000) +
+        HOSTD_SERVICE_URL_TTL_S +
+        HOSTD_SERVICE_LINK_SLACK_S;
       return {
-        services: services.map((service, i) => ({
-          ...service,
-          url: `${origin}${HOSTD_RIGS_PATH}/${id}/services/${encodeURIComponent(routes[i].name)}/`,
-        })),
+        services: await Promise.all(
+          services.map(async (service, i) => {
+            const name = routes[i].name;
+            if (name === AMIKAD_SERVICE && routes[i].port === AMIKAD_PORT) {
+              return {
+                ...service,
+                url: `${origin}${HOSTD_RIGS_PATH}/${id}/services/${encodeURIComponent(name)}/`,
+              };
+            }
+            const token = await signServiceLink(secretKey, {
+              rig: id,
+              service: name,
+              expiresAt,
+            });
+            return {
+              ...service,
+              url: `${origin}${serviceLinkPath(HOSTD_RIGS_PATH, id, name, token)}`,
+            };
+          }),
+        ),
       };
     },
     /**
