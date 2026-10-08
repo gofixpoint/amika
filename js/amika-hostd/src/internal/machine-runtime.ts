@@ -129,25 +129,36 @@ export class RuntimeError extends Error {
 /** The longest smolvm reason the machine API passes on. */
 export const MAX_REASON_LENGTH = 500;
 
-/** smolvm's reason as one line, cut to `MAX_REASON_LENGTH`. */
-function surfaceable(reason: string | undefined): string | undefined {
-  const line = reason?.replace(/[\p{Cc}\s]+/gu, " ").trim();
+/** `text` as one line: control characters and whitespace runs as a space. */
+function oneLine(text: string): string {
+  return text.replace(/[\p{Cc}\s]+/gu, " ").trim();
+}
+
+/**
+ * smolvm's reason as one line, cut to `MAX_REASON_LENGTH`, or nothing when
+ * it repeats any of `secrets`. Each secret is looked for in the whole reason
+ * before it is cut, as sent, as one line and JSON-escaped, so neither the cut
+ * nor smolvm quoting it hides a repeat.
+ */
+function surfaceable(
+  reason: string | undefined,
+  secrets: readonly string[],
+): string | undefined {
+  if (reason === undefined) return undefined;
+  const line = oneLine(reason);
   if (!line) return undefined;
+  const repeats = secrets.some((secret) => {
+    const flat = oneLine(secret);
+    return (
+      (secret && reason.includes(secret)) ||
+      (flat && line.includes(flat)) ||
+      (secret && reason.includes(JSON.stringify(secret).slice(1, -1)))
+    );
+  });
+  if (repeats) return undefined;
   return line.length > MAX_REASON_LENGTH
     ? `${line.slice(0, MAX_REASON_LENGTH - 1)}…`
     : line;
-}
-
-/** Drop a failure's reason if it repeats any of `secrets`. */
-function withoutSecrets(error: unknown, secrets: string[]): unknown {
-  if (
-    error instanceof RuntimeError &&
-    error.reason !== undefined &&
-    secrets.some((secret) => secret && error.reason?.includes(secret))
-  ) {
-    return new RuntimeError(error.status, error.message);
-  }
-  return error;
 }
 
 export interface ProviderRuntimeConfig {
@@ -192,7 +203,11 @@ export function providerRuntime({
    * Run a provider call, passing on smolvm's status for a request it
    * refused, as hostd did when it forwarded requests itself.
    */
-  const call = async <T>(run: () => Promise<T>): Promise<T> => {
+  const call = async <T>(
+    run: () => Promise<T>,
+    /** Values the request sent in confidence, never passed on in a reason. */
+    secrets: readonly string[] = [],
+  ): Promise<T> => {
     try {
       return await run();
     } catch (error) {
@@ -202,7 +217,7 @@ export function providerRuntime({
         throw new RuntimeError(
           error.status,
           message,
-          surfaceable(error.reason),
+          surfaceable(error.reason, secrets),
         );
       }
       // The request's deadline (`AbortSignal.timeout`) or an unreachable
@@ -225,29 +240,26 @@ export function providerRuntime({
       const target = machine.network ? creators.networked : creators.offline;
       // smolvm's reason for a refused create could repeat an environment
       // value, so one that does is not passed on.
-      await call(() =>
-        target.create({
-          name: machine.name,
-          snapshot: machine.image,
-          resources: {
-            vcpus: machine.cpus,
-            memoryGib:
-              machine.memoryMb === undefined
-                ? undefined
-                : machine.memoryMb / 1024,
-            diskGib: machine.storageGb,
-          },
-          envVars:
-            machine.env &&
-            Object.fromEntries(machine.env.map((e) => [e.name, e.value])),
-          services: (machine.services ?? []).map(sandboxService),
-        }),
-      ).catch((error: unknown) => {
-        throw withoutSecrets(
-          error,
-          (machine.env ?? []).map((e) => e.value),
-        );
-      });
+      await call(
+        () =>
+          target.create({
+            name: machine.name,
+            snapshot: machine.image,
+            resources: {
+              vcpus: machine.cpus,
+              memoryGib:
+                machine.memoryMb === undefined
+                  ? undefined
+                  : machine.memoryMb / 1024,
+              diskGib: machine.storageGb,
+            },
+            envVars:
+              machine.env &&
+              Object.fromEntries(machine.env.map((e) => [e.name, e.value])),
+            services: (machine.services ?? []).map(sandboxService),
+          }),
+        (machine.env ?? []).map((e) => e.value),
+      );
       return describe(machine.name);
     },
     // smolvm answers a start or stop with the machine, so a successful one

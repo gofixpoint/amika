@@ -329,6 +329,28 @@ describe("providerRuntime", () => {
       expect(error.status).toBe(500);
       expect(error.reason).toBeUndefined();
     });
+    it.each([
+      [
+        "across a line break",
+        "line one\nline two",
+        "bad env: line one line two",
+      ],
+      ["past the cut", "hunter2-secret", `${"x".repeat(495)} hunter2-secret`],
+      ["JSON-quoted", 'say "hi"', 'bad env "say \\"hi\\""'],
+    ])(
+      "withholds a failed start's reason repeating an env value %s",
+      async (_, value, reason) => {
+        const { runtime } = harness([], (method, path) =>
+          method === "POST" && path === "/demo/start"
+            ? Response.json({ error: reason }, { status: 500 })
+            : undefined,
+        );
+        const error = await failure(
+          runtime.create({ ...create, env: [{ name: "TOKEN", value }] }),
+        );
+        expect(error.reason).toBeUndefined();
+      },
+    );
   });
 
   describe("list and get", () => {
