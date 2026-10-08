@@ -172,6 +172,17 @@ describe("prepullImages", () => {
     expect(prepullMachines(file)).toEqual(new Set(["amika-hostd-prepull-3"]));
   });
 
+  it("never reuses the name of a recorded machine it could not delete", async () => {
+    const { runtime } = fakeRuntime(["amika-hostd-prepull-0"]);
+    runtime.remove.mockRejectedValueOnce(new RuntimeError(502, "unreachable"));
+    const file = stateFile([], ["amika-hostd-prepull-0"]);
+    await run(runtime, file).done;
+    expect(
+      runtime.createUnstarted.mock.calls.map(([{ name }]) => name),
+    ).toEqual(["amika-hostd-prepull-1", "amika-hostd-prepull-2"]);
+    expect(prepullMachines(file)).toEqual(new Set(["amika-hostd-prepull-0"]));
+  });
+
   it("forgets a recorded machine that is already gone", async () => {
     const { runtime } = fakeRuntime();
     runtime.remove.mockRejectedValueOnce(new RuntimeError(404, "not found"));

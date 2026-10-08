@@ -152,8 +152,11 @@ export async function prepullImages({
       err(`amika-hostd: could not update ${stateFile}: ${errorMessage(error)}`);
     }
   };
-  /** Delete a machine hostd created, and forget it once it is gone. */
-  const remove = async (name: string) => {
+  /**
+   * Delete a machine hostd created, and forget it once it is gone. Returns
+   * whether it is gone; one that is not stays recorded, to try again.
+   */
+  const remove = async (name: string): Promise<boolean> => {
     try {
       await runtime.remove(name);
     } catch (error) {
@@ -161,10 +164,11 @@ export async function prepullImages({
         err(
           `amika-hostd: could not delete pre-pull machine ${name}: ${errorMessage(error)}; the next \`amika-hostd up\` tries again`,
         );
-        return;
+        return false;
       }
     }
     forget(name);
+    return true;
   };
   // Every machine's name, so a throwaway one never takes a rig's.
   let taken: Set<string>;
@@ -177,8 +181,8 @@ export async function prepullImages({
     return;
   }
   for (const name of prepullMachines(stateFile)) {
-    await remove(name);
-    taken.delete(name);
+    // A machine that could not be deleted still holds its name.
+    if (await remove(name)) taken.delete(name);
   }
   let next = 0;
   const freeName = () => {

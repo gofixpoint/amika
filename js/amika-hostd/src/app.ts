@@ -154,11 +154,12 @@ export function createApp(
     // hostd's own pre-pull machines are no rigs of Amika's.
     app.get(machines, () =>
       call(async () => {
+        const listed = await runtime.list();
+        // Read after listing: a machine is recorded before it is created, so
+        // any machine the list shows is already named here.
         const hidden = hiddenMachines();
         return Response.json({
-          machines: (await runtime.list()).filter(
-            (machine) => !hidden.has(machine.name),
-          ),
+          machines: listed.filter((machine) => !hidden.has(machine.name)),
         });
       }),
     );
