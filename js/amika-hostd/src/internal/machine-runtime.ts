@@ -115,9 +115,39 @@ export class RuntimeError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * smolvm's own reason, one line and capped, when the machine API may
+     * pass it on: never an exec's, which may echo the command, nor one
+     * that repeats a value the request sent in confidence.
+     */
+    readonly reason?: string,
   ) {
     super(message);
   }
+}
+
+/** The longest smolvm reason the machine API passes on. */
+export const MAX_REASON_LENGTH = 500;
+
+/** smolvm's reason as one line, cut to `MAX_REASON_LENGTH`. */
+function surfaceable(reason: string | undefined): string | undefined {
+  const line = reason?.replace(/[\p{Cc}\s]+/gu, " ").trim();
+  if (!line) return undefined;
+  return line.length > MAX_REASON_LENGTH
+    ? `${line.slice(0, MAX_REASON_LENGTH - 1)}…`
+    : line;
+}
+
+/** Drop a failure's reason if it repeats any of `secrets`. */
+function withoutSecrets(error: unknown, secrets: string[]): unknown {
+  if (
+    error instanceof RuntimeError &&
+    error.reason !== undefined &&
+    secrets.some((secret) => secret && error.reason?.includes(secret))
+  ) {
+    return new RuntimeError(error.status, error.message);
+  }
+  return error;
 }
 
 export interface ProviderRuntimeConfig {
@@ -169,7 +199,11 @@ export function providerRuntime({
       if (error instanceof RuntimeError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof SmolApiError) {
-        throw new RuntimeError(error.status, message);
+        throw new RuntimeError(
+          error.status,
+          message,
+          surfaceable(error.reason),
+        );
       }
       // The request's deadline (`AbortSignal.timeout`) or an unreachable
       // smolvm.
@@ -189,6 +223,8 @@ export function providerRuntime({
     get: describe,
     create: async (machine) => {
       const target = machine.network ? creators.networked : creators.offline;
+      // smolvm's reason for a refused create could repeat an environment
+      // value, so one that does is not passed on.
       await call(() =>
         target.create({
           name: machine.name,
@@ -206,7 +242,12 @@ export function providerRuntime({
             Object.fromEntries(machine.env.map((e) => [e.name, e.value])),
           services: (machine.services ?? []).map(sandboxService),
         }),
-      );
+      ).catch((error: unknown) => {
+        throw withoutSecrets(
+          error,
+          (machine.env ?? []).map((e) => e.value),
+        );
+      });
       return describe(machine.name);
     },
     // smolvm answers a start or stop with the machine, so a successful one

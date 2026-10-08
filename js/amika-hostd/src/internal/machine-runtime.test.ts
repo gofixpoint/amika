@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import {
   type FileContents,
+  MAX_REASON_LENGTH,
   RuntimeError,
   providerRuntime,
 } from "./machine-runtime.js";
@@ -296,13 +297,37 @@ describe("providerRuntime", () => {
           ? Response.json({ error: "boot failed" }, { status: 500 })
           : undefined,
       );
-      expect((await failure(runtime.create(create))).status).toBe(500);
+      const error = await failure(runtime.create(create));
+      expect(error.status).toBe(500);
+      expect(error.reason).toBe("boot failed");
       expect(writes(received).map((r) => `${r.method} ${r.path}`)).toEqual([
         "POST ",
         "POST /demo/start",
         "DELETE /demo",
       ]);
       expect(machines.has("demo")).toBe(false);
+    });
+
+    it("withholds a failed start's reason when it repeats an env value", async () => {
+      const { runtime } = harness([], (method, path) =>
+        method === "POST" && path === "/demo/start"
+          ? Response.json(
+              { error: "bad env TOKEN=hunter2-secret" },
+              { status: 500 },
+            )
+          : undefined,
+      );
+      const error = await failure(
+        runtime.create({
+          ...create,
+          env: [
+            { name: "EMPTY", value: "" },
+            { name: "TOKEN", value: "hunter2-secret" },
+          ],
+        }),
+      );
+      expect(error.status).toBe(500);
+      expect(error.reason).toBeUndefined();
     });
   });
 
@@ -679,6 +704,30 @@ describe("providerRuntime", () => {
       expect(error.message).toBe(
         `smolvm POST /demo/start failed (HTTP ${status}): refused`,
       );
+      expect(error.reason).toBe("refused");
+    });
+
+    it("passes on smolvm's reason as one capped line", async () => {
+      const { runtime } = harness([machine()], () =>
+        Response.json(
+          { error: `pull image:\n\tmanifest unknown ${"x".repeat(1000)}` },
+          { status: 500 },
+        ),
+      );
+      const { reason } = await failure(runtime.start("demo"));
+      expect(reason).toMatch(/^pull image: manifest unknown x+…$/);
+      expect(reason).toHaveLength(MAX_REASON_LENGTH);
+    });
+
+    it("never passes on an exec's reason", async () => {
+      const { runtime } = harness([machine()], (method, path) =>
+        method === "POST" && path === "/demo/exec"
+          ? Response.json({ error: "echoed command" }, { status: 500 })
+          : undefined,
+      );
+      const error = await failure(runtime.exec("demo", { command: ["id"] }));
+      expect(error.status).toBe(500);
+      expect(error.reason).toBeUndefined();
     });
 
     it("answers 502 when smolvm cannot be reached", async () => {

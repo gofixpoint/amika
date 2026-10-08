@@ -41,6 +41,7 @@ describe("SmolClient", () => {
       new SmolClient({}, fetcher).request("", "POST", { name: "demo" }),
     ).rejects.toMatchObject({
       status: 400,
+      reason: error,
       message: `smolvm POST  failed (HTTP 400): ${error}`,
     });
   });
@@ -67,9 +68,15 @@ describe("SmolClient", () => {
       .mockResolvedValue(
         Response.json({ error: "sensitive command contents" }, { status: 500 }),
       );
-    await expect(
-      new SmolClient({}, fetcher).request("/machine/exec", "POST", {}),
-    ).rejects.toThrow(/^smolvm POST \/machine\/exec failed \(HTTP 500\)$/);
+    const request = new SmolClient({}, fetcher).request(
+      "/machine/exec",
+      "POST",
+      {},
+    );
+    await expect(request).rejects.toThrow(
+      /^smolvm POST \/machine\/exec failed \(HTTP 500\)$/,
+    );
+    await expect(request).rejects.toMatchObject({ reason: undefined });
   });
 
   it("surfaces the message for a file named exec", async () => {
