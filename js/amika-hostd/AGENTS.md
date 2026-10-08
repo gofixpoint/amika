@@ -51,10 +51,10 @@ Its closing steps point the operator at `amika-hostd setup`, then
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. On every host it warns, again without failing, when smolvm cannot
-find `resize2fs` (from e2fsprogs) where it looks: smolvm makes each disk from
-a 20 GiB template and shrinks it with `resize2fs`, so without it a rig with a
-smaller disk fails to start. `--dry-run` prints the plan. Nothing else needs to run alongside
-the daemon: `amika-hostd up` starts smolvm itself (see [smolvm](#smolvm)).
+find `resize2fs` (from e2fsprogs) where it looks: smolvm copies each disk from
+a 20 GiB template and shrinks it with `resize2fs` when the rig asks for less,
+so without it a rig with a smaller disk fails to start. `--dry-run` prints the
+plan. Nothing else needs to run alongside the daemon: `amika-hostd up` starts smolvm itself (see [smolvm](#smolvm)).
 
 The daemon is one ESM file, built by `pnpm --filter @amika/hostd build`
 (`scripts/bundle.mjs`, esbuild with every npm dependency inlined, including

@@ -527,8 +527,8 @@ check_kvm() {
   fi
 }
 
-# smolvm makes every disk from a 20 GiB template and shrinks it with
-# resize2fs, so a rig asking for a smaller disk fails to start without it.
+# smolvm copies every disk from a 20 GiB template and shrinks it with
+# resize2fs when the rig asks for less, so such a rig fails to start without it.
 # Look where smolvm does (src/disk_utils.rs in smol-machines/smolvm): the
 # Homebrew and system sbin directories, then PATH. A warning, not a failed
 # install: e2fsprogs can be installed afterwards.
