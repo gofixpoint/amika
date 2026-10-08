@@ -5,8 +5,6 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../../../amika-hostd/src/app";
-// eslint-disable-next-line local/no-cross-package-internal -- as below
-import { memoryServiceRegistry } from "../../../../amika-hostd/src/internal/service-registry";
 // hostd's app exports no runtime, so this contract test reaches for the one
 // its daemon builds.
 // eslint-disable-next-line local/no-cross-package-internal -- see above
@@ -621,8 +619,13 @@ describe("amika-hostd services", () => {
       const path = new URL(refreshed[0].url).pathname;
       expect((await app.request(path)).status).toBe(200);
       // The same machine and routes behind a host whose key was regenerated.
-      const registry = memoryServiceRegistry();
-      registry.set("demo", { web: 3000 });
+      // A fixed registry, through createApp's own injection point.
+      const registry = {
+        port: (machine: string, service: string) =>
+          machine === "demo" && service === "web" ? 3000 : undefined,
+        set: () => {},
+        remove: () => {},
+      };
       const rotated = createApp(
         { secretKey: `${SECRET}-regenerated` },
         providerRuntime({ apiUrl: SMOL_API_URL, fetch: smolvm }),
