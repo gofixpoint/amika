@@ -176,15 +176,17 @@ Amika already knows. It stores the new key and writes the config first, so a
 key this host could not keep never reaches Amika. If any of these steps fails,
 it puts the old key back where it keeps it (the keychain item, or `secret_key`
 in the file) and says how to recover in case Amika applied the new one anyway;
-if the old key cannot be put back, it says the new one stayed. A new API key
-entered in the same run is saved only once Amika has taken the new secret key
-with it, so one Amika refuses (a typo, say) is not kept for the next run.
-Setup does not offer to regenerate while the environment overrides the secret
-key, hostname, API URL or API key: the new key would reach the Amika,
-organization or hostname this run reaches, while `up` goes back to the stored
-ones once the override is unset, and the daemon would keep using an overriding
-secret key. After regenerating, setup says to restart a running daemon, which
-keeps the key `up` handed it.
+if the old key cannot be put back, it says the new one stayed. Ctrl-C while
+Amika is answering counts as such a failure: a SIGINT listener, set only for
+the request, cancels it, so the old key goes back instead of the process
+ending mid-request. A new API key entered in the same run is saved only once
+Amika has taken the new secret key with it, so one Amika refuses (a typo, say)
+is not kept for the next run. Setup does not offer to regenerate while the
+environment overrides the secret key, hostname, API URL or API key: the new
+key would reach the Amika, organization or hostname this run reaches, while
+`up` goes back to the stored ones once the override is unset, and the daemon
+would keep using an overriding secret key. After regenerating, setup says to
+restart a running daemon, which keeps the key `up` handed it.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the

@@ -28,12 +28,16 @@ export async function registerHost(
   api: AmikaApiConfig,
   input: { hostname: string; secretKey: string; sizes: HostSizes },
   fetcher: typeof fetch = fetch,
+  cancel?: AbortSignal,
 ): Promise<{ host: RegisteredHost; created: boolean }> {
-  const response = await send(api, fetcher, "POST", "/api/v0beta1/hosts", {
-    hostname: input.hostname,
-    secret: input.secretKey,
-    sizes: input.sizes,
-  });
+  const response = await send(
+    api,
+    fetcher,
+    "POST",
+    "/api/v0beta1/hosts",
+    { hostname: input.hostname, secret: input.secretKey, sizes: input.sizes },
+    cancel,
+  );
   if (response.status !== 200 && response.status !== 201) {
     throw await apiError("register the host", response);
   }
@@ -100,6 +104,7 @@ export async function setHostSecret(
   host: Pick<RegisteredHost, "id" | "hostname">,
   secretKey: string,
   fetcher: typeof fetch = fetch,
+  cancel?: AbortSignal,
 ): Promise<RegisteredHost> {
   const response = await send(
     api,
@@ -107,6 +112,7 @@ export async function setHostSecret(
     "PUT",
     `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
     { hostname: host.hostname, secret: secretKey },
+    cancel,
   );
   if (response.status !== 200) {
     throw await apiError("update the host's secret key", response);
@@ -124,7 +130,10 @@ async function send(
   method: string,
   path: string,
   body: unknown,
+  /** Stops the request early, e.g. on the operator's Ctrl-C. */
+  cancel?: AbortSignal,
 ): Promise<Response> {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   try {
     return await fetcher(`${api.apiUrl}${path}`, {
       method,
@@ -136,7 +145,7 @@ async function send(
       body: JSON.stringify(body),
       // A redirect would resend the API key and secret to another origin.
       redirect: "error",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: cancel ? AbortSignal.any([timeout, cancel]) : timeout,
     });
   } catch (error) {
     if (isRefusedRedirect(error)) {

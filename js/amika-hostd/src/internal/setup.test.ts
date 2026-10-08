@@ -44,6 +44,7 @@ function harness({
   const out: string[] = [];
   const err: string[] = [];
   const written: Record<string, string> = {};
+  const interrupt: { handler?: () => void } = {};
   /** The API key, wherever the store keeps it. */
   const store = {
     description: "the test store",
@@ -85,13 +86,35 @@ function harness({
       async (
         _api: { apiUrl: string; apiKey: string },
         _input: { hostname: string; secretKey: string },
-      ) => ({ host: HOST, created: false }),
+        _fetcher?: typeof fetch,
+        _cancel?: AbortSignal,
+      ): Promise<{ host: typeof HOST; created: boolean }> => ({
+        host: HOST,
+        created: false,
+      }),
     ),
     setHostSecret: vi.fn(async () => HOST),
+    // Ctrl-C, sent by `interrupt()` while a listener is set.
+    onInterrupt: vi.fn((handler: () => void) => {
+      interrupt.handler = handler;
+      return () => {
+        interrupt.handler = undefined;
+      };
+    }),
   } satisfies SetupDeps;
   const config = () =>
     resolveConfig({ file: { path: PATH, contents: written[PATH] } });
-  return { deps, out, err, written, store, keychainSecret, config };
+  return {
+    deps,
+    out,
+    err,
+    written,
+    store,
+    keychainSecret,
+    config,
+    interrupt: () => interrupt.handler?.(),
+    listening: () => interrupt.handler !== undefined,
+  };
 }
 
 const CONFIGURED = `hostname = "builder"
@@ -312,11 +335,15 @@ describe("regenerating the secret key", () => {
     expect(h.deps.registerHost).toHaveBeenCalledWith(
       { apiUrl: "https://app.amika.dev", apiKey: "amk_stored" },
       expect.objectContaining({ hostname: "builder", secretKey: NEW_SECRET }),
+      undefined,
+      expect.any(AbortSignal),
     );
     expect(h.deps.setHostSecret).toHaveBeenCalledWith(
       expect.anything(),
       HOST,
       NEW_SECRET,
+      undefined,
+      expect.any(AbortSignal),
     );
     expect(h.out).toContain(
       "Sent the new secret key for host builder to Amika.",
@@ -334,6 +361,8 @@ describe("regenerating the secret key", () => {
       expect.anything(),
       HOST,
       NEW_SECRET,
+      undefined,
+      expect.any(AbortSignal),
     );
   });
 
@@ -344,6 +373,8 @@ describe("regenerating the secret key", () => {
     expect(h.deps.registerHost).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ hostname: "newhost", secretKey: NEW_SECRET }),
+      undefined,
+      expect.any(AbortSignal),
     );
     expect(h.deps.setHostSecret).not.toHaveBeenCalled();
     expect(h.out).toContain(
@@ -417,6 +448,35 @@ describe("regenerating the secret key", () => {
     );
     expect(h.keychainSecret.value).toBe(OLD_SECRET);
     expect(h.deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("puts the old key back on Ctrl-C while Amika is answering, cancelling the request", async () => {
+    const h = rerun();
+    h.deps.registerHost.mockImplementation(
+      (_api, _input, _fetcher, cancel) =>
+        new Promise((_, reject) => {
+          cancel?.addEventListener("abort", () =>
+            reject(new Error("This operation was aborted")),
+          );
+          h.interrupt();
+        }),
+    );
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      `Cancelled while sending the new secret key to Amika; the test keychain (secret key) has the old secret key again. ${AGAIN}`,
+    );
+    expect(h.keychainSecret.value).toBe(OLD_SECRET);
+    expect(h.listening()).toBe(false);
+  });
+
+  it("listens for Ctrl-C only while sending", async () => {
+    const h = rerun();
+    h.deps.registerHost.mockImplementation(async () => {
+      expect(h.listening()).toBe(true);
+      return { host: HOST, created: false };
+    });
+    await runSetup(h.deps);
+    expect(h.deps.onInterrupt).toHaveBeenCalledOnce();
+    expect(h.listening()).toBe(false);
   });
 
   it("says the new key stayed when the old one cannot be put back", async () => {
