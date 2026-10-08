@@ -590,8 +590,9 @@ describe("amika-hostd services", () => {
         .get("demo")
         .services!.refreshAll([WEB, AMIKAD]);
       const url = new URL(refreshed[0].url);
-      // A day, plus five minutes for a host clock running ahead.
-      const expiry = Date.parse("2026-10-09T00:05:00Z") / 1000;
+      // Two days: a link served at the end of the control plane's one-day
+      // TTL still has a day left.
+      const expiry = Date.parse("2026-10-10T00:00:00Z") / 1000;
       expect(url.href).toMatch(
         new RegExp(
           `^http://127\\.0\\.0\\.1:3020/v0beta1/rigs/demo/service-links/web/${expiry}\\.[A-Za-z0-9_-]{43}/$`,
@@ -631,13 +632,19 @@ describe("amika-hostd services", () => {
     });
 
     it("signs amikad on another port like any other service", async () => {
-      const { provider } = harness();
+      const { app, provider, guest, machines } = harness();
       const other = { ...AMIKAD, containerPort: 2222, hostPort: 2222 };
+      await provider.sandboxes.create(ctx, { ...INPUT, services: [other] });
       const { services: refreshed } = await provider.sandboxes
         .get("demo")
         .services!.refreshAll([other]);
-      expect(refreshed[0].url).toContain(
+      const url = new URL(refreshed[0].url);
+      expect(url.pathname).toContain(
         "/v0beta1/rigs/demo/service-links/amikad/",
+      );
+      expect((await app.request(url.pathname)).status).toBe(200);
+      expect(guest.mock.calls[0][0]).toBe(
+        `http://127.0.0.1:${published(machines.get("demo"), 2222)}/`,
       );
     });
   });

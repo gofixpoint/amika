@@ -8,8 +8,8 @@
  * - `/v0beta1/rigs/<machine>/service-links/<name>/<expiry>.<signature>/...`,
  *   a signed service link (`../service-links.ts`). This is the URL every
  *   service gets, so a browser, curl or webhook can open it with no header.
- *   It expires, and the control plane mints a new one once
- *   `signedUrlTtlSeconds` has passed.
+ *   The control plane mints a new one once `signedUrlTtlSeconds` has
+ *   passed, and each link outlives that by a day.
  * - `/v0beta1/rigs/<machine>/services/<name>/...`, which needs the host's
  *   secret key in `X-Amika-Hostd-Key` (`HOSTD_SERVICE_KEY_HEADER`). amikad
  *   keeps this URL: the control plane derives its SSH, status and terminal
@@ -36,18 +36,17 @@ export const HOSTD_RIGS_PATH = `/${HOSTD_API_VERSION}/rigs`;
 export const HOSTD_SERVICE_KEY_HEADER = "X-Amika-Hostd-Key";
 
 /**
- * How long the control plane treats a service link as current before it
- * mints a new one: a day, as e2b and Daytona URLs last. A copied link stops
- * working within this long of being minted.
+ * How long the control plane serves a service link before it mints a new
+ * one: a day, as e2b and Daytona URLs last.
  */
 export const HOSTD_SERVICE_URL_TTL_S = 24 * 60 * 60;
 
 /**
- * Extra life a link gets past `HOSTD_SERVICE_URL_TTL_S`, so a host clock a
- * few minutes ahead of the control plane's does not refuse a link the
- * control plane still serves.
+ * How long a link stays valid once minted: twice the control plane's TTL, so
+ * a link it serves at the end of its TTL still works for at least a day. The
+ * margin also covers a host clock running ahead of the control plane's.
  */
-export const HOSTD_SERVICE_LINK_SLACK_S = 5 * 60;
+export const HOSTD_SERVICE_LINK_LIFETIME_S = 2 * HOSTD_SERVICE_URL_TTL_S;
 
 /** amikad's service name and guest port, as Amika registers them. */
 const AMIKAD_SERVICE = "amikad";
@@ -67,9 +66,7 @@ export function hostdServices(
       machinePath(id);
       const routes = hostdServiceRoutes(services);
       const expiresAt =
-        Math.floor(Date.now() / 1000) +
-        HOSTD_SERVICE_URL_TTL_S +
-        HOSTD_SERVICE_LINK_SLACK_S;
+        Math.floor(Date.now() / 1000) + HOSTD_SERVICE_LINK_LIFETIME_S;
       return {
         services: await Promise.all(
           services.map(async (service, i) => {
