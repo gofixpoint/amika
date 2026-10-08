@@ -67,7 +67,9 @@ export function createApp(
   const timeoutMs = z.number().int().positive().parse(requestTimeoutMs);
   /**
    * Answer with a runtime call's result, or with its failure's status and a
-   * fixed message: engine errors can echo commands and environment values.
+   * fixed message, followed by smolvm's reason when the runtime vouches it
+   * safe to pass on (see `RuntimeError.reason`): engine errors can echo
+   * commands and environment values.
    */
   const call = async (run: () => Promise<Response>): Promise<Response> => {
     let timer: NodeJS.Timeout | undefined;
@@ -88,8 +90,14 @@ export function createApp(
       return response;
     } catch (error) {
       if (error instanceof HTTPException) throw error;
+      const reason = error instanceof RuntimeError ? error.reason : undefined;
       return Response.json(
-        { error: "Smol runtime request failed" },
+        {
+          error:
+            reason === undefined
+              ? "Smol runtime request failed"
+              : `Smol runtime request failed: ${reason}`,
+        },
         { status: error instanceof RuntimeError ? error.status : 500 },
       );
     } finally {

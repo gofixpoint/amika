@@ -428,8 +428,13 @@ exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
   bodies (commands, environment, stdin) and uploaded files are never resent to
   wherever something answering at `SMOL_API_URL` points them.
 - A request smolvm refuses keeps smolvm's status; a timeout answers `504` and
-  an unreachable smolvm `502`. Messages stay fixed, since they can echo
-  commands.
+  an unreachable smolvm `502`. The answer is `Smol runtime request failed`,
+  followed by smolvm's own reason (`: resize2fs not found`) as one line cut
+  to 500 characters, so an operator sees why a start or an image pull failed.
+  The reason is withheld for exec, whose errors can echo the command. A
+  create's reason has each of its env values (4 characters or longer)
+  replaced by `[redacted]`; a later start or stop cannot, since smolvm never
+  reports a machine's env.
 
 ## Configuration
 

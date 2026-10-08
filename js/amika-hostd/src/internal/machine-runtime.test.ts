@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import {
   type FileContents,
+  MAX_REASON_LENGTH,
   RuntimeError,
   providerRuntime,
 } from "./machine-runtime.js";
@@ -296,13 +297,90 @@ describe("providerRuntime", () => {
           ? Response.json({ error: "boot failed" }, { status: 500 })
           : undefined,
       );
-      expect((await failure(runtime.create(create))).status).toBe(500);
+      const error = await failure(runtime.create(create));
+      expect(error.status).toBe(500);
+      expect(error.reason).toBe("boot failed");
       expect(writes(received).map((r) => `${r.method} ${r.path}`)).toEqual([
         "POST ",
         "POST /demo/start",
         "DELETE /demo",
       ]);
       expect(machines.has("demo")).toBe(false);
+    });
+
+    it.each([
+      [
+        "a value",
+        ["hunter2-secret"],
+        "bad env TOKEN=hunter2-secret",
+        "bad env TOKEN=[redacted]",
+      ],
+      [
+        "a multi-line value",
+        ["line one\nline two"],
+        "bad: line one\nline two",
+        "bad: [redacted]",
+      ],
+      [
+        "a value past the cut",
+        ["hunter2-secret"],
+        `${"x".repeat(493)} hunter2-secret`,
+        `${"x".repeat(493)} [reda…`,
+      ],
+      [
+        "a value as a quoted string literal",
+        ['say "hi"\nbye'],
+        'invalid type: string "say \\"hi\\"\\nbye"',
+        'invalid type: string "[redacted]"',
+      ],
+      [
+        "a value inside another",
+        ["abcd", "xxabcdxx"],
+        "bad: xxabcdxx abcd",
+        "bad: [redacted] [redacted]",
+      ],
+    ])(
+      "redacts %s from a failed start's reason",
+      async (_, values, reason, expected) => {
+        const { runtime } = harness([], (method, path) =>
+          method === "POST" && path === "/demo/start"
+            ? Response.json({ error: reason }, { status: 500 })
+            : undefined,
+        );
+        const error = await failure(
+          runtime.create({
+            ...create,
+            env: values.map((value, i) => ({ name: `V${i}`, value })),
+          }),
+        );
+        expect(error.status).toBe(500);
+        expect(error.reason).toBe(expected);
+      },
+    );
+
+    it("passes on a failed start's reason when cleanup fails too", async () => {
+      const { runtime } = harness([], (method, path) =>
+        method === "POST" && path === "/demo/start"
+          ? Response.json({ error: "resize2fs not found" }, { status: 500 })
+          : method === "DELETE" && path === "/demo"
+            ? Response.json({ error: "busy" }, { status: 409 })
+            : undefined,
+      );
+      const error = await failure(runtime.create(create));
+      expect(error.status).toBe(500);
+      expect(error.reason).toBe("resize2fs not found");
+    });
+
+    it("leaves short env values in a reason", async () => {
+      const { runtime } = harness([], (method, path) =>
+        method === "POST" && path === "/demo/start"
+          ? Response.json({ error: "resize2fs not found" }, { status: 500 })
+          : undefined,
+      );
+      const error = await failure(
+        runtime.create({ ...create, env: [{ name: "N", value: "2" }] }),
+      );
+      expect(error.reason).toBe("resize2fs not found");
     });
   });
 
@@ -679,6 +757,30 @@ describe("providerRuntime", () => {
       expect(error.message).toBe(
         `smolvm POST /demo/start failed (HTTP ${status}): refused`,
       );
+      expect(error.reason).toBe("refused");
+    });
+
+    it("passes on smolvm's reason as one capped line", async () => {
+      const { runtime } = harness([machine()], () =>
+        Response.json(
+          { error: `pull image:\n\tmanifest unknown ${"x".repeat(1000)}` },
+          { status: 500 },
+        ),
+      );
+      const { reason } = await failure(runtime.start("demo"));
+      expect(reason).toMatch(/^pull image: manifest unknown x+…$/);
+      expect(reason).toHaveLength(MAX_REASON_LENGTH);
+    });
+
+    it("never passes on an exec's reason", async () => {
+      const { runtime } = harness([machine()], (method, path) =>
+        method === "POST" && path === "/demo/exec"
+          ? Response.json({ error: "echoed command" }, { status: 500 })
+          : undefined,
+      );
+      const error = await failure(runtime.exec("demo", { command: ["id"] }));
+      expect(error.status).toBe(500);
+      expect(error.reason).toBeUndefined();
     });
 
     it("answers 502 when smolvm cannot be reached", async () => {

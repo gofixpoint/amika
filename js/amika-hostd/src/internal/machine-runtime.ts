@@ -115,9 +115,50 @@ export class RuntimeError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * smolvm's own reason, one line and capped, for the machine API to
+     * pass on: never an exec's, which may echo the command. A create's has
+     * its env values replaced by `[redacted]`.
+     */
+    readonly reason?: string,
   ) {
     super(message);
   }
+}
+
+/** The longest smolvm reason the machine API passes on. */
+export const MAX_REASON_LENGTH = 500;
+
+/** Env values shorter than this are left in a reason: none is a secret. */
+const MIN_REDACTED_LENGTH = 4;
+
+/**
+ * smolvm's reason as one line, cut to `MAX_REASON_LENGTH`, with each of
+ * `secrets` in it replaced by `[redacted]` first, so the cut never leaves
+ * part of one behind.
+ */
+function surfaceable(
+  reason: string | undefined,
+  secrets: readonly string[],
+): string | undefined {
+  let redacted = reason ?? "";
+  // Each value as sent and as an escaped string literal (`\"`, `\n`), the
+  // form smolvm's (serde's) errors quote a string in. Longest first, so a
+  // value inside another is not left half-replaced.
+  const forms = secrets
+    .filter((secret) => secret.length >= MIN_REDACTED_LENGTH)
+    .flatMap((secret) => [secret, JSON.stringify(secret).slice(1, -1)]);
+  for (const form of [...new Set(forms)].sort((a, b) => b.length - a.length)) {
+    redacted = redacted.replaceAll(form, "[redacted]");
+  }
+  const line = redacted.replace(/[\p{Cc}\s]+/gu, " ").trim();
+  if (!line) return undefined;
+  if (line.length <= MAX_REASON_LENGTH) return line;
+  // Never leave half a surrogate pair at the cut.
+  const cut = line
+    .slice(0, MAX_REASON_LENGTH - 1)
+    .replace(/[\uD800-\uDBFF]$/, "");
+  return `${cut}…`;
 }
 
 export interface ProviderRuntimeConfig {
@@ -162,14 +203,28 @@ export function providerRuntime({
    * Run a provider call, passing on smolvm's status for a request it
    * refused, as hostd did when it forwarded requests itself.
    */
-  const call = async <T>(run: () => Promise<T>): Promise<T> => {
+  const call = async <T>(
+    run: () => Promise<T>,
+    /** Values the request sent in confidence, redacted from a reason. */
+    secrets: readonly string[] = [],
+  ): Promise<T> => {
     try {
       return await run();
-    } catch (error) {
+    } catch (caught) {
+      // A create whose start and cleanup both fail reports the two together
+      // (`AggregateError`); the start's failure is the cause to pass on.
+      const error =
+        caught instanceof AggregateError && caught.errors.length
+          ? (caught.errors[0] as unknown)
+          : caught;
       if (error instanceof RuntimeError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       if (error instanceof SmolApiError) {
-        throw new RuntimeError(error.status, message);
+        throw new RuntimeError(
+          error.status,
+          message,
+          surfaceable(error.reason, secrets),
+        );
       }
       // The request's deadline (`AbortSignal.timeout`) or an unreachable
       // smolvm.
@@ -189,23 +244,27 @@ export function providerRuntime({
     get: describe,
     create: async (machine) => {
       const target = machine.network ? creators.networked : creators.offline;
-      await call(() =>
-        target.create({
-          name: machine.name,
-          snapshot: machine.image,
-          resources: {
-            vcpus: machine.cpus,
-            memoryGib:
-              machine.memoryMb === undefined
-                ? undefined
-                : machine.memoryMb / 1024,
-            diskGib: machine.storageGb,
-          },
-          envVars:
-            machine.env &&
-            Object.fromEntries(machine.env.map((e) => [e.name, e.value])),
-          services: (machine.services ?? []).map(sandboxService),
-        }),
+      // smolvm's reason for a refused create could repeat an environment
+      // value, so each one is redacted from it.
+      await call(
+        () =>
+          target.create({
+            name: machine.name,
+            snapshot: machine.image,
+            resources: {
+              vcpus: machine.cpus,
+              memoryGib:
+                machine.memoryMb === undefined
+                  ? undefined
+                  : machine.memoryMb / 1024,
+              diskGib: machine.storageGb,
+            },
+            envVars:
+              machine.env &&
+              Object.fromEntries(machine.env.map((e) => [e.name, e.value])),
+            services: (machine.services ?? []).map(sandboxService),
+          }),
+        (machine.env ?? []).map((e) => e.value),
       );
       return describe(machine.name);
     },

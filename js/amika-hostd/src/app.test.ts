@@ -333,6 +333,24 @@ describe("machine API", () => {
     expectUntouched(runtime);
   });
 
+  it("passes on the reason the runtime vouches safe", async () => {
+    const { app, runtime } = harness();
+    runtime.start.mockRejectedValueOnce(
+      new RuntimeError(
+        500,
+        "smolvm POST /demo/start failed (HTTP 500): resize2fs not found",
+        "resize2fs not found",
+      ),
+    );
+    const response = await app.request(`${ROOT}/demo/start`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "Smol runtime request failed: resize2fs not found",
+    });
+  });
+
   it.each([400, 404, 409, 422, 500, 503])(
     "preserves runtime status %i without leaking its message",
     async (status) => {

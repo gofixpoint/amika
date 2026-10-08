@@ -26,7 +26,7 @@ export class SmolApiError extends Error {
     /** Relative to the client's machines path; `""` is the collection. */
     readonly path: string,
     /** The response body's `error` message, when it is safe to surface. */
-    reason?: string,
+    readonly reason?: string,
   ) {
     super(
       `smolvm ${method} ${path} failed (HTTP ${status})${reason === undefined ? "" : `: ${reason}`}`,
