@@ -50,9 +50,8 @@ async function example(ctx: SandboxCtx) {
   const sandbox = await provider.sandboxes.create(ctx, {
     name: "local-demo",
     // OCI image reference, not an Amika snapshot name. The image needs an
-    // `amika` user (see below), as Amika's preset images from `sandbox-image/`
-    // have.
-    snapshot: "amika-coder:latest",
+    // `amika` user (see below), as Amika's published preset images have.
+    snapshot: "ghcr.io/gofixpoint/amika-coder:latest",
     resources: { vcpus: 2, memoryGib: 2, diskGib: 20 },
     services: [],
   });
