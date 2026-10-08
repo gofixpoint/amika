@@ -203,6 +203,7 @@ install_hostd() {
   seed_config
   ensure_smolvm
   check_kvm
+  check_resize2fs
   print_next_steps
 }
 
@@ -295,6 +296,7 @@ describe_plan() {
     echo "  Config:       would seed ${CONFIG_PATH} from config.example.toml"
   fi
   check_kvm
+  check_resize2fs
 }
 
 # Pick the node the launcher runs: the system node if it is new enough, else a
@@ -522,6 +524,27 @@ check_kvm() {
     echo "Warning: ${USER:-this user} cannot access /dev/kvm, which smolvm needs to run VMs." >&2
     echo "  Fix it with: sudo usermod -aG kvm \$USER" >&2
     echo "  then log out and back in." >&2
+  fi
+}
+
+# smolvm copies every disk from a 20 GiB template and shrinks it with
+# resize2fs when the rig asks for less, so such a rig fails to start without it.
+# Look where smolvm does (src/disk_utils.rs in smol-machines/smolvm): the
+# Homebrew and system sbin directories, then PATH. A warning, not a failed
+# install: e2fsprogs can be installed afterwards.
+check_resize2fs() {
+  for dir in /opt/homebrew/opt/e2fsprogs/sbin /usr/local/opt/e2fsprogs/sbin \
+    /opt/homebrew/sbin /usr/local/sbin /sbin /usr/sbin; do
+    [ -x "${dir}/resize2fs" ] && return 0
+  done
+  command -v resize2fs >/dev/null 2>&1 && return 0
+  echo "" >&2
+  echo "Warning: resize2fs not found. smolvm needs it to start a rig with a" >&2
+  echo "  disk under 20 GiB. Install e2fsprogs:" >&2
+  if [ "$OS" = "darwin" ]; then
+    echo "    brew install e2fsprogs" >&2
+  else
+    echo "    sudo apt-get install e2fsprogs (or your distribution's package)" >&2
   fi
 }
 
