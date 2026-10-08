@@ -52,7 +52,7 @@ import {
   SMOLVM_SEED_MIN_DISK_GIB,
   pendingImages,
   prepullImages,
-  type PendingImage,
+  type ConfiguredImage,
   type PrepullOptions,
 } from "./prepull.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
@@ -110,8 +110,8 @@ export interface CliDeps {
   /** The installed smolvm's version, for `up`'s warning about an old one. */
   smolvmVersion?: (env: NodeJS.ProcessEnv) => Promise<string | undefined>;
   /**
-   * Pull the preset images into smolvm's cache, once the daemon that started
-   * smolvm is ready; defaults to `prepullImages` on that smolvm.
+   * Make sure the preset images are in smolvm's cache, once the daemon that
+   * started smolvm is ready; defaults to `prepullImages` on that smolvm.
    */
   prepull?: (
     apiUrl: string,
@@ -915,7 +915,7 @@ function prepullOn(
  * one whose earlier pull failed.
  */
 function announcePrepull(
-  pending: PendingImage[],
+  pending: ConfiguredImage[],
   deps: CliDeps,
   { foreground }: { foreground: boolean },
 ) {

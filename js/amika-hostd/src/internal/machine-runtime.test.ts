@@ -181,6 +181,37 @@ async function failure(call: Promise<unknown>): Promise<RuntimeError> {
 
 const create = { name: "demo", image: "ubuntu:24.04", network: true };
 
+describe("createUnstarted", () => {
+  it("creates the machine without starting it", async () => {
+    const { runtime, received, machines } = harness();
+    await runtime.createUnstarted({
+      name: "amika-hostd-prepull-0",
+      image: "ghcr.io/gofixpoint/amika-coder:latest",
+      storageGb: 20,
+    });
+    expect(writes(received)).toEqual([
+      {
+        method: "POST",
+        path: "",
+        body: {
+          name: "amika-hostd-prepull-0",
+          image: "ghcr.io/gofixpoint/amika-coder:latest",
+          storageGb: 20,
+          network: true,
+        },
+      },
+    ]);
+    expect(machines.get("amika-hostd-prepull-0")?.state).toBe("created");
+  });
+
+  it("keeps smolvm's status for a create it refuses", async () => {
+    const { runtime } = harness([machine({ name: "taken" })]);
+    await expect(
+      runtime.createUnstarted({ name: "taken", image: "x:1", storageGb: 20 }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+});
+
 describe("providerRuntime", () => {
   describe("create", () => {
     it("creates the machine with its image, sizes and env, then starts it", async () => {

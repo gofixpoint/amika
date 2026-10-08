@@ -67,8 +67,8 @@ disk_gib = 40
 #
 # The image each Amika preset boots on this host. `:latest` follows each
 # release; pin a 12-character commit SHA instead to hold a version still.
-# The first `amika-hostd up` downloads each image into smolvm's cache in the
-# background, and later ones download only images added here.
+# Every `amika-hostd up` makes sure each image is in smolvm's cache, in the
+# background: the first one downloads them, later ones only what changed.
 
 [preset_images]
 amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"

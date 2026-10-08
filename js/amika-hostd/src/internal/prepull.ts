@@ -1,19 +1,20 @@
 /**
- * Pull this host's preset images into smolvm's image cache once, in the
- * background, so the first rig of each image does not wait for its download.
+ * Keep this host's preset images in smolvm's image cache, in the background,
+ * so no rig waits for its image to download.
  *
  * smolvm keeps a pulled registry image as a shared, read-only "seed" that
  * every later machine of that image starts from copy-on-write, keyed by the
- * digest the reference points to. It builds a seed the first time a machine
- * of the image is created, and on each `smolvm serve` start it refreshes the
- * seeds of images machines used in the last week. So hostd only has to start
- * the cache: for each configured image it has not pulled before, it creates a
- * throwaway machine (which builds the seed) and deletes it, and records the
- * image in `prepull.json` so a later `up` does not repeat it.
+ * digest the reference points to. A create attaches the seed, building it
+ * first when it is missing (a new image, a moved tag, or one smolvm evicted
+ * or lost), without booting the machine. So on every start the daemon
+ * creates and deletes one unstarted throwaway machine per configured image:
+ * a cached image costs one registry request to resolve its digest, and only
+ * a missing one is downloaded. `prepull.json` records the images pulled
+ * before, so `up` can say when a download is coming.
  */
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import type { MachineRuntime } from "./machine-runtime.js";
+import type { ProviderRuntime } from "./machine-runtime.js";
 import { writePrivateFile } from "./private-file.js";
 
 /** Names the throwaway machines, so a run cut short can clean them up. */
@@ -28,13 +29,13 @@ export const PREPULL_MACHINE_PREFIX = "amika-hostd-prepull-";
 export const SMOLVM_SEED_MIN_DISK_GIB = 20;
 
 /**
- * How long one pre-pull may take. A create builds the seed before it
- * answers, so it lasts the whole download of an image of several GB.
+ * How long one pre-pull may take. A create builds a missing seed before it
+ * answers, so it can last the whole download of an image of several GB.
  */
 export const PREPULL_TIMEOUT_MS = 60 * 60 * 1000;
 
-/** An image reference to pull, with the presets configured to boot it. */
-export interface PendingImage {
+/** An image reference, with the presets configured to boot it. */
+export interface ConfiguredImage {
   image: string;
   presets: string[];
 }
@@ -53,20 +54,24 @@ export function pulledImages(stateFile: string): Set<string> {
 }
 
 /**
- * The configured images not pulled yet, each reference once, in config
- * order. Several presets may share a reference.
+ * Each configured reference once, in config order, with its presets.
+ * Several presets may share a reference.
  */
+function configuredImages(images: Record<string, string>): ConfiguredImage[] {
+  const byImage = new Map<string, string[]>();
+  for (const [preset, image] of Object.entries(images)) {
+    byImage.set(image, [...(byImage.get(image) ?? []), preset]);
+  }
+  return [...byImage].map(([image, presets]) => ({ image, presets }));
+}
+
+/** The configured images never pulled before: those `up` announces. */
 export function pendingImages(
   images: Record<string, string>,
   stateFile: string,
-): PendingImage[] {
+): ConfiguredImage[] {
   const pulled = pulledImages(stateFile);
-  const pending = new Map<string, string[]>();
-  for (const [preset, image] of Object.entries(images)) {
-    if (pulled.has(image)) continue;
-    pending.set(image, [...(pending.get(image) ?? []), preset]);
-  }
-  return [...pending].map(([image, presets]) => ({ image, presets }));
+  return configuredImages(images).filter(({ image }) => !pulled.has(image));
 }
 
 function recordPulled(stateFile: string, image: string) {
@@ -81,7 +86,7 @@ export interface PrepullOptions {
   images: Record<string, string>;
   stateFile: string;
   /** Runs the throwaway machines; give it `PREPULL_TIMEOUT_MS`. */
-  runtime: MachineRuntime;
+  runtime: Pick<ProviderRuntime, "list" | "remove" | "createUnstarted">;
   out: (line: string) => void;
   err: (line: string) => void;
   /** Stops before the next image once this aborts (the daemon is stopping). */
@@ -90,10 +95,10 @@ export interface PrepullOptions {
 }
 
 /**
- * Pull each configured image not pulled before, one at a time, first
- * deleting any throwaway machine a run cut short left behind. Never throws:
- * a failed pull is logged and left unrecorded, so the next `up` tries it
- * again, and until then a rig of that image pulls it inside its own VM.
+ * Make sure each configured image is cached, one at a time, first deleting
+ * any throwaway machine a run cut short left behind. Never throws: a failed
+ * check is logged and tried again on the next start, and until then a rig of
+ * that image pulls it inside its own VM if its seed is missing.
  */
 export async function prepullImages({
   images,
@@ -124,23 +129,24 @@ export async function prepullImages({
       `amika-hostd: could not list machines before pre-pulling: ${reason(error)}`,
     );
   }
-  const pending = pendingImages(images, stateFile);
-  for (const [index, { image, presets }] of pending.entries()) {
+  for (const [index, { image, presets }] of configuredImages(
+    images,
+  ).entries()) {
     if (signal?.aborted) return;
     const name = `${PREPULL_MACHINE_PREFIX}${index}`;
     const started = now();
-    out(`Pre-pulling ${image} (${presets.join(", ")})`);
+    out(`Checking that ${image} (${presets.join(", ")}) is cached`);
     try {
-      // A disk smolvm seeds, so this create builds the image's seed.
-      await runtime.create({
+      // A disk smolvm seeds, so this create attaches the image's seed, and
+      // builds it first if it is missing.
+      await runtime.createUnstarted({
         name,
         image,
-        network: true,
         storageGb: SMOLVM_SEED_MIN_DISK_GIB,
       });
     } catch (error) {
       err(
-        `amika-hostd: could not pre-pull ${image}: ${reason(error)}; rigs of it pull it themselves, and the next \`amika-hostd up\` tries again`,
+        `amika-hostd: could not cache ${image}: ${reason(error)}; rigs of it may pull it themselves, and the next \`amika-hostd up\` tries again`,
       );
       // A create that failed after making the machine leaves it behind.
       if (!signal?.aborted) await remove(name);
@@ -155,7 +161,7 @@ export async function prepullImages({
       );
     }
     out(
-      `Pre-pulled ${image} in ${Math.round((now() - started) / 1000)}s; new rigs of it start from smolvm's image cache`,
+      `${image} is cached (${Math.round((now() - started) / 1000)}s); new rigs of it start from smolvm's image cache`,
     );
   }
 }
