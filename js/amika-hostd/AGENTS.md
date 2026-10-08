@@ -171,25 +171,20 @@ that cannot be stored (a locked keychain, say) leaves the config untouched.
 
 Registration never changes a stored secret, so setup sends a regenerated
 secret key to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with
-`secret`, `setHostSecret`) for every hostname `up` may register: the one it
-writes, which may be new or one Amika already knows, and the environment's
-while it overrides that. It stores the new key and writes the config first, so
-a key this host could not keep never reaches Amika; if the config cannot be
-written, the old key goes back in the keychain and nothing is sent. If sending
-fails, it puts the old key back where it keeps it (the keychain item, or
-`secret_key` in the file), names the hosts Amika already took the new key for,
-and says how to recover in case Amika applied it for the one that failed; if
-the old key cannot be put back, it says the new one stayed. A new API key
+`secret`, `setHostSecret`) for the hostname it writes, which may be new or one
+Amika already knows. It stores the new key and writes the config first, so a
+key this host could not keep never reaches Amika. If any of these steps fails,
+it puts the old key back where it keeps it (the keychain item, or `secret_key`
+in the file) and says how to recover in case Amika applied the new one anyway;
+if the old key cannot be put back, it says the new one stayed. A new API key
 entered in the same run is saved only once Amika has taken the new secret key
-with it, so one Amika refuses (a typo, say) is not kept for the next run. A
-secret key set in the environment is never regenerated: the daemon would keep
-using it. Nor is one while `AMIKA_HOSTD_API_URL` (or `AMIKA_API_URL`) points
-at another Amika than the file's `api_url` (or the default), or an API key in
-the environment differs from the stored one (it may be another
-organization's): the new key would reach only the environment's Amika or
-organization, and `up` goes back to the stored ones once the variable is
-unset, where the host would keep the old key. After regenerating, setup says
-to restart a running daemon, which keeps the key `up` handed it.
+with it, so one Amika refuses (a typo, say) is not kept for the next run.
+Setup does not offer to regenerate while the environment overrides the secret
+key, hostname, API URL or API key: the new key would reach the Amika,
+organization or hostname this run reaches, while `up` goes back to the stored
+ones once the override is unset, and the daemon would keep using an overriding
+secret key. After regenerating, setup says to restart a running daemon, which
+keeps the key `up` handed it.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the

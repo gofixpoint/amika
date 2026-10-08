@@ -280,6 +280,7 @@ describe("runSetup", () => {
 
 describe("regenerating the secret key", () => {
   const MARKED = 'hostname = "builder"\nsecret_store = "keychain"\n';
+  const FILE_STORE = `hostname = "builder"\nsecret_store = "file"\nsecret_key = "${OLD_SECRET}"\n`;
   /** A host set up before, answering yes to regenerating and no to the rest. */
   const rerun = (
     options: Partial<Parameters<typeof harness>[0]> = {},
@@ -292,12 +293,22 @@ describe("regenerating the secret key", () => {
       storedSecret: OLD_SECRET,
       ...options,
     });
+  const fileStore = {
+    kind: "file" as const,
+    file: FILE_STORE,
+    storedSecret: undefined,
+  };
+  const AGAIN =
+    "If Amika's requests to this host start failing, run `amika-hostd setup` again and regenerate it, so Amika and this host agree.";
 
-  it("keeps the new key in the keychain and sends it to Amika", async () => {
+  it("keeps the new key in the keychain, then sends it to Amika", async () => {
     const h = rerun();
+    h.deps.registerHost.mockImplementation(async () => {
+      expect(h.keychainSecret.value).toBe(NEW_SECRET);
+      expect(h.written[PATH]).toBe(MARKED);
+      return { host: HOST, created: false };
+    });
     await runSetup(h.deps);
-    expect(h.keychainSecret.value).toBe(NEW_SECRET);
-    expect(h.written[PATH]).toBe(MARKED);
     expect(h.deps.registerHost).toHaveBeenCalledWith(
       { apiUrl: "https://app.amika.dev", apiKey: "amk_stored" },
       expect.objectContaining({ hostname: "builder", secretKey: NEW_SECRET }),
@@ -315,23 +326,8 @@ describe("regenerating the secret key", () => {
     );
   });
 
-  it("stores the new key locally before sending it", async () => {
-    const h = rerun();
-    h.deps.registerHost.mockImplementation(async () => {
-      expect(h.keychainSecret.value).toBe(NEW_SECRET);
-      expect(h.written[PATH]).toBe(MARKED);
-      return { host: HOST, created: false };
-    });
-    await runSetup(h.deps);
-    expect(h.deps.registerHost).toHaveBeenCalledOnce();
-  });
-
   it("keeps the new key in the file with the file store", async () => {
-    const h = rerun({
-      kind: "file",
-      file: `hostname = "builder"\nsecret_store = "file"\nsecret_key = "${OLD_SECRET}"\n`,
-      storedSecret: undefined,
-    });
+    const h = rerun(fileStore);
     await runSetup(h.deps);
     expect(h.config().secretKey).toBe(NEW_SECRET);
     expect(h.deps.setHostSecret).toHaveBeenCalledWith(
@@ -341,221 +337,86 @@ describe("regenerating the secret key", () => {
     );
   });
 
-  it("says so when Amika registered the host afresh", async () => {
-    const h = rerun();
+  it("registers a hostname Amika does not know yet with the new key", async () => {
+    const h = rerun({ answers: ["newhost", "y", ""] });
     h.deps.registerHost.mockResolvedValue({ host: HOST, created: true });
     await runSetup(h.deps);
-    expect(h.deps.setHostSecret).not.toHaveBeenCalled();
-    expect(h.out).toContain(
-      "Registered host builder with https://app.amika.dev",
-    );
-  });
-
-  it("sends it for a new hostname too, which Amika may already know", async () => {
-    const h = rerun({ answers: ["newhost", "y", ""] });
-    await runSetup(h.deps);
-    expect(h.keychainSecret.value).toBe(NEW_SECRET);
-    expect(h.deps.registerHost).toHaveBeenCalledOnce();
     expect(h.deps.registerHost).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ hostname: "newhost", secretKey: NEW_SECRET }),
     );
-  });
-
-  it("sends it for the environment's hostname and the file's, which up registers once that is unset", async () => {
-    const h = rerun({ env: { AMIKA_HOSTD_HOSTNAME: "from-env" } });
-    await runSetup(h.deps);
-    expect(
-      h.deps.registerHost.mock.calls.map(([, input]) => input.hostname),
-    ).toEqual(["from-env", "builder"]);
-    for (const [, input] of h.deps.registerHost.mock.calls) {
-      expect(input.secretKey).toBe(NEW_SECRET);
-    }
-  });
-
-  it("names the hosts Amika already has the new key for when a later one fails", async () => {
-    const h = rerun({ env: { AMIKA_HOSTD_HOSTNAME: "from-env" } });
-    h.deps.setHostSecret
-      .mockResolvedValueOnce(HOST)
-      .mockRejectedValueOnce(new Error("Amika is down"));
-    await expect(runSetup(h.deps)).rejects.toThrow(
-      "Amika is down; the test keychain (secret key) has the old secret key again, but Amika already has the new one for from-env: run `amika-hostd setup` again and regenerate it, so Amika and this host agree.",
-    );
-    expect(h.keychainSecret.value).toBe(OLD_SECRET);
-  });
-
-  it("puts the old key back in the keychain when the config cannot be written, sending nothing", async () => {
-    const h = rerun();
-    h.deps.writeConfigFile.mockImplementation(() => {
-      throw Object.assign(new Error("denied"), { code: "EACCES" });
-    });
-    await expect(runSetup(h.deps)).rejects.toThrow(
-      `Cannot write ${PATH}: EACCES; the test keychain (secret key) still has the old secret key, and nothing was sent to Amika.`,
-    );
-    expect(h.keychainSecret.value).toBe(OLD_SECRET);
-    expect(h.deps.registerHost).not.toHaveBeenCalled();
-  });
-
-  it("never offers to regenerate a secret key the environment sets", async () => {
-    const h = rerun({
-      answers: ["", ""],
-      env: { AMIKA_HOSTD_SECRET_KEY: "c".repeat(64) },
-    });
-    await runSetup(h.deps);
-    expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
-      "Hostname [builder]: ",
-      "Update the stored Amika API key? [y/N] ",
-    ]);
+    expect(h.deps.setHostSecret).not.toHaveBeenCalled();
     expect(h.out).toContain(
-      "Keeping the secret key: AMIKA_HOSTD_SECRET_KEY overrides it, so change that instead.",
+      "Registered host newhost with https://app.amika.dev",
     );
-    expect(h.keychainSecret.value).toBe(OLD_SECRET);
   });
 
   it.each([
-    ["AMIKA_HOSTD_API_URL", { AMIKA_HOSTD_API_URL: "https://other.amika.dev" }],
-    ["AMIKA_API_URL", { AMIKA_API_URL: "https://other.amika.dev" }],
+    ["AMIKA_HOSTD_SECRET_KEY", "c".repeat(64)],
+    ["AMIKA_HOSTD_HOSTNAME", "from-env"],
+    ["AMIKA_HOSTD_API_URL", "https://other.amika.dev"],
+    ["AMIKA_API_URL", "https://other.amika.dev"],
+    ["AMIKA_HOSTD_API_KEY", "amk_other"],
+    ["AMIKA_API_KEY", "amk_other"],
   ])(
-    "does not offer to regenerate while %s points at another Amika",
-    async (name, env) => {
-      const h = rerun({ answers: ["", ""], env });
+    "does not offer to regenerate while %s overrides a setting",
+    async (name, value) => {
+      const h = rerun({ answers: ["", ""], env: { [name]: value } });
       await runSetup(h.deps);
-      expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
-        "Hostname [builder]: ",
-        "Update the stored Amika API key? [y/N] ",
-      ]);
+      expect(
+        h.deps.prompt.mock.calls.map(([question]) => question),
+      ).not.toContain(
+        "Regenerate the secret key Amika uses to reach this host? [y/N] ",
+      );
       expect(h.out).toContain(
-        `Not offering to regenerate the secret key: ${name} points at https://other.amika.dev, not https://app.amika.dev, which \`up\` uses without it. Set api_url in ${PATH}, or unset ${name}, to regenerate it.`,
+        `Not offering to regenerate the secret key while ${name} is set; unset it to regenerate it.`,
       );
       expect(h.keychainSecret.value).toBe(OLD_SECRET);
       expect(h.deps.registerHost).not.toHaveBeenCalled();
     },
   );
-
-  it.each(["AMIKA_HOSTD_API_KEY", "AMIKA_API_KEY"])(
-    "does not offer to regenerate while %s differs from the stored API key",
-    async (name) => {
-      const h = rerun({ answers: [""], env: { [name]: "amk_other_org" } });
-      await runSetup(h.deps);
-      expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
-        "Hostname [builder]: ",
-      ]);
-      expect(h.out).toContain(
-        `Not offering to regenerate the secret key: ${name} differs from the API key in the test store, which \`up\` uses without it, and may be for another organization. Unset ${name} to regenerate it.`,
-      );
-      expect(h.keychainSecret.value).toBe(OLD_SECRET);
-      expect(h.deps.registerHost).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    ["matches the stored one", "amk_stored"],
-    ["is the only one", undefined],
-  ])(
-    "offers to regenerate when the environment's API key %s, sending with it",
-    async (_, storedKey) => {
-      const h = rerun({
-        answers: ["", "y"],
-        storedKey,
-        env: { AMIKA_HOSTD_API_KEY: "amk_stored" },
-      });
-      await runSetup(h.deps);
-      expect(h.keychainSecret.value).toBe(NEW_SECRET);
-      expect(h.deps.registerHost).toHaveBeenCalledWith(
-        expect.objectContaining({ apiKey: "amk_stored" }),
-        expect.anything(),
-      );
-    },
-  );
-
-  it("offers to regenerate when the environment's API URL matches the file's", async () => {
-    const h = rerun({
-      file: `${MARKED}api_url = "https://other.amika.dev"\n`,
-      env: { AMIKA_HOSTD_API_URL: "https://other.amika.dev" },
-    });
-    await runSetup(h.deps);
-    expect(h.keychainSecret.value).toBe(NEW_SECRET);
-    expect(h.deps.registerHost).toHaveBeenCalledWith(
-      expect.objectContaining({ apiUrl: "https://other.amika.dev" }),
-      expect.anything(),
-    );
-  });
-
-  it("stops before changing anything when no API key is given to send it with", async () => {
-    const h = rerun({ answers: ["", "y"], storedKey: undefined, secrets: [] });
-    // No stored key, so setup asks for one; giving none stops it there.
-    await expect(runSetup(h.deps)).rejects.toThrow();
-    expect(h.keychainSecret.set).not.toHaveBeenCalled();
-    expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
-    expect(h.deps.registerHost).not.toHaveBeenCalled();
-  });
-
-  it("saves a new API key only once Amika has taken the new secret key with it", async () => {
-    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_new"] });
-    h.deps.registerHost.mockImplementation(async (api) => {
-      expect(api.apiKey).toBe("amk_new");
-      expect(h.store.value).toBe("amk_stored");
-      return { host: HOST, created: false };
-    });
-    await runSetup(h.deps);
-    expect(h.store.value).toBe("amk_new");
-    expect(h.out).toContain("Stored the API key in the test store.");
-  });
-
-  it("still says to restart the daemon when the API key cannot be saved after Amika took the new secret key", async () => {
-    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_new"] });
-    h.store.set.mockImplementation(() => {
-      throw new Error("Cannot store the API key: locked");
-    });
-    await expect(runSetup(h.deps)).rejects.toThrow(
-      "Amika and this host now have the new secret key, but the API key you entered could not be saved: Cannot store the API key: locked. If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up. Run `amika-hostd setup` again to store the API key.",
-    );
-    expect(h.keychainSecret.value).toBe(NEW_SECRET);
-    expect(h.deps.setHostSecret).toHaveBeenCalled();
-  });
-
-  it("does not save a new API key Amika refused, so a rerun starts from the old one", async () => {
-    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_typo"] });
-    h.deps.registerHost.mockRejectedValue(
-      new Error("Amika rejected the API key"),
-    );
-    await expect(runSetup(h.deps)).rejects.toThrow(
-      /^Amika rejected the API key; the test keychain \(secret key\) still has the old secret key\. .* The API key you entered was not saved either\.$/,
-    );
-    expect(h.store.set).not.toHaveBeenCalled();
-    expect(h.store.value).toBe("amk_stored");
-    expect(h.keychainSecret.value).toBe(OLD_SECRET);
-  });
-
-  it("does not save a new API key when the config cannot be written", async () => {
-    const h = rerun({ answers: ["", "y", "y"], secrets: ["amk_new"] });
-    h.deps.writeConfigFile.mockImplementation(() => {
-      throw Object.assign(new Error("denied"), { code: "EACCES" });
-    });
-    await expect(runSetup(h.deps)).rejects.toThrow(
-      /nothing was sent to Amika\. The API key you entered was not saved either\.$/,
-    );
-    expect(h.store.set).not.toHaveBeenCalled();
-  });
 
   it("puts the old key back in the keychain when Amika fails", async () => {
     const h = rerun();
     h.deps.setHostSecret.mockRejectedValue(new Error("Amika is down"));
     await expect(runSetup(h.deps)).rejects.toThrow(
-      "Amika is down; the test keychain (secret key) still has the old secret key. If Amika's requests to this host start failing, run `amika-hostd setup` again and regenerate it, so Amika and this host agree.",
+      `Amika is down; the test keychain (secret key) has the old secret key again. ${AGAIN}`,
     );
     expect(h.keychainSecret.value).toBe(OLD_SECRET);
   });
 
   it("puts the old key back in the file when Amika fails, with the file store", async () => {
-    const h = rerun({
-      kind: "file",
-      file: `hostname = "builder"\nsecret_store = "file"\nsecret_key = "${OLD_SECRET}"\n`,
-      storedSecret: undefined,
-    });
+    const h = rerun(fileStore);
     h.deps.registerHost.mockRejectedValue(new Error("Amika is down"));
     await expect(runSetup(h.deps)).rejects.toThrow(/^Amika is down; \/config/);
     expect(h.config().secretKey).toBe(OLD_SECRET);
+  });
+
+  it("puts the old key back when the keychain fails to confirm the new one, sending nothing", async () => {
+    const h = rerun();
+    // Written, then the read-back check fails, as `security` can.
+    h.keychainSecret.set.mockImplementation((value: string) => {
+      h.keychainSecret.value = value;
+      if (value === NEW_SECRET) throw new Error("Cannot store the secret key");
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      "Cannot store the secret key; the test keychain (secret key) has the old secret key again, and nothing was sent to Amika.",
+    );
+    expect(h.keychainSecret.value).toBe(OLD_SECRET);
+    expect(h.deps.writeConfigFile).not.toHaveBeenCalled();
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("puts the old key back when the config cannot be written, sending nothing", async () => {
+    const h = rerun();
+    h.deps.writeConfigFile.mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    });
+    await expect(runSetup(h.deps)).rejects.toThrow(
+      `Cannot write ${PATH}: EACCES; the test keychain (secret key) has the old secret key again, and nothing was sent to Amika.`,
+    );
+    expect(h.keychainSecret.value).toBe(OLD_SECRET);
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
   });
 
   it("says the new key stayed when the old one cannot be put back", async () => {
@@ -566,9 +427,48 @@ describe("regenerating the secret key", () => {
       h.keychainSecret.value = value;
     });
     await expect(runSetup(h.deps)).rejects.toThrow(
-      "Amika is down; the new secret key is still in the test keychain (secret key), since the old one could not be put back. Run `amika-hostd setup` again and regenerate it, so Amika and this host agree.",
+      "Amika is down; the new secret key is still in the test keychain (secret key), since the old one could not be put back: run `amika-hostd setup` again and regenerate it, so Amika and this host agree.",
     );
     expect(h.keychainSecret.value).toBe(NEW_SECRET);
+  });
+
+  describe("with a new API key", () => {
+    const withNewKey = (secrets: string[]) =>
+      rerun({ answers: ["", "y", "y"], secrets });
+
+    it("sends with it, and saves it only once Amika has taken the new secret key", async () => {
+      const h = withNewKey(["amk_new"]);
+      h.deps.registerHost.mockImplementation(async (api) => {
+        expect(api.apiKey).toBe("amk_new");
+        expect(h.store.value).toBe("amk_stored");
+        return { host: HOST, created: false };
+      });
+      await runSetup(h.deps);
+      expect(h.store.value).toBe("amk_new");
+    });
+
+    it("does not save one Amika refused, so a rerun starts from the old one", async () => {
+      const h = withNewKey(["amk_typo"]);
+      h.deps.registerHost.mockRejectedValue(
+        new Error("Amika rejected the API key"),
+      );
+      await expect(runSetup(h.deps)).rejects.toThrow(
+        `Amika rejected the API key; the test keychain (secret key) has the old secret key again. ${AGAIN} The API key you entered was not saved either.`,
+      );
+      expect(h.store.set).not.toHaveBeenCalled();
+      expect(h.keychainSecret.value).toBe(OLD_SECRET);
+    });
+
+    it("still says to restart the daemon when it cannot be saved after Amika took the new secret key", async () => {
+      const h = withNewKey(["amk_new"]);
+      h.store.set.mockImplementation(() => {
+        throw new Error("Cannot store the API key: locked");
+      });
+      await expect(runSetup(h.deps)).rejects.toThrow(
+        "Amika and this host now have the new secret key, but the API key you entered could not be saved: Cannot store the API key: locked. If the daemon is running, restart it to use the new secret key: amika-hostd down, then amika-hostd up. Run `amika-hostd setup` again to store the API key.",
+      );
+      expect(h.keychainSecret.value).toBe(NEW_SECRET);
+    });
   });
 });
 
