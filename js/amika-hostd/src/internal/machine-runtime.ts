@@ -142,17 +142,23 @@ function surfaceable(
   secrets: readonly string[],
 ): string | undefined {
   let redacted = reason ?? "";
-  // Longest first, so a value inside another is not left half-replaced.
-  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
-    if (secret.length >= MIN_REDACTED_LENGTH) {
-      redacted = redacted.replaceAll(secret, "[redacted]");
-    }
+  // Each value as sent and as an escaped string literal (`\"`, `\n`), the
+  // form smolvm's (serde's) errors quote a string in. Longest first, so a
+  // value inside another is not left half-replaced.
+  const forms = secrets
+    .filter((secret) => secret.length >= MIN_REDACTED_LENGTH)
+    .flatMap((secret) => [secret, JSON.stringify(secret).slice(1, -1)]);
+  for (const form of [...new Set(forms)].sort((a, b) => b.length - a.length)) {
+    redacted = redacted.replaceAll(form, "[redacted]");
   }
   const line = redacted.replace(/[\p{Cc}\s]+/gu, " ").trim();
   if (!line) return undefined;
-  return line.length > MAX_REASON_LENGTH
-    ? `${line.slice(0, MAX_REASON_LENGTH - 1)}…`
-    : line;
+  if (line.length <= MAX_REASON_LENGTH) return line;
+  // Never leave half a surrogate pair at the cut.
+  const cut = line
+    .slice(0, MAX_REASON_LENGTH - 1)
+    .replace(/[\uD800-\uDBFF]$/, "");
+  return `${cut}…`;
 }
 
 export interface ProviderRuntimeConfig {
@@ -233,7 +239,7 @@ export function providerRuntime({
     create: async (machine) => {
       const target = machine.network ? creators.networked : creators.offline;
       // smolvm's reason for a refused create could repeat an environment
-      // value, so one that does is not passed on.
+      // value, so each one is redacted from it.
       await call(
         () =>
           target.create({

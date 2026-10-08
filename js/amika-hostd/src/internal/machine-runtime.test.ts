@@ -328,6 +328,12 @@ describe("providerRuntime", () => {
         `${"x".repeat(493)} [reda…`,
       ],
       [
+        "a value as a quoted string literal",
+        ['say "hi"\nbye'],
+        'invalid type: string "say \\"hi\\"\\nbye"',
+        'invalid type: string "[redacted]"',
+      ],
+      [
         "a value inside another",
         ["abcd", "xxabcdxx"],
         "bad: xxabcdxx abcd",
