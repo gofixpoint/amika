@@ -520,24 +520,28 @@ creates of one image share a single build.
 - **smolvm 1.24.0 or newer** (`MIN_SMOLVM_VERSION`) grows a seed to a larger
   disk and, when `smolvm serve` starts, refreshes the seeds of images machines
   used in the last week. `up` warns when `smolvm --version` reports an older
-  one; it says nothing when smolvm cannot be run.
+  one; it says nothing when smolvm cannot be run. Like `smolvm serve`, that
+  command never sees the API key or the secret key.
 - **Pre-pull.** Once a daemon running its own smolvm is ready, it pulls each
   configured image it has never pulled before into the cache, in the
   background and one at a time (`prepullImages`): it creates a throwaway
-  machine `amika-hostd-prepull-<n>` (default sizes, network on), which builds
-  the seed, deletes it, and records the reference in `prepull.json` in the
+  machine `amika-hostd-prepull-<n>` (a 20 GiB disk, so smolvm seeds it, and
+  network on), which builds the seed, deletes it, and records the reference in `prepull.json` in the
   state directory. That file, not `config.toml`, holds this state: setup owns
   the config and rejects keys it does not know. A failed pull is logged and
   left unrecorded, so the next `up` tries again; until then rigs of that image
   pull it themselves. Leftover `amika-hostd-prepull-*` machines from a run cut
-  short are deleted first. Each create may take an hour
+  short are deleted first. The `amika-hostd-prepull-` prefix is hostd's own:
+  a create naming it is refused (`400`), and the machine list leaves those
+  machines out, so Amika never sees them as rigs. Each create may take an hour
   (`PREPULL_TIMEOUT_MS`), since smolvm builds the seed before answering. The
-  daemon stops before the next image when it shuts down. After the first
+  pre-pull stops before the next image whenever the daemon stops, and an
+  error from it is logged, never fatal to the daemon. After the first
   pull, refreshing the seed when a tag moves is smolvm's job, so a later `up`
   pulls only images added to `[preset_images]`.
 - **The announcement.** `up` reads `prepull.json` before starting the daemon
   and, once it is ready, lists the images about to be downloaded and where
-  progress is logged. It prints nothing when every image is recorded, so the
+  progress is logged (the log file, or the terminal under `--fg`). It prints nothing when every image is recorded, so the
   message appears on the first `up`, and again only for a new image or one
   whose pull failed.
 

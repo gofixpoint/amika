@@ -579,26 +579,21 @@ function freePort(): Promise<number> {
 describe("smolvmVersion", () => {
   const find = () => "/opt/smolvm";
 
-  it("reads the version smolvm prints", () => {
-    const run = vi.fn(() => "smolvm 1.25.0\n");
-    expect(smolvmVersion({}, { find, run })).toBe("1.25.0");
+  it("reads the version smolvm prints", async () => {
+    const run = vi.fn(async (_binary: string) => "smolvm 1.25.0\n");
+    expect(await smolvmVersion({}, { find, run })).toBe("1.25.0");
     expect(run).toHaveBeenCalledWith("/opt/smolvm");
   });
 
-  it("is undefined when smolvm is missing, fails, or prints no version", () => {
-    expect(smolvmVersion({}, { find: () => undefined })).toBeUndefined();
+  it("is undefined when smolvm is missing, fails, or prints no version", async () => {
+    expect(await smolvmVersion({}, { find: () => undefined })).toBeUndefined();
+    const failing = async (): Promise<string> => {
+      throw new Error("exited with code 1");
+    };
+    expect(await smolvmVersion({}, { find, run: failing })).toBeUndefined();
     expect(
-      smolvmVersion(
-        {},
-        {
-          find,
-          run: () => {
-            throw new Error("exited with code 1");
-          },
-        },
-      ),
+      await smolvmVersion({}, { find, run: async () => "smolvm" }),
     ).toBeUndefined();
-    expect(smolvmVersion({}, { find, run: () => "smolvm" })).toBeUndefined();
   });
 });
 

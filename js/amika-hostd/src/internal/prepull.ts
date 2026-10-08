@@ -131,7 +131,13 @@ export async function prepullImages({
     const started = now();
     out(`Pre-pulling ${image} (${presets.join(", ")})`);
     try {
-      await runtime.create({ name, image, network: true });
+      // A disk smolvm seeds, so this create builds the image's seed.
+      await runtime.create({
+        name,
+        image,
+        network: true,
+        storageGb: SMOLVM_SEED_MIN_DISK_GIB,
+      });
     } catch (error) {
       err(
         `amika-hostd: could not pre-pull ${image}: ${reason(error)}; rigs of it pull it themselves, and the next \`amika-hostd up\` tries again`,

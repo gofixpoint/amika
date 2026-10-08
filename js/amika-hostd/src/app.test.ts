@@ -290,6 +290,8 @@ describe("machine API", () => {
     { name: "demo", image: "ubuntu", memoryMb: 1.5 },
     { name: "demo", image: "ubuntu", memoryMb: 63 },
     { name: "demo", image: "ubuntu", hostMounts: ["/"] },
+    // hostd's own pre-pull machines, which it deletes on every start.
+    { name: "amika-hostd-prepull-0", image: "ubuntu" },
   ])(
     "rejects invalid create input without calling the runtime: %j",
     async (input) => {
@@ -309,6 +311,17 @@ describe("machine API", () => {
       400,
     );
     expectUntouched(runtime);
+  });
+
+  it("lists no pre-pull machine as a rig", async () => {
+    const runtime = fakeRuntime();
+    runtime.list.mockResolvedValue([
+      MACHINE,
+      { ...MACHINE, name: "amika-hostd-prepull-0" },
+    ]);
+    const { app } = harness(runtime);
+    const response = await app.request(ROOT);
+    expect(await response.json()).toEqual({ machines: [MACHINE] });
   });
 
   it("rejects malformed JSON without echoing input", async () => {

@@ -108,7 +108,7 @@ export interface CliDeps {
   startInBackground?: typeof spawnInBackground;
   startSmolvm?: typeof startSmolvmServe;
   /** The installed smolvm's version, for `up`'s warning about an old one. */
-  smolvmVersion?: (env: NodeJS.ProcessEnv) => string | undefined;
+  smolvmVersion?: (env: NodeJS.ProcessEnv) => Promise<string | undefined>;
   /**
    * Pull the preset images into smolvm's cache, once the daemon that started
    * smolvm is ready; defaults to `prepullImages` on that smolvm.
@@ -210,7 +210,7 @@ export async function runCli(
           REGISTRATION_SETTINGS,
         );
         warnUncachedSizes(config, deps);
-        warnOldSmolvm(deps);
+        await warnOldSmolvm(deps);
         const host = await register(config, deps);
         // Read before the daemon starts, which records each image it pulls.
         const pending = pendingImages(
@@ -220,7 +220,7 @@ export async function runCli(
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
         const finish = (port: number) => {
-          announcePrepull(pending, deps);
+          announcePrepull(pending, deps, { foreground: parsed.fg });
           return completeRegistration(config, host, port, deps);
         };
         if (parsed.fg) {
@@ -819,9 +819,14 @@ async function serveInForeground(
   const signalled = deps.shutdownSignal();
   const interrupted = new AbortController();
   void signalled.then(() => interrupted.abort());
+  // Stops the pre-pull however the daemon stops, not only on a signal, so
+  // it never goes on against a smolvm that is gone.
+  const stopping = new AbortController();
+  void signalled.then(() => stopping.abort());
   let runtime: ManagedSmolvm | undefined;
   let server: RunningServer | undefined;
   const stopAll = async () => {
+    stopping.abort();
     try {
       await server?.close();
     } finally {
@@ -852,12 +857,17 @@ async function serveInForeground(
     await (deps.notifyReady ?? notifyParent)(server.port);
     // Only a daemon running its own smolvm fills that smolvm's image cache.
     if (runtime) {
-      void (deps.prepull ?? prepullOn)(runtime.apiUrl, {
+      (deps.prepull ?? prepullOn)(runtime.apiUrl, {
         images: config.images,
         stateFile: paths.prepullFile,
         out: deps.out,
         err: deps.err,
-        signal: interrupted.signal,
+        signal: stopping.signal,
+      }).catch((error: unknown) => {
+        // Never let the background pull take the daemon down with it.
+        deps.err(
+          `amika-hostd: pre-pulling images stopped: ${error instanceof Error ? error.message : String(error)}`,
+        );
       });
     }
   } catch (error) {
@@ -904,7 +914,11 @@ function prepullOn(
  * before: on the first `up`, and again for an image added to the config, or
  * one whose earlier pull failed.
  */
-function announcePrepull(pending: PendingImage[], deps: CliDeps) {
+function announcePrepull(
+  pending: PendingImage[],
+  deps: CliDeps,
+  { foreground }: { foreground: boolean },
+) {
   if (pending.length === 0) return;
   const width = Math.max(
     ...pending.map(({ presets }) => presets.join(", ").length),
@@ -917,7 +931,12 @@ function announcePrepull(pending: PendingImage[], deps: CliDeps) {
   deps.out(
     "Each is several GB. A rig created before its image has downloaded waits for it; after that, rigs start without downloading it again.",
   );
-  deps.out(`Progress: ${daemonPaths(deps.env).logFile}`);
+  // In the foreground the daemon reports progress here, not in the log.
+  deps.out(
+    foreground
+      ? "Progress is reported below."
+      : `Progress: ${daemonPaths(deps.env).logFile}`,
+  );
 }
 
 /**
@@ -935,8 +954,11 @@ function warnUncachedSizes(config: HostdConfig, deps: CliDeps) {
 }
 
 /** Warn when smolvm's image cache does not yet serve every rig size. */
-function warnOldSmolvm(deps: CliDeps) {
-  const version = (deps.smolvmVersion ?? readSmolvmVersion)(deps.env);
+async function warnOldSmolvm(deps: CliDeps) {
+  // smolvm never sees the API key or the secret key.
+  const version = await (deps.smolvmVersion ?? readSmolvmVersion)(
+    withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
+  );
   if (version === undefined || !isOlderVersion(version, MIN_SMOLVM_VERSION)) {
     return;
   }

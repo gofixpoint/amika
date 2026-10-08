@@ -96,8 +96,18 @@ describe("prepullImages", () => {
     const { done, out, err } = run(asRuntime, file);
     await done;
     expect(runtime.create.mock.calls.map(([request]) => request)).toEqual([
-      { name: "amika-hostd-prepull-0", image: CODER, network: true },
-      { name: "amika-hostd-prepull-1", image: DOCKER, network: true },
+      {
+        name: "amika-hostd-prepull-0",
+        image: CODER,
+        network: true,
+        storageGb: 20,
+      },
+      {
+        name: "amika-hostd-prepull-1",
+        image: DOCKER,
+        network: true,
+        storageGb: 20,
+      },
     ]);
     expect(runtime.remove.mock.calls).toEqual([
       ["amika-hostd-prepull-0"],

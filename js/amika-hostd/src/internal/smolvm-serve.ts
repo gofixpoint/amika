@@ -3,10 +3,11 @@
  * daemon and the runtime it forwards to come and go together.
  */
 import {
-  execFileSync,
+  execFile,
   spawn as nodeSpawn,
   type ChildProcess,
 } from "node:child_process";
+import { promisify } from "node:util";
 import {
   accessSync,
   closeSync,
@@ -434,26 +435,27 @@ export const MIN_SMOLVM_VERSION = "1.24.0";
  * The version `smolvm --version` reports (`smolvm 1.25.0`), or undefined when
  * smolvm cannot be found or run, or prints something else.
  */
-export function smolvmVersion(
+export async function smolvmVersion(
   env: NodeJS.ProcessEnv,
   {
     find = findSmolvm,
-    run = (binary: string) =>
-      execFileSync(binary, ["--version"], {
-        encoding: "utf8",
-        env,
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 10_000,
-      }),
+    run = async (binary: string) =>
+      (
+        await promisify(execFile)(binary, ["--version"], {
+          encoding: "utf8",
+          env,
+          timeout: 10_000,
+        })
+      ).stdout,
   }: {
     find?: (env: NodeJS.ProcessEnv) => string | undefined;
-    run?: (binary: string) => string;
+    run?: (binary: string) => Promise<string>;
   } = {},
-): string | undefined {
+): Promise<string | undefined> {
   const binary = find(env);
   if (binary === undefined) return undefined;
   try {
-    return /\b(\d+\.\d+\.\d+)\b/.exec(run(binary))?.[1];
+    return /\b(\d+\.\d+\.\d+)\b/.exec(await run(binary))?.[1];
   } catch {
     return undefined;
   }

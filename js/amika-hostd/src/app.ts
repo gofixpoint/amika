@@ -8,6 +8,7 @@ import {
   RuntimeError,
   type MachineRuntime,
 } from "./internal/machine-runtime.js";
+import { PREPULL_MACHINE_PREFIX } from "./internal/prepull.js";
 import {
   createMachineSchema,
   execSchema,
@@ -142,8 +143,15 @@ export function createApp(
 
   function machineRoutes(machines: string) {
     app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
+    // hostd's own pre-pull machines are no rigs of Amika's.
     app.get(machines, () =>
-      call(async () => Response.json({ machines: await runtime.list() })),
+      call(async () =>
+        Response.json({
+          machines: (await runtime.list()).filter(
+            (machine) => !machine.name.startsWith(PREPULL_MACHINE_PREFIX),
+          ),
+        }),
+      ),
     );
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());

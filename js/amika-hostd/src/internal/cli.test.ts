@@ -128,7 +128,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     ),
     isSmolvmRunning: vi.fn(() => false),
     smolvmVersion: vi.fn(
-      (_env: NodeJS.ProcessEnv): string | undefined => "1.25.0",
+      async (_env: NodeJS.ProcessEnv): Promise<string | undefined> => "1.25.0",
     ),
     prepull: vi.fn(
       async (_apiUrl: string, _options: Omit<PrepullOptions, "runtime">) => {},
@@ -893,6 +893,43 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
     expect(deps.prepull.mock.calls[0][1].signal?.aborted).toBe(true);
   });
 
+  it("`up --fg` says progress follows in the terminal, not the log", async () => {
+    const { deps, out } = configured();
+    expect(await runCli(["up", "--fg"], deps)).toBe(0);
+    expect(out).toContain("Progress is reported below.");
+    expect(out.join("\n")).not.toContain("Progress: ");
+  });
+
+  it("stops the pre-pull when smolvm exits, not only on a signal", async () => {
+    const { deps, smolvmExit } = configured();
+    // No shutdown signal: smolvm exiting stops the daemon instead.
+    deps.shutdownSignal.mockReturnValue(new Promise(() => {}));
+    deps.prepull.mockImplementation(async () =>
+      smolvmExit("exited with code 1"),
+    );
+    expect(await runCli(["up", "--fg"], deps)).toBe(1);
+    expect(deps.prepull.mock.calls[0][1].signal?.aborted).toBe(true);
+  });
+
+  it("reports a pre-pull that fails, and keeps serving", async () => {
+    const { deps, err, server } = configured();
+    deps.prepull.mockRejectedValue(new Error("stdout closed"));
+    expect(await runCli(["up", "--fg"], deps)).toBe(0);
+    expect(err).toContain(
+      "amika-hostd: pre-pulling images stopped: stdout closed",
+    );
+    expect(server.close).toHaveBeenCalled();
+  });
+
+  it("asks smolvm its version without either secret in its environment", async () => {
+    const { deps } = configured();
+    expect(await runCli(["up"], deps)).toBe(0);
+    const [env] = deps.smolvmVersion.mock.calls[0];
+    expect(env).not.toHaveProperty("AMIKA_API_KEY");
+    expect(env).not.toHaveProperty("AMIKA_HOSTD_SECRET_KEY");
+    expect(env.XDG_STATE_HOME).toBe(deps.env.XDG_STATE_HOME);
+  });
+
   it("plain `serve` runs no smolvm, so pre-pulls nothing", async () => {
     const { deps } = configured();
     expect(await runCli(["serve"], deps)).toBe(0);
@@ -923,7 +960,7 @@ disk_gib = 20
 
   it("`up` warns about a smolvm older than its image cache needs", async () => {
     const { deps, err } = configured();
-    deps.smolvmVersion.mockReturnValue("1.23.7");
+    deps.smolvmVersion.mockResolvedValue("1.23.7");
     expect(await runCli(["up"], deps)).toBe(0);
     expect(err).toContainEqual(
       expect.stringContaining(
@@ -936,7 +973,7 @@ disk_gib = 20
     "`up` does not warn about smolvm %s",
     async (version) => {
       const { deps, err } = configured();
-      deps.smolvmVersion.mockReturnValue(version);
+      deps.smolvmVersion.mockResolvedValue(version);
       expect(await runCli(["up"], deps)).toBe(0);
       expect(err).toEqual([]);
     },
