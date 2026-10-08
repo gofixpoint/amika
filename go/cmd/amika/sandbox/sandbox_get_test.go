@@ -162,3 +162,42 @@ func TestSandboxSSHHostNilForUnaliasableName(t *testing.T) {
 		t.Errorf("sandboxSSHHost = %q, want nil", *got)
 	}
 }
+
+func TestSandboxGetSelf(t *testing.T) {
+	var requested []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.RequestURI)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"sb_1","name":"here","org_id":"org_1","status":"running","secret_names":[],"mounted_secrets":[],"resolved_agent_credentials":[],"agent_credentials":[],"services":[],"created_at":"2026-09-30T00:00:00Z","updated_at":"2026-09-30T01:00:00Z"}`))
+	}))
+	defer server.Close()
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	run := func() error {
+		root := newSandboxGetTestRoot()
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs([]string{"rig", "get", "_self"})
+		return root.Execute()
+	}
+
+	t.Setenv("AMIKA_RIG_NAME", "here")
+	t.Setenv("AMIKA_SANDBOX_NAME", "legacy")
+	if err := run(); err != nil {
+		t.Fatal(err)
+	}
+	if len(requested) != 1 || requested[0] != "/api/v0beta1/sandboxes/here" {
+		t.Fatalf("requests = %v, want one for the AMIKA_RIG_NAME rig", requested)
+	}
+
+	requested = nil
+	t.Setenv("AMIKA_RIG_NAME", "")
+	t.Setenv("AMIKA_SANDBOX_NAME", "")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "AMIKA_RIG_NAME") {
+		t.Fatalf("_self outside a rig error = %v, want one naming AMIKA_RIG_NAME", err)
+	}
+	if len(requested) != 0 {
+		t.Fatalf("_self outside a rig made requests %v, want none", requested)
+	}
+}

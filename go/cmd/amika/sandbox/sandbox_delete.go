@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +21,10 @@ var sandboxDeleteCmd = &cobra.Command{
 	Long:    `Delete one or more sandboxes.`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		args, err := rigself.ResolveAll(args)
+		if err != nil {
+			return err
+		}
 		force, _ := cmd.Flags().GetBool("force")
 
 		format, err := output.FormatFrom(cmd)

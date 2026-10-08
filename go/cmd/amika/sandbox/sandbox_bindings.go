@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -56,7 +57,10 @@ func init() {
 }
 
 func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
-	rigRef, _ := cmd.Flags().GetString("rig")
+	rigRef, err := rigself.Flag(cmd, "rig")
+	if err != nil {
+		return err
+	}
 	rigBy, _ := cmd.Flags().GetString("rig-by")
 	if rigRef == "" && cmd.Flags().Changed("rig-by") {
 		return fmt.Errorf("--rig-by requires --rig")
@@ -147,7 +151,10 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 	bindingID := strings.TrimSpace(args[0])
 	description := fmt.Sprintf("binding %q", bindingID)
 	if len(args) == 2 {
-		sandboxRef := strings.TrimSpace(args[0])
+		sandboxRef, err := rigself.Resolve(strings.TrimSpace(args[0]))
+		if err != nil {
+			return err
+		}
 		bindingTarget := args[1]
 		if sandboxRef == "" {
 			return fmt.Errorf("a rig reference is required")

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -46,7 +47,11 @@ func runSandboxGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	rig, err := client.GetSandbox(args[0])
+	name, err := rigself.Resolve(args[0])
+	if err != nil {
+		return err
+	}
+	rig, err := client.GetSandbox(name)
 	if err != nil {
 		return err
 	}

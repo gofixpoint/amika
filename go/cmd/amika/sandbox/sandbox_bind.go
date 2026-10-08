@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -15,7 +16,10 @@ var sandboxBindCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		sandboxRef := args[0]
+		sandboxRef, err := rigself.Resolve(args[0])
+		if err != nil {
+			return err
+		}
 		owner, repo, branch, err := parseGitHubBranchBinding(args[1])
 		if err != nil {
 			return err

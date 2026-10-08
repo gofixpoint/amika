@@ -104,6 +104,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - `ports/` — Port interfaces for Docker and store operations
 - `output/` — CLI output formatting for the `--output`/`-o` flag (`text`, `json`, `json-pretty`)
 - `services/` — Shared sandbox-service logic used by CLI and API, e.g. `ValidatePort` (rejects out-of-range and reserved container ports)
+- `rigself/` — Resolves the `_self` rig reference to the current rig's name (`AMIKA_RIG_NAME`, falling back to `AMIKA_SANDBOX_NAME`). Every CLI field that names a rig (positional rig args, `--rig`, `--rig-name`, `scp`'s `<rig>:<path>`) must pass its value through `rigself.Resolve`/`ResolveAll`/`Flag` as soon as it is read
 - `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
 - `eventlog/` — amikalog's hook installer + capture: appends events (one JSON line each) to a per-session JSONL file `<state>/events/{claude,codex}/sessions/{ts}_{session_id}.jsonl`, annotated with git context. `push.go` uploads each changed session file in parallel via an `Uploader`, tracking each file's uploaded byte size in `<state>/events/.amikalog-push-state.json` so only sessions that grew are re-sent (object key = `<repo>/<source>/sessions/<ts>_<session_id>.jsonl`, repo from each session's `git.repo_root`; legacy per-event `event_*.json` files are still uploaded for backward compatibility)
 

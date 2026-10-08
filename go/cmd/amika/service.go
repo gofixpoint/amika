@@ -10,6 +10,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/services"
 	"github.com/spf13/cobra"
@@ -64,7 +65,10 @@ var serviceDeleteCmd = &cobra.Command{
 }
 
 func runServiceCreate(cmd *cobra.Command, _ []string) error {
-	rigRef, _ := cmd.Flags().GetString("rig")
+	rigRef, err := rigself.Flag(cmd, "rig")
+	if err != nil {
+		return err
+	}
 	name, _ := cmd.Flags().GetString("name")
 	port, _ := cmd.Flags().GetInt("port")
 	urlScheme, _ := cmd.Flags().GetString("url-scheme")
@@ -125,7 +129,10 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runServiceDelete(cmd *cobra.Command, _ []string) error {
-	rigRef, _ := cmd.Flags().GetString("rig")
+	rigRef, err := rigself.Flag(cmd, "rig")
+	if err != nil {
+		return err
+	}
 	name, _ := cmd.Flags().GetString("name")
 	force, _ := cmd.Flags().GetBool("force")
 
@@ -212,7 +219,10 @@ var serviceListCmd = &cobra.Command{
 	Short:   "List services across sandboxes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		rigName, _ := cmd.Flags().GetString("rig-name")
+		rigName, err := rigself.Flag(cmd, "rig-name")
+		if err != nil {
+			return err
+		}
 
 		// Validate --remote-target up front, unconditionally, matching the
 		// sandbox command: a bad value fails the same way regardless of auth
@@ -226,7 +236,6 @@ var serviceListCmd = &cobra.Command{
 		}
 
 		var rows []serviceRow
-		var err error
 		if cmd.Flags().Changed("rig-name") && strings.TrimSpace(rigName) == "" {
 			// An explicitly empty --rig-name names no rig, so it matches no
 			// rig. An omitted filter continues to list every rig.
