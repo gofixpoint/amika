@@ -353,6 +353,14 @@ async function proxyService(
   // Every link on the host shares one origin; without this header a service
   // worker is confined to the path of the link that served its script.
   if (link) responseHeaders.delete("service-worker-allowed");
+  // A link's signature is a credential in its path, so a page served through
+  // one must never put that path in a `Referer`. Without this, every
+  // cross-origin request the page makes — an analytics script, a CDN font, a
+  // link the user clicks — hands a third party a working link for the rest of
+  // its 48 hours. Set rather than defaulted, and after the guest's own
+  // headers are copied: the credential is hostd's, not the service's, so a
+  // guest answering `unsafe-url` must not be able to opt into leaking it.
+  if (link) responseHeaders.set("referrer-policy", "no-referrer");
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
