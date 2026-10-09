@@ -823,6 +823,18 @@ describe("service routes", () => {
     };
   }
 
+  it("leaves the guest's referrer policy alone on the keyed route", async () => {
+    // No credential in this path, and the control plane is its only caller,
+    // so there is nothing to protect and the guest's own policy stands.
+    const { request } = services(
+      HOST_PORT,
+      new Response("ok", { headers: { "Referrer-Policy": "unsafe-url" } }),
+    );
+    const response = await request(`${ROUTE}/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("referrer-policy")).toBe("unsafe-url");
+  });
+
   it("forwards the guest path, query, body and the guest's credential", async () => {
     const { request, runtime, fetcher } = services(
       HOST_PORT,
@@ -1033,6 +1045,20 @@ describe("service-link routes", () => {
     );
     const response = await app.request(`${await link()}sw.js`);
     expect(response.headers.get("service-worker-allowed")).toBeNull();
+    expect(response.headers.get("x-guest")).toBe("yes");
+  });
+
+  it("answers no-referrer so a link never leaves in a Referer", async () => {
+    const { app } = links(
+      HOST_PORT,
+      // A guest that asks for the most permissive policy there is: the link
+      // is hostd's credential, so the guest does not get to leak it.
+      new Response("<a href=https://elsewhere.example>x</a>", {
+        headers: { "Referrer-Policy": "unsafe-url", "X-Guest": "yes" },
+      }),
+    );
+    const response = await app.request(await link());
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response.headers.get("x-guest")).toBe("yes");
   });
 
