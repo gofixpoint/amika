@@ -823,6 +823,23 @@ describe("service routes", () => {
     };
   }
 
+  it("leaves the guest's caching and indexing alone on the keyed route", async () => {
+    // No credential in this path, so there is nothing to keep out of a cache
+    // or a search index, and the guest's own answers stand.
+    const { request } = services(
+      HOST_PORT,
+      new Response("ok", {
+        headers: {
+          "Cache-Control": "public, max-age=60",
+          "X-Robots-Tag": "all",
+        },
+      }),
+    );
+    const response = await request(`${ROUTE}/`);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=60");
+    expect(response.headers.get("x-robots-tag")).toBe("all");
+  });
+
   it("leaves the guest's referrer policy alone on the keyed route", async () => {
     // No credential in this path, and the control plane is its only caller,
     // so there is nothing to protect and the guest's own policy stands.
@@ -1045,6 +1062,25 @@ describe("service-link routes", () => {
     );
     const response = await app.request(`${await link()}sw.js`);
     expect(response.headers.get("service-worker-allowed")).toBeNull();
+    expect(response.headers.get("x-guest")).toBe("yes");
+  });
+
+  it("answers no-store and noindex so the link is not kept", async () => {
+    // A cache entry is keyed by its URL, and a search result would publish
+    // one outright. The guest's own answers to both are overridden.
+    const { app } = links(
+      HOST_PORT,
+      new Response("<h1>preview</h1>", {
+        headers: {
+          "Cache-Control": "public, max-age=31536000",
+          "X-Robots-Tag": "all",
+          "X-Guest": "yes",
+        },
+      }),
+    );
+    const response = await app.request(await link());
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-robots-tag")).toBe("noindex");
     expect(response.headers.get("x-guest")).toBe("yes");
   });
 

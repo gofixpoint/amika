@@ -610,15 +610,15 @@ describe("amika-hostd services", () => {
         .get("demo")
         .services!.refreshAll([WEB, AMIKAD]);
       const url = new URL(refreshed[0].url);
-      // Two days: a link served at the end of the control plane's one-day
-      // TTL still has a day left.
-      const expiry = Date.parse("2026-10-10T00:00:00Z") / 1000;
+      // A day: a link served at the end of the control plane's twelve-hour
+      // TTL still has twelve hours left.
+      const expiry = Date.parse("2026-10-09T00:00:00Z") / 1000;
       expect(url.href).toMatch(
         new RegExp(
           `^http://127\\.0\\.0\\.1:3020/v0beta1/rigs/demo/service-links/web/${expiry}\\.[A-Za-z0-9_-]{43}/$`,
         ),
       );
-      expect(provider.signedUrlTtlSeconds).toBe(24 * 3600);
+      expect(provider.signedUrlTtlSeconds).toBe(12 * 3600);
 
       const response = await app.request(`${url.pathname}assets/app.js?v=1`);
       expect(response.status).toBe(200);
