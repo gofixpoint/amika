@@ -1065,6 +1065,26 @@ describe("service-link routes", () => {
     expect(response.headers.get("x-guest")).toBe("yes");
   });
 
+  // hostd's own answers carry the same credential-bearing URL, and both of
+  // these are cacheable without asking (RFC 9110 heuristics).
+  it("hardens the trailing-slash redirect, whose Location repeats the link", async () => {
+    const { app } = links();
+    const path = (await link()).slice(0, -1);
+    const response = await app.request(path);
+    expect(response.status).toBe(308);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-robots-tag")).toBe("noindex");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
+  it("hardens the 404 for a service that is gone", async () => {
+    const { app } = links(null);
+    const response = await app.request(await link());
+    expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-robots-tag")).toBe("noindex");
+  });
+
   it("answers no-store and noindex so the link is not kept", async () => {
     // A cache entry is keyed by its URL, and a search result would publish
     // one outright. The guest's own answers to both are overridden.

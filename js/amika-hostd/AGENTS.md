@@ -604,7 +604,10 @@ the keyed route does. Regenerating the secret key invalidates every link;
 removing a service makes its links `404`.
 
 A link's path is its credential, and no single link can be revoked, so
-`hardenServiceLinkResponse` overrides four headers on the way back —
+`hardenServiceLinkResponse` wraps _every_ response on a link route — hostd's
+own `401`, `404` and trailing-slash `308` as much as a proxied one, since
+they carry the same URL and the last two are cacheable without asking. It
+overrides four headers on the way back —
 dropping `Service-Worker-Allowed` (every link shares the host's origin, so a
 worker must stay inside its own link) and setting `Referrer-Policy:
 no-referrer`, `Cache-Control: private, no-store` and `X-Robots-Tag:

@@ -154,13 +154,17 @@ export function createApp(
   // registered first because Hono's `/*` also matches the bare path.
   app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token`, (c) => {
     const url = new URL(c.req.url);
-    return new Response(null, {
-      status: 308,
-      headers: { Location: `${url.pathname}/${url.search}` },
-    });
+    return hardenServiceLinkResponse(
+      new Response(null, {
+        status: 308,
+        headers: { Location: `${url.pathname}/${url.search}` },
+      }),
+    );
   });
-  app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token/*`, (c) =>
-    proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
+  app.all(`${RIGS_ROUTE}/:name/service-links/:service/:token/*`, async (c) =>
+    hardenServiceLinkResponse(
+      await proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
+    ),
   );
   // The machine API, at its versioned path and at the unversioned path
   // control planes on providers older than `v0beta1` still call.
@@ -350,7 +354,6 @@ async function proxyService(
   // longer describe what is sent on.
   responseHeaders.delete("content-encoding");
   responseHeaders.delete("content-length");
-  if (link) hardenServiceLinkResponse(responseHeaders);
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
@@ -359,17 +362,24 @@ async function proxyService(
 }
 
 /**
- * Narrow where a service link's path can end up, for a response served
- * through one. The path carries the signature that authorizes it, so every
- * copy of the URL is a working credential until it expires, and none can be
- * revoked individually.
+ * Narrow where a service link's path can end up. The path carries the
+ * signature that authorizes it, so every copy of the URL is a working
+ * credential until it expires, and none can be revoked individually.
  *
- * Each header is `set`, not defaulted, and applied after the guest's own are
+ * Applied to every response on a link route, not only a proxied one.
+ * hostd's own answers carry the same credential-bearing URL, and two are
+ * cacheable without asking: a `404` for a service that is gone, and the
+ * `308` that adds a missing trailing slash -- the most-travelled response
+ * of all, since it catches every pasted link, and one whose `Location`
+ * repeats the signature.
+ *
+ * Each header is `set`, not defaulted, and applied after a guest's own are
  * copied: the credential belongs to hostd, not to the service, so a service
  * must not be able to opt into spreading it. Stopgaps while the link is the
  * credential.
  */
-function hardenServiceLinkResponse(headers: Headers): void {
+function hardenServiceLinkResponse(response: Response): Response {
+  const headers = response.headers;
   // Every link on the host shares one origin; without this a service worker
   // one link registers would claim the others' paths too.
   headers.delete("service-worker-allowed");
@@ -387,4 +397,5 @@ function hardenServiceLinkResponse(headers: Headers): void {
   headers.set("cache-control", "private, no-store");
   // And a link that reaches a crawler should not become a search result.
   headers.set("x-robots-tag", "noindex");
+  return response;
 }
