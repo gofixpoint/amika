@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 )
 
@@ -71,51 +70,48 @@ func (s *fileFileMountStore) readAll() ([]FileMountInfo, error) {
 }
 
 func (s *fileFileMountStore) writeAll(mounts []FileMountInfo) error {
-	if err := os.MkdirAll(filepath.Dir(s.filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create storage directory: %w", err)
-	}
-
-	f, err := os.Create(s.filePath)
+	lines, err := marshalJSONL(mounts, "file mount info")
 	if err != nil {
-		return fmt.Errorf("failed to create file mounts file: %w", err)
+		return err
 	}
-	defer f.Close()
-
-	for _, info := range mounts {
-		data, err := json.Marshal(info)
-		if err != nil {
-			return fmt.Errorf("failed to marshal file mount info: %w", err)
-		}
-		if _, err := f.Write(data); err != nil {
-			return fmt.Errorf("failed to write file mount info: %w", err)
-		}
-		if _, err := f.WriteString("\n"); err != nil {
-			return fmt.Errorf("failed to write newline: %w", err)
-		}
-	}
-
-	return nil
+	return writeJSONLAtomic(s.filePath, lines)
 }
 
-func (s *fileFileMountStore) Save(info FileMountInfo) error {
+// update runs fn over the current entries while holding the store's advisory
+// lock and atomically writes the result back, so concurrent processes cannot
+// drop each other's changes through last-writer-wins. A false changed skips
+// the write.
+func (s *fileFileMountStore) update(fn func(mounts []FileMountInfo) ([]FileMountInfo, bool, error)) error {
+	lock, err := lockStore(s.filePath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
 	mounts, err := s.readAll()
 	if err != nil {
 		return err
 	}
+	updated, changed, err := fn(mounts)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return s.writeAll(updated)
+}
 
-	found := false
-	for i := range mounts {
-		if mounts[i].Name == info.Name {
-			mounts[i] = info
-			found = true
-			break
+func (s *fileFileMountStore) Save(info FileMountInfo) error {
+	return s.update(func(mounts []FileMountInfo) ([]FileMountInfo, bool, error) {
+		for i, m := range mounts {
+			if m.Name == info.Name {
+				mounts[i] = info
+				return mounts, true, nil
+			}
 		}
-	}
-	if !found {
-		mounts = append(mounts, info)
-	}
-
-	return s.writeAll(mounts)
+		return append(mounts, info), true, nil
+	})
 }
 
 func (s *fileFileMountStore) Get(name string) (FileMountInfo, error) {
@@ -133,23 +129,19 @@ func (s *fileFileMountStore) Get(name string) (FileMountInfo, error) {
 }
 
 func (s *fileFileMountStore) Remove(name string) error {
-	mounts, err := s.readAll()
-	if err != nil {
-		return err
-	}
-
-	var filtered []FileMountInfo
-	for _, m := range mounts {
-		if m.Name != name {
-			filtered = append(filtered, m)
+	return s.update(func(mounts []FileMountInfo) ([]FileMountInfo, bool, error) {
+		var filtered []FileMountInfo
+		for _, m := range mounts {
+			if m.Name != name {
+				filtered = append(filtered, m)
+			}
 		}
-	}
 
-	if len(filtered) == len(mounts) {
-		return nil
-	}
-
-	return s.writeAll(filtered)
+		if len(filtered) == len(mounts) {
+			return mounts, false, nil
+		}
+		return filtered, true, nil
+	})
 }
 
 func (s *fileFileMountStore) List() ([]FileMountInfo, error) {
@@ -157,31 +149,39 @@ func (s *fileFileMountStore) List() ([]FileMountInfo, error) {
 }
 
 func (s *fileFileMountStore) AddSandboxRef(name, sandbox string) error {
-	info, err := s.Get(name)
-	if err != nil {
-		return err
-	}
-
-	if !slices.Contains(info.SandboxRefs, sandbox) {
-		info.SandboxRefs = append(info.SandboxRefs, sandbox)
-	}
-	return s.Save(info)
+	return s.update(func(mounts []FileMountInfo) ([]FileMountInfo, bool, error) {
+		for i, m := range mounts {
+			if m.Name != name {
+				continue
+			}
+			if !slices.Contains(m.SandboxRefs, sandbox) {
+				m.SandboxRefs = append(m.SandboxRefs, sandbox)
+				mounts[i] = m
+			}
+			return mounts, true, nil
+		}
+		return nil, false, fmt.Errorf("no file mount found with name: %s", name)
+	})
 }
 
 func (s *fileFileMountStore) RemoveSandboxRef(name, sandbox string) error {
-	info, err := s.Get(name)
-	if err != nil {
-		return err
-	}
-
-	refs := info.SandboxRefs[:0]
-	for _, ref := range info.SandboxRefs {
-		if ref != sandbox {
-			refs = append(refs, ref)
+	return s.update(func(mounts []FileMountInfo) ([]FileMountInfo, bool, error) {
+		for i, m := range mounts {
+			if m.Name != name {
+				continue
+			}
+			refs := m.SandboxRefs[:0]
+			for _, ref := range m.SandboxRefs {
+				if ref != sandbox {
+					refs = append(refs, ref)
+				}
+			}
+			m.SandboxRefs = refs
+			mounts[i] = m
+			return mounts, true, nil
 		}
-	}
-	info.SandboxRefs = refs
-	return s.Save(info)
+		return nil, false, fmt.Errorf("no file mount found with name: %s", name)
+	})
 }
 
 func (s *fileFileMountStore) FileMountsForSandbox(sandbox string) ([]FileMountInfo, error) {

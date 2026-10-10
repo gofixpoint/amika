@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 )
 
@@ -69,51 +68,48 @@ func (s *fileVolumeStore) readAll() ([]VolumeInfo, error) {
 }
 
 func (s *fileVolumeStore) writeAll(volumes []VolumeInfo) error {
-	if err := os.MkdirAll(filepath.Dir(s.filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create storage directory: %w", err)
-	}
-
-	f, err := os.Create(s.filePath)
+	lines, err := marshalJSONL(volumes, "volume info")
 	if err != nil {
-		return fmt.Errorf("failed to create volumes file: %w", err)
+		return err
 	}
-	defer f.Close()
-
-	for _, info := range volumes {
-		data, err := json.Marshal(info)
-		if err != nil {
-			return fmt.Errorf("failed to marshal volume info: %w", err)
-		}
-		if _, err := f.Write(data); err != nil {
-			return fmt.Errorf("failed to write volume info: %w", err)
-		}
-		if _, err := f.WriteString("\n"); err != nil {
-			return fmt.Errorf("failed to write newline: %w", err)
-		}
-	}
-
-	return nil
+	return writeJSONLAtomic(s.filePath, lines)
 }
 
-func (s *fileVolumeStore) Save(info VolumeInfo) error {
+// update runs fn over the current entries while holding the store's advisory
+// lock and atomically writes the result back, so concurrent processes cannot
+// drop each other's changes through last-writer-wins. A false changed skips
+// the write.
+func (s *fileVolumeStore) update(fn func(volumes []VolumeInfo) ([]VolumeInfo, bool, error)) error {
+	lock, err := lockStore(s.filePath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
 	volumes, err := s.readAll()
 	if err != nil {
 		return err
 	}
+	updated, changed, err := fn(volumes)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return s.writeAll(updated)
+}
 
-	found := false
-	for i := range volumes {
-		if volumes[i].Name == info.Name {
-			volumes[i] = info
-			found = true
-			break
+func (s *fileVolumeStore) Save(info VolumeInfo) error {
+	return s.update(func(volumes []VolumeInfo) ([]VolumeInfo, bool, error) {
+		for i, v := range volumes {
+			if v.Name == info.Name {
+				volumes[i] = info
+				return volumes, true, nil
+			}
 		}
-	}
-	if !found {
-		volumes = append(volumes, info)
-	}
-
-	return s.writeAll(volumes)
+		return append(volumes, info), true, nil
+	})
 }
 
 func (s *fileVolumeStore) Get(name string) (VolumeInfo, error) {
@@ -131,23 +127,19 @@ func (s *fileVolumeStore) Get(name string) (VolumeInfo, error) {
 }
 
 func (s *fileVolumeStore) Remove(name string) error {
-	volumes, err := s.readAll()
-	if err != nil {
-		return err
-	}
-
-	var filtered []VolumeInfo
-	for _, v := range volumes {
-		if v.Name != name {
-			filtered = append(filtered, v)
+	return s.update(func(volumes []VolumeInfo) ([]VolumeInfo, bool, error) {
+		var filtered []VolumeInfo
+		for _, v := range volumes {
+			if v.Name != name {
+				filtered = append(filtered, v)
+			}
 		}
-	}
 
-	if len(filtered) == len(volumes) {
-		return nil
-	}
-
-	return s.writeAll(filtered)
+		if len(filtered) == len(volumes) {
+			return volumes, false, nil
+		}
+		return filtered, true, nil
+	})
 }
 
 func (s *fileVolumeStore) List() ([]VolumeInfo, error) {
@@ -155,31 +147,39 @@ func (s *fileVolumeStore) List() ([]VolumeInfo, error) {
 }
 
 func (s *fileVolumeStore) AddSandboxRef(name, sandbox string) error {
-	info, err := s.Get(name)
-	if err != nil {
-		return err
-	}
-
-	if !slices.Contains(info.SandboxRefs, sandbox) {
-		info.SandboxRefs = append(info.SandboxRefs, sandbox)
-	}
-	return s.Save(info)
+	return s.update(func(volumes []VolumeInfo) ([]VolumeInfo, bool, error) {
+		for i, v := range volumes {
+			if v.Name != name {
+				continue
+			}
+			if !slices.Contains(v.SandboxRefs, sandbox) {
+				v.SandboxRefs = append(v.SandboxRefs, sandbox)
+				volumes[i] = v
+			}
+			return volumes, true, nil
+		}
+		return nil, false, fmt.Errorf("no volume found with name: %s", name)
+	})
 }
 
 func (s *fileVolumeStore) RemoveSandboxRef(name, sandbox string) error {
-	info, err := s.Get(name)
-	if err != nil {
-		return err
-	}
-
-	refs := info.SandboxRefs[:0]
-	for _, ref := range info.SandboxRefs {
-		if ref != sandbox {
-			refs = append(refs, ref)
+	return s.update(func(volumes []VolumeInfo) ([]VolumeInfo, bool, error) {
+		for i, v := range volumes {
+			if v.Name != name {
+				continue
+			}
+			refs := v.SandboxRefs[:0]
+			for _, ref := range v.SandboxRefs {
+				if ref != sandbox {
+					refs = append(refs, ref)
+				}
+			}
+			v.SandboxRefs = refs
+			volumes[i] = v
+			return volumes, true, nil
 		}
-	}
-	info.SandboxRefs = refs
-	return s.Save(info)
+		return nil, false, fmt.Errorf("no volume found with name: %s", name)
+	})
 }
 
 func (s *fileVolumeStore) VolumesForSandbox(sandbox string) ([]VolumeInfo, error) {
