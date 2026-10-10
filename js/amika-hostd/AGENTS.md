@@ -596,12 +596,24 @@ host key, use a signed service link instead:
 The `amika-hostd` provider mints it on the control plane and hostd verifies
 it locally, both with `@amika/sandbox/hostd-service-links`: the signature is
 an HMAC-SHA256 over the machine, service and expiry, under a key derived from
-the host's secret key. hostd answers `401` for a bad or expired link and
-forwards a good one exactly as the keyed route does, except that it drops
-`Service-Worker-Allowed` from the response (every link shares the host's
-origin, so a service worker must stay inside its own link) and redirects a
-link missing its trailing slash to the full link. Regenerating the secret
-key invalidates every link; removing a service makes its links `404`.
+the host's secret key. A link lasts a day, and the control plane mints a new
+one every twelve hours, so the oldest link it hands out still has twelve
+hours left. hostd answers `401` for a bad or expired link, redirects one
+missing its trailing slash to the full link, and otherwise forwards it as
+the keyed route does. Regenerating the secret key invalidates every link;
+removing a service makes its links `404`.
+
+A link's path is its credential, and no single link can be revoked, so
+`hardenServiceLinkResponse` wraps _every_ response on a link route — hostd's
+own `401`, `404` and trailing-slash `308` as much as a proxied one, since
+they carry the same URL and the last two are cacheable without asking. It
+overrides four headers on the way back —
+dropping `Service-Worker-Allowed` (every link shares the host's origin, so a
+worker must stay inside its own link) and setting `Referrer-Policy:
+no-referrer`, `Cache-Control: private, no-store` and `X-Robots-Tag:
+noindex`. They are set rather than defaulted: the credential is hostd's, not
+the service's, so a guest must not be able to opt into spreading it. All
+four are stopgaps that last only as long as the link is the credential.
 
 - The key goes in `X-Amika-Hostd-Key`, since `Authorization` belongs to the
   guest (`amikad` checks SSH connect tokens with it). hostd never forwards

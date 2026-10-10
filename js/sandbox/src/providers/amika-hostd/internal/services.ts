@@ -37,14 +37,21 @@ export const HOSTD_SERVICE_KEY_HEADER = "X-Amika-Hostd-Key";
 
 /**
  * How long the control plane serves a service link before it mints a new
- * one: a day, as e2b and Daytona URLs last.
+ * one. Half the link's life, so the oldest link it can hand out still has
+ * the other half left.
  */
-export const HOSTD_SERVICE_URL_TTL_S = 24 * 60 * 60;
+export const HOSTD_SERVICE_URL_TTL_S = 12 * 60 * 60;
 
 /**
  * How long a link stays valid once minted: twice the control plane's TTL, so
- * a link it serves at the end of its TTL still works for at least a day. The
- * margin also covers a host clock running ahead of the control plane's.
+ * a link served at the end of that window still works for twelve hours. A
+ * day in total, as e2b and Daytona URLs last.
+ *
+ * The link's path is its credential, and a copy of it keeps working wherever
+ * it lands -- browser history, a Slack message (which fetches the link
+ * itself to build a preview), an error report. Nothing can revoke one
+ * individually, so its life is the only bound on a leak, which is why this
+ * is a day rather than the two it once was.
  */
 export const HOSTD_SERVICE_LINK_LIFETIME_S = 2 * HOSTD_SERVICE_URL_TTL_S;
 
