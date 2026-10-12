@@ -58,7 +58,7 @@ describe("setupSkill", () => {
     expect(skill).toContain("    rm ~/.amika-hostd-key");
     expect(skill).toContain("`amika auth status`");
     // Without a logged-in CLI, the operator creates the key in the web app.
-    expect(skill).toContain("https://app.amika.dev/settings");
+    expect(skill).toContain("https://app.amika.dev/settings/api-keys");
     expect(skill).toContain("< /path/to/key-file");
   });
 

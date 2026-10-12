@@ -134,9 +134,9 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// settingsURL is where a person deletes an API key in the web app.
+// settingsURL is the web app page where a person manages API keys.
 func settingsURL() string {
-	return strings.TrimRight(config.APIURL(), "/") + "/settings"
+	return strings.TrimRight(config.APIURL(), "/") + "/settings/api-keys"
 }
 
 // stdioPaths are the spellings of the process's own standard streams and
