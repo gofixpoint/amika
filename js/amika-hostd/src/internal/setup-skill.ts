@@ -51,33 +51,42 @@ lowercased (\`hostname\`).
 Setup needs the operator's Amika API key the first time, and stores it. If
 \`AMIKA_API_KEY\` or \`AMIKA_HOSTD_API_KEY\` is already set in your
 environment, setup and \`up\` use it and nothing needs passing, but it is
-not stored, so keep it set for \`up\` and \`register-url\`. Otherwise the
-operator hands you the key through a file you never read:
+not stored, so keep it set for \`up\` and \`register-url\`. If setup stored a
+key on an earlier run, it keeps that one, and nothing needs passing either.
 
-1. Make a private directory with \`mktemp -d\`. It gets a new random name
-   that only the operator can enter, so no one else can create it first or
-   read what goes in it. It prints the directory's path, which is not
-   secret: note it, and use it literally as \`<dir>\` below, since a shell
-   variable may not survive between your commands. Then make the key file,
-   empty and readable only by the operator:
+Otherwise the key goes in through a file you never read. Make a private
+directory for it with \`mktemp -d\`. It gets a new random name that only the
+operator can enter, so no one else can create it first or read what goes in
+it. It prints the directory's path, which is not secret: note it, and use it
+literally as \`<dir>\` below, since a shell variable may not survive between
+your commands.
 
-       mktemp -d
-       install -m 600 /dev/null <dir>/api-key
+    mktemp -d
 
-2. Ask the operator to create an API key in the Amika web app, at
-   \`/settings/api-keys\` on the \`api_url\` this host uses
-   (https://app.amika.dev/settings/api-keys by default), open
-   \`<dir>/api-key\` in an editor (give them the full path), paste the key
-   into it, save, and tell you when they are done.
+Then fill \`<dir>/api-key\` one of two ways:
 
-3. Check the file has something in it without reading it
-   (\`test -s <dir>/api-key\`), then pipe it straight into setup:
+- **With the \`amika\` CLI**, if it is installed and \`amika auth status\`
+  reports it authenticated. It writes the key to the file with mode 0600:
 
-       amika-hostd setup --non-interactive --hostname <name> < <dir>/api-key
+      amika auth api-key create --name <name>-hostd --out <dir>/api-key
 
-4. Delete the directory once setup succeeds, or when you stop trying:
+  Keep the default organization scope: a host belongs to the organization,
+  so its key should keep working when the person who set it up leaves.
+- **By hand** otherwise. Create the file empty
+  (\`install -m 600 /dev/null <dir>/api-key\`), then ask the operator to
+  create an API key in the Amika web app, at \`/settings/api-keys\` on the
+  \`api_url\` this host uses (https://app.amika.dev/settings/api-keys by
+  default), paste it into that file (give them the full path) in an editor,
+  save, and tell you when they are done. Check it is not empty with
+  \`test -s\`, which does not read it.
 
-       rm -rf <dir>
+Pipe the file straight into setup:
+
+    amika-hostd setup --non-interactive --hostname <name> < <dir>/api-key
+
+Delete the directory once setup succeeds, or when you stop trying:
+
+    rm -rf <dir>
 
 Never \`cat\`, open, copy, or otherwise read that file yourself; only
 redirect it into \`amika-hostd setup\`.
