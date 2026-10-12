@@ -63,13 +63,16 @@ install directory out of the launcher's `exec` line (`AMIKA_HOSTD_HOME` wins
 when set), shows both and asks for confirmation; on "no" it tells the user to
 set `AMIKA_INSTALL_DIR`. It then runs `amika-hostd down` and deletes the
 launcher and the install directory (bundle, `node_modules/`, private `node/`).
-It then asks two separate questions: remove the config and state
-directories, and remove the keychain secrets (`security delete-generic-password`
-on macOS, `secret-tool clear` on Linux, plus the file store's `api-key`).
-`--purge` answers both yes without asking, and `--yes` answers every question
-yes. Prompts read `/dev/tty`, so `--yes` or `--purge` is required without one.
-smolvm, `/etc/amika-hostd` and the host's Amika registration are never
-removed; it prints how to handle each. `--dry-run` previews it.
+It then asks three separate questions: remove the config and state
+directories, remove the keychain secrets (`security delete-generic-password`
+on macOS, `secret-tool clear` on Linux, plus the file store's `api-key`), and
+remove smolvm (`~/.smolvm` and the `~/.local/bin/smolvm` link into it; a smolvm
+installed anywhere else is never touched). `--purge` answers the first two
+yes without asking, and `--yes` answers every question yes except smolvm's.
+smolvm is removed only by typing `remove smolvm` at its prompt: no flag answers for the
+user, and without a terminal it stays. Prompts read `/dev/tty`, so `--yes` or
+`--purge` is required without one. `/etc/amika-hostd` and the host's Amika
+registration are never removed; it prints how to remove each. `--dry-run` previews it.
 
 The daemon is one ESM file, built by `pnpm --filter @amika/hostd build`
 (`scripts/bundle.mjs`, esbuild with every npm dependency inlined, including

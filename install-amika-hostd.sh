@@ -58,13 +58,15 @@ Flags:
                         asks you to confirm, stops the daemon, then deletes
                         the launcher and its files directory (including the
                         private Node.js). Then asks, separately, whether to
-                        remove the config and state directory and the keychain
-                        secrets. Never removes smolvm. If it finds the wrong
-                        install, answer no and set AMIKA_INSTALL_DIR.
+                        remove the config and state directory, the keychain
+                        secrets, and smolvm. If it finds the wrong install,
+                        answer no and set AMIKA_INSTALL_DIR.
   --purge               With --uninstall: remove the config, state directory
-                        and keychain secrets without asking
-  --yes, -y             With --uninstall: answer yes to every question
-                        (needed when there is no terminal)
+                        and keychain secrets without asking. Keeps smolvm.
+  --yes, -y             With --uninstall: answer yes to every question except
+                        smolvm's (needed when there is no terminal)
+
+smolvm is never removed by a flag: only typing "remove smolvm" at its prompt does.
 
 Environment variables:
   AMIKA_INSTALL_DIR          Launcher directory (default: /usr/local/bin)
@@ -178,22 +180,37 @@ parse_args() {
 }
 
 # Ask a yes/no question on the terminal (stdin may be the script itself when
-# piped from curl). Defaults to no. --yes answers yes without asking.
-confirm() {
-  if [ "$ASSUME_YES" = "true" ]; then
-    return 0
-  fi
-  if ! { : </dev/tty; } 2>/dev/null; then
-    echo "Error: no terminal to ask: ${1}" >&2
-    echo "Pass --yes to answer yes to every question." >&2
-    exit 1
-  fi
+# piped from curl). Defaults to no, and to no without a terminal.
+ask() {
+  { : </dev/tty; } 2>/dev/null || return 1
   printf '%s [y/N] ' "$1" >/dev/tty
   read -r reply </dev/tty || reply=""
   case "$reply" in
     y|Y|yes|YES|Yes) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# Ask the user to type an exact phrase ($2) to proceed; anything else, or no
+# terminal, declines. For steps that a stray "y" must not trigger.
+ask_typed() {
+  { : </dev/tty; } 2>/dev/null || return 1
+  printf '%s ' "$1" >/dev/tty
+  read -r reply </dev/tty || reply=""
+  [ "$reply" = "$2" ]
+}
+
+# Like ask, but --yes answers yes, and a missing terminal is an error.
+confirm() {
+  if [ "$ASSUME_YES" = "true" ]; then
+    return 0
+  fi
+  if ! { : </dev/tty; } 2>/dev/null; then
+    echo "Error: no terminal to ask: ${1}" >&2
+    echo "Pass --yes to answer yes to every question except smolvm's." >&2
+    exit 1
+  fi
+  ask "$1"
 }
 
 # Print the directory HOSTD_HOME that a launcher points at, read from the
@@ -255,6 +272,25 @@ remove_secrets() {
   fi
 }
 
+# The smolvm this installer's smolvm step puts in HOME: ~/.smolvm, with
+# ~/.local/bin/smolvm a link into it. Any other smolvm (Homebrew, a system
+# package) is not ours to remove. Sets SMOLVM_HOME when there is one.
+find_installed_smolvm() {
+  SMOLVM_HOME=""
+  if [ -x "${HOME}/.smolvm/smolvm" ]; then
+    SMOLVM_HOME="${HOME}/.smolvm"
+  fi
+}
+
+remove_smolvm() {
+  link="${HOME}/.local/bin/smolvm"
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "${SMOLVM_HOME}/smolvm" ]; then
+    rm -f "$link"
+    echo "Removed ${link}"
+  fi
+  remove_dir "$SMOLVM_HOME"
+}
+
 # Undo install_hostd: stop the daemon, then delete the launcher and HOSTD_HOME.
 # The launcher is found on PATH (unless AMIKA_INSTALL_DIR names it) and the
 # user confirms it. The config, state directory, keychain secrets, smolvm, and
@@ -294,6 +330,8 @@ uninstall_hostd() {
       ;;
   esac
 
+  find_installed_smolvm
+
   echo "Found amika-hostd:"
   echo "  Launcher: ${DEST_PATH}"
   echo "  Files:    ${HOSTD_HOME}"
@@ -312,6 +350,9 @@ uninstall_hostd() {
       echo "  Would ask about:            ${CONFIG_DIR} and ${STATE_DIR}"
       echo "  Would ask about:            the amika-hostd keychain secrets"
     fi
+    if [ -n "$SMOLVM_HOME" ] && [ "$PURGE" != "true" ]; then
+      echo "  Would ask about:            ${SMOLVM_HOME} (smolvm; never removed by a flag)"
+    fi
     uninstall_notes
     return 0
   fi
@@ -327,6 +368,7 @@ uninstall_hostd() {
   # user walks away from a later question.
   remove_user_data=false
   remove_secrets_too=false
+  remove_smolvm_too=false
   if [ "$PURGE" = "true" ]; then
     remove_user_data=true
     remove_secrets_too=true
@@ -336,6 +378,12 @@ uninstall_hostd() {
     fi
     if confirm "Also remove the amika-hostd secrets (API key, secret key) from your keychain?"; then
       remove_secrets_too=true
+    fi
+    # smolvm is only ever removed by typing the phrase at a terminal: neither
+    # --yes nor --purge answers for the user, and without a terminal it stays.
+    if [ -n "$SMOLVM_HOME" ] &&
+      ask_typed "smolvm (${SMOLVM_HOME}) may hold VMs and data other tools use. Type 'remove smolvm' to remove it, or press Enter to keep it:" "remove smolvm"; then
+      remove_smolvm_too=true
     fi
   fi
 
@@ -358,6 +406,9 @@ uninstall_hostd() {
     remove_dir "$CONFIG_DIR"
     remove_dir "$STATE_DIR"
   fi
+  if [ "$remove_smolvm_too" = "true" ]; then
+    remove_smolvm
+  fi
 
   echo ""
   echo "amika-hostd uninstalled."
@@ -372,7 +423,9 @@ uninstall_notes() {
   if [ "${remove_secrets_too:-false}" != "true" ]; then
     echo "  Secrets:  the amika-hostd entries in your OS keychain"
   fi
-  echo "  smolvm:   installed separately and possibly used by other tools; this never removes it"
+  if [ "${remove_smolvm_too:-false}" != "true" ]; then
+    echo "  smolvm:   possibly used by other tools (${SMOLVM_HOME:-not found under ~/.smolvm})"
+  fi
   echo "  Amika:    run 'amika host delete <host>' to drop the host's registration"
 }
 
