@@ -36,10 +36,30 @@ describe("setupSkill", () => {
     );
     expect(used.length).toBeGreaterThan(0);
     for (const command of used) expect(commands).toContain(command);
-    for (const option of skill.match(/(?<![-\w])--[a-z][a-z-]*/g) ?? []) {
+    // The `amika` CLI's commands carry that CLI's options, not amika-hostd's.
+    const hostdOnly = skill
+      .replace(/^ {4}amika .*$/gm, "")
+      .replace(/`amika [^`]*`/g, "");
+    for (const option of hostdOnly.match(/(?<![-\w])--[a-z][a-z-]*/g) ?? []) {
       if (option === "--url") continue; // cloudflared's
       expect(USAGE).toContain(option);
     }
+  });
+
+  it("creates the API key with the amika CLI into a file, never printing it", () => {
+    // The key goes from `amika auth api-key create` into a file, from the
+    // file into setup's stdin, and the file is removed.
+    expect(skill).toContain(
+      "    amika auth api-key create --name <name>-hostd --out ~/.amika-hostd-key",
+    );
+    expect(skill).toContain(
+      "    amika-hostd setup --non-interactive --hostname <name> < ~/.amika-hostd-key",
+    );
+    expect(skill).toContain("    rm ~/.amika-hostd-key");
+    expect(skill).toContain("`amika auth status`");
+    // Without a logged-in CLI, the operator creates the key in the web app.
+    expect(skill).toContain("https://app.amika.dev/settings");
+    expect(skill).toContain("< /path/to/key-file");
   });
 
   it("names only variables the config reads", () => {

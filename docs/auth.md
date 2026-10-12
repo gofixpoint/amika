@@ -33,10 +33,29 @@ The path can be overridden with the `AMIKA_STATE_DIRECTORY` environment variable
 
 ### Related Commands
 
-| Command             | Description                               |
-| ------------------- | ----------------------------------------- |
-| `amika auth status` | Show current login status (email and org) |
-| `amika auth logout` | Remove the saved session                  |
+| Command                                                | Description                                   |
+| ------------------------------------------------------ | --------------------------------------------- |
+| `amika auth status`                                    | Show current login status (email and org)     |
+| `amika auth logout`                                    | Remove the saved session                      |
+| `amika auth api-key create --name <name> --out <file>` | Create an API key and write it only to a file |
+
+### Creating API Keys
+
+A machine that cannot open a browser (a CI runner, a server, an `amika-hostd`
+host) authenticates with an API key instead of a login session. Once you are
+logged in, `amika auth api-key create` mints one and writes it to a file with
+mode `0600`, never printing it:
+
+```bash
+amika auth api-key create --name ci-runner --out ./amika-key
+amika auth login --api-key-file ./amika-key   # on the machine that needs it
+rm ./amika-key
+```
+
+Keys are organization-scoped by default, so they keep working if the person who
+created them leaves; pass `--scope user` for a key owned by you. You can also
+create and delete keys in the web app's settings page. See
+[cli-reference.md](cli-reference.md#amika-auth-api-key-create) for every flag.
 
 ### Environment Variables
 
