@@ -77,8 +77,8 @@ Then fill \`<dir>/api-key\` one of two ways:
   create an API key in the Amika web app, at \`/settings/api-keys\` on the
   \`api_url\` this host uses (https://app.amika.dev/settings/api-keys by
   default), paste it into that file (give them the full path) in an editor,
-  save, and tell you when they are done. Check it is not empty with \`test -s\`, which does
-  not read it.
+  save, and tell you when they are done. Check it is not empty with
+  \`test -s\`, which does not read it.
 
 Pipe the file straight into setup:
 
