@@ -175,7 +175,7 @@ rerun setup asks whether to regenerate it. Then it asks for the Amika API key,
 with input hidden, or on a rerun whether to replace the stored one; an API key
 in the environment is used instead, and setup does not ask. Before the prompt
 it names the page that creates one, `/settings/api-keys` on the configured
-API URL's origin, since no CLI can create an API key.
+API URL's origin.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping

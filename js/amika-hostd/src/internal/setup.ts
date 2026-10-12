@@ -435,7 +435,7 @@ async function askHostname(
 /**
  * The new API key to store, or `undefined` to keep the stored one (or the
  * environment's, which takes precedence over any stored key). Before asking,
- * says where in `apiUrl`'s Amika to create one: the CLI cannot.
+ * says where in `apiUrl`'s Amika to create one.
  */
 async function askApiKey(
   deps: SetupDeps,
