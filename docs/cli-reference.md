@@ -582,10 +582,10 @@ never includes it in its own output or in `-o json`.
 
 ```bash
 # Create an organization key for a host daemon, hand it to setup, remove the file
-mkdir -p -m 700 /tmp/amika-hostd/setup/secrets
-amika auth api-key create --name build-01-hostd --out /tmp/amika-hostd/setup/secrets/api-key
-amika-hostd setup --non-interactive --hostname build-01 < /tmp/amika-hostd/setup/secrets/api-key
-rm /tmp/amika-hostd/setup/secrets/api-key
+dir=$(mktemp -d)
+amika auth api-key create --name build-01-hostd --out "$dir/api-key"
+amika-hostd setup --non-interactive --hostname build-01 < "$dir/api-key"
+rm -rf "$dir"
 
 # Create a key owned by you and log another machine's CLI in with it
 amika auth api-key create --name laptop --scope user --out ./amika-key
@@ -600,7 +600,7 @@ If the key is created but the write still fails, the error names the key's id
 so you can delete it in the web app's settings page; the value itself is lost.
 
 ```
-Created API key "build-01-hostd" (key_01J..., scope organization, sk_...a1b2) and wrote it to /tmp/amika-hostd/setup/secrets/api-key
+Created API key "build-01-hostd" (key_01J..., scope organization, sk_...a1b2) and wrote it to /tmp/tmp.k3J9xQ/api-key
 ```
 
 With `-o json`, the output is the API's `ApiKeySummary` schema (the create
