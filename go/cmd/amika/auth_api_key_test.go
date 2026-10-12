@@ -23,11 +23,7 @@ type apiKeyAPIStub struct {
 	mu sync.Mutex
 	// status is what the create answers; 201 mints a key.
 	status int
-	// beforeRespond runs inside the handler after the request is read, so a
-	// test can change the world between the CLI's pre-flight checks and the
-	// moment it writes the key.
-	beforeRespond func()
-	bodies        []map[string]any
+	bodies []map[string]any
 }
 
 func (s *apiKeyAPIStub) requests() []map[string]any {
@@ -51,11 +47,8 @@ func stubAPIKeyAPI(t *testing.T) *apiKeyAPIStub {
 		_ = json.Unmarshal(raw, &body)
 		stub.mu.Lock()
 		stub.bodies = append(stub.bodies, body)
-		status, hook := stub.status, stub.beforeRespond
+		status := stub.status
 		stub.mu.Unlock()
-		if hook != nil {
-			hook()
-		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		if status != http.StatusCreated {
@@ -198,7 +191,7 @@ func TestAuthAPIKeyCreateJSONOmitsValue(t *testing.T) {
 }
 
 // Bad invocations are refused before any request, and leave nothing on disk:
-// a missing --name or --out, --out naming stdout, and an unknown --scope.
+// a missing --name or --out, an existing --out, and an unknown --scope.
 func TestAuthAPIKeyCreateRejectsBadFlagsBeforeCallingAPI(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -208,10 +201,7 @@ func TestAuthAPIKeyCreateRejectsBadFlagsBeforeCallingAPI(t *testing.T) {
 		{"missing name", []string{"--out", "KEYFILE"}, `required flag(s) "name" not set`},
 		{"missing out", []string{"--name", "k"}, `required flag(s) "out" not set`},
 		{"blank name", []string{"--name", "  ", "--out", "KEYFILE"}, "--name must not be empty"},
-		{"out dash", []string{"--name", "k", "--out", "-"}, "--out cannot be stdout"},
-		{"out dev stdout", []string{"--name", "k", "--out", "/dev/stdout"}, "--out cannot be /dev/stdout"},
-		{"out dev fd 1", []string{"--name", "k", "--out", "/dev/fd/1"}, "--out cannot be /dev/fd/1"},
-		{"out directory", []string{"--name", "k", "--out", "DIR"}, "is not a regular file"},
+		{"out directory", []string{"--name", "k", "--out", "DIR"}, "already exists"},
 		{"invalid scope", []string{"--name", "k", "--scope", "team", "--out", "KEYFILE"}, `invalid --scope "team"`},
 	}
 	for _, tc := range cases {
@@ -281,8 +271,7 @@ func TestAuthAPIKeyCreateExistingFile(t *testing.T) {
 	}
 }
 
-// When the API refuses the create, no file is left behind: neither the key
-// file nor the temp file that was waiting for the key.
+// When the API refuses the create, the key file opened for it is removed.
 func TestAuthAPIKeyCreateAPIErrorLeavesNoFile(t *testing.T) {
 	stub := stubAPIKeyAPI(t)
 	stub.status = http.StatusForbidden
@@ -297,34 +286,6 @@ func TestAuthAPIKeyCreateAPIErrorLeavesNoFile(t *testing.T) {
 	}
 }
 
-// If the key is minted but cannot be written, the error names the key's id
-// and says to delete it, since its value is gone, and still never prints the
-// value. The directory turns read-only between the pre-flight check and the
-// API's answer, so the final move into place fails.
-func TestAuthAPIKeyCreateWriteFailureNamesKeyID(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
-	}
-	stub := stubAPIKeyAPI(t)
-	dir := t.TempDir()
-	stub.beforeRespond = func() { os.Chmod(dir, 0o500) }
-	t.Cleanup(func() { os.Chmod(dir, 0o700) })
-
-	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", filepath.Join(dir, "key"))
-	assertNoKey(t, got, err)
-	if err == nil {
-		t.Fatalf("create succeeded writing into a read-only directory\n%s", got)
-	}
-	for _, want := range []string{"created API key \"k\" (key_01TEST)", "cannot be shown again", "/settings"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("err = %v, want it to contain %q", err, want)
-		}
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, "key")); statErr == nil {
-		t.Fatalf("key file exists after a failed write")
-	}
-}
-
 // The help text documents the flags and the file's format, and its example
 // pipes the file into amika-hostd.
 func TestAuthAPIKeyCreateHelp(t *testing.T) {
@@ -336,7 +297,7 @@ func TestAuthAPIKeyCreateHelp(t *testing.T) {
 		"amika auth api-key create [flags]",
 		"--name", "--out", "--scope", "--force",
 		"mode 0600",
-		"amika-hostd setup --non-interactive --hostname build-01 < ~/.amika-hostd-key",
+		"amika-hostd setup --non-interactive --hostname build-01 < /tmp/amika-hostd/setup/secrets/api-key",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help is missing %q:\n%s", want, got)

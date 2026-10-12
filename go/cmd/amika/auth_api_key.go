@@ -4,16 +4,14 @@ package main
 // keys through the control plane. Only `create` exists today; `list` and
 // `delete` belong here when they are added.
 //
-// The one rule every subcommand here keeps: a key's plaintext value goes to a
-// file the caller named, and nowhere else. Not stdout, not stderr, not an
-// error message, and not the `-o json` result.
+// A key's plaintext value goes only to the file the caller names with --out,
+// never to the CLI's own output, error messages, or the `-o json` result.
 
 import (
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
@@ -43,7 +41,7 @@ by --out and is never printed. The file is created with mode 0600 and holds
 the bare key followed by a newline, so it can be passed to
 ` + "`amika auth login --api-key-file`" + ` or piped into
 ` + "`amika-hostd setup --non-interactive`" + ` as is. An existing file is refused
-unless --force is given; --out cannot be stdout.
+unless --force is given.
 
 --scope picks who owns the key:
 
@@ -56,9 +54,10 @@ Requires a login (` + "`amika auth login`" + `) or AMIKA_API_KEY. Manage or dele
 keys in the web app's settings page.`,
 	Example: `  # Create an organization key for a host daemon, set the host up with it,
   # and remove the file
-  amika auth api-key create --name build-01-hostd --out ~/.amika-hostd-key
-  amika-hostd setup --non-interactive --hostname build-01 < ~/.amika-hostd-key
-  rm ~/.amika-hostd-key
+  mkdir -p -m 700 /tmp/amika-hostd/setup/secrets
+  amika auth api-key create --name build-01-hostd --out /tmp/amika-hostd/setup/secrets/api-key
+  amika-hostd setup --non-interactive --hostname build-01 < /tmp/amika-hostd/setup/secrets/api-key
+  rm /tmp/amika-hostd/setup/secrets/api-key
 
   # Create a key owned by you and log another machine's CLI in with it
   amika auth api-key create --name laptop --scope user --out ./amika-key
@@ -93,17 +92,22 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Everything that can go wrong with the file is settled before the key
-	// exists: the API shows its value once, so a key minted into a file that
-	// then cannot be written is a key nobody can use.
-	dest, err := prepareKeyFile(outPath, force)
+	dest, createdFile, err := openKeyFile(outPath, force)
 	if err != nil {
 		return err
 	}
-	defer dest.discard()
+	defer dest.Close()
+	// A failed create leaves no empty file behind; a file that was already
+	// there (with --force) has been truncated either way.
+	removeOnFail := func() {
+		if createdFile {
+			os.Remove(outPath)
+		}
+	}
 
 	created, err := runmode.NewRemoteClient().CreateAPIKey(apiclient.CreateAPIKeyRequest{Name: name, Scope: scope})
 	if err != nil {
+		removeOnFail()
 		var httpErr *apiclient.HTTPError
 		if !errors.As(err, &httpErr) {
 			// No HTTP status means the request may have reached the server
@@ -115,10 +119,10 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := dest.commit(created.Value.Reveal()); err != nil {
+	if _, err := dest.WriteString(created.Value.Reveal() + "\n"); err != nil {
 		return fmt.Errorf("created API key %q (%s) but could not write it to %s: %w\n"+
 			"Its value cannot be shown again. Delete the key at %s and run this command again",
-			created.Name, created.ID, dest.path, err, settingsURL())
+			created.Name, created.ID, outPath, err, settingsURL())
 	}
 
 	// -o json emits the API's ApiKeySummary schema: the create response
@@ -130,7 +134,7 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 		return format.JSON(cmd.OutOrStdout(), created.APIKey)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Created API key %q (%s, scope %s, %s) and wrote it to %s\n",
-		created.Name, created.ID, created.Scope, created.ObfuscatedValue, dest.path)
+		created.Name, created.ID, created.Scope, created.ObfuscatedValue, outPath)
 	return nil
 }
 
@@ -139,109 +143,31 @@ func settingsURL() string {
 	return strings.TrimRight(config.APIURL(), "/") + "/settings/api-keys"
 }
 
-// stdioPaths are the spellings of the process's own standard streams and
-// terminal that --out rejects by name, before a stat could resolve them to a
-// device or a pipe and reject them less clearly.
-var stdioPaths = map[string]bool{
-	"/dev/stdin":      true,
-	"/dev/stdout":     true,
-	"/dev/stderr":     true,
-	"/dev/fd/0":       true,
-	"/dev/fd/1":       true,
-	"/dev/fd/2":       true,
-	"/proc/self/fd/0": true,
-	"/proc/self/fd/1": true,
-	"/proc/self/fd/2": true,
-	"/dev/tty":        true,
-	"/dev/console":    true,
-}
-
-// keyFile is a 0600 temp file next to the requested path, which commit fills
-// and moves into place, so the key is never in a file anyone else can read
-// and the requested path never holds a partial key.
-type keyFile struct {
-	path  string
-	tmp   *os.File
-	force bool
-}
-
-// prepareKeyFile checks that path can take the key and opens the temp file
-// that will become it. It refuses stdout, a path that is not a regular file,
-// and (without force) a path that already exists.
-func prepareKeyFile(path string, force bool) (*keyFile, error) {
-	if path == "" {
-		return nil, fmt.Errorf("--out must name a file")
+// openKeyFile opens path for the key before the key is minted, so a path
+// that cannot be written fails without leaving a key nobody can use. A new
+// file is created with mode 0600; an existing one is refused unless force is
+// set, and a replaced regular file is narrowed to 0600 too. created reports
+// whether this call made the file, so a failed run can remove it.
+func openKeyFile(path string, force bool) (f *os.File, created bool, err error) {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if !force {
+		flags |= os.O_EXCL
 	}
-	if path == "-" {
-		return nil, fmt.Errorf("--out cannot be stdout: the key is written only to a file")
+	_, statErr := os.Stat(path)
+	f, err = os.OpenFile(path, flags, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return nil, false, fmt.Errorf("%s already exists; pass --force to replace it", path)
 	}
-	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("resolving --out: %w", err)
+		return nil, false, fmt.Errorf("opening --out: %w", err)
 	}
-	if stdioPaths[abs] {
-		return nil, fmt.Errorf("--out cannot be %s: the key is written only to a regular file", abs)
-	}
-
-	// Stat follows a symlink, so a link to a terminal or a pipe is refused
-	// too. --force replaces a regular file and nothing else.
-	info, err := os.Stat(abs)
-	switch {
-	case err == nil && !info.Mode().IsRegular():
-		return nil, fmt.Errorf("--out %s is not a regular file", abs)
-	case err == nil && !force:
-		return nil, fmt.Errorf("%s already exists; pass --force to replace it", abs)
-	case err != nil && !errors.Is(err, fs.ErrNotExist):
-		return nil, fmt.Errorf("checking --out: %w", err)
-	}
-
-	// CreateTemp opens with mode 0600 from the start. The name starts with a
-	// dot so a crash between create and rename leaves a hidden file.
-	tmp, err := os.CreateTemp(filepath.Dir(abs), "."+filepath.Base(abs)+".tmp-*")
-	if err != nil {
-		return nil, fmt.Errorf("cannot write a file next to %s: %w", abs, err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return nil, fmt.Errorf("setting permissions on %s: %w", tmp.Name(), err)
-	}
-	return &keyFile{path: abs, tmp: tmp, force: force}, nil
-}
-
-// commit writes the key and a trailing newline to the temp file and moves it
-// to the requested path. Without force the move is a hard link, which fails
-// rather than replacing a file that appeared since prepareKeyFile looked.
-// Errors name paths only, never the key.
-func (k *keyFile) commit(key string) error {
-	if _, err := k.tmp.WriteString(key + "\n"); err != nil {
-		return err
-	}
-	if err := k.tmp.Sync(); err != nil {
-		return err
-	}
-	if err := k.tmp.Close(); err != nil {
-		return err
-	}
-	if k.force {
-		return os.Rename(k.tmp.Name(), k.path)
-	}
-	if err := os.Link(k.tmp.Name(), k.path); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("%s was created by something else in the meantime", k.path)
+	if info, err := f.Stat(); err == nil && info.Mode().IsRegular() {
+		if err := f.Chmod(0o600); err != nil {
+			f.Close()
+			return nil, false, fmt.Errorf("setting permissions on %s: %w", path, err)
 		}
-		// Some filesystems have no hard links. The existence check in
-		// prepareKeyFile still stands; only the race it guards is reopened.
-		return os.Rename(k.tmp.Name(), k.path)
 	}
-	return nil
-}
-
-// discard removes the temp file, if commit has not moved it away. It runs on
-// every return, so a failed run leaves no copy of the key behind.
-func (k *keyFile) discard() {
-	k.tmp.Close()
-	os.Remove(k.tmp.Name())
+	return f, errors.Is(statErr, fs.ErrNotExist), nil
 }
 
 func init() {
