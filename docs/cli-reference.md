@@ -577,14 +577,15 @@ amika auth logout
 Create an Amika API key and write it to a file. An API key lets a machine or a
 script authenticate without a browser login, for example a CI job, another
 machine's `amika` CLI, or an `amika-hostd` host daemon. The API shows a key's
-value only once, so this command writes it straight to the file named by
-`--out` and never prints it: not to stdout, not to stderr, and not in `-o json`.
+value only once, so this command writes it to the file named by `--out` and
+never includes it in its own output or in `-o json`.
 
 ```bash
 # Create an organization key for a host daemon, hand it to setup, remove the file
-amika auth api-key create --name build-01-hostd --out ~/.amika-hostd-key
-amika-hostd setup --non-interactive --hostname build-01 < ~/.amika-hostd-key
-rm ~/.amika-hostd-key
+mkdir -p -m 700 /tmp/amika-hostd/setup/secrets
+amika auth api-key create --name build-01-hostd --out /tmp/amika-hostd/setup/secrets/api-key
+amika-hostd setup --non-interactive --hostname build-01 < /tmp/amika-hostd/setup/secrets/api-key
+rm /tmp/amika-hostd/setup/secrets/api-key
 
 # Create a key owned by you and log another machine's CLI in with it
 amika auth api-key create --name laptop --scope user --out ./amika-key
@@ -592,15 +593,14 @@ amika auth login --api-key-file ./amika-key
 ```
 
 The file holds the bare key followed by a newline, so it works as is with
-`amika auth login --api-key-file` and `amika-hostd setup --non-interactive`. It
-is created with mode `0600` from the start and moved into place only once the
-key is written. The command checks `--out` before it asks the API for a key, so
-a path it cannot write is refused without minting a key. In the rare case the
-key is created but the file still cannot be written, the error names the key's
-id so you can delete it in the web app's settings page; the value itself is lost.
+`amika auth login --api-key-file` and `amika-hostd setup --non-interactive`. A
+new file is created with mode `0600`. The command opens `--out` before it asks
+the API for a key, so a path it cannot write is refused without minting a key.
+If the key is created but the write still fails, the error names the key's id
+so you can delete it in the web app's settings page; the value itself is lost.
 
 ```
-Created API key "build-01-hostd" (key_01J..., scope organization, sk_...a1b2) and wrote it to /home/me/.amika-hostd-key
+Created API key "build-01-hostd" (key_01J..., scope organization, sk_...a1b2) and wrote it to /tmp/amika-hostd/setup/secrets/api-key
 ```
 
 With `-o json`, the output is the API's `ApiKeySummary` schema (the create
@@ -613,9 +613,9 @@ response without its `value`), in the API's camelCase spelling:
 | Flag              | Default        | Description                                                                  |
 | ----------------- | -------------- | ---------------------------------------------------------------------------- |
 | `--name <name>`   |                | Name for the key, shown in the web app's settings. Required                  |
-| `--out <file>`    |                | File to write the key to. Required. Cannot be `-` or another name for stdout |
+| `--out <file>`    |                | File to write the key to. Required                                           |
 | `--scope <scope>` | `organization` | `organization` (owned by your organization) or `user` (owned by you)         |
-| `--force`, `-f`   | `false`        | Replace `--out` if it already exists (only a regular file)                   |
+| `--force`, `-f`   | `false`        | Replace `--out` if it already exists                                         |
 
 A user-scoped key acts as you, and an organization-scoped API key has no user
 behind it, so it cannot create one.
