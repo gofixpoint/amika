@@ -297,7 +297,7 @@ func TestAuthAPIKeyCreateHelp(t *testing.T) {
 		"amika auth api-key create [flags]",
 		"--name", "--out", "--scope", "--force",
 		"mode 0600",
-		"amika-hostd setup --non-interactive --hostname build-01 < /tmp/amika-hostd/setup/secrets/api-key",
+		`amika-hostd setup --non-interactive --hostname build-01 < "$dir/api-key"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help is missing %q:\n%s", want, got)
