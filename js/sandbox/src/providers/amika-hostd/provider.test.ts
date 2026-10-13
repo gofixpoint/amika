@@ -170,16 +170,19 @@ function harness({
   config = { secretKey: SECRET },
   machines = [],
   respond,
+  amikaUrl,
 }: {
   config?: AmikaHostdConfig;
   machines?: SmolMachine[];
   respond?: (request: Received) => Response | undefined;
+  /** hostd's Amika URL, which makes it serve previews. */
+  amikaUrl?: string;
 } = {}) {
   const fake = fakeSmolvm(machines, respond);
   // What hostd's service routes reach a machine's published ports with.
   const guest = vi.fn<typeof fetch>(async () => Response.json({ ok: true }));
   const app = createApp(
-    { secretKey: SECRET },
+    { secretKey: SECRET, amikaUrl },
     providerRuntime({ apiUrl: SMOL_API_URL, fetch: fake.smolvm }),
     { fetch: guest },
   );
@@ -591,6 +594,55 @@ describe("amika-hostd services", () => {
     const forwarded = new Headers(guest.mock.calls[0][1]?.headers);
     expect(forwarded.get("Authorization")).toBe("Bearer connect-token");
     expect(forwarded.get(HOSTD_SERVICE_KEY_HEADER)).toBeNull();
+  });
+
+  describe("previews", () => {
+    const PREVIEW_HOST = {
+      secretKey: SECRET,
+      apiUrl: "https://preview.example",
+    };
+
+    it("hands a host that logs browsers in a preview with no credential", async () => {
+      const { provider } = harness({
+        config: PREVIEW_HOST,
+        amikaUrl: "https://app.amika.test",
+      });
+      await provider.sandboxes.create(ctx, {
+        ...INPUT,
+        services: [WEB, AMIKAD],
+      });
+      const { services } = await provider.sandboxes
+        .get("demo")
+        .services!.refreshAll([WEB, AMIKAD]);
+      expect(services[0].url).toBe(
+        "https://preview.example/v0beta1/rigs/demo/previews/web/",
+      );
+      // amikad keeps its keyed route.
+      expect(services[1].url).toBe(
+        "https://preview.example/v0beta1/rigs/demo/services/amikad/",
+      );
+    });
+
+    it("keeps signed links on a host whose hostd serves no previews", async () => {
+      const { provider } = harness({ config: PREVIEW_HOST });
+      await provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] });
+      const { services } = await provider.sandboxes
+        .get("demo")
+        .services!.refreshAll([WEB]);
+      expect(services[0].url).toMatch(
+        /^https:\/\/preview\.example\/v0beta1\/rigs\/demo\/service-links\/web\/\d+\./,
+      );
+    });
+
+    it("keeps signed links on a host that cannot hold browser cookies", async () => {
+      // A loopback URL, even with a hostd that serves previews.
+      const { provider } = harness({ amikaUrl: "https://app.amika.test" });
+      await provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] });
+      const { services } = await provider.sandboxes
+        .get("demo")
+        .services!.refreshAll([WEB]);
+      expect(services[0].url).toContain("/service-links/web/");
+    });
   });
 
   describe("signed service links", () => {

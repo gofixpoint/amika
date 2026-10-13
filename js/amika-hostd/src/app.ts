@@ -20,10 +20,24 @@ import {
   isHostdPath,
   linkCookie,
   linkFromCookie,
-  withoutLinkCookie,
+  withoutHostdCookies,
   type LinkCookieClaim,
 } from "./internal/link-cookie.js";
+import {
+  CALLBACK_PATH,
+  LOGIN_PATH,
+  finishLogin,
+  hardenPreviewResponse,
+  hasSession,
+  loginRedirect,
+  parsePreviewPath,
+  previewCookie,
+  previewFromCookie,
+  startLogin,
+  usedLoginStates,
+} from "./internal/browser-login.js";
 import { SERVICE_TOKEN_HEADER } from "@amika/sandbox/hostd-service-links";
+import { BROWSER_LOGIN_FEATURE } from "@amika/sandbox/hostd-browser-login";
 import {
   AMIKAD_SERVICE,
   SERVICE_KEY_HEADER,
@@ -58,6 +72,11 @@ export interface AppConfig {
    * 504. The runtime call itself carries on (an image pull, say).
    */
   requestTimeoutMs?: number;
+  /**
+   * Amika's URL, where a browser opening a preview is sent to log in
+   * (`./internal/browser-login.ts`). Without it hostd serves no previews.
+   */
+  amikaUrl?: string;
 }
 
 export interface AppDeps {
@@ -79,6 +98,7 @@ export function createApp(
     images = {},
     configPath,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    amikaUrl,
   }: AppConfig,
   runtime: MachineRuntime,
   {
@@ -144,11 +164,24 @@ export function createApp(
   // handler before it touches the body (see `./internal/services.ts` and
   // `./internal/link-cookie.ts`).
   const checkSecretKey = requireSecretKey(secretKey);
+  // Previews and the login pages are checked the same way, against the
+  // browser's session or login state (`./internal/browser-login.ts`).
+  const previews = amikaUrl !== undefined;
+  const loginStates = usedLoginStates();
   app.use("*", (c, next) =>
     parseServicePath(c.req.path) ||
     parseServiceLinkPath(c.req.path) ||
+    (previews &&
+      (c.req.path === LOGIN_PATH ||
+        c.req.path === CALLBACK_PATH ||
+        parsePreviewPath(c.req.path))) ||
     (!isHostdPath(c.req.path) &&
-      linkFromCookie(c.req.header("cookie"), c.req.header("sec-fetch-site")))
+      (linkFromCookie(c.req.header("cookie"), c.req.header("sec-fetch-site")) ||
+        (previews &&
+          previewFromCookie(
+            c.req.header("cookie"),
+            c.req.header("sec-fetch-site"),
+          ))))
       ? next()
       : checkSecretKey(c, next),
   );
@@ -156,8 +189,10 @@ export function createApp(
   // can tell what a host speaks before relying on it.
   // `features` names what a control plane may rely on beyond the API itself:
   // `service-tokens`, service routes accepting `X-Amika-Authorization`.
+  // `browser-login`, previews behind a login through Amika.
+  const features = previews ? [...FEATURES, BROWSER_LOGIN_FEATURE] : FEATURES;
   app.get("/health", (c) =>
-    c.json({ status: "ok", apis: [API_VERSION], features: FEATURES }),
+    c.json({ status: "ok", apis: [API_VERSION], features }),
   );
   // Service routes are registered first, so `/<rig>/services/<name>/...`
   // never falls through to a machine route.
@@ -185,6 +220,26 @@ export function createApp(
       await proxyService(c.req.raw, secretKey, runtime, registry, fetcher),
     ),
   );
+  if (amikaUrl !== undefined) {
+    app.get(LOGIN_PATH, (c) => startLogin(c.req.raw, amikaUrl));
+    app.post(CALLBACK_PATH, bodyLimit({ maxSize: 16 * 1024 }), (c) =>
+      finishLogin(c.req.raw, secretKey, loginStates),
+    );
+    // As for a link: a preview missing its trailing slash would resolve the
+    // service's relative URLs one segment up.
+    app.all(`${RIGS_ROUTE}/:name/previews/:service`, (c) => {
+      const url = new URL(c.req.url);
+      return hardenPreviewResponse(
+        new Response(null, {
+          status: 308,
+          headers: { Location: `${url.pathname}/${url.search}` },
+        }),
+      );
+    });
+    app.all(`${RIGS_ROUTE}/:name/previews/:service/*`, (c) =>
+      proxyPreview(c.req.raw),
+    );
+  }
   // The machine API, at its versioned path and at the unversioned path
   // control planes on providers older than `v0beta1` still call.
   for (const machines of [RIGS_ROUTE, LEGACY_MACHINES_ROUTE]) {
@@ -197,6 +252,21 @@ export function createApp(
     const claim = isHostdPath(c.req.path)
       ? null
       : linkFromCookie(c.req.header("cookie"), c.req.header("sec-fetch-site"));
+    const preview =
+      claim || !previews || isHostdPath(c.req.path)
+        ? null
+        : previewFromCookie(
+            c.req.header("cookie"),
+            c.req.header("sec-fetch-site"),
+          );
+    if (preview) {
+      if (c.req.header("service-worker") === "script") {
+        return hardenPreviewResponse(
+          Response.json({ error: "Not found" }, { status: 404 }),
+        );
+      }
+      return proxyPreview(c.req.raw, preview);
+    }
     if (!claim) return c.notFound();
     // A worker script served from the root would claim every link on the
     // host, not just this one's (`hardenServiceLinkResponse`).
@@ -217,6 +287,55 @@ export function createApp(
     );
   });
   return app;
+
+  /**
+   * Serve a preview to a browser with a session: the preview route itself,
+   * or (`cookie`) a root-relative URL its page asked for. Without a session
+   * a page load goes to log in, and anything else is refused.
+   */
+  async function proxyPreview(
+    request: Request,
+    cookie?: { machine: string; service: string },
+  ): Promise<Response> {
+    const url = new URL(request.url);
+    const route = cookie
+      ? { ...cookie, path: url.pathname }
+      : parsePreviewPath(url.pathname);
+    if (!route) {
+      return hardenPreviewResponse(
+        Response.json({ error: "Not found" }, { status: 404 }),
+      );
+    }
+    if (!(await hasSession(request.headers.get("cookie"), url, secretKey))) {
+      if (
+        !cookie &&
+        request.method === "GET" &&
+        request.headers.get("sec-fetch-mode") === "navigate"
+      ) {
+        return loginRedirect(url);
+      }
+      return hardenPreviewResponse(
+        Response.json(
+          {
+            error: "Unauthorized",
+            hint: "Open the preview in a browser to log in through Amika, or send a service token to the rig's service route.",
+          },
+          { status: 401, headers: { Connection: "close" } },
+        ),
+      );
+    }
+    const response = await forwardService(
+      request,
+      route,
+      runtime,
+      registry,
+      fetcher,
+    );
+    // Opening a preview hands its root-relative URLs to this service.
+    const setCookie = !cookie && previewCookie(request, route);
+    if (setCookie) response.headers.append("set-cookie", setCookie);
+    return hardenPreviewResponse(response);
+  }
 
   function machineRoutes(machines: string) {
     app.use(`${machines}/*`, bodyLimit({ maxSize: 64 * 1024 * 1024 }));
@@ -378,8 +497,35 @@ async function proxyService(
     );
   }
   const route = link ?? serviceRoute;
-  const hostPort = route && (await resolveHostPort(runtime, registry, route));
-  if (!route || hostPort === null) {
+  if (!route) return Response.json({ error: "Not found" }, { status: 404 });
+  const response = await forwardService(
+    request,
+    route,
+    runtime,
+    registry,
+    fetcher,
+  );
+  // Opening a link hands its root-relative URLs to this service.
+  const setCookie = link && !cookie && linkCookie(request, link);
+  if (setCookie) response.headers.append("set-cookie", setCookie);
+  return response;
+}
+
+/**
+ * Forward an authorized request to `route`'s guest port, without hostd's
+ * own headers and cookies, and the guest's answer back. 404 when the rig
+ * has no such service or is not running, 502 when the guest is down.
+ */
+async function forwardService(
+  request: Request,
+  route: ServiceRoute,
+  runtime: MachineRuntime,
+  registry: ServiceRegistry,
+  fetcher: typeof fetch,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const hostPort = await resolveHostPort(runtime, registry, route);
+  if (hostPort === null) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   const forwarded = new Headers(request.headers);
@@ -387,7 +533,7 @@ async function proxyService(
   forwarded.delete(SERVICE_KEY_HEADER);
   forwarded.delete(SERVICE_TOKEN_HEADER_NAME);
   forwarded.delete("host");
-  const guestCookies = withoutLinkCookie(forwarded.get("cookie"));
+  const guestCookies = withoutHostdCookies(forwarded.get("cookie"));
   if (guestCookies) forwarded.set("cookie", guestCookies);
   else forwarded.delete("cookie");
   let upstream: Response;
@@ -413,9 +559,6 @@ async function proxyService(
   // longer describe what is sent on.
   responseHeaders.delete("content-encoding");
   responseHeaders.delete("content-length");
-  // Opening a link hands its root-relative URLs to this service.
-  const setCookie = link && !cookie && linkCookie(request, link);
-  if (setCookie) responseHeaders.append("set-cookie", setCookie);
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

@@ -5,11 +5,17 @@
  * routes to it by name, forwarding HTTP and WebSocket upgrades (see
  * `js/amika-hostd/src/internal/services.ts`), on two routes:
  *
+ * - `/v0beta1/rigs/<machine>/previews/<name>/...`, a preview
+ *   (`../browser-login.ts`): an address with no credential in it, which a
+ *   browser opens after logging in to the host through Amika. Every service
+ *   gets one when the host can log browsers in: its hostd lists
+ *   `browser-login` in `GET /health`, and its URL is an https origin of its
+ *   own (`isBrowserLoginOrigin`).
  * - `/v0beta1/rigs/<machine>/service-links/<name>/<expiry>.<signature>/...`,
- *   a signed service link (`../service-links.ts`). This is the URL every
- *   service gets, so a browser, curl or webhook can open it with no header.
- *   The control plane mints a new one once `signedUrlTtlSeconds` has
- *   passed, and each link outlives that by a day.
+ *   a signed service link (`../service-links.ts`), on every other host, so a
+ *   browser, curl or webhook can open it with no header. The control plane
+ *   mints a new one once `signedUrlTtlSeconds` has passed, and each link
+ *   outlives that by a day.
  * - `/v0beta1/rigs/<machine>/services/<name>/...`, which needs the host's
  *   secret key in `X-Amika-Hostd-Key` (`HOSTD_SERVICE_KEY_HEADER`). amikad
  *   keeps this URL: the control plane derives its SSH, status and terminal
@@ -23,6 +29,11 @@ import {
 import type { SandboxService } from "../../../types";
 import { machinePath, type SmolClient } from "../../smol/provider";
 import { serviceLinkPath, signServiceLink } from "../service-links";
+import {
+  BROWSER_LOGIN_FEATURE,
+  isBrowserLoginOrigin,
+  previewPath,
+} from "../browser-login";
 
 /**
  * The versioned hostd API this provider speaks. hostd lists the versions it
@@ -63,8 +74,23 @@ export function hostdServices(
   apiUrl: string,
   secretKey: string,
   client: SmolClient,
+  /** hostd's `GET /health` features; rejects when the host cannot say. */
+  features: () => Promise<readonly string[]>,
 ) {
   const origin = apiUrl.replace(/\/$/, "");
+  /**
+   * Whether this host serves previews. Asked on every refresh, so a host
+   * moves to previews as soon as it is upgraded. A host that cannot say is
+   * treated as one that does not: a signed link always works.
+   */
+  const servesPreviews = async (): Promise<boolean> => {
+    if (!isBrowserLoginOrigin(apiUrl)) return false;
+    try {
+      return (await features()).includes(BROWSER_LOGIN_FEATURE);
+    } catch {
+      return false;
+    }
+  };
   return {
     refreshUrls: async (
       id: string,
@@ -72,6 +98,7 @@ export function hostdServices(
     ): Promise<RefreshUrlsResult> => {
       machinePath(id);
       const routes = hostdServiceRoutes(services);
+      const previews = await servesPreviews();
       const expiresAt =
         Math.floor(Date.now() / 1000) + HOSTD_SERVICE_LINK_LIFETIME_S;
       return {
@@ -82,6 +109,12 @@ export function hostdServices(
               return {
                 ...service,
                 url: `${origin}${HOSTD_RIGS_PATH}/${id}/services/${encodeURIComponent(name)}/`,
+              };
+            }
+            if (previews) {
+              return {
+                ...service,
+                url: `${origin}${previewPath(HOSTD_RIGS_PATH, id, name)}`,
               };
             }
             const token = await signServiceLink(secretKey, {

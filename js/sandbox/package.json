@@ -8,6 +8,7 @@
     "./client": "./src/client.ts",
     "./config-env": "./src/config-from-env.ts",
     "./smol": "./src/providers/smol/provider.ts",
+    "./hostd-browser-login": "./src/providers/amika-hostd/browser-login.ts",
     "./hostd-service-links": "./src/providers/amika-hostd/service-links.ts"
   },
   "scripts": {

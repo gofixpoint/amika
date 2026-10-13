@@ -55,6 +55,7 @@ export function startServer(
       images: config.images,
       configPath: config.configPath,
       requestTimeoutMs: config.smolRequestTimeoutMs,
+      amikaUrl: config.apiUrl,
     },
     runtime,
     { registry, hiddenMachines },
@@ -65,6 +66,8 @@ export function startServer(
     runtime,
     registry,
     tunnels,
+    undefined,
+    { previews: true },
   );
   return new Promise((resolve, reject) => {
     // Only the default `http.Server` is used, never HTTP/2.

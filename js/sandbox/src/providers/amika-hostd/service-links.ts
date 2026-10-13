@@ -37,6 +37,8 @@
  * Only Web Crypto is used, so this runs wherever the provider does.
  */
 
+import { signText, verifyText } from "./internal/signing";
+
 /** The path segment that marks a service-link route. */
 export const SERVICE_LINKS_SEGMENT = "service-links";
 
@@ -64,16 +66,9 @@ export const MAX_SERVICE_TOKEN_TTL_S = 24 * 60 * 60;
  */
 const CLOCK_SKEW_S = 5 * 60;
 
-/** An HMAC-SHA256 digest is 32 bytes: 43 base64url characters, unpadded. */
-const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 /** Unix seconds, at most 12 digits: a millisecond time is refused. */
 const EXPIRY_PATTERN = /^[1-9][0-9]{0,11}$/;
 const MAX_EXPIRY = 10 ** 12 - 1;
-
-const encoder = new TextEncoder();
-
-// The lib config has no DOM types, so `CryptoKey` is named through Web Crypto.
-type LinkKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
 
 /** What a service link grants: one service of one rig, until `expiresAt`. */
 export interface ServiceLinkClaim {
@@ -168,13 +163,7 @@ async function sign(
       "A service link or token's expiry must be a positive Unix time in seconds",
     );
   }
-  const key = await derivedKey(label, secretKey);
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    encoder.encode(signedText(claim)),
-  );
-  return `${claim.expiresAt}.${toBase64Url(new Uint8Array(signature))}`;
+  return `${claim.expiresAt}.${await signText(label, secretKey, signedText(claim))}`;
 }
 
 async function verify(
@@ -185,27 +174,15 @@ async function verify(
 ): Promise<"malformed" | "invalid" | "expired" | null> {
   const dot = token.indexOf(".");
   const expiry = token.slice(0, dot);
-  const encoded = token.slice(dot + 1);
-  if (
-    dot < 0 ||
-    !EXPIRY_PATTERN.test(expiry) ||
-    !SIGNATURE_PATTERN.test(encoded)
-  ) {
-    return "malformed";
-  }
-  const signature = fromBase64Url(encoded);
-  // 43 characters carry 258 bits, so four spellings decode to one digest;
-  // accept only the canonical one.
-  if (toBase64Url(signature) !== encoded) return "malformed";
+  if (dot < 0 || !EXPIRY_PATTERN.test(expiry)) return "malformed";
   const expiresAt = Number(expiry);
-  const key = await derivedKey(label, secretKey);
-  const valid = await crypto.subtle.verify(
-    "HMAC",
-    key,
-    signature,
-    encoder.encode(signedText({ rig, service, expiresAt })),
+  const problem = await verifyText(
+    label,
+    secretKey,
+    signedText({ rig, service, expiresAt }),
+    token.slice(dot + 1),
   );
-  if (!valid) return "invalid";
+  if (problem) return problem;
   return expiresAt > nowS ? null : "expired";
 }
 
@@ -225,64 +202,4 @@ export function serviceLinkPath(
 
 function signedText({ rig, service, expiresAt }: ServiceLinkClaim): string {
   return `v1\n${rig}\n${service}\n${expiresAt}`;
-}
-
-/**
- * Derived keys by label and secret key. hostd verifies every asset request a
- * page makes through a link, so a key is derived once, not per request. A
- * control plane signs for many hosts, so the cache is bounded.
- */
-const derivedKeys = new Map<string, Promise<LinkKey>>();
-const MAX_CACHED_KEYS = 64;
-
-/** HMAC-SHA256(secretKey, label), imported as an HMAC key. */
-function derivedKey(label: string, secretKey: string): Promise<LinkKey> {
-  // A label has no newline, so the pair is unambiguous.
-  const cacheKey = `${label}\n${secretKey}`;
-  let key = derivedKeys.get(cacheKey);
-  if (!key) {
-    if (derivedKeys.size >= MAX_CACHED_KEYS) derivedKeys.clear();
-    key = deriveKey(label, secretKey);
-    derivedKeys.set(cacheKey, key);
-    key.catch(() => derivedKeys.delete(cacheKey));
-  }
-  return key;
-}
-
-async function deriveKey(label: string, secretKey: string): Promise<LinkKey> {
-  const secret = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secretKey),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const derived = await crypto.subtle.sign(
-    "HMAC",
-    secret,
-    encoder.encode(label),
-  );
-  return crypto.subtle.importKey(
-    "raw",
-    derived,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-}
-
-function toBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function fromBase64Url(encoded: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(encoded.replace(/-/g, "+").replace(/_/g, "/"));
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }

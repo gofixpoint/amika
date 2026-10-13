@@ -1,4 +1,5 @@
 /** Sandbox resources backed by an Amika host daemon's versioned rig API. */
+import { z } from "zod";
 import { DEFAULT_HOME_DIR } from "../../constants";
 import type { AmikaHostdConfig } from "./config";
 import { amikaHostdCapabilities } from "./capabilities";
@@ -23,6 +24,12 @@ import {
 // host's secret key in this header; every other service URL is a signed link
 // that needs none. See `./internal/services`.
 export { HOSTD_SERVICE_KEY_HEADER } from "./internal/services";
+
+/** What `GET /health` says of the features a host serves. */
+const healthSchema = z.object({
+  features: z.array(z.string()).optional().default([]),
+});
+const HEALTH_TIMEOUT_MS = 5_000;
 
 interface AmikaHostdDeps {
   config: AmikaHostdConfig;
@@ -59,6 +66,13 @@ const createProvider = defineProvider(
       smolConfig,
       withSecretKey(secretKey, fetcher),
       HOSTD_RIGS_PATH,
+    );
+    // hostd's own `/health`, outside the rig API, with a short deadline: it
+    // only decides which URLs services get.
+    const health = new SmolClient(
+      { ...smolConfig, requestTimeoutMs: HEALTH_TIMEOUT_MS },
+      withSecretKey(secretKey, fetcher),
+      "",
     );
     const ops = smolOperations(smolConfig, client, {
       provider: "amika-hostd",
@@ -97,7 +111,12 @@ const createProvider = defineProvider(
       exec: { stdin: true, run: ops.run },
       files: { read: ops.read, write: ops.write },
       listing: { list: ops.list },
-      services: hostdServices(smolConfig.apiUrl, secretKey, client),
+      services: hostdServices(
+        smolConfig.apiUrl,
+        secretKey,
+        client,
+        async () => (await health.json("/health", healthSchema)).features,
+      ),
     };
   },
 );

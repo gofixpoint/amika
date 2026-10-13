@@ -13,6 +13,7 @@ import {
   signServiceLink,
   signServiceToken,
 } from "@amika/sandbox/hostd-service-links";
+import { signSession } from "@amika/sandbox/hostd-browser-login";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryServiceRegistry } from "./service-registry.js";
 import {
@@ -261,6 +262,7 @@ describe("createUpgradeHandler", () => {
     {
       services = { amikad: 60999 } as Record<string, number>,
       state = "running",
+      previews = false,
     } = {},
   ) {
     // As the real runtime does: a host port only for a running machine's
@@ -273,7 +275,14 @@ describe("createUpgradeHandler", () => {
     const server = createHttpServer();
     server.on(
       "upgrade",
-      createUpgradeHandler(SECRET, runtime, registry(services), tunnels),
+      createUpgradeHandler(
+        SECRET,
+        runtime,
+        registry(services),
+        tunnels,
+        undefined,
+        { previews },
+      ),
     );
     return { port: await listen(server), tunnels };
   }
@@ -507,6 +516,74 @@ describe("createUpgradeHandler", () => {
         expect(target.handshake()).toBe("");
       },
     );
+  });
+
+  describe("through a preview", () => {
+    // `open` reaches hostd as `hostd.example`.
+    const session = async (origin = "https://hostd.example") =>
+      `__Host-amika-session=${await signSession(SECRET, { origin, user: "u" })}`;
+
+    it("tunnels it with a session, without hostd's cookies", async () => {
+      const target = await guest();
+      const { port } = await hostd(target.port, {
+        services: { web: 5173 },
+        previews: true,
+      });
+      const socket = await open(port, "/v0beta1/rigs/demo/previews/web/hmr", {
+        key: "",
+        cookie: `${await session()}; theme=dark`,
+      });
+      expect(await read(socket)).toBe(
+        "HTTP/1.1 101 Switching Protocols\r\n\r\n",
+      );
+      expect(target.handshake()).toMatch(/^GET \/hmr HTTP\/1\.1\r\n/);
+      expect(target.handshake()).toMatch(/\r\nCookie: theme=dark\r\n/);
+      expect(target.handshake()).not.toMatch(/__Host-amika/);
+    });
+
+    it("tunnels a root-relative upgrade to the page's preview", async () => {
+      const target = await guest();
+      const { port } = await hostd(target.port, {
+        services: { web: 5173 },
+        previews: true,
+      });
+      const socket = await open(port, "/?token=hmr", {
+        key: "",
+        cookie: `${await session()}; __Host-amika-preview=demo/web`,
+      });
+      expect(await read(socket)).toBe(
+        "HTTP/1.1 101 Switching Protocols\r\n\r\n",
+      );
+      expect(target.handshake()).toMatch(/^GET \/\?token=hmr HTTP\/1\.1\r\n/);
+    });
+
+    it.each([
+      ["no session", async () => ""],
+      ["another origin's session", () => session("https://other.example")],
+    ])("refuses %s without reaching the guest", async (_label, cookie) => {
+      const target = await guest();
+      const { port } = await hostd(target.port, {
+        services: { web: 5173 },
+        previews: true,
+      });
+      const socket = await open(port, "/v0beta1/rigs/demo/previews/web/hmr", {
+        key: "",
+        cookie: await cookie(),
+      });
+      expect(await read(socket)).toMatch(/^HTTP\/1\.1 401 /);
+      expect(target.handshake()).toBe("");
+    });
+
+    it("serves no previews where hostd serves none", async () => {
+      const target = await guest();
+      const { port } = await hostd(target.port, { services: { web: 5173 } });
+      const socket = await open(port, "/v0beta1/rigs/demo/previews/web/hmr", {
+        key: "",
+        cookie: await session(),
+      });
+      expect(await read(socket)).toMatch(/^HTTP\/1\.1 (401|404) /);
+      expect(target.handshake()).toBe("");
+    });
   });
 
   describe("through the link cookie", () => {

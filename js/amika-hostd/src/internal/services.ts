@@ -42,11 +42,16 @@ import {
 } from "@amika/sandbox/hostd-service-links";
 import { secretMatches } from "./auth.js";
 import {
-  LINK_COOKIE,
   isHostdPath,
   linkFromCookie,
-  withoutLinkCookie,
+  mayHoldHostdCookie,
+  withoutHostdCookies,
 } from "./link-cookie.js";
+import {
+  hasSession,
+  parsePreviewPath,
+  previewFromCookie,
+} from "./browser-login.js";
 import type { ServiceRegistry } from "./service-registry.js";
 import type { MachineRuntime } from "./machine-runtime.js";
 
@@ -72,6 +77,8 @@ export function createUpgradeHandler(
   registry: ServiceRegistry,
   tunnels = new Set<Duplex>(),
   dial: (port: number) => Socket = (port) => connect(port, "127.0.0.1"),
+  /** Whether hostd serves previews (`./browser-login.ts`). */
+  { previews = false }: { previews?: boolean } = {},
 ) {
   return (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
     // Tracked from the start, not once connected, so a shutdown that begins
@@ -87,7 +94,14 @@ export function createUpgradeHandler(
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
-    const url = new URL(request.url ?? "/", "http://hostd");
+    const url = upgradeUrl(request);
+    const preview = previews && previewRoute(request, url);
+    if (preview) {
+      if (!(await hasSession(request.headers.cookie, url, secretKey))) {
+        return refuse(socket, 401);
+      }
+      return tunnel(request, socket, head, url, preview);
+    }
     // A root-relative upgrade (a dev server's hot-reload socket) goes where
     // the link cookie says, as its HTTP requests do.
     const cookie = isHostdPath(url.pathname)
@@ -127,6 +141,50 @@ export function createUpgradeHandler(
     ) {
       return refuse(socket, 404);
     }
+    return tunnel(request, socket, head, url, route);
+  }
+
+  /**
+   * The upgrade's URL on its `Host`, as a preview's session is for the
+   * origin it was reached at. A `Host` no URL can hold reaches no session.
+   */
+  function upgradeUrl(request: IncomingMessage): URL {
+    try {
+      return new URL(request.url ?? "/", `http://${request.headers.host}`);
+    } catch {
+      return new URL(request.url ?? "/", "http://hostd");
+    }
+  }
+
+  /** The preview an upgrade is for: its route, or its page's cookie. */
+  function previewRoute(
+    request: IncomingMessage,
+    url: URL,
+  ): ServiceRoute | null {
+    const route = parsePreviewPath(url.pathname);
+    if (route) return route;
+    if (isHostdPath(url.pathname)) return null;
+    // A link cookie wins, as it does for HTTP requests.
+    if (
+      linkFromCookie(request.headers.cookie, request.headers["sec-fetch-site"])
+    ) {
+      return null;
+    }
+    const cookie = previewFromCookie(
+      request.headers.cookie,
+      request.headers["sec-fetch-site"],
+    );
+    return cookie && { ...cookie, path: url.pathname };
+  }
+
+  /** Pipe an authorized upgrade to `route`'s guest port. */
+  async function tunnel(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    url: URL,
+    route: ServiceRoute,
+  ): Promise<void> {
     const hostPort = await resolveHostPort(runtime, registry, route);
     if (hostPort === null) return refuse(socket, 404);
     if (socket.destroyed) return;
@@ -200,8 +258,8 @@ function requestHead(request: IncomingMessage, path: string): string {
     ) {
       continue;
     }
-    if (lower === "cookie" && request.rawHeaders[i + 1].includes(LINK_COOKIE)) {
-      const kept = withoutLinkCookie(request.rawHeaders[i + 1]);
+    if (lower === "cookie" && mayHoldHostdCookie(request.rawHeaders[i + 1])) {
+      const kept = withoutHostdCookies(request.rawHeaders[i + 1]);
       if (kept) lines.push(`${name}: ${kept}`);
       continue;
     }
