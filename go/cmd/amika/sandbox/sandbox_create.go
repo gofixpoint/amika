@@ -174,11 +174,9 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Ide
 		NewBranchName:    newBranch,
 		GithubAuthMode:   githubAuthMode,
 	}
-	// Only set Snapshot when a slug was given; an unset flag leaves the field
-	// nil so the server applies its default snapshot chain.
-	if snapshot != "" {
-		req.Snapshot = &snapshot
-	}
+	// An empty slug is the zero selection, which omits the field so the
+	// server applies its default snapshot chain.
+	req.Snapshot = apiclient.SnapshotSlug(snapshot)
 
 	format, err := output.FormatFrom(cmd)
 	if err != nil {

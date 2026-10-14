@@ -63,13 +63,11 @@ type CreateSandboxRequest struct {
 	// names one of that host's own sizes, and the API refuses Provider,
 	// Snapshot, and the lifecycle timers.
 	HostID string `json:"host_id,omitempty"`
-	// Snapshot forks the new sandbox from a captured snapshot slug (remote
-	// only). nil omits the field so the server applies its default snapshot
-	// chain (repo default, else preset/size); a non-nil value boots from that
-	// snapshot. The server also accepts an explicit JSON null to opt out of the
-	// repo-level default, but a *string with omitempty cannot encode that (nil
-	// omits rather than nulls), so the opt-out is not reachable from here.
-	Snapshot *string `json:"snapshot,omitempty"`
+	// Snapshot picks what the rig boots from: omitted (the zero value) applies
+	// the default snapshot chain, NoSnapshot sends null to skip the repository
+	// and organization default snapshots, and SnapshotSlug forks a captured
+	// snapshot. The API refuses a slug alongside Preset.
+	Snapshot SnapshotSelection `json:"snapshot,omitzero"`
 }
 
 // AgentCredentialRef selects which credential of a given kind the server
