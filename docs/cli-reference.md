@@ -95,7 +95,8 @@ amika sandbox create --name dev-sandbox --git https://github.com/octocat/Hello-W
 # Skip git auto-detection and create a bare sandbox
 amika sandbox create --name dev-sandbox --no-git
 
-# Use the Docker-in-Docker preset
+# Use the Docker-in-Docker preset (boots its base image, skipping the
+# repository's default snapshot)
 amika sandbox create --name docker-box --preset coder-plus-docker
 
 # Pick a size
@@ -126,32 +127,37 @@ amika sandbox create --name dev-sandbox \
 # Fork from a captured snapshot
 amika sandbox create --name dev-sandbox --snapshot amika-mono-base
 
+# Boot the preset's base image without the repository's default snapshot,
+# e.g. to build a fresh one to capture
+amika sandbox create --name base --preset coder-plus-docker --no-setup
+
 # Run it on one of your organization's own hosts, at one of that host's sizes
 amika sandbox create --name dev-sandbox --host alpha.lan --size small
 ```
 
 #### Flags
 
-| Flag                    | Default              | Description                                                                                                                          |
-| ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--name <name>`         | auto-generated       | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`)                                    |
-| `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `coder-plus-docker`. See [presets.md](presets.md)                                          |
-| `--size <size>`         | `m`                  | Sandbox size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m` |
-| `--host <hostname\|id>` |                      | Run the rig on one of your organization's own hosts rather than on Amika Cloud. See [`amika host`](#amika-host). Cannot be combined with `--snapshot`. The create fails if the control plane did not put the rig on that host |
-| `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory |
-| `--no-git`              | `false`              | Skip git auto-detection; create a sandbox without mounting any repo                                                                  |
-| `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                                 |
-| `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                                              |
-| `--setup-script <path>` |                      | Upload a local script to run as `/usr/local/etc/amikad/setup/setup.sh`. See [sandbox-configuration.md](sandbox-configuration.md)     |
-| `--no-setup`            | `false`              | Skip the setup script (uses a no-op script instead)                                                                                  |
-| `--branch <name>`       |                      | Check out this branch, or create it if it doesn't exist. Requires a git repo (auto-detected or via `--git`)                          |
-| `--new-branch <name>`  |                      | Create a new branch (errors if it already exists). Starts from `--branch` if set, otherwise from the base branch. Requires a git repo (auto-detected or via `--git`)  |
-| `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. See [secrets.md](secrets.md)                        |
-| `--snapshot <slug>`     |                      | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`)                                            |
-| `--github-auth-mode <mode>` |                  | GitHub auth mode for the sandbox runtime: `pat`, `app_token`, or `app-token`. Unset uses the server default                          |
-| `--agent-credential <KIND=NAME>` |             | Pin an agent credential by name (e.g. `claude=personal-oauth`). Repeatable per kind                                                  |
-| `--agent-credential-type <KIND=TYPE>` |        | Pin an agent credential by type (`oauth` or `api-key`). Repeatable per kind                                                          |
-| `--no-agent-credential <KIND>` |               | Skip injecting any credential of this kind (e.g. `--no-agent-credential codex`). Repeatable                                          |
+| Flag                                  | Default        | Description                                                                                                                                                                                                                   |
+| ------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--name <name>`                       | auto-generated | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`)                                                                                                                             |
+| `--preset <name>`                     |                | Boot this preset's base image, e.g. `coder` or `coder-plus-docker`, skipping the repository and organization default snapshots. Cannot be combined with `--snapshot`. See [presets.md](presets.md)                            |
+| `--size <size>`                       | `m`            | Sandbox size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m`                   |
+| `--host <hostname\|id>`               |                | Run the rig on one of your organization's own hosts rather than on Amika Cloud. See [`amika host`](#amika-host). Cannot be combined with `--snapshot`. The create fails if the control plane did not put the rig on that host |
+| `--git <path\|url>`                   |                | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory                                                  |
+| `--no-git`                            | `false`        | Skip git auto-detection; create a sandbox without mounting any repo                                                                                                                                                           |
+| `--env <KEY=VALUE>`                   |                | Set environment variable. Repeatable                                                                                                                                                                                          |
+| `--connect`                           | `false`        | Connect to the sandbox shell immediately after creation                                                                                                                                                                       |
+| `--setup-script <path>`               |                | Upload a local script to run as `/usr/local/etc/amikad/setup/setup.sh`. See [sandbox-configuration.md](sandbox-configuration.md)                                                                                              |
+| `--no-setup`                          | `false`        | Skip the setup script (uses a no-op script instead)                                                                                                                                                                           |
+| `--branch <name>`                     |                | Check out this branch, or create it if it doesn't exist. Requires a git repo (auto-detected or via `--git`)                                                                                                                   |
+| `--new-branch <name>`                 |                | Create a new branch (errors if it already exists). Starts from `--branch` if set, otherwise from the base branch. Requires a git repo (auto-detected or via `--git`)                                                          |
+| `--secret <spec>`                     |                | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. See [secrets.md](secrets.md)                                                                                                                 |
+| `--snapshot <slug>`                   |                | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`). Cannot be combined with `--preset` or `--no-snapshot`                                                                              |
+| `--no-snapshot`                       | `false`        | Skip the repository and organization default snapshots and boot the preset's base image instead                                                                                                                               |
+| `--github-auth-mode <mode>`           |                | GitHub auth mode for the sandbox runtime: `pat`, `app_token`, or `app-token`. Unset uses the server default                                                                                                                   |
+| `--agent-credential <KIND=NAME>`      |                | Pin an agent credential by name (e.g. `claude=personal-oauth`). Repeatable per kind                                                                                                                                           |
+| `--agent-credential-type <KIND=TYPE>` |                | Pin an agent credential by type (`oauth` or `api-key`). Repeatable per kind                                                                                                                                                   |
+| `--no-agent-credential <KIND>`        |                | Skip injecting any credential of this kind (e.g. `--no-agent-credential codex`). Repeatable                                                                                                                                   |
 
 ### `amika sandbox list`
 

@@ -125,3 +125,49 @@ func TestSandboxCreateHostFlagFailsEarly(t *testing.T) {
 		})
 	}
 }
+
+// The snapshot flag conflicts are checked before the auth gate too. Driven
+// through the real binary, so this also pins that --no-snapshot is registered:
+// it is read with the error discarded, so a lost registration would silently
+// stop rejecting the pair.
+func TestSandboxCreateSnapshotFlagsFailEarly(t *testing.T) {
+	bin := testutil.BuildAmikaBinary(t)
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "with --no-snapshot",
+			args: []string{"--snapshot", "base", "--no-snapshot", "--no-git"},
+			want: "--snapshot and --no-snapshot are mutually exclusive",
+		},
+		{
+			name: "with --preset",
+			args: []string{"--snapshot", "base", "--preset", "coder", "--no-git"},
+			want: "--preset cannot be combined with --snapshot",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(bin, append([]string{"sandbox", "create", "--remote"}, tt.args...)...)
+			// Scrubbed credentials, as in TestSandboxCreateHostFlagFailsEarly:
+			// with an API key set, RequireAuth passes and the ordering goes
+			// untested.
+			cmd.Env = append(os.Environ(),
+				"AMIKA_API_KEY=",
+				"HOME="+t.TempDir(),
+				"AMIKA_STATE_DIRECTORY="+t.TempDir(),
+			)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected sandbox create to fail, output:\n%s", string(out))
+			}
+			if !strings.Contains(string(out), tt.want) {
+				t.Fatalf("expected %q, got:\n%s", tt.want, string(out))
+			}
+		})
+	}
+}

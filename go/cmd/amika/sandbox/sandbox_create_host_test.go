@@ -342,6 +342,7 @@ func newCreateCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 		c.Flags().StringArray(name, nil, "")
 	}
 	c.Flags().Bool("no-setup", false, "")
+	c.Flags().Bool("no-snapshot", false, "")
 	c.Flags().Bool("connect", false, "")
 	c.Flags().String(output.FlagName, "text", "")
 	var buf bytes.Buffer
