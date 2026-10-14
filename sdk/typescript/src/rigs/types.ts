@@ -90,7 +90,8 @@ export interface CreateRigRequest {
    *   - a slug  -> boot from that snapshot
    *   - `null`  -> skip the repository and organization default snapshots
    *   - omitted -> keep the full default chain (repository default, else
-   *                organization default, else the preset's base image)
+   *                organization default, else the repository's custom
+   *                image, else the preset's base image)
    *
    * `preset` cannot be combined with a slug.
    */

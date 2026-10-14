@@ -8,11 +8,11 @@ import (
 // SnapshotSelection is the value of CreateSandboxRequest.Snapshot, which the
 // API reads three ways:
 //
-//   - absent (the zero value): apply the default snapshot chain, the
-//     repository's default snapshot, else the organization's, else the
-//     preset's base image
-//   - null (NoSnapshot): skip both default snapshots and boot the preset's
-//     base image
+//   - absent (the zero value): apply the default chain, the repository's
+//     default snapshot, else the organization's, else the repository's
+//     custom image, else the preset's base image
+//   - null (NoSnapshot): skip both default snapshots and resolve the rest
+//     of that chain
 //   - a slug (SnapshotSlug): fork that captured snapshot
 //
 // The field must be tagged `omitzero`, since JSON can only express "absent"

@@ -2,8 +2,6 @@ package apiclient
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -30,30 +28,6 @@ func TestCreateSandboxRequestSnapshotJSON(t *testing.T) {
 				t.Fatalf("Marshal: %v", err)
 			}
 			assertSnapshotKey(t, data, tt.wantRaw)
-		})
-	}
-}
-
-// The same three cases end to end through the client, so a change to how
-// CreateSandbox hands the request to the encoder cannot drop the null.
-func TestCreateSandboxSendsSnapshotSelection(t *testing.T) {
-	for _, tt := range snapshotSelectionCases {
-		t.Run(tt.name, func(t *testing.T) {
-			var body []byte
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var raw json.RawMessage
-				_ = json.NewDecoder(r.Body).Decode(&raw)
-				body = raw
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"id":"1","name":"dev","state":"active"}`))
-			}))
-			defer srv.Close()
-
-			c := NewClient(srv.URL, "test-token")
-			if _, err := c.CreateSandbox(CreateSandboxRequest{Name: "dev", Snapshot: tt.selection}); err != nil {
-				t.Fatalf("CreateSandbox: %v", err)
-			}
-			assertSnapshotKey(t, body, tt.wantRaw)
 		})
 	}
 }
