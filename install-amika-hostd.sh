@@ -25,6 +25,9 @@ GLIBC_MIN="2.34"
 SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
 SMOLVM_VERSION="${SMOLVM_VERSION:-}"
 SKIP_SMOLVM=false
+UNINSTALL=false
+PURGE=false
+ASSUME_YES=false
 
 usage() {
   cat <<EOF
@@ -42,6 +45,7 @@ Apple silicon.
 Usage:
   sh install-amika-hostd.sh [--help] [--install-version VERSION] [--dry-run]
                             [--smolvm-version VERSION] [--skip-smolvm]
+  sh install-amika-hostd.sh --uninstall [--purge] [--yes] [--dry-run]
 
 Flags:
   --install-version     Install a specific version (default: ${DEFAULT_VERSION})
@@ -49,6 +53,20 @@ Flags:
   --smolvm-version      Install this smolvm version if smolvm is missing
                         (default: latest)
   --skip-smolvm         Do not install smolvm
+  --uninstall           Remove amika-hostd instead of installing it. Finds
+                        amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
+                        asks you to confirm, stops the daemon, then deletes
+                        the launcher and its files directory (including the
+                        private Node.js). Then asks, separately, whether to
+                        remove the config and state directory, the keychain
+                        secrets, and smolvm. If it finds the wrong install,
+                        answer no and set AMIKA_INSTALL_DIR.
+  --purge               With --uninstall: remove the config, state directory
+                        and keychain secrets without asking. Keeps smolvm.
+  --yes, -y             With --uninstall: answer yes to every question except
+                        smolvm's (needed when there is no terminal)
+
+smolvm is never removed by a flag: only typing "remove smolvm" at its prompt does.
 
 Environment variables:
   AMIKA_INSTALL_DIR          Launcher directory (default: /usr/local/bin)
@@ -73,6 +91,14 @@ EOF
 
 main() {
   parse_args "$@"
+  if [ "$UNINSTALL" = "true" ]; then
+    uninstall_hostd
+    exit 0
+  fi
+  if [ "$PURGE" = "true" ] || [ "$ASSUME_YES" = "true" ]; then
+    echo "Error: --purge and --yes only apply with --uninstall" >&2
+    exit 1
+  fi
   detect_platform
   engine_package
 
@@ -134,6 +160,15 @@ parse_args() {
       --dry-run)
         DRY_RUN=true
         ;;
+      --uninstall)
+        UNINSTALL=true
+        ;;
+      --purge)
+        PURGE=true
+        ;;
+      --yes|-y)
+        ASSUME_YES=true
+        ;;
       *)
         echo "Unknown argument: $arg" >&2
         usage >&2
@@ -142,6 +177,256 @@ parse_args() {
     esac
     shift
   done
+}
+
+# Ask a yes/no question on the terminal (stdin may be the script itself when
+# piped from curl). Defaults to no, and to no without a terminal.
+ask() {
+  { : </dev/tty; } 2>/dev/null || return 1
+  printf '%s [y/N] ' "$1" >/dev/tty
+  read -r reply </dev/tty || reply=""
+  case "$reply" in
+    y|Y|yes|YES|Yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Ask the user to type an exact phrase ($2) to proceed; anything else, or no
+# terminal, declines. For steps that a stray "y" must not trigger.
+ask_typed() {
+  { : </dev/tty; } 2>/dev/null || return 1
+  printf '%s ' "$1" >/dev/tty
+  read -r reply </dev/tty || reply=""
+  [ "$reply" = "$2" ]
+}
+
+# Like ask, but --yes answers yes, and a missing terminal is an error.
+confirm() {
+  if [ "$ASSUME_YES" = "true" ]; then
+    return 0
+  fi
+  if ! { : </dev/tty; } 2>/dev/null; then
+    echo "Error: no terminal to ask: ${1}" >&2
+    echo "Pass --yes to answer yes to every question except smolvm's." >&2
+    exit 1
+  fi
+  ask "$1"
+}
+
+# Print the directory HOSTD_HOME that a launcher points at, read from the
+# `exec <node> <HOSTD_HOME>/amika-hostd.mjs "$@"` line install_hostd wrote.
+# Prints nothing when the launcher is not in that shape.
+launcher_hostd_home() {
+  bundle="$(sed -n "s/^exec '[^']*' '\([^']*\)\/amika-hostd\.mjs' .*/\1/p" "$1" 2>/dev/null | head -n 1)"
+  printf '%s' "$bundle"
+}
+
+# Remove a directory the user owns, reporting it either way.
+remove_dir() {
+  if [ -d "$1" ]; then
+    rm -rf "$1"
+    echo "Removed ${1}"
+  else
+    echo "Nothing at ${1}"
+  fi
+}
+
+# The two secrets `amika-hostd setup` keeps, as account names under service
+# `amika-hostd` (src/internal/credentials.ts).
+SECRET_ACCOUNTS="api-key secret-key"
+
+# Delete the keychain items, tolerating ones that are not there. The file store
+# keeps its API key in CONFIG_DIR/api-key and its secret key in config.toml,
+# so those go with the config directory.
+remove_secrets() {
+  case "$(uname -s)" in
+    Darwin)
+      if command -v security >/dev/null 2>&1; then
+        keychain="$(security login-keychain 2>/dev/null | sed 's/^[[:space:]]*"\(.*\)"$/\1/')"
+        for account in $SECRET_ACCOUNTS; do
+          if security delete-generic-password -s amika-hostd -a "$account" ${keychain:+"$keychain"} >/dev/null 2>&1; then
+            echo "Removed keychain item amika-hostd/${account}"
+          else
+            echo "No keychain item amika-hostd/${account}"
+          fi
+        done
+      fi
+      ;;
+    *)
+      if command -v secret-tool >/dev/null 2>&1; then
+        for account in $SECRET_ACCOUNTS; do
+          if secret-tool clear service amika-hostd account "$account" >/dev/null 2>&1; then
+            echo "Cleared Secret Service item amika-hostd/${account}"
+          else
+            echo "Could not clear Secret Service item amika-hostd/${account}" >&2
+          fi
+        done
+      else
+        echo "secret-tool not found; remove the amika-hostd items from your keyring yourself" >&2
+      fi
+      ;;
+  esac
+  if [ -e "${CONFIG_DIR}/api-key" ]; then
+    rm -f "${CONFIG_DIR}/api-key"
+    echo "Removed ${CONFIG_DIR}/api-key"
+  fi
+}
+
+# The smolvm this installer's smolvm step puts in HOME: ~/.smolvm, with
+# ~/.local/bin/smolvm a link into it. Any other smolvm (Homebrew, a system
+# package) is not ours to remove. Sets SMOLVM_HOME when there is one.
+find_installed_smolvm() {
+  SMOLVM_HOME=""
+  if [ -x "${HOME}/.smolvm/smolvm" ]; then
+    SMOLVM_HOME="${HOME}/.smolvm"
+  fi
+}
+
+remove_smolvm() {
+  link="${HOME}/.local/bin/smolvm"
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "${SMOLVM_HOME}/smolvm" ]; then
+    rm -f "$link"
+    echo "Removed ${link}"
+  fi
+  remove_dir "$SMOLVM_HOME"
+}
+
+# Undo install_hostd: stop the daemon, then delete the launcher and HOSTD_HOME.
+# The launcher is found on PATH (unless AMIKA_INSTALL_DIR names it) and the
+# user confirms it. The config, state directory, keychain secrets, smolvm, and
+# the host's Amika registration are not removed without being asked; the
+# first two are asked about, or removed outright by --purge.
+uninstall_hostd() {
+  config_paths
+  CONFIG_DIR="$(dirname "$CONFIG_PATH")"
+  STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/amika-hostd"
+
+  if [ -n "${AMIKA_INSTALL_DIR:-}" ]; then
+    DEST_PATH="${INSTALL_DIR}/amika-hostd"
+  else
+    DEST_PATH="$(command -v amika-hostd 2>/dev/null || true)"
+    [ -n "$DEST_PATH" ] || DEST_PATH="${INSTALL_DIR}/amika-hostd"
+  fi
+
+  if [ ! -e "$DEST_PATH" ] && [ ! -L "$DEST_PATH" ]; then
+    echo "amika-hostd was not found at ${DEST_PATH}." >&2
+    echo "If it is installed elsewhere, set AMIKA_INSTALL_DIR to its directory" >&2
+    echo "(and AMIKA_HOSTD_HOME if you changed that) and run this again." >&2
+    exit 1
+  fi
+
+  # An explicit AMIKA_HOSTD_HOME wins; otherwise trust what the launcher says,
+  # and fall back to the default location.
+  if [ -z "${AMIKA_HOSTD_HOME:-}" ]; then
+    from_launcher="$(launcher_hostd_home "$DEST_PATH")"
+    [ -z "$from_launcher" ] || HOSTD_HOME="$from_launcher"
+  fi
+
+  # HOSTD_HOME is deleted recursively; refuse values that could be a disaster.
+  case "$HOSTD_HOME" in
+    ""|/|"$HOME"|"$HOME"/)
+      echo "Error: refusing to remove unsafe amika-hostd home: '${HOSTD_HOME}'" >&2
+      exit 1
+      ;;
+  esac
+
+  find_installed_smolvm
+
+  echo "Found amika-hostd:"
+  echo "  Launcher: ${DEST_PATH}"
+  echo "  Files:    ${HOSTD_HOME}"
+
+  if [ "$DRY_RUN" = "true" ]; then
+    echo ""
+    echo "Dry run — no changes will be made."
+    echo "  Would stop the daemon with: ${DEST_PATH} down"
+    echo "  Would remove:               ${DEST_PATH}"
+    echo "  Would remove:               ${HOSTD_HOME}"
+    if [ "$PURGE" = "true" ]; then
+      echo "  Would remove:               ${CONFIG_DIR}"
+      echo "  Would remove:               ${STATE_DIR}"
+      echo "  Would remove:               the amika-hostd keychain secrets"
+    else
+      echo "  Would ask about:            ${CONFIG_DIR} and ${STATE_DIR}"
+      echo "  Would ask about:            the amika-hostd keychain secrets"
+    fi
+    if [ -n "$SMOLVM_HOME" ] && [ "$PURGE" != "true" ]; then
+      echo "  Would ask about:            ${SMOLVM_HOME} (smolvm; never removed by a flag)"
+    fi
+    uninstall_notes
+    return 0
+  fi
+
+  if ! confirm "Uninstall this amika-hostd?"; then
+    echo "Not uninstalling. If that is the wrong install, set AMIKA_INSTALL_DIR" >&2
+    echo "to the directory holding the right launcher (and AMIKA_HOSTD_HOME if" >&2
+    echo "you changed that) and run this again." >&2
+    exit 1
+  fi
+
+  # Decide about the config and state up front so nothing is half-done if the
+  # user walks away from a later question.
+  remove_user_data=false
+  remove_secrets_too=false
+  remove_smolvm_too=false
+  if [ "$PURGE" = "true" ]; then
+    remove_user_data=true
+    remove_secrets_too=true
+  else
+    if confirm "Also remove the config (${CONFIG_DIR}) and state directory (${STATE_DIR})?"; then
+      remove_user_data=true
+    fi
+    if confirm "Also remove the amika-hostd secrets (API key, secret key) from your keychain?"; then
+      remove_secrets_too=true
+    fi
+    # smolvm is only ever removed by typing the phrase at a terminal: neither
+    # --yes nor --purge answers for the user, and without a terminal it stays.
+    if [ -n "$SMOLVM_HOME" ] &&
+      ask_typed "smolvm (${SMOLVM_HOME}) may hold VMs and data other tools use. Type 'remove smolvm' to remove it, or press Enter to keep it:" "remove smolvm"; then
+      remove_smolvm_too=true
+    fi
+  fi
+
+  echo "Stopping amika-hostd..."
+  "$DEST_PATH" down || echo "Warning: 'amika-hostd down' failed; stop the daemon yourself if it is running" >&2
+
+  if [ -w "$(dirname "$DEST_PATH")" ]; then
+    rm -f "$DEST_PATH"
+  else
+    echo "Removing ${DEST_PATH} (requires sudo)..."
+    sudo rm -f "$DEST_PATH"
+  fi
+  echo "Removed ${DEST_PATH}"
+
+  remove_dir "$HOSTD_HOME"
+  if [ "$remove_secrets_too" = "true" ]; then
+    remove_secrets
+  fi
+  if [ "$remove_user_data" = "true" ]; then
+    remove_dir "$CONFIG_DIR"
+    remove_dir "$STATE_DIR"
+  fi
+  if [ "$remove_smolvm_too" = "true" ]; then
+    remove_smolvm
+  fi
+
+  echo ""
+  echo "amika-hostd uninstalled."
+  uninstall_notes
+}
+
+# What an uninstall never removes.
+uninstall_notes() {
+  echo ""
+  echo "Not removed; delete them yourself if you want them gone:"
+  [ ! -e "$SYSTEM_CONFIG_PATH" ] || echo "  System config: ${SYSTEM_CONFIG_PATH}"
+  if [ "${remove_secrets_too:-false}" != "true" ]; then
+    echo "  Secrets:  the amika-hostd entries in your OS keychain"
+  fi
+  if [ "${remove_smolvm_too:-false}" != "true" ]; then
+    echo "  smolvm:   possibly used by other tools (${SMOLVM_HOME:-not found under ~/.smolvm})"
+  fi
+  echo "  Amika:    run 'amika host delete <host>' to drop the host's registration"
 }
 
 detect_platform() {
