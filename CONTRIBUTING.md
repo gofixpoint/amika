@@ -7,7 +7,7 @@ In some cases, we accept code contributions from users. Please reach out on [Dis
 
 ## Prerequisites
 
-- Go 1.25 or later
+- Go 1.26 or later
 - Docker (required by `amika-server`, which exposes the Docker-backed sandbox API)
 - macOS (the only supported platform currently)
 - rsync (usually pre-installed on macOS)
