@@ -51,13 +51,36 @@ lowercased (\`hostname\`).
 Setup needs the operator's Amika API key the first time, and stores it. If
 \`AMIKA_API_KEY\` or \`AMIKA_HOSTD_API_KEY\` is already set in your
 environment, setup and \`up\` use it and nothing needs passing, but it is
-not stored, so keep it set for \`up\` and \`register-url\`. Otherwise ask the
-operator to save the key in a file only they can read, and pipe it in (the
-operator deletes the file afterwards). An operator without a key creates one
-in the Amika web app, at \`/settings/api-keys\` on the \`api_url\` this host
-uses (https://app.amika.dev/settings/api-keys by default); no CLI can:
+not stored, so keep it set for \`up\` and \`register-url\`. Otherwise the
+operator hands you the key through a file you never read:
 
-    amika-hostd setup --non-interactive --hostname <name> < /path/to/key-file
+1. Make a private directory with \`mktemp -d\`. It gets a new random name
+   that only the operator can enter, so no one else can create it first or
+   read what goes in it. It prints the directory's path, which is not
+   secret: note it, and use it literally as \`<dir>\` below, since a shell
+   variable may not survive between your commands. Then make the key file,
+   empty and readable only by the operator:
+
+       mktemp -d
+       install -m 600 /dev/null <dir>/api-key
+
+2. Ask the operator to create an API key in the Amika web app, at
+   \`/settings/api-keys\` on the \`api_url\` this host uses
+   (https://app.amika.dev/settings/api-keys by default), open
+   \`<dir>/api-key\` in an editor (give them the full path), paste the key
+   into it, save, and tell you when they are done.
+
+3. Check the file has something in it without reading it
+   (\`test -s <dir>/api-key\`), then pipe it straight into setup:
+
+       amika-hostd setup --non-interactive --hostname <name> < <dir>/api-key
+
+4. Delete the directory once setup succeeds, or when you stop trying:
+
+       rm -rf <dir>
+
+Never \`cat\`, open, copy, or otherwise read that file yourself; only
+redirect it into \`amika-hostd setup\`.
 
 Once a key is stored, setup keeps it: only the operator can replace it, by
 running \`amika-hostd setup\` in a terminal.
