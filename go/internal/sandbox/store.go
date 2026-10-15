@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 // MountBinding represents a host directory mounted into a sandbox.
@@ -113,51 +112,51 @@ func (s *fileStore) readAll() ([]Info, error) {
 }
 
 func (s *fileStore) writeAll(sandboxes []Info) error {
-	if err := os.MkdirAll(filepath.Dir(s.filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create storage directory: %w", err)
-	}
-
-	f, err := os.Create(s.filePath)
+	lines, err := marshalJSONL(sandboxes, "sandbox info")
 	if err != nil {
-		return fmt.Errorf("failed to create sandboxes file: %w", err)
+		return err
 	}
-	defer f.Close()
-
-	for _, info := range sandboxes {
-		data, err := json.Marshal(info)
-		if err != nil {
-			return fmt.Errorf("failed to marshal sandbox info: %w", err)
-		}
-		if _, err := f.Write(data); err != nil {
-			return fmt.Errorf("failed to write sandbox info: %w", err)
-		}
-		if _, err := f.WriteString("\n"); err != nil {
-			return fmt.Errorf("failed to write newline: %w", err)
-		}
-	}
-	return nil
+	return writeJSONLAtomic(s.filePath, lines)
 }
 
-func (s *fileStore) Save(info Info) error {
+// update runs fn over the current entries while holding the store's advisory
+// lock and atomically writes the result back. Holding the lock across the
+// whole read-modify-write cycle prevents concurrent processes (separate CLI
+// runs, amika-server) from silently dropping each other's changes through
+// last-writer-wins. A false changed skips the write, leaving the file (and
+// its mtime) untouched.
+func (s *fileStore) update(fn func(sandboxes []Info) ([]Info, bool, error)) error {
+	lock, err := lockStore(s.filePath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
 	sandboxes, err := s.readAll()
 	if err != nil {
 		return err
 	}
+	updated, changed, err := fn(sandboxes)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return s.writeAll(updated)
+}
 
-	// Replace existing sandbox with same name, or append
-	found := false
-	for i, sb := range sandboxes {
-		if sb.Name == info.Name {
-			sandboxes[i] = info
-			found = true
-			break
+func (s *fileStore) Save(info Info) error {
+	return s.update(func(sandboxes []Info) ([]Info, bool, error) {
+		// Replace existing sandbox with same name, or append
+		for i, sb := range sandboxes {
+			if sb.Name == info.Name {
+				sandboxes[i] = info
+				return sandboxes, true, nil
+			}
 		}
-	}
-	if !found {
-		sandboxes = append(sandboxes, info)
-	}
-
-	return s.writeAll(sandboxes)
+		return append(sandboxes, info), true, nil
+	})
 }
 
 func (s *fileStore) Get(name string) (Info, error) {
@@ -175,23 +174,19 @@ func (s *fileStore) Get(name string) (Info, error) {
 }
 
 func (s *fileStore) Remove(name string) error {
-	sandboxes, err := s.readAll()
-	if err != nil {
-		return err
-	}
-
-	var filtered []Info
-	for _, sb := range sandboxes {
-		if sb.Name != name {
-			filtered = append(filtered, sb)
+	return s.update(func(sandboxes []Info) ([]Info, bool, error) {
+		var filtered []Info
+		for _, sb := range sandboxes {
+			if sb.Name != name {
+				filtered = append(filtered, sb)
+			}
 		}
-	}
 
-	if len(filtered) == len(sandboxes) {
-		return nil
-	}
-
-	return s.writeAll(filtered)
+		if len(filtered) == len(sandboxes) {
+			return sandboxes, false, nil
+		}
+		return filtered, true, nil
+	})
 }
 
 func (s *fileStore) List() ([]Info, error) {
