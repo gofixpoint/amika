@@ -37,7 +37,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, and `auth logout`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, `auth logout`, and `auth api-key create`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika send`
 
@@ -571,6 +571,57 @@ Log out of Amika and remove the saved session.
 ```bash
 amika auth logout
 ```
+
+### `amika auth api-key create`
+
+Create an Amika API key and write it to a file. An API key lets a machine or a
+script authenticate without a browser login, for example a CI job, another
+machine's `amika` CLI, or an `amika-hostd` host daemon. The API shows a key's
+value only once, so this command writes it to the file named by `--out` and
+never includes it in its own output or in `-o json`.
+
+```bash
+# Create an organization key for a host daemon, hand it to setup, remove the file
+dir=$(mktemp -d)
+amika auth api-key create --name build-01-hostd --out "$dir/api-key"
+amika-hostd setup --non-interactive --hostname build-01 < "$dir/api-key"
+rm -rf "$dir"
+
+# Create a key owned by you and log another machine's CLI in with it
+amika auth api-key create --name laptop --scope user --out ./amika-key
+amika auth login --api-key-file ./amika-key
+```
+
+The file holds the bare key followed by a newline, so it works as is with
+`amika auth login --api-key-file` and `amika-hostd setup --non-interactive`. A
+new file is created with mode `0600`. The command opens `--out` before it asks
+the API for a key, so a path it cannot write is refused without minting a key.
+If the key is created but the write still fails, the error names the key's id
+so you can delete it in the web app's settings page; the value itself is lost.
+
+```
+Created API key "build-01-hostd" (key_01J..., scope organization, sk_...a1b2) and wrote it to /tmp/tmp.k3J9xQ/api-key
+```
+
+With `-o json`, the output is the API's `ApiKeySummary` schema (the create
+response without its `value`), in the API's camelCase spelling:
+
+```json
+{"id":"key_01J...","name":"build-01-hostd","scope":"organization","obfuscatedValue":"sk_...a1b2","lastUsedAt":null,"createdAt":"2026-10-12T00:00:00.000Z","updatedAt":"2026-10-12T00:00:00.000Z"}
+```
+
+| Flag              | Default        | Description                                                                  |
+| ----------------- | -------------- | ---------------------------------------------------------------------------- |
+| `--name <name>`   |                | Name for the key, shown in the web app's settings. Required                  |
+| `--out <file>`    |                | File to write the key to. Required                                           |
+| `--scope <scope>` | `organization` | `organization` (owned by your organization) or `user` (owned by you)         |
+| `--force`, `-f`   | `false`        | Replace `--out` if it already exists                                         |
+
+A user-scoped key acts as you, and an organization-scoped API key has no user
+behind it, so it cannot create one.
+
+Requires `amika auth login` or `AMIKA_API_KEY`. When `--scope` is omitted, the
+request leaves the field out and the API applies its default, `organization`.
 
 ### `amika auth extract`
 

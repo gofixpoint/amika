@@ -85,6 +85,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - `sandbox.go` — `sandbox create|list|connect|delete` commands
 - `host.go` — `host list|get|delete` commands over the org's own hosts (BYOC); hosts are registered by `amika-hostd`, not here
 - `auth.go` — `auth login|logout|status` commands
+- `auth_api_key.go` — `auth api-key create`, which mints an API key and writes its value only to the `--out` file (never the CLI's own output, errors, or `-o json`)
 
 ### HTTP Server (`go/cmd/amika-server/`)
 - `main.go` — Entry point for the HTTP server (listens on `:8080` by default)
