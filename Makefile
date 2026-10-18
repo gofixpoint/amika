@@ -1,10 +1,12 @@
-.PHONY: goenv build build-cli build-server build-amikad build-amikalog build-akfs build-amikalyze clean test test-unit test-integration test-contract test-e2e test-e2e-api sweep-e2e test-expensive test-all test-sandbox-image coverage vet fmt fmtcheck lint shellcheck ci setup
+.PHONY: goenv build build-cli build-server build-amikad build-amikalog build-akfs build-amikalyze clean test test-unit test-integration test-contract test-e2e test-e2e-api sweep-e2e test-expensive test-all test-sandbox-image coverage vet fmt fmtcheck lint shellcheck zizmor ci setup
 
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
 GOFMT_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
 E2E_API_TIMEOUT ?= 45m
 E2E_SANDBOX_PROVIDER ?= daytona
+# Keep in sync with the version in .github/workflows/zizmor.yml.
+ZIZMOR_VERSION = 1.25.2
 
 export GOCACHE := $(CURDIR)/.gocache
 export GOTMPDIR := $(CURDIR)/.gotmp
@@ -115,7 +117,10 @@ lint: goenv
 shellcheck:
 	shellcheck bin/* sandbox-image/build.sh sandbox-image/steps/*.sh sandbox-image/assets/hooks/*.sh sandbox-image/assets/stable/welcome.sh sandbox-image/verify/run.sh sandbox-image/verify/checks/*.sh sandbox-image/verify/lib/check.sh scripts/test/*.sh install.sh install-amika-hostd.sh setup-repo.sh materialization-scripts/*.sh
 
-ci: test-sandbox-image shellcheck fmtcheck vet lint build test-unit test-integration test-contract coverage
+zizmor:
+	uvx zizmor@$(ZIZMOR_VERSION) .
+
+ci: test-sandbox-image shellcheck zizmor fmtcheck vet lint build test-unit test-integration test-contract coverage
 
 setup:
 	./setup-repo.sh

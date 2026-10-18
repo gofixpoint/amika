@@ -23,7 +23,7 @@ on:
       - "amika-hostd@v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   metadata:
@@ -38,9 +38,10 @@ jobs:
       binary_name: ${{ steps.parse.outputs.binary_name }}
       build_matrix: ${{ steps.parse.outputs.build_matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - id: parse
         env:
@@ -114,12 +115,15 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.25.x"
           cache-dependency-path: go/go.sum
+          cache: false
 
       - name: Build archive
         working-directory: go
@@ -171,7 +175,7 @@ jobs:
 
           tar -C "../dist" -czf "../dist/${archive_base}.tar.gz" "${archive_base}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ needs.metadata.outputs.component }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*.tar.gz
@@ -184,14 +188,17 @@ jobs:
     if: needs.metadata.outputs.component == 'amika-hostd'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      # No `cache:` input, so setup-node does not cache: a release build never
+      # restores dependencies a PR run could have poisoned.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 # zizmor: ignore[cache-poisoning]
         with:
           node-version: 22
-          cache: pnpm
 
       - run: pnpm install --frozen-lockfile
 
@@ -200,7 +207,7 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: js/amika-hostd/scripts/package-release.sh "$VERSION" dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: amika-hostd
           path: dist/*.tar.gz
@@ -214,10 +221,14 @@ jobs:
     # Exactly one of the build jobs runs; the other is skipped.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: release-artifacts
 

@@ -1,0 +1,37 @@
+name: zizmor
+
+# Static analysis of this repo's GitHub Actions workflows and Dependabot config
+# with zizmor (https://docs.zizmor.sh). It fails the check on any finding, so a
+# workflow change that introduces template injection, an unpinned action,
+# over-broad permissions, and the like cannot merge unnoticed. Findings are
+# reported as annotations on the PR diff.
+#
+# Run it locally with `make zizmor`. To suppress a finding that does not
+# apply, add `# zizmor: ignore[<audit>]` on the flagged line with a comment
+# explaining why.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          # Keep in sync with ZIZMOR_VERSION in the Makefile.
+          version: 1.25.2
+          # Annotations and a failing check, rather than SARIF uploaded to the
+          # Security tab, so findings block the PR that introduces them.
+          advanced-security: false
+          annotations: true

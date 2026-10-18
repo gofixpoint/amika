@@ -35,6 +35,7 @@ make test    # go test ./... (run from go/)
 make vet     # go vet ./...  (run from go/)
 make fmt     # check formatting
 make lint    # run revive linter
+make zizmor  # audit GitHub Actions workflows with zizmor (needs uv)
 ```
 
 ## Project Overview
@@ -147,6 +148,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - Linting uses [revive](https://github.com/mgechev/revive) — config in `go/revive.toml`
 - All exported symbols must have doc comments (enforced by the `exported` rule)
 - No external dependencies need to be installed for linting; `make lint` uses `go run`
+- GitHub Actions workflows are audited by [zizmor](https://docs.zizmor.sh) (`make zizmor` locally, `.github/workflows/zizmor.yml` in CI). Pin every `uses:` to a full commit SHA with a trailing `# vX.Y.Z` comment (Dependabot bumps both), declare least-privilege `permissions:`, and check out with `persist-credentials: false` unless a later step pushes. Suppress a finding that does not apply with `# zizmor: ignore[<audit>]` plus a comment saying why
 - Ports 60899–60999 are reserved inside sandbox containers for Amika services. See `docs/sandbox-configuration.md` for the allocation table. Any command or API that accepts a user-specified container port must reject this range by calling `services.ValidatePort` (`go/internal/services`); keep client-side and server-side validation in sync.
 
 ## Documentation Style
