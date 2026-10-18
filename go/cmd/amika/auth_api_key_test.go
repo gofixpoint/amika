@@ -286,6 +286,44 @@ func TestAuthAPIKeyCreateAPIErrorLeavesNoFile(t *testing.T) {
 	}
 }
 
+// With --force, an API error leaves the existing file as it was: it is
+// emptied only once a key has arrived to replace it.
+func TestAuthAPIKeyCreateForceAPIErrorKeepsExistingFile(t *testing.T) {
+	stub := stubAPIKeyAPI(t)
+	stub.status = http.StatusForbidden
+	out := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(out, []byte("old key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", out, "--force")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 403") {
+		t.Fatalf("err = %v, want the API's 403\n%s", err, got)
+	}
+	if data, _ := os.ReadFile(out); string(data) != "old key\n" {
+		t.Fatalf("existing file changed to %q", data)
+	}
+}
+
+// A 2xx answer that holds no key is an error, not a created key, and leaves
+// no file behind.
+func TestAuthAPIKeyCreateResponseWithoutKeyFails(t *testing.T) {
+	stub := stubAPIKeyAPI(t)
+	stub.status = http.StatusOK
+	dir := t.TempDir()
+
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", filepath.Join(dir, "key"))
+	if err == nil || !strings.Contains(err.Error(), "response holds no key") {
+		t.Fatalf("err = %v, want a no-key error\n%s", err, got)
+	}
+	if strings.Contains(got, "Created API key") {
+		t.Fatalf("reported success for a response without a key:\n%s", got)
+	}
+	if entries := dirEntries(t, dir); len(entries) != 0 {
+		t.Fatalf("directory holds %v, want nothing", entries)
+	}
+}
+
 // The help text documents the flags and the file's format, and its example
 // pipes the file into amika-hostd.
 func TestAuthAPIKeyCreateHelp(t *testing.T) {

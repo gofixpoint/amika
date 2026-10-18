@@ -66,5 +66,10 @@ func (c *Client) CreateAPIKey(req CreateAPIKeyRequest) (*CreatedAPIKey, error) {
 	if err := c.doJSON("POST", apiBasePath+"/api-keys", req, &result); err != nil {
 		return nil, fmt.Errorf("remote create API key: %w", err)
 	}
+	// A 2xx without a key (a proxy's empty answer, or a redirect that turned
+	// the POST into a GET of the key listing) is not a created key.
+	if result.ID == "" || result.Value == "" {
+		return nil, fmt.Errorf("remote create API key: response holds no key")
+	}
 	return &result, nil
 }

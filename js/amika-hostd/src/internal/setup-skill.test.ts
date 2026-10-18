@@ -62,6 +62,19 @@ describe("setupSkill", () => {
     expect(skill).toContain("https://app.amika.dev/settings/api-keys");
   });
 
+  it("makes a key only when setup has none", () => {
+    // The probe runs setup with empty input, and the skill quotes the exact
+    // error setup gives when it needs a key.
+    expect(skill).toContain(
+      "    amika-hostd setup --non-interactive --hostname <name> < /dev/null",
+    );
+    const cli = readFileSync(path.join(import.meta.dirname, "cli.ts"), "utf8");
+    const needsKey =
+      "pipe the Amika API key into `amika-hostd setup --non-interactive`";
+    expect(cli).toContain(needsKey);
+    expect(skill.replace(/\s+/g, " ")).toContain(needsKey);
+  });
+
   it("names only variables the config reads", () => {
     for (const name of skill.match(/AMIKA_[A-Z_]+/g) ?? []) {
       expect(Object.values(ENV_NAMES).flat()).toContain(name);

@@ -54,7 +54,17 @@ environment, setup and \`up\` use it and nothing needs passing, but it is
 not stored, so keep it set for \`up\` and \`register-url\`. If setup stored a
 key on an earlier run, it keeps that one, and nothing needs passing either.
 
-Otherwise the key goes in through a file you never read. Make a private
+So first run setup with nothing on its input:
+
+    amika-hostd setup --non-interactive --hostname <name> < /dev/null
+
+If that succeeds, setup has a key; go on to step 3. Only if it fails with
+"pipe the Amika API key into \`amika-hostd setup --non-interactive\`" does it
+need one (it changed nothing). Do not make a key otherwise: setup would
+keep the key it has and ignore the new one, leaving it unused in the
+organization. For any other failure, see the list below.
+
+The key goes in through a file you never read. Make a private
 directory for it with \`mktemp -d\`. It gets a new random name that only the
 operator can enter, so no one else can create it first or read what goes in
 it. It prints the directory's path, which is not secret: note it, and use it

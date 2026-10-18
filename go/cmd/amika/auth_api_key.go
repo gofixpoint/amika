@@ -97,8 +97,8 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer dest.Close()
-	// A failed create leaves no empty file behind; a file that was already
-	// there (with --force) has been truncated either way.
+	// A failed create leaves no empty file behind, and a file that was
+	// already there (with --force) keeps its contents until a key arrives.
 	removeOnFail := func() {
 		if createdFile {
 			os.Remove(outPath)
@@ -119,7 +119,7 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if _, err := dest.WriteString(created.Value.Reveal() + "\n"); err != nil {
+	if err := writeKey(dest, created.Value.Reveal()); err != nil {
 		return fmt.Errorf("created API key %q (%s) but could not write it to %s: %w\n"+
 			"Its value cannot be shown again. Delete the key at %s and run this command again",
 			created.Name, created.ID, outPath, err, settingsURL())
@@ -143,13 +143,29 @@ func settingsURL() string {
 	return strings.TrimRight(config.APIURL(), "/") + "/settings/api-keys"
 }
 
+// writeKey replaces what dest holds with key and a newline, then closes it,
+// so a write the OS only reports at close still fails the command.
+func writeKey(dest *os.File, key string) error {
+	if info, err := dest.Stat(); err == nil && info.Mode().IsRegular() {
+		if err := dest.Truncate(0); err != nil {
+			return err
+		}
+	}
+	if _, err := dest.WriteString(key + "\n"); err != nil {
+		return err
+	}
+	return dest.Close()
+}
+
 // openKeyFile opens path for the key before the key is minted, so a path
 // that cannot be written fails without leaving a key nobody can use. A new
 // file is created with mode 0600; an existing one is refused unless force is
-// set, and a replaced regular file is narrowed to 0600 too. created reports
-// whether this call made the file, so a failed run can remove it.
+// set, and a replaced regular file is narrowed to 0600 too. Nothing is
+// truncated here: writeKey empties the file only once a key has arrived.
+// created reports whether this call made the file, so a failed run can
+// remove it.
 func openKeyFile(path string, force bool) (f *os.File, created bool, err error) {
-	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	flags := os.O_WRONLY | os.O_CREATE
 	if !force {
 		flags |= os.O_EXCL
 	}
