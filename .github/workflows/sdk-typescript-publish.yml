@@ -86,14 +86,14 @@ jobs:
           version: 11.1.3
 
       # No `cache:` input, so setup-node does not cache: a release build never
-      # restores dependencies a PR run could have poisoned. The ignore holds
-      # only for setup-node v4. v5+ can cache automatically from package.json's
-      # `packageManager` field, so on a major bump re-check it, setting
-      # `package-manager-cache: false` if needed.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 # zizmor: ignore[cache-poisoning]
+      # restores dependencies a PR run could have poisoned. v5+ can cache
+      # automatically from package.json's `packageManager` field, so
+      # `package-manager-cache: false` turns that off.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0 # zizmor: ignore[cache-poisoning]
         with:
           # Trusted publishing (OIDC) requires Node >= 22.14.0.
           node-version: "22.14.0"
+          package-manager-cache: false
 
       - name: Upgrade npm for trusted publishing
         # OIDC trusted publishing requires npm CLI >= 11.5.1, newer than the
