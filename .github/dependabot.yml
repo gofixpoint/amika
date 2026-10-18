@@ -9,10 +9,17 @@ updates:
     schedule:
       interval: weekly
     # Wait a week after a release before proposing it, so a compromised or
-    # broken release has time to be noticed and yanked first.
+    # broken release has time to be noticed and yanked first. This applies to
+    # every update, grouped or not.
     cooldown:
       default-days: 7
+    # Minor and patch bumps share one weekly PR. Major bumps stay out of it and
+    # each get their own PR, since they can change behavior and should be
+    # reviewed (and reverted) one at a time.
     groups:
       github-actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch

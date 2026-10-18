@@ -195,7 +195,10 @@ jobs:
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
       # No `cache:` input, so setup-node does not cache: a release build never
-      # restores dependencies a PR run could have poisoned.
+      # restores dependencies a PR run could have poisoned. The ignore holds
+      # only for setup-node v4. v5+ can cache automatically from package.json's
+      # `packageManager` field, so on a major bump re-check it, setting
+      # `package-manager-cache: false` if needed.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 # zizmor: ignore[cache-poisoning]
         with:
           node-version: 22

@@ -61,8 +61,10 @@ on:
         required: false
         type: string
 
+# GITHUB_TOKEN only reads .github/release-branches.json. The tag push uses
+# the release app token, which is scoped separately below.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   create-tag:

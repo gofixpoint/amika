@@ -52,6 +52,7 @@ integration and contract tests.
 | `make test-all`         | `test-unit` + `test-integration` + `test-contract`                                            |
 | `make test-expensive`   | Sets `AMIKA_RUN_DOCKER_INTEGRATION=1` and `AMIKA_RUN_EXPENSIVE_TESTS=1`, then runs `test-all` |
 | `make coverage`         | Runs `scripts/test/check_coverage.sh` against configured thresholds                           |
+| `make zizmor`           | Audits `.github/` workflows with [zizmor](https://docs.zizmor.sh) via `uvx` (needs uv)        |
 | `make ci`               | run all CI targets                                                                            |
 
 ## Command Flow
@@ -75,6 +76,11 @@ Run CI-equivalent checks with:
 ```bash
 make ci
 ```
+
+`make zizmor` (part of `make ci`) runs only zizmor's offline audits unless
+`GH_TOKEN` is set. CI also runs the online audits, which check pinned action
+SHAs against GitHub, so a local pass can still fail in CI. To match CI, run
+`GH_TOKEN=$(gh auth token) make zizmor`.
 
 ## Docker-Backed Integration Tests (Opt-in)
 

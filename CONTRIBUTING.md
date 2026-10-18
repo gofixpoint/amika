@@ -11,6 +11,7 @@ In some cases, we accept code contributions from users. Please reach out on [Dis
 - Docker (required by `amika-server`, which exposes the Docker-backed sandbox API)
 - macOS (the only supported platform currently)
 - rsync (usually pre-installed on macOS)
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`), for `make zizmor`, which `make ci` runs
 
 ## Setup
 
