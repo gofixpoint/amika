@@ -10,6 +10,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/services"
@@ -219,7 +220,7 @@ var serviceListCmd = &cobra.Command{
 	Short:   "List services across sandboxes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		rigName, err := rigself.Flag(cmd, "rig-name")
+		filter, err := serviceListRigFilter(cmd)
 		if err != nil {
 			return err
 		}
@@ -236,15 +237,11 @@ var serviceListCmd = &cobra.Command{
 		}
 
 		var rows []serviceRow
-		if cmd.Flags().Changed("rig-name") && strings.TrimSpace(rigName) == "" {
-			// An explicitly empty --rig-name names no rig, so it matches no
-			// rig. An omitted filter continues to list every rig.
-			rows = nil
-		} else {
-			rows, err = remoteServiceRows(rigName)
-		}
-		if err != nil {
-			return err
+		if filter == nil || filter.Value != "" {
+			rows, err = remoteServiceRows(filter)
+			if err != nil {
+				return err
+			}
 		}
 
 		format, err := output.FormatFrom(cmd)
@@ -279,20 +276,61 @@ var serviceListCmd = &cobra.Command{
 	},
 }
 
-// remoteServiceRows fetches services from the remote API. The list endpoint
-// returns each sandbox's provisioned services (name, port, and generated URL),
-// so no local state is involved.
-func remoteServiceRows(sandboxName string) ([]serviceRow, error) {
+// serviceListRigFilter reads the rig `service list` is limited to, from --rig
+// or from the hidden --rig-name it replaced (a name-only match). It returns nil
+// when neither flag was given, so every rig is listed. An explicitly empty value
+// returns a Ref with an empty Value, which matches no rig: an unset
+// "$AMIKA_RIG_NAME" must not widen the listing to every rig.
+func serviceListRigFilter(cmd *cobra.Command) (*rigref.Ref, error) {
+	rigSet, rigNameSet := cmd.Flags().Changed("rig"), cmd.Flags().Changed("rig-name")
+	switch {
+	case rigSet && rigNameSet:
+		return nil, fmt.Errorf("--rig and --rig-name both name the rig; use --rig")
+	case rigNameSet:
+		name, err := rigself.Flag(cmd, "rig-name")
+		if err != nil {
+			return nil, err
+		}
+		return &rigref.Ref{Kind: rigref.KindName, Value: strings.TrimSpace(name)}, nil
+	case rigSet:
+		raw, _ := cmd.Flags().GetString("rig")
+		if strings.TrimSpace(raw) == "" {
+			return &rigref.Ref{Kind: rigref.KindRef}, nil
+		}
+		ref, err := rigref.Parse(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &ref, nil
+	default:
+		return nil, nil
+	}
+}
+
+// remoteServiceRows fetches services from the remote API, limited to the rig
+// filter names when it is non-nil. The list endpoint returns each sandbox's
+// provisioned services (name, port, and generated URL), so no local state is
+// involved.
+func remoteServiceRows(filter *rigref.Ref) ([]serviceRow, error) {
 	sandboxes, err := runmode.NewRemoteClient().ListSandboxes()
 	if err != nil {
 		return nil, err
 	}
+	if filter != nil {
+		i, err := rigref.Find(*filter, sandboxes,
+			func(sb apiclient.RemoteSandbox) string { return sb.ID },
+			func(sb apiclient.RemoteSandbox) string { return sb.Name })
+		if err != nil {
+			return nil, err
+		}
+		if i < 0 {
+			return nil, nil
+		}
+		sandboxes = sandboxes[i : i+1]
+	}
 
 	var rows []serviceRow
 	for _, sb := range sandboxes {
-		if sandboxName != "" && sb.Name != sandboxName {
-			continue
-		}
 		rows = append(rows, groupRemoteServices(sb.Name, sb.Services)...)
 	}
 	return rows, nil
@@ -369,7 +407,11 @@ func init() {
 	serviceCmd.PersistentFlags().MarkHidden("local")
 	serviceCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	serviceCmd.PersistentFlags().MarkHidden("remote-target")
-	serviceListCmd.Flags().String("rig-name", "", "Filter services to a specific rig")
+	serviceListCmd.Flags().String("rig", "", "Only list this rig's services: a name or id, or name=<name> / id=<id> to match one field")
+	// Superseded by --rig name=<name>; kept, hidden, so existing scripts keep
+	// working.
+	serviceListCmd.Flags().String("rig-name", "", "Only list services on the rig with this name")
+	_ = serviceListCmd.Flags().MarkHidden("rig-name")
 
 	serviceCreateCmd.Flags().String("rig", "", "Rig to create the service on (name or id)")
 	serviceCreateCmd.Flags().String("name", "", "Service name (a single DNS label)")

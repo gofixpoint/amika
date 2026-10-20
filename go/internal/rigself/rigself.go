@@ -1,7 +1,7 @@
 // Package rigself resolves the "_self" rig reference.
 //
 // Code running inside a rig often needs to name that same rig, e.g.
-// `amika service list --rig-name "$AMIKA_RIG_NAME"`. Any CLI field that names
+// `amika service list --rig "$AMIKA_RIG_NAME"`. Any CLI field that names
 // a rig instead accepts the literal "_self", which this package swaps for the
 // current rig's name, read from the environment every rig session carries.
 // AMIKA_RIG_NAME wins over the legacy AMIKA_SANDBOX_NAME; an empty variable

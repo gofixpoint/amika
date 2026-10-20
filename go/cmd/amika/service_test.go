@@ -27,8 +27,10 @@ func resetServiceFlags(t *testing.T) {
 	if err := serviceCmd.PersistentFlags().Set("remote-target", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := serviceListCmd.Flags().Set("rig-name", ""); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{"rig", "rig-name"} {
+		if err := serviceListCmd.Flags().Set(f, ""); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, f := range []string{"rig", "name", "url-scheme"} {
 		if err := serviceCreateCmd.Flags().Set(f, ""); err != nil {
@@ -47,7 +49,7 @@ func resetServiceFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Set marks a flag Changed, and that bit distinguishes an explicitly empty
-	// --rig-name (match nothing) from an absent one (match everything).
+	// --rig or --rig-name (match nothing) from an absent one (match everything).
 	for _, fs := range []*pflag.FlagSet{
 		serviceCmd.PersistentFlags(),
 		serviceListCmd.Flags(),
@@ -102,6 +104,132 @@ func TestServiceListCommand_SelfRigName(t *testing.T) {
 	}
 	if !strings.Contains(out, "web") || strings.Contains(out, "api") {
 		t.Fatalf("--rig-name _self must keep only the current rig's services; got:\n%s", out)
+	}
+}
+
+// serveRigs answers the sandbox listing with rigs, each carrying one service
+// named "<rig name>-svc" so the output shows which rigs a filter kept.
+func serveRigs(t *testing.T, rigs ...apiclient.RemoteSandbox) {
+	t.Helper()
+	for i := range rigs {
+		rigs[i].Services = []apiclient.RemoteSandboxService{{Name: rigs[i].Name + "-svc", HostPort: 3000 + i, ContainerPort: 3000 + i}}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(rigs)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AMIKA_API_URL", srv.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+}
+
+// --rig takes a bare name or id, or a name=/id= prefix that pins the field.
+// "beta" is one rig's id and another rig's name, so the bare form is refused
+// for it and each prefix picks a different rig.
+func TestServiceListCommand_RigFilter(t *testing.T) {
+	cases := []struct {
+		rig     string
+		want    []string
+		wantErr string
+	}{
+		{rig: "alpha", want: []string{"alpha-svc"}},
+		{rig: "id-alpha", want: []string{"alpha-svc"}},
+		{rig: "name=alpha", want: []string{"alpha-svc"}},
+		{rig: "id=id-alpha", want: []string{"alpha-svc"}},
+		{rig: "name=id-alpha", want: nil},
+		{rig: "id=beta", want: []string{"gamma-svc"}},
+		{rig: "name=beta", want: []string{"beta-svc"}},
+		{rig: "beta", wantErr: "ambiguous"},
+		{rig: "missing", want: nil},
+		{rig: "name=", wantErr: "no value"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rig, func(t *testing.T) {
+			resetServiceFlags(t)
+			serveRigs(t,
+				apiclient.RemoteSandbox{ID: "id-alpha", Name: "alpha"},
+				apiclient.RemoteSandbox{ID: "id-beta", Name: "beta"},
+				apiclient.RemoteSandbox{ID: "beta", Name: "gamma"},
+			)
+			out, err := runRootCommand("service", "list", "--rig", tc.rig)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("--rig %s: err = %v, want %q in it", tc.rig, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("--rig %s: %v", tc.rig, err)
+			}
+			for _, svc := range []string{"alpha-svc", "beta-svc", "gamma-svc"} {
+				wanted := false
+				for _, w := range tc.want {
+					wanted = wanted || w == svc
+				}
+				if strings.Contains(out, svc) != wanted {
+					t.Errorf("--rig %s: listing %q = %v, want %v; got:\n%s", tc.rig, svc, !wanted, wanted, out)
+				}
+			}
+		})
+	}
+}
+
+func TestServiceListCommand_EmptyRigMatchesNothing(t *testing.T) {
+	resetServiceFlags(t)
+	serveRigs(t, apiclient.RemoteSandbox{ID: "id-keep", Name: "keep"})
+
+	out, err := runRootCommand("service", "list", "--rig", "")
+	if err != nil {
+		t.Fatalf("service list failed: %v", err)
+	}
+	if !strings.Contains(out, "No services found.") {
+		t.Fatalf("an empty --rig must match no rig; got:\n%s", out)
+	}
+}
+
+func TestServiceListCommand_SelfRig(t *testing.T) {
+	resetServiceFlags(t)
+	t.Setenv("AMIKA_RIG_NAME", "keep")
+	serveRigs(t,
+		apiclient.RemoteSandbox{ID: "id-keep", Name: "keep"},
+		apiclient.RemoteSandbox{ID: "id-drop", Name: "drop"},
+	)
+
+	out, err := runRootCommand("service", "list", "--rig", "_self")
+	if err != nil {
+		t.Fatalf("service list failed: %v", err)
+	}
+	if !strings.Contains(out, "keep-svc") || strings.Contains(out, "drop-svc") {
+		t.Fatalf("--rig _self must keep only the current rig's services; got:\n%s", out)
+	}
+}
+
+// --rig-name is the hidden predecessor of --rig name=<name>; giving both is
+// refused rather than picking one.
+func TestServiceListCommand_RigAndRigNameConflict(t *testing.T) {
+	resetServiceFlags(t)
+	serveRigs(t, apiclient.RemoteSandbox{ID: "id-keep", Name: "keep"})
+
+	_, err := runRootCommand("service", "list", "--rig", "keep", "--rig-name", "keep")
+	if err == nil || !strings.Contains(err.Error(), "--rig and --rig-name") {
+		t.Fatalf("err = %v, want the conflict error", err)
+	}
+}
+
+// --rig-name matches by name only, as it always did, even for a value that is
+// also another rig's id.
+func TestServiceListCommand_RigNameMatchesNameOnly(t *testing.T) {
+	resetServiceFlags(t)
+	serveRigs(t,
+		apiclient.RemoteSandbox{ID: "id-beta", Name: "beta"},
+		apiclient.RemoteSandbox{ID: "beta", Name: "gamma"},
+	)
+
+	out, err := runRootCommand("service", "list", "--rig-name", "beta")
+	if err != nil {
+		t.Fatalf("service list failed: %v", err)
+	}
+	if !strings.Contains(out, "beta-svc") || strings.Contains(out, "gamma-svc") {
+		t.Fatalf("--rig-name must match by name only; got:\n%s", out)
 	}
 }
 
