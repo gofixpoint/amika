@@ -36,6 +36,9 @@ var sandboxCreateCmd = &cobra.Command{
 		if _, err := createHostRef(cmd); err != nil {
 			return err
 		}
+		if err := validateCreateSnapshotFlags(cmd); err != nil {
+			return err
+		}
 
 		format, err := output.FormatFrom(cmd)
 		if err != nil {
@@ -87,7 +90,6 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Ide
 	setupScript, _ := cmd.Flags().GetString("setup-script")
 	branch, _ := cmd.Flags().GetString("branch")
 	newBranch, _ := cmd.Flags().GetString("new-branch")
-	snapshot, _ := cmd.Flags().GetString("snapshot")
 
 	if name == "" {
 		name = sandbox.GenerateName()
@@ -173,11 +175,7 @@ func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Ide
 		Branch:           branch,
 		NewBranchName:    newBranch,
 		GithubAuthMode:   githubAuthMode,
-	}
-	// Only set Snapshot when a slug was given; an unset flag leaves the field
-	// nil so the server applies its default snapshot chain.
-	if snapshot != "" {
-		req.Snapshot = &snapshot
+		Snapshot:         createSnapshotSelection(cmd),
 	}
 
 	format, err := output.FormatFrom(cmd)

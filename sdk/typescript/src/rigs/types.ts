@@ -88,8 +88,12 @@ export interface CreateRigRequest {
    *
    * Tri-state, matching the server's `snapshot` param:
    *   - a slug  -> boot from that snapshot
-   *   - `null`  -> explicitly opt out of the repo-level default snapshot
-   *   - omitted -> keep the full default chain (repo default, else preset/size)
+   *   - `null`  -> skip the repository and organization default snapshots
+   *   - omitted -> keep the full default chain (repository default, else
+   *                organization default, else the repository's custom
+   *                image, else the preset's base image)
+   *
+   * `preset` cannot be combined with a slug.
    */
   snapshot?: string | null;
   /** Setup-script contents to run in the rig. The SDK does not read a local script file. */
