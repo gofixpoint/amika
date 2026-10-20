@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestRigOpenAcceptsAppFlag runs `rig open`, the alias of `rig code`, through
+// TestRigOpenAcceptsAppFlag runs `rig open` and its alias `rig code` through
 // the real command tree: --app reaches the editor validation that --editor
 // does, and the two must agree when both are passed. Validation runs before
 // authentication, so no API is needed.

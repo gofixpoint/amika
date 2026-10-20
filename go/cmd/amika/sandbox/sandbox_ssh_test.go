@@ -90,7 +90,7 @@ func TestResolveRemoteWorkspacePath(t *testing.T) {
 	}
 }
 
-// stubV2SSHClient implements the APIs `sandbox code` uses before it hands the prepared
+// stubV2SSHClient implements the APIs `sandbox open` uses before it hands the prepared
 // alias to an editor. Its session method is not reached by this test because
 // prepareSessionTarget is replaced with a recorder.
 type stubV2SSHClient struct {
@@ -503,7 +503,7 @@ func TestSSHCommandNames(t *testing.T) {
 		wantAliases []string
 	}{
 		{cmd: sandboxSSHV2Cmd, wantName: "ssh", wantHidden: false, wantAliases: []string{"sshv2"}},
-		{cmd: sandboxCodeV2Cmd, wantName: "code", wantHidden: false, wantAliases: []string{"codev2", "open"}},
+		{cmd: sandboxCodeV2Cmd, wantName: "open", wantHidden: false, wantAliases: []string{"code", "codev2"}},
 	} {
 		t.Run(tt.wantName, func(t *testing.T) {
 			if got := tt.cmd.Name(); got != tt.wantName {

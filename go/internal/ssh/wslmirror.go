@@ -160,7 +160,7 @@ var (
 // A WSL setup is the one place where writing the Linux pin file is not enough:
 // the editor is a Windows application, so the OpenSSH that verifies the host
 // reads the mirrored `amika_known_hosts` in the Windows .ssh directory, which
-// until now only an editor launch through `sandbox code` refreshed. Without
+// until now only an editor launch through `sandbox open` refreshed. Without
 // this, pinning from the proxy would fix the deep links everywhere except the
 // platform whose ProxyCommand exists to cross back into Linux.
 func windowsMirroredPins(paths basedir.Paths, pins HostKeyPinStore, knownHostsFile string, warnings io.Writer) HostKeyPinStore {

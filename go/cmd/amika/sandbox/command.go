@@ -23,9 +23,9 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxGetCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
-	// `ssh` and `code` are the direct-WebSocket-transport commands; they also
+	// `ssh` and `open` are the direct-WebSocket-transport commands; they also
 	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases,
-	// and `code` to `open`.
+	// and `open` to its former name `code`.
 	sandboxCmd.AddCommand(sandboxSSHV2Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
 	sandboxCmd.AddCommand(sandboxBindCmd)

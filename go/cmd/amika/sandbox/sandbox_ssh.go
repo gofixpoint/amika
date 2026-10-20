@@ -39,7 +39,7 @@ func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient
 }
 
 // sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the
-// identity needed to label and locate it, shared by every editor `sandbox code` opens.
+// identity needed to label and locate it, shared by every editor `sandbox open` opens.
 type sandboxSSHAlias struct {
 	alias       string
 	sandboxName string

@@ -48,7 +48,7 @@ Follow these rules unless the user explicitly wants an interactive session:
 
 1. Prefer `-o json` or `-o json-pretty` when the command supports it.
 2. Supply required confirmation flags up front.
-3. Do not run `rig connect`, `rig code` (alias `rig open`), or bare `rig ssh`
+3. Do not run `rig connect`, `rig open` (alias `rig code`), or bare `rig ssh`
    in a tool call. They require a controllable terminal.
 4. Use `amika rig ssh <name> <command>` for non-interactive remote work.
 5. Use `amika send` to send messages to an agent that either creates a new

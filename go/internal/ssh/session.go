@@ -370,7 +370,7 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 // hand the alias straight to system OpenSSH, which resolves it through the
 // managed block and its `StrictHostKeyChecking yes`. No Amika command runs on
 // that path, so nothing wrote the pin, and OpenSSH refused every sandbox the
-// user had not already reached with `sandbox ssh` or `sandbox code`:
+// user had not already reached with `sandbox ssh` or `sandbox open`:
 // "No ED25519 host key is known for <alias> ... Host key verification failed."
 //
 // The ProxyCommand is the one step every alias-based connection passes
