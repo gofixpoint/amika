@@ -41,7 +41,10 @@ func New() *cobra.Command {
 	sandboxCmd.PersistentFlags().MarkHidden("remote-target")
 
 	addProviderFlag(sandboxCreateCmd)
+	// Superseded by the positional <name>; kept, hidden, so existing scripts
+	// that pass --name keep working.
 	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
+	_ = sandboxCreateCmd.Flags().MarkHidden("name")
 	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-plus-docker")`)
 	gitrepo.AddFlags(sandboxCreateCmd,
 		"Mount a git repo into the sandbox. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.",

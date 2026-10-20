@@ -94,7 +94,7 @@ Assuming you connected GitHub during web onboarding:
 amika secret ssh-keygen
 
 cd path/to/git/repo/you/want/to/work/on
-amika rig create --name my-first-rig
+amika rig create my-first-rig
 amika rig ssh my-first-rig
 ```
 

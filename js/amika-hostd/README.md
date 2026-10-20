@@ -76,7 +76,7 @@ does not.
 
 ```bash
 amika host list                                       # confirm it registered
-amika rig create --name dev-box --host <hostname> --size small
+amika rig create dev-box --host <hostname> --size small
 ```
 
 The first `up` downloads the preset images in the background, and a rig created

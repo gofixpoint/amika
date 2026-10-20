@@ -133,3 +133,15 @@ func TestHelpAllRevealsGCOnlyForThatInvocation(t *testing.T) {
 		t.Fatal("unknown topic accepted")
 	}
 }
+
+// rig create documents its name as a positional argument; --name still parses
+// but stays out of the help so new users learn one spelling.
+func TestRigCreateHelpShowsPositionalName(t *testing.T) {
+	out, _ := runRootCommand("rig", "create", "--help")
+	if !helpLineContains(out, "amika rig create [<name>] [flags]") {
+		t.Errorf("rig create usage must show the positional name; got:\n%s", out)
+	}
+	if strings.Contains(out, "--name") {
+		t.Errorf("rig create help must not advertise --name; got:\n%s", out)
+	}
+}

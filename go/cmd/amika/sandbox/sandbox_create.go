@@ -16,11 +16,15 @@ import (
 )
 
 var sandboxCreateCmd = &cobra.Command{
-	Use:   "create",
+	Use:   "create [<name>]",
 	Short: "Create a new sandbox",
-	Long:  `Create a new sandbox.`,
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
+	Long:  `Create a new sandbox. If <name> is omitted, a random name is generated.`,
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, err := createName(cmd, args)
+		if err != nil {
+			return err
+		}
 		noSetup, _ := cmd.Flags().GetBool("no-setup")
 		if noSetup && cmd.Flags().Changed("setup-script") {
 			return fmt.Errorf("--no-setup and --setup-script are mutually exclusive")
@@ -63,12 +67,26 @@ var sandboxCreateCmd = &cobra.Command{
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
-		return createRemoteSandbox(cmd, target, identity)
+		return createRemoteSandbox(cmd, target, name, identity)
 	},
 }
 
-func createRemoteSandbox(cmd *cobra.Command, target string, identity gitrepo.Identity) error {
-	name, _ := cmd.Flags().GetString("name")
+// createName returns the rig name from the positional argument or the hidden
+// --name flag, which predates it and still works for existing scripts. Naming
+// the rig both ways is refused rather than silently preferring one.
+func createName(cmd *cobra.Command, args []string) (string, error) {
+	flagName, _ := cmd.Flags().GetString("name")
+	if len(args) == 0 {
+		return flagName, nil
+	}
+	if cmd.Flags().Changed("name") {
+		return "", fmt.Errorf("name the rig either as an argument or with --name, not both")
+	}
+	return args[0], nil
+}
+
+// createRemoteSandbox creates the rig, generating a name when name is empty.
+func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitrepo.Identity) error {
 	provider := requestedRemoteProvider(cmd)
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")

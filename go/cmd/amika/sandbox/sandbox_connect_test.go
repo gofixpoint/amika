@@ -32,7 +32,7 @@ func TestConnectCommandsUseSessionSSH(t *testing.T) {
 		wantExec     bool
 	}{
 		{name: "connect", args: []string{"connect", "requested"}, wantRequests: 1, wantPrepare: true, wantExec: true},
-		{name: "create and connect", args: []string{"create", "--name", "requested", "--no-git", "--connect"}, wantRequests: 2, wantPrepare: true, wantExec: true},
+		{name: "create and connect", args: []string{"create", "requested", "--no-git", "--connect"}, wantRequests: 2, wantPrepare: true, wantExec: true},
 		{name: "create only", args: []string{"create", "--name", "requested", "--no-git"}, wantRequests: 2},
 		{name: "connect unavailable", args: []string{"connect", "requested"}, prepareErr: failure, wantErr: failure.Error(), wantRequests: 1, wantPrepare: true},
 		{name: "created session unavailable", args: []string{"create", "--no-git", "--connect"}, prepareErr: failure, wantErr: failure.Error(), wantRequests: 2, wantPrepare: true},

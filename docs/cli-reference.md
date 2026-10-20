@@ -78,40 +78,46 @@ Every `sandbox` subcommand talks to the Amika API and requires you to be logged 
 
 Create a new sandbox.
 
+```
+amika sandbox create [<name>] [flags]
+```
+
+`<name>` names the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`). The older `--name <name>` flag still works but is no longer shown in help; passing both is an error.
+
 ```bash
 # Minimal — auto-generates a name, uses the default snapshot
 amika sandbox create
 
 # Auto-detect the git repo containing the current working directory
 # (this is the default behavior when no --git/--no-git flag is passed)
-amika sandbox create --name dev-sandbox
+amika sandbox create dev-sandbox
 
 # Mount git repo at a specific path
-amika sandbox create --name dev-sandbox --git ./src
+amika sandbox create dev-sandbox --git ./src
 
 # Mount a remote git repo by URL (HTTPS or SSH)
-amika sandbox create --name dev-sandbox --git https://github.com/octocat/Hello-World.git
+amika sandbox create dev-sandbox --git https://github.com/octocat/Hello-World.git
 
 # Skip git auto-detection and create a bare sandbox
-amika sandbox create --name dev-sandbox --no-git
+amika sandbox create dev-sandbox --no-git
 
 # Use the Docker-in-Docker preset
-amika sandbox create --name docker-box --preset coder-plus-docker
+amika sandbox create docker-box --preset coder-plus-docker
 
 # Pick a size
-amika sandbox create --name dev-sandbox --size m
+amika sandbox create dev-sandbox --size m
 
 # Set environment variables
-amika sandbox create --name dev-sandbox --env MY_KEY=my_value
+amika sandbox create dev-sandbox --env MY_KEY=my_value
 
 # Create and immediately connect
-amika sandbox create --name dev-sandbox --connect
+amika sandbox create dev-sandbox --connect
 
 # Run a setup script on container start
-amika sandbox create --name dev-sandbox --setup-script ./install-deps.sh
+amika sandbox create dev-sandbox --setup-script ./install-deps.sh
 
 # Clone a specific git branch
-amika sandbox create --name dev-sandbox --branch develop
+amika sandbox create dev-sandbox --branch develop
 
 # Create a new branch from your current branch
 amika sandbox create --new-branch feature-x
@@ -120,21 +126,20 @@ amika sandbox create --new-branch feature-x
 amika sandbox create --branch main --new-branch bugfix-1
 
 # Inject remote secrets
-amika sandbox create --name dev-sandbox \
+amika sandbox create dev-sandbox \
   --secret env:ANTHROPIC_API_KEY=my-claude-key
 
 # Fork from a captured snapshot
-amika sandbox create --name dev-sandbox --snapshot amika-mono-base
+amika sandbox create dev-sandbox --snapshot amika-mono-base
 
 # Run it on one of your organization's own hosts, at one of that host's sizes
-amika sandbox create --name dev-sandbox --host alpha.lan --size small
+amika sandbox create dev-sandbox --host alpha.lan --size small
 ```
 
 #### Flags
 
 | Flag                    | Default              | Description                                                                                                                          |
 | ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--name <name>`         | auto-generated       | Name for the sandbox. If omitted, a random `{color}-{city}` name is generated (e.g. `teal-tokyo`)                                    |
 | `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `coder-plus-docker`. See [presets.md](presets.md)                                          |
 | `--size <size>`         | `m`                  | Sandbox size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m` |
 | `--host <hostname\|id>` |                      | Run the rig on one of your organization's own hosts rather than on Amika Cloud. See [`amika host`](#amika-host). With `--snapshot`, boots one of that host's own snapshots; a snapshot taken anywhere else is refused. The create fails if the control plane did not put the rig on that host |

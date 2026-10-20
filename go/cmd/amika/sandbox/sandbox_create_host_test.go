@@ -344,7 +344,7 @@ func newCreateCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 	c := &cobra.Command{}
 	for _, name := range []string{
-		"name", "provider", "preset", "size", "snapshot", "setup-script",
+		"provider", "preset", "size", "snapshot", "setup-script",
 		"branch", "new-branch", "github-auth-mode", "host",
 	} {
 		c.Flags().String(name, "", "")
@@ -398,11 +398,10 @@ func stubCreateAPI(t *testing.T, honorHost bool) *map[string]any {
 func TestCreateRemoteSandboxSendsHostID(t *testing.T) {
 	body := stubCreateAPI(t, true)
 	c, _ := newCreateCmd(t)
-	c.Flags().Set("name", "dev")
 	c.Flags().Set("host", "alpha.lan")
 	c.Flags().Set("size", "small")
 
-	if err := createRemoteSandbox(c, "", gitrepo.Identity{Source: gitrepo.SourceNone}); err != nil {
+	if err := createRemoteSandbox(c, "", "dev", gitrepo.Identity{Source: gitrepo.SourceNone}); err != nil {
 		t.Fatalf("createRemoteSandbox: %v", err)
 	}
 	if got := (*body)["host_id"]; got != "host_1" {
@@ -425,10 +424,9 @@ func TestCreateRemoteSandboxSendsHostID(t *testing.T) {
 func TestCreateRemoteSandboxFailsWhenTheHostWasIgnored(t *testing.T) {
 	stubCreateAPI(t, false)
 	c, _ := newCreateCmd(t)
-	c.Flags().Set("name", "dev")
 	c.Flags().Set("host", "alpha.lan")
 
-	err := createRemoteSandbox(c, "", gitrepo.Identity{Source: gitrepo.SourceNone})
+	err := createRemoteSandbox(c, "", "dev", gitrepo.Identity{Source: gitrepo.SourceNone})
 	if err == nil {
 		t.Fatal("want an error for a rig that did not land on the host")
 	}
