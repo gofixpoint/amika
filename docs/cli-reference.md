@@ -297,8 +297,12 @@ configures the selected editor:
   Settings > Connections.
 - `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
   Remote SSH.
-- `herdr` runs `herdr machine add <ssh-host> --label <name>`, which adds the
-  sandbox to Herdr as a remote machine. Requires the `herdr` CLI in `PATH`.
+- `herdr` runs `herdr machine add <ssh-host> --label <name>`, which connects
+  to the sandbox over SSH to prepare a remote Herdr server, then saves it as a
+  Herdr machine labeled with the sandbox name. Herdr may prompt during setup.
+  If Herdr already has the sandbox, the command says so and does nothing; if
+  another machine already uses the label, it names that machine to remove.
+  Requires the `herdr` CLI in `PATH`.
 
 Before first use, create and upload an SSH key:
 
@@ -307,8 +311,9 @@ amika secret ssh-keygen
 ```
 
 To use an existing key, pass `--import <public-key-file>` instead. Cursor is
-the default editor; VS Code, Claude Desktop, and Codex are also available
-without an environment-variable feature gate.
+the default editor; VS Code, Claude Desktop, Codex, Paseo, and Herdr are also
+available without an environment-variable feature gate. `--path` has no effect
+with `paseo` or `herdr`.
 
 On WSL, `--editor cursor` and `--editor vscode` expect the editor to be a
 Windows application. The command mirrors the managed SSH config, identity,
@@ -324,6 +329,7 @@ amika sandbox code my-sandbox --editor=cursor
 amika sandbox code my-sandbox --editor=vscode
 amika sandbox code my-sandbox --editor=claude
 amika sandbox code my-sandbox --editor=codex
+amika sandbox code my-sandbox --editor=paseo
 amika sandbox code my-sandbox --editor=herdr
 amika rig open my-sandbox --app=claude
 ```

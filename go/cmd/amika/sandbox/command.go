@@ -24,7 +24,8 @@ func New() *cobra.Command {
 	sandboxCmd.AddCommand(sandboxGetCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
 	// `ssh` and `code` are the direct-WebSocket-transport commands; they also
-	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases.
+	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases,
+	// and `code` to `open`.
 	sandboxCmd.AddCommand(sandboxSSHV2Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
 	sandboxCmd.AddCommand(sandboxBindCmd)
@@ -67,7 +68,7 @@ func New() *cobra.Command {
 	// through untouched.
 	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", \"codex\", \"paseo\", or \"herdr\"")
 	sandboxCodeV2Cmd.Flags().String("app", "", "Alias for --editor")
-	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
+	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root); ignored by paseo and herdr")
 	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
 	sandboxBindCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")
 	sandboxBindingsListCmd.Flags().String("rig", "", "Only show bindings for this rig (name or id)")

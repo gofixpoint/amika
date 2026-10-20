@@ -51,6 +51,20 @@ func TestBuildSessionAliasRejectsDottedEnvironment(t *testing.T) {
 	}
 }
 
+// A leading dash would make the alias read as an option to the programs it is
+// passed to (ssh, herdr), so build and parse both refuse it.
+func TestSessionAliasRejectsLeadingDash(t *testing.T) {
+	if _, err := BuildSessionAlias("-oProxyCommand", "sbx-123", "app-amika-dev"); err == nil {
+		t.Fatal("expected a name with a leading dash to be rejected")
+	}
+	if _, err := ParseSessionAlias("-team.sbx-123.app-amika-dev.amika"); err == nil {
+		t.Fatal("expected an alias with a leading dash to be rejected")
+	}
+	if _, err := BuildSessionAlias("team-a", "sbx-123", "app-amika-dev"); err != nil {
+		t.Fatalf("an inner dash must stay allowed: %v", err)
+	}
+}
+
 func TestRenderSessionConfigScopesTheWildcardToOneEnvironment(t *testing.T) {
 	config, err := RenderSessionConfig(
 		"localhost-3011",

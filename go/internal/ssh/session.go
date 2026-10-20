@@ -29,8 +29,10 @@ const (
 	sandboxNameEnvironment = rigself.SandboxNameEnv
 )
 
-// safeAliasPart matches a sandbox name, which may itself contain dots.
-var safeAliasPart = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
+// safeAliasPart matches a sandbox name, which may itself contain dots. It may
+// not start with "-": the name leads the alias, which programs such as ssh and
+// herdr receive as an argument, so a leading dash would read as an option.
+var safeAliasPart = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$`)
 
 // safeAliasSegment matches exactly one dot-free alias segment, used for the
 // parts an alias is split on: the sandbox id and the environment slug.

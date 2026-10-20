@@ -225,6 +225,9 @@ Examples:
 		}
 		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
 		pathOverride, _ := cmd.Flags().GetString("path")
+		if pathOverride != "" && (editor == "paseo" || editor == "herdr") {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --path has no effect with --editor=%s\n", editor)
+		}
 		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
 	},
 }
@@ -233,11 +236,10 @@ Examples:
 // accepted only when they agree, so neither silently overrides the other.
 func editorFlag(cmd *cobra.Command) (string, error) {
 	editor, _ := cmd.Flags().GetString("editor")
-	appFlag := cmd.Flags().Lookup("app")
-	if appFlag == nil || !appFlag.Changed {
+	if !cmd.Flags().Changed("app") {
 		return editor, nil
 	}
-	app := appFlag.Value.String()
+	app, _ := cmd.Flags().GetString("app")
 	if cmd.Flags().Changed("editor") && editor != app {
 		return "", fmt.Errorf("--editor %q and --app %q disagree; --app is an alias for --editor, so pass only one", editor, app)
 	}

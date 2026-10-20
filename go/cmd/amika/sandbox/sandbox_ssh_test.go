@@ -3,6 +3,7 @@ package sandboxcmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -221,31 +222,132 @@ func TestOpenSandboxInPaseo(t *testing.T) {
 	}
 }
 
-// TestOpenSandboxInHerdr registers the prepared SSH alias as a Herdr machine
-// labeled with the sandbox name.
-func TestOpenSandboxInHerdr(t *testing.T) {
-	var got []string
-	prev := runHerdr
-	runHerdr = func(args ...string) error {
-		got = args
+// fakeHerdrScript stands in for the herdr CLI: `machine list --json` prints
+// machines.json from its own directory (failing when there is none), and any
+// other invocation records its argv, one per line, to add-args.
+const fakeHerdrScript = `#!/bin/sh
+dir=$(dirname "$0")
+if [ "$1 $2" = "machine list" ]; then exec cat "$dir/machines.json"; fi
+printf '%s\n' "$@" > "$dir/add-args"
+`
+
+// installFakeHerdr puts fakeHerdrScript alone on PATH. machinesJSON, when not
+// empty, is what `herdr machine list --json` reports. It returns the directory
+// holding the script and its records.
+func installFakeHerdr(t *testing.T, machinesJSON string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "herdr"), []byte(fakeHerdrScript), 0o755); err != nil {
+		t.Fatalf("write fake herdr: %v", err)
+	}
+	if machinesJSON != "" {
+		if err := os.WriteFile(filepath.Join(dir, "machines.json"), []byte(machinesJSON), 0o644); err != nil {
+			t.Fatalf("write machines.json: %v", err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/bin:/usr/bin")
+	return dir
+}
+
+// herdrAddArgs returns the argv the fake herdr recorded for `machine add`, or
+// nil when it was never run.
+func herdrAddArgs(t *testing.T, dir string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "add-args"))
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	t.Cleanup(func() { runHerdr = prev })
-
-	cmd := &cobra.Command{}
-	cmd.SetOut(&bytes.Buffer{})
-	target := sandboxSSHAlias{
-		alias:       "dylan.herdr-setup.sb_abc.app-amika-dev.amika",
-		sandboxName: "herdr-setup",
+	if err != nil {
+		t.Fatalf("read add-args: %v", err)
 	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
 
-	if err := openSandboxInEditor(cmd, "herdr", nil, target, ""); err != nil {
+var herdrTestTarget = sandboxSSHAlias{
+	alias:       "dylan.herdr-setup.sb_abc.app-amika-dev.amika",
+	sandboxName: "herdr-setup",
+}
+
+// TestOpenSandboxInHerdrAddsMachine registers the prepared SSH alias as a Herdr
+// machine labeled with the sandbox name, both when Herdr reports its saved
+// machines and when listing them fails.
+func TestOpenSandboxInHerdrAddsMachine(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		machines string
+	}{
+		{name: "no saved machines", machines: "[]"},
+		{name: "other machines", machines: `[{"id":"m1","label":"other","target":"other.sb_x.app-amika-dev.amika"}]`},
+		{name: "list fails", machines: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := installFakeHerdr(t, tt.machines)
+			cmd := &cobra.Command{}
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+
+			if err := openSandboxInEditor(cmd, "herdr", nil, herdrTestTarget, ""); err != nil {
+				t.Fatalf("openSandboxInEditor: %v", err)
+			}
+
+			want := []string{"machine", "add", herdrTestTarget.alias, "--label", herdrTestTarget.sandboxName}
+			if got := herdrAddArgs(t, dir); !reflect.DeepEqual(got, want) {
+				t.Fatalf("herdr args = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestOpenSandboxInHerdrSkipsSavedMachine reports a sandbox Herdr already has
+// instead of adding it again, which Herdr would refuse over the duplicate label.
+func TestOpenSandboxInHerdrSkipsSavedMachine(t *testing.T) {
+	dir := installFakeHerdr(t, `[{"id":"m1","label":"herdr-setup","target":"`+herdrTestTarget.alias+`"}]`)
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := openSandboxInEditor(cmd, "herdr", nil, herdrTestTarget, ""); err != nil {
 		t.Fatalf("openSandboxInEditor: %v", err)
 	}
 
-	want := []string{"machine", "add", "dylan.herdr-setup.sb_abc.app-amika-dev.amika", "--label", "herdr-setup"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("herdr args = %q, want %q", got, want)
+	if got := herdrAddArgs(t, dir); got != nil {
+		t.Fatalf("herdr machine add ran with %q, want it skipped", got)
+	}
+	if !strings.Contains(out.String(), `already a Herdr machine labeled "herdr-setup"`) {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+// TestOpenSandboxInHerdrRejectsTakenLabel names the conflicting machine when
+// the sandbox's label belongs to a different SSH host, e.g. a recreated rig.
+func TestOpenSandboxInHerdrRejectsTakenLabel(t *testing.T) {
+	dir := installFakeHerdr(t, `[{"id":"m1","label":"herdr-setup","target":"dylan.herdr-setup.sb_old.app-amika-dev.amika"}]`)
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := openSandboxInEditor(cmd, "herdr", nil, herdrTestTarget, "")
+	if err == nil || !strings.Contains(err.Error(), `herdr machine remove m1`) {
+		t.Fatalf("err = %v, want a hint to remove machine m1", err)
+	}
+	if got := herdrAddArgs(t, dir); got != nil {
+		t.Fatalf("herdr machine add ran with %q, want it skipped", got)
+	}
+}
+
+// TestOpenSandboxInHerdrRequiresCLI fails before printing anything when herdr
+// is not on PATH.
+func TestOpenSandboxInHerdrRequiresCLI(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	err := openSandboxInEditor(cmd, "herdr", nil, herdrTestTarget, "")
+	if err == nil || !strings.Contains(err.Error(), "install it from https://herdr.dev") {
+		t.Fatalf("err = %v, want an install hint", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("output = %q, want none", out.String())
 	}
 }
 
