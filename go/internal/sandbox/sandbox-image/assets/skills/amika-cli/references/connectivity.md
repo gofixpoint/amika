@@ -22,7 +22,7 @@ Use bare `amika rig ssh my-rig` only in a controllable terminal.
 ## Open a rig in an editor or app
 
 `amika rig open` (alias `rig code`) hands a rig's SSH host to a local
-editor or app. `--app` (alias of `--editor`) picks the target: `cursor`
+editor or app. `--app` (alias `--editor`) picks the target: `cursor`
 (default), `vscode`, `claude`, `codex`, `paseo`, or `herdr`. `herdr` runs
 `herdr machine add <ssh-host> --label <rig>`.
 

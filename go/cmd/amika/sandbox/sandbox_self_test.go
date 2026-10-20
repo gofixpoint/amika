@@ -41,7 +41,8 @@ func TestSelfResolvesBeforeAuth(t *testing.T) {
 		return root
 	}
 	code := &cobra.Command{Use: "open", Args: cobra.ExactArgs(1), RunE: sandboxCodeV2Cmd.RunE}
-	code.Flags().String("editor", "cursor", "")
+	code.Flags().String("app", "cursor", "")
+	code.Flags().String("editor", "", "")
 	bindingsDelete := &cobra.Command{Use: "bindings-delete", Args: cobra.RangeArgs(1, 2), RunE: runSandboxBindingsDelete}
 	bindingsDelete.Flags().String("rig-by", "ref", "")
 	bindingsDelete.Flags().Bool("force", false, "")

@@ -169,7 +169,7 @@ var sandboxCodeV2Cmd = &cobra.Command{
 	Long: `Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport, bypassing provider-native SSH access.
 
-Supported --editor values (--app is an alias for --editor):
+Supported --app values (--editor is an alias for --app):
   cursor   launch Cursor connected to the sandbox (default)
   vscode   launch VS Code connected to the sandbox
   claude   register the sandbox as a Claude Desktop SSH environment
@@ -183,23 +183,23 @@ hands that alias to the selected editor. It requires an SSH identity from
 
 Examples:
   amika sandbox open my-sandbox
-  amika sandbox open my-sandbox --editor=cursor
-  amika sandbox open my-sandbox --editor=vscode
-  amika sandbox open my-sandbox --editor=claude
-  amika sandbox open my-sandbox --editor=codex
-  amika sandbox open my-sandbox --editor=paseo
-  amika sandbox open my-sandbox --editor=herdr
-  amika sandbox open my-sandbox --app=claude`,
+  amika sandbox open my-sandbox --app=cursor
+  amika sandbox open my-sandbox --app=vscode
+  amika sandbox open my-sandbox --app=claude
+  amika sandbox open my-sandbox --app=codex
+  amika sandbox open my-sandbox --app=paseo
+  amika sandbox open my-sandbox --app=herdr
+  amika sandbox code my-sandbox --editor=vscode`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := output.RejectJSON(cmd); err != nil {
 			return err
 		}
-		editor, err := editorFlag(cmd)
+		app, err := appFlag(cmd)
 		if err != nil {
 			return err
 		}
-		if err := validateEditor(editor); err != nil {
+		if err := validateEditor(app); err != nil {
 			return err
 		}
 		name, err := rigself.Resolve(args[0])
@@ -225,25 +225,25 @@ Examples:
 		}
 		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
 		pathOverride, _ := cmd.Flags().GetString("path")
-		if pathOverride != "" && (editor == "paseo" || editor == "herdr") {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --path has no effect with --editor=%s\n", editor)
+		if pathOverride != "" && (app == "paseo" || app == "herdr") {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --path has no effect with --app=%s\n", app)
 		}
-		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
+		return openSandboxInEditor(cmd, app, paths, sshTarget, pathOverride)
 	},
 }
 
-// editorFlag reads the editor from --editor or its alias --app. Passing both is
+// appFlag reads the app from --app or its alias --editor. Passing both is
 // accepted only when they agree, so neither silently overrides the other.
-func editorFlag(cmd *cobra.Command) (string, error) {
-	editor, _ := cmd.Flags().GetString("editor")
-	if !cmd.Flags().Changed("app") {
-		return editor, nil
-	}
+func appFlag(cmd *cobra.Command) (string, error) {
 	app, _ := cmd.Flags().GetString("app")
-	if cmd.Flags().Changed("editor") && editor != app {
-		return "", fmt.Errorf("--editor %q and --app %q disagree; --app is an alias for --editor, so pass only one", editor, app)
+	if !cmd.Flags().Changed("editor") {
+		return app, nil
 	}
-	return app, nil
+	editor, _ := cmd.Flags().GetString("editor")
+	if cmd.Flags().Changed("app") && app != editor {
+		return "", fmt.Errorf("--app %q and --editor %q disagree; --editor is an alias for --app, so pass only one", app, editor)
+	}
+	return editor, nil
 }
 
 // sshV2Client is the subset of apiclient.Client `sandbox open` needs to prepare

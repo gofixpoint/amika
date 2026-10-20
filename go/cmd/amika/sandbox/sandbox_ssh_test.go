@@ -519,9 +519,9 @@ func TestSSHCommandNames(t *testing.T) {
 	}
 }
 
-// TestEditorFlagAcceptsAppAlias reads the editor from --editor or --app, and
+// TestAppFlagAcceptsEditorAlias reads the app from --app or --editor, and
 // rejects the two only when they name different editors.
-func TestEditorFlagAcceptsAppAlias(t *testing.T) {
+func TestAppFlagAcceptsEditorAlias(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		args    []string
@@ -529,30 +529,30 @@ func TestEditorFlagAcceptsAppAlias(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "default", args: nil, want: "cursor"},
-		{name: "editor", args: []string{"--editor=vscode"}, want: "vscode"},
 		{name: "app", args: []string{"--app=claude"}, want: "claude"},
-		{name: "both agree", args: []string{"--editor=codex", "--app=codex"}, want: "codex"},
-		{name: "both disagree", args: []string{"--editor=codex", "--app=claude"}, wantErr: true},
+		{name: "editor", args: []string{"--editor=vscode"}, want: "vscode"},
+		{name: "both agree", args: []string{"--app=codex", "--editor=codex"}, want: "codex"},
+		{name: "both disagree", args: []string{"--app=claude", "--editor=codex"}, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
-			cmd.Flags().String("editor", "cursor", "")
-			cmd.Flags().String("app", "", "")
+			cmd.Flags().String("app", "cursor", "")
+			cmd.Flags().String("editor", "", "")
 			if err := cmd.Flags().Parse(tt.args); err != nil {
 				t.Fatalf("parse %v: %v", tt.args, err)
 			}
-			got, err := editorFlag(cmd)
+			got, err := appFlag(cmd)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("editorFlag() = %q, want error", got)
+					t.Fatalf("appFlag() = %q, want error", got)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("editorFlag: %v", err)
+				t.Fatalf("appFlag: %v", err)
 			}
 			if got != tt.want {
-				t.Errorf("editorFlag() = %q, want %q", got, tt.want)
+				t.Errorf("appFlag() = %q, want %q", got, tt.want)
 			}
 		})
 	}

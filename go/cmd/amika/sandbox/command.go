@@ -66,8 +66,8 @@ func New() *cobra.Command {
 	// `ssh` registers no flags of its own: it forwards everything after the
 	// subcommand to ssh, so ssh's own -t (and every other option) passes
 	// through untouched.
-	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", \"codex\", \"paseo\", or \"herdr\"")
-	sandboxCodeV2Cmd.Flags().String("app", "", "Alias for --editor")
+	sandboxCodeV2Cmd.Flags().String("app", "cursor", "App or editor to open: \"cursor\", \"vscode\", \"claude\", \"codex\", \"paseo\", or \"herdr\"")
+	sandboxCodeV2Cmd.Flags().String("editor", "", "Alias for --app")
 	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root); ignored by paseo and herdr")
 	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
 	sandboxBindCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")

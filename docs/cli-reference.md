@@ -281,7 +281,7 @@ and X11 forwarding are not supported.
 Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport. Remote sandboxes only; requires a signed-in Amika
 account and an SSH identity from `amika secret ssh-keygen`. `amika sandbox code`
-is an alias, and `--app` is an alias for `--editor`.
+is an alias, and `--editor` is an alias for `--app`.
 
 The command adds a named SSH connection to Amika's managed config (so editors
 such as Codex that enumerate `Host` entries can find it), then starts or
@@ -311,11 +311,11 @@ amika secret ssh-keygen
 ```
 
 To use an existing key, pass `--import <public-key-file>` instead. Cursor is
-the default editor; VS Code, Claude Desktop, Codex, Paseo, and Herdr are also
+the default app; VS Code, Claude Desktop, Codex, Paseo, and Herdr are also
 available without an environment-variable feature gate. `--path` has no effect
 with `paseo` or `herdr`.
 
-On WSL, `--editor cursor` and `--editor vscode` expect the editor to be a
+On WSL, `--app cursor` and `--app vscode` expect the editor to be a
 Windows application. The command mirrors the managed SSH config, identity,
 and host-key pins to the Windows side (`%USERPROFILE%\.ssh\amika.conf`, added
 via an `Include` line) with a `ProxyCommand` that re-enters your WSL
@@ -325,19 +325,19 @@ with `--remote ssh-remote+<alias>`. This needs WSL interop (`cmd.exe`,
 
 ```bash
 amika sandbox open my-sandbox
-amika sandbox open my-sandbox --editor=cursor
-amika sandbox open my-sandbox --editor=vscode
-amika sandbox open my-sandbox --editor=claude
-amika sandbox open my-sandbox --editor=codex
-amika sandbox open my-sandbox --editor=paseo
-amika sandbox open my-sandbox --editor=herdr
+amika sandbox open my-sandbox --app=cursor
+amika sandbox open my-sandbox --app=vscode
 amika sandbox open my-sandbox --app=claude
+amika sandbox open my-sandbox --app=codex
+amika sandbox open my-sandbox --app=paseo
+amika sandbox open my-sandbox --app=herdr
+amika sandbox code my-sandbox --editor=vscode
 ```
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
-| `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
-| `--app <name>`    | —        | Alias for `--editor`                                     |
+| `--app <name>`    | `cursor` | App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
+| `--editor <name>` | —        | Alias for `--app`                                        |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
 
 ### `amika sandbox agent-send`

@@ -25,7 +25,7 @@ func validateEditor(editor string) error {
 	case "cursor", "vscode", "claude", "codex", "paseo", "herdr":
 		return nil
 	default:
-		return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
+		return fmt.Errorf("unsupported app %q; supported apps are %q", editor, supportedEditors)
 	}
 }
 
