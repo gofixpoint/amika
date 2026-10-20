@@ -147,9 +147,9 @@ Examples:
 		// Resolve the reference to the rig's canonical name and id first: the
 		// alias handed to ssh, and the ProxyCommand that parses it back, carry
 		// only those, never a name= or id= reference.
-		sandbox, err := client.GetSandbox(ref.Selector())
+		sandbox, err := rigref.Resolve(client, ref)
 		if err != nil {
-			return rigref.Explain(ref, err)
+			return err
 		}
 		alias, err := prepareSessionTarget(
 			basedir.New(""),
@@ -251,9 +251,9 @@ var upsertSessionHost = ssh.UpsertSessionHost
 // invokes the managed alias's ProxyCommand once it dials the host. The alias
 // is built from the canonical name and id the API returns for ref.
 func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, ref rigref.Ref) (sandboxSSHAlias, error) {
-	sandbox, err := client.GetSandbox(ref.Selector())
+	sandbox, err := rigref.Resolve(client, ref)
 	if err != nil {
-		return sandboxSSHAlias{}, rigref.Explain(ref, err)
+		return sandboxSSHAlias{}, err
 	}
 	alias, err := prepareSessionTarget(paths, client, sandbox.Name, sandbox.ID)
 	if err != nil {

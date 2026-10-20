@@ -170,15 +170,13 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 
 func runSnapshotList(cmd *cobra.Command, _ []string) error {
 	long, _ := cmd.Flags().GetBool("long")
-	// The server resolves the rig and filters by it (source_sandbox_ref,
-	// _name, or _id, by the reference's kind); a zero rigRef sends no filter.
-	var rigRef rigref.Ref
+	var rigRef *rigref.Ref
 	if rawRig, _ := cmd.Flags().GetString("rig"); strings.TrimSpace(rawRig) != "" {
 		parsed, err := rigref.Parse(rawRig)
 		if err != nil {
 			return err
 		}
-		rigRef = parsed
+		rigRef = &parsed
 	}
 	repoRef, _ := cmd.Flags().GetString("repo")
 
@@ -195,9 +193,21 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	snapshots, err := client.ListSandboxSnapshots(repositoryID, rigRef.Selector())
+	// The rig is resolved here and the list filtered by its id. A server that
+	// predates the source_sandbox_ref and _name filters ignores them and lists
+	// every snapshot in the org, while source_sandbox_id is honored by all.
+	var source apiclient.SandboxSelector
+	if rigRef != nil {
+		sb, err := rigref.Resolve(client, *rigRef)
+		if err != nil {
+			return err
+		}
+		source = apiclient.SandboxByID(sb.ID)
+	}
+
+	snapshots, err := client.ListSandboxSnapshots(repositoryID, source)
 	if err != nil {
-		return rigref.Explain(rigRef, err)
+		return err
 	}
 	format, err := output.FormatFrom(cmd)
 	if err != nil {

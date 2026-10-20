@@ -75,7 +75,11 @@ var sandboxDeleteCmd = &cobra.Command{
 		// way the user named it.
 		for i, ref := range refs {
 			label := labels[i]
-			if remoteErr := rigref.Explain(ref, remoteClient.DeleteSandbox(ref.Selector())); remoteErr != nil {
+			sel, remoteErr := rigref.Target(remoteClient, ref)
+			if remoteErr == nil {
+				remoteErr = rigref.Explain(ref, remoteClient.DeleteSandbox(sel))
+			}
+			if remoteErr != nil {
 				errs = append(errs, fmt.Sprintf("sandbox %q: %v", label, remoteErr))
 				results = append(results, batchError(label, remoteErr))
 				continue

@@ -183,3 +183,44 @@ func TestFind(t *testing.T) {
 		t.Fatalf("Find on a rig named after its own id = %d, %v; want 0, nil", got, err)
 	}
 }
+
+// ref= with nothing after it must not pass as an empty reference: an empty
+// rig on `send` routes nowhere and makes the server create a new rig.
+func TestParseRejectsEmptyValues(t *testing.T) {
+	for _, raw := range []string{"", "  ", "ref=", "name=", "id=", "ref=  "} {
+		if got, err := ParseWith(envResolver(nil), raw); err == nil {
+			t.Errorf("ParseWith(%q) = %v, want an error", raw, got)
+		}
+	}
+}
+
+func TestCheck(t *testing.T) {
+	cases := []struct {
+		ref     Ref
+		ok      bool
+		comment string
+	}{
+		{Ref{Kind: KindRef, Value: "box"}, true, "a plain ref accepts whatever the server matched"},
+		{Ref{Kind: KindName, Value: "box"}, true, "name matches"},
+		{Ref{Kind: KindID, Value: "sb_1"}, true, "id matches"},
+		{Ref{Kind: KindID, Value: "box"}, false, "an old server matched the name for an id= reference"},
+		{Ref{Kind: KindName, Value: "sb_1"}, false, "an old server matched the id for a name= reference"},
+	}
+	for _, tc := range cases {
+		if err := Check(tc.ref, "sb_1", "box"); (err == nil) != tc.ok {
+			t.Errorf("%s: Check(%v) = %v", tc.comment, tc.ref, err)
+		}
+	}
+}
+
+// A pinned reference that draws a 409 already names its kind, so the hint
+// to add one would loop; only a plain ref is rewritten.
+func TestExplainOnlyRewritesPlainRefs(t *testing.T) {
+	conflict := &apiclient.HTTPError{StatusCode: 409, Body: `{"error_code":"resource_ref_ambiguous"}`}
+	if err := Explain(Ref{Kind: KindRef, Value: "dup"}, conflict); !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("plain ref: %v, want ErrAmbiguous", err)
+	}
+	if err := Explain(Ref{Kind: KindID, Value: "dup"}, conflict); errors.Is(err, ErrAmbiguous) {
+		t.Errorf("id= ref: %v, want the server's error unchanged", err)
+	}
+}

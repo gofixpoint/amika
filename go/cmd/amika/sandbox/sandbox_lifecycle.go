@@ -54,12 +54,17 @@ var sandboxStartCmd = &cobra.Command{
 		}
 		for i, ref := range refs {
 			label := rigref.Label(args[i], ref)
-			if remoteErr := remoteClient.StartSandbox(ref.Selector()); remoteErr != nil {
+			sel, remoteErr := rigref.Target(remoteClient, ref)
+			if remoteErr != nil {
+				appendBatchFailure(&items, &failed, label, remoteErr)
+				continue
+			}
+			if remoteErr := remoteClient.StartSandbox(sel); remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
 			fmt.Fprintf(pw, "Sandbox %q starting...\n", label)
-			polled, remoteErr := remoteClient.WaitForSandboxStart(ref.Selector())
+			polled, remoteErr := remoteClient.WaitForSandboxStart(sel)
 			if remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
@@ -106,12 +111,17 @@ var sandboxStopCmd = &cobra.Command{
 		}
 		for i, ref := range refs {
 			label := rigref.Label(args[i], ref)
-			if remoteErr := remoteClient.StopSandbox(ref.Selector()); remoteErr != nil {
+			sel, remoteErr := rigref.Target(remoteClient, ref)
+			if remoteErr != nil {
+				appendBatchFailure(&items, &failed, label, remoteErr)
+				continue
+			}
+			if remoteErr := remoteClient.StopSandbox(sel); remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
 			fmt.Fprintf(pw, "Sandbox %q stopping...\n", label)
-			polled, remoteErr := remoteClient.WaitForSandboxStop(ref.Selector())
+			polled, remoteErr := remoteClient.WaitForSandboxStop(sel)
 			if remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
@@ -399,9 +409,9 @@ var sandboxConnectCmd = &cobra.Command{
 		}
 		// The reference resolves to the rig's canonical name and id here, and
 		// only those reach the SSH alias.
-		sb, err := client.GetSandbox(ref.Selector())
+		sb, err := rigref.Resolve(client, ref)
 		if err != nil {
-			return rigref.Explain(ref, err)
+			return err
 		}
 		return connectSandbox(client, sb)
 	},

@@ -12,8 +12,9 @@
 // devdocs/api-resource-refs.md), so a parsed Ref maps directly onto the API's
 // `by`/`sandbox_by` selectors.
 //
-// The prefix cannot collide with a current rig: ids are UUIDs and new names are
-// single DNS labels, neither of which contains '='. Only the value before the
+// The prefix cannot collide with a current rig: ids are UUIDs (or, for old
+// rigs, `sbox-<uuid>`) and new names are single DNS labels, none of which
+// contains '='. Only the value before the
 // first '=' is inspected, and only the three kind words count as a prefix, so a
 // legacy name that happens to start with one is still reachable as
 // `name=id=…` or `ref=id=…`. '=' rather than ':' because `amika scp` already
@@ -26,6 +27,12 @@
 // id=: any other value, bare "_self" included, is sent as a plain ref (no
 // `by`/`sandbox_by`), exactly as the CLI sent every reference before the API
 // accepted selectors, so it keeps working against servers that predate them.
+//
+// A pinned (name= or id=) reference cannot rely on the server honoring its
+// kind: a server that predates the sandbox routes' `by` selector ignores it and
+// matches id or name. Commands that act on such a reference through those
+// routes first call Resolve, which checks the returned rig really matches on
+// the pinned field, and then address the rig by its canonical id.
 package rigref
 
 import (
@@ -94,10 +101,67 @@ func ambiguous(value string) error {
 // named a rig by r into ErrAmbiguous, which tells the user how to pick one of
 // the two rigs. Any other error, including nil, is returned unchanged.
 func Explain(r Ref, err error) error {
-	if err != nil && apiclient.IsResourceRefAmbiguous(err) {
+	// Only a ref can be ambiguous; a pinned kind that somehow draws the 409
+	// keeps the server's message rather than suggesting the prefix it already
+	// has.
+	if err != nil && r.Kind == KindRef && !r.self && apiclient.IsResourceRefAmbiguous(err) {
 		return ambiguous(r.Value)
 	}
 	return err
+}
+
+// Pinned reports whether r matches on one field only (name= or id=), and so
+// goes on the wire with a selector.
+func (r Ref) Pinned() bool { return r.Selector().By != apiclient.SelectByRef }
+
+// Check reports an error when the rig the API returned for r, identified by id
+// and name, does not match r on the field r pins. A server that predates the
+// `by` selector ignores it and matches id or name, so this is what keeps a
+// name= or id= reference from acting on a rig it does not name.
+func Check(r Ref, id, name string) error {
+	switch {
+	case !r.Pinned():
+		return nil
+	case r.Kind == KindID && id != r.Value:
+		return fmt.Errorf("no rig has id %q (%q is the name of rig %s)", r.Value, r.Value, id)
+	case r.Kind == KindName && name != r.Value:
+		return fmt.Errorf("no rig is named %q (%q is the id of rig %q)", r.Value, r.Value, name)
+	}
+	return nil
+}
+
+// Getter fetches one rig; *apiclient.Client satisfies it.
+type Getter interface {
+	GetSandbox(sel apiclient.SandboxSelector) (*apiclient.RemoteSandbox, error)
+}
+
+// Resolve fetches the rig r names, rewriting an ambiguous-reference error (see
+// Explain) and refusing a rig that does not match on the field r pins (see
+// Check).
+func Resolve(client Getter, r Ref) (*apiclient.RemoteSandbox, error) {
+	sb, err := client.GetSandbox(r.Selector())
+	if err != nil {
+		return nil, Explain(r, err)
+	}
+	if err := Check(r, sb.ID, sb.Name); err != nil {
+		return nil, err
+	}
+	return sb, nil
+}
+
+// Target returns the selector to act on r with through a route whose `by`
+// selector an older server may ignore. A plain reference is its own selector;
+// a pinned one is resolved and checked first (see Resolve) and becomes the
+// rig's canonical id, which every server matches the same way.
+func Target(client Getter, r Ref) (apiclient.SandboxSelector, error) {
+	if !r.Pinned() {
+		return r.Selector(), nil
+	}
+	sb, err := Resolve(client, r)
+	if err != nil {
+		return apiclient.SandboxSelector{}, err
+	}
+	return apiclient.SandboxByRef(sb.ID), nil
 }
 
 // Prefix returns the kind raw's `kind=` prefix spells out, and false when raw
@@ -123,8 +187,11 @@ func ParseWith(resolver rigself.Resolver, raw string) (Ref, error) {
 	if kind, ok := Prefix(raw); ok {
 		ref = Ref{Kind: kind, Value: raw[len(kind)+1:]}
 	}
-	if ref.Kind != KindRef && ref.Value == "" {
-		return Ref{}, fmt.Errorf("rig reference %q has no value after %q", raw, string(ref.Kind)+"=")
+	if strings.TrimSpace(ref.Value) == "" {
+		if _, prefixed := Prefix(raw); prefixed {
+			return Ref{}, fmt.Errorf("rig reference %q has no value after %q", raw, string(ref.Kind)+"=")
+		}
+		return Ref{}, fmt.Errorf("rig reference must not be empty")
 	}
 	if ref.Value != rigself.Ref {
 		return ref, nil

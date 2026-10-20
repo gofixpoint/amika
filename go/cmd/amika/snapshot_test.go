@@ -63,30 +63,30 @@ func newTestListCmd() *cobra.Command {
 	return c
 }
 
-// TestSnapshotListRigFilter checks that --rig is handed to the server as the
-// source filter its reference kind names, with no client-side lookup of the
-// rig.
+// TestSnapshotListRigFilter checks that --rig is resolved to the rig's id
+// (by the reference's kind) and the list filtered with source_sandbox_id, the
+// one source filter every server honors; a server that predates the _ref and
+// _name filters would ignore them and list every snapshot.
 func TestSnapshotListRigFilter(t *testing.T) {
 	for _, tc := range []struct {
-		rig       string
-		wantQuery string
+		rig     string
+		wantGet string
 	}{
-		{rig: "alpha", wantQuery: "source_sandbox_ref=alpha"},
-		{rig: "ref=alpha", wantQuery: "source_sandbox_ref=alpha"},
-		{rig: "name=alpha", wantQuery: "source_sandbox_name=alpha"},
-		{rig: "id=sb-1", wantQuery: "source_sandbox_id=sb-1"},
+		{rig: "alpha", wantGet: "/api/v0beta1/sandboxes/alpha"},
+		{rig: "ref=alpha", wantGet: "/api/v0beta1/sandboxes/alpha"},
+		{rig: "name=alpha", wantGet: "/api/v0beta1/sandboxes/alpha?by=name"},
+		{rig: "id=sb-1", wantGet: "/api/v0beta1/sandboxes/sb-1?by=id"},
 	} {
 		t.Run(tc.rig, func(t *testing.T) {
-			var queries []string
+			var requests []string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/api/v0beta1/sandbox-snapshots" {
-					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusNotFound)
+				requests = append(requests, r.URL.RequestURI())
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v0beta1/sandbox-snapshots" {
+					_, _ = w.Write([]byte(`{"items":[]}`))
 					return
 				}
-				queries = append(queries, r.URL.RawQuery)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"items":[]}`))
+				_, _ = w.Write([]byte(`{"id":"sb-1","name":"alpha","state":"running"}`))
 			}))
 			defer srv.Close()
 			t.Setenv("AMIKA_API_URL", srv.URL)
@@ -98,11 +98,40 @@ func TestSnapshotListRigFilter(t *testing.T) {
 			if err := runSnapshotList(c, nil); err != nil {
 				t.Fatalf("runSnapshotList: %v", err)
 			}
-			if len(queries) != 1 || queries[0] != tc.wantQuery {
-				t.Fatalf("queries = %q, want [%q]", queries, tc.wantQuery)
+			want := []string{tc.wantGet, "/api/v0beta1/sandbox-snapshots?source_sandbox_id=sb-1"}
+			if !reflect.DeepEqual(requests, want) {
+				t.Fatalf("requests = %q, want %q", requests, want)
 			}
 		})
 	}
+
+	// An old server ignores `by` and may answer with the rig whose *name* is
+	// the id asked for; that rig's snapshots must not be listed.
+	t.Run("a pinned reference refuses a mismatched rig", func(t *testing.T) {
+		listed := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/api/v0beta1/sandbox-snapshots" {
+				listed = true
+				_, _ = w.Write([]byte(`{"items":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"sb-9","name":"alpha","state":"running"}`))
+		}))
+		defer srv.Close()
+		t.Setenv("AMIKA_API_URL", srv.URL)
+		t.Setenv("AMIKA_API_KEY", "test-token")
+
+		c := newTestListCmd()
+		c.Flags().Set("rig", "id=alpha")
+		c.SetOut(&bytes.Buffer{})
+		if err := runSnapshotList(c, nil); err == nil || !strings.Contains(err.Error(), `no rig has id "alpha"`) {
+			t.Fatalf("err = %v, want the id mismatch", err)
+		}
+		if listed {
+			t.Fatal("listed snapshots for a rig the reference does not name")
+		}
+	})
 
 	t.Run("a bad reference fails before any request", func(t *testing.T) {
 		t.Setenv("AMIKA_API_URL", "http://127.0.0.1:1")
