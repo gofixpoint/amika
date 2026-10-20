@@ -175,6 +175,7 @@ Supported --editor values (--app is an alias for --editor):
   claude   register the sandbox as a Claude Desktop SSH environment
   codex    expose the sandbox to Codex as an SSH connection
   paseo    print instructions for adding the sandbox as a Paseo SSH host
+  herdr    add the sandbox to Herdr as a remote machine
 
 The command creates a managed SSH alias backed by Amika's WebSocket proxy, then
 hands that alias to the selected editor. It requires an SSH identity from
@@ -187,6 +188,7 @@ Examples:
   amika sandbox code my-sandbox --editor=claude
   amika sandbox code my-sandbox --editor=codex
   amika sandbox code my-sandbox --editor=paseo
+  amika sandbox code my-sandbox --editor=herdr
   amika rig open my-sandbox --app=claude`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

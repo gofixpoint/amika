@@ -221,6 +221,34 @@ func TestOpenSandboxInPaseo(t *testing.T) {
 	}
 }
 
+// TestOpenSandboxInHerdr registers the prepared SSH alias as a Herdr machine
+// labeled with the sandbox name.
+func TestOpenSandboxInHerdr(t *testing.T) {
+	var got []string
+	prev := runHerdr
+	runHerdr = func(args ...string) error {
+		got = args
+		return nil
+	}
+	t.Cleanup(func() { runHerdr = prev })
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	target := sandboxSSHAlias{
+		alias:       "dylan.herdr-setup.sb_abc.app-amika-dev.amika",
+		sandboxName: "herdr-setup",
+	}
+
+	if err := openSandboxInEditor(cmd, "herdr", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	want := []string{"machine", "add", "dylan.herdr-setup.sb_abc.app-amika-dev.amika", "--label", "herdr-setup"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("herdr args = %q, want %q", got, want)
+	}
+}
+
 func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 	paths, _ := testSSHPaths(t)
 	repoName := "biz"

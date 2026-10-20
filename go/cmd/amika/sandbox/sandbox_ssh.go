@@ -20,14 +20,14 @@ import (
 // validateEditor checks that the requested editor is supported.
 func validateEditor(editor string) error {
 	switch editor {
-	case "cursor", "vscode", "claude", "codex", "paseo":
+	case "cursor", "vscode", "claude", "codex", "paseo", "herdr":
 		return nil
 	default:
 		return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
 	}
 }
 
-var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "paseo"}
+var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "paseo", "herdr"}
 
 // maintainSSHHosts keeps maintenance failures from preventing an editor launch.
 func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient.Client, alias string) {
@@ -57,6 +57,8 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 		return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
 	case "paseo":
 		return openSandboxInPaseoTarget(cmd, target)
+	case "herdr":
+		return openSandboxInHerdrTarget(cmd, target)
 	default:
 		return fmt.Errorf("unsupported editor %q", editor)
 	}
@@ -198,6 +200,31 @@ func openSandboxInPaseoTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 	fmt.Fprintln(out, "Copy paste this SSH host:")
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "ssh://amika@%s\n", target.alias)
+	return nil
+}
+
+// runHerdr is a seam around running the herdr CLI in the foreground, so tests
+// can assert the argv without a herdr install.
+var runHerdr = func(args ...string) error {
+	if _, err := exec.LookPath("herdr"); err != nil {
+		return fmt.Errorf("herdr CLI is not installed or not in PATH")
+	}
+	herdrCmd := exec.Command("herdr", args...)
+	herdrCmd.Stdin = os.Stdin
+	herdrCmd.Stdout = os.Stdout
+	herdrCmd.Stderr = os.Stderr
+	return herdrCmd.Run()
+}
+
+// openSandboxInHerdrTarget registers a prepared SSH target as a Herdr machine,
+// labeled with the sandbox name. Herdr dials the alias through the system
+// OpenSSH config, so it reaches the sandbox over the managed ProxyCommand.
+func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error {
+	fmt.Fprintf(cmd.OutOrStdout(), "Adding sandbox %q to Herdr as a machine via SSH (%s)...\n", target.sandboxName, target.alias)
+	fmt.Fprintf(cmd.OutOrStdout(), "Running: herdr machine add %s --label %s\n", target.alias, target.sandboxName)
+	if err := runHerdr("machine", "add", target.alias, "--label", target.sandboxName); err != nil {
+		return fmt.Errorf("herdr machine add failed: %w", err)
+	}
 	return nil
 }
 

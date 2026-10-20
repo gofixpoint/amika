@@ -295,6 +295,10 @@ configures the selected editor:
 - `codex` enables Codex's `remote_connections` feature (in
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
+- `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
+  Remote SSH.
+- `herdr` runs `herdr machine add <ssh-host> --label <name>`, which adds the
+  sandbox to Herdr as a remote machine. Requires the `herdr` CLI in `PATH`.
 
 Before first use, create and upload an SSH key:
 
@@ -320,12 +324,13 @@ amika sandbox code my-sandbox --editor=cursor
 amika sandbox code my-sandbox --editor=vscode
 amika sandbox code my-sandbox --editor=claude
 amika sandbox code my-sandbox --editor=codex
+amika sandbox code my-sandbox --editor=herdr
 amika rig open my-sandbox --app=claude
 ```
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
-| `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, or `codex`  |
+| `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
 | `--app <name>`    | —        | Alias for `--editor`                                     |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
 
