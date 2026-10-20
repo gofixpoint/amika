@@ -280,7 +280,8 @@ and X11 forwarding are not supported.
 
 Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport. Remote sandboxes only; requires a signed-in Amika
-account and an SSH identity from `amika secret ssh-keygen`.
+account and an SSH identity from `amika secret ssh-keygen`. `amika rig open`
+is an alias, and `--app` is an alias for `--editor`.
 
 The command adds a named SSH connection to Amika's managed config (so editors
 such as Codex that enumerate `Host` entries can find it), then starts or
@@ -319,11 +320,13 @@ amika sandbox code my-sandbox --editor=cursor
 amika sandbox code my-sandbox --editor=vscode
 amika sandbox code my-sandbox --editor=claude
 amika sandbox code my-sandbox --editor=codex
+amika rig open my-sandbox --app=claude
 ```
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
 | `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, or `codex`  |
+| `--app <name>`    | —        | Alias for `--editor`                                     |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
 
 ### `amika sandbox agent-send`

@@ -162,13 +162,14 @@ Examples:
 var sandboxCodeV2Cmd = &cobra.Command{
 	Use: "code <name>",
 	// "codev2" is the pre-promotion name this command answered to; kept as an
-	// alias so scripts and docs written against it keep working.
-	Aliases: []string{"codev2"},
+	// alias so scripts and docs written against it keep working. "open" reads
+	// better for the targets that are apps rather than editors.
+	Aliases: []string{"codev2", "open"},
 	Short:   "Open a remote sandbox in an editor or agent via SSH",
 	Long: `Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport, bypassing provider-native SSH access.
 
-Supported --editor values:
+Supported --editor values (--app is an alias for --editor):
   cursor   launch Cursor connected to the sandbox (default)
   vscode   launch VS Code connected to the sandbox
   claude   register the sandbox as a Claude Desktop SSH environment
@@ -185,13 +186,17 @@ Examples:
   amika sandbox code my-sandbox --editor=vscode
   amika sandbox code my-sandbox --editor=claude
   amika sandbox code my-sandbox --editor=codex
-  amika sandbox code my-sandbox --editor=paseo`,
+  amika sandbox code my-sandbox --editor=paseo
+  amika rig open my-sandbox --app=claude`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := output.RejectJSON(cmd); err != nil {
 			return err
 		}
-		editor, _ := cmd.Flags().GetString("editor")
+		editor, err := editorFlag(cmd)
+		if err != nil {
+			return err
+		}
 		if err := validateEditor(editor); err != nil {
 			return err
 		}
@@ -220,6 +225,21 @@ Examples:
 		pathOverride, _ := cmd.Flags().GetString("path")
 		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
 	},
+}
+
+// editorFlag reads the editor from --editor or its alias --app. Passing both is
+// accepted only when they agree, so neither silently overrides the other.
+func editorFlag(cmd *cobra.Command) (string, error) {
+	editor, _ := cmd.Flags().GetString("editor")
+	appFlag := cmd.Flags().Lookup("app")
+	if appFlag == nil || !appFlag.Changed {
+		return editor, nil
+	}
+	app := appFlag.Value.String()
+	if cmd.Flags().Changed("editor") && editor != app {
+		return "", fmt.Errorf("--editor %q and --app %q disagree; --app is an alias for --editor, so pass only one", editor, app)
+	}
+	return app, nil
 }
 
 // sshV2Client is the subset of apiclient.Client `sandbox code` needs to prepare

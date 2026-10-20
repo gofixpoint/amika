@@ -373,7 +373,7 @@ func TestSSHCommandNames(t *testing.T) {
 		wantAliases []string
 	}{
 		{cmd: sandboxSSHV2Cmd, wantName: "ssh", wantHidden: false, wantAliases: []string{"sshv2"}},
-		{cmd: sandboxCodeV2Cmd, wantName: "code", wantHidden: false, wantAliases: []string{"codev2"}},
+		{cmd: sandboxCodeV2Cmd, wantName: "code", wantHidden: false, wantAliases: []string{"codev2", "open"}},
 	} {
 		t.Run(tt.wantName, func(t *testing.T) {
 			if got := tt.cmd.Name(); got != tt.wantName {
@@ -384,6 +384,45 @@ func TestSSHCommandNames(t *testing.T) {
 			}
 			if !reflect.DeepEqual(tt.cmd.Aliases, tt.wantAliases) {
 				t.Errorf("Aliases = %#v, want %#v", tt.cmd.Aliases, tt.wantAliases)
+			}
+		})
+	}
+}
+
+// TestEditorFlagAcceptsAppAlias reads the editor from --editor or --app, and
+// rejects the two only when they name different editors.
+func TestEditorFlagAcceptsAppAlias(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{name: "default", args: nil, want: "cursor"},
+		{name: "editor", args: []string{"--editor=vscode"}, want: "vscode"},
+		{name: "app", args: []string{"--app=claude"}, want: "claude"},
+		{name: "both agree", args: []string{"--editor=codex", "--app=codex"}, want: "codex"},
+		{name: "both disagree", args: []string{"--editor=codex", "--app=claude"}, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.Flags().String("editor", "cursor", "")
+			cmd.Flags().String("app", "", "")
+			if err := cmd.Flags().Parse(tt.args); err != nil {
+				t.Fatalf("parse %v: %v", tt.args, err)
+			}
+			got, err := editorFlag(cmd)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("editorFlag() = %q, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("editorFlag: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("editorFlag() = %q, want %q", got, tt.want)
 			}
 		})
 	}
