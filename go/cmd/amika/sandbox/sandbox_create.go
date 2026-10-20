@@ -213,7 +213,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 
 	fmt.Fprintf(pw, "Sandbox %q initializing...\n", sb.Name)
 
-	sb, err = client.WaitForSandbox(sb.Name)
+	sb, err = client.WaitForSandbox(apiclient.SandboxByRef(sb.Name))
 	if err != nil {
 		return err
 	}

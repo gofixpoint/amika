@@ -20,7 +20,7 @@ func TestSandboxSnapshotRequestPaths(t *testing.T) {
 		{
 			name: "ListSandboxSnapshots with both filters",
 			call: func(c *Client) error {
-				_, err := c.ListSandboxSnapshots("repo1", "sb1")
+				_, err := c.ListSandboxSnapshots("repo1", SandboxByID("sb1"))
 				return err
 			},
 			wantMethod: "GET",
@@ -29,7 +29,7 @@ func TestSandboxSnapshotRequestPaths(t *testing.T) {
 		{
 			name: "ListSandboxSnapshots with no filters",
 			call: func(c *Client) error {
-				_, err := c.ListSandboxSnapshots("", "")
+				_, err := c.ListSandboxSnapshots("", SandboxSelector{})
 				return err
 			},
 			wantMethod: "GET",
@@ -51,7 +51,7 @@ func TestSandboxSnapshotRequestPaths(t *testing.T) {
 		{
 			name: "GetSandboxScrubPreview forwards ref via sandbox+by",
 			call: func(c *Client) error {
-				_, err := c.GetSandboxScrubPreview("my-box")
+				_, err := c.GetSandboxScrubPreview(SandboxByRef("my-box"))
 				return err
 			},
 			wantMethod: "GET",
@@ -103,7 +103,7 @@ func TestListSandboxSnapshotsParsesEnvelope(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	items, err := c.ListSandboxSnapshots("", "")
+	items, err := c.ListSandboxSnapshots("", SandboxSelector{})
 	if err != nil {
 		t.Fatalf("ListSandboxSnapshots: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestGetSandboxScrubPreviewParsesResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	preview, err := c.GetSandboxScrubPreview("my-box")
+	preview, err := c.GetSandboxScrubPreview(SandboxByRef("my-box"))
 	if err != nil {
 		t.Fatalf("GetSandboxScrubPreview: %v", err)
 	}

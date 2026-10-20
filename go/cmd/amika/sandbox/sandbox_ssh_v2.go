@@ -9,7 +9,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/cliargs"
 	"github.com/gofixpoint/amika/go/internal/cliflags"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
@@ -42,7 +42,7 @@ var sshV2OwnValueFlags = map[string]bool{
 }
 
 var sandboxSSHV2Cmd = &cobra.Command{
-	Use: "ssh [ssh-options] <name> [command...]",
+	Use: "ssh [ssh-options] <rig> [command...]",
 	// "sshv2" is the pre-promotion name this command answered to; kept as an
 	// alias so scripts and docs written against it keep working.
 	Aliases: []string{"sshv2"},
@@ -50,8 +50,10 @@ var sandboxSSHV2Cmd = &cobra.Command{
 	Long: `Open an SSH session to a remote sandbox over Amika's direct WebSocket
 transport. Requires an SSH identity from "amika secret ssh-keygen".
 
-Use it like ssh: options go before the sandbox name, an optional command
-after it. Every ssh option works, including port forwarding.
+Use it like ssh: options go before the rig, an optional command after it.
+Every ssh option works, including port forwarding. The rig is a name or ID, or
+name=<name> / id=<id> (see "amika rig --help"); it is resolved to the rig's
+"<name>.<id>.<environment>.amika" SSH alias before ssh runs.
 
 Amika's own flags go before "ssh":
 
@@ -125,9 +127,9 @@ Examples:
 			return err
 		}
 		if nameIdx < 0 {
-			return fmt.Errorf("missing sandbox name; usage: amika sandbox ssh [ssh-options] <name> [command...]")
+			return fmt.Errorf("missing rig; usage: amika sandbox ssh [ssh-options] <rig> [command...]")
 		}
-		name, err := rigself.Resolve(forward[nameIdx])
+		ref, err := rigref.Parse(forward[nameIdx])
 		if err != nil {
 			return err
 		}
@@ -142,9 +144,12 @@ Examples:
 		if err != nil {
 			return err
 		}
-		sandbox, err := client.GetSandbox(name)
+		// Resolve the reference to the rig's canonical name and id first: the
+		// alias handed to ssh, and the ProxyCommand that parses it back, carry
+		// only those, never a name= or id= reference.
+		sandbox, err := client.GetSandbox(ref.Selector())
 		if err != nil {
-			return err
+			return rigref.Explain(ref, err)
 		}
 		alias, err := prepareSessionTarget(
 			basedir.New(""),
@@ -160,13 +165,14 @@ Examples:
 }
 
 var sandboxCodeV2Cmd = &cobra.Command{
-	Use: "code <name>",
+	Use: "code <rig>",
 	// "codev2" is the pre-promotion name this command answered to; kept as an
 	// alias so scripts and docs written against it keep working.
 	Aliases: []string{"codev2"},
 	Short:   "Open a remote sandbox in an editor or agent via SSH",
 	Long: `Open a remote sandbox in an editor or coding agent over Amika's direct
-WebSocket SSH transport, bypassing provider-native SSH access.
+WebSocket SSH transport, bypassing provider-native SSH access. The rig is a
+name or ID, or name=<name> / id=<id> (see "amika rig --help").
 
 Supported --editor values:
   cursor   launch Cursor connected to the sandbox (default)
@@ -195,7 +201,7 @@ Examples:
 		if err := validateEditor(editor); err != nil {
 			return err
 		}
-		name, err := rigself.Resolve(args[0])
+		ref, err := rigref.Parse(args[0])
 		if err != nil {
 			return err
 		}
@@ -212,7 +218,7 @@ Examples:
 			return err
 		}
 		paths := basedir.New("")
-		sshTarget, err := resolveSandboxV2SSHAlias(client, paths, name)
+		sshTarget, err := resolveSandboxV2SSHAlias(client, paths, ref)
 		if err != nil {
 			return err
 		}
@@ -226,7 +232,7 @@ Examples:
 // a direct-session SSH alias for an editor.
 type sshV2Client interface {
 	ssh.SessionCreator
-	GetSandbox(name string) (*apiclient.RemoteSandbox, error)
+	GetSandbox(sel apiclient.SandboxSelector) (*apiclient.RemoteSandbox, error)
 }
 
 // prepareSessionTarget is a seam around the shared session-transport setup used
@@ -242,11 +248,12 @@ var upsertSessionHost = ssh.UpsertSessionHost
 
 // resolveSandboxV2SSHAlias prepares the same direct-session alias used by
 // `sandbox ssh` and `scp`. Editors subsequently use system OpenSSH, which
-// invokes the managed alias's ProxyCommand once it dials the host.
-func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, name string) (sandboxSSHAlias, error) {
-	sandbox, err := client.GetSandbox(name)
+// invokes the managed alias's ProxyCommand once it dials the host. The alias
+// is built from the canonical name and id the API returns for ref.
+func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, ref rigref.Ref) (sandboxSSHAlias, error) {
+	sandbox, err := client.GetSandbox(ref.Selector())
 	if err != nil {
-		return sandboxSSHAlias{}, err
+		return sandboxSSHAlias{}, rigref.Explain(ref, err)
 	}
 	alias, err := prepareSessionTarget(paths, client, sandbox.Name, sandbox.ID)
 	if err != nil {

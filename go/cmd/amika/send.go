@@ -15,7 +15,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -104,9 +104,16 @@ func runSend(cmd *cobra.Command, args []string) error {
 
 	agent, _ := cmd.Flags().GetString("agent")
 	sessionID, _ := cmd.Flags().GetString("session-id")
-	rigRef, err := rigself.Flag(cmd, "rig")
-	if err != nil {
-		return err
+	rawRig, _ := cmd.Flags().GetString("rig")
+	// rigRef stays nil when no rig was named, so the message goes to a
+	// session's sandbox or to a new one.
+	var rigRef *rigref.Ref
+	if rawRig != "" {
+		ref, err := rigref.Parse(rawRig)
+		if err != nil {
+			return err
+		}
+		rigRef = &ref
 	}
 	newSession, _ := cmd.Flags().GetBool("new-session")
 
@@ -132,7 +139,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 	// them costs nothing, so a login should not stand between the caller and
 	// a plain flag conflict. Only the flag-level checks move up — a bad path
 	// needs the filesystem, so it still waits.
-	if err := validateSendRepoFlags(cmd, sessionID, rigRef); err != nil {
+	if err := validateSendRepoFlags(cmd, sessionID, rigRef != nil); err != nil {
 		return err
 	}
 
@@ -146,7 +153,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 	// and shells out to git, and login is the precondition for all of it, so
 	// someone not logged in hears that rather than a complaint about their
 	// git remote.
-	repoURL, identity, err := sendRepo(cmd, sessionID, rigRef)
+	repoURL, identity, err := sendRepo(cmd, sessionID, rigRef != nil)
 	if err != nil {
 		return err
 	}
@@ -160,22 +167,24 @@ func runSend(cmd *cobra.Command, args []string) error {
 		Message:    message,
 		Agent:      agent,
 		SessionID:  sessionID,
-		SandboxID:  rigRef,
 		NewSession: newSession,
 		RepoURL:    repoURL,
 
 		Branch:        branches.Branch,
 		NewBranchName: branches.NewBranch,
 	}
+	if rigRef != nil {
+		req.SetSandbox(rigRef.Selector())
+	}
 	client := runmode.NewRemoteClient()
 
 	if stream {
-		return runSendStreaming(client, req)
+		return explainSendRig(rigRef, runSendStreaming(client, req))
 	}
 
 	resp, err := client.SendAgentSession(req)
 	if err != nil {
-		return err
+		return explainSendRig(rigRef, err)
 	}
 
 	if format.IsJSON() {
@@ -231,6 +240,15 @@ func branchForDisplay(branches gitrepo.BranchRequest) string {
 	return branches.Branch
 }
 
+// explainSendRig rewrites an ambiguous-reference error for the rig --rig named
+// (see rigref.Explain), and returns err unchanged when no rig was named.
+func explainSendRig(rigRef *rigref.Ref, err error) error {
+	if rigRef == nil {
+		return err
+	}
+	return rigref.Explain(*rigRef, err)
+}
+
 // validateSendRepoFlags rejects a repo or branch selection this command cannot
 // honor, using only the flags themselves so it can run before the auth gate.
 //
@@ -240,11 +258,11 @@ func branchForDisplay(branches gitrepo.BranchRequest) string {
 // dropping the flag from the request, which would show up only in what the
 // agent could see. --no-git needs no such refusal — it asks for exactly what
 // already happens there.
-func validateSendRepoFlags(cmd *cobra.Command, sessionID, rigRef string) error {
+func validateSendRepoFlags(cmd *cobra.Command, sessionID string, hasRig bool) error {
 	if err := gitrepo.ValidateFlags(cmd); err != nil {
 		return err
 	}
-	if sessionID == "" && rigRef == "" {
+	if sessionID == "" && !hasRig {
 		return nil
 	}
 	flag := gitrepo.RequestedFlag(cmd)
@@ -273,8 +291,8 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID, rigRef string) error {
 // A message aimed at an existing chat (--session-id) or an existing sandbox
 // (--rig) creates nothing, so there is no repo to choose and the working
 // directory is not consulted at all.
-func sendRepo(cmd *cobra.Command, sessionID, rigRef string) (url string, identity gitrepo.Identity, err error) {
-	if sessionID != "" || rigRef != "" {
+func sendRepo(cmd *cobra.Command, sessionID string, hasRig bool) (url string, identity gitrepo.Identity, err error) {
+	if sessionID != "" || hasRig {
 		// validateSendRepoFlags has already refused an explicit repo here, so
 		// this is the "nothing was asked for" case: skip detection entirely.
 		return "", gitrepo.Identity{}, nil
@@ -555,15 +573,15 @@ func init() {
 // newRigAgentSendCommand keeps the rig-scoped spelling on the same send path.
 func newRigAgentSendCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "agent-send <name> [message]",
+		Use:   "agent-send <rig> [message]",
 		Short: "Send a message to a coding agent in a rig",
-		Long: `Equivalent to "amika send --rig <name> [message]". Uses the same durable
+		Long: `Equivalent to "amika send --rig <rig> [message]". Uses the same durable
 chats, streaming behavior, and API response format as "amika send".
 The message can also be piped via stdin.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(args[0]) == "" {
-				return fmt.Errorf("rig name must not be empty")
+				return fmt.Errorf("rig must not be empty")
 			}
 			if target, _ := cmd.Flags().GetString("remote-target"); target != "" {
 				return fmt.Errorf("--remote-target is not yet supported")
@@ -589,7 +607,7 @@ The message can also be piped via stdin.`,
 func addSendFlags(cmd *cobra.Command) {
 	cmd.Flags().String("agent", "", "Coding agent to use: claude or codex (default: org setting, else claude)")
 	cmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
-	cmd.Flags().String("rig", "", "Send into a specific rig (id or name)")
+	cmd.Flags().String("rig", "", "Send into this existing rig: a name or id, or name=<name> / id=<id> to match one field")
 	cmd.Flags().Bool("new-session", false, "Start a brand-new chat")
 	gitrepo.AddFlags(cmd,
 		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",

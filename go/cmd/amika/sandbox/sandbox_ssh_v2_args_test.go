@@ -268,7 +268,7 @@ func TestSSHV2RejectsRemovedLocalFlag(t *testing.T) {
 func TestSSHV2MissingName(t *testing.T) {
 	root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", "-N", "-L", "6789:localhost:3010"})
 	err := root.Execute()
-	if err == nil || !strings.Contains(err.Error(), "missing sandbox name") {
+	if err == nil || !strings.Contains(err.Error(), "missing rig") {
 		t.Fatalf("err = %v, want a missing-name error", err)
 	}
 	if h.ran {

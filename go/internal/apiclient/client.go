@@ -212,10 +212,10 @@ func (c *Client) CreateSandbox(req CreateSandboxRequest) (*RemoteSandbox, error)
 	return &result, nil
 }
 
-// GetSandbox fetches a single sandbox by name or ID from the remote API.
-func (c *Client) GetSandbox(name string) (*RemoteSandbox, error) {
+// GetSandbox fetches the sandbox sel names from the remote API.
+func (c *Client) GetSandbox(sel SandboxSelector) (*RemoteSandbox, error) {
 	var result RemoteSandbox
-	if err := c.doJSON("GET", apiBasePath+"/sandboxes/"+url.PathEscape(name), nil, &result); err != nil {
+	if err := c.doJSON("GET", sandboxPath(sel, "by", "", nil), nil, &result); err != nil {
 		return nil, fmt.Errorf("remote get sandbox: %w", err)
 	}
 	return &result, nil
@@ -272,7 +272,9 @@ type ListSandboxBindingsResponse struct {
 }
 
 // BindSandboxGitHubBranch creates or reuses a sandbox's GitHub branch binding.
-func (c *Client) BindSandboxGitHubBranch(sandboxRef, sandboxBy, owner, repo, branch string, rebind bool) (*SandboxBindingReference, error) {
+// Unlike the other sandbox routes it always sends sandbox_by, "ref" included:
+// the bindings routes have taken it from the start.
+func (c *Client) BindSandboxGitHubBranch(sel SandboxSelector, owner, repo, branch string, rebind bool) (*SandboxBindingReference, error) {
 	req := GitHubBranchBindingRequest{
 		Target: GitHubBranchBindingTarget{
 			Kind: "github_branch",
@@ -285,10 +287,7 @@ func (c *Client) BindSandboxGitHubBranch(sandboxRef, sandboxBy, owner, repo, bra
 		Rebind: rebind,
 	}
 	var result SandboxBindingReference
-	q := url.Values{}
-	q.Set("sandbox_by", sandboxBy)
-	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/bindings?" + q.Encode()
-	if err := c.doJSON("POST", path, req, &result); err != nil {
+	if err := c.doJSON("POST", sandboxBindingsPath(sel), req, &result); err != nil {
 		return nil, fmt.Errorf("remote bind sandbox GitHub branch: %w", err)
 	}
 	return &result, nil
@@ -303,17 +302,21 @@ func (c *Client) ListSandboxBindings() (*ListSandboxBindingsResponse, error) {
 	return &result, nil
 }
 
-// ListSandboxBindingsForSandbox lists bindings for a sandbox resolved using
-// sandboxBy ("ref", "name", or "id").
-func (c *Client) ListSandboxBindingsForSandbox(sandboxRef, sandboxBy string) (*ListSandboxBindingsResponse, error) {
-	q := url.Values{}
-	q.Set("sandbox_by", sandboxBy)
-	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/bindings?" + q.Encode()
+// ListSandboxBindingsForSandbox lists the bindings of the sandbox sel names.
+func (c *Client) ListSandboxBindingsForSandbox(sel SandboxSelector) (*ListSandboxBindingsResponse, error) {
 	var result ListSandboxBindingsResponse
-	if err := c.doJSON("GET", path, nil, &result); err != nil {
+	if err := c.doJSON("GET", sandboxBindingsPath(sel), nil, &result); err != nil {
 		return nil, fmt.Errorf("remote list sandbox bindings: %w", err)
 	}
 	return &result, nil
+}
+
+// sandboxBindingsPath is the bindings route of the sandbox sel names, with
+// sandbox_by always set.
+func sandboxBindingsPath(sel SandboxSelector) string {
+	q := url.Values{}
+	q.Set("sandbox_by", sel.kind())
+	return apiBasePath + "/sandboxes/" + url.PathEscape(sel.Value) + "/bindings?" + q.Encode()
 }
 
 // DeleteSandboxBinding deletes an organization binding by ID.
@@ -330,11 +333,11 @@ func (c *Client) DeleteSandboxBinding(id string) error {
 // suite fast; production always uses the 3 second default.
 var pollInterval = 3 * time.Second
 
-// waitForSandboxState polls GET /api/v0beta1/sandboxes/{name} every pollInterval
+// waitForSandboxState polls GET /api/v0beta1/sandboxes/{ref} every pollInterval
 // until the sandbox state matches one of readyStates or "failed".
-func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg string) (*RemoteSandbox, error) {
+func (c *Client) waitForSandboxState(sel SandboxSelector, readyStates []string, failMsg string) (*RemoteSandbox, error) {
 	for {
-		sb, err := c.GetSandbox(name)
+		sb, err := c.GetSandbox(sel)
 		if err != nil {
 			return nil, err
 		}
@@ -353,47 +356,47 @@ func (c *Client) waitForSandboxState(name string, readyStates []string, failMsg 
 	}
 }
 
-// WaitForSandbox polls GET /api/v0beta1/sandboxes/{name} until the sandbox reaches
+// WaitForSandbox polls GET /api/v0beta1/sandboxes/{ref} until the sandbox reaches
 // a ready or terminal state. It polls every 3 seconds.
-func (c *Client) WaitForSandbox(name string) (*RemoteSandbox, error) {
-	return c.waitForSandboxState(name, []string{"active", "running", "started"}, "sandbox provisioning failed")
+func (c *Client) WaitForSandbox(sel SandboxSelector) (*RemoteSandbox, error) {
+	return c.waitForSandboxState(sel, []string{"active", "running", "started"}, "sandbox provisioning failed")
 }
 
 // StartSandbox starts (resumes) a sandbox on the remote API.
 // The endpoint returns 202 Accepted with the sandbox in "initializing" state.
 // Use WaitForSandboxStart to poll until the sandbox is active.
-func (c *Client) StartSandbox(name string) error {
-	if err := c.doJSON("POST", apiBasePath+"/sandboxes/"+url.PathEscape(name)+"/start", nil, nil); err != nil {
+func (c *Client) StartSandbox(sel SandboxSelector) error {
+	if err := c.doJSON("POST", sandboxPath(sel, "by", "/start", nil), nil, nil); err != nil {
 		return fmt.Errorf("remote start sandbox: %w", err)
 	}
 	return nil
 }
 
-// WaitForSandboxStart polls GET /api/v0beta1/sandboxes/{name} until the sandbox
+// WaitForSandboxStart polls GET /api/v0beta1/sandboxes/{ref} until the sandbox
 // transitions out of "initializing" state. It polls every 3 seconds.
-func (c *Client) WaitForSandboxStart(name string) (*RemoteSandbox, error) {
-	return c.waitForSandboxState(name, []string{"active", "running", "started"}, "sandbox start failed")
+func (c *Client) WaitForSandboxStart(sel SandboxSelector) (*RemoteSandbox, error) {
+	return c.waitForSandboxState(sel, []string{"active", "running", "started"}, "sandbox start failed")
 }
 
 // StopSandbox stops a sandbox on the remote API.
 // The endpoint returns 202 Accepted with the sandbox in "stopping" state.
 // Use WaitForSandboxStop to poll until the sandbox is stopped.
-func (c *Client) StopSandbox(name string) error {
-	if err := c.doJSON("POST", apiBasePath+"/sandboxes/"+url.PathEscape(name)+"/stop", nil, nil); err != nil {
+func (c *Client) StopSandbox(sel SandboxSelector) error {
+	if err := c.doJSON("POST", sandboxPath(sel, "by", "/stop", nil), nil, nil); err != nil {
 		return fmt.Errorf("remote stop sandbox: %w", err)
 	}
 	return nil
 }
 
-// WaitForSandboxStop polls GET /api/v0beta1/sandboxes/{name} until the sandbox
+// WaitForSandboxStop polls GET /api/v0beta1/sandboxes/{ref} until the sandbox
 // transitions out of "stopping" state. It polls every 3 seconds.
-func (c *Client) WaitForSandboxStop(name string) (*RemoteSandbox, error) {
-	return c.waitForSandboxState(name, []string{"stopped"}, "sandbox stop failed")
+func (c *Client) WaitForSandboxStop(sel SandboxSelector) (*RemoteSandbox, error) {
+	return c.waitForSandboxState(sel, []string{"stopped"}, "sandbox stop failed")
 }
 
-// DeleteSandbox deletes a sandbox on the remote API.
-func (c *Client) DeleteSandbox(name string) error {
-	if err := c.doJSON("DELETE", apiBasePath+"/sandboxes/"+url.PathEscape(name), nil, nil); err != nil {
+// DeleteSandbox deletes the sandbox sel names on the remote API.
+func (c *Client) DeleteSandbox(sel SandboxSelector) error {
+	if err := c.doJSON("DELETE", sandboxPath(sel, "by", "", nil), nil, nil); err != nil {
 		return fmt.Errorf("remote delete sandbox: %w", err)
 	}
 	return nil
@@ -465,25 +468,44 @@ type ExperimentalDaytonaSnapshot struct {
 }
 
 // CreateSandboxSnapshotRequest is the request body for
-// POST /api/v0beta1/sandbox-snapshots. SandboxRef references the source
-// sandbox by name or id; the server resolves it (id first, then name). Mode
-// is "scrub_and_delete" or "full".
+// POST /api/v0beta1/sandbox-snapshots. Exactly one of SandboxRef (id or name),
+// SandboxName, and SandboxID names the source sandbox; SetSandbox fills the
+// one a selector calls for. Mode is "scrub_and_delete" or "full".
 type CreateSandboxSnapshotRequest struct {
-	SandboxRef  string `json:"sandbox_ref"`
+	SandboxRef  string `json:"sandbox_ref,omitempty"`
+	SandboxName string `json:"sandbox_name,omitempty"`
+	SandboxID   string `json:"sandbox_id,omitempty"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Mode        string `json:"mode,omitempty"`
 }
 
+// SetSandbox names the source sandbox in the body field sel's kind calls for,
+// clearing the other two.
+func (r *CreateSandboxSnapshotRequest) SetSandbox(sel SandboxSelector) {
+	r.SandboxRef, r.SandboxName, r.SandboxID = "", "", ""
+	switch sel.kind() {
+	case SelectByName:
+		r.SandboxName = sel.Value
+	case SelectByID:
+		r.SandboxID = sel.Value
+	default:
+		r.SandboxRef = sel.Value
+	}
+}
+
 // ListSandboxSnapshots lists sandbox-captured snapshots for the caller's org.
-// repositoryID and sourceSandboxID are optional id filters; pass "" to omit.
-func (c *Client) ListSandboxSnapshots(repositoryID, sourceSandboxID string) ([]SandboxSnapshot, error) {
+// repositoryID is an optional id filter; pass "" to omit it. source optionally
+// limits the list to snapshots captured from one sandbox; a zero selector
+// omits it. Its kind picks the filter: source_sandbox_ref, source_sandbox_name,
+// or source_sandbox_id.
+func (c *Client) ListSandboxSnapshots(repositoryID string, source SandboxSelector) ([]SandboxSnapshot, error) {
 	q := url.Values{}
 	if repositoryID != "" {
 		q.Set("repository_id", repositoryID)
 	}
-	if sourceSandboxID != "" {
-		q.Set("source_sandbox_id", sourceSandboxID)
+	if source.Value != "" {
+		q.Set("source_sandbox_"+source.kind(), source.Value)
 	}
 	path := apiBasePath + "/sandbox-snapshots"
 	if encoded := q.Encode(); encoded != "" {
@@ -556,12 +578,12 @@ type SandboxScrubPreview struct {
 }
 
 // GetSandboxScrubPreview previews which injected secrets a scrub-and-delete
-// snapshot would remove from the given sandbox. sandboxRef is a name or id;
-// the server resolves it (id first, then name).
-func (c *Client) GetSandboxScrubPreview(sandboxRef string) (*SandboxScrubPreview, error) {
+// snapshot would remove from the sandbox sel names. The route has always taken
+// an explicit `by`, so it is sent for every kind.
+func (c *Client) GetSandboxScrubPreview(sel SandboxSelector) (*SandboxScrubPreview, error) {
 	q := url.Values{}
-	q.Set("sandbox", sandboxRef)
-	q.Set("by", "ref")
+	q.Set("sandbox", sel.Value)
+	q.Set("by", sel.kind())
 	var result SandboxScrubPreview
 	if err := c.doJSON("GET", apiBasePath+"/sandbox-snapshots/scrub-preview?"+q.Encode(), nil, &result); err != nil {
 		return nil, fmt.Errorf("remote sandbox scrub preview: %w", err)
@@ -630,11 +652,10 @@ func (c *Client) ListSandboxServices(sandboxRef string) ([]SandboxServiceResourc
 	return envelope.Items, nil
 }
 
-// CreateSandboxService creates a service on the sandbox referenced by name or
-// id. The server resolves sandboxRef (id first, then name) and returns the
-// created SandboxServiceResource.
-func (c *Client) CreateSandboxService(sandboxRef string, req SandboxServiceRequest) (*SandboxServiceResource, error) {
-	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/services"
+// CreateSandboxService creates a service on the sandbox sel names and returns
+// the created SandboxServiceResource.
+func (c *Client) CreateSandboxService(sel SandboxSelector, req SandboxServiceRequest) (*SandboxServiceResource, error) {
+	path := sandboxPath(sel, "sandbox_by", "/services", nil)
 	var result SandboxServiceResource
 	if err := c.doJSON("POST", path, req, &result); err != nil {
 		return nil, fmt.Errorf("remote create sandbox service: %w", err)
@@ -643,15 +664,16 @@ func (c *Client) CreateSandboxService(sandboxRef string, req SandboxServiceReque
 }
 
 // PutSandboxService fully replaces the service identified by serviceRef within
-// the given sandbox. by selects how serviceRef is resolved ("name", "id", or
-// "ref"); pass "" to default to "name". Returns the new SandboxServiceResource.
-func (c *Client) PutSandboxService(sandboxRef, serviceRef, by string, req SandboxServiceRequest) (*SandboxServiceResource, error) {
+// the sandbox sel names. by selects how serviceRef is resolved ("name", "id",
+// or "ref"); pass "" to default to "name". Returns the new
+// SandboxServiceResource.
+func (c *Client) PutSandboxService(sel SandboxSelector, serviceRef, by string, req SandboxServiceRequest) (*SandboxServiceResource, error) {
 	if by == "" {
 		by = "name"
 	}
 	q := url.Values{}
 	q.Set("by", by)
-	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/services/" + url.PathEscape(serviceRef) + "?" + q.Encode()
+	path := sandboxPath(sel, "sandbox_by", "/services/"+url.PathEscape(serviceRef), q)
 	var result SandboxServiceResource
 	if err := c.doJSON("PUT", path, req, &result); err != nil {
 		return nil, fmt.Errorf("remote put sandbox service: %w", err)
@@ -660,9 +682,9 @@ func (c *Client) PutSandboxService(sandboxRef, serviceRef, by string, req Sandbo
 }
 
 // DeleteSandboxService deletes the service identified by serviceRef (resolved
-// by name) within the given sandbox.
-func (c *Client) DeleteSandboxService(sandboxRef, serviceRef string) error {
-	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxRef) + "/services/" + url.PathEscape(serviceRef) + "?by=name"
+// by name) within the sandbox sel names.
+func (c *Client) DeleteSandboxService(sel SandboxSelector, serviceRef string) error {
+	path := sandboxPath(sel, "sandbox_by", "/services/"+url.PathEscape(serviceRef), url.Values{"by": {"name"}})
 	if err := c.doJSON("DELETE", path, nil, nil); err != nil {
 		return fmt.Errorf("remote delete sandbox service: %w", err)
 	}
@@ -805,32 +827,32 @@ type UpdateSessionRequest struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// CreateSession creates a new agent session on a remote sandbox.
-func (c *Client) CreateSession(sandboxName string, req CreateSessionRequest) (*Session, error) {
+// CreateSession creates a new agent session on the sandbox sel names.
+func (c *Client) CreateSession(sel SandboxSelector, req CreateSessionRequest) (*Session, error) {
 	var result Session
-	if err := c.doJSON("POST", apiBasePath+"/sandboxes/"+url.PathEscape(sandboxName)+"/sessions", req, &result); err != nil {
+	if err := c.doJSON("POST", sandboxPath(sel, "sandbox_by", "/sessions", nil), req, &result); err != nil {
 		return nil, fmt.Errorf("remote create session: %w", err)
 	}
 	return &result, nil
 }
 
-// ListSessions lists agent sessions for a remote sandbox.
-func (c *Client) ListSessions(sandboxName string) ([]Session, error) {
+// ListSessions lists agent sessions for the sandbox sel names.
+func (c *Client) ListSessions(sel SandboxSelector) ([]Session, error) {
 	var envelope struct {
 		Sessions []Session `json:"sessions"`
 		Total    int       `json:"total"`
 	}
-	if err := c.doJSON("GET", apiBasePath+"/sandboxes/"+url.PathEscape(sandboxName)+"/sessions", nil, &envelope); err != nil {
+	if err := c.doJSON("GET", sandboxPath(sel, "sandbox_by", "/sessions", nil), nil, &envelope); err != nil {
 		return nil, fmt.Errorf("remote list sessions: %w", err)
 	}
 	return envelope.Sessions, nil
 }
 
-// GetLatestSession returns the most recent session for a remote sandbox.
+// GetLatestSession returns the most recent session for the sandbox sel names.
 // Returns nil, nil if no session exists (HTTP 404).
-func (c *Client) GetLatestSession(sandboxName string) (*Session, error) {
+func (c *Client) GetLatestSession(sel SandboxSelector) (*Session, error) {
 	var result Session
-	if err := c.doJSON("GET", apiBasePath+"/sandboxes/"+url.PathEscape(sandboxName)+"/sessions/latest", nil, &result); err != nil {
+	if err := c.doJSON("GET", sandboxPath(sel, "sandbox_by", "/sessions/latest", nil), nil, &result); err != nil {
 		if strings.Contains(err.Error(), "HTTP 404") {
 			return nil, nil
 		}
@@ -839,19 +861,19 @@ func (c *Client) GetLatestSession(sandboxName string) (*Session, error) {
 	return &result, nil
 }
 
-// GetSession returns a specific session by ID.
-func (c *Client) GetSession(sandboxName, sessionID string) (*Session, error) {
+// GetSession returns a specific session, by ID, of the sandbox sel names.
+func (c *Client) GetSession(sel SandboxSelector, sessionID string) (*Session, error) {
 	var result Session
-	if err := c.doJSON("GET", apiBasePath+"/sandboxes/"+url.PathEscape(sandboxName)+"/sessions/"+url.PathEscape(sessionID), nil, &result); err != nil {
+	if err := c.doJSON("GET", sandboxPath(sel, "sandbox_by", "/sessions/"+url.PathEscape(sessionID), nil), nil, &result); err != nil {
 		return nil, fmt.Errorf("remote get session: %w", err)
 	}
 	return &result, nil
 }
 
-// UpdateSession updates a session on a remote sandbox.
-func (c *Client) UpdateSession(sandboxName, sessionID string, req UpdateSessionRequest) (*Session, error) {
+// UpdateSession updates a session on the sandbox sel names.
+func (c *Client) UpdateSession(sel SandboxSelector, sessionID string, req UpdateSessionRequest) (*Session, error) {
 	var result Session
-	if err := c.doJSON("PATCH", apiBasePath+"/sandboxes/"+url.PathEscape(sandboxName)+"/sessions/"+url.PathEscape(sessionID), req, &result); err != nil {
+	if err := c.doJSON("PATCH", sandboxPath(sel, "sandbox_by", "/sessions/"+url.PathEscape(sessionID), nil), req, &result); err != nil {
 		return nil, fmt.Errorf("remote update session: %w", err)
 	}
 	return &result, nil
@@ -859,13 +881,21 @@ func (c *Client) UpdateSession(sandboxName, sessionID string, req UpdateSessionR
 
 // AgentSessionSendRequest is the request body for POST /api/v0beta1/agent-sessions.
 // Message is required; the rest are optional. SessionID continues an existing
-// chat, SandboxID routes into a specific sandbox, and RepoURL, Branch and
+// chat; at most one of SandboxID, SandboxName, and SandboxRef routes into a
+// specific sandbox (SetSandbox picks one); and RepoURL, Branch and
 // NewBranchName are only used when a sandbox is created behind the scenes.
 type AgentSessionSendRequest struct {
-	Message    string `json:"message"`
-	Agent      string `json:"agent,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	SandboxID  string `json:"sandbox_id,omitempty"`
+	Message   string `json:"message"`
+	Agent     string `json:"agent,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	// SandboxID is the legacy routing field: despite its name the server
+	// resolves it as an id or a name.
+	SandboxID string `json:"sandbox_id,omitempty"`
+	// SandboxName matches by name only.
+	SandboxName string `json:"sandbox_name,omitempty"`
+	// SandboxRef matches by id or name and refuses an ambiguous value with a
+	// 409. SetSandbox never sends it; see there.
+	SandboxRef string `json:"sandbox_ref,omitempty"`
 	NewSession bool   `json:"new_session,omitempty"`
 	RepoURL    string `json:"repo_url,omitempty"`
 	// Branch and NewBranchName mirror the create request's pair: Branch
@@ -875,6 +905,26 @@ type AgentSessionSendRequest struct {
 	// as a branch name.
 	Branch        string `json:"branch,omitempty"`
 	NewBranchName string `json:"new_branch_name,omitempty"`
+}
+
+// SetSandbox routes the message into the sandbox sel names, clearing the other
+// routing fields.
+//
+// A server that predates sandbox_name and sandbox_ref strips them as unknown,
+// and a request with no routing field makes the server create a new sandbox:
+// a stray new sandbox rather than an error. So a ref selector keeps the legacy
+// sandbox_id field (which already matches an id or a name) instead of
+// sandbox_ref, and only an explicit name selector uses the new sandbox_name.
+// An id selector also uses sandbox_id; that field is not strictly id-only, but
+// the one case it gets wrong, a UUID that is also another sandbox's name, is
+// refused with a 409 rather than routed to the wrong sandbox.
+func (r *AgentSessionSendRequest) SetSandbox(sel SandboxSelector) {
+	r.SandboxID, r.SandboxName, r.SandboxRef = "", "", ""
+	if sel.kind() == SelectByName {
+		r.SandboxName = sel.Value
+		return
+	}
+	r.SandboxID = sel.Value
 }
 
 // AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and

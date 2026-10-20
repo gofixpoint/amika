@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/gofixpoint/amika/go/internal/wslbridge"
 	"github.com/spf13/cobra"
@@ -94,9 +95,12 @@ func TestResolveRemoteWorkspacePath(t *testing.T) {
 // prepareSessionTarget is replaced with a recorder.
 type stubV2SSHClient struct {
 	sandbox *apiclient.RemoteSandbox
+	// looked records every selector GetSandbox was asked for.
+	looked []apiclient.SandboxSelector
 }
 
-func (s *stubV2SSHClient) GetSandbox(_ string) (*apiclient.RemoteSandbox, error) {
+func (s *stubV2SSHClient) GetSandbox(sel apiclient.SandboxSelector) (*apiclient.RemoteSandbox, error) {
+	s.looked = append(s.looked, sel)
 	return s.sandbox, nil
 }
 
@@ -253,9 +257,14 @@ func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 		upsertSessionHost = previousUpsert
 	})
 
-	target, err := resolveSandboxV2SSHAlias(client, paths, "lookup-name")
+	// An id= reference is looked up by id, and only the canonical name and id
+	// the API returns reach the alias.
+	target, err := resolveSandboxV2SSHAlias(client, paths, rigref.Ref{Kind: rigref.KindID, Value: "sb_abc"})
 	if err != nil {
 		t.Fatalf("resolveSandboxV2SSHAlias: %v", err)
+	}
+	if want := []apiclient.SandboxSelector{apiclient.SandboxByID("sb_abc")}; !reflect.DeepEqual(client.looked, want) {
+		t.Fatalf("GetSandbox selectors = %#v, want %#v", client.looked, want)
 	}
 	if gotName != "my-sandbox" || gotID != "sb_abc" {
 		t.Fatalf("PrepareSessionTarget(%q, %q), want sandbox identity", gotName, gotID)

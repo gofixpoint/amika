@@ -66,7 +66,7 @@ var serviceDeleteCmd = &cobra.Command{
 }
 
 func runServiceCreate(cmd *cobra.Command, _ []string) error {
-	rigRef, err := rigself.Flag(cmd, "rig")
+	rigRef, err := requiredRigFlag(cmd)
 	if err != nil {
 		return err
 	}
@@ -74,9 +74,6 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	port, _ := cmd.Flags().GetInt("port")
 	urlScheme, _ := cmd.Flags().GetString("url-scheme")
 
-	if strings.TrimSpace(rigRef) == "" {
-		return fmt.Errorf("--rig is required")
-	}
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("--name is required")
 	}
@@ -111,13 +108,13 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	svc, err := runmode.NewRemoteClient().CreateSandboxService(rigRef, apiclient.SandboxServiceRequest{
+	svc, err := runmode.NewRemoteClient().CreateSandboxService(rigRef.Selector(), apiclient.SandboxServiceRequest{
 		Name:      name,
 		Port:      port,
 		URLScheme: urlScheme,
 	})
 	if err != nil {
-		return err
+		return rigref.Explain(rigRef, err)
 	}
 	if format.IsJSON() {
 		// Remote-backed command: emit the API's response schema verbatim (see
@@ -130,16 +127,14 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runServiceDelete(cmd *cobra.Command, _ []string) error {
-	rigRef, err := rigself.Flag(cmd, "rig")
+	rigRef, err := requiredRigFlag(cmd)
 	if err != nil {
 		return err
 	}
+	rawRig, _ := cmd.Flags().GetString("rig")
 	name, _ := cmd.Flags().GetString("name")
 	force, _ := cmd.Flags().GetBool("force")
 
-	if strings.TrimSpace(rigRef) == "" {
-		return fmt.Errorf("--rig is required")
-	}
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("--name is required")
 	}
@@ -165,7 +160,7 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		}
 		reader := bufio.NewReader(cmd.InOrStdin())
 		confirmed, err := cliprompt.Confirm(
-			fmt.Sprintf("Delete service %q from sandbox %q?", name, rigRef),
+			fmt.Sprintf("Delete service %q from sandbox %q?", name, rigref.Label(rawRig, rigRef)),
 			reader,
 		)
 		if err != nil {
@@ -177,14 +172,24 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	if err := runmode.NewRemoteClient().DeleteSandboxService(rigRef, name); err != nil {
-		return err
+	if err := runmode.NewRemoteClient().DeleteSandboxService(rigRef.Selector(), name); err != nil {
+		return rigref.Explain(rigRef, err)
 	}
 	if format.IsJSON() {
 		return format.JSON(cmd.OutOrStdout(), output.ItemResult{Name: name, Status: "deleted"})
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Service %q deleted\n", name)
 	return nil
+}
+
+// requiredRigFlag parses the rig reference a command's required --rig flag
+// names, refusing an empty or missing one.
+func requiredRigFlag(cmd *cobra.Command) (rigref.Ref, error) {
+	raw, _ := cmd.Flags().GetString("rig")
+	if strings.TrimSpace(raw) == "" {
+		return rigref.Ref{}, fmt.Errorf("--rig is required")
+	}
+	return rigref.Parse(raw)
 }
 
 // printService renders a single created service as a one-row table
@@ -413,12 +418,12 @@ func init() {
 	serviceListCmd.Flags().String("rig-name", "", "Only list services on the rig with this name")
 	_ = serviceListCmd.Flags().MarkHidden("rig-name")
 
-	serviceCreateCmd.Flags().String("rig", "", "Rig to create the service on (name or id)")
+	serviceCreateCmd.Flags().String("rig", "", "Rig to create the service on: a name or id, or name=<name> / id=<id> to match one field")
 	serviceCreateCmd.Flags().String("name", "", "Service name (a single DNS label)")
 	serviceCreateCmd.Flags().Int("port", 0, "Container port the service listens on")
 	serviceCreateCmd.Flags().String("url-scheme", "", "URL scheme for the generated URL: http or https")
 
-	serviceDeleteCmd.Flags().String("rig", "", "Rig the service belongs to (name or id)")
+	serviceDeleteCmd.Flags().String("rig", "", "Rig the service belongs to: a name or id, or name=<name> / id=<id> to match one field")
 	serviceDeleteCmd.Flags().String("name", "", "Name of the service to delete")
 	serviceDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 }

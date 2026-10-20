@@ -13,7 +13,18 @@ func New() *cobra.Command {
 		Use:     "rig",
 		Aliases: []string{"sandbox"},
 		Short:   "Manage rigs",
-		Long:    "Create and delete rig environments backed by container providers. The legacy `sandbox` command remains an alias.",
+		Long: `Create and delete rig environments backed by container providers. The legacy
+"sandbox" command remains an alias.
+
+Commands that act on an existing rig name it with a rig reference:
+
+  my-rig           the rig whose name or ID is "my-rig"; refused when it is
+                   one rig's ID and another rig's name
+  name=<name>      the rig with this name
+  id=<id>          the rig with this ID
+  _self            the rig this command runs in (from $AMIKA_RIG_NAME)
+
+The same forms work wherever a flag such as --rig names a rig.`,
 	}
 
 	sandboxCmd.AddCommand(sandboxCreateCmd)
@@ -71,10 +82,15 @@ func New() *cobra.Command {
 	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", \"codex\", or \"paseo\"")
 	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
 	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
+	// --rig-by is superseded by the name=/id= prefixes on the rig reference;
+	// kept, hidden, so existing scripts keep working.
 	sandboxBindCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")
-	sandboxBindingsListCmd.Flags().String("rig", "", "Only show bindings for this rig (name or id)")
+	_ = sandboxBindCmd.Flags().MarkHidden("rig-by")
+	sandboxBindingsListCmd.Flags().String("rig", "", "Only show bindings for this rig: a name or id, or name=<name> / id=<id> to match one field")
 	sandboxBindingsListCmd.Flags().String("rig-by", "ref", "Resolve --rig by ref, name, or id")
+	_ = sandboxBindingsListCmd.Flags().MarkHidden("rig-by")
 	sandboxBindingsDeleteCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")
+	_ = sandboxBindingsDeleteCmd.Flags().MarkHidden("rig-by")
 	sandboxBindingsDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
 
 	return sandboxCmd

@@ -66,9 +66,15 @@ func (s *SSHSession) Validate(expectedSandboxID string) error {
 }
 
 // CreateSSHSession creates and validates a fresh descriptor for one dial.
+//
+// sandboxID is always a canonical id: one a GetSandbox response returned, or
+// one parsed back out of a session alias inside the ProxyCommand. A user's rig
+// reference never reaches this call, so it is sent as a plain ref (no
+// sandbox_by), which every server version accepts, and the descriptor's
+// sandbox_id must equal it.
 func (c *Client) CreateSSHSession(sandboxID string) (*SSHSession, error) {
 	var result SSHSession
-	path := apiBasePath + "/sandboxes/" + url.PathEscape(sandboxID) + "/ssh-sessions"
+	path := sandboxPath(SandboxByRef(sandboxID), "sandbox_by", "/ssh-sessions", nil)
 	if err := c.doJSON("POST", path, nil, &result); err != nil {
 		return nil, fmt.Errorf("remote create SSH session: %w", err)
 	}

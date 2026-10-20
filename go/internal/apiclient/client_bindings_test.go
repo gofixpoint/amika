@@ -26,7 +26,7 @@ func TestBindSandboxGitHubBranch(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL, "test-token")
-	binding, err := client.BindSandboxGitHubBranch("org/box", "ref", "gofixpoint", "amika", "feature/one", true)
+	binding, err := client.BindSandboxGitHubBranch(SandboxByRef("org/box"), "gofixpoint", "amika", "feature/one", true)
 	if err != nil {
 		t.Fatalf("BindSandboxGitHubBranch: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestListSandboxBindings(t *testing.T) {
 			if tt.sandboxRef == "" {
 				result, err = client.ListSandboxBindings()
 			} else {
-				result, err = client.ListSandboxBindingsForSandbox(tt.sandboxRef, tt.sandboxBy)
+				result, err = client.ListSandboxBindingsForSandbox(SandboxSelector{Value: tt.sandboxRef, By: tt.sandboxBy})
 			}
 			if err != nil {
 				t.Fatalf("list bindings: %v", err)

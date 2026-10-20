@@ -11,16 +11,17 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
 var sandboxGetCmd = &cobra.Command{
-	Use:   "get <rig-ref>",
+	Use:   "get <rig>",
 	Short: "Get a rig by name or ID",
-	Long: `Get one rig by name or ID. Text output prints one key: value per line.
+	Long: `Get one rig by name or ID (see "amika rig --help" for the name=<name> and
+id=<id> forms). Text output prints one key: value per line.
 Nested objects and arrays use dotted keys and numbered indexes.
 
 hostname is the rig's DNS name, when the API provides it. ssh_host is the
@@ -32,7 +33,7 @@ JSON output uses the API response schema plus ssh_host.`,
 }
 
 func runSandboxGet(cmd *cobra.Command, args []string) error {
-	name, err := rigself.Resolve(args[0])
+	ref, err := rigref.Parse(args[0])
 	if err != nil {
 		return err
 	}
@@ -51,9 +52,9 @@ func runSandboxGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	rig, err := client.GetSandbox(name)
+	rig, err := client.GetSandbox(ref.Selector())
 	if err != nil {
-		return err
+		return rigref.Explain(ref, err)
 	}
 	result := sandboxGetResult{
 		RemoteSandbox: normalizeSandboxJSON(*rig),

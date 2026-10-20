@@ -9,7 +9,7 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -38,7 +38,7 @@ var sandboxBindingsDeleteCmd = &cobra.Command{
 
 const sandboxBindingsDeleteUsageTemplate = `Usage:
   {{.CommandPath}} <binding-id> [flags]
-  {{.CommandPath}} <rig-ref> <target> [flags]{{if gt (len .Aliases) 0}}
+  {{.CommandPath}} <rig> <target> [flags]{{if gt (len .Aliases) 0}}
 
 Aliases:
   {{.NameAndAliases}}{{end}}{{if .HasAvailableLocalFlags}}
@@ -57,16 +57,17 @@ func init() {
 }
 
 func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
-	rigRef, err := rigself.Flag(cmd, "rig")
-	if err != nil {
-		return err
-	}
-	rigBy, _ := cmd.Flags().GetString("rig-by")
-	if rigRef == "" && cmd.Flags().Changed("rig-by") {
+	rawRig, _ := cmd.Flags().GetString("rig")
+	if rawRig == "" && cmd.Flags().Changed("rig-by") {
 		return fmt.Errorf("--rig-by requires --rig")
 	}
-	if err := validateSandboxBindingRefKind(rigBy); err != nil {
-		return err
+	var ref rigref.Ref
+	if rawRig != "" {
+		parsed, err := parseRigRefWithBy(cmd, rawRig)
+		if err != nil {
+			return err
+		}
+		ref = parsed
 	}
 
 	target, err := getRemoteTarget(cmd)
@@ -86,13 +87,13 @@ func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
 	}
 
 	var result *apiclient.ListSandboxBindingsResponse
-	if rigRef == "" {
+	if rawRig == "" {
 		result, err = client.ListSandboxBindings()
 	} else {
-		result, err = client.ListSandboxBindingsForSandbox(rigRef, rigBy)
+		result, err = client.ListSandboxBindingsForSandbox(ref.Selector())
 	}
 	if err != nil {
-		return err
+		return rigref.Explain(ref, err)
 	}
 	if result.Items == nil {
 		result.Items = []apiclient.SandboxBinding{}
@@ -120,20 +121,20 @@ func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
 }
 
 func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
-	rigBy, _ := cmd.Flags().GetString("rig-by")
 	if len(args) == 1 && cmd.Flags().Changed("rig-by") {
-		return fmt.Errorf("--rig-by requires the <rig-ref> <target> form")
+		return fmt.Errorf("--rig-by requires the <rig> <target> form")
 	}
-	if err := validateSandboxBindingRefKind(rigBy); err != nil {
-		return err
-	}
-	var sandboxRef string
+	var ref rigref.Ref
 	if len(args) == 2 {
-		ref, err := rigself.Resolve(strings.TrimSpace(args[0]))
+		rawRig := strings.TrimSpace(args[0])
+		if rawRig == "" {
+			return fmt.Errorf("a rig reference is required")
+		}
+		parsed, err := parseRigRefWithBy(cmd, rawRig)
 		if err != nil {
 			return err
 		}
-		sandboxRef = ref
+		ref = parsed
 	}
 	format, err := output.FormatFrom(cmd)
 	if err != nil {
@@ -160,19 +161,16 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 	description := fmt.Sprintf("binding %q", bindingID)
 	if len(args) == 2 {
 		bindingTarget := args[1]
-		if sandboxRef == "" {
-			return fmt.Errorf("a rig reference is required")
-		}
-		bindings, err := client.ListSandboxBindingsForSandbox(sandboxRef, rigBy)
+		bindings, err := client.ListSandboxBindingsForSandbox(ref.Selector())
 		if err != nil {
-			return err
+			return rigref.Explain(ref, err)
 		}
 		binding, err := findSandboxBindingByTarget(bindings.Items, bindingTarget)
 		if err != nil {
 			return err
 		}
 		bindingID = binding.ID
-		description = fmt.Sprintf("binding %q for target %q on sandbox %q", bindingID, bindingTarget, sandboxRef)
+		description = fmt.Sprintf("binding %q for target %q on sandbox %q", bindingID, bindingTarget, rigref.Label(strings.TrimSpace(args[0]), ref))
 	}
 	if bindingID == "" {
 		return fmt.Errorf("a binding ID is required")
@@ -200,11 +198,38 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 }
 
 func validateSandboxBindingRefKind(kind string) error {
-	switch kind {
-	case "ref", "name", "id":
+	switch rigref.Kind(kind) {
+	case rigref.KindRef, rigref.KindName, rigref.KindID:
 		return nil
 	default:
 		return fmt.Errorf("invalid --rig-by value %q: must be one of ref, name, id", kind)
+	}
+}
+
+// parseRigRefWithBy parses raw, a rig reference given to a command that still
+// accepts the hidden --rig-by, the flag-based spelling of a reference's kind
+// that `name=`/`id=` prefixes replaced.
+//
+// A prefix in raw wins over the --rig-by default. A --rig-by value that pins
+// a field ("name" or "id") applies to an unprefixed raw as if it were that
+// prefix, and refuses a prefix that names a different kind rather than guess
+// which of the two the caller meant.
+func parseRigRefWithBy(cmd *cobra.Command, raw string) (rigref.Ref, error) {
+	rigBy, _ := cmd.Flags().GetString("rig-by")
+	if err := validateSandboxBindingRefKind(rigBy); err != nil {
+		return rigref.Ref{}, err
+	}
+	by := rigref.Kind(rigBy)
+	prefix, prefixed := rigref.Prefix(raw)
+	switch {
+	case by == rigref.KindRef:
+		return rigref.Parse(raw)
+	case prefixed && prefix != by:
+		return rigref.Ref{}, fmt.Errorf("--rig-by %s conflicts with the %s= prefix in %q; drop --rig-by", by, prefix, raw)
+	case prefixed:
+		return rigref.Parse(raw)
+	default:
+		return rigref.Parse(string(by) + "=" + raw)
 	}
 }
 

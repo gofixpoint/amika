@@ -20,37 +20,37 @@ func TestPathEscapesSandboxName(t *testing.T) {
 	}{
 		{
 			name:       "GetSandbox with slash",
-			call:       func(c *Client) error { _, err := c.GetSandbox("org/proj"); return err },
+			call:       func(c *Client) error { _, err := c.GetSandbox(SandboxByRef("org/proj")); return err },
 			wantMethod: "GET",
 			wantPath:   "/api/v0beta1/sandboxes/org%2Fproj",
 		},
 		{
 			name:       "DeleteSandbox with slash",
-			call:       func(c *Client) error { return c.DeleteSandbox("org/proj") },
+			call:       func(c *Client) error { return c.DeleteSandbox(SandboxByRef("org/proj")) },
 			wantMethod: "DELETE",
 			wantPath:   "/api/v0beta1/sandboxes/org%2Fproj",
 		},
 		{
 			name:       "StartSandbox with slash",
-			call:       func(c *Client) error { return c.StartSandbox("a/b") },
+			call:       func(c *Client) error { return c.StartSandbox(SandboxByRef("a/b")) },
 			wantMethod: "POST",
 			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/start",
 		},
 		{
 			name:       "StopSandbox with slash",
-			call:       func(c *Client) error { return c.StopSandbox("a/b") },
+			call:       func(c *Client) error { return c.StopSandbox(SandboxByRef("a/b")) },
 			wantMethod: "POST",
 			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/stop",
 		},
 		{
 			name:       "ListSessions with slash",
-			call:       func(c *Client) error { _, err := c.ListSessions("a/b"); return err },
+			call:       func(c *Client) error { _, err := c.ListSessions(SandboxByRef("a/b")); return err },
 			wantMethod: "GET",
 			wantPath:   "/api/v0beta1/sandboxes/a%2Fb/sessions",
 		},
 		{
 			name:       "GetSandbox without slash",
-			call:       func(c *Client) error { _, err := c.GetSandbox("simple-name"); return err },
+			call:       func(c *Client) error { _, err := c.GetSandbox(SandboxByRef("simple-name")); return err },
 			wantMethod: "GET",
 			wantPath:   "/api/v0beta1/sandboxes/simple-name",
 		},
@@ -199,7 +199,7 @@ func TestRemoteSandboxRoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	sb, err := c.GetSandbox("dylan/release-test")
+	sb, err := c.GetSandbox(SandboxByRef("dylan/release-test"))
 	if err != nil {
 		t.Fatalf("GetSandbox: %v", err)
 	}

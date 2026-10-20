@@ -10,19 +10,19 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/pkg/amika"
 	"github.com/spf13/cobra"
 )
 
 var sandboxStartCmd = &cobra.Command{
-	Use:   "start <name> [<name>...]",
+	Use:   "start <rig> [<rig>...]",
 	Short: "Start one or more stopped sandboxes",
-	Long:  `Start (resume) one or more stopped sandboxes.`,
+	Long:  `Start (resume) one or more stopped sandboxes, each named by name or ID (see "amika rig --help").`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		args, err := rigself.ResolveAll(args)
+		refs, err := rigref.ParseAll(args)
 		if err != nil {
 			return err
 		}
@@ -52,18 +52,19 @@ var sandboxStartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		for _, name := range args {
-			if remoteErr := remoteClient.StartSandbox(name); remoteErr != nil {
-				appendBatchFailure(&items, &failed, name, remoteErr)
+		for i, ref := range refs {
+			label := rigref.Label(args[i], ref)
+			if remoteErr := remoteClient.StartSandbox(ref.Selector()); remoteErr != nil {
+				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q starting...\n", name)
-			polled, remoteErr := remoteClient.WaitForSandboxStart(name)
+			fmt.Fprintf(pw, "Sandbox %q starting...\n", label)
+			polled, remoteErr := remoteClient.WaitForSandboxStart(ref.Selector())
 			if remoteErr != nil {
-				appendBatchFailure(&items, &failed, name, remoteErr)
+				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q started\n", name)
+			fmt.Fprintf(pw, "Sandbox %q started\n", polled.Name)
 			items = append(items, normalizeSandboxJSON(*polled))
 		}
 		return finishBatch(cmd, format, items, failed)
@@ -71,12 +72,12 @@ var sandboxStartCmd = &cobra.Command{
 }
 
 var sandboxStopCmd = &cobra.Command{
-	Use:   "stop <name> [<name>...]",
+	Use:   "stop <rig> [<rig>...]",
 	Short: "Stop one or more sandboxes",
-	Long:  `Stop one or more running sandboxes without removing them.`,
+	Long:  `Stop one or more running sandboxes without removing them, each named by name or ID (see "amika rig --help").`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		args, err := rigself.ResolveAll(args)
+		refs, err := rigref.ParseAll(args)
 		if err != nil {
 			return err
 		}
@@ -103,18 +104,19 @@ var sandboxStopCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		for _, name := range args {
-			if remoteErr := remoteClient.StopSandbox(name); remoteErr != nil {
-				appendBatchFailure(&items, &failed, name, remoteErr)
+		for i, ref := range refs {
+			label := rigref.Label(args[i], ref)
+			if remoteErr := remoteClient.StopSandbox(ref.Selector()); remoteErr != nil {
+				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q stopping...\n", name)
-			polled, remoteErr := remoteClient.WaitForSandboxStop(name)
+			fmt.Fprintf(pw, "Sandbox %q stopping...\n", label)
+			polled, remoteErr := remoteClient.WaitForSandboxStop(ref.Selector())
 			if remoteErr != nil {
-				appendBatchFailure(&items, &failed, name, remoteErr)
+				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q stopped\n", name)
+			fmt.Fprintf(pw, "Sandbox %q stopped\n", polled.Name)
 			items = append(items, normalizeSandboxJSON(*polled))
 		}
 		return finishBatch(cmd, format, items, failed)
@@ -369,13 +371,13 @@ func repoBasenameFromURL(repoURL string) string {
 }
 
 var sandboxConnectCmd = &cobra.Command{
-	Use:   "connect <name>",
+	Use:   "connect <rig>",
 	Short: "Connect to a sandbox console",
 	Long: `Open an interactive shell using the same direct WebSocket SSH transport as
 "amika rig ssh". Requires an SSH identity from "amika secret ssh-keygen".`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name, err := rigself.Resolve(args[0])
+		ref, err := rigref.Parse(args[0])
 		if err != nil {
 			return err
 		}
@@ -395,9 +397,11 @@ var sandboxConnectCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		sb, err := client.GetSandbox(name)
+		// The reference resolves to the rig's canonical name and id here, and
+		// only those reach the SSH alias.
+		sb, err := client.GetSandbox(ref.Selector())
 		if err != nil {
-			return err
+			return rigref.Explain(ref, err)
 		}
 		return connectSandbox(client, sb)
 	},

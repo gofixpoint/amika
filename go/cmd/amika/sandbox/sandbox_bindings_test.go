@@ -109,7 +109,7 @@ func TestSandboxBindingsDeleteUsageListsVariants(t *testing.T) {
 	usage := deleteCmd.UsageString()
 	want := "Usage:\n" +
 		"  amika sandbox bindings delete <binding-id> [flags]\n" +
-		"  amika sandbox bindings delete <rig-ref> <target> [flags]\n"
+		"  amika sandbox bindings delete <rig> <target> [flags]\n"
 	if !strings.HasPrefix(usage, want) {
 		t.Fatalf("usage =\n%s\nwant prefix =\n%s", usage, want)
 	}

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
@@ -16,16 +16,12 @@ var sandboxBindCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		sandboxRef, err := rigself.Resolve(args[0])
+		ref, err := parseRigRefWithBy(cmd, args[0])
 		if err != nil {
 			return err
 		}
 		owner, repo, branch, err := parseGitHubBranchBinding(args[1])
 		if err != nil {
-			return err
-		}
-		rigBy, _ := cmd.Flags().GetString("rig-by")
-		if err := validateSandboxBindingRefKind(rigBy); err != nil {
 			return err
 		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
@@ -46,14 +42,14 @@ var sandboxBindCmd = &cobra.Command{
 
 		rebind, _ := cmd.Flags().GetBool("rebind")
 
-		binding, err := client.BindSandboxGitHubBranch(sandboxRef, rigBy, owner, repo, branch, rebind)
+		binding, err := client.BindSandboxGitHubBranch(ref.Selector(), owner, repo, branch, rebind)
 		if err != nil {
-			return err
+			return rigref.Explain(ref, err)
 		}
 		if format.IsJSON() {
 			return format.JSON(cmd.OutOrStdout(), binding)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Bound sandbox %q to %s/%s branch %q (%s).\n", sandboxRef, owner, repo, branch, binding.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Bound sandbox %q to %s/%s branch %q (%s).\n", rigref.Label(args[0], ref), owner, repo, branch, binding.ID)
 		return nil
 	},
 }

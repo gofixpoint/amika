@@ -9,21 +9,25 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/spf13/cobra"
 )
 
 var sandboxDeleteCmd = &cobra.Command{
-	Use:     "delete <name> [<name>...]",
+	Use:     "delete <rig> [<rig>...]",
 	Aliases: []string{"rm", "remove"},
 	Short:   "Delete one or more sandboxes",
-	Long:    `Delete one or more sandboxes.`,
+	Long:    `Delete one or more sandboxes, each named by name or ID (see "amika rig --help").`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		args, err := rigself.ResolveAll(args)
+		refs, err := rigref.ParseAll(args)
 		if err != nil {
 			return err
+		}
+		labels := make([]string, len(args))
+		for i, raw := range args {
+			labels[i] = rigref.Label(raw, refs[i])
 		}
 		force, _ := cmd.Flags().GetBool("force")
 
@@ -38,7 +42,7 @@ var sandboxDeleteCmd = &cobra.Command{
 			}
 			reader := bufio.NewReader(cmd.InOrStdin())
 			confirmed, err := cliprompt.Confirm(
-				fmt.Sprintf("Delete sandbox(es) %s?", strings.Join(args, ", ")),
+				fmt.Sprintf("Delete sandbox(es) %s?", strings.Join(labels, ", ")),
 				reader,
 			)
 			if err != nil {
@@ -67,14 +71,17 @@ var sandboxDeleteCmd = &cobra.Command{
 
 		var errs []string
 		var results []output.ItemResult
-		for _, name := range args {
-			if remoteErr := remoteClient.DeleteSandbox(name); remoteErr != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q: %v", name, remoteErr))
-				results = append(results, batchError(name, remoteErr))
+		// The API answers a delete with no body, so the rig is reported the
+		// way the user named it.
+		for i, ref := range refs {
+			label := labels[i]
+			if remoteErr := rigref.Explain(ref, remoteClient.DeleteSandbox(ref.Selector())); remoteErr != nil {
+				errs = append(errs, fmt.Sprintf("sandbox %q: %v", label, remoteErr))
+				results = append(results, batchError(label, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q deleted\n", name)
-			results = append(results, output.ItemResult{Name: name, Status: "deleted"})
+			fmt.Fprintf(pw, "Sandbox %q deleted\n", label)
+			results = append(results, output.ItemResult{Name: label, Status: "deleted"})
 		}
 
 		if format.IsJSON() {

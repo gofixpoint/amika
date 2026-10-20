@@ -36,7 +36,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 		{
 			name: "CreateSandboxService escapes the sandbox ref",
 			call: func(c *Client) error {
-				_, err := c.CreateSandboxService("org/box", SandboxServiceRequest{Name: "web", Port: 3000, URLScheme: "https"})
+				_, err := c.CreateSandboxService(SandboxByRef("org/box"), SandboxServiceRequest{Name: "web", Port: 3000, URLScheme: "https"})
 				return err
 			},
 			wantMethod: "POST",
@@ -45,7 +45,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 		{
 			name: "PutSandboxService defaults by=name and escapes refs",
 			call: func(c *Client) error {
-				_, err := c.PutSandboxService("my-box", "web", "", SandboxServiceRequest{Name: "web", Port: 8080, URLScheme: "http"})
+				_, err := c.PutSandboxService(SandboxByRef("my-box"), "web", "", SandboxServiceRequest{Name: "web", Port: 8080, URLScheme: "http"})
 				return err
 			},
 			wantMethod: "PUT",
@@ -54,7 +54,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 		{
 			name: "PutSandboxService honors an explicit by param",
 			call: func(c *Client) error {
-				_, err := c.PutSandboxService("my-box", "sbsvc_1", "id", SandboxServiceRequest{Name: "web", Port: 8080, URLScheme: "http"})
+				_, err := c.PutSandboxService(SandboxByRef("my-box"), "sbsvc_1", "id", SandboxServiceRequest{Name: "web", Port: 8080, URLScheme: "http"})
 				return err
 			},
 			wantMethod: "PUT",
@@ -63,7 +63,7 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 		{
 			name: "DeleteSandboxService resolves by name",
 			call: func(c *Client) error {
-				return c.DeleteSandboxService("my-box", "web")
+				return c.DeleteSandboxService(SandboxByRef("my-box"), "web")
 			},
 			wantMethod: "DELETE",
 			wantPath:   "/api/v0beta1/sandboxes/my-box/services/web?by=name",
@@ -115,7 +115,7 @@ func TestCreateSandboxServiceSendsBody(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	svc, err := c.CreateSandboxService("my-box", SandboxServiceRequest{Name: "web", Port: 3000, URLScheme: "https"})
+	svc, err := c.CreateSandboxService(SandboxByRef("my-box"), SandboxServiceRequest{Name: "web", Port: 3000, URLScheme: "https"})
 	if err != nil {
 		t.Fatalf("CreateSandboxService: %v", err)
 	}

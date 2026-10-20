@@ -1,9 +1,16 @@
 package scpcmd
 
 import (
+	"bytes"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 )
 
 // stubResolver resolves any sandbox name to a deterministic v2 alias and
@@ -147,5 +154,98 @@ func TestBuildSCPV2InvocationLeavesSCPURIsAlone(t *testing.T) {
 	}
 	if !strings.HasPrefix(got[0], "scp://") || len(seen) != 0 {
 		t.Fatalf("got %q with resolved names %v", got, seen)
+	}
+}
+
+func TestBuildSCPV2InvocationPassesPrefixedReferences(t *testing.T) {
+	// The kind prefix is part of the rig operand: scp's first colon still
+	// separates the rig from the path, and '=' never does.
+	var seen []string
+	got, err := buildSCPV2Invocation(
+		scpPlan{scpArgv: []string{"name=box:/a", "sbox://id=sb_1/b", "./out"}},
+		stubResolver(&seen),
+	)
+	if err != nil {
+		t.Fatalf("buildSCPV2Invocation: %v", err)
+	}
+	if want := []string{"name=box", "id=sb_1"}; !reflect.DeepEqual(seen, want) {
+		t.Fatalf("resolved names = %q, want %q", seen, want)
+	}
+	if want := []string{"name=box.sbx-1234.amika:/a", "id=sb_1.sbx-1234.amika:/b", "./out"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// scpTestServer fakes the sandbox API, answering every lookup with rig "box"
+// (id "sb_1") and recording each request URI.
+func scpTestServer(t *testing.T) *[]string {
+	t.Helper()
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.RequestURI)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"sb_1","name":"box","state":"active"}`))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AMIKA_API_URL", server.URL)
+	return &requests
+}
+
+// TestRunSCPV2ResolvesReferenceKinds checks that each rig operand is looked
+// up by its reference kind and replaced by the alias built from the rig's
+// canonical name and id, so no "id=" or "name=" reaches scp.
+func TestRunSCPV2ResolvesReferenceKinds(t *testing.T) {
+	for _, tc := range []struct {
+		operand     string
+		wantRequest string
+	}{
+		{"box:b.txt", "/api/v0beta1/sandboxes/box"},
+		{"name=box:b.txt", "/api/v0beta1/sandboxes/box?by=name"},
+		{"id=sb_1:b.txt", "/api/v0beta1/sandboxes/sb_1?by=id"},
+		{"sbox://id=sb_1/home/amika/b.txt", "/api/v0beta1/sandboxes/sb_1?by=id"},
+	} {
+		t.Run(tc.operand, func(t *testing.T) {
+			requests := scpTestServer(t)
+			t.Setenv("AMIKA_API_KEY", "test-key")
+			prev := prepareSessionTarget
+			t.Cleanup(func() { prepareSessionTarget = prev })
+			prepareSessionTarget = func(_ basedir.Paths, _ ssh.SessionCreator, name, id string) (string, error) {
+				return name + "." + id + ".test.amika", nil
+			}
+
+			cmd := NewV2()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			if err := runSCPV2(cmd, []string{"--print", "./a.txt", tc.operand}); err != nil {
+				t.Fatal(err)
+			}
+			if want := []string{tc.wantRequest}; !reflect.DeepEqual(*requests, want) {
+				t.Fatalf("requests = %q, want %q", *requests, want)
+			}
+			if want := "scp ./a.txt box.sb_1.test.amika:/home/amika/b.txt\n"; out.String() != want {
+				t.Fatalf("printed %q, want %q", out.String(), want)
+			}
+		})
+	}
+}
+
+// TestRunSCPV2ParsesEveryReferenceBeforeAuth checks that a malformed rig
+// reference in any operand, not just the first, is reported before the login
+// check and before any rig is fetched.
+func TestRunSCPV2ParsesEveryReferenceBeforeAuth(t *testing.T) {
+	requests := scpTestServer(t)
+	dir := t.TempDir()
+	for key, value := range map[string]string{
+		"AMIKA_API_KEY": "", "HOME": dir, "XDG_CONFIG_HOME": dir,
+		"XDG_STATE_HOME": dir, "XDG_DATA_HOME": dir, "AMIKA_STATE_DIRECTORY": dir,
+	} {
+		t.Setenv(key, value)
+	}
+	err := runSCPV2(NewV2(), []string{"box:a.txt", "id=:b.txt"})
+	if err == nil || !strings.Contains(err.Error(), "no value") {
+		t.Fatalf("error = %v, want a missing-value error", err)
+	}
+	if len(*requests) != 0 {
+		t.Fatalf("requests = %q, want none", *requests)
 	}
 }

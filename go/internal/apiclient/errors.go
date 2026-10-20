@@ -46,6 +46,16 @@ func (e *HTTPError) UserMessage() string {
 	return e.Body
 }
 
+// Code returns the stable machine-readable error code from a structured API
+// error response, or "" when the body carries none.
+func (e *HTTPError) Code() string {
+	var resp APIErrorResponse
+	if json.Unmarshal([]byte(e.Body), &resp) != nil {
+		return ""
+	}
+	return resp.stableCode()
+}
+
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.UserMessage())
 }

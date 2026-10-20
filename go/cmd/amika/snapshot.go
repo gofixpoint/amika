@@ -14,7 +14,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +59,7 @@ func getSnapshotClient() (*apiclient.Client, error) {
 }
 
 func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
-	rigRef, err := rigself.Flag(cmd, "rig")
+	rigRef, err := requiredRigFlag(cmd)
 	if err != nil {
 		return err
 	}
@@ -74,10 +74,6 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 	}
 	if format.IsJSON() && !noInteractive {
 		return fmt.Errorf("snapshot create with --%s %s requires --no-interactive together with --mode and --name", output.FlagName, format)
-	}
-
-	if strings.TrimSpace(rigRef) == "" {
-		return fmt.Errorf("--rig is required")
 	}
 
 	client, err := getSnapshotClient()
@@ -119,9 +115,9 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 	// For scrub-and-delete, show what will be removed and confirm before the
 	// destructive capture (interactive runs only).
 	if mode == "scrub_and_delete" && !noInteractive {
-		preview, err := client.GetSandboxScrubPreview(rigRef)
+		preview, err := client.GetSandboxScrubPreview(rigRef.Selector())
 		if err != nil {
-			return err
+			return rigref.Explain(rigRef, err)
 		}
 		printScrubPreview(cmd, preview)
 		confirmed, err := cliprompt.Confirm(
@@ -137,14 +133,15 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	snap, err := client.CreateSandboxSnapshot(apiclient.CreateSandboxSnapshotRequest{
-		SandboxRef:  rigRef,
+	req := apiclient.CreateSandboxSnapshotRequest{
 		Name:        name,
 		Description: description,
 		Mode:        mode,
-	})
+	}
+	req.SetSandbox(rigRef.Selector())
+	snap, err := client.CreateSandboxSnapshot(req)
 	if err != nil {
-		return err
+		return rigref.Explain(rigRef, err)
 	}
 
 	pw := format.Progress(cmd.OutOrStdout())
@@ -173,9 +170,15 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 
 func runSnapshotList(cmd *cobra.Command, _ []string) error {
 	long, _ := cmd.Flags().GetBool("long")
-	rigRef, err := rigself.Flag(cmd, "rig")
-	if err != nil {
-		return err
+	// The server resolves the rig and filters by it (source_sandbox_ref,
+	// _name, or _id, by the reference's kind); a zero rigRef sends no filter.
+	var rigRef rigref.Ref
+	if rawRig, _ := cmd.Flags().GetString("rig"); strings.TrimSpace(rawRig) != "" {
+		parsed, err := rigref.Parse(rawRig)
+		if err != nil {
+			return err
+		}
+		rigRef = parsed
 	}
 	repoRef, _ := cmd.Flags().GetString("repo")
 
@@ -184,13 +187,7 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	var sourceSandboxID, repositoryID string
-	if strings.TrimSpace(rigRef) != "" {
-		sourceSandboxID, err = resolveSandboxID(client, rigRef)
-		if err != nil {
-			return err
-		}
-	}
+	var repositoryID string
 	if strings.TrimSpace(repoRef) != "" {
 		repositoryID, err = resolveRepositoryID(client, repoRef)
 		if err != nil {
@@ -198,9 +195,9 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	snapshots, err := client.ListSandboxSnapshots(repositoryID, sourceSandboxID)
+	snapshots, err := client.ListSandboxSnapshots(repositoryID, rigRef.Selector())
 	if err != nil {
-		return err
+		return rigref.Explain(rigRef, err)
 	}
 	format, err := output.FormatFrom(cmd)
 	if err != nil {
@@ -353,26 +350,6 @@ func printScrubPreview(cmd *cobra.Command, preview *apiclient.SandboxScrubPrevie
 	}
 }
 
-// resolveSandboxID resolves a sandbox name-or-id to its id, matching by id
-// first, then by name.
-func resolveSandboxID(client *apiclient.Client, ref string) (string, error) {
-	sandboxes, err := client.ListSandboxes()
-	if err != nil {
-		return "", err
-	}
-	for _, s := range sandboxes {
-		if s.ID == ref {
-			return s.ID, nil
-		}
-	}
-	for _, s := range sandboxes {
-		if s.Name == ref {
-			return s.ID, nil
-		}
-	}
-	return "", fmt.Errorf("no sandbox found matching %q", ref)
-}
-
 // resolveRepositoryID resolves a repository name-or-id to its id, matching by
 // id, then exact repo URL, then repo-name basename (rejecting an ambiguous
 // basename match).
@@ -441,14 +418,14 @@ func init() {
 	snapshotCmd.AddCommand(snapshotListCmd)
 	snapshotCmd.AddCommand(snapshotDeleteCmd)
 
-	snapshotCreateCmd.Flags().String("rig", "", "Source rig to snapshot (name or id)")
+	snapshotCreateCmd.Flags().String("rig", "", "Source rig to snapshot: a name or id, or name=<name> / id=<id> to match one field")
 	snapshotCreateCmd.Flags().String("name", "", "Name for the snapshot")
 	snapshotCreateCmd.Flags().String("mode", "", "Capture mode: scrub_and_delete or full (required with --no-interactive)")
 	snapshotCreateCmd.Flags().String("description", "", "Optional description shown in the snapshot list")
 	snapshotCreateCmd.Flags().Bool("no-interactive", false, "Do not prompt; requires --mode and --name")
 
 	snapshotListCmd.Flags().BoolP("long", "l", false, "Show additional columns")
-	snapshotListCmd.Flags().String("rig", "", "Only show snapshots captured from this rig (name or id)")
+	snapshotListCmd.Flags().String("rig", "", "Only show snapshots captured from this rig: a name or id, or name=<name> / id=<id> to match one field")
 	snapshotListCmd.Flags().String("repo", "", "Only show snapshots for this repository (name or id)")
 
 	snapshotDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
