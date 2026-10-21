@@ -165,40 +165,47 @@ Examples:
 }
 
 var sandboxCodeV2Cmd = &cobra.Command{
-	Use: "code <rig>",
-	// "codev2" is the pre-promotion name this command answered to; kept as an
-	// alias so scripts and docs written against it keep working.
-	Aliases: []string{"codev2"},
+	// "open" reads better than "code" for the targets that are apps rather than
+	// editors. "code" and its pre-promotion name "codev2" stay as aliases so
+	// scripts and docs written against them keep working.
+	Use:     "open <rig>",
+	Aliases: []string{"code", "codev2"},
 	Short:   "Open a remote sandbox in an editor or agent via SSH",
 	Long: `Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport, bypassing provider-native SSH access. The rig is a
 name or ID, or name=<name> / id=<id> (see "amika rig --help").
 
-Supported --editor values:
+Supported --app values (--editor is an alias for --app):
   cursor   launch Cursor connected to the sandbox (default)
   vscode   launch VS Code connected to the sandbox
   claude   register the sandbox as a Claude Desktop SSH environment
   codex    expose the sandbox to Codex as an SSH connection
   paseo    print instructions for adding the sandbox as a Paseo SSH host
+  herdr    add the sandbox to Herdr as a remote machine
 
 The command creates a managed SSH alias backed by Amika's WebSocket proxy, then
 hands that alias to the selected editor. It requires an SSH identity from
 "amika secret ssh-keygen".
 
 Examples:
-  amika sandbox code my-sandbox
-  amika sandbox code my-sandbox --editor=cursor
-  amika sandbox code my-sandbox --editor=vscode
-  amika sandbox code my-sandbox --editor=claude
-  amika sandbox code my-sandbox --editor=codex
-  amika sandbox code my-sandbox --editor=paseo`,
+  amika sandbox open my-sandbox
+  amika sandbox open my-sandbox --app=cursor
+  amika sandbox open my-sandbox --app=vscode
+  amika sandbox open my-sandbox --app=claude
+  amika sandbox open my-sandbox --app=codex
+  amika sandbox open my-sandbox --app=paseo
+  amika sandbox open my-sandbox --app=herdr
+  amika sandbox code my-sandbox --editor=vscode`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := output.RejectJSON(cmd); err != nil {
 			return err
 		}
-		editor, _ := cmd.Flags().GetString("editor")
-		if err := validateEditor(editor); err != nil {
+		app, err := appFlag(cmd)
+		if err != nil {
+			return err
+		}
+		if err := validateEditor(app); err != nil {
 			return err
 		}
 		ref, err := rigref.Parse(args[0])
@@ -224,11 +231,28 @@ Examples:
 		}
 		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
 		pathOverride, _ := cmd.Flags().GetString("path")
-		return openSandboxInEditor(cmd, editor, paths, sshTarget, pathOverride)
+		if pathOverride != "" && (app == "paseo" || app == "herdr") {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --path has no effect with --app=%s\n", app)
+		}
+		return openSandboxInEditor(cmd, app, paths, sshTarget, pathOverride)
 	},
 }
 
-// sshV2Client is the subset of apiclient.Client `sandbox code` needs to prepare
+// appFlag reads the app from --app or its alias --editor. Passing both is
+// accepted only when they agree, so neither silently overrides the other.
+func appFlag(cmd *cobra.Command) (string, error) {
+	app, _ := cmd.Flags().GetString("app")
+	if !cmd.Flags().Changed("editor") {
+		return app, nil
+	}
+	editor, _ := cmd.Flags().GetString("editor")
+	if cmd.Flags().Changed("app") && app != editor {
+		return "", fmt.Errorf("--app %q and --editor %q disagree; --editor is an alias for --app, so pass only one", app, editor)
+	}
+	return editor, nil
+}
+
+// sshV2Client is the subset of apiclient.Client `sandbox open` needs to prepare
 // a direct-session SSH alias for an editor.
 type sshV2Client interface {
 	ssh.SessionCreator
@@ -236,14 +260,14 @@ type sshV2Client interface {
 }
 
 // prepareSessionTarget is a seam around the shared session-transport setup used
-// by `sandbox code`, `sandbox ssh`, and `scp`. Keeping it replaceable lets the
+// by `sandbox open`, `sandbox ssh`, and `scp`. Keeping it replaceable lets the
 // command package verify its alias handoff without re-testing the session
 // package's key and pinning logic.
 var prepareSessionTarget = ssh.PrepareSessionTarget
 
 // upsertSessionHost makes a concrete session alias discoverable to editors that
 // enumerate SSH Host entries, notably Codex. Cursor and Claude receive their
-// aliases directly, so this extra persistent entry is specific to `sandbox code`.
+// aliases directly, so this extra persistent entry is specific to `sandbox open`.
 var upsertSessionHost = ssh.UpsertSessionHost
 
 // resolveSandboxV2SSHAlias prepares the same direct-session alias used by

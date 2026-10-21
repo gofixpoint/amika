@@ -34,8 +34,9 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	sandboxCmd.AddCommand(sandboxListCmd)
 	sandboxCmd.AddCommand(sandboxGetCmd)
 	sandboxCmd.AddCommand(sandboxConnectCmd)
-	// `ssh` and `code` are the direct-WebSocket-transport commands; they also
-	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases.
+	// `ssh` and `open` are the direct-WebSocket-transport commands; they also
+	// answer to their pre-promotion names `sshv2`/`codev2` as Cobra aliases,
+	// and `open` to its former name `code`.
 	sandboxCmd.AddCommand(sandboxSSHV2Cmd)
 	sandboxCmd.AddCommand(sandboxCodeV2Cmd)
 	sandboxCmd.AddCommand(sandboxBindCmd)
@@ -79,8 +80,9 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	// `ssh` registers no flags of its own: it forwards everything after the
 	// subcommand to ssh, so ssh's own -t (and every other option) passes
 	// through untouched.
-	sandboxCodeV2Cmd.Flags().String("editor", "cursor", "Editor or agent to open: \"cursor\", \"vscode\", \"claude\", \"codex\", or \"paseo\"")
-	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root)")
+	sandboxCodeV2Cmd.Flags().String("app", "cursor", "App or editor to open: \"cursor\", \"vscode\", \"claude\", \"codex\", \"paseo\", or \"herdr\"")
+	sandboxCodeV2Cmd.Flags().String("editor", "", "Alias for --app")
+	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root); ignored by paseo and herdr")
 	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
 	// --rig-by is superseded by the name=/id= prefixes on the rig reference;
 	// kept, hidden, so existing scripts keep working.

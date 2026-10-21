@@ -3,11 +3,13 @@ package sandboxcmd
 // sandbox_ssh.go implements sandbox SSH and editor connection commands.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
 	"runtime"
+	"slices"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/appcfg"
@@ -20,14 +22,14 @@ import (
 // validateEditor checks that the requested editor is supported.
 func validateEditor(editor string) error {
 	switch editor {
-	case "cursor", "vscode", "claude", "codex", "paseo":
+	case "cursor", "vscode", "claude", "codex", "paseo", "herdr":
 		return nil
 	default:
-		return fmt.Errorf("unsupported editor %q; supported editors are %q", editor, supportedEditors)
+		return fmt.Errorf("unsupported app %q; supported apps are %q", editor, supportedEditors)
 	}
 }
 
-var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "paseo"}
+var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "paseo", "herdr"}
 
 // maintainSSHHosts keeps maintenance failures from preventing an editor launch.
 func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient.Client, alias string) {
@@ -37,7 +39,7 @@ func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient
 }
 
 // sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the
-// identity needed to label and locate it, shared by every editor `sandbox code` opens.
+// identity needed to label and locate it, shared by every editor `sandbox open` opens.
 type sandboxSSHAlias struct {
 	alias       string
 	sandboxName string
@@ -57,6 +59,8 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 		return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
 	case "paseo":
 		return openSandboxInPaseoTarget(cmd, target)
+	case "herdr":
+		return openSandboxInHerdrTarget(cmd, target)
 	default:
 		return fmt.Errorf("unsupported editor %q", editor)
 	}
@@ -199,6 +203,64 @@ func openSandboxInPaseoTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "ssh://amika@%s\n", target.alias)
 	return nil
+}
+
+// herdrMachine is the subset of a `herdr machine list --json` entry amika reads.
+type herdrMachine struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Target string `json:"target"`
+}
+
+// openSandboxInHerdrTarget registers a prepared SSH target as a Herdr machine,
+// labeled with the sandbox name. Herdr dials the alias through the system
+// OpenSSH config, so it reaches the sandbox over the managed ProxyCommand.
+// Herdr refuses a second machine with the same label, so a sandbox it already
+// has is reported rather than added again.
+func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error {
+	if _, err := exec.LookPath("herdr"); err != nil {
+		return fmt.Errorf("herdr CLI is not installed or not in PATH; install it from https://herdr.dev")
+	}
+	out := cmd.OutOrStdout()
+	machines, err := listHerdrMachines()
+	if err != nil {
+		// Listing only spares a rerun herdr's duplicate-label error; without
+		// it, `machine add` still reports any conflict itself.
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list Herdr machines: %v\n", err)
+	}
+	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.Target == target.alias }); i >= 0 {
+		fmt.Fprintf(out, "Sandbox %q is already a Herdr machine labeled %q.\n", target.sandboxName, machines[i].Label)
+		return nil
+	}
+	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.Label == target.sandboxName }); i >= 0 {
+		return fmt.Errorf("a Herdr machine labeled %q already exists for a different SSH host (%s); remove it with \"herdr machine remove %s\" and retry",
+			target.sandboxName, machines[i].Target, machines[i].ID)
+	}
+
+	fmt.Fprintf(out, "Adding sandbox %q to Herdr as a machine via SSH (%s)...\n", target.sandboxName, target.alias)
+	fmt.Fprintf(out, "Running: herdr machine add %s --label %s\n", target.alias, target.sandboxName)
+	add := exec.Command("herdr", "machine", "add", target.alias, "--label", target.sandboxName)
+	// `machine add` may prompt, e.g. to pick a remote session.
+	add.Stdin = cmd.InOrStdin()
+	add.Stdout = out
+	add.Stderr = cmd.ErrOrStderr()
+	if err := add.Run(); err != nil {
+		return fmt.Errorf("herdr machine add failed: %w", err)
+	}
+	return nil
+}
+
+// listHerdrMachines returns the SSH machines Herdr has saved.
+func listHerdrMachines() ([]herdrMachine, error) {
+	data, err := exec.Command("herdr", "machine", "list", "--json").Output()
+	if err != nil {
+		return nil, err
+	}
+	var machines []herdrMachine
+	if err := json.Unmarshal(data, &machines); err != nil {
+		return nil, fmt.Errorf("parse herdr machine list: %w", err)
+	}
+	return machines, nil
 }
 
 // resolveRemoteWorkspacePath computes the remote path to open in the editor.

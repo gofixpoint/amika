@@ -40,9 +40,10 @@ func newRigRefTestRoot() *cobra.Command {
 	add("stop", cobra.MinimumNArgs(1), sandboxStopCmd.RunE)
 	add("delete", cobra.MinimumNArgs(1), sandboxDeleteCmd.RunE).Flags().Bool("force", false, "")
 	add("connect", cobra.ExactArgs(1), sandboxConnectCmd.RunE)
-	code := add("code", cobra.ExactArgs(1), sandboxCodeV2Cmd.RunE)
-	code.Flags().String("editor", "cursor", "")
-	code.Flags().String("path", "", "")
+	open := add("open", cobra.ExactArgs(1), sandboxCodeV2Cmd.RunE)
+	open.Flags().String("app", "cursor", "")
+	open.Flags().String("editor", "", "")
+	open.Flags().String("path", "", "")
 	bind := add("bind", cobra.ExactArgs(2), sandboxBindCmd.RunE)
 	bind.Flags().Bool("rebind", false, "")
 	bind.Flags().String("rig-by", "ref", "")
@@ -281,7 +282,7 @@ func TestRigReferenceParsedBeforeAuth(t *testing.T) {
 		{"stop", []string{"stop", "id=_self"}, "not its id"},
 		{"delete", []string{"delete", "--force", "box", "id="}, "no value"},
 		{"connect", []string{"connect", "name="}, "no value"},
-		{"code", []string{"code", "id="}, "no value"},
+		{"open", []string{"open", "id="}, "no value"},
 		{"bind", []string{"bind", "id=", "gh-branch:o/r/b"}, "no value"},
 		{"bind --rig-by conflict", []string{"bind", "--rig-by", "id", "name=box", "gh-branch:o/r/b"}, "conflicts with the name= prefix"},
 		{"bind --rig-by id with _self", []string{"bind", "--rig-by", "id", "_self", "gh-branch:o/r/b"}, "not its id"},

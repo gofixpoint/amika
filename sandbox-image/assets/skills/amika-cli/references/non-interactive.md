@@ -39,7 +39,7 @@ printf 'y\n' | amika secret push KEY=value
 Do not pass `-o json` to commands that open a shell, editor, browser, or masked
 credential prompt:
 
-- `rig connect`, `rig code`, and `rig create --connect`
+- `rig connect`, `rig open` (alias `rig code`), and `rig create --connect`
 - bare `rig ssh`
 - `auth login` without `--api-key-file`
 - `secret extract` and `secret push`

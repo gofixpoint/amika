@@ -14,7 +14,7 @@ Read only the reference relevant to the task:
 
 - [Rig lifecycle, hosts, agents, auth, and secrets](references/rig-operations.md)
 - [Services, repository config, and snapshots](references/services-config-snapshots.md)
-- [SSH and file transfer](references/connectivity.md)
+- [SSH, editors, and file transfer](references/connectivity.md)
 - [Structured output and non-interactive behavior](references/non-interactive.md)
 
 ## Inside an Amika rig
@@ -48,8 +48,8 @@ Follow these rules unless the user explicitly wants an interactive session:
 
 1. Prefer `-o json` or `-o json-pretty` when the command supports it.
 2. Supply required confirmation flags up front.
-3. Do not run `rig connect`, `rig code`, or bare `rig ssh` in a
-   tool call. They require a controllable terminal.
+3. Do not run `rig connect`, `rig open` (alias `rig code`), or bare `rig ssh`
+   in a tool call. They require a controllable terminal.
 4. Use `amika rig ssh <name> <command>` for non-interactive remote work.
 5. Use `amika send` to send messages to an agent that either creates a new
    rig or lives inside an existing rig.

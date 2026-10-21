@@ -27,7 +27,7 @@ amika sandbox list --remote -o json | jq '.[].name'
 amika snapshot list -o json-pretty
 ```
 
-Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox code`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
+Most list commands emit a JSON array (empty as `[]`, never `null`); `snapshot list` is the exception and emits a `{ "items": [...] }` envelope to match the API's `ListSandboxSnapshotsResponse`. Mutating commands emit a JSON result object or a per-item result array. Because JSON output cannot be interrupted by an interactive prompt, in JSON mode the CLI never prompts: destructive commands require their confirmation flag (`--force` for deletes, `--no-interactive` for `snapshot create`), and commands that would open a shell or editor (`sandbox connect`, `sandbox open`, interactive `sandbox ssh`, `sandbox create --connect`, `auth login` without `--api-key-file`) refuse `-o json`. Human-readable progress and any subprocess output go to stderr so stdout carries only the JSON value.
 
 ```bash
 # Create a sandbox and capture its name for a script
@@ -37,7 +37,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, `auth logout`, and `auth api-key create`. Commands that open a shell or editor (`sandbox connect`, `sandbox code`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, `auth logout`, and `auth api-key create`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika send`
 
@@ -89,10 +89,10 @@ names both spellings. Only the text before the first `=` is checked, and only
 `my-rig`.
 
 References work for the positional `<rig>` of `get`, `start`, `stop`,
-`delete`, `connect`, `ssh`, `code`, and `agent-send`, for the `--rig` flag of
+`delete`, `connect`, `ssh`, `open`, and `agent-send`, for the `--rig` flag of
 `send`, `service create`, `service delete`, `service list`, `snapshot create`,
 and `snapshot list`, and for the rig in an [`amika scp`](#amika-scp) operand.
-`ssh`, `code`, `connect`, and `scp` look the rig up first and connect through
+`ssh`, `open`, `connect`, and `scp` look the rig up first and connect through
 its `<name>.<id>.<environment>.amika` SSH alias, so a `name=` or `id=` prefix
 never reaches `ssh` or `scp` itself.
 
@@ -104,7 +104,7 @@ amika rig ssh id=9f3c8b21-0000-4000-8000-000000000000 uptime
 
 ### Global sandbox flags
 
-These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `code`, `agent-send`). For `ssh` they must be written before the subcommand, since everything after it is forwarded to `ssh`:
+These persistent flags apply to all `sandbox` subcommands (`create`, `list`, `connect`, `stop`, `start`, `delete`, `ssh`, `open`, `agent-send`). For `ssh` they must be written before the subcommand, since everything after it is forwarded to `ssh`:
 
 | Flag       | Default | Description                                            |
 | ---------- | ------- | ------------------------------------------------------ |
@@ -322,11 +322,12 @@ and X11 forwarding are not supported.
 `-o`/`--output` is not available there; written before `ssh` it is rejected
 (see [Global flags](#global-flags) above).
 
-### `amika sandbox code`
+### `amika sandbox open`
 
 Open a remote sandbox in an editor or coding agent over Amika's direct
 WebSocket SSH transport. Remote sandboxes only; requires a signed-in Amika
-account and an SSH identity from `amika secret ssh-keygen`.
+account and an SSH identity from `amika secret ssh-keygen`. `amika sandbox code`
+is an alias, and `--editor` is an alias for `--app`.
 
 The command adds a named SSH connection to Amika's managed config (so editors
 such as Codex that enumerate `Host` entries can find it), then starts or
@@ -340,6 +341,14 @@ configures the selected editor:
 - `codex` enables Codex's `remote_connections` feature (in
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
+- `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
+  Remote SSH.
+- `herdr` runs `herdr machine add <ssh-host> --label <name>`, which connects
+  to the sandbox over SSH to prepare a remote Herdr server, then saves it as a
+  Herdr machine labeled with the sandbox name. Herdr may prompt during setup.
+  If Herdr already has the sandbox, the command says so and does nothing; if
+  another machine already uses the label, it names that machine to remove.
+  Requires the `herdr` CLI in `PATH`.
 
 Before first use, create and upload an SSH key:
 
@@ -348,10 +357,11 @@ amika secret ssh-keygen
 ```
 
 To use an existing key, pass `--import <public-key-file>` instead. Cursor is
-the default editor; VS Code, Claude Desktop, and Codex are also available
-without an environment-variable feature gate.
+the default app; VS Code, Claude Desktop, Codex, Paseo, and Herdr are also
+available without an environment-variable feature gate. `--path` has no effect
+with `paseo` or `herdr`.
 
-On WSL, `--editor cursor` and `--editor vscode` expect the editor to be a
+On WSL, `--app cursor` and `--app vscode` expect the editor to be a
 Windows application. The command mirrors the managed SSH config, identity,
 and host-key pins to the Windows side (`%USERPROFILE%\.ssh\amika.conf`, added
 via an `Include` line) with a `ProxyCommand` that re-enters your WSL
@@ -360,16 +370,20 @@ with `--remote ssh-remote+<alias>`. This needs WSL interop (`cmd.exe`,
 `wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell sets it).
 
 ```bash
-amika sandbox code my-sandbox
-amika sandbox code my-sandbox --editor=cursor
+amika sandbox open my-sandbox
+amika sandbox open my-sandbox --app=cursor
+amika sandbox open my-sandbox --app=vscode
+amika sandbox open my-sandbox --app=claude
+amika sandbox open my-sandbox --app=codex
+amika sandbox open my-sandbox --app=paseo
+amika sandbox open my-sandbox --app=herdr
 amika sandbox code my-sandbox --editor=vscode
-amika sandbox code my-sandbox --editor=claude
-amika sandbox code my-sandbox --editor=codex
 ```
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
-| `--editor <name>` | `cursor` | Editor or agent to open: `cursor`, `vscode`, `claude`, or `codex`  |
+| `--app <name>`    | `cursor` | App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
+| `--editor <name>` | —        | Alias for `--app`                                        |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
 
 ### `amika sandbox agent-send`
@@ -497,7 +511,7 @@ A copy naming no sandbox at all is simply forwarded to the system `scp`.
 
 ## The managed SSH config
 
-`sandbox ssh`, `sandbox code`, and `scp` all connect by handing system OpenSSH
+`sandbox ssh`, `sandbox open`, and `scp` all connect by handing system OpenSSH
 a hostname such as `my-sandbox.sb_123.app-amika-dev.amika`. Every setting that
 connection needs comes from a block Amika generates in `~/.ssh/amika.conf`,
 which `~/.ssh/config` pulls in through an `Include` line. The file
@@ -566,7 +580,7 @@ already contains `Include amika.conf`, Amika leaves the file byte-for-byte
 unchanged. Move an existing directive to the beginning yourself if Codex does
 not discover the managed hosts.
 
-Under WSL, `sandbox code` mirrors this file (and the key material it names) to
+Under WSL, `sandbox open` mirrors this file (and the key material it names) to
 the Windows side so a Windows editor's own OpenSSH can reach the sandbox. The
 Windows mirror omits agent forwarding because Windows OpenSSH cannot use the
 dedicated Unix socket. Connections made by the Amika CLI inside WSL do use the

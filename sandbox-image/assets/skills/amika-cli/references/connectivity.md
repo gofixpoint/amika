@@ -1,4 +1,4 @@
-# SSH and file transfer
+# SSH, editors, and file transfer
 
 ## Run remote commands
 
@@ -18,6 +18,20 @@ amika rig ssh -N -L 6789:localhost:3010 my-rig
 
 `rig ssh` uses Amika's direct WebSocket transport and forwards SSH options.
 Use bare `amika rig ssh my-rig` only in a controllable terminal.
+
+## Open a rig in an editor or app
+
+`amika rig open` (alias `rig code`) hands a rig's SSH host to a local
+editor or app. `--app` (alias `--editor`) picks the target: `cursor`
+(default), `vscode`, `claude`, `codex`, `paseo`, or `herdr`. `herdr` runs
+`herdr machine add <ssh-host> --label <rig>`.
+
+```bash
+amika rig open my-rig --app=herdr
+```
+
+These launch or configure apps on the user's machine and may prompt, so run
+them only when the user asks, in a controllable terminal.
 
 ## Copy files
 

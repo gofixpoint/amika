@@ -40,8 +40,9 @@ func TestSelfResolvesBeforeAuth(t *testing.T) {
 		root.AddCommand(rig)
 		return root
 	}
-	code := &cobra.Command{Use: "code", Args: cobra.ExactArgs(1), RunE: sandboxCodeV2Cmd.RunE}
-	code.Flags().String("editor", "cursor", "")
+	code := &cobra.Command{Use: "open", Args: cobra.ExactArgs(1), RunE: sandboxCodeV2Cmd.RunE}
+	code.Flags().String("app", "cursor", "")
+	code.Flags().String("editor", "", "")
 	bindingsDelete := &cobra.Command{Use: "bindings-delete", Args: cobra.RangeArgs(1, 2), RunE: runSandboxBindingsDelete}
 	bindingsDelete.Flags().String("rig-by", "ref", "")
 	bindingsDelete.Flags().Bool("force", false, "")
@@ -52,7 +53,7 @@ func TestSelfResolvesBeforeAuth(t *testing.T) {
 		args []string
 	}{
 		{"get", newSandboxGetTestRoot(), []string{"rig", "get", rigself.Ref}},
-		{"code", newRoot(code), []string{"rig", "code", rigself.Ref}},
+		{"open", newRoot(code), []string{"rig", "open", rigself.Ref}},
 		{"bindings delete", newRoot(bindingsDelete), []string{"rig", "bindings-delete", rigself.Ref, "gh-branch:o/r/b", "--force"}},
 	}
 	for _, tc := range cases {

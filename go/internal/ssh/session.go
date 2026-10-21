@@ -29,8 +29,10 @@ const (
 	sandboxNameEnvironment = rigself.SandboxNameEnv
 )
 
-// safeAliasPart matches a sandbox name, which may itself contain dots.
-var safeAliasPart = regexp.MustCompile(`^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`)
+// safeAliasPart matches a sandbox name, which may itself contain dots. It may
+// not start with "-": the name leads the alias, which programs such as ssh and
+// herdr receive as an argument, so a leading dash would read as an option.
+var safeAliasPart = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$`)
 
 // safeAliasSegment matches exactly one dot-free alias segment, used for the
 // parts an alias is split on: the sandbox id and the environment slug.
@@ -368,7 +370,7 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 // hand the alias straight to system OpenSSH, which resolves it through the
 // managed block and its `StrictHostKeyChecking yes`. No Amika command runs on
 // that path, so nothing wrote the pin, and OpenSSH refused every sandbox the
-// user had not already reached with `sandbox ssh` or `sandbox code`:
+// user had not already reached with `sandbox ssh` or `sandbox open`:
 // "No ED25519 host key is known for <alias> ... Host key verification failed."
 //
 // The ProxyCommand is the one step every alias-based connection passes

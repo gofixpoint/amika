@@ -36,11 +36,11 @@ steps:
       exit: 0
       stdout_contains: "Available Commands"
 
-  - name: amika rig code --help exits 0 and shows its own usage line
+  - name: amika rig code --help exits 0 and shows the open usage line
     cmd: [rig, code, --help]
     expect:
       exit: 0
-      stdout_contains: "amika rig code <name> [flags]"
+      stdout_contains: "amika rig open <rig> [flags]"
 
   - name: rig --help lists ssh and code
     cmd: [rig, --help]
