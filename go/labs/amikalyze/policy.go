@@ -69,12 +69,14 @@ func RepositoryRoot(dir string) (string, error) {
 
 // Evaluate checks target against every .amikalyze.toml on its ancestor path,
 // stopping at repoRoot. Patterns are relative to their config's directory.
-// Target is matched as written below the repository root (see repoRelative),
-// so a freeze on a path that is a symlink still applies to edits through it.
 func Evaluate(repoRoot, target string, overrides Overrides) (Decision, error) {
-	repoRoot, err := resolveRepoRoot(repoRoot)
+	repoRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
-		return Decision{}, err
+		return Decision{}, fmt.Errorf("resolving repository root: %w", err)
+	}
+	repoRoot, err = filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return Decision{}, fmt.Errorf("resolving repository root: %w", err)
 	}
 	repoPath, inside := repoRelative(repoRoot, target)
 	if !inside {
@@ -178,56 +180,17 @@ func relativeInside(base, target string) (string, bool) {
 	return relative, true
 }
 
-func samePath(left, right string) bool {
-	if left == "" || right == "" {
-		return false
-	}
-	leftResolved, leftErr := resolveExisting(left)
-	rightResolved, rightErr := resolveExisting(right)
-	return leftErr == nil && rightErr == nil && leftResolved == rightResolved
-}
-
-// resolveRepoRoot returns repoRoot with every symlink resolved, the form Git
-// reports from `rev-parse --show-toplevel`.
-func resolveRepoRoot(repoRoot string) (string, error) {
-	repoRoot, err := filepath.Abs(repoRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolving repository root: %w", err)
-	}
-	repoRoot, err = filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolving repository root: %w", err)
-	}
-	return repoRoot, nil
-}
-
-// resolveExisting returns path with every symlink resolved, or the absolute,
-// clean path when it does not exist.
-func resolveExisting(path string) (string, error) {
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return filepath.Clean(path), nil
-	}
-	return resolved, err
-}
-
-// repoRelative returns target's path relative to the symlink-free repoRoot,
-// keeping the components below the repository as written. It finds the
-// nearest ancestor of target that resolves to repoRoot, so a target reached
-// through a symlinked cwd (on macOS, /var and /tmp are symlinks into /private)
-// maps to the same repository path as its physical location, while a symlink
-// inside the repository is matched by its own name rather than its
-// destination.
+// repoRelative returns target's path relative to repoRoot, which must have its
+// symlinks resolved, as Git reports it. Git and the agent can spell the same
+// directory differently (on macOS, /var and /tmp are symlinks into /private),
+// so this finds the nearest ancestor of target that resolves to repoRoot and
+// keeps the components below it as written. Symlinks inside the repository are
+// not followed: a target is matched by the path the agent names.
 func repoRelative(repoRoot, target string) (string, bool) {
 	target, err := filepath.Abs(target)
 	if err != nil {
 		return "", false
 	}
-	target = filepath.Clean(target)
 	dir, rest := filepath.Dir(target), []string{filepath.Base(target)}
 	for {
 		if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved == repoRoot {
@@ -242,78 +205,24 @@ func repoRelative(repoRoot, target string) (string, bool) {
 	}
 }
 
-// maxSymlinkHops bounds how many symlinks resolvePath follows, so a symlink
-// loop is reported instead of followed forever.
-const maxSymlinkHops = 40
-
-// resolvePath returns the physical location a change to path affects. It
-// walks path one component at a time as the kernel does, following each
-// symlink before applying a later "..", so "link/.." means the parent of the
-// link's destination rather than the directory holding the link. With
-// followFinal, for a write that goes through path, a final symlink is
-// followed too, even one whose destination does not exist yet, since the
-// write creates it. Without it, for a delete or rename that acts on path
-// itself, the final element is kept as written. Once a component does not
-// exist, the rest of the path is kept as written, as a write would create it.
-func resolvePath(path string, followFinal bool) (string, error) {
-	if !filepath.IsAbs(path) {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		path = wd + string(filepath.Separator) + path
+func samePath(left, right string) bool {
+	if left == "" || right == "" {
+		return false
 	}
-	volume := filepath.VolumeName(path)
-	resolved := volume + string(filepath.Separator)
-	remaining := pathComponents(path[len(volume):])
-	for hops := 0; len(remaining) > 0; {
-		component := remaining[0]
-		remaining = remaining[1:]
-		switch component {
-		case ".":
-			continue
-		case "..":
-			resolved = filepath.Dir(resolved)
-			continue
-		}
-		next := filepath.Join(resolved, component)
-		info, err := os.Lstat(next)
-		if errors.Is(err, os.ErrNotExist) {
-			return filepath.Join(append([]string{next}, remaining...)...), nil
-		}
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink == 0 || (len(remaining) == 0 && !followFinal) {
-			resolved = next
-			continue
-		}
-		if hops++; hops > maxSymlinkHops {
-			return "", fmt.Errorf("resolving %s: too many levels of symbolic links", path)
-		}
-		destination, err := os.Readlink(next)
-		if err != nil {
-			return "", err
-		}
-		// A relative destination is relative to the directory holding the
-		// link, which is resolved as it stands.
-		if filepath.IsAbs(destination) {
-			volume = filepath.VolumeName(destination)
-			resolved = volume + string(filepath.Separator)
-			destination = destination[len(volume):]
-		}
-		remaining = append(pathComponents(destination), remaining...)
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr != nil || rightErr != nil {
+		return false
 	}
-	return resolved, nil
-}
-
-// pathComponents splits path into its non-empty components, keeping "." and
-// ".." for resolvePath to interpret. It splits on every separator the platform
-// accepts, so a "/" in a Windows path still separates components.
-func pathComponents(path string) []string {
-	return strings.FieldsFunc(path, func(r rune) bool {
-		return r < 0x80 && os.IsPathSeparator(uint8(r))
-	})
+	// Compare resolved paths where they exist, so a repository root spelled
+	// through a symlink matches the resolved root Evaluate works from.
+	if resolved, err := filepath.EvalSymlinks(leftAbs); err == nil {
+		leftAbs = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(rightAbs); err == nil {
+		rightAbs = resolved
+	}
+	return filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
 }
 
 func sliceSet(values []string) map[string]struct{} {

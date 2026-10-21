@@ -65,58 +65,30 @@ paths = ["schema/**"]
 	}
 }
 
-// A symlink inside the repository is frozen both by its own path and by its
-// destination: edits through `linked`, a frozen symlink to a directory outside
-// the repository, through `alias`, an unfrozen symlink to the frozen `schema`
-// directory, to `alias.sql`, an unfrozen symlink to a frozen file, and to
-// `dangling.sql`, an unfrozen symlink to a frozen file that does not exist yet
-// (a write through it creates the frozen file), are all denied.
-func TestEvaluateHook_SymlinkInsideRepo(t *testing.T) {
+// Targets are matched by the path the agent names, so a frozen path that is a
+// symlink to a directory outside the repository stays frozen.
+func TestEvaluateHook_FrozenSymlinkOutOfRepo(t *testing.T) {
 	root := initTestRepo(t)
 	writeTestFile(t, filepath.Join(root, configName), `
 [[freezes]]
 label = "linked"
 paths = ["linked/**"]
-
-[[freezes]]
-label = "schema"
-paths = ["schema/**"]
 `)
-	if err := os.Mkdir(filepath.Join(root, "schema"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "linked")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(root, "schema"), filepath.Join(root, "alias")); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(root, "schema", "one.sql"), "frozen")
-	if err := os.Symlink(filepath.Join(root, "schema", "one.sql"), filepath.Join(root, "alias.sql")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join("schema", "new.sql"), filepath.Join(root, "dangling.sql")); err != nil {
-		t.Fatal(err)
-	}
-	for target, label := range map[string]string{
-		filepath.Join(root, "linked", "file.txt"): "linked",
-		filepath.Join(root, "alias", "one.sql"):   "schema",
-		filepath.Join(root, "alias.sql"):          "schema",
-		filepath.Join(root, "dangling.sql"):       "schema",
-	} {
-		payload := fmt.Sprintf(`{
+	payload := fmt.Sprintf(`{
   "cwd": %q,
   "hook_event_name": "PreToolUse",
   "tool_name": "Write",
   "tool_input": {"file_path": %q, "content": "changed"}
-}`, root, target)
-		decision, err := EvaluateHook(SourceClaude, strings.NewReader(payload), Overrides{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !decision.Frozen() || !strings.Contains(decision.DenialReason(), fmt.Sprintf("freeze %q", label)) {
-			t.Fatalf("edit to %s: decision = %+v, want freeze %q", target, decision, label)
-		}
+}`, root, filepath.Join(root, "linked", "file.txt"))
+	decision, err := EvaluateHook(SourceClaude, strings.NewReader(payload), Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Frozen() {
+		t.Fatalf("edit through the frozen symlink was allowed: %+v", decision)
 	}
 }
 
@@ -170,112 +142,9 @@ func TestParsePatchTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The renamed-away dir/two.txt and the deleted four.txt act on the path
-	// itself; the rest write through it.
-	want := []hookTarget{
-		{path: "dir/three.txt", writesThrough: true},
-		{path: "dir/two.txt", writesThrough: false},
-		{path: "four.txt", writesThrough: false},
-		{path: "one.txt", writesThrough: true},
-	}
+	want := []string{"dir/three.txt", "dir/two.txt", "four.txt", "one.txt"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("targets = %+v, want %+v", got, want)
-	}
-}
-
-// A path that one operation deletes and another writes through still writes
-// through, whatever the order.
-func TestParsePatchTargets_WriteWinsOverDelete(t *testing.T) {
-	for _, patch := range []string{
-		"*** Begin Patch\n*** Delete File: one.txt\n*** Add File: one.txt\n+hello\n*** End Patch",
-		"*** Begin Patch\n*** Add File: one.txt\n+hello\n*** Update File: two.txt\n*** Move to: one.txt\n*** Delete File: one.txt\n*** End Patch",
-	} {
-		got, err := parsePatchTargets(patch)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, target := range got {
-			if target.path == "one.txt" && !target.writesThrough {
-				t.Fatalf("parsePatchTargets(%q): one.txt does not write through", patch)
-			}
-		}
-	}
-}
-
-// A ".." after a symlink leads to the parent of the symlink's destination, as
-// the kernel resolves it, not to the directory holding the symlink. With
-// `dlink` pointing at frozen/child, both a dangling symlink to
-// dlink/../secret.sql and a target written as dlink/../other.sql land in the
-// frozen directory and are denied.
-func TestEvaluateHook_DotDotAfterSymlink(t *testing.T) {
-	root := initTestRepo(t)
-	writeTestFile(t, filepath.Join(root, configName), `
-[[freezes]]
-label = "frozen"
-paths = ["frozen/**"]
-`)
-	if err := os.MkdirAll(filepath.Join(root, "frozen", "child"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join("frozen", "child"), filepath.Join(root, "dlink")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("dlink/../secret.sql", filepath.Join(root, "alias.sql")); err != nil {
-		t.Fatal(err)
-	}
-	for _, target := range []string{
-		filepath.Join(root, "alias.sql"),
-		root + "/dlink/../other.sql",
-	} {
-		payload := fmt.Sprintf(`{
-  "cwd": %q,
-  "hook_event_name": "PreToolUse",
-  "tool_name": "Write",
-  "tool_input": {"file_path": %q, "content": "changed"}
-}`, root, target)
-		decision, err := EvaluateHook(SourceClaude, strings.NewReader(payload), Overrides{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !decision.Frozen() {
-			t.Errorf("write to %s was allowed, want freeze \"frozen\" (%+v)", target, decision)
-		}
-	}
-}
-
-// Deleting or renaming away an unfrozen symlink to a frozen file changes only
-// the symlink, so Codex may do it, while updating the file through the
-// symlink, or renaming another file onto it, is denied.
-func TestEvaluateHook_CodexSymlinkDeleteAndRename(t *testing.T) {
-	root := initTestRepo(t)
-	writeTestFile(t, filepath.Join(root, configName), `
-[[freezes]]
-label = "schema"
-paths = ["schema/**"]
-`)
-	writeTestFile(t, filepath.Join(root, "schema", "one.sql"), "frozen")
-	if err := os.Symlink(filepath.Join("schema", "one.sql"), filepath.Join(root, "alias.sql")); err != nil {
-		t.Fatal(err)
-	}
-	for operations, wantFrozen := range map[string]bool{
-		"*** Delete File: alias.sql":                                       false,
-		"*** Update File: alias.sql\n*** Move to: renamed.sql\n@@\n-a\n+b": false,
-		"*** Update File: alias.sql\n@@\n-a\n+b":                           true,
-		"*** Update File: other.sql\n*** Move to: alias.sql\n@@\n-a\n+b":   true,
-	} {
-		payload := fmt.Sprintf(`{
-  "cwd": %q,
-  "hook_event_name": "PreToolUse",
-  "tool_name": "apply_patch",
-  "tool_input": {"command": %q}
-}`, root, "*** Begin Patch\n"+operations+"\n*** End Patch")
-		decision, err := EvaluateHook(SourceCodex, strings.NewReader(payload), Overrides{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if decision.Frozen() != wantFrozen {
-			t.Errorf("patch %q: frozen = %v, want %v (%+v)", operations, decision.Frozen(), wantFrozen, decision)
-		}
+		t.Fatalf("targets = %v, want %v", got, want)
 	}
 }
 
