@@ -86,7 +86,7 @@ const rig = await client.rigs.get("dev");
 console.log(rig.status);
 ```
 
-`handle()` creates a **RigHandle** from a name or ID without a request or an
+`handle()` creates a **RigHandle** from a rig reference without a request or an
 existence check. It has operations but no fetched metadata. `fetch()` and
 `wait()` return a **Rig**, which includes metadata and the same operations.
 
@@ -99,14 +99,33 @@ await rig.stop();
 await rig.wait({ status: "stopped" });
 ```
 
+### Identifying a rig
+
+Every method that takes a rig accepts a `RigRef`. A plain string matches the
+rig's ID or its name, and the server rejects a value that is one rig's ID and
+another's name with a 409 `AmikaHTTPError`. To match only one, pass an object
+that pins the kind:
+
+```ts
+await client.rigs.get("dev"); // ID or name
+await client.rigs.get({ ref: "dev", by: "name" }); // name only
+await client.rigs.get({ ref: rig.id, by: "id" }); // ID only
+```
+
+The SDK never reads a kind out of the string itself, so `"name=dev"` names a rig
+called `name=dev`. An empty reference throws `AmikaError` before any request.
+The same `ResourceRef` shape identifies snapshots in `client.snapshots.get()`
+and `handle()`.
+
 For a rig that is already starting or running, `await client.rigs.getAndWait("dev")`
 fetches and waits for readiness in one call. It includes the initial fetch in
 the wait deadline. `get()` returns an ordinary promise: await it before calling
 resource methods.
 
 Fetched data is an observation rather than a live view. `rig.refresh()` and
-`rig.wait()` update and return the same object. After fetching, operations use
-the rig's ID so a later rename does not change their target. `rig.services` is
+`rig.wait()` update and return the same object. A handle uses the reference you
+gave it until it has fetched the rig. After that, operations pin the rig's ID
+(`{ ref: rig.id, by: "id" }`) so a later rename does not change their target. `rig.services` is
 an array of fetched service summaries; service operations live on
 `client.services`.
 
@@ -149,7 +168,7 @@ listed status matches.
 ## Send and continue agent chats
 
 `client.agentSessions.send()` can continue a chat by `sessionId`, target an
-existing rig by `rigId`, or let the server create a rig. `repoUrl` is used only
+existing rig by `rig` (a `RigRef`), or let the server create a rig. `repoUrl` is used only
 when a rig must be created. `rig.send()` supplies the rig reference for you.
 Both buffered and streaming sends have a 10-minute client timeout.
 To choose which credentials a rig receives, create it with `agentCredentials`
@@ -159,7 +178,7 @@ selection option.
 ```ts
 const turn = await client.agentSessions.send({
   message: "Summarize the repository",
-  rigId: rig.id,
+  rig: { ref: rig.id, by: "id" },
   agent: "claude",
 });
 if (turn.isError) throw new Error(turn.response);
@@ -179,8 +198,9 @@ callback fails the send. The server can end a stream before the client timeout;
 if it ends without a terminal result, the SDK throws. Inspect the chat before
 retrying because the turn may still have completed.
 
-`agentSessions.list({ limit, rigRef })` returns `{ sessions, total }`, newest
-first. Pass `rigRef` (a rig name or ID) to list only that rig's chats. Keep
+`agentSessions.list({ limit, rig })` returns `{ sessions, total }`, newest
+first. Pass `rig` (a `RigRef`) to list only that rig's chats. The filter needs a
+server that supports it; an older server ignores it and lists every chat. Keep
 `total` when displaying a partial list. `agentSessions.get(id)` returns a
 chat with its transcript and bound `send`, `sendStream`, and `refresh` methods.
 Chat transcripts are stored on the server and can outlive their rigs; keeping
@@ -196,7 +216,7 @@ fetched snapshots add `refresh()`.
 
 ```ts
 const snapshot = await client.snapshots.create({
-  rigRef: "dev",
+  rig: "dev",
   name: "project-base",
   mode: "full",
 });
@@ -208,7 +228,7 @@ const fork = await client.rigs.create({ snapshot: snapshot.snapshot });
 Choose capture mode deliberately. `full` keeps the source rig and captures its
 complete filesystem, including credentials. The default, `scrub_and_delete`,
 removes Amika-injected secrets, captures the cleaned filesystem, and deletes the
-source rig. `client.snapshots.previewScrub(rigRef)` previews affected paths and
+source rig. `client.snapshots.previewScrub(rig)` previews affected paths and
 environment names without returning secret values. Snapshot failures and
 expired waits throw `AmikaError`; HTTP failures throw `AmikaHTTPError`.
 
@@ -270,8 +290,17 @@ do not need to add the new resource methods or canonical rig field names.
 The flat session-record methods (`createSession`, `listSessions`,
 `getLatestSession`, `getSession`, `updateSession`) and their `Session`,
 `CreateSessionRequest`, and `UpdateSessionRequest` types have been removed. To
-find a rig's chats, use `client.agentSessions.list({ rigRef })`, then
+find a rig's chats, use `client.agentSessions.list({ rig })`, then
 `client.agentSessions.get(id)` for one chat's transcript.
+
+Fields that named a rig before `RigRef` remain as deprecated aliases. `rigRef`
+(on `snapshots.create`, `services.list`, and `agentSessions.list`) and
+`sandboxRef` (on `snapshots.create`) map to a plain-string `rig`. `sourceRigId` and
+`sourceSandboxId` on `snapshots.list` map to `sourceRig: { ref, by: "id" }`.
+If you set both, a non-empty canonical field wins. On `agentSessions.send`,
+`rigId` and `sandboxId` now map to `rig: { ref, by: "id" }` and so must be the
+rig's ID: they were documented as "name or ID", but the server's `sandbox_id`
+field now matches IDs only. Pass a name as `rig` instead.
 
 The old `waitForRig`, `waitForRigStart`, and `waitForRigStop` helpers retain their
 original behavior: checking provisioning state without checking setup and

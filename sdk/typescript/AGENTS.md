@@ -29,3 +29,34 @@ and is called both in the functional `globalSetup` (fails the run before
 any network call) and in `makeClient()` as defense in depth. There is no
 override by design. Do not weaken this; point functional runs at staging
 (`https://app.staging-amika.dev`) or an ephemeral deployment.
+
+## Identifying resources
+
+Every parameter or field that names a rig (or another referenced resource)
+accepts a `ResourceRef` (`RigRef` for rigs), exported from `src/resource-ref.ts`:
+
+- A plain string is a `ref`: the server matches it by ID or name and rejects a
+  value that is one resource's ID and another's name with 409.
+- `{ ref, by: "id" | "name" | "ref" }` pins the kind.
+- Never infer a kind from the string. A `name=` or `id=` prefix is part of the
+  value, not a selector.
+
+Map every reference through `src/internal/resource-ref.ts`, never by hand. It
+validates (an empty or whitespace `ref` and an unknown `by` throw `AmikaError`
+before any request) and produces the API's wire spellings: a path segment plus
+`by` when the resource is the endpoint's primary one, `sandbox_by` when it is a
+parent in the path, and `*_id` / `*_name` / `*_ref` fields in bodies and some
+list filters. A pinned kind always sends its selector; a plain string omits it
+where the server's default is already `ref`, so plain-string requests keep their
+earlier wire form. A handle sends the caller's reference as given until it has
+fetched its resource, then pins `{ ref: id, by: "id" }`.
+
+When a reference field replaces an older one, keep the old field as a
+`@deprecated` alias that maps onto the new form: a former "name or ID" string
+becomes a plain-string ref, and a former ID-only field becomes
+`{ ref, by: "id" }`. Pass the canonical field and its aliases to `pickRef` in
+precedence order: the first non-empty one wins, so an empty canonical value
+falls through to an alias rather than shadowing it. In a list filter, an empty
+deprecated alias keeps its old meaning of no filter (`alias || undefined`); an
+empty canonical field throws. Keep the type-compatibility tricks for older
+callers described in `src/snapshots/types.ts`.
