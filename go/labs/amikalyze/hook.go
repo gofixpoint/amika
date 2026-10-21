@@ -74,22 +74,42 @@ func EvaluateHook(source Source, input io.Reader, overrides Overrides) (HookDeci
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(payload.CWD, target)
 		}
-		// Git reports a symlink-free root, so the target must be resolved too
-		// or a cwd reached through a symlink would put every target outside it.
-		target, err = resolvePath(target)
-		if err != nil {
-			return result, fmt.Errorf("resolving target path: %w", err)
-		}
-		if _, inside := relativeInside(repoRoot, target); !inside {
-			continue
-		}
-		decision, err := Evaluate(repoRoot, target, overrides)
+		candidates, err := repoCandidates(repoRoot, target)
 		if err != nil {
 			return result, err
 		}
-		result.Decisions = append(result.Decisions, decision)
+		for _, candidate := range candidates {
+			decision, err := Evaluate(repoRoot, candidate, overrides)
+			if err != nil {
+				return result, err
+			}
+			result.Decisions = append(result.Decisions, decision)
+		}
 	}
 	return result, nil
+}
+
+// repoCandidates returns the repository paths an edit of target touches: the
+// path as written, and the physical location it writes to when a symlink in
+// its directory leads elsewhere in the repository. Freezes apply to both, so
+// neither a symlink out of a frozen path nor one into it evades them. Targets
+// outside the repository on both counts yield nothing.
+func repoCandidates(repoRoot, target string) ([]string, error) {
+	var candidates []string
+	if repoPath, inside := repoRelative(repoRoot, target); inside {
+		candidates = append(candidates, filepath.Join(repoRoot, repoPath))
+	}
+	physical, err := resolvePath(target)
+	if err != nil {
+		return nil, fmt.Errorf("resolving target path: %w", err)
+	}
+	if repoPath, inside := relativeInside(repoRoot, physical); inside {
+		physical = filepath.Join(repoRoot, repoPath)
+		if len(candidates) == 0 || candidates[0] != physical {
+			candidates = append(candidates, physical)
+		}
+	}
+	return candidates, nil
 }
 
 // DenialReason returns concise model-visible feedback for a denied tool call.

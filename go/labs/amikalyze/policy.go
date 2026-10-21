@@ -69,23 +69,18 @@ func RepositoryRoot(dir string) (string, error) {
 
 // Evaluate checks target against every .amikalyze.toml on its ancestor path,
 // stopping at repoRoot. Patterns are relative to their config's directory.
+// Target is matched as written below the repository root (see repoRelative),
+// so a freeze on a path that is a symlink still applies to edits through it.
 func Evaluate(repoRoot, target string, overrides Overrides) (Decision, error) {
-	repoRoot, err := filepath.Abs(repoRoot)
+	repoRoot, err := resolveRepoRoot(repoRoot)
 	if err != nil {
-		return Decision{}, fmt.Errorf("resolving repository root: %w", err)
+		return Decision{}, err
 	}
-	repoRoot, err = filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		return Decision{}, fmt.Errorf("resolving repository root: %w", err)
-	}
-	target, err = resolvePath(target)
-	if err != nil {
-		return Decision{}, fmt.Errorf("resolving target path: %w", err)
-	}
-	repoPath, inside := relativeInside(repoRoot, target)
+	repoPath, inside := repoRelative(repoRoot, target)
 	if !inside {
 		return Decision{}, fmt.Errorf("target %s is outside repository %s", target, repoRoot)
 	}
+	target = filepath.Join(repoRoot, repoPath)
 	decision := Decision{TargetPath: target, RepoPath: filepath.ToSlash(repoPath)}
 
 	configs, err := discoverConfigs(repoRoot, filepath.Dir(target))
@@ -187,14 +182,68 @@ func samePath(left, right string) bool {
 	if left == "" || right == "" {
 		return false
 	}
-	leftResolved, leftErr := resolvePath(left)
-	rightResolved, rightErr := resolvePath(right)
+	leftResolved, leftErr := resolveExisting(left)
+	rightResolved, rightErr := resolveExisting(right)
 	return leftErr == nil && rightErr == nil && leftResolved == rightResolved
 }
 
+// resolveRepoRoot returns repoRoot with every symlink resolved, the form Git
+// reports from `rev-parse --show-toplevel`.
+func resolveRepoRoot(repoRoot string) (string, error) {
+	repoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolving repository root: %w", err)
+	}
+	repoRoot, err = filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolving repository root: %w", err)
+	}
+	return repoRoot, nil
+}
+
+// resolveExisting returns path with every symlink resolved, or the absolute,
+// clean path when it does not exist.
+func resolveExisting(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return filepath.Clean(path), nil
+	}
+	return resolved, err
+}
+
+// repoRelative returns target's path relative to the symlink-free repoRoot,
+// keeping the components below the repository as written. It finds the
+// nearest ancestor of target that resolves to repoRoot, so a target reached
+// through a symlinked cwd (on macOS, /var and /tmp are symlinks into /private)
+// maps to the same repository path as its physical location, while a symlink
+// inside the repository is matched by its own name rather than its
+// destination.
+func repoRelative(repoRoot, target string) (string, bool) {
+	target, err := filepath.Abs(target)
+	if err != nil {
+		return "", false
+	}
+	target = filepath.Clean(target)
+	dir, rest := filepath.Dir(target), []string{filepath.Base(target)}
+	for {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved == repoRoot {
+			return filepath.Join(rest...), true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		rest = append([]string{filepath.Base(dir)}, rest...)
+		dir = parent
+	}
+}
+
 // resolvePath returns path as an absolute, clean path with symlinks in its
-// directory resolved, so it compares equal to the physical path Git reports
-// as the repository root (on macOS, /var and /tmp are symlinks into /private).
+// directory resolved: the physical location an edit through path writes to.
 // The final element is kept as is, since an edit may create it, and missing
 // directories are rejoined under their nearest existing ancestor.
 func resolvePath(path string) (string, error) {

@@ -65,6 +65,50 @@ paths = ["schema/**"]
 	}
 }
 
+// A symlink inside the repository is frozen both by its own path and by its
+// destination: an edit through `linked`, a frozen symlink to a directory
+// outside the repository, and through `alias`, an unfrozen symlink to the
+// frozen `schema` directory, are both denied.
+func TestEvaluateHook_SymlinkInsideRepo(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, filepath.Join(root, configName), `
+[[freezes]]
+label = "linked"
+paths = ["linked/**"]
+
+[[freezes]]
+label = "schema"
+paths = ["schema/**"]
+`)
+	if err := os.Mkdir(filepath.Join(root, "schema"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "schema"), filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	for target, label := range map[string]string{
+		filepath.Join(root, "linked", "file.txt"): "linked",
+		filepath.Join(root, "alias", "one.sql"):   "schema",
+	} {
+		payload := fmt.Sprintf(`{
+  "cwd": %q,
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {"file_path": %q, "content": "changed"}
+}`, root, target)
+		decision, err := EvaluateHook(SourceClaude, strings.NewReader(payload), Overrides{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !decision.Frozen() || !strings.Contains(decision.DenialReason(), fmt.Sprintf("freeze %q", label)) {
+			t.Fatalf("edit to %s: decision = %+v, want freeze %q", target, decision, label)
+		}
+	}
+}
+
 func TestEvaluateHook_CodexMultiFileAndOverride(t *testing.T) {
 	root := initTestRepo(t)
 	writeTestFile(t, filepath.Join(root, configName), `
