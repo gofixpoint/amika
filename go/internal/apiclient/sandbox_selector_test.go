@@ -112,12 +112,13 @@ func TestRoutesThatAlwaysSendTheKind(t *testing.T) {
 	}
 }
 
-// TestCreateSSHSessionSendsNoSelector checks that an SSH session, always
-// requested for a canonical id, goes out as a plain ref with no sandbox_by.
-func TestCreateSSHSessionSendsNoSelector(t *testing.T) {
+// TestCreateSSHSessionSelectsByID checks that an SSH session, always
+// requested for a canonical id, pins sandbox_by=id, so a rig named after that
+// id cannot make the request ambiguous.
+func TestCreateSSHSessionSelectsByID(t *testing.T) {
 	c, got := recordRequests(t)
 	_, _ = c.CreateSSHSession("sbx_123")
-	if want := []string{"POST /api/v0beta1/sandboxes/sbx_123/ssh-sessions"}; !reflect.DeepEqual(*got, want) {
+	if want := []string{"POST /api/v0beta1/sandboxes/sbx_123/ssh-sessions?sandbox_by=id"}; !reflect.DeepEqual(*got, want) {
 		t.Fatalf("requests = %q, want %q", *got, want)
 	}
 }

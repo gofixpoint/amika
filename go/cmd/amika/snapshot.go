@@ -172,8 +172,10 @@ func runSnapshotList(cmd *cobra.Command, _ []string) error {
 	long, _ := cmd.Flags().GetBool("long")
 	// The server resolves the rig and filters by it (source_sandbox_ref,
 	// _name, or _id, by the reference's kind); a zero rigRef sends no filter.
+	// An explicitly empty --rig (an unset "$AMIKA_RIG_NAME") is refused by
+	// Parse rather than widening the listing to every snapshot in the org.
 	var rigRef rigref.Ref
-	if rawRig, _ := cmd.Flags().GetString("rig"); strings.TrimSpace(rawRig) != "" {
+	if rawRig, _ := cmd.Flags().GetString("rig"); cmd.Flags().Changed("rig") || strings.TrimSpace(rawRig) != "" {
 		parsed, err := rigref.Parse(rawRig)
 		if err != nil {
 			return err

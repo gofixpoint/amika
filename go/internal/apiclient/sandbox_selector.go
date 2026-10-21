@@ -32,10 +32,16 @@ type SandboxSelector struct {
 	By    string
 }
 
-// SandboxByRef selects the sandbox whose id or name is value. Use it for a
-// canonical name or id the API itself returned.
+// SandboxByRef selects the sandbox whose id or name is value.
 func SandboxByRef(value string) SandboxSelector {
 	return SandboxSelector{Value: value, By: SelectByRef}
+}
+
+// SandboxByID selects the sandbox whose id is value. Use it for an id the API
+// itself returned: a ref could also match another sandbox named after that id
+// and draw a 409.
+func SandboxByID(value string) SandboxSelector {
+	return SandboxSelector{Value: value, By: SelectByID}
 }
 
 // kind returns the selector's kind with the empty default spelled out.

@@ -107,6 +107,16 @@ func TestSnapshotListRigFilter(t *testing.T) {
 		})
 	}
 
+	// An unset "$AMIKA_RIG_NAME" must not widen the list to every snapshot.
+	t.Run("an explicitly empty --rig fails before any request", func(t *testing.T) {
+		t.Setenv("AMIKA_API_URL", "http://127.0.0.1:1")
+		c := newTestListCmd()
+		c.Flags().Set("rig", "")
+		if err := runSnapshotList(c, nil); err == nil || !strings.Contains(err.Error(), "must not be empty") {
+			t.Fatalf("err = %v, want the empty-reference error", err)
+		}
+	})
+
 	t.Run("a bad reference fails before any request", func(t *testing.T) {
 		t.Setenv("AMIKA_API_URL", "http://127.0.0.1:1")
 		c := newTestListCmd()
