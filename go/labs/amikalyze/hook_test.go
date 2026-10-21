@@ -170,9 +170,71 @@ func TestParsePatchTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"dir/three.txt", "dir/two.txt", "four.txt", "one.txt"}
+	// The renamed-away dir/two.txt and the deleted four.txt act on the path
+	// itself; the rest write through it.
+	want := []hookTarget{
+		{path: "dir/three.txt", writesThrough: true},
+		{path: "dir/two.txt", writesThrough: false},
+		{path: "four.txt", writesThrough: false},
+		{path: "one.txt", writesThrough: true},
+	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("targets = %v, want %v", got, want)
+		t.Fatalf("targets = %+v, want %+v", got, want)
+	}
+}
+
+// A path that one operation deletes and another writes through still writes
+// through, whatever the order.
+func TestParsePatchTargets_WriteWinsOverDelete(t *testing.T) {
+	for _, patch := range []string{
+		"*** Begin Patch\n*** Delete File: one.txt\n*** Add File: one.txt\n+hello\n*** End Patch",
+		"*** Begin Patch\n*** Add File: one.txt\n+hello\n*** Update File: two.txt\n*** Move to: one.txt\n*** Delete File: one.txt\n*** End Patch",
+	} {
+		got, err := parsePatchTargets(patch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range got {
+			if target.path == "one.txt" && !target.writesThrough {
+				t.Fatalf("parsePatchTargets(%q): one.txt does not write through", patch)
+			}
+		}
+	}
+}
+
+// Deleting or renaming away an unfrozen symlink to a frozen file changes only
+// the symlink, so Codex may do it, while updating the file through the
+// symlink, or renaming another file onto it, is denied.
+func TestEvaluateHook_CodexSymlinkDeleteAndRename(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, filepath.Join(root, configName), `
+[[freezes]]
+label = "schema"
+paths = ["schema/**"]
+`)
+	writeTestFile(t, filepath.Join(root, "schema", "one.sql"), "frozen")
+	if err := os.Symlink(filepath.Join("schema", "one.sql"), filepath.Join(root, "alias.sql")); err != nil {
+		t.Fatal(err)
+	}
+	for operations, wantFrozen := range map[string]bool{
+		"*** Delete File: alias.sql":                                       false,
+		"*** Update File: alias.sql\n*** Move to: renamed.sql\n@@\n-a\n+b": false,
+		"*** Update File: alias.sql\n@@\n-a\n+b":                           true,
+		"*** Update File: other.sql\n*** Move to: alias.sql\n@@\n-a\n+b":   true,
+	} {
+		payload := fmt.Sprintf(`{
+  "cwd": %q,
+  "hook_event_name": "PreToolUse",
+  "tool_name": "apply_patch",
+  "tool_input": {"command": %q}
+}`, root, "*** Begin Patch\n"+operations+"\n*** End Patch")
+		decision, err := EvaluateHook(SourceCodex, strings.NewReader(payload), Overrides{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decision.Frozen() != wantFrozen {
+			t.Errorf("patch %q: frozen = %v, want %v (%+v)", operations, decision.Frozen(), wantFrozen, decision)
+		}
 	}
 }
 

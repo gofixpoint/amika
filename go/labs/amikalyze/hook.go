@@ -20,6 +20,15 @@ const (
 	SourceCodex Source = "codex"
 )
 
+// hookTarget is one path a tool call modifies.
+type hookTarget struct {
+	path string
+	// writesThrough reports whether the call writes the file's contents, which
+	// follows path when it is a symlink. Deleting a file or renaming it away
+	// acts on the symlink itself and leaves its destination untouched.
+	writesThrough bool
+}
+
 type hookInput struct {
 	CWD           string          `json:"cwd"`
 	HookEventName string          `json:"hook_event_name"`
@@ -71,8 +80,8 @@ func EvaluateHook(source Source, input io.Reader, overrides Overrides) (HookDeci
 
 	result := HookDecision{Decisions: make([]Decision, 0, len(targets))}
 	for _, target := range targets {
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(payload.CWD, target)
+		if !filepath.IsAbs(target.path) {
+			target.path = filepath.Join(payload.CWD, target.path)
 		}
 		candidates, err := repoCandidates(repoRoot, target)
 		if err != nil {
@@ -89,17 +98,17 @@ func EvaluateHook(source Source, input io.Reader, overrides Overrides) (HookDeci
 	return result, nil
 }
 
-// repoCandidates returns the repository paths an edit of target touches: the
-// path as written, and the physical location it writes to when a symlink in
-// its directory leads elsewhere in the repository. Freezes apply to both, so
-// neither a symlink out of a frozen path nor one into it evades them. Targets
-// outside the repository on both counts yield nothing.
-func repoCandidates(repoRoot, target string) ([]string, error) {
+// repoCandidates returns the repository paths a change to target touches: the
+// path as written, and the physical location it changes when a symlink leads
+// elsewhere in the repository. Freezes apply to both, so neither a symlink out
+// of a frozen path nor one into it evades them. Targets outside the repository
+// on both counts yield nothing.
+func repoCandidates(repoRoot string, target hookTarget) ([]string, error) {
 	var candidates []string
-	if repoPath, inside := repoRelative(repoRoot, target); inside {
+	if repoPath, inside := repoRelative(repoRoot, target.path); inside {
 		candidates = append(candidates, filepath.Join(repoRoot, repoPath))
 	}
-	physical, err := resolvePath(target)
+	physical, err := resolvePath(target.path, target.writesThrough)
 	if err != nil {
 		return nil, fmt.Errorf("resolving target path: %w", err)
 	}
@@ -128,7 +137,7 @@ func (d HookDecision) DenialReason() string {
 		"\nOnly a human may unfreeze these paths. Do not retry with another tool or shell command."
 }
 
-func hookTargets(source Source, payload hookInput) ([]string, error) {
+func hookTargets(source Source, payload hookInput) ([]hookTarget, error) {
 	switch source {
 	case SourceClaude:
 		if payload.ToolName != "Edit" && payload.ToolName != "Write" {
@@ -143,7 +152,7 @@ func hookTargets(source Source, payload hookInput) ([]string, error) {
 		if input.FilePath == "" {
 			return nil, fmt.Errorf("Claude %s input is missing file_path", payload.ToolName)
 		}
-		return []string{input.FilePath}, nil
+		return []hookTarget{{path: input.FilePath, writesThrough: true}}, nil
 	case SourceCodex:
 		if payload.ToolName != "apply_patch" {
 			return nil, fmt.Errorf("unexpected Codex tool %q", payload.ToolName)
@@ -160,39 +169,62 @@ func hookTargets(source Source, payload hookInput) ([]string, error) {
 	}
 }
 
-func parsePatchTargets(patch string) ([]string, error) {
+func parsePatchTargets(patch string) ([]hookTarget, error) {
 	lines := strings.Split(strings.ReplaceAll(patch, "\r\n", "\n"), "\n")
 	if len(lines) < 2 || lines[0] != "*** Begin Patch" {
 		return nil, errors.New("Codex apply_patch input is missing Begin Patch marker")
 	}
-	targets := make(map[string]struct{})
+	var operations []hookTarget
+	// updated indexes the operation for the latest Update File header, whose
+	// file a following Move to renames away rather than writes through.
+	updated := -1
 	ended := false
 	for _, line := range lines[1:] {
 		if line == "*** End Patch" {
 			ended = true
 			break
 		}
-		for _, prefix := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
-			if !strings.HasPrefix(line, prefix) {
+		for _, op := range []struct {
+			prefix        string
+			writesThrough bool
+		}{
+			{"*** Add File: ", true},
+			{"*** Update File: ", true},
+			{"*** Delete File: ", false},
+			{"*** Move to: ", true},
+		} {
+			if !strings.HasPrefix(line, op.prefix) {
 				continue
 			}
-			target := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			target := strings.TrimSpace(strings.TrimPrefix(line, op.prefix))
 			if target == "" {
-				return nil, fmt.Errorf("Codex apply_patch has an empty %s target", strings.TrimSpace(prefix))
+				return nil, fmt.Errorf("Codex apply_patch has an empty %s target", strings.TrimSpace(op.prefix))
 			}
-			targets[target] = struct{}{}
+			if op.prefix == "*** Move to: " && updated >= 0 {
+				operations[updated].writesThrough = false
+			}
+			updated = -1
+			if op.prefix == "*** Update File: " {
+				updated = len(operations)
+			}
+			operations = append(operations, hookTarget{path: target, writesThrough: op.writesThrough})
 		}
 	}
 	if !ended {
 		return nil, errors.New("Codex apply_patch input is missing End Patch marker")
 	}
-	if len(targets) == 0 {
+	if len(operations) == 0 {
 		return nil, errors.New("Codex apply_patch input contains no file targets")
 	}
-	result := make([]string, 0, len(targets))
-	for target := range targets {
-		result = append(result, target)
+	// A path several operations name writes through if any of them does.
+	targets := make(map[string]bool)
+	for _, operation := range operations {
+		targets[operation.path] = targets[operation.path] || operation.writesThrough
 	}
-	sort.Strings(result)
+	result := make([]hookTarget, 0, len(targets))
+	for target, writesThrough := range targets {
+		result = append(result, hookTarget{path: target, writesThrough: writesThrough})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].path < result[j].path })
 	return result, nil
 }

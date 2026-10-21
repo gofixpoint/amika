@@ -246,19 +246,20 @@ func repoRelative(repoRoot, target string) (string, bool) {
 // so a symlink loop is reported instead of followed forever.
 const maxSymlinkHops = 40
 
-// resolvePath returns the physical location an edit through path writes to:
-// path with every symlink resolved when it exists, which follows a symlinked
-// file to its destination. A final symlink whose destination does not exist
-// yet is followed too, since a write through it creates that destination. A
-// path an edit would create keeps its missing components as written, rejoined
-// under their nearest existing ancestor.
-func resolvePath(path string) (string, error) {
+// resolvePath returns the physical location a change to path affects, with
+// the symlinks in its directory resolved. With followFinal, for a write that
+// goes through path, a final symlink is followed to its destination too, even
+// one whose destination does not exist yet, since the write creates it.
+// Without it, for a delete or rename that acts on path itself, the final
+// element is kept as written. A path a write would create keeps its missing
+// components as written, rejoined under their nearest existing ancestor.
+func resolvePath(path string, followFinal bool) (string, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	path = filepath.Clean(path)
-	for hops := 0; ; hops++ {
+	for hops := 0; followFinal; hops++ {
 		if resolved, err := filepath.EvalSymlinks(path); err == nil {
 			return resolved, nil
 		}
