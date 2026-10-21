@@ -57,11 +57,8 @@ Flags:
   --smolvm-version      Install this smolvm version if smolvm is missing
                         (default: latest)
   --skip-smolvm         Do not install smolvm
-  --install-deps        Install missing system packages (e2fsprogs, for
-                        resize2fs) without asking, and only when no password
-                        is needed (root, or sudo -n works); otherwise it
-                        warns with the command to run. For scripts and AI
-                        agents.
+  --install-deps        Install e2fsprogs without asking, if no password is
+                        needed (for scripts and AI agents)
   --uninstall           Remove amika-hostd instead of installing it. Finds
                         amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
                         asks you to confirm, stops the daemon, then deletes

@@ -38,26 +38,14 @@ Its closing steps point the operator at `amika-hostd setup`, then
 `amika-hostd up` (which runs setup itself if it was skipped).
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
-accessible. smolvm copies each disk from a 20 GiB template and shrinks it with
-`resize2fs` (from e2fsprogs) when the rig asks for less, so without it a rig
-with a smaller disk fails to start. When smolvm cannot find `resize2fs` where
-it looks, the installer installs e2fsprogs:
-
-- on macOS with `brew install e2fsprogs`, without asking (no root needed);
-- on Linux with `apt-get` (after `apt-get update`), `dnf` or `yum`, quietly
-  and noninteractively, as root or through `sudo`. At a terminal it asks
-  first, showing the command, and sudo may ask for a password.
-  `--install-deps` answers yes instead, and never waits for a password: it
-  installs only as root or when `sudo -n` works, so an agent on a
-  pseudo-terminal cannot hang at a sudo prompt.
-
-When it cannot (no terminal, not confirmed, sudo needs a password, no known
-package manager, a failed install), it warns without failing, giving the
-reason and the exact command to run. Before downloading anything it lists
-what it will check and install, without asking for confirmation. `--dry-run`
-prints the plan, including what it would do about e2fsprogs. Nothing else
-needs to run alongside the daemon: `amika-hostd up` starts smolvm itself (see
-[smolvm](runtime.md#smolvm)).
+accessible. smolvm shrinks its 20 GiB template disk with `resize2fs` (from
+e2fsprogs) for any smaller disk, so when `resize2fs` is missing the installer
+installs e2fsprogs: with Homebrew on macOS, and on Linux with apt-get, dnf or
+yum after asking. `--install-deps` installs without asking, and only when no
+password is needed. When it cannot install, it warns with the command to run.
+It lists what it will check and install before it starts, and `--dry-run`
+prints the plan. Nothing else needs to run alongside the daemon: `amika-hostd
+up` starts smolvm itself (see [smolvm](runtime.md#smolvm)).
 
 `install-amika-hostd.sh --uninstall` reverses the install. It finds the
 launcher on `PATH` (or in `AMIKA_INSTALL_DIR` when that is set), reads the
