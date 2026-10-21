@@ -961,10 +961,8 @@ install_e2fsprogs() {
 # surprising anyone (see plan_e2fsprogs). Otherwise warn, never fail: it is
 # needed only for rigs with a disk under 20 GiB, and can be installed later.
 ensure_resize2fs() {
-  if find_resize2fs; then
-    echo "Found resize2fs at ${RESIZE2FS_PATH}"
-    return 0
-  fi
+  find_resize2fs && return 0
+  echo ""
   plan_e2fsprogs
   reason="$E2FS_BLOCKER"
   if [ -z "$reason" ] && [ "$E2FS_PM" != "brew" ] && [ "$INSTALL_DEPS" != "true" ] &&
@@ -972,7 +970,7 @@ ensure_resize2fs() {
     reason="not confirmed"
   fi
   if [ -z "$reason" ]; then
-    echo "resize2fs not found; installing e2fsprogs: ${E2FS_CMD}"
+    echo "Installing e2fsprogs: ${E2FS_CMD}"
     if ! install_e2fsprogs; then
       reason="the install failed"
     elif find_resize2fs; then
@@ -982,7 +980,6 @@ ensure_resize2fs() {
       reason="e2fsprogs installed, but resize2fs is still not where smolvm looks"
     fi
   fi
-  echo "" >&2
   echo "Warning: resize2fs not found and e2fsprogs not installed: ${reason}." >&2
   echo "  smolvm needs resize2fs to start a rig with a disk under 20 GiB. To install it, run:" >&2
   echo "    ${E2FS_CMD}" >&2
