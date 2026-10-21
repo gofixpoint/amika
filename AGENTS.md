@@ -135,7 +135,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 
 ## Development Notes
 
-- Requires Go 1.25 or later
+- Requires Go 1.26 or later
 - Linting uses [revive](https://github.com/mgechev/revive) — config in `go/revive.toml`
 - All exported symbols must have doc comments (enforced by the `exported` rule)
 - No external dependencies need to be installed for linting; `make lint` uses `go run`
