@@ -393,7 +393,7 @@ func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveSandboxV2SSHAlias: %v", err)
 	}
-	if want := []apiclient.SandboxSelector{apiclient.SandboxByID("sb_abc")}; !reflect.DeepEqual(client.looked, want) {
+	if want := []apiclient.SandboxSelector{{Value: "sb_abc", By: apiclient.SelectByID}}; !reflect.DeepEqual(client.looked, want) {
 		t.Fatalf("GetSandbox selectors = %#v, want %#v", client.looked, want)
 	}
 	if gotName != "my-sandbox" || gotID != "sb_abc" {

@@ -54,17 +54,12 @@ var sandboxStartCmd = &cobra.Command{
 		}
 		for i, ref := range refs {
 			label := rigref.Label(args[i], ref)
-			sel, remoteErr := rigref.Target(remoteClient, ref)
-			if remoteErr != nil {
-				appendBatchFailure(&items, &failed, label, remoteErr)
-				continue
-			}
-			if remoteErr := remoteClient.StartSandbox(sel); remoteErr != nil {
+			if remoteErr := remoteClient.StartSandbox(ref.Selector()); remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
 			fmt.Fprintf(pw, "Sandbox %q starting...\n", label)
-			polled, remoteErr := remoteClient.WaitForSandboxStart(sel)
+			polled, remoteErr := remoteClient.WaitForSandboxStart(ref.Selector())
 			if remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
@@ -111,17 +106,12 @@ var sandboxStopCmd = &cobra.Command{
 		}
 		for i, ref := range refs {
 			label := rigref.Label(args[i], ref)
-			sel, remoteErr := rigref.Target(remoteClient, ref)
-			if remoteErr != nil {
-				appendBatchFailure(&items, &failed, label, remoteErr)
-				continue
-			}
-			if remoteErr := remoteClient.StopSandbox(sel); remoteErr != nil {
+			if remoteErr := remoteClient.StopSandbox(ref.Selector()); remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
 			fmt.Fprintf(pw, "Sandbox %q stopping...\n", label)
-			polled, remoteErr := remoteClient.WaitForSandboxStop(sel)
+			polled, remoteErr := remoteClient.WaitForSandboxStop(ref.Selector())
 			if remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
@@ -407,11 +397,11 @@ var sandboxConnectCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		// The reference resolves to the rig's canonical name and id here, and
-		// only those reach the SSH alias.
-		sb, err := rigref.Resolve(client, ref)
+		// The SSH alias is built from the canonical name and id this lookup
+		// returns, never from the reference itself.
+		sb, err := client.GetSandbox(ref.Selector())
 		if err != nil {
-			return err
+			return rigref.Explain(ref, err)
 		}
 		return connectSandbox(client, sb)
 	},

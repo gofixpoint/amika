@@ -213,8 +213,8 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 
 	fmt.Fprintf(pw, "Sandbox %q initializing...\n", sb.Name)
 
-	// Poll by id: a new name can equal another rig's id, which a name-based
-	// poll would find ambiguous (or, on an older server, the wrong rig).
+	// Poll by id: a new name can equal another rig's id, which a poll by the
+	// name would find ambiguous.
 	pollRef := sb.ID
 	if pollRef == "" {
 		pollRef = sb.Name

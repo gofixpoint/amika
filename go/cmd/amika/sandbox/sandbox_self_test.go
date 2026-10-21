@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/output"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/spf13/cobra"
 )
 
@@ -23,8 +23,8 @@ func isolateOutsideRigUnauthenticated(t *testing.T) {
 		"XDG_STATE_HOME":        dir,
 		"XDG_DATA_HOME":         dir,
 		"AMIKA_STATE_DIRECTORY": dir,
-		rigself.RigNameEnv:      "",
-		rigself.SandboxNameEnv:  "",
+		rigref.RigNameEnv:       "",
+		rigref.SandboxNameEnv:   "",
 	} {
 		t.Setenv(key, value)
 	}
@@ -52,9 +52,9 @@ func TestSelfResolvesBeforeAuth(t *testing.T) {
 		root *cobra.Command
 		args []string
 	}{
-		{"get", newSandboxGetTestRoot(), []string{"rig", "get", rigself.Ref}},
-		{"open", newRoot(code), []string{"rig", "open", rigself.Ref}},
-		{"bindings delete", newRoot(bindingsDelete), []string{"rig", "bindings-delete", rigself.Ref, "gh-branch:o/r/b", "--force"}},
+		{"get", newSandboxGetTestRoot(), []string{"rig", "get", rigref.Self}},
+		{"open", newRoot(code), []string{"rig", "open", rigref.Self}},
+		{"bindings delete", newRoot(bindingsDelete), []string{"rig", "bindings-delete", rigref.Self, "gh-branch:o/r/b", "--force"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,16 +62,16 @@ func TestSelfResolvesBeforeAuth(t *testing.T) {
 			tc.root.SetOut(&bytes.Buffer{})
 			tc.root.SetErr(&bytes.Buffer{})
 			tc.root.SetArgs(tc.args)
-			if err := tc.root.Execute(); !errors.Is(err, rigself.ErrNotInRig) {
+			if err := tc.root.Execute(); !errors.Is(err, rigref.ErrNotInRig) {
 				t.Fatalf("error = %v, want ErrNotInRig", err)
 			}
 		})
 	}
 
 	t.Run("ssh", func(t *testing.T) {
-		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", rigself.Ref})
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", rigref.Self})
 		isolateOutsideRigUnauthenticated(t)
-		if err := root.Execute(); !errors.Is(err, rigself.ErrNotInRig) {
+		if err := root.Execute(); !errors.Is(err, rigref.ErrNotInRig) {
 			t.Fatalf("error = %v, want ErrNotInRig", err)
 		}
 		if h.ran {

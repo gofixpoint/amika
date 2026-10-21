@@ -16,7 +16,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
-	"github.com/gofixpoint/amika/go/internal/rigself"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/wsstream"
 	cryptossh "golang.org/x/crypto/ssh"
 )
@@ -25,8 +25,8 @@ const proxyCopyBufferBytes = 32 * 1024
 
 const (
 	forwardedAgentSocket   = "SSH_AUTH_SOCK"
-	rigNameEnvironment     = rigself.RigNameEnv
-	sandboxNameEnvironment = rigself.SandboxNameEnv
+	rigNameEnvironment     = rigref.RigNameEnv
+	sandboxNameEnvironment = rigref.SandboxNameEnv
 )
 
 // safeAliasPart matches a sandbox name, which may itself contain dots. It may

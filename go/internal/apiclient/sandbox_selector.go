@@ -22,10 +22,11 @@ const (
 // against the field By names (SelectByRef, SelectByName, or SelectByID; empty
 // means SelectByRef).
 //
-// A SelectByRef selector puts nothing but Value on the wire, so a request
-// reads exactly as it did before the API accepted selectors and servers that
-// predate them still understand it. Only a name or id selector adds the
-// `by`/`sandbox_by` parameter (or the matching body field).
+// On the routes under /sandboxes/{ref}, a SelectByRef selector puts nothing but
+// Value on the wire, since ref is the server's default there; a name or id
+// selector adds the `by`/`sandbox_by` parameter. Requests that name a sandbox
+// in the body or a list filter use the field the kind calls for
+// (sandbox_ref, sandbox_name, or sandbox_id).
 type SandboxSelector struct {
 	Value string
 	By    string
@@ -35,16 +36,6 @@ type SandboxSelector struct {
 // canonical name or id the API itself returned.
 func SandboxByRef(value string) SandboxSelector {
 	return SandboxSelector{Value: value, By: SelectByRef}
-}
-
-// SandboxByName selects the sandbox named value.
-func SandboxByName(value string) SandboxSelector {
-	return SandboxSelector{Value: value, By: SelectByName}
-}
-
-// SandboxByID selects the sandbox whose id is value.
-func SandboxByID(value string) SandboxSelector {
-	return SandboxSelector{Value: value, By: SelectByID}
 }
 
 // kind returns the selector's kind with the empty default spelled out.

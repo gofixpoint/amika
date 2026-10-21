@@ -7,18 +7,18 @@ import (
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
-	"github.com/gofixpoint/amika/go/internal/rigself"
 )
 
-func envResolver(env map[string]string) rigself.Resolver {
-	return rigself.Resolver{LookupEnv: func(key string) (string, bool) {
+func envResolver(env map[string]string) Resolver {
+	return Resolver{LookupEnv: func(key string) (string, bool) {
 		value, ok := env[key]
 		return value, ok
 	}}
 }
 
 func TestParse(t *testing.T) {
-	inRig := map[string]string{rigself.RigNameEnv: "here"}
+	inRig := map[string]string{RigNameEnv: "here"}
+	sandboxOnly := map[string]string{RigNameEnv: "", SandboxNameEnv: "legacy"}
 	cases := []struct {
 		name    string
 		env     map[string]string
@@ -40,29 +40,31 @@ func TestParse(t *testing.T) {
 		{name: "name=_self resolves too", env: inRig, raw: "name=_self", want: Ref{Kind: KindName, Value: "here"}},
 		{name: "ref=_self resolves too", env: inRig, raw: "ref=_self", want: Ref{Kind: KindName, Value: "here"}},
 		{name: "id=_self is refused", env: inRig, raw: "id=_self", wantErr: "not its id"},
-		{name: "_self outside a rig names the env vars", raw: "_self", wantErr: rigself.RigNameEnv},
+		{name: "_self outside a rig names the env vars", raw: "_self", wantErr: RigNameEnv},
+		{name: "_self falls back to the legacy variable", env: sandboxOnly, raw: "_self", want: Ref{Kind: KindName, Value: "legacy"}},
+		{name: "only the exact literal is _self", env: inRig, raw: "_self-x", want: Ref{Kind: KindRef, Value: "_self-x"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParseWith(envResolver(tc.env), tc.raw)
+			got, err := parseWith(envResolver(tc.env), tc.raw)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("ParseWith(%q) = %v, %v; want error containing %q", tc.raw, got, err, tc.wantErr)
+					t.Fatalf("parseWith(%q) = %v, %v; want error containing %q", tc.raw, got, err, tc.wantErr)
 				}
 				return
 			}
 			if err != nil || got.Kind != tc.want.Kind || got.Value != tc.want.Value {
-				t.Fatalf("ParseWith(%q) = %v, %v; want %v", tc.raw, got, err, tc.want)
+				t.Fatalf("parseWith(%q) = %v, %v; want %v", tc.raw, got, err, tc.want)
 			}
 		})
 	}
 }
 
-// TestSelector checks what each reference puts on the wire: its own kind when
-// the user spelled one out, and a plain ref otherwise, bare "_self" included,
-// so servers that predate selectors still understand the request.
+// TestSelector checks the selector each reference carries to the API: its own
+// kind when the user spelled one out, and a plain ref otherwise, bare "_self"
+// included, since it stands in for the rig's name typed bare.
 func TestSelector(t *testing.T) {
-	inRig := envResolver(map[string]string{rigself.RigNameEnv: "here"})
+	inRig := envResolver(map[string]string{RigNameEnv: "here"})
 	for _, tc := range []struct {
 		raw  string
 		want apiclient.SandboxSelector
@@ -75,12 +77,12 @@ func TestSelector(t *testing.T) {
 		{raw: "ref=_self", want: apiclient.SandboxSelector{Value: "here", By: "ref"}},
 		{raw: "name=_self", want: apiclient.SandboxSelector{Value: "here", By: "name"}},
 	} {
-		ref, err := ParseWith(inRig, tc.raw)
+		ref, err := parseWith(inRig, tc.raw)
 		if err != nil {
-			t.Fatalf("ParseWith(%q): %v", tc.raw, err)
+			t.Fatalf("parseWith(%q): %v", tc.raw, err)
 		}
 		if got := ref.Selector(); got != tc.want {
-			t.Errorf("ParseWith(%q).Selector() = %#v, want %#v", tc.raw, got, tc.want)
+			t.Errorf("parseWith(%q).Selector() = %#v, want %#v", tc.raw, got, tc.want)
 		}
 	}
 }
@@ -88,7 +90,7 @@ func TestSelector(t *testing.T) {
 // TestLabel checks that output names a rig the way the user wrote it, except
 // that "_self" shows the rig name it stands for.
 func TestLabel(t *testing.T) {
-	inRig := envResolver(map[string]string{rigself.RigNameEnv: "here"})
+	inRig := envResolver(map[string]string{RigNameEnv: "here"})
 	for _, tc := range []struct{ raw, want string }{
 		{raw: "my-rig", want: "my-rig"},
 		{raw: "name=my-rig", want: "name=my-rig"},
@@ -96,9 +98,9 @@ func TestLabel(t *testing.T) {
 		{raw: "_self", want: "here"},
 		{raw: "name=_self", want: "here"},
 	} {
-		ref, err := ParseWith(inRig, tc.raw)
+		ref, err := parseWith(inRig, tc.raw)
 		if err != nil {
-			t.Fatalf("ParseWith(%q): %v", tc.raw, err)
+			t.Fatalf("parseWith(%q): %v", tc.raw, err)
 		}
 		if got := Label(tc.raw, ref); got != tc.want {
 			t.Errorf("Label(%q) = %q, want %q", tc.raw, got, tc.want)
@@ -126,21 +128,6 @@ func TestExplain(t *testing.T) {
 	}
 	if got := Explain(ref, nil); got != nil {
 		t.Fatalf("Explain(nil) = %v, want nil", got)
-	}
-}
-
-func TestRefString(t *testing.T) {
-	for _, tc := range []struct {
-		ref  Ref
-		want string
-	}{
-		{Ref{Kind: KindRef, Value: "a"}, "a"},
-		{Ref{Kind: KindName, Value: "a"}, "name=a"},
-		{Ref{Kind: KindID, Value: "a"}, "id=a"},
-	} {
-		if got := tc.ref.String(); got != tc.want {
-			t.Errorf("%#v.String() = %q, want %q", tc.ref, got, tc.want)
-		}
 	}
 }
 
@@ -188,27 +175,8 @@ func TestFind(t *testing.T) {
 // rig on `send` routes nowhere and makes the server create a new rig.
 func TestParseRejectsEmptyValues(t *testing.T) {
 	for _, raw := range []string{"", "  ", "ref=", "name=", "id=", "ref=  "} {
-		if got, err := ParseWith(envResolver(nil), raw); err == nil {
-			t.Errorf("ParseWith(%q) = %v, want an error", raw, got)
-		}
-	}
-}
-
-func TestCheck(t *testing.T) {
-	cases := []struct {
-		ref     Ref
-		ok      bool
-		comment string
-	}{
-		{Ref{Kind: KindRef, Value: "box"}, true, "a plain ref accepts whatever the server matched"},
-		{Ref{Kind: KindName, Value: "box"}, true, "name matches"},
-		{Ref{Kind: KindID, Value: "sb_1"}, true, "id matches"},
-		{Ref{Kind: KindID, Value: "box"}, false, "an old server matched the name for an id= reference"},
-		{Ref{Kind: KindName, Value: "sb_1"}, false, "an old server matched the id for a name= reference"},
-	}
-	for _, tc := range cases {
-		if err := Check(tc.ref, "sb_1", "box"); (err == nil) != tc.ok {
-			t.Errorf("%s: Check(%v) = %v", tc.comment, tc.ref, err)
+		if got, err := parseWith(envResolver(nil), raw); err == nil {
+			t.Errorf("parseWith(%q) = %v, want an error", raw, got)
 		}
 	}
 }
@@ -222,5 +190,37 @@ func TestExplainOnlyRewritesPlainRefs(t *testing.T) {
 	}
 	if err := Explain(Ref{Kind: KindID, Value: "dup"}, conflict); errors.Is(err, ErrAmbiguous) {
 		t.Errorf("id= ref: %v, want the server's error unchanged", err)
+	}
+}
+
+// TestResolverName checks which environment variable names the current rig:
+// RigNameEnv wins over the legacy SandboxNameEnv, and an empty variable counts
+// as unset.
+func TestResolverName(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     map[string]string
+		want    string
+		wantErr bool
+	}{
+		{"prefers rig name", map[string]string{RigNameEnv: "rig", SandboxNameEnv: "sandbox"}, "rig", false},
+		{"falls back to sandbox name", map[string]string{SandboxNameEnv: "sandbox"}, "sandbox", false},
+		{"empty rig name counts as unset", map[string]string{RigNameEnv: "", SandboxNameEnv: "sandbox"}, "sandbox", false},
+		{"neither set", nil, "", true},
+		{"both empty", map[string]string{RigNameEnv: "", SandboxNameEnv: ""}, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := envResolver(tc.env).Name()
+			if tc.wantErr {
+				if !errors.Is(err, ErrNotInRig) || !strings.Contains(err.Error(), SandboxNameEnv) {
+					t.Fatalf("Name() error = %v, want ErrNotInRig naming both variables", err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("Name() = %q, %v; want %q", got, err, tc.want)
+			}
+		})
 	}
 }

@@ -2,8 +2,9 @@ package sandboxcmd
 
 // sandbox_rigref_test.go covers how the rig commands read a rig reference
 // (a bare value, ref=, name=, id=, or _self) and what each one sends to the
-// API: a bare value goes out exactly as before selectors existed, and only an
-// explicit name= or id= adds a by/sandbox_by selector.
+// API: every reference goes out in the command's one request with its kind, a
+// bare value as a plain ref (the server's default) and an explicit name= or
+// id= with a by/sandbox_by selector.
 
 import (
 	"bytes"
@@ -135,20 +136,17 @@ func TestRigCommandsSendReferenceKinds(t *testing.T) {
 		{"get bare", []string{"get", "box"}, []string{"GET " + base + "box"}},
 		{"get ref=", []string{"get", "ref=box"}, []string{"GET " + base + "box"}},
 		{"get name=", []string{"get", "name=box"}, []string{"GET " + base + "box?by=name"}},
+		// A pinned reference is sent with its kind in one request; the server
+		// resolves it, with no lookup beforehand.
 		{"get id=", []string{"get", "id=sb_1"}, []string{"GET " + base + "sb_1?by=id"}},
-		// _self names the current rig but goes out as a plain ref, the way
-		// every reference did before the API took selectors.
-		{"get _self", []string{"get", "_self"}, []string{"GET " + base + "box"}},
-		{"get name=_self", []string{"get", "name=_self"}, []string{"GET " + base + "box?by=name"}},
-		// start, stop, and delete route a name= or id= rig through its
-		// canonical id, after a lookup that checks the pinned field, since a
-		// server that predates `by` on those routes would ignore it.
-		{"start id=", []string{"start", "id=sb_1"}, []string{"GET " + base + "sb_1?by=id", "POST " + base + "sb_1/start", "GET " + base + "sb_1"}},
-		{"stop name=", []string{"stop", "name=box"}, []string{"GET " + base + "box?by=name", "POST " + base + "sb_1/stop", "GET " + base + "sb_1"}},
+		// _self stands in for the current rig's name typed bare, so it goes
+		// out as a plain ref.
+		{"get _self", []string{"get", "_self"}, []string{"GET " + base + "here"}},
+		{"get name=_self", []string{"get", "name=_self"}, []string{"GET " + base + "here?by=name"}},
+		{"start id=", []string{"start", "id=sb_1"}, []string{"POST " + base + "sb_1/start?by=id", "GET " + base + "sb_1?by=id"}},
+		{"stop name=", []string{"stop", "name=box"}, []string{"POST " + base + "box/stop?by=name", "GET " + base + "box?by=name"}},
 		{"delete mixed", []string{"delete", "--force", "box", "name=box", "id=sb_1"}, []string{
-			"DELETE " + base + "box",
-			"GET " + base + "box?by=name", "DELETE " + base + "sb_1",
-			"GET " + base + "sb_1?by=id", "DELETE " + base + "sb_1",
+			"DELETE " + base + "box", "DELETE " + base + "box?by=name", "DELETE " + base + "sb_1?by=id",
 		}},
 		{"connect id=", []string{"connect", "id=sb_1"}, []string{"GET " + base + "sb_1?by=id"}},
 		{"bind name=", []string{"bind", "name=box", "gh-branch:o/r/b"}, []string{"POST " + base + "box/bindings?sandbox_by=name"}},
@@ -166,7 +164,7 @@ func TestRigCommandsSendReferenceKinds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("AMIKA_RIG_NAME", "box")
+			t.Setenv("AMIKA_RIG_NAME", "here")
 			requests := rigRefServer(t)
 			stubSessionSSH(t)
 			if out, err := runRigRefCommand(t, tc.args...); err != nil {
@@ -174,34 +172,6 @@ func TestRigCommandsSendReferenceKinds(t *testing.T) {
 			}
 			if !reflect.DeepEqual(*requests, tc.want) {
 				t.Fatalf("requests = %q, want %q", *requests, tc.want)
-			}
-		})
-	}
-}
-
-// The stub server answers every lookup with the rig named "box" whose id is
-// "sb_1", the way a server that ignores `by` matches id or name. A pinned
-// reference to the other field must be refused before anything acts on that
-// rig.
-func TestPinnedRigRefusesAMismatchedRig(t *testing.T) {
-	for _, args := range [][]string{
-		{"delete", "--force", "id=box"},
-		{"stop", "name=sb_1"},
-		{"start", "id=box"},
-		{"get", "id=box"},
-		{"connect", "name=sb_1"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			requests := rigRefServer(t)
-			stubSessionSSH(t)
-			out, err := runRigRefCommand(t, args...)
-			if err == nil {
-				t.Fatalf("rig %v succeeded against a rig it does not name\n%s", args, out)
-			}
-			for _, req := range *requests {
-				if !strings.HasPrefix(req, "GET ") {
-					t.Fatalf("rig %v sent %q after a mismatched lookup", args, req)
-				}
 			}
 		})
 	}
@@ -322,7 +292,7 @@ func TestSSHResolvesReferenceToAlias(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if want := []apiclient.SandboxSelector{apiclient.SandboxByID("sb_abc")}; !reflect.DeepEqual(stub.looked, want) {
+	if want := []apiclient.SandboxSelector{{Value: "sb_abc", By: apiclient.SelectByID}}; !reflect.DeepEqual(stub.looked, want) {
 		t.Fatalf("GetSandbox selectors = %#v, want %#v", stub.looked, want)
 	}
 	if want := []string{"-N", testV2Alias, "uptime"}; !reflect.DeepEqual(h.argv, want) {

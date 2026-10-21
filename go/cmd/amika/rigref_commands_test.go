@@ -13,39 +13,34 @@ import (
 	"testing"
 )
 
-// TestSendRigReferenceKinds checks the send body's routing field per
-// reference kind. Every kind ends up in the legacy sandbox_id, the one field
-// a server that predates sandbox_name and sandbox_ref honors (it strips the
-// others and would create a new sandbox). A bare value, ref= and _self go out
-// as written; name= and id= are resolved to the rig's canonical id first.
+// TestSendRigReferenceKinds checks that send makes exactly one request, the
+// agent-sessions POST, routing the message by the field the reference's kind
+// calls for: a bare value, ref=, and _self go in sandbox_ref (the server
+// resolves an id or a name and refuses an ambiguous value), name= in
+// sandbox_name, and id= in sandbox_id.
 func TestSendRigReferenceKinds(t *testing.T) {
 	cases := []struct {
-		name    string
-		args    []string
-		wantGet string
-		want    map[string]any
+		name string
+		args []string
+		want map[string]any
 	}{
-		{"bare", []string{"send", "hi", "--rig", "my-rig"}, "", map[string]any{"sandbox_id": "my-rig"}},
-		{"ref=", []string{"send", "hi", "--rig", "ref=my-rig"}, "", map[string]any{"sandbox_id": "my-rig"}},
-		{"_self", []string{"send", "hi", "--rig", "_self"}, "", map[string]any{"sandbox_id": "here"}},
-		{"name=", []string{"send", "hi", "--rig", "name=my-rig"}, "/api/v0beta1/sandboxes/my-rig?by=name", map[string]any{"sandbox_id": "sb_1"}},
-		{"id=", []string{"send", "hi", "--rig", "id=sb_1"}, "/api/v0beta1/sandboxes/sb_1?by=id", map[string]any{"sandbox_id": "sb_1"}},
-		{"agent-send name=", []string{"rig", "agent-send", "name=my-rig", "hi"}, "/api/v0beta1/sandboxes/my-rig?by=name", map[string]any{"sandbox_id": "sb_1"}},
+		{"bare", []string{"send", "hi", "--rig", "my-rig"}, map[string]any{"sandbox_ref": "my-rig"}},
+		{"ref=", []string{"send", "hi", "--rig", "ref=my-rig"}, map[string]any{"sandbox_ref": "my-rig"}},
+		{"_self", []string{"send", "hi", "--rig", "_self"}, map[string]any{"sandbox_ref": "here"}},
+		{"name=", []string{"send", "hi", "--rig", "name=my-rig"}, map[string]any{"sandbox_name": "my-rig"}},
+		{"name=_self", []string{"send", "hi", "--rig", "name=_self"}, map[string]any{"sandbox_name": "here"}},
+		{"id=", []string{"send", "hi", "--rig", "id=sb_1"}, map[string]any{"sandbox_id": "sb_1"}},
+		{"agent-send bare", []string{"rig", "agent-send", "my-rig", "hi"}, map[string]any{"sandbox_ref": "my-rig"}},
+		{"agent-send name=", []string{"rig", "agent-send", "name=my-rig", "hi"}, map[string]any{"sandbox_name": "my-rig"}},
+		{"agent-send id=", []string{"rig", "agent-send", "id=sb_1", "hi"}, map[string]any{"sandbox_id": "sb_1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var body map[string]any
-			var gets []string
+			var requests []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.Method+" "+r.URL.RequestURI())
 				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					gets = append(gets, r.URL.RequestURI())
-					_, _ = w.Write([]byte(`{"id":"sb_1","name":"my-rig","state":"running"}`))
-					return
-				}
-				if r.URL.Path != "/api/v0beta1/agent-sessions" {
-					t.Errorf("request = %s %s", r.Method, r.URL.Path)
-				}
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				_, _ = w.Write([]byte(`{"session_id":"chat_1","sandbox_id":"sb_1","agent":"claude","response":"ok","is_error":false,"is_new_session":false,"created_sandbox":false}`))
 			}))
@@ -57,12 +52,8 @@ func TestSendRigReferenceKinds(t *testing.T) {
 			if _, err := runRootCommandOutput(t, append(tc.args, "--output", "json")...); err != nil {
 				t.Fatal(err)
 			}
-			var wantGets []string
-			if tc.wantGet != "" {
-				wantGets = []string{tc.wantGet}
-			}
-			if !reflect.DeepEqual(gets, wantGets) {
-				t.Fatalf("lookups = %q, want %q", gets, wantGets)
+			if want := []string{"POST /api/v0beta1/agent-sessions"}; !reflect.DeepEqual(requests, want) {
+				t.Fatalf("requests = %q, want %q", requests, want)
 			}
 			want := map[string]any{"message": "hi"}
 			for key, value := range tc.want {
@@ -75,31 +66,21 @@ func TestSendRigReferenceKinds(t *testing.T) {
 	}
 }
 
-// A server that predates the `by` selector ignores it and matches id or
-// name, so `send --rig id=x` could land in the rig *named* x. The lookup's
-// answer is checked against the pinned field, and nothing is sent when it
-// does not match.
-func TestSendPinnedRigRefusesAMismatchedRig(t *testing.T) {
-	sent := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// TestSendAmbiguousRigSuggestsPrefixes checks that the server's 409 for an
+// ambiguous plain reference becomes a hint naming both prefixed spellings.
+func TestSendAmbiguousRigSuggestsPrefixes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet {
-			// Matched by name, as an old server would.
-			_, _ = w.Write([]byte(`{"id":"sb_9","name":"my-rig","state":"running"}`))
-			return
-		}
-		sent = true
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"code":"resource_ref_ambiguous","message":"more than one sandbox matches"}`))
 	}))
 	defer server.Close()
 	t.Setenv("AMIKA_API_URL", server.URL)
 	t.Setenv("AMIKA_API_KEY", "test-key")
 
-	_, err := runRootCommandOutput(t, "send", "hi", "--rig", "id=my-rig", "--output", "json")
-	if err == nil || !strings.Contains(err.Error(), `no rig has id "my-rig"`) {
-		t.Fatalf("error = %v, want the id mismatch", err)
-	}
-	if sent {
-		t.Fatal("the message was sent to a rig the reference does not name")
+	_, err := runRootCommandOutput(t, "send", "hi", "--rig", "dup", "--output", "json")
+	if err == nil || !strings.Contains(err.Error(), `use "id=dup" or "name=dup"`) {
+		t.Fatalf("error = %v, want a hint naming id=dup and name=dup", err)
 	}
 }
 

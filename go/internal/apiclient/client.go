@@ -631,27 +631,6 @@ type SandboxServiceRequest struct {
 	URLScheme string `json:"url_scheme"`
 }
 
-// ListSandboxServices lists live services for the caller's org. sandboxRef is
-// an optional name-or-id filter forwarded as the sandbox_ref query param; pass
-// "" to list all services in the org.
-func (c *Client) ListSandboxServices(sandboxRef string) ([]SandboxServiceResource, error) {
-	q := url.Values{}
-	if sandboxRef != "" {
-		q.Set("sandbox_ref", sandboxRef)
-	}
-	path := apiBasePath + "/sandbox-services"
-	if encoded := q.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	var envelope struct {
-		Items []SandboxServiceResource `json:"items"`
-	}
-	if err := c.doJSON("GET", path, nil, &envelope); err != nil {
-		return nil, fmt.Errorf("remote list sandbox services: %w", err)
-	}
-	return envelope.Items, nil
-}
-
 // CreateSandboxService creates a service on the sandbox sel names and returns
 // the created SandboxServiceResource.
 func (c *Client) CreateSandboxService(sel SandboxSelector, req SandboxServiceRequest) (*SandboxServiceResource, error) {
@@ -881,21 +860,21 @@ func (c *Client) UpdateSession(sel SandboxSelector, sessionID string, req Update
 
 // AgentSessionSendRequest is the request body for POST /api/v0beta1/agent-sessions.
 // Message is required; the rest are optional. SessionID continues an existing
-// chat; at most one of SandboxID, SandboxName, and SandboxRef routes into a
-// specific sandbox (SetSandbox picks one); and RepoURL, Branch and
+// chat; at most one of SandboxRef, SandboxName, and SandboxID routes into a
+// specific sandbox (SetSandbox fills the one a selector calls for); and
+// RepoURL, Branch and
 // NewBranchName are only used when a sandbox is created behind the scenes.
 type AgentSessionSendRequest struct {
 	Message   string `json:"message"`
 	Agent     string `json:"agent,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
-	// SandboxID is the legacy routing field: despite its name the server
-	// resolves it as an id or a name.
-	SandboxID string `json:"sandbox_id,omitempty"`
+	// SandboxRef matches by id or name and refuses an ambiguous value with a
+	// 409.
+	SandboxRef string `json:"sandbox_ref,omitempty"`
 	// SandboxName matches by name only.
 	SandboxName string `json:"sandbox_name,omitempty"`
-	// SandboxRef matches by id or name and refuses an ambiguous value with a
-	// 409. SetSandbox never sends it; see there.
-	SandboxRef string `json:"sandbox_ref,omitempty"`
+	// SandboxID matches by id only.
+	SandboxID  string `json:"sandbox_id,omitempty"`
 	NewSession bool   `json:"new_session,omitempty"`
 	RepoURL    string `json:"repo_url,omitempty"`
 	// Branch and NewBranchName mirror the create request's pair: Branch
@@ -907,24 +886,19 @@ type AgentSessionSendRequest struct {
 	NewBranchName string `json:"new_branch_name,omitempty"`
 }
 
-// SetSandbox routes the message into the sandbox sel names, clearing the other
-// routing fields.
-//
-// A server that predates sandbox_name and sandbox_ref strips them as unknown,
-// and a request with no routing field makes the server create a new sandbox:
-// a stray new sandbox rather than an error. So a ref selector keeps the legacy
-// sandbox_id field (which already matches an id or a name) instead of
-// sandbox_ref, and only an explicit name selector uses the new sandbox_name.
-// An id selector also uses sandbox_id; that field is not strictly id-only, but
-// the one case it gets wrong, a UUID that is also another sandbox's name, is
-// refused with a 409 rather than routed to the wrong sandbox.
+// SetSandbox routes the message into the sandbox sel names, in the body field
+// sel's kind calls for (sandbox_ref, sandbox_name, or sandbox_id), clearing the
+// other two.
 func (r *AgentSessionSendRequest) SetSandbox(sel SandboxSelector) {
-	r.SandboxID, r.SandboxName, r.SandboxRef = "", "", ""
-	if sel.kind() == SelectByName {
+	r.SandboxRef, r.SandboxName, r.SandboxID = "", "", ""
+	switch sel.kind() {
+	case SelectByName:
 		r.SandboxName = sel.Value
-		return
+	case SelectByID:
+		r.SandboxID = sel.Value
+	default:
+		r.SandboxRef = sel.Value
 	}
-	r.SandboxID = sel.Value
 }
 
 // AgentSessionUsage mirrors the API's AgentSessionUsage schema: the token and

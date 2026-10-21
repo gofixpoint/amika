@@ -10,39 +10,80 @@
 //
 // The kinds mirror the control plane's resource-ref convention (amika-mono's
 // devdocs/api-resource-refs.md), so a parsed Ref maps directly onto the API's
-// `by`/`sandbox_by` selectors.
+// `by`/`sandbox_by` selectors and `sandbox_ref`/`sandbox_name`/`sandbox_id`
+// fields, and every command sends its reference, kind included, in a single
+// request for the server to resolve.
 //
 // The prefix cannot collide with a current rig: ids are UUIDs (or, for old
 // rigs, `sbox-<uuid>`) and new names are single DNS labels, none of which
-// contains '='. Only the value before the
-// first '=' is inspected, and only the three kind words count as a prefix, so a
-// legacy name that happens to start with one is still reachable as
-// `name=id=…` or `ref=id=…`. '=' rather than ':' because `amika scp` already
-// splits `<rig>:<path>` on the first colon.
+// contains '='. Only the value before the first '=' is inspected, and only the
+// three kind words count as a prefix, so a legacy name that happens to start
+// with one is still reachable as `name=id=…` or `ref=id=…`. '=' rather than ':'
+// because `amika scp` already splits `<rig>:<path>` on the first colon.
 //
-// "_self" (see rigself) is resolved here too, to a name match, since it stands
-// for the current rig's name.
+// # The current rig
 //
-// On the wire a reference keeps its kind only when the user wrote name= or
-// id=: any other value, bare "_self" included, is sent as a plain ref (no
-// `by`/`sandbox_by`), exactly as the CLI sent every reference before the API
-// accepted selectors, so it keeps working against servers that predate them.
+// Code running inside a rig often needs to name that same rig, e.g.
+// `amika service list --rig "$AMIKA_RIG_NAME"`. Any reference may instead be
+// the literal "_self" (Self), which Parse swaps for the current rig's name,
+// read from the environment every rig session carries: AMIKA_RIG_NAME
+// (RigNameEnv) wins over the legacy AMIKA_SANDBOX_NAME (SandboxNameEnv), and an
+// empty variable counts as unset. "_self" and "ref=_self" stand in for typing
+// that name bare, so they go to the API as a plain ref; "name=_self" pins the
+// match to the name; "id=_self" is refused, since "_self" is a name.
 //
-// A pinned (name= or id=) reference cannot rely on the server honoring its
-// kind: a server that predates the sandbox routes' `by` selector ignores it and
-// matches id or name. Commands that act on such a reference through those
-// routes first call Resolve, which checks the returned rig really matches on
-// the pinned field, and then address the rig by its canonical id.
+// Call sites parse a reference as soon as they read it from argv or a flag,
+// before the auth check, so a malformed reference or a "_self" outside a rig
+// is reported as itself rather than as a login prompt, and everything
+// downstream (API calls, prompts, output) sees the real name.
 package rigref
 
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
-	"github.com/gofixpoint/amika/go/internal/rigself"
 )
+
+const (
+	// Self is the literal rig reference that names the current rig.
+	Self = "_self"
+	// RigNameEnv is the preferred environment variable carrying the current
+	// rig's name.
+	RigNameEnv = "AMIKA_RIG_NAME"
+	// SandboxNameEnv is the legacy environment variable carrying the current
+	// rig's name, consulted when RigNameEnv is unset or empty.
+	SandboxNameEnv = "AMIKA_SANDBOX_NAME"
+)
+
+// ErrNotInRig reports a "_self" reference made where neither RigNameEnv nor
+// SandboxNameEnv names a rig.
+var ErrNotInRig = errors.New("not running inside a rig")
+
+// Resolver finds the current rig's name, which "_self" stands for, in an
+// environment.
+type Resolver struct {
+	// LookupEnv reads one environment variable, with os.LookupEnv semantics.
+	LookupEnv func(key string) (string, bool)
+}
+
+// Default resolves the current rig against the process environment. Parse
+// uses it.
+var Default = Resolver{LookupEnv: os.LookupEnv}
+
+// Name returns the current rig's name, preferring RigNameEnv over
+// SandboxNameEnv. It returns an error wrapping ErrNotInRig, and naming both
+// variables, when neither is set to a non-empty value.
+func (r Resolver) Name() (string, error) {
+	for _, key := range []string{RigNameEnv, SandboxNameEnv} {
+		if value, ok := r.LookupEnv(key); ok && value != "" {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("%q names the current rig, but neither %s nor %s is set: %w", Self, RigNameEnv, SandboxNameEnv, ErrNotInRig)
+}
 
 // Kind says which field of a rig a reference matches.
 type Kind string
@@ -61,24 +102,16 @@ const (
 type Ref struct {
 	Kind  Kind
 	Value string
-	// self marks a "_self" not spelled name=_self: a name match here, but sent
-	// to the API as a plain ref like any other value without a name= or id=
-	// prefix.
+	// self marks a "_self" not spelled name=_self: Value holds the current
+	// rig's name, but the reference goes to the API as a plain ref, the way
+	// the user would have sent that name typed bare.
 	self bool
-}
-
-// String renders the reference the way a user would write it, with the prefix
-// omitted for KindRef.
-func (r Ref) String() string {
-	if r.Kind == KindRef {
-		return r.Value
-	}
-	return string(r.Kind) + "=" + r.Value
 }
 
 // Selector returns the API selector for r: the reference's value with its kind
 // as the API's `by`/`sandbox_by` value. A "_self" without name= selects by ref
-// (see the package comment).
+// (see the package comment). The zero Ref yields the zero selector, which
+// list filters read as no filter.
 func (r Ref) Selector() apiclient.SandboxSelector {
 	if r.self {
 		return apiclient.SandboxByRef(r.Value)
@@ -110,60 +143,6 @@ func Explain(r Ref, err error) error {
 	return err
 }
 
-// Pinned reports whether r matches on one field only (name= or id=), and so
-// goes on the wire with a selector.
-func (r Ref) Pinned() bool { return r.Selector().By != apiclient.SelectByRef }
-
-// Check reports an error when the rig the API returned for r, identified by id
-// and name, does not match r on the field r pins. A server that predates the
-// `by` selector ignores it and matches id or name, so this is what keeps a
-// name= or id= reference from acting on a rig it does not name.
-func Check(r Ref, id, name string) error {
-	switch {
-	case !r.Pinned():
-		return nil
-	case r.Kind == KindID && id != r.Value:
-		return fmt.Errorf("no rig has id %q (%q is the name of rig %s)", r.Value, r.Value, id)
-	case r.Kind == KindName && name != r.Value:
-		return fmt.Errorf("no rig is named %q (%q is the id of rig %q)", r.Value, r.Value, name)
-	}
-	return nil
-}
-
-// Getter fetches one rig; *apiclient.Client satisfies it.
-type Getter interface {
-	GetSandbox(sel apiclient.SandboxSelector) (*apiclient.RemoteSandbox, error)
-}
-
-// Resolve fetches the rig r names, rewriting an ambiguous-reference error (see
-// Explain) and refusing a rig that does not match on the field r pins (see
-// Check).
-func Resolve(client Getter, r Ref) (*apiclient.RemoteSandbox, error) {
-	sb, err := client.GetSandbox(r.Selector())
-	if err != nil {
-		return nil, Explain(r, err)
-	}
-	if err := Check(r, sb.ID, sb.Name); err != nil {
-		return nil, err
-	}
-	return sb, nil
-}
-
-// Target returns the selector to act on r with through a route whose `by`
-// selector an older server may ignore. A plain reference is its own selector;
-// a pinned one is resolved and checked first (see Resolve) and becomes the
-// rig's canonical id, which every server matches the same way.
-func Target(client Getter, r Ref) (apiclient.SandboxSelector, error) {
-	if !r.Pinned() {
-		return r.Selector(), nil
-	}
-	sb, err := Resolve(client, r)
-	if err != nil {
-		return apiclient.SandboxSelector{}, err
-	}
-	return apiclient.SandboxByRef(sb.ID), nil
-}
-
 // Prefix returns the kind raw's `kind=` prefix spells out, and false when raw
 // has none (a bare value, or "_self").
 func Prefix(raw string) (Kind, bool) {
@@ -178,11 +157,12 @@ func Prefix(raw string) (Kind, bool) {
 	return "", false
 }
 
-// Parse parses raw into a Ref, resolving "_self" through rigself.Default.
-func Parse(raw string) (Ref, error) { return ParseWith(rigself.Default, raw) }
+// Parse parses raw into a Ref, resolving "_self" through Default. An empty
+// value, with or without a prefix, is an error.
+func Parse(raw string) (Ref, error) { return parseWith(Default, raw) }
 
-// ParseWith parses raw into a Ref, resolving "_self" through resolver.
-func ParseWith(resolver rigself.Resolver, raw string) (Ref, error) {
+// parseWith parses raw into a Ref, resolving "_self" through resolver.
+func parseWith(resolver Resolver, raw string) (Ref, error) {
 	ref := Ref{Kind: KindRef, Value: raw}
 	if kind, ok := Prefix(raw); ok {
 		ref = Ref{Kind: kind, Value: raw[len(kind)+1:]}
@@ -193,11 +173,11 @@ func ParseWith(resolver rigself.Resolver, raw string) (Ref, error) {
 		}
 		return Ref{}, fmt.Errorf("rig reference must not be empty")
 	}
-	if ref.Value != rigself.Ref {
+	if ref.Value != Self {
 		return ref, nil
 	}
 	if ref.Kind == KindID {
-		return Ref{}, fmt.Errorf("%q stands for the current rig's name, not its id; use %q or %q", rigself.Ref, rigself.Ref, "name="+rigself.Ref)
+		return Ref{}, fmt.Errorf("%q stands for the current rig's name, not its id; use %q or %q", Self, Self, "name="+Self)
 	}
 	name, err := resolver.Name()
 	if err != nil {
@@ -237,7 +217,7 @@ func Label(raw string, r Ref) string {
 	if kind, ok := Prefix(raw); ok {
 		value = raw[len(kind)+1:]
 	}
-	if value == rigself.Ref {
+	if value == Self {
 		return r.Value
 	}
 	return raw

@@ -575,7 +575,7 @@ func TestRigAgentSendUsesSendAPI(t *testing.T) {
 				}
 				results = append(results, decoded)
 			}
-			want := map[string]any{"message": "hello world", "sandbox_id": "my-rig", "agent": "codex", "session_id": "chat_1"}
+			want := map[string]any{"message": "hello world", "sandbox_ref": "my-rig", "agent": "codex", "session_id": "chat_1"}
 			if len(requests) != 3 {
 				t.Fatalf("requests=%d", len(requests))
 			}
@@ -659,7 +659,7 @@ func TestRigAgentSendStreamsPipedMessage(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
-		want := map[string]any{"message": "inspect the rig", "sandbox_id": "my-rig", "new_session": true}
+		want := map[string]any{"message": "inspect the rig", "sandbox_ref": "my-rig", "new_session": true}
 		if !reflect.DeepEqual(request, want) {
 			t.Errorf("request=%v, want %v", request, want)
 		}

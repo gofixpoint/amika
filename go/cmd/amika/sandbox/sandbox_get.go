@@ -52,9 +52,9 @@ func runSandboxGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	rig, err := rigref.Resolve(client, ref)
+	rig, err := client.GetSandbox(ref.Selector())
 	if err != nil {
-		return err
+		return rigref.Explain(ref, err)
 	}
 	result := sandboxGetResult{
 		RemoteSandbox: normalizeSandboxJSON(*rig),

@@ -20,7 +20,7 @@ func TestSandboxSnapshotRequestPaths(t *testing.T) {
 		{
 			name: "ListSandboxSnapshots with both filters",
 			call: func(c *Client) error {
-				_, err := c.ListSandboxSnapshots("repo1", SandboxByID("sb1"))
+				_, err := c.ListSandboxSnapshots("repo1", SandboxSelector{Value: "sb1", By: SelectByID})
 				return err
 			},
 			wantMethod: "GET",

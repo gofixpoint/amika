@@ -11,7 +11,6 @@ import (
 	"github.com/gofixpoint/amika/go/internal/cliprompt"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/rigref"
-	"github.com/gofixpoint/amika/go/internal/rigself"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/services"
 	"github.com/spf13/cobra"
@@ -292,11 +291,18 @@ func serviceListRigFilter(cmd *cobra.Command) (*rigref.Ref, error) {
 	case rigSet && rigNameSet:
 		return nil, fmt.Errorf("--rig and --rig-name both name the rig; use --rig")
 	case rigNameSet:
-		name, err := rigself.Flag(cmd, "rig-name")
+		raw, _ := cmd.Flags().GetString("rig-name")
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return &rigref.Ref{Kind: rigref.KindName}, nil
+		}
+		// Parsed as a name= reference, so "_self" still resolves and any value,
+		// even one that looks like a prefix, matches by name only.
+		ref, err := rigref.Parse(string(rigref.KindName) + "=" + raw)
 		if err != nil {
 			return nil, err
 		}
-		return &rigref.Ref{Kind: rigref.KindName, Value: strings.TrimSpace(name)}, nil
+		return &ref, nil
 	case rigSet:
 		raw, _ := cmd.Flags().GetString("rig")
 		if strings.TrimSpace(raw) == "" {

@@ -16,24 +16,6 @@ func TestSandboxServiceRequestPaths(t *testing.T) {
 		wantPath   string
 	}{
 		{
-			name: "ListSandboxServices with sandbox_ref filter",
-			call: func(c *Client) error {
-				_, err := c.ListSandboxServices("my-box")
-				return err
-			},
-			wantMethod: "GET",
-			wantPath:   "/api/v0beta1/sandbox-services?sandbox_ref=my-box",
-		},
-		{
-			name: "ListSandboxServices with no filter",
-			call: func(c *Client) error {
-				_, err := c.ListSandboxServices("")
-				return err
-			},
-			wantMethod: "GET",
-			wantPath:   "/api/v0beta1/sandbox-services",
-		},
-		{
 			name: "CreateSandboxService escapes the sandbox ref",
 			call: func(c *Client) error {
 				_, err := c.CreateSandboxService(SandboxByRef("org/box"), SandboxServiceRequest{Name: "web", Port: 3000, URLScheme: "https"})
@@ -127,42 +109,5 @@ func TestCreateSandboxServiceSendsBody(t *testing.T) {
 	}
 	if svc.Name != "web" || svc.Port != 3000 || svc.URLScheme == nil || *svc.URLScheme != "https" || svc.Source != "table" {
 		t.Errorf("service = %+v", svc)
-	}
-}
-
-func TestListSandboxServicesParsesEnvelope(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"items": []map[string]any{
-				{"id": "sbsvc_1", "sandbox_id": "sb_1", "name": "web", "port": 3000, "url_scheme": "https", "protocol": "tcp", "url": "https://web.example.com", "host_port": 12345, "source": "table"},
-				{"id": nil, "sandbox_id": "sb_1", "name": "legacy", "port": 8080, "url_scheme": "http", "protocol": "tcp", "source": "legacy"},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL, "test-token")
-	items, err := c.ListSandboxServices("")
-	if err != nil {
-		t.Fatalf("ListSandboxServices: %v", err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("len(items) = %d, want 2", len(items))
-	}
-	if items[0].ID == nil || *items[0].ID != "sbsvc_1" {
-		t.Errorf("items[0].ID = %v", items[0].ID)
-	}
-	if items[0].URL == nil || *items[0].URL != "https://web.example.com" {
-		t.Errorf("items[0].URL = %v", items[0].URL)
-	}
-	if items[0].HostPort == nil || *items[0].HostPort != 12345 {
-		t.Errorf("items[0].HostPort = %v", items[0].HostPort)
-	}
-	if items[1].ID != nil {
-		t.Errorf("legacy items[1].ID should be nil, got %v", items[1].ID)
-	}
-	if items[1].Source != "legacy" {
-		t.Errorf("items[1].Source = %q", items[1].Source)
 	}
 }

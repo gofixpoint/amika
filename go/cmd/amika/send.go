@@ -173,19 +173,10 @@ func runSend(cmd *cobra.Command, args []string) error {
 		Branch:        branches.Branch,
 		NewBranchName: branches.NewBranch,
 	}
-	client := runmode.NewRemoteClient()
 	if rigRef != nil {
-		// A name= or id= rig is resolved to its canonical id first, and the
-		// message is routed by that id. A server that predates sandbox_name
-		// and sandbox_ref strips them, and a send with no routing field creates
-		// a new sandbox; the legacy sandbox_id is the one field every server
-		// honors. A plain reference goes out as-is in that same field.
-		sel, err := rigref.Target(client, *rigRef)
-		if err != nil {
-			return err
-		}
-		req.SetSandbox(sel)
+		req.SetSandbox(rigRef.Selector())
 	}
+	client := runmode.NewRemoteClient()
 
 	if stream {
 		return explainSendRig(rigRef, runSendStreaming(client, req))

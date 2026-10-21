@@ -61,8 +61,8 @@ func TestSandboxSelectorWire(t *testing.T) {
 		}{
 			{SandboxByRef("org/box"), ""},
 			{SandboxSelector{Value: "org/box"}, ""},
-			{SandboxByName("org/box"), "?" + route.wantPinned + "=name"},
-			{SandboxByID("org/box"), "?" + route.wantPinned + "=id"},
+			{SandboxSelector{Value: "org/box", By: SelectByName}, "?" + route.wantPinned + "=name"},
+			{SandboxSelector{Value: "org/box", By: SelectByID}, "?" + route.wantPinned + "=id"},
 		} {
 			t.Run(route.name+"/"+tc.sel.kind(), func(t *testing.T) {
 				c, got := recordRequests(t)
@@ -80,8 +80,8 @@ func TestSandboxSelectorWire(t *testing.T) {
 // still names the service's kind, beside a sandbox_by for the sandbox.
 func TestServiceRoutesKeepServiceBy(t *testing.T) {
 	c, got := recordRequests(t)
-	_, _ = c.PutSandboxService(SandboxByID("sb_1"), "web", "", SandboxServiceRequest{Name: "web", Port: 1, URLScheme: "http"})
-	_ = c.DeleteSandboxService(SandboxByName("box"), "web")
+	_, _ = c.PutSandboxService(SandboxSelector{Value: "sb_1", By: SelectByID}, "web", "", SandboxServiceRequest{Name: "web", Port: 1, URLScheme: "http"})
+	_ = c.DeleteSandboxService(SandboxSelector{Value: "box", By: SelectByName}, "web")
 	_ = c.DeleteSandboxService(SandboxByRef("box"), "web")
 	want := []string{
 		"PUT /api/v0beta1/sandboxes/sb_1/services/web?by=name&sandbox_by=id",
@@ -93,15 +93,14 @@ func TestServiceRoutesKeepServiceBy(t *testing.T) {
 	}
 }
 
-// TestRoutesThatAlwaysSendTheKind checks the routes whose selector parameter
-// predates selector support: bindings (sandbox_by) and the scrub preview
-// (by) send the kind for a ref selector too, as they always have.
+// TestRoutesThatAlwaysSendTheKind checks the routes that spell out the kind
+// even for a ref selector: bindings (sandbox_by) and the scrub preview (by).
 func TestRoutesThatAlwaysSendTheKind(t *testing.T) {
 	c, got := recordRequests(t)
 	_, _ = c.ListSandboxBindingsForSandbox(SandboxSelector{Value: "box"})
-	_, _ = c.ListSandboxBindingsForSandbox(SandboxByID("sb_1"))
+	_, _ = c.ListSandboxBindingsForSandbox(SandboxSelector{Value: "sb_1", By: SelectByID})
 	_, _ = c.GetSandboxScrubPreview(SandboxSelector{Value: "box"})
-	_, _ = c.GetSandboxScrubPreview(SandboxByName("box"))
+	_, _ = c.GetSandboxScrubPreview(SandboxSelector{Value: "box", By: SelectByName})
 	want := []string{
 		"GET /api/v0beta1/sandboxes/box/bindings?sandbox_by=ref",
 		"GET /api/v0beta1/sandboxes/sb_1/bindings?sandbox_by=id",
@@ -114,8 +113,7 @@ func TestRoutesThatAlwaysSendTheKind(t *testing.T) {
 }
 
 // TestCreateSSHSessionSendsNoSelector checks that an SSH session, always
-// requested for a canonical id, goes out as a plain ref that every server
-// version accepts.
+// requested for a canonical id, goes out as a plain ref with no sandbox_by.
 func TestCreateSSHSessionSendsNoSelector(t *testing.T) {
 	c, got := recordRequests(t)
 	_, _ = c.CreateSSHSession("sbx_123")
@@ -129,7 +127,7 @@ func TestCreateSSHSessionSendsNoSelector(t *testing.T) {
 // selector.
 func TestListSandboxSnapshotsSourceFilter(t *testing.T) {
 	c, got := recordRequests(t)
-	for _, sel := range []SandboxSelector{{}, {Value: "box"}, SandboxByRef("box"), SandboxByName("box"), SandboxByID("sb_1")} {
+	for _, sel := range []SandboxSelector{{}, {Value: "box"}, SandboxByRef("box"), {Value: "box", By: SelectByName}, {Value: "sb_1", By: SelectByID}} {
 		_, _ = c.ListSandboxSnapshots("", sel)
 	}
 	want := []string{
@@ -166,8 +164,8 @@ func TestCreateSandboxSnapshotRequestSetSandbox(t *testing.T) {
 		want map[string]any
 	}{
 		{SandboxByRef("box"), map[string]any{"sandbox_ref": "box", "name": "snap"}},
-		{SandboxByName("box"), map[string]any{"sandbox_name": "box", "name": "snap"}},
-		{SandboxByID("sb_1"), map[string]any{"sandbox_id": "sb_1", "name": "snap"}},
+		{SandboxSelector{Value: "box", By: SelectByName}, map[string]any{"sandbox_name": "box", "name": "snap"}},
+		{SandboxSelector{Value: "sb_1", By: SelectByID}, map[string]any{"sandbox_id": "sb_1", "name": "snap"}},
 	} {
 		req := CreateSandboxSnapshotRequest{SandboxRef: "stale", Name: "snap"}
 		req.SetSandbox(tc.sel)
@@ -177,19 +175,21 @@ func TestCreateSandboxSnapshotRequestSetSandbox(t *testing.T) {
 	}
 }
 
-// TestAgentSessionSendRequestSetSandbox checks the send body's routing field:
-// a ref or id selector keeps the legacy sandbox_id, which servers that predate
-// the new fields still read, and only a name selector uses sandbox_name.
+// TestAgentSessionSendRequestSetSandbox checks that the send body carries
+// exactly one routing field, the one the selector's kind names: sandbox_ref
+// for a ref (or kindless) selector, sandbox_name for a name selector, and
+// sandbox_id for an id selector.
 func TestAgentSessionSendRequestSetSandbox(t *testing.T) {
 	for _, tc := range []struct {
 		sel  SandboxSelector
 		want map[string]any
 	}{
-		{SandboxByRef("box"), map[string]any{"message": "hi", "sandbox_id": "box"}},
-		{SandboxByName("box"), map[string]any{"message": "hi", "sandbox_name": "box"}},
-		{SandboxByID("sb_1"), map[string]any{"message": "hi", "sandbox_id": "sb_1"}},
+		{SandboxSelector{Value: "box"}, map[string]any{"message": "hi", "sandbox_ref": "box"}},
+		{SandboxByRef("box"), map[string]any{"message": "hi", "sandbox_ref": "box"}},
+		{SandboxSelector{Value: "box", By: SelectByName}, map[string]any{"message": "hi", "sandbox_name": "box"}},
+		{SandboxSelector{Value: "sb_1", By: SelectByID}, map[string]any{"message": "hi", "sandbox_id": "sb_1"}},
 	} {
-		req := AgentSessionSendRequest{Message: "hi", SandboxRef: "stale"}
+		req := AgentSessionSendRequest{Message: "hi", SandboxRef: "stale", SandboxName: "stale", SandboxID: "stale"}
 		req.SetSandbox(tc.sel)
 		if got := bodyFields(t, req); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("SetSandbox(%+v) body = %v, want %v", tc.sel, got, tc.want)

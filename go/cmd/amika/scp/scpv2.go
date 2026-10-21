@@ -71,9 +71,9 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 			}
 			client = runmode.NewRemoteClient()
 		}
-		sandbox, err := rigref.Resolve(client, ref)
+		sandbox, err := client.GetSandbox(ref.Selector())
 		if err != nil {
-			return "", err
+			return "", rigref.Explain(ref, err)
 		}
 		alias, err := prepareSessionTarget(
 			basedir.New(""),
