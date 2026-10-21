@@ -117,7 +117,7 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	}
 	if format.IsJSON() {
 		// Remote-backed command: emit the API's response schema verbatim (see
-		// AGENTS.md "Remote-backed commands emit the API's response schema") so
+		// go/cmd/amika/AGENTS.md "Output format") so
 		// every field round-trips, including the id and a pending url as null.
 		return format.JSON(cmd.OutOrStdout(), svc)
 	}

@@ -82,6 +82,8 @@ checked out as a sibling worktree rather than searching for those paths in this 
 ## Code Structure
 
 ### CLI Commands (`go/cmd/amika/`)
+Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig arguments) live in [`go/cmd/amika/AGENTS.md`](go/cmd/amika/AGENTS.md).
+
 - `main.go` — Entry point, root Cobra command
 - `sandbox.go` — `sandbox create|list|connect|delete` commands
 - `host.go` — `host list|get|delete` commands over the org's own hosts (BYOC); hosts are registered by `amika-hostd`, not here
@@ -108,9 +110,9 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - `ports/` — Port interfaces for Docker and store operations
 - `output/` — CLI output formatting for the `--output`/`-o` flag (`text`, `json`, `json-pretty`)
 - `services/` — Shared sandbox-service logic used by CLI and API, e.g. `ValidatePort` (rejects out-of-range and reserved container ports)
-- `rigref/` — Parses a rig reference: a bare value matches by id or name (ambiguous if it is one rig's id and another's name), while `name=<name>` and `id=<id>` pin the field, mirroring amika-mono's `devdocs/api-resource-refs.md` kinds. It also resolves `_self` to the current rig's name (`AMIKA_RIG_NAME`, falling back to `AMIKA_SANDBOX_NAME`; `rigref.RigNameEnv`/`SandboxNameEnv`, and `rigref.Default.Name()` for the name itself). Every CLI field that names an existing rig (positional rig args, `--rig`, `--rig-name`, `scp`'s `<rig>:<path>`) must pass its value through `rigref.Parse`/`ParseAll` as soon as it is read, before the auth check, so a malformed reference or a `_self` outside a rig is reported as itself (naming the env vars to set) rather than as a login prompt; the hidden, name-only `service list --rig-name <v>` is parsed as `name=<v>`. Each command then makes one request carrying the reference and its kind, and the server resolves it: `Ref.Selector()` converts a parsed reference to the `apiclient.SandboxSelector` the API methods take, which becomes `by`/`sandbox_by` on the `/sandboxes/{ref}` routes (omitted for a plain ref, the server's default; the bindings routes and the snapshot scrub preview always spell it out), `sandbox_ref`/`sandbox_name`/`sandbox_id` in the `send` and `snapshot create` bodies, and `source_sandbox_ref`/`_name`/`_id` on `snapshot list`. A bare value, `ref=`, and `_self` go out as a ref; `name=_self` as a name. `rig get`, `ssh`, `open`, `connect`, and `scp` build the `*.amika` SSH alias only from the canonical name and id their one `GetSandbox` returns, so a prefixed reference never becomes an ssh hostname. `rigref.Explain` turns the API's 409 `resource_ref_ambiguous` for a plain ref into a hint naming `id=<v>` and `name=<v>`; `rigref.Label` is how output names a rig before its canonical name is known (the user's spelling, with `_self` shown as the name it stands for). `rigref.Find` picks the matching rig from a listing: `service list --rig` filters `ListSandboxes` client-side because the `/sandbox-services` response carries only each service's `sandbox_id`, not the rig name the output shows. The hidden `--rig-by` on `rig bind`/`bindings` is the legacy spelling of a prefix
+- `rigref/` — Parses rig references (a name or id, `name=`/`id=` to pin the field, `_self` for the current rig); rules for commands that take a rig are in [`go/cmd/amika/AGENTS.md`](go/cmd/amika/AGENTS.md)
 - `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
-- `eventlog/` — amikalog's hook installer + capture: appends events (one JSON line each) to a per-session JSONL file `<state>/events/{claude,codex}/sessions/{ts}_{session_id}.jsonl`, annotated with git context. `push.go` uploads each changed session file in parallel via an `Uploader`, tracking each file's uploaded byte size in `<state>/events/.amikalog-push-state.json` so only sessions that grew are re-sent (object key = `<repo>/<source>/sessions/<ts>_<session_id>.jsonl`, repo from each session's `git.repo_root`; legacy per-event `event_*.json` files are still uploaded for backward compatibility)
+- `eventlog/` — amikalog's hook installer, event capture, and push (details in the package doc)
 
 ### Public Package (`go/pkg/amika/`)
 - `service.go` — Public service API used by both the CLI and HTTP server
@@ -128,20 +130,8 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - `bin/amikalog` — Wrapper script that auto-builds and runs `dist/amikalog`
 - `bin/amikalyze` — Wrapper script that auto-builds and runs `dist/amikalyze`
 - `materialization-scripts/` — Example data materialization scripts
-- `sandbox-image/` — Shared manifest, build steps, assets, verification suite, and generated Dockerfiles
+- `sandbox-image/` — Shared manifest, build steps, assets, verification suite, and generated Dockerfiles. It also holds generated copies of the `amika-cli` skill: edit only `.agents/skills/amika-cli/`, then run `python3 sandbox-image/generate.py` (CI fails on a stale copy)
 - `sdk/typescript/` — TypeScript SDK
-
-## CLI Output Format (`--output`)
-
-`--output`/`-o` (`text` default, `json`, `json-pretty`) is a persistent root flag, validated once in the root `PersistentPreRunE`. When adding or changing a command, honor it:
-
-- Read the format with `output.FormatFrom(cmd)`, and when `format.IsJSON()` write the result via `format.JSON(w, v)`.
-- Emit snake_case JSON keys, empty lists as `[]` (never `null`), and per-item batch results as `output.ItemResult{name, status, error}`. The one exception is a field the API itself spells otherwise: a mirror struct copies the API's spelling, so `Host.Sizes` entries keep the control plane's `memoryGib`, `diskGib`, and `diskGrowOnly`. Renaming one to snake_case decodes that field as its zero value with no error: `amika host get` then prints the row `small  2  0 GiB  40 GiB` and `-o json` emits `"memory_gib":0`, rather than failing.
-- In JSON mode stdout carries only the JSON value: emit human progress through `format.Progress(w)` (which discards it in JSON mode) and send any subprocess or build output to stderr.
-- Do not prompt in JSON mode: destructive commands require their confirmation flag (`--force` or `--no-interactive`).
-- Commands that open a shell or editor, or that prompt over a masked table with no structured result (`secret extract`, `secret push`), call `output.RejectJSON(cmd)`. Commands that delegate to a shell utility reject the flag instead: `ssh` calls `output.RejectFlag(cmd)`; `scp` sets `DisableFlagParsing` (so its own `-o` ssh_config option forwards to the system scp) and therefore rejects only the unambiguous long form via `output.RejectFlagInArgs(rawArgs)`.
-
-**Remote-backed commands emit the API's response schema.** For any command backed by a remote API resource (`sandbox create/list/start/stop`, `snapshot create/list`, `host list/get`), `-o json`/`-o json-pretty` emit the same shape as the documented `amika-server` API response (see `/api/openapi.json`), via the typed mirror structs in `internal/apiclient` (`RemoteSandbox`, `SandboxSnapshot`, `SecretSummary`, `AgentSessionSendResponse`, `Host`). Those structs are the single decode/encode type: the CLI decodes an API response into one and re-encodes the same value for `-o json`, so a field the schema marks `nullable` is a Go pointer (emits explicit `null`, never omitted) and a field the schema marks `required` has no `omitempty` (always present). `sandbox list` and `snapshot list` mirror `ListSandboxesResponse`/`ListSandboxSnapshotsResponse` exactly, including the latter's `{"items": [...]}` envelope (`sandbox list` is a bare array; `snapshot list` is not). These structs carry only schema fields: the former `container_id`/`image` extras existed for local Docker sandboxes and were dropped with the `--local` mode. The one exception is `rig get`, which adds `ssh_host`: the rig's alias from `~/.ssh/amika.conf`, derived client-side because it embeds a slug of the CLI's `AMIKA_API_URL`. `sandbox start`/`stop` emit an array of each target's final resource (the CLI already polls the API to completion) mixed with an `output.ItemResult` per failed target; `sandbox delete`/`snapshot delete`/`host delete` stay arrays of `output.ItemResult` since the API returns no body (`OkStatus`/204) to mirror.
 
 ## Development Notes
 
@@ -150,6 +140,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 - All exported symbols must have doc comments (enforced by the `exported` rule)
 - No external dependencies need to be installed for linting; `make lint` uses `go run`
 - GitHub Actions workflows are audited by [zizmor](https://docs.zizmor.sh) (`make zizmor` locally, `.github/workflows/zizmor.yml` in CI). Pin every `uses:` to a full commit SHA with a trailing `# vX.Y.Z` comment (Dependabot bumps both), declare least-privilege `permissions:`, and check out with `persist-credentials: false` unless a later step pushes. Suppress a finding that does not apply with `# zizmor: ignore[<audit>]` plus a comment saying why
+- The Amika API (amika-mono's control plane) and its clients here (the CLI, the TypeScript SDK) ship together, API first. Don't add extra requests, client-side checks, or fallbacks for older servers unless asked.
 - Ports 60899–60999 are reserved inside sandbox containers for Amika services. See `docs/sandbox-configuration.md` for the allocation table. Any command or API that accepts a user-specified container port must reject this range by calling `services.ValidatePort` (`go/internal/services`); keep client-side and server-side validation in sync.
 
 ## Documentation Style
@@ -167,6 +158,7 @@ For user-facing docs (`docs/`, README):
 - Test targets: `make test-unit`, `make test-integration`, `make test-contract`, `make test-expensive`
 - The Docker-gated suites (`AMIKA_RUN_DOCKER_INTEGRATION`, `AMIKA_RUN_EXPENSIVE_TESTS`) currently have no tests opting into them; they were removed with the CLI's `--local` mode. See `docs/development/testing.md`
 - See `docs/development/testing.md` for the full smoke test plan
+- On macOS run `go test ./...` with `TMPDIR=/tmp`: the default temp dir is too long for the unix sockets the `internal/ssh` tests create
 - Cobra does not reset `rootCmd` flag state between `Execute` calls, so CLI tests that set flags must reset them afterward (see `resetChangedFlags` in `cmd/amika`)
 
 ## Environment Variables

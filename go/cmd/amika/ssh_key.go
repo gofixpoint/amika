@@ -119,7 +119,7 @@ Examples:
 			}
 			if format.IsJSON() {
 				// Remote-backed commands emit the API's response schema
-				// unchanged (AGENTS.md "CLI Output Format"), so the
+				// unchanged (go/cmd/amika/AGENTS.md "Output format"), so the
 				// created/updated distinction stays in the text output only.
 				return format.JSON(cmd.OutOrStdout(), summary)
 			}

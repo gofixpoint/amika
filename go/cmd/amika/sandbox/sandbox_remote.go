@@ -2,7 +2,7 @@ package sandboxcmd
 
 // sandbox_remote.go provides the shared remote-target and client helpers used
 // by the rig commands, plus the one output convention applied on top of the
-// API mirror before encoding (see AGENTS.md, "CLI Output Format (--output)").
+// API mirror before encoding (see go/cmd/amika/AGENTS.md, "Output format").
 
 import (
 	"fmt"

@@ -2,6 +2,13 @@
 
 TypeScript SDK for Amika (`@amika/sdk`).
 
+## Build check
+
+On macOS under Node 26, run `pnpm run build` with
+`TMPDIR=$(realpath "$TMPDIR")`. Otherwise its last step,
+`scripts/check-package.mjs`, fails with "package types entry point must
+resolve" because `TMPDIR` sits under the `/var` to `/private/var` symlink.
+
 ## Test tiers
 
 Two tiers, run by two separate commands:
