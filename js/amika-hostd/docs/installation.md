@@ -38,12 +38,29 @@ Its closing steps point the operator at `amika-hostd setup`, then
 `amika-hostd up` (which runs setup itself if it was skipped).
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
-accessible. On every host it warns, again without failing, when smolvm cannot
-find `resize2fs` (from e2fsprogs) where it looks: smolvm copies each disk from
-a 20 GiB template and shrinks it with `resize2fs` when the rig asks for less,
-so without it a rig with a smaller disk fails to start. `--dry-run` prints the
-plan. Nothing else needs to run alongside the daemon: `amika-hostd up` starts
-smolvm itself (see [smolvm](runtime.md#smolvm)).
+accessible. smolvm copies each disk from a 20 GiB template and shrinks it with
+`resize2fs` (from e2fsprogs) when the rig asks for less, so without it a rig
+with a smaller disk fails to start. When smolvm cannot find `resize2fs` where
+it looks, the installer installs e2fsprogs:
+
+- on macOS with `brew install e2fsprogs`, without asking (no root needed);
+- on Linux with `apt-get`, `dnf` or `yum`, noninteractively (`-y`,
+  `DEBIAN_FRONTEND=noninteractive`; `apt-get` updates its lists and retries
+  once if the install fails), as root or through `sudo`. It asks first on the
+  terminal; `--install-deps` answers yes. Without a terminal it installs only
+  with `--install-deps` and only when no password is needed (root, or
+  `sudo -n` works), since sudo would wait for a password no one can type.
+
+When it cannot (no terminal, a declined question, sudo needs a password, no
+known package manager, a failed install), it warns without failing, giving
+the reason and the exact command to run. `--dry-run` prints the plan,
+including what it would do about e2fsprogs. Nothing else needs to run
+alongside the daemon: `amika-hostd up` starts smolvm itself (see
+[smolvm](runtime.md#smolvm)).
+
+Prompts read `/dev/tty` through `have_tty`, which tests it with `true`, not
+`:`: a failed redirection on a special builtin exits a POSIX shell (dash,
+bash as `sh`) instead of failing the test.
 
 `install-amika-hostd.sh --uninstall` reverses the install. It finds the
 launcher on `PATH` (or in `AMIKA_INSTALL_DIR` when that is set), reads the

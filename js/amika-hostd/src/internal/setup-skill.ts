@@ -157,6 +157,21 @@ URL still forwards to the daemon.
   \`amika host get <hostname>\` shows the host, its transport and its URL. A
   tunnelled host shows no URL; Amika assigns its address.
 
+## Small rig disks: resize2fs
+
+Only needed when a size in the config has a \`disk_gib\` under 20. smolvm
+makes such a disk by shrinking a 20 GiB template with \`resize2fs\`, from
+e2fsprogs, and the rig fails to start without it. The installer installs
+e2fsprogs when it is missing, but without a terminal only if it was run with
+\`--install-deps\` and needs no password. So run it that way:
+
+    curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh -s -- --install-deps
+
+If it still warns "resize2fs not found" because "sudo needs a password",
+give the operator the exact command the warning prints and ask them to run
+it. Never try to obtain root another way: do not guess or ask for a
+password, and do not change sudo's configuration.
+
 ## Stopping
 
     amika-hostd down
