@@ -153,7 +153,7 @@ describe("rigs: the rig is the path's primary resource (by)", () => {
     },
   );
 
-  it("a rig returned by get, list, or create pins its ID", async () => {
+  it("a rig returned by list pins its ID", async () => {
     const { fetch, calls } = mockFetch([{ body: [wireRig] }, { status: 204 }]);
     const [rig] = await makeClient(fetch).rigs.list();
     await rig!.stop();
@@ -503,6 +503,66 @@ describe("agentSessions", () => {
       ).rejects.toThrow(message);
       await expect(client.agentSessions.list({ rig })).rejects.toThrow(message);
       expect(calls).toHaveLength(0);
+    },
+  );
+});
+
+// `fetch`'s URL parser collapses dot segments, so a reference of "." or ".."
+// would reach a different route than the one named (e.g. a service delete
+// landing on the rig itself). They are refused before any request.
+describe("dot-segment references", () => {
+  it.each([".", ".."])("rejects the rig %j before any request", async (dot) => {
+    const { fetch, calls } = mockFetch([]);
+    const client = makeClient(fetch);
+    await expect(client.rigs.get(dot)).rejects.toThrow(
+      'rig must not be "." or ".."',
+    );
+    await expect(client.rigs.get({ ref: dot, by: "name" })).rejects.toThrow(
+      'rig must not be "." or ".."',
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([".", ".."])(
+    "rejects the service %j before any request",
+    async (dot) => {
+      const { fetch, calls } = mockFetch([]);
+      await expect(
+        makeClient(fetch).services.delete("dev", dot),
+      ).rejects.toThrow('service must not be "." or ".."');
+      expect(calls).toHaveLength(0);
+    },
+  );
+});
+
+// A blank deprecated alias in a list filter keeps its old meaning: no filter.
+describe("blank deprecated list-filter aliases", () => {
+  it.each(["", "  "])(
+    "services.list({ rigRef: %j }) sends no filter",
+    async (blank) => {
+      const { fetch, calls } = mockFetch([{ body: { items: [] } }]);
+      await makeClient(fetch).services.list({ rigRef: blank });
+      expect(calls[0]?.url).toBe(`${API}/rig-services`);
+    },
+  );
+
+  it.each(["", "  "])(
+    "snapshots.list({ sourceRigId: %j }) sends no filter",
+    async (blank) => {
+      const { fetch, calls } = mockFetch([{ body: { items: [] } }]);
+      await makeClient(fetch).snapshots.list({ sourceRigId: blank });
+      expect(calls[0]?.url).toBe(`${API}/rig-snapshots`);
+    },
+  );
+
+  it.each(["", "  "])(
+    "agentSessions.list({ rigRef: %j }) sends no filter",
+    async (blank) => {
+      const { fetch, calls } = mockFetch([
+        { body: { sessions: [], total: 0 } },
+      ]);
+      await makeClient(fetch).agentSessions.list({ rigRef: blank });
+      expect(calls[0]?.url).not.toContain("sandbox");
     },
   );
 });

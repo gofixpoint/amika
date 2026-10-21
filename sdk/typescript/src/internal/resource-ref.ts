@@ -14,6 +14,32 @@ import type { RefKind, ResourceRef } from "../resource-ref.js";
 
 const KINDS: readonly RefKind[] = ["id", "name", "ref"];
 
+/**
+ * Reject a value that is a dot segment. `encodeURIComponent` leaves dots
+ * alone and the URL parser `fetch` uses collapses `.` and `..` (and their
+ * percent-encoded forms), so `/rigs/dev/services/..` would reach
+ * `/rigs/dev/` instead: a different route than the caller named.
+ */
+function rejectDotSegment(value: string, label: string): void {
+  if (value === "." || value === "..") {
+    throw new AmikaError(`${label} must not be "." or ".."`);
+  }
+}
+
+/** A plain identifier as an encoded path segment, refusing dot segments. */
+export function pathSegment(value: string, label: string): string {
+  rejectDotSegment(value, label);
+  return encodeURIComponent(value);
+}
+
+/**
+ * A deprecated alias as a list-filter candidate: a blank value keeps its old
+ * meaning there, no filter, instead of failing validation.
+ */
+export function nonBlank(value: string | undefined): string | undefined {
+  return value?.trim() ? value : undefined;
+}
+
 /** A validated reference. `pinned` is false for a plain string. */
 export interface NormalizedRef {
   value: string;
@@ -28,6 +54,7 @@ export interface NormalizedRef {
 export function normalizeRef(ref: unknown, label: string): NormalizedRef {
   if (typeof ref === "string") {
     if (!ref.trim()) throw new AmikaError(`${label} must not be empty`);
+    rejectDotSegment(ref, label);
     return { value: ref, kind: "ref", pinned: false };
   }
   if (typeof ref !== "object" || ref === null) {
@@ -40,6 +67,7 @@ export function normalizeRef(ref: unknown, label: string): NormalizedRef {
     throw new AmikaError(`${label}.ref must be a string`);
   }
   if (!value.trim()) throw new AmikaError(`${label} must not be empty`);
+  rejectDotSegment(value, label);
   if (!KINDS.includes(by as RefKind)) {
     throw new AmikaError(
       `${label}.by must be one of "id", "name", or "ref" (got ${JSON.stringify(by)})`,

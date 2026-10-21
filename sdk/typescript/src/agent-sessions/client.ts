@@ -17,6 +17,7 @@ import {
 } from "./wire.js";
 import { readAgentSessionStream } from "./stream.js";
 import {
+  nonBlank,
   pickRef,
   queryString,
   setRefSelector,
@@ -65,7 +66,7 @@ class AgentSessionsClient implements AgentSessions {
     // A referenced rig in the query: its value in `sandbox` plus the
     // namespaced `sandbox_by` selector, which the server defaults to ref.
     // An empty deprecated rigRef keeps its old meaning in a filter: none.
-    const rig = pickRef("rig", options?.rig, options?.rigRef || undefined);
+    const rig = pickRef("rig", options?.rig, nonBlank(options?.rigRef));
     if (rig) {
       params.set("sandbox", rig.value);
       setRefSelector(params, "sandbox_by", rig);

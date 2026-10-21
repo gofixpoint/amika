@@ -12,6 +12,8 @@ import {
   pickRef,
   queryString,
   refFieldName,
+  nonBlank,
+  pathSegment,
   refPathSegment,
   setRefSelector,
 } from "../internal/resource-ref.js";
@@ -36,7 +38,7 @@ function servicePath(
   const params = new URLSearchParams();
   if (service) params.set("by", service.by);
   setRefSelector(params, "sandbox_by", ref);
-  const tail = service ? `/${encodeURIComponent(service.ref)}` : "";
+  const tail = service ? `/${pathSegment(service.ref, "service")}` : "";
   return `${API_BASE_PATH}/rigs/${refPathSegment(ref)}/services${tail}${queryString(params)}`;
 }
 
@@ -44,7 +46,7 @@ class ServicesClient implements Services {
   constructor(private readonly http: HTTPClient) {}
   async list(options?: ListServicesOptions): Promise<RigServiceResource[]> {
     // An empty deprecated rigRef keeps its old meaning in a filter: none.
-    const rig = pickRef("rig", options?.rig, options?.rigRef || undefined);
+    const rig = pickRef("rig", options?.rig, nonBlank(options?.rigRef));
     const params = new URLSearchParams();
     // The org-wide list filters with the server's mutually exclusive
     // sandbox_id / sandbox_name / sandbox_ref query fields.

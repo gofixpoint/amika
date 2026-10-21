@@ -5,6 +5,7 @@ import {
   normalizeRef,
   pickRef,
   refFieldName,
+  nonBlank,
   refPathSegment,
   setRefSelector,
   type NormalizedRef,
@@ -65,8 +66,8 @@ export function createSnapshots(http: HTTPClient): Snapshots {
       const source = pickRef(
         "sourceRig",
         options?.sourceRig,
-        idRef(options?.sourceRigId || undefined),
-        idRef(options?.sourceSandboxId || undefined),
+        idRef(nonBlank(options?.sourceRigId)),
+        idRef(nonBlank(options?.sourceSandboxId)),
       );
       if (source)
         params.set(refFieldName("source_sandbox", source), source.value);
