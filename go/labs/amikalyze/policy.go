@@ -308,15 +308,12 @@ func resolvePath(path string, followFinal bool) (string, error) {
 }
 
 // pathComponents splits path into its non-empty components, keeping "." and
-// ".." for resolvePath to interpret.
+// ".." for resolvePath to interpret. It splits on every separator the platform
+// accepts, so a "/" in a Windows path still separates components.
 func pathComponents(path string) []string {
-	var components []string
-	for _, component := range strings.Split(path, string(filepath.Separator)) {
-		if component != "" {
-			components = append(components, component)
-		}
-	}
-	return components
+	return strings.FieldsFunc(path, func(r rune) bool {
+		return r < 0x80 && os.IsPathSeparator(uint8(r))
+	})
 }
 
 func sliceSet(values []string) map[string]struct{} {
