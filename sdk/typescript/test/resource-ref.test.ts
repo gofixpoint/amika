@@ -18,7 +18,11 @@ function makeClient(fetchImpl: typeof fetch): AmikaClient {
   });
 }
 
-/** Each accepted form for the value "dev/1", with the kind it pins (if any). */
+/**
+ * Each accepted form for the value "dev/1", with the kind it pins (if any).
+ * A `/rigs/{ref}` path omits `by` for a plain string but sends it for every
+ * pinned kind, including `ref`, so those methods run all four forms.
+ */
 const FORMS: [label: string, ref: RigRef, pinned: RefKind | undefined][] = [
   ["a plain string", "dev/1", undefined],
   ['{ by: "name" }', { ref: "dev/1", by: "name" }, "name"],
@@ -26,23 +30,15 @@ const FORMS: [label: string, ref: RigRef, pinned: RefKind | undefined][] = [
   ['{ by: "ref" }', { ref: "dev/1", by: "ref" }, "ref"],
 ];
 
+/**
+ * Body fields and query filters only branch on plain versus pinned, so they
+ * run one of each. The `{ by: "name" }` cases in the alias and smuggled-field
+ * tests prove the field name follows the kind.
+ */
+const PLAIN_AND_PINNED = [FORMS[0]!, FORMS[2]!];
+
 /** The kind a form resolves to on the wire. A plain string is a ref. */
 const kindOf = (pinned: RefKind | undefined): RefKind => pinned ?? "ref";
-
-/** References that must be rejected before any request, with the message. */
-const INVALID: [label: string, ref: unknown, message: string][] = [
-  ["an empty string", "", "rig must not be empty"],
-  ["a whitespace string", " \t", "rig must not be empty"],
-  ["an empty object ref", { ref: "", by: "id" }, "rig must not be empty"],
-  [
-    "an unknown kind",
-    { ref: "dev", by: "slug" },
-    'rig.by must be one of "id", "name", or "ref"',
-  ],
-  ["a missing kind", { ref: "dev" }, "rig.by must be one of"],
-  ["a non-string ref", { ref: 7, by: "id" }, "rig.ref must be a string"],
-  ["a number", 7, "rig must be a string or an object"],
-];
 
 const wireRig = {
   id: "rig/9",
@@ -60,34 +56,100 @@ const wireService = {
 };
 const wireSnapshot = { id: "snap/9", snapshot: "base", state: "active" };
 const wireTurn = { session_id: "chat1", sandbox_id: "rig/9", response: "ok" };
+const wireTurnStream = `event: done\ndata: ${JSON.stringify(wireTurn)}\n\n`;
 const serviceReq = { name: "web", port: 3000, urlScheme: "https" as const };
 
-describe("rigs: the rig is the path's primary resource (by)", () => {
-  it.each(FORMS)("get with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ body: wireRig }]);
-    await makeClient(fetch).rigs.get(ref);
-    // A plain string omits `by`: the server's default is already ref.
-    expect(calls[0]?.url).toBe(
-      `${API}/rigs/dev%2F1${pinned ? `?by=${pinned}` : ""}`,
+describe("reference validation", () => {
+  // normalizeRef is the one validator behind every method, so the full table
+  // of invalid references runs through one of them.
+  it.each([
+    ["an empty string", "", "rig must not be empty"],
+    ["a whitespace string", " \t", "rig must not be empty"],
+    ["an empty object ref", { ref: "", by: "id" }, "rig must not be empty"],
+    [
+      "an unknown kind",
+      { ref: "dev", by: "slug" },
+      'rig.by must be one of "id", "name", or "ref"',
+    ],
+    ["a missing kind", { ref: "dev" }, "rig.by must be one of"],
+    ["a non-string ref", { ref: 7, by: "id" }, "rig.ref must be a string"],
+    ["a number", 7, "rig must be a string or an object"],
+  ])("rejects %s before any request", async (_label, ref, message) => {
+    const { fetch, calls } = mockFetch([]);
+    await expect(makeClient(fetch).rigs.get(ref as RigRef)).rejects.toThrow(
+      message,
     );
+    expect(calls).toHaveLength(0);
   });
 
-  it.each(FORMS)("getAndWait with %s", async (_label, ref, pinned) => {
+  it("every method rejects a blank reference, under its own label", async () => {
+    const { fetch, calls } = mockFetch([]);
+    const c = makeClient(fetch);
+    const blank = " \t";
+    const methods: [label: string, call: () => unknown][] = [
+      ["rig", () => c.rigs.handle(blank)],
+      ["rig", () => c.rigs.getAndWait(blank)],
+      ["rig", () => c.services.create(blank, serviceReq)],
+      ["rig", () => c.services.replace(blank, "web", serviceReq)],
+      ["rig", () => c.services.delete(blank, "web")],
+      ["rig", () => c.services.list({ rig: blank })],
+      ["rig", () => c.snapshots.create({ rig: blank, name: "s" })],
+      ["rig", () => c.snapshots.previewScrub(blank)],
+      ["sourceRig", () => c.snapshots.list({ sourceRig: blank })],
+      ["snapshot", () => c.snapshots.handle(blank)],
+      ["snapshot", () => c.snapshots.get(blank)],
+      ["rig", () => c.agentSessions.send({ message: "m", rig: blank })],
+      ["rig", () => c.agentSessions.sendStream({ message: "m", rig: blank })],
+      ["rig", () => c.agentSessions.list({ rig: blank })],
+    ];
+    for (const [label, call] of methods) {
+      // Handles throw synchronously; the async methods reject.
+      await expect(Promise.resolve().then(call)).rejects.toThrow(
+        `${label} must not be empty`,
+      );
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("never parses a kind out of the string", async () => {
     const { fetch, calls } = mockFetch([{ body: wireRig }]);
-    await makeClient(fetch).rigs.getAndWait(ref);
-    expect(calls[0]?.url).toBe(
-      `${API}/rigs/dev%2F1${pinned ? `?by=${pinned}` : ""}`,
+    await makeClient(fetch).rigs.get("name=dev");
+    expect(calls[0]?.url).toBe(`${API}/rigs/name%3Ddev`);
+  });
+
+  // `fetch`'s URL parser collapses dot segments, so a reference of "." or ".."
+  // would reach a different route than the one named (e.g. a service delete
+  // landing on the rig itself). They are refused before any request.
+  it.each([".", ".."])("rejects the dot segment %j", async (dot) => {
+    const { fetch, calls } = mockFetch([]);
+    const client = makeClient(fetch);
+    const rigMessage = 'rig must not be "." or ".."';
+    await expect(client.rigs.get(dot)).rejects.toThrow(rigMessage);
+    await expect(client.rigs.get({ ref: dot, by: "name" })).rejects.toThrow(
+      rigMessage,
     );
+    await expect(client.services.delete("dev", dot)).rejects.toThrow(
+      'service must not be "." or ".."',
+    );
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("rigs: the rig is the path's primary resource (by)", () => {
+  it.each(FORMS)("get and getAndWait with %s", async (_label, ref, pinned) => {
+    const { fetch, calls } = mockFetch([{ body: wireRig }, { body: wireRig }]);
+    const client = makeClient(fetch);
+    await client.rigs.get(ref);
+    await client.rigs.getAndWait(ref);
+    // A plain string omits `by`: the server's default is already ref.
+    const url = `${API}/rigs/dev%2F1${pinned ? `?by=${pinned}` : ""}`;
+    expect(calls.map((c) => c.url)).toEqual([url, url]);
   });
 
   it.each(FORMS)(
     "an unfetched handle's start, stop, and delete with %s",
     async (_label, ref, pinned) => {
-      const { fetch, calls } = mockFetch([
-        { status: 204 },
-        { status: 204 },
-        { status: 204 },
-      ]);
+      const { fetch, calls } = mockFetch(Array(3).fill({ status: 204 }));
       const handle = makeClient(fetch).rigs.handle(ref);
       await handle.start();
       await handle.stop();
@@ -101,57 +163,49 @@ describe("rigs: the rig is the path's primary resource (by)", () => {
     },
   );
 
-  it.each(FORMS)(
+  it.each(PLAIN_AND_PINNED)(
     "an unfetched handle's send and sendStream with %s",
     async (_label, ref, pinned) => {
-      const bodies: unknown[] = [];
-      const fetch: typeof globalThis.fetch = async (_url, init) => {
-        bodies.push(JSON.parse(String(init?.body)));
-        return String(_url).endsWith("/stream")
-          ? new Response(`event: done\ndata: ${JSON.stringify(wireTurn)}\n\n`)
-          : Response.json(wireTurn);
-      };
+      const { fetch, calls } = mockFetch([
+        { body: wireTurn },
+        { body: wireTurnStream },
+      ]);
       const handle = makeClient(fetch).rigs.handle(ref);
       await handle.send({ message: "hi" });
       await handle.sendStream({ message: "hi" });
-      const field = `sandbox_${kindOf(pinned)}`;
-      expect(bodies).toEqual([
-        { message: "hi", [field]: "dev/1" },
-        { message: "hi", [field]: "dev/1" },
-      ]);
+      const body = { message: "hi", [`sandbox_${kindOf(pinned)}`]: "dev/1" };
+      expect(calls.map((c) => JSON.parse(c.body ?? ""))).toEqual([body, body]);
     },
   );
 
-  it.each(FORMS)(
-    "a handle created with %s pins the fetched rig's ID",
-    async (_label, ref) => {
-      const { fetch, calls } = mockFetch([
-        { body: wireRig },
-        { body: wireRig },
-        { status: 204 },
-        { status: 204 },
-        { status: 204 },
-        { body: wireTurn },
-      ]);
-      const rig = await makeClient(fetch).rigs.handle(ref).fetch();
-      await rig.refresh();
-      await rig.start();
-      await rig.stop();
-      await rig.delete();
-      await rig.send({ message: "hi" });
-      expect(calls.slice(1).map((c) => [c.method, c.url])).toEqual([
-        ["GET", `${API}/rigs/rig%2F9?by=id`],
-        ["POST", `${API}/rigs/rig%2F9/start?by=id`],
-        ["POST", `${API}/rigs/rig%2F9/stop?by=id`],
-        ["DELETE", `${API}/rigs/rig%2F9?by=id`],
-        ["POST", `${API}/agent-sessions`],
-      ]);
-      expect(JSON.parse(calls[5]?.body ?? "")).toEqual({
-        message: "hi",
-        sandbox_id: "rig/9",
-      });
-    },
-  );
+  it("a fetched handle pins the rig's ID", async () => {
+    const { fetch, calls } = mockFetch([
+      { body: wireRig },
+      { body: wireRig },
+      { status: 204 },
+      { status: 204 },
+      { status: 204 },
+      { body: wireTurn },
+    ]);
+    const rig = await makeClient(fetch).rigs.handle("dev").fetch();
+    await rig.refresh();
+    await rig.start();
+    await rig.stop();
+    await rig.delete();
+    await rig.send({ message: "hi" });
+    expect(calls.map((c) => [c.method, c.url])).toEqual([
+      ["GET", `${API}/rigs/dev`],
+      ["GET", `${API}/rigs/rig%2F9?by=id`],
+      ["POST", `${API}/rigs/rig%2F9/start?by=id`],
+      ["POST", `${API}/rigs/rig%2F9/stop?by=id`],
+      ["DELETE", `${API}/rigs/rig%2F9?by=id`],
+      ["POST", `${API}/agent-sessions`],
+    ]);
+    expect(JSON.parse(calls[5]?.body ?? "")).toEqual({
+      message: "hi",
+      sandbox_id: "rig/9",
+    });
+  });
 
   it("a rig returned by list pins its ID", async () => {
     const { fetch, calls } = mockFetch([{ body: [wireRig] }, { status: 204 }]);
@@ -170,80 +224,47 @@ describe("rigs: the rig is the path's primary resource (by)", () => {
       sandbox_name: "dev",
     });
   });
-
-  it.each(INVALID)(
-    "rejects %s before any request",
-    async (_label, ref, message) => {
-      const { fetch, calls } = mockFetch([]);
-      const client = makeClient(fetch);
-      expect(() => client.rigs.handle(ref as RigRef)).toThrow(message);
-      await expect(client.rigs.get(ref as RigRef)).rejects.toThrow(message);
-      await expect(client.rigs.getAndWait(ref as RigRef)).rejects.toThrow(
-        message,
-      );
-      expect(calls).toHaveLength(0);
-    },
-  );
-
-  it("never parses a kind out of the string", async () => {
-    const { fetch, calls } = mockFetch([{ body: wireRig }]);
-    await makeClient(fetch).rigs.get("name=dev");
-    expect(calls[0]?.url).toBe(`${API}/rigs/name%3Ddev`);
-  });
 });
 
 describe("services: the rig is the path's parent (sandbox_by)", () => {
-  it.each(FORMS)("create with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ status: 201, body: wireService }]);
-    await makeClient(fetch).services.create(ref, serviceReq);
-    expect(calls[0]?.method).toBe("POST");
-    expect(calls[0]?.url).toBe(
-      `${API}/rigs/dev%2F1/services${pinned ? `?sandbox_by=${pinned}` : ""}`,
-    );
-  });
-
   it.each(FORMS)(
-    "replace with %s keeps the service's own by",
+    "create, replace, and delete with %s keep the service's own by",
     async (_label, ref, pinned) => {
       const { fetch, calls } = mockFetch([
+        { status: 201, body: wireService },
         { body: wireService },
         { body: wireService },
+        { status: 204 },
       ]);
       const client = makeClient(fetch);
+      await client.services.create(ref, serviceReq);
       await client.services.replace(ref, "web", serviceReq);
       await client.services.replace(ref, "svc_1", serviceReq, "id");
-      const rigQs = pinned ? `&sandbox_by=${pinned}` : "";
+      await client.services.delete(ref, "web");
+      const rigQs = pinned ? `sandbox_by=${pinned}` : "";
+      const svc = `${API}/rigs/dev%2F1/services`;
       expect(calls.map((c) => [c.method, c.url])).toEqual([
-        ["PUT", `${API}/rigs/dev%2F1/services/web?by=name${rigQs}`],
-        ["PUT", `${API}/rigs/dev%2F1/services/svc_1?by=id${rigQs}`],
+        ["POST", `${svc}${rigQs && `?${rigQs}`}`],
+        ["PUT", `${svc}/web?by=name${rigQs && `&${rigQs}`}`],
+        ["PUT", `${svc}/svc_1?by=id${rigQs && `&${rigQs}`}`],
+        ["DELETE", `${svc}/web?by=name${rigQs && `&${rigQs}`}`],
       ]);
     },
   );
 
-  it.each(FORMS)("delete with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ status: 204 }]);
-    await makeClient(fetch).services.delete(ref, "web");
-    expect(calls[0]?.method).toBe("DELETE");
-    expect(calls[0]?.url).toBe(
-      `${API}/rigs/dev%2F1/services/web?by=name${pinned ? `&sandbox_by=${pinned}` : ""}`,
-    );
-  });
-
-  it.each(FORMS)("list({ rig }) with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ body: { items: [] } }]);
-    await makeClient(fetch).services.list({ rig: ref });
-    expect(calls[0]?.url).toBe(
-      `${API}/rig-services?sandbox_${kindOf(pinned)}=dev%2F1`,
-    );
-  });
+  it.each(PLAIN_AND_PINNED)(
+    "list({ rig }) with %s",
+    async (_label, ref, pinned) => {
+      const { fetch, calls } = mockFetch([{ body: { items: [] } }]);
+      await makeClient(fetch).services.list({ rig: ref });
+      expect(calls[0]?.url).toBe(
+        `${API}/rig-services?sandbox_${kindOf(pinned)}=dev%2F1`,
+      );
+    },
+  );
 
   it("list maps the deprecated rigRef to a ref, behind a non-empty rig", async () => {
-    const { fetch, calls } = mockFetch([
-      { body: { items: [] } },
-      { body: { items: [] } },
-      { body: { items: [] } },
-      { body: { items: [] } },
-    ]);
+    const { fetch, calls } = mockFetch(Array(5).fill({ body: { items: [] } }));
     const client = makeClient(fetch);
     await client.services.list({ rigRef: "dev" });
     await client.services.list({
@@ -251,44 +272,44 @@ describe("services: the rig is the path's parent (sandbox_by)", () => {
       rigRef: "dev",
     });
     await client.services.list({ rig: "", rigRef: "dev" });
-    // An empty deprecated alias still means no filter, as it always did.
+    // A blank deprecated alias still means no filter, as it always did.
     await client.services.list({ rigRef: "" });
+    await client.services.list({ rigRef: "  " });
     expect(calls.map((c) => c.url)).toEqual([
       `${API}/rig-services?sandbox_ref=dev`,
       `${API}/rig-services?sandbox_id=rig%2F9`,
       `${API}/rig-services?sandbox_ref=dev`,
       `${API}/rig-services`,
+      `${API}/rig-services`,
     ]);
   });
-
-  it.each(INVALID)(
-    "rejects %s before any request",
-    async (_label, ref, message) => {
-      const { fetch, calls } = mockFetch([]);
-      const client = makeClient(fetch);
-      const rig = ref as RigRef;
-      await expect(client.services.create(rig, serviceReq)).rejects.toThrow(
-        message,
-      );
-      await expect(
-        client.services.replace(rig, "web", serviceReq),
-      ).rejects.toThrow(message);
-      await expect(client.services.delete(rig, "web")).rejects.toThrow(message);
-      await expect(client.services.list({ rig })).rejects.toThrow(message);
-      expect(calls).toHaveLength(0);
-    },
-  );
 });
 
 describe("snapshots", () => {
-  it.each(FORMS)("create({ rig }) with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ status: 201, body: wireSnapshot }]);
-    await makeClient(fetch).snapshots.create({ rig: ref, name: "base" });
-    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
-      [`sandbox_${kindOf(pinned)}`]: "dev/1",
-      name: "base",
-    });
-  });
+  it.each(PLAIN_AND_PINNED)(
+    "the rig in create, list, and previewScrub with %s",
+    async (_label, ref, pinned) => {
+      const { fetch, calls } = mockFetch([
+        { status: 201, body: wireSnapshot },
+        { body: { items: [] } },
+        { body: { files: [], env_vars: [] } },
+      ]);
+      const client = makeClient(fetch);
+      await client.snapshots.create({ rig: ref, name: "base" });
+      await client.snapshots.list({ sourceRig: ref });
+      await client.snapshots.previewScrub(ref);
+      const kind = kindOf(pinned);
+      expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+        [`sandbox_${kind}`]: "dev/1",
+        name: "base",
+      });
+      // previewScrub's omitted `by` means name, so a plain string sends by=ref.
+      expect(calls.slice(1).map((c) => c.url)).toEqual([
+        `${API}/rig-snapshots?source_sandbox_${kind}=dev%2F1`,
+        `${API}/rig-snapshots/scrub-preview?sandbox=dev%2F1&by=${kind}`,
+      ]);
+    },
+  );
 
   it("create maps rigRef and sandboxRef to a ref, in precedence order", async () => {
     const { fetch, calls } = mockFetch(
@@ -314,41 +335,27 @@ describe("snapshots", () => {
     ]);
   });
 
-  it.each(FORMS)("list({ sourceRig }) with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ body: { items: [] } }]);
-    await makeClient(fetch).snapshots.list({ sourceRig: ref });
-    expect(calls[0]?.url).toBe(
-      `${API}/rig-snapshots?source_sandbox_${kindOf(pinned)}=dev%2F1`,
-    );
-  });
-
   it("list maps sourceRigId and sourceSandboxId to an ID, behind sourceRig", async () => {
-    const { fetch, calls } = mockFetch(Array(5).fill({ body: { items: [] } }));
+    const { fetch, calls } = mockFetch(Array(6).fill({ body: { items: [] } }));
     const client = makeClient(fetch);
     await client.snapshots.list({ sourceRigId: "rig-a" });
     await client.snapshots.list({ sourceSandboxId: "rig-b" });
     await client.snapshots.list({ sourceRig: "dev", sourceRigId: "rig-a" });
     await client.snapshots.list({ sourceRig: "", sourceSandboxId: "rig-b" });
+    // A blank deprecated alias still means no filter, as it always did.
     await client.snapshots.list({ sourceRigId: "", sourceSandboxId: "" });
+    await client.snapshots.list({ sourceRigId: "  " });
     expect(calls.map((c) => c.url)).toEqual([
       `${API}/rig-snapshots?source_sandbox_id=rig-a`,
       `${API}/rig-snapshots?source_sandbox_id=rig-b`,
       `${API}/rig-snapshots?source_sandbox_ref=dev`,
       `${API}/rig-snapshots?source_sandbox_id=rig-b`,
       `${API}/rig-snapshots`,
+      `${API}/rig-snapshots`,
     ]);
   });
 
-  it.each(FORMS)("previewScrub with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ body: { files: [], env_vars: [] } }]);
-    await makeClient(fetch).snapshots.previewScrub(ref);
-    // The endpoint's omitted `by` means name, so a plain string sends by=ref.
-    expect(calls[0]?.url).toBe(
-      `${API}/rig-snapshots/scrub-preview?sandbox=dev%2F1&by=${kindOf(pinned)}`,
-    );
-  });
-
-  it.each(FORMS)(
+  it.each(PLAIN_AND_PINNED)(
     "get and an unfetched handle's delete with %s",
     async (_label, ref, pinned) => {
       const { fetch, calls } = mockFetch([
@@ -378,52 +385,33 @@ describe("snapshots", () => {
     await snapshot.delete();
     expect(calls[1]?.url).toBe(`${API}/rig-snapshots/snap%2F9?by=id`);
   });
-
-  it.each(INVALID)(
-    "rejects %s before any request",
-    async (_label, ref, message) => {
-      const { fetch, calls } = mockFetch([]);
-      const client = makeClient(fetch);
-      const rig = ref as RigRef;
-      await expect(client.snapshots.create({ rig, name: "s" })).rejects.toThrow(
-        message,
-      );
-      await expect(client.snapshots.previewScrub(rig)).rejects.toThrow(message);
-      await expect(client.snapshots.list({ sourceRig: rig })).rejects.toThrow(
-        message.replace(/^rig/, "sourceRig"),
-      );
-      const snapshotMessage = message.replace(/^rig/, "snapshot");
-      expect(() => client.snapshots.handle(rig)).toThrow(snapshotMessage);
-      await expect(client.snapshots.get(rig)).rejects.toThrow(snapshotMessage);
-      expect(calls).toHaveLength(0);
-    },
-  );
 });
 
 describe("agentSessions", () => {
-  it.each(FORMS)("send({ rig }) with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ body: wireTurn }]);
-    await makeClient(fetch).agentSessions.send({ message: "hi", rig: ref });
-    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
-      message: "hi",
-      [`sandbox_${kindOf(pinned)}`]: "dev/1",
-    });
-  });
-
-  it.each(FORMS)("sendStream({ rig }) with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([
-      { body: `event: done\ndata: ${JSON.stringify(wireTurn)}\n\n` },
-    ]);
-    await makeClient(fetch).agentSessions.sendStream({
-      message: "hi",
-      rig: ref,
-    });
-    expect(calls[0]?.url).toBe(`${API}/agent-sessions/stream`);
-    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
-      message: "hi",
-      [`sandbox_${kindOf(pinned)}`]: "dev/1",
-    });
-  });
+  it.each(PLAIN_AND_PINNED)(
+    "send, sendStream, and list({ rig }) with %s",
+    async (_label, ref, pinned) => {
+      const { fetch, calls } = mockFetch([
+        { body: wireTurn },
+        { body: wireTurnStream },
+        { body: { sessions: [], total: 0 } },
+      ]);
+      const client = makeClient(fetch);
+      await client.agentSessions.send({ message: "hi", rig: ref });
+      await client.agentSessions.sendStream({ message: "hi", rig: ref });
+      await client.agentSessions.list({ rig: ref, limit: 5 });
+      expect(calls.map((c) => c.url)).toEqual([
+        `${API}/agent-sessions`,
+        `${API}/agent-sessions/stream`,
+        `${API}/agent-sessions?limit=5&sandbox=dev%2F1${pinned ? `&sandbox_by=${pinned}` : ""}`,
+      ]);
+      const body = { message: "hi", [`sandbox_${kindOf(pinned)}`]: "dev/1" };
+      expect(calls.slice(0, 2).map((c) => JSON.parse(c.body ?? ""))).toEqual([
+        body,
+        body,
+      ]);
+    },
+  );
 
   it("send maps the deprecated rigId and sandboxId to an ID, behind a non-empty rig", async () => {
     const { fetch, calls } = mockFetch(Array(5).fill({ body: wireTurn }));
@@ -463,17 +451,9 @@ describe("agentSessions", () => {
     });
   });
 
-  it.each(FORMS)("list({ rig }) with %s", async (_label, ref, pinned) => {
-    const { fetch, calls } = mockFetch([{ body: { sessions: [], total: 0 } }]);
-    await makeClient(fetch).agentSessions.list({ rig: ref, limit: 5 });
-    expect(calls[0]?.url).toBe(
-      `${API}/agent-sessions?limit=5&sandbox=dev%2F1${pinned ? `&sandbox_by=${pinned}` : ""}`,
-    );
-  });
-
   it("list maps the deprecated rigRef to a ref, behind a non-empty rig", async () => {
     const { fetch, calls } = mockFetch(
-      Array(3).fill({ body: { sessions: [], total: 0 } }),
+      Array(5).fill({ body: { sessions: [], total: 0 } }),
     );
     const client = makeClient(fetch);
     await client.agentSessions.list({ rigRef: "dev" });
@@ -482,87 +462,15 @@ describe("agentSessions", () => {
       rigRef: "dev",
     });
     await client.agentSessions.list({ rig: "", rigRef: "dev" });
+    // A blank deprecated alias still means no filter, as it always did.
+    await client.agentSessions.list({ rigRef: "" });
+    await client.agentSessions.list({ rigRef: "  " });
     expect(calls.map((c) => c.url)).toEqual([
       `${API}/agent-sessions?sandbox=dev`,
       `${API}/agent-sessions?sandbox=rig%2F9&sandbox_by=id`,
       `${API}/agent-sessions?sandbox=dev`,
+      `${API}/agent-sessions`,
+      `${API}/agent-sessions`,
     ]);
   });
-
-  it.each(INVALID)(
-    "rejects %s before any request",
-    async (_label, ref, message) => {
-      const { fetch, calls } = mockFetch([]);
-      const client = makeClient(fetch);
-      const rig = ref as RigRef;
-      await expect(
-        client.agentSessions.send({ message: "m", rig }),
-      ).rejects.toThrow(message);
-      await expect(
-        client.agentSessions.sendStream({ message: "m", rig }),
-      ).rejects.toThrow(message);
-      await expect(client.agentSessions.list({ rig })).rejects.toThrow(message);
-      expect(calls).toHaveLength(0);
-    },
-  );
-});
-
-// `fetch`'s URL parser collapses dot segments, so a reference of "." or ".."
-// would reach a different route than the one named (e.g. a service delete
-// landing on the rig itself). They are refused before any request.
-describe("dot-segment references", () => {
-  it.each([".", ".."])("rejects the rig %j before any request", async (dot) => {
-    const { fetch, calls } = mockFetch([]);
-    const client = makeClient(fetch);
-    await expect(client.rigs.get(dot)).rejects.toThrow(
-      'rig must not be "." or ".."',
-    );
-    await expect(client.rigs.get({ ref: dot, by: "name" })).rejects.toThrow(
-      'rig must not be "." or ".."',
-    );
-    expect(calls).toHaveLength(0);
-  });
-
-  it.each([".", ".."])(
-    "rejects the service %j before any request",
-    async (dot) => {
-      const { fetch, calls } = mockFetch([]);
-      await expect(
-        makeClient(fetch).services.delete("dev", dot),
-      ).rejects.toThrow('service must not be "." or ".."');
-      expect(calls).toHaveLength(0);
-    },
-  );
-});
-
-// A blank deprecated alias in a list filter keeps its old meaning: no filter.
-describe("blank deprecated list-filter aliases", () => {
-  it.each(["", "  "])(
-    "services.list({ rigRef: %j }) sends no filter",
-    async (blank) => {
-      const { fetch, calls } = mockFetch([{ body: { items: [] } }]);
-      await makeClient(fetch).services.list({ rigRef: blank });
-      expect(calls[0]?.url).toBe(`${API}/rig-services`);
-    },
-  );
-
-  it.each(["", "  "])(
-    "snapshots.list({ sourceRigId: %j }) sends no filter",
-    async (blank) => {
-      const { fetch, calls } = mockFetch([{ body: { items: [] } }]);
-      await makeClient(fetch).snapshots.list({ sourceRigId: blank });
-      expect(calls[0]?.url).toBe(`${API}/rig-snapshots`);
-    },
-  );
-
-  it.each(["", "  "])(
-    "agentSessions.list({ rigRef: %j }) sends no filter",
-    async (blank) => {
-      const { fetch, calls } = mockFetch([
-        { body: { sessions: [], total: 0 } },
-      ]);
-      await makeClient(fetch).agentSessions.list({ rigRef: blank });
-      expect(calls[0]?.url).not.toContain("sandbox");
-    },
-  );
 });
