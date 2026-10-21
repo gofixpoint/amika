@@ -182,23 +182,28 @@ func relativeInside(base, target string) (string, bool) {
 
 // repoRelative returns target's path relative to repoRoot, which must have its
 // symlinks resolved, as Git reports it. Git and the agent can spell the same
-// directory differently (on macOS, /var and /tmp are symlinks into /private),
-// so this finds the nearest ancestor of target that resolves to repoRoot and
-// keeps the components below it as written. Symlinks inside the repository are
-// not followed: a target is matched by the path the agent names.
+// directory differently (on macOS, /var and /tmp are symlinks into /private,
+// and a cwd may be a symlink to a directory inside the repository), so this
+// finds the outermost ancestor of target that resolves into the repository
+// and keeps the components below it as written. Symlinks inside the
+// repository are not followed: a target is matched by the path the agent
+// names.
 func repoRelative(repoRoot, target string) (string, bool) {
 	target, err := filepath.Abs(target)
 	if err != nil {
 		return "", false
 	}
+	repoPath, found := "", false
 	dir, rest := filepath.Dir(target), []string{filepath.Base(target)}
 	for {
-		if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved == repoRoot {
-			return filepath.Join(rest...), true
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			if prefix, inside := relativeInside(repoRoot, resolved); inside {
+				repoPath, found = filepath.Join(append([]string{prefix}, rest...)...), true
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", false
+			return repoPath, found
 		}
 		rest = append([]string{filepath.Base(dir)}, rest...)
 		dir = parent

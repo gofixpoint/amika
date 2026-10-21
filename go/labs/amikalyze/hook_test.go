@@ -65,6 +65,38 @@ paths = ["schema/**"]
 	}
 }
 
+// A cwd that is a symlink to a subdirectory of the repository, such as
+// ~/frontend pointing at mono/frontend, still maps its targets into the
+// repository.
+func TestEvaluateHook_CWDSymlinkToRepoSubdirectory(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, filepath.Join(root, configName), `
+[[freezes]]
+label = "schema"
+paths = ["sub/schema/**"]
+`)
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Join(root, "sub"), link); err != nil {
+		t.Fatal(err)
+	}
+	payload := fmt.Sprintf(`{
+  "cwd": %q,
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {"file_path": %q, "content": "changed"}
+}`, link, filepath.Join("schema", "one.sql"))
+	decision, err := EvaluateHook(SourceClaude, strings.NewReader(payload), Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Frozen() {
+		t.Fatalf("edit through a cwd symlinked to a repository subdirectory was allowed: %+v", decision)
+	}
+}
+
 // Targets are matched by the path the agent names, so a frozen path that is a
 // symlink to a directory outside the repository stays frozen.
 func TestEvaluateHook_FrozenSymlinkOutOfRepo(t *testing.T) {
