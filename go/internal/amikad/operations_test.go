@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -57,6 +58,7 @@ func testOperations(t *testing.T) (*DaemonOperations, string, *fakeSSHDManager) 
 }
 
 func TestSetConnectTokenStoresCanonicalOwnerOnlyValue(t *testing.T) {
+	skipUnlessLinux(t)
 	operations, tokenPath, _ := testOperations(t)
 	token := base64.RawURLEncoding.EncodeToString(make([]byte, norelay.TokenBytes))
 	if err := operations.SetConnectToken(context.Background(), strings.NewReader(token+"\n")); err != nil {
@@ -137,5 +139,15 @@ func TestServeReadyRequiresNoRelayStatusOnExactPort(t *testing.T) {
 
 	if !serveReady(context.Background(), port) {
 		t.Fatal("no-relay status was not considered ready")
+	}
+}
+
+// skipUnlessLinux skips tests that write sensitive files through state.OSFiles,
+// which fails closed off Linux because its no-symlink fd-relative writes are
+// Linux-only (see state/os_files_other.go).
+func skipUnlessLinux(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("amikad sensitive writes require Linux")
 	}
 }

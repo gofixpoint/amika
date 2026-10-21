@@ -31,6 +31,40 @@ paths = ["schema/**"]
 	}
 }
 
+// Git reports the symlink-free repository root, so a cwd and target reached
+// through a symlink must still be recognized as inside the repository. This
+// also covers a target whose directory does not exist yet.
+func TestEvaluateHook_SymlinkedRepoPath(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, filepath.Join(root, configName), `
+[[freezes]]
+label = "schema"
+paths = ["schema/**"]
+`)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		filepath.Join(link, "schema", "one.sql"),
+		filepath.Join(link, "schema", "new", "two.sql"),
+	} {
+		payload := fmt.Sprintf(`{
+  "cwd": %q,
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {"file_path": %q, "content": "changed"}
+}`, link, target)
+		decision, err := EvaluateHook(SourceClaude, strings.NewReader(payload), Overrides{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !decision.Frozen() {
+			t.Fatalf("edit to %s through a symlinked repo path was allowed", target)
+		}
+	}
+}
+
 func TestEvaluateHook_CodexMultiFileAndOverride(t *testing.T) {
 	root := initTestRepo(t)
 	writeTestFile(t, filepath.Join(root, configName), `

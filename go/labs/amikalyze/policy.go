@@ -74,12 +74,14 @@ func Evaluate(repoRoot, target string, overrides Overrides) (Decision, error) {
 	if err != nil {
 		return Decision{}, fmt.Errorf("resolving repository root: %w", err)
 	}
-	target, err = filepath.Abs(target)
+	repoRoot, err = filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return Decision{}, fmt.Errorf("resolving repository root: %w", err)
+	}
+	target, err = resolvePath(target)
 	if err != nil {
 		return Decision{}, fmt.Errorf("resolving target path: %w", err)
 	}
-	repoRoot = filepath.Clean(repoRoot)
-	target = filepath.Clean(target)
 	repoPath, inside := relativeInside(repoRoot, target)
 	if !inside {
 		return Decision{}, fmt.Errorf("target %s is outside repository %s", target, repoRoot)
@@ -185,9 +187,38 @@ func samePath(left, right string) bool {
 	if left == "" || right == "" {
 		return false
 	}
-	leftAbs, leftErr := filepath.Abs(left)
-	rightAbs, rightErr := filepath.Abs(right)
-	return leftErr == nil && rightErr == nil && filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
+	leftResolved, leftErr := resolvePath(left)
+	rightResolved, rightErr := resolvePath(right)
+	return leftErr == nil && rightErr == nil && leftResolved == rightResolved
+}
+
+// resolvePath returns path as an absolute, clean path with symlinks in its
+// directory resolved, so it compares equal to the physical path Git reports
+// as the repository root (on macOS, /var and /tmp are symlinks into /private).
+// The final element is kept as is, since an edit may create it, and missing
+// directories are rejoined under their nearest existing ancestor.
+func resolvePath(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	path = filepath.Clean(path)
+	dir, rest := filepath.Dir(path), []string{filepath.Base(path)}
+	for {
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			return filepath.Join(append([]string{resolved}, rest...)...), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return path, nil
+		}
+		rest = append([]string{filepath.Base(dir)}, rest...)
+		dir = parent
+	}
 }
 
 func sliceSet(values []string) map[string]struct{} {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -105,6 +106,7 @@ func TestSetupRejectsSymlinkedAuthorizedKeysDirectoryWithoutChangingTarget(t *te
 }
 
 func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
+	skipUnlessLinux(t)
 	manager, paths, keygen, _ := testManager(t)
 	if err := manager.Setup(context.Background(), SetupOptions{}); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -166,6 +168,7 @@ func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
 }
 
 func TestSetupRefusesExistingUserConfigurationUnlessForced(t *testing.T) {
+	skipUnlessLinux(t)
 	manager, paths, _, _ := testManager(t)
 	if err := os.MkdirAll(filepath.Dir(paths.Config), 0o700); err != nil {
 		t.Fatal(err)
@@ -186,6 +189,7 @@ func TestSetupRefusesExistingUserConfigurationUnlessForced(t *testing.T) {
 }
 
 func TestSetupRefusesInvalidExistingHostKeyUnlessForced(t *testing.T) {
+	skipUnlessLinux(t)
 	manager, paths, keygen, _ := testManager(t)
 	if err := os.MkdirAll(filepath.Dir(paths.HostPrivateKey), 0o700); err != nil {
 		t.Fatal(err)
@@ -211,6 +215,7 @@ func TestSetupRefusesInvalidExistingHostKeyUnlessForced(t *testing.T) {
 }
 
 func TestAuthorizedKeysRejectsOptionsAndWritesCanonicalKeys(t *testing.T) {
+	skipUnlessLinux(t)
 	manager, paths, _, _ := testManager(t)
 	key := newTestAuthorizedKey(t)
 	optionBearing := "command=\"touch /tmp/pwned\" " + key
@@ -232,6 +237,7 @@ func TestAuthorizedKeysRejectsOptionsAndWritesCanonicalKeys(t *testing.T) {
 }
 
 func TestClearAuthorizedKeysOverwritesPriorKeysWithEmptySet(t *testing.T) {
+	skipUnlessLinux(t)
 	manager, paths, _, _ := testManager(t)
 	key := newTestAuthorizedKey(t)
 	if err := manager.SetAuthorizedKeys(context.Background(), strings.NewReader(key+"\n")); err != nil {
@@ -263,6 +269,7 @@ func newTestAuthorizedKey(t *testing.T) string {
 }
 
 func TestShowHostKeyAndServeUseOnlyPublicManagedState(t *testing.T) {
+	skipUnlessLinux(t)
 	manager, _, _, processes := testManager(t)
 	if err := manager.Setup(context.Background(), SetupOptions{}); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -303,5 +310,15 @@ func TestManagedPortIsOffSystemSSHAndMatchesTheDialTarget(t *testing.T) {
 	}
 	if got, want := manager.LoopbackAddress(), fmt.Sprintf("127.0.0.1:%d", manager.paths.Port); got != want {
 		t.Fatalf("LoopbackAddress = %q, want %q", got, want)
+	}
+}
+
+// skipUnlessLinux skips tests that write sensitive files through state.OSFiles,
+// which fails closed off Linux because its no-symlink fd-relative writes are
+// Linux-only (see state/os_files_other.go).
+func skipUnlessLinux(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("amikad sensitive writes require Linux")
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -427,6 +428,7 @@ func TestStoreSerializesConcurrentManifestUpdates(t *testing.T) {
 }
 
 func TestOSStoresSerializeManifestAcrossInstances(t *testing.T) {
+	skipUnlessLinux(t)
 	directory := t.TempDir()
 	manifestPath := filepath.Join(directory, "injected-paths.json")
 	files := OSFiles{}
@@ -488,5 +490,15 @@ func assertManifestPathSet(t *testing.T, data []byte, want []string) {
 		if !seen[path] {
 			t.Fatalf("manifest %v missing %q", got, path)
 		}
+	}
+}
+
+// skipUnlessLinux skips tests that write sensitive files through state.OSFiles,
+// which fails closed off Linux because its no-symlink fd-relative writes are
+// Linux-only (see state/os_files_other.go).
+func skipUnlessLinux(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("amikad sensitive writes require Linux")
 	}
 }

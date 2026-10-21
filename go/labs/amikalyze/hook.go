@@ -74,7 +74,13 @@ func EvaluateHook(source Source, input io.Reader, overrides Overrides) (HookDeci
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(payload.CWD, target)
 		}
-		if _, inside := relativeInside(repoRoot, filepath.Clean(target)); !inside {
+		// Git reports a symlink-free root, so the target must be resolved too
+		// or a cwd reached through a symlink would put every target outside it.
+		target, err = resolvePath(target)
+		if err != nil {
+			return result, fmt.Errorf("resolving target path: %w", err)
+		}
+		if _, inside := relativeInside(repoRoot, target); !inside {
 			continue
 		}
 		decision, err := Evaluate(repoRoot, target, overrides)
