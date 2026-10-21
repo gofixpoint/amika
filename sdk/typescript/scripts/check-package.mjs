@@ -24,13 +24,19 @@ try {
   const source = `
 import { AmikaClient, AmikaHTTPError, AmikaWaitError, type Rig, type RigHandle,
   type CreateRigRequest, type RemoteRig, type Sandbox, type RemoteSandbox,
-  type SandboxSnapshot, type RigWaitOptions, type AgentSession } from "@amika/sdk";
+  type SandboxSnapshot, type RigWaitOptions, type AgentSession, type RefKind,
+  type ResourceRef, type RigRef } from "@amika/sdk";
 // @ts-expect-error Retired runtime exports are no longer public.
 import { StaticTokenSource, RESERVED_PORT_MIN, RESERVED_PORT_MAX, validateServicePort } from "@amika/sdk";
 // @ts-expect-error Internal transport is not an exported package subpath.
 import { HTTPClient } from "@amika/sdk/dist/internal/http.js";
 const client = new AmikaClient({ apiKey: "example" });
 const handle: RigHandle = client.rigs.handle("dev");
+const kind: RefKind = "name";
+const byName: RigRef = { ref: "dev", by: kind };
+const snapshotRef: ResourceRef = "base";
+client.rigs.handle(byName);
+client.snapshots.handle(snapshotRef);
 // @ts-expect-error Unchecked handles do not pretend to contain fetched metadata.
 handle.status;
 const pending: Promise<Rig> = client.rigs.get("dev");

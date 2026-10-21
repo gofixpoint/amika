@@ -25,7 +25,7 @@ describe("grouped and bound operations", () => {
     expect(session.messages[0]?.content).toBe("second");
     expect(JSON.parse(calls[0]!.body!)).toEqual({
       message: "first",
-      sandbox_id: "rig1",
+      sandbox_ref: "rig1",
       model: "model1",
       effort: "high",
     });
@@ -59,7 +59,7 @@ describe("grouped and bound operations", () => {
     await session.sendStream({ message: "again" });
     expect(deltas).toEqual(["hello"]);
     expect(bodies).toEqual([
-      { message: "hi", sandbox_id: "rig1" },
+      { message: "hi", sandbox_ref: "rig1" },
       { message: "again", session_id: "chat1" },
     ]);
   });

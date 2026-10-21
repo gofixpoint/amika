@@ -1,4 +1,5 @@
 import { type LegacyShape } from "../internal/types.js";
+import type { RigRef } from "../resource-ref.js";
 
 /**
  * Provider-specific Daytona detail nested under {@link RigSnapshot.daytona}.
@@ -100,22 +101,39 @@ export interface RigSnapshotCaptureFields {
 }
 
 /**
- * Request body for POST /api/v0beta1/rig-snapshots. The union requires one of
- * the two spellings for the source rig without forcing callers that already
- * pass `sandboxRef` to change.
+ * Request body for POST /api/v0beta1/rig-snapshots. The union requires the
+ * source rig in one of three spellings: `rig` (canonical), or the deprecated
+ * `rigRef` and `sandboxRef`, so callers that already pass those need not
+ * change. Precedence is `rig`, then `rigRef`, then `sandboxRef`; the first
+ * non-empty one wins.
  */
 export type CreateRigSnapshotRequest = RigSnapshotCaptureFields &
   (
     | {
-        /** Source rig name or ID. */
-        rigRef: string;
-        /** @deprecated Use `rigRef`. */
+        /**
+         * Source rig. A plain string matches its ID or name (409 if it is one
+         * rig's ID and another's name); `{ ref, by: "id" | "name" }` pins one.
+         */
+        rig: RigRef;
+        /** @deprecated Use `rig`; a string there behaves the same. */
+        rigRef?: string;
+        /** @deprecated Use `rig`; a string there behaves the same. */
         sandboxRef?: string;
       }
     | {
-        /** @deprecated Use `rigRef`. */
+        /** @deprecated Use `rig`; a string there behaves the same (ID or name). */
+        rigRef: string;
+        /** Source rig; a non-empty value takes precedence over rigRef and sandboxRef. */
+        rig?: RigRef;
+        /** @deprecated Use `rig`. */
+        sandboxRef?: string;
+      }
+    | {
+        /** @deprecated Use `rig`; a string there behaves the same (ID or name). */
         sandboxRef: string;
-        /** Source rig name or ID; a non-empty value takes precedence over sandboxRef. */
+        /** Source rig; a non-empty value takes precedence over rigRef and sandboxRef. */
+        rig?: RigRef;
+        /** @deprecated Use `rig`. A non-empty value takes precedence over sandboxRef. */
         rigRef?: string;
       }
   );
@@ -130,7 +148,7 @@ export type CreateRigSnapshotRequest = RigSnapshotCaptureFields &
  * type is still assignable to {@link CreateRigSnapshotRequest}.
  */
 export type CreateSandboxSnapshotRequest = RigSnapshotCaptureFields & {
-  /** Source rig, by name or id (the server resolves id first, then name). */
+  /** Source rig, by ID or name. */
   sandboxRef: string;
   rigRef?: string;
 };

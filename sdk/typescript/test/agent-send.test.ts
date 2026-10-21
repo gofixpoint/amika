@@ -48,7 +48,9 @@ describe("AmikaClient.agentSend", () => {
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/agent-sessions`);
     expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
       message: "do it",
-      sandbox_id: "org/dev",
+      // An unfetched handle sends the caller's plain-string reference as a
+      // ref (ID or name).
+      sandbox_ref: "org/dev",
       session_id: "chat1",
       agent: "codex",
     });

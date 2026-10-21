@@ -1,5 +1,14 @@
 import { API_BASE_PATH } from "../internal/constants.js";
 import type { HTTPClient } from "../internal/http.js";
+import {
+  idRef,
+  normalizeRef,
+  pickRef,
+  refFieldName,
+  refPathSegment,
+  setRefSelector,
+  type NormalizedRef,
+} from "../internal/resource-ref.js";
 import { mapArray } from "../internal/wire.js";
 import type { Snapshots } from "./snapshot.js";
 import {
@@ -15,7 +24,13 @@ import {
 
 export function createSnapshots(http: HTTPClient): Snapshots {
   const base = `${API_BASE_PATH}/rig-snapshots`;
-  const path = (ref: string) => `${base}/${encodeURIComponent(ref)}?by=ref`;
+  // The server defaults an omitted snapshot `by` to name, so a plain string
+  // sends by=ref explicitly to keep its ID-or-name meaning.
+  const path = (ref: NormalizedRef) => {
+    const params = new URLSearchParams();
+    setRefSelector(params, "by", ref, "ref");
+    return `${base}/${refPathSegment(ref)}?${params}`;
+  };
   const transport: SnapshotTransport = {
     get: async (ref, signal) =>
       rigSnapshotFromWire(
@@ -46,8 +61,15 @@ export function createSnapshots(http: HTTPClient): Snapshots {
       const params = new URLSearchParams();
       if (options?.repositoryId)
         params.set("repository_id", options.repositoryId);
-      const source = options?.sourceRigId || options?.sourceSandboxId;
-      if (source) params.set("source_sandbox_id", source);
+      // An empty deprecated alias keeps its old meaning in a filter: none.
+      const source = pickRef(
+        "sourceRig",
+        options?.sourceRig,
+        idRef(options?.sourceRigId || undefined),
+        idRef(options?.sourceSandboxId || undefined),
+      );
+      if (source)
+        params.set(refFieldName("source_sandbox", source), source.value);
       const query = params.toString();
       const envelope = await http.doJSON<{ items?: unknown[] }>(
         "GET",
@@ -58,10 +80,17 @@ export function createSnapshots(http: HTTPClient): Snapshots {
       );
     },
     get: async (ref) =>
-      createSnapshotResource(await transport.get(ref), transport),
+      createSnapshotResource(
+        await transport.get(normalizeRef(ref, "snapshot")),
+        transport,
+      ),
     handle: (ref) => createSnapshotHandle(ref, transport),
-    previewScrub: async (rigRef) => {
-      const params = new URLSearchParams({ sandbox: rigRef, by: "ref" });
+    previewScrub: async (rig) => {
+      const ref = normalizeRef(rig, "rig");
+      const params = new URLSearchParams({ sandbox: ref.value });
+      // The rig is the endpoint's only resource reference, so it takes the
+      // bare `by`. An omitted `by` means name here, so send ref explicitly.
+      setRefSelector(params, "by", ref, "ref");
       return rigScrubPreviewFromWire(
         (await http.doJSON<Record<string, unknown>>(
           "GET",

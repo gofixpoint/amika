@@ -109,7 +109,7 @@ describeFunctional("rig functional tests", () => {
         expect(typeof resp.response).toBe("string");
         expect(resp.isError).toBe(false);
 
-        const onRig = await client.agentSessions.list({ rigRef: rig.name });
+        const onRig = await client.agentSessions.list({ rig: rig.name });
         expect(onRig.sessions.some((s) => s.sessionId === resp.sessionId)).toBe(
           true,
         );

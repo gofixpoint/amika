@@ -148,11 +148,11 @@ describe("AmikaClient rig snapshots", () => {
       typeof client.createRigSnapshot
     >[0];
     await expect(client.createRigSnapshot(noRef)).rejects.toThrow(
-      /rigRef \(or its alias sandboxRef\) is required/,
+      /rig \(or its alias rigRef or sandboxRef\) is required/,
     );
     await expect(
       client.createRigSnapshot({ rigRef: "", sandboxRef: "", name: "s" }),
-    ).rejects.toThrow(/is required/);
+    ).rejects.toThrow("rig must not be empty");
     expect(calls).toHaveLength(0);
   });
 

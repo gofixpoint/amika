@@ -6,25 +6,36 @@ import type {
 } from "../agent-sessions/types.js";
 import { bindOperations } from "../internal/resource.js";
 import { pollTiming, sleep, withDeadline } from "../internal/polling.js";
+import { normalizeRef, type NormalizedRef } from "../internal/resource-ref.js";
+import type { RigRef } from "../resource-ref.js";
 import type { RemoteRig } from "./types.js";
 import type { Rig, RigHandle } from "./rig.js";
 
 export interface RigTransport {
-  get(ref: string, signal?: AbortSignal): Promise<RemoteRig>;
-  start(ref: string): Promise<void>;
-  stop(ref: string): Promise<void>;
-  delete(ref: string): Promise<void>;
+  get(ref: NormalizedRef, signal?: AbortSignal): Promise<RemoteRig>;
+  start(ref: NormalizedRef): Promise<void>;
+  stop(ref: NormalizedRef): Promise<void>;
+  delete(ref: NormalizedRef): Promise<void>;
   agentSessions: AgentSessions;
 }
 
 export function createRigHandle(
-  ref: string,
+  given: RigRef,
   transport: RigTransport,
   data?: RemoteRig,
 ): RigHandle {
-  if (!ref.trim()) throw new AmikaError("rig name or ID must not be empty");
+  const initial = normalizeRef(given, "rig");
+  const ref = initial.value;
   let rig: Rig | undefined;
-  const target = () => rig?.id || ref;
+  // Once the rig has been fetched, pin its ID so a later rename (or another
+  // rig taking this name) cannot change the target. Before that, the caller's
+  // reference goes out exactly as given.
+  const target = (): NormalizedRef =>
+    rig?.id ? { value: rig.id, kind: "id", pinned: true } : initial;
+  const targetRef = (): RigRef => {
+    const t = target();
+    return t.pinned ? { ref: t.value, by: t.kind } : t.value;
+  };
   const update = (latest: RemoteRig): Rig => {
     if (rig) Object.assign(rig, latest);
     else
@@ -107,13 +118,13 @@ export function createRigHandle(
     stop: () => transport.stop(target()),
     delete: () => transport.delete(target()),
     send: (request: AgentSendRequest) =>
-      transport.agentSessions.send({ ...request, rigId: target() }),
+      transport.agentSessions.send({ ...request, rig: targetRef() }),
     sendStream: (
       request: AgentSendRequest,
       handlers?: AgentSessionStreamHandlers,
     ) =>
       transport.agentSessions.sendStream(
-        { ...request, rigId: target() },
+        { ...request, rig: targetRef() },
         handlers,
       ),
   };

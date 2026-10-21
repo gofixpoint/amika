@@ -74,9 +74,10 @@ describe("rig handles and eager lookups", () => {
       name: "renamed",
       setupStatus: "ok",
     });
+    // The name goes out as given; once fetched, the ID is pinned with by=id.
     expect(calls.map((c) => c.url.split("/rigs/")[1])).toEqual([
       "dev",
-      "rig%2F1",
+      "rig%2F1?by=id",
     ]);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -128,9 +129,9 @@ describe("rig handles and eager lookups", () => {
     expect(
       calls.slice(1).map((c) => [c.method, c.url.split("/rigs/")[1]]),
     ).toEqual([
-      ["GET", "rig%2F1"],
-      ["POST", "rig%2F1/start"],
-      ["POST", "rig%2F1/stop"],
+      ["GET", "rig%2F1?by=id"],
+      ["POST", "rig%2F1/start?by=id"],
+      ["POST", "rig%2F1/stop?by=id"],
     ]);
     expect(JSON.stringify(rig)).not.toMatch(/test-key|refresh|transport|fetch/);
   });
@@ -191,7 +192,7 @@ describe("snapshot resources", () => {
     expect(await pending).toBe(snapshot);
     expect(snapshot.state).toBe("active");
     await snapshot.delete();
-    expect(calls[1]?.url).toContain("snap%2F1?by=ref");
+    expect(calls[1]?.url).toContain("snap%2F1?by=id");
     expect(JSON.stringify(snapshot)).not.toMatch(/test-key|wait|delete|fetch/);
   });
 

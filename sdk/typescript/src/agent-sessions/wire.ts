@@ -17,20 +17,23 @@ import {
   mapArray,
   num,
 } from "../internal/wire.js";
+import { idRef, pickRef, refFieldName } from "../internal/resource-ref.js";
 
 export function agentSessionSendRequestToWire(
   r: AgentSessionSendRequest,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { message: r.message };
-  // `||`, not `??`, matching the other two sites that accept both spellings: an
-  // empty rig spelling falls through to the legacy one rather than shadowing it.
-  // Preserves 0.11 for every input, which sent `sandbox_id` whenever it was set.
-  const rigId = r.rigId || r.sandboxId;
+  // The first non-empty of rig, rigId, sandboxId wins, so an empty canonical
+  // spelling falls through to a legacy one rather than shadowing it. The
+  // deprecated rigId/sandboxId are IDs: the server's sandbox_id field matches
+  // by ID only.
+  const rig = pickRef("rig", r.rig, idRef(r.rigId), idRef(r.sandboxId));
   if (r.agent !== undefined) out["agent"] = r.agent;
   if (r.model !== undefined) out["model"] = r.model;
   if (r.effort !== undefined) out["effort"] = r.effort;
   if (r.sessionId !== undefined) out["session_id"] = r.sessionId;
-  if (rigId !== undefined) out["sandbox_id"] = rigId;
+  // At most one of sandbox_id / sandbox_name / sandbox_ref.
+  if (rig) out[refFieldName("sandbox", rig)] = rig.value;
   if (r.newSession !== undefined) out["new_session"] = r.newSession;
   if (r.repoUrl !== undefined) out["repo_url"] = r.repoUrl;
   return out;

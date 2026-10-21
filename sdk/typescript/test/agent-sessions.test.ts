@@ -109,7 +109,6 @@ describe("AmikaClient.sendAgentSession", () => {
       { status: 200, body: DONE_PAYLOAD },
       { status: 200, body: DONE_PAYLOAD },
       { status: 200, body: DONE_PAYLOAD },
-      { status: 200, body: DONE_PAYLOAD },
     ]);
     const client = makeClient(fetch);
     await client.sendAgentSession({ message: "hi", sandboxId: "sbx_1" });
@@ -125,12 +124,15 @@ describe("AmikaClient.sendAgentSession", () => {
       rigId: "",
       sandboxId: "sbx_1",
     });
-    // An explicitly empty legacy value is still sent, exactly as 0.11 sent it.
-    await client.sendAgentSession({ message: "hi", sandboxId: "" });
+    // An explicitly empty value is rejected before sending; the server would
+    // have answered 400 for the empty sandbox_id earlier releases sent.
+    await expect(
+      client.sendAgentSession({ message: "hi", sandboxId: "" }),
+    ).rejects.toThrow("rig must not be empty");
+    expect(calls).toHaveLength(3);
     expect(JSON.parse(calls[0]?.body ?? "").sandbox_id).toBe("sbx_1");
     expect(JSON.parse(calls[1]?.body ?? "").sandbox_id).toBe("rig_1");
     expect(JSON.parse(calls[2]?.body ?? "").sandbox_id).toBe("sbx_1");
-    expect(JSON.parse(calls[3]?.body ?? "").sandbox_id).toBe("");
   });
 
   it("leaves usage undefined when the provider reports none", async () => {

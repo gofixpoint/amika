@@ -2,6 +2,13 @@ import type { AgentSessions } from "../agent-sessions/types.js";
 import { AmikaError } from "../errors.js";
 import { API_BASE_PATH } from "../internal/constants.js";
 import type { HTTPClient } from "../internal/http.js";
+import {
+  normalizeRef,
+  queryString,
+  refPathSegment,
+  setRefSelector,
+  type NormalizedRef,
+} from "../internal/resource-ref.js";
 import { mapArray } from "../internal/wire.js";
 import type { Rigs } from "./rig.js";
 import {
@@ -15,8 +22,13 @@ export function createRigs(
   http: HTTPClient,
   agentSessions: AgentSessions,
 ): Rigs {
-  const path = (ref: string) =>
-    `${API_BASE_PATH}/rigs/${encodeURIComponent(ref)}`;
+  // The rig is the primary resource here, so its selector is the bare `by`.
+  // The server defaults an omitted `by` to `ref`, so a plain string sends none.
+  const path = (ref: NormalizedRef, suffix = "") => {
+    const params = new URLSearchParams();
+    setRefSelector(params, "by", ref);
+    return `${API_BASE_PATH}/rigs/${refPathSegment(ref)}${suffix}${queryString(params)}`;
+  };
   const transport: RigTransport = {
     get: async (ref, signal) =>
       remoteRigFromWire(
@@ -28,10 +40,10 @@ export function createRigs(
         )) ?? {},
       ),
     start: async (ref) => {
-      await http.doJSON("POST", `${path(ref)}/start`);
+      await http.doJSON("POST", path(ref, "/start"));
     },
     stop: async (ref) => {
-      await http.doJSON("POST", `${path(ref)}/stop`);
+      await http.doJSON("POST", path(ref, "/stop"));
     },
     delete: async (ref) => {
       await http.doJSON("DELETE", path(ref));
@@ -63,7 +75,11 @@ export function createRigs(
         await http.doJSON("GET", `${API_BASE_PATH}/rigs`),
         remoteRigFromWire,
       ).map((data) => createRigResource(data, transport)),
-    get: async (ref) => createRigResource(await transport.get(ref), transport),
+    get: async (ref) =>
+      createRigResource(
+        await transport.get(normalizeRef(ref, "rig")),
+        transport,
+      ),
     handle: (ref) => createRigHandle(ref, transport),
     getAndWait: async (ref, options) =>
       createRigHandle(ref, transport).wait(options),

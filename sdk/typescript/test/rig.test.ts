@@ -46,8 +46,8 @@ describe("rig resources", () => {
       expect(Object.keys(rig)).not.toContain("wait");
       await rig.delete();
       expect(calls.slice(1).map(({ method, url }) => [method, url])).toEqual([
-        ["GET", `${BASE}/api/v0beta1/rigs/rig%2F1`],
-        ["DELETE", `${BASE}/api/v0beta1/rigs/rig%2F1`],
+        ["GET", `${BASE}/api/v0beta1/rigs/rig%2F1?by=id`],
+        ["DELETE", `${BASE}/api/v0beta1/rigs/rig%2F1?by=id`],
       ]);
     },
   );
@@ -61,7 +61,7 @@ describe("rig resources", () => {
       ]);
       const rigs = await client(fetch)[method]();
       await rigs[1]!.delete();
-      expect(calls[1]?.url).toBe(`${BASE}/api/v0beta1/rigs/rig%2F2`);
+      expect(calls[1]?.url).toBe(`${BASE}/api/v0beta1/rigs/rig%2F2?by=id`);
     },
   );
 

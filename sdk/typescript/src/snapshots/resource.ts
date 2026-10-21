@@ -1,23 +1,27 @@
 import { AmikaError } from "../errors.js";
 import { pollTiming, sleep, withDeadline } from "../internal/polling.js";
 import { bindOperations } from "../internal/resource.js";
+import { normalizeRef, type NormalizedRef } from "../internal/resource-ref.js";
+import type { ResourceRef } from "../resource-ref.js";
 import type { Snapshot, SnapshotHandle } from "./snapshot.js";
 import type { RigSnapshot } from "./types.js";
 
 export interface SnapshotTransport {
-  get(ref: string, signal?: AbortSignal): Promise<RigSnapshot>;
-  delete(ref: string): Promise<void>;
+  get(ref: NormalizedRef, signal?: AbortSignal): Promise<RigSnapshot>;
+  delete(ref: NormalizedRef): Promise<void>;
 }
 
 export function createSnapshotHandle(
-  ref: string,
+  given: ResourceRef,
   transport: SnapshotTransport,
   data?: RigSnapshot,
 ): SnapshotHandle {
-  if (!ref.trim())
-    throw new AmikaError("snapshot name or ID must not be empty");
+  const initial = normalizeRef(given, "snapshot");
+  const ref = initial.value;
   let snapshot: Snapshot | undefined;
-  const target = () => snapshot?.id || ref;
+  // Pin the fetched snapshot's ID; before that, use the reference as given.
+  const target = (): NormalizedRef =>
+    snapshot?.id ? { value: snapshot.id, kind: "id", pinned: true } : initial;
   const update = (latest: RigSnapshot): Snapshot => {
     if (snapshot) Object.assign(snapshot, latest);
     else

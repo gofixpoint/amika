@@ -16,6 +16,11 @@ import {
   agentSessionDetailFromWire,
 } from "./wire.js";
 import { readAgentSessionStream } from "./stream.js";
+import {
+  pickRef,
+  queryString,
+  setRefSelector,
+} from "../internal/resource-ref.js";
 import { createAgentSessionResource } from "./resource.js";
 
 export function createAgentSessions(http: HTTPClient): AgentSessions {
@@ -57,8 +62,15 @@ class AgentSessionsClient implements AgentSessions {
     const params = new URLSearchParams();
     const limit = options?.limit;
     if (limit && limit > 0) params.set("limit", String(limit));
-    if (options?.rigRef) params.set("sandbox", options.rigRef);
-    const qs = params.size > 0 ? `?${params}` : "";
+    // A referenced rig in the query: its value in `sandbox` plus the
+    // namespaced `sandbox_by` selector, which the server defaults to ref.
+    // An empty deprecated rigRef keeps its old meaning in a filter: none.
+    const rig = pickRef("rig", options?.rig, options?.rigRef || undefined);
+    if (rig) {
+      params.set("sandbox", rig.value);
+      setRefSelector(params, "sandbox_by", rig);
+    }
+    const qs = queryString(params);
     const data = await this.http.doJSON<Record<string, unknown>>(
       "GET",
       `${API_BASE_PATH}/agent-sessions${qs}`,

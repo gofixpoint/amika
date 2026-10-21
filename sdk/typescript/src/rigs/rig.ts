@@ -3,6 +3,7 @@ import type {
   AgentSessionSendResponse,
   AgentSessionStreamHandlers,
 } from "../agent-sessions/types.js";
+import type { RigRef } from "../resource-ref.js";
 import type { CreateRigRequest, RemoteRig, RemoteSandbox } from "./types.js";
 
 /** Stable lifecycle states. stopped also accepts the API's suspended status. */
@@ -21,10 +22,14 @@ export interface RigWaitOptions {
 }
 
 /**
- * An unchecked, client-bound rig name or ID. Construct with client.rigs.handle().
+ * An unchecked, client-bound rig reference. Construct with client.rigs.handle().
  * Construction makes no request and opens no connection. A handle has no fetched
  * metadata; use fetch() or wait() to obtain a Rig. HTTP errors, including 404,
  * propagate from operations. A handle never creates a missing rig.
+ *
+ * Until the rig has been fetched, operations identify it by the {@link RigRef}
+ * passed to handle(), exactly as given. Once fetch() or wait() has returned
+ * it, every operation pins the fetched rig's ID (`{ ref: rig.id, by: "id" }`).
  */
 export interface RigHandle {
   /** Fetch current metadata now. Rejects if the rig does not exist or is inaccessible. */
@@ -51,7 +56,8 @@ export interface RigHandle {
 }
 
 /**
- * Fetched rig metadata with operations bound to its ID. Data is an observation,
+ * Fetched rig metadata with operations bound to its ID (sent as
+ * `{ ref: rig.id, by: "id" }`). Data is an observation,
  * not a live view: refresh() and wait() update and return this same object.
  * Bound methods and client credentials are excluded from JSON and object spreads.
  */
@@ -69,10 +75,17 @@ export interface Rigs {
   create(request: CreateRigRequest): Promise<Rig>;
   /** Fetch all rigs accessible to the caller, each with bound operations. */
   list(): Promise<Rig[]>;
-  /** Fetch one rig by name or ID immediately. A stopped rig is returned without starting or waiting. */
-  get(nameOrId: string): Promise<Rig>;
-  /** Construct an unchecked handle without a request. Does not establish existence or readiness. */
-  handle(nameOrId: string): RigHandle;
+  /**
+   * Fetch one rig immediately. A plain string matches its ID or name (409 if it
+   * is one rig's ID and another's name); `{ ref, by: "id" | "name" }` pins one.
+   * A stopped rig is returned without starting or waiting.
+   */
+  get(rig: RigRef): Promise<Rig>;
+  /**
+   * Construct an unchecked handle without a request. Does not establish
+   * existence or readiness. Rejects an empty reference immediately.
+   */
+  handle(rig: RigRef): RigHandle;
   /** Fetch and wait under one deadline. Uses the first response as the first readiness observation. */
-  getAndWait(nameOrId: string, options?: RigWaitOptions): Promise<Rig>;
+  getAndWait(rig: RigRef, options?: RigWaitOptions): Promise<Rig>;
 }

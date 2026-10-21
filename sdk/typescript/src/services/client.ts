@@ -7,59 +7,87 @@ import {
   type ServiceLookup,
 } from "./types.js";
 import { API_BASE_PATH } from "../internal/constants.js";
+import {
+  normalizeRef,
+  pickRef,
+  queryString,
+  refFieldName,
+  refPathSegment,
+  setRefSelector,
+} from "../internal/resource-ref.js";
 import { mapArray } from "../internal/wire.js";
+import { type RigRef } from "../resource-ref.js";
 import { rigServiceResourceFromWire, rigServiceRequestToWire } from "./wire.js";
 
 export function createServices(http: HTTPClient): Services {
   return new ServicesClient(http);
 }
 
+/**
+ * `/rigs/{rig}/services[/{service}]` plus its query. The rig is the parent
+ * here, so its selector is the namespaced `sandbox_by` (server default `ref`,
+ * so a plain string sends none); `by` belongs to the service.
+ */
+function servicePath(
+  rig: RigRef,
+  service?: { ref: string; by: ServiceLookup },
+): string {
+  const ref = normalizeRef(rig, "rig");
+  const params = new URLSearchParams();
+  if (service) params.set("by", service.by);
+  setRefSelector(params, "sandbox_by", ref);
+  const tail = service ? `/${encodeURIComponent(service.ref)}` : "";
+  return `${API_BASE_PATH}/rigs/${refPathSegment(ref)}/services${tail}${queryString(params)}`;
+}
+
 class ServicesClient implements Services {
   constructor(private readonly http: HTTPClient) {}
   async list(options?: ListServicesOptions): Promise<RigServiceResource[]> {
-    const rigRef = options?.rigRef;
+    // An empty deprecated rigRef keeps its old meaning in a filter: none.
+    const rig = pickRef("rig", options?.rig, options?.rigRef || undefined);
     const params = new URLSearchParams();
-    // The query key is the server's, which still spells it `sandbox_ref`.
-    if (rigRef) params.set("sandbox_ref", rigRef);
-    const qs = params.toString();
+    // The org-wide list filters with the server's mutually exclusive
+    // sandbox_id / sandbox_name / sandbox_ref query fields.
+    if (rig) params.set(refFieldName("sandbox", rig), rig.value);
     const envelope = await this.http.doJSON<{ items?: unknown[] }>(
       "GET",
-      `${API_BASE_PATH}/rig-services${qs ? `?${qs}` : ""}`,
+      `${API_BASE_PATH}/rig-services${queryString(params)}`,
     );
     return mapArray(envelope?.items, rigServiceResourceFromWire);
   }
 
   async create(
-    rigRef: string,
+    rig: RigRef,
     req: RigServiceRequest,
   ): Promise<RigServiceResource> {
+    const path = servicePath(rig);
     const data = await this.http.doJSON<Record<string, unknown>>(
       "POST",
-      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigRef)}/services`,
+      path,
       rigServiceRequestToWire(req),
     );
     return rigServiceResourceFromWire(data ?? {});
   }
 
   async replace(
-    rigRef: string,
+    rig: RigRef,
     serviceRef: string,
     req: RigServiceRequest,
     by: ServiceLookup = "name",
   ): Promise<RigServiceResource> {
-    const params = new URLSearchParams({ by });
+    const path = servicePath(rig, { ref: serviceRef, by });
     const data = await this.http.doJSON<Record<string, unknown>>(
       "PUT",
-      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigRef)}/services/${encodeURIComponent(serviceRef)}?${params.toString()}`,
+      path,
       rigServiceRequestToWire(req),
     );
     return rigServiceResourceFromWire(data ?? {});
   }
 
-  async delete(rigRef: string, serviceRef: string): Promise<void> {
+  async delete(rig: RigRef, serviceRef: string): Promise<void> {
     await this.http.doJSON(
       "DELETE",
-      `${API_BASE_PATH}/rigs/${encodeURIComponent(rigRef)}/services/${encodeURIComponent(serviceRef)}?by=name`,
+      servicePath(rig, { ref: serviceRef, by: "name" }),
     );
   }
 }

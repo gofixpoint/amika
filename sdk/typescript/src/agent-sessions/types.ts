@@ -1,3 +1,5 @@
+import type { RigRef } from "../resource-ref.js";
+
 /** Request for the rig-scoped alias of sendAgentSession. */
 export type AgentSendRequest = Pick<
   AgentSessionSendRequest,
@@ -9,12 +11,12 @@ export type AgentSendResponse = AgentSessionSendResponse;
 
 /**
  * Request body for POST /api/v0beta1/agent-sessions. Only `message` is
- * required: `sessionId` continues an existing chat, `rigId` routes into a
+ * required: `sessionId` continues an existing chat, `rig` routes into a
  * specific rig, and `repoUrl` is used only when a rig has to be
  * created behind the scenes.
  *
- * `sandboxId` is the legacy spelling of `rigId`. Setting both is allowed and a
- * non-empty `rigId` wins, but there is no reason to.
+ * `rigId` and `sandboxId` are deprecated ID-only spellings of `rig`. When more
+ * than one is set, the first non-empty of `rig`, `rigId`, `sandboxId` wins.
  */
 export interface AgentSessionSendRequest {
   /** User prompt to send to the coding agent. */
@@ -25,11 +27,23 @@ export interface AgentSessionSendRequest {
   model?: string | null;
   /** Omitted inherits; null resets. The server validates support for the agent. */
   effort?: "low" | "medium" | "high" | "xhigh" | "max" | null;
-  /** Continue this durable chat. Omit to route by rigId or start a new chat. */
+  /** Continue this durable chat. Omit to route by rig or start a new chat. */
   sessionId?: string;
-  /** Target rig name or ID. Omit to let the server select or create a rig. */
+  /**
+   * Target rig. A plain string matches its ID or name (409 if it is one rig's
+   * ID and another's name); `{ ref, by: "id" | "name" }` pins one. Omit to let
+   * the server select or create a rig. A non-empty value takes precedence over
+   * rigId and sandboxId.
+   */
+  rig?: RigRef;
+  /**
+   * @deprecated Use `rig`. Sent as `{ ref: rigId, by: "id" }`: the value must
+   * be the rig's ID. Earlier releases documented this as "name or ID", but the
+   * server's `sandbox_id` field now matches by ID only; pass a name, or a value
+   * that may be either, as `rig` instead.
+   */
   rigId?: string;
-  /** @deprecated Use {@link AgentSessionSendRequest.rigId}. */
+  /** @deprecated Use `rig`. Like rigId, an ID only; a non-empty rigId takes precedence. */
   sandboxId?: string;
   /** Start a new chat on the selected rig instead of reusing its current chat. */
   newSession?: boolean;
@@ -176,13 +190,24 @@ export interface AgentSessionStreamHandlers {
 export interface ListAgentSessionsOptions {
   /** Maximum chats to return; omitted or non-positive uses the server default of 50. */
   limit?: number;
-  /** Keep only chats on this rig, by name or ID. An unknown rig throws AmikaHTTPError (404); a value matching one rig's ID and another's name throws (409). */
+  /**
+   * Keep only chats on this rig. A plain string matches its ID or name;
+   * `{ ref, by: "id" | "name" }` pins one. An unknown rig throws
+   * AmikaHTTPError (404); a plain string matching one rig's ID and another's
+   * name throws (409). Sent as `sandbox` plus `sandbox_by`; a server without
+   * that filter ignores it and lists every chat.
+   */
+  rig?: RigRef;
+  /**
+   * @deprecated Use {@link ListAgentSessionsOptions.rig}; a string there
+   * behaves the same (ID or name). A non-empty `rig` takes precedence.
+   */
   rigRef?: string;
 }
 
 /** AgentSessions operations available on AmikaClient. */
 export interface AgentSessions {
-  /** Send a prompt and wait for the agent turn to finish (10-minute request timeout). sessionId continues a chat; rigId selects a rig; otherwise the server can create one. Agent failures return isError: true; HTTP failures throw AmikaHTTPError. */
+  /** Send a prompt and wait for the agent turn to finish (10-minute request timeout). sessionId continues a chat; rig selects a rig; otherwise the server can create one. Agent failures return isError: true; HTTP failures throw AmikaHTTPError. */
   send(req: AgentSessionSendRequest): Promise<AgentSessionSendResponse>;
 
   /** Send a prompt with ordered, awaited progress callbacks and return the completed turn. The request timeout is 10 minutes; the server can end it sooner. A stream without a terminal result throws, even if the turn was persisted. Check the session before retrying. */

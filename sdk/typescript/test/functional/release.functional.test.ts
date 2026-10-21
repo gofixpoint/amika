@@ -149,7 +149,7 @@ describeFunctional("Release test: snapshot round-trip", () => {
     "create full snapshot and poll to active; source rig still present",
     async () => {
       const snap = await client.createRigSnapshot({
-        rigRef: sourceRig.name,
+        rig: sourceRig.name,
         name: snapName,
         mode: "full",
       });
@@ -241,7 +241,7 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
     "scrub-and-delete snapshot captures and deletes source on completion",
     async () => {
       const snap = await client.createRigSnapshot({
-        rigRef: sourceRig.name,
+        rig: sourceRig.name,
         name: snapName,
         mode: "scrub_and_delete",
       });

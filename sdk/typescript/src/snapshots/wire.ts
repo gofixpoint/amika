@@ -14,6 +14,12 @@ import {
   strArray,
 } from "../internal/wire.js";
 import { AmikaError } from "../errors.js";
+import {
+  pickRef,
+  refFieldName,
+  type NormalizedRef,
+} from "../internal/resource-ref.js";
+import type { RigRef } from "../resource-ref.js";
 
 export function experimentalDaytonaSnapshotFromWire(
   w: Record<string, unknown>,
@@ -60,8 +66,11 @@ export function rigSnapshotFromWire(w: Record<string, unknown>): RigSnapshot {
 export function createRigSnapshotRequestToWire(
   r: CreateRigSnapshotRequest,
 ): Record<string, unknown> {
+  const source = sourceRigOf(r);
   return omitUndefined({
-    sandbox_ref: rigRefOf(r),
+    // Exactly one of sandbox_id / sandbox_name / sandbox_ref; a plain string
+    // is sandbox_ref, as this request always sent.
+    [refFieldName("sandbox", source)]: source.value,
     name: r.name,
     description: r.description,
     mode: r.mode,
@@ -69,18 +78,21 @@ export function createRigSnapshotRequestToWire(
 }
 
 /**
- * Resolve the source rig from whichever of the two spellings the caller used.
- * A non-empty `rigRef` wins; `||` rather than `??` so an empty rig spelling
- * falls through to the legacy one instead of shadowing it.
+ * Resolve the source rig from whichever of the three spellings the caller
+ * used. The first non-empty of `rig`, `rigRef`, `sandboxRef` wins, so an empty
+ * canonical spelling falls through to a legacy one instead of shadowing it.
  *
- * The union above already rejects a request carrying neither, so the throw
- * catches an empty string in both, plus callers arriving untyped from
- * JavaScript.
+ * The union type already rejects a request carrying none, so the throw catches
+ * empty strings in all of them, plus callers arriving untyped from JavaScript.
  */
-export function rigRefOf(r: { rigRef?: string; sandboxRef?: string }): string {
-  const ref = r.rigRef || r.sandboxRef;
+export function sourceRigOf(r: {
+  rig?: RigRef;
+  rigRef?: string;
+  sandboxRef?: string;
+}): NormalizedRef {
+  const ref = pickRef("rig", r.rig, r.rigRef, r.sandboxRef);
   if (!ref) {
-    throw new AmikaError("rigRef (or its alias sandboxRef) is required");
+    throw new AmikaError("rig (or its alias rigRef or sandboxRef) is required");
   }
   return ref;
 }
