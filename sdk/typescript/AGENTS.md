@@ -32,14 +32,18 @@ override by design. Do not weaken this; point functional runs at staging
 
 ## Identifying resources
 
-Every parameter or field that names a rig (or another referenced resource)
-accepts a `ResourceRef` (`RigRef` for rigs), exported from `src/resource-ref.ts`:
+In the resource API (`client.rigs`, `client.services`, `client.snapshots`,
+`client.agentSessions`), every parameter or field that names a rig (or another
+referenced resource) accepts a `ResourceRef` (`RigRef` for rigs), exported from
+`src/resource-ref.ts`:
 
 - A plain string is a `ref`: the server matches it by ID or name and rejects a
   value that is one resource's ID and another's name with 409.
 - `{ ref, by: "id" | "name" | "ref" }` pins the kind.
 - Never infer a kind from the string. A `name=` or `id=` prefix is part of the
   value, not a selector.
+
+The deprecated flat `LegacyClient` methods take plain strings; do not widen them.
 
 Map every reference through `src/internal/resource-ref.ts`, never by hand. It
 validates (an empty or whitespace `ref` and an unknown `by` throw `AmikaError`

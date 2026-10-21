@@ -101,8 +101,10 @@ await rig.wait({ status: "stopped" });
 
 ### Identifying a rig
 
-Every method that takes a rig accepts a `RigRef`. A plain string matches the
-rig's ID or its name, and the server rejects a value that is one rig's ID and
+Every method on `client.rigs`, `client.services`, `client.snapshots`, and
+`client.agentSessions` that takes a rig accepts a `RigRef`. (The deprecated
+flat `LegacyClient` methods still take plain strings.) A plain string matches
+the rig's ID or its name, and the server rejects a value that is one rig's ID and
 another's name with a 409 `AmikaHTTPError`. To match only one, pass an object
 that pins the kind:
 
