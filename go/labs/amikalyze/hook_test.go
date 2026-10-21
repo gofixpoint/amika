@@ -66,9 +66,10 @@ paths = ["schema/**"]
 }
 
 // A symlink inside the repository is frozen both by its own path and by its
-// destination: an edit through `linked`, a frozen symlink to a directory
-// outside the repository, and through `alias`, an unfrozen symlink to the
-// frozen `schema` directory, are both denied.
+// destination: edits through `linked`, a frozen symlink to a directory outside
+// the repository, through `alias`, an unfrozen symlink to the frozen `schema`
+// directory, and to `alias.sql`, an unfrozen symlink to a frozen file, are all
+// denied.
 func TestEvaluateHook_SymlinkInsideRepo(t *testing.T) {
 	root := initTestRepo(t)
 	writeTestFile(t, filepath.Join(root, configName), `
@@ -89,9 +90,14 @@ paths = ["schema/**"]
 	if err := os.Symlink(filepath.Join(root, "schema"), filepath.Join(root, "alias")); err != nil {
 		t.Fatal(err)
 	}
+	writeTestFile(t, filepath.Join(root, "schema", "one.sql"), "frozen")
+	if err := os.Symlink(filepath.Join(root, "schema", "one.sql"), filepath.Join(root, "alias.sql")); err != nil {
+		t.Fatal(err)
+	}
 	for target, label := range map[string]string{
 		filepath.Join(root, "linked", "file.txt"): "linked",
 		filepath.Join(root, "alias", "one.sql"):   "schema",
+		filepath.Join(root, "alias.sql"):          "schema",
 	} {
 		payload := fmt.Sprintf(`{
   "cwd": %q,

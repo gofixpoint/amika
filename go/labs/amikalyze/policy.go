@@ -242,16 +242,19 @@ func repoRelative(repoRoot, target string) (string, bool) {
 	}
 }
 
-// resolvePath returns path as an absolute, clean path with symlinks in its
-// directory resolved: the physical location an edit through path writes to.
-// The final element is kept as is, since an edit may create it, and missing
-// directories are rejoined under their nearest existing ancestor.
+// resolvePath returns the physical location an edit through path writes to:
+// path with every symlink resolved when it exists, which follows a symlinked
+// file to its destination. A path an edit would create keeps its missing
+// components as written, rejoined under their nearest existing ancestor.
 func resolvePath(path string) (string, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved, nil
+	}
 	dir, rest := filepath.Dir(path), []string{filepath.Base(path)}
 	for {
 		resolved, err := filepath.EvalSymlinks(dir)
