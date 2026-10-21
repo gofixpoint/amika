@@ -96,14 +96,14 @@ only from the smolvm host). smolvm cannot publish or unpublish a port later,
 so `syncRoutes` succeeds only when the desired services' ports are exactly the
 published ones, and UDP services are refused. (The `amika-hostd` provider
 reuses these operations but leaves publishing to hostd, which routes services
-by name; see `js/amika-hostd/AGENTS.md`.)
+by name; see `js/amika-hostd/docs/service-routes.md`.)
 
 SSH access, streamed output, snapshots, and automatic stop/delete timers are
 not implemented; omit timers (or set them to zero). Nonzero timers fail before
 a VM is created. (The `amika-hostd` provider does support snapshots, because
 hostd packs a machine and keeps the artifact itself; these shared operations
 accept a local artifact through `from`, which only `amika-hostd` sets. See
-`js/amika-hostd/AGENTS.md`.)
+`js/amika-hostd/docs/snapshots.md`.)
 
 Listings cover the runtime's machines, including machines created outside
 Amika. Smol has no provider label support: `labels` are not persisted and

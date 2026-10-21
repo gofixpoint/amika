@@ -669,7 +669,8 @@ async function register(
     deps.out(
       `Host ${host.hostname} is already registered with ${config.apiUrl} (${host.id})`,
     );
-    // Registration never changes an existing host's secret (see AGENTS.md).
+    // Registration never changes an existing host's secret (see
+    // docs/commands-and-registration.md#registration).
     deps.out(
       "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
     );

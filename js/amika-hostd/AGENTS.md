@@ -8,96 +8,14 @@ daemon serves `GET /health`, the versioned rig API under `/v0beta1/rigs`
 API for older control planes, and
 registers itself with the Amika control plane when started with `up`. `up`
 also starts the `smolvm serve` process the API runs machines on (through the
-`smol` sandbox provider; see [Machine runtime](#machine-runtime)), and `down`
-stops both.
+`smol` sandbox provider; see [Machine runtime](docs/runtime.md#machine-runtime)),
+and `down` stops both.
 
-## Installation
-
-On a host, install the released daemon with `install-amika-hostd.sh`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
-```
-
-It downloads `amika-hostd_<version>.tar.gz` from the `amika-hostd@v<version>`
-GitHub release, verifies it against `checksums.txt`, and installs:
-
-- the bundle and `config.example.toml` into `$XDG_DATA_HOME/amika-hostd`
-  (default `~/.local/share/amika-hostd`; override with `AMIKA_HOSTD_HOME`),
-  with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR` (default
-  `/usr/local/bin`) that pins the node it runs on;
-- Node.js: the system `node` if it is 22 or newer, otherwise the official
-  Node.js LTS binary (24.21.0, `AMIKA_HOSTD_NODE_VERSION`), verified against
-  `SHASUMS256.txt`, into `node/` in that same directory (the system node is
-  never touched);
-- smolvm, through its official installer, unless `smolvm` is on `PATH` or in
-  `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
-  (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
-- the machine engine the daemon is moving to: the `smolmachines` SDK
-  (smolvm's engine, embedded) the release carries, into `node_modules/` in
-  that same directory, plus this platform's engine package
-  (`smolmachines-linux-x64-gnu`, `-linux-arm64-gnu` or `-darwin-arm64`:
-  native addon, boot helper, hypervisor libraries and guest rootfs, over
-  100 MB) downloaded from npm (`AMIKA_HOSTD_NPM_REGISTRY`) and verified
-  against the release's `engines.sha256`. Any other platform, or Linux with a
-  C library other than glibc 2.34+, fails before anything is downloaded;
-- a config: `config.example.toml` copied to the user config path below, with
-  `hostname` set to this machine's lowercased `hostname` (left commented when
-  it isn't a valid hostname), unless a config already exists there or in
-  `/etc`. It is never overwritten, and it holds no secret: `amika-hostd setup`
-  keeps the secrets (see [Secret storage](#secret-storage)).
-
-Its closing steps point the operator at `amika-hostd setup`, then
-`amika-hostd up` (which runs setup itself if it was skipped).
-
-On Linux it warns, without failing, when `/dev/kvm` is missing or not
-accessible. On every host it warns, again without failing, when smolvm cannot
-find `resize2fs` (from e2fsprogs) where it looks: smolvm copies each disk from
-a 20 GiB template and shrinks it with `resize2fs` when the rig asks for less,
-so without it a rig with a smaller disk fails to start. `--dry-run` prints the
-plan. Nothing else needs to run alongside the daemon: `amika-hostd up` starts
-smolvm itself (see [smolvm](#smolvm)).
-
-`install-amika-hostd.sh --uninstall` reverses the install. It finds the
-launcher on `PATH` (or in `AMIKA_INSTALL_DIR` when that is set), reads the
-install directory out of the launcher's `exec` line (`AMIKA_HOSTD_HOME` wins
-when set), shows both and asks for confirmation; on "no" it tells the user to
-set `AMIKA_INSTALL_DIR`. It then runs `amika-hostd down` and deletes the
-launcher and the install directory (bundle, `node_modules/`, private `node/`).
-It then asks three separate questions: remove the config and state
-directories, remove the keychain secrets (`security delete-generic-password`
-on macOS, `secret-tool clear` on Linux, plus the file store's `api-key`), and
-remove smolvm (`~/.smolvm` and the `~/.local/bin/smolvm` link into it; a smolvm
-installed anywhere else is never touched). `--purge` answers the first two
-yes without asking, and `--yes` answers every question yes except smolvm's.
-smolvm is removed only by typing `remove smolvm` at its prompt: no flag answers for the
-user, and without a terminal it stays. Prompts read `/dev/tty`, so `--yes` or
-`--purge` is required without one. `/etc/amika-hostd` and the host's Amika
-registration are never removed; it prints how to remove each. `--dry-run` previews it.
-
-The daemon is one ESM file, built by `pnpm --filter @amika/hostd build`
-(`scripts/bundle.mjs`, esbuild with every npm dependency inlined, including
-the `smol` provider from the workspace's `@amika/sandbox`), so it runs under
-plain `node` with no `node_modules`; `src/bundle.test.ts` checks that. The
-bundle leaves `smolmachines` external (it finds its native files on disk
-beside its own), but the daemon does not load it yet: it is shipped for the
-planned move from `smolvm serve` to that embedded engine. `@amika/sandbox` is
-TypeScript source resolved bundler-style, so hostd typechecks with
-`moduleResolution: "bundler"` and has no `tsc` emit. `scripts/package-release.sh
-<version> [out-dir]` wraps the bundle, the example config, the `smolmachines`
-package at the exact version `package.json` pins, and `engines.sha256` (each
-platform's engine package, fetched with `npm pack`) in one tarball for every
-platform, and writes `checksums.txt`. The Release workflow
-runs it for an `amika-hostd@v*` tag. To test the installer against a local
-build, point `AMIKA_RELEASE_URL` at that directory, with a temporary `HOME`
-and `AMIKA_INSTALL_DIR`:
-
-```bash
-js/amika-hostd/scripts/package-release.sh 0.1.0 /tmp/hostd-release
-HOME=/tmp/hostd-home AMIKA_INSTALL_DIR=/tmp/hostd-bin \
-  AMIKA_RELEASE_URL=file:///tmp/hostd-release \
-  sh install-amika-hostd.sh
-```
+This file holds what every change needs: how to run and check the daemon, the
+invariants that span files, and an index of the detail docs under `docs/`.
+Read the doc for the area you are changing before changing it. The
+conventions in [`js/AGENTS.md`](../AGENTS.md) apply here too, and
+[README.md](README.md) is the operator-facing guide.
 
 ## Development
 
@@ -118,780 +36,10 @@ pnpm --filter @amika/hostd build   # dist/bundle/amika-hostd.mjs
 pnpm --filter @amika/hostd start   # node dist/bundle/amika-hostd.mjs up --fg
 ```
 
-## Commands
-
-`src/index.ts` is the `amika-hostd` bin; `src/internal/cli.ts` parses commands
-with `node:util` `parseArgs` and takes every side effect as a dependency.
-
-- `amika-hostd setup` asks for the hostname and API key, generates the secret
-  key, and writes them (see [Setup](#setup)).
-- `amika-hostd up [--port N] [--host H]` starts the daemon in the background:
-  it re-runs itself as `serve --smolvm` with `detached: true`, appends output, each line
-  timestamped, to `$XDG_STATE_HOME/amika-hostd/log/amika-hostd.log` (else
-  `$HOME/.local/state/...`), and waits for the child's IPC `ready` message, so startup failures print in the
-  caller's terminal. Only the operator's own flags are forwarded; the child
-  inherits the environment and re-reads the TOML file.
-- `amika-hostd up --fg` and `amika-hostd serve` run in the foreground until
-  `SIGINT` or `SIGTERM`. Shutdown waits up to 5 seconds for in-flight requests,
-  then drops the rest, and the process exits a second later even if a request
-  to the Smol runtime is still pending, so a slow client or runtime cannot keep
-  the daemon alive. A daemon running smolvm first waits up to 60s more for it
-  to stop (see [smolvm](#smolvm)). If the launching `up` exits before the
-  child is ready, the child shuts down too.
-  Only `up` registers with Amika; `serve` does not. `up` (either way) and
-  `serve --smolvm` also run smolvm; plain `serve` does not, for development.
-  Plain `serve` forwards to `SMOL_API_URL`, else to a fixed
-  `http://127.0.0.1:23020` (it does no port scan), so run a hand-started
-  smolvm there with `smolvm serve start --listen 127.0.0.1:23020` or point
-  `SMOL_API_URL` at it.
-- `amika-hostd down` sends `SIGTERM` to the daemon named by the pidfile and
-  waits for it to exit, which includes stopping smolvm. It needs no
-  configuration.
-- `amika-hostd register-url <url>` records the host's public URL and exits.
-
-## Setup
-
-`src/internal/setup.ts` runs `amika-hostd setup`, which needs a terminal. It
-edits the TOML file `up` reads (the first that exists, else the user path),
-and keeps the secrets in the secret store (see [Secret storage](#secret-storage)).
-It opens the store first, so with the keychain store on a machine with no
-keychain it refuses before asking anything.
-
-It asks for the hostname, defaulting to the configured one, or else the
-machine's own hostname made valid (lowercased, `.local` dropped, other
-characters turned into `-`), re-asking until it is valid. When the host has no
-secret key it generates one (`randomBytes(32)`, hex), unless the environment
-sets one, which is saved instead (Amika may already know it). With the
-keychain store, setup writes `secret_store = "keychain"` to mark that the
-keychain holds this host's secret key; when the file has that line but the
-keychain shows no key, setup first asks whether to generate one, since the key
-may be in a keychain that is only locked. (The hostname is no such mark: the
-installer seeds it.) When the environment chooses a store
-(`AMIKA_HOSTD_SECRET_STORE`) other than the one the file alone would (its
-`secret_store`, else the keychain default), setup writes `secret_store` to
-match where it kept the secrets, so the choice outlasts the variable, and says
-so when it replaces a different one. An existing secret key is kept, but on a
-rerun setup asks whether to regenerate it. Then it asks for the Amika API key,
-with input hidden, or on a rerun whether to replace the stored one; an API key
-in the environment is used instead, and setup does not ask. Before the prompt
-it names the page that creates one, `/settings/api-keys` on the configured
-API URL's origin.
-
-It then writes `hostname` in place (a live line, bare or quoted, else the
-commented `# hostname = ...` one; otherwise above the first table), keeping
-everything else in the file. With the file store it writes `secret_key` the
-same way, except that a setting with no line of its own goes under the
-`hostname` line; so does `secret_store`. With the keychain it removes any
-`secret_key` line instead, moving that secret into the keychain if the
-keychain has none (the keychain's own item wins otherwise). A `secret_key` too
-short to use, such as an old example's `REPLACE_ME`, counts as unset. A config
-written from scratch also gets the example's default `[sizes]` and
-`[preset_images]` (`DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES`, which
-`setup.test.ts` keeps in step with `config.example.toml`). It prints the
-result and where to edit it. The new contents are parsed before anything is
-written, and the file is replaced atomically with mode `0600`
-(`src/internal/private-file.ts`). The secrets are stored first, so a secret
-that cannot be stored (a locked keychain, say) leaves the config untouched.
-
-Registration never changes a stored secret, so setup sends a regenerated
-secret key to Amika (register, then `PUT /api/v0beta1/hosts/{id}` with
-`secret`, `setHostSecret`) for the hostname it writes, which may be new or one
-Amika already knows. It stores the new key and writes the config first, so a
-key this host could not keep never reaches Amika. If any of these steps fails,
-it puts the old key back where it keeps it (the keychain item, or `secret_key`
-in the file) and says how to recover in case Amika applied the new one anyway;
-if the old key cannot be put back, it says the new one stayed. Ctrl-C while
-Amika is answering counts as such a failure: a SIGINT listener, set only for
-the request, cancels it, so the old key goes back instead of the process
-ending mid-request. A new API key entered in the same run is saved only once
-Amika has taken the new secret key with it, so one Amika refuses (a typo, say)
-is not kept for the next run. Setup does not offer to regenerate while the
-environment overrides the secret key, hostname, API URL or API key: the new
-key would reach the Amika, organization or hostname this run reaches, while
-`up` goes back to the stored ones once the override is unset, and the daemon
-would keep using an overriding secret key. After regenerating, setup says to
-restart a running daemon, which keeps the key `up` handed it.
-
-`amika-hostd setup --non-interactive` asks nothing, for an AI agent or a
-script. It runs the same setup, answering each question with its default: the
-hostname from `--hostname`, else the configured one or this machine's; no to
-every yes/no question, so it never regenerates or replaces a secret key; and
-the API key from stdin when none is stored or set in the environment. An
-answer setup refuses (an invalid hostname, no API key on stdin) ends it with
-nothing changed, instead of asking again.
-
-`amika-hostd setup --skill` prints, as a SKILL.md document, how an agent sets
-the host up with it: settle the hostname with the operator, get an API key
-(minted by `amika auth api-key create --out <file>` when the `amika` CLI is
-logged in, else from the operator) and pipe it from that file into
-`setup --non-interactive`, choose the file store only with the operator's
-consent when there is no keychain, then run `up` and `register-url`
-(`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
-fills in the config and log files and the daemon's local address (from `host`
-and `port`, loopback for a wildcard bind). The installer points agents at it.
-`setup-skill.test.ts` checks that every command and option it uses exists and
-every variable it names is one the config reads, so keep them in step when the
-CLI changes. Options on `amika` CLI commands are exempt from that check, so a
-change to `amika auth api-key create` must be mirrored in the skill text by hand.
-
-`up` runs setup first whenever the hostname, secret key or API key is
-missing, or the file still holds a `secret_key` while secrets are kept in the
-keychain, and it has a terminal; without one it fails, naming `setup`, or,
-when another secret key is in effect (the keychain's, or the environment's),
-warns that the file's is unused and carries on. Like setup, it reads a
-`secret_key` too short to use as missing, so a hand-copied old example gets
-set up rather than rejected; other commands still reject it. Ctrl-C at a
-question exits 130 and changes nothing.
-
-### Secret storage
-
-hostd has two secrets: the Amika API key, which `up` and `register-url` use
-to call Amika, and the secret key, which Amika presents on every request to
-the daemon. `src/internal/credentials.ts` keeps both in one of two stores,
-chosen by `secret_store` in the TOML file or `AMIKA_HOSTD_SECRET_STORE`:
-
-- **`keychain`** (the default, `DEFAULT_SECRET_STORE`): both are items in
-  the system keychain. On macOS that is the login keychain, through `security` (service
-  `amika-hostd`, one account per secret: `api-key`, `secret-key`), named
-  explicitly in every command (from `security login-keychain`), since
-  without one `security` uses the default keychain, which a user can change
-  to another, separately locked or temporary, one. Values go
-  in through `security -i` on stdin, so they never appear in the process
-  list, and are read back to confirm they were stored. Exit 44 means "not
-  there"; any other failure (a locked keychain, over SSH say) is an error
-  that says to unlock it or choose files. On a Linux desktop session
-  (`DBUS_SESSION_BUS_ADDRESS` set and not blank) it is the Secret Service
-  (GNOME Keyring, KWallet), through `secret-tool`, which takes values on
-  stdin; items carry `service=amika-hostd` and `account=<secret>`.
-  `secret-tool lookup` exits 1 silently both for no item and for a locked one
-  whose unlock prompt was dismissed, so a silent exit 1 is confirmed with
-  `secret-tool search --all` (which lists locked items without unlocking
-  them on GNOME Keyring and KWallet, and whose output is never shown): an
-  item there is refused as locked. KeePassXC hides a locked database's items
-  from the search too, so setup also asks before generating a new secret key
-  when config.toml has the `secret_store = "keychain"` setup wrote but the
-  keychain shows no secret key, and changes nothing on "no". Any other
-  failure is an error quoting secret-tool's stderr; a session bus with no
-  keyring daemon on it, as over SSH to a server, says to choose files rather
-  than to unlock anything. On a machine where amika-hostd supports no
-  keychain (Linux with no desktop or user session, so no
-  `DBUS_SESSION_BUS_ADDRESS`), every command that needs a secret refuses,
-  naming `secret_store = "file"`; it never falls back to a file on its own.
-  A bus GLib could find without that variable (under `sudo -u`, say) is not
-  used.
-- **`file`**, chosen explicitly: the API key in
-  `$XDG_CONFIG_HOME/amika-hostd/api-key` and the secret key as `secret_key` in
-  the TOML file, both mode `0600`. That is how `gh` and Docker keep
-  credentials without a keyring, and how WireGuard and `sshd` keep their keys.
-
-The two are never mixed: a read never falls back from one store to the other,
-so a key left in one cannot shadow a newer one in the other. The environment
-(`AMIKA_HOSTD_API_KEY`, `AMIKA_HOSTD_SECRET_KEY`) overrides either store, and
-the store is opened only for a secret the environment does not set, so a
-command whose secrets are all exported runs on a machine with no keychain.
-Setup is the exception: it stores secrets, so it always opens the store. When
-setup generates a secret key for a host that already has a hostname, it warns
-that Amika may still hold the one the host first registered with.
-
-A person always starts the daemon, with `up`, so `up` reads the secrets (an
-unlock prompt can reach them) and hands the secret key to the background
-daemon over the IPC channel it already uses to wait for "ready"
-(`receiveSecretKey` in `src/internal/daemon.ts`, behind the internal
-`serve --secret-key-from-up`, which reads the file as `up` does, so a
-placeholder `secret_key` there cannot stop it). Neither secret goes in the
-daemon's environment, and the daemon never reads the store; smolvm and rigs get
-neither. `serve` run by hand reads the secret key from the store itself, and
-never the API key.
-
-## Registration
-
-Before starting the daemon, `up` calls `POST /api/v0beta1/hosts` on the Amika
-API (`src/internal/amika-api.ts`) with `Authorization: Bearer <API key>` and a
-body of `hostname`, `secret` and `sizes`. The endpoint is
-idempotent by hostname: `201` creates the host, `200` returns the existing host
-and leaves its stored secret and sizes unchanged. Changing the local secret
-therefore never rotates it in Amika; changing the hostname registers a new
-host. On `200`, `up` then sends `PUT /api/v0beta1/hosts/{id}` with the
-configured `sizes`, so edits to the `[sizes]` tables reach
-Amika on the next `up` (or `register-url`). The config is the source of truth:
-the PUT replaces the host's stored sizes, so a config with no `[sizes]` tables
-clears them. Any other status, a network error,
-or a 30s timeout aborts `up` before a daemon starts, with a message that never
-includes the API key or secret. `401`/`403` from the sign-in check in front of the API carry `{ error }` rather
-than `{ error_code, message }`, and that reason is kept. Redirects are refused
-so credentials cannot be resent to another origin, and the error says so. On
-`200`, `up` warns that Amika kept the stored secret, since a changed local
-secret would make Amika's requests fail. The background daemon is spawned
-without `AMIKA_API_KEY`/`AMIKA_HOSTD_API_KEY`: it only serves, so the
-background daemon never holds the API key. `up` checks the pidfile before
-registering, so a second `up` fails without calling Amika.
-
-Registration is complete once Amika knows the host's internet-facing URL (an
-ngrok or Cloudflare Tunnel URL, for example). `up` runs in this order: resolve
-config, register the hostname and secret, start the daemon (background, or
-`--fg`), then complete registration. If the host has no URL and stdin and
-stdout are both terminals, `up` asks the operator to expose the now-running
-daemon and enter its public URL, re-asking on an invalid URL. A blank answer or
-end of input (Ctrl-D) skips it. Ctrl-C exits 130: a background daemon keeps
-running, while `--fg` stops. A failed save is reported and the daemon keeps
-running (`up` exits 1 in the background). Without a terminal it prints how to
-finish instead of blocking. If the host already has a URL, `up` reminds the
-operator that Amika expects to reach it there.
-
-`amika-hostd register-url <url>` sets the URL from the same configuration as
-`up`: it registers idempotently to learn the host's id, then sends
-`PUT /api/v0beta1/hosts/{id}` with the hostname and URL and no secret, so the
-stored secret is kept. Only absolute http(s) URLs without credentials are
-accepted; a bare origin is normalized without its trailing slash, and a path is
-kept.
-
-Every run claims `amika-hostd.pid` in that state directory, atomically, and refuses to
-start while it names a live daemon. The daemon sets `process.title` to
-`amika-hostd`; where `/proc` exists, a pidfile naming any other process is
-treated as stale, since the pidfile outlives reboots and pids are reused. An
-empty `--host` is rejected, since it would bind every interface. Stop a
-background daemon with `amika-hostd down`.
-
-## smolvm
-
-`src/internal/smolvm-serve.ts` runs smolvm for `up` and `serve --smolvm`, so
-the daemon and the runtime it forwards to start and stop together, and a host
-is left as it was before `up`:
-
-1. Before spawning smolvm, it refuses to start if a smolvm from an earlier
-   run is still alive (`smolvm.pid`, next to the daemon's pidfile). Files an
-   earlier run left naming a pid that has exited are removed.
-2. It finds `smolvm` on `PATH`, else where the smolvm installer puts it
-   (`~/.smolvm/smolvm` or `~/.local/bin/smolvm`).
-3. It picks a port and runs `smolvm serve start --listen <host:port>`.
-   smolvm's own default is a Unix socket, so the address is always passed.
-   `SMOL_API_URL` must be a plain `http://<IP address>[:port]` (port 80 if
-   omitted), since `--listen` takes no hostnames such as `localhost`. The
-   address must be loopback (`127.0.0.0/8` or `[::1]`): smolvm's API has no
-   authentication, so listening anywhere else would expose it without
-   amika-hostd's bearer check.
-
-   A port is free when a plain TCP connect is refused, since the holder may not
-   speak HTTP (an editor's language server, say). With `SMOL_API_URL` set, it
-   uses that port or fails naming it. Unset, it starts at 23020 and moves to
-   the next port while the port is held, or while smolvm exits with
-   `Address already in use` (another program won the race), giving up only once
-   every port up to 65535 is taken. A shutdown signal stops the scan. It never
-   shares a port, and it refuses to start at all when a held port it tries, or
-   `127.0.0.1:8080` (where smolvm's docs run it by hand), is a smolvm (both
-   `/health` and `/api/v1/machines` answer 2xx): a smolvm it did not start
-   would expose unrelated VMs, and is not the daemon's to stop or drain. A
-   smolvm elsewhere (another port the scan never reaches, or a Unix socket)
-   goes unnoticed. The daemon forwards to the chosen URL, which is also written
-   to `smolvm.url` beside `smolvm.pid` while smolvm runs.
-
-   smolvm gets its own process group, so Ctrl-C on `up --fg` reaches only
-   the daemon; its output goes to `log/smolvm.log`, with `NO_COLOR=1` so the
-   log carries no ANSI color codes; and it never sees the API key or secret
-   key.
-
-4. The daemon listens only once smolvm answers `/health` (30s at most) and is
-   still running half a second later (a program that won the race for the port
-   answers too, until smolvm fails to bind), so the background `up` reports a
-   smolvm that fails to start. A shutdown signal while it waits stops smolvm
-   and exits without listening.
-5. On shutdown the daemon stops listening first, then sends smolvm `SIGTERM`
-   and waits up to 60s. smolvm is started with `SMOLVM_DRAIN_ON_SHUTDOWN=1`,
-   so it stops every machine cleanly (disks are kept; nothing is deleted)
-   instead of leaving them running, which is its default. It is never killed
-   outright: if it is still stopping machines after 60s, the daemon exits and
-   `down` goes on waiting for it.
-6. If smolvm exits on its own, the daemon stops too, with exit code 1, rather
-   than answer every request with a `502`.
-
-`down` stops the daemon, then any smolvm a daemon left behind (one killed with
-`SIGKILL`, or that timed out stopping it). Both pidfiles are acted on, not
-only read, so `down` signals a pid only when `/proc` or `ps` confirms its
-program: `amika-hostd` (the daemon's title) for the daemon, and `smolvm` or
-`smolvm-bin` (the binary the `smolvm` launcher `exec`s) for smolvm. A daemon
-pidfile naming a live process that is not confirmed is left alone, and `down`
-says to remove it if it is stale, as `up` does. A `smolvm.pid` and
-`smolvm.url` naming a pid that has exited are removed.
-
-## Machine runtime
-
-`src/internal/machine-runtime.ts` serves the machine API through the `smol`
-sandbox provider from the workspace's `@amika/sandbox`
-(`js/sandbox/src/providers/smol`, imported as `@amika/sandbox/smol`), pointed
-at the smolvm this daemon started (or `SMOL_API_URL` for plain `serve`).
-Create, delete and service ports go through the provider's resource surface,
-translated to and from `smolvm serve`'s shapes, which the control plane's
-`amika-hostd` provider expects. Machine info (get and list), start and stop,
-exec and file reads and writes go through the provider's exported smolvm
-client instead, because the machine API's contract carries what the resource
-surface drops or adds: each machine's published `ports`, the machine smolvm
-answers a start or stop with (so a successful start never hinges on a second
-request whose failure would make a create through hostd delete the machine),
-exec as argv with any `user`, a file's exact bytes and type (JSON for a
-directory), streamed through rather than buffered, and a write left as smolvm
-makes it (the resource surface would also hand the file to the `amika` user,
-which the calling `amika-hostd` provider already does over exec). Machine and exec replies
-are validated only for the fields hostd reads and otherwise passed through
-whole, so smolvm's other fields (a machine's `image`, `network`, `mounts`;
-exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
-
-- The provider's network setting is per provider, so hostd builds create
-  operations with networking and without, and creates each machine with the
-  one its request asks for.
-- Create also starts the machine (the provider's create does both). It goes
-  through the provider's create operation (`smolOperations`) rather than its
-  resource surface, whose create takes all three of cpus, memory and disk or
-  none: hostd sends only the sizes a request names, so smolvm picks the rest
-  itself, from the image's manifest when it has one (a packed image's sizes,
-  or a checkpoint's, which refuses any others) or its defaults.
-- Host ports are picked and published by the provider. Service routes
-  ask it for a running machine's host port (`services.refreshAll`), and
-  `PUT .../services` checks the same way that every port is one the machine
-  published at create, refusing (`409`) any other. It never reconciles the
-  provider's routes, which refuses to drop a port smolvm cannot unpublish:
-  hostd routes by name, so a dropped name is simply no longer routed, and its
-  port stays published on loopback, unreachable through hostd.
-- The provider treats deleting a missing machine as success; hostd answers
-  `404` for one, as `smolvm serve` does.
-- Every request to smolvm refuses redirects (`redirect: "error"`), so exec
-  bodies (commands, environment, stdin) and uploaded files are never resent to
-  wherever something answering at `SMOL_API_URL` points them.
-- A request smolvm refuses keeps smolvm's status, with one exception: a file
-  read smolvm refuses with a `500` whose reason ends in the guest's
-  `ENOENT` (`: No such file or directory (os error 2)`) answers `404`. smolvm
-  (1.22.1, at least) reports a missing file that way, and Amika reads only a
-  `404` as "no such file", which a fresh rig's setup relies on. A timeout
-  answers `504` and an unreachable smolvm `502`. The answer is `Smol runtime request failed`,
-  followed by smolvm's own reason (`: resize2fs not found`) as one line cut
-  to 500 characters, so an operator sees why a start or an image pull failed.
-  The reason is withheld for exec, whose errors can echo the command. A
-  create's reason has each of its env values (4 characters or longer)
-  replaced by `[redacted]`; a later start or stop cannot, since smolvm never
-  reports a machine's env.
-
-## Configuration
-
-`src/internal/config.ts` resolves every setting in one place. Each setting takes
-the first source that sets it: CLI flag, then environment, then TOML file.
-
-| Setting      | Flag     | Environment                                   | TOML                           | Default                 |
-| ------------ | -------- | --------------------------------------------- | ------------------------------ | ----------------------- |
-| API key      |          | `AMIKA_HOSTD_API_KEY` / `AMIKA_API_KEY`       | (rejected)                     | in the secret store     |
-| API URL      |          | `AMIKA_HOSTD_API_URL` / `AMIKA_API_URL`       | `api_url`                      | `https://app.amika.dev` |
-| Hostname     |          | `AMIKA_HOSTD_HOSTNAME`                        | `hostname`                     |                         |
-| Secret key   |          | `AMIKA_HOSTD_SECRET_KEY` / `AMIKA_SECRET_KEY` | `secret_key` (file store only) | in the secret store     |
-| Secret store |          | `AMIKA_HOSTD_SECRET_STORE`                    | `secret_store`                 | `keychain`              |
-| Bind host    | `--host` | `AMIKA_HOSTD_HOST`                            | `host`                         | `127.0.0.1`             |
-| Port         | `--port` | `AMIKA_HOSTD_PORT`                            | `port`                         | `3020`                  |
-| Snapshot dir |          | `AMIKA_HOSTD_SNAPSHOT_DIR`                    | `snapshot_dir`                 | in the state directory  |
-
-Setting both names of an aliased pair to different values is an error, never a
-silent pick. A blank variable (empty, or only whitespace) sets nothing; code
-that asks which variable sets a setting uses `envName`, which applies the same
-rule, rather than testing `env[name]` itself. The API key never comes from TOML: a TOML `api_key` fails
-startup. Without one in the environment, the key `setup` stored is used (see
-[Secret storage](#secret-storage)).
-The hostname must be a lowercase RFC 1123 hostname, the rule the control plane
-enforces, so a bad one fails locally instead of at registration.
-The TOML file is the first of `$XDG_CONFIG_HOME/amika-hostd/config.toml`
-(default `~/.config/...`) and `/etc/amika-hostd/config.toml` that exists; the
-two are not merged, and unknown keys are rejected. `SMOL_API_URL` (where `up`
-and `serve --smolvm` start smolvm, by default the first free port from
-`http://127.0.0.1:23020`, see [smolvm](#smolvm); plain `serve` forwards to a
-fixed `http://127.0.0.1:23020`) and `SMOL_REQUEST_TIMEOUT_MS` remain
-environment-only. `config.example.toml`
-is the template the installer seeds: every setting with a default is a live
-line, and only `hostname` and `secret_store` are commented. It holds no
-`secret_key`, since the secrets live in the keychain by default. Keep its comments short. `config.test.ts`
-resolves it as seeded, so keep it in step with the schema. Never include a secret or
-file contents in a `ConfigError` message: operators see it verbatim.
-
-### Images
-
-`[preset_images]` maps a preset name to the full OCI reference this host boots for it,
-so the host, not Amika, pins the version:
-
-```toml
-[preset_images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
-amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
-```
-
-The seeded config tracks `:latest`, which every image release moves. A host
-that needs a fixed version pins the release's 12-character commit SHA instead.
-smolvm's image cache (below) is keyed by the digest a reference points to, so
-a moved tag is pulled again rather than served stale.
-
-On create (`POST /v0beta1/rigs`), `resolveSource` (`src/internal/requests.ts`)
-swaps a configured name for its reference before forwarding to smolvm. A name
-this host holds as a snapshot is resolved to that artifact instead (see
-[Snapshots](#snapshots)). Failing both, an `image` containing `/` or `:` is
-taken as a full reference and forwarded unchanged, for development. Any other
-name is refused with a `400` naming the config file to edit, so an
-unconfigured preset never falls through to a Docker Hub pull.
-smolvm pulls the reference inside the VM on first use, which needs the
-machine's network on (the default).
-
-### Image cache
-
-An image is several GB, and without a cache every rig downloads its own copy
-into its own disk, so a rig can sit in "Creating" for minutes, and rigs
-created together split the bandwidth. smolvm caches a pulled registry image as
-a shared, read-only "seed": a new machine of that image starts from a
-copy-on-write overlay of it (an APFS clone on macOS) instead of pulling. Seeds
-are keyed by the digest the reference points to, resolved on the host with
-smolvm's registry credentials (its own config, then Docker's), and concurrent
-creates of one image share a single build.
-
-- **Disks under 20 GiB are never cached.** smolvm seeds only a disk at least
-  as large as its 20 GiB template (`SMOLVM_SEED_MIN_DISK_GIB` in
-  `src/internal/prepull.ts`); a smaller one is the template shrunk with
-  `resize2fs`, and pulls its image every time. So the default `tiny` and
-  `small` sizes have 20 GiB disks (`DEFAULT_SIZES`), and `up` warns about any
-  configured size under 20 GiB. Lower them once smolvm can seed smaller disks.
-- **smolvm 1.24.0 or newer** (`MIN_SMOLVM_VERSION`) grows a seed to a larger
-  disk and, when `smolvm serve` starts, refreshes the seeds of images machines
-  used in the last week. `up` warns when `smolvm --version` reports an older
-  one; it says nothing when smolvm cannot be run. The check runs alongside
-  registration, and like `smolvm serve` it never sees the API key or the
-  secret key.
-- **Pre-pull.** Once a daemon running its own smolvm is ready, it makes sure
-  every configured image is in the cache, on every start, in the background
-  and one at a time (`prepullImages`): it creates an unstarted throwaway
-  machine `amika-hostd-prepull-<random>` (`createUnstarted`: a 20 GiB disk, so
-  smolvm seeds it, and network on) and deletes it. smolvm attaches a seed at
-  create without booting the VM, building it first when it is missing, so a
-  cached image costs one registry request to resolve its digest (well under
-  a second), and a new image, a moved tag, or a seed smolvm evicted or lost
-  is downloaded then rather than by the next rig. Checking every time,
-  rather than once, matters because smolvm's cache is not permanent: it
-  evicts unused seeds over its 20 GiB cap, a smolvm upgrade makes every seed
-  stale (its own startup refresh covers only images used in the last week),
-  and a reinstall loses them, and smolvm keeps no other copy of an image.
-  smolvm logs, but does not report, a seed it fails to build, so a create
-  that succeeds is no proof the image is cached.
-  - `prepull.json` in the state directory records the images pulled
-    before, which only decide what `up` announces, and the throwaway
-    machines hostd created and has not yet deleted. That file, not
-    `config.toml`, holds this state: setup owns the config and rejects keys
-    it does not know.
-  - A failure is logged and retried on the next start; until then a rig of
-    that image pulls it itself if its seed is missing.
-  - Each throwaway machine is recorded before it is created, and forgotten
-    once deleted, so the machines a run cut short left behind are deleted
-    first. Only recorded machines are ever deleted, and only hostd's own
-    are left out of the machine list (`hiddenMachines`) so Amika never sees
-    them as rigs: a rig that merely shares the prefix, made before it was
-    reserved, is left alone. The list hides the recorded machines plus every
-    name this daemon's pre-pull has used or cleaned up (`used`), kept after
-    the machine is deleted, so a list smolvm answered mid-create or mid-delete never
-    shows one. A create naming the prefix is refused (`400`). The rest of a
-    throwaway machine's name is 16 random hex digits, so it never takes
-    another machine's name, nor that of one hostd could not delete. A create
-    smolvm still refuses as taken (`409`) is never cleaned up, since the
-    machine is someone else's.
-  - Each create may take an hour (`PREPULL_TIMEOUT_MS`), since smolvm builds
-    a missing seed before answering. The pre-pull stops whenever the daemon
-    stops, quietly, leaving a machine it was creating recorded for the next
-    start to delete; any other error from it is logged, never fatal to the
-    daemon. Rig creates keep their own timeout (`SMOL_REQUEST_TIMEOUT_MS`),
-    so a rig created while its image is still downloading may time out,
-    which the announcement says.
-- **The announcement.** `up` reads `prepull.json` before starting the daemon
-  and, once it is ready, lists the images never pulled before and where
-  progress is logged (the log file, or the terminal under `--fg`). It prints
-  nothing when every image is recorded, so the message appears on the first
-  `up`, and again only for a new image or one whose pull failed. A routine
-  check of cached images is not announced.
-
-## Service routes
-
-```
-user ──▶ amika server (control plane) ──▶ ngrok ──▶ amika-hostd ──▶ smolvm machine
-         authenticates users,                        checks the key,
-         sends the host key                          routes to the machine's service
-
-browser ─────────────────────────────────▶ ngrok ──▶ amika-hostd ──▶ smolvm machine
-         signed link from the amika server           checks the link
-```
-
-The amika server authenticates users itself and sends the host's secret key;
-hostd checks the key and routes
-`/v0beta1/rigs/<machine>/services/<name>/<path>` to that machine's service, over HTTP
-(`fetch`) or a piped WebSocket upgrade.
-
-Browsers, which cannot send a header on a navigation and must never hold the
-host key, use a signed service link instead:
-`/v0beta1/rigs/<machine>/service-links/<name>/<expiry>.<signature>/<path>`.
-The `amika-hostd` provider mints it on the control plane and hostd verifies
-it locally, both with `@amika/service-auth/credentials`: the signature is
-an HMAC-SHA256 over the machine, service and expiry, under a key derived from
-the host's secret key. A link lasts a day, and the control plane mints a new
-one every twelve hours, so the oldest link it hands out still has twelve
-hours left. hostd answers `401` for a bad or expired link, redirects one
-missing its trailing slash to the full link, and otherwise forwards it as
-the keyed route does. Regenerating the secret key invalidates every link;
-removing a service makes its links `404`.
-
-A link's path is its credential, and no single link can be revoked, so
-`hardenServiceLinkResponse` wraps _every_ response on a link route — hostd's
-own `401`, `404` and trailing-slash `308` as much as a proxied one, since
-they carry the same URL and the last two are cacheable without asking. It
-overrides four headers on the way back —
-dropping `Service-Worker-Allowed` (every link shares the host's origin, so a
-worker must stay inside its own link) and setting `Referrer-Policy:
-no-referrer`, `Cache-Control: private, no-store` and `X-Robots-Tag:
-noindex`. They are set rather than defaulted: the credential is hostd's, not
-the service's, so a guest must not be able to opt into spreading it. All
-four are stopgaps that last only as long as the link is the credential.
-
-Most dev servers (Vite, Next.js) write root-relative URLs into their pages
-(`/@vite/client`, `/_next/static/...`, `/api/...`), which leave the link and
-carry no credential. So opening a link in a browser (`Sec-Fetch-Mode:
-navigate`) also sets the link cookie, `__Host-amika-service-link`, naming the
-link's machine, service and token (`@amika/service-auth/gateway`). A request
-outside hostd's own paths (`/v0beta1/...`, `/api/v1/machines...`, `/health`)
-that carries it is verified as the link would be and forwarded to that
-service with its whole path as the guest path, HTTP and WebSocket upgrades
-(hot reload) alike, and hardened like a link response.
-
-- The cookie grants what the link grants, until the link's expiry
-  (`Max-Age`), and is `HttpOnly; Secure; SameSite=Strict`. `SameSite` is by
-  site, which a sibling subdomain shares, so hostd also accepts the cookie
-  only on a request the browser marks `Sec-Fetch-Site: same-origin` (or
-  `none`, for an address typed, a bookmark or a reload), HTTP and upgrades
-  alike. hostd strips it before forwarding any request, on link routes too;
-  a guest's own cookies pass through.
-- It is never set for, nor routes to, `amikad`.
-- A host is one origin, so a browser holds one link cookie per host: the
-  link it opened last. A second service opened side by side takes over the
-  first's root-relative requests; pages under a link path are unaffected.
-- **A host is one trusted unit** (as KAPRO-1037 decided for links), and the
-  cookie relies on it. A page from service A can `fetch("/api/...")` after
-  the browser has opened service B on the same host: the request is
-  same-origin and carries B's cookie, so A reads and acts on B as the user,
-  without learning B's link. Services on one host already share the
-  origin's cookies and storage. Isolating previews from each other needs an
-  origin per preview (a subdomain each), which is KAPRO-1038's to solve;
-  until then, keep code you do not trust off a host whose other previews
-  you open.
-- A service worker script requested from the root is refused (`404`): its
-  scope would be the whole origin, every link on the host included.
-- hostd's own paths never accept the cookie, so the machine API, keyed
-  service routes and `/health` still need the key.
-- It needs a hostname of hostd's own, at the root of an https origin on the
-  default port, as an ngrok or cloudflared tunnel gives. Under a path
-  (`https://example.com/hostd/`), root-relative URLs miss hostd entirely;
-  over plain http, browsers drop the `Secure` cookie. Browsers scope cookies
-  by host, not port, so hostd sets none on an explicit port
-  (`preview.example:8443`) or an address that reaches the machine itself
-  (`localhost`, `127.0.0.0/8`, `[::1]`, their IPv4-mapped forms,
-  `0.0.0.0`): every other server on that host would receive the token and
-  could replay it. `register-url` keeps such a URL, since links still work,
-  but warns. hostd reads the host from `Host`, so a tunnel must pass it
-  through unrewritten, as ngrok and cloudflared do by default.
-
-- The key goes in `X-Amika-Hostd-Key`, since `Authorization` belongs to the
-  guest (`amikad` checks SSH connect tokens with it). hostd never forwards
-  the key.
-- A caller without the key, such as `curl` or a script, may send a service
-  token instead: `X-Amika-Authorization: Bearer <token>`. The control plane
-  mints it (`signServiceToken` in `@amika/service-auth/credentials`) for
-  one machine's one service, for at most a day: the same claim a link signs,
-  under a second key derived from the secret key, so a link's token never
-  works as a service token or the other way round. hostd refuses a token
-  that claims to live longer, never accepts one for `amikad`, and strips
-  the header before forwarding, HTTP and upgrades alike. A `401` on a
-  service route carries a `hint` saying where a token goes, except for
-  `amikad`; it names no CLI command until the CLI has one. `GET /health` lists `service-tokens` in `features` so a control
-  plane knows the host takes them (KAPRO-1038).
-- One request needs no key: the SSH WebSocket that `amika sandbox ssh`
-  opens, exactly `GET .../services/amikad/v1/ssh-sessions` as an upgrade,
-  to a running rig whose `amikad` is on port 60999. `amikad` checks the
-  connect token the control plane gave the CLI; the key never leaves the
-  control plane. Everything else still needs the key.
-- Create takes `services: [{ name, port }]`. The `smol` provider publishes
-  each port on a host loopback port it picks, and hostd keeps each machine's
-  name-to-port map in `services.json` (`src/internal/service-registry.ts`),
-  since smolvm stores no names.
-  `PUT /v0beta1/rigs/<name>/services` replaces the map later (the
-  provider's `syncRoutes`), on ports published at create.
-
-### Previews and browser login
-
-With Amika's URL configured (`api_url`, which hostd always has),
-hostd also serves previews: `/v0beta1/rigs/<machine>/previews/<name>/<path>`,
-an address with no credential in it (KAPRO-1038). A browser proves itself
-with a session cookie instead, set after Amika vouched for its user
-(`@amika/service-auth/gateway`; the credentials are in
-`@amika/service-auth/credentials`):
-
-1. A page load on a preview without a session is redirected to
-   `/__amika/login?return=<path>`, which keeps a random state and the path in
-   `__Host-amika-login` (`SameSite=None`, 10 minutes) and redirects to
-   `<api_url>/hosts/authorize?origin=<this host's origin>&state=<state>`.
-   A page load a preview cookie routes (a root-relative URL) does the same,
-   returning to its guest path through the preview's own: the Strict preview
-   cookie is not sent on the redirect back from Amika's site, and opening
-   the preview renews it. Anything other than a page load gets `401`.
-2. Amika checks the user is signed in and that one of their org's hosts is
-   registered at that origin, then form-posts a login pass to that host's
-   registered URL, `/__amika/callback`. The pass names the origin, state and
-   user, lives a minute, and is signed under a key derived from the secret
-   key. Either clock may be up to five minutes ahead of the other.
-3. hostd checks the pass against the state cookie, answers each state once,
-   sets `__Host-amika-session` (`SameSite=Lax`, a day, signed under another
-   derived key), and redirects to the path.
-
-- Lax, not Strict: a preview is opened from Amika, another site, and a
-  Strict session would send every such click back to log in.
-- A session covers every preview on the host, as a host is one trusted unit,
-  and opens nothing else: keyed service routes, links and the machine API
-  still need their own credentials. amikad has no preview.
-- With a session, a preview still answers only this origin's own requests
-  (`Sec-Fetch-Site: same-origin` or `none`) and page loads another site
-  starts, such as Amika opening it; anything else gets `403`. An upgrade
-  must name this origin in `Origin`. Lax counts a sibling subdomain as the
-  same site, and no CORS covers a WebSocket, so without this a page there
-  could post to a preview or read its socket with the session.
-- Opening a preview sets `__Host-amika-preview` (rig and service, no
-  credential), so the page's root-relative URLs and upgrades reach the same
-  service, under the same `Sec-Fetch-Site` rule as the link cookie, and only
-  with the session too. A page load it routes renews it. Opening a preview
-  ends the link cookie and opening a link ends the preview cookie, so the
-  one opened last owns the root.
-- The return path is resolved as a browser resolves `Location`, and anything
-  that leaves the origin returns to `/`.
-- Preview responses drop `Service-Worker-Allowed` and set `X-Robots-Tag:
-noindex`, but keep the guest's own caching, made `private`: the URL is
-  not a credential. A guest's CDN cache policies (`CDN-Cache-Control`,
-  `Cloudflare-CDN-Cache-Control`, `Surrogate-Control`) are dropped there and
-  on links, as a tunnel's CDN would read them first. hostd's login responses
-  are `no-store`.
-- hostd sets none of these cookies on a loopback address or an explicit
-  port; `/__amika/login` answers `400` there. `GET /health` lists
-  `browser-login` in `features`, and the `amika-hostd` provider hands out
-  previews only to such a host whose URL is an https origin of its own,
-  keeping service links everywhere else.
-- hostd strips its own cookies from every forwarded request, and drops any
-  `Set-Cookie` of a guest's under `__Host-amika-`, in a WebSocket
-  handshake's answer as in any other response. That keeps a guest's
-  server out of the login; a guest's page shares the origin, and its script
-  could still set a cookie where none is held, as a host is one trusted
-  unit.
-
-## Snapshots
-
-A snapshot is a rig's disks packed into a `.smolmachine` file on this host,
-which a later rig boots from. They stay on the host: an org's rigs on its own
-hardware never leave it, and neither do their snapshots.
-
-```
-POST   /v0beta1/rigs/<rig>/snapshots   {"name": "<org>/sandbox/<label>"} -> 202
-GET    /v0beta1/snapshots                     every snapshot this host holds
-GET    /v0beta1/snapshots/<name>              one, or 404
-DELETE /v0beta1/snapshots/<name>              204; 409 while it is being
-                                              taken
-```
-
-`src/internal/snapshots.ts` takes one: stop the rig, run `smolvm pack create
---from-vm <rig> -o <staged>`, adopt the `.smolmachine` it writes beside that
-stub. `src/internal/snapshot-store.ts` keeps them.
-
-- **Why a pack, and not a checkpoint.** smolvm can also capture a running
-  machine (`POST /machines/<name>/checkpoint`), which is one atomic call and
-  needs no stop. It captures guest RAM as well as disks, which is wrong for
-  Amika's snapshots in two ways: the control plane scrubs a rig's credentials
-  before capturing, and a RAM image carries the secrets the scrubbed
-  processes still hold; and a checkpoint restores only onto its captured
-  CPU/memory/disk topology, while a snapshot is a base image new rigs of any
-  size boot from. A pack carries disks only, as a flattened tar of the
-  container's layers for an image-based machine, so a scrubbed file is
-  absent from the artifact rather than merely unlinked from a block image.
-- **Why hostd owns the stop.** `pack create --from-vm` refuses a running
-  machine and smolvm has no one call that stops and packs, so the daemon does
-  both itself, under a lock that holds the stop and the pack together for one
-  rig.
-- **Why hostd keeps everything else off the rig.** The pack is a separate
-  process, so smolvm's own lifecycle lock is not held across it: smolvm
-  starts, execs in or deletes a machine mid-pack without complaint, and the
-  pack then reads disks that are being written. So from the moment a capture
-  reserves its name until the snapshot is `active` or `failed`, hostd answers
-  `409` to every rig route but reading the rig (`leaveCapturedRigAlone`),
-  file reads included, since one may boot a stopped rig. The control plane
-  holds the rig too, as `snapshotting`, but only while it waits on the
-  capture (20 minutes), and a large pack can take longer.
-- **Why it is a subprocess.** The HTTP API's only export pushes to an OCI
-  registry; a local artifact comes from the CLI. It runs the binary the
-  daemon's own smolvm runs (`ManagedSmolvm.binary`), so both read the same
-  on-disk machine state, and never with the API key or the secret key. A
-  daemon that did not start smolvm (plain `serve`) serves no snapshot routes
-  and does not name the feature in `/health`.
-- **A capture answers before it finishes.** A pack is gigabytes and minutes,
-  far past any HTTP deadline, so `POST .../snapshots` reserves the name and
-  answers `202`; the snapshot carries `capturing` until the artifact lands,
-  then `active` or `failed` with a reason. The control plane polls it.
-- **Only scrub-and-delete.** Stopping the rig rules out the non-destructive
-  "snapshot everything and keep it running" mode, so the provider declares
-  `fullSnapshotCapture: false` and Amika offers only "snapshot and delete".
-- **The scrub window.** The control plane scrubs the rig's credentials over
-  `exec` (so the rig is still running), then this stops it. The agent is
-  alive for both, and a graceful stop flushes the guest, so a file the scrub
-  removed can be written back before the pack reads the disks. Every provider
-  Amika supports has this window (none kills the agent before capturing),
-  but it is wider here, because stopping a VM runs the guest's shutdown
-  rather than freezing it.
-- **Names are never paths.** Amika's snapshot names are namespaced
-  (`org_abc123/sandbox/nightly`), so they carry slashes. Each artifact's
-  filename is a slug plus a digest of the whole name, so no part of a name
-  reaches the filesystem and two names that slugify alike keep their own
-  files. The routes take the name as a trailing wildcard, decoded once.
-- **Resolving one at create.** `resolveSource`
-  (`src/internal/requests.ts`) checks `[preset_images]`, then this store,
-  then the full-OCI-reference passthrough. The store has to come first,
-  because a snapshot name contains slashes and would otherwise be forwarded
-  to a registry.
-- **Rigs do not need the snapshot they came from.** smolvm copies an
-  artifact's layers into its own storage when it creates a machine from one,
-  so a snapshot can be deleted while rigs made from it are still here: they
-  boot, run and are packed again without it.
-- **What an interrupted run leaves.** A capture is abandoned when the daemon
-  stops: nothing is left that could adopt an artifact, so on startup the store
-  turns every `capturing` entry into `failed`, drops entries whose artifact has
-  gone missing, and clears staging. The pack is signalled on a graceful
-  shutdown, but it runs in its own process group, so one that outlives a
-  `kill -9` keeps writing into a staging directory the next start removes.
-
-## API versions
-
-hostd and the control plane upgrade independently, so hostd's API is
-versioned. `/v0beta1/rigs` is the current API: the machine routes (create,
-get, delete, start, stop, exec, files, services), the service routes and
-the service-link routes.
-`GET /health` lists the versions served and the features a control plane may
-rely on (`{ "status": "ok", "apis": ["v0beta1"], "features":
-["service-tokens", "snapshots"] }`). `snapshots` appears only on a daemon
-that can take them (see [Snapshots](#snapshots)). `/api/v1/machines` serves the same machine routes, without
-service routes, for control planes on providers from before `v0beta1`; remove
-it once none are deployed. Change a version's contract only in a new version.
-
-## Authentication
-
-Every route, including `/health` and unknown paths, requires the secret key:
-in `X-Amika-Hostd-Key` (or a service token in `X-Amika-Authorization`) on
-service routes, as a signed link on service-link
-routes, or as the link cookie on a path outside hostd's own (see
-[Service routes](#service-routes)), otherwise as
-`Authorization: Bearer <secret key>` (the scheme the Amika CLI uses for API
-credentials). `src/internal/auth.ts` reads it the same way as amika-mono's
-worker auth (`checkWorkerAuth`): strip a leading `Bearer` scheme, trim, compare
-in constant time, and answer a mismatch with a plain `401`. It runs before the body
-limit, so unauthenticated callers cannot make the daemon buffer a body. The
-caller's credential is never forwarded to the Smol runtime. The
-`@amika/sandbox` `amika-hostd` provider sends the key from
-`AMIKA_HOSTD_SECRET_KEY`. Both sides require at least 32 printable ASCII
-characters with no spaces: HTTP clients trim header values, so a padded key
-could never match.
+Plain `serve` (what `dev` runs) does not start smolvm; see
+[Commands](docs/commands-and-registration.md#commands) for pointing it at one.
+How the bundle is built and packaged for release is in
+[Release bundle](docs/installation.md#release-bundle).
 
 ## Checks
 
@@ -905,3 +53,119 @@ pnpm --filter @amika/hostd test
 The test command allows an empty suite until behavior is added. Use `format` to
 apply formatting. `src/app.ts` defines routes without opening a socket;
 `src/internal/server.ts` binds the listener and bounds shutdown.
+
+## Invariants
+
+Each of these is stated in full, with its reason, in the doc it links to.
+
+**The HTTP API**
+
+- **Every route requires a credential**, `/health` and unknown paths
+  included, compared in constant time before the body limit. The caller's
+  credential is never forwarded to the Smol runtime. See
+  [Authentication](docs/api-and-auth.md#authentication).
+- **Change a version's contract only in a new version.** `GET /health` lists
+  the versions served and the features a control plane may rely on. See
+  [API versions](docs/api-and-auth.md#api-versions).
+
+**Credentials reaching hostd**
+
+- **The host key never reaches a browser.** A browser uses a signed service
+  link instead, minted on the control plane and verified locally, both with
+  `@amika/service-auth/credentials`: an HMAC-SHA256 over the machine, service
+  and expiry under a key derived from the secret key. Service tokens, the
+  browser-login pass and the session sign under other derived keys, so no
+  credential works as another. See [Service routes](docs/service-routes.md).
+- **A link's path is its credential**, and no single link can be revoked, so
+  `hardenServiceLinkResponse` wraps every response on a link route, hostd's
+  own `401`, `404` and `308` included, and sets its headers rather than
+  defaulting them.
+- **hostd never forwards a credential it checks.** The key, the service-token
+  header and hostd's own cookies are stripped before forwarding, for HTTP and
+  WebSocket upgrades alike, and a guest's `Set-Cookie` under `__Host-amika-`
+  is dropped.
+- **Each credential opens only its own routes.** hostd's own paths never
+  accept the link cookie, so the machine API, keyed service routes and
+  `/health` still need the key; no link cookie or service token is set for or
+  accepted for `amikad`; a browser session opens previews and nothing else.
+  hostd sets no cookie on a loopback address or an explicit port.
+
+**Secrets on the host**
+
+- **One store, never mixed.** The API key and secret key live in the
+  `keychain` store (the default) or the `file` store, chosen explicitly. A
+  read never falls back from one store to the other, and hostd never falls
+  back to files on its own. Values reach `security` and `secret-tool` on
+  stdin, never in the process list. See
+  [Secret storage](docs/setup-and-secrets.md#secret-storage).
+- **The daemon holds only the secret key, and never reads the store.** `up`
+  reads the secrets and hands the secret key over IPC; neither secret goes in
+  the daemon's environment. smolvm, rigs, the snapshot pack subprocess and
+  the smolvm version check never see either secret.
+- **Secrets stay out of files and messages they do not belong in.** The API
+  key never comes from TOML. Config and secret files are replaced atomically
+  with mode `0600` (`src/internal/private-file.ts`). Never include a secret or
+  file contents in a `ConfigError` message, nor the API key or secret in a
+  registration error. See [Configuration](docs/configuration.md).
+- **Registration never changes a stored secret.** Only setup's regenerate
+  path sends a new secret key to Amika, after storing it locally. See
+  [Registration](docs/commands-and-registration.md#registration).
+- **Requests to Amika and to smolvm refuse redirects**, so credentials, exec
+  bodies and uploaded files are never resent to another origin. smolvm's
+  error reason is withheld for exec and redacted of a create's env values.
+  See [Machine runtime](docs/runtime.md#machine-runtime).
+
+**Runtime**
+
+- **smolvm listens only on loopback**: its API has no authentication. It is
+  never killed outright, and `down` signals a pid only once `/proc` or `ps`
+  confirms its program. See [smolvm](docs/runtime.md#smolvm).
+- **Pre-pull deletes only the machines it recorded**, and hides only hostd's
+  own from the machine list. See
+  [Image cache](docs/configuration.md#image-cache).
+- **`resolveSource` checks `[preset_images]`, then the snapshot store, then
+  the full-reference passthrough**, so an unconfigured preset never falls
+  through to a Docker Hub pull. A snapshot name never reaches the filesystem,
+  and a rig being captured answers `409` to every route but reading it. See
+  [Snapshots](docs/snapshots.md).
+
+**Kept in step by tests or by hand**
+
+- `config.example.toml` with the config schema (`config.test.ts`) and with
+  `DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES` (`setup.test.ts`).
+- The `setup --skill` text with the CLI (`setup-skill.test.ts`); options on
+  `amika` CLI commands it names are mirrored by hand.
+- A blank environment variable sets nothing; ask which variable sets a
+  setting through `envName`.
+- The bundle runs under plain `node` with no `node_modules`
+  (`src/bundle.test.ts`).
+
+## Detail docs
+
+`src/internal/` is flat, so the detail lives in `docs/` by area:
+
+- [docs/installation.md](docs/installation.md) — read when changing
+  `install-amika-hostd.sh` (install, `--uninstall`) or the release bundle
+  (`scripts/bundle.mjs`, `scripts/package-release.sh`).
+- [docs/commands-and-registration.md](docs/commands-and-registration.md) —
+  read when changing the CLI (`src/index.ts`, `cli.ts`, `daemon.ts`), how
+  `up`, `serve` and `down` start and stop, registration with Amika
+  (`amika-api.ts`), `register-url`, or the pidfile.
+- [docs/setup-and-secrets.md](docs/setup-and-secrets.md) — read when changing
+  `amika-hostd setup` (`setup.ts`, `setup-skill.ts`), secret-key regeneration,
+  or where secrets are kept (`credentials.ts`).
+- [docs/configuration.md](docs/configuration.md) — read when changing a
+  setting (`config.ts`, `config.example.toml`), preset images, or the image
+  cache and pre-pull (`prepull.ts`).
+- [docs/runtime.md](docs/runtime.md) — read when changing how smolvm is run
+  (`smolvm-serve.ts`) or the machine API on top of it (`machine-runtime.ts`).
+- [docs/api-and-auth.md](docs/api-and-auth.md) — read when adding or
+  changing a route, a `/health` feature, or how a request is authenticated
+  (`src/app.ts`, `auth.ts`).
+- [docs/service-routes.md](docs/service-routes.md) — read when changing
+  service routing, signed links, service tokens, the link cookie, previews or
+  browser login (`src/app.ts`, `services.ts`, `service-registry.ts`,
+  `@amika/service-auth`).
+- [docs/snapshots.md](docs/snapshots.md) — read when changing snapshot capture
+  or storage (`snapshots.ts`, `snapshot-store.ts`) or how a create resolves
+  its source (`requests.ts`).

@@ -34,6 +34,9 @@ machine doesn't have them.
 curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
 ```
 
+[Installation](docs/installation.md) lists what the installer puts where, its
+options, and how `--uninstall` removes it again.
+
 ### 2. Set up credentials
 
 ```bash
@@ -46,6 +49,8 @@ keychain. On a server with no keychain, set `secret_store = "file"` in the
 config first. Edit the file the installer printed: the daemon reads
 `$XDG_CONFIG_HOME/amika-hostd/config.toml` (`~/.config/...` by default) if it
 exists and `/etc/amika-hostd/config.toml` otherwise, never both.
+[Setup and secret storage](docs/setup-and-secrets.md) covers what setup asks,
+`setup --non-interactive` for scripts, and how each store keeps the secrets.
 
 ### 3. Start it
 
@@ -101,7 +106,9 @@ publishes the sizes to Amika, so the file is the source of truth for them.
 Preset images stay local: this host pins the version it boots. Edit the file
 and restart the daemon either way.
 
-See `config.example.toml` for every key.
+See `config.example.toml` for every key, and
+[Configuration](docs/configuration.md) for each setting's environment variable,
+preset images, and the image cache.
 
 ## Managing hosts
 
@@ -119,4 +126,5 @@ on the next `up`.
 
 - [BYOC guide](https://docs.amika.dev/guides/byoc)
 - [`amika host` reference](https://docs.amika.dev/reference/cli)
-- [AGENTS.md](./AGENTS.md) for how the daemon works internally
+- [AGENTS.md](./AGENTS.md) for how the daemon works internally, with an index
+  of the detail docs in [`docs/`](./docs/)
