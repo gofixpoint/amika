@@ -80,8 +80,10 @@ func EvaluateHook(source Source, input io.Reader, overrides Overrides) (HookDeci
 
 	result := HookDecision{Decisions: make([]Decision, 0, len(targets))}
 	for _, target := range targets {
+		// Joined without cleaning: a lexical ".." after a symlink would change
+		// which file the path names (see resolvePath).
 		if !filepath.IsAbs(target.path) {
-			target.path = filepath.Join(payload.CWD, target.path)
+			target.path = payload.CWD + string(filepath.Separator) + target.path
 		}
 		candidates, err := repoCandidates(repoRoot, target)
 		if err != nil {

@@ -242,59 +242,81 @@ func repoRelative(repoRoot, target string) (string, bool) {
 	}
 }
 
-// maxSymlinkHops bounds how many dangling final symlinks resolvePath follows,
-// so a symlink loop is reported instead of followed forever.
+// maxSymlinkHops bounds how many symlinks resolvePath follows, so a symlink
+// loop is reported instead of followed forever.
 const maxSymlinkHops = 40
 
-// resolvePath returns the physical location a change to path affects, with
-// the symlinks in its directory resolved. With followFinal, for a write that
-// goes through path, a final symlink is followed to its destination too, even
-// one whose destination does not exist yet, since the write creates it.
-// Without it, for a delete or rename that acts on path itself, the final
-// element is kept as written. A path a write would create keeps its missing
-// components as written, rejoined under their nearest existing ancestor.
+// resolvePath returns the physical location a change to path affects. It
+// walks path one component at a time as the kernel does, following each
+// symlink before applying a later "..", so "link/.." means the parent of the
+// link's destination rather than the directory holding the link. With
+// followFinal, for a write that goes through path, a final symlink is
+// followed too, even one whose destination does not exist yet, since the
+// write creates it. Without it, for a delete or rename that acts on path
+// itself, the final element is kept as written. Once a component does not
+// exist, the rest of the path is kept as written, as a write would create it.
 func resolvePath(path string, followFinal bool) (string, error) {
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	path = filepath.Clean(path)
-	for hops := 0; followFinal; hops++ {
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			return resolved, nil
-		}
-		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink == 0 {
-			break
-		}
-		if hops == maxSymlinkHops {
-			return "", fmt.Errorf("resolving %s: too many levels of symbolic links", path)
-		}
-		destination, err := os.Readlink(path)
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
 		if err != nil {
 			return "", err
 		}
-		if !filepath.IsAbs(destination) {
-			destination = filepath.Join(filepath.Dir(path), destination)
-		}
-		path = filepath.Clean(destination)
+		path = wd + string(filepath.Separator) + path
 	}
-	dir, rest := filepath.Dir(path), []string{filepath.Base(path)}
-	for {
-		resolved, err := filepath.EvalSymlinks(dir)
-		if err == nil {
-			return filepath.Join(append([]string{resolved}, rest...)...), nil
+	volume := filepath.VolumeName(path)
+	resolved := volume + string(filepath.Separator)
+	remaining := pathComponents(path[len(volume):])
+	for hops := 0; len(remaining) > 0; {
+		component := remaining[0]
+		remaining = remaining[1:]
+		switch component {
+		case ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
 		}
-		if !errors.Is(err, os.ErrNotExist) {
+		next := filepath.Join(resolved, component)
+		info, err := os.Lstat(next)
+		if errors.Is(err, os.ErrNotExist) {
+			return filepath.Join(append([]string{next}, remaining...)...), nil
+		}
+		if err != nil {
 			return "", err
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return path, nil
+		if info.Mode()&os.ModeSymlink == 0 || (len(remaining) == 0 && !followFinal) {
+			resolved = next
+			continue
 		}
-		rest = append([]string{filepath.Base(dir)}, rest...)
-		dir = parent
+		if hops++; hops > maxSymlinkHops {
+			return "", fmt.Errorf("resolving %s: too many levels of symbolic links", path)
+		}
+		destination, err := os.Readlink(next)
+		if err != nil {
+			return "", err
+		}
+		// A relative destination is relative to the directory holding the
+		// link, which is resolved as it stands.
+		if filepath.IsAbs(destination) {
+			volume = filepath.VolumeName(destination)
+			resolved = volume + string(filepath.Separator)
+			destination = destination[len(volume):]
+		}
+		remaining = append(pathComponents(destination), remaining...)
 	}
+	return resolved, nil
+}
+
+// pathComponents splits path into its non-empty components, keeping "." and
+// ".." for resolvePath to interpret.
+func pathComponents(path string) []string {
+	var components []string
+	for _, component := range strings.Split(path, string(filepath.Separator)) {
+		if component != "" {
+			components = append(components, component)
+		}
+	}
+	return components
 }
 
 func sliceSet(values []string) map[string]struct{} {

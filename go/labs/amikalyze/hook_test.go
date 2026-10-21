@@ -202,6 +202,47 @@ func TestParsePatchTargets_WriteWinsOverDelete(t *testing.T) {
 	}
 }
 
+// A ".." after a symlink leads to the parent of the symlink's destination, as
+// the kernel resolves it, not to the directory holding the symlink. With
+// `dlink` pointing at frozen/child, both a dangling symlink to
+// dlink/../secret.sql and a target written as dlink/../other.sql land in the
+// frozen directory and are denied.
+func TestEvaluateHook_DotDotAfterSymlink(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, filepath.Join(root, configName), `
+[[freezes]]
+label = "frozen"
+paths = ["frozen/**"]
+`)
+	if err := os.MkdirAll(filepath.Join(root, "frozen", "child"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("frozen", "child"), filepath.Join(root, "dlink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("dlink/../secret.sql", filepath.Join(root, "alias.sql")); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		filepath.Join(root, "alias.sql"),
+		root + "/dlink/../other.sql",
+	} {
+		payload := fmt.Sprintf(`{
+  "cwd": %q,
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {"file_path": %q, "content": "changed"}
+}`, root, target)
+		decision, err := EvaluateHook(SourceClaude, strings.NewReader(payload), Overrides{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !decision.Frozen() {
+			t.Errorf("write to %s was allowed, want freeze \"frozen\" (%+v)", target, decision)
+		}
+	}
+}
+
 // Deleting or renaming away an unfrozen symlink to a frozen file changes only
 // the symlink, so Codex may do it, while updating the file through the
 // symlink, or renaming another file onto it, is denied.
