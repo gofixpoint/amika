@@ -5,7 +5,7 @@ commands, and entire packages may change or disappear at any time.
 
 - Lives in the main `github.com/gofixpoint/amika/go` module so it can import
   `go/internal/*` and `go/pkg/amika`.
-- Stable code (`go/cmd/amika`, `go/cmd/amika-server`, `go/pkg/amika`,
+- Stable code (`go/cmd/amika`, `go/pkg/amika`,
   `go/internal/*`) must **not** import from `go/labs/`.
 - Build the `akfs` and `amikalyze` CLIs with `make build-akfs` and
   `make build-amikalyze`; both are built as part of the default `make build`.

@@ -15,8 +15,6 @@ name: Create Release Tag
 # Supported tag shapes:
 #   amika@v1.2.3
 #   amika@v1.2.3-rc.1
-#   amika-server@v1.2.3
-#   amika-server@v1.2.3-beta.1
 #   amikad@v1.2.3
 #   amikad@v1.2.3-rc.1
 #   amikalog@v1.2.3
@@ -35,7 +33,6 @@ on:
         type: choice
         options:
           - amika
-          - amika-server
           - amikad
           - amikalog
           - amika-hostd

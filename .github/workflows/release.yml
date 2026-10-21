@@ -17,7 +17,6 @@ on:
   push:
     tags:
       - "amika@v*"
-      - "amika-server@v*"
       - "amikad@v*"
       - "amikalog@v*"
       - "amika-hostd@v*"
@@ -51,10 +50,6 @@ jobs:
             amika@*)
               component="amika"
               binary_name="amika"
-              ;;
-            amika-server@*)
-              component="amika-server"
-              binary_name="amika-server"
               ;;
             amikad@*)
               component="amikad"
@@ -141,10 +136,6 @@ jobs:
             amika)
               package_path="./cmd/amika"
               ld_version="github.com/gofixpoint/amika/go/internal/buildmeta.amikaVersionValue=$VERSION"
-              ;;
-            amika-server)
-              package_path="./cmd/amika-server"
-              ld_version="github.com/gofixpoint/amika/go/internal/buildmeta.amikaServerVersionValue=$VERSION"
               ;;
             amikad)
               package_path="./cmd/amikad"

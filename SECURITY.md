@@ -61,7 +61,7 @@ release of each component and do not backport them to older versions.
 
 | Component | Supported |
 |-----------|-----------|
-| `amika` CLI and `amika-server` (latest release, currently 0.14.x) | ✅ |
+| `amika` CLI (latest release, currently 0.14.x) | ✅ |
 | `amikalog` (latest release, currently 0.2.x) | ✅ |
 | `@amika/typescript-sdk` (latest release, currently 0.10.x) | ✅ |
 | Any earlier release | ❌ |
@@ -73,7 +73,7 @@ Before reporting, please confirm the issue reproduces on the latest release.
 
 In scope:
 
-- The `amika` CLI, `amika-server`, and `amikalog`
+- The `amika` CLI and `amikalog`
 - The Go package `go/pkg/amika` and the internal packages it depends on
 - The TypeScript SDK (`sdk/typescript/`) and `@amika/sandbox` (`js/sandbox/`)
 - The sandbox image bundle in `sandbox-image/`
@@ -123,10 +123,6 @@ A few things worth knowing when assessing Amika's security posture:
   Both the CLI and the API reject user-specified ports in that range. See
   [`docs/sandbox-configuration.md`](docs/sandbox-configuration.md).
 - Hosted rigs run in true VMs.
-- The `amika-server` binary still exposes a Docker-backed sandbox API. Those
-  sandboxes run as containers on the host Docker daemon, so they inherit that
-  daemon's isolation properties and are not a hard security boundary against
-  untrusted code.
 
 ## Non-Security Bugs
 

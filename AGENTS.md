@@ -9,11 +9,10 @@ commands with `go -C go ...`, so `make` targets continue to work
 unchanged from the repo root. Build outputs are written to `dist/` at
 the repo root.
 
-**Use `make build` to build all binaries (`amika`, `amika-server`, `amikalog`, and the experimental `akfs` and `amikalyze`), or `make build-cli` / `make build-server` / `make build-amikalog` / `make build-akfs` / `make build-amikalyze` for one binary.** If you run `go build` directly, do it from the `go/` directory and write outputs to the repo-root `dist/`:
+**Use `make build` to build all binaries (`amika`, `amikad`, `amikalog`, and the experimental `akfs` and `amikalyze`), or `make build-cli` / `make build-amikad` / `make build-amikalog` / `make build-akfs` / `make build-amikalyze` for one binary.** If you run `go build` directly, do it from the `go/` directory and write outputs to the repo-root `dist/`:
 
 ```bash
 (cd go && go build -o ../dist/amika ./cmd/amika)
-(cd go && go build -o ../dist/amika-server ./cmd/amika-server)
 (cd go && go build -o ../dist/amikalog ./cmd/amikalog)
 ```
 
@@ -27,7 +26,6 @@ make ci
 # Individual targets
 make build          # builds all stable and experimental binaries
 make build-cli      # builds dist/amika
-make build-server   # builds dist/amika-server
 make build-amikalog # builds dist/amikalog
 make build-akfs     # builds dist/akfs (experimental, labs)
 make build-amikalyze # builds dist/amikalyze (experimental, labs)
@@ -40,7 +38,7 @@ make zizmor  # audit GitHub Actions workflows with zizmor (needs uv)
 
 ## Project Overview
 
-Amika is a Go module that lets people control sandboxed AI agents, focused on use-cases for AI coding agents. The goal is to provide the infra for users to build their own software factories. It includes a CLI tool `amika`, a Go package `go/pkg/amika`, and an HTTP server (`amika-server`) that exposes the same functionality as a REST API. The project uses standard Go tooling with a Makefile for common commands.
+Amika is a Go module that lets people control sandboxed AI agents, focused on use-cases for AI coding agents. The goal is to provide the infra for users to build their own software factories. It includes a CLI tool `amika` and a Go package `go/pkg/amika`. The project uses standard Go tooling with a Makefile for common commands.
 
 The repo also ships `amikalog`, a separate, separately-installed CLI that captures Claude Code and Codex hook activity (with the git state of each hook's working directory) as raw append-only events under the amika state directory. Run `amikalog start` once to install the hooks. It is versioned and released independently of `amika` (tags `amikalog@v*`).
 
@@ -75,8 +73,6 @@ checked out as a sibling worktree rather than searching for those paths in this 
 
 ## Runtime Dependencies
 
-- **Docker** is required by `amika-server`, which still exposes the Docker-backed sandbox API over HTTP. Preset images (`coder`, `coder-plus-docker`) are auto-built on first use from the generated Dockerfiles in `sandbox-image/`.
-- **rsync** is required by `amika-server`'s materialize endpoint to copy output files.
 - The `amika` CLI itself is remote-only: every `rig`/`sandbox` command talks to the Amika API. The former `--local` mode, and the `volume` and `materialize` commands that served it, have been removed.
 
 ## Code Structure
@@ -90,9 +86,6 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `auth.go` — `auth login|logout|status` commands
 - `auth_api_key.go` — `auth api-key create`, which mints an API key and writes its value only to the `--out` file (never the CLI's own output, errors, or `-o json`)
 
-### HTTP Server (`go/cmd/amika-server/`)
-- `main.go` — Entry point for the HTTP server (listens on `:8080` by default)
-
 ### amikalog CLI (`go/cmd/amikalog/`)
 - `main.go` — Entry point, root Cobra command
 - `start.go` — `start` / `stop` commands that install/remove the agent hooks
@@ -105,7 +98,6 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `auth/` — Multi-source credential discovery (Claude, Codex, OpenCode, Amp) with priority-based deduplication
 - `config/` — XDG path resolution, state file location helpers
 - `basedir/` — XDG base directory resolution
-- `httpapi/` — HTTP handler for the REST API server
 - `app/` — Application service layer implementation
 - `ports/` — Port interfaces for Docker and store operations
 - `output/` — CLI output formatting for the `--output`/`-o` flag (`text`, `json`, `json-pretty`)
@@ -115,7 +107,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `eventlog/` — amikalog's hook installer, event capture, and push (details in the package doc)
 
 ### Public Package (`go/pkg/amika/`)
-- `service.go` — Public service API used by both the CLI and HTTP server
+- `service.go` — Public service API and the request/response types the CLI uses
 - `requests.go` — Request types
 - `responses.go` — Response types
 
@@ -126,7 +118,6 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 ### Other
 - `dist/` — Build output directory at the repo root (gitignored)
 - `bin/amika` — Wrapper script that auto-builds and runs `dist/amika`
-- `bin/amika-server` — Wrapper script that auto-builds and runs `dist/amika-server`
 - `bin/amikalog` — Wrapper script that auto-builds and runs `dist/amikalog`
 - `bin/amikalyze` — Wrapper script that auto-builds and runs `dist/amikalyze`
 - `materialization-scripts/` — Example data materialization scripts
@@ -166,12 +157,10 @@ For user-facing docs (`docs/`, README):
 | Variable | Purpose |
 |----------|---------|
 | `AMIKA_STATE_DIRECTORY` | Override default state directory (`~/.local/state/amika`) |
-| `AMIKA_PRESET_IMAGE_PREFIX` | Override Docker image name prefix for presets (read by `amika-server`; no effect on the CLI) |
 | `AMIKA_API_URL` | Override remote API base URL (default: `https://app.amika.dev`) |
 | `AMIKA_BINARY_PATH` | Absolute path to the `amika` executable recorded in generated config (the SSH `ProxyCommand`). Defaults to the running binary; set it inside a wrapper script so the wrapper names itself and the environment it exports survives |
 | `AMIKA_WORKOS_CLIENT_ID` | Override default WorkOS client ID for `amika auth login` |
 | `AMIKA_RUN_EXPENSIVE_TESTS` | Gate for expensive Docker integration tests. No test opts into it today; see `docs/development/testing.md` |
-| `PORT` | Override listen address for `amika-server` (mutually exclusive with `-addr` flag) |
 
 ## Cursor Cloud specific instructions
 

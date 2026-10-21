@@ -3,7 +3,7 @@
 Experimental code lives here. Anything under `go/labs/` is a work in progress
 and carries **no compatibility guarantees** — APIs, commands, flags, and entire
 packages may change or disappear at any time. Do not depend on it from stable
-code (`go/cmd/amika`, `go/cmd/amika-server`, `go/pkg/amika`, `go/internal/*`).
+code (`go/cmd/amika`, `go/pkg/amika`, `go/internal/*`).
 
 This mirrors the spirit of [`golang.org/x/exp`](https://pkg.go.dev/golang.org/x/exp):
 a place to prototype before anything graduates into the supported surface.

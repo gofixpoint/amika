@@ -8,9 +8,7 @@ In some cases, we accept code contributions from users. Please reach out on [Dis
 ## Prerequisites
 
 - Go 1.25 or later
-- Docker (required by `amika-server`, which exposes the Docker-backed sandbox API)
 - macOS (the only supported platform currently)
-- rsync (usually pre-installed on macOS)
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`), for `make zizmor`, which `make ci` runs
 
 ## Setup
@@ -25,12 +23,11 @@ make setup
 ## Building
 
 ```bash
-# Build both binaries (recommended)
+# Build all binaries (recommended)
 make build
 
 # Or build individually
 make build-cli     # builds dist/amika
-make build-server  # builds dist/amika-server
 ```
 
 Go sources live under `go/`. The Makefile runs go commands with
@@ -40,14 +37,12 @@ The wrapper scripts auto-build and run for convenience during development:
 
 ```bash
 bin/amika --help
-bin/amika-server
 ```
 
 ## Running
 
 ```bash
 dist/amika
-dist/amika-server
 ```
 
 ## Development
@@ -57,9 +52,8 @@ dist/amika-server
 make ci
 
 # Individual targets
-make build         # builds both dist/amika and dist/amika-server
+make build         # builds all binaries into dist/
 make build-cli     # builds dist/amika
-make build-server  # builds dist/amika-server
 make test    # go test ./... (run from go/)
 make vet     # go vet ./...  (run from go/)
 make fmt     # check formatting
@@ -92,17 +86,15 @@ For end-to-end smoke tests (Docker required), see [docs/development/testing.md](
 ```
 go/                      Go module (github.com/gofixpoint/amika/go)
   cmd/amika/             CLI commands (Cobra)
-  cmd/amika-server/      HTTP server entry point
   internal/
     sandbox/             Docker sandbox management, presets, volumes
     auth/                Credential discovery (Claude, Codex, OpenCode, Amp)
     config/              XDG path resolution, state file locations
     basedir/             XDG base directory resolution
-    httpapi/             HTTP handler for the REST API
     app/                 Application service layer
     ports/               Port interfaces for Docker and stores
     materialize/         Local sandbox script execution (v0 legacy)
-  pkg/amika/             Public service API (used by CLI and HTTP server)
+  pkg/amika/             Public service API and types (used by the CLI)
   test/                  Integration and contract tests
 sdk/typescript/          TypeScript SDK
 materialization-scripts/ Example scripts for pulling data

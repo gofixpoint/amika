@@ -8,15 +8,12 @@ import (
 )
 
 var (
-	amikaVersionValue       = "dev"
-	amikaServerVersionValue = "dev"
-	amikadVersionValue      = "dev"
-	amikalogVersionValue    = "dev"
+	amikaVersionValue    = "dev"
+	amikadVersionValue   = "dev"
+	amikalogVersionValue = "dev"
 
 	// AmikaVersion is the parsed semantic version for the amika CLI.
 	AmikaVersion = MustParseSemVer(amikaVersionValue)
-	// AmikaServerVersion is the parsed semantic version for the amika-server binary.
-	AmikaServerVersion = MustParseSemVer(amikaServerVersionValue)
 	// AmikadVersion is the parsed semantic version for the sandbox daemon.
 	AmikadVersion = MustParseSemVer(amikadVersionValue)
 	// AmikalogVersion is the parsed semantic version for the amikalog CLI.

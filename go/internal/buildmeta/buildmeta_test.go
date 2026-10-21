@@ -27,7 +27,7 @@ func TestNewDefaults(t *testing.T) {
 
 func TestInfoString(t *testing.T) {
 	info := Info{
-		Component: "amika-server",
+		Component: "amikalog",
 		Version:   SemVer{Major: 1, Minor: 2, Patch: 3, PreRelease: "rc.1"},
 		Commit:    "abcdef123456",
 		Date:      "2026-03-17T12:00:00Z",

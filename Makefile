@@ -1,4 +1,4 @@
-.PHONY: goenv build build-cli build-server build-amikad build-amikalog build-akfs build-amikalyze clean test test-unit test-integration test-contract test-e2e test-e2e-api sweep-e2e test-expensive test-all test-sandbox-image coverage vet fmt fmtcheck lint shellcheck zizmor ci setup
+.PHONY: goenv build build-cli build-amikad build-amikalog build-akfs build-amikalyze clean test test-unit test-integration test-contract test-e2e test-e2e-api sweep-e2e test-expensive test-all test-sandbox-image coverage vet fmt fmtcheck lint shellcheck zizmor ci setup
 
 GO_DIR = go
 UNIT_PACKAGES = $$(go -C $(GO_DIR) list ./... | grep -Ev '/test/(integration|contract)($$|/)')
@@ -14,15 +14,11 @@ export GOTMPDIR := $(CURDIR)/.gotmp
 goenv:
 	mkdir -p "$(GOCACHE)" "$(GOTMPDIR)"
 
-build: build-cli build-server build-amikad build-amikalog build-akfs build-amikalyze
+build: build-cli build-amikad build-amikalog build-akfs build-amikalyze
 
 build-cli: goenv
 	mkdir -p dist
 	go -C $(GO_DIR) build -o $(CURDIR)/dist/amika ./cmd/amika
-
-build-server: goenv
-	mkdir -p dist
-	go -C $(GO_DIR) build -o $(CURDIR)/dist/amika-server ./cmd/amika-server
 
 build-amikad: goenv
 	mkdir -p dist
