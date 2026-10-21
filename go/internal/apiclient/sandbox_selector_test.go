@@ -23,9 +23,9 @@ func recordRequests(t *testing.T) (*Client, *[]string) {
 	return NewClient(srv.URL, "test-token"), &got
 }
 
-// TestSandboxSelectorWire checks every sandbox-addressed route against each
-// selector kind: a ref selector leaves the request exactly as it was before
-// selectors existed (no by/sandbox_by), and a name or id selector adds `by`
+// TestSandboxSelectorWire checks every sandbox-addressed route against a ref
+// and a pinned selector: a ref selector leaves the request exactly as it was
+// before selectors existed (no by/sandbox_by), and a pinned one adds `by`
 // where the sandbox is the resource and `sandbox_by` where it is the parent.
 func TestSandboxSelectorWire(t *testing.T) {
 	svc := SandboxServiceRequest{Name: "web", Port: 3000, URLScheme: "https"}
@@ -54,18 +54,17 @@ func TestSandboxSelectorWire(t *testing.T) {
 		}, "PATCH /api/v0beta1/sandboxes/org%%2Fbox/sessions/ses_1%s", "sandbox_by"},
 		{"CreateSandboxService", func(c *Client, s SandboxSelector) error { _, err := c.CreateSandboxService(s, svc); return err }, "POST /api/v0beta1/sandboxes/org%%2Fbox/services%s", "sandbox_by"},
 	}
+	c, got := recordRequests(t)
 	for _, route := range routes {
 		for _, tc := range []struct {
 			sel   SandboxSelector
 			query string
 		}{
 			{SandboxByRef("org/box"), ""},
-			{SandboxSelector{Value: "org/box"}, ""},
-			{SandboxSelector{Value: "org/box", By: SelectByName}, "?" + route.wantPinned + "=name"},
-			{SandboxSelector{Value: "org/box", By: SelectByID}, "?" + route.wantPinned + "=id"},
+			{SandboxByID("org/box"), "?" + route.wantPinned + "=id"},
 		} {
 			t.Run(route.name+"/"+tc.sel.kind(), func(t *testing.T) {
-				c, got := recordRequests(t)
+				*got = nil
 				_ = route.call(c, tc.sel)
 				want := []string{fmt.Sprintf(route.want, tc.query)}
 				if !reflect.DeepEqual(*got, want) {

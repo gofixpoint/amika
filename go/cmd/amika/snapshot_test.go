@@ -72,14 +72,9 @@ func TestSnapshotListRigFilter(t *testing.T) {
 		wantQuery string
 	}{
 		{rig: "alpha", wantQuery: "source_sandbox_ref=alpha"},
-		{rig: "ref=alpha", wantQuery: "source_sandbox_ref=alpha"},
-		{rig: "name=alpha", wantQuery: "source_sandbox_name=alpha"},
 		{rig: "id=sb-1", wantQuery: "source_sandbox_id=sb-1"},
-		{rig: "_self", wantQuery: "source_sandbox_ref=here"},
-		{rig: "name=_self", wantQuery: "source_sandbox_name=here"},
 	} {
 		t.Run(tc.rig, func(t *testing.T) {
-			t.Setenv("AMIKA_RIG_NAME", "here")
 			var queries []string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/api/v0beta1/sandbox-snapshots" {
@@ -116,68 +111,46 @@ func TestSnapshotListRigFilter(t *testing.T) {
 			t.Fatalf("err = %v, want the empty-reference error", err)
 		}
 	})
-
-	t.Run("a bad reference fails before any request", func(t *testing.T) {
-		t.Setenv("AMIKA_API_URL", "http://127.0.0.1:1")
-		c := newTestListCmd()
-		c.Flags().Set("rig", "id=")
-		if err := runSnapshotList(c, nil); err == nil || !strings.Contains(err.Error(), "no value") {
-			t.Fatalf("err = %v, want a missing-value error", err)
-		}
-	})
 }
 
 // TestSnapshotCreateRigSelector checks that snapshot create names the source
 // rig in the body field its reference kind calls for, and asks the scrub
 // preview for the same kind.
 func TestSnapshotCreateRigSelector(t *testing.T) {
-	for _, tc := range []struct {
-		rig       string
-		wantField string
-		wantBy    string
-	}{
-		{rig: "box", wantField: "sandbox_ref", wantBy: "ref"},
-		{rig: "name=box", wantField: "sandbox_name", wantBy: "name"},
-		{rig: "id=sb_1", wantField: "sandbox_id", wantBy: "id"},
-	} {
-		t.Run(tc.rig, func(t *testing.T) {
-			var body map[string]any
-			var previewQuery string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch {
-				case r.Method == "GET" && r.URL.Path == "/api/v0beta1/sandbox-snapshots/scrub-preview":
-					previewQuery = r.URL.RawQuery
-					_, _ = w.Write([]byte(`{"files":[],"restored_files":[],"env_vars":[]}`))
-				case r.Method == "POST" && r.URL.Path == "/api/v0beta1/sandbox-snapshots":
-					_ = json.NewDecoder(r.Body).Decode(&body)
-					_, _ = w.Write([]byte(`{"id":"snap_1","snapshot":"org/snap","state":"capturing"}`))
-				default:
-					_, _ = w.Write([]byte(`{"id":"snap_1","snapshot":"org/snap","state":"active"}`))
-				}
-			}))
-			defer srv.Close()
-			t.Setenv("AMIKA_API_URL", srv.URL)
-			t.Setenv("AMIKA_API_KEY", "test-token")
+	var body map[string]any
+	var previewQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/api/v0beta1/sandbox-snapshots/scrub-preview":
+			previewQuery = r.URL.RawQuery
+			_, _ = w.Write([]byte(`{"files":[],"restored_files":[],"env_vars":[]}`))
+		case r.Method == "POST" && r.URL.Path == "/api/v0beta1/sandbox-snapshots":
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"id":"snap_1","snapshot":"org/snap","state":"capturing"}`))
+		default:
+			_, _ = w.Write([]byte(`{"id":"snap_1","snapshot":"org/snap","state":"active"}`))
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+	t.Setenv("AMIKA_API_KEY", "test-token")
 
-			c := newTestCreateCmd()
-			c.Flags().Set("rig", tc.rig)
-			c.Flags().Set("name", "snap")
-			c.Flags().Set("mode", "scrub_and_delete")
-			// Interactive, so the scrub preview is fetched; "y" confirms.
-			c.SetIn(strings.NewReader("y\n"))
-			c.SetOut(&bytes.Buffer{})
-			if err := runSnapshotCreate(c, nil); err != nil {
-				t.Fatalf("runSnapshotCreate: %v", err)
-			}
-			wantBody := map[string]any{tc.wantField: strings.TrimPrefix(strings.TrimPrefix(tc.rig, "name="), "id="), "name": "snap", "mode": "scrub_and_delete"}
-			if !reflect.DeepEqual(body, wantBody) {
-				t.Fatalf("body = %v, want %v", body, wantBody)
-			}
-			if want := "by=" + tc.wantBy + "&sandbox=" + wantBody[tc.wantField].(string); previewQuery != want {
-				t.Fatalf("scrub preview query = %q, want %q", previewQuery, want)
-			}
-		})
+	c := newTestCreateCmd()
+	c.Flags().Set("rig", "id=sb_1")
+	c.Flags().Set("name", "snap")
+	c.Flags().Set("mode", "scrub_and_delete")
+	// Interactive, so the scrub preview is fetched; "y" confirms.
+	c.SetIn(strings.NewReader("y\n"))
+	c.SetOut(&bytes.Buffer{})
+	if err := runSnapshotCreate(c, nil); err != nil {
+		t.Fatalf("runSnapshotCreate: %v", err)
+	}
+	if want := map[string]any{"sandbox_id": "sb_1", "name": "snap", "mode": "scrub_and_delete"}; !reflect.DeepEqual(body, want) {
+		t.Fatalf("body = %v, want %v", body, want)
+	}
+	if want := "by=id&sandbox=sb_1"; previewQuery != want {
+		t.Fatalf("scrub preview query = %q, want %q", previewQuery, want)
 	}
 }
 

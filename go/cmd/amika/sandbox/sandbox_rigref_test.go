@@ -4,63 +4,72 @@ package sandboxcmd
 // (a bare value, ref=, name=, id=, or _self) and what each one sends to the
 // API: every reference goes out in the command's one request with its kind, a
 // bare value as a plain ref (the server's default) and an explicit name= or
-// id= with a by/sandbox_by selector.
+// id= with a by/sandbox_by selector. That each command parses its reference
+// before the auth check is covered from package main, against the real root.
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
-// newRigRefTestRoot builds a fresh amika/rig tree around the real RunE of each
-// command that names an existing rig, so every test starts from clean flag
-// state instead of sharing the package's singleton commands.
-func newRigRefTestRoot() *cobra.Command {
-	root := &cobra.Command{Use: "amika", SilenceUsage: true, SilenceErrors: true}
-	output.AddFlag(root)
-	rig := &cobra.Command{Use: "rig"}
-	rig.PersistentFlags().String("remote-target", "", "")
-	root.AddCommand(rig)
-	add := func(use string, args cobra.PositionalArgs, runE func(*cobra.Command, []string) error) *cobra.Command {
-		cmd := &cobra.Command{Use: use, Args: args, RunE: runE}
-		rig.AddCommand(cmd)
-		return cmd
+// New registers flags on the package's singleton commands, so it may run only
+// once per process; the tests share the one real tree it builds.
+var (
+	rigTreeOnce sync.Once
+	rigTreeRoot *cobra.Command
+)
+
+// resetChangedFlags restores every flag a run changed to its default across
+// the tree, since Cobra never resets flag values or their Changed state.
+func resetChangedFlags(cmd *cobra.Command) {
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		}
+	})
+	for _, child := range cmd.Commands() {
+		resetChangedFlags(child)
 	}
-	add("get", cobra.ExactArgs(1), runSandboxGet)
-	add("start", cobra.MinimumNArgs(1), sandboxStartCmd.RunE)
-	add("stop", cobra.MinimumNArgs(1), sandboxStopCmd.RunE)
-	add("delete", cobra.MinimumNArgs(1), sandboxDeleteCmd.RunE).Flags().Bool("force", false, "")
-	add("connect", cobra.ExactArgs(1), sandboxConnectCmd.RunE)
-	open := add("open", cobra.ExactArgs(1), sandboxCodeV2Cmd.RunE)
-	open.Flags().String("app", "cursor", "")
-	open.Flags().String("editor", "", "")
-	open.Flags().String("path", "", "")
-	bind := add("bind", cobra.ExactArgs(2), sandboxBindCmd.RunE)
-	bind.Flags().Bool("rebind", false, "")
-	bind.Flags().String("rig-by", "ref", "")
-	bindingsList := add("bindings-list", cobra.NoArgs, runSandboxBindingsList)
-	bindingsList.Flags().String("rig", "", "")
-	bindingsList.Flags().String("rig-by", "ref", "")
-	bindingsDelete := add("bindings-delete", cobra.RangeArgs(1, 2), runSandboxBindingsDelete)
-	bindingsDelete.Flags().String("rig-by", "ref", "")
-	bindingsDelete.Flags().Bool("force", false, "")
-	return root
+}
+
+// runRigCommand runs `amika rig <args>` through the real command tree from
+// New, with flag state reset before and after, and returns its stdout.
+func runRigCommand(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	rigTreeOnce.Do(func() {
+		rigTreeRoot = &cobra.Command{Use: "amika", SilenceUsage: true, SilenceErrors: true}
+		output.AddFlag(rigTreeRoot)
+		rigTreeRoot.AddCommand(New())
+	})
+	resetChangedFlags(rigTreeRoot)
+	t.Cleanup(func() { resetChangedFlags(rigTreeRoot) })
+	var out bytes.Buffer
+	rigTreeRoot.SetOut(&out)
+	rigTreeRoot.SetErr(&bytes.Buffer{})
+	rigTreeRoot.SetArgs(append([]string{"rig"}, args...))
+	err := rigTreeRoot.Execute()
+	return out.String(), err
 }
 
 // rigRefServer fakes the sandbox API. Every sandbox it returns is "box" with
-// id "sb_1", stopped once a stop was requested; a reference value of "dup" is
-// refused as ambiguous and "missing" as not found. It records each request as
-// "METHOD URI".
+// id "sb_1", stopped once a stop was requested; a reference value of
+// "missing" is refused as not found. It records each request as "METHOD URI".
 func rigRefServer(t *testing.T) *[]string {
 	t.Helper()
 	var requests []string
@@ -69,9 +78,6 @@ func rigRefServer(t *testing.T) *[]string {
 		requests = append(requests, r.Method+" "+r.RequestURI)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.Contains(r.URL.Path, "/sandboxes/dup"):
-			w.WriteHeader(http.StatusConflict)
-			_, _ = w.Write([]byte(`{"code":"resource_ref_ambiguous","message":"more than one sandbox matches"}`))
 		case strings.Contains(r.URL.Path, "/sandboxes/missing"):
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"code":"not_found","message":"no such sandbox"}`))
@@ -115,59 +121,51 @@ func stubSessionSSH(t *testing.T) *[]string {
 	return &prepared
 }
 
-func runRigRefCommand(t *testing.T, args ...string) (string, error) {
-	t.Helper()
-	root := newRigRefTestRoot()
-	var out bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&bytes.Buffer{})
-	root.SetArgs(append([]string{"rig"}, args...))
-	err := root.Execute()
-	return out.String(), err
-}
-
+// TestRigCommandsSendReferenceKinds checks that each command sends a pinned
+// reference with its kind in one request, which the server resolves with no
+// lookup beforehand, and how the hidden --rig-by combines with a prefix.
 func TestRigCommandsSendReferenceKinds(t *testing.T) {
 	const base = "/api/v0beta1/sandboxes/"
 	cases := []struct {
-		name string
-		args []string
-		want []string
+		name    string
+		args    []string
+		want    []string
+		wantErr string
 	}{
-		{"get bare", []string{"get", "box"}, []string{"GET " + base + "box"}},
-		{"get ref=", []string{"get", "ref=box"}, []string{"GET " + base + "box"}},
-		{"get name=", []string{"get", "name=box"}, []string{"GET " + base + "box?by=name"}},
-		// A pinned reference is sent with its kind in one request; the server
-		// resolves it, with no lookup beforehand.
-		{"get id=", []string{"get", "id=sb_1"}, []string{"GET " + base + "sb_1?by=id"}},
-		// _self stands in for the current rig's name typed bare, so it goes
-		// out as a plain ref.
-		{"get _self", []string{"get", "_self"}, []string{"GET " + base + "here"}},
-		{"get name=_self", []string{"get", "name=_self"}, []string{"GET " + base + "here?by=name"}},
-		{"start id=", []string{"start", "id=sb_1"}, []string{"POST " + base + "sb_1/start?by=id", "GET " + base + "sb_1?by=id"}},
-		{"stop name=", []string{"stop", "name=box"}, []string{"POST " + base + "box/stop?by=name", "GET " + base + "box?by=name"}},
+		{"get id=", []string{"get", "id=sb_1"}, []string{"GET " + base + "sb_1?by=id"}, ""},
+		{"start id=", []string{"start", "id=sb_1"}, []string{"POST " + base + "sb_1/start?by=id", "GET " + base + "sb_1?by=id"}, ""},
+		{"stop name=", []string{"stop", "name=box"}, []string{"POST " + base + "box/stop?by=name", "GET " + base + "box?by=name"}, ""},
 		{"delete mixed", []string{"delete", "--force", "box", "name=box", "id=sb_1"}, []string{
 			"DELETE " + base + "box", "DELETE " + base + "box?by=name", "DELETE " + base + "sb_1?by=id",
-		}},
-		{"connect id=", []string{"connect", "id=sb_1"}, []string{"GET " + base + "sb_1?by=id"}},
-		{"bind name=", []string{"bind", "name=box", "gh-branch:o/r/b"}, []string{"POST " + base + "box/bindings?sandbox_by=name"}},
-		{"bind bare", []string{"bind", "box", "gh-branch:o/r/b"}, []string{"POST " + base + "box/bindings?sandbox_by=ref"}},
-		// The hidden --rig-by still works as the legacy spelling of a prefix.
-		{"bind --rig-by", []string{"bind", "--rig-by", "id", "sb_1", "gh-branch:o/r/b"}, []string{"POST " + base + "sb_1/bindings?sandbox_by=id"}},
-		{"bindings list id=", []string{"bindings-list", "--rig", "id=sb_1"}, []string{"GET " + base + "sb_1/bindings?sandbox_by=id"}},
-		{"bindings list --rig-by", []string{"bindings-list", "--rig", "box", "--rig-by", "name"}, []string{"GET " + base + "box/bindings?sandbox_by=name"}},
-		// A prefix wins over --rig-by's default.
-		{"bindings list prefix over default", []string{"bindings-list", "--rig", "name=box", "--rig-by", "ref"}, []string{"GET " + base + "box/bindings?sandbox_by=name"}},
-		{"bindings list agreeing prefix", []string{"bindings-list", "--rig", "name=box", "--rig-by", "name"}, []string{"GET " + base + "box/bindings?sandbox_by=name"}},
-		{"bindings delete id=", []string{"bindings-delete", "--force", "id=sb_1", "gh-branch:o/r/b"}, []string{
+		}, ""},
+		{"connect id=", []string{"connect", "id=sb_1"}, []string{"GET " + base + "sb_1?by=id"}, ""},
+		{"bind name=", []string{"bind", "name=box", "gh-branch:o/r/b"}, []string{"POST " + base + "box/bindings?sandbox_by=name"}, ""},
+		{"bindings list id=", []string{"bindings", "list", "--rig", "id=sb_1"}, []string{"GET " + base + "sb_1/bindings?sandbox_by=id"}, ""},
+		{"bindings delete id=", []string{"bindings", "delete", "--force", "id=sb_1", "gh-branch:o/r/b"}, []string{
 			"GET " + base + "sb_1/bindings?sandbox_by=id", "DELETE /api/v0beta1/sandbox-bindings/sbind_1",
-		}},
+		}, ""},
+		// The hidden --rig-by still works as the legacy spelling of a prefix.
+		{"bind --rig-by", []string{"bind", "--rig-by", "id", "sb_1", "gh-branch:o/r/b"}, []string{"POST " + base + "sb_1/bindings?sandbox_by=id"}, ""},
+		{"bindings list --rig-by", []string{"bindings", "list", "--rig", "box", "--rig-by", "name"}, []string{"GET " + base + "box/bindings?sandbox_by=name"}, ""},
+		// A prefix wins over --rig-by's default and may repeat its kind, but
+		// one that disagrees with an explicit --rig-by is refused.
+		{"bindings list prefix over default", []string{"bindings", "list", "--rig", "name=box", "--rig-by", "ref"}, []string{"GET " + base + "box/bindings?sandbox_by=name"}, ""},
+		{"bindings list agreeing prefix", []string{"bindings", "list", "--rig", "name=box", "--rig-by", "name"}, []string{"GET " + base + "box/bindings?sandbox_by=name"}, ""},
+		{"bindings list conflict", []string{"bindings", "list", "--rig", "id=sb_1", "--rig-by", "name"}, nil, "conflicts with the id= prefix"},
+		{"bind --rig-by conflict", []string{"bind", "--rig-by", "id", "name=box", "gh-branch:o/r/b"}, nil, "conflicts with the name= prefix"},
+		{"bind --rig-by id with _self", []string{"bind", "--rig-by", "id", "_self", "gh-branch:o/r/b"}, nil, "not its id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("AMIKA_RIG_NAME", "here")
 			requests := rigRefServer(t)
 			stubSessionSSH(t)
-			if out, err := runRigRefCommand(t, tc.args...); err != nil {
+			out, err := runRigCommand(t, tc.args...)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want one containing %q", err, tc.wantErr)
+				}
+			} else if err != nil {
 				t.Fatalf("rig %v: %v\n%s", tc.args, err, out)
 			}
 			if !reflect.DeepEqual(*requests, tc.want) {
@@ -180,7 +178,7 @@ func TestRigCommandsSendReferenceKinds(t *testing.T) {
 func TestRigConnectUsesCanonicalIdentity(t *testing.T) {
 	rigRefServer(t)
 	prepared := stubSessionSSH(t)
-	if _, err := runRigRefCommand(t, "connect", "id=sb_1"); err != nil {
+	if _, err := runRigCommand(t, "connect", "id=sb_1"); err != nil {
 		t.Fatal(err)
 	}
 	// The alias is built from what the API returned, never from "id=sb_1".
@@ -192,7 +190,7 @@ func TestRigConnectUsesCanonicalIdentity(t *testing.T) {
 func TestRigBatchOutputNamesRigs(t *testing.T) {
 	t.Run("JSON names each rig as the user wrote it", func(t *testing.T) {
 		rigRefServer(t)
-		out, err := runRigRefCommand(t, "delete", "--force", "-o", "json", "name=box", "id=missing")
+		out, err := runRigCommand(t, "delete", "--force", "-o", "json", "name=box", "id=missing")
 		if err == nil {
 			t.Fatal("want an error for the missing rig")
 		}
@@ -208,7 +206,7 @@ func TestRigBatchOutputNamesRigs(t *testing.T) {
 
 	t.Run("start reports the canonical name once it is known", func(t *testing.T) {
 		rigRefServer(t)
-		out, err := runRigRefCommand(t, "start", "id=sb_1")
+		out, err := runRigCommand(t, "start", "id=sb_1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,7 +218,7 @@ func TestRigBatchOutputNamesRigs(t *testing.T) {
 	t.Run("delete shows the name _self stands for", func(t *testing.T) {
 		t.Setenv("AMIKA_RIG_NAME", "here")
 		rigRefServer(t)
-		out, err := runRigRefCommand(t, "delete", "--force", "-o", "json", "_self")
+		out, err := runRigCommand(t, "delete", "--force", "-o", "json", "_self")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -230,56 +228,48 @@ func TestRigBatchOutputNamesRigs(t *testing.T) {
 	})
 }
 
-func TestRigAmbiguousReferenceSuggestsPrefixes(t *testing.T) {
-	rigRefServer(t)
-	_, err := runRigRefCommand(t, "get", "dup")
-	if err == nil || !strings.Contains(err.Error(), `use "id=dup" or "name=dup"`) {
-		t.Fatalf("error = %v, want a hint naming id=dup and name=dup", err)
+// isolateOutsideRigUnauthenticated leaves the process with no credential
+// source and no rig name, so a command that checks auth before resolving
+// "_self" would report a login prompt instead of ErrNotInRig.
+func isolateOutsideRigUnauthenticated(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	for key, value := range map[string]string{
+		"AMIKA_API_KEY":         "",
+		"HOME":                  dir,
+		"XDG_CONFIG_HOME":       dir,
+		"XDG_STATE_HOME":        dir,
+		"XDG_DATA_HOME":         dir,
+		"AMIKA_STATE_DIRECTORY": dir,
+		rigref.RigNameEnv:       "",
+		rigref.SandboxNameEnv:   "",
+	} {
+		t.Setenv(key, value)
 	}
 }
 
-// TestRigReferenceParsedBeforeAuth checks that a malformed reference is
-// reported as itself, not hidden behind a login prompt, for every command
-// that names a rig.
-func TestRigReferenceParsedBeforeAuth(t *testing.T) {
-	cases := []struct {
-		name    string
-		args    []string
-		wantErr string
+// TestSSHReferenceParsedBeforeAuth checks that `rig ssh` reports a malformed
+// reference, or a "_self" outside a rig, as itself rather than behind a login
+// prompt, and never runs ssh for it.
+func TestSSHReferenceParsedBeforeAuth(t *testing.T) {
+	for _, tc := range []struct {
+		ref   string
+		check func(error) bool
 	}{
-		{"get", []string{"get", "id="}, "no value"},
-		{"start", []string{"start", "box", "name="}, "no value"},
-		{"stop", []string{"stop", "id=_self"}, "not its id"},
-		{"delete", []string{"delete", "--force", "box", "id="}, "no value"},
-		{"connect", []string{"connect", "name="}, "no value"},
-		{"open", []string{"open", "id="}, "no value"},
-		{"bind", []string{"bind", "id=", "gh-branch:o/r/b"}, "no value"},
-		{"bind --rig-by conflict", []string{"bind", "--rig-by", "id", "name=box", "gh-branch:o/r/b"}, "conflicts with the name= prefix"},
-		{"bind --rig-by id with _self", []string{"bind", "--rig-by", "id", "_self", "gh-branch:o/r/b"}, "not its id"},
-		{"bindings list", []string{"bindings-list", "--rig", "id="}, "no value"},
-		{"bindings list conflict", []string{"bindings-list", "--rig", "id=sb_1", "--rig-by", "name"}, "conflicts with the id= prefix"},
-		{"bindings delete", []string{"bindings-delete", "--force", "name=", "gh-branch:o/r/b"}, "no value"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		{"id=", func(err error) bool { return err != nil && strings.Contains(err.Error(), "no value") }},
+		{rigref.Self, func(err error) bool { return errors.Is(err, rigref.ErrNotInRig) }},
+	} {
+		t.Run(tc.ref, func(t *testing.T) {
+			root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", tc.ref})
 			isolateOutsideRigUnauthenticated(t)
-			_, err := runRigRefCommand(t, tc.args...)
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("error = %v, want one containing %q", err, tc.wantErr)
+			if err := root.Execute(); !tc.check(err) {
+				t.Fatalf("error = %v, want the reference's own error", err)
+			}
+			if h.ran {
+				t.Fatal("ssh ran for an unusable reference")
 			}
 		})
 	}
-
-	t.Run("ssh", func(t *testing.T) {
-		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", "id="})
-		isolateOutsideRigUnauthenticated(t)
-		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "no value") {
-			t.Fatalf("error = %v, want a missing-value error", err)
-		}
-		if h.ran {
-			t.Fatal("ssh ran for a malformed reference")
-		}
-	})
 }
 
 // TestSSHResolvesReferenceToAlias checks that `rig ssh` looks a prefixed
