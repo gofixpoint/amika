@@ -40,9 +40,9 @@ put them in a command line, a file in the repository, or a log.
 
 ## Before you start: resize2fs
 
-Only needed when a size in the config has a \`disk_gib\` under 20. smolvm
-makes such a disk by shrinking a 20 GiB template with \`resize2fs\`, from
-e2fsprogs, and the rig fails to start without it. The installer installs
+smolvm makes any disk smaller than its 20 GiB template by shrinking the
+template with \`resize2fs\`, from e2fsprogs, and such a rig fails to start
+without it. The installer installs
 e2fsprogs when it is missing, but without a terminal only when run with
 \`--install-deps\`, and then only as root or with sudo that needs no
 password. If it warned "resize2fs not found" with "no terminal to ask", tell
