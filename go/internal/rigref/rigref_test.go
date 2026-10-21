@@ -16,6 +16,11 @@ func envResolver(env map[string]string) Resolver {
 	}}
 }
 
+// TestParse checks each reference's parsed kind and value, the selector it
+// carries to the API, and how output labels it. The selector is the kind the
+// user spelled out, and a plain ref otherwise, bare "_self" included, since it
+// stands in for the rig's name typed bare. The label is the reference as the
+// user wrote it, except that "_self" shows the rig name it stands for.
 func TestParse(t *testing.T) {
 	inRig := map[string]string{RigNameEnv: "here"}
 	sandboxOnly := map[string]string{RigNameEnv: "", SandboxNameEnv: "legacy"}
@@ -24,25 +29,34 @@ func TestParse(t *testing.T) {
 		env     map[string]string
 		raw     string
 		want    Ref
+		by      string // the selector's kind
+		label   string
 		wantErr string
 	}{
-		{name: "bare value matches by id or name", raw: "my-rig", want: Ref{Kind: KindRef, Value: "my-rig"}},
-		{name: "ref= is the explicit spelling", raw: "ref=my-rig", want: Ref{Kind: KindRef, Value: "my-rig"}},
-		{name: "name= matches by name only", raw: "name=my-rig", want: Ref{Kind: KindName, Value: "my-rig"}},
-		{name: "id= matches by id only", raw: "id=9f3c8b21-0000-4000-8000-000000000000", want: Ref{Kind: KindID, Value: "9f3c8b21-0000-4000-8000-000000000000"}},
+		{name: "bare value matches by id or name", raw: "my-rig", want: Ref{Kind: KindRef, Value: "my-rig"}, by: "ref", label: "my-rig"},
+		{name: "ref= is the explicit spelling", raw: "ref=my-rig", want: Ref{Kind: KindRef, Value: "my-rig"}, by: "ref", label: "ref=my-rig"},
+		{name: "name= matches by name only", raw: "name=my-rig", want: Ref{Kind: KindName, Value: "my-rig"}, by: "name", label: "name=my-rig"},
+		{name: "id= matches by id only", raw: "id=abc", want: Ref{Kind: KindID, Value: "abc"}, by: "id", label: "id=abc"},
 		// Only the first '=' separates the kind, so a legacy name that itself
 		// starts with a kind word stays reachable.
-		{name: "splits on the first equals only", raw: "name=id=legacy", want: Ref{Kind: KindName, Value: "id=legacy"}},
-		{name: "unknown prefix is part of the value", raw: "nmae=my-rig", want: Ref{Kind: KindRef, Value: "nmae=my-rig"}},
-		{name: "prefix match is case sensitive", raw: "NAME=my-rig", want: Ref{Kind: KindRef, Value: "NAME=my-rig"}},
-		{name: "empty value after a prefix is refused", raw: "name=", wantErr: "no value"},
-		{name: "_self resolves to a name match", env: inRig, raw: "_self", want: Ref{Kind: KindName, Value: "here"}},
-		{name: "name=_self resolves too", env: inRig, raw: "name=_self", want: Ref{Kind: KindName, Value: "here"}},
-		{name: "ref=_self resolves too", env: inRig, raw: "ref=_self", want: Ref{Kind: KindName, Value: "here"}},
+		{name: "splits on the first equals only", raw: "name=id=legacy", want: Ref{Kind: KindName, Value: "id=legacy"}, by: "name", label: "name=id=legacy"},
+		{name: "unknown prefix is part of the value", raw: "nmae=my-rig", want: Ref{Kind: KindRef, Value: "nmae=my-rig"}, by: "ref", label: "nmae=my-rig"},
+		{name: "prefix match is case sensitive", raw: "NAME=my-rig", want: Ref{Kind: KindRef, Value: "NAME=my-rig"}, by: "ref", label: "NAME=my-rig"},
+		{name: "_self resolves to a name match sent as a ref", env: inRig, raw: "_self", want: Ref{Kind: KindName, Value: "here"}, by: "ref", label: "here"},
+		{name: "name=_self resolves too", env: inRig, raw: "name=_self", want: Ref{Kind: KindName, Value: "here"}, by: "name", label: "here"},
+		{name: "ref=_self resolves too", env: inRig, raw: "ref=_self", want: Ref{Kind: KindName, Value: "here"}, by: "ref", label: "here"},
+		{name: "_self falls back to the legacy variable", env: sandboxOnly, raw: "_self", want: Ref{Kind: KindName, Value: "legacy"}, by: "ref", label: "legacy"},
+		{name: "only the exact literal is _self", env: inRig, raw: "_self-x", want: Ref{Kind: KindRef, Value: "_self-x"}, by: "ref", label: "_self-x"},
 		{name: "id=_self is refused", env: inRig, raw: "id=_self", wantErr: "not its id"},
 		{name: "_self outside a rig names the env vars", raw: "_self", wantErr: RigNameEnv},
-		{name: "_self falls back to the legacy variable", env: sandboxOnly, raw: "_self", want: Ref{Kind: KindName, Value: "legacy"}},
-		{name: "only the exact literal is _self", env: inRig, raw: "_self-x", want: Ref{Kind: KindRef, Value: "_self-x"}},
+		// An empty reference must not pass: an empty rig on `send` routes
+		// nowhere and makes the server create a new rig.
+		{name: "empty", raw: "", wantErr: "must not be empty"},
+		{name: "blank", raw: "  ", wantErr: "must not be empty"},
+		{name: "empty value after name=", raw: "name=", wantErr: "no value"},
+		{name: "empty value after id=", raw: "id=", wantErr: "no value"},
+		{name: "empty value after ref=", raw: "ref=", wantErr: "no value"},
+		{name: "blank value after ref=", raw: "ref=  ", wantErr: "no value"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,61 +70,20 @@ func TestParse(t *testing.T) {
 			if err != nil || got.Kind != tc.want.Kind || got.Value != tc.want.Value {
 				t.Fatalf("parseWith(%q) = %v, %v; want %v", tc.raw, got, err, tc.want)
 			}
+			if sel, want := got.Selector(), (apiclient.SandboxSelector{Value: tc.want.Value, By: tc.by}); sel != want {
+				t.Errorf("Selector() = %#v, want %#v", sel, want)
+			}
+			if label := Label(tc.raw, got); label != tc.label {
+				t.Errorf("Label() = %q, want %q", label, tc.label)
+			}
 		})
-	}
-}
-
-// TestSelector checks the selector each reference carries to the API: its own
-// kind when the user spelled one out, and a plain ref otherwise, bare "_self"
-// included, since it stands in for the rig's name typed bare.
-func TestSelector(t *testing.T) {
-	inRig := envResolver(map[string]string{RigNameEnv: "here"})
-	for _, tc := range []struct {
-		raw  string
-		want apiclient.SandboxSelector
-	}{
-		{raw: "my-rig", want: apiclient.SandboxSelector{Value: "my-rig", By: "ref"}},
-		{raw: "ref=my-rig", want: apiclient.SandboxSelector{Value: "my-rig", By: "ref"}},
-		{raw: "name=my-rig", want: apiclient.SandboxSelector{Value: "my-rig", By: "name"}},
-		{raw: "id=abc", want: apiclient.SandboxSelector{Value: "abc", By: "id"}},
-		{raw: "_self", want: apiclient.SandboxSelector{Value: "here", By: "ref"}},
-		{raw: "ref=_self", want: apiclient.SandboxSelector{Value: "here", By: "ref"}},
-		{raw: "name=_self", want: apiclient.SandboxSelector{Value: "here", By: "name"}},
-	} {
-		ref, err := parseWith(inRig, tc.raw)
-		if err != nil {
-			t.Fatalf("parseWith(%q): %v", tc.raw, err)
-		}
-		if got := ref.Selector(); got != tc.want {
-			t.Errorf("parseWith(%q).Selector() = %#v, want %#v", tc.raw, got, tc.want)
-		}
-	}
-}
-
-// TestLabel checks that output names a rig the way the user wrote it, except
-// that "_self" shows the rig name it stands for.
-func TestLabel(t *testing.T) {
-	inRig := envResolver(map[string]string{RigNameEnv: "here"})
-	for _, tc := range []struct{ raw, want string }{
-		{raw: "my-rig", want: "my-rig"},
-		{raw: "name=my-rig", want: "name=my-rig"},
-		{raw: "id=abc", want: "id=abc"},
-		{raw: "_self", want: "here"},
-		{raw: "name=_self", want: "here"},
-	} {
-		ref, err := parseWith(inRig, tc.raw)
-		if err != nil {
-			t.Fatalf("parseWith(%q): %v", tc.raw, err)
-		}
-		if got := Label(tc.raw, ref); got != tc.want {
-			t.Errorf("Label(%q) = %q, want %q", tc.raw, got, tc.want)
-		}
 	}
 }
 
 // TestExplain checks that the API's 409 resource_ref_ambiguous becomes
 // ErrAmbiguous with the id=/name= spellings, and that other errors pass
-// through untouched.
+// through untouched. A pinned reference that draws a 409 already names its
+// kind, so the hint to add one would loop; only a plain ref is rewritten.
 func TestExplain(t *testing.T) {
 	ref := Ref{Kind: KindRef, Value: "b-id"}
 	conflict := fmt.Errorf("remote get sandbox: %w", &apiclient.HTTPError{
@@ -128,6 +101,9 @@ func TestExplain(t *testing.T) {
 	}
 	if got := Explain(ref, nil); got != nil {
 		t.Fatalf("Explain(nil) = %v, want nil", got)
+	}
+	if got := Explain(Ref{Kind: KindID, Value: "b-id"}, conflict); got != conflict {
+		t.Fatalf("Explain(id=, 409) = %v, want the server's error unchanged", got)
 	}
 }
 
@@ -168,28 +144,6 @@ func TestFind(t *testing.T) {
 	// A rig whose name equals its own id is one rig, not two.
 	if got, err := find(Ref{Kind: KindRef, Value: "same"}, []rig{{"same", "same"}}); err != nil || got != 0 {
 		t.Fatalf("Find on a rig named after its own id = %d, %v; want 0, nil", got, err)
-	}
-}
-
-// ref= with nothing after it must not pass as an empty reference: an empty
-// rig on `send` routes nowhere and makes the server create a new rig.
-func TestParseRejectsEmptyValues(t *testing.T) {
-	for _, raw := range []string{"", "  ", "ref=", "name=", "id=", "ref=  "} {
-		if got, err := parseWith(envResolver(nil), raw); err == nil {
-			t.Errorf("parseWith(%q) = %v, want an error", raw, got)
-		}
-	}
-}
-
-// A pinned reference that draws a 409 already names its kind, so the hint
-// to add one would loop; only a plain ref is rewritten.
-func TestExplainOnlyRewritesPlainRefs(t *testing.T) {
-	conflict := &apiclient.HTTPError{StatusCode: 409, Body: `{"error_code":"resource_ref_ambiguous"}`}
-	if err := Explain(Ref{Kind: KindRef, Value: "dup"}, conflict); !errors.Is(err, ErrAmbiguous) {
-		t.Errorf("plain ref: %v, want ErrAmbiguous", err)
-	}
-	if err := Explain(Ref{Kind: KindID, Value: "dup"}, conflict); errors.Is(err, ErrAmbiguous) {
-		t.Errorf("id= ref: %v, want the server's error unchanged", err)
 	}
 }
 

@@ -1,7 +1,6 @@
 package sandboxcmd
 
 import (
-	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,14 +10,9 @@ import (
 
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/ssh"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 func TestConnectCommandsUseSessionSSH(t *testing.T) {
-	root := &cobra.Command{Use: "amika", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().String("output", "text", "Output format")
-	root.AddCommand(New())
 	const alias = "canonical.sbx_123.app-amika-dev.amika"
 	failure := errors.New("session unavailable")
 	for _, tt := range []struct {
@@ -42,21 +36,6 @@ func TestConnectCommandsUseSessionSSH(t *testing.T) {
 		{name: "create connect rejects JSON", args: []string{"create", "--no-git", "--connect", "--output", "json"}, wantErr: "--connect cannot be combined"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Cleanup(func() {
-				var reset func(*cobra.Command)
-				reset = func(cmd *cobra.Command) {
-					cmd.Flags().VisitAll(func(f *pflag.Flag) {
-						if f.Changed {
-							_ = f.Value.Set(f.DefValue)
-							f.Changed = false
-						}
-					})
-					for _, child := range cmd.Commands() {
-						reset(child)
-					}
-				}
-				reset(root)
-			})
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
@@ -90,10 +69,7 @@ func TestConnectCommandsUseSessionSSH(t *testing.T) {
 				}
 				return nil
 			}
-			root.SetOut(&bytes.Buffer{})
-			root.SetErr(&bytes.Buffer{})
-			root.SetArgs(append([]string{"rig"}, tt.args...))
-			err := root.Execute()
+			_, err := runRigCommand(t, tt.args...)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)

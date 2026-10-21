@@ -124,7 +124,8 @@ func serveRigs(t *testing.T, rigs ...apiclient.RemoteSandbox) {
 
 // --rig takes a bare name or id, or a name=/id= prefix that pins the field.
 // "beta" is one rig's id and another rig's name, so the bare form is refused
-// for it and each prefix picks a different rig.
+// for it and each prefix picks a different rig. rigref's TestFind covers the
+// rest of the matching rules.
 func TestServiceListCommand_RigFilter(t *testing.T) {
 	cases := []struct {
 		rig     string
@@ -132,15 +133,9 @@ func TestServiceListCommand_RigFilter(t *testing.T) {
 		wantErr string
 	}{
 		{rig: "alpha", want: []string{"alpha-svc"}},
-		{rig: "id-alpha", want: []string{"alpha-svc"}},
-		{rig: "name=alpha", want: []string{"alpha-svc"}},
-		{rig: "id=id-alpha", want: []string{"alpha-svc"}},
-		{rig: "name=id-alpha", want: nil},
 		{rig: "id=beta", want: []string{"gamma-svc"}},
 		{rig: "name=beta", want: []string{"beta-svc"}},
 		{rig: "beta", wantErr: "ambiguous"},
-		{rig: "missing", want: nil},
-		{rig: "name=", wantErr: "no value"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.rig, func(t *testing.T) {
