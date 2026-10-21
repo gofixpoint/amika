@@ -58,10 +58,10 @@ Flags:
                         (default: latest)
   --skip-smolvm         Do not install smolvm
   --install-deps        Install missing system packages (e2fsprogs, for
-                        resize2fs) without asking. Without a terminal it
-                        installs only when no password is needed (root, or
-                        sudo -n works); otherwise it warns with the command
-                        to run. For scripts and AI agents.
+                        resize2fs) without asking, and only when no password
+                        is needed (root, or sudo -n works); otherwise it
+                        warns with the command to run. For scripts and AI
+                        agents.
   --uninstall           Remove amika-hostd instead of installing it. Finds
                         amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
                         asks you to confirm, stops the daemon, then deletes
@@ -160,9 +160,13 @@ print_overview() {
   else
     echo "  - check for KVM (/dev/kvm)"
     if [ "$INSTALL_DEPS" = "true" ]; then
-      echo "  - check for resize2fs, and install e2fsprogs without asking if it is missing (--install-deps)"
+      echo "  - check for resize2fs; if missing, install e2fsprogs without asking,"
+      echo "    as root or with sudo that needs no password (--install-deps)"
+    elif have_tty; then
+      echo "  - check for resize2fs; if missing, offer to install e2fsprogs (as root or with sudo)"
     else
-      echo "  - check for resize2fs, and offer to install e2fsprogs if it is missing"
+      echo "  - check for resize2fs; if missing, print how to install e2fsprogs"
+      echo "    (no terminal to ask; --install-deps installs it)"
     fi
   fi
   echo ""
@@ -876,99 +880,82 @@ find_resize2fs() {
   [ -n "$RESIZE2FS_PATH" ]
 }
 
-# Decide how to install e2fsprogs, without changing anything. Sets
-# E2FS_ACTION to install (no question), ask (on the terminal) or warn (cannot),
-# E2FS_CMD to the command to run, E2FS_SUDO to the prefix it needs, and, for
-# warn, E2FS_REASON. Homebrew needs no root, like Node.js and smolvm; a system
-# package manager does, so it is asked about unless --install-deps answers.
+# Decide how to install e2fsprogs, without changing anything. Sets E2FS_CMD
+# (the command, as the operator would run it), E2FS_PM, E2FS_SUDO ("sudo "
+# when not root) and E2FS_BLOCKER: empty when the installer can run it, else
+# why not. Homebrew needs no root, like Node.js and smolvm. A system package
+# manager does, and only a question on the terminal may lead to a sudo
+# password prompt: --install-deps never waits for one, so an agent on a
+# pseudo-terminal cannot hang on it.
 plan_e2fsprogs() {
-  E2FS_SUDO=""
-  E2FS_REASON=""
   E2FS_PM=""
+  E2FS_SUDO=""
+  E2FS_BLOCKER=""
   if [ "$OS" = "darwin" ]; then
     E2FS_CMD="brew install e2fsprogs"
     if command -v brew >/dev/null 2>&1; then
       E2FS_PM="brew"
-      E2FS_ACTION="install"
     else
-      E2FS_ACTION="warn"
-      E2FS_REASON="Homebrew not found; install it from https://brew.sh first"
+      E2FS_BLOCKER="Homebrew not found; install it from https://brew.sh first"
     fi
     return 0
   fi
 
+  [ "$(id -u)" -eq 0 ] || E2FS_SUDO="sudo "
   for pm in apt-get dnf yum; do
     if command -v "$pm" >/dev/null 2>&1; then
       E2FS_PM="$pm"
       break
     fi
   done
-  needs_password=false
-  if [ "$(id -u)" -ne 0 ]; then
-    E2FS_SUDO="sudo "
-    if ! command -v sudo >/dev/null 2>&1; then
-      E2FS_ACTION="warn"
-      E2FS_REASON="not root and sudo not found; run the command below as root"
-      E2FS_SUDO=""
-    elif ! sudo -n true >/dev/null 2>&1; then
-      needs_password=true
-    fi
-  fi
   case "$E2FS_PM" in
     apt-get) E2FS_CMD="${E2FS_SUDO}apt-get update && ${E2FS_SUDO}apt-get install -y e2fsprogs" ;;
     dnf|yum) E2FS_CMD="${E2FS_SUDO}${E2FS_PM} install -y e2fsprogs" ;;
     *)
-      E2FS_ACTION="warn"
-      E2FS_REASON="no apt-get, dnf or yum found"
-      E2FS_CMD="${E2FS_SUDO}<package manager> install e2fsprogs"
+      E2FS_CMD="install the e2fsprogs package with your distribution's package manager"
+      E2FS_BLOCKER="no apt-get, dnf or yum found"
       return 0
       ;;
   esac
-  [ -z "$E2FS_REASON" ] || return 0
 
-  if have_tty; then
-    if [ "$INSTALL_DEPS" = "true" ]; then
-      E2FS_ACTION="install"
-    else
-      E2FS_ACTION="ask"
-    fi
-  elif [ "$needs_password" = "true" ]; then
-    # sudo would wait for a password no one can type.
-    E2FS_ACTION="warn"
-    E2FS_REASON="sudo needs a password and there is no terminal; the operator must run the command below"
-  elif [ "$INSTALL_DEPS" = "true" ]; then
-    E2FS_ACTION="install"
-  else
-    E2FS_ACTION="warn"
-    E2FS_REASON="no terminal to ask; re-run with --install-deps to install it without asking"
+  if [ -n "$E2FS_SUDO" ] && ! command -v sudo >/dev/null 2>&1; then
+    E2FS_BLOCKER="not root and sudo not found; run the command below as root"
+  elif [ -n "$E2FS_SUDO" ] && ! sudo -n true >/dev/null 2>&1 &&
+    { [ "$INSTALL_DEPS" = "true" ] || ! have_tty; }; then
+    E2FS_BLOCKER="sudo needs a password; the operator must run the command below at a terminal"
+  elif [ "$INSTALL_DEPS" != "true" ] && ! have_tty; then
+    E2FS_BLOCKER="no terminal to ask; re-run with --install-deps to install it without asking"
   fi
 }
 
-# Run "$@" as root: through sudo when plan_e2fsprogs said it needs it.
+# Run "$@" as root: through sudo when plan_e2fsprogs said it needs it, and
+# never waiting for a password under --install-deps.
 as_root() {
-  if [ -n "$E2FS_SUDO" ]; then
-    sudo "$@"
-  else
+  if [ -z "$E2FS_SUDO" ]; then
     "$@"
+  elif [ "$INSTALL_DEPS" = "true" ]; then
+    sudo -n "$@"
+  else
+    sudo "$@"
   fi
 }
 
-# Run the package manager noninteractively, with stdin away from the script
-# (it may be piped from curl). sudo, when it needs a password, reads it from
-# the terminal.
+# Run E2FS_CMD quietly and noninteractively, with stdin away from the script
+# (it may be piped from curl). sudo, when it asks, reads the terminal.
 install_e2fsprogs() {
   case "$E2FS_PM" in
     brew)
-      brew install e2fsprogs </dev/null
+      HOMEBREW_NO_AUTO_UPDATE=1 brew install e2fsprogs </dev/null
       ;;
     apt-get)
-      # A host's package lists may be missing or stale: update and retry once.
-      as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y e2fsprogs </dev/null ||
-        { as_root env DEBIAN_FRONTEND=noninteractive apt-get update </dev/null &&
-          as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y e2fsprogs </dev/null; }
+      # Wait for the lock unattended-upgrades holds on a freshly booted host.
+      as_root env DEBIAN_FRONTEND=noninteractive \
+        apt-get -qq -o DPkg::Lock::Timeout=120 update </dev/null &&
+        as_root env DEBIAN_FRONTEND=noninteractive \
+          apt-get -qq -o DPkg::Lock::Timeout=120 install -y --no-install-recommends e2fsprogs </dev/null
       ;;
     *)
-      as_root "$E2FS_PM" install -y e2fsprogs </dev/null
+      as_root "$E2FS_PM" -q install -y e2fsprogs </dev/null
       ;;
   esac
 }
@@ -982,24 +969,24 @@ ensure_resize2fs() {
     return 0
   fi
   plan_e2fsprogs
-  if [ "$E2FS_ACTION" = "ask" ] &&
-    ! ask "resize2fs not found. Install e2fsprogs with ${E2FS_PM}?"; then
-    E2FS_ACTION="warn"
-    E2FS_REASON="you answered no"
+  reason="$E2FS_BLOCKER"
+  if [ -z "$reason" ] && [ "$E2FS_PM" != "brew" ] && [ "$INSTALL_DEPS" != "true" ] &&
+    ! ask "resize2fs not found. Install e2fsprogs (runs: ${E2FS_CMD})?"; then
+    reason="not confirmed"
   fi
-  if [ "$E2FS_ACTION" != "warn" ]; then
-    echo "resize2fs not found; installing e2fsprogs with ${E2FS_PM}..."
+  if [ -z "$reason" ]; then
+    echo "resize2fs not found; installing e2fsprogs: ${E2FS_CMD}"
     if ! install_e2fsprogs; then
-      E2FS_REASON="${E2FS_PM} install failed"
+      reason="the install failed"
     elif find_resize2fs; then
       echo "Found resize2fs at ${RESIZE2FS_PATH}"
       return 0
     else
-      E2FS_REASON="e2fsprogs installed, but resize2fs is still not where smolvm looks"
+      reason="e2fsprogs installed, but resize2fs is still not where smolvm looks"
     fi
   fi
   echo "" >&2
-  echo "Warning: resize2fs not found and e2fsprogs not installed: ${E2FS_REASON}." >&2
+  echo "Warning: resize2fs not found and e2fsprogs not installed: ${reason}." >&2
   echo "  smolvm needs resize2fs to start a rig with a disk under 20 GiB. To install it, run:" >&2
   echo "    ${E2FS_CMD}" >&2
 }
@@ -1010,14 +997,14 @@ describe_resize2fs() {
     return 0
   fi
   plan_e2fsprogs
-  case "$E2FS_ACTION" in
-    install) echo "  resize2fs:    not found; would run: ${E2FS_CMD}" ;;
-    ask)     echo "  resize2fs:    not found; would ask, then run: ${E2FS_CMD}" ;;
-    *)
-      echo "  resize2fs:    not found; would not install e2fsprogs: ${E2FS_REASON}"
-      echo "                To install it, run: ${E2FS_CMD}"
-      ;;
-  esac
+  if [ -n "$E2FS_BLOCKER" ]; then
+    echo "  resize2fs:    not found; would not install e2fsprogs: ${E2FS_BLOCKER}"
+    echo "                To install it, run: ${E2FS_CMD}"
+  elif [ "$E2FS_PM" = "brew" ] || [ "$INSTALL_DEPS" = "true" ]; then
+    echo "  resize2fs:    not found; would run: ${E2FS_CMD}"
+  else
+    echo "  resize2fs:    not found; would ask, then run: ${E2FS_CMD}"
+  fi
 }
 
 print_next_steps() {

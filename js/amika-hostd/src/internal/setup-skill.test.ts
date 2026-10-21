@@ -106,7 +106,11 @@ describe("setupSkill", () => {
     );
     expect(skill).toContain("| sh -s -- --install-deps");
     expect(installer).toContain("      --install-deps)");
-    for (const phrase of ["resize2fs not found", "sudo needs a password"]) {
+    for (const phrase of [
+      "resize2fs not found",
+      "no terminal to ask",
+      "sudo needs a password",
+    ]) {
       expect(installer).toContain(phrase);
       expect(skill.replace(/\s+/g, " ")).toContain(phrase);
     }
