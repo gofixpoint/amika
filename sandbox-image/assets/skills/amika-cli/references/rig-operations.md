@@ -16,6 +16,12 @@ amika auth logout
 
 Do not invoke browser login in an unattended environment.
 
+## Naming a rig
+
+Wherever a command takes a rig, as a positional `<rig>` or `--rig`, pass its
+name or id. A value that is one rig's id and another rig's name is refused;
+pin the field with `name=<name>` or `id=<id>`. `_self` is the current rig.
+
 ## Creating rigs
 
 Without `--git` or `--no-git`, creation detects the repository containing the
@@ -24,7 +30,7 @@ does not carry over.
 
 ```bash
 amika rig create --no-git -o json
-amika rig create --name dev \
+amika rig create dev \
   --git https://github.com/octocat/Hello-World.git --branch develop
 amika rig create --branch main --new-branch bugfix-1
 amika rig create --snapshot my-project-base

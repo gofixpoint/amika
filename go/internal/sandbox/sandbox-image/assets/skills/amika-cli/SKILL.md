@@ -20,13 +20,14 @@ Read only the reference relevant to the task:
 ## Inside an Amika rig
 
 When `$AMIKA_RIG_NAME` is set, it means you are running inside a rig,
-and it has that rig's name. Otherwise, you are running outside a rig.
+and it has that rig's name. Otherwise, you are running outside a rig. Inside a
+rig, `_self` names it wherever a command takes a rig.
 
 For any task involving a service, URL, port, preview, or local server, inspect
 the rig's live services first:
 
 ```bash
-amika service list --rig-name "$AMIKA_RIG_NAME" -o json
+amika service list --rig _self -o json
 ```
 
 Find the referenced service in that result and use its provisioned `url` and
@@ -50,7 +51,7 @@ Follow these rules unless the user explicitly wants an interactive session:
 2. Supply required confirmation flags up front.
 3. Do not run `rig connect`, `rig open` (alias `rig code`), or bare `rig ssh`
    in a tool call. They require a controllable terminal.
-4. Use `amika rig ssh <name> <command>` for non-interactive remote work.
+4. Use `amika rig ssh <rig> <command>` for non-interactive remote work.
 5. Use `amika send` to send messages to an agent that either creates a new
    rig or lives inside an existing rig.
 6. Check structured results for per-item errors. Do not rely only on the process
@@ -64,10 +65,10 @@ confirmation flags, and commands that reject JSON output.
 | Need                                       | Start with                                                                 |
 | ------------------------------------------ | -------------------------------------------------------------------------- |
 | Identify the current rig                   | `$AMIKA_RIG_NAME`                                                         |
-| Find a service URL or port inside a rig    | `amika service list --rig-name "$AMIKA_RIG_NAME" -o json`                |
+| Find a service URL or port inside a rig    | `amika service list --rig _self -o json`                                 |
 | Create, list, start, stop, or delete rigs | `amika rig --help`                                                        |
 | Run a coding agent                         | `amika send --help`                                                       |
-| Run a command remotely                     | `amika rig ssh <name> <command>`                                          |
+| Run a command remotely                     | `amika rig ssh <rig> <command>`                                           |
 | Copy files                                 | `amika scp --help`                                                        |
 | Manage service exposure                    | `amika service --help`                                                    |
 | Capture a base environment                 | `amika snapshot --help`                                                   |

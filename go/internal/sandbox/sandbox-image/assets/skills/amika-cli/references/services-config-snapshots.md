@@ -10,7 +10,7 @@ multiple URLs are space-joined.
 
 ```bash
 amika service create --rig my-rig --name web --port 3000 --url-scheme http
-amika service list --rig-name my-rig -o json
+amika service list --rig my-rig -o json
 amika service delete --rig my-rig --name web --force
 ```
 
