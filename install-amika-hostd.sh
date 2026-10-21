@@ -135,8 +135,37 @@ main() {
     exit 0
   fi
 
+  print_overview
   download_and_extract
   install_hostd
+}
+
+# Say up front what the install will check and install, without asking.
+print_overview() {
+  config_paths
+  echo ""
+  echo "This will:"
+  echo "  - install amika-hostd into ${HOSTD_HOME}, with a launcher at"
+  echo "    ${INSTALL_DIR}/amika-hostd (using sudo if that directory is not writable)"
+  echo "  - use the system Node.js ${NODE_MIN_MAJOR}+, or download Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node"
+  if [ "$SKIP_SMOLVM" = "true" ]; then
+    echo "  - skip smolvm (--skip-smolvm)"
+  else
+    echo "  - install smolvm into ~/.smolvm if it is missing"
+  fi
+  echo "  - download the ${ENGINE_PACKAGE} engine from ${NPM_REGISTRY}"
+  echo "  - write a config to ${CONFIG_PATH} if there is none"
+  if [ "$OS" = "darwin" ]; then
+    echo "  - check for resize2fs, and install e2fsprogs with Homebrew if it is missing"
+  else
+    echo "  - check for KVM (/dev/kvm)"
+    if [ "$INSTALL_DEPS" = "true" ]; then
+      echo "  - check for resize2fs, and install e2fsprogs without asking if it is missing (--install-deps)"
+    else
+      echo "  - check for resize2fs, and offer to install e2fsprogs if it is missing"
+    fi
+  fi
+  echo ""
 }
 
 parse_args() {

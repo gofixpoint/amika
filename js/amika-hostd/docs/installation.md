@@ -34,7 +34,8 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   `/etc`. It is never overwritten, and it holds no secret: `amika-hostd setup`
   keeps the secrets (see [Secret storage](setup-and-secrets.md#secret-storage)).
 
-Its closing steps point the operator at `amika-hostd setup`, then
+Before downloading anything it lists what it will check and install, without
+asking for confirmation. Its closing steps point the operator at `amika-hostd setup`, then
 `amika-hostd up` (which runs setup itself if it was skipped).
 
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
