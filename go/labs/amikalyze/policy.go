@@ -242,18 +242,41 @@ func repoRelative(repoRoot, target string) (string, bool) {
 	}
 }
 
+// maxSymlinkHops bounds how many dangling final symlinks resolvePath follows,
+// so a symlink loop is reported instead of followed forever.
+const maxSymlinkHops = 40
+
 // resolvePath returns the physical location an edit through path writes to:
 // path with every symlink resolved when it exists, which follows a symlinked
-// file to its destination. A path an edit would create keeps its missing
-// components as written, rejoined under their nearest existing ancestor.
+// file to its destination. A final symlink whose destination does not exist
+// yet is followed too, since a write through it creates that destination. A
+// path an edit would create keeps its missing components as written, rejoined
+// under their nearest existing ancestor.
 func resolvePath(path string) (string, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	path = filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved, nil
+	for hops := 0; ; hops++ {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return resolved, nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			break
+		}
+		if hops == maxSymlinkHops {
+			return "", fmt.Errorf("resolving %s: too many levels of symbolic links", path)
+		}
+		destination, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(destination) {
+			destination = filepath.Join(filepath.Dir(path), destination)
+		}
+		path = filepath.Clean(destination)
 	}
 	dir, rest := filepath.Dir(path), []string{filepath.Base(path)}
 	for {
