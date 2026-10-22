@@ -80,6 +80,14 @@ To get started with Amika's cloud product:
    amika secret claude push --type oauth --name claude-oauth
    ```
 
+4. Teach your coding agents (Claude Code, Codex, Cursor) to drive the CLI by
+   installing its agent skill, which ships inside the `amika` binary. Rerun it
+   after upgrading `amika` to upgrade the skill.
+
+   ```bash
+   amika skill install --global
+   ```
+
 
 Now, you can either (a) create a Rig and then connect to it however you choose, or (b) directly start an agent chat session, which will provision its own Rig behind the scenes. Both can be done from the https://app.amika.dev/, and also from the CLI.
 

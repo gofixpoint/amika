@@ -15,7 +15,8 @@ EMBED_SOURCE_DIRECTORIES = ("assets", "steps", "verify")
 # the copy every reader outside this image is pointed at. The image still needs
 # one of its own because a bundle must be self-contained: WritePresetBuildContext
 # extracts only sandbox-image/, so a generated Dockerfile cannot COPY from above
-# it. The generator owns that copy for the same reason it owns the go/ mirror.
+# it. The generator owns that copy for the same reason it owns the go/ mirror,
+# whose copy of the skill is also what `amika skill install` writes out.
 # A hand-maintained second copy of a file agents follow literally goes stale in
 # silence, and --check turns that into a CI failure instead.
 AGENT_SKILL_SOURCE = ".agents/skills/amika-cli"

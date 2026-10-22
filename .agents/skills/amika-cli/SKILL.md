@@ -17,6 +17,12 @@ Read only the reference relevant to the task:
 - [SSH, editors, and file transfer](references/connectivity.md)
 - [Structured output and non-interactive behavior](references/non-interactive.md)
 
+This skill ships inside the `amika` binary, versioned with it. Install or
+upgrade it with `amika skill install --global` (home directory) or
+`amika skill install --local` (current repository), optionally limited with
+`--agents claude,codex,cursor`. Rerun it after upgrading `amika` so the skill
+matches the installed CLI.
+
 ## Inside an Amika rig
 
 When `$AMIKA_RIG_NAME` is set, it means you are running inside a rig,

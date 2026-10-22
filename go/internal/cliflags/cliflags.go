@@ -76,9 +76,11 @@ func removedLocalFlagError() error {
 
 // RejectRemovedLocalFlag returns the migration error when --local was passed to
 // cmd. Commands whose tree never registered the flag are unaffected, so those
-// keep Cobra's unknown-flag error.
+// keep Cobra's unknown-flag error. Only the hidden registration is the retired
+// flag: a command that offers a visible --local of its own, such as
+// `skill install` (install into the current project), keeps it.
 func RejectRemovedLocalFlag(cmd *cobra.Command) error {
-	if f := cmd.Flags().Lookup(RemovedLocalFlagName); f != nil && f.Changed {
+	if f := cmd.Flags().Lookup(RemovedLocalFlagName); f != nil && f.Hidden && f.Changed {
 		return removedLocalFlagError()
 	}
 	return nil

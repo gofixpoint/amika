@@ -3,6 +3,7 @@ package cliflags
 import (
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -70,5 +71,33 @@ func TestNormalizeFlagName_RenamesAlreadyRegisteredFlags(t *testing.T) {
 	}
 	if got != "box" {
 		t.Errorf("--rig = %q, want %q", got, "box")
+	}
+}
+
+// Only the hidden registration is the retired flag; a command that registers a
+// visible --local of its own must be able to use it.
+func TestRejectRemovedLocalFlag_OnlyHiddenFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		hidden  bool
+		wantErr bool
+	}{
+		{"hidden retired flag", true, true},
+		{"visible flag of its own", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: "test"}
+			cmd.Flags().Bool(RemovedLocalFlagName, false, "")
+			if tc.hidden {
+				_ = cmd.Flags().MarkHidden(RemovedLocalFlagName)
+			}
+			if err := cmd.Flags().Parse([]string{"--local"}); err != nil {
+				t.Fatal(err)
+			}
+			err := RejectRemovedLocalFlag(cmd)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("RejectRemovedLocalFlag error = %v, want error: %v", err, tc.wantErr)
+			}
+		})
 	}
 }

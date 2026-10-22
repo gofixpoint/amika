@@ -37,7 +37,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, `auth logout`, and `auth api-key create`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, `auth logout`, `auth api-key create`, and `skill install`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika send`
 
@@ -896,6 +896,50 @@ amika secret ssh-key delete <id> --force  # skips the prompt
 With `-o json` the prompt is never shown, so `--force` is required.
 
 Deleting a key does not revoke access on sandboxes that are already running; the removal applies the next time a sandbox is provisioned.
+
+---
+
+## `amika skill`
+
+Coding agents drive `amika` far more reliably when they know its
+non-interactive conventions: which commands take `-o json`, which need a
+confirmation flag, and which open a terminal they cannot control. The
+`amika-cli` agent skill teaches them that. It is built into the `amika`
+binary, so the copy you install always matches the CLI you have installed.
+
+### `amika skill install`
+
+Install the `amika-cli` skill where Claude Code, Codex, and Cursor discover
+skills. Exactly one of `--global` or `--local` is required.
+
+```bash
+# Install for Claude Code, Codex, and Cursor in your home directory
+amika skill install --global
+
+# Install into the current repository for Claude Code only
+amika skill install --local --agents claude
+```
+
+| Flag       | Default               | Description                                                                                      |
+| ---------- | --------------------- | ------------------------------------------------------------------------------------------------ |
+| `--global` | `false`               | Install into your home directory                                                                 |
+| `--local`  | `false`               | Install into the current project: the enclosing git repository root, else the working directory  |
+| `--agents` | `claude,codex,cursor` | Comma-separated agents to install for; any of `claude`, `codex`, `cursor`                        |
+
+Each agent reads skills from its own directory under the chosen root (`~` for
+`--global`, the project root for `--local`):
+
+| Agent    | Installed to               |
+| -------- | -------------------------- |
+| `claude` | `.claude/skills/amika-cli` |
+| `codex`  | `.agents/skills/amika-cli` |
+| `cursor` | `.agents/skills/amika-cli` |
+
+Codex and Cursor share `.agents/skills`, so choosing both writes one copy. The
+command prints each path it writes. An existing copy is replaced, which is how
+you upgrade the skill after upgrading `amika`, and the output says when it
+replaced one. With `-o json` it emits
+`{"skill", "version", "scope", "installs": [{"path", "agents", "replaced"}]}`.
 
 ---
 

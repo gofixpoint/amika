@@ -77,7 +77,9 @@ runtime home and `/etc/skel`. The image needs its own copy because a bundle
 must be self-contained: the Go CLI extracts only `sandbox-image/` into its
 build context, so a generated Dockerfile cannot `COPY` from above this
 directory. Edit the skill at the repository root, never the copy; `--check`
-fails on any divergence between the two.
+fails on any divergence between the two. The Go-embed mirror's copy of that
+directory (below) is also what `amika skill install` writes, so the CLI ships
+the skill without embedding it a second time.
 
 The canonical skill tree is installed at `~/.agents/skills`. opencode and pi
 load that path themselves. Claude Code does not, so the step also links the

@@ -85,6 +85,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `host.go` — `host list|get|delete` commands over the org's own hosts (BYOC); hosts are registered by `amika-hostd`, not here
 - `auth.go` — `auth login|logout|status` commands
 - `auth_api_key.go` — `auth api-key create`, which mints an API key and writes its value only to the `--out` file (never the CLI's own output, errors, or `-o json`)
+- `skill.go` — `skill install --global|--local [--agents ...]`, which writes the `amika-cli` agent skill embedded in the binary into each agent's skill directory (logic in `internal/agentskill`)
 
 ### amikalog CLI (`go/cmd/amikalog/`)
 - `main.go` — Entry point, root Cobra command
@@ -104,6 +105,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `services/` — Shared sandbox-service logic used by CLI and API, e.g. `ValidatePort` (rejects out-of-range and reserved container ports)
 - `rigref/` — Parses rig references (a name or id, `name=`/`id=` to pin the field, `_self` for the current rig); rules for commands that take a rig are in [`go/cmd/amika/AGENTS.md`](go/cmd/amika/AGENTS.md)
 - `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
+- `agentskill/` — Agent names, per-agent skill directories, and the copy behind `amika skill install`
 - `eventlog/` — amikalog's hook installer, event capture, and push (details in the package doc)
 
 ### Public Package (`go/pkg/amika/`)
@@ -121,7 +123,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `bin/amikalog` — Wrapper script that auto-builds and runs `dist/amikalog`
 - `bin/amikalyze` — Wrapper script that auto-builds and runs `dist/amikalyze`
 - `materialization-scripts/` — Example data materialization scripts
-- `sandbox-image/` — Shared manifest, build steps, assets, verification suite, and generated Dockerfiles. It also holds generated copies of the `amika-cli` skill: edit only `.agents/skills/amika-cli/`, then run `python3 sandbox-image/generate.py` (CI fails on a stale copy)
+- `sandbox-image/` — Shared manifest, build steps, assets, verification suite, and generated Dockerfiles. It also holds generated copies of the `amika-cli` skill: edit only `.agents/skills/amika-cli/`, then run `python3 sandbox-image/generate.py` (CI fails on a stale copy). The copy in the Go-embed mirror is also what `amika skill install` writes, via `sandbox.AgentSkillFS`
 - `sdk/typescript/` — TypeScript SDK
 
 ## Development Notes
