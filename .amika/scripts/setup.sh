@@ -20,7 +20,7 @@ fi
 
 echo "Go not found. Installing..."
 
-GO_VERSION="1.26.1"
+GO_VERSION="1.26.10"
 ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 
 # Normalize architecture name

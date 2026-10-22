@@ -19,8 +19,13 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.25.x"
+          # go.mod's `go` line is the toolchain floor, so CI and releases
+          # build with exactly the patched version it names.
+          go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
+
+      - name: Record Go version
+        run: go version
 
       - name: Check formatting
         run: make fmtcheck

@@ -9,10 +9,12 @@ E2E_SANDBOX_PROVIDER ?= daytona
 ZIZMOR_VERSION = 1.25.2
 
 export GOCACHE := $(CURDIR)/.gocache
-export GOTMPDIR := $(CURDIR)/.gotmp
+# No GOTMPDIR: since Go 1.26, t.TempDir creates its directories there, and
+# a repo-relative path pushes the unix sockets the internal/ssh tests bind
+# past the 108-byte sun_path limit.
 
 goenv:
-	mkdir -p "$(GOCACHE)" "$(GOTMPDIR)"
+	mkdir -p "$(GOCACHE)"
 
 build: build-cli build-amikad build-amikalog build-akfs build-amikalyze
 
