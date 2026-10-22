@@ -99,7 +99,7 @@ func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, pa
 
 	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Opening sandbox %q in %s via SSH (%s)...\n", target.sandboxName, name, target.alias)
+	fmt.Fprintf(cmd.OutOrStdout(), "Opening rig %q in %s via SSH (%s)...\n", target.sandboxName, name, target.alias)
 	fmt.Fprintf(cmd.OutOrStdout(), "Running: %s --remote ssh-remote+%s %s\n", cli, target.alias, remotePath)
 	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
 	if err := launch("--remote", "ssh-remote+"+target.alias, remotePath); err != nil {
@@ -160,7 +160,7 @@ func openSandboxInClaudeTarget(cmd *cobra.Command, paths basedir.Paths, target s
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Registered SSH environment %q for sandbox %q in Claude Desktop.\n", host.Name, target.sandboxName)
+	fmt.Fprintf(out, "Registered SSH environment %q for rig %q in Claude Desktop.\n", host.Name, target.sandboxName)
 	if err := openApp("claude://code/new"); err != nil {
 		fmt.Fprintf(out, "Could not launch Claude Desktop automatically (%v); open it yourself.\n", err)
 	} else {
@@ -177,7 +177,7 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Enabled Codex remote connections; SSH host %q for sandbox %q is available from ~/.ssh/config.\n", target.alias, target.sandboxName)
+	fmt.Fprintf(out, "Enabled Codex remote connections; SSH host %q for rig %q is available from ~/.ssh/config.\n", target.alias, target.sandboxName)
 	if err := openApp("codex://"); err != nil {
 		fmt.Fprintf(out, "Could not launch Codex automatically (%v); open it yourself.\n", err)
 	} else {
@@ -229,7 +229,7 @@ func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list Herdr machines: %v\n", err)
 	}
 	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.Target == target.alias }); i >= 0 {
-		fmt.Fprintf(out, "Sandbox %q is already a Herdr machine labeled %q.\n", target.sandboxName, machines[i].Label)
+		fmt.Fprintf(out, "Rig %q is already a Herdr machine labeled %q.\n", target.sandboxName, machines[i].Label)
 		return nil
 	}
 	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.Label == target.sandboxName }); i >= 0 {
@@ -237,7 +237,7 @@ func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 			target.sandboxName, machines[i].Target, machines[i].ID)
 	}
 
-	fmt.Fprintf(out, "Adding sandbox %q to Herdr as a machine via SSH (%s)...\n", target.sandboxName, target.alias)
+	fmt.Fprintf(out, "Adding rig %q to Herdr as a machine via SSH (%s)...\n", target.sandboxName, target.alias)
 	fmt.Fprintf(out, "Running: herdr machine add %s --label %s\n", target.alias, target.sandboxName)
 	add := exec.Command("herdr", "machine", "add", target.alias, "--label", target.sandboxName)
 	// `machine add` may prompt, e.g. to pick a remote session.

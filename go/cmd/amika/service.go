@@ -159,7 +159,7 @@ func runServiceDelete(cmd *cobra.Command, _ []string) error {
 		}
 		reader := bufio.NewReader(cmd.InOrStdin())
 		confirmed, err := cliprompt.Confirm(
-			fmt.Sprintf("Delete service %q from sandbox %q?", name, rigref.Label(rawRig, rigRef)),
+			fmt.Sprintf("Delete service %q from rig %q?", name, rigref.Label(rawRig, rigRef)),
 			reader,
 		)
 		if err != nil {
@@ -271,7 +271,7 @@ var serviceListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "SERVICE\tSANDBOX\tPORTS\tURL")
+		fmt.Fprintln(w, "SERVICE\tRIG\tPORTS\tURL")
 		for _, r := range rows {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.service, r.sandboxName, r.ports, r.url)
 		}

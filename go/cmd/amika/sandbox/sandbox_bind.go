@@ -49,7 +49,7 @@ var sandboxBindCmd = &cobra.Command{
 		if format.IsJSON() {
 			return format.JSON(cmd.OutOrStdout(), binding)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Bound sandbox %q to %s/%s branch %q (%s).\n", rigref.Label(args[0], ref), owner, repo, branch, binding.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Bound rig %q to %s/%s branch %q (%s).\n", rigref.Label(args[0], ref), owner, repo, branch, binding.ID)
 		return nil
 	},
 }

@@ -93,18 +93,18 @@ func parseSboxURI(raw string) (name, path string, err error) {
 		auth, rawPath = rest[:i], rest[i:]
 	}
 	if auth == "" {
-		return "", "", fmt.Errorf("sandbox URI %q is missing a sandbox name (expected sbox://NAME/PATH)", raw)
+		return "", "", fmt.Errorf("rig URI %q is missing a rig name (expected sbox://NAME/PATH)", raw)
 	}
 	name, err = url.PathUnescape(auth)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid percent-encoding in sandbox URI %q: %w", raw, err)
+		return "", "", fmt.Errorf("invalid percent-encoding in rig URI %q: %w", raw, err)
 	}
 	if strings.ContainsAny(name, ": ") {
-		return "", "", fmt.Errorf("sandbox URI %q decodes to an invalid sandbox name %q: ':' and spaces are not allowed", raw, name)
+		return "", "", fmt.Errorf("rig URI %q decodes to an invalid rig name %q: ':' and spaces are not allowed", raw, name)
 	}
 	path, err = url.PathUnescape(rawPath)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid percent-encoding in the path of sandbox URI %q: %w", raw, err)
+		return "", "", fmt.Errorf("invalid percent-encoding in the path of rig URI %q: %w", raw, err)
 	}
 	return name, path, nil
 }

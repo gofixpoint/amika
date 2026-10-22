@@ -211,7 +211,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 
 	resolved := sb.ResolvedAgentCredentials
 
-	fmt.Fprintf(pw, "Sandbox %q initializing...\n", sb.Name)
+	fmt.Fprintf(pw, "Rig %q initializing...\n", sb.Name)
 
 	// Poll by id: a new name can equal another rig's id, which a poll by the
 	// name, or by a plain ref, would find ambiguous.
@@ -227,7 +227,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 		return err
 	}
 
-	fmt.Fprintf(pw, "Sandbox %q created\n", sb.Name)
+	fmt.Fprintf(pw, "Rig %q created\n", sb.Name)
 	printResolvedAgentCredentials(cmd, resolved)
 
 	if format.IsJSON() {

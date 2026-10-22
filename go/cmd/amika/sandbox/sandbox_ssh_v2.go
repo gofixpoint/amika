@@ -127,7 +127,7 @@ Examples:
 			return err
 		}
 		if nameIdx < 0 {
-			return fmt.Errorf("missing rig; usage: amika sandbox ssh [ssh-options] <rig> [command...]")
+			return fmt.Errorf("missing rig; usage: amika rig ssh [ssh-options] <rig> [command...]")
 		}
 		ref, err := rigref.Parse(forward[nameIdx])
 		if err != nil {

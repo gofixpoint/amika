@@ -121,7 +121,7 @@ func runSnapshotCreate(cmd *cobra.Command, _ []string) error {
 		}
 		printScrubPreview(cmd, preview)
 		confirmed, err := cliprompt.Confirm(
-			"Scrub these secrets, snapshot the sandbox, and delete it?",
+			"Scrub these secrets, snapshot the rig, and delete it?",
 			reader,
 		)
 		if err != nil {
@@ -309,8 +309,8 @@ func promptSnapshotMode(cmd *cobra.Command, reader *bufio.Reader) (string, error
 	out := cmd.OutOrStdout()
 	for {
 		fmt.Fprintln(out, "Capture mode:")
-		fmt.Fprintln(out, "  [1] scrub_and_delete (default): remove injected secrets, snapshot, then delete the sandbox")
-		fmt.Fprintln(out, "  [2] full: snapshot everything as-is (keeps secrets and the sandbox; unsafe)")
+		fmt.Fprintln(out, "  [1] scrub_and_delete (default): remove injected secrets, snapshot, then delete the rig")
+		fmt.Fprintln(out, "  [2] full: snapshot everything as-is (keeps secrets and the rig; unsafe)")
 		fmt.Fprint(out, "Choose [1/2] (default 1): ")
 		answer, err := reader.ReadString('\n')
 		if err != nil {

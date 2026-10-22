@@ -107,7 +107,7 @@ func runSandboxBindingsList(cmd *cobra.Command, _ []string) error {
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tSANDBOX ID\tTARGET\tRELATIONSHIP\tCREATED")
+	fmt.Fprintln(w, "ID\tRIG ID\tTARGET\tRELATIONSHIP\tCREATED")
 	for _, binding := range result.Items {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			binding.ID,
@@ -170,7 +170,7 @@ func runSandboxBindingsDelete(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		bindingID = binding.ID
-		description = fmt.Sprintf("binding %q for target %q on sandbox %q", bindingID, bindingTarget, rigref.Label(strings.TrimSpace(args[0]), ref))
+		description = fmt.Sprintf("binding %q for target %q on rig %q", bindingID, bindingTarget, rigref.Label(strings.TrimSpace(args[0]), ref))
 	}
 	if bindingID == "" {
 		return fmt.Errorf("a binding ID is required")

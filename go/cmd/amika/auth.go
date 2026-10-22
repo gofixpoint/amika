@@ -52,7 +52,7 @@ func ensureSSHSessionConfig(cmd *cobra.Command, format output.Format) {
 	// Both host-side fixes are offered: a UI-uploaded key already has a
 	// private half somewhere, and only --import points the config at it.
 	if sessionNeedsIdentityWarning(session) {
-		fmt.Fprintf(out, "No SSH identity at %s yet, so `amika sandbox ssh` will not connect until you add one:\n",
+		fmt.Fprintf(out, "No SSH identity at %s yet, so `amika rig ssh` will not connect until you add one:\n",
 			session.IdentityFile)
 		fmt.Fprintln(out, "  amika secret ssh-keygen                                 # create a new key")
 		fmt.Fprintln(out, "  amika secret ssh-keygen --import <path>.pub             # use a key you already have")

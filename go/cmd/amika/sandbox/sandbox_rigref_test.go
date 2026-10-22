@@ -210,7 +210,7 @@ func TestRigBatchOutputNamesRigs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := "Sandbox \"id=sb_1\" starting...\nSandbox \"box\" started\n"; out != want {
+		if want := "Rig \"id=sb_1\" starting...\nRig \"box\" started\n"; out != want {
 			t.Fatalf("output = %q, want %q", out, want)
 		}
 	})

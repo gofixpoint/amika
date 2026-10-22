@@ -202,7 +202,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "session_id: %s\n", resp.SessionID)
 	}
 	if resp.CreatedSandbox {
-		fmt.Fprintf(os.Stderr, "created sandbox: %s\n", resp.SandboxID)
+		fmt.Fprintf(os.Stderr, "created rig: %s\n", resp.SandboxID)
 	}
 	fmt.Fprint(os.Stdout, resp.Response)
 	if resp.Response != "" && !strings.HasSuffix(resp.Response, "\n") {
@@ -278,7 +278,7 @@ func validateSendRepoFlags(cmd *cobra.Command, sessionID string, hasRig bool) er
 	}
 	if flag != "" {
 		return fmt.Errorf(
-			"--%s cannot be combined with --session-id or --rig; it only applies to a sandbox this command creates",
+			"--%s cannot be combined with --session-id or --rig; it only applies to a rig this command creates",
 			flag)
 	}
 	return nil
@@ -358,10 +358,10 @@ func runSendStreaming(
 		OnStatus: func(phase, sandboxID string) {
 			switch phase {
 			case "creating_sandbox":
-				fmt.Fprintln(os.Stderr, "creating sandbox…")
+				fmt.Fprintln(os.Stderr, "creating rig…")
 			case "sandbox_ready":
 				if sandboxID != "" {
-					fmt.Fprintf(os.Stderr, "sandbox ready: %s\n", sandboxID)
+					fmt.Fprintf(os.Stderr, "rig ready: %s\n", sandboxID)
 				}
 			}
 		},
@@ -480,7 +480,7 @@ func runSessionsList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "SESSION ID\tAGENT\tSTATUS\tSANDBOX\tUPDATED")
+	fmt.Fprintln(w, "SESSION ID\tAGENT\tSTATUS\tRIG\tUPDATED")
 	for _, s := range sessions {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			s.SessionID,
@@ -532,7 +532,7 @@ func runSessionsShow(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "session:  %s\n", detail.SessionID)
 	fmt.Fprintf(out, "agent:    %s\n", detail.Agent)
-	fmt.Fprintf(out, "sandbox:  %s\n", strOrDash(detail.SandboxName, detail.SandboxID))
+	fmt.Fprintf(out, "rig:      %s\n", strOrDash(detail.SandboxName, detail.SandboxID))
 	fmt.Fprintf(out, "status:   %s\n", detail.Status)
 	fmt.Fprintln(out)
 	for _, m := range detail.Messages {

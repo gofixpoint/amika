@@ -42,7 +42,7 @@ var sandboxDeleteCmd = &cobra.Command{
 			}
 			reader := bufio.NewReader(cmd.InOrStdin())
 			confirmed, err := cliprompt.Confirm(
-				fmt.Sprintf("Delete sandbox(es) %s?", strings.Join(labels, ", ")),
+				fmt.Sprintf("Delete rig(s) %s?", strings.Join(labels, ", ")),
 				reader,
 			)
 			if err != nil {
@@ -76,11 +76,11 @@ var sandboxDeleteCmd = &cobra.Command{
 		for i, ref := range refs {
 			label := labels[i]
 			if remoteErr := rigref.Explain(ref, remoteClient.DeleteSandbox(ref.Selector())); remoteErr != nil {
-				errs = append(errs, fmt.Sprintf("sandbox %q: %v", label, remoteErr))
+				errs = append(errs, fmt.Sprintf("rig %q: %v", label, remoteErr))
 				results = append(results, batchError(label, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q deleted\n", label)
+			fmt.Fprintf(pw, "Rig %q deleted\n", label)
 			results = append(results, output.ItemResult{Name: label, Status: "deleted"})
 		}
 

@@ -58,13 +58,13 @@ var sandboxStartCmd = &cobra.Command{
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q starting...\n", label)
+			fmt.Fprintf(pw, "Rig %q starting...\n", label)
 			polled, remoteErr := remoteClient.WaitForSandboxStart(ref.Selector())
 			if remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q started\n", polled.Name)
+			fmt.Fprintf(pw, "Rig %q started\n", polled.Name)
 			items = append(items, normalizeSandboxJSON(*polled))
 		}
 		return finishBatch(cmd, format, items, failed)
@@ -110,13 +110,13 @@ var sandboxStopCmd = &cobra.Command{
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q stopping...\n", label)
+			fmt.Fprintf(pw, "Rig %q stopping...\n", label)
 			polled, remoteErr := remoteClient.WaitForSandboxStop(ref.Selector())
 			if remoteErr != nil {
 				appendBatchFailure(&items, &failed, label, rigref.Explain(ref, remoteErr))
 				continue
 			}
-			fmt.Fprintf(pw, "Sandbox %q stopped\n", polled.Name)
+			fmt.Fprintf(pw, "Rig %q stopped\n", polled.Name)
 			items = append(items, normalizeSandboxJSON(*polled))
 		}
 		return finishBatch(cmd, format, items, failed)
@@ -134,7 +134,7 @@ func batchError(name string, err error) output.ItemResult {
 // their mixed-shape result array.
 func appendBatchFailure(items *[]any, failed *[]string, name string, err error) {
 	*items = append(*items, batchError(name, err))
-	*failed = append(*failed, fmt.Sprintf("sandbox %q: %s", name, err.Error()))
+	*failed = append(*failed, fmt.Sprintf("rig %q: %s", name, err.Error()))
 }
 
 // finishBatch emits items as the JSON array for `-o json`/`-o json-pretty` and
@@ -154,7 +154,7 @@ func finishBatch(cmd *cobra.Command, format output.Format, items []any, failed [
 			return err
 		}
 		if len(failed) > 0 {
-			return fmt.Errorf("%d of %d sandboxes failed; see JSON output", len(failed), len(items))
+			return fmt.Errorf("%d of %d rigs failed; see JSON output", len(failed), len(items))
 		}
 		return nil
 	}
@@ -243,7 +243,7 @@ var sandboxListCmd = &cobra.Command{
 		}
 
 		if len(allItems) == 0 {
-			fmt.Println("No sandboxes found.")
+			fmt.Println("No rigs found.")
 			return nil
 		}
 
