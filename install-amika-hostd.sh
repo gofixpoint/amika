@@ -11,13 +11,23 @@ set -eu
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
+# TODO(KAPRO-1059): v0.4.0 bundles Hono and follow-redirects releases with
+# known advisories. Point this at the first release built from a main that
+# has the fixes once it is published.
 DEFAULT_VERSION="0.4.0"
 INSTALL_VERSION=""
 DRY_RUN=false
 
 HOSTD_HOME="${AMIKA_HOSTD_HOME:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/amika-hostd}"
-NODE_MIN_MAJOR=22
-NODE_VERSION="${AMIKA_HOSTD_NODE_VERSION:-24.21.0}"
+# The oldest release of each Node.js major the daemon runs on: the October
+# 2026 security releases, which fix TLS hostname checks and the Brotli decoder
+# and drop eMudhra's compromised CAs from the bundled store. A node on any other
+# major, or older than its major's entry, is never used.
+NODE_MIN_VERSIONS="22.23.4 24.22.1 26.12.1"
+NODE_VERSION="${AMIKA_HOSTD_NODE_VERSION:-24.22.1}"
+NODE_VERSION="${NODE_VERSION#v}"
+NODE_DIST_URL="${AMIKA_HOSTD_NODE_DIST_URL:-https://nodejs.org/dist}"
+NODE_DIST_URL="${NODE_DIST_URL%/}"
 NPM_REGISTRY="${AMIKA_HOSTD_NPM_REGISTRY:-https://registry.npmjs.org}"
 NPM_REGISTRY="${NPM_REGISTRY%/}"
 # The smolmachines engine runs on Linux with glibc 2.34 or newer.
@@ -33,9 +43,9 @@ usage() {
   cat <<EOF
 install-amika-hostd.sh — install the amika-hostd BYOC host daemon
 
-Installs amika-hostd from its GitHub release, plus the Node.js ${NODE_MIN_MAJOR}+
-and smolvm it needs. It uses the system node if it is new enough, and otherwise
-downloads Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node. If smolvm is
+Installs amika-hostd from its GitHub release, plus the Node.js and smolvm it
+needs. It uses the system node if it is a patched release ($(node_floors_text)),
+and otherwise downloads Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node. If smolvm is
 missing, it runs the official smolvm installer. It also installs the
 smolmachines engine (smolvm, embedded) for this platform.
 
@@ -74,13 +84,16 @@ Environment variables:
                              (default: \$XDG_DATA_HOME/amika-hostd, which is
                              ~/.local/share/amika-hostd by default)
   AMIKA_HOSTD_NODE_VERSION   Node.js version to download when the system node
-                             is missing or too old (default: ${NODE_VERSION})
+                             is missing or unpatched (default: ${NODE_VERSION});
+                             must itself be a patched release
   SMOLVM_VERSION             Same as --smolvm-version
   AMIKA_HOSTD_NPM_REGISTRY   npm registry to fetch the engine package from
                              (default: https://registry.npmjs.org)
   AMIKA_RELEASE_URL          Testing only: fetch the archive and checksums.txt
                              from this base URL (e.g. file:///path/to/dir)
                              instead of the GitHub release
+  AMIKA_HOSTD_NODE_DIST_URL  Testing only: fetch Node.js from this base URL
+                             instead of https://nodejs.org/dist
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
@@ -99,6 +112,7 @@ main() {
     echo "Error: --purge and --yes only apply with --uninstall" >&2
     exit 1
   fi
+  check_node_version
   detect_platform
   engine_package
 
@@ -559,7 +573,7 @@ describe_plan() {
     echo "  Node.js:      use the private node v${FOUND_NODE_VERSION} at ${FOUND_NODE}"
   else
     node_dist_names
-    echo "  Node.js:      no node ${NODE_MIN_MAJOR}+ found; would download"
+    echo "  Node.js:      no patched node ($(node_floors_text)) found; would download"
     echo "                ${NODE_BASE_URL}/${NODE_ARCHIVE}"
     echo "                into ${HOSTD_HOME}/node"
   fi
@@ -584,15 +598,28 @@ describe_plan() {
   check_resize2fs
 }
 
-# Pick the node the launcher runs: the system node if it is new enough, else a
-# private one under HOSTD_HOME, downloaded if needed. Sets NODE_BIN.
+# Refuse an AMIKA_HOSTD_NODE_VERSION that is not itself a patched release,
+# before anything is downloaded.
+check_node_version() {
+  if ! node_version_patched "$NODE_VERSION"; then
+    echo "Error: AMIKA_HOSTD_NODE_VERSION=${NODE_VERSION} is not a Node.js release amika-hostd runs on." >&2
+    echo "Use a version at or above one of: $(node_floors_text) (same major)." >&2
+    exit 1
+  fi
+}
+
+# Pick the node the launcher runs: the system node if it is a patched release,
+# else a private one under HOSTD_HOME, downloaded (replacing an unpatched one)
+# if needed. Sets NODE_BIN.
 ensure_node() {
   if find_system_node; then
     echo "Using system Node.js v${FOUND_NODE_VERSION} at ${FOUND_NODE}"
   elif find_private_node; then
     echo "Using Node.js v${FOUND_NODE_VERSION} at ${FOUND_NODE}"
   else
-    echo "Node.js ${NODE_MIN_MAJOR}+ not found; installing Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node"
+    report_skipped_node "$(command -v node 2>/dev/null || true)" "Not using system"
+    report_skipped_node "${HOSTD_HOME}/node/bin/node" "Replacing"
+    echo "No patched Node.js ($(node_floors_text)) found; installing Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node"
     install_private_node
     find_private_node || {
       echo "Error: the downloaded Node.js at ${HOSTD_HOME}/node/bin/node does not run" >&2
@@ -611,18 +638,57 @@ find_private_node() {
   node_is_supported "${HOSTD_HOME}/node/bin/node"
 }
 
-# Succeed if $1 runs and is Node.js NODE_MIN_MAJOR or newer, setting
-# FOUND_NODE and FOUND_NODE_VERSION.
+# Succeed if $1 runs and is a patched Node.js release, setting FOUND_NODE and
+# FOUND_NODE_VERSION.
 node_is_supported() {
-  [ -x "$1" ] || return 1
-  node_version="$("$1" -p 'process.versions.node' 2>/dev/null || true)"
-  node_major="${node_version%%.*}"
-  case "$node_major" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
-  [ "$node_major" -ge "$NODE_MIN_MAJOR" ] || return 1
+  node_version="$(node_version_of "$1")"
+  node_version_patched "$node_version" || return 1
   FOUND_NODE="$1"
   FOUND_NODE_VERSION="$node_version"
+}
+
+# Print the version node $1 reports, or nothing when it does not run.
+node_version_of() {
+  [ -x "$1" ] || return 0
+  "$1" -p 'process.versions.node' 2>/dev/null || true
+}
+
+# Say why the node at $1, when it runs, is not used. $2 starts the sentence.
+report_skipped_node() {
+  [ -n "$1" ] || return 0
+  skipped_version="$(node_version_of "$1")"
+  [ -n "$skipped_version" ] || return 0
+  echo "${2} Node.js v${skipped_version} at ${1}: amika-hostd needs $(node_floors_text)"
+}
+
+# Succeed if $1 is a release version (major.minor.patch) on a major in
+# NODE_MIN_VERSIONS and no older than that major's entry.
+node_version_patched() {
+  case "$1" in
+    ''|*[!0-9.]*) return 1 ;;
+  esac
+  saved_ifs="$IFS"
+  IFS=.
+  # shellcheck disable=SC2086 # split the version on its dots
+  set -- $1
+  IFS="$saved_ifs"
+  [ "$#" -eq 3 ] && [ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] || return 1
+  for floor in $NODE_MIN_VERSIONS; do
+    floor_major="${floor%%.*}"
+    floor_minor="${floor#*.}"; floor_minor="${floor_minor%%.*}"
+    floor_patch="${floor##*.}"
+    [ "$1" -eq "$floor_major" ] || continue
+    [ "$2" -gt "$floor_minor" ] ||
+      { [ "$2" -eq "$floor_minor" ] && [ "$3" -ge "$floor_patch" ]; }
+    return
+  done
+  return 1
+}
+
+# NODE_MIN_VERSIONS for people: "22.23.4+, 24.22.1+ or 26.12.1+".
+node_floors_text() {
+  # shellcheck disable=SC2086 # one argument per version
+  printf '%s+' $NODE_MIN_VERSIONS | sed 's/+\([0-9]\)/+, \1/g; s/, \([^,]*\)$/ or \1/'
 }
 
 node_dist_names() {
@@ -632,7 +698,7 @@ node_dist_names() {
   esac
   NODE_DIST="node-v${NODE_VERSION}-${OS}-${node_arch}"
   NODE_ARCHIVE="${NODE_DIST}.tar.gz"
-  NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
+  NODE_BASE_URL="${NODE_DIST_URL}/v${NODE_VERSION}"
 }
 
 # Download the official Node.js binary, verify it against SHASUMS256.txt, and
