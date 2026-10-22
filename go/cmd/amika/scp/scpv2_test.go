@@ -54,6 +54,11 @@ func TestBuildSCPV2InvocationRewritesSandboxOperands(t *testing.T) {
 			want: []string{"box.sbx-1234.amika:/home/amika", "./out"},
 		},
 		{
+			name: "rig URI form resolves the same way",
+			argv: []string{"rig://box/~/a.txt", "./a.txt"},
+			want: []string{"box.sbx-1234.amika:/home/amika/a.txt", "./a.txt"},
+		},
+		{
 			name: "sbox URI form resolves the same way",
 			argv: []string{"sbox://box/~/a.txt", "./a.txt"},
 			want: []string{"box.sbx-1234.amika:/home/amika/a.txt", "./a.txt"},

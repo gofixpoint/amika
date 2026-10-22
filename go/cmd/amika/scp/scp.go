@@ -59,8 +59,8 @@ func resolveSandboxScpPath(path string) string {
 	}
 }
 
-// resolveSandboxURIPath resolves the path of an "sbox://NAME/PATH" reference,
-// where parseSboxURI returns the path with its leading "/". Every path is
+// resolveSandboxURIPath resolves the path of a "rig://NAME/PATH" reference,
+// where parseRigURI returns the path with its leading "/". Every path is
 // absolute; a leading "~" expands to the sandbox home, and an empty path (or a
 // bare "~") means the home directory.
 func resolveSandboxURIPath(path string) string {
@@ -81,19 +81,39 @@ func splitSandboxRef(tok string) (name, path string) {
 	return tok[:i], tok[i+1:]
 }
 
-// parseSboxURI parses an "sbox://NAME[/PATH]" URI into the sandbox name and the
-// remote path (with its leading "/"). The name is percent-decoded — a name may
-// contain "/", which must be encoded as %2F so it does not begin the path — and
-// url.Parse rejects a percent-encoded host, so the authority is split off and
-// decoded directly rather than via url.Parse.
-func parseSboxURI(raw string) (name, path string, err error) {
-	rest := strings.TrimPrefix(raw, "sbox://")
+// rigURISchemes are the URI prefixes that name a path in a rig. "sbox://" is
+// the original spelling, kept so existing scripts keep working.
+var rigURISchemes = []string{"rig://", "sbox://"}
+
+// trimRigURIScheme strips a rig URI scheme from tok, reporting whether it had one.
+func trimRigURIScheme(tok string) (string, bool) {
+	for _, scheme := range rigURISchemes {
+		if rest, ok := strings.CutPrefix(tok, scheme); ok {
+			return rest, true
+		}
+	}
+	return tok, false
+}
+
+// isRigURI reports whether tok is a rig URI.
+func isRigURI(tok string) bool {
+	_, ok := trimRigURIScheme(tok)
+	return ok
+}
+
+// parseRigURI parses a "rig://NAME[/PATH]" (or "sbox://NAME[/PATH]") URI into
+// the rig name and the remote path (with its leading "/"). The name is
+// percent-decoded — a name may contain "/", which must be encoded as %2F so it
+// does not begin the path — and url.Parse rejects a percent-encoded host, so
+// the authority is split off and decoded directly rather than via url.Parse.
+func parseRigURI(raw string) (name, path string, err error) {
+	rest, _ := trimRigURIScheme(raw)
 	auth, rawPath := rest, ""
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
 		auth, rawPath = rest[:i], rest[i:]
 	}
 	if auth == "" {
-		return "", "", fmt.Errorf("rig URI %q is missing a rig name (expected sbox://NAME/PATH)", raw)
+		return "", "", fmt.Errorf("rig URI %q is missing a rig name (expected rig://NAME/PATH)", raw)
 	}
 	name, err = url.PathUnescape(auth)
 	if err != nil {

@@ -51,7 +51,7 @@ Path forms:
 | ------------------------------- | ----------------------------------------------------- |
 | `PATH`                          | Local path                                            |
 | `NAME[:PATH]`                   | Rig path; relative paths start under `/home/amika`    |
-| `sbox://NAME[/PATH]`            | Rig URI; the path is absolute and `~` means home      |
+| `rig://NAME[/PATH]`             | Rig URI; the path is absolute and `~` means home (`sbox://` also works) |
 | `scp://[user@]host[:port][/path]` | Arbitrary SSH host                                  |
 
 A bare `host:path` always names an Amika rig. Use an `scp://` URI for an

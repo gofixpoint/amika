@@ -129,8 +129,8 @@ func buildSCPV2Invocation(plan scpPlan, resolve aliasResolver) ([]string, error)
 // become alias operands; scp:// URIs and local paths are returned unchanged.
 func rewriteV2Operand(tok string, resolve aliasResolver) (string, error) {
 	switch {
-	case strings.HasPrefix(tok, "sbox://"):
-		name, path, err := parseSboxURI(tok)
+	case isRigURI(tok):
+		name, path, err := parseRigURI(tok)
 		if err != nil {
 			return "", err
 		}
@@ -170,9 +170,10 @@ Operands take these forms:
   RIG:[PATH]                        a path in rig RIG (scp-style): a relative
                                     PATH is under the rig home, an absolute
                                     PATH is used verbatim
-  sbox://RIG[/PATH]                 a path in rig RIG (URI form): PATH is
+  rig://RIG[/PATH]                  a path in rig RIG (URI form): PATH is
                                     absolute and "~" is the home directory. A
-                                    "/" in RIG must be percent-encoded as %2F
+                                    "/" in RIG must be percent-encoded as %2F.
+                                    sbox://RIG[/PATH] is accepted too
   scp://[user@]host[:port][/path]   a path on an arbitrary SSH host
 
 RIG is a name or ID, or name=<name> / id=<id> (see "amika rig --help"), as in

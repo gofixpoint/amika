@@ -474,7 +474,7 @@ Rigs are resolved wherever they appear, so a single command can copy between two
 | --------------------------------- | ------------------------------------------------------------------------------ |
 | `PATH`                            | A local path                                                                   |
 | `RIG:[PATH]`                      | A path in rig `RIG` (scp-style); a relative `PATH` is under the rig home (`/home/amika`), an absolute `PATH` is used verbatim |
-| `sbox://RIG[/PATH]`               | A path in rig `RIG` (URI form); `PATH` is absolute and `~` is the home directory. A `/` in `RIG` must be percent-encoded as `%2F` |
+| `rig://RIG[/PATH]`                | A path in rig `RIG` (URI form); `PATH` is absolute and `~` is the home directory. A `/` in `RIG` must be percent-encoded as `%2F`. The older `sbox://RIG[/PATH]` spelling also works |
 | `scp://[user@]host[:port][/path]` | A path on an arbitrary SSH host                                                |
 
 A bare `host:path` **always** names a sandbox; to reach an arbitrary SSH host, use an `scp://` URI.
@@ -488,8 +488,8 @@ amika scp ./local.txt my-sandbox:local.txt
 # Recursively download an absolute directory from the sandbox
 amika scp -r my-sandbox:/srv/out ./out
 
-# Sandbox URI form, relative to the home directory
-amika scp ./a.txt sbox://my-sandbox/~/a.txt
+# Rig URI form, relative to the home directory
+amika scp ./a.txt rig://my-sandbox/~/a.txt
 
 # Name the rig by id
 amika scp ./a.txt id=9f3c8b21-0000-4000-8000-000000000000:a.txt

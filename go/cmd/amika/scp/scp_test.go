@@ -66,13 +66,17 @@ func TestParseSCPArgs(t *testing.T) {
 }
 
 // fixedDest resolves any sandbox name to a static destination for tests.
-func TestParseSboxURI(t *testing.T) {
+func TestParseRigURI(t *testing.T) {
 	tests := []struct {
 		raw      string
 		wantName string
 		wantPath string
 		wantErr  bool
 	}{
+		{raw: "rig://mybox/home/amika/a.txt", wantName: "mybox", wantPath: "/home/amika/a.txt"},
+		{raw: "rig://mybox", wantName: "mybox", wantPath: ""},
+		{raw: "rig://", wantErr: true},
+		// "sbox://" is the original scheme and parses the same way.
 		{raw: "sbox://mybox/home/amika/a.txt", wantName: "mybox", wantPath: "/home/amika/a.txt"},
 		{raw: "sbox://mybox", wantName: "mybox", wantPath: ""},
 		{raw: "sbox://mybox/~/f", wantName: "mybox", wantPath: "/~/f"},
@@ -89,18 +93,18 @@ func TestParseSboxURI(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
-			name, path, err := parseSboxURI(tt.raw)
+			name, path, err := parseRigURI(tt.raw)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("parseSboxURI(%q) expected error", tt.raw)
+					t.Fatalf("parseRigURI(%q) expected error", tt.raw)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseSboxURI(%q) error = %v", tt.raw, err)
+				t.Fatalf("parseRigURI(%q) error = %v", tt.raw, err)
 			}
 			if name != tt.wantName || path != tt.wantPath {
-				t.Errorf("parseSboxURI(%q) = (%q, %q), want (%q, %q)", tt.raw, name, path, tt.wantName, tt.wantPath)
+				t.Errorf("parseRigURI(%q) = (%q, %q), want (%q, %q)", tt.raw, name, path, tt.wantName, tt.wantPath)
 			}
 		})
 	}
