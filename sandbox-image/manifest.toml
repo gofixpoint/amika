@@ -44,7 +44,7 @@ provider_variants = ["daytona", "e2b"]
 
 [steps.os-packages]
 script = "steps/10-os-packages.sh"
-versions = ["GIT_VERSION"]
+versions = ["GIT_VERSION", "CA_CERTIFICATES_MIN_VERSION"]
 assets = []
 
 [steps.static-config]

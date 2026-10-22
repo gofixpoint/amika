@@ -4,6 +4,7 @@
 set -euo pipefail
 
 : "${GIT_VERSION:?GIT_VERSION must be set}"
+: "${CA_CERTIFICATES_MIN_VERSION:?CA_CERTIFICATES_MIN_VERSION must be set}"
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -34,6 +35,16 @@ apt-get install -y --no-install-recommends \
   xz-utils \
   zlib1g-dev \
   zsh
+
+# Trust must be current before the first HTTPS download below. apt fetched
+# the packages above over signed indexes, not TLS, and `install` upgrades a
+# ca-certificates a base image already carried.
+installed_ca_certificates="$(dpkg-query -W -f='${Version}' ca-certificates)"
+if ! dpkg --compare-versions "$installed_ca_certificates" ge "$CA_CERTIFICATES_MIN_VERSION"; then
+  echo "ca-certificates $installed_ca_certificates is below the floor $CA_CERTIFICATES_MIN_VERSION" >&2
+  exit 1
+fi
+update-ca-certificates --fresh >/dev/null
 
 temporary_dir="$(mktemp -d)"
 trap 'rm -rf "$temporary_dir"' EXIT

@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
 ARG GIT_VERSION=2.54.0
+ARG CA_CERTIFICATES_MIN_VERSION=20260816ubuntu0.24.04.1
 COPY sandbox-image/steps/10-os-packages.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
@@ -15,7 +16,7 @@ COPY sandbox-image/steps/20-static-config.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
     && rm -rf /opt/amika-build
 
-ARG NODE_VERSION=24.20.0
+ARG NODE_VERSION=24.22.1
 ARG GH_VERSION=2.98.0
 COPY sandbox-image/steps/30-node-gh.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build

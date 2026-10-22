@@ -102,6 +102,7 @@
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
           "versions": {
+            "CA_CERTIFICATES_MIN_VERSION": "20260816ubuntu0.24.04.1",
             "GIT_VERSION": "2.54.0"
           }
         },
@@ -120,7 +121,7 @@
           "script": "steps/30-node-gh.sh",
           "versions": {
             "GH_VERSION": "2.98.0",
-            "NODE_VERSION": "24.20.0"
+            "NODE_VERSION": "24.22.1"
           }
         },
         {
@@ -254,6 +255,7 @@
           "id": "os-packages",
           "script": "steps/10-os-packages.sh",
           "versions": {
+            "CA_CERTIFICATES_MIN_VERSION": "20260816ubuntu0.24.04.1",
             "GIT_VERSION": "2.54.0"
           }
         },
@@ -272,7 +274,7 @@
           "script": "steps/30-node-gh.sh",
           "versions": {
             "GH_VERSION": "2.98.0",
-            "NODE_VERSION": "24.20.0"
+            "NODE_VERSION": "24.22.1"
           }
         },
         {
