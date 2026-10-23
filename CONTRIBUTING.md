@@ -7,7 +7,7 @@ In some cases, we accept code contributions from users. Please reach out on [Dis
 
 ## Prerequisites
 
-- Go 1.26.10 or later
+- Go 1.26.10 or later, excluding 1.27.0–1.27.2 (`make` rejects them)
 - macOS (the only supported platform currently)
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`), for `make zizmor`, which `make ci` runs
 
