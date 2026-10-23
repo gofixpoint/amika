@@ -13,16 +13,16 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   (default `~/.local/share/amika-hostd`; override with `AMIKA_HOSTD_HOME`),
   with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR` (default
   `/usr/local/bin`) that pins the node it runs on;
-- Node.js: the system `node` if it is a patched release, otherwise the
-  official Node.js LTS binary (24.22.1, `AMIKA_HOSTD_NODE_VERSION`), verified
-  against `SHASUMS256.txt`, into `node/` in that same directory (the system
-  node is never touched). Patched means at least the October 2026 security
-  release of a supported major: 22.23.4, 24.22.1 or 26.12.1
-  (`NODE_MIN_VERSIONS`). A node on any other major or older than its floor is
-  passed over, a private `node/` from an earlier install is replaced, and an
-  `AMIKA_HOSTD_NODE_VERSION` below the floor fails before anything is
-  downloaded. Re-running the installer re-selects, so it moves the launcher to
-  a system node patched since;
+- Node.js: the system `node` if it is 22 or newer, otherwise the official
+  Node.js LTS binary (24.22.1, `AMIKA_HOSTD_NODE_VERSION`), verified against
+  `SHASUMS256.txt`, into `node/` in that same directory (the system node is
+  never touched). A system node is used as it is: keeping it patched is its
+  owner's job. A node the installer downloads must be a patched release, at
+  least the October 2026 security release of its major: 22.23.4, 24.22.1 or
+  26.12.1 (`NODE_MIN_VERSIONS`). An unpatched private `node/` from an earlier
+  install is replaced, and an `AMIKA_HOSTD_NODE_VERSION` below the floor fails
+  before anything is installed. Re-running the installer re-selects, so it
+  moves the launcher to a system node installed since;
 - smolvm, through its official installer, unless `smolvm` is on `PATH` or in
   `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
   (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;

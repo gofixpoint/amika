@@ -120,38 +120,16 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     const result = install();
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(
-      "No patched Node.js (22.23.4+, 24.22.1+ or 26.12.1+) found; installing Node.js 24.22.1",
+      "Node.js 22+ not found; installing Node.js 24.22.1",
     );
     expectLauncherRuns(privateNode(), "24.22.1");
   });
 
-  it.each(["24.21.0", "22.23.3", "26.12.0"])(
-    "does not use an unpatched system node (%s)",
+  it.each(["24.21.0", "22.23.3", "26.12.0", "23.11.1", "24.22.1", "27.1.0"])(
+    "uses a system node on 22 or newer (%s) as it is",
     (version) => {
       writeSystemNode(version);
-      const result = install();
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain(
-        `Not using system Node.js v${version} at ${systemNode()}`,
-      );
-      expectLauncherRuns(privateNode(), "24.22.1");
-    },
-  );
-
-  it.each(["20.19.6", "23.11.1", "25.9.0", "27.1.0"])(
-    "does not use a system node on an unsupported major (%s)",
-    (version) => {
-      writeSystemNode(version);
-      const result = install();
-      expect(result.status, result.stderr).toBe(0);
-      expectLauncherRuns(privateNode(), "24.22.1");
-    },
-  );
-
-  it.each(["22.23.4", "24.22.1", "26.12.1", "24.23.0"])(
-    "uses a patched system node (%s) without downloading one",
-    (version) => {
-      writeSystemNode(version);
+      rmSync(nodeDist, { recursive: true });
       const result = install();
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain(
@@ -162,12 +140,25 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     },
   );
 
+  it.each(["20.19.6", "18.20.8"])(
+    "downloads the default patched node when the system node is older than 22 (%s)",
+    (version) => {
+      writeSystemNode(version);
+      const result = install();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        `Not using system Node.js v${version} at ${systemNode()}: amika-hostd needs Node.js 22+`,
+      );
+      expectLauncherRuns(privateNode(), "24.22.1");
+    },
+  );
+
   it("replaces a private node left by an earlier install when it is unpatched", () => {
     writeFakeNode(privateNode(), "24.21.0");
     const result = install();
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(
-      `Replacing Node.js v24.21.0 at ${privateNode()}`,
+      `Replacing Node.js v24.21.0 at ${privateNode()}: amika-hostd needs a patched release`,
     );
     expectLauncherRuns(privateNode(), "24.22.1");
   });
@@ -190,27 +181,34 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
   });
 
   it.each(["24.21.0", "25.0.0", "24.22", "latest"])(
-    "refuses an explicitly requested version that is not patched (%s)",
+    "refuses to download an explicitly requested version that is not patched (%s)",
     (version) => {
       const result = install({ AMIKA_HOSTD_NODE_VERSION: version });
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        `AMIKA_HOSTD_NODE_VERSION=${version} is not a Node.js release amika-hostd runs on`,
-      );
-      expect(existsSync(hostdHome)).toBe(false);
-      expect(existsSync(launcher())).toBe(false);
+      expectRefused(result, version);
     },
   );
 
-  it("moves the launcher to a system node that was patched since the last install", () => {
+  it("refuses an unpatched requested version when the system node is too old", () => {
+    writeSystemNode("20.19.6");
+    expectRefused(install({ AMIKA_HOSTD_NODE_VERSION: "24.21.0" }), "24.21.0");
+  });
+
+  it("ignores an unpatched requested version when it uses the system node", () => {
     writeSystemNode("24.21.0");
+    const result = install({ AMIKA_HOSTD_NODE_VERSION: "24.21.0" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(privateNode())).toBe(false);
+    expectLauncherRuns(systemNode(), "24.21.0");
+  });
+
+  it("moves the launcher to a system node installed since the last install", () => {
     expect(install().status).toBe(0);
     expectLauncherRuns(privateNode(), "24.22.1");
 
-    writeSystemNode("24.22.1");
+    writeSystemNode("24.21.0");
     const again = install();
     expect(again.status, again.stderr).toBe(0);
-    expectLauncherRuns(systemNode(), "24.22.1");
+    expectLauncherRuns(systemNode(), "24.21.0");
   });
 
   it("reinstalls over itself, keeping the node it downloaded", () => {
@@ -224,15 +222,26 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expectLauncherRuns(privateNode(), "24.22.1");
   });
 
-  it("describes the download in a dry run when the system node is unpatched", () => {
-    writeSystemNode("24.21.0");
+  it("describes the download in a dry run when the system node is too old", () => {
+    writeSystemNode("20.19.6");
     const result = install({}, ["--dry-run"]);
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain(
-      "no patched node (22.23.4+, 24.22.1+ or 26.12.1+) found; would download",
-    );
+    expect(result.stdout).toContain("no node 22+ found; would download");
     expect(result.stdout).toContain(`node-v24.22.1-${os}-${nodeArch}.tar.gz`);
   });
+
+  /** The installer failed before installing anything, naming the version. */
+  function expectRefused(
+    result: ReturnType<typeof spawnSync>,
+    version: string,
+  ) {
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `not installing Node.js ${version} (AMIKA_HOSTD_NODE_VERSION)`,
+    );
+    expect(existsSync(hostdHome)).toBe(false);
+    expect(existsSync(launcher())).toBe(false);
+  }
 
   function install(extraEnv: Record<string, string> = {}, args: string[] = []) {
     return spawnSync("sh", [installer, "--skip-smolvm", ...args], {
