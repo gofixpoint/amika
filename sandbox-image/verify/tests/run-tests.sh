@@ -31,6 +31,8 @@ import sys
 
 records = [json.loads(line) for line in sys.argv[1].splitlines()]
 assert records
+# fixture-stdin drains stdin; the checks after it must still run.
+assert [record["id"] for record in records] == ["fixture-stdin", "fixture-pass", "fixture-skip"], records
 assert {record["status"] for record in records} == {"passed", "skipped"}
 assert len({record["id"] for record in records}) == len(records)
 for record in records:

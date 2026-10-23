@@ -17,7 +17,10 @@ passed=0
 total=0
 
 while IFS= read -r check; do
-  metadata="$($check --metadata)"
+  # Checks get no stdin. This loop reads its list of checks from stdin, so
+  # a check that reads it (script, ssh, a login shell) would swallow every
+  # check after it, and the run would report success without running them.
+  metadata="$($check --metadata </dev/null)"
   applies="$(python3 - "$metadata" "$context" <<'PY'
 import json
 import sys
@@ -34,7 +37,7 @@ PY
   # cannot reach a verdict at all says so by exiting nonzero, since pass,
   # fail, and skip all exit 0.
   diagnostics_file="$(mktemp)"
-  record="$($check 2>"$diagnostics_file")"
+  record="$($check 2>"$diagnostics_file" </dev/null)"
   check_exit=$?
   diagnostics="$(cat "$diagnostics_file")"
   rm -f "$diagnostics_file"
