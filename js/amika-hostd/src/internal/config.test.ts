@@ -34,6 +34,8 @@ describe("resolveConfig", () => {
       smolRequestTimeoutMs: 300_000,
       sizes: {},
       images: {},
+      transport: "listen",
+      tunnelGatewayUrl: undefined,
       configPath: undefined,
     });
   });
@@ -456,6 +458,57 @@ describe("loadConfigFile", () => {
   });
 });
 
+describe("the transport", () => {
+  it("is listening, so an upgrade never takes a working host offline", () => {
+    expect(resolveConfig({}).transport).toBe("listen");
+    expect(resolveConfig({ file: file("port = 3020\n") }).transport).toBe(
+      "listen",
+    );
+  });
+
+  it("is read from TOML and from the environment", () => {
+    expect(
+      resolveConfig({ file: file('transport = "tunnel"\n') }).transport,
+    ).toBe("tunnel");
+    expect(
+      resolveConfig({ env: { AMIKA_HOSTD_TRANSPORT: "tunnel" } }).transport,
+    ).toBe("tunnel");
+  });
+
+  it("refuses a spelling the daemon has no code for", () => {
+    // Falling back to listening would bind a port the operator believed
+    // was closed.
+    expect(() =>
+      resolveConfig({ file: file('transport = "tunel"\n') }),
+    ).toThrow(/must be "listen" or "tunnel"/);
+  });
+});
+
+describe("the tunnel gateway URL", () => {
+  it("is unset by default, so the control plane's assignment is used", () => {
+    expect(resolveConfig({}).tunnelGatewayUrl).toBeUndefined();
+  });
+
+  it("overrides it from TOML or the environment", () => {
+    expect(
+      resolveConfig({
+        file: file('tunnel_gateway_url = "ws://127.0.0.1:8787/attach"\n'),
+      }).tunnelGatewayUrl,
+    ).toBe("ws://127.0.0.1:8787/attach");
+    expect(
+      resolveConfig({
+        env: { AMIKA_HOSTD_TUNNEL_GATEWAY_URL: "wss://gw.example/attach" },
+      }).tunnelGatewayUrl,
+    ).toBe("wss://gw.example/attach");
+  });
+
+  it("refuses a typo at startup, not once a second on every dial", () => {
+    expect(() =>
+      resolveConfig({ file: file('tunnel_gateway_url = "gw.example"\n') }),
+    ).toThrow(/not a URL/);
+  });
+});
+
 describe("config.example.toml", () => {
   const example = file(
     readFileSync(new URL("../../config.example.toml", import.meta.url), "utf8"),
@@ -468,6 +521,15 @@ describe("config.example.toml", () => {
 
   it("documents the line the installer fills in", () => {
     expect(example.contents).toMatch(/^# hostname = "my-host"$/m);
+  });
+
+  it("documents the transport and leaves it listening", () => {
+    expect(example.contents).toMatch(/^# transport = "listen"$/m);
+    expect(example.contents).toMatch(/^# tunnel_gateway_url = /m);
+    expect(resolveConfig({ file: example })).toMatchObject({
+      transport: "listen",
+      tunnelGatewayUrl: undefined,
+    });
   });
 
   it("holds no secret, and documents the default secret store", () => {

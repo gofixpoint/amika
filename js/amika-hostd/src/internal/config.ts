@@ -9,6 +9,23 @@ export const DEFAULT_API_URL = "https://app.amika.dev";
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 3020;
 
+/**
+ * How Amika reaches this host.
+ *
+ * `listen` binds a port and the operator exposes it, through ngrok, a
+ * router or cloudflared. `tunnel` binds nothing and dials out to Amika's
+ * gateway instead, which is what a machine behind a home router needs.
+ */
+export type TransportMode = "listen" | "tunnel";
+
+/**
+ * Listening, because that is what every host already installed does. A
+ * config written before this setting existed must keep working, and a
+ * daemon that silently started dialling out instead would take a working
+ * host offline on upgrade. Tunnel mode is opt-in.
+ */
+export const DEFAULT_TRANSPORT: TransportMode = "listen";
+
 /** Settings accepted as command-line flags. */
 export interface HostdFlags {
   host?: string;
@@ -71,6 +88,17 @@ export interface HostdConfig {
    * state directory (`daemonPaths`).
    */
   snapshotDir?: string;
+  /** How Amika reaches this host; see `TransportMode`. */
+  transport: TransportMode;
+  /**
+   * The gateway this host attaches to in tunnel mode, when an operator
+   * names one. Normally unset: the control plane assigns the gateway for
+   * its environment and the daemon uses what it was given, so that moving
+   * the gateway does not mean editing a file on every host. Set it for a
+   * gateway running on a developer's own machine, or to pin a host to one
+   * while an incident is on.
+   */
+  tunnelGatewayUrl?: string;
   /** The TOML file the settings were read from, if one was found. */
   configPath?: string;
 }
@@ -111,6 +139,8 @@ export const ENV_NAMES = {
   host: ["AMIKA_HOSTD_HOST"],
   port: ["AMIKA_HOSTD_PORT"],
   snapshotDir: ["AMIKA_HOSTD_SNAPSHOT_DIR"],
+  transport: ["AMIKA_HOSTD_TRANSPORT"],
+  tunnelGatewayUrl: ["AMIKA_HOSTD_TUNNEL_GATEWAY_URL"],
 } as const;
 
 /** Resolve every setting. Each one takes the first source that sets it. */
@@ -151,6 +181,12 @@ export function resolveConfig({
     sizes: toHostSizes(toml.sizes ?? {}),
     images: toml.preset_images ?? {},
     snapshotDir: parseSnapshotDir(fromEnv("snapshotDir") ?? toml.snapshot_dir),
+    transport: parseTransport(
+      fromEnv("transport") ?? toml.transport ?? DEFAULT_TRANSPORT,
+    ),
+    tunnelGatewayUrl: parseGatewayUrl(
+      fromEnv("tunnelGatewayUrl") ?? toml.tunnel_gateway_url,
+    ),
     configPath: file?.path,
   };
 }
@@ -201,6 +237,37 @@ export function loadConfigFile(
 }
 
 /**
+ * The transport, refusing a spelling this daemon has no code for.
+ *
+ * Fails closed rather than falling back to listening. A host whose config
+ * says `tunel` must not quietly bind a port the operator believed was
+ * closed, nor a host whose config says a mode a newer daemon understands.
+ */
+function parseTransport(value: string): TransportMode {
+  if (value === "listen" || value === "tunnel") return value;
+  throw new ConfigError(
+    `transport must be "listen" or "tunnel", not ${JSON.stringify(value)}`,
+  );
+}
+
+/**
+ * An operator's gateway override, checked here so a typo is a startup error
+ * rather than a dial that fails every few seconds. `wss://` is required
+ * outside loopback; `tunnel-dial.ts` enforces that, and this only checks
+ * that the value is a URL at all.
+ */
+function parseGatewayUrl(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return new URL(value).toString();
+  } catch {
+    throw new ConfigError(
+      `tunnel_gateway_url is not a URL (set ${ENV_NAMES.tunnelGatewayUrl[0]} or tunnel_gateway_url in config.toml)`,
+    );
+  }
+}
+
+/**
  * One `[sizes.<name>]` table. Held to the daemon's machine limits, so a size
  * never promises what a create (`POST /v0beta1/rigs`) would refuse: 1-16 vCPUs, and
  * at least 64 MiB of memory in whole MiB.
@@ -223,6 +290,8 @@ const configFileSchema = z.strictObject({
   host: z.string().min(1).optional(),
   port: z.number().int().optional(),
   snapshot_dir: z.string().trim().min(1).optional(),
+  transport: z.string().optional(),
+  tunnel_gateway_url: z.string().trim().min(1).optional(),
   sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
   preset_images: z
     .record(z.string().min(1), z.string().trim().min(1))
