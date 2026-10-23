@@ -38,6 +38,24 @@ none, and writes the config with default rig sizes and images:
 Never print the secret key or the Amika API key, paste them into chat, or
 put them in a command line, a file in the repository, or a log.
 
+## Before you start: resize2fs
+
+smolvm makes any disk smaller than its 20 GiB template by shrinking the
+template with \`resize2fs\`, from e2fsprogs, and such a rig fails to start
+without it. The installer installs
+e2fsprogs when it is missing, but without a terminal only when run with
+\`--install-deps\`, and then only as root or with sudo that needs no
+password. If it warned "resize2fs not found" with "no terminal to ask", tell
+the operator you are installing e2fsprogs, and run it again that way now,
+before the daemon starts (a re-run replaces the daemon's files):
+
+    curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh -s -- --install-deps
+
+If it warns that "sudo needs a password", give the operator the exact
+command the warning prints and ask them to run it at a terminal. Never try
+to obtain root another way: do not guess or ask for a password, and do not
+change sudo's configuration.
+
 ## 1. Hostname
 
 This host's name in the operator's Amika organization: lowercase letters,

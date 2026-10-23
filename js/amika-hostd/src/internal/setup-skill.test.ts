@@ -37,8 +37,11 @@ describe("setupSkill", () => {
     expect(used.length).toBeGreaterThan(0);
     for (const command of used) expect(commands).toContain(command);
     // The `amika` CLI's commands carry that CLI's options, not amika-hostd's.
+    // So do the installer's.
     const hostdOnly = skill
       .replace(/^ +amika .*$/gm, "")
+      .replace(/^ +curl .*install-amika-hostd\.sh.*$/gm, "")
+      .replace(/`--install-deps`/g, "")
       .replace(/`amika [^`]*`/g, "");
     for (const option of hostdOnly.match(/(?<![-\w])--[a-z][a-z-]*/g) ?? []) {
       if (option === "--url") continue; // cloudflared's
@@ -92,6 +95,23 @@ describe("setupSkill", () => {
       "secret-tool is not installed",
     ]) {
       expect(credentials).toContain(phrase);
+      expect(skill.replace(/\s+/g, " ")).toContain(phrase);
+    }
+  });
+
+  it("installs e2fsprogs with the installer's flag and quotes its warning", () => {
+    const installer = readFileSync(
+      path.join(import.meta.dirname, "../../../../install-amika-hostd.sh"),
+      "utf8",
+    );
+    expect(skill).toContain("| sh -s -- --install-deps");
+    expect(installer).toContain("      --install-deps)");
+    for (const phrase of [
+      "resize2fs not found",
+      "no terminal to ask",
+      "sudo needs a password",
+    ]) {
+      expect(installer).toContain(phrase);
       expect(skill.replace(/\s+/g, " ")).toContain(phrase);
     }
   });

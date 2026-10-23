@@ -77,7 +77,8 @@ the host up with it: settle the hostname with the operator, get an API key
 logged in, else from the operator) and pipe it from that file into
 `setup --non-interactive`, choose the file store only with the operator's
 consent when there is no keychain, then run `up` and `register-url`
-(`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
+(`src/internal/setup-skill.ts`). It also covers
+installing e2fsprogs with `--install-deps`. It needs no terminal or valid config, and
 fills in the config and log files and the daemon's local address (from `host`
 and `port`, loopback for a wildcard bind). The installer points agents at it.
 `setup-skill.test.ts` checks that every command and option it uses exists and

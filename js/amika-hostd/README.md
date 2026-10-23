@@ -15,8 +15,7 @@ credential Amika signed, so do not restrict the tunnel to Amika's own traffic.
 ## Requirements
 
 - Linux x86_64 or arm64 with glibc 2.34+ and KVM, or macOS on Apple silicon
-- `e2fsprogs`, only if a rig size has a disk under 20 GiB: smolvm shrinks its
-  template with `resize2fs`
+- `e2fsprogs`, for `resize2fs` (the installer installs it if it is missing)
 - A way to expose one local port to the internet over HTTPS, such as
   [ngrok](https://ngrok.com) or
   [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
