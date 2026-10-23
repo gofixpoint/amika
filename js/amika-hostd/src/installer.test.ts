@@ -174,6 +174,55 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expectLauncherRuns(privateNode(), "24.22.1");
   });
 
+  it.each([false, true])(
+    "replaces an unpatched private node found on PATH (symlink: %s)",
+    (symlink) => {
+      writeFakeNode(privateNode(), "24.21.0");
+      if (symlink) symlinkSync(privateNode(), systemNode());
+      const result = install({
+        PATH: `${symlink ? systemNodeDir : path.dirname(privateNode())}:${toolsDir}`,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        `Replacing Node.js v24.21.0 at ${privateNode()}: amika-hostd needs a patched release`,
+      );
+      expectLauncherRuns(privateNode(), "24.22.1");
+    },
+  );
+
+  it.each([false, true])(
+    "keeps a patched private node found on PATH (symlink: %s)",
+    (symlink) => {
+      writeFakeNode(privateNode(), "24.22.1");
+      if (symlink) symlinkSync(privateNode(), systemNode());
+      rmSync(nodeDist, { recursive: true });
+      const result = install({
+        PATH: `${symlink ? systemNodeDir : path.dirname(privateNode())}:${toolsDir}`,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        `Using Node.js v24.22.1 at ${privateNode()}`,
+      );
+      expectLauncherRuns(privateNode(), "24.22.1");
+    },
+  );
+
+  it("keeps a symlinked user node separate from a private node at the same version", () => {
+    const userNode = path.join(root, "user-node/bin/node");
+    writeFakeNode(userNode, "24.21.0");
+    symlinkSync(userNode, systemNode());
+    writeFakeNode(privateNode(), "24.21.0");
+    rmSync(nodeDist, { recursive: true });
+    const result = install();
+    expect(result.status, result.stderr).toBe(0);
+    expectLauncherRuns(systemNode(), "24.21.0");
+    expect(
+      execFileSync(userNode, ["-p", "process.versions.node"], {
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("24.21.0");
+  });
+
   it("downloads an explicitly requested patched version", () => {
     const result = install({ AMIKA_HOSTD_NODE_VERSION: "v22.23.4" });
     expect(result.status, result.stderr).toBe(0);

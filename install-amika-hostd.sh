@@ -638,7 +638,11 @@ ensure_node() {
 
 find_system_node() {
   candidate="$(command -v node 2>/dev/null || true)"
-  [ -n "$candidate" ] && node_is_supported "$candidate"
+  [ -n "$candidate" ] || return 1
+  # Our private node is still ours when found through PATH. Compare file
+  # identity so symlinks to it also go through the private version check.
+  [ "$candidate" -ef "${HOSTD_HOME}/node/bin/node" ] && return 1
+  node_is_supported "$candidate"
 }
 
 find_private_node() {
