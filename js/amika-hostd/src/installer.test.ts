@@ -25,7 +25,11 @@ const repoRoot = path.resolve(
   "../../..",
 );
 const installer = path.join(repoRoot, "install-amika-hostd.sh");
-const hostdVersion = "0.4.0";
+// The fake release must carry the version the installer asks for, so a
+// DEFAULT_VERSION bump never needs a matching edit here.
+const hostdVersion = readFileSync(installer, "utf8").match(
+  /^DEFAULT_VERSION="([^"]+)"$/m,
+)![1];
 const engineVersion = "1.22.2";
 
 /** The installer's names for this host, or undefined where it cannot run. */
