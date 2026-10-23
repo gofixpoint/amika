@@ -60,7 +60,7 @@ assets = []
 
 [steps.npm-toolchain]
 script = "steps/40-npm-toolchain.sh"
-versions = ["PNPM_VERSION", "TYPESCRIPT_VERSION", "TSX_VERSION"]
+versions = ["NPM_VERSION", "PNPM_VERSION", "TYPESCRIPT_VERSION", "TSX_VERSION"]
 assets = []
 
 [steps.runtime-user]
@@ -270,6 +270,11 @@ binaries = [
 id = "node"
 env = "NODE_VERSION"
 command = ["node", "--version"]
+
+[[version_checks]]
+id = "npm"
+env = "NPM_VERSION"
+command = ["npm", "--version"]
 
 [[version_checks]]
 id = "pnpm"

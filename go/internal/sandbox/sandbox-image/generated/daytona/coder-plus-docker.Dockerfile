@@ -17,11 +17,12 @@ RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
     && rm -rf /opt/amika-build
 
 ARG NODE_VERSION=24.22.1
-ARG GH_VERSION=2.98.0
+ARG GH_VERSION=2.102.1
 COPY sandbox-image/steps/30-node-gh.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
-ARG PNPM_VERSION=12.1.0
+ARG NPM_VERSION=11.21.1
+ARG PNPM_VERSION=12.14.0
 ARG TYPESCRIPT_VERSION=7.0.2
 ARG TSX_VERSION=4.23.13
 COPY sandbox-image/steps/40-npm-toolchain.sh /opt/amika-build/step.sh
@@ -50,14 +51,14 @@ COPY sandbox-image/steps/70-hook-assets.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh /opt/amika-build/step-assets \
     && rm -rf /opt/amika-build
 
-ARG CLAUDE_CODE_VERSION=2.1.287
-ARG CODEX_VERSION=0.160.0
-ARG OPENCODE_VERSION=1.18.33
-ARG PI_VERSION=0.99.1
+ARG CLAUDE_CODE_VERSION=2.1.309
+ARG CODEX_VERSION=0.164.0
+ARG OPENCODE_VERSION=1.19.4
+ARG PI_VERSION=1.3.0
 COPY sandbox-image/steps/80-agent-clis.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
-ARG PI_WEB_VERSION=0.9.3
+ARG PI_WEB_VERSION=0.12.2
 COPY sandbox-image/steps/82-pi-web.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
@@ -67,8 +68,8 @@ ARG AMIKAD_VERSION=0.2.0
 COPY sandbox-image/steps/85-amika-clis.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
-ARG DOCKER_VERSION=28.3.3
-ARG BUILDX_VERSION=0.25.0
+ARG DOCKER_VERSION=29.9.2
+ARG BUILDX_VERSION=0.38.1
 COPY sandbox-image/steps/90-dind.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 

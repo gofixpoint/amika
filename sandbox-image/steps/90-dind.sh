@@ -30,6 +30,15 @@ curl -fsSL \
 install -D -m 0755 "$temporary_dir/docker-buildx" \
   /usr/local/lib/docker/cli-plugins/docker-buildx
 
+# Docker 29 stores images in containerd's overlayfs snapshotter by default,
+# which cannot mount when /var/lib/docker itself sits on overlayfs (a nested
+# container with no volume there) and, unlike the overlay2 graph driver, does
+# not fall back to vfs. Keep the graph drivers so Docker starts everywhere it
+# did on 28.x: overlay2 on a real filesystem, vfs on overlayfs.
+install -D -m 0644 /dev/stdin /etc/docker/daemon.json <<'JSON'
+{"features": {"containerd-snapshotter": false}}
+JSON
+
 getent group docker >/dev/null || groupadd docker
 usermod -aG docker amika
 touch /usr/local/etc/amika/dind-enabled
