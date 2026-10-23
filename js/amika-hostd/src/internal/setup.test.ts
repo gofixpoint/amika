@@ -68,6 +68,15 @@ function harness({
       keychainSecret.value = value;
     }),
   };
+  /** The tunnel attachment credential, which setup does not touch today. */
+  const attachmentCredential = {
+    description: "the test store (attachment credential)",
+    value: undefined as string | undefined,
+    get: vi.fn(() => attachmentCredential.value),
+    set: vi.fn((value: string) => {
+      attachmentCredential.value = value;
+    }),
+  };
   const deps = {
     env: { XDG_CONFIG_HOME: "/config", ...env },
     out: (line: string) => out.push(line),
@@ -78,6 +87,7 @@ function harness({
       kind,
       apiKey: store,
       secretKey: kind === "keychain" ? keychainSecret : undefined,
+      attachmentCredential,
     },
     loadConfigFile: vi.fn((): HostdConfigFile | undefined =>
       file === undefined ? undefined : { path: PATH, contents: file },

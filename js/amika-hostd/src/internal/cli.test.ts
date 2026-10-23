@@ -70,18 +70,26 @@ function memoryStore(value?: string, description = "the test store") {
 
 /**
  * Fake secret stores that never touch a keychain or disk: `credentials` holds
- * the API key in either store, and `keychainSecret` the secret key when the
- * config chooses the keychain (with the file store it is in config.toml).
+ * the API key in either store, `keychainSecret` the secret key when the
+ * config chooses the keychain (with the file store it is in config.toml), and
+ * `attachmentCredential` the host's tunnel credential, which lives outside
+ * config.toml in both stores.
  */
 function memorySecrets() {
   const credentials = memoryStore();
   const keychainSecret = memoryStore(undefined, "the test keychain");
+  const attachmentCredential = memoryStore();
   const openSecrets = vi.fn((kind: "keychain" | "file") =>
     kind === "file"
-      ? { kind, apiKey: credentials }
-      : { kind, apiKey: credentials, secretKey: keychainSecret },
+      ? { kind, apiKey: credentials, attachmentCredential }
+      : {
+          kind,
+          apiKey: credentials,
+          secretKey: keychainSecret,
+          attachmentCredential,
+        },
   );
-  return { credentials, keychainSecret, openSecrets };
+  return { credentials, keychainSecret, attachmentCredential, openSecrets };
 }
 
 function harness(env: NodeJS.ProcessEnv = ENV) {
