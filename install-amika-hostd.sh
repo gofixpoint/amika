@@ -14,7 +14,7 @@ GITHUB_REPO="gofixpoint/amika"
 # TODO(KAPRO-1059): v0.4.0 bundles Hono and follow-redirects releases with
 # known advisories. Point this at the first release built from a main that
 # has the fixes once it is published.
-DEFAULT_VERSION="0.4.0"
+DEFAULT_VERSION="0.4.1"
 INSTALL_VERSION=""
 DRY_RUN=false
 
