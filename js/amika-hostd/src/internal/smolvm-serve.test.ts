@@ -66,8 +66,8 @@ const devServerOn23020 = route((url) =>
     : 200,
 );
 
-/** Every port but 8080, where smolvm's docs run it by hand, is taken. */
-const allButUsual = async (_host: string, port: number) => port !== 8080;
+/** Every port is taken. */
+const allTaken = async () => true;
 
 /** `startSmolvm`, failing the test if it resolves without a smolvm. */
 async function mustStart(...args: Parameters<typeof startSmolvm>) {
@@ -175,7 +175,7 @@ describe("startSmolvm", () => {
 
   it("refuses when another program holds SMOL_API_URL's port", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(allButUsual),
+      isPortInUse: vi.fn(allTaken),
     });
     await expect(
       startSmolvm("http://127.0.0.1:9000", paths(), {}, deps),
@@ -210,41 +210,19 @@ describe("startSmolvm", () => {
 
   it("refuses to start beside a smolvm it did not start", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(allButUsual),
+      isPortInUse: vi.fn(allTaken),
       fetch: health(200),
     });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
       "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:23020",
     );
-    // 8080, then 23020.
-    expect(deps.isPortInUse).toHaveBeenCalledTimes(2);
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(1);
     expect(deps.spawn).not.toHaveBeenCalled();
-  });
-
-  it("refuses to start beside a smolvm run by hand on 8080", async () => {
-    const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async (_host: string, port: number) => port === 8080),
-      fetch: health(200),
-    });
-    await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
-      "a smolvm that amika-hostd did not start is already serving at http://127.0.0.1:8080",
-    );
-    expect(deps.spawn).not.toHaveBeenCalled();
-  });
-
-  it("starts as usual when 8080 holds something other than smolvm", async () => {
-    const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(async (_host: string, port: number) => port === 8080),
-      // Cursor, say: it answers no HTTP at all.
-      fetch: health(undefined, 200),
-    });
-    const smolvm = await mustStart(undefined, paths(), {}, deps);
-    expect(smolvm.apiUrl).toBe("http://127.0.0.1:23020");
   });
 
   it("refuses a smolvm it did not start at SMOL_API_URL too", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(allButUsual),
+      isPortInUse: vi.fn(allTaken),
       fetch: health(200),
     });
     await expect(
@@ -298,14 +276,13 @@ describe("startSmolvm", () => {
 
   it("gives up once every port it tries is taken", async () => {
     const deps = fakeDeps(fakeChild(), {
-      isPortInUse: vi.fn(allButUsual),
+      isPortInUse: vi.fn(allTaken),
       fetch: health(404),
     });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
       "ports 23020-65535 on 127.0.0.1 are all in use",
     );
-    // 8080, then every port from 23020 up.
-    expect(deps.isPortInUse).toHaveBeenCalledTimes(1 + 65_536 - 23_020);
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(65_536 - 23_020);
     expect(deps.spawn).not.toHaveBeenCalled();
   });
 
@@ -484,8 +461,8 @@ describe("startSmolvm", () => {
       signal: shutdown.signal,
     });
     expect(await startSmolvm(undefined, paths(), {}, deps)).toBeUndefined();
-    // 8080, then 23020 to 23030, and no further.
-    expect(deps.isPortInUse).toHaveBeenCalledTimes(12);
+    // 23020 to 23030, and no further.
+    expect(deps.isPortInUse).toHaveBeenCalledTimes(11);
     expect(deps.spawn).not.toHaveBeenCalled();
   });
 
@@ -526,12 +503,7 @@ process.on("SIGTERM", () => {
       `http://127.0.0.1:${port}`,
       files,
       {},
-      {
-        findSmolvm: () => fake,
-        // Ignore whatever this machine runs on 8080 (a smolvm, say).
-        isPortInUse: (host, port) =>
-          port === 8080 ? Promise.resolve(false) : isTcpPortInUse(host, port),
-      },
+      { findSmolvm: () => fake },
     );
     expect(readFileSync(files.smolvmPidFile, "utf8")).toBe(`${smolvm.pid}\n`);
     const response = await fetch(`http://127.0.0.1:${port}/health`);

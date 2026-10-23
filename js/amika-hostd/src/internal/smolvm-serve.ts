@@ -84,12 +84,6 @@ export interface SmolvmDeps {
 export const SMOLVM_STOP_TIMEOUT_MS = 60_000;
 
 /**
- * Where smolvm's own docs have people run it by hand. A smolvm there is not
- * one amika-hostd started, even though the scan from 23020 never reaches it.
- */
-const USUAL_SMOLVM_URL = "http://127.0.0.1:8080";
-
-/**
  * Start `smolvm serve` and resolve once it answers `/health`, or as soon as
  * `signal` aborts, so the caller can stop it. It listens at `apiUrl` (i.e.
  * `SMOL_API_URL`) and fails if that port is taken. Without one, it starts at
@@ -237,13 +231,6 @@ export async function startSmolvm(
       );
     }
   };
-  const usual = smolvmListenAddress(USUAL_SMOLVM_URL);
-  if (
-    usual.origin !== first.origin &&
-    (await isPortInUse(usual.address, usual.port))
-  ) {
-    await refuseForeignSmolvm(usual.origin);
-  }
 
   // Without SMOL_API_URL, any free port from the default up will do.
   const attempts = apiUrl === undefined ? 65_536 - first.port : 1;

@@ -28,10 +28,10 @@ is left as it was before `up`:
    the next port while the port is held, or while smolvm exits with
    `Address already in use` (another program won the race), giving up only once
    every port up to 65535 is taken. A shutdown signal stops the scan. It never
-   shares a port, and it refuses to start at all when a held port it tries, or
-   `127.0.0.1:8080` (where smolvm's docs run it by hand), is a smolvm (both
-   `/health` and `/api/v1/machines` answer 2xx): a smolvm it did not start
-   would expose unrelated VMs, and is not the daemon's to stop or drain. A
+   shares a port, and it refuses to start at all when a held port it tries is a
+   smolvm (both `/health` and `/api/v1/machines` answer 2xx): a smolvm it did
+   not start would expose unrelated VMs, and is not the daemon's to stop or
+   drain. A
    smolvm elsewhere (another port the scan never reaches, or a Unix socket)
    goes unnoticed. The daemon forwards to the chosen URL, which is also written
    to `smolvm.url` beside `smolvm.pid` while smolvm runs.
