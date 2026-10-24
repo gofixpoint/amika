@@ -82,7 +82,7 @@ export async function startInBackground(
     env = process.env,
     secretKey,
   }: BackgroundDeps = {},
-): Promise<{ pid: number; port: number }> {
+): Promise<{ pid: number; port?: number }> {
   ensureNotRunning(paths.pidFile, isRunning);
   const log = openLogFile(paths.logFile);
   let child: ChildProcess;
@@ -104,7 +104,7 @@ export async function startInBackground(
     child.send?.({ type: "secret-key", secretKey } satisfies SecretKeyMessage);
   };
   child.on("message", answer);
-  let port: number;
+  let port: number | undefined;
   try {
     port = await waitForReady(child, startupTimeoutMs, paths.logFile);
   } finally {
@@ -175,7 +175,7 @@ export function receiveSecretKey(
  * launching `up` went away first (e.g. Ctrl-C), so the daemon can shut down
  * cleanly instead of crashing on a broken IPC channel.
  */
-export function notifyReady(port: number): Promise<void> {
+export function notifyReady(ready: Omit<ReadyMessage, "type">): Promise<void> {
   const send = process.send?.bind(process);
   if (!send) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -186,7 +186,7 @@ export function notifyReady(port: number): Promise<void> {
         ),
       );
     if (!process.connected) return abandoned();
-    send({ type: "ready", port } satisfies ReadyMessage, (error) => {
+    send({ type: "ready", ...ready } satisfies ReadyMessage, (error) => {
       if (error) return abandoned();
       process.disconnect?.();
       resolve();
@@ -382,9 +382,19 @@ export class DaemonError extends Error {
   override name = "DaemonError";
 }
 
+/**
+ * What a started daemon reports back to the `up` that spawned it.
+ *
+ * `port` is absent on a tunnel host, and that absence is the message:
+ * such a daemon binds nothing, so there is no port to report and no
+ * local URL for the operator to expose. Sending a zero instead would be
+ * indistinguishable from the kernel having chosen one.
+ */
 const readyMessageSchema = z.object({
   type: z.literal("ready"),
-  port: z.number().int(),
+  port: z.number().int().optional(),
+  /** The gateway's id for the attachment, where it reported one. */
+  connectionId: z.string().optional(),
 });
 type ReadyMessage = z.infer<typeof readyMessageSchema>;
 
@@ -403,7 +413,7 @@ function waitForReady(
   child: ChildProcess,
   timeoutMs: number,
   logFile: string,
-): Promise<number> {
+): Promise<number | undefined> {
   return new Promise((resolve, reject) => {
     const fail = (reason: string) => {
       cleanup();

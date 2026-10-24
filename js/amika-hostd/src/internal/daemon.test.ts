@@ -428,7 +428,7 @@ describe("notifyReady", () => {
     const { notifyReady } = await import(process.argv[1]);
     await new Promise((r) => setTimeout(r, 200));
     try {
-      await notifyReady(3020);
+      await notifyReady({ port: 3020 });
       console.log("sent");
     } catch (error) {
       console.log(error.message);

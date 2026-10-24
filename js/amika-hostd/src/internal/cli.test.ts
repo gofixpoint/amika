@@ -130,6 +130,14 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
       ) => server,
     ),
     startInBackground: vi.fn(async () => ({ pid: 77, port: 4000 })),
+    startTunnel: vi.fn(() => ({
+      whenAttached: async () => ({
+        hostId: "host_1",
+        connectionId: "c_1",
+        rttMs: 12,
+      }),
+      close: async () => {},
+    })),
     startSmolvm: vi.fn(
       async (
         _url: string | undefined,
@@ -153,7 +161,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
       async (_apiUrl: string, _options: Omit<PrepullOptions, "runtime">) => {},
     ),
     claimPidFile: vi.fn(() => release),
-    notifyReady: vi.fn(async (_port: number) => signalReady()),
+    notifyReady: vi.fn(async (_ready: { port?: number }) => signalReady()),
     isRunning: vi.fn(() => false),
     ...memorySecrets(),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
@@ -272,7 +280,7 @@ describe("runCli", () => {
         "/state/amika-hostd/amika-hostd.pid",
         deps.isRunning,
       );
-      expect(deps.notifyReady).toHaveBeenCalledWith(3020);
+      expect(deps.notifyReady).toHaveBeenCalledWith({ port: 3020 });
       expect(out).toEqual([
         "amika-hostd listening on http://0.0.0.0:3020",
         ...(args[0] === "up"
@@ -299,6 +307,40 @@ describe("runCli", () => {
     expect(deps.startServer.mock.calls[0][0].port).toBe(7000);
     await runCli(["serve"], deps);
     expect(deps.startServer.mock.calls[1][0].port).toBe(5000);
+  });
+
+  it("serves over a tunnel when the transport says so", async () => {
+    // A tunnel host binds nothing, so the listener must not start: a
+    // bound port on a host Amika reaches by tunnel is a second address
+    // nobody routes to, and on a machine behind a home router it is the
+    // one an operator would try first.
+    const { deps, out } = harness();
+    deps.loadConfigFile.mockReturnValue({
+      path: "/etc/amika-hostd/config.toml",
+      contents: 'transport = "tunnel"',
+    } as never);
+
+    await runCli(["serve"], deps);
+
+    expect(deps.startTunnel).toHaveBeenCalledTimes(1);
+    expect(deps.startServer).not.toHaveBeenCalled();
+    expect(out.some((line) => line.includes("over a tunnel"))).toBe(true);
+    expect(out.some((line) => line.includes("listening on"))).toBe(false);
+  });
+
+  it("reports readiness without a port, and names the connection", async () => {
+    // `up` waits on this. A port here would be a lie -- there is none --
+    // and the connection id is what lets an operator match this daemon
+    // against the gateway's logs.
+    const { deps } = harness();
+    deps.loadConfigFile.mockReturnValue({
+      path: "/etc/amika-hostd/config.toml",
+      contents: 'transport = "tunnel"',
+    } as never);
+
+    await runCli(["serve"], deps);
+
+    expect(deps.notifyReady).toHaveBeenCalledWith({ connectionId: "c_1" });
   });
 
   it("releases the pidfile and reports a port that cannot be bound", async () => {

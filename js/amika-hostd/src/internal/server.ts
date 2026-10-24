@@ -1,5 +1,5 @@
 /** Open and close the daemon's HTTP listener. */
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { serve } from "@hono/node-server";
@@ -46,28 +46,39 @@ export interface SnapshotOptions {
 }
 
 /** Resolve once the port is bound, or reject if it cannot be (e.g. in use). */
-export function startServer(
+/**
+ * The app and the upgrade handler, which both transports serve.
+ *
+ * Lifted out so a tunnel is the same daemon reached a different way. A
+ * second assembly here would be a second set of routes and a second
+ * upgrade policy, and the one that drifted would be the one nobody was
+ * looking at -- which for the upgrade handler means an authorization
+ * rule that holds on one transport and not the other.
+ */
+export function buildHandlers(
   config: HostdConfigWith<"secretKey">,
   runtime: MachineRuntime,
   {
-    shutdownGraceMs = SHUTDOWN_GRACE_MS,
     servicesFile,
     hiddenMachines,
     snapshots,
   }: {
-    shutdownGraceMs?: number;
-    /** Persists service names across restarts; in memory without one. */
     servicesFile?: string;
-    /** Machines left out of the machine list (see `AppDeps`). */
     hiddenMachines?: () => ReadonlySet<string>;
-    /**
-     * Where snapshots are kept and how they are packed. Only a daemon
-     * running its own smolvm can supply this: a pack is a subprocess of
-     * that binary. Without it the daemon serves no snapshot routes.
-     */
     snapshots?: SnapshotOptions;
   } = {},
-): Promise<RunningServer> {
+): {
+  app: ReturnType<typeof createApp>;
+  upgrade: (request: IncomingMessage, socket: Duplex, head: Buffer) => void;
+  /**
+   * Every upgraded connection, for shutdown to cut.
+   *
+   * Returned rather than kept here, because closing is the caller's: a
+   * listener drains its own server, and a tunnel's connections belong to
+   * the attachment they arrived on.
+   */
+  tunnels: Set<Duplex>;
+} {
   const registry = servicesFile
     ? fileServiceRegistry(servicesFile)
     : memoryServiceRegistry();
@@ -95,6 +106,36 @@ export function startServer(
     undefined,
     { amikaUrl: config.apiUrl },
   );
+  return { app, upgrade, tunnels };
+}
+
+export function startServer(
+  config: HostdConfigWith<"secretKey">,
+  runtime: MachineRuntime,
+  {
+    shutdownGraceMs = SHUTDOWN_GRACE_MS,
+    servicesFile,
+    hiddenMachines,
+    snapshots,
+  }: {
+    shutdownGraceMs?: number;
+    /** Persists service names across restarts; in memory without one. */
+    servicesFile?: string;
+    /** Machines left out of the machine list (see `AppDeps`). */
+    hiddenMachines?: () => ReadonlySet<string>;
+    /**
+     * Where snapshots are kept and how they are packed. Only a daemon
+     * running its own smolvm can supply this: a pack is a subprocess of
+     * that binary. Without it the daemon serves no snapshot routes.
+     */
+    snapshots?: SnapshotOptions;
+  } = {},
+): Promise<RunningServer> {
+  const { app, upgrade, tunnels } = buildHandlers(config, runtime, {
+    servicesFile,
+    hiddenMachines,
+    snapshots,
+  });
   return new Promise((resolve, reject) => {
     // Only the default `http.Server` is used, never HTTP/2.
     const server = serve({

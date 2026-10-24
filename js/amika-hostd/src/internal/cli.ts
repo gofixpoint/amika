@@ -23,7 +23,10 @@ import {
   type HostdConfigWith,
   type HostdFlags,
 } from "./config.js";
+import path from "node:path";
 import { openSecrets as openSecretStore, type Secrets } from "./credentials.js";
+import { startTunnel as startTunnelOut } from "./tunnel-runner.js";
+import { readTunnelEnrolment, tunnelEnrolmentPath } from "./tunnel-target.js";
 import {
   DaemonError,
   claimPidFile as claimPidFileOnDisk,
@@ -110,6 +113,8 @@ export interface CliDeps {
   shutdownSignal: () => Promise<void>;
   loadConfigFile?: typeof loadConfigFileFromDisk;
   startServer?: typeof startServerOnPort;
+  /** Serves over a tunnel instead of a port; defaults to `startTunnel`. */
+  startTunnel?: typeof startTunnelOut;
   startInBackground?: typeof spawnInBackground;
   startSmolvm?: typeof startSmolvmServe;
   /** The installed smolvm's version, for `up`'s warning about an old one. */
@@ -226,7 +231,7 @@ export async function runCli(
         );
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
-        const finish = (port: number) => {
+        const finish = (port: number | undefined) => {
           announcePrepull(pending, deps, { foreground: parsed.fg });
           return completeRegistration(config, host, port, deps);
         };
@@ -724,13 +729,71 @@ const FINISH_LATER =
  * remind them where Amika expects to reach it. Returns false if saving the
  * URL failed; the daemon keeps running either way.
  */
+
+/**
+ * Serve this host by dialling the gateway, and wait until it has.
+ *
+ * The counterpart of `listen`. It returns only once the gateway has kept
+ * the connection, because `up` reports readiness from this and a daemon
+ * that said "serving" while still retrying would send an operator
+ * looking for the rig rather than for the reason it cannot attach.
+ *
+ * A dial that never succeeds therefore fails startup, with whatever
+ * `resolveTunnelTarget` or the client said -- which names the missing
+ * enrolment, the missing credential, or the gateway's refusal.
+ */
+async function dialOut(
+  config: HostdConfigWith<"secretKey">,
+  paths: DaemonPaths,
+  deps: CliDeps,
+  signal: AbortSignal,
+): Promise<{
+  port?: undefined;
+  connectionId?: string;
+  close: () => Promise<void>;
+}> {
+  // The same provider runtime a listener uses: a tunnel changes how the
+  // daemon is reached, not what it runs.
+  const runtime = providerRuntime({
+    apiUrl: config.smolApiUrl ?? DEFAULT_SMOL_API_URL,
+    requestTimeoutMs: config.smolRequestTimeoutMs,
+  });
+  const secrets = (deps.openSecrets ?? openSecretStore)(
+    config.secretStore,
+    deps.env,
+  );
+  // Beside the config, where `credentials.ts` keeps file secrets.
+  const enrolmentFile = tunnelEnrolmentPath(
+    path.dirname(configFilePaths(deps.env)[0]),
+  );
+  const tunnel = (deps.startTunnel ?? startTunnelOut)(
+    config,
+    runtime,
+    secrets,
+    () => readTunnelEnrolment(enrolmentFile),
+    { servicesFile: paths.servicesFile },
+  );
+  try {
+    const attached = await tunnel.whenAttached();
+    return {
+      connectionId: attached.connectionId,
+      close: () => tunnel.close(),
+    };
+  } catch (error) {
+    // Nothing is serving, so leave nothing dialling behind.
+    await tunnel.close();
+    if (signal.aborted) return { close: async () => {} };
+    throw error;
+  }
+}
+
 async function completeRegistration(
   config: RegistrationConfig,
   host: RegisteredHost,
-  port: number,
+  /** Absent on a tunnel host, which binds nothing. */
+  port: number | undefined,
   deps: CliDeps,
 ): Promise<boolean> {
-  const local = localUrl(config.host, port);
   // Only a listening host registers a URL. Amika assigns the address of one
   // it reaches any other way, and `register-url` on such a host is refused,
   // so there is nothing here for the operator to finish; asking would walk
@@ -749,6 +812,13 @@ async function completeRegistration(
     );
     return true;
   }
+  // Below the guard, because a tunnel host has no port to build one from
+  // and returns above. A listener without one is this file disagreeing
+  // with itself rather than anything the operator did.
+  if (port === undefined) {
+    throw new Error("A listening host reported no port to register");
+  }
+  const local = localUrl(config.host, port);
   if (host.url !== null) {
     deps.out(
       `Amika reaches this host at ${host.url}; make sure it is exposed there and forwards to ${local}.`,
@@ -874,7 +944,10 @@ async function serveInForeground(
   {
     smolvm = false,
     afterStart,
-  }: { smolvm?: boolean; afterStart?: (port: number) => Promise<unknown> } = {},
+  }: {
+    smolvm?: boolean;
+    afterStart?: (port: number | undefined) => Promise<unknown>;
+  } = {},
 ) {
   const paths = daemonPaths(deps.env);
   const claim = deps.claimPidFile ?? claimPidFileOnDisk;
@@ -885,7 +958,15 @@ async function serveInForeground(
   const interrupted = new AbortController();
   void signalled.then(() => interrupted.abort());
   let runtime: ManagedSmolvm | undefined;
-  let server: RunningServer | undefined;
+  /**
+   * Whichever transport this host serves on.
+   *
+   * A listener reports the port it bound; a tunnel reports none, because
+   * it binds nothing. Everything after startup needs only `close`.
+   */
+  let server:
+    | { port?: number; connectionId?: string; close: () => Promise<void> }
+    | undefined;
   // Every throwaway machine name the pre-pull uses. Each is random, so
   // hiding them all, deleted or not, never hides a rig.
   const usedPrepullNames = new Set<string>();
@@ -914,18 +995,36 @@ async function serveInForeground(
         : config;
       // Only a daemon running its own smolvm can pack a snapshot: a pack
       // is a subprocess of that binary, reading the same machine state.
-      server = await listen(serving, paths, usedPrepullNames, deps, {
-        smolvm: runtime?.binary,
-        signal: interrupted.signal,
-      });
+      server =
+        config.transport === "tunnel"
+          ? await dialOut(serving, paths, deps, interrupted.signal)
+          : await listen(serving, paths, usedPrepullNames, deps, {
+              smolvm: runtime?.binary,
+              signal: interrupted.signal,
+            });
     }
     // Signalled during startup: stop without telling `up` it is ready.
     if (server === undefined || interrupted.signal.aborted) {
       await stopAll();
       return;
     }
-    deps.out(`amika-hostd listening on ${localUrl(config.host, server.port)}`);
-    await (deps.notifyReady ?? notifyParent)(server.port);
+    if (server.port === undefined) {
+      // Said once it is attached, not once it is dialling. `up` waits on
+      // this, and an operator told "serving" by a daemon that is still
+      // retrying would go looking for the rig rather than for the
+      // reason it cannot attach.
+      deps.out(
+        "amika-hostd is serving over a tunnel; Amika assigns its address.",
+      );
+      await (deps.notifyReady ?? notifyParent)({
+        connectionId: server.connectionId,
+      });
+    } else {
+      deps.out(
+        `amika-hostd listening on ${localUrl(config.host, server.port)}`,
+      );
+      await (deps.notifyReady ?? notifyParent)({ port: server.port });
+    }
     // Only a daemon running its own smolvm fills that smolvm's image cache.
     if (runtime) {
       (deps.prepull ?? prepullOn)(runtime.apiUrl, {
