@@ -158,8 +158,8 @@ async function attach(
       protocols.has(TUNNEL_SUBPROTOCOL) ? TUNNEL_SUBPROTOCOL : false,
   });
   wss.on("headers", (headers) => {
-    headers.push("amika-connection-id: conn-1");
-    headers.push("amika-host-url: https://h-test.hosts.amika.dev");
+    headers.push("x-amika-connection-id: conn-1");
+    headers.push("x-amika-host-url: https://h-test.hosts.amika.dev");
   });
   cleanups.push(() => new Promise<void>((done) => wss.close(() => done())));
   await new Promise<void>((ready) => wss.once("listening", ready));

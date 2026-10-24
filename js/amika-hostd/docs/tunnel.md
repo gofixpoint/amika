@@ -62,9 +62,13 @@ therefore needs a change on the gateway side first; the credential is opaque
 to the gateway, so making it later changes nothing in this repo but the
 enrolment call.
 
-It travels in the `Authorization` header of the handshake, never in the URL,
-because a query string reaches the access log of every proxy on the path and
-an attachment credential lives until it is rotated.
+It travels in the `x-amika-host-credential` header of the handshake, beside
+`x-amika-host-id`, never in the URL, because a query string reaches the
+access log of every proxy on the path and an attachment credential lives
+until it is rotated. It is not `Authorization: Bearer`: the gateway does not
+know the credential's scheme and hands the whole value to the control plane
+unread. These are the names the gateway reads; any other spelling is
+refused at the handshake.
 
 ### The gateway address comes from the control plane
 
@@ -165,8 +169,9 @@ id, connection id and public address. The connection id is minted by the
 gateway's attachment directory, and the only channel the host has for it is
 the handshake response, since the tunnel carries binary frames only and a
 text control message is exactly what the gateway refuses. `dialTunnel`
-reads `amika-connection-id` and `amika-host-url` when they are there, and
-reports the attachment without them when they are not.
+reads `x-amika-connection-id` and `x-amika-host-url` when they are there,
+and reports the attachment without them when they are not. The gateway
+sends the connection id; it does not send a public URL today.
 
 ## Limits, and the one rule nothing enforces
 
