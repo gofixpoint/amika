@@ -5,14 +5,49 @@
  * covers the decisions around that dial, which are the ones that decide
  * whether a revoked host retries for ever or tells its operator.
  */
+import { EventEmitter } from "node:events";
+import type { WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import {
+  dialTunnel,
+  type ConnectOptions,
   refusal,
   requireSecureGateway,
   TunnelRejected,
   TunnelUnavailable,
   TUNNEL_SUBPROTOCOL,
 } from "./tunnel-dial.js";
+
+describe("the handshake the gateway reads", () => {
+  // The gateway refuses a dial that does not use its own spelling, so these
+  // names are the contract with amika-mono's `host-listener.ts`, restated
+  // here rather than imported from the module under test.
+  it("names the host and carries the credential in the gateway's headers", () => {
+    let sent: ConnectOptions | undefined;
+    void dialTunnel(
+      {
+        gatewayUrl: "wss://gateway.amika.test/v1/host-tunnel",
+        hostId: "host-1",
+        credential: "cred-1",
+        generation: 1,
+      },
+      {
+        handshakeTimeoutMs: 1_000,
+        userAgent: "amika-hostd/test",
+        connect: (_url, options) => {
+          sent = options;
+          // Never opens: only what the dial would send is under test.
+          return new EventEmitter() as unknown as WebSocket;
+        },
+      },
+    );
+    const headers = sent?.headers as Record<string, string>;
+    expect(headers["x-amika-host-id"]).toBe("host-1");
+    expect(headers["x-amika-host-credential"]).toBe("cred-1");
+    // Not a bearer token: the gateway passes the value on unread.
+    expect(headers.authorization).toBeUndefined();
+  });
+});
 
 describe("what a gateway's status means", () => {
   it.each([401, 403, 404, 410, 426])(

@@ -19,10 +19,17 @@ import { DEFAULT_LIMITS, type TunnelLimits } from "./tunnel-attachment.js";
  */
 export const TUNNEL_SUBPROTOCOL = "amika.tunnel.v1";
 
-/** Header names this handshake uses, in the spelling the gateway reads. */
-export const HOST_ID_HEADER = "amika-host-id";
-export const CONNECTION_ID_HEADER = "amika-connection-id";
-export const PUBLIC_URL_HEADER = "amika-host-url";
+/**
+ * Header names this handshake uses, in the spelling the gateway reads and
+ * writes (amika-mono `js/gateway/src/internal/host-listener.ts`). The
+ * gateway refuses a dial that does not name the host and carry the
+ * credential in exactly these.
+ */
+export const HOST_ID_HEADER = "x-amika-host-id";
+export const CREDENTIAL_HEADER = "x-amika-host-credential";
+export const CONNECTION_ID_HEADER = "x-amika-connection-id";
+/** Read when present. The gateway does not send it today. */
+export const PUBLIC_URL_HEADER = "x-amika-host-url";
 
 export interface TunnelTarget {
   /** The gateway's attachment endpoint, `wss://` outside development. */
@@ -117,7 +124,11 @@ export async function dialTunnel(
       // The credential goes in a header and never in the URL. A query
       // string reaches the access log of every proxy on the path, and an
       // attachment credential lives until it is rotated.
-      authorization: `Bearer ${target.credential}`,
+      //
+      // A header of its own, not `Authorization: Bearer`: the gateway does
+      // not know the credential's scheme and passes the whole value to the
+      // control plane unread, so it asks for the value alone.
+      [CREDENTIAL_HEADER]: target.credential,
       [HOST_ID_HEADER]: target.hostId,
       "user-agent": options.userAgent,
     },
