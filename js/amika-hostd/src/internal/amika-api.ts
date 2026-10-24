@@ -133,6 +133,77 @@ export async function setHostSecret(
   return parseHost(response);
 }
 
+/**
+ * What the control plane hands a tunnel host so it can dial out.
+ *
+ * `transport_mode` is a literal here, unlike `registeredHostSchema`'s
+ * permissive string. That schema is shared by every call and must not fail
+ * a listening host against a control plane that added a transport; this one
+ * answers a single question -- may this host dial, and where -- and an
+ * answer naming any other transport is one the daemon cannot act on.
+ */
+export const hostEnrolmentSchema = z.object({
+  credential: z.string().min(1),
+  generation: z.number().int().min(0),
+  gateway_url: z.string().min(1),
+  transport_mode: z.literal("tunnel"),
+});
+export type HostEnrolment = z.infer<typeof hostEnrolmentSchema>;
+
+/**
+ * Enrol this host for tunnel mode, and get what it needs to dial.
+ *
+ * Three things in one call: the credential, the generation the gateway
+ * fences stale connections on, and the gateway's address. The address comes
+ * from here rather than from a config file because the gateway for an
+ * environment is deployment configuration Amika owns -- hosts move between
+ * staging and production, and that should not mean editing a file on every
+ * operator's laptop.
+ *
+ * Not idempotent in the way `registerHost` is. The control plane answers
+ * with the credential it holds; a caller that wanted a *new* one rotates
+ * instead. So calling this twice is safe and returns the same credential.
+ */
+export async function enrolHostTunnel(
+  api: AmikaApiConfig,
+  host: Pick<RegisteredHost, "id">,
+  fetcher: typeof fetch = fetch,
+  cancel?: AbortSignal,
+): Promise<HostEnrolment> {
+  const response = await send(
+    api,
+    fetcher,
+    "POST",
+    `/api/v0beta1/hosts/${encodeURIComponent(host.id)}/enrolment`,
+    {},
+    cancel,
+  );
+  if (response.status !== 200) {
+    throw await apiError("enrol this host for tunnel mode", response);
+  }
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    throw new AmikaApiError(
+      "Amika's enrolment answer was not JSON. Check the API URL.",
+    );
+  }
+  const parsed = hostEnrolmentSchema.safeParse(raw);
+  if (!parsed.success) {
+    // By field name. The body carries this host's credential, and a
+    // message quoting the value it could not read would put the
+    // credential wherever the message goes.
+    const fields = parsed.error.issues.map((issue) =>
+      issue.path.map(String).join("."),
+    );
+    throw new AmikaApiError(
+      `Amika's enrolment answer has unexpected fields: ${[...new Set(fields)].join(", ")}`,
+    );
+  }
+  return parsed.data;
+}
+
 type HostSizes = Record<string, HostSize>;
 
 const REQUEST_TIMEOUT_MS = 30_000;
