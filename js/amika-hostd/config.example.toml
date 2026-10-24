@@ -24,8 +24,26 @@
 
 api_url = "https://app.amika.dev"
 
-# The address the daemon listens on. Expose it to Amika through a tunnel and
-# run `amika-hostd register-url <public-url>`.
+# How Amika reaches this host.
+#   "listen" (the default) binds `host`:`port` below; you expose it yourself
+#     through ngrok, a port forward or cloudflared, then run
+#     `amika-hostd register-url <public-url>`.
+#   "tunnel" binds nothing and dials out to Amika's gateway instead, which is
+#     what a machine behind a home router needs. Enrol the host with
+#     `amika-hostd setup` first; `host` and `port` have no effect.
+# Environment: AMIKA_HOSTD_TRANSPORT
+# transport = "listen"
+
+# The gateway this host attaches to in tunnel mode. Normally leave this unset:
+# Amika assigns the gateway for its environment when the host is enrolled, so
+# moving the gateway does not mean editing this file on every host. Set it for
+# a gateway running on your own machine, or to pin this host to one.
+# Must be wss://, except on loopback.
+# Environment: AMIKA_HOSTD_TUNNEL_GATEWAY_URL
+# tunnel_gateway_url = "wss://tunnel.amika.dev/attach"
+
+# The address the daemon listens on in "listen" mode. Expose it to Amika
+# through a tunnel and run `amika-hostd register-url <public-url>`.
 host = "127.0.0.1"
 port = 3020
 

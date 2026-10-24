@@ -30,6 +30,15 @@ export interface Secrets {
   readonly kind: SecretStoreKind;
   readonly apiKey: Secret;
   /**
+   * The host-scoped credential that attaches this host to Amika's tunnel
+   * gateway, in tunnel mode. Deliberately a third secret and not either of
+   * the two above: the API key acts as the user across their whole
+   * organization, and the secret key authorizes Amika's requests *into*
+   * this daemon. Attaching a host is a different permission from both, so
+   * a copy of this one is worth only this host's inbound traffic.
+   */
+  readonly attachmentCredential: Secret;
+  /**
    * In the keychain, the secret key is a keychain item. With the file store
    * it is `secret_key` in config.toml, which setup writes with the rest of
    * the config, so there is no separate secret here.
@@ -48,7 +57,7 @@ export interface Keychain {
   set(name: SecretName, value: string): void;
 }
 
-export type SecretName = "api-key" | "secret-key";
+export type SecretName = "api-key" | "secret-key" | "attachment-credential";
 
 export interface CredentialDeps {
   /** The system keychain; defaults to this platform's (see `systemKeychain`). */
@@ -88,6 +97,7 @@ const SERVICE = "amika-hostd";
 const LABELS: Record<SecretName, string> = {
   "api-key": "Amika API key for amika-hostd",
   "secret-key": "amika-hostd secret key",
+  "attachment-credential": "amika-hostd tunnel attachment credential",
 };
 /** Long enough for a keychain to ask the operator to unlock it. */
 const KEYCHAIN_TIMEOUT_MS = 60_000;
@@ -102,7 +112,23 @@ export function isValidApiKey(value: string): boolean {
 
 /** The file the API key is kept in with the file store: the user config dir. */
 export function apiKeyFilePath(env: NodeJS.ProcessEnv): string {
-  return path.join(path.dirname(configFilePaths(env)[0]), "api-key");
+  return secretFilePath(env, "api-key");
+}
+
+/**
+ * The file the attachment credential is kept in with the file store.
+ *
+ * Beside the API key rather than in `config.toml`, unlike the secret key.
+ * The config file is read and rewritten by `setup`, printed in support
+ * threads and copied between machines; a credential that lets the bearer
+ * receive this host's traffic should not travel with it.
+ */
+export function attachmentCredentialFilePath(env: NodeJS.ProcessEnv): string {
+  return secretFilePath(env, "attachment-credential");
+}
+
+function secretFilePath(env: NodeJS.ProcessEnv, name: SecretName): string {
+  return path.join(path.dirname(configFilePaths(env)[0]), name);
 }
 
 /**
@@ -116,7 +142,11 @@ export function openSecrets(
   deps: CredentialDeps = {},
 ): Secrets {
   if (kind === "file") {
-    return { kind, apiKey: fileSecret(apiKeyFilePath(env), deps) };
+    return {
+      kind,
+      apiKey: fileSecret(apiKeyFilePath(env), deps),
+      attachmentCredential: fileSecret(attachmentCredentialFilePath(env), deps),
+    };
   }
   const keychain =
     deps.keychain === undefined ? systemKeychain(env, deps) : deps.keychain;
@@ -134,6 +164,10 @@ export function openSecrets(
     kind,
     apiKey: item("api-key", "Amika API key"),
     secretKey: item("secret-key", "secret key"),
+    attachmentCredential: item(
+      "attachment-credential",
+      "tunnel attachment credential",
+    ),
   };
 }
 

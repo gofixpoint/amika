@@ -6,8 +6,10 @@
  * key.
  */
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 import { hostname as osHostname } from "node:os";
 import {
+  type RegisteredHost,
   registerHost as registerHostWithAmika,
   setHostSecret as setHostSecretInAmika,
 } from "./amika-api.js";
@@ -27,6 +29,8 @@ import {
 } from "./config.js";
 import { isValidApiKey, type Secrets } from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
+import { enrolForTunnel, type EnrolForTunnelDeps } from "./tunnel-enrol.js";
+import { tunnelEnrolmentPath } from "./tunnel-target.js";
 import type { Prompt } from "./prompt.js";
 
 export interface SetupDeps {
@@ -44,6 +48,9 @@ export interface SetupDeps {
   generateSecretKey?: () => string;
   registerHost?: typeof registerHostWithAmika;
   setHostSecret?: typeof setHostSecretInAmika;
+  /** Tunnel enrolment, injected the same way. */
+  enrol?: EnrolForTunnelDeps["enrol"];
+  write?: EnrolForTunnelDeps["write"];
   /**
    * Call `handler` on the operator's Ctrl-C until the returned function is
    * called; defaults to a SIGINT listener.
@@ -250,7 +257,7 @@ export async function runSetup(
       sending = true;
       // Ctrl-C would otherwise end the process mid-request, before the old
       // key goes back; instead it cancels the request like any failure.
-      const created = await whileInterruptible(deps, (cancel) =>
+      const { host, created } = await whileInterruptible(deps, (cancel) =>
         sendSecret(
           { apiUrl: effective.apiUrl, apiKey: sendWith },
           written,
@@ -264,6 +271,34 @@ export async function runSetup(
           ? `Registered host ${hostname} with ${effective.apiUrl}`
           : `Sent the new secret key for host ${hostname} to Amika.`,
       );
+
+      // A tunnel host binds nothing, so registering it is only half the
+      // job: it still has to be told where to dial and given a credential
+      // for it. A listening host needs neither, and asking for them would
+      // mint a secret nothing uses.
+      //
+      // After the secret, not before. Enrolment authenticates with the
+      // API key, but the host has to exist for it to name one, and
+      // `sendSecret` is what creates it.
+      if (written.transport === "tunnel") {
+        const enrolment = await whileInterruptible(deps, (cancel) =>
+          enrolForTunnel(
+            { apiUrl: effective.apiUrl, apiKey: sendWith },
+            host,
+            deps.secrets,
+            // Beside the config, where `credentials.ts` puts the file
+            // secrets. There is no separate state directory, and putting
+            // the record somewhere else would leave an operator moving a
+            // host between machines with two places to copy.
+            tunnelEnrolmentPath(path.dirname(configPath)),
+            deps,
+            cancel,
+          ),
+        );
+        deps.out(
+          `Enrolled host ${hostname} for tunnel mode; it will dial ${enrolment.gatewayUrl}`,
+        );
+      }
     } catch (error) {
       const restored = restoreSecret(
         error as Error,
@@ -329,7 +364,10 @@ export async function runSetup(
 
 /**
  * Give Amika `input.secretKey` for this hostname: registering it if new,
- * else replacing the stored secret. Returns whether it registered the host.
+ * else replacing the stored secret.
+ *
+ * Returns the host as well as whether it was created. Tunnel enrolment
+ * needs the id, and this is the only call that learns it.
  */
 async function sendSecret(
   api: { apiUrl: string; apiKey: string },
@@ -337,14 +375,14 @@ async function sendSecret(
   input: { hostname: string; secretKey: string },
   deps: SetupDeps,
   cancel: AbortSignal,
-): Promise<boolean> {
+): Promise<{ host: RegisteredHost; created: boolean }> {
   const { host, created } = await (deps.registerHost ?? registerHostWithAmika)(
     api,
     { ...input, sizes: config.sizes },
     undefined,
     cancel,
   );
-  if (created) return true;
+  if (created) return { host, created };
   await (deps.setHostSecret ?? setHostSecretInAmika)(
     api,
     host,
@@ -352,7 +390,7 @@ async function sendSecret(
     undefined,
     cancel,
   );
-  return false;
+  return { host, created };
 }
 
 /**

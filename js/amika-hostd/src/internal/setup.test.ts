@@ -68,6 +68,15 @@ function harness({
       keychainSecret.value = value;
     }),
   };
+  /** The tunnel attachment credential, which setup does not touch today. */
+  const attachmentCredential = {
+    description: "the test store (attachment credential)",
+    value: undefined as string | undefined,
+    get: vi.fn(() => attachmentCredential.value),
+    set: vi.fn((value: string) => {
+      attachmentCredential.value = value;
+    }),
+  };
   const deps = {
     env: { XDG_CONFIG_HOME: "/config", ...env },
     out: (line: string) => out.push(line),
@@ -78,6 +87,7 @@ function harness({
       kind,
       apiKey: store,
       secretKey: kind === "keychain" ? keychainSecret : undefined,
+      attachmentCredential,
     },
     loadConfigFile: vi.fn((): HostdConfigFile | undefined =>
       file === undefined ? undefined : { path: PATH, contents: file },
@@ -121,6 +131,11 @@ function harness({
     listening: () => interrupt.handler !== undefined,
   };
 }
+
+const TUNNEL_CONFIGURED = `hostname = "builder"
+secret_key = "${OLD_SECRET}"
+transport = "tunnel"
+`;
 
 const CONFIGURED = `hostname = "builder"
 secret_key = "${OLD_SECRET}"
@@ -969,5 +984,88 @@ describe("suggestHostname", () => {
     ["___", undefined],
   ])("turns %j into %j", (raw, expected) => {
     expect(suggestHostname(raw)).toBe(expected);
+  });
+});
+
+describe("runSetup, enrolling a tunnel host", () => {
+  const ENROLMENT = {
+    credential: "amkht_b3JnXzE.s3cret",
+    generation: 2,
+    gateway_url: "wss://gateway.staging-amika.run/v1/host-tunnel",
+    transport_mode: "tunnel" as const,
+  };
+
+  it("enrols after registering, and records what Amika answered", async () => {
+    // A tunnel host binds nothing, so registering it is half the job: it
+    // still needs a credential and somewhere to dial. Without this the
+    // daemon starts, reads no enrolment, and tells the operator to run
+    // the setup they just ran.
+    const h = harness({
+      kind: "keychain",
+      answers: ["", "y", ""],
+      file: TUNNEL_CONFIGURED,
+      storedKey: "amk_stored",
+      storedSecret: OLD_SECRET,
+    });
+    const written: Array<[string, unknown]> = [];
+    const deps = {
+      ...h.deps,
+      enrol: vi.fn(async () => ENROLMENT),
+      write: (file: string, record: unknown) => written.push([file, record]),
+    };
+
+    await runSetup(deps);
+
+    expect(deps.enrol).toHaveBeenCalledTimes(1);
+    expect(written).toHaveLength(1);
+    expect(written[0]![1]).toMatchObject({
+      hostId: HOST.id,
+      generation: 2,
+      gatewayUrl: ENROLMENT.gateway_url,
+    });
+    expect(h.deps.secrets.attachmentCredential.get()).toBe(
+      ENROLMENT.credential,
+    );
+  });
+
+  it("puts the record beside the config, not somewhere of its own", async () => {
+    // `credentials.ts` keeps file secrets beside the config. A record
+    // somewhere else leaves an operator moving a host between machines
+    // with two places to copy.
+    const h = harness({
+      kind: "keychain",
+      answers: ["", "y", ""],
+      file: TUNNEL_CONFIGURED,
+      storedKey: "amk_stored",
+      storedSecret: OLD_SECRET,
+    });
+    const written: string[] = [];
+
+    await runSetup({
+      ...h.deps,
+      enrol: vi.fn(async () => ENROLMENT),
+      write: (file: string) => written.push(file),
+    });
+
+    expect(written[0]).toBe(
+      `${PATH.slice(0, PATH.lastIndexOf("/"))}/tunnel-enrolment.json`,
+    );
+  });
+
+  it("does not enrol a listening host", async () => {
+    // Enrolment mints a credential. Asking for one on a host that binds
+    // a port leaves a live secret nothing uses.
+    const h = harness({
+      kind: "keychain",
+      answers: ["", "y", ""],
+      file: CONFIGURED,
+      storedKey: "amk_stored",
+      storedSecret: OLD_SECRET,
+    });
+    const enrol = vi.fn(async () => ENROLMENT);
+
+    await runSetup({ ...h.deps, enrol, write: () => {} });
+
+    expect(enrol).not.toHaveBeenCalled();
   });
 });

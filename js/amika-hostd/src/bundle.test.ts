@@ -1,6 +1,6 @@
 /** Smoke-test the release bundle: it must run under plain node, alone. */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,5 +28,41 @@ describe("release bundle", () => {
       encoding: "utf8",
     });
     expect(output).toContain("Usage: amika-hostd <command>");
+  }, 30_000);
+
+  it("inlines the tunnel's dependencies, CommonJS ones included", () => {
+    // `ws` is CommonJS and calls `require("events")` as it loads. esbuild
+    // rewrites that to a helper that throws in ESM output unless a real
+    // `require` is in scope, which the bundler's banner supplies. Without
+    // the banner this fails at startup with `Dynamic require of "events"
+    // is not supported`, and no test on `src/index.ts` would catch it
+    // until the daemon imports the tunnel.
+    const entry = path.join(workDir, "tunnel-entry.ts");
+    const internal = path.join(packageDir, "src/internal");
+    writeFileSync(
+      entry,
+      [
+        `import { TunnelClient } from "${internal}/tunnel-client.js";`,
+        `import { virtualServer } from "${internal}/tunnel-serving.js";`,
+        `import { dialTunnel } from "${internal}/tunnel-dial.js";`,
+        "console.log(",
+        "  typeof TunnelClient, typeof virtualServer, typeof dialTunnel,",
+        ");",
+      ].join("\n"),
+    );
+    const bundle = path.join(workDir, "tunnel.mjs");
+    execFileSync(
+      process.execPath,
+      [path.join(packageDir, "scripts/bundle.mjs"), bundle, entry],
+      { cwd: packageDir },
+    );
+
+    const output = execFileSync(process.execPath, [bundle], {
+      cwd: workDir,
+      env: { PATH: process.env.PATH },
+      encoding: "utf8",
+    });
+
+    expect(output.trim()).toBe("function function function");
   }, 30_000);
 });
