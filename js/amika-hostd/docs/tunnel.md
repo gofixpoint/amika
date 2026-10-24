@@ -194,11 +194,34 @@ on the day it does.
 
 ## Not here yet
 
-- `--transport tunnel` on `up` and `serve`, and the readiness result the
-  daemon reports over IPC. The client is wired for it (`whenAttached`,
-  `TunnelClient.status`) and `transport` is already a setting, but the CLI
-  still only starts a listener.
-- Enrolment. `tunnel-target.ts` reads the record the control plane's
-  enrolment call must write; nothing writes it yet.
 - Rotation from the CLI. `TunnelClient.reattach` exists and the generation
-  fence works; no command calls it.
+  fence works; no command calls it. Until then a rotated credential is
+  picked up on the next dial, because `resolveTunnelTarget` is read per
+  attempt -- but nothing makes that attempt happen on demand.
+- `--transport tunnel` as a _flag_. The transport is a setting, read from
+  `transport` in the config or `AMIKA_HOSTD_TRANSPORT`, and `serve` and
+  `up` both honour it. A flag would be a third place to say the same
+  thing, and the one that disagreed would be the one in the operator's
+  shell history rather than in the file.
+
+## Enrolment
+
+`amika-hostd setup` enrols a host whose transport is `tunnel`, after it
+registers. One call to the control plane returns the credential, the
+generation the gateway fences on, and the gateway's address; the
+credential goes into the secret store and the rest into
+`tunnel-enrolment.json` beside the config. The record deliberately does
+not hold the credential, so a copied state directory does not carry one.
+
+## Serving
+
+`serve` and `up` start a tunnel instead of a listener when the transport
+says so. `startTunnel` is the counterpart of `startServer`, and both
+build the app and the upgrade handler through one `buildHandlers`, so a
+rig reached down a tunnel answers the same routes under the same
+authorization as one reached on a port.
+
+A tunnel host binds nothing, so the readiness the daemon reports over IPC
+carries no port. It carries the connection id the gateway named on the
+`101`, where the gateway sends one, which is what matches this daemon
+against the gateway's logs.
