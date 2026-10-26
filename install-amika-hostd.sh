@@ -36,6 +36,10 @@ NPM_REGISTRY="${NPM_REGISTRY%/}"
 # The smolmachines engine runs on Linux with glibc 2.34 or newer.
 GLIBC_MIN="2.34"
 SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
+# The smolvm installed when none is found: the release hostd is tested with,
+# so a new smolvm release cannot reach a fresh install untested. "latest"
+# opts out of the pin.
+DEFAULT_SMOLVM_VERSION="1.32.3"
 SMOLVM_VERSION="${SMOLVM_VERSION:-}"
 SKIP_SMOLVM=false
 UNINSTALL=false
@@ -49,8 +53,8 @@ install-amika-hostd.sh — install the amika-hostd BYOC host daemon
 Installs amika-hostd from its GitHub release, plus the Node.js ${NODE_MIN_MAJOR}+
 and smolvm it needs. It uses the system node if it is new enough, and otherwise
 downloads Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node. If smolvm is
-missing, it runs the official smolvm installer. It also installs the
-smolmachines engine (smolvm, embedded) for this platform.
+missing, it runs the official smolvm installer for smolvm ${DEFAULT_SMOLVM_VERSION}.
+It also installs the smolmachines engine (smolvm, embedded) for this platform.
 
 Supported hosts: Linux x86_64 or arm64 with glibc ${GLIBC_MIN}+, and macOS on
 Apple silicon.
@@ -64,7 +68,7 @@ Flags:
   --install-version     Install a specific version (default: ${DEFAULT_VERSION})
   --dry-run             Show what would be done without downloading or installing
   --smolvm-version      Install this smolvm version if smolvm is missing
-                        (default: latest)
+                        (default: ${DEFAULT_SMOLVM_VERSION}; "latest" for the newest)
   --skip-smolvm         Do not install smolvm
   --uninstall           Remove amika-hostd instead of installing it. Finds
                         amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
@@ -118,6 +122,9 @@ main() {
   check_node_version
   detect_platform
   engine_package
+
+  SMOLVM_VERSION="${SMOLVM_VERSION:-$DEFAULT_SMOLVM_VERSION}"
+  SMOLVM_VERSION="${SMOLVM_VERSION#v}"
 
   VERSION="${INSTALL_VERSION:-$DEFAULT_VERSION}"
   VERSION="${VERSION#v}"
@@ -585,7 +592,7 @@ describe_plan() {
   elif find_smolvm; then
     echo "  smolvm:       found at ${SMOLVM_PATH}"
   else
-    echo "  smolvm:       not found; would run ${SMOLVM_INSTALL_URL} (version: ${SMOLVM_VERSION:-latest})"
+    echo "  smolvm:       not found; would run ${SMOLVM_INSTALL_URL} (version: ${SMOLVM_VERSION})"
   fi
   echo "  Engine:       ${ENGINE_PACKAGE}, the version the release pins, from"
   echo "                ${NPM_REGISTRY}, into ${HOSTD_HOME}/node_modules"
@@ -869,12 +876,13 @@ ensure_smolvm() {
     exit 1
   fi
 
-  echo "Installing smolvm (version: ${SMOLVM_VERSION:-latest})..."
+  echo "Installing smolvm (version: ${SMOLVM_VERSION})..."
   fetch_url "$SMOLVM_INSTALL_URL" > "${TMPDIR_INSTALL}/smolvm-install.sh"
-  if [ -n "$SMOLVM_VERSION" ]; then
-    set -- --version "$SMOLVM_VERSION"
-  else
+  # With no --version, the smolvm installer picks its newest release.
+  if [ "$SMOLVM_VERSION" = "latest" ]; then
     set --
+  else
+    set -- --version "$SMOLVM_VERSION"
   fi
   if ! bash "${TMPDIR_INSTALL}/smolvm-install.sh" "$@" </dev/null; then
     echo "Error: the smolvm installer failed. amika-hostd is installed; install smolvm and re-run, or pass --skip-smolvm." >&2

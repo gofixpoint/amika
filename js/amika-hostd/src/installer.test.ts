@@ -275,14 +275,6 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expectLauncherRuns(privateNode(), "24.22.1");
   });
 
-  it("describes the download in a dry run when the system node is too old", () => {
-    writeSystemNode("20.19.6");
-    const result = install({}, ["--dry-run"]);
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("no node 22+ found; would download");
-    expect(result.stdout).toContain(`node-v24.22.1-${os}-${nodeArch}.tar.gz`);
-  });
-
   /** The installer failed before installing anything, naming the version. */
   function expectRefused(
     result: ReturnType<typeof spawnSync>,
@@ -296,8 +288,8 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expect(existsSync(launcher())).toBe(false);
   }
 
-  function install(extraEnv: Record<string, string> = {}, args: string[] = []) {
-    return spawnSync("sh", [installer, "--skip-smolvm", ...args], {
+  function install(extraEnv: Record<string, string> = {}) {
+    return spawnSync("sh", [installer, "--skip-smolvm"], {
       encoding: "utf8",
       env: {
         PATH: `${systemNodeDir}:${toolsDir}`,

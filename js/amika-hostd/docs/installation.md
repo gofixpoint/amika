@@ -24,8 +24,10 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   before anything is installed. Re-running the installer re-selects, so it
   moves the launcher to a system node installed since;
 - smolvm, through its official installer, unless `smolvm` is on `PATH` or in
-  `~/.smolvm` or `~/.local/bin`. Pin it with `--smolvm-version`
-  (`SMOLVM_VERSION`) or skip it with `--skip-smolvm`;
+  `~/.smolvm` or `~/.local/bin`. It installs smolvm 1.32.3
+  (`DEFAULT_SMOLVM_VERSION`), the release hostd is tested with. Choose another
+  with `--smolvm-version` (`SMOLVM_VERSION`), `latest` for the newest release,
+  or skip it with `--skip-smolvm`;
 - the machine engine the daemon is moving to: the `smolmachines` SDK
   (smolvm's engine, embedded) the release carries, into `node_modules/` in
   that same directory, plus this platform's engine package
