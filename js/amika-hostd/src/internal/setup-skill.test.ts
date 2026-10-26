@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { USAGE } from "./cli.js";
-import { ENV_NAMES } from "./config.js";
+import { DEFAULT_TRANSPORT, ENV_NAMES } from "./config.js";
 import { setupSkill } from "./setup-skill.js";
 
 const skill = setupSkill({
@@ -94,6 +94,22 @@ describe("setupSkill", () => {
       expect(credentials).toContain(phrase);
       expect(skill.replace(/\s+/g, " ")).toContain(phrase);
     }
+  });
+
+  it("defaults to the tunnel, and says how to listen instead", () => {
+    expect(DEFAULT_TRANSPORT).toBe("tunnel");
+    expect(skill).toContain("- **Tunnel**, the default:");
+    expect(skill).toContain('\n    transport = "listen"\n');
+  });
+
+  it("quotes the error up gives when enrolment refuses the key", () => {
+    const api = readFileSync(
+      path.join(import.meta.dirname, "amika-api.ts"),
+      "utf8",
+    );
+    expect(api).toContain("`Amika refused to ${action} with this API key");
+    expect(api).toContain('"enrol this host for tunnel mode"');
+    expect(skill).toContain('"refused to enrol this host for tunnel mode"');
   });
 
   it("tunnels to the daemon's own address", () => {

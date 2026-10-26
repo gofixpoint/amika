@@ -72,12 +72,14 @@ answer setup refuses (an invalid hostname, no API key on stdin) ends it with
 nothing changed, instead of asking again.
 
 `amika-hostd setup --skill` prints, as a SKILL.md document, how an agent sets
-the host up with it: settle the hostname with the operator, get an API key
+the host up with it: settle the hostname with the operator, keep the default
+tunnel transport unless the operator wants to expose a port (then add
+`transport = "listen"`), get an API key, user-scoped for a tunnelled host
 (minted by `amika auth api-key create --out <file>` when the `amika` CLI is
 logged in, else from the operator) and pipe it from that file into
 `setup --non-interactive`, choose the file store only with the operator's
-consent when there is no keychain, then run `up` and `register-url`
-(`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
+consent when there is no keychain, then run `up`, and `register-url` for a
+listening host (`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
 fills in the config and log files and the daemon's local address (from `host`
 and `port`, loopback for a wildcard bind). The installer points agents at it.
 `setup-skill.test.ts` checks that every command and option it uses exists and
