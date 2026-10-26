@@ -791,7 +791,7 @@ func discoverAndPickCredential(cmd *cobra.Command, p providerConfig) (discovered
 	reader := bufio.NewReader(cmd.InOrStdin())
 	if len(creds) == 1 {
 		selected = creds[0]
-		fmt.Fprintf(cmd.OutOrStdout(), "Push this credential? [y/N] ")
+		fmt.Fprintf(cmd.OutOrStdout(), "Push this credential? [Y/n] ")
 	} else {
 		fmt.Fprintf(cmd.OutOrStdout(), "Select credential to push [1-%d]: ", len(creds))
 		input, err := reader.ReadString('\n')
@@ -805,7 +805,7 @@ func discoverAndPickCredential(cmd *cobra.Command, p providerConfig) (discovered
 		}
 		selected = creds[choice-1]
 
-		fmt.Fprintf(cmd.OutOrStdout(), "\nPush %s from %s? [y/N] ", selected.Type, selected.Source)
+		fmt.Fprintf(cmd.OutOrStdout(), "\nPush %s from %s? [Y/n] ", selected.Type, selected.Source)
 	}
 
 	answer, err := reader.ReadString('\n')
@@ -813,7 +813,7 @@ func discoverAndPickCredential(cmd *cobra.Command, p providerConfig) (discovered
 		return discoveredCredential{}, fmt.Errorf("reading confirmation: %w", err)
 	}
 	answer = strings.TrimSpace(strings.ToLower(answer))
-	if answer != "y" && answer != "yes" {
+	if answer != "" && answer != "y" && answer != "yes" {
 		return discoveredCredential{}, fmt.Errorf("aborted")
 	}
 
