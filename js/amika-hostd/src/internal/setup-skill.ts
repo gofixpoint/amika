@@ -44,7 +44,7 @@ This host's name in the operator's Amika organization: lowercase letters,
 digits, and hyphens, in dot-separated labels. The config may hold the
 secret key, so never \`cat\` it; read only the lines you need:
 
-    grep -E '^\\s*(hostname|transport)\\s*=' ${configPath}
+    grep -E '^\\s*(hostname|transport)\\s*=' ${shellQuote(configPath)}
 
 If the config has a \`hostname\` (the installer fills in this machine's
 name), keep it: changing it registers a new host. Otherwise ask the operator
@@ -167,8 +167,8 @@ by running \`amika-hostd setup\` in a terminal and choosing to regenerate it.
 For the tunnel, there is nothing to do unless \`AMIKA_HOSTD_TRANSPORT\` or
 the config says \`listen\`; then ask the operator before changing it.
 
-To listen, add this line to the config above its first \`[\` line,
-replacing any \`# transport =\` line there:
+To listen, replace any \`transport =\` line in the config (commented out
+or not) with this one, or add it above the first \`[\` line:
 
     transport = "listen"
 
@@ -229,4 +229,11 @@ URL still forwards to the daemon.
 
 stops the daemon, and smolvm with it, which stops every rig on this host.
 `;
+}
+
+/** `path` as one shell word. */
+function shellQuote(path: string): string {
+  return /^[\w@%+=:,./-]+$/.test(path)
+    ? path
+    : `'${path.replaceAll("'", `'\\''`)}'`;
 }
