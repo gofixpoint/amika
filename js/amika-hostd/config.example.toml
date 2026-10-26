@@ -31,8 +31,10 @@ api_url = "https://app.amika.dev"
 #   "listen" binds `host`:`port` below instead; you expose it yourself
 #     through ngrok, a port forward or cloudflared, then run
 #     `amika-hostd register-url <public-url>`.
+# Uncomment one line to choose.
 # Environment: AMIKA_HOSTD_TRANSPORT
 # transport = "tunnel"
+# transport = "listen"
 
 # The gateway this host attaches to in tunnel mode. Normally leave this unset:
 # Amika assigns the gateway for its environment when the host is enrolled, so

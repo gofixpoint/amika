@@ -19,12 +19,14 @@ a port yourself, through ngrok or Cloudflare Tunnel, the daemon can
 - Linux x86_64 or arm64 with glibc 2.34+ and KVM, or macOS on Apple silicon
 - `e2fsprogs`, only if a rig size has a disk under 20 GiB: smolvm shrinks its
   template with `resize2fs`
-- Outbound HTTPS from the machine to Amika's gateway
+- Outbound HTTPS from the machine to Amika. A [listening](#listening-on-a-port)
+  host also needs a way to expose a port to the internet.
 - A user-scoped Amika API key, from **Settings → API keys** at
   [app.amika.dev](https://app.amika.dev/settings/api-keys). Amika hands a
   host the credential for its gateway only for a person, so an
   organization-scoped key is refused. A [listening](#listening-on-a-port)
-  host can use either.
+  host can use either, and is better off with an organization key, which
+  outlives the person who made it.
 
 Node.js and [smolvm](https://smolmachines.com) are installed for you if the
 machine doesn't have them.
@@ -99,8 +101,9 @@ brings the daemon back, but not the rigs: start those with `amika rig start`.
 A daemon can instead bind `127.0.0.1:3020` and let you expose it, through
 [ngrok](https://ngrok.com) or
 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/),
-say. Set `transport = "listen"` in the config, run `amika-hostd up`, then tell
-Amika where to find it:
+say. Set `transport = "listen"` in the config, above its first `[` line (or
+set `AMIKA_HOSTD_TRANSPORT=listen`, which overrides the config), run
+`amika-hostd up`, then tell Amika where to find it:
 
 ```bash
 ngrok http 3020                                    # in another terminal

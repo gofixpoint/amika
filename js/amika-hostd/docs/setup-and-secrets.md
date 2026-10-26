@@ -82,10 +82,9 @@ consent when there is no keychain, then run `up`, and `register-url` for a
 listening host (`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
 fills in the config and log files and the daemon's local address (from `host`
 and `port`, loopback for a wildcard bind). The installer points agents at it.
-`setup-skill.test.ts` checks that every command and option it uses exists and
-every variable it names is one the config reads, so keep them in step when the
-CLI changes. Options on `amika` CLI commands are exempt from that check, so a
-change to `amika auth api-key create` must be mirrored in the skill text by hand.
+No test checks the text against the CLI, so when a command, option,
+environment variable or error message it names changes, here or in
+`amika auth api-key create`, update the skill text by hand.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the

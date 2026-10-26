@@ -532,6 +532,17 @@ describe("config.example.toml", () => {
     });
   });
 
+  it("documents listening as a line to uncomment", () => {
+    expect(example.contents).toMatch(/^# transport = "listen"$/m);
+    const listening = file(
+      example.contents.replace(
+        '# transport = "listen"',
+        'transport = "listen"',
+      ),
+    );
+    expect(resolveConfig({ file: listening }).transport).toBe("listen");
+  });
+
   it("holds no secret, and documents the default secret store", () => {
     expect(example.contents).not.toMatch(/^\s*secret_key\s*=/m);
     expect(example.contents).toMatch(/^# secret_store = "keychain"$/m);

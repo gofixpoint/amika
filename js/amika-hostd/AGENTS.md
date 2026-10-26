@@ -156,8 +156,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
 
 - `config.example.toml` with the config schema (`config.test.ts`) and with
   `DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES` (`setup.test.ts`).
-- The `setup --skill` text with the CLI (`setup-skill.test.ts`); options on
-  `amika` CLI commands it names are mirrored by hand.
+- The `setup --skill` text with the CLI, by hand: the commands, options,
+  environment variables and error messages it names, and options on the
+  `amika` CLI commands it runs.
 - A blank environment variable sets nothing; ask which variable sets a
   setting through `envName`.
 - The bundle runs under plain `node` with no `node_modules`

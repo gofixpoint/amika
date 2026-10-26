@@ -52,10 +52,10 @@ unless --force is given.
 
 Requires a login (` + "`amika auth login`" + `) or AMIKA_API_KEY. Manage or delete
 keys in the web app's settings page.`,
-	Example: `  # Create an organization key for a host daemon, set the host up with it,
+	Example: `  # Create a key owned by you for a host daemon, set the host up with it,
   # and remove the file
   dir=$(mktemp -d)
-  amika auth api-key create --name build-01-hostd --out "$dir/api-key"
+  amika auth api-key create --name build-01-hostd --scope user --out "$dir/api-key"
   amika-hostd setup --non-interactive --hostname build-01 < "$dir/api-key"
   rm -rf "$dir"
 
