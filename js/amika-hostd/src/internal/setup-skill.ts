@@ -218,6 +218,8 @@ URL still forwards to the daemon.
 
 ## 6. Check it works
 
+- \`amika-hostd status\` says whether the daemon is running: it exits 0 if
+  so and 3 if not.
 - The daemon's log: ${logFile}
 - With the \`amika\` CLI signed in to the same organization,
   \`amika host get <hostname>\` shows the host, its transport and its URL. A

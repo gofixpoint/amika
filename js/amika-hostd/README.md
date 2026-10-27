@@ -66,6 +66,7 @@ without seeing it.
 
 ```bash
 amika-hostd up
+amika-hostd status   # is the daemon up? exits 0 if so, 3 if not
 ```
 
 This registers the host with Amika, enrols it with Amika's gateway, starts the

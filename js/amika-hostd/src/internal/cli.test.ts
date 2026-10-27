@@ -498,6 +498,8 @@ describe("runCli", () => {
     [["start"], "unknown command: start"],
     [["down", "extra"], "unexpected argument: extra"],
     [["down", "--port", "1"], "--port does not apply to `down`"],
+    [["status", "extra"], "unexpected argument: extra"],
+    [["status", "--fg"], "--fg does not apply to `status`"],
     [["up", "--smolvm"], "--smolvm does not apply to `up`"],
     [["up", "extra"], "unexpected argument: extra"],
     [["serve", "--fg"], "--fg does not apply to `serve`"],
@@ -1528,6 +1530,76 @@ describe("down", () => {
       contents: "not toml [",
     });
     expect(await runCli(["down"], deps)).toBe(0);
+  });
+});
+
+describe("status", () => {
+  /** A state directory whose pidfiles name a daemon and a smolvm. */
+  function running() {
+    const dir = pidDir();
+    writeFileSync(path.join(dir, "amika-hostd", "smolvm.pid"), "888888\n");
+    return { ...harness({ XDG_STATE_HOME: dir }), dir };
+  }
+
+  it("exits 3 when nothing is running", async () => {
+    const { deps, out, err } = harness();
+    expect(await runCli(["status"], deps)).toBe(3);
+    expect(out).toEqual(["amika-hostd is not running"]);
+    expect(err).toEqual([]);
+  });
+
+  it("exits 0 with the pids and log when the daemon is up", async () => {
+    const { deps, out, dir } = running();
+    deps.isRunning.mockReturnValue(true);
+    deps.isSmolvmRunning.mockReturnValue(true);
+    expect(await runCli(["status"], deps)).toBe(0);
+    expect(out).toEqual([
+      "amika-hostd is running (pid 999999)",
+      "smolvm is running (pid 888888)",
+      `Log: ${path.join(dir, "amika-hostd", "log", "amika-hostd.log")}`,
+    ]);
+  });
+
+  it("points at `down` for a smolvm the daemon left behind", async () => {
+    const { deps, out } = running();
+    deps.isSmolvmRunning.mockReturnValue(true);
+    expect(await runCli(["status"], deps)).toBe(3);
+    expect(out).toEqual([
+      "amika-hostd is not running",
+      "smolvm (pid 888888) is still running without it; `amika-hostd down` stops it",
+    ]);
+  });
+
+  it("does not count a pidfile naming another live process", async () => {
+    const dir = pidDir();
+    writeFileSync(
+      path.join(dir, "amika-hostd", "amika-hostd.pid"),
+      `${process.pid}\n`,
+    );
+    const { deps, out, err } = harness({ XDG_STATE_HOME: dir });
+    expect(await runCli(["status"], deps)).toBe(3);
+    expect(out).toEqual(["amika-hostd is not running"]);
+    if (!existsSync(`/proc/${process.pid}/cmdline`)) {
+      expect(err[0]).toMatch(/names pid \d+, which is not amika-hostd/);
+    }
+  });
+
+  it("changes nothing on disk", async () => {
+    const { deps, dir } = running();
+    expect(await runCli(["status"], deps)).toBe(3);
+    expect(existsSync(path.join(dir, "amika-hostd", "amika-hostd.pid"))).toBe(
+      true,
+    );
+    expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(true);
+  });
+
+  it("does not need a valid configuration", async () => {
+    const { deps } = harness();
+    deps.loadConfigFile.mockReturnValue({
+      path: "/etc/amika-hostd/config.toml",
+      contents: "not toml [",
+    });
+    expect(await runCli(["status"], deps)).toBe(3);
   });
 });
 

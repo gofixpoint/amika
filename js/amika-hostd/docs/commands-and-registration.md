@@ -32,6 +32,13 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
 - `amika-hostd down` sends `SIGTERM` to the daemon named by the pidfile and
   waits for it to exit, which includes stopping smolvm. It needs no
   configuration.
+- `amika-hostd status` says whether the daemon is running, by the same
+  pidfile checks `down` makes, and changes nothing. It exits 0 when the
+  daemon is up (printing its pid, smolvm's and the log file) and 3 when it is
+  not, as LSB init scripts do, so scripts can test it. A smolvm still running
+  without its daemon is reported, since `down` is what stops it. Like `down`
+  it needs no configuration, and it does not check that Amika can reach the
+  daemon (see `amika host get`).
 - `amika-hostd register-url <url>` records a listening host's public URL and
   exits. On a host whose address Amika assigns it refuses instead.
 

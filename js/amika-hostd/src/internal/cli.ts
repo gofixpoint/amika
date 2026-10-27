@@ -89,6 +89,8 @@ Commands:
                       The daemon dials out to Amika's gateway unless the config
                       sets transport = "listen"
   down                Stop the daemon and its smolvm, which stops every machine
+  status              Say whether the daemon is running; exits 0 if it is, 3 if
+                      it is not
   serve               Run the HTTP server in the foreground without registering
   register-url <url>  Set a listening host's internet-facing URL (e.g. an
                       ngrok or Cloudflare Tunnel URL) to complete its
@@ -183,8 +185,9 @@ export async function runCli(
       deps.out(USAGE);
       return 0;
     }
-    // Stopping needs only the pidfiles, not a valid configuration.
+    // Stopping and checking need only the pidfiles, not a valid configuration.
     if (parsed.command === "down") return await down(deps);
+    if (parsed.command === "status") return status(deps);
     if (parsed.command === "setup") {
       if (parsed.skill) {
         deps.out(setupSkill(skillContext(deps)));
@@ -337,6 +340,7 @@ type ParsedCommand =
     }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
+  | { help: false; command: "status" }
   | {
       help: false;
       command: "serve";
@@ -598,6 +602,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       expectArguments(rest, 0);
       return { help: false, command, fg: values.fg ?? false, flags };
     case "down":
+    case "status":
       rejectOptions(command, values, [
         ...SETUP_ONLY,
         "fg",
@@ -1448,13 +1453,7 @@ async function down(deps: CliDeps): Promise<number> {
   const isDaemon = deps.isRunning ?? isDaemonProcess;
   const isSmolvm = deps.isSmolvmRunning ?? isSmolvmProcess;
   const daemon = readRunningPid(paths.pidFile, isDaemon);
-  const unconfirmed = readRunningPid(paths.pidFile, isDaemonRunning);
-  if (daemon === undefined && unconfirmed !== undefined) {
-    // `up` refuses to start while this pidfile names a live process.
-    deps.err(
-      `amika-hostd: ${paths.pidFile} names pid ${unconfirmed}, which is not amika-hostd; remove it if it is stale`,
-    );
-  }
+  if (daemon === undefined) reportForeignPid(paths.pidFile, deps);
   if (daemon !== undefined) {
     deps.out(`Stopping amika-hostd (pid ${daemon})`);
     if (!(await stop(daemon, isDaemon, { timeoutMs: DOWN_TIMEOUT_MS }))) {
@@ -1487,6 +1486,48 @@ async function down(deps: CliDeps): Promise<number> {
       ? "amika-hostd is not running"
       : `Stopped ${stopped.join(" and ")}`,
   );
+  return 0;
+}
+
+/**
+ * Warn when the pidfile names a live process not confirmed as amika-hostd,
+ * since `up` refuses to start while it does.
+ */
+function reportForeignPid(pidFile: string, deps: CliDeps): void {
+  const pid = readRunningPid(pidFile, isDaemonRunning);
+  if (pid === undefined) return;
+  deps.err(
+    `amika-hostd: ${pidFile} names pid ${pid}, which is not amika-hostd; remove it if it is stale`,
+  );
+}
+
+/** Exit code of `status` when the daemon is down, as LSB init scripts use. */
+const NOT_RUNNING_EXIT = 3;
+
+/**
+ * Say whether the daemon is up, by the same pidfile checks `down` makes, and
+ * exit 0 if it is. A smolvm left without its daemon is mentioned, since
+ * `down` is what stops it.
+ */
+function status(deps: CliDeps): number {
+  const paths = daemonPaths(deps.env);
+  const isDaemon = deps.isRunning ?? isDaemonProcess;
+  const isSmolvm = deps.isSmolvmRunning ?? isSmolvmProcess;
+  const daemon = readRunningPid(paths.pidFile, isDaemon);
+  const smolvm = readRunningPid(paths.smolvmPidFile, isSmolvm);
+  if (daemon === undefined) {
+    reportForeignPid(paths.pidFile, deps);
+    deps.out("amika-hostd is not running");
+    if (smolvm !== undefined) {
+      deps.out(
+        `smolvm (pid ${smolvm}) is still running without it; \`amika-hostd down\` stops it`,
+      );
+    }
+    return NOT_RUNNING_EXIT;
+  }
+  deps.out(`amika-hostd is running (pid ${daemon})`);
+  if (smolvm !== undefined) deps.out(`smolvm is running (pid ${smolvm})`);
+  deps.out(`Log: ${paths.logFile}`);
   return 0;
 }
 
