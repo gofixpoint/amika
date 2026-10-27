@@ -65,6 +65,7 @@ import {
   type ConfiguredImage,
   type PrepullOptions,
 } from "./prepull.js";
+import { versionText } from "./build-info.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
 import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
 import { setupSkill, type SkillContext } from "./setup-skill.js";
@@ -96,6 +97,7 @@ Commands:
                       ngrok or Cloudflare Tunnel URL) to complete its
                       registration. A host whose address Amika assigns takes
                       none
+  version             Print version information
 
 Options:
   --non-interactive
@@ -183,6 +185,10 @@ export async function runCli(
     const parsed = parseCommand(args);
     if (parsed.help) {
       deps.out(USAGE);
+      return 0;
+    }
+    if (parsed.command === "version") {
+      deps.out(versionText());
       return 0;
     }
     // Stopping and checking need only the pidfiles, not a valid configuration.
@@ -341,6 +347,7 @@ type ParsedCommand =
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
   | { help: false; command: "status" }
+  | { help: false; command: "version" }
   | {
       help: false;
       command: "serve";
@@ -603,6 +610,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       return { help: false, command, fg: values.fg ?? false, flags };
     case "down":
     case "status":
+    case "version":
       rejectOptions(command, values, [
         ...SETUP_ONLY,
         "fg",

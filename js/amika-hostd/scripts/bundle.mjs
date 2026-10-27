@@ -20,6 +20,10 @@
  *   outfile defaults to dist/bundle/amika-hostd.mjs, entry to src/index.ts.
  *   A second entry point is for tests that bundle one part of the daemon;
  *   the release always bundles the default one.
+ *
+ * AMIKA_HOSTD_VERSION, AMIKA_HOSTD_COMMIT and AMIKA_HOSTD_BUILD_DATE, when
+ * set, are what `amika-hostd version` prints (see src/internal/build-info.ts);
+ * scripts/package-release.sh sets them. Unset, the bundle reports a dev build.
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +47,13 @@ await build({
   // The minimum Node.js version install-amika-hostd.sh accepts (NODE_MIN_MAJOR).
   target: "node22",
   external: ["smolmachines"],
+  define: {
+    __AMIKA_HOSTD_BUILD__: JSON.stringify({
+      version: process.env.AMIKA_HOSTD_VERSION ?? "",
+      commit: process.env.AMIKA_HOSTD_COMMIT ?? "",
+      date: process.env.AMIKA_HOSTD_BUILD_DATE ?? "",
+    }),
+  },
   banner: {
     js: [
       'import { createRequire as __createRequire } from "node:module";',

@@ -52,7 +52,11 @@ esac
 
 rm -rf "$staging_dir"
 mkdir -p "$staging_dir/node_modules/smolmachines"
-node "${package_dir}/scripts/bundle.mjs" "${staging_dir}/amika-hostd.mjs"
+# What `amika-hostd version` prints, in the form the Go CLIs' releases use.
+AMIKA_HOSTD_VERSION="v${version}" \
+  AMIKA_HOSTD_COMMIT="$(git -C "$package_dir" rev-parse HEAD 2>/dev/null || echo unknown)" \
+  AMIKA_HOSTD_BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+  node "${package_dir}/scripts/bundle.mjs" "${staging_dir}/amika-hostd.mjs"
 cp "${package_dir}/config.example.toml" "${staging_dir}/"
 
 # `npm pack` fetches a package's registry tarball and verifies its integrity.

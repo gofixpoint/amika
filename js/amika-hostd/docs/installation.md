@@ -84,7 +84,9 @@ TypeScript source resolved bundler-style, so hostd typechecks with
 <version> [out-dir]` wraps the bundle, the example config, the `smolmachines`
 package at the exact version `package.json` pins, and `engines.sha256` (each
 platform's engine package, fetched with `npm pack`) in one tarball for every
-platform, and writes `checksums.txt`. The Release workflow
+platform, and writes `checksums.txt`. It stamps the bundle with
+`v<version>`, the checkout's commit and the build time, which
+`amika-hostd version` prints. The Release workflow
 runs it for an `amika-hostd@v*` tag. To test the installer against a local
 build, point `AMIKA_RELEASE_URL` at that directory, with a temporary `HOME`
 and `AMIKA_INSTALL_DIR`:

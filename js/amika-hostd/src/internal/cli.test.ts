@@ -503,6 +503,7 @@ describe("runCli", () => {
     [["up", "--smolvm"], "--smolvm does not apply to `up`"],
     [["up", "extra"], "unexpected argument: extra"],
     [["serve", "--fg"], "--fg does not apply to `serve`"],
+    [["version", "extra"], "unexpected argument: extra"],
     [["register-url"], "missing <url>"],
     [["register-url", "a", "b"], "unexpected argument: b"],
     [["register-url", "ftp://x"], "not an http(s) URL: ftp://x"],
@@ -530,6 +531,12 @@ describe("runCli", () => {
     const { deps, out } = harness({});
     expect(await runCli(["--help"], deps)).toBe(0);
     expect(out).toEqual([USAGE]);
+  });
+
+  it("prints a dev build's version without requiring configuration", async () => {
+    const { deps, out } = harness({});
+    expect(await runCli(["version"], deps)).toBe(0);
+    expect(out).toEqual(["version: dev\ncommit: unknown\ndate: unknown"]);
   });
 });
 

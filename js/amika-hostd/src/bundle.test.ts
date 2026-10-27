@@ -30,6 +30,32 @@ describe("release bundle", () => {
     expect(output).toContain("Usage: amika-hostd <command>");
   }, 30_000);
 
+  it("prints the build metadata it was bundled with", () => {
+    const bundle = path.join(workDir, "versioned.mjs");
+    execFileSync(
+      process.execPath,
+      [path.join(packageDir, "scripts/bundle.mjs"), bundle],
+      {
+        cwd: packageDir,
+        env: {
+          ...process.env,
+          AMIKA_HOSTD_VERSION: "v1.2.3-rc.1",
+          AMIKA_HOSTD_COMMIT: "abcdef123456",
+          AMIKA_HOSTD_BUILD_DATE: "2026-03-17T12:00:00Z",
+        },
+      },
+    );
+
+    const output = execFileSync(process.execPath, [bundle, "version"], {
+      cwd: workDir,
+      env: { PATH: process.env.PATH },
+      encoding: "utf8",
+    });
+    expect(output).toBe(
+      "version: v1.2.3-rc.1\ncommit: abcdef123456\ndate: 2026-03-17T12:00:00Z\n",
+    );
+  }, 30_000);
+
   it("inlines the tunnel's dependencies, CommonJS ones included", () => {
     // `ws` is CommonJS and calls `require("events")` as it loads. esbuild
     // rewrites that to a helper that throws in ESM output unless a real

@@ -41,6 +41,12 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   daemon (see `amika host get`).
 - `amika-hostd register-url <url>` records a listening host's public URL and
   exits. On a host whose address Amika assigns it refuses instead.
+- `amika-hostd version` prints the build's version,
+  git commit and build date in the format `amika version` uses, and needs no
+  configuration. `scripts/bundle.mjs` bakes them in from
+  `AMIKA_HOSTD_VERSION`, `AMIKA_HOSTD_COMMIT` and `AMIKA_HOSTD_BUILD_DATE`
+  (`src/internal/build-info.ts`), which `scripts/package-release.sh` sets; a
+  build without them, or a run from source, reports `dev`.
 
 ## Registration
 
