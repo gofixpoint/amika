@@ -16,14 +16,14 @@ import (
 
 var sandboxBindingsCmd = &cobra.Command{
 	Use:    "bindings",
-	Short:  "Manage remote sandbox bindings",
+	Short:  "Manage remote rig bindings",
 	Hidden: true,
 }
 
 var sandboxBindingsListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List sandbox bindings",
+	Short:   "List rig bindings",
 	Args:    cobra.NoArgs,
 	RunE:    runSandboxBindingsList,
 }
@@ -31,7 +31,7 @@ var sandboxBindingsListCmd = &cobra.Command{
 var sandboxBindingsDeleteCmd = &cobra.Command{
 	Use:     "delete <binding-id>",
 	Aliases: []string{"rm", "remove"},
-	Short:   "Delete a sandbox binding",
+	Short:   "Delete a rig binding",
 	Args:    cobra.RangeArgs(1, 2),
 	RunE:    runSandboxBindingsDelete,
 }

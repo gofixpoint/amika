@@ -198,6 +198,25 @@ func TestServiceListCommand_SelfRig(t *testing.T) {
 	}
 }
 
+// With -o json, each row names its rig under "rig" and, for existing
+// scripts, under the original "sandbox" key too.
+func TestServiceListCommand_JSONNamesRig(t *testing.T) {
+	resetServiceFlags(t)
+	serveRigs(t, apiclient.RemoteSandbox{ID: "id-keep", Name: "keep"})
+
+	out, err := runRootCommandOutput(t, "service", "list", "-o", "json")
+	if err != nil {
+		t.Fatalf("service list failed: %v", err)
+	}
+	var got []map[string]string
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(got) != 1 || got[0]["rig"] != "keep" || got[0]["sandbox"] != "keep" {
+		t.Fatalf("want one row with rig and sandbox both %q; got:\n%s", "keep", out)
+	}
+}
+
 // --rig-name is the hidden predecessor of --rig name=<name>; giving both is
 // refused rather than picking one.
 func TestServiceListCommand_RigAndRigNameConflict(t *testing.T) {

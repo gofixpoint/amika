@@ -19,9 +19,11 @@ import (
 // serviceListItem is the JSON representation of one `service list` row. Ports
 // and URL are display strings (comma/space-joined) matching the text columns
 // rather than structured arrays, since a service row aggregates several bindings
-// into a single cell.
+// into a single cell. Rig and Sandbox carry the same name; "sandbox" is the
+// original key, kept so existing scripts keep working.
 type serviceListItem struct {
 	Service string `json:"service"`
+	Rig     string `json:"rig"`
 	Sandbox string `json:"sandbox"`
 	Ports   string `json:"ports"`
 	URL     string `json:"url"`
@@ -30,8 +32,8 @@ type serviceListItem struct {
 var serviceCmd = &cobra.Command{
 	Use:     "service",
 	Aliases: []string{"services"},
-	Short:   "Manage sandbox services",
-	Long:    `View and manage declared services and their port bindings across sandboxes.`,
+	Short:   "Manage rig services",
+	Long:    `View and manage declared services and their port bindings across rigs.`,
 }
 
 // dnsLabelRe matches a single RFC 1123 DNS label (a sandbox service name):
@@ -51,7 +53,7 @@ func validateServiceName(name string) error {
 
 var serviceCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a service on a running sandbox",
+	Short: "Create a service on a running rig",
 	Args:  cobra.NoArgs,
 	RunE:  runServiceCreate,
 }
@@ -59,7 +61,7 @@ var serviceCreateCmd = &cobra.Command{
 var serviceDeleteCmd = &cobra.Command{
 	Use:     "delete",
 	Aliases: []string{"rm", "remove"},
-	Short:   "Delete a service from a sandbox",
+	Short:   "Delete a service from a rig",
 	Args:    cobra.NoArgs,
 	RunE:    runServiceDelete,
 }
@@ -221,7 +223,7 @@ type serviceRow struct {
 var serviceListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List services across sandboxes",
+	Short:   "List services across rigs",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		filter, err := serviceListRigFilter(cmd)
@@ -257,6 +259,7 @@ var serviceListCmd = &cobra.Command{
 			for _, r := range rows {
 				items = append(items, serviceListItem{
 					Service: r.service,
+					Rig:     r.sandboxName,
 					Sandbox: r.sandboxName,
 					Ports:   r.ports,
 					URL:     r.url,
