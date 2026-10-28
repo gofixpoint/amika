@@ -52,7 +52,9 @@ function fakeRuntime(machine: MachineInfo = MACHINE) {
     writeFile: vi.fn(
       async (_name: string, _path: string, _data: Uint8Array) => {},
     ),
-    checkServices: vi.fn(async (_name: string, _services: ServicePort[]) => {}),
+    publishServices: vi.fn(
+      async (_name: string, _services: ServicePort[]) => {},
+    ),
     hostPort: vi.fn(
       async (_name: string, _guestPort: number): Promise<number | null> => null,
     ),
@@ -723,14 +725,14 @@ describe("replacing a machine's services", () => {
     return { put, registry, runtime };
   }
 
-  it("renames, adds and removes names on published ports", async () => {
+  it("renames, adds and removes names, publishing their ports", async () => {
     const { put, registry, runtime } = replacing();
     const response = await put([
       { name: "site", port: 3000 },
       { name: "site-admin", port: 3000 },
     ]);
     expect(response.status).toBe(204);
-    expect(runtime.checkServices).toHaveBeenCalledWith("demo", [
+    expect(runtime.publishServices).toHaveBeenCalledWith("demo", [
       { name: "site", port: 3000 },
       { name: "site-admin", port: 3000 },
     ]);
@@ -740,13 +742,16 @@ describe("replacing a machine's services", () => {
     expect(registry.port("demo", "amikad")).toBeUndefined();
   });
 
-  it("refuses a port the machine did not publish, keeping the old names", async () => {
+  it("refuses a port the runtime cannot publish, keeping the old names", async () => {
     const { put, registry, runtime } = replacing();
-    const message = "machine demo does not publish 4000";
-    runtime.checkServices.mockRejectedValueOnce(new RuntimeError(409, message));
+    const message =
+      "smolvm on this host cannot publish ports after create, so machine demo serves only the ports it was created with; update smolvm";
+    runtime.publishServices.mockRejectedValueOnce(
+      new RuntimeError(409, message),
+    );
     const response = await put([{ name: "api", port: 4000 }]);
     expect(response.status).toBe(409);
-    // The refusal's message is passed on: it names ports, nothing secret.
+    // The refusal's message is passed on: it names nothing secret.
     expect(await response.json()).toEqual({ error: message });
     expect(registry.port("demo", "web")).toBe(3000);
     expect(registry.port("demo", "api")).toBeUndefined();
@@ -754,7 +759,9 @@ describe("replacing a machine's services", () => {
 
   it("passes on the runtime's 404 for an unknown machine", async () => {
     const { put, registry, runtime } = replacing();
-    runtime.checkServices.mockRejectedValueOnce(new RuntimeError(404, "nope"));
+    runtime.publishServices.mockRejectedValueOnce(
+      new RuntimeError(404, "nope"),
+    );
     const response = await put([{ name: "site", port: 3000 }]);
     expect(response.status).toBe(404);
     // Only a 409's message is passed on.

@@ -4,8 +4,9 @@
  * (`./smolvm-serve.ts`).
  *
  * Create goes through the provider's create operation, which takes a
- * request's sizes as given. Delete and service ports go through the
- * provider's resource surface. Machine info, start and stop, exec and file
+ * request's sizes as given, and publishing a port later through its publish
+ * operation. Delete and service ports go through the provider's resource
+ * surface. Machine info, start and stop, exec and file
  * reads and writes go through the provider's exported smolvm client instead,
  * so they behave exactly as smolvm's own API: the resource surface reports no
  * published ports, answers a start or stop with nothing, takes exec as a
@@ -111,8 +112,11 @@ export interface MachineRuntime {
   exec(name: string, request: ExecRequest): Promise<ExecResult>;
   readFile(name: string, path: string): Promise<FileContents>;
   writeFile(name: string, path: string, data: Uint8Array): Promise<void>;
-  /** Refuse (409) services on ports the machine did not publish at create. */
-  checkServices(name: string, services: ServicePort[]): Promise<void>;
+  /**
+   * Publish each service's guest port the machine does not publish yet,
+   * running or not; 409 when this host's smolvm cannot publish one.
+   */
+  publishServices(name: string, services: ServicePort[]): Promise<void>;
   /** The host port a running machine publishes `guestPort` on, or null. */
   hostPort(name: string, guestPort: number): Promise<number | null>;
 }
@@ -258,6 +262,20 @@ export function providerRuntime({
   };
   const describe = async (name: string): Promise<MachineInfo> =>
     info(await call(() => client.json(machinePath(name), smolvmMachine)));
+  // smolvm takes a machine's whole port list, so two publishes at once would
+  // each drop the port the other added.
+  const publishing = new Map<string, Promise<void>>();
+  const oneAtATime = (name: string, run: () => Promise<void>) => {
+    const next = (publishing.get(name) ?? Promise.resolve())
+      .catch(() => {})
+      .then(run);
+    publishing.set(name, next);
+    const forget = () => {
+      if (publishing.get(name) === next) publishing.delete(name);
+    };
+    next.then(forget, forget);
+    return next;
+  };
 
   return {
     list: async () =>
@@ -353,33 +371,25 @@ export function providerRuntime({
         client.discard(filePath(name, path), "PUT", Buffer.from(data)),
       );
     },
-    checkServices: async (name, services) => {
-      // hostd routes by name, so replacing the names never reconciles the
-      // provider's routes (which refuses to drop a port smolvm cannot
-      // unpublish): a dropped name is simply no longer routed, and its port
-      // stays published on loopback, unreachable through hostd. Only a port
-      // the machine did not publish is refused; the provider reports a host
-      // port just for published ones.
-      const refreshed = await call(async () => {
-        await describe(name);
-        return sandboxes
-          .get(name)
-          .services?.refreshAll(services.map(sandboxService));
-      });
-      const missing = [
-        ...new Set(
-          (refreshed?.services ?? [])
-            .filter((service) => !service.hostPort)
-            .map((service) => service.containerPort),
-        ),
-      ];
-      if (missing.length) {
-        throw new RuntimeError(
-          409,
-          `amika-hostd publishes service ports only at create; machine ${name} does not publish ${missing.join(", ")}`,
-        );
-      }
-    },
+    // hostd routes by name, so a dropped name is simply no longer routed:
+    // its port stays published on loopback, unreachable through hostd, and
+    // only ports the machine does not publish yet are added. Leaving them
+    // also keeps amikad's port published whatever a caller sends.
+    publishServices: (name, services) =>
+      oneAtATime(name, async () => {
+        const { ports } = await describe(name);
+        const guests = [
+          ...ports.map((p) => p.guest),
+          ...services.map((s) => s.port),
+        ];
+        await call(async () => {
+          try {
+            await creators.networked.publishPorts(name, guests);
+          } catch (error) {
+            throw cannotPublish(name, error) ?? error;
+          }
+        });
+      }),
     hostPort: async (name, guestPort) => {
       try {
         const sandbox = sandboxes.get(name);
@@ -420,6 +430,26 @@ function sandboxService({ name, port }: ServicePort) {
     url: "",
     protocol: "tcp" as const,
   };
+}
+
+/**
+ * smolvm's answer for a port list it has no route for, as the 409 the machine
+ * API answers; undefined for any other failure. Only smolvm versions that
+ * predate publishing a port after create answer `PUT .../ports` this way: the
+ * machine was just read, so a 404 here is the route, not the machine.
+ */
+function cannotPublish(name: string, error: unknown): RuntimeError | undefined {
+  if (
+    !(error instanceof SmolApiError) ||
+    error.method !== "PUT" ||
+    (error.status !== 404 && error.status !== 405)
+  ) {
+    return undefined;
+  }
+  return new RuntimeError(
+    409,
+    `smolvm on this host cannot publish ports after create, so machine ${name} serves only the ports it was created with; update smolvm`,
+  );
 }
 
 /**

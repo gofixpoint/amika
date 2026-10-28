@@ -1,8 +1,9 @@
 /**
  * Service URLs for amika-hostd machines.
  *
- * hostd publishes each service's guest port when it creates the machine and
- * routes to it by name, forwarding HTTP and WebSocket upgrades (see
+ * hostd publishes each service's guest port when it creates the machine, or
+ * when a later `syncRoutes` names a port it does not publish yet, and routes
+ * to it by name, forwarding HTTP and WebSocket upgrades (see
  * `js/amika-hostd/src/internal/services.ts`), on two routes:
  *
  * - `/v0beta1/rigs/<machine>/previews/<name>/...`, a preview: an address
@@ -73,8 +74,8 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
     /**
      * Replace hostd's name-to-port map with `desired`, so services added,
      * renamed or removed after create route (or stop routing) by name.
-     * smolvm publishes ports only at create, so hostd refuses a port it did
-     * not publish rather than record a dead URL.
+     * hostd publishes a port the rig does not publish yet first, and refuses
+     * (409) when its smolvm is too old to, rather than record a dead URL.
      */
     syncRoutes: async (id: string, desired: SandboxService[]) => {
       // As at create: hostd routes HTTP and TCP upgrades, never UDP.

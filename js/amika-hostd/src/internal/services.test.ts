@@ -32,7 +32,7 @@ function runtimeWith(hostPort: MachineRuntime["hostPort"]): MachineRuntime {
     exec: unexpected,
     readFile: unexpected,
     writeFile: unexpected,
-    checkServices: unexpected,
+    publishServices: unexpected,
     hostPort,
   };
 }

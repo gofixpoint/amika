@@ -169,6 +169,32 @@ export function smolOperations(
   /** The machine's published ports, guest to host. */
   const publishedPorts = async (id: string) =>
     (await client.json(machinePath(id), machineSchema)).ports ?? [];
+  /**
+   * Publish exactly `guestPorts` on a machine, running or not, keeping the
+   * host port of each one already published and picking a free loopback
+   * port for each new one. smolvm takes the whole list and unpublishes any
+   * port left out; a TCP change applies to a running machine at once.
+   */
+  const publishPorts = async (id: string, guestPorts: number[]) => {
+    const published = await publishedPorts(id);
+    const wanted = [...new Set(guestPorts)];
+    if (
+      wanted.length === published.length &&
+      wanted.every((guest) => published.some((p) => p.guest === guest))
+    ) {
+      return;
+    }
+    const ports = await Promise.all(
+      wanted.map(
+        async (guest) =>
+          published.find((p) => p.guest === guest) ?? {
+            host: await freeLoopbackPort(),
+            guest,
+          },
+      ),
+    );
+    await client.discard(`${machinePath(id)}/ports`, "PUT", { ports });
+  };
   const start = async (id: string, interval?: number | null) => {
     rejectTimer(interval, "autoStopInterval");
     await client.discard(`${machinePath(id)}/start`, "POST");
@@ -266,28 +292,15 @@ export function smolOperations(
     ): Promise<RefreshUrlsResult> => ({
       services: withHostPorts(services, await publishedPorts(id)),
     }),
-    /**
-     * smolvm publishes ports only at create and cannot unpublish one, so the
-     * routes already match the desired services exactly when their ports are
-     * the published ones; anything else is refused rather than reported done.
-     */
+    publishPorts,
+    /** Publish exactly the desired services' ports, unpublishing any other. */
     syncRoutes: async (id: string, desired: SandboxService[]) => {
       if (desired.some((service) => service.protocol !== "tcp"))
         throw new SandboxProviderUnsupportedError(provider, "udp services");
-      const published = new Set((await publishedPorts(id)).map((p) => p.guest));
-      const wanted = new Set(desired.map((s) => s.containerPort));
-      const missing = [...wanted].filter((p) => !published.has(p));
-      const dropped = [...published].filter((p) => !wanted.has(p));
-      if (missing.length) {
-        throw new SmolPortsError(
-          `smolvm publishes service ports only at create; machine ${id} does not publish ${missing.join(", ")}`,
-        );
-      }
-      if (dropped.length) {
-        throw new SmolPortsError(
-          `smolvm cannot unpublish ports; machine ${id} still publishes ${dropped.join(", ")}`,
-        );
-      }
+      await publishPorts(
+        id,
+        desired.map((service) => service.containerPort),
+      );
     },
     start,
     stop: (id: string) => client.discard(`${machinePath(id)}/stop`, "POST"),
@@ -325,14 +338,6 @@ export function smolOperations(
   };
 }
 
-/**
- * A route reconcile smolvm cannot carry out: it publishes ports only at
- * create and never unpublishes one.
- */
-export class SmolPortsError extends Error {
-  override name = "SmolPortsError";
-}
-
 /** Services with the host port and local URL each one's guest port maps to. */
 function withHostPorts(
   services: SandboxService[],
@@ -353,7 +358,7 @@ function withHostPorts(
 /**
  * A free port on the host's loopback interface to publish a guest port on.
  * It is released before smolvm binds it, so another process can take it
- * first, and the machine then fails to start.
+ * first, and the machine then fails to start or the publish fails.
  */
 function freeLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {

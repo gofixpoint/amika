@@ -97,11 +97,14 @@ exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
   or a checkpoint's, which refuses any others) or its defaults.
 - Host ports are picked and published by the provider. Service routes
   ask it for a running machine's host port (`services.refreshAll`), and
-  `PUT .../services` checks the same way that every port is one the machine
-  published at create, refusing (`409`) any other. It never reconciles the
-  provider's routes, which refuses to drop a port smolvm cannot unpublish:
-  hostd routes by name, so a dropped name is simply no longer routed, and its
-  port stays published on loopback, unreachable through hostd.
+  `PUT .../services` publishes any port the machine does not publish yet
+  (the provider's `publishPorts`, smolvm's `PUT .../ports`), running or
+  stopped. It only ever adds ports, and one machine's publishes run one at a
+  time, since smolvm takes the whole list and two at once would each drop
+  the other's new port. hostd routes by name, so a dropped name is simply no
+  longer routed, and its port stays published on loopback, unreachable
+  through hostd. A smolvm too old to publish after create answers the port
+  list `404` or `405`, which hostd answers `409`, naming the machine.
 - The provider treats deleting a missing machine as success; hostd answers
   `404` for one, as `smolvm serve` does.
 - Every request to smolvm refuses redirects (`redirect: "error"`), so exec
