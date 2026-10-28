@@ -486,6 +486,9 @@ class UpgradeStream implements TunnelStream {
           const size = await this.sendWindow.take(
             Math.min(MAX_DATA_BYTES, chunk.byteLength - offset),
           );
+          // The same bound on the tunnel's own buffer an ordinary response
+          // keeps: credit bounds each stream, this bounds them all.
+          if (this.carrier.congested()) await this.carrier.writable();
           if (this.done) return;
           this.carrier.send({
             type: "data",

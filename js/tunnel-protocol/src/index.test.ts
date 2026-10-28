@@ -4,6 +4,7 @@ import {
   decodeFrame,
   encodeFrame,
   MAX_DATA_BYTES,
+  MAX_MESSAGE_BYTES,
   ProtocolError,
   sendableCloseCode,
   type Frame,
@@ -117,6 +118,24 @@ describe("frames", () => {
       },
     };
     expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
+  });
+
+  it("refuses an oversized message at both ends", () => {
+    const big = new Uint8Array(MAX_MESSAGE_BYTES + 1);
+    expect(() =>
+      encodeFrame({ type: "message", streamId: 1, data: big }),
+    ).toThrow(RangeError);
+    // Text is measured in bytes, not characters.
+    expect(() =>
+      encodeFrame({
+        type: "message",
+        streamId: 1,
+        data: "é".repeat(MAX_MESSAGE_BYTES / 2 + 1),
+      }),
+    ).toThrow(RangeError);
+    const forged = new Uint8Array(5 + MAX_MESSAGE_BYTES + 1);
+    forged.set([8, 0, 0, 0, 1]);
+    expect(() => decodeFrame(forged)).toThrow(ProtocolError);
   });
 
   it("refuses an oversized DATA frame at both ends", () => {

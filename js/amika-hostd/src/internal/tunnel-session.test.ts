@@ -564,6 +564,28 @@ describe("the session", () => {
     expect(session.isEnded).toBe(false);
   });
 
+  it("ends when the relay reuses the id of a stream that has finished", async () => {
+    const { relay, session } = await attach();
+    const id = relay.open("/hello");
+    relay.send({ type: "end", streamId: id });
+    await relay.response(id);
+    await expect.poll(() => session.activeConnections).toBe(0);
+    relay.send({
+      type: "open",
+      streamId: id,
+      head: {
+        method: "GET",
+        target: "/hello",
+        headers: [["host", "web--rig.r.org.o.amika.test"]],
+        upgrade: false,
+      },
+    });
+    const ended = await new Promise<Error | undefined>((resolve) =>
+      session.onEnded(resolve),
+    );
+    expect(ended?.name).toBe("ProtocolError");
+  });
+
   it("ends on a text message that is not a pong", async () => {
     const { relay, session } = await attach();
     relay.ws.send("hello");

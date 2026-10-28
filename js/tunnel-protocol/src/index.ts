@@ -164,14 +164,23 @@ export function encodeFrame(frame: Frame): Uint8Array {
       new DataView(payload.buffer).setUint32(0, frame.credit);
       return withHeader(FRAME_TYPE.window, frame.streamId, payload);
     }
-    case "message":
-      return typeof frame.data === "string"
-        ? withHeader(
-            FRAME_TYPE.text,
-            frame.streamId,
-            encoder.encode(frame.data),
-          )
-        : withHeader(FRAME_TYPE.binary, frame.streamId, frame.data);
+    case "message": {
+      const payload =
+        typeof frame.data === "string"
+          ? encoder.encode(frame.data)
+          : frame.data;
+      // A larger frame would exceed the far end's `maxPayload`, and the
+      // WebSocket library closes the whole tunnel on that. A sender checks
+      // the size first and closes only its stream (1009).
+      if (payload.byteLength > MAX_MESSAGE_BYTES) {
+        throw new RangeError(`message over ${MAX_MESSAGE_BYTES} bytes`);
+      }
+      return withHeader(
+        typeof frame.data === "string" ? FRAME_TYPE.text : FRAME_TYPE.binary,
+        frame.streamId,
+        payload,
+      );
+    }
     case "close": {
       const reason = encoder.encode(closeReason(frame.reason));
       const payload = new Uint8Array(2 + reason.byteLength);
@@ -229,9 +238,15 @@ export function decodeFrame(bytes: Uint8Array): Frame {
       return { type: "window", streamId, credit };
     }
     case FRAME_TYPE.text:
-      return { type: "message", streamId, data: text(payload) };
     case FRAME_TYPE.binary:
-      return { type: "message", streamId, data: payload };
+      if (payload.byteLength > MAX_MESSAGE_BYTES) {
+        throw new ProtocolError(`message over ${MAX_MESSAGE_BYTES} bytes`);
+      }
+      return {
+        type: "message",
+        streamId,
+        data: type === FRAME_TYPE.text ? text(payload) : payload,
+      };
     case FRAME_TYPE.close: {
       if (payload.byteLength < 2) {
         throw new ProtocolError("CLOSE payload shorter than its code");

@@ -50,6 +50,13 @@ const WRITABLE_POLL_MS = 20;
 
 export class TunnelSession implements StreamCarrier {
   private readonly streams = new Map<number, TunnelStream>();
+  /**
+   * The highest stream id the relay has opened. Ids only rise on one
+   * connection, so this is the whole record of which have been used: a
+   * finished stream leaves `streams`, and a late frame for it must not
+   * reach a new stream that reused its id.
+   */
+  private lastStreamId = 0;
   private readonly closeListeners = new Set<(error?: Error) => void>();
   /** The id of the stream being opened, so an early finish is not lost. */
   private opening?: { streamId: number; finished: boolean };
@@ -251,12 +258,18 @@ export class TunnelSession implements StreamCarrier {
     streamId: number,
     head: Parameters<typeof openStream>[1],
   ): void {
-    if (this.streams.has(streamId)) {
-      // Ids are never reused on a connection, so this peer is confused
-      // about which stream is which, and nothing it sends can be trusted.
-      this.abort(new ProtocolError(`stream ${streamId} opened twice`));
+    if (streamId <= this.lastStreamId) {
+      // Ids rise and are never reused on a connection, so this peer is
+      // confused about which stream is which, and nothing it sends can be
+      // trusted.
+      this.abort(
+        new ProtocolError(
+          `stream ${streamId} opened after stream ${this.lastStreamId}`,
+        ),
+      );
       return;
     }
+    this.lastStreamId = streamId;
     // A stream that arrives after shutdown started is reset rather than
     // served. The relay turns a reset into a `502`, which is truthful: this
     // host is going away and will not finish the request.
