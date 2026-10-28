@@ -59,6 +59,12 @@ export const MAX_MESSAGE_BYTES = 1024 * 1024;
 export const MAX_FRAME_BYTES = MAX_MESSAGE_BYTES + 64;
 /** The longest close reason a WebSocket close frame can carry. */
 export const MAX_CLOSE_REASON_BYTES = 123;
+/**
+ * The longest request target, in characters. The relay's URL parser
+ * percent-encodes, so a public URL under the edge's own limit can still
+ * come out longer than this.
+ */
+export const MAX_TARGET_LENGTH = 16 * 1024;
 /** How many streams may be open to one host at once. */
 export const MAX_CONCURRENT_STREAMS = 256;
 
@@ -102,10 +108,7 @@ const headerPairs = z.array(
 const requestHeadSchema = z.object({
   method: z.string().regex(TOKEN),
   /** Origin-form. The relay has already refused anything else. */
-  target: z
-    .string()
-    .startsWith("/")
-    .max(16 * 1024),
+  target: z.string().startsWith("/").max(MAX_TARGET_LENGTH),
   headers: headerPairs,
   /** A WebSocket upgrade. The host answers `101` and the stream relays messages. */
   upgrade: z.boolean(),
@@ -138,6 +141,24 @@ export class ProtocolError extends Error {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/**
+ * A frame whose header reads fine but whose head JSON breaks the schema: a
+ * target too long, a header value Node would refuse. The stream it names is
+ * known, so a receiver can refuse that stream alone rather than the whole
+ * connection. A head that is not JSON at all stays a plain `ProtocolError`.
+ */
+export class MalformedHeadError extends ProtocolError {
+  override name = "MalformedHeadError";
+
+  constructor(
+    readonly frameType: "open" | "response",
+    readonly streamId: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 /** One frame as the bytes of one binary WebSocket message. */
 export function encodeFrame(frame: Frame): Uint8Array {
@@ -212,13 +233,13 @@ export function decodeFrame(bytes: Uint8Array): Frame {
       return {
         type: "open",
         streamId,
-        head: parse(requestHeadSchema, payload),
+        head: parse(requestHeadSchema, payload, "open", streamId),
       };
     case FRAME_TYPE.response:
       return {
         type: "response",
         streamId,
-        head: parse(responseHeadSchema, payload),
+        head: parse(responseHeadSchema, payload, "response", streamId),
       };
     case FRAME_TYPE.data:
       if (payload.byteLength > MAX_DATA_BYTES) {
@@ -287,6 +308,16 @@ export function sendableCloseCode(code: number): number {
 }
 
 /**
+ * Whether a request head can cross the tunnel. A head built from a public
+ * request can hold what this protocol does not, such as a percent-encoded
+ * target past `MAX_TARGET_LENGTH`. The relay checks first and answers that
+ * caller itself, rather than send an `OPEN` the host must refuse.
+ */
+export function isSendableRequestHead(head: RequestHead): boolean {
+  return requestHeadSchema.safeParse(head).success;
+}
+
+/**
  * Whether a response head can cross the tunnel. A head read from a service
  * can hold what Node's HTTP parser accepts and this protocol does not, such
  * as a status of 600 or a long reason phrase. `decodeFrame` refuses such a
@@ -328,7 +359,12 @@ function json(value: unknown): Uint8Array {
   return encoder.encode(JSON.stringify(value));
 }
 
-function parse<T>(schema: z.ZodType<T>, payload: Uint8Array): T {
+function parse<T>(
+  schema: z.ZodType<T>,
+  payload: Uint8Array,
+  frameType: "open" | "response",
+  streamId: number,
+): T {
   let value: unknown;
   try {
     value = JSON.parse(text(payload));
@@ -337,7 +373,11 @@ function parse<T>(schema: z.ZodType<T>, payload: Uint8Array): T {
   }
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new ProtocolError(`head is malformed: ${result.error.message}`);
+    throw new MalformedHeadError(
+      frameType,
+      streamId,
+      `head is malformed: ${result.error.message}`,
+    );
   }
   return result.data;
 }

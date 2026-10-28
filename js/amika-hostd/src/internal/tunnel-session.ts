@@ -16,6 +16,7 @@ import type { RawData, WebSocket } from "ws";
 import {
   decodeFrame,
   encodeFrame,
+  MalformedHeadError,
   MAX_CONCURRENT_STREAMS,
   PING,
   PONG,
@@ -213,6 +214,21 @@ export class TunnelSession implements StreamCarrier {
     try {
       frame = decodeFrame(bytes);
     } catch (error) {
+      // An `OPEN` whose head breaks the schema still names its stream, and
+      // the relay builds heads from public requests. Refusing that one
+      // stream keeps one caller's odd URL from cutting every other stream
+      // on this host. Anything less readable means a peer that is not
+      // speaking this protocol.
+      if (error instanceof MalformedHeadError && error.frameType === "open") {
+        if (this.claimStreamId(error.streamId)) {
+          this.send({
+            type: "reset",
+            streamId: error.streamId,
+            reason: error.message,
+          });
+        }
+        return;
+      }
       this.abort(
         error instanceof Error ? error : new ProtocolError("bad frame"),
       );
@@ -258,18 +274,7 @@ export class TunnelSession implements StreamCarrier {
     streamId: number,
     head: Parameters<typeof openStream>[1],
   ): void {
-    if (streamId <= this.lastStreamId) {
-      // Ids rise and are never reused on a connection, so this peer is
-      // confused about which stream is which, and nothing it sends can be
-      // trusted.
-      this.abort(
-        new ProtocolError(
-          `stream ${streamId} opened after stream ${this.lastStreamId}`,
-        ),
-      );
-      return;
-    }
-    this.lastStreamId = streamId;
+    if (!this.claimStreamId(streamId)) return;
     // A stream that arrives after shutdown started is reset rather than
     // served. The relay turns a reset into a `502`, which is truthful: this
     // host is going away and will not finish the request.
@@ -305,6 +310,26 @@ export class TunnelSession implements StreamCarrier {
     // one, and report that before it was ever recorded here.
     if (!this.opening.finished) this.streams.set(streamId, stream);
     this.opening = undefined;
+  }
+
+  /**
+   * Record the id of an `OPEN`, served or refused, or end the session for
+   * one that does not rise. Returns whether the session carries on.
+   */
+  private claimStreamId(streamId: number): boolean {
+    if (streamId <= this.lastStreamId) {
+      // Ids rise and are never reused on a connection, so this peer is
+      // confused about which stream is which, and nothing it sends can be
+      // trusted.
+      this.abort(
+        new ProtocolError(
+          `stream ${streamId} opened after stream ${this.lastStreamId}`,
+        ),
+      );
+      return false;
+    }
+    this.lastStreamId = streamId;
+    return true;
   }
 
   // --- Liveness -------------------------------------------------------

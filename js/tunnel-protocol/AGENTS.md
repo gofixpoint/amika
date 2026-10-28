@@ -15,6 +15,10 @@ exchange over a host's tunnel WebSocket.
   the first frame that crosses the difference.
 - **It runs in a Cloudflare Worker as well as Node.** Use `Uint8Array`,
   `DataView` and `TextEncoder`. No `Buffer` and no `node:` import.
+- **A sender checks a head before it sends it.** `isSendableRequestHead`
+  and `isSendableResponseHead` apply exactly the schema `decodeFrame`
+  applies. A head that breaks it is decoded as `MalformedHeadError`, which
+  names the stream, so a receiver can refuse that stream alone.
 - **A change to the wire format is a new subprotocol.** Bump
   `TUNNEL_SUBPROTOCOL` and the path, and make the gateway refuse the old one
   with `426`. Hosts and the relay ship separately, so an incompatible change

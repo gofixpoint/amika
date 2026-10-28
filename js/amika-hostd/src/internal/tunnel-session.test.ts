@@ -634,6 +634,46 @@ describe("the session", () => {
     expect(ended?.name).toBe("ProtocolError");
   });
 
+  it("resets only the stream whose OPEN head breaks the schema", async () => {
+    const { relay, session } = await attach();
+    // What a percent-encoded public URL can grow into.
+    const bad = relay.open(`/${"%2F".repeat(6_000)}`);
+    const frames = await relay.until(bad, (list) =>
+      list.some((f) => f.type === "reset"),
+    );
+    const reset = frames.find((f) => f.type === "reset");
+    expect(reset?.type === "reset" && reset.reason).toContain("malformed");
+    expect(session.isEnded).toBe(false);
+    // The rejected OPEN still used its id: the next one is served, and a
+    // reuse of the rejected id ends the session.
+    const next = relay.open("/hello");
+    relay.send({ type: "end", streamId: next });
+    expect((await relay.response(next)).status).toBe(200);
+    relay.send({
+      type: "open",
+      streamId: bad,
+      head: {
+        method: "GET",
+        target: "/hello",
+        headers: [["host", "web--rig.r.org.o.amika.test"]],
+        upgrade: false,
+      },
+    });
+    const ended = await new Promise<Error | undefined>((resolve) =>
+      session.onEnded(resolve),
+    );
+    expect(ended?.name).toBe("ProtocolError");
+  });
+
+  it("ends on an OPEN whose head is not JSON", async () => {
+    const { relay, session } = await attach();
+    relay.ws.send(new Uint8Array([1, 0, 0, 0, 1, 0x7b]));
+    const ended = await new Promise<Error | undefined>((resolve) =>
+      session.onEnded(resolve),
+    );
+    expect(ended?.name).toBe("ProtocolError");
+  });
+
   it("ends on a text message that is not a pong", async () => {
     const { relay, session } = await attach();
     relay.ws.send("hello");

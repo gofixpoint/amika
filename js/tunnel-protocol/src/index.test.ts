@@ -3,9 +3,12 @@ import {
   closeReason,
   decodeFrame,
   encodeFrame,
+  isSendableRequestHead,
   isSendableResponseHead,
+  MalformedHeadError,
   MAX_DATA_BYTES,
   MAX_MESSAGE_BYTES,
+  MAX_TARGET_LENGTH,
   ProtocolError,
   sendableCloseCode,
   type Frame,
@@ -144,6 +147,73 @@ describe("frames", () => {
     expect(() =>
       encodeFrame({ type: "data", streamId: 1, bytes: big }),
     ).toThrow(RangeError);
+  });
+});
+
+describe("request heads", () => {
+  const head = {
+    method: "GET",
+    target: "/",
+    headers: [["host", "a.example"]] as [string, string][],
+    upgrade: false,
+  };
+
+  it.each([
+    [
+      "a target at the limit",
+      { target: `/${"a".repeat(MAX_TARGET_LENGTH - 1)}` },
+      true,
+    ],
+    [
+      "a target past the limit",
+      { target: `/${"a".repeat(MAX_TARGET_LENGTH)}` },
+      false,
+    ],
+    ["a target that is not a path", { target: "http://x/" }, false],
+    ["a method that is not a token", { method: "GE T" }, false],
+    ["a header name that is not a token", { headers: [["a b", "x"]] }, false],
+    [
+      "a header value with a control character",
+      { headers: [["x", "a\x01"]] },
+      false,
+    ],
+    ["a header value above Latin-1", { headers: [["x", "\u0100"]] }, false],
+  ])("judges %s exactly as decodeFrame does", (_name, change, sendable) => {
+    const candidate = { ...head, ...change } as typeof head;
+    expect(isSendableRequestHead(candidate)).toBe(sendable);
+    const decode = () =>
+      decodeFrame(encodeFrame({ type: "open", streamId: 7, head: candidate }));
+    if (sendable) expect(decode).not.toThrow();
+    else expect(decode).toThrow(MalformedHeadError);
+  });
+
+  it("names the stream of an OPEN whose head breaks the schema", () => {
+    const bytes = encodeFrame({
+      type: "open",
+      streamId: 42,
+      head: { ...head, target: `/${"a".repeat(MAX_TARGET_LENGTH)}` },
+    });
+    let caught: unknown;
+    try {
+      decodeFrame(bytes);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(MalformedHeadError);
+    expect(caught).toBeInstanceOf(ProtocolError);
+    expect(caught).toMatchObject({ frameType: "open", streamId: 42 });
+  });
+
+  it("keeps a head that is not JSON a plain ProtocolError", () => {
+    const bytes = new Uint8Array([1, 0, 0, 0, 1, 0x7b]);
+    let caught: unknown;
+    try {
+      decodeFrame(bytes);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ProtocolError);
+    expect(caught).not.toBeInstanceOf(MalformedHeadError);
   });
 });
 

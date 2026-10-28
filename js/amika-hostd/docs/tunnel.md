@@ -211,6 +211,15 @@ A change to the wire format is a new subprotocol and a new path, and the
 gateway answers the old ones `426`: hosts and the relay ship separately,
 and an incompatible change under the same name fails in silence.
 
+A head is checked against the protocol's schema before it is sent, with
+`isSendableRequestHead` at the relay and `isSendableResponseHead` here, so
+the sender refuses one caller rather than send a frame the far end must
+reject. A malformed frame ends the session, with one exception: an `OPEN`
+whose header reads but whose head breaks the schema (`MalformedHeadError`)
+is answered with a `RESET` for that stream alone. Its id still counts as
+used. The relay builds heads from public requests, so one odd URL must not
+be able to cut every stream on the host.
+
 `maxPayload` on the WebSocket is the only bound on an inbound message: `ws`
 assembles a whole message before the decoder sees a byte of it.
 `dialTunnel` sets it to `MAX_FRAME_BYTES`.
