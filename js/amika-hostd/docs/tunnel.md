@@ -6,31 +6,32 @@ solves that themselves: ngrok, a port forward, cloudflared, and then
 a second service to run, a second thing to pay for, and a URL that changes.
 
 Tunnel mode removes it. The daemon binds nothing and **dials out** to an
-Amika-run gateway over WSS. The gateway holds one yamux session per host and
-opens one stream for each public request it forwards. hostd serves each of
-those streams with the same Hono app, the same authentication and the same
-upgrade handler a listening daemon serves, so no route exists twice.
+Amika-run gateway over WSS. Each host's connection is held by its own relay
+(a Cloudflare Durable Object), which opens one stream for each public
+request it forwards. hostd serves each of those streams with the same Hono
+app, the same authentication and the same upgrade handler a listening daemon
+serves, so no route exists twice.
 
-This document covers the client half, which lives in this repo. The gateway
-is in amika-mono (`js/gateway`), and the design both ends implement is spec
-025, `specs/025-hostd-outbound-tunnel.md` there.
+This document covers the client half, which lives in this repo. The relay
+is in amika-mono (`js/gateway-cloudflare`). The wire
+format is `amika.tunnel.v2`, and its code is `@amika/tunnel-protocol`
+(`js/tunnel-protocol` in this repo), which both ends import.
 
 ## The pieces
 
 `src/internal/` is flat, so the tunnel is a set of files rather than a
 directory:
 
-| File                    | What it owns                                                |
-| ----------------------- | ----------------------------------------------------------- |
-| `tunnel-dial.ts`        | The WSS handshake, and what the gateway's answer means      |
-| `tunnel-byte-stream.ts` | The WebSocket, read by the multiplexer as ordered bytes     |
-| `tunnel-frame-guard.ts` | A length check on an inbound DATA frame, before the decoder |
-| `tunnel-attachment.ts`  | One live session: the yamux muxer, liveness, draining       |
-| `tunnel-socket.ts`      | One yamux stream, shaped like a socket for `node:http`      |
-| `tunnel-serving.ts`     | An `http.Server` with no listener, fed those sockets        |
-| `tunnel-backoff.ts`     | How long to wait before dialling again                      |
-| `tunnel-client.ts`      | The loop: dial, serve, decide what a disconnect meant       |
-| `tunnel-target.ts`      | Where to attach, and what to prove it with                  |
+| File                    | What it owns                                                   |
+| ----------------------- | -------------------------------------------------------------- |
+| `tunnel-dial.ts`        | The WSS handshake, and what the gateway's answer means         |
+| `tunnel-session.ts`     | One live session: frames, the stream table, liveness, drain    |
+| `tunnel-bridge.ts`      | One stream turned into a request to this daemon's own server   |
+| `tunnel-socket-pair.ts` | Two connected sockets with nothing under them, for `node:http` |
+| `tunnel-serving.ts`     | An `http.Server` with no listener, fed those sockets           |
+| `tunnel-backoff.ts`     | How long to wait before dialling again                         |
+| `tunnel-client.ts`      | The loop: dial, serve, decide what a disconnect meant          |
+| `tunnel-target.ts`      | Where to attach, and what to prove it with                     |
 
 ## Decisions
 
@@ -88,32 +89,31 @@ developer's own gateway has no certificate and nothing leaves the machine.
 The loopback test is anchored at both ends: `127.0.0.1.evil.example` is a
 name anyone can register.
 
-### A ping, not a WebSocket ping, and not the library's keep-alive
+### A text ping that the relay answers without waking
 
 The normal way a tunnel dies is a closed laptop lid. The socket stays in
 `ESTABLISHED`, the kernel accepts writes, and no WebSocket or TCP event
 reports anything. Only an unanswered round trip finds it.
 
-- A **WebSocket ping** is answered by the peer's `ws` library, below the
-  multiplexer and below the event loop that serves requests. A pong proves
-  bytes move and nothing else.
-- **`@libp2p/yamux`'s own keep-alive** sends pings and swallows the error
-  when one goes unanswered. Its source carries a `TODO: should abort here?`
-  where the abort would be. It cannot report a dead peer, which is the only
-  thing this daemon needs it for.
+So `TunnelSession` sends the text message `ping` every
+`KEEP_ALIVE_INTERVAL_MS` and ends the session when the text `pong` does not
+come back within `PING_TIMEOUT_MS`. The relay registers that pair with
+Cloudflare's `setWebSocketAutoResponse`, so its runtime answers without
+waking the relay: an idle host costs nothing, and the relay is not billed a
+message for it. The relay also reads when it last answered, which is how it
+tells a live host from one that went quiet without closing.
 
-So `TunnelAttachment` disables the library's keep-alive and runs its own:
-a yamux ping every `keepAliveIntervalMs`, with a `pingTimeoutMs` deadline,
-ending the attachment when one is not answered. A yamux ping is answered by
-the peer's multiplexer, so it proves the whole stack a request travels
-through.
+It is a text message, and not a WebSocket ping frame, for that reason: the
+runtime can answer a message pair and report on it, and a protocol ping
+reaches neither. `ping` and `pong` are the only text messages on a tunnel.
+Anything else in text ends the session as a peer that is not speaking the
+protocol.
 
 It pings on a fixed interval rather than only when the tunnel is idle.
-Inbound traffic proves the gateway can reach this host; it proves nothing
+Inbound traffic proves the relay can reach this host; it proves nothing
 about the other direction, and a response that cannot be written is the
-failure that matters. The cost of being wrong is one 12-byte frame per
-interval. The same interval doubles as the idle keep-alive an edge that
-closes quiet WebSockets needs.
+failure that matters. The same interval doubles as the idle keep-alive
+NATs and load balancers need.
 
 ### Backoff is full jitter with a floor
 
@@ -130,13 +130,13 @@ morning's first reconnect.
 
 ### Shutdown closes the WebSocket, and that is the point
 
-`TunnelAttachment.close()` stops accepting streams, lets the requests in
-flight finish up to `drainMs`, sends GO_AWAY, and then closes the WebSocket
-with 1001 "going away". The close is what releases the attachment at the
-gateway: its close handler gives up the route, so a daemon that has gone
-does not leave the gateway forwarding into a socket nobody reads. Dropping
-the connection instead loses every request sent before the gateway's own
-liveness check notices.
+`TunnelSession.close()` stops accepting streams (a late `OPEN` is reset,
+which the relay answers `502`), lets the requests in flight finish up to
+`drainMs`, and then closes the WebSocket with 1001 "going away". The close
+is what releases the attachment at the relay: a daemon that has gone does
+not leave the relay forwarding into a socket nobody reads. Dropping the
+connection instead loses every request sent before the relay presumes the
+host gone.
 
 A caller with upgraded connections -- SSH, the web terminal, a rig's service
 WebSocket -- destroys those first. They are long-lived by design, so waiting
@@ -147,41 +147,73 @@ Disconnecting is **not** shutdown. A dropped tunnel leaves the daemon and
 every rig on this host running while it reconnects, and it never falls back
 to opening a port.
 
-## What the gateway does
+### The relay sends heads, and Node parses HTTP at both ends
 
-The gateway in amika-mono does both things this client was written to use.
+The relay runs in a Worker, which has no HTTP client that can write into a
+custom stream and no parser this design wants to write. So it does not send
+HTTP bytes. It sends a request head (method, target, header pairs) and
+streams the body as `DATA`.
+
+hostd turns that back into HTTP with Node's own code. Each stream gets a
+socket pair (`tunnel-socket-pair.ts`): one end goes to the virtual server
+exactly as a listener's accepted socket would, and `http.request` writes
+the request into the other. The response is read back the same way and sent
+as a response head and `DATA`. Chunked bodies, `Connection` rules and early
+responses are Node's problem at both ends, and the daemon cannot tell a
+tunnelled request from a listened one.
+
+An upgrade uses a `ws` client on that end instead. A Worker cannot see the
+bytes after a `101`, only WebSocket messages, so the relay accepts the
+caller's WebSocket and this end opens its own against the upgrade handler.
+Messages keep their text or binary type, and close codes cross both ways. A
+refused upgrade is relayed as the plain response it is.
+
+### Credit, so the relay never buffers a download
+
+`DATA` moves under credit, per stream and per direction
+(`@amika/tunnel-protocol/window`). This end grants credit back only once
+Node has taken the bytes, and never sends a response body past what the
+relay granted. The relay cannot push back on the caller it is streaming to,
+so without credit a fast rig and a slow caller would buffer the download in
+the relay's memory.
+
+Relayed WebSocket messages carry no credit. Instead the bridge stops
+reading the upstream WebSocket while the tunnel's own send buffer is over
+4 MiB, which bounds this machine's side.
+
+## What the relay does
 
 **It authorizes before the `101`.** A refusal arrives as an HTTP status,
 not an aborted socket, so a daemon whose credential was revoked can tell
-its operator why it is offline instead of retrying for ever. The gateway
+its operator why it is offline instead of retrying for ever. The relay
 answers `401` for a host the control plane rejects and `503` when it could
 not ask. `tunnel-dial.ts` reads the status: 401, 403, 404, 410 and 426 stop
 the loop and produce an actionable message, and everything else is an
-outage to wait out. As a fallback, the client still counts consecutive
-sessions that connected, served nothing and died, and raises
-`suspect-credential` after five of them.
+outage to wait out. The gateway answers `426` to amika-hostd 0.5.x and
+earlier, which dial `/v1/host-tunnel` with `amika.tunnel.v1`. As a
+fallback, the client still counts consecutive sessions that connected,
+served nothing and died, and raises `suspect-credential` after five of
+them.
 
-**It names the connection on the `101`.** Spec 025's readiness result is
-host id, connection id and public address. The connection id is minted by
-the gateway's attachment directory, and the only channel the host has for
-it is the handshake response, since the tunnel carries binary frames only
-and a text control message is exactly what the gateway refuses.
-`dialTunnel` reads `x-amika-connection-id` and `x-amika-host-url` when they
-are there, and reports the attachment without them when they are not. The
-gateway sends the connection id; it does not send a public URL.
+**It revokes by closing.** A renewal the control plane refuses closes the
+socket (`4003`). The daemon redials, the relay answers `401`, and the loop
+stops with that message.
 
-## Limits, and the one rule nothing enforces
+**It names the connection on the `101`.** `dialTunnel` reads
+`x-amika-connection-id`, and `x-amika-host-url` if it is ever sent, and
+reports the attachment without them when they are not there.
 
-`DEFAULT_LIMITS` mirrors the gateway's. The guard's limit at each end must
-be at least the other end's initial stream window, and **nothing negotiates
-this**: a host with a larger window trips the gateway's guard on its first
-full-size frame and loses its tunnel. Amika owns both ends, so it is a
-deployment rule. Keep `maxFrameBytes` here equal to the gateway's
-`maxFrameBytes`, and check it when either moves.
+## Limits come from one place
 
-`maxPayload` on the WebSocket is the only bound on an inbound WebSocket
-message: `ws` assembles a whole message before the frame guard sees a byte
-of it. `dialTunnel` sets it.
+Nothing negotiates the frame size, the window or the stream limit, so both
+ends import them from `@amika/tunnel-protocol` rather than keeping copies.
+A change to the wire format is a new subprotocol and a new path, and the
+gateway answers the old ones `426`: hosts and the relay ship separately,
+and an incompatible change under the same name fails in silence.
+
+`maxPayload` on the WebSocket is the only bound on an inbound message: `ws`
+assembles a whole message before the decoder sees a byte of it.
+`dialTunnel` sets it to `MAX_FRAME_BYTES`.
 
 ## Bundling
 
@@ -231,13 +263,12 @@ against the gateway's logs.
 
 A browser reaches a rig's service at `<service>--<rig>.r.<org>.o.<zone>`.
 That hostname never reaches this daemon on its own: the request goes to
-the gateway's address, and on Cloudflare the gateway's container renames
-it again. So the reverse proxy reads the rig and the service out of it and
-signs them, and the gateway, having checked the signature, writes them
-onto the tunnel stream as `x-amika-rig` and `x-amika-service`. It writes
-them after removing every `x-amika-` header the request arrived with, so
-on a tunnel stream they can only be the gateway's. It also sends the
-caller's own authority as `Host`.
+the gateway's address. So the reverse proxy reads the rig and the service
+out of it and signs them, and the gateway, having checked the signature,
+writes them into the request head as `x-amika-rig` and `x-amika-service`.
+It writes them after removing every `x-amika-` header the request arrived
+with, so on a tunnel stream they can only be the gateway's. It also sends
+the caller's own authority as `Host`.
 
 The tunnel's server (`tunnel-rig-route.ts`) reads the two headers, removes
 them, and records the rig and service beside the request in a `WeakMap`.

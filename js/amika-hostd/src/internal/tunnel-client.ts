@@ -19,15 +19,13 @@
  *
  * **Did the last session work.** A session that served traffic for a while
  * resets the schedule, so a nightly sleep does not inherit yesterday's cap.
- * A run of sessions that connected and immediately died is the shape a
- * refused attachment has on the wire today, so the loop counts those and
- * tells the operator what it suspects rather than retrying in silence.
+ * The relay refuses with an HTTP status before its `101`, so a refusal
+ * normally arrives as one. A run of sessions that connected and
+ * immediately died is still counted, as a fallback: it is what a relay that
+ * accepts and then cannot keep the host looks like, and the operator is
+ * told what the loop suspects rather than left with a silent retry.
  */
-import {
-  TunnelAttachment,
-  type TunnelLimits,
-  type TunnelAttachmentOptions,
-} from "./tunnel-attachment.js";
+import { TunnelSession, type TunnelSessionOptions } from "./tunnel-session.js";
 import {
   Backoff,
   DEFAULT_BACKOFF,
@@ -97,7 +95,7 @@ export type TunnelEvent =
   | { type: "stopped" };
 
 export interface TunnelClientOptions extends Pick<
-  TunnelAttachmentOptions,
+  TunnelSessionOptions,
   "keepAliveIntervalMs" | "pingTimeoutMs" | "drainMs" | "onConnection"
 > {
   /**
@@ -106,7 +104,6 @@ export interface TunnelClientOptions extends Pick<
    * attempt without a restart.
    */
   target: () => TunnelTarget | Promise<TunnelTarget>;
-  limits?: TunnelLimits;
   backoff?: BackoffOptions;
   handshakeTimeoutMs: number;
   userAgent: string;
@@ -120,7 +117,7 @@ export interface TunnelClientOptions extends Pick<
   onEvent?: (event: TunnelEvent) => void;
   /**
    * Open one attachment. The default dials the gateway over WSS and builds
-   * a `TunnelAttachment` on it; a test replaces the whole transport here.
+   * a `TunnelSession` on it; a test replaces the whole transport here.
    */
   connect?: (target: TunnelTarget) => Promise<OpenAttachment>;
   now?: () => number;
@@ -352,9 +349,8 @@ export class TunnelClient {
     });
 
     // A session that connected, served nothing and died at once is what a
-    // refused attachment looks like from this end, because the gateway
-    // aborts the socket rather than answering an HTTP status. It is also
-    // what a flapping network looks like, so this counts rather than
+    // relay that cannot keep this host looks like from this end. It is
+    // also what a flapping network looks like, so this counts rather than
     // concludes.
     if (served === 0 && uptimeMs < this.settleMs) {
       this.shortSessions += 1;
@@ -389,15 +385,13 @@ export class TunnelClient {
     return target;
   }
 
-  /** The real transport: one WSS handshake, one yamux session on it. */
+  /** The real transport: one WSS handshake, one framed session on it. */
   private async dialAndAttach(target: TunnelTarget): Promise<OpenAttachment> {
     const dialed = await dialTunnel(target, {
-      limits: this.options.limits,
       handshakeTimeoutMs: this.options.handshakeTimeoutMs,
       userAgent: this.options.userAgent,
     });
-    const attachment = new TunnelAttachment(dialed.ws, {
-      limits: this.options.limits,
+    const attachment = new TunnelSession(dialed.ws, {
       keepAliveIntervalMs: this.options.keepAliveIntervalMs,
       pingTimeoutMs: this.options.pingTimeoutMs,
       drainMs: this.options.drainMs,

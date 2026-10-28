@@ -88,8 +88,8 @@ export function virtualServer(options: VirtualServerOptions): VirtualServer {
     close(): void {
       // Not `server.close()`: it is only meaningful for a listening socket,
       // and it calls back with `ERR_SERVER_NOT_RUNNING` here. Draining the
-      // connections is `TunnelAttachment.close`'s job, because the streams
-      // they sit on are the attachment's and not this server's.
+      // connections is `TunnelSession.close`'s job, because the streams
+      // they sit on are the session's and not this server's.
       server.removeAllListeners("upgrade");
     },
   };

@@ -4,7 +4,7 @@
  * The transport is replaced here on purpose. Every branch below is a policy
  * decision -- retry, wait longer, stop and tell the operator -- and running
  * them over a real socket would test the socket instead.
- * `tunnel-attachment.test.ts` covers the transport against a real peer.
+ * `tunnel-session.test.ts` covers the transport against a real peer.
  */
 import { describe, expect, it, vi } from "vitest";
 import {

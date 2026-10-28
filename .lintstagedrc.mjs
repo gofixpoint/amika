@@ -25,6 +25,7 @@ const PACKAGE_BY_PREFIX = [
   ["js/sandbox/", "@amika/sandbox"],
   ["js/amika-hostd/", "@amika/hostd"],
   ["js/service-auth/", "@amika/service-auth"],
+  ["js/tunnel-protocol/", "@amika/tunnel-protocol"],
 ];
 
 function normalizePath(path) {

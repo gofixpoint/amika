@@ -77,20 +77,24 @@ Each of these is stated in full, with its reason, in the doc it links to.
   the user and from authorizing Amika's requests into this daemon. It never
   goes in `config.toml`, which `setup` rewrites and operators copy between
   machines. See [Outbound tunnel](docs/tunnel.md#decisions).
-- **A dead tunnel is found by a yamux ping with a deadline**, not by a
-  WebSocket ping and not by the multiplexer's own keep-alive, which
-  swallows an unanswered ping. A closed laptop lid leaves a socket that
-  looks alive, and only an unanswered round trip finds it.
-- **Shutdown closes the WebSocket**, which is what makes the gateway give
+- **A dead tunnel is found by a text `ping` with a deadline.** The relay's
+  runtime answers `pong` without waking the relay. A closed laptop lid
+  leaves a socket that looks alive, and only an unanswered round trip finds
+  it.
+- **Shutdown closes the WebSocket**, which is what makes the relay give
   up the route. Dropping the connection loses every request sent before the
-  gateway notices.
-- **hostd opens no streams.** The gateway opens one per request; a stream in
-  the other direction would make the gateway a forward proxy for this host.
-  `maxOutboundStreams` is zero at this end and `maxInboundStreams` is zero
-  at the gateway's.
-- **`maxFrameBytes` must equal the gateway's.** Nothing negotiates the
-  window, and a host with a larger one loses its tunnel on its first
-  full-size frame.
+  relay notices.
+- **hostd opens no streams.** The relay opens one per request; a stream in
+  the other direction would make the relay a forward proxy for this host.
+  Nothing in hostd can send `OPEN`.
+- **The limits come from `@amika/tunnel-protocol`.** Nothing negotiates
+  them, so hostd and the relay import the same constants rather than
+  keeping copies that can drift. A change to the wire format is a new
+  subprotocol, not an edit under the old name.
+- **`DATA` moves under credit.** Credit goes back to the relay only once
+  Node has taken the bytes, and hostd never sends past what the relay
+  granted. The relay cannot push back on a caller, so this is what bounds
+  a download in its memory.
 
 **Credentials reaching hostd**
 
@@ -194,6 +198,6 @@ Each of these is stated in full, with its reason, in the doc it links to.
   or storage (`snapshots.ts`, `snapshot-store.ts`) or how a create resolves
   its source (`requests.ts`).
 - [docs/tunnel.md](docs/tunnel.md) — read when changing the outbound tunnel
-  (`tunnel-*.ts`): the WSS handshake, the yamux session, liveness,
+  (`tunnel-*.ts`): the WSS handshake, the framed session, liveness,
   reconnection, or where the attachment credential and gateway address come
   from.

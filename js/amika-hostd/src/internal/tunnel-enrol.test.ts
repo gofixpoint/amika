@@ -9,7 +9,7 @@ const HOST = { id: "host_1" };
 const ANSWER: HostEnrolment = {
   credential: "amkht_b3JnXzE.s3cret",
   generation: 3,
-  gateway_url: "wss://gateway.amika.run/v1/host-tunnel",
+  gateway_url: "wss://gateway.amika.run/v2/host-tunnel",
   transport_mode: "tunnel",
 };
 
@@ -49,7 +49,7 @@ describe("enrolForTunnel", () => {
         {
           hostId: "host_1",
           generation: 3,
-          gatewayUrl: "wss://gateway.amika.run/v1/host-tunnel",
+          gatewayUrl: "wss://gateway.amika.run/v2/host-tunnel",
         },
       ],
     ]);
