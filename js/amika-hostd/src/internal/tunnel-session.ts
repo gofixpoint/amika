@@ -271,7 +271,23 @@ export class TunnelSession implements StreamCarrier {
     }
     this.served += 1;
     this.opening = { streamId, finished: false };
-    const stream = openStream(streamId, head, this, this.options.onConnection);
+    let stream: TunnelStream;
+    try {
+      stream = openStream(streamId, head, this, this.options.onConnection);
+    } catch (error) {
+      // Node's HTTP client and `ws` validate the head as they build the
+      // request, and throw synchronously. This runs inside the WebSocket's
+      // message handler, so a throw that escaped would end the daemon over
+      // one bad stream. The schema refuses what Node refuses; this is the
+      // second lock.
+      this.opening = undefined;
+      this.send({
+        type: "reset",
+        streamId,
+        reason: error instanceof Error ? error.message : "bad request head",
+      });
+      return;
+    }
     // A stream can fail inside its own constructor, a head with no host for
     // one, and report that before it was ever recorded here.
     if (!this.opening.finished) this.streams.set(streamId, stream);

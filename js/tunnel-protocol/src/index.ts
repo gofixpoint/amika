@@ -87,8 +87,11 @@ const HEADER_BYTES = 5;
 export type HeaderPair = [name: string, value: string];
 
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-// A value may hold obs-text, so this refuses only what would split a line.
-const FIELD_VALUE = /^[^\r\n\0]*$/;
+// RFC 9110 field-value characters: tab, visible ASCII, space, and obs-text,
+// one character per byte. This is exactly what Node's HTTP client will
+// write; anything else (a control character, a code point above Latin-1)
+// makes it throw `ERR_INVALID_CHAR` while building the request.
+const FIELD_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/;
 
 const headerPairs = z.array(
   z.tuple([z.string().regex(TOKEN), z.string().regex(FIELD_VALUE)]),

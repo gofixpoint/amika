@@ -111,7 +111,6 @@ class RequestStream implements TunnelStream {
   ) {
     const [client, server] = socketPair();
     this.client = client;
-    accept(server);
     const { headers, bodyAllowed } = requestHeaders(head);
     this.bodyAllowed = bodyAllowed;
     this.outbound = httpRequest({
@@ -128,6 +127,11 @@ class RequestStream implements TunnelStream {
       createConnection: () => client,
       setHost: false,
     });
+    // Only once the request is built. Node validates the head as it builds
+    // it and throws; a server end handed over before that would be left
+    // waiting on a request that never comes. Node writes nothing to the
+    // connection until a later tick, so the server has its end in time.
+    accept(server);
     this.outbound.once("response", (response) => {
       this.responseStarted = true;
       void this.relayResponse(response);

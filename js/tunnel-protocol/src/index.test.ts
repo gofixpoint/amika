@@ -83,6 +83,42 @@ describe("frames", () => {
     expect(() => decodeFrame(bytes)).toThrow(ProtocolError);
   });
 
+  it.each([
+    ["a control character", "a\x01b"],
+    ["a code point above Latin-1", "\u0100"],
+    ["DEL", "a\x7fb"],
+  ])(
+    "refuses a header value with %s, which Node cannot write",
+    (_name, value) => {
+      const forged = new TextEncoder().encode(
+        JSON.stringify({
+          method: "GET",
+          target: "/",
+          headers: [["x", value]],
+          upgrade: false,
+        }),
+      );
+      const bytes = new Uint8Array(5 + forged.byteLength);
+      bytes.set([1, 0, 0, 0, 1]);
+      bytes.set(forged, 5);
+      expect(() => decodeFrame(bytes)).toThrow(ProtocolError);
+    },
+  );
+
+  it("keeps obs-text and tabs in a header value", () => {
+    const frame: Frame = {
+      type: "open",
+      streamId: 1,
+      head: {
+        method: "GET",
+        target: "/",
+        headers: [["x", "caf\u00e9\tok"]],
+        upgrade: false,
+      },
+    };
+    expect(decodeFrame(encodeFrame(frame))).toEqual(frame);
+  });
+
   it("refuses an oversized DATA frame at both ends", () => {
     const big = new Uint8Array(MAX_DATA_BYTES + 1);
     expect(() =>
