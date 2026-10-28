@@ -138,6 +138,29 @@ describe("close codes", () => {
     expect(sendableCloseCode(5000)).toBe(1011);
   });
 
+  it("cuts a long reason in one pass, on a character boundary", () => {
+    const long = "é".repeat(500_000);
+    const started = performance.now();
+    const cut = closeReason(long);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(new TextEncoder().encode(cut).byteLength).toBe(122);
+    expect(cut).toBe("é".repeat(61));
+  });
+
+  it("refuses a CLOSE frame whose reason cannot fit a close frame", () => {
+    const frame = encodeFrame({
+      type: "close",
+      streamId: 1,
+      code: 1000,
+      reason: "x".repeat(123),
+    });
+    expect(decodeFrame(frame)).toMatchObject({ reason: "x".repeat(123) });
+    const oversized = new Uint8Array(frame.byteLength + 1);
+    oversized.set(frame);
+    oversized[oversized.length - 1] = 0x78;
+    expect(() => decodeFrame(oversized)).toThrow(ProtocolError);
+  });
+
   it("cuts a reason to 123 bytes", () => {
     expect(
       new TextEncoder().encode(closeReason("é".repeat(100))).length,

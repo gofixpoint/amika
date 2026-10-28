@@ -239,6 +239,11 @@ function echoUpgrade(tunnels: Set<Duplex> = new Set()) {
       return;
     }
     wss.handleUpgrade(request, socket, head, (ws) => {
+      // A service that accepts the connection and then stops reading.
+      if (request.url === "/stall") {
+        socket.pause();
+        return;
+      }
       ws.on("message", (data, isBinary) => {
         if (!isBinary && data.toString() === "close-me") {
           ws.close(4321, "asked to");
@@ -403,6 +408,23 @@ describe("an upgrade", () => {
       4321,
       "asked to",
     ]);
+  });
+
+  it("closes the stream rather than queue without bound for a service that stops reading", async () => {
+    const echo = echoUpgrade();
+    const { relay } = await attach({ upgrade: echo.handler });
+    const id = relay.open("/stall", { upgrade: true });
+    await relay.until(id, (list) => list.some((f) => f.type === "response"));
+    const megabyte = new Uint8Array(1024 * 1024);
+    for (let sent = 0; sent < 12; sent += 1) {
+      relay.send({ type: "message", streamId: id, data: megabyte });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const frames = await relay.until(id, (list) =>
+      list.some((f) => f.type === "close"),
+    );
+    const close = frames.find((f) => f.type === "close");
+    expect(close?.type === "close" && close.code).toBe(1013);
   });
 
   it("answers a refused upgrade as a plain response", async () => {

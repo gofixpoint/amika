@@ -85,6 +85,12 @@ const HANDSHAKE = new Set([
   "sec-websocket-protocol",
 ]);
 
+/**
+ * How much may wait in a relayed WebSocket's send buffer toward the local
+ * service. The same bound the session keeps on the tunnel itself.
+ */
+const MAX_UPSTREAM_BUFFER_BYTES = 4 * 1024 * 1024;
+
 /** Methods whose requests carry no body from a Fetch caller. */
 const BODILESS = new Set(["GET", "HEAD"]);
 
@@ -389,6 +395,13 @@ class UpgradeStream implements TunnelStream {
           this.reset("a message before the 101");
           return;
         }
+        // Messages carry no credit, so the relay cannot be slowed down for a
+        // service that stops reading. Past a bound, the stream ends rather
+        // than queueing the caller's messages in this daemon's memory.
+        if ((this.upstream?.bufferedAmount ?? 0) > MAX_UPSTREAM_BUFFER_BYTES) {
+          this.closeBoth(1013, "the service is not reading");
+          return;
+        }
         this.upstream?.send(frame.data, {
           binary: typeof frame.data !== "string",
         });
@@ -492,6 +505,15 @@ class UpgradeStream implements TunnelStream {
     this.carrier.finished(this.streamId);
     // `ws` hands the response over and leaves the connection to us.
     response.destroy();
+    this.upstream?.terminate();
+  }
+
+  /** End an open upgrade at both ends with one close code. */
+  private closeBoth(code: number, reason: string): void {
+    if (this.done) return;
+    this.done = true;
+    this.carrier.send({ type: "close", streamId: this.streamId, code, reason });
+    this.carrier.finished(this.streamId);
     this.upstream?.terminate();
   }
 

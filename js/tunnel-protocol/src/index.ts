@@ -57,6 +57,8 @@ export const MAX_MESSAGE_BYTES = 1024 * 1024;
  * message plus the frame header, with room to spare.
  */
 export const MAX_FRAME_BYTES = MAX_MESSAGE_BYTES + 64;
+/** The longest close reason a WebSocket close frame can carry. */
+export const MAX_CLOSE_REASON_BYTES = 123;
 /** How many streams may be open to one host at once. */
 export const MAX_CONCURRENT_STREAMS = 256;
 
@@ -234,6 +236,11 @@ export function decodeFrame(bytes: Uint8Array): Frame {
       if (payload.byteLength < 2) {
         throw new ProtocolError("CLOSE payload shorter than its code");
       }
+      // A reason has to fit the close frame it will be sent in. `encodeFrame`
+      // never writes a longer one, so a peer that does is not this protocol.
+      if (payload.byteLength - 2 > MAX_CLOSE_REASON_BYTES) {
+        throw new ProtocolError("CLOSE reason over 123 bytes");
+      }
       return {
         type: "close",
         streamId,
@@ -266,9 +273,13 @@ export function sendableCloseCode(code: number): number {
 
 /** A close reason that fits a close frame: at most 123 bytes of UTF-8. */
 export function closeReason(reason: string): string {
-  let cut = reason;
-  while (encoder.encode(cut).byteLength > 123) cut = cut.slice(0, -1);
-  return cut;
+  // One encode and one cut, so a long reason costs linear time. The cut
+  // backs up past UTF-8 continuation bytes so it never splits a character.
+  const bytes = encoder.encode(reason);
+  if (bytes.byteLength <= MAX_CLOSE_REASON_BYTES) return reason;
+  let end = MAX_CLOSE_REASON_BYTES;
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+  return decoder.decode(bytes.subarray(0, end));
 }
 
 function withHeader(
