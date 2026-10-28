@@ -336,6 +336,34 @@ describe("a plain request", () => {
     expect((await relay.response(id)).body.length).toBe(big.length);
   });
 
+  it("delivers the whole of a chunked response the relay drains slowly", async () => {
+    // A body of unknown length ends the connection when it ends, so the
+    // server's end of the pair is gone while the tail still waits on credit.
+    const size = 1024 * 1024;
+    const { relay } = await attach({
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              for (let sent = 0; sent < size; sent += 16 * 1024) {
+                controller.enqueue(new Uint8Array(16 * 1024).fill(120));
+              }
+              controller.close();
+            },
+          }),
+        ),
+    });
+    relay.autoGrant = false;
+    const id = relay.open("/download");
+    relay.send({ type: "end", streamId: id });
+    const granting = setInterval(() => relay.grant(id, 32 * 1024), 20);
+    try {
+      expect((await relay.response(id)).body.length).toBe(size);
+    } finally {
+      clearInterval(granting);
+    }
+  });
+
   it("is reset when the relay sends DATA beyond its credit", async () => {
     const { relay } = await attach({
       // Never reads the body, so no credit is returned.

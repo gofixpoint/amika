@@ -125,8 +125,17 @@ export class PairSocket extends Duplex {
         // FIN there. Resetting instead would tear down a response that was
         // already written. The peer reads EOF and then goes too, because
         // there is nobody left to write to.
-        if (!peer.readableEnded) peer.push(null);
-        peer.destroySoon();
+        //
+        // Only once it has read to that EOF. Its reader may have paused
+        // with the tail of the response still buffered -- the tunnel is
+        // waiting on credit -- and destroying the peer now would discard
+        // those bytes and abort a response that was written whole.
+        if (peer.readableEnded) {
+          peer.destroySoon();
+        } else {
+          peer.push(null);
+          peer.once("end", () => peer.destroySoon());
+        }
       }
     }
     callback(error);
