@@ -9,7 +9,7 @@
  * nobody was looking at.
  *
  * What differs is where connections come from. A listener waits for them;
- * this opens one WebSocket to the gateway and serves the yamux streams
+ * this opens one WebSocket to the gateway and serves the streams
  * the gateway opens back down it. `virtualServer` is the HTTP server with
  * no socket under it.
  */

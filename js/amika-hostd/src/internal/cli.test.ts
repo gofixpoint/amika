@@ -654,7 +654,7 @@ describe("completing registration", () => {
       enrol: vi.fn(async () => ({
         credential: "amkht_b3JnXzE.s3cret",
         generation: 1,
-        gateway_url: "wss://gateway.example/v1/host-tunnel",
+        gateway_url: "wss://gateway.example/v2/host-tunnel",
         transport_mode: "tunnel" as const,
       })),
       write: () => {},
@@ -827,7 +827,7 @@ describe("enrolling a tunnel host", () => {
   const ENROLMENT = {
     credential: "amkht_b3JnXzE.s3cret",
     generation: 2,
-    gateway_url: "wss://gateway.staging-amika.run/v1/host-tunnel",
+    gateway_url: "wss://gateway.staging-amika.run/v2/host-tunnel",
     transport_mode: "tunnel" as const,
   };
 
@@ -1001,7 +1001,7 @@ describe("a tunnel daemon", () => {
       enrol: vi.fn(async () => ({
         credential: "amkht_b3JnXzE.s3cret",
         generation: 1,
-        gateway_url: "wss://gateway.example/v1/host-tunnel",
+        gateway_url: "wss://gateway.example/v2/host-tunnel",
         transport_mode: "tunnel" as const,
       })),
       write: () => {},

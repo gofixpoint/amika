@@ -1,33 +1,33 @@
 /**
  * Opening the WebSocket to the gateway, and reading what the answer means.
  *
- * Everything here happens before a single yamux byte moves. It is the only
+ * Everything here happens before a single frame moves. It is the only
  * place the attachment credential is written to a socket, and the only place
  * the gateway gets to refuse this host with a reason an operator can act on.
  */
 import { WebSocket, type ClientOptions } from "ws";
 import type { IncomingMessage } from "node:http";
-import { DEFAULT_LIMITS, type TunnelLimits } from "./tunnel-attachment.js";
+import {
+  CONNECTION_ID_HEADER,
+  CREDENTIAL_HEADER,
+  HOST_ID_HEADER,
+  MAX_FRAME_BYTES,
+  TUNNEL_SUBPROTOCOL,
+} from "@amika/tunnel-protocol";
 
 /**
- * The subprotocol this daemon speaks. The version is in the name because
- * there is nowhere else to put it: the connection carries binary frames
- * only, and a text control message is exactly what the gateway refuses.
- *
- * A gateway that does not echo it has not agreed to this protocol, and the
- * bytes that follow would be read by something that is not a yamux peer.
+ * The subprotocol and the handshake's header names come from
+ * `@amika/tunnel-protocol`, which the relay imports too. The version is in
+ * the subprotocol's name: a relay that does not echo it has not agreed to
+ * this protocol, and the bytes that follow would be read by something that
+ * does not speak it.
  */
-export const TUNNEL_SUBPROTOCOL = "amika.tunnel.v1";
-
-/**
- * Header names this handshake uses, in the spelling the gateway reads and
- * writes (amika-mono `js/gateway/src/internal/host-listener.ts`). The
- * gateway refuses a dial that does not name the host and carry the
- * credential in exactly these.
- */
-export const HOST_ID_HEADER = "x-amika-host-id";
-export const CREDENTIAL_HEADER = "x-amika-host-credential";
-export const CONNECTION_ID_HEADER = "x-amika-connection-id";
+export {
+  CONNECTION_ID_HEADER,
+  CREDENTIAL_HEADER,
+  HOST_ID_HEADER,
+  TUNNEL_SUBPROTOCOL,
+};
 /** Read when present. The gateway does not send it today. */
 export const PUBLIC_URL_HEADER = "x-amika-host-url";
 
@@ -82,9 +82,8 @@ export interface DialedTunnel {
    * logs and in the daemon's readiness result, and the value an operator
    * needs to match a host's session against the gateway's own records.
    *
-   * Optional because the gateway that exists today mints this id after it
-   * has accepted the WebSocket, so it has no 101 to put it on. See
-   * `docs/tunnel.md`.
+   * The relay names it on every `101`. Optional because nothing breaks
+   * without it, and a daemon should not refuse to serve over a label.
    */
   connectionId?: string;
   /** The public address the gateway assigned this host, if it sent one. */
@@ -92,7 +91,6 @@ export interface DialedTunnel {
 }
 
 export interface DialOptions {
-  limits?: TunnelLimits;
   /** How long the HTTP handshake may take. */
   handshakeTimeoutMs: number;
   /** What this daemon calls itself to the gateway. */
@@ -113,7 +111,6 @@ export async function dialTunnel(
   target: TunnelTarget,
   options: DialOptions,
 ): Promise<DialedTunnel> {
-  const limits = options.limits ?? DEFAULT_LIMITS;
   const url = requireSecureGateway(target.gatewayUrl);
   const connect =
     options.connect ??
@@ -132,12 +129,11 @@ export async function dialTunnel(
       [HOST_ID_HEADER]: target.hostId,
       "user-agent": options.userAgent,
     },
-    // The gateway writes at its own message size and this end splits at
-    // the same one, so an inbound message far above that is a peer that is
-    // not the gateway, or one that is wrong. `ws` assembles a whole
-    // message before the frame guard can see a byte of it, so this is the
-    // only bound on that memory.
-    maxPayload: limits.maxFrameBytes,
+    // No frame is larger, so an inbound message above this is a peer that
+    // is not the relay, or one that is wrong. `ws` assembles a whole
+    // message before anything can read it, so this is the only bound on
+    // that memory.
+    maxPayload: MAX_FRAME_BYTES,
     // Deliberate. Compression on a multiplexed tunnel costs CPU on every
     // host and leaks the size of inner traffic across streams, and the
     // bodies that matter here are already compressed.
@@ -174,7 +170,7 @@ export async function dialTunnel(
     const onOpen = () =>
       settle(() => {
         // `ws` leaves `protocol` empty when the server echoed nothing. The
-        // bytes after this point are read as yamux frames by whatever is at
+        // bytes after this point are read as tunnel frames by whatever is at
         // the other end, so a peer that did not agree to this protocol is
         // refused here rather than fed a frame stream.
         if (ws.protocol !== TUNNEL_SUBPROTOCOL) {

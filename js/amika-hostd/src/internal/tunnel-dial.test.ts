@@ -1,7 +1,7 @@
 /**
  * The handshake, and what the gateway's answer means for the next attempt.
  *
- * `tunnel-attachment.test.ts` dials a real WebSocket server; this file
+ * `tunnel-session.test.ts` dials a real WebSocket server; this file
  * covers the decisions around that dial, which are the ones that decide
  * whether a revoked host retries for ever or tells its operator.
  */
@@ -26,7 +26,7 @@ describe("the handshake the gateway reads", () => {
     let sent: ConnectOptions | undefined;
     void dialTunnel(
       {
-        gatewayUrl: "wss://gateway.amika.test/v1/host-tunnel",
+        gatewayUrl: "wss://gateway.amika.test/v2/host-tunnel",
         hostId: "host-1",
         credential: "cred-1",
         generation: 1,
