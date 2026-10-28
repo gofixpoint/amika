@@ -286,6 +286,17 @@ export function sendableCloseCode(code: number): number {
   return 1011;
 }
 
+/**
+ * Whether a response head can cross the tunnel. A head read from a service
+ * can hold what Node's HTTP parser accepts and this protocol does not, such
+ * as a status of 600 or a long reason phrase. `decodeFrame` refuses such a
+ * frame as malformed and fails the whole tunnel, so a sender checks first
+ * and fails only the one stream.
+ */
+export function isSendableResponseHead(head: ResponseHead): boolean {
+  return responseHeadSchema.safeParse(head).success;
+}
+
 /** A close reason that fits a close frame: at most 123 bytes of UTF-8. */
 export function closeReason(reason: string): string {
   // One encode and one cut, so a long reason costs linear time. The cut

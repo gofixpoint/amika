@@ -3,6 +3,7 @@ import {
   closeReason,
   decodeFrame,
   encodeFrame,
+  isSendableResponseHead,
   MAX_DATA_BYTES,
   MAX_MESSAGE_BYTES,
   ProtocolError,
@@ -143,6 +144,29 @@ describe("frames", () => {
     expect(() =>
       encodeFrame({ type: "data", streamId: 1, bytes: big }),
     ).toThrow(RangeError);
+  });
+});
+
+describe("response heads", () => {
+  it("passes a head the far end can read, and refuses one it cannot", () => {
+    const head = { status: 200, statusText: "OK", headers: [] };
+    expect(isSendableResponseHead(head)).toBe(true);
+    const sendable = [
+      head,
+      { ...head, status: 600 },
+      { ...head, statusText: "x".repeat(2000) },
+    ].map(isSendableResponseHead);
+    expect(sendable).toEqual([true, false, false]);
+    // Each refused head is one `decodeFrame` would refuse.
+    expect(() =>
+      decodeFrame(
+        encodeFrame({
+          type: "response",
+          streamId: 1,
+          head: { ...head, status: 600 },
+        }),
+      ),
+    ).toThrow(ProtocolError);
   });
 });
 

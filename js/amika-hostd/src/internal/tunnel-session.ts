@@ -349,6 +349,9 @@ export class TunnelSession implements StreamCarrier {
    * balancers need between here and the relay.
    */
   private watchLiveness(): void {
+    // The session can end between the first pong and this call, and
+    // `finish` has already run: an interval set now would never be cleared.
+    if (this.ended) return;
     this.keepAlive = setInterval(() => {
       if (this.ended || this.draining || this.pending) return;
       this.ping().catch((error: Error) => {

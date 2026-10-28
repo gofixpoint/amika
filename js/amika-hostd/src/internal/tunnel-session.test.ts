@@ -232,6 +232,13 @@ function echoUpgrade(tunnels: Set<Duplex> = new Set()) {
   const handler = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     tunnels.add(socket);
     socket.on("close", () => tunnels.delete(socket));
+    if (request.url === "/odd-status") {
+      // Node's parser takes any three digits; the tunnel takes 100 to 599.
+      socket.end(
+        "HTTP/1.1 600 Odd\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+      );
+      return;
+    }
     if (request.url === "/refuse") {
       socket.end(
         "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope",
@@ -434,6 +441,19 @@ describe("an upgrade", () => {
     const response = await relay.response(id);
     expect(response.status).toBe(403);
     expect(response.body).toBe("nope");
+  });
+
+  it("resets only its stream when a refusal's head cannot cross the tunnel", async () => {
+    const echo = echoUpgrade();
+    const { relay } = await attach({ upgrade: echo.handler });
+    const odd = relay.open("/odd-status", { upgrade: true });
+    await expect(relay.response(odd)).rejects.toThrow(/status 600/);
+    expect(
+      (relay.frames.get(odd) ?? []).some((f) => f.type === "response"),
+    ).toBe(false);
+    // The tunnel carries on for the next caller.
+    const id = relay.open("/refuse", { upgrade: true });
+    expect((await relay.response(id)).status).toBe(403);
   });
 
   it("ends at the relay when shutdown cuts the upgraded connection", async () => {

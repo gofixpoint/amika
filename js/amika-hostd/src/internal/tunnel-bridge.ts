@@ -21,12 +21,14 @@ import type { Duplex } from "node:stream";
 import { WebSocket, type RawData } from "ws";
 import {
   closeReason,
+  isSendableResponseHead,
   MAX_DATA_BYTES,
   MAX_MESSAGE_BYTES,
   sendableCloseCode,
   type Frame,
   type HeaderPair,
   type RequestHead,
+  type ResponseHead,
 } from "@amika/tunnel-protocol";
 import { ReceiveWindow, SendWindow } from "@amika/tunnel-protocol/window";
 import { socketPair } from "./tunnel-socket-pair.js";
@@ -206,6 +208,8 @@ class RequestStream implements TunnelStream {
       case "close":
         this.reset(`${frame.type} on a plain request`);
         return;
+      default:
+        assertNever(frame);
     }
   }
 
@@ -222,15 +226,12 @@ class RequestStream implements TunnelStream {
   }
 
   private async relayResponse(response: IncomingMessage): Promise<void> {
-    this.carrier.send({
-      type: "response",
-      streamId: this.streamId,
-      head: {
-        status: response.statusCode ?? 502,
-        statusText: response.statusMessage ?? "",
-        headers: pairs(response.rawHeaders),
-      },
-    });
+    const head = responseHead(response);
+    if (!isSendableResponseHead(head)) {
+      this.reset(unsendableHead(head));
+      return;
+    }
+    this.carrier.send({ type: "response", streamId: this.streamId, head });
     try {
       for await (const chunk of response as AsyncIterable<Buffer>) {
         await this.sendData(chunk);
@@ -351,15 +352,16 @@ class UpgradeStream implements TunnelStream {
       if (this.done) return;
       this.open = true;
       const response = this.handshake;
-      this.carrier.send({
-        type: "response",
-        streamId: this.streamId,
-        head: {
-          status: 101,
-          statusText: response?.statusMessage ?? "Switching Protocols",
-          headers: response ? pairs(response.rawHeaders) : [],
-        },
-      });
+      const head = {
+        status: 101,
+        statusText: response?.statusMessage ?? "Switching Protocols",
+        headers: response ? pairs(response.rawHeaders) : [],
+      };
+      if (!isSendableResponseHead(head)) {
+        this.reset(unsendableHead(head));
+        return;
+      }
+      this.carrier.send({ type: "response", streamId: this.streamId, head });
     });
     upstream.on("unexpected-response", (_request, response) => {
       void this.relayRefusal(response);
@@ -435,6 +437,8 @@ class UpgradeStream implements TunnelStream {
       case "data":
         this.reset(`${frame.type} on an upgrade`);
         return;
+      default:
+        assertNever(frame);
     }
   }
 
@@ -470,15 +474,13 @@ class UpgradeStream implements TunnelStream {
 
   /** A server that refused the upgrade has something to say. Say it. */
   private async relayRefusal(response: IncomingMessage): Promise<void> {
-    this.carrier.send({
-      type: "response",
-      streamId: this.streamId,
-      head: {
-        status: response.statusCode ?? 502,
-        statusText: response.statusMessage ?? "",
-        headers: pairs(response.rawHeaders),
-      },
-    });
+    const head = responseHead(response);
+    if (!isSendableResponseHead(head)) {
+      response.destroy();
+      this.reset(unsendableHead(head));
+      return;
+    }
+    this.carrier.send({ type: "response", streamId: this.streamId, head });
     try {
       for await (const chunk of response as AsyncIterable<Buffer>) {
         let offset = 0;
@@ -606,6 +608,20 @@ function headerValue(headers: HeaderPair[], name: string): string | undefined {
   return headers.find(([key]) => key.toLowerCase() === name)?.[1];
 }
 
+/** A service's response head, as the tunnel spells it. */
+function responseHead(response: IncomingMessage): ResponseHead {
+  return {
+    status: response.statusCode ?? 502,
+    statusText: response.statusMessage ?? "",
+    headers: pairs(response.rawHeaders),
+  };
+}
+
+/** Why a head that cannot cross the tunnel ends its stream. */
+function unsendableHead(head: ResponseHead): string {
+  return `the service's response head cannot cross the tunnel (status ${head.status})`;
+}
+
 /** Node's flat `rawHeaders` as name and value pairs. */
 function pairs(rawHeaders: string[]): HeaderPair[] {
   const out: HeaderPair[] = [];
@@ -613,4 +629,8 @@ function pairs(rawHeaders: string[]): HeaderPair[] {
     out.push([rawHeaders[index]!, rawHeaders[index + 1]!]);
   }
   return out;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled frame: ${JSON.stringify(value)}`);
 }
