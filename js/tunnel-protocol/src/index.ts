@@ -32,9 +32,16 @@ export const CONNECTION_ID_HEADER = "x-amika-connection-id";
  * The keep-alive. The host sends `PING` as a text message and the relay's
  * runtime answers `PONG` without waking the relay. These are the only text
  * messages on a tunnel.
+ *
+ * Namespaced, because Cloudflare's auto-response applies to every WebSocket
+ * the relay accepts, the callers of relayed upgrades included. A plain
+ * `ping` there would be answered by the runtime and never reach the
+ * service, which breaks any application heartbeat that uses that word. A
+ * caller that sends exactly `PING` is still answered `PONG` by the
+ * runtime; no application has a reason to.
  */
-export const PING = "ping";
-export const PONG = "pong";
+export const PING = "amika.tunnel.v2.ping";
+export const PONG = "amika.tunnel.v2.pong";
 
 /** How often hostd pings. */
 export const KEEP_ALIVE_INTERVAL_MS = 30_000;

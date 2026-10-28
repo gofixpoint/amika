@@ -363,7 +363,7 @@ export class TunnelSession implements StreamCarrier {
   /**
    * Ping on a fixed interval, and end the session when one goes unanswered.
    *
-   * A text `ping` and not a WebSocket ping frame. The relay's runtime
+   * A text `PING` and not a WebSocket ping frame. The relay's runtime
    * answers it without waking the relay, so an idle host costs nothing, and
    * the relay can read when it last answered to tell a live host from one
    * whose laptop lid closed. The normal way a tunnel dies is that lid: the

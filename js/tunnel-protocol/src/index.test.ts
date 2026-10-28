@@ -9,6 +9,8 @@ import {
   MAX_DATA_BYTES,
   MAX_MESSAGE_BYTES,
   MAX_TARGET_LENGTH,
+  PING,
+  PONG,
   ProtocolError,
   sendableCloseCode,
   type Frame,
@@ -147,6 +149,19 @@ describe("frames", () => {
     expect(() =>
       encodeFrame({ type: "data", streamId: 1, bytes: big }),
     ).toThrow(RangeError);
+  });
+});
+
+describe("keep-alive", () => {
+  it("uses strings no relayed application would send as its own heartbeat", () => {
+    // The relay's runtime answers `PING` on every WebSocket it accepts,
+    // including a caller's relayed upgrade.
+    for (const word of ["ping", "pong", "PING", "PONG", "heartbeat"]) {
+      expect([PING, PONG]).not.toContain(word);
+    }
+    expect(PING).toMatch(/^amika\.tunnel\.v2\./);
+    expect(PONG).toMatch(/^amika\.tunnel\.v2\./);
+    expect(PING).not.toBe(PONG);
   });
 });
 

@@ -95,8 +95,9 @@ The normal way a tunnel dies is a closed laptop lid. The socket stays in
 `ESTABLISHED`, the kernel accepts writes, and no WebSocket or TCP event
 reports anything. Only an unanswered round trip finds it.
 
-So `TunnelSession` sends the text message `ping` every
-`KEEP_ALIVE_INTERVAL_MS` and ends the session when the text `pong` does not
+So `TunnelSession` sends the text message `PING` (`amika.tunnel.v2.ping`)
+every `KEEP_ALIVE_INTERVAL_MS` and ends the session when the text `PONG`
+(`amika.tunnel.v2.pong`) does not
 come back within `PING_TIMEOUT_MS`. The relay registers that pair with
 Cloudflare's `setWebSocketAutoResponse`, so its runtime answers without
 waking the relay: an idle host costs nothing, and the relay is not billed a
@@ -105,9 +106,17 @@ tells a live host from one that went quiet without closing.
 
 It is a text message, and not a WebSocket ping frame, for that reason: the
 runtime can answer a message pair and report on it, and a protocol ping
-reaches neither. `ping` and `pong` are the only text messages on a tunnel.
+reaches neither. `PING` and `PONG` are the only text messages on a tunnel.
 Anything else in text ends the session as a peer that is not speaking the
 protocol.
+
+The strings are namespaced because the runtime's auto-response covers
+every WebSocket the relay accepts, including the caller's side of a
+relayed upgrade. A plain `ping` would be answered there by the runtime and
+never reach the service, so an application heartbeat that uses that word
+would break through the tunnel. A caller that sends exactly
+`amika.tunnel.v2.ping` is still answered by the runtime; no application has
+a reason to.
 
 It pings on a fixed interval rather than only when the tunnel is idle.
 Inbound traffic proves the relay can reach this host; it proves nothing

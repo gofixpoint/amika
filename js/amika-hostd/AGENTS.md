@@ -77,10 +77,12 @@ Each of these is stated in full, with its reason, in the doc it links to.
   the user and from authorizing Amika's requests into this daemon. It never
   goes in `config.toml`, which `setup` rewrites and operators copy between
   machines. See [Outbound tunnel](docs/tunnel.md#decisions).
-- **A dead tunnel is found by a text `ping` with a deadline.** The relay's
-  runtime answers `pong` without waking the relay. A closed laptop lid
-  leaves a socket that looks alive, and only an unanswered round trip finds
-  it.
+- **A dead tunnel is found by a text `PING` with a deadline.** The relay's
+  runtime answers `PONG` without waking the relay. Both are namespaced
+  strings from `@amika/tunnel-protocol`, because the runtime's answer
+  covers relayed WebSockets too and a bare `ping` would swallow a
+  service's own heartbeat. A closed laptop lid leaves a socket that looks
+  alive, and only an unanswered round trip finds it.
 - **Shutdown closes the WebSocket**, which is what makes the relay give
   up the route. Dropping the connection loses every request sent before the
   relay notices.
