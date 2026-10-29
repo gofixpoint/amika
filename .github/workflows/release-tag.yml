@@ -106,7 +106,7 @@ jobs:
       # Credentials stay persisted: the final step pushes the tag with the app
       # token, which (unlike GITHUB_TOKEN) triggers release.yml. Nothing in
       # this job uploads the workspace as an artifact.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 # zizmor: ignore[artipacked]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.4.0 # zizmor: ignore[artipacked]
         with:
           ref: main
           fetch-depth: 0
