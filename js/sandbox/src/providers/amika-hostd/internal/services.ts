@@ -154,13 +154,9 @@ export function hostdServiceRoutes(
 const HOSTD_SCHEMA_REFUSAL = "Invalid request";
 
 /** Whether any route sets what only a hostd with `service-access` keeps. */
-function setsAccessSettings(
-  routes: HostdServiceRoute[],
-  owner?: string,
-): boolean {
-  return (
-    owner !== undefined ||
-    routes.some((r) => r.auth !== undefined || r.preserve_host !== undefined)
+function setsAccessSettings(routes: HostdServiceRoute[]): boolean {
+  return routes.some(
+    (r) => r.auth !== undefined || r.preserve_host !== undefined,
   );
 }
 
@@ -177,13 +173,12 @@ export function refusedAccessSettings(
   error: unknown,
   routes: HostdServiceRoute[],
   apiUrl: string,
-  owner?: string,
 ): Error | null {
   if (
     !(error instanceof SmolApiError) ||
     error.status !== 400 ||
     error.reason !== HOSTD_SCHEMA_REFUSAL ||
-    !setsAccessSettings(routes, owner)
+    !setsAccessSettings(routes)
   ) {
     return null;
   }

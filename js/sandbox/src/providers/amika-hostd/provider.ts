@@ -99,7 +99,6 @@ const createProvider = defineProvider(
                 error,
                 hostdServiceRoutes(input.services),
                 smolConfig.apiUrl,
-                input.owner,
               ) ?? error
             );
           }

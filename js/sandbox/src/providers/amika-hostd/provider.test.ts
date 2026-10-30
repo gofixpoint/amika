@@ -1076,10 +1076,18 @@ describe("what a service is at its name", () => {
 
   it("has hostd keep the settings and the owner from create, and the settings from a sync", async () => {
     const { provider, registry } = harness();
+    // The owner travels only with a service that admits the owner alone.
+    await provider.sandboxes.create(ctx, {
+      ...INPUT,
+      name: "shared",
+      owner: "user_1",
+      services: [WEB, PUBLIC, AMIKAD],
+    });
+    expect(registry.owner("shared")).toBeUndefined();
     await provider.sandboxes.create(ctx, {
       ...INPUT,
       owner: "user_1",
-      services: [WEB, PUBLIC, AMIKAD],
+      services: [WEB, PUBLIC, { ...WEB, name: "mine", auth: "owner" }, AMIKAD],
     });
     expect(registry.owner("demo")).toBe("user_1");
     expect(registry.entry("demo", "web")).toEqual({
@@ -1127,7 +1135,11 @@ describe("what a service is at its name", () => {
       provider.sandboxes.create(ctx, { ...INPUT, services: [PUBLIC] }),
     ).rejects.toThrow(upgrade);
     await expect(
-      provider.sandboxes.create(ctx, { ...INPUT, owner: "user_1" }),
+      provider.sandboxes.create(ctx, {
+        ...INPUT,
+        owner: "user_1",
+        services: [{ ...WEB, auth: "owner" }],
+      }),
     ).rejects.toThrow(upgrade);
     await expect(
       provider.sandboxes.get("demo").services!.load([PUBLIC]).refresh(),
