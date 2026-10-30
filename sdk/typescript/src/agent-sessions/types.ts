@@ -11,9 +11,9 @@ export type AgentSendResponse = AgentSessionSendResponse;
 
 /**
  * Request body for POST /api/v0beta1/agent-sessions. `message` is always
- * required, and `agent` is required to start a new chat: `sessionId`
- * continues an existing chat, `rig` routes into a specific rig, and `repoUrl`
- * is used only when a rig has to be created behind the scenes.
+ * required, and `agent` is required to start a new chat (see `agent`).
+ * `sessionId` continues an existing chat, `rig` routes into a specific rig,
+ * and `repoUrl` is used only when a rig has to be created behind the scenes.
  *
  * `rigId` and `sandboxId` are deprecated ID-only spellings of `rig`. When more
  * than one is set, the first non-empty of `rig`, `rigId`, `sandboxId` wins.
