@@ -63,13 +63,14 @@ therefore needs a change on the gateway side first; the credential is opaque
 to the gateway, so making it later changes nothing in this repo but the
 enrolment call.
 
-It travels in the `x-amika-host-credential` header of the handshake, beside
+It travels in the `x-amika-host-token` header of the handshake, beside
 `x-amika-host-id`, never in the URL, because a query string reaches the
 access log of every proxy on the path and an attachment credential lives
 until it is rotated. It is not `Authorization: Bearer`: the gateway does not
 know the credential's scheme and hands the whole value to the control plane
 unread. These are the names the gateway reads; any other spelling is
-refused at the handshake.
+refused at the handshake. The gateway also reads `x-amika-host-credential`,
+where amika-hostd 0.6.0 and earlier send the credential.
 
 ### The gateway address comes from the control plane
 
