@@ -75,4 +75,8 @@ export interface ServicePortDefinition {
 export interface ServiceDefinitionData {
   name: string;
   ports: ServicePortDefinition[];
+  /** Who Amika admits at the service's public name; absent is `organization`. */
+  auth?: ServiceAuth;
+  /** Whether the service sees its public name in `Host`; absent is false. */
+  preserve_host?: boolean;
 }
