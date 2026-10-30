@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -55,8 +56,13 @@ var sendCmd = &cobra.Command{
 
 If neither --session-id nor --rig is given, a sandbox is created behind the
 scenes and a new chat is started; the returned session id can be passed back as
---session-id to continue the conversation. The agent (claude or codex) comes
-from --agent, else the organization's default, else claude.
+--session-id to continue the conversation.
+
+--agent (claude or codex) is required to start a new chat: with no
+--session-id and no --rig, or with --new-session. A continued chat keeps the
+agent it started with, so --agent is optional there; if given, it must match.
+With --rig alone the message continues the rig's latest chat, or starts one
+(needing --agent) if the rig has none.
 
 Run from inside a git repo and that repo's "origin" remote is cloned into
 the sandbox, the same way "amika sandbox create" picks up the repo you are
@@ -135,10 +141,13 @@ func runSend(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Contradictory repo flags are reported before the auth gate: checking
-	// them costs nothing, so a login should not stand between the caller and
-	// a plain flag conflict. Only the flag-level checks move up — a bad path
-	// needs the filesystem, so it still waits.
+	// A bad or missing --agent and contradictory repo flags are reported
+	// before the auth gate: checking them costs nothing, so a login should not
+	// stand between the caller and a plain flag mistake. Only the flag-level checks
+	// move up — a bad path needs the filesystem, so it still waits.
+	if err := validateSendAgent(agent, sendStartsNewChat(sessionID, rigRef != nil, newSession)); err != nil {
+		return err
+	}
 	if err := validateSendRepoFlags(cmd, sessionID, rigRef != nil); err != nil {
 		return err
 	}
@@ -247,6 +256,35 @@ func explainSendRig(rigRef *rigref.Ref, err error) error {
 		return err
 	}
 	return rigref.Explain(*rigRef, err)
+}
+
+// sendAgents are the coding agents the agent-sessions API accepts.
+var sendAgents = []string{"claude", "codex"}
+
+// sendStartsNewChat reports whether a send can only start a new chat. A
+// named rig without a session may continue the rig's latest chat, which only
+// the server knows, so that case is not counted here.
+func sendStartsNewChat(sessionID string, rigNamed, newSession bool) bool {
+	return newSession || (sessionID == "" && !rigNamed)
+}
+
+// validateSendAgent checks that --agent names a known agent, and requires it
+// when the send starts a new chat.
+//
+// A new chat has no agent to inherit, so an empty value is refused here
+// rather than sent and rejected remotely. A continued chat uses its own
+// agent, so the flag may be left out there.
+func validateSendAgent(agent string, newChat bool) error {
+	if agent == "" {
+		if !newChat {
+			return nil
+		}
+		return fmt.Errorf("--agent is required to start a new chat: pass --agent %s", strings.Join(sendAgents, " or --agent "))
+	}
+	if !slices.Contains(sendAgents, agent) {
+		return fmt.Errorf("invalid --agent %q: must be %s", agent, strings.Join(sendAgents, " or "))
+	}
+	return nil
 }
 
 // validateSendRepoFlags rejects a repo or branch selection this command cannot
@@ -576,7 +614,9 @@ func newRigAgentSendCommand() *cobra.Command {
 		Use:   "agent-send <rig> [message]",
 		Short: "Send a message to a coding agent in a rig",
 		Long: `Equivalent to "amika send --rig <rig> [message]". Uses the same durable
-chats, streaming behavior, and API response format as "amika send".
+chats, streaming behavior, and API response format as "amika send": by
+default the message continues the rig's latest chat, and --agent (claude or codex) is
+needed only with --new-session or when the rig has no chat yet.
 The message can also be piped via stdin.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -605,7 +645,7 @@ The message can also be piped via stdin.`,
 
 // addSendFlags gives both send entry points identical request and output options.
 func addSendFlags(cmd *cobra.Command) {
-	cmd.Flags().String("agent", "", "Coding agent to use: claude or codex (default: org setting, else claude)")
+	cmd.Flags().String("agent", "", "Coding agent to use: claude or codex (required to start a new chat)")
 	cmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
 	cmd.Flags().String("rig", "", "Send into this existing rig: a name or id, or name=<name> / id=<id> to match one field")
 	cmd.Flags().Bool("new-session", false, "Start a brand-new chat")

@@ -865,7 +865,10 @@ func (c *Client) UpdateSession(sel SandboxSelector, sessionID string, req Update
 // RepoURL, Branch and
 // NewBranchName are only used when a sandbox is created behind the scenes.
 type AgentSessionSendRequest struct {
-	Message   string `json:"message"`
+	Message string `json:"message"`
+	// Agent ("claude" or "codex") is required to start a new chat. A
+	// continued chat uses its own agent, so it may be left empty there; if
+	// set, it must match.
 	Agent     string `json:"agent,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	// SandboxRef matches by id or name and refuses an ambiguous value with a

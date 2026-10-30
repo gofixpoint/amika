@@ -82,23 +82,25 @@ value.
 ## Driving an agent
 
 `amika send` is the programmatic entry point for remote agent chats. Without
-`--session-id` or `--rig`, it creates a rig and starts a chat. It uses
-the organization's default agent, falling back to Claude; pass `--agent claude`
-or `--agent codex` to choose explicitly.
+`--session-id` or `--rig`, it creates a rig and starts a chat. Starting a new
+chat requires `--agent claude` or `--agent codex`. A continued chat keeps its
+agent, so `--agent` is optional with `--session-id` and, if given, must match.
+`--rig` alone continues the rig's latest chat, or starts one (needing
+`--agent`) if the rig has none.
 
 ```bash
-amika send "Add tests for the auth module"
-printf 'Fix the failing tests\n' | amika send
+amika send --agent claude "Add tests for the auth module"
+printf 'Fix the failing tests\n' | amika send --agent codex
 amika send --rig my-rig "Refactor the API layer"
 amika send --session-id <id> "Continue the refactor"
-amika send "Summarize this repo" -o json
+amika send --agent claude "Summarize this repo" -o json
 ```
 
 In JSON output, check `is_error`; a completed request can still contain an agent
-failure. Use `--session-id <id>` to continue a chat or `--new-session` with
-`--rig` to start another chat in an existing rig. When `amika send`
-creates a rig, it auto-detects the current git repository; use `--git` or
-`--no-git` to override that behavior.
+failure. Use `--session-id <id>` to continue a chat or `--new-session` and
+`--agent` with `--rig` to start another chat in an existing rig. When
+`amika send` creates a rig, it auto-detects the current git repository; use
+`--git` or `--no-git` to override that behavior.
 
 The agent runs with permission prompts disabled inside the rig, so prompts
 execute unsupervised there.

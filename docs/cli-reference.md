@@ -47,7 +47,15 @@ to create a rig. When creating a rig, repository and branch selection work
 like `rig create`: the current Git repository is detected unless `--git` or
 `--no-git` overrides it.
 
+Starting a new chat requires `--agent claude` or `--agent codex`, so a send
+with neither `--rig` nor `--session-id`, or with `--new-session`, is refused
+without it. A continued chat keeps the agent it started with: `--agent` is
+optional there and, if given, must match. With `--rig` alone the send
+continues the rig's latest chat, or starts one (needing `--agent`) if the rig
+has none.
+
 ```bash
+amika send "Add tests for the auth module" --agent claude
 amika send "Fix the tests" --rig my-rig
 amika send "Now update the README" --session-id <session-id>
 amika send "Summarize the code" --rig my-rig --output json
@@ -407,12 +415,12 @@ amika rig agent-send my-rig "Continue the review" --session-id <session-id>
 amika rig agent-send my-rig "Review this code" --agent codex --output json
 ```
 
-| Flag                  | Default                      | Description                                               |
-| --------------------- | ---------------------------- | --------------------------------------------------------- |
-| `--agent <name>`      | Existing chat or org setting | Coding agent: `claude` or `codex`; falls back to `claude` |
-| `--session-id <id>`   | —                            | Continue a durable chat returned by a prior send          |
-| `--new-session`       | `false`                      | Start a brand-new chat                                    |
-| `--stream[=false]`    | On for a terminal            | Stream text output; JSON is always buffered               |
+| Flag                | Default           | Description                                                |
+| ------------------- | ----------------- | ---------------------------------------------------------- |
+| `--agent <name>`    | The chat's agent  | Coding agent: `claude` or `codex`; required for a new chat |
+| `--session-id <id>` | —                 | Continue a durable chat returned by a prior send           |
+| `--new-session`     | `false`           | Start a brand-new chat                                     |
+| `--stream[=false]`  | On for a terminal | Stream text output; JSON is always buffered                |
 
 The old `--no-wait` and `--workdir` flags have been removed. Commands wait for
 the agent's response and use the rig's configured agent working directory. Session IDs
