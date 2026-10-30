@@ -1,6 +1,23 @@
-import { type RigServiceResource, type RigServiceRequest } from "./types.js";
+import {
+  type RigServiceResource,
+  type RigServiceRequest,
+  type ServiceAuth,
+} from "./types.js";
 import { nullableStr, str, num, nullableNum } from "../internal/wire.js";
 import { validateServicePort } from "../internal/ports.js";
+
+const SERVICE_AUTH_MODES: readonly ServiceAuth[] = [
+  "organization",
+  "owner",
+  "public",
+];
+
+/** The server's `auth`, or `organization` where a server does not report one. */
+function serviceAuth(value: unknown): ServiceAuth {
+  return SERVICE_AUTH_MODES.includes(value as ServiceAuth)
+    ? (value as ServiceAuth)
+    : "organization";
+}
 
 export function rigServiceResourceFromWire(
   w: Record<string, unknown>,
@@ -17,6 +34,8 @@ export function rigServiceResourceFromWire(
     hostPort: nullableNum(w["host_port"]),
     source: str(w["source"]),
     kind: str(w["kind"]),
+    auth: serviceAuth(w["auth"]),
+    preserveHost: w["preserve_host"] === true,
     createdAt: nullableStr(w["created_at"]),
     updatedAt: nullableStr(w["updated_at"]),
   };
@@ -30,5 +49,13 @@ export function rigServiceRequestToWire(
   r: RigServiceRequest,
 ): Record<string, unknown> {
   validateServicePort(r.port);
-  return { name: r.name, port: r.port, url_scheme: r.urlScheme };
+  // Each access field goes only when set, so the server's default applies
+  // to a request that names neither.
+  return {
+    name: r.name,
+    port: r.port,
+    url_scheme: r.urlScheme,
+    ...(r.auth === undefined ? {} : { auth: r.auth }),
+    ...(r.preserveHost === undefined ? {} : { preserve_host: r.preserveHost }),
+  };
 }

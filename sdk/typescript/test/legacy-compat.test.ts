@@ -50,6 +50,8 @@ const service: SandboxServiceResource = {
   protocol: "tcp",
   url: null,
   hostPort: null,
+  auth: "organization",
+  preserveHost: false,
   source: "table",
   kind: "user",
   createdAt: null,

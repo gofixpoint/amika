@@ -148,3 +148,46 @@ describe("rig service port validation", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("what a rig service is at its public address", () => {
+  it("sends auth and preserve_host only when set, and reads them back", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 201,
+        body: { ...wireService, auth: "public", preserve_host: true },
+      },
+      { status: 201, body: wireService },
+    ]);
+    const client = makeClient(fetch);
+    const pub = await client.services.create("org/dev", {
+      name: "t3",
+      port: 3773,
+      urlScheme: "https",
+      auth: "public",
+      preserveHost: true,
+    });
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      name: "t3",
+      port: 3773,
+      url_scheme: "https",
+      auth: "public",
+      preserve_host: true,
+    });
+    expect(pub.auth).toBe("public");
+    expect(pub.preserveHost).toBe(true);
+
+    // Neither set: neither sent, so the server's defaults apply. A server
+    // from before the fields answers without them, which reads as those
+    // defaults too.
+    const plain = await client.services.create("org/dev", {
+      name: "web",
+      port: 3000,
+      urlScheme: "https",
+    });
+    const body = JSON.parse(calls[1]?.body ?? "");
+    expect(body).not.toHaveProperty("auth");
+    expect(body).not.toHaveProperty("preserve_host");
+    expect(plain.auth).toBe("organization");
+    expect(plain.preserveHost).toBe(false);
+  });
+});
