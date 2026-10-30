@@ -23,8 +23,12 @@ import {
   SandboxProviderUnsupportedError,
   type RefreshUrlsResult,
 } from "../../provider";
-import type { SandboxService } from "../../../types";
-import { machinePath, type SmolClient } from "../../smol/provider";
+import type { SandboxService, ServiceAuth } from "../../../types";
+import {
+  SmolApiError,
+  machinePath,
+  type SmolClient,
+} from "../../smol/provider";
 import { previewPath } from "@amika/service-auth/credentials";
 
 /**
@@ -82,11 +86,23 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
         throw new SandboxProviderUnsupportedError("amika-hostd", "services");
       }
       const routes = hostdServiceRoutes(desired);
-      await client.discard(`${machinePath(id)}/services`, "PUT", {
-        services: [...new Map(routes.map((r) => [r.name, r])).values()],
-      });
+      try {
+        await client.discard(`${machinePath(id)}/services`, "PUT", {
+          services: [...new Map(routes.map((r) => [r.name, r])).values()],
+        });
+      } catch (error) {
+        throw refusedAccessSettings(error, routes, origin) ?? error;
+      }
     },
   };
+}
+
+/** A service as hostd's create and replace bodies take it. */
+export interface HostdServiceRoute {
+  name: string;
+  port: number;
+  auth?: ServiceAuth;
+  preserve_host?: boolean;
 }
 
 /**
@@ -97,10 +113,15 @@ export function hostdServices(apiUrl: string, client: SmolClient) {
  * segments even percent-encoded). `amikad` is reserved for amikad's own
  * port: hostd never serves it a preview, so on any other port it would get
  * no URL a browser can open.
+ *
+ * What a service is at its name (`auth`, `preserve_host`) travels with it,
+ * but a default is left out: a body that sets nothing is one any hostd
+ * takes, and one that sets a value is refused by a hostd too old to keep
+ * it rather than served as if it had not been set.
  */
 export function hostdServiceRoutes(
   services: SandboxService[],
-): { name: string; port: number }[] {
+): HostdServiceRoute[] {
   const ports = new Map<string, number>();
   for (const { name, containerPort } of services) {
     if (name === "" || name === "." || name === "..") {
@@ -121,8 +142,47 @@ export function hostdServiceRoutes(
     }
     ports.set(name, containerPort);
   }
-  return services.map(({ name, containerPort }) => ({
+  return services.map(({ name, containerPort, auth, preserveHost }) => ({
     name,
     port: containerPort,
+    ...(auth === undefined || auth === "organization" ? {} : { auth }),
+    ...(preserveHost ? { preserve_host: true } : {}),
   }));
+}
+
+/** Whether any route sets what only a hostd with `service-access` keeps. */
+export function setsAccessSettings(
+  routes: HostdServiceRoute[],
+  owner?: string,
+): boolean {
+  return (
+    owner !== undefined ||
+    routes.some((r) => r.auth !== undefined || r.preserve_host !== undefined)
+  );
+}
+
+/**
+ * The error to raise when hostd refused a body for what it says of a
+ * service at its name, which a daemon from before `service-access` does
+ * with a `400` on the strict body; null when `error` is something else.
+ * The operator is told what to upgrade rather than left with a schema
+ * message, and nothing is served as if the setting had not been made.
+ */
+export function refusedAccessSettings(
+  error: unknown,
+  routes: HostdServiceRoute[],
+  apiUrl: string,
+  owner?: string,
+): Error | null {
+  if (
+    !(error instanceof SmolApiError) ||
+    error.status !== 400 ||
+    !setsAccessSettings(routes, owner)
+  ) {
+    return null;
+  }
+  return new Error(
+    `amika-hostd at ${apiUrl} refused a service's access settings (auth, preserve_host); upgrade amika-hostd on that host to use them`,
+    { cause: error },
+  );
 }

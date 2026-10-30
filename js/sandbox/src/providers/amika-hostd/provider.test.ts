@@ -21,6 +21,12 @@ import { startCapture } from "../../../../amika-hostd/src/internal/snapshots";
 // its daemon builds.
 // eslint-disable-next-line local/no-cross-package-internal -- see above
 import { providerRuntime } from "../../../../amika-hostd/src/internal/machine-runtime";
+// The real registry, to read what hostd kept of a create's services.
+// eslint-disable-next-line local/no-cross-package-internal -- see above
+import {
+  memoryServiceRegistry,
+  type ServiceRegistry,
+} from "../../../../amika-hostd/src/internal/service-registry";
 import { moduleLogger, type SandboxCtx } from "../../logger";
 import { getProviderLabel, isSandboxProviderName } from "../capabilities";
 import { type CreateSandboxProviderInput } from "../provider";
@@ -216,6 +222,7 @@ function harness({
   amikaUrl,
   snapshots = false,
   pack = fakePack(),
+  registry = memoryServiceRegistry(),
 }: {
   config?: AmikaHostdConfig;
   machines?: SmolMachine[];
@@ -225,6 +232,8 @@ function harness({
   /** Serve the snapshot routes, as a daemon running its own smolvm does. */
   snapshots?: boolean;
   pack?: ReturnType<typeof fakePack>;
+  /** hostd's record of each rig's services, to read what create sent. */
+  registry?: ServiceRegistry;
 } = {}) {
   const fake = fakeSmolvm(machines, respond);
   // What hostd's service routes reach a machine's published ports with.
@@ -245,6 +254,7 @@ function harness({
   }
   const app = createApp({ secretKey: SECRET, amikaUrl }, runtime, {
     fetch: guest,
+    registry,
     ...(store
       ? {
           snapshots: {
@@ -274,6 +284,7 @@ function harness({
     app,
     guest,
     fetcher,
+    registry,
     config,
     store,
     pack,
@@ -1042,5 +1053,89 @@ describe("snapshots", () => {
     const body = create?.body as { image?: string; from?: string };
     expect(body.image).toBeUndefined();
     expect(body.from).toMatch(/\.smolmachine$/);
+  });
+});
+
+describe("what a service is at its name", () => {
+  const PUBLIC: SandboxService = {
+    ...WEB,
+    name: "app",
+    auth: "public",
+    preserveHost: true,
+  };
+
+  it("sends a service's settings and the rig's owner to hostd, defaults left out", () => {
+    expect(
+      hostdServiceRoutes([WEB, PUBLIC, { ...WEB, auth: "organization" }]),
+    ).toEqual([
+      { name: "web", port: 3000 },
+      { name: "app", port: 3000, auth: "public", preserve_host: true },
+      { name: "web", port: 3000 },
+    ]);
+  });
+
+  it("has hostd keep the settings and the owner from create, and the settings from a sync", async () => {
+    const { provider, registry } = harness();
+    await provider.sandboxes.create(ctx, {
+      ...INPUT,
+      owner: "user_1",
+      services: [WEB, PUBLIC, AMIKAD],
+    });
+    expect(registry.owner("demo")).toBe("user_1");
+    expect(registry.entry("demo", "web")).toEqual({
+      port: 3000,
+      auth: "organization",
+      preserveHost: false,
+    });
+    expect(registry.entry("demo", "app")).toEqual({
+      port: 3000,
+      auth: "public",
+      preserveHost: true,
+    });
+
+    const services = provider.sandboxes.get("demo").services!;
+    await services
+      .load([
+        { ...WEB, auth: "owner" },
+        { ...PUBLIC, preserveHost: false },
+        AMIKAD,
+      ])
+      .refresh();
+    expect(registry.entry("demo", "web")?.auth).toBe("owner");
+    expect(registry.entry("demo", "app")).toEqual({
+      port: 3000,
+      auth: "public",
+      preserveHost: false,
+    });
+    expect(registry.owner("demo")).toBe("user_1");
+  });
+
+  it("tells the operator to upgrade a host that refuses the settings", async () => {
+    // A hostd from before `service-access` has a strict body: 400.
+    const fetcher = vi.fn<typeof fetch>(async (url) =>
+      String(url).endsWith("/health")
+        ? Response.json({ status: "ok" })
+        : Response.json({ error: "Unrecognized key: auth" }, { status: 400 }),
+    );
+    const provider = amikaHostdProvider({
+      config: { secretKey: SECRET, apiUrl: "http://old-host:3020" },
+      fetcher,
+    });
+    const upgrade =
+      "amika-hostd at http://old-host:3020 refused a service's access settings (auth, preserve_host); upgrade amika-hostd";
+    await expect(
+      provider.sandboxes.create(ctx, { ...INPUT, services: [PUBLIC] }),
+    ).rejects.toThrow(upgrade);
+    await expect(
+      provider.sandboxes.create(ctx, { ...INPUT, owner: "user_1" }),
+    ).rejects.toThrow(upgrade);
+    await expect(
+      provider.sandboxes.get("demo").services!.load([PUBLIC]).refresh(),
+    ).rejects.toThrow(upgrade);
+    // A body that sets nothing is refused for some other reason, which is
+    // reported as it is.
+    await expect(
+      provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] }),
+    ).rejects.toThrow("HTTP 400");
   });
 });

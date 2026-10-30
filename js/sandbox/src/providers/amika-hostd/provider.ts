@@ -16,6 +16,7 @@ import {
   HOSTD_RIGS_PATH,
   HOSTD_SERVICE_URL_TTL_S,
   hostdServiceRoutes,
+  refusedAccessSettings,
   hostdServices,
 } from "./internal/services";
 import { HOSTD_SNAPSHOTS_PATH, hostdSnapshots } from "./internal/snapshots";
@@ -90,7 +91,17 @@ const createProvider = defineProvider(
                 { cause: error },
               );
             }
-            throw error;
+            // A host from before `service-access` refuses a body that says
+            // what a service is at its name, rather than serving it as if
+            // it had said nothing.
+            throw (
+              refusedAccessSettings(
+                error,
+                hostdServiceRoutes(input.services),
+                smolConfig.apiUrl,
+                input.owner,
+              ) ?? error
+            );
           }
         },
         delete: ops.remove,

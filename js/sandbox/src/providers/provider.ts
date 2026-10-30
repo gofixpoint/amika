@@ -85,6 +85,13 @@ export interface CreateSandboxProviderInput {
   autoDeleteInterval?: number;
   /** The caller-ordered service list to expose and return unchanged by identity. */
   services: SandboxService[];
+  /**
+   * The Amika user id that owns the sandbox, as the browser login pass
+   * spells it. A provider that serves services at their own public names
+   * (amika-hostd) admits that user alone at a service whose `auth` is
+   * `owner`; the others ignore it.
+   */
+  owner?: string;
   labels?: Record<string, string>;
   /**
    * Whether the base snapshot is known to have no Amika-injected secrets

@@ -236,6 +236,9 @@ export function smolOperations(
           input.services.length && serviceRoutes
             ? uniqueByName(serviceRoutes(input.services))
             : undefined,
+        // Who owns the rig, for a service that admits its owner alone at
+        // its name. Only amika-hostd serves such names.
+        owner: serviceRoutes ? input.owner : undefined,
         ports,
       });
       try {
