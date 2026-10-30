@@ -98,7 +98,14 @@ describe("startServer", () => {
       );
       expect(response.status).toBe(201);
       expect(JSON.parse(readFileSync(servicesFile, "utf8"))).toEqual({
-        demo: { web: 3000 },
+        version: 2,
+        machines: {
+          demo: {
+            services: {
+              web: { port: 3000, auth: "organization", preserve_host: false },
+            },
+          },
+        },
       });
     } finally {
       await server.close();

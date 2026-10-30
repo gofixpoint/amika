@@ -1,6 +1,10 @@
 /** Validate the machine API's requests, the supported subset of smolvm's. */
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
+import {
+  AMIKAD_SERVICE,
+  SERVICE_AUTH_MODES,
+} from "@amika/service-auth/gateway";
 import { PREPULL_MACHINE_PREFIX } from "./prepull.js";
 import type { SnapshotState } from "./snapshot-store.js";
 
@@ -13,23 +17,45 @@ const envSchema = z.array(
 // hostd, not the caller, picks the host side of each, so a caller can never
 // bind an arbitrary host port. Several names may share a port. Names are
 // Amika's, which allow any text; routes carry them percent-encoded.
+//
+// `auth` and `preserve_host` say what the service is at its own public name
+// (`service-registry.ts`); absent, each is the default. Both are strict
+// keys, so a daemon from before them refuses a body that sets one rather
+// than serving the service as if it had not. amikad takes neither: it has
+// its own rules at its name, whatever a body says.
+const serviceSchema = z
+  .strictObject({
+    // `.` and `..` are dot segments, which no URL can carry as a name.
+    name: z
+      .string()
+      .min(1)
+      .max(300)
+      .refine((name) => name !== "." && name !== ".."),
+    port: z.number().int().min(1).max(65_535),
+    auth: z.enum(SERVICE_AUTH_MODES).optional(),
+    preserve_host: z.boolean().optional(),
+  })
+  .refine(
+    (service) =>
+      service.name !== AMIKAD_SERVICE ||
+      (service.auth === undefined && service.preserve_host === undefined),
+    `${AMIKAD_SERVICE} takes no auth or preserve_host`,
+  );
+export type ServiceInput = z.infer<typeof serviceSchema>;
+
 const servicesSchema = z
-  .array(
-    z.strictObject({
-      // `.` and `..` are dot segments, which no URL can carry as a name.
-      name: z
-        .string()
-        .min(1)
-        .max(300)
-        .refine((name) => name !== "." && name !== ".."),
-      port: z.number().int().min(1).max(65_535),
-    }),
-  )
+  .array(serviceSchema)
   .max(16)
   .refine(
     (services) => new Set(services.map((s) => s.name)).size === services.length,
     "duplicate service name",
   );
+
+/**
+ * The Amika user id that owns the rig, as the login pass spells it. Only
+ * `auth: "owner"` reads it; a rig without one admits nobody that way.
+ */
+const ownerSchema = z.string().min(1).max(200).optional();
 
 export const createMachineSchema = z.strictObject({
   // The prefix names hostd's own throwaway machines, which it deletes.
@@ -47,9 +73,14 @@ export const createMachineSchema = z.strictObject({
   network: z.boolean().default(true),
   env: envSchema.optional(),
   services: servicesSchema.optional(),
+  owner: ownerSchema,
 });
 
-/** A machine's full service set, replacing the one it was created with. */
+/**
+ * A machine's full service set, replacing the one it was created with. The
+ * owner is not among them: a rig's never changes, so the one create named
+ * stays.
+ */
 export const replaceServicesSchema = z.strictObject({
   services: servicesSchema,
 });

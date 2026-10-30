@@ -24,9 +24,10 @@ import {
   type GatewayRequest,
   type ServiceRoute,
 } from "@amika/service-auth/gateway";
+import { guestHost } from "./guest-host.js";
 import { isHostdPath } from "./hostd-paths.js";
 import { namedRoute } from "./tunnel-rig-route.js";
-import type { ServiceRegistry } from "./service-registry.js";
+import { namedService, type ServiceRegistry } from "./service-registry.js";
 import type { MachineRuntime } from "./machine-runtime.js";
 
 /** amikad's guest port, as Amika registers it. */
@@ -72,7 +73,13 @@ export function createUpgradeHandler(
     head: Buffer,
   ): Promise<void> {
     const incoming = fromIncomingMessage(request);
-    const decision = await gateway.authorize(incoming, { upgrade: true });
+    // What the registry recorded of the service at its name: who may have
+    // it, and the `Host` it sees.
+    const named = incoming.named && namedService(registry, incoming.named);
+    const decision = await gateway.authorize(
+      { ...incoming, named },
+      { upgrade: true },
+    );
     if (decision.kind === "not-mine") {
       // No service of any machine: refused as any request without the key
       // is, and not found with it.
@@ -102,8 +109,18 @@ export function createUpgradeHandler(
         requestHead(
           request,
           `${route.path}${incoming.url.search}`,
-          // Only a named request is at a public address of its own.
-          incoming.named ? incoming.url.host : undefined,
+          // Only a named request is at a public address of its own, and
+          // only there is `Host` hostd's to choose (`guest-host.ts`).
+          named
+            ? {
+                authority: incoming.url.host,
+                host: guestHost(
+                  named.preserveHost,
+                  incoming.url.host,
+                  hostPort,
+                ),
+              }
+            : undefined,
         ),
       );
       if (head.length) upstream.write(head);
@@ -124,13 +141,14 @@ export function createUpgradeHandler(
    * including `Host`, `Origin`, and the `Authorization` the guest
    * authenticates. Only the gateway's credentials and `Proxy-Authorization`
    * are dropped: each was meant for hostd or a proxy in front of it, never
-   * for the guest.
+   * for the guest. A named request's `Host` is hostd's to choose, and its
+   * public address is told as every proxy tells it.
    */
   function requestHead(
     request: IncomingMessage,
     path: string,
-    /** For a named request, the public address it was made to. */
-    publicAuthority?: string,
+    /** For a named request, its public address and the `Host` to write. */
+    named?: { authority: string; host: string },
   ): string {
     const lines = [`${request.method} ${path} HTTP/${request.httpVersion}`];
     for (let i = 0; i < request.rawHeaders.length; i += 2) {
@@ -139,7 +157,7 @@ export function createUpgradeHandler(
       if (
         lower === "proxy-authorization" ||
         gateway.isCredentialHeader(lower) ||
-        (publicAuthority !== undefined && isForwardingHeader(lower))
+        (named !== undefined && (isForwardingHeader(lower) || lower === "host"))
       ) {
         continue;
       }
@@ -151,8 +169,9 @@ export function createUpgradeHandler(
       }
       lines.push(`${name}: ${value}`);
     }
-    if (publicAuthority !== undefined) {
-      for (const [name, value] of publicForwarding(publicAuthority)) {
+    if (named !== undefined) {
+      lines.push(`Host: ${named.host}`);
+      for (const [name, value] of publicForwarding(named.authority)) {
         lines.push(`${name}: ${value}`);
       }
     }
