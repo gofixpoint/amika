@@ -106,6 +106,10 @@ type RemoteSandboxService struct {
 	ContainerPort int    `json:"containerPort"`
 	Protocol      string `json:"protocol"`
 	Kind          string `json:"kind,omitempty"`
+	// Auth and PreserveHost are what the service is at its public address
+	// (see SandboxServiceResource); absent from a server that predates them.
+	Auth         string `json:"auth,omitempty"`
+	PreserveHost bool   `json:"preserveHost,omitempty"`
 }
 
 // RemoteSandbox mirrors the API's Sandbox schema (see
@@ -619,16 +623,29 @@ type SandboxServiceResource struct {
 	HostPort  *int    `json:"host_port"`
 	Source    string  `json:"source"`
 	Kind      string  `json:"kind"`
-	CreatedAt *string `json:"created_at"`
-	UpdatedAt *string `json:"updated_at"`
+	// Auth is who Amika admits at the service's public address:
+	// "organization", "owner" or "public". PreserveHost is whether the
+	// service sees that address in Host rather than its loopback address.
+	// Rigs on cloud providers store both and ignore them.
+	Auth         string  `json:"auth"`
+	PreserveHost bool    `json:"preserve_host"`
+	CreatedAt    *string `json:"created_at"`
+	UpdatedAt    *string `json:"updated_at"`
 }
 
+// ServiceAuthModes are the values SandboxServiceRequest.Auth may take.
+var ServiceAuthModes = []string{"organization", "owner", "public"}
+
 // SandboxServiceRequest is the request body for creating or replacing a sandbox
-// service (POST/PUT). url_scheme is "http" or "https".
+// service (POST/PUT). url_scheme is "http" or "https". Auth and PreserveHost
+// are sent only when set, so the server's defaults ("organization", false)
+// apply otherwise; PreserveHost is a pointer so an explicit false is sent.
 type SandboxServiceRequest struct {
-	Name      string `json:"name"`
-	Port      int    `json:"port"`
-	URLScheme string `json:"url_scheme"`
+	Name         string `json:"name"`
+	Port         int    `json:"port"`
+	URLScheme    string `json:"url_scheme"`
+	Auth         string `json:"auth,omitempty"`
+	PreserveHost *bool  `json:"preserve_host,omitempty"`
 }
 
 // CreateSandboxService creates a service on the sandbox sel names and returns

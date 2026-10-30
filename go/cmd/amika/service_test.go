@@ -32,12 +32,15 @@ func resetServiceFlags(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, f := range []string{"rig", "name", "url-scheme"} {
+	for _, f := range []string{"rig", "name", "url-scheme", "auth"} {
 		if err := serviceCreateCmd.Flags().Set(f, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := serviceCreateCmd.Flags().Set("port", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := serviceCreateCmd.Flags().Set("preserve-host", "false"); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range []string{"rig", "name"} {
@@ -636,5 +639,82 @@ func TestGroupRemoteServices_NoURL(t *testing.T) {
 	}
 	if rows[0].url != "-" {
 		t.Fatalf("missing URL should render as '-', got %q", rows[0].url)
+	}
+}
+
+// --auth takes one of the server's modes, checked before any request.
+func TestServiceCreateCommand_RejectsUnknownAuth(t *testing.T) {
+	resetServiceFlags(t)
+	_, err := runRootCommand("service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "--auth", "anyone")
+	if err == nil || !strings.Contains(err.Error(), `invalid --auth "anyone"`) || !strings.Contains(err.Error(), `"public"`) {
+		t.Fatalf("expected an --auth error naming the modes, got %v", err)
+	}
+}
+
+// Each access flag reaches the request only when given, so the server's
+// defaults apply to a create that names neither; the response's fields are
+// printed and, with -o json, emitted as the API returned them.
+func TestServiceCreateCommand_SendsAccessFlagsOnlyWhenGiven(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		bodies = append(bodies, body)
+		_ = json.NewEncoder(w).Encode(apiclient.SandboxServiceResource{
+			Name:         "t3",
+			Port:         3773,
+			URLScheme:    strptr("https"),
+			Auth:         "public",
+			PreserveHost: true,
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("AMIKA_API_URL", srv.URL)
+
+	resetServiceFlags(t)
+	out, err := runRootCommand("service", "create", "--rig", "box", "--name", "t3", "--port", "3773", "--url-scheme", "https", "--auth", "public", "--preserve-host")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	for _, needle := range []string{"AUTH", "PRESERVE HOST", "public", "yes"} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("output missing %q:\n%s", needle, out)
+		}
+	}
+
+	resetServiceFlags(t)
+	if _, err := runRootCommand("service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "--preserve-host=false"); err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	resetServiceFlags(t)
+	out, err = runRootCommand("service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "-o", "json")
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	if !strings.Contains(out, `"auth":"public"`) || !strings.Contains(out, `"preserve_host":true`) {
+		t.Fatalf("json output missing the access fields:\n%s", out)
+	}
+
+	if len(bodies) != 3 {
+		t.Fatalf("expected 3 requests, got %d", len(bodies))
+	}
+	if bodies[0]["auth"] != "public" || bodies[0]["preserve_host"] != true {
+		t.Errorf("first body should carry both flags: %v", bodies[0])
+	}
+	if _, ok := bodies[1]["auth"]; ok {
+		t.Errorf("second body should not carry auth: %v", bodies[1])
+	}
+	if bodies[1]["preserve_host"] != false {
+		t.Errorf("second body should carry an explicit preserve_host=false: %v", bodies[1])
+	}
+	for _, key := range []string{"auth", "preserve_host"} {
+		if _, ok := bodies[2][key]; ok {
+			t.Errorf("third body should not carry %s: %v", key, bodies[2])
+		}
 	}
 }
