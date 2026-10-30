@@ -77,6 +77,7 @@ confirmation flags, and commands that reject JSON output.
 | Run a command remotely                     | `amika rig ssh <rig> <command>`                                           |
 | Copy files                                 | `amika scp --help`                                                        |
 | Manage service exposure                    | `amika service --help`                                                    |
+| Expose an app that does its own login      | `amika service create --auth public --preserve-host ...`                 |
 | Capture a base environment                 | `amika snapshot --help`                                                   |
 | Fork from a snapshot                       | `amika rig create --snapshot <name>`                                      |
 | List the org's own hosts                   | `amika host list`                                                         |

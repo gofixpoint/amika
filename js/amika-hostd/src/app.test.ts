@@ -104,7 +104,7 @@ describe("machine API", () => {
     expect(await (await app.request("/health")).json()).toEqual({
       status: "ok",
       apis: ["v0beta1"],
-      features: ["service-tokens"],
+      features: ["service-tokens", "service-access"],
     });
     expectUntouched(runtime);
   });
@@ -1416,5 +1416,86 @@ describe("snapshots", () => {
     };
     expect(health.features).not.toContain("snapshots");
     expect((await plain.request(SNAPSHOTS)).status).toBe(404);
+  });
+});
+
+describe("what a service is at its name, at create and replace", () => {
+  function creating() {
+    const runtime = fakeRuntime();
+    const registry = memoryServiceRegistry();
+    const app = authenticated(
+      createApp({ secretKey: SECRET }, runtime, { registry }),
+    );
+    return { app, runtime, registry };
+  }
+
+  it("records auth, preserve_host and the owner, and hands the runtime names and ports alone", async () => {
+    const { app, runtime, registry } = creating();
+    const input = {
+      name: "demo",
+      image: "ubuntu:24.04",
+      owner: "user_1",
+      services: [
+        { name: "web", port: 3000 },
+        { name: "app", port: 4000, auth: "public", preserve_host: true },
+        { name: "amikad", port: 60999 },
+      ],
+    };
+    expect((await app.request(ROOT, json(input))).status).toBe(201);
+    expect(runtime.create.mock.calls[0][0].services).toEqual([
+      { name: "web", port: 3000 },
+      { name: "app", port: 4000 },
+      { name: "amikad", port: 60999 },
+    ]);
+    expect(registry.owner("demo")).toBe("user_1");
+    expect(registry.entry("demo", "web")).toEqual({
+      port: 3000,
+      auth: "organization",
+      preserveHost: false,
+    });
+    expect(registry.entry("demo", "app")).toEqual({
+      port: 4000,
+      auth: "public",
+      preserveHost: true,
+    });
+  });
+
+  it.each([
+    [{ name: "amikad", port: 60999, auth: "public" }],
+    [{ name: "amikad", port: 60999, preserve_host: true }],
+    [{ name: "web", port: 3000, auth: "anyone" }],
+    [{ name: "web", port: 3000, preserve_host: "yes" }],
+  ])("refuses %j without calling the runtime", async (service) => {
+    const { app, runtime } = creating();
+    const input = { name: "demo", image: "ubuntu:24.04", services: [service] };
+    expect((await app.request(ROOT, json(input))).status).toBe(400);
+    expectUntouched(runtime);
+  });
+
+  it("replaces the entries and keeps the owner create named", async () => {
+    const { app, runtime, registry } = creating();
+    registry.set("demo", { web: 3000 }, "user_1");
+    const body = { services: [{ name: "web", port: 3000, auth: "owner" }] };
+    const response = await app.request(`${ROOT}/demo/services`, {
+      ...json(body),
+      method: "PUT",
+    });
+    expect(response.status).toBe(204);
+    expect(runtime.checkServices).toHaveBeenCalledWith("demo", [
+      { name: "web", port: 3000 },
+    ]);
+    expect(registry.owner("demo")).toBe("user_1");
+    expect(registry.entry("demo", "web")).toEqual({
+      port: 3000,
+      auth: "owner",
+      preserveHost: false,
+    });
+    // A rig's owner never changes, so a replace body may not name one.
+    const renamed = await app.request(`${ROOT}/demo/services`, {
+      ...json({ ...body, owner: "user_2" }),
+      method: "PUT",
+    });
+    expect(renamed.status).toBe(400);
+    expect(registry.owner("demo")).toBe("user_1");
   });
 });

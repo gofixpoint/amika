@@ -72,6 +72,7 @@ export {
 } from "./repositories/types.js";
 export {
   type RigServiceRequest,
+  type ServiceAuth,
   type RigServiceResource,
   type SandboxServiceRequest,
   type SandboxServiceResource,

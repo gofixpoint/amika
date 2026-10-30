@@ -146,3 +146,38 @@ noindex`, but keep the guest's own caching, made `private`: the URL is
   server out of the login; a guest's page shares the origin, and its script
   could still set a cookie where none is held, as a host is one trusted
   unit.
+
+## Access modes and the Host header at a name
+
+A service reached at its own name (`<service>--<rig>.r.<org>.o.<zone>`,
+named by the tunnel; see `tunnel-rig-route.ts`) is what the control plane
+said it is when it created or replaced the rig's services. Two fields of
+each service say so, and `services.json` keeps them with the port
+(`service-registry.ts`); `GET /health` lists `service-access` on a daemon
+that takes them.
+
+- `auth`: who Amika admits at the name. `organization` (the default) is the
+  browser login above, which every member of the organization passes.
+  `owner` is that login, and then the session's user must be the rig's
+  `owner`, which the create body names beside the services (a rig's never
+  changes, so a replace does not); a rig without one admits nobody this way, and a member who is not the owner
+  gets a `403` that says so. `public` is no check at all: every request
+  reaches the service as the caller sent it, its `Authorization`, its CORS
+  preflight and its WebSocket upgrade included, because an app on another
+  origin (a desktop app, a hosted web app) carries no session of ours and
+  does its own login. A public service is a service, not a preview, so its
+  answers are not hardened as one. amikad takes neither field: it keeps its
+  own rules at its name, and a body that sets one for it is refused.
+- `preserve_host`: what the service sees in `Host`. Off (the default), the
+  loopback address hostd dials, `127.0.0.1:<port>`, as a reverse proxy
+  leaves it, so a dev server that accepts only `localhost` keeps answering;
+  the public name is in `X-Forwarded-Host`. On, the public name itself, for
+  an app that compares `Origin` with `Host` before it acts or builds its
+  links from `Host`. The name is always the one the gateway signed, never a
+  caller's. An HTTP request and a WebSocket upgrade give the same answer
+  (`guest-host.ts`); before this field, an upgrade kept the public name
+  while an HTTP request got the loopback address.
+
+The decision stays in `@amika/service-auth/gateway` (`authorizeNamed`):
+hostd hands it what the registry recorded (`namedService`), and it answers
+as for any named request.

@@ -421,6 +421,35 @@ rig-local agent sessions.
 
 ---
 
+## `amika service`
+
+### `amika service create`
+
+Expose a port on a running rig as a named service:
+
+```bash
+amika service create --rig <rig> --name <name> --port <port> --url-scheme https
+```
+
+Two optional flags say what the service is at its public address. Both
+apply to rigs on the organization's own hosts; rigs on cloud providers store
+them and ignore them.
+
+| Flag              | Values                                 | Default        |
+| ----------------- | -------------------------------------- | -------------- |
+| `--auth`          | `organization`, `owner`, `public`      | `organization` |
+| `--preserve-host` | boolean; `--preserve-host=false` off   | `false`        |
+
+`--auth organization` admits any member of the organization after the Amika
+login; `owner` admits the rig's owner alone; `public` skips the Amika login,
+so the app must have a login of its own. `--preserve-host` sends the app its
+public address in the `Host` header instead of its loopback address, for an
+app that compares `Host` with the browser's `Origin`. A flag not given is not
+sent, so the server's default applies.
+
+`amika service list` shows each service's `AUTH`, and `-o json` carries both
+fields on every service.
+
 ## `amika host`
 
 Inspect and retire your organization's own hosts (bring-your-own-compute). `hosts` is an alias.

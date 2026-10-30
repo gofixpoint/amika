@@ -1,8 +1,13 @@
 /** Cover the gateway's decision for each way in, without a server. */
 import { describe, expect, it } from "vitest";
-import { signServiceToken } from "../credentials";
+import { signServiceToken, signSession } from "../credentials";
+import { SESSION_COOKIE } from "./cookies";
 import { createGateway } from "./gateway";
-import type { GatewayRequest } from "./routes";
+import {
+  SERVICE_AUTH_MODES,
+  type GatewayRequest,
+  type NamedService,
+} from "./routes";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
 const gateway = createGateway({
@@ -173,5 +178,138 @@ describe("createGateway", () => {
       error: "Unauthorized",
       hint: "send a token",
     });
+  });
+});
+
+/**
+ * A service at its own name, with each access mode. The server (hostd) says
+ * who may have the name; this covers what the gateway then asks of the
+ * caller. The browser login end to end is hostd's `hostname-login.test.ts`.
+ */
+describe("a named service", () => {
+  const NAME = "web--demo.r.acme.o.amika.test";
+  const ORIGIN = `https://${NAME}`;
+  const previews = createGateway({
+    secretKey: SECRET,
+    isOwnPath: (pathname) => pathname.startsWith("/v0beta1/"),
+    amikaUrl: "https://app.amika.test",
+  });
+  const session = async (user: string) =>
+    `${SESSION_COOKIE}=${await signSession(SECRET, { origin: ORIGIN, user })}`;
+  const named = (
+    headers: Record<string, string>,
+    service: Partial<NamedService> = {},
+    method = "GET",
+  ): GatewayRequest => ({
+    method,
+    url: new URL(`${ORIGIN}/app?q=1`),
+    headers: new Headers(headers),
+    named: { machine: "demo", service: "web", ...service },
+  });
+  const forwarded = (surface: "service" | "preview") => ({
+    kind: "forward",
+    surface,
+    route: { machine: "demo", service: "web", path: "/app" },
+    keyless: false,
+    setCookies: [],
+  });
+
+  it("admits any member's session by default, and sends a page to log in", async () => {
+    const page = named({ "sec-fetch-mode": "navigate" });
+    expect(await previews.authorize(page)).toEqual({
+      kind: "login",
+      location: "/__amika/login?return=%2Fapp%3Fq%3D1",
+    });
+    const member = named({
+      "sec-fetch-mode": "navigate",
+      cookie: await session("user_2"),
+    });
+    expect(await previews.authorize(member)).toEqual(forwarded("preview"));
+  });
+
+  it("admits the owner alone with owner, and nobody without one", async () => {
+    const owner = { auth: "owner" as const, owner: "user_1" };
+    const mine = named(
+      { "sec-fetch-site": "same-origin", cookie: await session("user_1") },
+      owner,
+    );
+    expect(await previews.authorize(mine)).toEqual(forwarded("preview"));
+
+    const theirs = named(
+      { "sec-fetch-site": "same-origin", cookie: await session("user_2") },
+      owner,
+    );
+    expect(await previews.authorize(theirs)).toMatchObject({
+      kind: "refuse",
+      status: 403,
+      reason: expect.stringContaining("another user"),
+    });
+    expect(
+      await previews
+        .refusal((await previews.authorize(theirs)) as never)
+        .json(),
+    ).toEqual({
+      error: "Forbidden: this rig belongs to another user",
+    });
+
+    // No session still logs in first, as for any member.
+    const page = named({ "sec-fetch-mode": "navigate" }, owner);
+    expect((await previews.authorize(page)).kind).toBe("login");
+
+    // A server that never said who owns the rig admits nobody as its owner.
+    const unowned = named(
+      { "sec-fetch-site": "same-origin", cookie: await session("user_1") },
+      { auth: "owner" },
+    );
+    expect((await previews.authorize(unowned)).kind).toBe("refuse");
+  });
+
+  it("forwards everything to a public service, as a service", async () => {
+    const pub = { auth: "public" as const };
+    // No session, from another origin, a preflight, an upgrade: all the
+    // service's to answer, Authorization included.
+    for (const [headers, method, upgrade] of [
+      [{}, "GET", false],
+      [
+        {
+          "sec-fetch-site": "cross-site",
+          "sec-fetch-dest": "empty",
+          origin: "https://app.t3.codes",
+        },
+        "OPTIONS",
+        false,
+      ],
+      [
+        { authorization: "Bearer app-token", "sec-fetch-site": "cross-site" },
+        "POST",
+        false,
+      ],
+      [{ connection: "Upgrade", upgrade: "websocket" }, "GET", true],
+    ] as const) {
+      const decision = await previews.authorize(named(headers, pub, method), {
+        upgrade,
+      });
+      expect(decision).toEqual(forwarded("service"));
+    }
+    // Without previews on the host, too: nothing to log in to is needed.
+    expect(await gateway.authorize(named({}, pub))).toEqual(
+      forwarded("service"),
+    );
+  });
+
+  it("keeps amikad's own rules whatever the mode says", async () => {
+    for (const auth of SERVICE_AUTH_MODES) {
+      const decision = await previews.authorize(
+        named(
+          { cookie: await session("user_1"), "sec-fetch-site": "same-origin" },
+          { service: "amikad", auth },
+        ),
+      );
+      expect(decision).toEqual({
+        kind: "refuse",
+        surface: "service",
+        status: 404,
+      });
+    }
   });
 });

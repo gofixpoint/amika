@@ -1,6 +1,7 @@
 /**
  * Provider-facing shared types owned by the provider layer.
  */
+import type { ServiceAuth } from "@amika/service-auth/gateway";
 
 /**
  * Canonical provider-name list. A runtime value (not just a type union) so the
@@ -22,6 +23,14 @@ export type SandboxProviderName = (typeof SANDBOX_PROVIDER_NAMES)[number];
 
 export type ServiceProtocol = "tcp" | "udp";
 export type ServiceUrlScheme = "http" | "https";
+/**
+ * Who Amika admits at a service's own public name, as the gateway decides
+ * it (`@amika/service-auth/gateway`): `organization`, `owner` or `public`.
+ */
+export {
+  SERVICE_AUTH_MODES,
+  type ServiceAuth,
+} from "@amika/service-auth/gateway";
 
 /** A live service exposed by a sandbox (name, signed URL, ports, protocol). */
 export interface SandboxService {
@@ -37,6 +46,18 @@ export interface SandboxService {
    * with no authored scheme (e.g. the built-in coding-agent entry).
    */
   urlScheme?: "http" | "https";
+  /**
+   * Who Amika admits at the service's own public name. Absent is
+   * `organization`. Only a provider that serves such names (amika-hostd)
+   * acts on it; the others carry it unchanged.
+   */
+  auth?: ServiceAuth;
+  /**
+   * Whether the service sees its public name in `Host`, rather than the
+   * loopback address it is forwarded to. Absent is false. As `auth`, only
+   * amika-hostd acts on it.
+   */
+  preserveHost?: boolean;
 }
 
 /**
@@ -55,4 +76,8 @@ export interface ServicePortDefinition {
 export interface ServiceDefinitionData {
   name: string;
   ports: ServicePortDefinition[];
+  /** Who Amika admits at the service's public name; absent is `organization`. */
+  auth?: ServiceAuth;
+  /** Whether the service sees its public name in `Host`; absent is false. */
+  preserve_host?: boolean;
 }

@@ -32,6 +32,18 @@ export interface RigServiceResource {
   source: string;
   /** Service category, commonly system or user. */
   kind: string;
+  /**
+   * Who Amika admits at the service's public address: `organization` (any
+   * member, after the Amika login), `owner` (the rig's owner alone) or
+   * `public` (no Amika login; the app does its own). Rigs on cloud providers
+   * store it and ignore it.
+   */
+  auth: ServiceAuth;
+  /**
+   * Whether the service sees its public address in `Host`, rather than the
+   * loopback address it is forwarded to. As `auth`, cloud providers ignore it.
+   */
+  preserveHost: boolean;
   /** Creation timestamp returned by the server. */
   createdAt: string | null;
   /** Last-update timestamp returned by the server. */
@@ -49,7 +61,14 @@ export interface RigServiceRequest {
   port: number;
   /** URL scheme for the exposed HTTP service. */
   urlScheme: "http" | "https";
+  /** Who Amika admits at the public address; the server defaults to `organization`. */
+  auth?: ServiceAuth;
+  /** Whether the service sees its public address in `Host`; the server defaults to false. */
+  preserveHost?: boolean;
 }
+
+/** Who Amika admits at a service's public address. */
+export type ServiceAuth = "organization" | "owner" | "public";
 
 /** @deprecated Use {@link RigServiceRequest}. */
 export type SandboxServiceRequest = RigServiceRequest;

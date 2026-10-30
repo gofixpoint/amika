@@ -38,7 +38,7 @@ export interface SmolOperationsOptions {
    */
   serviceRoutes?: (
     services: CreateSandboxProviderInput["services"],
-  ) => { name: string; port: number }[];
+  ) => { name: string; port: number; auth?: string }[];
 }
 
 /**
@@ -214,6 +214,10 @@ export function smolOperations(
               ),
             )
           : undefined;
+      const routes =
+        input.services.length && serviceRoutes
+          ? uniqueByName(serviceRoutes(input.services))
+          : undefined;
       // Create does not boot. Only delete after create succeeds, so a name
       // conflict never causes us to delete an existing machine.
       await client.discard("", "POST", {
@@ -232,10 +236,14 @@ export function smolOperations(
           name,
           value,
         })),
-        services:
-          input.services.length && serviceRoutes
-            ? uniqueByName(serviceRoutes(input.services))
-            : undefined,
+        services: routes?.length ? routes : undefined,
+        // Who owns the rig, for a service that admits its owner alone at
+        // its name. Sent only with such a service: a body that names an
+        // owner is refused by a hostd from before it, and a rig with no
+        // such service must still be created on any hostd.
+        owner: routes?.some((route) => route.auth === "owner")
+          ? input.owner
+          : undefined,
         ports,
       });
       try {

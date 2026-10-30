@@ -117,6 +117,12 @@ Each of these is stated in full, with its reason, in the doc it links to.
   for or accepted for `amikad`; a browser session opens previews and nothing
   else.
   hostd sets no cookie on a loopback address or an explicit port.
+- **A service at its name is what the control plane said it is.** Its
+  `auth` says who Amika admits there (`organization`, `owner` or `public`,
+  which forwards every request as sent) and its `preserve_host` what it sees
+  in `Host`; both live in `services.json` with the port, and amikad takes
+  neither. An HTTP request and an upgrade give a service the same `Host`.
+  See [Access modes](docs/service-routes.md#access-modes-and-the-host-header-at-a-name).
 
 **Secrets on the host**
 

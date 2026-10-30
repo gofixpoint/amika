@@ -54,6 +54,7 @@ import {
   parsePreviewPath,
   previewCookies,
   previewFromCookie,
+  sessionUser,
   startLogin,
   usedLoginStates,
 } from "./browser-login";
@@ -63,6 +64,7 @@ import {
   isNamedAmikadSshUpgrade,
   parseServicePath,
   type GatewayRequest,
+  type NamedService,
   type ServiceRoute,
 } from "./routes";
 
@@ -108,6 +110,8 @@ export interface RefuseDecision {
   status: 400 | 401 | 403 | 404;
   /** What a refused `curl` should do next, for a 401's body. */
   hint?: string;
+  /** Why a 403, for its body, when the default reason would mislead. */
+  reason?: string;
 }
 
 /** Send the browser to log in, at `location`, before it may have this. */
@@ -277,7 +281,11 @@ export function createGateway({
               )
             : decision.status === 403
               ? Response.json(
-                  { error: "Forbidden: not a request from this preview" },
+                  {
+                    error:
+                      decision.reason ??
+                      "Forbidden: not a request from this preview",
+                  },
                   { status: 403 },
                 )
               : Response.json({ error: "Not found" }, { status: 404 });
@@ -402,11 +410,15 @@ export function createGateway({
    */
   async function authorizeNamed(
     request: GatewayRequest,
-    named: Pick<ServiceRoute, "machine" | "service">,
+    named: NamedService,
     upgrade: boolean,
   ): Promise<GatewayDecision> {
     const { url, headers } = request;
-    const route = { ...named, path: url.pathname };
+    const route = {
+      machine: named.machine,
+      service: named.service,
+      path: url.pathname,
+    };
     // amikad runs commands in the rig and has no preview. A browser session,
     // which every member of the organization can get, must not reach it at
     // its name. Only its SSH upgrade does, without the key as at its service
@@ -417,6 +429,16 @@ export function createGateway({
         return forward("service", route, { keyless: true, setCookies: [] });
       }
       return { kind: "refuse", surface: "service", status: 404 };
+    }
+    const auth = named.auth ?? "organization";
+    // A public service does its own login. Every request reaches it as the
+    // caller sent it, with its `Authorization`, so an app on another origin
+    // (a desktop app, a hosted web app) can pair with it: that app cannot
+    // carry a session of ours, and its CORS preflight has to reach the
+    // service to be answered. It is a service, not a preview, so its
+    // answers are not hardened as one.
+    if (auth === "public") {
+      return forward("service", route, { setCookies: [] });
     }
     // Every rig of every organization shares the zone, so another
     // organization's rig is the same site as this one, and the `Lax`
@@ -440,7 +462,8 @@ export function createGateway({
         hint: "This host serves no browser login. Reach the service at its service route with a service token.",
       };
     }
-    if (!(await hasSession(headers.get("cookie"), url, secretKey))) {
+    const user = await sessionUser(headers.get("cookie"), url, secretKey);
+    if (user === null) {
       if (
         !upgrade &&
         request.method === "GET" &&
@@ -454,6 +477,25 @@ export function createGateway({
         status: 401,
         hint: "Open the page in a browser to log in through Amika. A scripted caller uses the service route with a service token.",
       };
+    }
+    // A session says who logged in. The login admits every member of the
+    // organization, so `owner` compares the user with the rig's owner. A
+    // rig whose owner the server never named admits nobody this way.
+    switch (auth) {
+      case "organization":
+        break;
+      case "owner":
+        if (user !== named.owner) {
+          return {
+            kind: "refuse",
+            surface: "preview",
+            status: 403,
+            reason: "Forbidden: this rig belongs to another user",
+          };
+        }
+        break;
+      default:
+        assertNever(auth);
     }
     // Only this origin's own requests, and page loads, are let through.
     if (!isOwnOrPageLoad(request, { upgrade })) {
@@ -506,4 +548,8 @@ export function createGateway({
       setCookies,
     };
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled case: ${String(value)}`);
 }

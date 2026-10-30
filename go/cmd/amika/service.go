@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -24,7 +25,11 @@ type serviceListItem struct {
 	Service string `json:"service"`
 	Sandbox string `json:"sandbox"`
 	Ports   string `json:"ports"`
-	URL     string `json:"url"`
+	// Auth is who Amika admits at the service's public address; a service
+	// the server reports none for is shown at the default.
+	Auth         string `json:"auth"`
+	PreserveHost bool   `json:"preserve_host"`
+	URL          string `json:"url"`
 }
 
 var serviceCmd = &cobra.Command{
@@ -91,6 +96,17 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	if urlScheme != "http" && urlScheme != "https" {
 		return fmt.Errorf("invalid --url-scheme %q: must be \"http\" or \"https\"", urlScheme)
 	}
+	// Each access flag is sent only when given, so the server's default
+	// applies to a service that sets neither.
+	auth, _ := cmd.Flags().GetString("auth")
+	if cmd.Flags().Changed("auth") && !slices.Contains(apiclient.ServiceAuthModes, auth) {
+		return fmt.Errorf("invalid --auth %q: must be one of %s", auth, strings.Join(quoteAll(apiclient.ServiceAuthModes), ", "))
+	}
+	var preserveHost *bool
+	if cmd.Flags().Changed("preserve-host") {
+		v, _ := cmd.Flags().GetBool("preserve-host")
+		preserveHost = &v
+	}
 
 	// Validate --remote-target up front, unconditionally, matching `service
 	// list`: a bad value fails the same way regardless of auth state.
@@ -108,12 +124,19 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	svc, err := runmode.NewRemoteClient().CreateSandboxService(rigRef.Selector(), apiclient.SandboxServiceRequest{
-		Name:      name,
-		Port:      port,
-		URLScheme: urlScheme,
+		Name:         name,
+		Port:         port,
+		URLScheme:    urlScheme,
+		Auth:         auth,
+		PreserveHost: preserveHost,
 	})
 	if err != nil {
 		return rigref.Explain(rigRef, err)
+	}
+	// A public service is open to the internet, guarded by the app's own
+	// login alone. Said on stderr, so `-o json` output stays the resource.
+	if svc.Auth == "public" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: service %q is reachable by anyone on the internet without an Amika login; the app must have a login of its own.\n", svc.Name)
 	}
 	if format.IsJSON() {
 		// Remote-backed command: emit the API's response schema verbatim (see
@@ -192,11 +215,11 @@ func requiredRigFlag(cmd *cobra.Command) (rigref.Ref, error) {
 }
 
 // printService renders a single created service as a one-row table
-// (NAME/PORT/SCHEME/URL), using the same "-" placeholder as `service list`
-// when no URL has been provisioned.
+// (NAME/PORT/SCHEME/AUTH/PRESERVE HOST/URL), using the same "-" placeholder as
+// `service list` when no URL has been provisioned.
 func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPORT\tSCHEME\tURL")
+	fmt.Fprintln(w, "NAME\tPORT\tSCHEME\tAUTH\tPRESERVE HOST\tURL")
 	scheme := deref(svc.URLScheme)
 	if scheme == "" {
 		scheme = "-"
@@ -205,17 +228,40 @@ func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
 	if url == "" {
 		url = "-"
 	}
-	fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", svc.Name, svc.Port, scheme, url)
+	preserveHost := "no"
+	if svc.PreserveHost {
+		preserveHost = "yes"
+	}
+	fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", svc.Name, svc.Port, scheme, orDash(svc.Auth), preserveHost, url)
 	w.Flush()
+}
+
+// orDash is the table placeholder for an empty cell.
+func orDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+// quoteAll wraps each value in double quotes, for an error that lists them.
+func quoteAll(values []string) []string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = fmt.Sprintf("%q", v)
+	}
+	return quoted
 }
 
 // serviceRow is one line of the `service list` table: a named service, the
 // sandbox it belongs to, its port binding(s), and any generated URL(s).
 type serviceRow struct {
-	service     string
-	sandboxName string
-	ports       string
-	url         string
+	service      string
+	sandboxName  string
+	ports        string
+	auth         string
+	preserveHost bool
+	url          string
 }
 
 var serviceListCmd = &cobra.Command{
@@ -256,10 +302,12 @@ var serviceListCmd = &cobra.Command{
 			items := make([]serviceListItem, 0, len(rows))
 			for _, r := range rows {
 				items = append(items, serviceListItem{
-					Service: r.service,
-					Sandbox: r.sandboxName,
-					Ports:   r.ports,
-					URL:     r.url,
+					Service:      r.service,
+					Sandbox:      r.sandboxName,
+					Ports:        r.ports,
+					Auth:         r.auth,
+					PreserveHost: r.preserveHost,
+					URL:          r.url,
 				})
 			}
 			return format.JSON(cmd.OutOrStdout(), items)
@@ -271,9 +319,9 @@ var serviceListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "SERVICE\tRIG\tPORTS\tURL")
+		fmt.Fprintln(w, "SERVICE\tRIG\tPORTS\tAUTH\tURL")
 		for _, r := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.service, r.sandboxName, r.ports, r.url)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.service, r.sandboxName, r.ports, r.auth, r.url)
 		}
 		w.Flush()
 		return nil
@@ -356,7 +404,14 @@ func groupRemoteServices(sandboxName string, services []apiclient.RemoteSandboxS
 	for _, svc := range services {
 		row, ok := byName[svc.Name]
 		if !ok {
-			row = &serviceRow{service: svc.Name, sandboxName: sandboxName}
+			row = &serviceRow{
+				service:     svc.Name,
+				sandboxName: sandboxName,
+				// A server that reports no mode, or a legacy entry, serves the
+				// default.
+				auth:         orDefaultAuth(svc.Auth),
+				preserveHost: svc.PreserveHost,
+			}
 			byName[svc.Name] = row
 			order = append(order, svc.Name)
 		}
@@ -383,6 +438,14 @@ func groupRemoteServices(sandboxName string, services []apiclient.RemoteSandboxS
 		rows = append(rows, *row)
 	}
 	return rows
+}
+
+// orDefaultAuth is the access mode a service has when the API reports none.
+func orDefaultAuth(auth string) string {
+	if auth == "" {
+		return "organization"
+	}
+	return auth
 }
 
 // formatRemoteServicePort renders a remote service's published port binding as
@@ -428,6 +491,8 @@ func init() {
 	serviceCreateCmd.Flags().String("name", "", "Service name (a single DNS label)")
 	serviceCreateCmd.Flags().Int("port", 0, "Container port the service listens on")
 	serviceCreateCmd.Flags().String("url-scheme", "", "URL scheme for the generated URL: http or https")
+	serviceCreateCmd.Flags().String("auth", "", "Who Amika admits at the service's public address: organization (default), owner, or public (no Amika login; the app does its own). Rigs on cloud providers ignore it")
+	serviceCreateCmd.Flags().Bool("preserve-host", false, "Send the service its public address in the Host header instead of its loopback address, for an app that checks Host against Origin. Rigs on cloud providers ignore it")
 
 	serviceDeleteCmd.Flags().String("rig", "", "Rig the service belongs to: a name or id, or name=<name> / id=<id> to match one field")
 	serviceDeleteCmd.Flags().String("name", "", "Name of the service to delete")

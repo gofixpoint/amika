@@ -43,9 +43,17 @@ import {
 } from "./internal/services.js";
 import {
   memoryServiceRegistry,
+  namedService,
+  serviceEntries,
   type ServiceRegistry,
 } from "./internal/service-registry.js";
 import { namedRoute, type NamedRoute } from "./internal/tunnel-rig-route.js";
+import type { Dispatcher } from "undici";
+import {
+  dispatchWithHost,
+  guestFetch,
+  guestHost,
+} from "./internal/guest-host.js";
 
 export interface AppConfig {
   /**
@@ -114,7 +122,7 @@ export function createApp(
   {
     registry = memoryServiceRegistry(),
     snapshots,
-    fetch: fetcher = fetch,
+    fetch: fetcher = guestFetch,
     hiddenMachines = () => new Set(),
   }: AppDeps = {},
 ) {
@@ -382,20 +390,19 @@ export function createApp(
     );
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());
-      const { services, image: named, ...machine } = input;
+      const { services, owner, image: named, ...machine } = input;
       const source = resolveSource(named, images, snapshotSource, configPath);
       return call(async () => {
         const created = await runtime.create({
           ...machine,
           ...source,
-          services,
+          // The runtime publishes ports; what a service is at its name is
+          // hostd's to know.
+          services: services?.map(({ name, port }) => ({ name, port })),
         });
         // Record names only for a machine that now exists, replacing any a
         // deleted machine of the same name left behind.
-        registry.set(
-          machine.name,
-          Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
-        );
+        registry.set(machine.name, serviceEntries(services ?? []), owner);
         return Response.json(created, { status: 201 });
       });
     });
@@ -425,7 +432,10 @@ export function createApp(
       const { services } = replaceServicesSchema.parse(await c.req.json());
       return call(async () => {
         try {
-          await runtime.checkServices(name, services);
+          await runtime.checkServices(
+            name,
+            services.map(({ name, port }) => ({ name, port })),
+          );
         } catch (error) {
           // The refusal names the unpublished ports and nothing secret.
           if (error instanceof RuntimeError && error.status === 409) {
@@ -433,10 +443,7 @@ export function createApp(
           }
           throw error;
         }
-        registry.set(
-          name,
-          Object.fromEntries(services.map((s) => [s.name, s.port])),
-        );
+        registry.set(name, serviceEntries(services), registry.owner(name));
         return new Response(null, { status: 204 });
       });
     });
@@ -480,7 +487,12 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
 
 /** The versioned API this daemon serves. */
 export const API_VERSION = "v0beta1";
-export const FEATURES = ["service-tokens"];
+/**
+ * `service-access`: a service may be created with `auth` and `preserve_host`,
+ * and a rig with its `owner` (`internal/requests.ts`).
+ */
+const SERVICE_ACCESS_FEATURE = "service-access";
+export const FEATURES = ["service-tokens", SERVICE_ACCESS_FEATURE];
 const RIGS_ROUTE = `/${API_VERSION}/rigs`;
 /** This host's snapshots, which belong to the host rather than to one rig. */
 const SNAPSHOTS_ROUTE = `/${API_VERSION}/snapshots`;
@@ -542,7 +554,11 @@ async function proxyService(
   /** The service the tunnel named the request for, if it did. */
   named?: NamedRoute,
 ): Promise<Response> {
-  const decision = await gateway.authorize({ ...fromRequest(request), named });
+  const access = named && namedService(registry, named);
+  const decision = await gateway.authorize({
+    ...fromRequest(request),
+    named: access,
+  });
   if (decision.kind === "not-mine") {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -562,16 +578,23 @@ async function proxyService(
   for (const name of [...forwarded.keys()]) {
     if (gateway.isCredentialHeader(name)) forwarded.delete(name);
   }
+  // `fetch` writes the URL's authority as `Host`, the guest's loopback
+  // address; a named service that keeps its public name gets it below
+  // `fetch` (`guest-host.ts`), so the two paths to a guest, this one and an
+  // upgrade's, give it the same `Host`.
   forwarded.delete("host");
+  let dispatcher: Dispatcher | undefined;
   // At its own address, the service is told that address
   // (`publicForwarding`), and nothing the caller claimed about it.
-  if (named) {
+  if (access) {
     for (const name of [...forwarded.keys()]) {
       if (isForwardingHeader(name)) forwarded.delete(name);
     }
     for (const [name, value] of publicForwarding(url.host)) {
       forwarded.set(name, value);
     }
+    const host = guestHost(access.preserveHost, url.host, hostPort);
+    if (host !== `127.0.0.1:${hostPort}`) dispatcher = dispatchWithHost(host);
   }
   const guestCookies = gateway.guestCookies(forwarded.get("cookie"));
   if (guestCookies) forwarded.set("cookie", guestCookies);
@@ -588,6 +611,7 @@ async function proxyService(
         signal: request.signal,
         // Required by Node's fetch to stream a request body.
         duplex: "half",
+        dispatcher,
       } as RequestInit,
     );
   } catch {

@@ -18,7 +18,10 @@ import type { Duplex } from "node:stream";
 import { signLoginPass, signSession } from "@amika/service-auth/credentials";
 import { createApp } from "./app.js";
 import type { MachineRuntime } from "./internal/machine-runtime.js";
-import { memoryServiceRegistry } from "./internal/service-registry.js";
+import {
+  memoryServiceRegistry,
+  type ServiceEntry,
+} from "./internal/service-registry.js";
 import { AMIKAD_PORT, createUpgradeHandler } from "./internal/services.js";
 import { virtualServer } from "./internal/tunnel-serving.js";
 
@@ -29,21 +32,41 @@ const ORIGIN = `https://${NAME}`;
 const NAMED = { "x-amika-rig": "demo", "x-amika-service": "web" };
 const NAVIGATE = { "sec-fetch-mode": "navigate", "sec-fetch-site": "none" };
 
-const servers: Server[] = [];
+const servers: (Server | HttpServer)[] = [];
 afterEach(async () => {
   await Promise.all(
-    servers.splice(0).map((s) => new Promise((done) => s.close(done))),
+    servers.splice(0).map((s) => {
+      // A real guest keeps the forwarding agent's connections alive.
+      if ("closeAllConnections" in s) s.closeAllConnections();
+      return new Promise((done) => s.close(done));
+    }),
   );
 });
 
-/** A host whose `demo` rig serves `web`, reached as the tunnel reaches it. */
-async function tunnelledHost() {
+/**
+ * A host whose `demo` rig serves `web`, reached as the tunnel reaches it.
+ * `web` is a bare port unless given as an entry; `owner` is the rig's. With
+ * `realGuest`, HTTP requests reach a real server that answers with the
+ * `Host` it saw, through the real `fetch`, rather than the `guest` mock.
+ */
+async function tunnelledHost({
+  web = 3000 as number | ServiceEntry,
+  owner,
+  realGuest = false,
+}: { web?: number | ServiceEntry; owner?: string; realGuest?: boolean } = {}) {
+  const realGuestPort = realGuest
+    ? await listen(
+        createHttpServer((req, res) =>
+          res.end(JSON.stringify({ host: req.headers.host })),
+        ),
+      )
+    : 41001;
   const runtime = {
-    hostPort: vi.fn(async () => 41001),
+    hostPort: vi.fn(async () => realGuestPort),
     list: vi.fn(async () => []),
   } as unknown as MachineRuntime;
   const registry = memoryServiceRegistry();
-  registry.set("demo", { web: 3000, amikad: AMIKAD_PORT });
+  registry.set("demo", { web, amikad: AMIKAD_PORT }, owner);
   // Another rig on the same host, for a request that must never reach it.
   registry.set("other", { admin: 4000 });
   const guest = vi.fn<typeof fetch>(
@@ -51,7 +74,7 @@ async function tunnelledHost() {
   );
   const app = createApp({ secretKey: SECRET, amikaUrl: AMIKA }, runtime, {
     registry,
-    fetch: guest,
+    ...(realGuest ? {} : { fetch: guest }),
   });
   // A guest WebSocket server that records the handshake it is sent.
   let handshake = "";
@@ -242,7 +265,9 @@ describe("a rig's service at its own hostname", () => {
     expect(headers.get("host")).toBeNull();
   });
 
-  it("tells a WebSocket the same, and keeps its Host for its Origin check", async () => {
+  it("tells a WebSocket the same, with the Host an HTTP request gets", async () => {
+    // Before `preserve_host`, an upgrade kept the caller's `Host` while an
+    // HTTP request got the loopback address, so one service saw two names.
     const { upgradeTo } = await tunnelledHost();
     const session = `__Host-amika-session=${await signSession(SECRET, { origin: ORIGIN, user: "u" })}`;
 
@@ -255,7 +280,8 @@ describe("a rig's service at its own hostname", () => {
     expect(handshake).toContain(`X-Forwarded-Host: ${NAME}`);
     expect(handshake).toContain("X-Forwarded-Proto: https");
     expect(handshake).not.toContain("evil.example");
-    expect(handshake).toContain(`host: ${NAME}`);
+    expect(handshake).toContain("Host: 127.0.0.1:41001");
+    expect(handshake).not.toContain(`host: ${NAME}`);
   });
 
   it.each([
@@ -333,5 +359,102 @@ describe("a rig's service at its own hostname", () => {
 
     expect(answer.status).toBe(401);
     expect(guest).not.toHaveBeenCalled();
+  });
+});
+
+describe("what a service is at its name", () => {
+  const session = async (user: string) =>
+    `__Host-amika-session=${await signSession(SECRET, { origin: ORIGIN, user })}`;
+
+  it("forwards everything to a public service as the caller sent it", async () => {
+    const pub = { port: 3000, auth: "public" as const, preserveHost: false };
+    const { guest, send, upgradeTo } = await tunnelledHost({ web: pub });
+
+    // No session: the page, a fetch from another origin, its preflight.
+    expect((await send("/app", NAVIGATE)).status).toBe(200);
+    const preflight = await send(
+      "/api/auth",
+      { origin: "https://app.t3.codes", "sec-fetch-site": "cross-site" },
+      { method: "OPTIONS" },
+    );
+    expect(preflight.status).toBe(200);
+    const [, init] = guest.mock.calls.at(-1)!;
+    expect(init?.method).toBe("OPTIONS");
+    // The caller's own credential reaches the service.
+    await send("/api", { authorization: "Bearer app-token" });
+    expect(
+      new Headers(guest.mock.calls.at(-1)![1]?.headers).get("authorization"),
+    ).toBe("Bearer app-token");
+
+    // An upgrade from another origin, without a session.
+    const handshake = await upgradeTo("/ws", {
+      origin: "https://app.t3.codes",
+      authorization: "Bearer app-token",
+    });
+    expect(handshake).toMatch(/^GET \/ws HTTP\/1\.1\r\n/);
+    expect(handshake).toContain("authorization: Bearer app-token");
+  });
+
+  it("admits the rig's owner alone with owner, and tells the others", async () => {
+    const owner = { port: 3000, auth: "owner" as const, preserveHost: false };
+    const { guest, send } = await tunnelledHost({
+      web: owner,
+      owner: "user_1",
+    });
+
+    expect(
+      (await send("/app", { ...NAVIGATE, cookie: await session("user_1") }))
+        .status,
+    ).toBe(200);
+    const other = await send("/app", {
+      ...NAVIGATE,
+      cookie: await session("user_2"),
+    });
+    expect(other.status).toBe(403);
+    expect(JSON.parse(other.body)).toEqual({
+      error: "Forbidden: this rig belongs to another user",
+    });
+    // Without a session, the login comes first, as for any member.
+    expect((await send("/app", NAVIGATE)).status).toBe(302);
+    expect(guest).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the service its loopback address as Host by default, on HTTP and on an upgrade", async () => {
+    const { send, upgradeTo } = await tunnelledHost({ realGuest: true });
+    const cookie = await session("u");
+
+    const served = await send("/app", { ...NAVIGATE, cookie });
+    expect(served.status).toBe(200);
+    expect(JSON.parse(served.body).host).toMatch(/^127\.0\.0\.1:\d+$/);
+
+    const handshake = await upgradeTo("/live", { origin: ORIGIN, cookie });
+    expect(handshake).toMatch(/\r\nHost: 127\.0\.0\.1:\d+\r\n/);
+  });
+
+  it("keeps the public name as Host with preserve_host, on both", async () => {
+    const kept = {
+      port: 3000,
+      auth: "organization" as const,
+      preserveHost: true,
+    };
+    const { send, upgradeTo } = await tunnelledHost({
+      web: kept,
+      realGuest: true,
+    });
+    const cookie = await session("u");
+
+    const served = await send("/app", {
+      ...NAVIGATE,
+      cookie,
+      // Never the caller's say: the name comes from the gateway, which
+      // presents the signed authority as `Host` and drops what was sent.
+      "x-forwarded-host": "evil.example",
+    });
+    expect(served.status).toBe(200);
+    expect(JSON.parse(served.body).host).toBe(NAME);
+
+    const handshake = await upgradeTo("/live", { origin: ORIGIN, cookie });
+    expect(handshake).toContain(`\r\nHost: ${NAME}\r\n`);
+    expect(handshake).not.toContain("127.0.0.1");
   });
 });
