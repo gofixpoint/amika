@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofixpoint/amika/go/internal/amikad/oomscore"
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
 	"github.com/gofixpoint/amika/go/internal/constants"
 	"golang.org/x/crypto/ssh"
@@ -449,13 +450,17 @@ func (Ed25519KeyGenerator) Generate(ctx context.Context) (GeneratedHostKey, erro
 // ExecProcessRunner runs foreground processes with daemon output on stderr.
 type ExecProcessRunner struct{}
 
-// Run executes one process without a shell or environment interpolation.
+// Run executes one process without environment interpolation. On Linux it
+// starts through oomscore.Command, a fixed shell script that takes the
+// command as positional parameters, so the child does not inherit amikad's
+// OOM protection. sshd would otherwise pass it on to every user session.
 func (ExecProcessRunner) Run(ctx context.Context, name string, args ...string) error {
 	resolved, err := exec.LookPath(name)
 	if err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, resolved, args...)
+	program, programArgs := oomscore.Command(resolved, args...)
+	command := exec.CommandContext(ctx, program, programArgs...)
 	command.Stdout = os.Stderr
 	command.Stderr = os.Stderr
 	return command.Run()
