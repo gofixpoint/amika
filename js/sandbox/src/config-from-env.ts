@@ -24,6 +24,7 @@ import type { DaytonaConfig } from "./providers/daytona/config";
 import type { E2bConfig } from "./providers/e2b/config";
 import type { FreestyleConfig } from "./providers/freestyle/config";
 import type { VercelConfig } from "./providers/vercel/config";
+import type { SimulateConfig } from "./providers/simulate/config";
 
 /** The provider config slices a caller supplies to the registry. */
 export interface SandboxProviderConfigs {
@@ -33,6 +34,7 @@ export interface SandboxProviderConfigs {
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
   amikaHostd: AmikaHostdConfig | null;
+  simulate: SimulateConfig | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -83,7 +85,7 @@ function hostdSecretKey(env: Env): string {
 /**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
- * Daytona is always configured (the baseline provider). E2B/Freestyle/Vercel/Smol/AmikaHostd are
+ * Daytona is always configured (the baseline provider). E2B/Freestyle/Vercel/Smol/AmikaHostd/Simulate are
  * gated on their `*_ENABLED` variables being exactly `true` and are
  * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
  * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
@@ -140,5 +142,11 @@ export function sandboxProviderConfigsFromEnv(
       }
     : null;
 
-  return { daytona, e2b, freestyle, vercel, smol, amikaHostd };
+  // The in-memory provider has no credentials; `SIMULATE_WORLD_ID` picks the
+  // world a test or control API drives, defaulting to the provider's own.
+  const simulate: SimulateConfig | null = isEnabled(env.SIMULATE_ENABLED)
+    ? { worldId: env.SIMULATE_WORLD_ID }
+    : null;
+
+  return { daytona, e2b, freestyle, vercel, smol, amikaHostd, simulate };
 }

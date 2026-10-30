@@ -211,3 +211,27 @@ describe("Amika host daemon environment configuration", () => {
     expect(run).not.toThrow(HOSTD_SECRET);
   });
 });
+
+describe("simulate", () => {
+  it("is null unless SIMULATE_ENABLED is exactly true", () => {
+    expect(sandboxProviderConfigsFromEnv(BASE).simulate).toBeNull();
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, SIMULATE_ENABLED: "1" })
+        .simulate,
+    ).toBeNull();
+  });
+
+  it("needs no credentials and carries the world id", () => {
+    expect(
+      sandboxProviderConfigsFromEnv({ ...BASE, SIMULATE_ENABLED: "true" })
+        .simulate,
+    ).toEqual({ worldId: undefined });
+    expect(
+      sandboxProviderConfigsFromEnv({
+        ...BASE,
+        SIMULATE_ENABLED: "true",
+        SIMULATE_WORLD_ID: "e2e",
+      }).simulate,
+    ).toEqual({ worldId: "e2e" });
+  });
+});
