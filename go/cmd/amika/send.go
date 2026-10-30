@@ -133,7 +133,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 	}
 	newSession, _ := cmd.Flags().GetBool("new-session")
 	// Neither is checked here: the server owns the allowlist, which moves with
-	// its releases, and its 400 names the field and the values it accepts.
+	// its releases, and its 400 names the rejected field.
 	model, _ := cmd.Flags().GetString(flagModel)
 	effort, _ := cmd.Flags().GetString(flagEffort)
 

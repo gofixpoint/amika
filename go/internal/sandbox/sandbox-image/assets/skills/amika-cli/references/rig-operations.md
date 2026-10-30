@@ -107,8 +107,9 @@ the org's default, else the server's default model and the agent's own default
 effort). Claude models: `fable`, `opus`, `sonnet`, `haiku`; Codex models:
 `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.2`. Effort
 is `low`, `medium`, `high`, `xhigh`, or `max` (Codex stops at `xhigh`). The
-server validates both against the agent and returns a 400 naming the field and
-the values it accepts, so trust that error over this list if the two disagree.
+server validates both against the agent and returns a 400 naming the rejected
+field (and, for a value it does not know at all, the values it accepts), so
+trust that error over this list if the two disagree.
 
 The agent runs with permission prompts disabled inside the rig, so prompts
 execute unsupervised there.
