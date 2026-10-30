@@ -70,6 +70,13 @@ export interface AppConfig {
    * (`@amika/service-auth/gateway`). Without it hostd serves no previews.
    */
   amikaUrl?: string;
+  /**
+   * A bare-metal host, whose one rig is this machine: create takes no image
+   * (nothing is resolved), and the files routes are not served, so nothing
+   * reaches the machine's files. Snapshots are never offered either. What
+   * exec may run is the runtime's to refuse (`bare-metal-runtime.ts`).
+   */
+  bareMetal?: boolean;
 }
 
 /**
@@ -109,15 +116,18 @@ export function createApp(
     configPath,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     amikaUrl,
+    bareMetal = false,
   }: AppConfig,
   runtime: MachineRuntime,
   {
     registry = memoryServiceRegistry(),
-    snapshots,
+    snapshots: offered,
     fetch: fetcher = fetch,
     hiddenMachines = () => new Set(),
   }: AppDeps = {},
 ) {
+  // A bare-metal host has no disk image to capture, whatever it was given.
+  const snapshots = bareMetal ? undefined : offered;
   const timeoutMs = z.number().int().positive().parse(requestTimeoutMs);
   /**
    * Answer with a runtime call's result, or with its failure's status and a
@@ -240,6 +250,7 @@ export function createApp(
         ...FEATURES,
         ...(gateway.servesPreviews ? [BROWSER_LOGIN_FEATURE] : []),
         ...(snapshots ? [SNAPSHOTS_FEATURE] : []),
+        ...(bareMetal ? [BARE_METAL_FEATURE] : []),
       ],
     }),
   );
@@ -383,7 +394,11 @@ export function createApp(
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());
       const { services, image: named, ...machine } = input;
-      const source = resolveSource(named, images, snapshotSource, configPath);
+      // The rig is this machine as it is, so a bare-metal host boots no
+      // image: the name is passed along unresolved, and ignored.
+      const source = bareMetal
+        ? { image: named }
+        : resolveSource(named, images, snapshotSource, configPath);
       return call(async () => {
         const created = await runtime.create({
           ...machine,
@@ -451,6 +466,10 @@ export function createApp(
       const request = execSchema.parse(await c.req.json());
       return call(async () => Response.json(await runtime.exec(name, request)));
     });
+    // Not served on bare metal: the control plane must not read or write
+    // the machine's files. Unregistered, a files path is a 404 like any
+    // other path hostd does not serve.
+    if (bareMetal) return;
     app.get(`${machines}/:name/files/*`, (c) => {
       const name = machineName(c.req.param("name"));
       const path = filePath(name, c.req.path, machines);
@@ -486,6 +505,11 @@ const RIGS_ROUTE = `/${API_VERSION}/rigs`;
 const SNAPSHOTS_ROUTE = `/${API_VERSION}/snapshots`;
 /** Named in `/health` by a daemon that can take snapshots. */
 export const SNAPSHOTS_FEATURE = "snapshots";
+/**
+ * Named in `/health` by a bare-metal host: one rig, exec limited to the
+ * amikad commands that set up SSH, and no files or snapshots.
+ */
+export const BARE_METAL_FEATURE = "bare-metal";
 
 /** The Smol-compatible machine API, served until no control plane needs it. */
 const LEGACY_MACHINES_ROUTE = "/api/v1/machines";

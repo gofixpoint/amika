@@ -62,10 +62,13 @@ export function buildHandlers(
     servicesFile,
     hiddenMachines,
     snapshots,
+    bareMetal = false,
   }: {
     servicesFile?: string;
     hiddenMachines?: () => ReadonlySet<string>;
     snapshots?: SnapshotOptions;
+    /** A bare-metal host: no files or snapshots (see `AppConfig`). */
+    bareMetal?: boolean;
   } = {},
 ): {
   app: ReturnType<typeof createApp>;
@@ -89,12 +92,14 @@ export function buildHandlers(
       configPath: config.configPath,
       requestTimeoutMs: config.smolRequestTimeoutMs,
       amikaUrl: config.apiUrl,
+      bareMetal,
     },
     runtime,
     {
       registry,
       hiddenMachines,
-      snapshots: snapshotSupport(runtime, snapshots),
+      // Never on bare metal: there is no disk image to capture.
+      snapshots: bareMetal ? undefined : snapshotSupport(runtime, snapshots),
     },
   );
   const tunnels = new Set<Duplex>();
@@ -117,8 +122,11 @@ export function startServer(
     servicesFile,
     hiddenMachines,
     snapshots,
+    bareMetal,
   }: {
     shutdownGraceMs?: number;
+    /** A bare-metal host: no files or snapshots (see `AppConfig`). */
+    bareMetal?: boolean;
     /** Persists service names across restarts; in memory without one. */
     servicesFile?: string;
     /** Machines left out of the machine list (see `AppDeps`). */
@@ -135,6 +143,7 @@ export function startServer(
     servicesFile,
     hiddenMachines,
     snapshots,
+    bareMetal,
   });
   return new Promise((resolve, reject) => {
     // Only the default `http.Server` is used, never HTTP/2.

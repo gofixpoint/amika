@@ -46,6 +46,8 @@ export interface StartTunnelOptions {
   servicesFile?: string;
   hiddenMachines?: () => ReadonlySet<string>;
   snapshots?: SnapshotOptions;
+  /** A bare-metal host: no files or snapshots (see `AppConfig`). */
+  bareMetal?: boolean;
   onEvent?: (event: TunnelEvent) => void;
   /** What the gateway sees this daemon as. */
   userAgent?: string;
@@ -76,6 +78,7 @@ export function startTunnel(
     servicesFile: options.servicesFile,
     hiddenMachines: options.hiddenMachines,
     snapshots: options.snapshots,
+    bareMetal: options.bareMetal,
   });
   const server = virtualServer({ fetch: app.fetch, upgrade });
 

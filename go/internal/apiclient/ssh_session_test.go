@@ -78,6 +78,11 @@ func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 	if err := valid.Validate("sbx_123"); err != nil {
 		t.Fatalf("Validate valid session: %v", err)
 	}
+	bareMetal := valid
+	bareMetal.SSHUser = "Jakub.Smith"
+	if err := bareMetal.Validate("sbx_123"); err != nil {
+		t.Fatalf("Validate bare-metal session user: %v", err)
+	}
 
 	tests := map[string]SSHSession{
 		"unknown transport": func() SSHSession { s := valid; s.Transport = "other"; return s }(),
@@ -97,6 +102,8 @@ func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 		"empty credential":      func() SSHSession { s := valid; s.ConnectCredential = ""; return s }(),
 		"invalid host key":      func() SSHSession { s := valid; s.HostPublicKey = "ssh-rsa AAAA"; return s }(),
 		"host key with newline": func() SSHSession { s := valid; s.HostPublicKey = "ssh-ed25519 AAAA\nInjected"; return s }(),
+		"empty SSH user":        func() SSHSession { s := valid; s.SSHUser = ""; return s }(),
+		"unsafe SSH user":       func() SSHSession { s := valid; s.SSHUser = "root@evil"; return s }(),
 	}
 	for name, session := range tests {
 		t.Run(name, func(t *testing.T) {

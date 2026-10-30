@@ -38,6 +38,30 @@ const eslintConfig = defineConfig([
       "local/no-cross-package-internal": "error",
     },
   },
+  // OS-dependent code lives behind `src/platforms/` (`HostPlatform`), which
+  // is resolved once and passed through deps so tests choose the OS. Tests
+  // may still ask which machine they run on, to pick real binaries.
+  {
+    files: ["**/*.{ts,mjs}"],
+    ignores: ["src/platforms/**", "**/*.test.ts"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "platform",
+          message:
+            "Read the OS through HostPlatform (src/platforms/), passed in deps.",
+        },
+        {
+          object: "os",
+          property: "platform",
+          message:
+            "Read the OS through HostPlatform (src/platforms/), passed in deps.",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

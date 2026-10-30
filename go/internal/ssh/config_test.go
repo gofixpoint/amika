@@ -203,6 +203,78 @@ func TestUpsertSessionHostRendersConcreteAliasBeforeWildcardSettings(t *testing.
 	}
 }
 
+func TestRenderSessionHostUserOverridesWildcardUser(t *testing.T) {
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+			KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+			AgentSocket:    "/home/user/.ssh/amika-agent.sock",
+		},
+		SessionProxyCommands: map[string]string{
+			"prod": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+		SessionHosts: []SessionHostEntry{
+			{Alias: "metal.sb_metal.prod.amika", User: "Jakub"},
+			{Alias: "vm.sb_vm.prod.amika"},
+		},
+	}
+	content := Render(state)
+	for _, want := range []string{
+		"# metal\nHost metal.sb_metal.prod.amika\n  User Jakub\n",
+		"# vm\nHost vm.sb_vm.prod.amika\n\n",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Index(content, "User Jakub") > strings.Index(content, "User amika") {
+		t.Fatalf("per-rig User must come before the wildcard User:\n%s", content)
+	}
+}
+
+func TestSaveStateRejectsUnsafeSessionHostUser(t *testing.T) {
+	paths := testPaths(t)
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+			KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+		},
+		SessionHosts: []SessionHostEntry{{Alias: "metal.sb_metal.prod.amika", User: "x\n  ProxyCommand evil"}},
+	}
+	if err := SaveState(paths, state); err == nil {
+		t.Fatal("SaveState accepted an unsafe User")
+	}
+	if content := Render(state); strings.Contains(content, "evil") {
+		t.Fatalf("Render emitted an unsafe User:\n%s", content)
+	}
+}
+
+func TestSetSessionHostUser(t *testing.T) {
+	var state HostsState
+	if state.SetSessionHostUser("vm.sb_vm.prod.amika", "amika") || len(state.SessionHosts) != 0 {
+		t.Fatalf("default user added an entry: %#v", state.SessionHosts)
+	}
+	if !state.SetSessionHostUser("metal.sb_metal.prod.amika", "jakub") {
+		t.Fatal("bare-metal user did not change the state")
+	}
+	if state.SetSessionHostUser("metal.sb_metal.prod.amika", "jakub") {
+		t.Fatal("unchanged user reported a change")
+	}
+	revision := state.SessionHosts[0].Revision
+	if !state.SetSessionHostUser("metal.sb_metal.prod.amika", "amika") {
+		t.Fatal("switching back to the default did not change the state")
+	}
+	if got := state.SessionHosts[0]; got.User != "" || got.Revision != revision+1 {
+		t.Fatalf("entry = %#v, want cleared user and bumped revision", got)
+	}
+	state.UpsertSessionHost("other.sb_other.prod.amika")
+	state.SetSessionHostUser("other.sb_other.prod.amika", "ops")
+	state.UpsertSessionHost("other.sb_other.prod.amika")
+	if got := state.SessionHosts[1]; got.User != "ops" {
+		t.Fatalf("editor upsert dropped the user: %#v", got)
+	}
+}
+
 func TestEnsureIncludeCreatesMissingConfig(t *testing.T) {
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()

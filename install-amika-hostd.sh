@@ -42,6 +42,9 @@ SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
 DEFAULT_SMOLVM_VERSION="1.32.3"
 SMOLVM_VERSION="${SMOLVM_VERSION:-}"
 SKIP_SMOLVM=false
+# A bare-metal host runs no VMs: its one rig is the machine itself, so it
+# needs neither smolvm nor KVM.
+BARE_METAL=false
 UNINSTALL=false
 PURGE=false
 ASSUME_YES=false
@@ -62,6 +65,7 @@ Apple silicon.
 Usage:
   sh install-amika-hostd.sh [--help] [--install-version VERSION] [--dry-run]
                             [--smolvm-version VERSION] [--skip-smolvm]
+                            [--bare-metal]
   sh install-amika-hostd.sh --uninstall [--purge] [--yes] [--dry-run]
 
 Flags:
@@ -70,6 +74,10 @@ Flags:
   --smolvm-version      Install this smolvm version if smolvm is missing
                         (default: ${DEFAULT_SMOLVM_VERSION}; "latest" for the newest)
   --skip-smolvm         Do not install smolvm
+  --bare-metal          Set this host up as a bare-metal host, whose one rig
+                        is this machine: skip smolvm and the KVM and resize2fs
+                        checks, and seed host_type = "bare-metal" in a new
+                        config. \`amika-hostd setup\` installs amikad.
   --uninstall           Remove amika-hostd instead of installing it. Finds
                         amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
                         asks you to confirm, stops the daemon, then deletes
@@ -180,6 +188,9 @@ parse_args() {
         ;;
       --skip-smolvm)
         SKIP_SMOLVM=true
+        ;;
+      --bare-metal)
+        BARE_METAL=true
         ;;
       --dry-run)
         DRY_RUN=true
@@ -510,9 +521,13 @@ install_hostd() {
   echo "amika-hostd ${VERSION} installed to ${INSTALL_DIR}/amika-hostd"
 
   seed_config
-  ensure_smolvm
-  check_kvm
-  check_resize2fs
+  if [ "$BARE_METAL" = "true" ]; then
+    echo "Skipping smolvm and the VM checks (--bare-metal)"
+  else
+    ensure_smolvm
+    check_kvm
+    check_resize2fs
+  fi
   print_next_steps
 }
 
@@ -587,7 +602,9 @@ describe_plan() {
     echo "                ${NODE_BASE_URL}/${NODE_ARCHIVE}"
     echo "                into ${HOSTD_HOME}/node"
   fi
-  if [ "$SKIP_SMOLVM" = "true" ]; then
+  if [ "$BARE_METAL" = "true" ]; then
+    echo "  smolvm:       skipped (--bare-metal)"
+  elif [ "$SKIP_SMOLVM" = "true" ]; then
     echo "  smolvm:       skipped (--skip-smolvm)"
   elif find_smolvm; then
     echo "  smolvm:       found at ${SMOLVM_PATH}"
@@ -604,8 +621,12 @@ describe_plan() {
   else
     echo "  Config:       would seed ${CONFIG_PATH} from config.example.toml"
   fi
-  check_kvm
-  check_resize2fs
+  if [ "$BARE_METAL" = "true" ]; then
+    echo "  Host type:    bare-metal (no VMs; amika-hostd setup installs amikad)"
+  else
+    check_kvm
+    check_resize2fs
+  fi
 }
 
 # Refuse to download a Node.js that is not a patched release. It runs before
@@ -828,9 +849,14 @@ seed_config() {
   # `amika-hostd setup` keeps the secrets in the keychain by default, or adds
   # the secret key to it with `secret_store = "file"`; keep it to the
   # daemon's user either way.
+  type_line='# host_type = "vm"'
+  if [ "$BARE_METAL" = "true" ]; then
+    type_line='host_type = "bare-metal"'
+  fi
   (
     umask 077
     sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
+      -e "s/^# host_type = \"vm\"\$/${type_line}/" \
       "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
   )
   CONFIG_HOSTNAME="$host_name"
@@ -951,10 +977,18 @@ print_next_steps() {
     echo "     keep the secrets in files only you can read: first add"
     echo "     secret_store = \"file\" to ${CONFIG_PATH}."
   fi
-  echo "  2. Start the daemon, which starts smolvm with it (and runs setup first"
-  echo "     if you skipped step 1):"
-  echo "       amika-hostd up"
-  echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."
+  if [ "$BARE_METAL" = "true" ]; then
+    echo "     Answer bare-metal when it asks for the host type. It checks for an"
+    echo "     sshd binary and installs amikad into ${HOSTD_HOME}."
+    echo "  2. Start the daemon (it runs setup first if you skipped step 1):"
+    echo "       amika-hostd up"
+    echo "  To stop the daemon and SSH to this machine, run \`amika-hostd down\`."
+  else
+    echo "  2. Start the daemon, which starts smolvm with it (and runs setup first"
+    echo "     if you skipped step 1):"
+    echo "       amika-hostd up"
+    echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."
+  fi
   echo ""
   echo "If you're an AI agent, run \`amika-hostd setup --skill\` and follow the"
   echo "instructions it prints."

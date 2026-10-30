@@ -134,29 +134,30 @@ func TestHostListText(t *testing.T) {
 	// blank cells would hide the very thing the listing exists to show.
 	// Counting the fields is also what pins these cells to one
 	// whitespace-free token each, which `rowFor` above and anyone piping
-	// this into awk both rely on: a space in the TRANSPORT or URL cell
-	// would silently turn one column into two and the count would not be 4.
+	// this into awk both rely on: a space in the TYPE, TRANSPORT, or URL
+	// cell would silently turn one column into two and the count would not
+	// be 5. A host that predates host_type is listed as a vm.
 	// SIZES is the one cell that can hold a space, since a host names its
 	// own sizes and nothing rejects a space in one. It is the last column,
 	// so it costs only itself.
 	beta := rowFor(t, out, "beta.lan")
-	if got := strings.Fields(beta); len(got) != 4 || got[1] != "listen" ||
-		got[2] != "-" || got[3] != "-" {
-		t.Errorf("beta.lan row = %q, want listen with its URL and sizes as \"-\"", beta)
+	if got := strings.Fields(beta); len(got) != 5 || got[1] != "vm" || got[2] != "listen" ||
+		got[3] != "-" || got[4] != "-" {
+		t.Errorf("beta.lan row = %q, want a listening vm with its URL and sizes as \"-\"", beta)
 	}
 	// A tunnelled host shows the same "-" as a listener that never
 	// registered; TRANSPORT is what tells them apart, so the column has to
 	// be there and has to be right.
 	delta := rowFor(t, out, "delta.lan")
-	if got := strings.Fields(delta); len(got) != 4 || got[1] != "tunnel" ||
-		got[2] != "-" {
+	if got := strings.Fields(delta); len(got) != 5 || got[2] != "tunnel" ||
+		got[3] != "-" {
 		t.Errorf("delta.lan row = %q, want tunnel with its URL as \"-\"", delta)
 	}
 	// The rows above would still pass if the column were unlabelled, so
 	// check the header names it too: that is what tells a reader which of
-	// the four fields they are looking at.
-	if !strings.Contains(out, "TRANSPORT") {
-		t.Errorf("no TRANSPORT column in %q", out)
+	// the five fields they are looking at.
+	if got := strings.Fields(rowFor(t, out, "HOSTNAME")); !reflect.DeepEqual(got, []string{"HOSTNAME", "TYPE", "TRANSPORT", "URL", "SIZES"}) {
+		t.Errorf("header = %q", got)
 	}
 	// Ids are not a listing column; `host get` and -o json carry them.
 	if strings.Contains(out, "host_1") {
@@ -520,5 +521,151 @@ func TestHostDeleteReportsPerHostFailures(t *testing.T) {
 	}
 	if len(results) != 2 || results[0].Status != "deleted" || results[1].Status != "error" {
 		t.Errorf("results = %+v", results)
+	}
+}
+
+// bareMetalHostsBody is a listing with one bare-metal host, which offers no
+// sizes but reports its detected resources and login account, beside a VM
+// host that says so explicitly.
+func bareMetalHostsBody() []map[string]any {
+	return []map[string]any{
+		{
+			"id": "host_m", "hostname": "metal.lan", "url": nil, "org_id": "org_1",
+			"sizes": map[string]any{}, "transport_mode": "tunnel", "host_type": "bare_metal",
+			"detected_resources": map[string]any{
+				"vcpus": 10, "memoryGib": 32, "diskGib": 926.5, "os": "darwin", "arch": "arm64",
+			},
+			"ssh_user":   "Jakub",
+			"created_at": "2026-01-05T00:00:00Z", "updated_at": "2026-01-05T00:00:00Z",
+		},
+		{
+			"id": "host_v", "hostname": "vm.lan", "url": "https://vm.example", "org_id": "org_1",
+			"sizes": map[string]any{
+				"small": map[string]any{"vcpus": 2, "memoryGib": 4, "diskGib": 40, "diskGrowOnly": false},
+			},
+			"host_type": "vm", "detected_resources": nil, "ssh_user": nil,
+			"created_at": "2026-01-06T00:00:00Z", "updated_at": "2026-01-06T00:00:00Z",
+		},
+	}
+}
+
+// serveHosts points the CLI at a control plane whose listing is body.
+func serveHosts(t *testing.T, body []map[string]any) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" && r.URL.Path == "/api/v0beta1/hosts" {
+			json.NewEncoder(w).Encode(body)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AMIKA_API_URL", srv.URL)
+	t.Setenv("AMIKA_API_KEY", "test-token")
+}
+
+func TestHostListShowsTypeAndBareMetalResources(t *testing.T) {
+	serveHosts(t, bareMetalHostsBody())
+	c, buf := newHostCmd(runHostList, nil)
+	if err := runHostList(c, nil); err != nil {
+		t.Fatalf("runHostList: %v", err)
+	}
+	out := buf.String()
+	for name, want := range map[string][]string{
+		"metal.lan": {"metal.lan", "bare_metal", "tunnel", "-", "10cpu/32GiB/926.5GiB"},
+		"vm.lan":    {"vm.lan", "vm", "listen", "https://vm.example", "small"},
+	} {
+		if got := strings.Fields(rowFor(t, out, name)); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s row = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestHostGetShowsBareMetalResources(t *testing.T) {
+	serveHosts(t, bareMetalHostsBody())
+	c, buf := newHostCmd(runHostGet, nil)
+	if err := runHostGet(c, []string{"metal.lan"}); err != nil {
+		t.Fatalf("runHostGet: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"Type:       bare_metal",
+		"SSH user:   Jakub",
+		"CPUs:       10",
+		"Memory:     32 GiB",
+		"Disk:       926.5 GiB",
+		"OS/Arch:    darwin/arm64",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q missing %q", out, want)
+		}
+	}
+	if strings.Contains(out, "Sizes:") {
+		t.Errorf("a bare-metal host has no sizes to list: %q", out)
+	}
+
+	c, buf = newHostCmd(runHostGet, nil)
+	if err := runHostGet(c, []string{"vm.lan"}); err != nil {
+		t.Fatalf("runHostGet: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "Type:       vm") || strings.Contains(out, "SSH user:") || strings.Contains(out, "CPUs:") {
+		t.Errorf("vm host output = %q", out)
+	}
+}
+
+func TestHostJSONRoundTripsBareMetalFields(t *testing.T) {
+	serveHosts(t, bareMetalHostsBody())
+	c, buf := newHostCmd(runHostList, nil)
+	c.Flags().Set(output.FlagName, "json")
+	if err := runHostList(c, nil); err != nil {
+		t.Fatalf("runHostList: %v", err)
+	}
+	var got []map[string]json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decoding %q: %v", buf.String(), err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d hosts, want 2", len(got))
+	}
+	for field, want := range map[string]string{
+		"host_type":          `"bare_metal"`,
+		"ssh_user":           `"Jakub"`,
+		"detected_resources": `{"vcpus":10,"memoryGib":32,"diskGib":926.5,"os":"darwin","arch":"arm64"}`,
+	} {
+		if string(got[0][field]) != want {
+			t.Errorf("metal %s = %s, want %s", field, got[0][field], want)
+		}
+	}
+	// Nullable fields stay explicit nulls rather than disappearing.
+	for field, want := range map[string]string{
+		"host_type":          `"vm"`,
+		"ssh_user":           "null",
+		"detected_resources": "null",
+	} {
+		raw, ok := got[1][field]
+		if !ok || string(raw) != want {
+			t.Errorf("vm %s = %s (present %v), want %s", field, raw, ok, want)
+		}
+	}
+}
+
+// A control plane older than host_type omits it; every host it registers is
+// a VM host, and -o json must say so rather than emit "".
+func TestHostJSONReadsMissingHostTypeAsVM(t *testing.T) {
+	stubHostAPI(t)
+	c, buf := newHostCmd(runHostList, nil)
+	c.Flags().Set(output.FlagName, "json")
+	if err := runHostList(c, nil); err != nil {
+		t.Fatalf("runHostList: %v", err)
+	}
+	var got []map[string]json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decoding %q: %v", buf.String(), err)
+	}
+	for i, h := range got {
+		if string(h["host_type"]) != `"vm"` {
+			t.Errorf("got[%d].host_type = %s, want \"vm\"", i, h["host_type"])
+		}
 	}
 }

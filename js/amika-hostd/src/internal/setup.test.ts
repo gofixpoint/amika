@@ -2,7 +2,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { resolveConfig, type HostdConfigFile } from "./config.js";
+import { hostPlatformFor, type HostPlatform } from "../platforms/index.js";
+import { ConfigError, resolveConfig, type HostdConfigFile } from "./config.js";
 import { PromptCancelled } from "./prompt.js";
 import {
   DEFAULT_PRESET_IMAGES,
@@ -186,6 +187,7 @@ describe("runSetup", () => {
       "Hostname [builder]: ",
       "Regenerate the secret key Amika uses to reach this host? [y/N] ",
       "Update the stored Amika API key? [y/N] ",
+      "Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig [vm/bare-metal]: ",
     ]);
     expect(h.written[PATH]).toBe(file);
     expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
@@ -591,6 +593,7 @@ describe("runSetup with the keychain store", () => {
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      "Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig [vm/bare-metal]: ",
     ]);
     expect(h.keychainSecret.value).toBe(NEW_SECRET);
     // Setup marks the file, so a later run knows the keychain has the key.
@@ -612,6 +615,7 @@ describe("runSetup with the keychain store", () => {
       "Hostname [builder]: ",
       "Generate a new secret key? [y/N] ",
       "Update the stored Amika API key? [y/N] ",
+      "Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig [vm/bare-metal]: ",
     ]);
     expect(h.out).toContain(
       "No secret key found in the test keychain (secret key). If it is there but locked, unlock it and run setup again, rather than replace the secret key Amika may know.",
@@ -960,6 +964,7 @@ describe("runSetup on the shipped example", () => {
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [jakubs-macbook-pro]: ",
+      "Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig [vm/bare-metal]: ",
     ]);
     expect(h.config()).toMatchObject({
       hostname: "builder",
@@ -979,5 +984,160 @@ describe("suggestHostname", () => {
     ["___", undefined],
   ])("turns %j into %j", (raw, expected) => {
     expect(suggestHostname(raw)).toBe(expected);
+  });
+});
+
+describe("runSetup: host type", () => {
+  const FILE_CONFIGURED = `secret_store = "file"\n${CONFIGURED}`;
+  const HOST_TYPE =
+    "Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig";
+
+  /** A Linux machine with an sshd, unless `sshd` is false. */
+  function linux({ sshd = true } = {}): HostPlatform {
+    return hostPlatformFor("linux", {
+      availableParallelism: () => 8,
+      totalmem: () => 16 * 1024 ** 3,
+      statfs: () => ({ bsize: 4096, blocks: (500 * 1024 ** 3) / 4096 }),
+      homedir: () => "/home/jakub",
+      arch: () => "x64",
+      path: "/usr/bin",
+      isExecutable: (file) => sshd && file === "/usr/sbin/sshd",
+    });
+  }
+
+  function bareMetalHarness(
+    options: Parameters<typeof harness>[0],
+    platform = linux(),
+  ) {
+    const h = harness(options);
+    const installAmikad = vi.fn(
+      async (_config: { amikadPath?: string }) => "/data/amikad/0.3.0/amikad",
+    );
+    const deps = {
+      ...h.deps,
+      platform,
+      installAmikad,
+      sshUser: () => "jakub",
+    };
+    return { ...h, deps, installAmikad };
+  }
+
+  it("keeps VMs by default, writing nothing about it", async () => {
+    const h = bareMetalHarness({
+      answers: ["", "", "", ""],
+      file: FILE_CONFIGURED,
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.deps.prompt.mock.calls.at(-1)?.[0]).toBe(
+      `${HOST_TYPE} [vm/bare-metal]: `,
+    );
+    expect(h.written[PATH]).toBe(FILE_CONFIGURED);
+    expect(h.installAmikad).not.toHaveBeenCalled();
+  });
+
+  it("makes a host bare metal: checks sshd, installs amikad, shows the machine", async () => {
+    const h = bareMetalHarness({
+      answers: ["", "", "", "bare-metal"],
+      file: FILE_CONFIGURED,
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.config().hostType).toBe("bare-metal");
+    expect(h.written[PATH]).toMatch(/^host_type = "bare-metal"$/m);
+    expect(h.installAmikad).toHaveBeenCalledWith(
+      expect.objectContaining({ amikadPath: undefined }),
+      expect.objectContaining({ env: h.deps.env }),
+    );
+    expect(h.out).toContain(
+      "This machine is the rig: 8 vCPUs, 16 GiB memory, 500 GiB disk (linux/x64).",
+    );
+    expect(h.out).toContain(
+      "SSH sessions log in as jakub, through amikad (/data/amikad/0.3.0/amikad) and its own sshd (/usr/sbin/sshd).",
+    );
+    expect(h.out).toContain(
+      "Rig sizes: [sizes] is ignored on a bare-metal host.",
+    );
+  });
+
+  it("writes no default sizes for a new bare-metal host", async () => {
+    const h = bareMetalHarness({
+      answers: ["", "bare-metal"],
+      secrets: ["amk_123"],
+    });
+    await runSetup(h.deps);
+    expect(h.config()).toMatchObject({ hostType: "bare-metal", sizes: {} });
+  });
+
+  it("offers the configured type first, and keeps it unattended", async () => {
+    const file = FILE_CONFIGURED.replace(
+      'hostname = "builder"',
+      'hostname = "builder"\nhost_type = "bare-metal"',
+    );
+    const h = bareMetalHarness({
+      answers: ["", "", "", ""],
+      file,
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.deps.prompt.mock.calls.at(-1)?.[0]).toBe(
+      `${HOST_TYPE} [bare-metal/vm]: `,
+    );
+    expect(h.written[PATH]).toBe(file);
+    // Still made ready, so a newer hostd's amikad gets installed.
+    expect(h.installAmikad).toHaveBeenCalled();
+  });
+
+  it("switches back to VMs, adding the default sizes it lacks", async () => {
+    const file = `secret_store = "file"
+hostname = "builder"
+host_type = "bare-metal"
+secret_key = "${OLD_SECRET}"
+`;
+    const h = bareMetalHarness({
+      answers: ["", "", "", "vm"],
+      file,
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.written[PATH]).toMatch(/^host_type = "vm"$/m);
+    expect(h.config()).toMatchObject({ hostType: "vm", sizes: DEFAULT_SIZES });
+  });
+
+  it("asks again for an answer that is not a host type", async () => {
+    const h = bareMetalHarness({
+      answers: ["", "", "", "metal", "vm"],
+      file: FILE_CONFIGURED,
+      storedKey: "k",
+    });
+    await runSetup(h.deps);
+    expect(h.err).toContain(
+      'Not a host type: "metal". Answer vm or bare-metal.',
+    );
+    expect(h.config().hostType).toBe("vm");
+  });
+
+  it.each([
+    [
+      "an OS without bare metal",
+      hostPlatformFor("win32"),
+      /does not support bare-metal hosts on win32/,
+    ],
+    [
+      "a machine with no sshd",
+      linux({ sshd: false }),
+      /needs an sshd binary.*openssh-server/,
+    ],
+  ])("refuses bare metal on %s, changing nothing", async (_, platform, why) => {
+    const h = bareMetalHarness(
+      { answers: ["", "bare-metal"], secrets: ["amk_123"] },
+      platform,
+    );
+    const error = await runSetup(h.deps).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConfigError);
+    expect((error as Error).message).toMatch(why);
+    expect(h.written).toEqual({});
+    expect(h.store.set).not.toHaveBeenCalled();
+    expect(h.installAmikad).not.toHaveBeenCalled();
   });
 });

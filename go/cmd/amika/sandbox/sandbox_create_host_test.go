@@ -43,28 +43,28 @@ func TestResolveCreateHost(t *testing.T) {
 
 	t.Run("no --host leaves the rig on Amika Cloud", func(t *testing.T) {
 		// Resolved without a request: the empty id is what the create omits.
-		id, err := resolveCreateHost(nil, "")
+		id, _, err := resolveCreateHost(nil, "")
 		if err != nil || id != "" {
 			t.Errorf("got %q, %v", id, err)
 		}
 	})
 
 	t.Run("resolves a hostname to its id", func(t *testing.T) {
-		id, err := resolveCreateHost(client, "alpha.lan")
+		id, _, err := resolveCreateHost(client, "alpha.lan")
 		if err != nil || id != "host_1" {
 			t.Errorf("got %q, %v", id, err)
 		}
 	})
 
 	t.Run("accepts an id too", func(t *testing.T) {
-		id, err := resolveCreateHost(client, "host_1")
+		id, _, err := resolveCreateHost(client, "host_1")
 		if err != nil || id != "host_1" {
 			t.Errorf("got %q, %v", id, err)
 		}
 	})
 
 	t.Run("refuses a host with no URL", func(t *testing.T) {
-		_, err := resolveCreateHost(client, "beta.lan")
+		_, _, err := resolveCreateHost(client, "beta.lan")
 		if err == nil || !strings.Contains(err.Error(), "register-url") {
 			t.Errorf("err = %v, want one pointing at register-url", err)
 		}
@@ -74,7 +74,7 @@ func TestResolveCreateHost(t *testing.T) {
 		// Reading the URL alone would answer "run `amika-hostd register-url`",
 		// which the API refuses for this host. Its reachability is the
 		// control plane's to report, not something to guess at from here.
-		id, err := resolveCreateHost(client, "delta.lan")
+		id, _, err := resolveCreateHost(client, "delta.lan")
 		if err != nil || id != "host_3" {
 			t.Errorf("got %q, %v; want host_3 and no error", id, err)
 		}
@@ -86,14 +86,14 @@ func TestResolveCreateHost(t *testing.T) {
 		// keep answering exactly as it did before the field existed. The
 		// `beta.lan` case above cannot show that: it is sent an explicit
 		// mode, so it would survive the check being inverted.
-		_, err := resolveCreateHost(client, "legacy.lan")
+		_, _, err := resolveCreateHost(client, "legacy.lan")
 		if err == nil || !strings.Contains(err.Error(), "register-url") {
 			t.Errorf("err = %v, want one pointing at register-url", err)
 		}
 	})
 
 	t.Run("reports an unknown host", func(t *testing.T) {
-		_, err := resolveCreateHost(client, "gamma.lan")
+		_, _, err := resolveCreateHost(client, "gamma.lan")
 		if err == nil || !strings.Contains(err.Error(), "alpha.lan") {
 			t.Errorf("err = %v, want one naming the known hosts", err)
 		}
@@ -105,7 +105,7 @@ func TestResolveCreateHost(t *testing.T) {
 func TestResolveCreateHostRejectsNamingAmikaCloud(t *testing.T) {
 	client := newHostListClient(t)
 	for _, ref := range []string{"amika-cloud", "Amika Cloud", "amika", "cloud", "AMIKACLOUD"} {
-		_, err := resolveCreateHost(client, ref)
+		_, _, err := resolveCreateHost(client, ref)
 		if err == nil || !strings.Contains(err.Error(), "omit --host") {
 			t.Errorf("resolveCreateHost(%q) = %v, want the omit-the-flag error", ref, err)
 		}
@@ -229,7 +229,7 @@ func TestResolveCreateHostKeepsAListingFailure(t *testing.T) {
 	client := apiclient.NewClient(srv.URL, "tok")
 
 	for _, ref := range []string{"cloud", "alpha.lan"} {
-		_, err := resolveCreateHost(client, ref)
+		_, _, err := resolveCreateHost(client, ref)
 		if err == nil {
 			t.Fatalf("resolveCreateHost(%q): want an error", ref)
 		}
@@ -254,7 +254,7 @@ func TestResolveCreateHostHintKeepsTheKnownHostnames(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := resolveCreateHost(apiclient.NewClient(srv.URL, "tok"), "amika")
+	_, _, err := resolveCreateHost(apiclient.NewClient(srv.URL, "tok"), "amika")
 	if err == nil {
 		t.Fatal(`resolveCreateHost("amika"): want an error`)
 	}
@@ -278,14 +278,14 @@ func TestResolveCreateHostPrefersARealHostOverTheCloudHint(t *testing.T) {
 	defer srv.Close()
 	client := apiclient.NewClient(srv.URL, "tok")
 
-	id, err := resolveCreateHost(client, "cloud")
+	id, _, err := resolveCreateHost(client, "cloud")
 	if err != nil || id != "host_7" {
 		t.Errorf("exact spelling: got %q, %v", id, err)
 	}
 
 	// And a typo in its casing is a typo, not an invitation to drop the flag:
 	// hostnames are stored lowercase, so `Cloud` means the host named `cloud`.
-	_, err = resolveCreateHost(client, "Cloud")
+	_, _, err = resolveCreateHost(client, "Cloud")
 	if err == nil {
 		t.Fatal(`resolveCreateHost("Cloud"): want an error`)
 	}
@@ -463,4 +463,59 @@ func TestCreateRemoteSandboxFailsWhenTheHostWasIgnored(t *testing.T) {
 			t.Errorf("err = %v, want %q in it", err, want)
 		}
 	}
+}
+
+func TestResolveCreateHostReportsBareMetal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `[
+		  {"id":"host_9","hostname":"metal.lan","url":null,"org_id":"org_1","sizes":{},
+		   "transport_mode":"tunnel","host_type":"bare_metal","ssh_user":"jo",
+		   "created_at":"","updated_at":""}
+		]`)
+	}))
+	t.Cleanup(srv.Close)
+	id, hostType, err := resolveCreateHost(apiclient.NewClient(srv.URL, "tok"), "metal.lan")
+	if err != nil || id != "host_9" || hostType != apiclient.HostTypeBareMetal {
+		t.Fatalf("got %q, %q, %v", id, hostType, err)
+	}
+}
+
+func TestBareMetalCreateConflicts(t *testing.T) {
+	newCmd := func() *cobra.Command {
+		cmd := &cobra.Command{Use: "create"}
+		gitrepo.AddFlags(cmd, "", "")
+		for _, name := range []string{"branch", "new-branch", "setup-script", "preset", "size", "snapshot", "github-auth-mode", "name"} {
+			cmd.Flags().String(name, "", "")
+		}
+		for _, name := range []string{"env", "secret", "agent-credential", "agent-credential-type", "no-agent-credential"} {
+			cmd.Flags().StringArray(name, nil, "")
+		}
+		cmd.Flags().Bool("no-setup", false, "")
+		return cmd
+	}
+
+	t.Run("a name-only create is allowed", func(t *testing.T) {
+		cmd := newCmd()
+		_ = cmd.Flags().Set("name", "test")
+		if err := bareMetalCreateConflicts(cmd); err != nil {
+			t.Fatalf("got %v", err)
+		}
+	})
+
+	t.Run("names every flag that asks for something copied onto the host", func(t *testing.T) {
+		cmd := newCmd()
+		_ = cmd.Flags().Set("git", "https://github.com/a/b")
+		_ = cmd.Flags().Set("secret", "env:FOO")
+		_ = cmd.Flags().Set("no-setup", "true")
+		err := bareMetalCreateConflicts(cmd)
+		if err == nil {
+			t.Fatal("want an error")
+		}
+		for _, want := range []string{"--git", "--secret", "--no-setup", "bare-metal"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %s", err, want)
+			}
+		}
+	})
 }

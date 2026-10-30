@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
 )
@@ -50,10 +51,12 @@ type HostsState struct {
 	// that proxies its aliases, one entry per control plane this machine has
 	// opened a v2 session against.
 	SessionProxyCommands map[string]string `json:"session_proxy_commands,omitempty"`
-	// SessionHosts lists concrete v2 aliases for editors that discover SSH
-	// connections by enumerating Host entries, rather than accepting an alias
-	// supplied directly. Their connection settings come from the wildcard
-	// session blocks below, not these intentionally empty entries.
+	// SessionHosts lists concrete v2 aliases, written ahead of the wildcard
+	// session blocks. An entry exists for one of two reasons: editors that
+	// discover SSH connections by enumerating Host entries need the alias
+	// listed, or the rig logs in as someone other than the wildcard block's
+	// `amika` (a bare-metal rig) and the entry carries that User. Every other
+	// connection setting comes from the wildcard blocks.
 	SessionHosts []SessionHostEntry `json:"session_hosts,omitempty"`
 	// SSHConfigVersion is advanced only after every managed Linux and WSL
 	// artifact reflects the forwarding policy. Zero means reconciliation must
@@ -63,8 +66,12 @@ type HostsState struct {
 
 // SessionHostEntry is a concrete direct-WebSocket SSH alias advertised to
 // editors. The alias is self-describing and validated with ParseSessionAlias.
+// User is the rig's login account when it is not the wildcard block's default
+// (apiclient.DefaultSSHUser), and empty otherwise; it is validated with
+// apiclient.ValidSSHUser.
 type SessionHostEntry struct {
 	Alias    string `json:"alias"`
+	User     string `json:"user,omitempty"`
 	GCScope  string `json:"gc_scope,omitempty"`
 	Revision uint64 `json:"revision,omitempty"`
 }
@@ -247,6 +254,34 @@ func (s *HostsState) UpsertSessionHost(alias string) {
 	})
 }
 
+// SetSessionHostUser records the login account for a v2 alias, reporting
+// whether the state changed. The default account is stored as empty, so a VM
+// rig never gains an entry it did not already have; any other account adds the
+// alias if needed so its User line is rendered ahead of the wildcard block.
+func (s *HostsState) SetSessionHostUser(alias, user string) bool {
+	if user == apiclient.DefaultSSHUser {
+		user = ""
+	}
+	for i, host := range s.SessionHosts {
+		if host.Alias == alias {
+			if host.User == user {
+				return false
+			}
+			s.SessionHosts[i].User = user
+			s.SessionHosts[i].Revision++
+			return true
+		}
+	}
+	if user == "" {
+		return false
+	}
+	s.SessionHosts = append(s.SessionHosts, SessionHostEntry{Alias: alias, User: user})
+	sort.Slice(s.SessionHosts, func(i, j int) bool {
+		return s.SessionHosts[i].Alias < s.SessionHosts[j].Alias
+	})
+	return true
+}
+
 // Render produces the contents of ~/.ssh/amika.conf from the state. Each block
 // is a stable `Host amika-<id>` alias preceded by the sandbox name as a comment
 // so the file stays human-readable even though it is keyed by id.
@@ -263,7 +298,7 @@ func writeManagedConfig(b *strings.Builder, state HostsState, blocks []string) {
 	b.WriteString(managedHeader)
 	writeHostBlocks(b, state.Hosts)
 	if hosts := renderSessionHosts(state); len(hosts) > 0 {
-		b.WriteString("\n# Direct WebSocket SSH aliases for editor discovery.\n")
+		b.WriteString("\n# Direct WebSocket SSH aliases for editor discovery and per-rig login users.\n")
 		for i, host := range hosts {
 			if i > 0 {
 				b.WriteString("\n")
@@ -302,17 +337,23 @@ func writeHostBlocks(b *strings.Builder, hosts []HostEntry) {
 	}
 }
 
-// renderSessionHosts emits intentionally empty concrete Host stanzas before
-// the wildcard session blocks. This makes aliases discoverable to apps such as
-// Codex while letting the later wildcard stanza provide every SSH option.
+// renderSessionHosts emits concrete Host stanzas before the wildcard session
+// blocks. This makes aliases discoverable to apps such as Codex while letting
+// the later wildcard stanza provide every SSH option except, for a rig that
+// logs in as another account, User: OpenSSH keeps the first value it finds
+// for an option, so this stanza's User wins over the wildcard's `User amika`.
 func renderSessionHosts(state HostsState) []string {
 	hosts := make([]string, 0, len(state.SessionHosts))
 	for _, entry := range state.SessionHosts {
 		parsed, err := ParseSessionAlias(entry.Alias)
-		if err != nil {
+		if err != nil || (entry.User != "" && !apiclient.ValidSSHUser(entry.User)) {
 			continue
 		}
-		hosts = append(hosts, fmt.Sprintf("# %s\nHost %s\n", parsed.Name, entry.Alias))
+		host := fmt.Sprintf("# %s\nHost %s\n", parsed.Name, entry.Alias)
+		if entry.User != "" {
+			host += fmt.Sprintf("  User %s\n", entry.User)
+		}
+		hosts = append(hosts, host)
 	}
 	return hosts
 }
@@ -348,6 +389,9 @@ func validateSessionState(state HostsState) error {
 	for _, entry := range state.SessionHosts {
 		if _, err := ParseSessionAlias(entry.Alias); err != nil {
 			return err
+		}
+		if entry.User != "" && !apiclient.ValidSSHUser(entry.User) {
+			return apiclient.ErrInvalidSSHSession
 		}
 	}
 	if state.SessionConfig == nil {

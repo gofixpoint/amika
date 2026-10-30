@@ -23,12 +23,12 @@ import (
 // written; it doesn't need to be reflected here since nothing in this file
 // depends on the resolver's output shape, only on where it gets substituted.
 func stubResolver(seen *[]string) aliasResolver {
-	return func(name string) (string, error) {
+	return func(name string) (scpRig, error) {
 		if name == "missing" {
-			return "", errors.New("sandbox not found")
+			return scpRig{}, errors.New("sandbox not found")
 		}
 		*seen = append(*seen, name)
-		return name + ".sbx-1234.amika", nil
+		return scpRig{alias: name + ".sbx-1234.amika", home: sandboxHome}, nil
 	}
 }
 
@@ -112,17 +112,17 @@ func TestBuildSCPV2InvocationResolvesEachSandboxOnce(t *testing.T) {
 	// does: one resolver shared across every operand.
 	var seen []string
 	inner := stubResolver(&seen)
-	cache := map[string]string{}
-	cached := func(name string) (string, error) {
-		if alias, ok := cache[name]; ok {
-			return alias, nil
+	cache := map[string]scpRig{}
+	cached := func(name string) (scpRig, error) {
+		if rig, ok := cache[name]; ok {
+			return rig, nil
 		}
-		alias, err := inner(name)
+		rig, err := inner(name)
 		if err != nil {
-			return "", err
+			return scpRig{}, err
 		}
-		cache[name] = alias
-		return alias, nil
+		cache[name] = rig
+		return rig, nil
 	}
 
 	if _, err := buildSCPV2Invocation(
@@ -252,5 +252,33 @@ func TestRunSCPV2ParsesEveryReferenceBeforeAuth(t *testing.T) {
 	}
 	if len(*requests) != 0 {
 		t.Fatalf("requests = %q, want none", *requests)
+	}
+}
+
+// TestRunSCPV2KeepsBareMetalPathsRelative checks that a rig on a bare-metal
+// host, which logs in as the host's own account, never has /home/amika
+// prepended: scp resolves the relative path against that account's home.
+func TestRunSCPV2KeepsBareMetalPathsRelative(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"sb_1","name":"box","state":"active","provider":"amika-hostd-bare-metal"}`))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+	prev := prepareSessionTarget
+	t.Cleanup(func() { prepareSessionTarget = prev })
+	prepareSessionTarget = func(_ basedir.Paths, _ ssh.SessionCreator, name, id string) (string, error) {
+		return name + "." + id + ".test.amika", nil
+	}
+
+	cmd := NewV2()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := runSCPV2(cmd, []string{"--print", "./a.txt", "box:~/b.txt", "rig://box/~/c.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "scp ./a.txt box.sb_1.test.amika:b.txt box.sb_1.test.amika:c.txt\n"; out.String() != want {
+		t.Fatalf("printed %q, want %q", out.String(), want)
 	}
 }

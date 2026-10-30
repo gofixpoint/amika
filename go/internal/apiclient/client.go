@@ -170,6 +170,17 @@ type RemoteSandbox struct {
 	AgentCredentials json.RawMessage `json:"agent_credentials,omitempty"`
 }
 
+// ProviderHostdBareMetal is the provider of a rig that runs directly on a
+// bare-metal host's own account rather than in a VM. Such a rig has no
+// `/home/amika`: it logs in as the account running amika-hostd, in that
+// account's home directory.
+const ProviderHostdBareMetal = "amika-hostd-bare-metal"
+
+// IsBareMetal reports whether the rig runs directly on a bare-metal host.
+func (s *RemoteSandbox) IsBareMetal() bool {
+	return s.Provider != nil && *s.Provider == ProviderHostdBareMetal
+}
+
 // RemoteSandboxCreator describes the human who created a remote sandbox, as
 // returned by the API. Either field may be null if the server could not
 // resolve the user (deleted account, API-key principal, or noop auth mode).
@@ -1437,13 +1448,33 @@ type Host struct {
 	// host chose. Its keys, not the cloud size vocabulary, are what
 	// `rig create --host` accepts for --size.
 	Sizes map[string]HostSize `json:"sizes"`
+	// HostType is what the host runs its rigs in: HostTypeVM for one VM per
+	// rig, HostTypeBareMetal for one rig directly on the machine's own
+	// account. Never empty: UnmarshalJSON reads a control plane's silence as
+	// HostTypeVM, the only kind a plane predating the field registers.
+	HostType string `json:"host_type"`
+	// DetectedResources is the machine's own CPU, memory, disk, and platform
+	// as amika-hostd detected them, or nil when the host has not reported
+	// them. A bare-metal host has no sizes, so this is its capacity.
+	DetectedResources *HostResources `json:"detected_resources"`
+	// SSHUser is the account a bare-metal host's rig logs in as (the one
+	// running amika-hostd), or nil for a VM host, whose rigs log in as
+	// `amika`.
+	SSHUser *string `json:"ssh_user"`
 	// CreatedAt is when the host was first registered.
 	CreatedAt string `json:"created_at"`
 	// UpdatedAt is when the host was last replaced or re-registered.
 	UpdatedAt string `json:"updated_at"`
 }
 
-// UnmarshalJSON decodes a host, reading an absent transport as "listen".
+// HostTypeVM marks a host that runs each rig in its own VM.
+const HostTypeVM = "vm"
+
+// HostTypeBareMetal marks a host that runs one rig directly on the machine.
+const HostTypeBareMetal = "bare_metal"
+
+// UnmarshalJSON decodes a host, reading an absent transport as "listen" and
+// an absent host type as "vm".
 //
 // The field is required in the current response schema, but a control plane
 // older than it omits the key entirely, and every host such a plane can serve
@@ -1460,6 +1491,9 @@ func (h *Host) UnmarshalJSON(data []byte) error {
 	if decoded.TransportMode == "" {
 		decoded.TransportMode = "listen"
 	}
+	if decoded.HostType == "" {
+		decoded.HostType = HostTypeVM
+	}
 	*h = Host(decoded)
 	return nil
 }
@@ -1475,6 +1509,22 @@ type HostSize struct {
 	DiskGiB int `json:"diskGib"`
 	// DiskGrowOnly reports that the disk is a minimum the rig may exceed.
 	DiskGrowOnly bool `json:"diskGrowOnly"`
+}
+
+// HostResources is the hardware and platform amika-hostd detected on a host.
+// Like HostSize, its fields are camelCase, matching the control plane's
+// stored shape: renaming one to snake_case would decode it as zero silently.
+type HostResources struct {
+	// VCPUs is the machine's logical CPU count.
+	VCPUs int `json:"vcpus"`
+	// MemoryGiB is the machine's memory in GiB.
+	MemoryGiB float64 `json:"memoryGib"`
+	// DiskGiB is the disk capacity in GiB.
+	DiskGiB float64 `json:"diskGib"`
+	// OS is the operating system, e.g. "linux" or "darwin".
+	OS string `json:"os"`
+	// Arch is the CPU architecture, e.g. "x86_64" or "arm64".
+	Arch string `json:"arch"`
 }
 
 // ListHosts fetches the organization's own hosts from the remote API. It

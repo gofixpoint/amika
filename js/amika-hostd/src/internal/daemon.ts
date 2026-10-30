@@ -1,6 +1,5 @@
 /** Run the daemon as a detached background process and track it by pidfile. */
 import {
-  execFileSync,
   spawn as nodeSpawn,
   type ChildProcess,
   type SpawnOptions,
@@ -18,6 +17,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
+import { currentHostPlatform, type HostPlatform } from "../platforms/index.js";
 
 /**
  * Set as `process.title`, so a pidfile naming a reused pid is recognized as
@@ -45,6 +45,16 @@ export interface DaemonPaths {
    * still keeps snapshots with the daemon's other state.
    */
   snapshotDir: string;
+  /** A bare-metal host's one rig (`bare-metal-runtime.ts`). */
+  bareMetalRigFile: string;
+  /**
+   * The state directory a bare-metal host runs amikad with
+   * (`AMIKAD_STATE_DIR`): its sshd config, host keys, connect token and
+   * authorized keys. Deleting the rig deletes it.
+   */
+  amikadStateDir: string;
+  /** The supervised `amikad serve`'s output on a bare-metal host. */
+  amikadLogFile: string;
 }
 
 export type Spawn = (
@@ -352,7 +362,23 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     prepullFile: path.join(dir, "prepull.json"),
     snapshotIndexFile: path.join(dir, "snapshots.json"),
     snapshotDir: path.join(dir, "snapshots"),
+    bareMetalRigFile: path.join(dir, "bare-metal-rig.json"),
+    amikadStateDir: path.join(dir, "amikad"),
+    amikadLogFile: path.join(logDir, "amikad.log"),
   };
+}
+
+/**
+ * Where hostd's own files are installed (`install-amika-hostd.sh`):
+ * `$AMIKA_HOSTD_HOME`, else `$XDG_DATA_HOME/amika-hostd`, else
+ * `$HOME/.local/share/amika-hostd`. A bare-metal host's amikad is installed
+ * here too, so nothing is written to a system path.
+ */
+export function hostdDataDir(env: NodeJS.ProcessEnv = {}): string {
+  if (env.AMIKA_HOSTD_HOME?.trim()) return env.AMIKA_HOSTD_HOME;
+  const dataHome =
+    env.XDG_DATA_HOME || path.join(env.HOME || homedir(), ".local/share");
+  return path.join(dataHome, "amika-hostd");
 }
 
 /** Open `file` for appending, creating it and its directory privately. */
@@ -384,8 +410,13 @@ export function isDaemonRunning(pid: number): boolean {
  * unlike `isDaemonRunning` a process that cannot be confirmed never counts;
  * without `/proc`, `ps` shows the title the daemon set.
  */
-export function isDaemonProcess(pid: number): boolean {
-  return isAlive(pid) && programOf(pid, "command") === PROCESS_TITLE;
+export function isDaemonProcess(
+  pid: number,
+  platform: HostPlatform = currentHostPlatform(),
+): boolean {
+  return (
+    isAlive(pid) && platform.processCommand(pid, "command") === PROCESS_TITLE
+  );
 }
 
 /**
@@ -393,9 +424,12 @@ export function isDaemonProcess(pid: number): boolean {
  * `isDaemonProcess`, a pid whose program cannot be confirmed as smolvm never
  * counts.
  */
-export function isSmolvmRunning(pid: number): boolean {
+export function isSmolvmRunning(
+  pid: number,
+  platform: HostPlatform = currentHostPlatform(),
+): boolean {
   if (!isAlive(pid)) return false;
-  const program = programOf(pid, "comm");
+  const program = platform.processCommand(pid, "comm");
   return (
     program !== undefined && SMOLVM_PROGRAMS.includes(path.basename(program))
   );
@@ -531,29 +565,3 @@ function isAlive(pid: number): boolean {
 
 /** The smolvm launcher `exec`s `smolvm-bin`, so a running smolvm is either. */
 const SMOLVM_PROGRAMS = ["smolvm", "smolvm-bin"];
-
-/**
- * The program `pid` runs, from `/proc` or else `ps`; undefined if unknown.
- * `ps` reports it as `comm` (the executable) or as the first word of
- * `command` (the argv, which `process.title` rewrites).
- */
-function programOf(
-  pid: number,
-  psField: "comm" | "command",
-): string | undefined {
-  try {
-    return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0];
-  } catch {
-    // No /proc (e.g. macOS), or the process just exited.
-  }
-  try {
-    const shown = execFileSync("ps", ["-o", `${psField}=`, "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    const program = psField === "command" ? shown.split(/\s+/)[0] : shown;
-    return program === "" ? undefined : program;
-  } catch {
-    return undefined;
-  }
-}
