@@ -57,6 +57,29 @@ amika send "Fix the tests" --rig name=my-rig
 `--rig` takes a [rig reference](#naming-a-rig): a name or id, or
 `name=<name>` / `id=<id>` to match one field.
 
+`--model` chooses the model the agent runs and `--effort` how hard it thinks.
+Each applies from this message on, and the chat keeps it for later messages,
+so pass it once rather than on every send. Leave a flag out to inherit: a
+continued chat keeps its current setting, and a new chat starts on the
+organization's default, else the server's default model (`opus` for Claude,
+`gpt-5.6-terra` for Codex) and the agent's own default effort.
+
+```bash
+amika send "Plan the migration" --agent claude --model fable --effort max
+amika send "Now write it" --agent claude --session-id <session-id> --model sonnet
+amika send "Review the diff" --agent codex --model gpt-5.6-sol --effort high
+```
+
+| Flag               | Claude                                  | Codex                                                                |
+| ------------------ | --------------------------------------- | -------------------------------------------------------------------- |
+| `--model <name>`   | `fable`, `opus`, `sonnet`, `haiku`      | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.2` |
+| `--effort <level>` | `low`, `medium`, `high`, `xhigh`, `max` | `low`, `medium`, `high`, `xhigh`                                     |
+
+The server owns these lists and checks each value against the agent, so asking
+Codex for `opus` fails with a validation error naming the problem. The CLI
+does not check them itself, which lets a model added on the server work
+without a CLI upgrade; the model list above may lag the server's.
+
 Replies stream to a terminal by default; piped output and JSON are buffered.
 Use `--stream` or `--stream=false` to choose text behavior. Text metadata goes
 to stderr. JSON matches the agent-sessions API response, including `session_id`,
@@ -412,6 +435,8 @@ amika rig agent-send my-rig "Review this code" --agent codex --output json
 | `--agent <name>`      | Existing chat or org setting | Coding agent: `claude` or `codex`; falls back to `claude` |
 | `--session-id <id>`   | —                            | Continue a durable chat returned by a prior send          |
 | `--new-session`       | `false`                      | Start a brand-new chat                                    |
+| `--model <name>`      | Chat's, org's, else server's | Model to run from this message on; see `amika send`       |
+| `--effort <level>`    | Chat's, org's, else agent's  | Reasoning effort from this message on; see `amika send`   |
 | `--stream[=false]`    | On for a terminal            | Stream text output; JSON is always buffered               |
 
 The old `--no-wait` and `--workdir` flags have been removed. Commands wait for

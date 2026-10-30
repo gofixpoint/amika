@@ -26,6 +26,12 @@ const (
 	flagNewBranch = "new-branch"
 )
 
+// Run-setting flags: the chat's model and reasoning effort.
+const (
+	flagModel  = "model"
+	flagEffort = "effort"
+)
+
 // sendStdinPiped reports whether stdin is a pipe/redirect rather than a
 // terminal, so a message can be read from it when no positional arg is given.
 func sendStdinPiped() bool {
@@ -72,6 +78,16 @@ branch without saying so.
 Repo and branch selection only apply to a sandbox this command creates, so
 neither can be combined with --session-id or --rig.
 
+--model picks the model the agent runs (for example opus or sonnet for
+claude, gpt-5.6-terra for codex) and --effort how hard it thinks (low, medium,
+high, xhigh, or max; codex stops at xhigh). Either applies from this turn on,
+and the chat keeps it for later turns. Leave a flag out to inherit: a
+continued chat keeps its current setting, and a new chat starts on the
+organization's default, else the server's default model and the agent's own
+default effort. The server decides which values each agent accepts and
+rejects the rest, so a model added in a server release works without a CLI
+upgrade.
+
 The message can be provided as a positional argument or piped via stdin.
 
 By default the reply streams in as the agent produces it when stdout is a
@@ -116,6 +132,10 @@ func runSend(cmd *cobra.Command, args []string) error {
 		rigRef = &ref
 	}
 	newSession, _ := cmd.Flags().GetBool("new-session")
+	// Neither is checked here: the server owns the allowlist, which moves with
+	// its releases, and its 400 names the rejected field.
+	model, _ := cmd.Flags().GetString(flagModel)
+	effort, _ := cmd.Flags().GetString(flagEffort)
 
 	format, err := output.FormatFrom(cmd)
 	if err != nil {
@@ -168,6 +188,8 @@ func runSend(cmd *cobra.Command, args []string) error {
 		Agent:      agent,
 		SessionID:  sessionID,
 		NewSession: newSession,
+		Model:      model,
+		Effort:     effort,
 		RepoURL:    repoURL,
 
 		Branch:        branches.Branch,
@@ -609,6 +631,8 @@ func addSendFlags(cmd *cobra.Command) {
 	cmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
 	cmd.Flags().String("rig", "", "Send into this existing rig: a name or id, or name=<name> / id=<id> to match one field")
 	cmd.Flags().Bool("new-session", false, "Start a brand-new chat")
+	cmd.Flags().String(flagModel, "", "Model for the agent to run from this turn on, kept by the chat, e.g. opus or gpt-5.6-terra; the server checks it against the agent (default: the chat's current model; a new chat gets the org's default, else the server's)")
+	cmd.Flags().String(flagEffort, "", "Reasoning effort from this turn on, kept by the chat: low, medium, high, xhigh, or max; codex stops at xhigh (default: the chat's current effort; a new chat gets the org's default, else the agent's own)")
 	gitrepo.AddFlags(cmd,
 		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",
 		"Skip git repo auto-detection; create a sandbox without any repo")

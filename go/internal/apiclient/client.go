@@ -861,8 +861,8 @@ func (c *Client) UpdateSession(sel SandboxSelector, sessionID string, req Update
 // AgentSessionSendRequest is the request body for POST /api/v0beta1/agent-sessions.
 // Message is required; the rest are optional. SessionID continues an existing
 // chat; at most one of SandboxRef, SandboxName, and SandboxID routes into a
-// specific sandbox (SetSandbox fills the one a selector calls for); and
-// RepoURL, Branch and
+// specific sandbox (SetSandbox fills the one a selector calls for); Model and
+// Effort change the chat's run settings; and RepoURL, Branch and
 // NewBranchName are only used when a sandbox is created behind the scenes.
 type AgentSessionSendRequest struct {
 	Message   string `json:"message"`
@@ -876,7 +876,17 @@ type AgentSessionSendRequest struct {
 	// SandboxID matches by id only.
 	SandboxID  string `json:"sandbox_id,omitempty"`
 	NewSession bool   `json:"new_session,omitempty"`
-	RepoURL    string `json:"repo_url,omitempty"`
+	// Model and Effort set which model the agent runs and how hard it
+	// thinks, from this turn on; the chat keeps the setting for later turns.
+	// The server reads an absent field as "inherit" (a new chat gets the
+	// org's or the server's default), so both are omitempty. The API also
+	// takes null, to clear back to the agent CLI's own default, which a
+	// plain string cannot express; nothing here sends it. Neither is checked
+	// client-side: the server owns the allowlist and which values each
+	// agent accepts.
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	RepoURL string `json:"repo_url,omitempty"`
 	// Branch and NewBranchName mirror the create request's pair: Branch
 	// checks out an existing branch, NewBranchName cuts a new one (from
 	// Branch when both are given). Both omitempty, because the server reads
