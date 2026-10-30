@@ -29,8 +29,8 @@ func TestHTTPErrorUserMessage(t *testing.T) {
 			want: `Validation failed: model: Invalid option: expected one of "fable"|"opus"`,
 		},
 		{
-			name: "zod 3 schema rejection with nested path and two issues",
-			body: `{"success":false,"error":{"name":"ZodError","issues":[{"path":["items",0,"name"],"message":"Required"},{"path":[],"message":"Too many fields"}]}}`,
+			name: "zod 4 schema rejection with nested path and two issues",
+			body: `{"success":false,"error":{"name":"ZodError","message":"[{\"path\":[\"items\",0,\"name\"],\"message\":\"Required\"},{\"path\":[],\"message\":\"Too many fields\"}]"}}`,
 			want: "Validation failed: items.0.name: Required; Too many fields",
 		},
 		{

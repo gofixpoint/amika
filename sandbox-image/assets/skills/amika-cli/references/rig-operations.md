@@ -103,12 +103,12 @@ creates a rig, it auto-detects the current git repository; use `--git` or
 
 `--model` and `--effort` set the chat's model and reasoning effort from that
 message on, and the chat keeps them; omit both to inherit (a new chat starts on
-the org's default, else the server's). Claude models: `fable`, `opus`,
-`sonnet`, `haiku`; Codex models: `gpt-5.6-sol`, `gpt-5.6-terra`,
-`gpt-5.6-luna`, `gpt-5.5`, `gpt-5.2`. Effort is `low`, `medium`, `high`,
-`xhigh`, or `max` (Codex stops at `xhigh`). The server validates both against
-the agent and returns a 400 naming the bad value, so trust that error over
-this list if the two disagree.
+the org's default, else the server's default model and the agent's own default
+effort). Claude models: `fable`, `opus`, `sonnet`, `haiku`; Codex models:
+`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.2`. Effort
+is `low`, `medium`, `high`, `xhigh`, or `max` (Codex stops at `xhigh`). The
+server validates both against the agent and returns a 400 naming the field and
+the values it accepts, so trust that error over this list if the two disagree.
 
 The agent runs with permission prompts disabled inside the rig, so prompts
 execute unsupervised there.

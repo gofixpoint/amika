@@ -435,8 +435,8 @@ amika rig agent-send my-rig "Review this code" --agent codex --output json
 | `--agent <name>`      | Existing chat or org setting | Coding agent: `claude` or `codex`; falls back to `claude` |
 | `--session-id <id>`   | —                            | Continue a durable chat returned by a prior send          |
 | `--new-session`       | `false`                      | Start a brand-new chat                                    |
-| `--model <name>`      | Existing chat or org setting | Model to run from this message on; see `amika send`       |
-| `--effort <level>`    | Existing chat or org setting | Reasoning effort from this message on; see `amika send`   |
+| `--model <name>`      | Chat's, org's, else server's | Model to run from this message on; see `amika send`       |
+| `--effort <level>`    | Chat's, org's, else agent's  | Reasoning effort from this message on; see `amika send`   |
 | `--stream[=false]`    | On for a terminal            | Stream text output; JSON is always buffered               |
 
 The old `--no-wait` and `--workdir` flags have been removed. Commands wait for

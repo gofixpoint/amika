@@ -54,24 +54,23 @@ func (e *HTTPError) UserMessage() string {
 // schema rejects the body before any handler runs: Hono's zod validator
 // replies {"success": false, "error": <ZodError>} rather than the API's
 // error envelope. Zod 4 serializes the issues only as a JSON string in the
-// error's `message`; zod 3 as an `issues` array. Either way this renders them
-// the way the server's own envelope would ("Validation failed: model: ..."),
-// so a mistyped enum value (`amika send --model`) names the field and the
-// accepted values instead of printing escaped JSON. Reports false for any
-// other shape, leaving the caller's raw-body fallback in place.
+// error's `message`; this renders them the way the server's own envelope
+// would ("Validation failed: model: ..."), so a mistyped enum value
+// (`amika send --model`) names the field and the accepted values instead of
+// printing escaped JSON. Reports false for any other shape, leaving the
+// caller's raw-body fallback in place.
 func schemaRejectionMessage(body string) (string, bool) {
 	var raw struct {
 		Success *bool `json:"success"`
 		Error   struct {
-			Message string           `json:"message"`
-			Issues  []validatorIssue `json:"issues"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if json.Unmarshal([]byte(body), &raw) != nil || raw.Success == nil || *raw.Success {
 		return "", false
 	}
-	issues := raw.Error.Issues
-	if len(issues) == 0 && json.Unmarshal([]byte(raw.Error.Message), &issues) != nil {
+	var issues []validatorIssue
+	if json.Unmarshal([]byte(raw.Error.Message), &issues) != nil {
 		return "", false
 	}
 	parts := make([]string, 0, len(issues))

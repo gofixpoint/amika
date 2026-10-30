@@ -879,10 +879,11 @@ type AgentSessionSendRequest struct {
 	// Model and Effort set which model the agent runs and how hard it
 	// thinks, from this turn on; the chat keeps the setting for later turns.
 	// The server reads an absent field as "inherit" (a new chat gets the
-	// org's or the server's default), so both are omitempty. The API also takes null, to
-	// clear back to the agent CLI's own default, which a plain string cannot
-	// express; nothing here sends it. Neither is checked client-side: the
-	// server owns the allowlist and which values each agent accepts.
+	// org's or the server's default), so both are omitempty. The API also
+	// takes null, to clear back to the agent CLI's own default, which a
+	// plain string cannot express; nothing here sends it. Neither is checked
+	// client-side: the server owns the allowlist and which values each
+	// agent accepts.
 	Model   string `json:"model,omitempty"`
 	Effort  string `json:"effort,omitempty"`
 	RepoURL string `json:"repo_url,omitempty"`
