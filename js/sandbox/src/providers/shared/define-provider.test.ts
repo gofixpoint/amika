@@ -18,6 +18,7 @@ const ALL_OFF: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
+  guestProvisioning: true,
 };
 
 /** The always-required `sandbox` namespace, with fake create/delete. */

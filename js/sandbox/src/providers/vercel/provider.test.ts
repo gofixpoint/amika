@@ -54,6 +54,7 @@ describe("vercel provider wiring", () => {
       // Snapshots are id-only; persistent microVMs aren't auto-deleted.
       snapshotIdsAreOpaque: true,
       supportsAutoDelete: false,
+      guestProvisioning: true,
     });
   });
 

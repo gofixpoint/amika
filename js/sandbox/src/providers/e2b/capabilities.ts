@@ -14,4 +14,5 @@ export const e2bCapabilities: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: true,
   supportsAutoDelete: false,
+  guestProvisioning: true,
 };

@@ -21,6 +21,7 @@ const ALL_OFF: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
+  guestProvisioning: true,
 };
 
 const ALL_ON: SandboxProviderCapabilities = {
@@ -36,6 +37,7 @@ const ALL_ON: SandboxProviderCapabilities = {
   dockerRegistries: true,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
+  guestProvisioning: true,
 };
 
 /** A fully-capable definition whose every method is a spy we can assert on. */
