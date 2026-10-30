@@ -231,6 +231,14 @@ func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
 	w.Flush()
 }
 
+// orDefaultAuth is the access mode a service has when the API reports none.
+func orDefaultAuth(auth string) string {
+	if auth == "" {
+		return "organization"
+	}
+	return auth
+}
+
 // orDash is the table placeholder for an empty cell.
 func orDash(value string) string {
 	if value == "" {
@@ -400,9 +408,11 @@ func groupRemoteServices(sandboxName string, services []apiclient.RemoteSandboxS
 		row, ok := byName[svc.Name]
 		if !ok {
 			row = &serviceRow{
-				service:      svc.Name,
-				sandboxName:  sandboxName,
-				auth:         svc.Auth,
+				service:     svc.Name,
+				sandboxName: sandboxName,
+				// A server that reports no mode, or a legacy entry, serves the
+				// default.
+				auth:         orDefaultAuth(svc.Auth),
 				preserveHost: svc.PreserveHost,
 			}
 			byName[svc.Name] = row
