@@ -1115,7 +1115,7 @@ describe("what a service is at its name", () => {
     const fetcher = vi.fn<typeof fetch>(async (url) =>
       String(url).endsWith("/health")
         ? Response.json({ status: "ok" })
-        : Response.json({ error: "Unrecognized key: auth" }, { status: 400 }),
+        : Response.json({ error: "Invalid request" }, { status: 400 }),
     );
     const provider = amikaHostdProvider({
       config: { secretKey: SECRET, apiUrl: "http://old-host:3020" },
@@ -1137,5 +1137,25 @@ describe("what a service is at its name", () => {
     await expect(
       provider.sandboxes.create(ctx, { ...INPUT, services: [WEB] }),
     ).rejects.toThrow("HTTP 400");
+  });
+
+  it("reports a refusal that names its reason as it is", async () => {
+    // A current hostd refuses an image it lacks with a message of its own;
+    // that is not a host to upgrade, whatever the body set.
+    const reason = `image "amika/base" is not configured on this host`;
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({ error: reason }, { status: 400 }),
+    );
+    const provider = amikaHostdProvider({
+      config: { secretKey: SECRET, apiUrl: "http://host:3020" },
+      fetcher,
+    });
+    const attempt = provider.sandboxes.create(ctx, {
+      ...INPUT,
+      services: [PUBLIC],
+      owner: "user_1",
+    });
+    await expect(attempt).rejects.toThrow(reason);
+    await expect(attempt).rejects.not.toThrow("upgrade amika-hostd");
   });
 });

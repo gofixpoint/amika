@@ -150,8 +150,11 @@ export function hostdServiceRoutes(
   }));
 }
 
+/** What hostd answers a body its schema refuses with, and nothing else. */
+const HOSTD_SCHEMA_REFUSAL = "Invalid request";
+
 /** Whether any route sets what only a hostd with `service-access` keeps. */
-export function setsAccessSettings(
+function setsAccessSettings(
   routes: HostdServiceRoute[],
   owner?: string,
 ): boolean {
@@ -166,7 +169,9 @@ export function setsAccessSettings(
  * service at its name, which a daemon from before `service-access` does
  * with a `400` on the strict body; null when `error` is something else.
  * The operator is told what to upgrade rather than left with a schema
- * message, and nothing is served as if the setting had not been made.
+ * message, and nothing is served as if the setting had not been made. A
+ * `400` that says why (an image the host lacks, a snapshot still being
+ * taken) is not the schema's, and is reported as it is.
  */
 export function refusedAccessSettings(
   error: unknown,
@@ -177,6 +182,7 @@ export function refusedAccessSettings(
   if (
     !(error instanceof SmolApiError) ||
     error.status !== 400 ||
+    error.reason !== HOSTD_SCHEMA_REFUSAL ||
     !setsAccessSettings(routes, owner)
   ) {
     return null;
