@@ -85,7 +85,7 @@ function hostdSecretKey(env: Env): string {
 /**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
- * Daytona is always configured (the baseline provider). E2B/Freestyle/Vercel/Smol/AmikaHostd/Simulate are
+ * Daytona is always configured (this contract requires its key). E2B/Freestyle/Vercel/Smol/AmikaHostd/Simulate are
  * gated on their `*_ENABLED` variables being exactly `true` and are
  * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
  * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
