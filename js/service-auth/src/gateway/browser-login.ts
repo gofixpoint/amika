@@ -213,11 +213,25 @@ export async function hasSession(
   secretKey: string,
   nowS = Math.floor(Date.now() / 1000),
 ): Promise<boolean> {
+  return (await sessionUser(cookieHeader, url, secretKey, nowS)) !== null;
+}
+
+/**
+ * The user the request's session cookie vouches for at `url`'s origin, or
+ * null without a session: no cookie, a cookie for another origin, or an
+ * expired one.
+ */
+export async function sessionUser(
+  cookieHeader: string | null | undefined,
+  url: URL,
+  secretKey: string,
+  nowS = Math.floor(Date.now() / 1000),
+): Promise<string | null> {
   const origin = browserOrigin(url);
   const token = cookieValues(cookieHeader).get(SESSION_COOKIE);
-  if (!origin || !token) return false;
+  if (!origin || !token) return null;
   const session = await verifySession(secretKey, token, { origin }, nowS);
-  return typeof session !== "string";
+  return typeof session === "string" ? null : session.user;
 }
 
 /**

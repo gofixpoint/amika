@@ -32,10 +32,13 @@ export {
 export { tokenHint } from "./responses";
 export {
   AMIKAD_SERVICE,
+  SERVICE_AUTH_MODES,
   fromRequest,
   isAmikadSshUpgrade,
   parseServicePath,
   type GatewayRequest,
+  type NamedService,
+  type ServiceAuth,
   type ServiceRoute,
 } from "./routes";
 export {

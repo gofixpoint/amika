@@ -18,7 +18,32 @@ export interface GatewayRequest {
    * Such a request is the service's whatever its path, but for the two
    * login endpoints: its origin is the service's own (`gateway.ts`).
    */
-  named?: Pick<ServiceRoute, "machine" | "service">;
+  named?: NamedService;
+}
+
+/**
+ * Who Amika admits at a service's own name:
+ *
+ * - `organization`: any member of the organization with a browser session.
+ * - `owner`: the rig's owner alone.
+ * - `public`: everyone. The service does its own login, so nothing is
+ *   checked and nothing is asked for.
+ */
+export const SERVICE_AUTH_MODES = ["organization", "owner", "public"] as const;
+export type ServiceAuth = (typeof SERVICE_AUTH_MODES)[number];
+
+/** The service a request's hostname names, and who may have it there. */
+export interface NamedService extends Pick<
+  ServiceRoute,
+  "machine" | "service"
+> {
+  /** Who is admitted. Absent is `organization`. */
+  auth?: ServiceAuth;
+  /**
+   * The Amika user id that owns the rig, as the login pass spells it.
+   * `owner` admits that user and nobody else; absent, it admits nobody.
+   */
+  owner?: string;
 }
 
 /** A Fetch `Request` as the gateway reads it. */
