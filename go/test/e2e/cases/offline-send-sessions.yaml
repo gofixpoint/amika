@@ -50,27 +50,35 @@ steps:
       exit: 1
       stderr_contains: 'invalid --output value "bogus": must be one of text, json, json-pretty'
 
-  - name: send requires --agent before asking for credentials
-    # The API has no fallback agent, so a send without one is refused here,
-    # ahead of the auth gate, rather than after a login.
+  - name: a send that starts a new chat requires --agent
+    # The check runs ahead of the auth gate, so no login is needed to hear it.
     cmd: [send, hello]
     env:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: "--agent is required: pass --agent claude or --agent codex"
+      stderr_contains: "--agent is required to start a new chat: pass --agent claude or --agent codex"
 
-  - name: a continued chat still requires --agent
-    # Nothing falls back to the agent the chat started with.
+  - name: --new-session requires --agent even with a rig named
+    cmd: [send, hello, --rig, some-rig, --new-session]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--agent is required to start a new chat"
+
+  - name: a continued chat does not require --agent
+    # The chat keeps its own agent, so the send gets past the agent check and
+    # stops at the auth gate.
     cmd: [send, hello, --session-id, some-session-id]
     env:
       AMIKA_API_KEY: ""
     expect:
       exit: 1
-      stderr_contains: "--agent is required"
+      stderr_contains: 'not logged in; run "amika auth login"'
 
   - name: send rejects an unknown --agent before asking for credentials
-    cmd: [send, hello, --agent, gpt]
+    cmd: [send, hello, --session-id, some-session-id, --agent, gpt]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -139,7 +147,7 @@ steps:
     # No sandbox is created, so an explicit repo cannot be honored. Before
     # inference existed this reached the API and was ignored; dropping it
     # silently would be a regression visible only in the sandbox contents.
-    cmd: [send, hello, --agent, claude, --rig, some-sandbox, --repo, "https://github.com/gofixpoint/example-repo"]
+    cmd: [send, hello, --rig, some-sandbox, --repo, "https://github.com/gofixpoint/example-repo"]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -149,7 +157,7 @@ steps:
   - name: send refuses a branch flag aimed at an existing rig
     # Nothing is created, so the branch cannot be honored. Dropping it would
     # be visible only in what the agent could see.
-    cmd: [send, hello, --agent, claude, --rig, some-rig, --branch, release]
+    cmd: [send, hello, --rig, some-rig, --branch, release]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -157,7 +165,7 @@ steps:
       stderr_contains: "--branch cannot be combined with --session-id or --rig"
 
   - name: send refuses --new-branch aimed at an existing chat
-    cmd: [send, hello, --agent, claude, --session-id, some-session-id, --new-branch, feature/x]
+    cmd: [send, hello, --session-id, some-session-id, --new-branch, feature/x]
     env:
       AMIKA_API_KEY: ""
     expect:

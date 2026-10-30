@@ -84,53 +84,68 @@ func TestSendRejectsInvalidOutput(t *testing.T) {
 }
 
 // TestValidateSendAgent checks that --agent must name claude or codex
-// exactly, since the API has no fallback agent.
+// exactly, and may be left out only when the send can continue a chat.
 func TestValidateSendAgent(t *testing.T) {
 	for _, agent := range []string{"claude", "codex"} {
-		if err := validateSendAgent(agent); err != nil {
-			t.Errorf("validateSendAgent(%q) = %v, want nil", agent, err)
+		for _, newChat := range []bool{true, false} {
+			if err := validateSendAgent(agent, newChat); err != nil {
+				t.Errorf("validateSendAgent(%q, %v) = %v, want nil", agent, newChat, err)
+			}
 		}
 	}
-	for agent, want := range map[string]string{
-		"":       "--agent is required: pass --agent claude or --agent codex",
-		"gpt":    `invalid --agent "gpt": must be claude or codex`,
-		"Claude": `invalid --agent "Claude": must be claude or codex`,
+	if err := validateSendAgent("", false); err != nil {
+		t.Errorf(`validateSendAgent("", false) = %v, want nil`, err)
+	}
+	for _, tc := range []struct {
+		agent   string
+		newChat bool
+		want    string
+	}{
+		{"", true, "--agent is required to start a new chat: pass --agent claude or --agent codex"},
+		{"gpt", true, `invalid --agent "gpt": must be claude or codex`},
+		{"gpt", false, `invalid --agent "gpt": must be claude or codex`},
+		{"Claude", false, `invalid --agent "Claude": must be claude or codex`},
 	} {
-		if err := validateSendAgent(agent); err == nil || err.Error() != want {
-			t.Errorf("validateSendAgent(%q) = %v, want %q", agent, err, want)
+		if err := validateSendAgent(tc.agent, tc.newChat); err == nil || err.Error() != tc.want {
+			t.Errorf("validateSendAgent(%q, %v) = %v, want %q", tc.agent, tc.newChat, err, tc.want)
 		}
 	}
 }
 
-// TestSendRequiresAgent checks that every send entry point refuses a missing
-// or unknown --agent, continuations and sends into a rig included. It runs
-// logged out: the check precedes the auth gate, so a login error here would
-// mean the flag mistake was hidden behind it.
-func TestSendRequiresAgent(t *testing.T) {
+// TestSendRequiresAgentForNewChat checks which sends refuse a missing
+// --agent: only those that can only start a new chat. A continuation or a
+// send into a named rig leaves the choice to the server. It runs logged out:
+// the check precedes the auth gate, so a send that passes it stops at the
+// login error instead.
+func TestSendRequiresAgentForNewChat(t *testing.T) {
 	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
 	t.Setenv("AMIKA_API_KEY", "")
-	for _, base := range [][]string{
-		{"send", "hi"},
-		{"send", "hi", "--session-id", "chat_1"},
-		{"send", "hi", "--rig", "my-rig"},
-		{"rig", "agent-send", "my-rig", "hi"},
+	const required = "--agent is required to start a new chat"
+	const loggedOut = "not logged in"
+	for _, tc := range []struct {
+		args    []string
+		wantErr string
+	}{
+		{[]string{"send", "hi"}, required},
+		{[]string{"send", "hi", "--agent", ""}, required},
+		{[]string{"send", "hi", "--new-session"}, required},
+		{[]string{"send", "hi", "--session-id", "chat_1", "--new-session"}, required},
+		{[]string{"send", "hi", "--rig", "my-rig", "--new-session"}, required},
+		{[]string{"rig", "agent-send", "my-rig", "hi", "--new-session"}, required},
+		{[]string{"send", "hi", "--session-id", "chat_1"}, loggedOut},
+		{[]string{"send", "hi", "--rig", "my-rig"}, loggedOut},
+		{[]string{"rig", "agent-send", "my-rig", "hi"}, loggedOut},
+		{[]string{"send", "hi", "--agent", "codex"}, loggedOut},
+		{[]string{"send", "hi", "--agent", "gpt"}, `invalid --agent "gpt"`},
+		{[]string{"send", "hi", "--session-id", "chat_1", "--agent", "gpt"}, `invalid --agent "gpt"`},
+		{[]string{"rig", "agent-send", "my-rig", "hi", "--agent", "gpt"}, `invalid --agent "gpt"`},
 	} {
-		for _, tc := range []struct {
-			agent   []string
-			wantErr string
-		}{
-			{nil, "--agent is required"},
-			{[]string{"--agent", ""}, "--agent is required"},
-			{[]string{"--agent", "gpt"}, `invalid --agent "gpt"`},
-		} {
-			args := append(append([]string{}, base...), tc.agent...)
-			t.Run(strings.Join(args, " "), func(t *testing.T) {
-				_, err := runRootCommandOutput(t, args...)
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("err = %v, want %q", err, tc.wantErr)
-				}
-			})
-		}
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			_, err := runRootCommandOutput(t, tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 

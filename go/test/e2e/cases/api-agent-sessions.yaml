@@ -47,8 +47,8 @@ steps:
       cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
 
   - name: send the first message and start a durable chat
-    # --agent is required on every send; claude also makes `agent` below a
-    # deterministic assertion. The agent's reply text is deliberately NOT
+    # --agent is pinned rather than left to the org default so `agent` below is
+    # a deterministic assertion. The agent's reply text is deliberately NOT
     # asserted: model output is nondeterministic, so the case checks the
     # envelope (a string response, no error) and not the words in it.
     cmd: [send, "Reply with exactly the word: pong", --rig, "{{sandbox_name}}", --agent, claude, -o, json]

@@ -86,7 +86,7 @@ func TestSendAgentSessionStream_ErrorFrame(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-token")
 	_, err := c.SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "sandbox blew up") {
@@ -103,7 +103,7 @@ func TestSendAgentSessionStream_NoDoneFrame(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-token")
 	_, err := c.SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "without a result") {
@@ -123,7 +123,7 @@ func TestSendAgentSessionStream_PreStreamHTTPError(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-token")
 	_, err := c.SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude", SessionID: "nope"},
+		AgentSessionSendRequest{Message: "hi", SessionID: "nope"},
 		AgentSessionStreamHandlers{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "Agent session not found") {
@@ -146,7 +146,7 @@ func TestSendAgentSessionStream_EventlessDataFrameDoesNotCorruptNext(t *testing.
 	defer srv.Close()
 
 	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{},
 	)
 	if err != nil {
@@ -171,7 +171,7 @@ func TestSendAgentSessionStream_MalformedDeltaIsAnError(t *testing.T) {
 	defer srv.Close()
 
 	_, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{OnDelta: func(string) {}},
 	)
 	if err == nil || !strings.Contains(err.Error(), "parsing delta frame") {
@@ -192,7 +192,7 @@ func TestSendAgentSessionStream_DataWithoutSpace(t *testing.T) {
 
 	var deltas strings.Builder
 	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{OnDelta: func(s string) { deltas.WriteString(s) }},
 	)
 	if err != nil {
@@ -216,7 +216,7 @@ func TestSendAgentSessionStream_DoneWinsOverLaterErrorFrame(t *testing.T) {
 	defer srv.Close()
 
 	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{},
 	)
 	if err != nil {
@@ -243,7 +243,7 @@ func TestSendAgentSessionStream_LargeResponse(t *testing.T) {
 	defer srv.Close()
 
 	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{},
 	)
 	if err != nil {
@@ -269,7 +269,7 @@ func TestSendAgentSessionStream_CRLFAndHeartbeats(t *testing.T) {
 
 	var deltas strings.Builder
 	resp, err := NewClient(srv.URL, "test-token").SendAgentSessionStream(
-		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
+		AgentSessionSendRequest{Message: "hi"},
 		AgentSessionStreamHandlers{OnDelta: func(s string) { deltas.WriteString(s) }},
 	)
 	if err != nil {

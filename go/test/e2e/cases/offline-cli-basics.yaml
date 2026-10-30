@@ -46,7 +46,7 @@ steps:
     # Confirms stdin plumbing: with a message on stdin, the command gets
     # past the "message is required" check and fails later, at the auth
     # gate, instead — proving the piped message was read.
-    cmd: [send, --rig, does-not-exist, --agent, claude]
+    cmd: [send, --rig, does-not-exist]
     stdin: "hello from stdin"
     env:
       AMIKA_API_KEY: ""

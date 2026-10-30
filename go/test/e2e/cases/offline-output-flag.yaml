@@ -27,7 +27,7 @@ steps:
     # here failing at the auth gate, same as it would in text mode.
     # cobra/main.go prints RunE errors as plain text regardless of --output,
     # so the error text below is unchanged from the text-mode message.
-    cmd: [send, hello, --rig, some-sandbox, --agent, claude, --output, json]
+    cmd: [send, hello, --rig, some-sandbox, --output, json]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -38,7 +38,7 @@ steps:
     # JSON output forces a buffered response even when --stream is present.
     # With no stored credentials and no AMIKA_API_KEY, validation reaches the
     # auth check before any network call is attempted.
-    cmd: [send, hello, --rig, some-sandbox, --agent, claude, --stream, --output, json]
+    cmd: [send, hello, --rig, some-sandbox, --stream, --output, json]
     env:
       AMIKA_API_KEY: ""
     expect:

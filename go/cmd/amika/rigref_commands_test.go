@@ -45,13 +45,13 @@ func TestSendRigReferenceKinds(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			body, requests = nil, nil
-			if _, err := runRootCommandOutput(t, append(tc.args, "--agent", "claude", "--output", "json")...); err != nil {
+			if _, err := runRootCommandOutput(t, append(tc.args, "--output", "json")...); err != nil {
 				t.Fatal(err)
 			}
 			if want := []string{"POST /api/v0beta1/agent-sessions"}; !reflect.DeepEqual(requests, want) {
 				t.Fatalf("requests = %q, want %q", requests, want)
 			}
-			want := map[string]any{"message": "hi", "agent": "claude"}
+			want := map[string]any{"message": "hi"}
 			for key, value := range tc.want {
 				want[key] = value
 			}
@@ -74,7 +74,7 @@ func TestSendAmbiguousRigSuggestsPrefixes(t *testing.T) {
 	t.Setenv("AMIKA_API_URL", server.URL)
 	t.Setenv("AMIKA_API_KEY", "test-key")
 
-	_, err := runRootCommandOutput(t, "send", "hi", "--rig", "dup", "--agent", "claude", "--output", "json")
+	_, err := runRootCommandOutput(t, "send", "hi", "--rig", "dup", "--output", "json")
 	if err == nil || !strings.Contains(err.Error(), `use "id=dup" or "name=dup"`) {
 		t.Fatalf("error = %v, want a hint naming id=dup and name=dup", err)
 	}

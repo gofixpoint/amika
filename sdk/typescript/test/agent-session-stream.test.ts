@@ -50,7 +50,7 @@ describe("AmikaClient.sendAgentSessionStream", () => {
     const statuses: [string, string][] = [];
     let text = "";
     const resp = await makeClient(fetch).sendAgentSessionStream(
-      { message: "hi", agent: "claude" },
+      { message: "hi" },
       {
         onStatus: (phase, rigId) => statuses.push([phase, rigId]),
         onDelta: (chunk) => {
@@ -78,7 +78,6 @@ describe("AmikaClient.sendAgentSessionStream", () => {
     ]);
     const resp = await makeClient(fetch).sendAgentSessionStream({
       message: "hi",
-      agent: "claude",
     });
     expect(resp.sessionId).toBe("as_1");
   });
@@ -92,7 +91,6 @@ describe("AmikaClient.sendAgentSessionStream", () => {
     ]);
     const resp = await makeClient(fetch).sendAgentSessionStream({
       message: "hi",
-      agent: "claude",
     });
     expect(resp.sessionId).toBe("as_1");
   });
@@ -102,10 +100,7 @@ describe("AmikaClient.sendAgentSessionStream", () => {
       { status: 200, body: sse(["error", { error: "agent exploded" }]) },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/agent exploded/);
   });
 
@@ -114,10 +109,7 @@ describe("AmikaClient.sendAgentSessionStream", () => {
       { status: 200, body: sse(["delta", { text: "partial" }]) },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/stream ended without a result/);
   });
 
@@ -126,10 +118,7 @@ describe("AmikaClient.sendAgentSessionStream", () => {
       { status: 200, body: "event: delta\ndata: {not json\n\n" },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(AmikaError);
   });
 
@@ -138,10 +127,7 @@ describe("AmikaClient.sendAgentSessionStream", () => {
       { status: 401, body: { code: "unauthorized", message: "bad token" } },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(AmikaHTTPError);
   });
 });
@@ -165,7 +151,7 @@ describe("AmikaClient.sendAgentSessionStream async handlers", () => {
     // reader would race ahead and the writes would land out of order.
     const delays: Record<string, number> = { first: 30, second: 10, third: 0 };
     await makeClient(fetch).sendAgentSessionStream(
-      { message: "hi", agent: "claude" },
+      { message: "hi" },
       {
         onDelta: async (text) => {
           await new Promise((r) => setTimeout(r, delays[text] ?? 0));
@@ -191,7 +177,7 @@ describe("AmikaClient.sendAgentSessionStream async handlers", () => {
 
     const order: string[] = [];
     await makeClient(fetch).sendAgentSessionStream(
-      { message: "hi", agent: "claude" },
+      { message: "hi" },
       {
         onStatus: async (phase) => {
           await new Promise((r) => setTimeout(r, 20));
@@ -215,7 +201,7 @@ describe("AmikaClient.sendAgentSessionStream async handlers", () => {
     ]);
     await expect(
       makeClient(fetch).sendAgentSessionStream(
-        { message: "hi", agent: "claude" },
+        { message: "hi" },
         {
           onDelta: () => Promise.reject(new Error("writer closed")),
         },
@@ -237,10 +223,7 @@ describe("AmikaClient.sendAgentSessionStream truncated streams", () => {
       },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/stream ended without a result/);
   });
 
@@ -249,10 +232,7 @@ describe("AmikaClient.sendAgentSessionStream truncated streams", () => {
       { status: 200, body: 'event: done\ndata: {"session_id":"as' },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/stream ended without a result/);
   });
 
@@ -264,10 +244,7 @@ describe("AmikaClient.sendAgentSessionStream truncated streams", () => {
       },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/boom/);
   });
 
@@ -282,7 +259,6 @@ describe("AmikaClient.sendAgentSessionStream truncated streams", () => {
     ]);
     const resp = await makeClient(fetch).sendAgentSessionStream({
       message: "hi",
-      agent: "claude",
     });
     expect(resp.sessionId).toBe("as_1");
   });
@@ -292,10 +268,7 @@ describe("AmikaClient.sendAgentSessionStream truncated streams", () => {
       { status: 200, body: "event: done\ndata: [1,2]\n\n" },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/parsing done frame failed/);
   });
 });
@@ -306,10 +279,7 @@ describe("AmikaClient agent-session malformed payloads", () => {
       const { fetch } = mockFetch([
         { status: 200, body: { ...DONE_PAYLOAD, usage } },
       ]);
-      const resp = await makeClient(fetch).sendAgentSession({
-        message: "hi",
-        agent: "claude",
-      });
+      const resp = await makeClient(fetch).sendAgentSession({ message: "hi" });
       expect(resp.usage, `usage=${JSON.stringify(usage)}`).toBeUndefined();
     }
   });
@@ -326,10 +296,7 @@ describe("AmikaClient agent-session malformed payloads", () => {
       },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/boom/);
   });
 
@@ -338,10 +305,7 @@ describe("AmikaClient agent-session malformed payloads", () => {
       { status: 200, body: 'event: error\ndata: {"error":"boom bec' },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/stream ended without a result/);
   });
 
@@ -352,10 +316,7 @@ describe("AmikaClient agent-session malformed payloads", () => {
       { status: 200, body: "event: delta\ndata: <html>oops</html>" },
     ]);
     await expect(
-      makeClient(fetch).sendAgentSessionStream({
-        message: "hi",
-        agent: "claude",
-      }),
+      makeClient(fetch).sendAgentSessionStream({ message: "hi" }),
     ).rejects.toThrow(/truncated or malformed/);
   });
 });
