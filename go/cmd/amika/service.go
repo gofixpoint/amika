@@ -25,8 +25,8 @@ type serviceListItem struct {
 	Service string `json:"service"`
 	Sandbox string `json:"sandbox"`
 	Ports   string `json:"ports"`
-	// Auth is who Amika admits at the service's public address; empty for a
-	// server that does not report it.
+	// Auth is who Amika admits at the service's public address; a service
+	// the server reports none for is shown at the default.
 	Auth         string `json:"auth"`
 	PreserveHost bool   `json:"preserve_host"`
 	URL          string `json:"url"`
@@ -133,6 +133,11 @@ func runServiceCreate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return rigref.Explain(rigRef, err)
 	}
+	// A public service is open to the internet, guarded by the app's own
+	// login alone. Said on stderr, so `-o json` output stays the resource.
+	if svc.Auth == "public" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: service %q is reachable by anyone on the internet without an Amika login; the app must have a login of its own.\n", svc.Name)
+	}
 	if format.IsJSON() {
 		// Remote-backed command: emit the API's response schema verbatim (see
 		// go/cmd/amika/AGENTS.md "Output format") so
@@ -231,14 +236,6 @@ func printService(cmd *cobra.Command, svc *apiclient.SandboxServiceResource) {
 	w.Flush()
 }
 
-// orDefaultAuth is the access mode a service has when the API reports none.
-func orDefaultAuth(auth string) string {
-	if auth == "" {
-		return "organization"
-	}
-	return auth
-}
-
 // orDash is the table placeholder for an empty cell.
 func orDash(value string) string {
 	if value == "" {
@@ -324,7 +321,7 @@ var serviceListCmd = &cobra.Command{
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		fmt.Fprintln(w, "SERVICE\tRIG\tPORTS\tAUTH\tURL")
 		for _, r := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.service, r.sandboxName, r.ports, orDash(r.auth), r.url)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.service, r.sandboxName, r.ports, r.auth, r.url)
 		}
 		w.Flush()
 		return nil
@@ -441,6 +438,14 @@ func groupRemoteServices(sandboxName string, services []apiclient.RemoteSandboxS
 		rows = append(rows, *row)
 	}
 	return rows
+}
+
+// orDefaultAuth is the access mode a service has when the API reports none.
+func orDefaultAuth(auth string) string {
+	if auth == "" {
+		return "organization"
+	}
+	return auth
 }
 
 // formatRemoteServicePort renders a remote service's published port binding as

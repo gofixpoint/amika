@@ -686,6 +686,10 @@ func TestServiceCreateCommand_SendsAccessFlagsOnlyWhenGiven(t *testing.T) {
 			t.Fatalf("output missing %q:\n%s", needle, out)
 		}
 	}
+	// A service made public is open to the internet; the CLI says so.
+	if !strings.Contains(out, `Warning: service "t3" is reachable by anyone on the internet without an Amika login`) {
+		t.Fatalf("output missing the public warning:\n%s", out)
+	}
 
 	resetServiceFlags(t)
 	if _, err := runRootCommand("service", "create", "--rig", "box", "--name", "web", "--port", "3000", "--url-scheme", "https", "--preserve-host=false"); err != nil {
