@@ -481,13 +481,21 @@ export function createGateway({
     // A session says who logged in. The login admits every member of the
     // organization, so `owner` compares the user with the rig's owner. A
     // rig whose owner the server never named admits nobody this way.
-    if (auth === "owner" && user !== named.owner) {
-      return {
-        kind: "refuse",
-        surface: "preview",
-        status: 403,
-        reason: "Forbidden: this rig belongs to another user",
-      };
+    switch (auth) {
+      case "organization":
+        break;
+      case "owner":
+        if (user !== named.owner) {
+          return {
+            kind: "refuse",
+            surface: "preview",
+            status: 403,
+            reason: "Forbidden: this rig belongs to another user",
+          };
+        }
+        break;
+      default:
+        assertNever(auth);
     }
     // Only this origin's own requests, and page loads, are let through.
     if (!isOwnOrPageLoad(request, { upgrade })) {
@@ -540,4 +548,8 @@ export function createGateway({
       setCookies,
     };
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled case: ${String(value)}`);
 }
