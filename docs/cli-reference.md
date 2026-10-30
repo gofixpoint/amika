@@ -47,11 +47,16 @@ to create a rig. When creating a rig, repository and branch selection work
 like `rig create`: the current Git repository is detected unless `--git` or
 `--no-git` overrides it.
 
+Every send names its agent with `--agent claude` or `--agent codex`, including
+one that continues a chat or targets an existing rig. Nothing falls back to the
+chat's earlier agent or an organization default, so a send without `--agent`
+is refused before any request is made.
+
 ```bash
-amika send "Fix the tests" --rig my-rig
-amika send "Now update the README" --session-id <session-id>
-amika send "Summarize the code" --rig my-rig --output json
-amika send "Fix the tests" --rig name=my-rig
+amika send "Fix the tests" --agent claude --rig my-rig
+amika send "Now update the README" --agent claude --session-id <session-id>
+amika send "Summarize the code" --agent codex --rig my-rig --output json
+amika send "Fix the tests" --agent claude --rig name=my-rig
 ```
 
 `--rig` takes a [rig reference](#naming-a-rig): a name or id, or
@@ -401,18 +406,18 @@ Text output reports `session_id: <id>` on stderr; JSON output includes
 `amika sessions show <id>` to read a conversation.
 
 ```bash
-amika rig agent-send my-rig "Add unit tests for the auth module"
-echo "Fix the failing tests" | amika rig agent-send my-rig
-amika rig agent-send my-rig "Continue the review" --session-id <session-id>
+amika rig agent-send my-rig "Add unit tests for the auth module" --agent claude
+echo "Fix the failing tests" | amika rig agent-send my-rig --agent claude
+amika rig agent-send my-rig "Continue the review" --agent claude --session-id <session-id>
 amika rig agent-send my-rig "Review this code" --agent codex --output json
 ```
 
-| Flag                  | Default                      | Description                                               |
-| --------------------- | ---------------------------- | --------------------------------------------------------- |
-| `--agent <name>`      | Existing chat or org setting | Coding agent: `claude` or `codex`; falls back to `claude` |
-| `--session-id <id>`   | —                            | Continue a durable chat returned by a prior send          |
-| `--new-session`       | `false`                      | Start a brand-new chat                                    |
-| `--stream[=false]`    | On for a terminal            | Stream text output; JSON is always buffered               |
+| Flag                | Default           | Description                                      |
+| ------------------- | ----------------- | ------------------------------------------------ |
+| `--agent <name>`    | Required          | Coding agent: `claude` or `codex`, on every send |
+| `--session-id <id>` | —                 | Continue a durable chat returned by a prior send |
+| `--new-session`     | `false`           | Start a brand-new chat                           |
+| `--stream[=false]`  | On for a terminal | Stream text output; JSON is always buffered      |
 
 The old `--no-wait` and `--workdir` flags have been removed. Commands wait for
 the agent's response and use the rig's configured agent working directory. Session IDs

@@ -184,12 +184,12 @@ func TestAgentSessionSendRequestSetSandbox(t *testing.T) {
 		sel  SandboxSelector
 		want map[string]any
 	}{
-		{SandboxSelector{Value: "box"}, map[string]any{"message": "hi", "sandbox_ref": "box"}},
-		{SandboxByRef("box"), map[string]any{"message": "hi", "sandbox_ref": "box"}},
-		{SandboxSelector{Value: "box", By: SelectByName}, map[string]any{"message": "hi", "sandbox_name": "box"}},
-		{SandboxSelector{Value: "sb_1", By: SelectByID}, map[string]any{"message": "hi", "sandbox_id": "sb_1"}},
+		{SandboxSelector{Value: "box"}, map[string]any{"message": "hi", "agent": "claude", "sandbox_ref": "box"}},
+		{SandboxByRef("box"), map[string]any{"message": "hi", "agent": "claude", "sandbox_ref": "box"}},
+		{SandboxSelector{Value: "box", By: SelectByName}, map[string]any{"message": "hi", "agent": "claude", "sandbox_name": "box"}},
+		{SandboxSelector{Value: "sb_1", By: SelectByID}, map[string]any{"message": "hi", "agent": "claude", "sandbox_id": "sb_1"}},
 	} {
-		req := AgentSessionSendRequest{Message: "hi", SandboxRef: "stale", SandboxName: "stale", SandboxID: "stale"}
+		req := AgentSessionSendRequest{Message: "hi", Agent: "claude", SandboxRef: "stale", SandboxName: "stale", SandboxID: "stale"}
 		req.SetSandbox(tc.sel)
 		if got := bodyFields(t, req); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("SetSandbox(%+v) body = %v, want %v", tc.sel, got, tc.want)

@@ -859,14 +859,17 @@ func (c *Client) UpdateSession(sel SandboxSelector, sessionID string, req Update
 }
 
 // AgentSessionSendRequest is the request body for POST /api/v0beta1/agent-sessions.
-// Message is required; the rest are optional. SessionID continues an existing
-// chat; at most one of SandboxRef, SandboxName, and SandboxID routes into a
-// specific sandbox (SetSandbox fills the one a selector calls for); and
-// RepoURL, Branch and
-// NewBranchName are only used when a sandbox is created behind the scenes.
+// Message and Agent are required; the rest are optional. SessionID continues
+// an existing chat; at most one of SandboxRef, SandboxName, and SandboxID
+// routes into a specific sandbox (SetSandbox fills the one a selector calls
+// for); and RepoURL, Branch and NewBranchName are only used when a sandbox is
+// created behind the scenes.
 type AgentSessionSendRequest struct {
-	Message   string `json:"message"`
-	Agent     string `json:"agent,omitempty"`
+	Message string `json:"message"`
+	// Agent ("claude" or "codex") is sent on every request, continuations
+	// and sends into an existing sandbox included: the server has no
+	// fallback agent.
+	Agent     string `json:"agent"`
 	SessionID string `json:"session_id,omitempty"`
 	// SandboxRef matches by id or name and refuses an ambiguous value with a
 	// 409.

@@ -85,7 +85,7 @@ func TestSendAgentSession_OmitsUsageWhenAbsent(t *testing.T) {
 	defer srv.Close()
 
 	resp, err := NewClient(srv.URL, "test-token").SendAgentSession(
-		AgentSessionSendRequest{Message: "hi"},
+		AgentSessionSendRequest{Message: "hi", Agent: "claude"},
 	)
 	if err != nil {
 		t.Fatalf("SendAgentSession: %v", err)

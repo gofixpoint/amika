@@ -82,16 +82,16 @@ value.
 ## Driving an agent
 
 `amika send` is the programmatic entry point for remote agent chats. Without
-`--session-id` or `--rig`, it creates a rig and starts a chat. It uses
-the organization's default agent, falling back to Claude; pass `--agent claude`
-or `--agent codex` to choose explicitly.
+`--session-id` or `--rig`, it creates a rig and starts a chat. Every call must
+pass `--agent claude` or `--agent codex`, including one that continues a chat;
+nothing falls back to the chat's earlier agent or an organization default.
 
 ```bash
-amika send "Add tests for the auth module"
-printf 'Fix the failing tests\n' | amika send
-amika send --rig my-rig "Refactor the API layer"
-amika send --session-id <id> "Continue the refactor"
-amika send "Summarize this repo" -o json
+amika send --agent claude "Add tests for the auth module"
+printf 'Fix the failing tests\n' | amika send --agent claude
+amika send --agent codex --rig my-rig "Refactor the API layer"
+amika send --agent claude --session-id <id> "Continue the refactor"
+amika send --agent claude "Summarize this repo" -o json
 ```
 
 In JSON output, check `is_error`; a completed request can still contain an agent

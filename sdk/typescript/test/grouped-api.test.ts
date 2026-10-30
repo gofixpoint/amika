@@ -16,21 +16,31 @@ describe("grouped and bound operations", () => {
       },
     ]);
     const client = new AmikaClient({ apiKey: "test-key", fetch });
-    const turn = await client.rigs
-      .handle("rig1")
-      .send({ message: "first", model: "model1", effort: "high" });
+    const turn = await client.rigs.handle("rig1").send({
+      message: "first",
+      agent: "claude",
+      model: "model1",
+      effort: "high",
+    });
     const session = await client.agentSessions.get(turn.sessionId);
-    await session.send({ message: "second", model: null, effort: null });
+    await session.send({
+      message: "second",
+      agent: "claude",
+      model: null,
+      effort: null,
+    });
     expect(await session.refresh()).toBe(session);
     expect(session.messages[0]?.content).toBe("second");
     expect(JSON.parse(calls[0]!.body!)).toEqual({
       message: "first",
+      agent: "claude",
       sandbox_ref: "rig1",
       model: "model1",
       effort: "high",
     });
     expect(JSON.parse(calls[2]!.body!)).toEqual({
       message: "second",
+      agent: "claude",
       session_id: "chat/1",
       model: null,
       effort: null,
@@ -54,13 +64,16 @@ describe("grouped and bound operations", () => {
     const deltas: string[] = [];
     await client.rigs
       .handle("rig1")
-      .sendStream({ message: "hi" }, { onDelta: (text) => deltas.push(text) });
+      .sendStream(
+        { message: "hi", agent: "claude" },
+        { onDelta: (text) => deltas.push(text) },
+      );
     const session = await client.agentSessions.get("chat1");
-    await session.sendStream({ message: "again" });
+    await session.sendStream({ message: "again", agent: "claude" });
     expect(deltas).toEqual(["hello"]);
     expect(bodies).toEqual([
-      { message: "hi", sandbox_ref: "rig1" },
-      { message: "again", session_id: "chat1" },
+      { message: "hi", agent: "claude", sandbox_ref: "rig1" },
+      { message: "again", agent: "claude", session_id: "chat1" },
     ]);
   });
 

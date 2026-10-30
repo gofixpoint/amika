@@ -51,7 +51,7 @@ async function example() {
   const legacy: Sandbox = rig;
   const legacyData: RemoteSandbox = data;
   const chat: AgentSession = await client.agentSessions.get("chat1");
-  await chat.send({ message: "continue", model: null });
+  await chat.send({ message: "continue", agent: chat.agent, model: null });
   const snapshot = await client.snapshots.create({ rigRef: rig.id, name: "base", mode: "full" });
   const oldSnapshot: SandboxSnapshot = snapshot;
   await snapshot.wait();

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { AmikaClient } from "@/index";
+import {
+  AmikaClient,
+  type AgentSendRequest,
+  type AgentSessionSendRequest,
+  type ContinueAgentSessionRequest,
+} from "@/index";
 import { mockFetch } from "./helpers.js";
 
 const BASE = "https://api.example.com";
@@ -87,11 +92,20 @@ describe("AmikaClient.sendAgentSession", () => {
         { body: sse(["done", DONE_PAYLOAD]) },
       ]);
       const client = makeClient(fetch);
-      await client.sendAgentSession({ message: "hi", ...settings });
-      await client.sendAgentSessionStream({ message: "hi", ...settings });
+      await client.sendAgentSession({
+        message: "hi",
+        agent: "claude",
+        ...settings,
+      });
+      await client.sendAgentSessionStream({
+        message: "hi",
+        agent: "claude",
+        ...settings,
+      });
       for (const call of calls) {
         expect(JSON.parse(call.body ?? "")).toEqual({
           message: "hi",
+          agent: "claude",
           ...settings,
         });
       }
@@ -100,8 +114,25 @@ describe("AmikaClient.sendAgentSession", () => {
 
   it("sends only the fields that are set", async () => {
     const { fetch, calls } = mockFetch([{ status: 200, body: DONE_PAYLOAD }]);
-    await makeClient(fetch).sendAgentSession({ message: "hi" });
-    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({ message: "hi" });
+    await makeClient(fetch).sendAgentSession({
+      message: "hi",
+      agent: "claude",
+    });
+    expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
+      message: "hi",
+      agent: "claude",
+    });
+  });
+
+  it("requires an agent on every send request type", () => {
+    // The server has no fallback agent, not even a continued chat's own.
+    // @ts-expect-error agent is required
+    const send: AgentSessionSendRequest = { message: "hi" };
+    // @ts-expect-error agent is required
+    const onRig: AgentSendRequest = { message: "hi" };
+    // @ts-expect-error agent is required
+    const onChat: ContinueAgentSessionRequest = { message: "hi" };
+    expect([send, onRig, onChat]).toHaveLength(3);
   });
 
   it("accepts the legacy sandboxId spelling, and prefers a non-empty rigId", async () => {
@@ -111,9 +142,14 @@ describe("AmikaClient.sendAgentSession", () => {
       { status: 200, body: DONE_PAYLOAD },
     ]);
     const client = makeClient(fetch);
-    await client.sendAgentSession({ message: "hi", sandboxId: "sbx_1" });
     await client.sendAgentSession({
       message: "hi",
+      agent: "claude",
+      sandboxId: "sbx_1",
+    });
+    await client.sendAgentSession({
+      message: "hi",
+      agent: "claude",
       rigId: "rig_1",
       sandboxId: "sbx_1",
     });
@@ -121,13 +157,18 @@ describe("AmikaClient.sendAgentSession", () => {
     // matching the other two sites that accept both spellings.
     await client.sendAgentSession({
       message: "hi",
+      agent: "claude",
       rigId: "",
       sandboxId: "sbx_1",
     });
     // An explicitly empty value is rejected before sending; the server would
     // have answered 400 for the empty sandbox_id earlier releases sent.
     await expect(
-      client.sendAgentSession({ message: "hi", sandboxId: "" }),
+      client.sendAgentSession({
+        message: "hi",
+        agent: "claude",
+        sandboxId: "",
+      }),
     ).rejects.toThrow("rig must not be empty");
     expect(calls).toHaveLength(3);
     expect(JSON.parse(calls[0]?.body ?? "").sandbox_id).toBe("sbx_1");
@@ -137,7 +178,10 @@ describe("AmikaClient.sendAgentSession", () => {
 
   it("leaves usage undefined when the provider reports none", async () => {
     const { fetch } = mockFetch([{ status: 200, body: DONE_PAYLOAD }]);
-    const resp = await makeClient(fetch).sendAgentSession({ message: "hi" });
+    const resp = await makeClient(fetch).sendAgentSession({
+      message: "hi",
+      agent: "claude",
+    });
     expect(resp.usage).toBeUndefined();
   });
 });

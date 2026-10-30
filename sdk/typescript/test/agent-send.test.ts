@@ -18,7 +18,10 @@ describe("AmikaClient.agentSend", () => {
     async (name) => {
       const { fetch, calls } = mockFetch([]);
       await expect(
-        makeClient(fetch).agentSend(name, { message: "hello" }),
+        makeClient(fetch).agentSend(name, {
+          message: "hello",
+          agent: "claude",
+        }),
       ).rejects.toThrow("rig name must not be empty");
       expect(calls).toHaveLength(0);
     },
@@ -81,7 +84,10 @@ describe("AmikaClient.agentSend", () => {
         },
       },
     ]);
-    const resp = await makeClient(fetch).agentSend("dev", { message: "hi" });
+    const resp = await makeClient(fetch).agentSend("dev", {
+      message: "hi",
+      agent: "claude",
+    });
     expect(resp.isError).toBe(true);
     expect(resp.response).toBe("Not logged in");
   });

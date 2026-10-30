@@ -10,8 +10,8 @@ export type AgentSendRequest = Pick<
 export type AgentSendResponse = AgentSessionSendResponse;
 
 /**
- * Request body for POST /api/v0beta1/agent-sessions. Only `message` is
- * required: `sessionId` continues an existing chat, `rig` routes into a
+ * Request body for POST /api/v0beta1/agent-sessions. `message` and `agent`
+ * are required: `sessionId` continues an existing chat, `rig` routes into a
  * specific rig, and `repoUrl` is used only when a rig has to be
  * created behind the scenes.
  *
@@ -21,8 +21,12 @@ export type AgentSendResponse = AgentSessionSendResponse;
 export interface AgentSessionSendRequest {
   /** User prompt to send to the coding agent. */
   message: string;
-  /** Agent name, such as claude or codex. Omission uses the server-selected agent. */
-  agent?: string;
+  /**
+   * Agent name: claude or codex. Required on every send, including one that
+   * continues a chat: the server does not fall back to the chat's earlier
+   * agent or an organization default.
+   */
+  agent: string;
   /** Server-supported model; omitted inherits, null resets to the agent default. */
   model?: string | null;
   /** Omitted inherits; null resets. The server validates support for the agent. */
@@ -223,7 +227,7 @@ export interface AgentSessions {
   get(sessionId: string): Promise<AgentSession>;
 }
 
-/** A prompt continuing the selected chat, with optional agent/model overrides. */
+/** A prompt continuing the selected chat, naming its agent, with optional model/effort overrides. */
 export type ContinueAgentSessionRequest = Pick<
   AgentSessionSendRequest,
   "message" | "agent" | "model" | "effort"

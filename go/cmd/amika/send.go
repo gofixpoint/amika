@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -55,8 +56,11 @@ var sendCmd = &cobra.Command{
 
 If neither --session-id nor --rig is given, a sandbox is created behind the
 scenes and a new chat is started; the returned session id can be passed back as
---session-id to continue the conversation. The agent (claude or codex) comes
-from --agent, else the organization's default, else claude.
+--session-id to continue the conversation.
+
+--agent (claude or codex) is required on every send, including one that
+continues a chat with --session-id or goes into an existing rig with --rig:
+nothing falls back to the chat's earlier agent or an organization default.
 
 Run from inside a git repo and that repo's "origin" remote is cloned into
 the sandbox, the same way "amika sandbox create" picks up the repo you are
@@ -135,10 +139,13 @@ func runSend(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Contradictory repo flags are reported before the auth gate: checking
-	// them costs nothing, so a login should not stand between the caller and
-	// a plain flag conflict. Only the flag-level checks move up — a bad path
-	// needs the filesystem, so it still waits.
+	// A missing --agent and contradictory repo flags are reported before the
+	// auth gate: checking them costs nothing, so a login should not stand
+	// between the caller and a plain flag mistake. Only the flag-level checks
+	// move up — a bad path needs the filesystem, so it still waits.
+	if err := validateSendAgent(agent); err != nil {
+		return err
+	}
 	if err := validateSendRepoFlags(cmd, sessionID, rigRef != nil); err != nil {
 		return err
 	}
@@ -247,6 +254,23 @@ func explainSendRig(rigRef *rigref.Ref, err error) error {
 		return err
 	}
 	return rigref.Explain(*rigRef, err)
+}
+
+// sendAgents are the coding agents the agent-sessions API accepts.
+var sendAgents = []string{"claude", "codex"}
+
+// validateSendAgent requires --agent and checks it names a known agent.
+//
+// The API takes no default, not even the agent of the chat being continued,
+// so an empty value is refused here rather than sent and rejected remotely.
+func validateSendAgent(agent string) error {
+	if agent == "" {
+		return fmt.Errorf("--agent is required: pass --agent %s", strings.Join(sendAgents, " or --agent "))
+	}
+	if !slices.Contains(sendAgents, agent) {
+		return fmt.Errorf("invalid --agent %q: must be %s", agent, strings.Join(sendAgents, " or "))
+	}
+	return nil
 }
 
 // validateSendRepoFlags rejects a repo or branch selection this command cannot
@@ -576,7 +600,8 @@ func newRigAgentSendCommand() *cobra.Command {
 		Use:   "agent-send <rig> [message]",
 		Short: "Send a message to a coding agent in a rig",
 		Long: `Equivalent to "amika send --rig <rig> [message]". Uses the same durable
-chats, streaming behavior, and API response format as "amika send".
+chats, streaming behavior, and API response format as "amika send", and
+likewise requires --agent (claude or codex).
 The message can also be piped via stdin.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -605,7 +630,7 @@ The message can also be piped via stdin.`,
 
 // addSendFlags gives both send entry points identical request and output options.
 func addSendFlags(cmd *cobra.Command) {
-	cmd.Flags().String("agent", "", "Coding agent to use: claude or codex (default: org setting, else claude)")
+	cmd.Flags().String("agent", "", "Coding agent to use: claude or codex (required)")
 	cmd.Flags().String("session-id", "", "Continue an existing chat by its session id")
 	cmd.Flags().String("rig", "", "Send into this existing rig: a name or id, or name=<name> / id=<id> to match one field")
 	cmd.Flags().Bool("new-session", false, "Start a brand-new chat")

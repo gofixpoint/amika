@@ -83,6 +83,57 @@ func TestSendRejectsInvalidOutput(t *testing.T) {
 	}
 }
 
+// TestValidateSendAgent checks that --agent must name claude or codex
+// exactly, since the API has no fallback agent.
+func TestValidateSendAgent(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		if err := validateSendAgent(agent); err != nil {
+			t.Errorf("validateSendAgent(%q) = %v, want nil", agent, err)
+		}
+	}
+	for agent, want := range map[string]string{
+		"":       "--agent is required: pass --agent claude or --agent codex",
+		"gpt":    `invalid --agent "gpt": must be claude or codex`,
+		"Claude": `invalid --agent "Claude": must be claude or codex`,
+	} {
+		if err := validateSendAgent(agent); err == nil || err.Error() != want {
+			t.Errorf("validateSendAgent(%q) = %v, want %q", agent, err, want)
+		}
+	}
+}
+
+// TestSendRequiresAgent checks that every send entry point refuses a missing
+// or unknown --agent, continuations and sends into a rig included. It runs
+// logged out: the check precedes the auth gate, so a login error here would
+// mean the flag mistake was hidden behind it.
+func TestSendRequiresAgent(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	for _, base := range [][]string{
+		{"send", "hi"},
+		{"send", "hi", "--session-id", "chat_1"},
+		{"send", "hi", "--rig", "my-rig"},
+		{"rig", "agent-send", "my-rig", "hi"},
+	} {
+		for _, tc := range []struct {
+			agent   []string
+			wantErr string
+		}{
+			{nil, "--agent is required"},
+			{[]string{"--agent", ""}, "--agent is required"},
+			{[]string{"--agent", "gpt"}, `invalid --agent "gpt"`},
+		} {
+			args := append(append([]string{}, base...), tc.agent...)
+			t.Run(strings.Join(args, " "), func(t *testing.T) {
+				_, err := runRootCommandOutput(t, args...)
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+			})
+		}
+	}
+}
+
 // TestSendRepo covers which repo the sandbox created for a message clones,
 // and when the working directory is not consulted at all.
 func TestSendRepo(t *testing.T) {
@@ -659,7 +710,7 @@ func TestRigAgentSendStreamsPipedMessage(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
-		want := map[string]any{"message": "inspect the rig", "sandbox_ref": "my-rig", "new_session": true}
+		want := map[string]any{"message": "inspect the rig", "agent": "claude", "sandbox_ref": "my-rig", "new_session": true}
 		if !reflect.DeepEqual(request, want) {
 			t.Errorf("request=%v, want %v", request, want)
 		}
@@ -669,7 +720,7 @@ func TestRigAgentSendStreamsPipedMessage(t *testing.T) {
 	defer server.Close()
 	t.Setenv("AMIKA_API_URL", server.URL)
 	t.Setenv("AMIKA_API_KEY", "test-key")
-	_, err = runRootCommandOutput(t, "rig", "agent-send", "my-rig", "--new-session", "--stream")
+	_, err = runRootCommandOutput(t, "rig", "agent-send", "my-rig", "--agent", "claude", "--new-session", "--stream")
 	if err != nil {
 		t.Fatal(err)
 	}

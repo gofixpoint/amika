@@ -98,8 +98,20 @@ describe("reference validation", () => {
       ["sourceRig", () => c.snapshots.list({ sourceRig: blank })],
       ["snapshot", () => c.snapshots.handle(blank)],
       ["snapshot", () => c.snapshots.get(blank)],
-      ["rig", () => c.agentSessions.send({ message: "m", rig: blank })],
-      ["rig", () => c.agentSessions.sendStream({ message: "m", rig: blank })],
+      [
+        "rig",
+        () =>
+          c.agentSessions.send({ message: "m", agent: "claude", rig: blank }),
+      ],
+      [
+        "rig",
+        () =>
+          c.agentSessions.sendStream({
+            message: "m",
+            agent: "claude",
+            rig: blank,
+          }),
+      ],
       ["rig", () => c.agentSessions.list({ rig: blank })],
     ];
     for (const [label, call] of methods) {
@@ -171,9 +183,13 @@ describe("rigs: the rig is the path's primary resource (by)", () => {
         { body: wireTurnStream },
       ]);
       const handle = makeClient(fetch).rigs.handle(ref);
-      await handle.send({ message: "hi" });
-      await handle.sendStream({ message: "hi" });
-      const body = { message: "hi", [`sandbox_${kindOf(pinned)}`]: "dev/1" };
+      await handle.send({ message: "hi", agent: "claude" });
+      await handle.sendStream({ message: "hi", agent: "claude" });
+      const body = {
+        message: "hi",
+        agent: "claude",
+        [`sandbox_${kindOf(pinned)}`]: "dev/1",
+      };
       expect(calls.map((c) => JSON.parse(c.body ?? ""))).toEqual([body, body]);
     },
   );
@@ -192,7 +208,7 @@ describe("rigs: the rig is the path's primary resource (by)", () => {
     await rig.start();
     await rig.stop();
     await rig.delete();
-    await rig.send({ message: "hi" });
+    await rig.send({ message: "hi", agent: "claude" });
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["GET", `${API}/rigs/dev`],
       ["GET", `${API}/rigs/rig%2F9?by=id`],
@@ -203,6 +219,7 @@ describe("rigs: the rig is the path's primary resource (by)", () => {
     ]);
     expect(JSON.parse(calls[5]?.body ?? "")).toEqual({
       message: "hi",
+      agent: "claude",
       sandbox_id: "rig/9",
     });
   });
@@ -218,9 +235,14 @@ describe("rigs: the rig is the path's primary resource (by)", () => {
     const { fetch, calls } = mockFetch([{ body: wireTurn }]);
     const handle = makeClient(fetch).rigs.handle({ ref: "dev", by: "name" });
     // Untyped callers can pass fields AgentSendRequest omits.
-    await handle.send({ message: "hi", rigId: "other" } as never);
+    await handle.send({
+      message: "hi",
+      agent: "claude",
+      rigId: "other",
+    } as never);
     expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
       message: "hi",
+      agent: "claude",
       sandbox_name: "dev",
     });
   });
@@ -397,15 +419,27 @@ describe("agentSessions", () => {
         { body: { sessions: [], total: 0 } },
       ]);
       const client = makeClient(fetch);
-      await client.agentSessions.send({ message: "hi", rig: ref });
-      await client.agentSessions.sendStream({ message: "hi", rig: ref });
+      await client.agentSessions.send({
+        message: "hi",
+        agent: "claude",
+        rig: ref,
+      });
+      await client.agentSessions.sendStream({
+        message: "hi",
+        agent: "claude",
+        rig: ref,
+      });
       await client.agentSessions.list({ rig: ref, limit: 5 });
       expect(calls.map((c) => c.url)).toEqual([
         `${API}/agent-sessions`,
         `${API}/agent-sessions/stream`,
         `${API}/agent-sessions?limit=5&sandbox=dev%2F1${pinned ? `&sandbox_by=${pinned}` : ""}`,
       ]);
-      const body = { message: "hi", [`sandbox_${kindOf(pinned)}`]: "dev/1" };
+      const body = {
+        message: "hi",
+        agent: "claude",
+        [`sandbox_${kindOf(pinned)}`]: "dev/1",
+      };
       expect(calls.slice(0, 2).map((c) => JSON.parse(c.body ?? ""))).toEqual([
         body,
         body,
@@ -416,26 +450,41 @@ describe("agentSessions", () => {
   it("send maps the deprecated rigId and sandboxId to an ID, behind a non-empty rig", async () => {
     const { fetch, calls } = mockFetch(Array(5).fill({ body: wireTurn }));
     const client = makeClient(fetch);
-    await client.agentSessions.send({ message: "m", rigId: "rig-a" });
-    await client.agentSessions.send({ message: "m", sandboxId: "rig-b" });
     await client.agentSessions.send({
       message: "m",
+      agent: "claude",
+      rigId: "rig-a",
+    });
+    await client.agentSessions.send({
+      message: "m",
+      agent: "claude",
+      sandboxId: "rig-b",
+    });
+    await client.agentSessions.send({
+      message: "m",
+      agent: "claude",
       rig: "dev",
       rigId: "rig-a",
       sandboxId: "rig-b",
     });
-    await client.agentSessions.send({ message: "m", rig: "", rigId: "rig-a" });
     await client.agentSessions.send({
       message: "m",
+      agent: "claude",
+      rig: "",
+      rigId: "rig-a",
+    });
+    await client.agentSessions.send({
+      message: "m",
+      agent: "claude",
       rigId: "",
       sandboxId: "rig-b",
     });
     expect(calls.map((c) => JSON.parse(c.body ?? ""))).toEqual([
-      { message: "m", sandbox_id: "rig-a" },
-      { message: "m", sandbox_id: "rig-b" },
-      { message: "m", sandbox_ref: "dev" },
-      { message: "m", sandbox_id: "rig-a" },
-      { message: "m", sandbox_id: "rig-b" },
+      { message: "m", agent: "claude", sandbox_id: "rig-a" },
+      { message: "m", agent: "claude", sandbox_id: "rig-b" },
+      { message: "m", agent: "claude", sandbox_ref: "dev" },
+      { message: "m", agent: "claude", sandbox_id: "rig-a" },
+      { message: "m", agent: "claude", sandbox_id: "rig-b" },
     ]);
   });
 
@@ -443,10 +492,12 @@ describe("agentSessions", () => {
     const { fetch, calls } = mockFetch([{ body: wireTurn }]);
     await makeClient(fetch).agentSessions.send({
       message: "m",
+      agent: "claude",
       sessionId: "chat1",
     });
     expect(JSON.parse(calls[0]?.body ?? "")).toEqual({
       message: "m",
+      agent: "claude",
       session_id: "chat1",
     });
   });

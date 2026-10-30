@@ -27,7 +27,7 @@ steps:
     # With a message on stdin the command gets past the "message is required"
     # check and fails later, at the auth check, proving the piped message was
     # read.
-    cmd: [send]
+    cmd: [send, --agent, claude]
     stdin: "hello from stdin"
     env:
       AMIKA_API_KEY: ""
@@ -50,8 +50,35 @@ steps:
       exit: 1
       stderr_contains: 'invalid --output value "bogus": must be one of text, json, json-pretty'
 
-  - name: send is remote-only and requires credentials
+  - name: send requires --agent before asking for credentials
+    # The API has no fallback agent, so a send without one is refused here,
+    # ahead of the auth gate, rather than after a login.
     cmd: [send, hello]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--agent is required: pass --agent claude or --agent codex"
+
+  - name: a continued chat still requires --agent
+    # Nothing falls back to the agent the chat started with.
+    cmd: [send, hello, --session-id, some-session-id]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: "--agent is required"
+
+  - name: send rejects an unknown --agent before asking for credentials
+    cmd: [send, hello, --agent, gpt]
+    env:
+      AMIKA_API_KEY: ""
+    expect:
+      exit: 1
+      stderr_contains: 'invalid --agent "gpt": must be claude or codex'
+
+  - name: send is remote-only and requires credentials
+    cmd: [send, hello, --agent, claude]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -62,7 +89,7 @@ steps:
     # Nothing is inferred from the working directory, so the next thing that
     # can fail is the auth gate. The runner executes cases from inside this
     # repo, so without --no-git the cwd's repo would be resolved first.
-    cmd: [send, hello, --no-git]
+    cmd: [send, hello, --agent, claude, --no-git]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -72,7 +99,7 @@ steps:
   - name: send --repo reaches the auth check with a repo given
     # --repo is an alias for --git, so it resolves the same way; with valid
     # flags the next thing that can fail is the auth gate.
-    cmd: [send, hello, --repo, "https://github.com/gofixpoint/example-repo"]
+    cmd: [send, hello, --agent, claude, --repo, "https://github.com/gofixpoint/example-repo"]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -83,7 +110,7 @@ steps:
     # Flag contradictions are checked ahead of the auth gate: needing a login
     # to be told about a typo would be absurd, and it keeps these assertable
     # without credentials.
-    cmd: [send, hello, --git, ".", --no-git]
+    cmd: [send, hello, --agent, claude, --git, ".", --no-git]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -93,7 +120,7 @@ steps:
   - name: send names the alias when --repo is the flag that conflicts
     # The message has to name what the caller typed, not the canonical spelling
     # of the flag it aliases.
-    cmd: [send, hello, --repo, "https://github.com/gofixpoint/example-repo", --no-git]
+    cmd: [send, hello, --agent, claude, --repo, "https://github.com/gofixpoint/example-repo", --no-git]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -101,7 +128,7 @@ steps:
       stderr_contains: "--repo and --no-git are mutually exclusive"
 
   - name: send rejects --git and --repo set to different values
-    cmd: [send, hello, --git, "https://github.com/gofixpoint/example-repo", --repo, "https://github.com/gofixpoint/amika"]
+    cmd: [send, hello, --agent, claude, --git, "https://github.com/gofixpoint/example-repo", --repo, "https://github.com/gofixpoint/amika"]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -112,7 +139,7 @@ steps:
     # No sandbox is created, so an explicit repo cannot be honored. Before
     # inference existed this reached the API and was ignored; dropping it
     # silently would be a regression visible only in the sandbox contents.
-    cmd: [send, hello, --rig, some-sandbox, --repo, "https://github.com/gofixpoint/example-repo"]
+    cmd: [send, hello, --agent, claude, --rig, some-sandbox, --repo, "https://github.com/gofixpoint/example-repo"]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -122,7 +149,7 @@ steps:
   - name: send refuses a branch flag aimed at an existing rig
     # Nothing is created, so the branch cannot be honored. Dropping it would
     # be visible only in what the agent could see.
-    cmd: [send, hello, --rig, some-rig, --branch, release]
+    cmd: [send, hello, --agent, claude, --rig, some-rig, --branch, release]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -130,7 +157,7 @@ steps:
       stderr_contains: "--branch cannot be combined with --session-id or --rig"
 
   - name: send refuses --new-branch aimed at an existing chat
-    cmd: [send, hello, --session-id, some-session-id, --new-branch, feature/x]
+    cmd: [send, hello, --agent, claude, --session-id, some-session-id, --new-branch, feature/x]
     env:
       AMIKA_API_KEY: ""
     expect:
@@ -141,7 +168,7 @@ steps:
     # --stream selects the SSE transport, but only after auth. Asserting the
     # same failure here proves the flag is registered and does not change the
     # order of the checks ahead of the request.
-    cmd: [send, hello, --stream]
+    cmd: [send, hello, --agent, claude, --stream]
     env:
       AMIKA_API_KEY: ""
     expect:
