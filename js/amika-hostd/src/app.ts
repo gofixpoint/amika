@@ -43,6 +43,8 @@ import {
 } from "./internal/services.js";
 import {
   memoryServiceRegistry,
+  namedService,
+  serviceEntries,
   type ServiceRegistry,
 } from "./internal/service-registry.js";
 import { namedRoute, type NamedRoute } from "./internal/tunnel-rig-route.js";
@@ -52,7 +54,6 @@ import {
   guestFetch,
   guestHost,
 } from "./internal/guest-host.js";
-import { namedService, serviceEntries } from "./internal/service-registry.js";
 
 export interface AppConfig {
   /**
@@ -490,7 +491,7 @@ export const API_VERSION = "v0beta1";
  * `service-access`: a service may be created with `auth` and `preserve_host`,
  * and a rig with its `owner` (`internal/requests.ts`).
  */
-export const SERVICE_ACCESS_FEATURE = "service-access";
+const SERVICE_ACCESS_FEATURE = "service-access";
 export const FEATURES = ["service-tokens", SERVICE_ACCESS_FEATURE];
 const RIGS_ROUTE = `/${API_VERSION}/rigs`;
 /** This host's snapshots, which belong to the host rather than to one rig. */
@@ -553,9 +554,10 @@ async function proxyService(
   /** The service the tunnel named the request for, if it did. */
   named?: NamedRoute,
 ): Promise<Response> {
+  const access = named && namedService(registry, named);
   const decision = await gateway.authorize({
     ...fromRequest(request),
-    named: named && namedService(registry, named),
+    named: access,
   });
   if (decision.kind === "not-mine") {
     return Response.json({ error: "Not found" }, { status: 404 });
@@ -584,18 +586,14 @@ async function proxyService(
   let dispatcher: Dispatcher | undefined;
   // At its own address, the service is told that address
   // (`publicForwarding`), and nothing the caller claimed about it.
-  if (named) {
+  if (access) {
     for (const name of [...forwarded.keys()]) {
       if (isForwardingHeader(name)) forwarded.delete(name);
     }
     for (const [name, value] of publicForwarding(url.host)) {
       forwarded.set(name, value);
     }
-    const host = guestHost(
-      registry.entry(named.machine, named.service)?.preserveHost ?? false,
-      url.host,
-      hostPort,
-    );
+    const host = guestHost(access.preserveHost, url.host, hostPort);
     if (host !== `127.0.0.1:${hostPort}`) dispatcher = dispatchWithHost(host);
   }
   const guestCookies = gateway.guestCookies(forwarded.get("cookie"));

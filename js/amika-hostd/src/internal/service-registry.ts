@@ -33,7 +33,7 @@ export interface ServiceEntry {
 }
 
 /** A service given as a bare port takes the defaults: today's behavior. */
-export const DEFAULT_ENTRY: Omit<ServiceEntry, "port"> = {
+const DEFAULT_ENTRY: Omit<ServiceEntry, "port"> = {
   auth: "organization",
   preserveHost: false,
 };

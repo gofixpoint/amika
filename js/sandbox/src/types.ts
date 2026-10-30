@@ -1,6 +1,7 @@
 /**
  * Provider-facing shared types owned by the provider layer.
  */
+import type { ServiceAuth } from "@amika/service-auth/gateway";
 
 /**
  * Canonical provider-name list. A runtime value (not just a type union) so the
@@ -25,7 +26,6 @@ export type ServiceUrlScheme = "http" | "https";
  * Who Amika admits at a service's own public name, as the gateway decides
  * it (`@amika/service-auth/gateway`): `organization`, `owner` or `public`.
  */
-import type { ServiceAuth } from "@amika/service-auth/gateway";
 export {
   SERVICE_AUTH_MODES,
   type ServiceAuth,
