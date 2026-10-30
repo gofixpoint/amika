@@ -57,6 +57,22 @@ daytona/
     *.test.ts        # tests colocate with the module they cover
 ```
 
+## The `simulate` provider
+
+`simulate/` is a provider with no vendor behind it. Every sandbox is a record
+in an in-memory `SimulateWorld`, and the provider backs the whole contract
+(lifecycle, exec, files, ssh, services, listing, snapshots) over that record.
+A control plane configured with `SIMULATE_ENABLED=true` can run its create,
+start, stop, snapshot, and metering paths end to end with no cloud account.
+
+The world is the control surface. A test (or a control API) calls
+`getSimulateWorld(worldId)` with the same id the provider was built with and
+then scripts the scenario: `onExec` sets command output, `failNext` /
+`failAlways` make an operation throw, `setLatency` slows one down, `vanish`
+drops a sandbox the way an outage would, and `freezeTime` / `advanceTime`
+move the clock (which applies auto-stop and auto-delete). Ids and tokens come
+from a counter, so a scenario replays the same way every run.
+
 ## Adding a provider ("acme")
 
 1. **Create `acme/`** with:
