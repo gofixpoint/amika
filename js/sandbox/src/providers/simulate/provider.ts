@@ -81,7 +81,7 @@ export default defineProvider(
           streamSimulateCommand(world, id, command, handlers),
       },
       files: {
-        read: (id, path) => readSimulateFile(world, id, path),
+        read: (id, path, opts) => readSimulateFile(world, id, path, opts),
         write: (id, path, content) =>
           writeSimulateFile(world, id, path, content),
       },

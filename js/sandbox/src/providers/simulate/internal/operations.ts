@@ -14,6 +14,7 @@ import type {
   ProviderSandboxListing,
   ProviderSnapshot,
   RefreshUrlsResult,
+  ReadFileBytesOptions,
   SandboxExecResult,
   StreamCommandHandlers,
 } from "../../provider";
@@ -125,8 +126,9 @@ export function readSimulateFile(
   world: SimulateWorld,
   id: string,
   path: string,
+  opts?: ReadFileBytesOptions,
 ): Promise<Uint8Array | null> {
-  return world.perform("readFile", () => world.readFile(id, path));
+  return world.perform("readFile", () => world.readFile(id, path, opts));
 }
 
 export function writeSimulateFile(

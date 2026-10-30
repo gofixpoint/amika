@@ -155,3 +155,33 @@ describe("SimulateWorld snapshots and files", () => {
     expect(world.exec("sim-vm-000001", "x", undefined).exitCode).toBe(0);
   });
 });
+
+describe("auto-delete contract", () => {
+  it("deletes immediately on explicit stop and revokes SSH tokens", () => {
+    const world = new SimulateWorld();
+    const vm = createVm(world, { autoDeleteInterval: 0 });
+    world.mintSsh(vm.id);
+    world.stopVm(vm.id);
+    expect(world.vm(vm.id)).toBeUndefined();
+    expect(world.sshTokensFor(vm.id)).toEqual([]);
+  });
+
+  it("deletes immediately when auto-stop fires", () => {
+    const world = new SimulateWorld();
+    world.freezeTime(0);
+    const vm = createVm(world, { autoStopInterval: 1, autoDeleteInterval: 0 });
+    world.advanceTime(60_000);
+    expect(world.vm(vm.id)).toBeUndefined();
+  });
+
+  it.each([undefined, -1])(
+    "preserves stopped sandboxes with interval %s",
+    (autoDeleteInterval) => {
+      const world = new SimulateWorld();
+      const vm = createVm(world, { autoDeleteInterval });
+      world.stopVm(vm.id);
+      world.advanceTime(365 * 24 * 60 * 60_000);
+      expect(world.vm(vm.id)?.state).toBe("stopped");
+    },
+  );
+});

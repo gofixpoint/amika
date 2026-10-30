@@ -19,6 +19,12 @@ import {
 } from "./provider";
 import { SIMULATE_HOST_SUFFIX } from "./internal/operations";
 
+import {
+  SandboxFileTooLargeError,
+  ScrubRestoreError,
+  ScrubVerificationError,
+} from "../provider";
+
 const WORLD_ID = "provider-test";
 
 const DEPS: SandboxProviderDeps = {
@@ -296,5 +302,106 @@ describe("simulate faults", () => {
     ).toEqual([other.id]);
     await expect(sandbox.getState()).rejects.toThrow(SimulateNotFoundError);
     await expect(sandbox.exec("true")).rejects.toThrow(SimulateNotFoundError);
+  });
+});
+
+describe("simulate contract regressions", () => {
+  it("enforces byte limits including exact-size and empty files", async () => {
+    const sandbox = await createSandbox();
+    await sandbox.writeFile("/f", "abcdef");
+    await expect(sandbox.readFileBytes("/f", { maxBytes: 5 })).rejects.toThrow(
+      SandboxFileTooLargeError,
+    );
+    expect(await sandbox.readFileBytes("/f", { maxBytes: 6 })).toHaveLength(6);
+    expect(await sandbox.readFileBytes("/missing", { maxBytes: 0 })).toBeNull();
+    await sandbox.writeFile("/empty", "");
+    expect(await sandbox.readFileBytes("/empty", { maxBytes: 0 })).toHaveLength(
+      0,
+    );
+  });
+
+  it.each([/whoami/g, /whoami/y])(
+    "repeats stateful matcher %s",
+    async (matcher) => {
+      const sandbox = await createSandbox();
+      getSimulateWorld(WORLD_ID).onExec(matcher, {
+        exitCode: 0,
+        stdout: "amika",
+        stderr: "",
+      });
+      for (let i = 0; i < 3; i++)
+        expect((await sandbox.exec("whoami")).stdout).toBe("amika");
+    },
+  );
+
+  it("scrubs files, directories, baselines and git remotes before capture", async () => {
+    const sandbox = await createSandbox();
+    const secret = "/home/amika/it's secret";
+    const root = "/work/it's a repo";
+    const config = `${root}/project/.git/config`;
+    await sandbox.writeFile(`${secret}/token`, "credential");
+    await sandbox.writeFile(`${secret}-kept`, "kept");
+    await sandbox.writeFile("/etc/secret", "credential");
+    await sandbox.writeFile("/etc/environment", "TOKEN=secret");
+    await sandbox.writeFile("/baseline", "PATH=/bin");
+    await sandbox.writeFile(
+      config,
+      "url = https://x-access-token:secret@github.com/org/repo.git",
+    );
+    await sandbox.snapshots!.scrubAndCreate("scrubbed", {
+      files: [secret],
+      sudoFiles: ["/etc/secret"],
+      sudoFileRestores: [
+        { sourcePath: "/baseline", destinationPath: "/etc/environment" },
+      ],
+      envVarNames: ["TOKEN"],
+      gitTokenWorkspaceRoot: root,
+    });
+    const restored = await provider().sandboxes.create(ctx, {
+      name: "restored",
+      snapshot: "scrubbed",
+      services: [],
+    });
+    expect(await restored.readFile(`${secret}/token`)).toBeNull();
+    expect(await restored.readFile(`${secret}-kept`)).toBe("kept");
+    expect(await restored.readFile("/etc/secret")).toBeNull();
+    expect(await restored.readFile("/etc/environment")).toBe("PATH=/bin");
+    expect(await restored.readFile(config)).toBe(
+      "url = https://github.com/org/repo.git",
+    );
+  });
+
+  it("fails capture when a scrub baseline is missing", async () => {
+    const sandbox = await createSandbox();
+    await expect(
+      sandbox.snapshots!.scrubAndCreate("bad", {
+        files: [],
+        sudoFiles: [],
+        envVarNames: [],
+        sudoFileRestores: [
+          { sourcePath: "/missing", destinationPath: "/etc/environment" },
+        ],
+      }),
+    ).rejects.toThrow(ScrubRestoreError);
+    expect(getSimulateWorld(WORLD_ID).snapshot("bad")).toBeUndefined();
+  });
+
+  it("verification catches a scripted removal that does nothing", async () => {
+    const sandbox = await createSandbox();
+    await sandbox.writeFile("/secret", "credential");
+    getSimulateWorld(WORLD_ID).onExec(/^rm /, {
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
+    await expect(
+      sandbox.snapshots!.scrubAndCreate("bad", {
+        files: ["/secret"],
+        sudoFiles: [],
+        sudoFileRestores: [],
+        envVarNames: [],
+      }),
+    ).rejects.toThrow(ScrubVerificationError);
+    expect(getSimulateWorld(WORLD_ID).snapshot("bad")).toBeUndefined();
   });
 });

@@ -11,14 +11,20 @@
  * moves when the caller moves it, so a scenario replays the same way every
  * run.
  */
-import { SANDBOX_ORG_ID_LABEL } from "../../../constants";
+import {
+  SANDBOX_DELETE_INTERVAL_KEEP_ON_STOP,
+  SANDBOX_ORG_ID_LABEL,
+} from "../../../constants";
 import type { SandboxService } from "../../../types";
 import type {
   CreateSandboxProviderInput,
   ExecCommandOptions,
   SandboxExecResult,
   SandboxResources,
+  ReadFileBytesOptions,
 } from "../../provider";
+import { SandboxFileTooLargeError } from "../../provider";
+import { executeScrubCommand } from "./scrub-commands";
 
 const DEFAULT_WORLD_ID = "default";
 
@@ -88,7 +94,7 @@ export interface SimulateVm {
   routes: SandboxService[];
   /** Minutes of inactivity before the world stops the sandbox; 0 never. */
   autoStopInterval: number;
-  /** Minutes after a stop before the world deletes the sandbox; 0 never. */
+  /** Minutes after a stop before deletion; 0 immediately, -1 never. */
   autoDeleteInterval: number;
   scrubSafe: boolean;
   state: SimulateVmState;
@@ -233,8 +239,8 @@ export class SimulateWorld {
   /**
    * Script the output of commands that match `matcher` (an exact command
    * string, or a RegExp tested against it). The newest matching handler wins.
-   * Returns a function that removes the handler. Unmatched commands exit 0
-   * with empty output.
+   * Returns a function that removes the handler. Shared scrub commands update
+   * the stored filesystem; other unmatched commands exit 0 with empty output.
    */
   onExec(
     matcher: string | RegExp,
@@ -355,7 +361,8 @@ export class SimulateWorld {
       services: input.services,
       routes: input.services,
       autoStopInterval: input.autoStopInterval ?? 0,
-      autoDeleteInterval: input.autoDeleteInterval ?? 0,
+      autoDeleteInterval:
+        input.autoDeleteInterval ?? SANDBOX_DELETE_INTERVAL_KEEP_ON_STOP,
       scrubSafe: input.scrubSafe ?? false,
       state: "running",
       createdAt: now,
@@ -386,6 +393,7 @@ export class SimulateWorld {
     if (vm.state === "stopped") return;
     vm.state = "stopped";
     vm.stoppedAt = this.now();
+    if (vm.autoDeleteInterval === 0) this.deleteVm(vmId);
   }
 
   exec(
@@ -402,18 +410,30 @@ export class SimulateWorld {
     this.execLog.push(call);
     for (let i = this.execHandlers.length - 1; i >= 0; i--) {
       const { matcher, handler } = this.execHandlers[i];
+      if (matcher instanceof RegExp) matcher.lastIndex = 0;
       const matches =
         typeof matcher === "string"
           ? matcher === command
           : matcher.test(command);
       if (matches) return handler(call, vm);
     }
-    return OK;
+    return executeScrubCommand(vm.files, command) ?? OK;
   }
 
-  readFile(vmId: string, path: string): Uint8Array | null {
+  readFile(
+    vmId: string,
+    path: string,
+    opts?: ReadFileBytesOptions,
+  ): Uint8Array | null {
     const vm = this.requireVm(vmId);
     const bytes = vm.files.get(path);
+    if (
+      bytes &&
+      opts?.maxBytes !== undefined &&
+      bytes.byteLength > opts.maxBytes
+    ) {
+      throw new SandboxFileTooLargeError(path, opts.maxBytes);
+    }
     return bytes ? new Uint8Array(bytes) : null;
   }
 
@@ -503,7 +523,7 @@ export class SimulateWorld {
       }
       if (
         vm.state === "stopped" &&
-        vm.autoDeleteInterval > 0 &&
+        vm.autoDeleteInterval >= 0 &&
         vm.stoppedAt !== null &&
         vm.stoppedAt + minutes(vm.autoDeleteInterval) <= now
       ) {
