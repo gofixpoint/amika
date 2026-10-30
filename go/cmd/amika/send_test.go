@@ -602,21 +602,25 @@ func TestRigAgentSendUsesSendAPI(t *testing.T) {
 func TestSendModelAndEffort(t *testing.T) {
 	cases := []struct {
 		name  string
+		agent string
 		flags []string
 		want  map[string]any
 	}{
 		{
 			name:  "both",
+			agent: "codex",
 			flags: []string{"--model", "gpt-5.6-terra", "--effort", "xhigh"},
 			want:  map[string]any{"model": "gpt-5.6-terra", "effort": "xhigh"},
 		},
 		{
 			name:  "model only",
+			agent: "claude",
 			flags: []string{"--model", "sonnet"},
 			want:  map[string]any{"model": "sonnet"},
 		},
 		{
 			name:  "effort only",
+			agent: "claude",
 			flags: []string{"--effort", "max"},
 			want:  map[string]any{"effort": "max"},
 		},
@@ -624,12 +628,14 @@ func TestSendModelAndEffort(t *testing.T) {
 			// Not in the server's list today: the CLI passes it through rather
 			// than second-guess an allowlist that moves with server releases.
 			name:  "unknown model passes through",
+			agent: "claude",
 			flags: []string{"--model", "some-future-model"},
 			want:  map[string]any{"model": "some-future-model"},
 		},
 		{
-			name: "neither",
-			want: map[string]any{},
+			name:  "neither",
+			agent: "claude",
+			want:  map[string]any{},
 		},
 	}
 	for _, tc := range cases {
@@ -656,12 +662,12 @@ func TestSendModelAndEffort(t *testing.T) {
 					t.Setenv("AMIKA_API_URL", server.URL)
 					t.Setenv("AMIKA_API_KEY", "test-key")
 
-					args := append(append([]string{}, base...), tc.flags...)
-					args = append(args, fmt.Sprintf("--stream=%t", stream))
+					args := append(append([]string{}, base...), "--agent", tc.agent)
+					args = append(append(args, tc.flags...), fmt.Sprintf("--stream=%t", stream))
 					if _, err := runRootCommandOutput(t, args...); err != nil {
 						t.Fatal(err)
 					}
-					want := map[string]any{"message": "hi", "sandbox_ref": "my-rig"}
+					want := map[string]any{"message": "hi", "agent": tc.agent, "sandbox_ref": "my-rig"}
 					for k, v := range tc.want {
 						want[k] = v
 					}
@@ -689,7 +695,7 @@ func TestSendSurfacesModelRejection(t *testing.T) {
 
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
-			_, err := runRootCommandOutput(t, "send", "hi", "--rig", "my-rig",
+			_, err := runRootCommandOutput(t, "send", "hi", "--agent", "claude", "--rig", "my-rig",
 				"--model", "gpt-4", fmt.Sprintf("--stream=%t", stream))
 			want := `HTTP 400: Validation failed: model: Invalid option: expected one of "fable"|"opus"`
 			if err == nil || !strings.Contains(err.Error(), want) {
