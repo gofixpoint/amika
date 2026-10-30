@@ -136,6 +136,9 @@ function fakeSmolvm(
         case "PUT files":
           files.set(`/${rest.join("/")}`, body as Buffer);
           return new Response(null, { status: 204 });
+        case "PUT ports":
+          record.ports = (body as { ports: Port[] }).ports;
+          return Response.json(record);
       }
       return Response.json({ error: "no such route" }, { status: 405 });
     },
@@ -740,7 +743,7 @@ describe("providerRuntime", () => {
     });
   });
 
-  describe("checkServices", () => {
+  describe("publishServices", () => {
     const published = machine({
       state: "running",
       ports: [
@@ -749,41 +752,96 @@ describe("providerRuntime", () => {
       ],
     });
 
-    it("accepts services on published ports", async () => {
-      const { runtime } = harness([published]);
-      await runtime.checkServices("demo", [
+    it("publishes nothing for services on published ports", async () => {
+      const { runtime, received } = harness([published]);
+      await runtime.publishServices("demo", [
         { name: "web", port: 3000 },
         { name: "api", port: 8080 },
       ]);
-    });
-
-    it("accepts dropping a name, whose port stays published", async () => {
-      const { runtime, received } = harness([published]);
-      await runtime.checkServices("demo", [{ name: "web", port: 3000 }]);
-      await runtime.checkServices("demo", []);
       expect(writes(received)).toEqual([]);
     });
 
-    it("refuses with 409 a port the machine did not publish", async () => {
-      const { runtime } = harness([published]);
-      const error = await failure(
-        runtime.checkServices("demo", [
-          { name: "web", port: 3000 },
-          { name: "db", port: 5432 },
-          { name: "db-alias", port: 5432 },
-          { name: "cache", port: 6379 },
-        ]),
-      );
-      expect(error.status).toBe(409);
-      expect(error.message).toBe(
-        "amika-hostd publishes service ports only at create; machine demo does not publish 5432, 6379",
-      );
+    it("leaves a dropped name's port published", async () => {
+      const { runtime, received } = harness([published]);
+      await runtime.publishServices("demo", [{ name: "web", port: 3000 }]);
+      await runtime.publishServices("demo", []);
+      expect(writes(received)).toEqual([]);
     });
+
+    it("publishes each new port once, keeping the published ones", async () => {
+      const { runtime, machines, received } = harness([published]);
+      await runtime.publishServices("demo", [
+        { name: "web", port: 3000 },
+        { name: "db", port: 5432 },
+        { name: "db-alias", port: 5432 },
+        { name: "cache", port: 6379 },
+      ]);
+      expect(writes(received).map((r) => `${r.method} ${r.path}`)).toEqual([
+        "PUT /demo/ports",
+      ]);
+      const ports = machines.get("demo")!.ports!;
+      expect(ports.map((p) => p.guest)).toEqual([3000, 8080, 5432, 6379]);
+      expect(ports.slice(0, 2)).toEqual(published.ports);
+      expect(new Set(ports.map((p) => p.host)).size).toBe(4);
+    });
+
+    it("publishes on a stopped machine", async () => {
+      const { runtime, machines } = harness([machine({ ports: [] })]);
+      await runtime.publishServices("demo", [{ name: "web", port: 3000 }]);
+      expect(machines.get("demo")!.ports!.map((p) => p.guest)).toEqual([3000]);
+    });
+
+    it("publishes one at a time, so neither drops the other's port", async () => {
+      const { runtime, machines } = harness([published]);
+      await Promise.all([
+        runtime.publishServices("demo", [{ name: "db", port: 5432 }]),
+        runtime.publishServices("demo", [{ name: "cache", port: 6379 }]),
+      ]);
+      expect(machines.get("demo")!.ports!.map((p) => p.guest)).toEqual([
+        3000, 8080, 5432, 6379,
+      ]);
+    });
+
+    it("keeps publishing after a failed publish", async () => {
+      let failures = 1;
+      const { runtime, machines } = harness([published], (method, path) =>
+        method === "PUT" && path === "/demo/ports" && failures-- > 0
+          ? Response.json({ error: "boom" }, { status: 500 })
+          : undefined,
+      );
+      const [first, second] = await Promise.allSettled([
+        runtime.publishServices("demo", [{ name: "db", port: 5432 }]),
+        runtime.publishServices("demo", [{ name: "cache", port: 6379 }]),
+      ]);
+      expect(first.status).toBe("rejected");
+      expect(second.status).toBe("fulfilled");
+      expect(machines.get("demo")!.ports!.map((p) => p.guest)).toEqual([
+        3000, 8080, 6379,
+      ]);
+    });
+
+    it.each([404, 405])(
+      "refuses with 409 when smolvm answers %i for the port list",
+      async (status) => {
+        const { runtime } = harness([published], (method, path) =>
+          method === "PUT" && path === "/demo/ports"
+            ? Response.json({ error: "no such route" }, { status })
+            : undefined,
+        );
+        const error = await failure(
+          runtime.publishServices("demo", [{ name: "db", port: 5432 }]),
+        );
+        expect(error.status).toBe(409);
+        expect(error.message).toBe(
+          "smolvm on this host cannot publish ports after create, so machine demo serves only the ports it was created with; update smolvm",
+        );
+      },
+    );
 
     it("answers 404 for a missing machine", async () => {
       const { runtime } = harness();
       const error = await failure(
-        runtime.checkServices("demo", [{ name: "web", port: 3000 }]),
+        runtime.publishServices("demo", [{ name: "web", port: 3000 }]),
       );
       expect(error.status).toBe(404);
     });

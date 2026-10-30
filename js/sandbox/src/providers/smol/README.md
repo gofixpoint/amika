@@ -89,12 +89,13 @@ optionally `SMOL_API_URL` (default `http://127.0.0.1:8080`) and `SMOL_NETWORK=tr
 That shared helper still requires `DAYTONA_API_KEY`; direct configuration as
 above does not need real cloud credentials.
 
-Services are TCP ports published at create: the provider picks a free host
-loopback port for each service's guest port and passes the mapping to smolvm,
-and the service's URL is `http://127.0.0.1:<host port>` (so it is reachable
-only from the smolvm host). smolvm cannot publish or unpublish a port later,
-so `syncRoutes` succeeds only when the desired services' ports are exactly the
-published ones, and UDP services are refused. (The `amika-hostd` provider
+Services are TCP ports: the provider picks a free host loopback port for each
+service's guest port and passes the mapping to smolvm, and the service's URL
+is `http://127.0.0.1:<host port>` (so it is reachable only from the smolvm
+host). Create publishes the first set; `syncRoutes` publishes exactly the
+desired services' ports later through `PUT /api/v1/machines/<name>/ports`,
+keeping each already published port's host port and unpublishing any port no
+service names. UDP services are refused. (The `amika-hostd` provider
 reuses these operations but leaves publishing to hostd, which routes services
 by name; see `js/amika-hostd/docs/service-routes.md`.)
 

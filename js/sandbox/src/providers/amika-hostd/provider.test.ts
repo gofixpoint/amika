@@ -166,6 +166,9 @@ function fakeSmolvm(
       case "PUT files":
         files.set(file, request.body as Buffer);
         return new Response(null, { status: 204 });
+      case "PUT ports":
+        record.ports = (request.body as { ports: SmolMachine["ports"] }).ports;
+        return Response.json(record);
     }
     return Response.json({ error: "no such route" }, { status: 405 });
   });
@@ -856,8 +859,8 @@ describe("amika-hostd services", () => {
     ]);
   });
 
-  it("reconciles only to ports published at create", async () => {
-    const { provider } = harness({
+  it("reconciles a running rig to services added after create", async () => {
+    const { provider, machines } = harness({
       machines: [
         {
           ...MACHINE,
@@ -867,22 +870,37 @@ describe("amika-hostd services", () => {
             { host: 40002, guest: 60999 },
           ],
         },
-        { ...MACHINE, name: "bare" },
       ],
     });
     const services = provider.sandboxes.get("demo").services!;
+    const API = { ...WEB, name: "api", containerPort: 4000 };
     const { services: refreshed } = await services
-      .load([WEB, AMIKAD])
+      .load([WEB, AMIKAD, API])
       .refresh();
-    expect(refreshed[0].url).toBe(
+    expect(refreshed.map((s) => s.url)).toEqual([
       "http://127.0.0.1:3020/v0beta1/rigs/demo/previews/web/",
-    );
-    expect(refreshed[1].url).toBe(
       "http://127.0.0.1:3020/v0beta1/rigs/demo/services/amikad/",
-    );
+      "http://127.0.0.1:3020/v0beta1/rigs/demo/previews/api/",
+    ]);
+    const ports = machines.get("demo")!.ports!;
+    expect(ports.map((p) => p.guest)).toEqual([3000, 60999, 4000]);
+    expect(ports.slice(0, 2)).toEqual([
+      { host: 40001, guest: 3000 },
+      { host: 40002, guest: 60999 },
+    ]);
+  });
+
+  it("refuses a new port when the host's smolvm cannot publish one", async () => {
+    const { provider } = harness({
+      machines: [{ ...MACHINE, state: "running" }],
+      respond: ({ method, path }) =>
+        method === "PUT" && path === "/demo/ports"
+          ? Response.json({ error: "no such route" }, { status: 404 })
+          : undefined,
+    });
     await expect(
-      provider.sandboxes.get("bare").services!.load([WEB]).refresh(),
-    ).rejects.toThrow("machine bare does not publish 3000");
+      provider.sandboxes.get("demo").services!.load([WEB]).refresh(),
+    ).rejects.toThrow("cannot publish ports after create");
   });
 
   it("refuses to reconcile a published port to UDP", async () => {

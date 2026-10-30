@@ -41,7 +41,7 @@ function fakeRuntime() {
       contentType: "application/octet-stream",
     })),
     writeFile: vi.fn(async () => {}),
-    checkServices: vi.fn(async () => {}),
+    publishServices: vi.fn(async () => {}),
     hostPort: vi.fn(async (): Promise<number | null> => null),
   } satisfies MachineRuntime;
 }

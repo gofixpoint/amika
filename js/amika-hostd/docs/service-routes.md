@@ -47,7 +47,8 @@ needs the key like any other path hostd does not serve.
   name-to-port map in `services.json` (`src/internal/service-registry.ts`),
   since smolvm stores no names.
   `PUT /v0beta1/rigs/<name>/services` replaces the map later (the
-  provider's `syncRoutes`), on ports published at create.
+  provider's `syncRoutes`), first publishing any port the machine does not
+  publish yet, so a service added to a running rig gets a URL.
 
 ## Previews and browser login
 

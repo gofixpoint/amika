@@ -418,16 +418,16 @@ export function createApp(
         return new Response(null, { status: 204 });
       });
     });
-    // Services can be added, renamed and removed after create, but only on
-    // ports published then: a machine cannot publish more later.
+    // Services can be added, renamed and removed after create; a port the
+    // machine does not publish yet is published first.
     app.put(`${machines}/:name/services`, async (c) => {
       const name = machineName(c.req.param("name"));
       const { services } = replaceServicesSchema.parse(await c.req.json());
       return call(async () => {
         try {
-          await runtime.checkServices(name, services);
+          await runtime.publishServices(name, services);
         } catch (error) {
-          // The refusal names the unpublished ports and nothing secret.
+          // The refusal names the machine and nothing secret.
           if (error instanceof RuntimeError && error.status === 409) {
             return Response.json({ error: error.message }, { status: 409 });
           }
