@@ -92,6 +92,7 @@ printf 'Fix the failing tests\n' | amika send
 amika send --rig my-rig "Refactor the API layer"
 amika send --session-id <id> "Continue the refactor"
 amika send "Summarize this repo" -o json
+amika send --agent claude --model fable --effort max "Plan the migration"
 ```
 
 In JSON output, check `is_error`; a completed request can still contain an agent
@@ -99,6 +100,15 @@ failure. Use `--session-id <id>` to continue a chat or `--new-session` with
 `--rig` to start another chat in an existing rig. When `amika send`
 creates a rig, it auto-detects the current git repository; use `--git` or
 `--no-git` to override that behavior.
+
+`--model` and `--effort` set the chat's model and reasoning effort from that
+message on, and the chat keeps them; omit both to inherit (a new chat starts on
+the org's default, else the server's). Claude models: `fable`, `opus`,
+`sonnet`, `haiku`; Codex models: `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna`, `gpt-5.5`, `gpt-5.2`. Effort is `low`, `medium`, `high`,
+`xhigh`, or `max` (Codex stops at `xhigh`). The server validates both against
+the agent and returns a 400 naming the bad value, so trust that error over
+this list if the two disagree.
 
 The agent runs with permission prompts disabled inside the rig, so prompts
 execute unsupervised there.
