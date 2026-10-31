@@ -203,13 +203,9 @@ func TestPrepareStateDirectoryCreatesOwnerOnlyDirectory(t *testing.T) {
 func TestResolveUserLayoutResolvesSymlinkedParents(t *testing.T) {
 	// /home on Fedora Silverblue and /var on macOS are symlinks the operator
 	// does not control; the secure writes refuse any symlink in a path.
-	real := realTempDir(t)
-	real, err := filepath.EvalSymlinks(real)
-	if err != nil {
-		t.Fatal(err)
-	}
+	target := realTempDir(t)
 	linked := filepath.Join(realTempDir(t), "home")
-	if err := os.Symlink(real, linked); err != nil {
+	if err := os.Symlink(target, linked); err != nil {
 		t.Fatal(err)
 	}
 	layout, err := ResolveLayout(testEnv(map[string]string{
@@ -218,18 +214,13 @@ func TestResolveUserLayoutResolvesSymlinkedParents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveLayout: %v", err)
 	}
-	if want := filepath.Join(real, "amikad", "connect-token"); layout.TokenPath != want {
+	if want := filepath.Join(target, "amikad", "connect-token"); layout.TokenPath != want {
 		t.Fatalf("token path = %q, want %q under the resolved parent", layout.TokenPath, want)
 	}
 }
 
 func TestResolveUserLayoutKeepsFinalSymlinkUnresolved(t *testing.T) {
-	parent := realTempDir(t)
-	parent, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stateDirectory := filepath.Join(parent, "amikad")
+	stateDirectory := filepath.Join(realTempDir(t), "amikad")
 	if err := os.Symlink(realTempDir(t), stateDirectory); err != nil {
 		t.Fatal(err)
 	}
