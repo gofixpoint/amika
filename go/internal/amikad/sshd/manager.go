@@ -18,7 +18,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
+	"github.com/gofixpoint/amika/go/internal/amikad/platform"
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
 	"github.com/gofixpoint/amika/go/internal/constants"
 	"golang.org/x/crypto/ssh"
@@ -32,17 +34,33 @@ var ErrExistingConfiguration = errors.New("existing sshd configuration requires 
 // input.
 var ErrInvalidPublicKey = errors.New("invalid SSH public key")
 
+// ErrInvalidAllowUser indicates an account name sshd's AllowUsers would
+// misparse as a pattern, list, or user@host form.
+var ErrInvalidAllowUser = errors.New("invalid sshd login account name")
+
 // Paths contains every filesystem location owned by the managed sshd, plus
-// the loopback port it listens on.
+// the loopback port it listens on and the one account it admits.
 type Paths struct {
-	Config            string
-	HostPrivateKey    string
-	HostPublicKey     string
-	AuthorizedKeys    string
-	PID               string
+	Config         string
+	HostPrivateKey string
+	HostPublicKey  string
+	AuthorizedKeys string
+	PID            string
+	// RuntimeDirectory is the privilege-separation directory a root sshd
+	// needs, created by Setup. Empty when none must be created: the OS ships
+	// it, or sshd runs unprivileged and never chroots.
 	RuntimeDirectory  string
 	AuthorizedKeysUID int
 	AuthorizedKeysGID int
+	// AllowUser is the single account sshd admits (AllowUsers).
+	AllowUser string
+	// Unprivileged marks a manager running as AllowUser itself rather than
+	// root: it never chowns, and Setup checks the authorized-keys directory
+	// against sshd's StrictModes instead.
+	Unprivileged bool
+	// SSHD is the absolute sshd binary path. Empty resolves it through the
+	// platform when sshd starts.
+	SSHD string
 	// Port the managed sshd binds on 127.0.0.1. This is the single source of
 	// truth for the loopback address: the rendered config listens on it and
 	// the no-relay bridge dials it, so the two can never drift apart.
@@ -56,8 +74,8 @@ type Paths struct {
 // account.
 const EnvManagedUser = "AMIKA_SSHD_USER"
 
-// DefaultPaths returns the production paths owned by amikad, for the managed
-// user named by EnvManagedUser (default "amika").
+// DefaultPaths returns the production (root mode) paths owned by amikad, for
+// the managed user named by EnvManagedUser (default "amika").
 func DefaultPaths() Paths {
 	username := os.Getenv(EnvManagedUser)
 	if username == "" {
@@ -74,10 +92,29 @@ func DefaultPaths() Paths {
 		HostPublicKey:     "/var/lib/amikad/ssh_host_ed25519_key.pub",
 		AuthorizedKeys:    "/home/" + username + "/.ssh/authorized_keys",
 		PID:               "/var/lib/amikad/sshd.pid",
-		RuntimeDirectory:  "/run/sshd",
+		RuntimeDirectory:  platform.Current().SSHD().PrivsepDirectory,
 		AuthorizedKeysUID: uid,
 		AuthorizedKeysGID: gid,
+		AllowUser:         username,
 		Port:              constants.ManagedSSHDPort,
+	}
+}
+
+// UserPaths returns the user-mode paths: every file lives directly in
+// stateDirectory, including authorized_keys, so the account's own ~/.ssh is
+// never read or written, and sshd runs as, and admits only, username.
+func UserPaths(stateDirectory, username string, port int) Paths {
+	return Paths{
+		Config:            filepath.Join(stateDirectory, "sshd_config"),
+		HostPrivateKey:    filepath.Join(stateDirectory, "ssh_host_ed25519_key"),
+		HostPublicKey:     filepath.Join(stateDirectory, "ssh_host_ed25519_key.pub"),
+		AuthorizedKeys:    filepath.Join(stateDirectory, "authorized_keys"),
+		PID:               filepath.Join(stateDirectory, "sshd.pid"),
+		AuthorizedKeysUID: -1,
+		AuthorizedKeysGID: -1,
+		AllowUser:         username,
+		Unprivileged:      true,
+		Port:              port,
 	}
 }
 
@@ -118,6 +155,7 @@ type Manager struct {
 	files     AtomicFiles
 	keygen    KeyGenerator
 	processes ProcessRunner
+	platform  platform.Platform
 }
 
 // NewManager creates a manager with explicit, testable boundaries.
@@ -128,7 +166,14 @@ func NewManager(
 	keygen KeyGenerator,
 	processes ProcessRunner,
 ) *Manager {
-	return &Manager{paths: paths, store: store, files: files, keygen: keygen, processes: processes}
+	return &Manager{
+		paths:     paths,
+		store:     store,
+		files:     files,
+		keygen:    keygen,
+		processes: processes,
+		platform:  platform.Current(),
+	}
 }
 
 // Setup installs the managed policy and creates a host key only when absent.
@@ -142,11 +187,21 @@ func (m *Manager) Setup(ctx context.Context, options SetupOptions) error {
 	if err := m.prepareAuthorizedKeysDirectory(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(m.paths.RuntimeDirectory, 0o755); err != nil {
-		return err
+	if m.paths.Unprivileged {
+		// StrictModes refuses an authorized_keys file under any directory
+		// other users could write. Fail here with the reason rather than let
+		// sshd silently reject every login.
+		if err := m.platform.CheckStrictModesPath(filepath.Dir(m.paths.AuthorizedKeys), os.Getuid()); err != nil {
+			return err
+		}
 	}
-	if err := os.Chmod(m.paths.RuntimeDirectory, 0o755); err != nil {
-		return err
+	if m.paths.RuntimeDirectory != "" {
+		if err := os.MkdirAll(m.paths.RuntimeDirectory, 0o755); err != nil {
+			return err
+		}
+		if err := os.Chmod(m.paths.RuntimeDirectory, 0o755); err != nil {
+			return err
+		}
 	}
 
 	desiredConfig := []byte(RenderConfig(m.paths))
@@ -261,6 +316,9 @@ func (m *Manager) ClearAuthorizedKeys(ctx context.Context) error {
 }
 
 func (m *Manager) writeAuthorizedKeys(ctx context.Context, contents string) error {
+	if m.paths.Unprivileged {
+		return m.store.WriteAndRegister(ctx, m.paths.AuthorizedKeys, strings.NewReader(contents), 0o600)
+	}
 	return m.store.WriteAndRegisterOwned(
 		ctx,
 		m.paths.AuthorizedKeys,
@@ -288,6 +346,9 @@ func (m *Manager) prepareAuthorizedKeysDirectory() error {
 	if !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return fmt.Errorf("unsafe authorized-keys directory: %w", state.ErrInvalidPath)
 	}
+	if m.paths.Unprivileged {
+		return nil
+	}
 	// Lchown cannot follow a final-component symlink if the sandbox user
 	// races this check. A replacement real directory can only be assigned to
 	// that same unprivileged user and is never chmodded by root here.
@@ -298,9 +359,19 @@ func (m *Manager) prepareAuthorizedKeysDirectory() error {
 	)
 }
 
-// Serve runs sshd in the foreground with only the managed configuration.
+// Serve runs sshd in the foreground with only the managed configuration. sshd
+// is started by absolute path because it re-executes itself and refuses to
+// start otherwise.
 func (m *Manager) Serve(ctx context.Context) error {
-	return m.processes.Run(ctx, "sshd", "-D", "-e", "-f", m.paths.Config)
+	binary := m.paths.SSHD
+	if binary == "" {
+		resolved, err := platform.FindSSHD(m.platform)
+		if err != nil {
+			return err
+		}
+		binary = resolved
+	}
+	return m.processes.Run(ctx, binary, "-D", "-e", "-f", m.paths.Config)
 }
 
 // LoopbackAddress is where the managed sshd accepts connections. The no-relay
@@ -372,23 +443,44 @@ func validateHostKeyPair(files AtomicFiles, paths Paths) bool {
 }
 
 func validatePaths(paths Paths) error {
-	for _, path := range []string{
+	required := []string{
 		paths.Config,
 		paths.HostPrivateKey,
 		paths.HostPublicKey,
 		paths.AuthorizedKeys,
 		paths.PID,
-		paths.RuntimeDirectory,
-	} {
+	}
+	if paths.RuntimeDirectory != "" {
+		required = append(required, paths.RuntimeDirectory)
+	}
+	for _, path := range required {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return fmt.Errorf("invalid sshd path: %w", state.ErrInvalidPath)
 		}
 	}
-	if paths.AuthorizedKeysUID < 0 || paths.AuthorizedKeysGID < 0 {
+	if !paths.Unprivileged && (paths.AuthorizedKeysUID < 0 || paths.AuthorizedKeysGID < 0) {
 		return fmt.Errorf("invalid authorized-keys owner: %w", state.ErrInvalidPath)
+	}
+	if err := ValidateAllowUser(paths.AllowUser); err != nil {
+		return err
 	}
 	if paths.Port < 1 || paths.Port > 65535 {
 		return fmt.Errorf("invalid sshd port %d", paths.Port)
+	}
+	return nil
+}
+
+// ValidateAllowUser accepts an account name sshd's AllowUsers reads as one
+// literal user: no whitespace, control characters, quoting, pattern (`*?!`),
+// list (`,`), or user@host (`@`) syntax, and no leading `-`.
+func ValidateAllowUser(name string) error {
+	if name == "" || len(name) > 256 || strings.HasPrefix(name, "-") {
+		return ErrInvalidAllowUser
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune(`*?!,@"'\#%`, r) {
+			return ErrInvalidAllowUser
+		}
 	}
 	return nil
 }
@@ -401,7 +493,7 @@ Protocol 2
 HostKey %s
 PidFile %s
 AuthorizedKeysFile %s
-AllowUsers amika
+AllowUsers %s
 AuthenticationMethods publickey
 PubkeyAuthentication yes
 PasswordAuthentication no
@@ -417,7 +509,7 @@ PermitTunnel no
 PermitUserEnvironment no
 UsePAM no
 Subsystem sftp internal-sftp
-`, paths.Port, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys)
+`, paths.Port, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys, paths.AllowUser)
 }
 
 // Ed25519KeyGenerator creates a passwordless OpenSSH keypair in memory.

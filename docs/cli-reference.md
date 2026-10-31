@@ -361,6 +361,11 @@ the default app; VS Code, Claude Desktop, Codex, Paseo, and Herdr are also
 available without an environment-variable feature gate. `--path` has no effect
 with `paseo` or `herdr`.
 
+A rig on a bare-metal host logs in as the host's own account rather than
+`amika`, so it has no `/home/amika/workspace`. Without `--path`, Cursor and VS
+Code connect to it without opening a folder, and Claude Desktop starts in the
+account's home directory; `--path` must be absolute for such a rig.
+
 On WSL, `--app cursor` and `--app vscode` expect the editor to be a
 Windows application. The command mirrors the managed SSH config, identity,
 and host-key pins to the Windows side (`%USERPROFILE%\.ssh\amika.conf`, added
@@ -384,7 +389,7 @@ amika sandbox code my-sandbox --editor=vscode
 | ----------------- | -------- | -------------------------------------------------------- |
 | `--app <name>`    | `cursor` | App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
 | `--editor <name>` | —        | Alias for `--app`                                        |
-| `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
+| `--path <path>`   | —        | Override the remote path to open (absolute, or relative to `/home/amika`; must be absolute on a bare-metal rig) |
 
 ### `amika sandbox agent-send`
 
@@ -442,11 +447,11 @@ amika host delete alpha.lan
 
 ### `amika host list`
 
-Lists `HOSTNAME`, `TRANSPORT`, `URL`, and `SIZES`. Read the `-` in `URL` against `TRANSPORT`: a `listen` host is reached at the URL it registered and cannot take rigs until it has one, while a `tunnel` host dials Amika instead, so Amika assigns its address and it has no URL to register. Ids and timestamps are not columns: a host is addressed by hostname wherever these commands take one, and `amika host get` or `-o json` has the rest for the host you care about.
+Lists `HOSTNAME`, `TYPE`, `TRANSPORT`, `URL`, and `SIZES`. `TYPE` is `vm` for a host that runs each rig in its own VM, or `bare_metal` for one that runs a single rig directly on the machine's own account. A bare-metal host offers no sizes, so its `SIZES` cell shows the resources `amika-hostd` detected on it instead, as `<cpus>cpu/<memory>GiB/<disk>GiB` (for example `10cpu/32GiB/926.5GiB`). Read the `-` in `URL` against `TRANSPORT`: a `listen` host is reached at the URL it registered and cannot take rigs until it has one, while a `tunnel` host dials Amika instead, so Amika assigns its address and it has no URL to register. Ids and timestamps are not columns: a host is addressed by hostname wherever these commands take one, and `amika host get` or `-o json` has the rest for the host you care about.
 
 ### `amika host get <hostname-or-id>`
 
-Shows one host's details and the sizes it offers its rigs, including its `Transport`: a `tunnel` host shows no URL, because Amika assigns its address and there is none to register. Those size names, not the cloud size vocabulary, are what `rig create --host ... --size ...` accepts.
+Shows one host's details and the sizes it offers its rigs, including its `Type` and `Transport`: a `tunnel` host shows no URL, because Amika assigns its address and there is none to register. Those size names, not the cloud size vocabulary, are what `rig create --host ... --size ...` accepts. A bare-metal host instead shows the `SSH user` its rig logs in as and the resources `amika-hostd` detected on it: `CPUs`, `Memory`, `Disk`, and `OS/Arch`. With `-o json` these are the `host_type`, `ssh_user`, and `detected_resources` fields (`{vcpus, memoryGib, diskGib, os, arch}`, camelCase as the API returns it); `ssh_user` and `detected_resources` are `null` when the host has not reported them, and a host from a control plane that predates `host_type` reads as `vm`.
 
 ### `amika host delete <hostname-or-id> [...]`
 
@@ -473,7 +478,7 @@ Rigs are resolved wherever they appear, so a single command can copy between two
 | Form                              | Meaning                                                                        |
 | --------------------------------- | ------------------------------------------------------------------------------ |
 | `PATH`                            | A local path                                                                   |
-| `RIG:[PATH]`                      | A path in rig `RIG` (scp-style); a relative `PATH` is under the rig home (`/home/amika`), an absolute `PATH` is used verbatim |
+| `RIG:[PATH]`                      | A path in rig `RIG` (scp-style); a relative `PATH` is under the rig home (`/home/amika`, or the login account's home on a bare-metal rig), an absolute `PATH` is used verbatim |
 | `rig://RIG[/PATH]`                | A path in rig `RIG` (URI form); `PATH` is absolute and `~` is the home directory. A `/` in `RIG` must be percent-encoded as `%2F`. The older `sbox://RIG[/PATH]` spelling also works |
 | `scp://[user@]host[:port][/path]` | A path on an arbitrary SSH host                                                |
 
@@ -522,12 +527,21 @@ touched.
 
 | Option                                         | Value                    | Why                                                                        |
 | ---------------------------------------------- | ------------------------ | -------------------------------------------------------------------------- |
-| `User`                                         | `amika`                  | The sandbox account                                                        |
+| `User`                                         | `amika`                  | The sandbox account; a bare-metal rig overrides it (see below)             |
 | `IdentityFile` / `IdentitiesOnly`              | your Amika key           | Offer the key the control plane holds                                      |
 | `IdentityAgent` / `ForwardAgent`               | Amika's agent, `yes`     | Forward only the Amika key, never every key in your ordinary agent         |
 | `StrictHostKeyChecking` / `UserKnownHostsFile` | `yes`, Amika's file      | Pin each sandbox host key in a dedicated file, so a change fails closed    |
 | `ProxyCommand`                                 | `amika plumbing …`     | Carry the session over Amika's WebSocket transport instead of a TCP dial   |
 | `ServerAliveInterval` / `ServerAliveCountMax`  | `15`, `3`                | Notice a dead transport instead of hanging                                 |
+
+A rig on a bare-metal host logs in as the account running `amika-hostd` on
+that machine, which the control plane reports with each SSH session. When
+`sandbox ssh`, `sandbox open`, `sandbox connect`, or `scp` prepares such a rig,
+Amika writes a `Host <alias>` stanza naming that `User` ahead of the wildcard
+block. OpenSSH keeps the first `User` it finds, so the rig's own account wins
+and every other option still comes from the wildcard block. Prepare a
+bare-metal rig with one of those commands before reaching its alias from a
+tool that never calls the Amika CLI, or that tool logs in as `amika`.
 
 Amika starts a separate `ssh-agent` at `~/.ssh/amika_agent.sock` and loads
 exactly the configured Amika identity into it. The generated host block uses

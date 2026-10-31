@@ -1,6 +1,12 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
 import { isIPv6 } from "node:net";
+import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
+import {
+  currentHostPlatform,
+  type HostPlatform,
+  type HostResources,
+} from "../platforms/index.js";
 import {
   AmikaApiError,
   HostTransportConflictError,
@@ -8,9 +14,16 @@ import {
   setHostSecret as setHostSecretInAmika,
   setHostSizes as setHostSizesInAmika,
   setHostTransport as setHostTransportInAmika,
+  setHostType as setHostTypeInAmika,
   setHostUrl as setHostUrlInAmika,
+  type BareMetalReport,
   type RegisteredHost,
 } from "./amika-api.js";
+import { amikadBinary, ensureAmikad } from "./amikad-install.js";
+import {
+  bareMetalRuntime,
+  type BareMetalRuntime,
+} from "./bare-metal-runtime.js";
 import {
   ConfigError,
   DEFAULT_HOST,
@@ -54,7 +67,7 @@ import {
   startServer as startServerOnPort,
   type RunningServer,
 } from "./server.js";
-import { providerRuntime } from "./machine-runtime.js";
+import { providerRuntime, type MachineRuntime } from "./machine-runtime.js";
 import {
   PREPULL_TIMEOUT_MS,
   SMOLVM_SEED_MIN_DISK_GIB,
@@ -148,8 +161,18 @@ export interface CliDeps {
   registerHost?: typeof registerHostWithAmika;
   setHostSizes?: typeof setHostSizesInAmika;
   setHostTransport?: typeof setHostTransportInAmika;
+  setHostType?: typeof setHostTypeInAmika;
   setHostSecret?: typeof setHostSecretInAmika;
   setHostUrl?: typeof setHostUrlInAmika;
+  /** The OS hostd runs on, resolved once; defaults to this machine's. */
+  platform?: HostPlatform;
+  /** The account a bare-metal rig's SSH sessions log in as. */
+  sshUser?: () => string;
+  /**
+   * Make sure a bare-metal host's amikad is installed, and return its path;
+   * defaults to `ensureAmikad`.
+   */
+  installAmikad?: SetupDeps["installAmikad"];
   /**
    * Ask the operator a question (see `Prompt`). Absent when stdin or stdout
    * is not a terminal, so `up` never blocks.
@@ -241,17 +264,19 @@ export async function runCli(
           placedSecrets(filled, deps),
           REGISTRATION_SETTINGS,
         );
-        warnUncachedSizes(config, deps);
+        const bareMetal = config.hostType === "bare-metal";
+        // A bare-metal host runs no smolvm, so neither smolvm warning applies.
+        if (bareMetal) await prepareBareMetal(config, deps);
+        else warnUncachedSizes(config, deps);
         // Alongside registration, so a slow smolvm never delays it.
-        const checkedSmolvm = warnOldSmolvm(deps);
+        const checkedSmolvm = bareMetal ? undefined : warnOldSmolvm(deps);
         const host = await register(config, deps);
         if (config.transport === "tunnel") await enrol(config, host, deps);
         await checkedSmolvm;
         // Read before the daemon starts, which records each image it pulls.
-        const pending = pendingImages(
-          config.images,
-          daemonPaths(deps.env).prepullFile,
-        );
+        const pending = bareMetal
+          ? []
+          : pendingImages(config.images, daemonPaths(deps.env).prepullFile);
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
         const finish = (port: number | undefined) => {
@@ -701,13 +726,33 @@ async function register(
   deps: CliDeps,
 ): Promise<RegisteredHost> {
   const api = { apiUrl: config.apiUrl, apiKey: config.apiKey };
-  const { sizes } = config;
-  const { host, created } = await registerInTransport(config, deps);
+  const sizes = registeredSizes(config);
+  const report = hostTypeReport(config, deps);
+  const { host, created } = await registerInTransport(config, deps, report);
   if (created) {
+    if (report) assertRecordedAsBareMetal(host, config.apiUrl);
     deps.out(
       `Registered host ${host.hostname} with ${config.apiUrl} (${host.id})`,
     );
   } else {
+    // The type first: Amika refuses to change it while the host has rigs,
+    // and a refusal should leave the rest as it was. A bare-metal host
+    // reports itself on every `up`, so Amika sees its resources as they are
+    // now; a VM host says nothing unless Amika still has it as bare metal.
+    if (report) {
+      assertRecordedAsBareMetal(
+        await (deps.setHostType ?? setHostTypeInAmika)(api, host, report),
+        config.apiUrl,
+      );
+      deps.out(
+        `Reported host ${host.hostname} as bare metal (${describeResources(report.resources)}; SSH as ${report.sshUser})`,
+      );
+    } else if (host.host_type === "bare_metal") {
+      await (deps.setHostType ?? setHostTypeInAmika)(api, host, {
+        hostType: "vm",
+      });
+      deps.out(`Switched host ${host.hostname} from bare metal to VMs`);
+    }
     deps.out(
       `Host ${host.hostname} is already registered with ${config.apiUrl} (${host.id})`,
     );
@@ -718,9 +763,11 @@ async function register(
     );
     // Nor its sizes, so bring those up to date with the config separately.
     await (deps.setHostSizes ?? setHostSizesInAmika)(api, host, sizes);
-    deps.out(
-      `Updated the sizes of host ${host.hostname} (${describeSizes(sizes)})`,
-    );
+    if (!report) {
+      deps.out(
+        `Updated the sizes of host ${host.hostname} (${describeSizes(sizes)})`,
+      );
+    }
   }
   if (host.transport_mode === config.transport) return host;
   // The config is the source of truth for the transport, as for sizes.
@@ -738,6 +785,19 @@ async function register(
 }
 
 /**
+ * Refuse to carry on when Amika did not record the host as bare metal. A
+ * control plane that predates bare-metal hosts drops the fields it does not
+ * know and keeps the host as a VM host, which would then send it VM rigs
+ * this daemon refuses; saying so here beats reporting success.
+ */
+function assertRecordedAsBareMetal(host: RegisteredHost, apiUrl: string): void {
+  if (host.host_type === "bare_metal") return;
+  throw new AmikaApiError(
+    `${apiUrl} did not record host ${host.hostname} as bare metal, so it does not support bare-metal hosts yet; set host_type = "vm" or use a newer Amika`,
+  );
+}
+
+/**
  * Register in the configured transport, so a new host is created in it. A
  * host Amika already has in another transport is refused rather than
  * returned, so register it again without one to learn which host it is;
@@ -746,12 +806,15 @@ async function register(
 async function registerInTransport(
   config: RegistrationConfig,
   deps: CliDeps,
+  /** A bare-metal host's report; a VM host sends none. */
+  report?: BareMetalReport,
 ): Promise<{ host: RegisteredHost; created: boolean }> {
   const api = { apiUrl: config.apiUrl, apiKey: config.apiKey };
   const input = {
     hostname: config.hostname,
     secretKey: config.secretKey,
-    sizes: config.sizes,
+    sizes: registeredSizes(config),
+    ...(report === undefined ? {} : { hostType: report }),
   };
   const registerHost = deps.registerHost ?? registerHostWithAmika;
   try {
@@ -763,6 +826,66 @@ async function registerInTransport(
     if (!(error instanceof HostTransportConflictError)) throw error;
     return registerHost(api, input);
   }
+}
+
+/** The sizes Amika gets: none from a bare-metal host, which ignores them. */
+function registeredSizes(config: HostdConfig): HostdConfig["sizes"] {
+  return config.hostType === "bare-metal" ? {} : config.sizes;
+}
+
+/**
+ * What a bare-metal host tells Amika about itself: its type, the resources
+ * detected now, and the account SSH sessions log in as. Undefined for a VM
+ * host, which sends none of it.
+ */
+function hostTypeReport(
+  config: HostdConfig,
+  deps: CliDeps,
+): BareMetalReport | undefined {
+  if (config.hostType !== "bare-metal") return undefined;
+  return {
+    hostType: "bare_metal",
+    resources: platformOf(deps).detectResources(),
+    sshUser: (deps.sshUser ?? (() => userInfo().username))(),
+  };
+}
+
+function describeResources({
+  vcpus,
+  memoryGib,
+  diskGib,
+  os,
+  arch,
+}: HostResources): string {
+  return `${vcpus} vCPU${vcpus === 1 ? "" : "s"}, ${memoryGib} GiB memory, ${diskGib} GiB disk, ${os}/${arch}`;
+}
+
+function platformOf(deps: Pick<CliDeps, "platform">): HostPlatform {
+  return deps.platform ?? currentHostPlatform();
+}
+
+/**
+ * Before a bare-metal host registers: refuse on an OS without bare metal,
+ * say that `[sizes]` is ignored, and make sure amikad is installed (a new
+ * hostd may pin a newer one than setup installed).
+ */
+async function prepareBareMetal(config: HostdConfig, deps: CliDeps) {
+  const platform = platformOf(deps);
+  if (!platform.capabilities.bareMetal) {
+    throw new ConfigError(
+      `amika-hostd does not support bare-metal hosts on ${platform.name}; set host_type = "vm" in ${config.configPath ?? "the config file"}`,
+    );
+  }
+  if (Object.keys(config.sizes).length > 0) {
+    deps.err(
+      `amika-hostd: [sizes] in ${config.configPath ?? "the config file"} is ignored on a bare-metal host, whose one rig is this machine as it is.`,
+    );
+  }
+  await (deps.installAmikad ?? ensureAmikad)(config, {
+    env: deps.env,
+    platform,
+    out: deps.out,
+  });
 }
 
 function describeSizes(sizes: Record<string, unknown>): string {
@@ -810,6 +933,7 @@ const FINISH_LATER =
  */
 async function dialOut(
   config: HostdConfigWith<"secretKey">,
+  runtime: MachineRuntime,
   paths: DaemonPaths,
   usedPrepullNames: ReadonlySet<string>,
   deps: CliDeps,
@@ -827,12 +951,8 @@ async function dialOut(
   connectionId?: string;
   close: () => Promise<void>;
 }> {
-  // The same provider runtime a listener uses: a tunnel changes how the
-  // daemon is reached, not what it runs.
-  const runtime = providerRuntime({
-    apiUrl: config.smolApiUrl ?? DEFAULT_SMOL_API_URL,
-    requestTimeoutMs: config.smolRequestTimeoutMs,
-  });
+  // The same runtime a listener uses: a tunnel changes how the daemon is
+  // reached, not what it runs.
   const secrets =
     handed ??
     (deps.openSecrets ?? openSecretStore)(config.secretStore, deps.env);
@@ -1161,6 +1281,12 @@ async function serveInForeground(
   } = {},
 ) {
   const paths = daemonPaths(deps.env);
+  // A bare-metal host runs no smolvm: its one rig is this machine.
+  const bareMetal =
+    config.hostType === "bare-metal"
+      ? bareMetalRuntimeFor(config, paths, deps)
+      : undefined;
+  const runsSmolvm = smolvm && !bareMetal;
   const claim = deps.claimPidFile ?? claimPidFileOnDisk;
   const release = claim(paths.pidFile, deps.isRunning);
   // Listen for the signal first, so Ctrl-C during startup (or during
@@ -1189,6 +1315,7 @@ async function serveInForeground(
       await server?.close();
     } finally {
       try {
+        await bareMetal?.shutdown();
         await stopSmolvm(runtime, deps);
       } finally {
         release();
@@ -1196,7 +1323,7 @@ async function serveInForeground(
     }
   };
   try {
-    if (smolvm) {
+    if (runsSmolvm) {
       runtime = await startSmolvm(config, paths, deps, interrupted.signal);
     }
     if (!interrupted.signal.aborted) {
@@ -1204,16 +1331,24 @@ async function serveInForeground(
       const serving = runtime
         ? { ...config, smolApiUrl: runtime.apiUrl }
         : config;
+      // Machines run through the `smol` provider, on the smolvm this daemon
+      // started (or `SMOL_API_URL`, for plain `serve`).
+      const machines =
+        bareMetal ??
+        providerRuntime({
+          apiUrl: serving.smolApiUrl ?? DEFAULT_SMOL_API_URL,
+          requestTimeoutMs: serving.smolRequestTimeoutMs,
+        });
       // Only a daemon running its own smolvm can pack a snapshot: a pack
       // is a subprocess of that binary, reading the same machine state.
       server =
         config.transport === "tunnel"
-          ? await dialOut(serving, paths, usedPrepullNames, deps, {
+          ? await dialOut(serving, machines, paths, usedPrepullNames, deps, {
               smolvm: runtime?.binary,
               signal: interrupted.signal,
               secrets: tunnelSecrets,
             })
-          : await listen(serving, paths, usedPrepullNames, deps, {
+          : await listen(serving, machines, paths, usedPrepullNames, deps, {
               smolvm: runtime?.binary,
               signal: interrupted.signal,
             });
@@ -1240,6 +1375,9 @@ async function serveInForeground(
       );
       await (deps.notifyReady ?? notifyParent)({ port: server.port });
     }
+    // A rig that was running when the daemon stopped gets its SSH bridge
+    // back, if it was provisioned.
+    if (bareMetal) await bareMetal.resume();
     // Only a daemon running its own smolvm fills that smolvm's image cache.
     if (runtime) {
       (deps.prepull ?? prepullOn)(runtime.apiUrl, {
@@ -1282,6 +1420,28 @@ async function serveInForeground(
   } finally {
     await stopAll();
   }
+}
+
+/**
+ * The runtime over this machine for a bare-metal host: the one rig's record
+ * and amikad's state in the daemon's state directory, and the amikad setup
+ * installed (or `amikad_path`).
+ */
+function bareMetalRuntimeFor(
+  config: HostdConfig,
+  paths: DaemonPaths,
+  deps: CliDeps,
+): BareMetalRuntime {
+  const platform = platformOf(deps);
+  return bareMetalRuntime({
+    rigFile: paths.bareMetalRigFile,
+    stateDir: path.dirname(paths.bareMetalRigFile),
+    amikadStateDir: paths.amikadStateDir,
+    amikad: amikadBinary(config, deps.env),
+    logFile: paths.amikadLogFile,
+    resources: () => platform.detectResources(),
+    err: deps.err,
+  });
 }
 
 /** `prepullImages` on the smolvm at `apiUrl`, waiting out a whole download. */
@@ -1375,18 +1535,13 @@ async function startSmolvm(
 
 async function listen(
   config: HostdConfigWith<"secretKey">,
+  runtime: MachineRuntime,
   paths: DaemonPaths,
   usedPrepullNames: ReadonlySet<string>,
   deps: CliDeps,
   /** The smolvm a pack runs through, when this daemon started one. */
   packing: { smolvm?: string; signal?: AbortSignal } = {},
 ): Promise<RunningServer> {
-  // Machines run through the `smol` provider, on the smolvm this daemon
-  // started (or `SMOL_API_URL`, for plain `serve`).
-  const runtime = providerRuntime({
-    apiUrl: config.smolApiUrl ?? DEFAULT_SMOL_API_URL,
-    requestTimeoutMs: config.smolRequestTimeoutMs,
-  });
   try {
     return await (deps.startServer ?? startServerOnPort)(
       config,
@@ -1416,6 +1571,7 @@ function handlerOptions(
 ) {
   return {
     servicesFile: paths.servicesFile,
+    bareMetal: config.hostType === "bare-metal",
     snapshots: packing.smolvm
       ? {
           directory: config.snapshotDir ?? paths.snapshotDir,

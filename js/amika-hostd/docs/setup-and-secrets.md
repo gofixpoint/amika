@@ -28,6 +28,19 @@ in the environment is used instead, and setup does not ask. Before the prompt
 it names the page that creates one, `/settings/api-keys` on the configured
 API URL's origin.
 
+Last it asks for the host type (`vm` or `bare-metal`), offering the
+configured one, else `vm`, as the default and the other as the alternative.
+End of input keeps the default, as for a yes/no question. Choosing bare metal
+first checks that the platform supports it (`HostPlatform.capabilities`), that
+an `sshd` binary exists (else it names how to install one), installs amikad
+into hostd's data directory (see
+[Bare-metal runtime](runtime.md#bare-metal-runtime)) unless `amikad_path` is
+set, and prints the resources it detected and the account SSH logs in as.
+These run before anything is stored, so a machine that cannot be a bare-metal
+host is refused with nothing changed. A bare-metal config gets no default
+`[sizes]` or `[preset_images]`; switching back to VMs adds them when the file
+has none.
+
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping
 everything else in the file. With the file store it writes `secret_key` the
@@ -65,7 +78,8 @@ restart a running daemon, which keeps the key `up` handed it.
 
 `amika-hostd setup --non-interactive` asks nothing, for an AI agent or a
 script. It runs the same setup, answering each question with its default: the
-hostname from `--hostname`, else the configured one or this machine's; no to
+hostname from `--hostname`, else the configured one or this machine's; the
+configured host type (still installing amikad for a bare-metal one); no to
 every yes/no question, so it never regenerates or replaces a secret key; and
 the API key from stdin when none is stored or set in the environment. An
 answer setup refuses (an invalid hostname, no API key on stdin) ends it with

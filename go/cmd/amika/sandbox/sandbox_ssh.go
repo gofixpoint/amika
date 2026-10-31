@@ -10,6 +10,7 @@ import (
 	"path"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/appcfg"
@@ -40,10 +41,36 @@ func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient
 
 // sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the
 // identity needed to label and locate it, shared by every editor `sandbox open` opens.
+// bareMetal marks a rig on a bare-metal host, which has no /home/amika
+// workspace to open.
 type sandboxSSHAlias struct {
 	alias       string
 	sandboxName string
 	repoName    string
+	bareMetal   bool
+}
+
+// remotePath is the remote folder an editor opens for this target, or "" for
+// a bare-metal rig given no absolute --path: such a rig logs in as the host's
+// own account, whose home directory the CLI cannot know, so the editor
+// connects without opening a folder rather than guess one.
+func (t sandboxSSHAlias) remotePath(pathOverride string) string {
+	if t.bareMetal {
+		if path.IsAbs(pathOverride) {
+			return pathOverride
+		}
+		return ""
+	}
+	return resolveRemoteWorkspacePath(t.repoName, pathOverride)
+}
+
+// validateBareMetalPath rejects a relative --path for a bare-metal rig, where
+// there is no known directory to resolve it against.
+func validateBareMetalPath(target sandboxSSHAlias, pathOverride string) error {
+	if target.bareMetal && pathOverride != "" && !path.IsAbs(pathOverride) {
+		return fmt.Errorf("--path %q must be absolute for bare-metal rig %q", pathOverride, target.sandboxName)
+	}
+	return nil
 }
 
 // openSandboxInEditor starts the selected editor with a prepared SSH target.
@@ -97,12 +124,15 @@ func launchRemoteSSHEditor(cmd *cobra.Command, cli, name, installHint string, pa
 		return err
 	}
 
-	remotePath := resolveRemoteWorkspacePath(target.repoName, pathOverride)
+	args := []string{"--remote", "ssh-remote+" + target.alias}
+	if remotePath := target.remotePath(pathOverride); remotePath != "" {
+		args = append(args, remotePath)
+	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Opening rig %q in %s via SSH (%s)...\n", target.sandboxName, name, target.alias)
-	fmt.Fprintf(cmd.OutOrStdout(), "Running: %s --remote ssh-remote+%s %s\n", cli, target.alias, remotePath)
+	fmt.Fprintf(cmd.OutOrStdout(), "Running: %s %s\n", cli, strings.Join(args, " "))
 	fmt.Fprintf(cmd.OutOrStdout(), "Hint: if the file explorer is not visible, press Cmd+Shift+E in %s to open it.\n", name)
-	if err := launch("--remote", "ssh-remote+"+target.alias, remotePath); err != nil {
+	if err := launch(args...); err != nil {
 		return fmt.Errorf("%s failed: %w\n\nMake sure the \"Remote - SSH\" extension is installed in %s", cli, err, name)
 	}
 	return nil
@@ -153,7 +183,7 @@ func openSandboxInClaudeTarget(cmd *cobra.Command, paths basedir.Paths, target s
 		ID:             target.alias,
 		Name:           "Amika: " + target.sandboxName,
 		SSHHost:        target.alias,
-		StartDirectory: resolveRemoteWorkspacePath(target.repoName, pathOverride),
+		StartDirectory: target.remotePath(pathOverride),
 	}
 	if _, err := appcfg.UpsertClaudeSSHConfig(paths, host); err != nil {
 		return fmt.Errorf("write Claude settings: %w", err)
@@ -183,8 +213,12 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 	} else {
 		fmt.Fprintf(out, "Opening Codex...\n")
 	}
-	fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder (e.g. %s).\n",
-		target.alias, resolveRemoteWorkspacePath(target.repoName, pathOverride))
+	if remotePath := target.remotePath(pathOverride); remotePath != "" {
+		fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder (e.g. %s).\n",
+			target.alias, remotePath)
+	} else {
+		fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder.\n", target.alias)
+	}
 	return nil
 }
 
@@ -201,7 +235,13 @@ func openSandboxInPaseoTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Copy paste this SSH host:")
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "ssh://amika@%s\n", target.alias)
+	// A bare-metal rig's login account is the host's own, which the managed
+	// SSH config already names for this alias, so the URL leaves it out.
+	if target.bareMetal {
+		fmt.Fprintf(out, "ssh://%s\n", target.alias)
+	} else {
+		fmt.Fprintf(out, "ssh://amika@%s\n", target.alias)
+	}
 	return nil
 }
 

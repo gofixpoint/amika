@@ -1,10 +1,16 @@
 /** Sandbox resources backed by an Amika host daemon's versioned rig API. */
 import { DEFAULT_HOME_DIR } from "../../constants";
 import type { AmikaHostdConfig } from "./config";
-import { amikaHostdCapabilities } from "./capabilities";
+import {
+  amikaHostdBareMetalCapabilities,
+  amikaHostdCapabilities,
+} from "./capabilities";
 import type { SandboxProvider } from "../provider";
 import type { SandboxAdapter } from "../shared/adapter";
-import { defineProvider } from "../shared/define-provider";
+import {
+  defineProvider,
+  type ProviderDefinition,
+} from "../shared/define-provider";
 import {
   SmolApiError,
   SmolClient,
@@ -41,72 +47,109 @@ export default function amikaHostdProvider({
   return createProvider({ config, fetcher });
 }
 
+/**
+ * The same daemon on a bare-metal host: one rig that is the host machine
+ * itself. Its exec only accepts the fixed `amikad` SSH-bridge commands, and
+ * it serves neither the files routes nor snapshots, so the provider omits
+ * both namespaces.
+ */
+export function amikaHostdBareMetalProvider({
+  config,
+  fetcher = fetch,
+}: AmikaHostdDeps): SandboxProvider {
+  return createBareMetalProvider({ config, fetcher });
+}
+
 const createProvider = defineProvider(
   amikaHostdCapabilities,
-  ({
+  (deps: { config: AmikaHostdConfig; fetcher: typeof fetch }) =>
+    hostdDefinition(deps, "amika-hostd"),
+);
+
+const createBareMetalProvider = defineProvider(
+  amikaHostdBareMetalCapabilities,
+  (deps: { config: AmikaHostdConfig; fetcher: typeof fetch }) => ({
+    ...hostdDefinition(deps, "amika-hostd-bare-metal"),
+    files: null,
+    snapshots: null,
+  }),
+);
+
+function hostdDefinition(
+  {
     config: { secretKey, ...config },
     fetcher,
   }: {
     config: AmikaHostdConfig;
     fetcher: typeof fetch;
-  }) => {
-    const smolConfig = {
-      ...config,
-      network: config.network ?? true,
-      apiUrl: config.apiUrl ?? "http://127.0.0.1:3020",
-      requestTimeoutMs: config.requestTimeoutMs ?? 310_000,
-    };
-    const authenticated = withSecretKey(secretKey, fetcher);
-    const client = new SmolClient(smolConfig, authenticated, HOSTD_RIGS_PATH);
-    // The host's snapshots are its own collection, not a rig's, so they need
-    // a client addressing that path rather than `/v0beta1/rigs`.
-    const snapshotClient = new SmolClient(
-      smolConfig,
-      authenticated,
-      HOSTD_SNAPSHOTS_PATH,
-    );
-    const ops = smolOperations(smolConfig, client, {
-      provider: "amika-hostd",
-      serviceRoutes: hostdServiceRoutes,
-    });
-    return {
-      name: "amika-hostd",
-      signedUrlTtlSeconds: HOSTD_SERVICE_URL_TTL_S,
-      userHomeDir: DEFAULT_HOME_DIR,
-      sandbox: {
-        create: async (_ctx, input) => {
-          try {
-            return await ops.create(input);
-          } catch (error) {
-            // The collection itself missing means the host predates v0beta1.
-            if (
-              error instanceof SmolApiError &&
-              error.status === 404 &&
-              error.method === "POST" &&
-              error.path === ""
-            ) {
-              throw new Error(
-                `amika-hostd at ${smolConfig.apiUrl} does not serve API ${HOSTD_API_VERSION}; upgrade amika-hostd on that host`,
-                { cause: error },
-              );
-            }
-            throw error;
-          }
-        },
-        delete: ops.remove,
-        start: ops.start,
-        stop: ops.stop,
-        getState: ops.getState,
-        mapState: mapSmolState,
-      },
-      exec: { stdin: true, run: ops.run },
-      files: { read: ops.read, write: ops.write },
-      listing: { list: ops.list },
-      services: hostdServices(smolConfig.apiUrl, client),
-      snapshots: hostdSnapshots({ rigs: client, snapshots: snapshotClient }),
-    };
   },
-);
+  name: "amika-hostd" | "amika-hostd-bare-metal",
+): ProviderDefinition {
+  const smolConfig = {
+    ...config,
+    network: config.network ?? true,
+    apiUrl: config.apiUrl ?? "http://127.0.0.1:3020",
+    requestTimeoutMs: config.requestTimeoutMs ?? 310_000,
+  };
+  const authenticated = withSecretKey(secretKey, fetcher);
+  const client = new SmolClient(smolConfig, authenticated, HOSTD_RIGS_PATH);
+  // The host's snapshots are its own collection, not a rig's, so they need
+  // a client addressing that path rather than `/v0beta1/rigs`.
+  const snapshotClient = new SmolClient(
+    smolConfig,
+    authenticated,
+    HOSTD_SNAPSHOTS_PATH,
+  );
+  const ops = smolOperations(smolConfig, client, {
+    provider: name,
+    serviceRoutes: hostdServiceRoutes,
+  });
+  return {
+    name,
+    signedUrlTtlSeconds: HOSTD_SERVICE_URL_TTL_S,
+    userHomeDir: DEFAULT_HOME_DIR,
+    sandbox: {
+      create: async (_ctx, input) => {
+        try {
+          // A bare-metal rig is the host machine itself, so it has no size
+          // to ask for. The control plane records the host's detected
+          // resources on the rig, which are rarely within smol's VM limits
+          // (at most 16 vCPUs, whole-MiB memory, whole-GiB disk); hostd
+          // ignores them anyway, so they are never sent.
+          return await ops.create(
+            name === "amika-hostd-bare-metal"
+              ? { ...input, resources: undefined }
+              : input,
+          );
+        } catch (error) {
+          // The collection itself missing means the host predates v0beta1.
+          if (
+            error instanceof SmolApiError &&
+            error.status === 404 &&
+            error.method === "POST" &&
+            error.path === ""
+          ) {
+            throw new Error(
+              `amika-hostd at ${smolConfig.apiUrl} does not serve API ${HOSTD_API_VERSION}; upgrade amika-hostd on that host`,
+              { cause: error },
+            );
+          }
+          throw error;
+        }
+      },
+      delete: ops.remove,
+      start: ops.start,
+      stop: ops.stop,
+      getState: ops.getState,
+      mapState: mapSmolState,
+    },
+    exec: { stdin: true, run: ops.run },
+    files: { read: ops.read, write: ops.write },
+    listing: { list: ops.list },
+    services: hostdServices(smolConfig.apiUrl, client),
+    snapshots: hostdSnapshots({ rigs: client, snapshots: snapshotClient }),
+  };
+}
 
 /** Provision through the same public sandbox methods as other consumers. */
 export async function openAmikaHostdAdapter(
@@ -114,7 +157,23 @@ export async function openAmikaHostdAdapter(
   id: string,
   fetcher = fetch,
 ): Promise<SandboxAdapter> {
-  const sandbox = amikaHostdProvider({ config, fetcher }).sandboxes.get(id);
+  return adapterFor(amikaHostdProvider({ config, fetcher }), id);
+}
+
+/**
+ * The bare-metal adapter. Its file methods reach routes the host does not
+ * serve, so a caller that tries to write onto the machine fails loudly.
+ */
+export async function openAmikaHostdBareMetalAdapter(
+  config: AmikaHostdConfig,
+  id: string,
+  fetcher = fetch,
+): Promise<SandboxAdapter> {
+  return adapterFor(amikaHostdBareMetalProvider({ config, fetcher }), id);
+}
+
+function adapterFor(provider: SandboxProvider, id: string): SandboxAdapter {
+  const sandbox = provider.sandboxes.get(id);
   return {
     exec: (command, opts) => sandbox.exec(command, opts),
     uploadFile: (content, path) => sandbox.writeFile(path, content),

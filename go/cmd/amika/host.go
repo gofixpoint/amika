@@ -97,9 +97,9 @@ func runHostList(cmd *cobra.Command, _ []string) error {
 	// command group accepts one, and `host get` (or -o json) has the id, the
 	// timestamps, and the per-size resources for the one host you care about.
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "HOSTNAME\tTRANSPORT\tURL\tSIZES")
+	fmt.Fprintln(w, "HOSTNAME\tTYPE\tTRANSPORT\tURL\tSIZES")
 	for _, h := range hosts {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", h.Hostname, h.TransportMode, hostURL(h), hostSizeNames(h))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", h.Hostname, h.HostType, h.TransportMode, hostURL(h), hostSizesCell(h))
 	}
 	return w.Flush()
 }
@@ -125,12 +125,26 @@ func runHostGet(cmd *cobra.Command, args []string) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 	fmt.Fprintf(w, "Hostname:\t%s\n", host.Hostname)
 	fmt.Fprintf(w, "ID:\t%s\n", host.ID)
+	fmt.Fprintf(w, "Type:\t%s\n", host.HostType)
 	fmt.Fprintf(w, "Transport:\t%s\n", host.TransportMode)
 	fmt.Fprintf(w, "URL:\t%s\n", hostURL(*host))
+	if host.SSHUser != nil {
+		fmt.Fprintf(w, "SSH user:\t%s\n", tableCell(*host.SSHUser))
+	}
 	fmt.Fprintf(w, "Created:\t%s\n", host.CreatedAt)
 	fmt.Fprintf(w, "Updated:\t%s\n", host.UpdatedAt)
+	if r := host.DetectedResources; r != nil {
+		fmt.Fprintf(w, "CPUs:\t%d\n", r.VCPUs)
+		fmt.Fprintf(w, "Memory:\t%s GiB\n", formatGiB(r.MemoryGiB))
+		fmt.Fprintf(w, "Disk:\t%s GiB\n", formatGiB(r.DiskGiB))
+		fmt.Fprintf(w, "OS/Arch:\t%s\n", tableCell(resourcePlatform(*r)))
+	}
+	// A bare-metal host runs one rig on the whole machine rather than
+	// offering sizes, so its missing sizes are not worth a line.
 	if len(host.Sizes) == 0 {
-		fmt.Fprintf(w, "Sizes:\t-\n")
+		if host.HostType != apiclient.HostTypeBareMetal {
+			fmt.Fprintf(w, "Sizes:\t-\n")
+		}
 		return w.Flush()
 	}
 	fmt.Fprintln(w, "\nSIZE\tVCPU\tMEMORY\tDISK")
@@ -242,13 +256,37 @@ func runHostDelete(cmd *cobra.Command, args []string) error {
 // The TRANSPORT column says which kind of "-" it is: a listening host that
 // has not registered one yet, or a tunnelled host that never will. Spelling
 // it out here instead would put a space in this cell, and the row would stop
-// having four whitespace-separated fields, so `awk '{print $4}'` would no
+// having five whitespace-separated fields, so `awk '{print $5}'` would no
 // longer print SIZES.
 func hostURL(h apiclient.Host) string {
 	if h.URL == nil || *h.URL == "" {
 		return "-"
 	}
 	return *h.URL
+}
+
+// hostSizesCell renders a listing's SIZES cell. A VM host lists its size
+// names; a bare-metal host offers no sizes, so it shows its detected
+// resources compactly instead, as one whitespace-free token
+// ("8cpu/32GiB/500GiB") so the row keeps five fields.
+func hostSizesCell(h apiclient.Host) string {
+	if h.HostType == apiclient.HostTypeBareMetal && len(h.Sizes) == 0 && h.DetectedResources != nil {
+		r := h.DetectedResources
+		return fmt.Sprintf("%dcpu/%sGiB/%sGiB", r.VCPUs, formatGiB(r.MemoryGiB), formatGiB(r.DiskGiB))
+	}
+	return hostSizeNames(h)
+}
+
+// resourcePlatform renders a host's detected OS and architecture as
+// "os/arch", with "-" standing in for a part the host did not report.
+func resourcePlatform(r apiclient.HostResources) string {
+	platform := func(v string) string {
+		if v == "" {
+			return "-"
+		}
+		return v
+	}
+	return platform(r.OS) + "/" + platform(r.Arch)
 }
 
 // hostSizeNames renders a host's size names for a table cell, as "-" when the

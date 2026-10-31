@@ -1418,3 +1418,102 @@ describe("snapshots", () => {
     expect((await plain.request(SNAPSHOTS)).status).toBe(404);
   });
 });
+
+describe("a bare-metal host", () => {
+  const RIGS = "/v0beta1/rigs";
+  const SNAPSHOTS = "/v0beta1/snapshots";
+
+  /** The app in bare-metal mode, even if handed snapshot support. */
+  function bareMetal(runtime = fakeRuntime()) {
+    const store = {
+      list: vi.fn(() => []),
+      get: vi.fn(() => undefined),
+      artifact: vi.fn(() => undefined),
+      isCapturing: vi.fn(() => false),
+      remove: vi.fn(),
+    };
+    const capture = vi.fn(async () => {});
+    const app = authenticated(
+      createApp({ secretKey: SECRET, bareMetal: true }, runtime, {
+        snapshots: { store: store as never, capture },
+      }),
+    );
+    return { app, runtime, store, capture };
+  }
+
+  it("names bare-metal in /health, and never snapshots", async () => {
+    const { app } = bareMetal();
+    expect(await (await app.request("/health")).json()).toEqual({
+      status: "ok",
+      apis: ["v0beta1"],
+      features: ["service-tokens", "bare-metal"],
+    });
+  });
+
+  it.each(["GET", "PUT"])(
+    "serves no files routes (%s), at either path",
+    async (method) => {
+      const { app, runtime } = bareMetal();
+      for (const root of [RIGS, ROOT]) {
+        const response = await app.request(`${root}/demo/files/etc/passwd`, {
+          method,
+          body: method === "PUT" ? "data" : undefined,
+        });
+        expect(response.status).toBe(404);
+      }
+      expect(runtime.readFile).not.toHaveBeenCalled();
+      expect(runtime.writeFile).not.toHaveBeenCalled();
+    },
+  );
+
+  it("serves no snapshot routes", async () => {
+    const { app, capture, store } = bareMetal();
+    expect((await app.request(SNAPSHOTS)).status).toBe(404);
+    expect((await app.request(`${SNAPSHOTS}/org/sandbox/x`)).status).toBe(404);
+    expect(
+      (await app.request(`${RIGS}/demo/snapshots`, json({ name: "org/x" })))
+        .status,
+    ).toBe(404);
+    expect(capture).not.toHaveBeenCalled();
+    expect(store.list).not.toHaveBeenCalled();
+  });
+
+  it("creates without resolving an image, which the rig ignores", async () => {
+    const { app, runtime } = bareMetal();
+    const response = await app.request(
+      RIGS,
+      json({
+        name: "demo",
+        image: "amika-coder",
+        services: [{ name: "amikad", port: 60999 }],
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(runtime.create.mock.calls[0][0]).toMatchObject({
+      name: "demo",
+      image: "amika-coder",
+      services: [{ name: "amikad", port: 60999 }],
+    });
+  });
+
+  it("passes on the runtime's refusal of an exec", async () => {
+    const runtime = fakeRuntime();
+    runtime.exec.mockRejectedValueOnce(
+      new RuntimeError(
+        403,
+        "refused",
+        "a bare-metal host runs only the amikad commands that set up SSH",
+      ),
+    );
+    const { app } = bareMetal(runtime);
+    const response = await app.request(
+      `${RIGS}/demo/exec`,
+      json({ command: ["/bin/sh", "-c", "id"], user: "root" }),
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error:
+        "Smol runtime request failed: a bare-metal host runs only the amikad commands that set up SSH",
+    });
+  });
+});

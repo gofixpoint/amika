@@ -1,5 +1,6 @@
 /** The Amika control-plane endpoints the daemon calls, authenticated by API key. */
 import { z } from "zod";
+import type { HostResources } from "../platforms/index.js";
 import type { HostSize, TransportMode } from "./config.js";
 
 export interface AmikaApiConfig {
@@ -21,6 +22,10 @@ export const registeredHostSchema = z.object({
   // for the listening hosts on it. Callers test for the transport they
   // handle and leave the rest to the control plane, as the Go client does.
   transport_mode: z.string().default("listen"),
+  // What the host runs rigs on (`vm` or `bare_metal`). Absent from a control
+  // plane older than bare metal, and a plain string for the same reason as
+  // `transport_mode`.
+  host_type: z.string().optional(),
 });
 export type RegisteredHost = z.infer<typeof registeredHostSchema>;
 
@@ -50,6 +55,29 @@ export class HostTransportConflictError extends AmikaApiError {
 }
 
 /**
+ * Amika refused to change the host's type because it still has rigs.
+ * The message says what to do about it.
+ */
+export class HostTypeConflictError extends AmikaApiError {
+  override name = "HostTypeConflictError";
+}
+
+/**
+ * What a bare-metal host tells Amika about itself on every registration and
+ * `up`. A VM host sends none of it, so hostd and the control plane can be
+ * released in either order; one switching back from bare metal sends only
+ * `hostType: "vm"`.
+ */
+export type HostTypeReport = BareMetalReport | { hostType: "vm" };
+
+/** A bare-metal host's type, detected resources and SSH login account. */
+export interface BareMetalReport {
+  hostType: "bare_metal";
+  resources: HostResources;
+  sshUser: string;
+}
+
+/**
  * Register this host by hostname. The endpoint is idempotent: `201` creates
  * the host and stores the secret, `200` returns the existing host and leaves
  * its stored secret unchanged, so this is safe on every boot.
@@ -67,6 +95,8 @@ export async function registerHost(
     secretKey: string;
     sizes: HostSizes;
     transportMode?: TransportMode;
+    /** Sent by a bare-metal host only. */
+    hostType?: HostTypeReport;
   },
   fetcher: typeof fetch = fetch,
   cancel?: AbortSignal,
@@ -83,11 +113,15 @@ export async function registerHost(
       ...(input.transportMode === undefined
         ? {}
         : { transport_mode: input.transportMode }),
+      ...(input.hostType === undefined ? {} : hostTypeBody(input.hostType)),
     },
     cancel,
   );
   if (response.status === 409) {
     const error = await apiError("register the host", response);
+    if (error.code === "host_type_conflict") {
+      throw hostTypeConflict(input.hostname, input.hostType, error);
+    }
     throw error.code === "host_transport_conflict"
       ? new HostTransportConflictError(error.message, error.code)
       : error;
@@ -174,6 +208,60 @@ export async function setHostTransport(
     throw await apiError(`switch the host to ${transportMode} mode`, response);
   }
   return parseHost(response);
+}
+
+/**
+ * Tell Amika what this host runs rigs on: a bare-metal host's type,
+ * resources and login account on every `up`, or `vm` for a host switching
+ * back. Amika refuses a change of type while the host has rigs.
+ */
+export async function setHostType(
+  api: AmikaApiConfig,
+  host: Pick<RegisteredHost, "id" | "hostname">,
+  report: HostTypeReport,
+  fetcher: typeof fetch = fetch,
+): Promise<RegisteredHost> {
+  const response = await send(
+    api,
+    fetcher,
+    "PUT",
+    `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
+    { hostname: host.hostname, ...hostTypeBody(report) },
+  );
+  if (response.status === 409) {
+    const error = await apiError("change the host's type", response);
+    if (error.code === "host_type_conflict") {
+      throw hostTypeConflict(host.hostname, report, error);
+    }
+    throw error;
+  }
+  if (response.status !== 200) {
+    throw await apiError("update the host's type", response);
+  }
+  return parseHost(response);
+}
+
+/** The API's fields for `report`. */
+function hostTypeBody(report: HostTypeReport) {
+  return report.hostType === "bare_metal"
+    ? {
+        host_type: report.hostType,
+        resources: report.resources,
+        ssh_user: report.sshUser,
+      }
+    : { host_type: report.hostType };
+}
+
+function hostTypeConflict(
+  hostname: string,
+  report: HostTypeReport | undefined,
+  error: AmikaApiError,
+): HostTypeConflictError {
+  const wanted = report?.hostType === "bare_metal" ? "bare metal" : "a VM host";
+  return new HostTypeConflictError(
+    `Amika cannot make host ${hostname} ${wanted}: this host still has rigs; delete them before changing host type`,
+    error.code,
+  );
 }
 
 /**

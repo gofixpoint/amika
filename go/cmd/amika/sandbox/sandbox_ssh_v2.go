@@ -229,11 +229,13 @@ Examples:
 		if err != nil {
 			return err
 		}
-		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
 		pathOverride, _ := cmd.Flags().GetString("path")
 		if pathOverride != "" && (app == "paseo" || app == "herdr") {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --path has no effect with --app=%s\n", app)
+		} else if err := validateBareMetalPath(sshTarget, pathOverride); err != nil {
+			return err
 		}
+		maintainSSHHosts(cmd, paths, client, sshTarget.alias)
 		return openSandboxInEditor(cmd, app, paths, sshTarget, pathOverride)
 	},
 }
@@ -290,7 +292,12 @@ func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, ref rigre
 	if sandbox.RepoName != nil {
 		repoName = *sandbox.RepoName
 	}
-	return sandboxSSHAlias{alias: alias, sandboxName: sandbox.Name, repoName: repoName}, nil
+	return sandboxSSHAlias{
+		alias:       alias,
+		sandboxName: sandbox.Name,
+		repoName:    repoName,
+		bareMetal:   sandbox.IsBareMetal(),
+	}, nil
 }
 
 // connectSandbox opens an interactive shell using the same transport as rig ssh.

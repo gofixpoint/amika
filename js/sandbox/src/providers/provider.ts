@@ -588,6 +588,14 @@ export interface SandboxProviderCapabilities {
    * auto-delete request is rejected at create rather than silently ignored.
    */
   supportsAutoDelete: boolean;
+  /**
+   * Whether the control plane provisions the guest after it boots: writing
+   * environment, credentials, and agent configs, cloning repositories, and
+   * running lifecycle hooks. False for a bare-metal host, where the rig is the
+   * host machine itself and nothing but the SSH bridge may be configured on
+   * it. A behavioral fact with no namespace of its own; the author owns it.
+   */
+  guestProvisioning: boolean;
 }
 
 // ---------------------------------------------------------------------------

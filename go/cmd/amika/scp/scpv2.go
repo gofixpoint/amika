@@ -17,8 +17,25 @@ import (
 )
 
 // aliasResolver resolves a rig reference, as written in an operand, to the
-// rig's prepared v2 host alias.
-type aliasResolver func(name string) (string, error)
+// rig's prepared v2 host alias and home directory.
+type aliasResolver func(name string) (scpRig, error)
+
+// scpRig is a resolved rig operand target: the alias scp dials and the home
+// directory relative paths resolve against. home is empty for a bare-metal
+// rig, whose login home the CLI does not know; its relative paths stay
+// relative so scp resolves them against that home itself.
+type scpRig struct {
+	alias string
+	home  string
+}
+
+// rigHome returns the home directory a rig's relative paths resolve against.
+func rigHome(sandbox *apiclient.RemoteSandbox) string {
+	if sandbox.IsBareMetal() {
+		return ""
+	}
+	return sandboxHome
+}
 
 // prepareSessionTarget is a seam over ssh.PrepareSessionTarget, so tests can
 // check which rig identity an alias is built from without SSH key material.
@@ -27,11 +44,11 @@ var prepareSessionTarget = ssh.PrepareSessionTarget
 // parseOnlyResolver parses each rig reference without resolving it, so a bad
 // reference in any operand is reported before auth is checked or any rig is
 // fetched.
-func parseOnlyResolver(name string) (string, error) {
+func parseOnlyResolver(name string) (scpRig, error) {
 	if _, err := rigref.Parse(name); err != nil {
-		return "", err
+		return scpRig{}, err
 	}
-	return name, nil
+	return scpRig{alias: name, home: sandboxHome}, nil
 }
 
 func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
@@ -56,24 +73,24 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 	// and needs no auth. A name= or id= reference resolves to the rig's
 	// canonical name and id here, and only those reach the alias scp dials.
 	var client *apiclient.Client
-	aliases := map[string]string{}
-	resolve := func(name string) (string, error) {
-		if alias, ok := aliases[name]; ok {
-			return alias, nil
+	rigs := map[string]scpRig{}
+	resolve := func(name string) (scpRig, error) {
+		if rig, ok := rigs[name]; ok {
+			return rig, nil
 		}
 		ref, err := rigref.Parse(name)
 		if err != nil {
-			return "", err
+			return scpRig{}, err
 		}
 		if client == nil {
 			if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
-				return "", err
+				return scpRig{}, err
 			}
 			client = runmode.NewRemoteClient()
 		}
 		sandbox, err := client.GetSandbox(ref.Selector())
 		if err != nil {
-			return "", rigref.Explain(ref, err)
+			return scpRig{}, rigref.Explain(ref, err)
 		}
 		alias, err := prepareSessionTarget(
 			basedir.New(""),
@@ -82,10 +99,11 @@ func runSCPV2(cmd *cobra.Command, rawArgs []string) error {
 			sandbox.ID,
 		)
 		if err != nil {
-			return "", err
+			return scpRig{}, err
 		}
-		aliases[name] = alias
-		return alias, nil
+		rig := scpRig{alias: alias, home: rigHome(sandbox)}
+		rigs[name] = rig
+		return rig, nil
 	}
 
 	scpArgs, err := buildSCPV2Invocation(plan, resolve)
@@ -134,20 +152,20 @@ func rewriteV2Operand(tok string, resolve aliasResolver) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		alias, err := resolve(name)
+		rig, err := resolve(name)
 		if err != nil {
 			return "", err
 		}
-		return alias + ":" + resolveSandboxURIPath(path), nil
+		return rig.alias + ":" + resolveSandboxURIPath(rig.home, path), nil
 	case strings.HasPrefix(tok, "scp://"):
 		return parseSCPURI(tok)
 	case looksLikeRemote(tok):
 		name, path := splitSandboxRef(tok)
-		alias, err := resolve(name)
+		rig, err := resolve(name)
 		if err != nil {
 			return "", err
 		}
-		return alias + ":" + resolveSandboxScpPath(path), nil
+		return rig.alias + ":" + resolveSandboxScpPath(rig.home, path), nil
 	default:
 		return tok, nil
 	}
@@ -168,8 +186,10 @@ Operands take these forms:
 
   PATH                              a local path
   RIG:[PATH]                        a path in rig RIG (scp-style): a relative
-                                    PATH is under the rig home, an absolute
-                                    PATH is used verbatim
+                                    PATH is under the rig home (/home/amika,
+                                    or the login account's home on a
+                                    bare-metal rig), an absolute PATH is
+                                    used verbatim
   rig://RIG[/PATH]                  a path in rig RIG (URI form): PATH is
                                     absolute and "~" is the home directory. A
                                     "/" in RIG must be percent-encoded as %2F.

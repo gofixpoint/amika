@@ -108,6 +108,7 @@ from a counter, so a scenario replays the same way every run.
        dockerRegistries: false,
        snapshotIdsAreOpaque: false,
        supportsAutoDelete: false,
+       guestProvisioning: true,
      };
      ```
 

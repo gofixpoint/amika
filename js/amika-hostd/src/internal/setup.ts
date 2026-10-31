@@ -6,12 +6,14 @@
  * key.
  */
 import { randomBytes } from "node:crypto";
-import { hostname as osHostname } from "node:os";
+import { hostname as osHostname, userInfo } from "node:os";
+import { currentHostPlatform, type HostPlatform } from "../platforms/index.js";
 import {
   type RegisteredHost,
   registerHost as registerHostWithAmika,
   setHostSecret as setHostSecretInAmika,
 } from "./amika-api.js";
+import { ensureAmikad } from "./amikad-install.js";
 import {
   ConfigError,
   ENV_NAMES,
@@ -24,6 +26,7 @@ import {
   type HostdConfig,
   type HostdConfigFile,
   type HostSize,
+  type HostType,
   type SecretStoreKind,
 } from "./config.js";
 import { isValidApiKey, type Secrets } from "./credentials.js";
@@ -50,6 +53,15 @@ export interface SetupDeps {
    * called; defaults to a SIGINT listener.
    */
   onInterrupt?: (handler: () => void) => () => void;
+  /** The OS hostd runs on; defaults to this machine's. */
+  platform?: HostPlatform;
+  /** The account a bare-metal rig's SSH sessions log in as. */
+  sshUser?: () => string;
+  /**
+   * Make sure a bare-metal host's amikad is installed and return its path;
+   * defaults to `ensureAmikad`.
+   */
+  installAmikad?: typeof ensureAmikad;
 }
 
 /**
@@ -191,6 +203,11 @@ export async function runSetup(
 
   const apiKey = await askApiKey(deps, effective.apiUrl);
 
+  const hostType = await askHostType(saved.hostType, deps);
+  // Before anything is stored, so a machine that cannot be a bare-metal
+  // host is refused with nothing changed.
+  if (hostType === "bare-metal") await prepareBareMetal(saved, deps);
+
   // The file names the store setup used whenever the file alone (its own
   // setting, else the default) would choose another, so a store chosen from
   // the environment carries over once that is unset. With the keychain it
@@ -208,10 +225,15 @@ export async function runSetup(
         store === "keychain" || saved.secretStore !== store ? store : undefined,
       // In the keychain, the file keeps no secret key at all.
       secretKey: keychainSecret ? undefined : secret,
+      // Written only when it changes, so a VM host's file is left as it was.
+      hostType: hostType === saved.hostType ? undefined : hostType,
       // A config written from scratch always gets them, even when a secret
-      // survived in the keychain (the file was deleted, say).
+      // survived in the keychain (the file was deleted, say), and so does a
+      // host switching from bare metal to VMs. A bare-metal host has no use
+      // for them.
       addDefaults:
-        (file === undefined || firstRun) &&
+        hostType === "vm" &&
+        (file === undefined || firstRun || saved.hostType !== hostType) &&
         Object.keys(saved.sizes).length === 0,
     });
   const contents = render(secretKey);
@@ -308,15 +330,20 @@ export async function runSetup(
   deps.out("");
   deps.out(`Wrote ${configPath}:`);
   deps.out(`  hostname  ${hostname}`);
+  deps.out(`  host type ${hostType}`);
   deps.out(
     keychainSecret
       ? `  secret    (in ${secretHome})`
       : "  secret    (in the file, readable only by you)",
   );
-  deps.out("Rig sizes:");
-  for (const line of describeSizes(written.sizes)) deps.out(`  ${line}`);
-  deps.out("Images:");
-  for (const line of describeImages(written.images)) deps.out(`  ${line}`);
+  if (hostType === "vm") {
+    deps.out("Rig sizes:");
+    for (const line of describeSizes(written.sizes)) deps.out(`  ${line}`);
+    deps.out("Images:");
+    for (const line of describeImages(written.images)) deps.out(`  ${line}`);
+  } else if (Object.keys(written.sizes).length > 0) {
+    deps.out("Rig sizes: [sizes] is ignored on a bare-metal host.");
+  }
   deps.out(`Edit ${configPath} to change these settings.`);
   warnAboutEnvironment(deps, secretHome);
   // `up` runs setup only with the daemon stopped.
@@ -326,6 +353,68 @@ export async function runSetup(
     deps.out("Start the daemon with `amika-hostd up`.");
     deps.out("To stop the daemon and its VMs, run `amika-hostd down`.");
   }
+}
+
+/**
+ * What this host runs rigs on. The default offered is the configured type,
+ * the alternative the other one. End of input (and `--non-interactive`,
+ * which answers blank) keeps the default, as a yes/no question's does.
+ */
+async function askHostType(
+  current: HostType,
+  deps: SetupDeps,
+): Promise<HostType> {
+  const other: HostType = current === "vm" ? "bare-metal" : "vm";
+  for (;;) {
+    const answer = (
+      await deps.prompt(
+        `Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig [${current}/${other}]: `,
+      )
+    )
+      ?.trim()
+      .toLowerCase();
+    if (answer === undefined || answer === "") return current;
+    if (answer === "vm" || answer === "bare-metal") return answer;
+    deps.err(
+      `Not a host type: ${JSON.stringify(answer)}. Answer vm or bare-metal.`,
+    );
+  }
+}
+
+/**
+ * What choosing bare metal needs: an OS that supports it, an `sshd` binary
+ * for amikad to run, and amikad itself in hostd's data directory (no system
+ * path, no `sudo`). Then shows what Amika will be told about the machine.
+ */
+async function prepareBareMetal(
+  config: { amikadPath?: string },
+  deps: SetupDeps,
+): Promise<void> {
+  const platform = deps.platform ?? currentHostPlatform();
+  if (!platform.capabilities.bareMetal) {
+    throw new ConfigError(
+      `amika-hostd does not support bare-metal hosts on ${platform.name}; nothing was changed`,
+    );
+  }
+  const sshd = platform.findSshd();
+  if (sshd === undefined) {
+    throw new ConfigError(
+      `A bare-metal host needs an sshd binary, and none was found: ${platform.sshdInstallHint}. Then run \`amika-hostd setup\` again; nothing was changed.`,
+    );
+  }
+  const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {
+    env: deps.env,
+    platform,
+    out: deps.out,
+  });
+  const { vcpus, memoryGib, diskGib, os, arch } = platform.detectResources();
+  const user = (deps.sshUser ?? (() => userInfo().username))();
+  deps.out(
+    `This machine is the rig: ${vcpus} vCPU${vcpus === 1 ? "" : "s"}, ${memoryGib} GiB memory, ${diskGib} GiB disk (${os}/${arch}).`,
+  );
+  deps.out(
+    `SSH sessions log in as ${user}, through amikad (${amikad}) and its own sshd (${sshd}).`,
+  );
 }
 
 /**
@@ -516,7 +605,7 @@ export function suggestHostname(raw: string): string | undefined {
 }
 
 /**
- * Set `hostname`, and `secret_key` and `secret_store` when given, in
+ * Set `hostname`, and `secret_key`, `secret_store` and `host_type` when given, in
  * `contents`, keeping everything else the operator wrote. An existing
  * top-level line, or else a commented-out `# key = ...` one, is replaced in
  * place; otherwise the setting goes under the `hostname` line, or with no such
@@ -530,9 +619,12 @@ export function renderConfig(
     hostname,
     secretKey,
     secretStore,
+    hostType,
     addDefaults,
   }: {
     hostname: string;
+    /** `host_type` to set, if any; `undefined` leaves the file's as is. */
+    hostType?: HostType;
     /** `undefined` to keep no secret key in the file (the keychain has it). */
     secretKey: string | undefined;
     /** `secret_store` to set, if any; `undefined` leaves the file's as is. */
@@ -571,6 +663,7 @@ export function renderConfig(
   const settings: [string, string][] = [["hostname", hostname]];
   if (secretKey !== undefined) settings.push(["secret_key", secretKey]);
   if (secretStore !== undefined) settings.push(["secret_store", secretStore]);
+  if (hostType !== undefined) settings.push(["host_type", hostType]);
   for (const [key, value] of settings) {
     const line = `${key} = ${JSON.stringify(value)}`;
     const top = lines.slice(0, topEnd);

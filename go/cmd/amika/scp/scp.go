@@ -12,8 +12,11 @@ import (
 	"syscall"
 )
 
-// sandboxHome is the login user's home directory inside every sandbox. A
-// relative sandbox path, a bare "~", or a leading "~/" resolves against it.
+// sandboxHome is the login user's home directory inside every VM rig. A
+// relative sandbox path, a bare "~", or a leading "~/" resolves against it. A
+// bare-metal rig has no fixed home (it logs in as the host's own account), so
+// its paths are resolved against an empty home instead: see
+// resolveSandboxScpPath.
 const sandboxHome = "/home/amika"
 
 // scpPlan is the parsed form of an `amika scp` invocation: the residual argv
@@ -42,36 +45,51 @@ func parseSCPArgs(rawArgs []string) (scpPlan, error) {
 	return plan, nil
 }
 
-// resolveSandboxScpPath resolves the path of a bare "NAME:PATH" reference to an
-// absolute sandbox path: a relative path is taken under the sandbox home, an
-// absolute path is used verbatim, a leading "~" expands to home, and an empty
-// path means the home directory.
-func resolveSandboxScpPath(path string) string {
+// resolveSandboxScpPath resolves the path of a bare "NAME:PATH" reference
+// against the rig's home: a relative path is taken under home, an absolute
+// path is used verbatim, a leading "~" expands to home, and an empty path
+// means the home directory.
+//
+// An empty home stands for the login account's home directory, which the CLI
+// does not know (a bare-metal rig). The path is then left relative, or empty
+// for the home itself, since scp resolves a relative remote path against the
+// login home.
+func resolveSandboxScpPath(home, path string) string {
 	switch {
 	case path == "", path == "~":
-		return sandboxHome
+		return home
 	case strings.HasPrefix(path, "~/"):
-		return sandboxHome + path[1:]
+		return joinHome(home, path[2:])
 	case strings.HasPrefix(path, "/"):
 		return path
 	default:
-		return sandboxHome + "/" + path
+		return joinHome(home, path)
 	}
 }
 
 // resolveSandboxURIPath resolves the path of a "rig://NAME/PATH" reference,
 // where parseRigURI returns the path with its leading "/". Every path is
-// absolute; a leading "~" expands to the sandbox home, and an empty path (or a
-// bare "~") means the home directory.
-func resolveSandboxURIPath(path string) string {
+// absolute; a leading "~" expands to the rig's home, and an empty path (or a
+// bare "~") means the home directory. An empty home is the login home, as in
+// resolveSandboxScpPath.
+func resolveSandboxURIPath(home, path string) string {
 	switch {
 	case path == "", path == "/~":
-		return sandboxHome
+		return home
 	case strings.HasPrefix(path, "/~/"):
-		return sandboxHome + path[2:]
+		return joinHome(home, path[3:])
 	default:
 		return path
 	}
+}
+
+// joinHome places a home-relative path under home, or leaves it relative when
+// home is the unknown login home.
+func joinHome(home, rel string) string {
+	if home == "" {
+		return rel
+	}
+	return home + "/" + rel
 }
 
 // splitSandboxRef splits a bare "NAME:PATH" reference at its first colon. It is

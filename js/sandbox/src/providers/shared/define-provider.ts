@@ -219,6 +219,7 @@ function assertCapabilitiesMatch(
     // Behavioral facts with no namespace to derive from — the author owns them.
     snapshotIdsAreOpaque: capabilities.snapshotIdsAreOpaque,
     supportsAutoDelete: capabilities.supportsAutoDelete,
+    guestProvisioning: capabilities.guestProvisioning,
   };
 
   for (const flag of Object.keys(derived) as Array<
