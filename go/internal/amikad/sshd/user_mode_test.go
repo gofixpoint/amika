@@ -28,7 +28,7 @@ func (p *strictModesPlatform) CheckStrictModesPath(directory string, _ int) erro
 
 func testUserManager(t *testing.T) (*Manager, Paths, *strictModesPlatform) {
 	t.Helper()
-	stateDirectory := filepath.Join(t.TempDir(), "amikad")
+	stateDirectory := filepath.Join(realTempDir(t), "amikad")
 	if err := os.Mkdir(stateDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}

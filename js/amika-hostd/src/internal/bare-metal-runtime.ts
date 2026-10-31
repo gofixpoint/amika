@@ -25,6 +25,7 @@ import {
   rmSync,
 } from "node:fs";
 import { createServer } from "node:net";
+import { userInfo } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import type { HostResources } from "../platforms/index.js";
@@ -330,15 +331,24 @@ export function bareMetalRuntime({
 
   /**
    * amikad's whole environment: user mode, its loopback listener and sshd
-   * port, and a minimal `PATH`. Nothing of hostd's own (no secret, no
-   * `AMIKA_*` setting) and nothing from the request reaches it.
+   * port, a minimal `PATH`, and who it runs as. Nothing of hostd's own (no
+   * secret, no `AMIKA_*` setting) and nothing from the request reaches it.
+   *
+   * The account is named explicitly because the Linux amikad is built
+   * without cgo, so Go resolves the current user from `/etc/passwd` alone
+   * and falls back to `$USER` and `$HOME`. Without them an account from
+   * LDAP or sssd cannot be resolved and every amikad command fails.
    */
   function amikadEnv(current: BareMetalRig): NodeJS.ProcessEnv {
+    const account = userInfo();
     return {
       AMIKAD_STATE_DIR: amikadStateDir,
       AMIKAD_LISTEN: `127.0.0.1:${current.amikadPort}`,
       AMIKAD_SSHD_PORT: String(current.sshdPort),
       PATH: MINIMAL_PATH,
+      USER: account.username,
+      LOGNAME: account.username,
+      HOME: account.homedir,
     };
   }
 

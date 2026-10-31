@@ -149,6 +149,9 @@ func TestResolveUserLayoutRejectsUnsafeConfiguration(t *testing.T) {
 		"bad sshd port":      {EnvStateDir: "/srv/amikad", EnvSSHDPort: "ssh"},
 		"zero sshd port":     {EnvStateDir: "/srv/amikad", EnvSSHDPort: "0"},
 		"shared port":        {EnvStateDir: "/srv/amikad", EnvListen: "127.0.0.1:5000", EnvSSHDPort: "5000"},
+		"space in path":      {EnvStateDir: "/Users/x/Library/Application Support/amikad"},
+		"percent in path":    {EnvStateDir: "/srv/100%/amikad"},
+		"newline in path":    {EnvStateDir: "/srv/a\nb/amikad"},
 	} {
 		if _, err := ResolveLayout(testEnv(env), testUser("operator")); !errors.Is(err, ErrInvalidEnvironment) {
 			t.Errorf("%s: error = %v, want ErrInvalidEnvironment", name, err)
@@ -163,7 +166,7 @@ func TestResolveUserLayoutRejectsUnsafeConfiguration(t *testing.T) {
 }
 
 func TestPrepareStateDirectoryCreatesOwnerOnlyDirectory(t *testing.T) {
-	stateDirectory := filepath.Join(t.TempDir(), "amikad")
+	stateDirectory := filepath.Join(realTempDir(t), "amikad")
 	if err := os.Mkdir(stateDirectory, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +185,7 @@ func TestPrepareStateDirectoryCreatesOwnerOnlyDirectory(t *testing.T) {
 		t.Fatalf("state directory mode = %o, want 700", info.Mode().Perm())
 	}
 
-	link := filepath.Join(t.TempDir(), "link")
+	link := filepath.Join(realTempDir(t), "link")
 	if err := os.Symlink(stateDirectory, link); err != nil {
 		t.Fatal(err)
 	}
@@ -192,5 +195,49 @@ func TestPrepareStateDirectoryCreatesOwnerOnlyDirectory(t *testing.T) {
 	}
 	if err := PrepareStateDirectory(layout); !errors.Is(err, ErrInvalidEnvironment) {
 		t.Fatalf("symlinked state directory: error = %v, want ErrInvalidEnvironment", err)
+	}
+}
+
+func TestResolveUserLayoutResolvesSymlinkedParents(t *testing.T) {
+	// /home on Fedora Silverblue and /var on macOS are symlinks the operator
+	// does not control; the secure writes refuse any symlink in a path.
+	real := realTempDir(t)
+	real, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(realTempDir(t), "home")
+	if err := os.Symlink(real, linked); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := ResolveLayout(testEnv(map[string]string{
+		EnvStateDir: filepath.Join(linked, "amikad"),
+	}), testUser("operator"))
+	if err != nil {
+		t.Fatalf("ResolveLayout: %v", err)
+	}
+	if want := filepath.Join(real, "amikad", "connect-token"); layout.TokenPath != want {
+		t.Fatalf("token path = %q, want %q under the resolved parent", layout.TokenPath, want)
+	}
+}
+
+func TestResolveUserLayoutKeepsFinalSymlinkUnresolved(t *testing.T) {
+	parent := realTempDir(t)
+	parent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDirectory := filepath.Join(parent, "amikad")
+	if err := os.Symlink(realTempDir(t), stateDirectory); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := ResolveLayout(testEnv(map[string]string{EnvStateDir: stateDirectory}), testUser("operator"))
+	if err != nil {
+		t.Fatalf("ResolveLayout: %v", err)
+	}
+	// The state directory itself stays as named, so preparing it still finds
+	// and refuses the symlink.
+	if want := filepath.Join(stateDirectory, "connect-token"); layout.TokenPath != want {
+		t.Fatalf("token path = %q, want %q", layout.TokenPath, want)
 	}
 }

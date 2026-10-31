@@ -111,7 +111,16 @@ function hostdDefinition(
     sandbox: {
       create: async (_ctx, input) => {
         try {
-          return await ops.create(input);
+          // A bare-metal rig is the host machine itself, so it has no size
+          // to ask for. The control plane records the host's detected
+          // resources on the rig, which are rarely within smol's VM limits
+          // (at most 16 vCPUs, whole-MiB memory, whole-GiB disk); hostd
+          // ignores them anyway, so they are never sent.
+          return await ops.create(
+            name === "amika-hostd-bare-metal"
+              ? { ...input, resources: undefined }
+              : input,
+          );
         } catch (error) {
           // The collection itself missing means the host predates v0beta1.
           if (

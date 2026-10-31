@@ -9,6 +9,8 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/gofixpoint/amika/go/internal/amikad/sshd"
 	"github.com/gofixpoint/amika/go/internal/constants"
@@ -115,7 +117,10 @@ func resolveUserLayout(
 	if !filepath.IsAbs(stateDirectory) {
 		return Layout{}, fmt.Errorf("%w: %s must be an absolute path", ErrInvalidEnvironment, EnvStateDir)
 	}
-	stateDirectory = filepath.Clean(stateDirectory)
+	stateDirectory, err := resolveStateDirectory(stateDirectory)
+	if err != nil {
+		return Layout{}, err
+	}
 	account, err := currentUser()
 	if err != nil {
 		return Layout{}, fmt.Errorf("look up current user: %w", err)
@@ -146,6 +151,33 @@ func resolveUserLayout(
 		ListenPort:   listenPort,
 		SSHD:         paths,
 	}, nil
+}
+
+// resolveStateDirectory resolves symlinks in the state directory's parents,
+// keeping its final component as given. The secure writes refuse a symlink at
+// every level, yet the parents belong to the operator and are often linked by
+// the OS itself: /home on Fedora Silverblue, and /var and /tmp on macOS. The
+// final component stays unresolved, so a symlink there is still refused.
+//
+// The result is also checked for characters sshd cannot take in a path:
+// sshd_config splits on whitespace and expands % tokens in
+// AuthorizedKeysFile, so either would leave a config that sshd rejects or
+// misreads, long after setup reported success.
+func resolveStateDirectory(stateDirectory string) (string, error) {
+	stateDirectory = filepath.Clean(stateDirectory)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(stateDirectory))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("%w: %s: resolve parent: %w", ErrInvalidEnvironment, EnvStateDir, err)
+	}
+	if err == nil {
+		stateDirectory = filepath.Join(parent, filepath.Base(stateDirectory))
+	}
+	if strings.ContainsFunc(stateDirectory, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '%' || r == '"'
+	}) {
+		return "", fmt.Errorf("%w: %s %q contains whitespace, %%, a quote or a control character, which sshd_config cannot hold", ErrInvalidEnvironment, EnvStateDir, stateDirectory)
+	}
+	return stateDirectory, nil
 }
 
 // parseLoopbackListen accepts an IP-literal loopback host:port. A hostname,

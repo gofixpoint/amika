@@ -546,7 +546,10 @@ func recordSessionUser(paths basedir.Paths, alias, user string) error {
 		if !state.SetSessionHostUser(alias, user) {
 			return nil
 		}
-		return persistManagedStateLocked(paths, state, false)
+		// Forced, so WSL's Windows-side mirror of the config is rewritten
+		// too: editors launched on Windows read that copy, and without the
+		// rig's own User line they would log in as amika and be refused.
+		return persistManagedStateLocked(paths, state, true)
 	})
 }
 

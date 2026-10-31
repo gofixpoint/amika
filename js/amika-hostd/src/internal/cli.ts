@@ -730,6 +730,7 @@ async function register(
   const report = hostTypeReport(config, deps);
   const { host, created } = await registerInTransport(config, deps, report);
   if (created) {
+    if (report) assertRecordedAsBareMetal(host, config.apiUrl);
     deps.out(
       `Registered host ${host.hostname} with ${config.apiUrl} (${host.id})`,
     );
@@ -739,7 +740,10 @@ async function register(
     // reports itself on every `up`, so Amika sees its resources as they are
     // now; a VM host says nothing unless Amika still has it as bare metal.
     if (report) {
-      await (deps.setHostType ?? setHostTypeInAmika)(api, host, report);
+      assertRecordedAsBareMetal(
+        await (deps.setHostType ?? setHostTypeInAmika)(api, host, report),
+        config.apiUrl,
+      );
       deps.out(
         `Reported host ${host.hostname} as bare metal (${describeResources(report.resources)}; SSH as ${report.sshUser})`,
       );
@@ -778,6 +782,19 @@ async function register(
     `Switched host ${host.hostname} from ${host.transport_mode} to ${config.transport} mode`,
   );
   return switched;
+}
+
+/**
+ * Refuse to carry on when Amika did not record the host as bare metal. A
+ * control plane that predates bare-metal hosts drops the fields it does not
+ * know and keeps the host as a VM host, which would then send it VM rigs
+ * this daemon refuses; saying so here beats reporting success.
+ */
+function assertRecordedAsBareMetal(host: RegisteredHost, apiUrl: string): void {
+  if (host.host_type === "bare_metal") return;
+  throw new AmikaApiError(
+    `${apiUrl} did not record host ${host.hostname} as bare metal, so it does not support bare-metal hosts yet; set host_type = "vm" or use a newer Amika`,
+  );
 }
 
 /**

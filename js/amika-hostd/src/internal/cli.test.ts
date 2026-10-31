@@ -2249,6 +2249,7 @@ describe("bare-metal hosts", () => {
     arch: () => "x64",
   });
   const SIZES = "[sizes.small]\nvcpus = 2\nmemory_gib = 4\ndisk_gib = 20\n";
+  const METAL_HOST = { ...HOST, host_type: "bare_metal" } as typeof HOST;
 
   /** `harness` with a config file of `contents`, on a fake Linux machine. */
   function configured(contents: string) {
@@ -2259,7 +2260,9 @@ describe("bare-metal hosts", () => {
       contents,
     });
     const installAmikad = vi.fn(async () => "/data/amikad/0.3.0/amikad");
-    const setHostType = vi.fn(async () => HOST);
+    // As a control plane that knows bare-metal hosts records them.
+    h.deps.registerHost.mockResolvedValue({ host: METAL_HOST, created: true });
+    const setHostType = vi.fn(async () => METAL_HOST);
     const deps = {
       ...h.deps,
       platform: PLATFORM,
@@ -2290,6 +2293,17 @@ describe("bare-metal hosts", () => {
     expect(h.deps.smolvmVersion).not.toHaveBeenCalled();
     expect(h.deps.startSmolvm).not.toHaveBeenCalled();
     expect(h.out.join("\n")).not.toMatch(/Downloading this host's rig images/);
+  });
+
+  it("refuses to come up when Amika keeps it as a VM host", async () => {
+    // A control plane predating bare-metal hosts drops the fields it does
+    // not know, so the record comes back without the type.
+    const h = configured(`host_type = "bare-metal"\n`);
+    h.deps.registerHost.mockResolvedValue({ host: HOST, created: false });
+    h.setHostType.mockResolvedValue(HOST);
+    expect(await runCli(["up"], h.deps)).not.toBe(0);
+    expect(h.err.join("\n")).toMatch(/did not record host .* as bare metal/);
+    expect(h.deps.setHostSizes).not.toHaveBeenCalled();
   });
 
   it("reports itself again on every `up`, before its sizes", async () => {

@@ -804,3 +804,39 @@ func TestEnsureIncludeMovesExistingIncludeAheadOfHostBlocks(t *testing.T) {
 		t.Fatalf("existing host block was not preserved:\n%s", content)
 	}
 }
+
+func TestRecordSessionUserRewritesWindowsMirror(t *testing.T) {
+	paths := testPaths(t)
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	previousIsWSL, previousResolve, previousIcacls := isWSL, resolveWSLTarget, runIcacls
+	isWSL = func() bool { return true }
+	resolveWSLTarget = func() (wslbridge.Target, error) {
+		return windowsTestTarget(winSSH), nil
+	}
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() {
+		isWSL, resolveWSLTarget, runIcacls = previousIsWSL, previousResolve, previousIcacls
+	})
+	originalStartAgent := startAgent
+	t.Cleanup(func() { startAgent = originalStartAgent })
+	startAgent = func(socketPath string) error {
+		serveTestAgent(t, socketPath, agent.NewKeyring())
+		return nil
+	}
+	if _, err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+
+	// A bare-metal rig's account, recorded after the session config exists:
+	// editors launched on Windows read the mirror, so it must carry the line.
+	if err := recordSessionUser(paths, "metal.sb_metal.prod.amika", "jo"); err != nil {
+		t.Fatalf("recordSessionUser: %v", err)
+	}
+	windowsConfig, err := os.ReadFile(filepath.Join(winSSH, basedir.SSHAmikaConfigName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(windowsConfig), "User jo") {
+		t.Fatalf("Windows mirror lacks the rig's User line:\n%s", windowsConfig)
+	}
+}

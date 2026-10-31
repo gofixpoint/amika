@@ -11,7 +11,7 @@ import (
 )
 
 func TestWriteFileAtomicReplacesWithMode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "secret")
+	path := filepath.Join(realTempDir(t), "secret")
 	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +39,8 @@ func TestWriteFileAtomicReplacesWithMode(t *testing.T) {
 }
 
 func TestWriteFileAtomicRefusesSymlinkedDirectory(t *testing.T) {
-	target := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link")
+	target := realTempDir(t)
+	link := filepath.Join(realTempDir(t), "link")
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestWriteFileAtomicRefusesSymlinkedDirectory(t *testing.T) {
 }
 
 func TestWithLockHonoursCancellation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "lock")
+	path := filepath.Join(realTempDir(t), "lock")
 	ctx, cancel := context.WithCancel(context.Background())
 	err := Current().WithLock(context.Background(), path, func() error {
 		cancel()
@@ -68,7 +68,7 @@ func TestWithLockHonoursCancellation(t *testing.T) {
 }
 
 func TestCheckStrictModesPathRejectsWritableAncestor(t *testing.T) {
-	parent := t.TempDir()
+	parent := realTempDir(t)
 	if err := os.Chmod(parent, 0o777); err != nil {
 		t.Fatal(err)
 	}

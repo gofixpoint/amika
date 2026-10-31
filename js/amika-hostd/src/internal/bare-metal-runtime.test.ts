@@ -12,7 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -300,6 +300,10 @@ describe("bareMetalRuntime: exec", () => {
       AMIKAD_LISTEN: `127.0.0.1:${record.amikadPort}`,
       AMIKAD_SSHD_PORT: String(record.sshdPort),
       PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      // Named for a cgo-less amikad, which cannot look up an LDAP account.
+      USER: userInfo().username,
+      LOGNAME: userInfo().username,
+      HOME: userInfo().homedir,
     });
     expect(call.env).not.toHaveProperty("HOME", "/root");
     expect(call.env).not.toHaveProperty("LD_PRELOAD");
