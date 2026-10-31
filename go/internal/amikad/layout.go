@@ -160,9 +160,9 @@ func resolveUserLayout(
 // final component stays unresolved, so a symlink there is still refused.
 //
 // The result is also checked for characters sshd cannot take in a path:
-// sshd_config splits on whitespace and expands % tokens in
-// AuthorizedKeysFile, so either would leave a config that sshd rejects or
-// misreads, long after setup reported success.
+// sshd_config splits on whitespace, honours quotes and backslashes, and
+// expands % tokens in AuthorizedKeysFile, so any of them would leave a config
+// that sshd rejects or misreads, long after setup reported success.
 func resolveStateDirectory(stateDirectory string) (string, error) {
 	stateDirectory = filepath.Clean(stateDirectory)
 	parent, err := filepath.EvalSymlinks(filepath.Dir(stateDirectory))
@@ -173,9 +173,9 @@ func resolveStateDirectory(stateDirectory string) (string, error) {
 		stateDirectory = filepath.Join(parent, filepath.Base(stateDirectory))
 	}
 	if strings.ContainsFunc(stateDirectory, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '%' || r == '"'
+		return unicode.IsSpace(r) || unicode.IsControl(r) || strings.ContainsRune(`%"'\`, r)
 	}) {
-		return "", fmt.Errorf("%w: %s %q contains whitespace, %%, a quote or a control character, which sshd_config cannot hold", ErrInvalidEnvironment, EnvStateDir, stateDirectory)
+		return "", fmt.Errorf("%w: %s %q contains whitespace, %%, a quote, a backslash or a control character, which sshd_config cannot hold", ErrInvalidEnvironment, EnvStateDir, stateDirectory)
 	}
 	return stateDirectory, nil
 }

@@ -152,6 +152,8 @@ func TestResolveUserLayoutRejectsUnsafeConfiguration(t *testing.T) {
 		"space in path":      {EnvStateDir: "/Users/x/Library/Application Support/amikad"},
 		"percent in path":    {EnvStateDir: "/srv/100%/amikad"},
 		"newline in path":    {EnvStateDir: "/srv/a\nb/amikad"},
+		"apostrophe in path": {EnvStateDir: "/home/o'neil/amikad"},
+		"backslash in path":  {EnvStateDir: `/srv/a\b/amikad`},
 	} {
 		if _, err := ResolveLayout(testEnv(env), testUser("operator")); !errors.Is(err, ErrInvalidEnvironment) {
 			t.Errorf("%s: error = %v, want ErrInvalidEnvironment", name, err)
