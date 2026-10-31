@@ -181,64 +181,80 @@ export function bareMetalRuntime({
     ...tuning,
   });
 
+  // Every change to the rig record, and starting amikad, runs one at a time.
+  // Each awaits partway through (free ports, the supervisor), so two
+  // overlapping creates could otherwise both find no rig and both succeed,
+  // the second record silently replacing the first, and two overlapping
+  // `serve` execs could each launch an amikad.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
+    const run = queue.then(operation, operation);
+    queue = run.catch(() => {});
+    return run;
+  };
+
   return {
     list: async () => (rig ? [info(rig)] : []),
     get: async (name) => info(find(name)),
-    create: async (machine) => {
-      if (rig) {
-        throw refused(
-          409,
-          `this bare-metal host already has rig ${rig.name}; a bare-metal host runs one rig at a time`,
+    create: (machine) =>
+      serialized(async () => {
+        if (rig) {
+          throw refused(
+            409,
+            `this bare-metal host already has rig ${rig.name}; a bare-metal host runs one rig at a time`,
+          );
+        }
+        if (machine.env?.length) {
+          throw refused(
+            400,
+            "a bare-metal host takes no environment variables; nothing is copied onto the machine",
+          );
+        }
+        const other = (machine.services ?? []).find(
+          (s) => s.name !== AMIKAD_SERVICE_NAME || s.port !== AMIKAD_PORT,
         );
-      }
-      if (machine.env?.length) {
-        throw refused(
-          400,
-          "a bare-metal host takes no environment variables; nothing is copied onto the machine",
-        );
-      }
-      const other = (machine.services ?? []).find(
-        (s) => s.name !== AMIKAD_SERVICE_NAME || s.port !== AMIKAD_PORT,
-      );
-      if (other) {
-        throw refused(
-          400,
-          `a bare-metal host serves only ${AMIKAD_SERVICE_NAME} on port ${AMIKAD_PORT}`,
-        );
-      }
-      // The image, sizes and network a VM create carries mean nothing here:
-      // the rig is this machine, as it is.
-      const amikadPort = await freePort();
-      let sshdPort = await freePort();
-      while (sshdPort === amikadPort) sshdPort = await freePort();
-      save({
-        name: machine.name,
-        state: "running",
-        amikadPort,
-        sshdPort,
-        createdAt: now().toISOString(),
-      });
-      return info(requireRig());
-    },
+        if (other) {
+          throw refused(
+            400,
+            `a bare-metal host serves only ${AMIKAD_SERVICE_NAME} on port ${AMIKAD_PORT}`,
+          );
+        }
+        // The image, sizes and network a VM create carries mean nothing here:
+        // the rig is this machine, as it is.
+        const amikadPort = await freePort();
+        let sshdPort = await freePort();
+        while (sshdPort === amikadPort) sshdPort = await freePort();
+        save({
+          name: machine.name,
+          state: "running",
+          amikadPort,
+          sshdPort,
+          createdAt: now().toISOString(),
+        });
+        return info(requireRig());
+      }),
     // Running means the control plane may provision the bridge, which it
     // does next and ends with `serve`; hostd starts nothing on its own.
-    start: async (name) => {
-      save({ ...find(name), state: "running" });
-      return info(requireRig());
-    },
-    stop: async (name) => {
-      const found = find(name);
-      await serve.stop();
-      save({ ...found, state: "stopped" });
-      return info(requireRig());
-    },
-    remove: async (name) => {
-      find(name);
-      await serve.stop();
-      removeInside(stateDir, amikadStateDir);
-      rmSync(rigFile, { force: true });
-      rig = undefined;
-    },
+    start: (name) =>
+      serialized(async () => {
+        save({ ...find(name), state: "running" });
+        return info(requireRig());
+      }),
+    stop: (name) =>
+      serialized(async () => {
+        const found = find(name);
+        await serve.stop();
+        save({ ...found, state: "stopped" });
+        return info(requireRig());
+      }),
+    remove: (name) =>
+      serialized(async () => {
+        find(name);
+        await serve.stop();
+        removeInside(stateDir, amikadStateDir);
+        rmSync(rigFile, { force: true });
+        rig = undefined;
+      }),
     exec: async (name, request) => {
       const found = find(name);
       const allowed = allowedCommand(request.command);
@@ -252,7 +268,7 @@ export function bareMetalRuntime({
       if (found.state !== "running") save({ ...found, state: "running" });
       mkdirSync(amikadStateDir, { recursive: true, mode: 0o700 });
       if (allowed.kind === "serve") {
-        const started = await serve.start();
+        const started = await serialized(() => serve.start());
         return started.ok
           ? { exitCode: 0, stdout: "", stderr: "" }
           : { exitCode: 1, stdout: "", stderr: `${started.reason}\n` };

@@ -202,6 +202,20 @@ describe("bareMetalRuntime: the one rig", () => {
     expect((await h.runtime.list()).map((m) => m.name)).toEqual(["rig"]);
   });
 
+  it("lets only one of two overlapping creates through", async () => {
+    // Both start before either has saved: each awaits free ports first.
+    const h = harness();
+    const results = await Promise.allSettled([
+      h.runtime.create({ name: "first", image: "x", network: true }),
+      h.runtime.create({ name: "second", image: "x", network: true }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+    const [, second] = results;
+    expect(second.status === "rejected" && second.reason.status).toBe(409);
+    expect((await h.runtime.list()).map((m) => m.name)).toEqual(["first"]);
+    expect((await h.open().list()).map((m) => m.name)).toEqual(["first"]);
+  });
+
   it("survives a restart of the daemon", async () => {
     const h = harness();
     await created(h);
