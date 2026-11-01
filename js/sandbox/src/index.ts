@@ -70,13 +70,8 @@ export * from "./types";
 export * from "./constants";
 export * from "./logger";
 
-// Deep helpers consumed by the control plane (Freestyle naming, the adapter
-// port + fake, github-auth script builders).
-export {
-  buildFreestyleVmName,
-  freestyleVmNameOrgId,
-  freestyleVmBelongsToOrg,
-} from "./providers/freestyle/naming";
+// Deep helpers consumed by the control plane (the adapter port + fake,
+// github-auth script builders).
 export {
   execChecked,
   execFailureText,
