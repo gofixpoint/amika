@@ -289,6 +289,29 @@ describe("createVercelSandbox", () => {
     });
   });
 
+  it("names the sandbox with the caller's name and returns that name as its id", async () => {
+    sandboxCreate.mockResolvedValue({ name: "rig-a_1" });
+
+    const result = await createVercelSandbox(
+      ctx(),
+      config,
+      createInput({ name: "rig-a_1" }),
+    );
+
+    expect(sandboxCreate.mock.calls[0][0]).toMatchObject({ name: "rig-a_1" });
+    expect(result.providerSandboxId).toBe("rig-a_1");
+  });
+
+  it.each(["", "has space", "dot.name", "slash/name", "x".repeat(129)])(
+    "refuses the name %j before calling Vercel",
+    async (name) => {
+      await expect(
+        createVercelSandbox(ctx(), config, createInput({ name })),
+      ).rejects.toThrow(/must be 1 to 128 letters/);
+      expect(sandboxCreate).not.toHaveBeenCalled();
+    },
+  );
+
   it("boots a captured user snapshot by id", async () => {
     sandboxCreate.mockResolvedValue({ name: "vercel-generated" });
 
