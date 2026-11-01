@@ -25,6 +25,7 @@ steps:
       type: ssh-key
       name: "{{ssh_key_id}}"
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
+      verify_gone: [secret, ssh-key, list, -o, json]
 
   - name: create a medium coder-plus-docker sandbox from the selected provider base snapshot
     cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-plus-docker, --size, "{{request_size}}", -o, json]
@@ -43,6 +44,7 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      verify_gone: [rig, list, -o, json]
 
   - name: verify the booted DinD base snapshot contract
     cmd:

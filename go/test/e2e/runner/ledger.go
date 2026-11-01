@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,6 +36,9 @@ type Entry struct {
 	// CleanupArgv is the amika argv (not including the binary itself) that
 	// deletes the resource.
 	CleanupArgv []string `json:"cleanup_argv"`
+	// VerifyArgv, when set, lists resources of this kind; cleanup polls it
+	// until its stdout no longer contains Name. See Resource.VerifyGone.
+	VerifyArgv []string `json:"verify_argv,omitempty"`
 	// Env holds the environment overrides to apply when cleaning up this
 	// resource: the creating step's own env overrides (persisted verbatim)
 	// plus the resolved values of the cleanup target variables
@@ -154,21 +158,49 @@ func LoadLedgerEntries(path string) ([]Entry, error) {
 	return entries, nil
 }
 
+// How a cleanup's deletion was confirmed. Recorded on every CleanupResult.
+const (
+	// VerifiedGone: the entry's VerifyArgv no longer listed the resource.
+	VerifiedGone = "gone"
+	// VerifiedUnsupported: the entry has no VerifyArgv, so the delete
+	// command's exit status is all there is.
+	VerifiedUnsupported = "unsupported"
+	// VerifiedStillPresent: the resource was still listed when the poll
+	// gave up. The result's Err is set.
+	VerifiedStillPresent = "still_present"
+	// VerifiedUnchecked: the delete command or the verify command itself
+	// failed, so nothing is known. The result's Err is set.
+	VerifiedUnchecked = "unchecked"
+)
+
 // CleanupResult is the outcome of running one ledger entry's cleanup
-// command.
+// command and, when the entry has a VerifyArgv, confirming the deletion.
 type CleanupResult struct {
 	Entry  Entry  `json:"entry"`
 	Err    error  `json:"-"`
 	Error  string `json:"error,omitempty"`
 	Stdout string `json:"stdout,omitempty"`
 	Stderr string `json:"stderr,omitempty"`
+	// Verified is one of the Verified* constants.
+	Verified string `json:"verified"`
 }
+
+// VerifyPolicy is how long Cleanup keeps asking a listing whether a deleted
+// resource is still there. Deletion is asynchronous on every provider, so a
+// resource can stay listed for a while after its delete command returns.
+type VerifyPolicy struct {
+	Timeout  time.Duration
+	Interval time.Duration
+}
+
+// DefaultVerifyPolicy is what Cleanup uses.
+var DefaultVerifyPolicy = VerifyPolicy{Timeout: 2 * time.Minute, Interval: 5 * time.Second}
 
 // Cleanup runs every entry's CleanupArgv through binPath, in REVERSE
 // registration order (last-created resources are deleted first, which
-// matters when later resources depend on earlier ones). A failing cleanup
-// command is recorded in the returned result but does not stop cleanup of
-// the remaining entries.
+// matters when later resources depend on earlier ones), and confirms each
+// deletion with DefaultVerifyPolicy. A failing cleanup command is recorded in
+// the returned result but does not stop cleanup of the remaining entries.
 //
 // env is the environment each cleanup command runs with; pass the run's step
 // environment (see Runner.CleanupEnv) so a resource created under the run's
@@ -176,28 +208,64 @@ type CleanupResult struct {
 // deleted from that same state rather than the invoking user's default
 // state. A nil env falls back to the current process environment.
 func Cleanup(binPath string, entries []Entry, env []string) []CleanupResult {
+	return CleanupVerified(binPath, entries, env, DefaultVerifyPolicy)
+}
+
+// CleanupVerified is Cleanup with an explicit verification policy.
+func CleanupVerified(binPath string, entries []Entry, env []string, policy VerifyPolicy) []CleanupResult {
 	results := make([]CleanupResult, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
-		var stdout, stderr bytes.Buffer
-		cmd := exec.Command(binPath, entry.CleanupArgv...)
-		cmd.Env = mergeEnv(env, entry.Env)
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		err := cmd.Run()
-
+		cmdEnv := mergeEnv(env, entry.Env)
+		stdout, stderr, err := runArgv(binPath, entry.CleanupArgv, cmdEnv)
 		result := CleanupResult{
-			Entry:  entry,
-			Err:    err,
-			Stdout: stdout.String(),
-			Stderr: stderr.String(),
+			Entry:    entry,
+			Err:      err,
+			Stdout:   stdout,
+			Stderr:   stderr,
+			Verified: VerifiedUnchecked,
 		}
-		if err != nil {
-			result.Error = err.Error()
+		if err == nil {
+			result.Verified, result.Err = verifyGone(binPath, entry, cmdEnv, policy)
+		}
+		if result.Err != nil {
+			result.Error = result.Err.Error()
 		}
 		results = append(results, result)
 	}
 	return results
+}
+
+// verifyGone polls the entry's VerifyArgv until its stdout stops naming the
+// resource, or the policy's timeout passes.
+func verifyGone(binPath string, entry Entry, env []string, policy VerifyPolicy) (string, error) {
+	if len(entry.VerifyArgv) == 0 {
+		return VerifiedUnsupported, nil
+	}
+	deadline := time.Now().Add(policy.Timeout)
+	for {
+		stdout, stderr, err := runArgv(binPath, entry.VerifyArgv, env)
+		if err != nil {
+			return VerifiedUnchecked, fmt.Errorf("verify deletion of %s %q: %w: %s", entry.Type, entry.Name, err, strings.TrimSpace(stderr))
+		}
+		if !strings.Contains(stdout, entry.Name) {
+			return VerifiedGone, nil
+		}
+		if time.Now().After(deadline) {
+			return VerifiedStillPresent, errors.New("still listed after delete")
+		}
+		time.Sleep(policy.Interval)
+	}
+}
+
+func runArgv(binPath string, argv, env []string) (stdout, stderr string, err error) {
+	var out, errOut bytes.Buffer
+	cmd := exec.Command(binPath, argv...)
+	cmd.Env = env
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err = cmd.Run()
+	return out.String(), errOut.String(), err
 }
 
 // mergeEnv returns base with overrides applied on top, deduplicating keys so

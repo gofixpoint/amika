@@ -34,6 +34,7 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      verify_gone: [rig, list, -o, json]
 
   - name: list sandboxes as json and confirm ours is present
     cmd: [rig, list, -o, json]
