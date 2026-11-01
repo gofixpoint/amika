@@ -30,7 +30,7 @@ steps:
         absent_from: "$[*].id"
 
   - name: create a medium coder-plus-docker sandbox from the selected provider base snapshot
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-plus-docker, --size, "{{request_size}}", -o, json]
+    cmd: [rig, create, "e2e-{{run_slug}}-dind", --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-plus-docker, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -44,10 +44,11 @@ steps:
       sandbox_name: $.name
     resource:
       type: sandbox
-      name: "{{sandbox_name}}"
-      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-dind"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-dind", --remote, --force, -o, json]
       verify_gone:
-        cmd: [rig, get, "{{sandbox_name}}", -o, json]
+        cmd: [rig, get, "e2e-{{run_slug}}-dind", -o, json]
         not_found: "HTTP 404"
 
   - name: verify the booted DinD base snapshot contract

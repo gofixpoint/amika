@@ -36,7 +36,7 @@ steps:
         absent_from: "$[*].id"
 
   - name: create a source sandbox
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
+    cmd: [rig, create, "e2e-{{run_slug}}-scrub", --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -47,10 +47,11 @@ steps:
       source_sandbox: $.name
     resource:
       type: sandbox
-      name: "{{source_sandbox}}"
-      cleanup: [rig, delete, "{{source_sandbox}}", --remote, --force, -o, json]
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-scrub"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-scrub", --remote, --force, -o, json]
       verify_gone:
-        cmd: [rig, get, "{{source_sandbox}}", -o, json]
+        cmd: [rig, get, "e2e-{{run_slug}}-scrub", -o, json]
         not_found: "HTTP 404"
 
   - name: inject scrub sentinels into the source sandbox
@@ -134,7 +135,7 @@ steps:
       name: "{{source_sandbox}}"
 
   - name: fork a sandbox from the scrubbed snapshot
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --snapshot, "{{snapshot_ref}}", -o, json]
+    cmd: [rig, create, "e2e-{{run_slug}}-scrub-restored", --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", --snapshot, "{{snapshot_ref}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -145,10 +146,11 @@ steps:
       restored_sandbox: $.name
     resource:
       type: sandbox
-      name: "{{restored_sandbox}}"
-      cleanup: [rig, delete, "{{restored_sandbox}}", --remote, --force, -o, json]
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-scrub-restored"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-scrub-restored", --remote, --force, -o, json]
       verify_gone:
-        cmd: [rig, get, "{{restored_sandbox}}", -o, json]
+        cmd: [rig, get, "e2e-{{run_slug}}-scrub-restored", -o, json]
         not_found: "HTTP 404"
 
   - name: verify the scrubbed snapshot restores a clean usable environment

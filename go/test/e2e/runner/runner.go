@@ -55,7 +55,20 @@ const varDefaultKey = "default"
 // break the uniqueness that remote resource names depend on.
 var reservedVarNames = map[string]bool{
 	"run_id":           true,
+	"run_slug":         true,
 	"sandbox_provider": true,
+}
+
+// RunSlug is run_id reduced to lowercase letters and digits, exposed as
+// {{run_slug}} for resource names that must be DNS labels, such as rig names.
+func RunSlug(runID string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(runID) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // VarSpec is one entry in a case's "vars" block: either a plain scalar (a
@@ -608,6 +621,7 @@ func New(opts Options) (*Runner, error) {
 	vars := map[string]string{}
 	if opts.RunID != "" {
 		vars["run_id"] = opts.RunID
+		vars["run_slug"] = RunSlug(opts.RunID)
 	}
 	if opts.SandboxProvider != "" {
 		vars["sandbox_provider"] = opts.SandboxProvider
@@ -696,7 +710,13 @@ func (r *Runner) runStep(ctx context.Context, index int, rawStep Step) error {
 
 	stdout, stderr, exitCode, err := r.execStep(ctx, step)
 	if err != nil {
-		return err
+		// The command was killed (interrupt, step timeout, run deadline). It
+		// may already have created its resource, so a step that opted into
+		// register_on_failure still registers it, with whatever the command
+		// printed before it died.
+		regErr := r.registerAfterAbort(step, stdout)
+		transcriptErr := r.writeTranscript(index, step.Name, stdout, stderr, exitCode)
+		return errors.Join(err, regErr, transcriptErr)
 	}
 
 	// A resource the command created must reach the ledger even when the step
@@ -1084,6 +1104,26 @@ func substituteArgv(field string, argv []string, vars map[string]string) ([]stri
 		out[i] = v
 	}
 	return out, nil
+}
+
+// registerAfterAbort registers a killed step's resource when the step opted
+// into register_on_failure. Captures are taken from the partial stdout when it
+// parses; a resource whose name depends on a capture the command never
+// printed cannot be registered, and that is returned as an error.
+func (r *Runner) registerAfterAbort(step Step, stdout []byte) error {
+	if step.Resource == nil || !step.Resource.RegisterOnFailure {
+		return nil
+	}
+	for name := range step.Capture {
+		delete(r.vars, name)
+	}
+	if parsed, err := parseStdout(step, stdout); err == nil {
+		_ = r.captureVars(step, parsed)
+	}
+	if err := r.registerResource(step); err != nil {
+		return fmt.Errorf("register resource after the command was killed: %w", err)
+	}
+	return nil
 }
 
 // releaseResource hands a resource that the step proved was consumed (for

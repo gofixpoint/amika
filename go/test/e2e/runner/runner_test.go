@@ -1258,6 +1258,58 @@ func TestReleaseVerifiesBeforeHandingBackFromCleanup(t *testing.T) {
 	}
 }
 
+// TestKilledStepRegistersResourceWhenOptedIn covers a create command that
+// printed its resource and was then killed (a step timeout here; an
+// interrupt or the run deadline take the same path). With
+// register_on_failure the resource must still reach the ledger.
+func TestKilledStepRegistersResourceWhenOptedIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	script := filepath.Join(t.TempDir(), "slow.sh")
+	writeFile(t, script, "#!/bin/sh\nprintf '%s' '{\"name\":\"sb-killed\"}'\nexec sleep 30\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(optIn bool) (*Runner, error) {
+		r, err := New(Options{BinPath: script, RunDir: t.TempDir(), StepTimeout: 300 * time.Millisecond})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{Name: "killed create", Steps: []Step{{
+			Name:    "create",
+			Cmd:     []string{"rig", "create"},
+			Capture: map[string]string{"sandbox_name": "$.name"},
+			Resource: &Resource{
+				Type:              "sandbox",
+				Name:              "{{sandbox_name}}",
+				Cleanup:           []string{"rig", "delete", "{{sandbox_name}}"},
+				RegisterOnFailure: optIn,
+			},
+		}}}
+		return r, r.RunCase(context.Background(), c)
+	}
+
+	r, err := run(true)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected the step to time out, got %v", err)
+	}
+	if entries := r.Ledger().Entries(); len(entries) != 1 || entries[0].Name != "sb-killed" {
+		t.Fatalf("expected sb-killed registered from the partial output, got %+v", entries)
+	}
+
+	r, _ = run(false)
+	if entries := r.Ledger().Entries(); len(entries) != 0 {
+		t.Fatalf("expected nothing registered without register_on_failure, got %+v", entries)
+	}
+}
+
+func TestRunSlug(t *testing.T) {
+	if got := RunSlug("20261101T200601.962951000Z"); got != "20261101t200601962951000z" {
+		t.Fatalf("RunSlug = %q", got)
+	}
+}
+
 // TestRunnerRegistersResourceFromSameStepCapture covers the common real-world
 // shape: a single step creates a resource, captures its id/name from that same
 // command's own output, and registers cleanup referencing that capture. The
