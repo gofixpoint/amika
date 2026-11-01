@@ -252,12 +252,9 @@ type Resource struct {
 	// Cleanup is the amika argv (not including the binary itself) that
 	// deletes the resource. Elements may contain "{{var}}" templates.
 	Cleanup []string `yaml:"cleanup"`
-	// VerifyGone is an optional amika argv that lists resources of this kind,
-	// e.g. [rig, list, -o, json]. After Cleanup runs, the runner polls this
-	// command until its stdout no longer contains Name, and records the
-	// resource as verified gone. A resource still listed when the poll gives
-	// up counts as a failed cleanup. Elements may contain "{{var}}" templates.
-	VerifyGone []string `yaml:"verify_gone"`
+	// VerifyGone, when set, is how the runner confirms the resource is really
+	// gone after Cleanup. See VerifyGone.
+	VerifyGone *VerifyGone `yaml:"verify_gone"`
 	// RegisterOnFailure, when true, registers the resource for cleanup even if
 	// the creating step exits with an unexpected status. Off by default: an
 	// unexpected exit is ambiguous (the command may have failed before
@@ -265,6 +262,51 @@ type Resource struct {
 	// run may not have created could delete one owned by another run. Enable it
 	// only for a command known to create the resource before it can fail.
 	RegisterOnFailure bool `yaml:"register_on_failure"`
+}
+
+// VerifyGone is a structured check that a deleted resource no longer exists.
+// Exactly one of NotFound or AbsentFrom must be set:
+//
+//	verify_gone:                                   # direct lookup
+//	  cmd: [rig, get, "{{sandbox_name}}", -o, json]
+//	  not_found: "HTTP 404"
+//
+//	verify_gone:                                   # exact match over a listing
+//	  cmd: [snapshot, list, -o, json]
+//	  absent_from: "$.items[*].snapshot"
+//
+// With NotFound the command must FAIL and its stderr must contain NotFound;
+// that is the only result read as "gone". A command that succeeds means the
+// resource still exists; one that fails any other way (auth, network) means
+// nothing is known, and the cleanup is recorded as unchecked rather than
+// gone. With AbsentFrom the command must succeed and print JSON; the
+// resource is gone when no value at that path equals the resource Name
+// exactly. Both forms are polled, because deletion is asynchronous.
+type VerifyGone struct {
+	// Cmd is the amika argv (not including the binary itself). Elements may
+	// contain "{{var}}" templates.
+	Cmd []string `yaml:"cmd" json:"cmd"`
+	// NotFound is the stderr text that means "does not exist".
+	NotFound string `yaml:"not_found,omitempty" json:"not_found,omitempty"`
+	// AbsentFrom is a JSONPath with one "[*]" wildcard over the listing.
+	AbsentFrom string `yaml:"absent_from,omitempty" json:"absent_from,omitempty"`
+}
+
+// validate rejects a VerifyGone that could never confirm anything.
+func (v *VerifyGone) validate() error {
+	if len(v.Cmd) == 0 {
+		return fmt.Errorf("verify_gone requires a non-empty \"cmd\" argv")
+	}
+	switch {
+	case v.NotFound == "" && v.AbsentFrom == "":
+		return fmt.Errorf("verify_gone requires \"not_found\" or \"absent_from\"")
+	case v.NotFound != "" && v.AbsentFrom != "":
+		return fmt.Errorf("verify_gone takes \"not_found\" or \"absent_from\", not both")
+	}
+	if v.AbsentFrom != "" && !strings.Contains(v.AbsentFrom, "[*]") {
+		return fmt.Errorf("verify_gone.absent_from %q needs a \"[*]\" wildcard", v.AbsentFrom)
+	}
+	return nil
 }
 
 // ResourceRef identifies a previously registered resource that a successful
@@ -380,6 +422,11 @@ func LoadCase(path string) (*Case, error) {
 			}
 			if len(step.Resource.Cleanup) == 0 {
 				return nil, fmt.Errorf("case %s: step %d (%s): resource requires a non-empty \"cleanup\" argv", path, i+1, step.Name)
+			}
+			if step.Resource.VerifyGone != nil {
+				if err := step.Resource.VerifyGone.validate(); err != nil {
+					return nil, fmt.Errorf("case %s: step %d (%s): %w", path, i+1, step.Name, err)
+				}
 			}
 		}
 		if step.ReleaseResource != nil {
@@ -944,16 +991,20 @@ func (r *Runner) registerResource(step Step) error {
 	if err != nil {
 		return err
 	}
-	verify, err := substituteArgv("resource.verify_gone", step.Resource.VerifyGone, r.vars)
-	if err != nil {
-		return err
+	var verify *VerifyGone
+	if v := step.Resource.VerifyGone; v != nil {
+		cmd, err := substituteArgv("resource.verify_gone.cmd", v.Cmd, r.vars)
+		if err != nil {
+			return err
+		}
+		verify = &VerifyGone{Cmd: cmd, NotFound: v.NotFound, AbsentFrom: v.AbsentFrom}
 	}
 	entry := Entry{
 		Type:          step.Resource.Type,
 		Name:          name,
 		CreatedByStep: step.Name,
 		CleanupArgv:   cleanup,
-		VerifyArgv:    verify,
+		VerifyGone:    verify,
 		Env:           r.resourceEnv(step),
 		CreatedAt:     time.Now().UTC(),
 	}

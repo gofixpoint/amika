@@ -30,7 +30,9 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
-      verify_gone: [rig, list, -o, json]
+      verify_gone:
+        cmd: [rig, get, "{{sandbox_name}}", -o, json]
+        not_found: "HTTP 404"
 
   - name: create a service on the running sandbox
     cmd: [service, create, --rig, "{{sandbox_name}}", --name, e2e-svc, --port, "3000", --url-scheme, http, -o, json]
@@ -46,7 +48,9 @@ steps:
       type: service
       name: e2e-svc
       cleanup: [service, delete, --rig, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
-      verify_gone: [service, list, --rig, "{{sandbox_name}}", -o, json]
+      verify_gone:
+        cmd: [service, list, --rig, "{{sandbox_name}}", -o, json]
+        absent_from: "$[*].service"
 
   - name: list services and confirm ours is present
     cmd: [service, list, --rig, "{{sandbox_name}}", -o, json]

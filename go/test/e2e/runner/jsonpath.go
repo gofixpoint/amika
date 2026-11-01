@@ -93,3 +93,36 @@ func readIndex(fullPath, s string) (idx int, remainder string, err error) {
 	}
 	return idx, s[end+1:], nil
 }
+
+// CollectJSONPath evaluates a path with exactly one "[*]" wildcard, such as
+// "$.items[*].name" or "$[*].id", and returns the value the rest of the path
+// selects in every element of that array. An element where the rest of the
+// path does not resolve (a missing field) is skipped rather than failing the
+// whole collection, since listings may carry optional fields. A path with no
+// wildcard is an error: use ExtractJSONPath for a single value.
+func CollectJSONPath(path string, value any) ([]any, error) {
+	before, after, ok := strings.Cut(path, "[*]")
+	if !ok {
+		return nil, fmt.Errorf("jsonpath %q: CollectJSONPath needs one \"[*]\" wildcard", path)
+	}
+	if strings.Contains(after, "[*]") {
+		return nil, fmt.Errorf("jsonpath %q: only one \"[*]\" wildcard is supported", path)
+	}
+	container, err := ExtractJSONPath(before, value)
+	if err != nil {
+		return nil, err
+	}
+	arr, ok := container.([]any)
+	if !ok {
+		return nil, fmt.Errorf("jsonpath %q: \"[*]\" applied to non-array (got %s)", path, typeName(container))
+	}
+	out := make([]any, 0, len(arr))
+	for _, element := range arr {
+		v, err := ExtractJSONPath("$"+after, element)
+		if err != nil {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}

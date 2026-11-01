@@ -28,7 +28,9 @@ steps:
       type: ssh-key
       name: "{{ssh_key_id}}"
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
-      verify_gone: [secret, ssh-key, list, -o, json]
+      verify_gone:
+        cmd: [secret, ssh-key, list, -o, json]
+        absent_from: "$[*].id"
 
   - name: create a medium coder sandbox from the selected provider base snapshot
     cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
@@ -47,7 +49,9 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
-      verify_gone: [rig, list, -o, json]
+      verify_gone:
+        cmd: [rig, get, "{{sandbox_name}}", -o, json]
+        not_found: "HTTP 404"
 
   - name: verify the booted base snapshot contract
     cmd:

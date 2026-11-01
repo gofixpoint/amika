@@ -31,7 +31,9 @@ steps:
       type: ssh-key
       name: "{{ssh_key_id}}"
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
-      verify_gone: [secret, ssh-key, list, -o, json]
+      verify_gone:
+        cmd: [secret, ssh-key, list, -o, json]
+        absent_from: "$[*].id"
 
   - name: create a source sandbox
     cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
@@ -47,7 +49,9 @@ steps:
       type: sandbox
       name: "{{source_sandbox}}"
       cleanup: [rig, delete, "{{source_sandbox}}", --remote, --force, -o, json]
-      verify_gone: [rig, list, -o, json]
+      verify_gone:
+        cmd: [rig, get, "{{source_sandbox}}", -o, json]
+        not_found: "HTTP 404"
 
   - name: inject scrub sentinels into the source sandbox
     cmd:
@@ -116,7 +120,9 @@ steps:
       type: snapshot
       name: "{{snapshot_ref}}"
       cleanup: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
-      verify_gone: [snapshot, list, -o, json]
+      verify_gone:
+        cmd: [snapshot, list, -o, json]
+        absent_from: "$.items[*].snapshot"
 
   - name: confirm scrub and delete removed the source sandbox
     cmd: [rig, list, --remote, -o, json]
@@ -141,7 +147,9 @@ steps:
       type: sandbox
       name: "{{restored_sandbox}}"
       cleanup: [rig, delete, "{{restored_sandbox}}", --remote, --force, -o, json]
-      verify_gone: [rig, list, -o, json]
+      verify_gone:
+        cmd: [rig, get, "{{restored_sandbox}}", -o, json]
+        not_found: "HTTP 404"
 
   - name: verify the scrubbed snapshot restores a clean usable environment
     cmd:

@@ -36,9 +36,9 @@ type Entry struct {
 	// CleanupArgv is the amika argv (not including the binary itself) that
 	// deletes the resource.
 	CleanupArgv []string `json:"cleanup_argv"`
-	// VerifyArgv, when set, lists resources of this kind; cleanup polls it
-	// until its stdout no longer contains Name. See Resource.VerifyGone.
-	VerifyArgv []string `json:"verify_argv,omitempty"`
+	// VerifyGone, when set, is how cleanup confirms the resource is gone.
+	// See the VerifyGone type.
+	VerifyGone *VerifyGone `json:"verify_gone,omitempty"`
 	// Env holds the environment overrides to apply when cleaning up this
 	// resource: the creating step's own env overrides (persisted verbatim)
 	// plus the resolved values of the cleanup target variables
@@ -160,21 +160,23 @@ func LoadLedgerEntries(path string) ([]Entry, error) {
 
 // How a cleanup's deletion was confirmed. Recorded on every CleanupResult.
 const (
-	// VerifiedGone: the entry's VerifyArgv no longer listed the resource.
+	// VerifiedGone: the entry's VerifyGone check confirmed the resource no
+	// longer exists.
 	VerifiedGone = "gone"
-	// VerifiedUnsupported: the entry has no VerifyArgv, so the delete
+	// VerifiedUnsupported: the entry has no VerifyGone, so the delete
 	// command's exit status is all there is.
 	VerifiedUnsupported = "unsupported"
-	// VerifiedStillPresent: the resource was still listed when the poll
-	// gave up. The result's Err is set.
+	// VerifiedStillPresent: the resource still existed when the poll gave
+	// up. The result's Err is set.
 	VerifiedStillPresent = "still_present"
-	// VerifiedUnchecked: the delete command or the verify command itself
-	// failed, so nothing is known. The result's Err is set.
+	// VerifiedUnchecked: the delete command failed, or the verify command
+	// failed in a way that is not "not found", so nothing is known. The
+	// result's Err is set.
 	VerifiedUnchecked = "unchecked"
 )
 
 // CleanupResult is the outcome of running one ledger entry's cleanup
-// command and, when the entry has a VerifyArgv, confirming the deletion.
+// command and, when the entry has a VerifyGone, confirming the deletion.
 type CleanupResult struct {
 	Entry  Entry  `json:"entry"`
 	Err    error  `json:"-"`
@@ -185,9 +187,9 @@ type CleanupResult struct {
 	Verified string `json:"verified"`
 }
 
-// VerifyPolicy is how long Cleanup keeps asking a listing whether a deleted
-// resource is still there. Deletion is asynchronous on every provider, so a
-// resource can stay listed for a while after its delete command returns.
+// VerifyPolicy is how long Cleanup keeps asking whether a deleted resource
+// is still there. Deletion is asynchronous on every provider, so a resource
+// can remain for a while after its delete command returns.
 type VerifyPolicy struct {
 	Timeout  time.Duration
 	Interval time.Duration
@@ -236,26 +238,62 @@ func CleanupVerified(binPath string, entries []Entry, env []string, policy Verif
 	return results
 }
 
-// verifyGone polls the entry's VerifyArgv until its stdout stops naming the
-// resource, or the policy's timeout passes.
+// verifyGone polls the entry's VerifyGone check until it reports the
+// resource gone, or the policy's timeout passes. Only a positive "does not
+// exist" answer counts as gone; a check that cannot answer (the command
+// failed for another reason, or printed something unexpected) is unchecked,
+// never gone, so an API outage cannot make a leaked resource look deleted.
 func verifyGone(binPath string, entry Entry, env []string, policy VerifyPolicy) (string, error) {
-	if len(entry.VerifyArgv) == 0 {
+	check := entry.VerifyGone
+	if check == nil {
 		return VerifiedUnsupported, nil
 	}
 	deadline := time.Now().Add(policy.Timeout)
 	for {
-		stdout, stderr, err := runArgv(binPath, entry.VerifyArgv, env)
+		exists, err := check.run(binPath, env, entry.Name)
 		if err != nil {
-			return VerifiedUnchecked, fmt.Errorf("verify deletion of %s %q: %w: %s", entry.Type, entry.Name, err, strings.TrimSpace(stderr))
+			return VerifiedUnchecked, fmt.Errorf("verify deletion of %s %q: %w", entry.Type, entry.Name, err)
 		}
-		if !strings.Contains(stdout, entry.Name) {
+		if !exists {
 			return VerifiedGone, nil
 		}
 		if time.Now().After(deadline) {
-			return VerifiedStillPresent, errors.New("still listed after delete")
+			return VerifiedStillPresent, errors.New("still exists after delete")
 		}
 		time.Sleep(policy.Interval)
 	}
+}
+
+// run performs the check once. It returns whether the resource still exists,
+// or an error when the command's result answers neither way.
+func (v *VerifyGone) run(binPath string, env []string, name string) (exists bool, err error) {
+	stdout, stderr, runErr := runArgv(binPath, v.Cmd, env)
+	if v.NotFound != "" {
+		if runErr == nil {
+			return true, nil
+		}
+		if strings.Contains(stderr, v.NotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("lookup failed without %q: %w: %s", v.NotFound, runErr, strings.TrimSpace(stderr))
+	}
+	if runErr != nil {
+		return false, fmt.Errorf("listing failed: %w: %s", runErr, strings.TrimSpace(stderr))
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		return false, fmt.Errorf("listing is not JSON: %w", err)
+	}
+	values, err := CollectJSONPath(v.AbsentFrom, doc)
+	if err != nil {
+		return false, fmt.Errorf("listing: %w", err)
+	}
+	for _, value := range values {
+		if fmt.Sprint(value) == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func runArgv(binPath string, argv, env []string) (stdout, stderr string, err error) {

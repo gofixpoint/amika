@@ -130,7 +130,9 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
-      verify_gone: [rig, list, -o, json]                    # optional: after cleanup, poll until stdout no longer contains the name
+      verify_gone:                                          # optional: confirm the delete (see "Verifying a delete")
+        cmd: [rig, get, "{{sandbox_name}}", -o, json]
+        not_found: "HTTP 404"
       register_on_failure: false                            # optional: set true to register even on an unexpected exit (default false)
     release_resource:                                      # optional: retire a consumed resource after this step passes
       type: sandbox
@@ -356,32 +358,62 @@ fails, logging the failure via `t.Log` and recording it in
 ### Verifying a delete
 
 A delete command that exits 0 is not proof the resource is gone. Give the
-resource a `verify_gone` argv, a list command for that kind of resource:
+resource a `verify_gone` check. There are two forms; use exactly one.
+
+**Direct lookup**, for a resource kind with a `get` command:
 
 ```yaml
     resource:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
-      verify_gone: [rig, list, -o, json]
+      verify_gone:
+        cmd: [rig, get, "{{sandbox_name}}", -o, json]
+        not_found: "HTTP 404"
 ```
 
-After the cleanup command succeeds, the runner runs `verify_gone` and
-checks that its stdout no longer contains the resource `name`. Deletion is
-asynchronous on every provider, so it polls every 5 seconds for up to 2
-minutes. Each `cleanup-results.json` entry records the result as
-`verified`:
+The command must **fail** and its stderr must contain `not_found`. That is
+the only result read as "gone". A command that succeeds means the resource
+still exists. A command that fails any other way (an auth error, a network
+error) answers nothing, and the cleanup is recorded as `unchecked`, never
+`gone`. This is what stops an API outage from making a leaked resource look
+deleted.
 
-| Value           | Meaning                                                              |
-| --------------- | -------------------------------------------------------------------- |
-| `gone`          | The listing no longer names the resource.                            |
-| `unsupported`   | The resource has no `verify_gone`; only the delete's exit status is known. |
-| `still_present` | The listing still named it when the poll gave up. Counts as a failure. |
-| `unchecked`     | The delete, or the listing itself, failed. Counts as a failure.      |
+**Exact match over a listing**, for a resource kind with only a `list`
+command:
 
-Names are run-unique (see `{{run_id}}`), so a substring check on the
-listing is enough. Every `api-*` case declares `verify_gone` for each
-resource it creates; do the same for new ones.
+```yaml
+      verify_gone:
+        cmd: [snapshot, list, -o, json]
+        absent_from: "$.items[*].snapshot"
+```
+
+The command must succeed and print JSON. `absent_from` is a JSONPath with
+one `[*]` wildcard; the resource is gone when no value at that path equals
+the resource `name` exactly. This is a structured comparison, not a text
+search, so a name mentioned in some other field (a snapshot's source rig, for
+example) cannot be mistaken for the resource itself.
+
+Deletion is asynchronous on every provider, so both forms poll every 5
+seconds for up to 2 minutes. Each `cleanup-results.json` entry records the
+result as `verified`:
+
+| Value           | Meaning                                                                          |
+| --------------- | -------------------------------------------------------------------------------- |
+| `gone`          | The check gave a positive "does not exist" answer.                               |
+| `unsupported`   | The resource has no `verify_gone`; only the delete's exit status is known.       |
+| `still_present` | The resource still existed when the poll gave up. Counts as a failure.           |
+| `unchecked`     | The delete failed, or the check could not answer. Counts as a failure.           |
+
+What this proves: the control plane no longer has the resource. For rigs that
+is a strong statement, because the server deletes the provider sandbox first
+and refuses to drop its row if that fails (`rig delete --force` only skips the
+confirmation prompt; it never asks the server to forget). Vendor-side state is
+checked directly by the provider contract suite, not here.
+
+The `api-*` cases use `rig get` + `not_found` for rigs, and `absent_from` on
+`$.items[*].snapshot`, `$[*].id`, and `$[*].service` for snapshots, SSH keys,
+and services. Do the same for new resources.
 
 ### The resource audit
 
