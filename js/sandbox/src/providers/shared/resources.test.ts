@@ -77,6 +77,7 @@ function fullDef() {
     list: vi.fn(async () => [
       {
         providerSandboxId: "sb_a",
+        name: "a",
         orgId: "o",
         state: "running",
         sizing: { vcpus: 1, memoryGib: 2, diskGib: 32 },

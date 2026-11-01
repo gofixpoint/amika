@@ -161,6 +161,7 @@ export function listSimulateSandboxes(
   return world.perform("list", () =>
     world.vms().map((vm) => ({
       providerSandboxId: vm.id,
+      name: vm.name,
       orgId: vm.orgId,
       state: vm.state,
       sizing: { ...vm.resources },

@@ -92,6 +92,7 @@ describe("listDaytonaSandboxes", () => {
       asyncOf([
         {
           id: "sb_1",
+          name: "box-1",
           labels: { [SANDBOX_ORG_ID_LABEL]: "org_abc" },
           cpu: 4,
           memory: 8,
@@ -107,6 +108,7 @@ describe("listDaytonaSandboxes", () => {
     expect(listings).toEqual([
       {
         providerSandboxId: "sb_1",
+        name: "box-1",
         orgId: "org_abc",
         state: "started",
         sizing: { vcpus: 4, memoryGib: 8, diskGib: 20 },

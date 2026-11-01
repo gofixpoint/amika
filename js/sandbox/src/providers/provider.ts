@@ -193,6 +193,14 @@ export type ProviderSandboxSizing = SandboxResources;
  */
 export interface ProviderSandboxListing {
   providerSandboxId: string;
+  /**
+   * The provider's name for the sandbox, derived from the `name` passed to
+   * `create`. It starts with that name; a provider whose names must be
+   * unique account-wide may append a suffix (Vercel). `null` when the
+   * provider keeps no name. Lets a caller find sandboxes it named but whose
+   * create never returned an id.
+   */
+  name: string | null;
   orgId: string | null;
   state: string;
   sizing: ProviderSandboxSizing;
