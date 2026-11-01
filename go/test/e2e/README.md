@@ -5,6 +5,13 @@ as a subprocess and asserts on `argv + stdin + env -> stdout + stderr + exit
 code`. Nothing here calls into Go packages that implement `amika`; every case
 is exactly what a user typing commands at a shell would see.
 
+This is the outer of two test layers for a sandbox provider. The inner layer
+is the provider contract suite in `js/sandbox/src/providers/contract/`, which
+checks a provider against its vendor with no control plane in between. Run
+that first when adding a provider; run the `api-*` cases here last, against a
+deployment that has the provider wired in. See "Testing a provider" in
+`js/sandbox/src/providers/README.md`.
+
 ## Running it
 
 ```bash

@@ -178,10 +178,75 @@ true`), implement the `SandboxAdapter` port (`shared/adapter.ts`: exec,
    - `src/index.ts` — re-export the config type
      (`export type { AcmeConfig } from "./providers/acme/config";`) so consumers
      get it from the package barrel
+   - `contract/contract.integration.test.ts` — add `acme: "ACME_ENABLED"` to
+     `ENABLE_VAR` so the contract suite can run against acme (the table is
+     exhaustive over the name union, so this is a compile error until done)
+   - `go/test/e2e/runner/runner.go` — add `"acme"` to
+     `SupportedSandboxProviders` so the CLI e2e cases can select it
 
-3. **Wire the config through the caller** — the control plane constructs
+3. **Run the contract suite against acme** (see "Testing a provider" below)
+   until it is green. This is the fast loop: no control plane, minutes per
+   run.
+
+4. **Wire the config through the caller** — the control plane constructs
    `SandboxProviderDeps`, so its env builder needs to supply `deps.acme`.
 
-That's it: the registry table is exhaustive over the name union, so forgetting
-a registration fails to compile, and `defineProvider`'s capability
+5. **Run the CLI e2e cases against acme** on a deployment that has the new
+   provider wired in: `make test-e2e-api E2E_SANDBOX_PROVIDER=acme`.
+
+The registry table is exhaustive over the name union, so forgetting a
+registration fails to compile, and `defineProvider`'s capability
 reconciliation fails construction if the flags oversell the implementation.
+The two test layers below check everything the type system cannot.
+
+## Testing a provider
+
+There are two layers. Run them in this order.
+
+| Layer             | Where                           | What it proves                                                         | Needs                                      |
+| ----------------- | ------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| Provider contract | `contract/` in this package     | The provider honors `SandboxProvider` against the real vendor          | Vendor credentials, a bootable snapshot    |
+| CLI e2e (`api-*`) | `go/test/e2e/` at the repo root | The whole stack works: CLI, control plane, registry wiring, the vendor | A deployed control plane with the provider |
+
+### The provider contract suite
+
+`contract/contract.ts` is one set of behavior checks written once against the
+`SandboxProvider` interface, with no mocks. Each scenario is a short, linear
+script: create a sandbox, run `echo hello`, expect `hello\n`. Scenarios are
+selected by the provider's capability flags, so a flag set to `true` is a
+promise the suite checks and a flag set to `false` skips its scenarios. A
+provider cannot pass by turning flags off: `lifecycle` and `exec` scenarios
+are what the control plane needs, and the e2e layer fails without them.
+
+Two entry points run the same suite:
+
+- `contract.test.ts` runs it against `simulate` on every `pnpm test`. This
+  keeps the suite itself correct and makes `simulate` the reference
+  provider. `simulate` has no shell, so the suite's commands are scripted
+  into its world through the `scriptExec` hook; a real vendor runs them.
+- `contract.integration.test.ts` runs it against a real vendor:
+
+  ```bash
+  TEST_SANDBOX_CONTRACT_PROVIDER=e2b \
+  TEST_SANDBOX_CONTRACT_SNAPSHOT=<snapshot or image the vendor can boot> \
+  E2B_API_KEY=... \
+  pnpm --filter @amika/sandbox test:integration
+  ```
+
+  Vendor credentials use the same env vars the control plane reads
+  (`../config-from-env.ts`). The entry turns the provider's `*_ENABLED` flag
+  on itself. Every sandbox and snapshot the suite creates is deleted after
+  its test, and names carry a per-run id so two runs never collide. The
+  suite is not run in CI against real vendors; run it by hand when adding or
+  changing a provider.
+
+Keep the scenarios readable. One scenario is one `it` with no shared state
+beyond the sandbox it creates, and it asserts on outcomes a human can check
+(`stdout` is `hello\n`), never on vendor response shapes.
+
+### Per-provider unit tests
+
+A provider folder keeps unit tests only for logic the contract cannot see
+from the outside: command building, state mapping, retry policy, pagination,
+snapshot name aliasing. Tests that mock the vendor SDK to re-check contract
+behavior (create then stop then start) belong in the contract suite instead.
