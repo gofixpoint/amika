@@ -16,64 +16,28 @@
  * With `TEST_SANDBOX_CONTRACT_PROVIDER` unset this file skips.
  */
 import { describe, inject, it } from "vitest";
-import { sandboxProviderConfigsFromEnv } from "../../config-from-env";
-import type { SandboxProviderName } from "../../types";
-import { isSandboxProviderName } from "../capabilities";
 import { createSandboxProvider, getSandboxAdapter } from "../registry";
 import { describeProviderContract } from "./contract";
-
-/**
- * The env var that enables each provider in `sandboxProviderConfigsFromEnv`.
- * `null` means the provider is always configured. Exhaustive over the name
- * union, so adding a provider without an entry here does not compile.
- */
-const ENABLE_VAR: Record<SandboxProviderName, string | null> = {
-  daytona: null,
-  e2b: "E2B_ENABLED",
-  freestyle: "FREESTYLE_ENABLED",
-  vercel: "VERCEL_ENABLED",
-  smol: "SMOL_ENABLED",
-  "amika-hostd": "AMIKA_HOSTD_ENABLED",
-  simulate: "SIMULATE_ENABLED",
-};
+import { providerDepsFromEnv, realProviderName } from "./env-target";
 
 /** How long to keep polling for a vendor-side change, such as a listing update. */
 const VENDOR_SETTLE_MS = 2 * 60_000;
 
-const providerName = process.env.TEST_SANDBOX_CONTRACT_PROVIDER;
+const rawProviderName = process.env.TEST_SANDBOX_CONTRACT_PROVIDER;
 
-if (!providerName) {
+if (!rawProviderName) {
   describe("provider contract against a real vendor", () => {
     it.skip("set TEST_SANDBOX_CONTRACT_PROVIDER to run", () => {});
   });
 } else {
-  if (!isSandboxProviderName(providerName)) {
-    throw new Error(
-      `TEST_SANDBOX_CONTRACT_PROVIDER=${providerName} is not a known provider`,
-    );
-  }
-  if (providerName === "simulate") {
-    throw new Error(
-      "simulate has no shell to run the suite's commands; `pnpm test` already runs the contract against it",
-    );
-  }
+  const providerName = realProviderName(rawProviderName);
   const bootSnapshot = process.env.TEST_SANDBOX_CONTRACT_SNAPSHOT;
   if (!bootSnapshot) {
     throw new Error(
       "TEST_SANDBOX_CONTRACT_SNAPSHOT must name a snapshot the provider can boot",
     );
   }
-
-  const env: Record<string, string | undefined> = { ...process.env };
-  const enableVar = ENABLE_VAR[providerName];
-  if (enableVar) env[enableVar] = "true";
-  // The env contract always requires a Daytona key. Any value satisfies it
-  // when Daytona is not the provider under test.
-  if (providerName !== "daytona") env.DAYTONA_API_KEY ??= "unused";
-  const deps = {
-    ...sandboxProviderConfigsFromEnv(env),
-    resolveSnapshotId: async () => null,
-  };
+  const deps = providerDepsFromEnv(providerName, process.env);
 
   describeProviderContract({
     createProvider: (resolveSnapshotId) =>

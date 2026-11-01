@@ -33,6 +33,8 @@ export type LedgerEvent =
       id: string;
       /** `true` once the provider confirmed it is gone; `"unsupported"` when it cannot be asked. */
       verified: true | "unsupported";
+      /** Set when the sweep, not the run itself, deleted it. */
+      swept?: true;
       at: string;
     }
   | {
@@ -40,8 +42,12 @@ export type LedgerEvent =
       kind: ResourceKind;
       id: string;
       error: string;
+      swept?: true;
       at: string;
     };
+
+/** The two ways a tracked resource ends up. */
+export type OutcomeEvent = Exclude<LedgerEvent, { event: "created" }>;
 
 /** One resource the suite created and must delete. */
 export interface TrackedResource {
@@ -98,6 +104,19 @@ export class Ledger {
     }
   }
 
+  /**
+   * Delete one resource an earlier run left behind and record the outcome,
+   * marked as swept. The resource's `created` line is already in the file.
+   */
+  async sweep(resource: TrackedResource): Promise<OutcomeEvent> {
+    const outcome = {
+      ...(await this.deleteAndVerify(resource)),
+      swept: true as const,
+    };
+    this.write(outcome);
+    return outcome;
+  }
+
   /** Resources with a `created` event and no outcome yet. */
   get leaked(): LedgerEvent[] {
     const settled = new Set(
@@ -112,7 +131,7 @@ export class Ledger {
 
   private async deleteAndVerify(
     resource: TrackedResource,
-  ): Promise<LedgerEvent> {
+  ): Promise<OutcomeEvent> {
     const { kind, id } = resource;
     const at = () => this.now().toISOString();
     try {
