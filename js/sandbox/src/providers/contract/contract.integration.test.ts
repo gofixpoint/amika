@@ -17,7 +17,7 @@ import { describe, it } from "vitest";
 import { sandboxProviderConfigsFromEnv } from "../../config-from-env";
 import type { SandboxProviderName } from "../../types";
 import { isSandboxProviderName } from "../capabilities";
-import { createSandboxProvider } from "../registry";
+import { createSandboxProvider, getSandboxAdapter } from "../registry";
 import { describeProviderContract } from "./contract";
 
 /**
@@ -68,11 +68,15 @@ if (!providerName) {
   // The env contract always requires a Daytona key. Any value satisfies it
   // when Daytona is not the provider under test.
   if (providerName !== "daytona") env.DAYTONA_API_KEY ??= "unused";
-  const configs = sandboxProviderConfigsFromEnv(env);
+  const deps = {
+    ...sandboxProviderConfigsFromEnv(env),
+    resolveSnapshotId: async () => null,
+  };
 
   describeProviderContract({
     createProvider: (resolveSnapshotId) =>
-      createSandboxProvider(providerName, { ...configs, resolveSnapshotId }),
+      createSandboxProvider(providerName, { ...deps, resolveSnapshotId }),
+    openAdapter: (id) => getSandboxAdapter(providerName, deps, id),
     bootSnapshot,
     settleMs: VENDOR_SETTLE_MS,
   });
