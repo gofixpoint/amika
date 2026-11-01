@@ -19,6 +19,7 @@ import type { Logger, SandboxCtx } from "../../logger";
 import { SANDBOX_ORG_ID_LABEL } from "../../constants";
 import type { SandboxService } from "../../types";
 import { SANDBOX_PROVIDER_CAPABILITIES } from "../capabilities";
+import type { SandboxAdapter } from "../shared/adapter";
 import {
   SandboxFileTooLargeError,
   type ExecCommandOptions,
@@ -39,6 +40,11 @@ export interface ProviderContractTarget {
   createProvider(resolveSnapshotId: SnapshotIdResolver): SandboxProvider;
   /** A snapshot or image the provider can boot a sandbox from. */
   bootSnapshot: string;
+  /**
+   * Open the provisioning adapter for a sandbox, as the registry's
+   * `getSandboxAdapter` does. Set when the provider registers an adapter.
+   */
+  openAdapter?(providerSandboxId: string): Promise<SandboxAdapter>;
   /**
    * Script the output of `command` before the suite runs it. Only a provider
    * with no real shell behind it needs this (`simulate`); a real vendor runs
@@ -260,19 +266,53 @@ export function describeProviderContract(target: ProviderContractTarget): void {
       });
     });
 
+    describe.skipIf(!caps.lifecycle || !target.openAdapter)(
+      "provisioning adapter",
+      () => {
+        it("runs a command", async () => {
+          const sandbox = await createSandbox();
+          const adapter = await target.openAdapter!(sandbox.id);
+          const want = { exitCode: 0, stdout: "via adapter\n", stderr: "" };
+          target.scriptExec?.("echo via adapter", want);
+          expect(await adapter.exec("echo via adapter")).toEqual(want);
+        });
+
+        it("uploads a file the sandbox can read, and downloads it back", async () => {
+          const sandbox = await createSandbox();
+          const adapter = await target.openAdapter!(sandbox.id);
+          const path = `${provider.userHomeDir}/uploaded.txt`;
+          await adapter.uploadFile("uploaded", path);
+          expect(await sandbox.readFile(path)).toBe("uploaded");
+          expect(await adapter.downloadFile(path)).toBe("uploaded");
+        });
+
+        it("downloads a missing file as null", async () => {
+          const sandbox = await createSandbox();
+          const adapter = await target.openAdapter!(sandbox.id);
+          expect(
+            await adapter.downloadFile(`${provider.userHomeDir}/missing.txt`),
+          ).toBeNull();
+        });
+      },
+    );
+
     describe.skipIf(!caps.streaming)("streaming", () => {
-      it("streams a command's stdout", async () => {
+      it("streams stdout and stderr to their own handlers", async () => {
         const sandbox = await createSandbox();
-        target.scriptExec?.("echo streamed", {
+        const command = "echo out; echo err 1>&2";
+        target.scriptExec?.(command, {
           exitCode: 0,
-          stdout: "streamed\n",
-          stderr: "",
+          stdout: "out\n",
+          stderr: "err\n",
         });
-        const chunks: string[] = [];
-        await sandbox.streamExec("echo streamed", {
-          onStdout: (chunk) => chunks.push(chunk),
+        const stdout: string[] = [];
+        const stderr: string[] = [];
+        await sandbox.streamExec(command, {
+          onStdout: (chunk) => stdout.push(chunk),
+          onStderr: (chunk) => stderr.push(chunk),
         });
-        expect(chunks.join("")).toBe("streamed\n");
+        expect(stdout.join("")).toBe("out\n");
+        expect(stderr.join("")).toBe("err\n");
       });
     });
 

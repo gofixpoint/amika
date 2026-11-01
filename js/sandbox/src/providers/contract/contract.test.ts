@@ -5,24 +5,31 @@
  * `simulate` has no shell, so the suite's commands are scripted into its world
  * through `scriptExec`; against a real vendor the same commands really run.
  */
-import { createSandboxProvider } from "../registry";
+import {
+  createSandboxProvider,
+  getSandboxAdapter,
+  type SandboxProviderDeps,
+} from "../registry";
 import { getSimulateWorld } from "../simulate/provider";
 import { describeProviderContract } from "./contract";
 
 const WORLD_ID = "provider-contract";
 
+const DEPS: SandboxProviderDeps = {
+  daytona: { apiKey: "", apiUrl: "" },
+  e2b: null,
+  freestyle: null,
+  vercel: null,
+  smol: null,
+  amikaHostd: null,
+  simulate: { worldId: WORLD_ID },
+  resolveSnapshotId: async () => null,
+};
+
 describeProviderContract({
   createProvider: (resolveSnapshotId) =>
-    createSandboxProvider("simulate", {
-      daytona: { apiKey: "", apiUrl: "" },
-      e2b: null,
-      freestyle: null,
-      vercel: null,
-      smol: null,
-      amikaHostd: null,
-      simulate: { worldId: WORLD_ID },
-      resolveSnapshotId,
-    }),
+    createSandboxProvider("simulate", { ...DEPS, resolveSnapshotId }),
+  openAdapter: (id) => getSandboxAdapter("simulate", DEPS, id),
   bootSnapshot: "base",
   scriptExec: (command, result) =>
     getSimulateWorld(WORLD_ID).onExec(command, result),
