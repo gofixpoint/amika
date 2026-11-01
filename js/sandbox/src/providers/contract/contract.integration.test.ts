@@ -18,7 +18,11 @@
 import { describe, inject, it } from "vitest";
 import { createSandboxProvider, getSandboxAdapter } from "../registry";
 import { describeProviderContract } from "./contract";
-import { providerDepsFromEnv, realProviderName } from "./env-target";
+import {
+  providerDepsFromEnv,
+  realProviderName,
+  targetIdentity,
+} from "./env-target";
 
 /** How long to keep polling for a vendor-side change, such as a listing update. */
 const VENDOR_SETTLE_MS = 2 * 60_000;
@@ -46,5 +50,6 @@ if (!rawProviderName) {
     bootSnapshot,
     settleMs: VENDOR_SETTLE_MS,
     auditFile: inject("contractAuditFile"),
+    identity: targetIdentity(providerName, deps),
   });
 }

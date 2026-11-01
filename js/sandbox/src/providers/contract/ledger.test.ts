@@ -203,7 +203,8 @@ describe("fileSink and parseLedger", () => {
     l.track(resource("sb-1"));
     l.track(resource("sb-2"));
     const events = parseLedger(readFileSync(file, "utf8"));
-    expect(events.map((e) => e.id)).toEqual(["sb-1", "sb-2"]);
+    expect(events.map((e) => e.event)).toEqual(["created", "created"]);
+    expect(events).toMatchObject([{ id: "sb-1" }, { id: "sb-2" }]);
   });
 
   it("rejects a truncated or foreign line instead of skipping it", () => {

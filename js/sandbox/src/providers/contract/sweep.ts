@@ -8,6 +8,11 @@
  * is still alive is skipped: its ledger looks the same as a dead run's, and
  * deleting its sandboxes would break the test in flight.
  *
+ * The sweep only acts on a run whose recorded target (account, endpoint,
+ * credential fingerprint; see `targetIdentity`) matches the one it is
+ * configured for. In any other account a by-name lookup finds nothing, and
+ * that would mark a live resource deleted.
+ *
  * Sweeping is never automatic. Run it by hand:
  *
  *   pnpm --filter @amika/sandbox sweep:contract            # delete
@@ -18,6 +23,7 @@ import path from "node:path";
 import type { SandboxProviderName } from "../../types";
 import type { SandboxProvider, SnapshotIdResolver } from "../provider";
 import { summarize, type AuditRow } from "./audit-report";
+import { identityDifferences } from "./env-target";
 import { fileSink, Ledger, parseLedger, type OutcomeEvent } from "./ledger";
 import { AUDIT_FILE_NAME } from "./run-dir";
 
@@ -27,6 +33,8 @@ export interface SweepOptions {
     name: SandboxProviderName,
     resolveSnapshotId: SnapshotIdResolver,
   ): SandboxProvider;
+  /** The target the sweep is configured for (`targetIdentity`). */
+  identityFor(name: SandboxProviderName): Record<string, string>;
   /** Whether the run that wrote a ledger is still running. */
   isRunAlive(runId: string): boolean;
   /** List what would be deleted without deleting. */
@@ -43,6 +51,8 @@ export interface SweepRunResult {
   /** Leaked resources the sweep cannot delete; a person must. */
   manual: AuditRow[];
   skipped?: "alive";
+  /** Why the sweep would not touch this run; its leaks stay as they are. */
+  refused?: string;
 }
 
 /** Sweep every run directory under `root`. */
@@ -68,7 +78,8 @@ export async function sweepRun(
   options: SweepOptions,
 ): Promise<SweepRunResult> {
   const log = options.log ?? (() => {});
-  const leaked = summarize(parseLedger(readFileSync(file, "utf8"))).rows.filter(
+  const events = parseLedger(readFileSync(file, "utf8"));
+  const leaked = summarize(events).rows.filter(
     (row) => row.outcome === "LEAKED",
   );
   if (leaked.length === 0) return { runId, leaked, outcomes: [], manual: [] };
@@ -78,6 +89,12 @@ export async function sweepRun(
     );
     return { runId, leaked, outcomes: [], manual: [], skipped: "alive" };
   }
+  const refused = refusal(events, options);
+  if (refused) {
+    log(`run ${runId}: refused, ${refused}`);
+    return { runId, leaked, outcomes: [], manual: [], refused };
+  }
+
   // SSH access is revoked with its token, which is never written to disk.
   const manual = leaked.filter((row) => row.kind === "ssh-access");
   for (const row of manual) {
@@ -94,10 +111,12 @@ export async function sweepRun(
     return { runId, leaked, outcomes: [], manual };
   }
 
-  // Snapshot names resolve to the ids the ledger recorded, so providers with
-  // opaque snapshot ids can look them up.
+  // Snapshot names resolve to the bootable ids the ledger recorded, so
+  // providers with opaque snapshot ids can look them up.
   const snapshotIds = new Map(
-    leaked.filter((r) => r.kind === "snapshot").map((r) => [r.name, r.id]),
+    leaked
+      .filter((r) => r.kind === "snapshot" && r.providerId)
+      .map((r) => [r.name, r.providerId!]),
   );
   const providers = new Map<string, SandboxProvider>();
   const providerFor = (name: SandboxProviderName) => {
@@ -122,8 +141,8 @@ export async function sweepRun(
       id: row.id,
       name: row.name,
       test: row.test,
-      delete: () => deleteResource(provider, row),
-      verifyGone: verifier(provider, row, options.settleMs ?? 0),
+      delete: () => deleteResource(provider, row, snapshotIds),
+      verifyGone: verifier(provider, row, snapshotIds, options.settleMs ?? 0),
     });
     outcomes.push(outcome);
     log(
@@ -135,9 +154,60 @@ export async function sweepRun(
   return { runId, leaked, outcomes, manual };
 }
 
+/**
+ * Why the sweep must not act on this run, or `undefined` when it may. A
+ * ledger with no header, more than one provider, or a different target is
+ * refused: the sweep cannot know it is looking in the right account.
+ */
+function refusal(
+  events: ReturnType<typeof parseLedger>,
+  options: SweepOptions,
+): string | undefined {
+  const header = events.find((e) => e.event === "run");
+  if (!header || header.event !== "run") {
+    return "the ledger has no run header recording its target; sweep it by hand";
+  }
+  const providers = new Set(
+    events.flatMap((e) => (e.event === "created" ? [e.provider] : [])),
+  );
+  if ([...providers].some((p) => p !== header.provider)) {
+    return `the ledger mixes providers (${[...providers].join(", ")}); sweep it by hand`;
+  }
+  const differences = identityDifferences(
+    header.target,
+    options.identityFor(header.provider as SandboxProviderName),
+  );
+  if (differences.length > 0) {
+    return `the sweep is configured for a different target than the run used: ${differences.join("; ")}`;
+  }
+  return undefined;
+}
+
+/**
+ * Find a snapshot by name with the registration-tolerant lookup. On a
+ * provider with opaque ids, a snapshot whose id was never recorded cannot be
+ * found, so that is an error rather than "absent".
+ */
+async function findSnapshot(
+  provider: SandboxProvider,
+  row: AuditRow,
+  snapshotIds: Map<string, string>,
+) {
+  if (
+    provider.capabilities.snapshotIdsAreOpaque &&
+    !snapshotIds.has(row.name)
+  ) {
+    throw new Error(
+      `no bootable id was recorded for snapshot ${row.name}, so it cannot be looked up; check the provider by hand`,
+    );
+  }
+  return provider.snapshots!.find(row.name);
+}
+
 async function deleteResource(
   provider: SandboxProvider,
   row: AuditRow,
+  snapshotIds: Map<string, string>,
 ): Promise<void> {
   switch (row.kind) {
     case "sandbox":
@@ -145,7 +215,7 @@ async function deleteResource(
       return;
     case "snapshot": {
       // A snapshot already gone is a finished job, not an error.
-      const snapshot = await provider.snapshots?.get(row.name);
+      const snapshot = await findSnapshot(provider, row, snapshotIds);
       await snapshot?.delete();
       return;
     }
@@ -163,6 +233,7 @@ function assertNever(value: never): never {
 function verifier(
   provider: SandboxProvider,
   row: AuditRow,
+  snapshotIds: Map<string, string>,
   settleMs: number,
 ): (() => Promise<boolean>) | undefined {
   const check =
@@ -173,7 +244,7 @@ function verifier(
               (l) => l.providerSandboxId === row.id,
             )
         : undefined
-      : async () => (await provider.snapshots!.get(row.name)) === null;
+      : async () => (await findSnapshot(provider, row, snapshotIds)) === null;
   if (!check) return undefined;
   return async () => {
     const deadline = Date.now() + settleMs;

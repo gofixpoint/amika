@@ -70,6 +70,12 @@ export interface ProviderContractTarget {
    * memory only.
    */
   auditFile?: string;
+  /**
+   * The account and endpoint the provider points at (`targetIdentity`),
+   * written as the ledger's first line so the sweep can refuse to act on a
+   * different target.
+   */
+  identity?: Record<string, string>;
 }
 
 /** The org id stamped on every sandbox the suite creates. */
@@ -134,6 +140,7 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     provider.name,
     target.auditFile ? fileSink(target.auditFile) : () => {},
   );
+  if (target.identity) ledger.begin(target.identity);
   afterEach(() => ledger.release());
   const currentTest = () => expect.getState().currentTestName ?? "unknown";
 

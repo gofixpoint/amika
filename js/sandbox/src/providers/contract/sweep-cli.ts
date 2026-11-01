@@ -1,6 +1,10 @@
 /** Command-line entry for the sweep; see `./sweep.ts`. */
 import { createSandboxProvider } from "../registry";
-import { providerDepsFromEnv, realProviderName } from "./env-target";
+import {
+  providerDepsFromEnv,
+  realProviderName,
+  targetIdentity,
+} from "./env-target";
 import { contractRunsRoot } from "./run-dir";
 import { runProcessAlive, sweepRuns } from "./sweep";
 
@@ -19,6 +23,11 @@ async function main(): Promise<void> {
           resolveSnapshotId,
         ),
       ),
+    identityFor: (name) =>
+      targetIdentity(
+        name,
+        providerDepsFromEnv(realProviderName(name), process.env),
+      ),
     isRunAlive: runProcessAlive,
     dryRun,
     settleMs: VENDOR_SETTLE_MS,
@@ -27,6 +36,8 @@ async function main(): Promise<void> {
 
   const open = results.reduce((n, r) => n + r.leaked.length, 0);
   const manual = results.reduce((n, r) => n + r.manual.length, 0);
+  const refused = results.filter((r) => r.refused).length;
+  if (refused > 0) process.exitCode = 1;
   const failed = results
     .flatMap((r) => r.outcomes)
     .filter((o) => o.event === "delete_failed");

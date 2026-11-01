@@ -24,6 +24,17 @@ export type ResourceKind = "sandbox" | "snapshot" | "ssh-access";
 
 export type LedgerEvent =
   | {
+      /**
+       * The run's header: which account and endpoint it ran against (see
+       * `targetIdentity`). Written once, before anything is created. The
+       * sweep refuses a ledger whose header does not match its own target.
+       */
+      event: "run";
+      provider: string;
+      target: Record<string, string>;
+      at: string;
+    }
+  | {
       event: "created";
       kind: ResourceKind;
       provider: string;
@@ -64,6 +75,9 @@ export type LedgerEvent =
       swept?: true;
       at: string;
     };
+
+/** The line that records a resource exists. */
+export type CreatedEvent = Extract<LedgerEvent, { event: "created" }>;
 
 /** The two ways a tracked resource ends up. */
 export type OutcomeEvent = Extract<
@@ -114,6 +128,16 @@ export class Ledger {
       id: resource.id,
       name: resource.name,
       test: resource.test,
+      at: this.now().toISOString(),
+    });
+  }
+
+  /** Write the run header. Call once, before the first `track`. */
+  begin(target: Record<string, string>): void {
+    this.write({
+      event: "run",
+      provider: this.provider,
+      target,
       at: this.now().toISOString(),
     });
   }
@@ -173,14 +197,15 @@ export class Ledger {
   }
 
   /** Resources with a `created` event and no outcome yet. */
-  get leaked(): LedgerEvent[] {
+  get leaked(): CreatedEvent[] {
     const settled = new Set(
       this.events
         .filter((e) => e.event === "deleted" || e.event === "delete_failed")
         .map((e) => `${e.kind}:${e.id}`),
     );
     return this.events.filter(
-      (e) => e.event === "created" && !settled.has(`${e.kind}:${e.id}`),
+      (e): e is CreatedEvent =>
+        e.event === "created" && !settled.has(`${e.kind}:${e.id}`),
     );
   }
 

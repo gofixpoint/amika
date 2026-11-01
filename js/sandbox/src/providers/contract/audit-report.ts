@@ -31,6 +31,7 @@ export interface AuditSummary {
 export function summarize(events: LedgerEvent[]): AuditSummary {
   const rows = new Map<string, AuditRow>();
   for (const event of events) {
+    if (event.event === "run") continue;
     const key = `${event.kind}:${event.id}`;
     if (event.event === "created") {
       rows.set(key, {
