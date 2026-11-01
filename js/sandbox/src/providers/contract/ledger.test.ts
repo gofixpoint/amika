@@ -131,6 +131,55 @@ describe("Ledger", () => {
   });
 });
 
+describe("Ledger.release when the audit write fails", () => {
+  it("still deletes every resource, keeps the unrecorded ones, and throws after", async () => {
+    let failWrites = false;
+    const lines: string[] = [];
+    const l = new Ledger(
+      "acme",
+      (line) => {
+        if (failWrites) throw new Error("disk full");
+        lines.push(line);
+      },
+      () => AT,
+    );
+    const deleted: string[] = [];
+    l.track(
+      resource("older", { delete: async () => void deleted.push("older") }),
+    );
+    l.track(
+      resource("newer", { delete: async () => void deleted.push("newer") }),
+    );
+
+    failWrites = true;
+    await expect(l.release()).rejects.toThrow(
+      /could not record 2 cleanup outcome/,
+    );
+    expect(deleted).toEqual(["newer", "older"]);
+    // Nothing reached disk, so both are still leaks on disk and in memory.
+    expect(l.leaked.map((e) => e.id)).toEqual(["older", "newer"]);
+
+    failWrites = false;
+    await l.release();
+    expect(deleted).toEqual(["newer", "older", "newer", "older"]);
+    expect(l.leaked).toEqual([]);
+  });
+
+  it("keeps a resource pending when its created line cannot be written", async () => {
+    const l = new Ledger("acme", () => {
+      throw new Error("disk full");
+    });
+    const deleted: string[] = [];
+    expect(() =>
+      l.track(
+        resource("sb-1", { delete: async () => void deleted.push("sb-1") }),
+      ),
+    ).toThrow("disk full");
+    await expect(l.release()).rejects.toThrow();
+    expect(deleted).toEqual(["sb-1"]);
+  });
+});
+
 describe("fileSink and parseLedger", () => {
   it("appends one JSON line per event and reads them back", () => {
     const file = path.join(
@@ -143,5 +192,16 @@ describe("fileSink and parseLedger", () => {
     l.track(resource("sb-2"));
     const events = parseLedger(readFileSync(file, "utf8"));
     expect(events.map((e) => e.id)).toEqual(["sb-1", "sb-2"]);
+  });
+
+  it("rejects a truncated or foreign line instead of skipping it", () => {
+    const good = JSON.stringify({ event: "created", id: "sb-1" });
+    expect(() => parseLedger(`${good}\n{"event":"crea`)).toThrow(
+      /line 2 is not valid JSON/,
+    );
+    expect(() => parseLedger(`${good}\n{"id":"x"}`)).toThrow(
+      /line 2 has no "event"/,
+    );
+    expect(parseLedger(`${good}\n\n`)).toHaveLength(1);
   });
 });

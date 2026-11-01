@@ -78,7 +78,11 @@ export class Ledger {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  /** Record that `resource` exists. Call right after the provider returns its id. */
+  /**
+   * Record that `resource` exists. Call right after the provider returns its
+   * id. The resource is pending before the line is written, so it is deleted
+   * after the test even if writing the line throws.
+   */
   track(resource: TrackedResource): void {
     this.pending.push(resource);
     this.write({
@@ -94,13 +98,31 @@ export class Ledger {
 
   /**
    * Delete everything tracked since the last release, newest first, and
-   * record each outcome. Never throws: a failed delete is an event, not an
-   * error, so one failure does not stop the others.
+   * record each outcome. A failed delete is an event, not an error, so it
+   * never stops the others.
+   *
+   * A resource leaves the pending list only once its outcome is on disk. If
+   * writing an outcome fails, the rest are still deleted, the unrecorded ones
+   * stay pending (a later release deletes them again; deletes are idempotent),
+   * and the write errors are thrown together at the end.
    */
   async release(): Promise<void> {
-    for (const resource of this.pending.splice(0).reverse()) {
+    const writeErrors: unknown[] = [];
+    for (const resource of [...this.pending].reverse()) {
       const outcome = await this.deleteAndVerify(resource);
-      this.write(outcome);
+      try {
+        this.write(outcome);
+      } catch (error) {
+        writeErrors.push(error);
+        continue;
+      }
+      this.pending.splice(this.pending.indexOf(resource), 1);
+    }
+    if (writeErrors.length > 0) {
+      throw new AggregateError(
+        writeErrors,
+        `could not record ${writeErrors.length} cleanup outcome(s) in the audit ledger`,
+      );
     }
   }
 
@@ -172,9 +194,10 @@ export class Ledger {
     return { event: "deleted", kind, id, verified: true, at: at() };
   }
 
+  /** Write to the sink first, so `events` holds only what is on disk. */
   private write(event: LedgerEvent): void {
-    this.events.push(event);
     this.sink(JSON.stringify(event));
+    this.events.push(event);
   }
 }
 
@@ -184,12 +207,33 @@ export function fileSink(file: string): LedgerSink {
   return (line) => appendFileSync(file, `${line}\n`);
 }
 
-/** Parse a ledger file's contents back into events. Blank lines are skipped. */
+/**
+ * Parse a ledger file's contents back into events. Blank lines are skipped.
+ * Any other line that is not a JSON object with an `event` field throws, so
+ * a truncated or corrupt ledger is reported, never read as "nothing leaked".
+ */
 export function parseLedger(contents: string): LedgerEvent[] {
-  return contents
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as LedgerEvent);
+  const events: LedgerEvent[] = [];
+  contents.split("\n").forEach((line, index) => {
+    if (line.trim() === "") return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (error) {
+      throw new Error(
+        `audit ledger line ${index + 1} is not valid JSON: ${message(error)}`,
+      );
+    }
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as { event?: unknown }).event !== "string"
+    ) {
+      throw new Error(`audit ledger line ${index + 1} has no "event" field`);
+    }
+    events.push(parsed as LedgerEvent);
+  });
+  return events;
 }
 
 function message(error: unknown): string {
