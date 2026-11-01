@@ -775,7 +775,7 @@ func TestCleanupVerifiesDeletion(t *testing.T) {
 
 func TestCollectJSONPath(t *testing.T) {
 	var doc any
-	if err := json.Unmarshal([]byte(`{"items":[{"name":"a"},{"name":"b"},{"other":1}]}`), &doc); err != nil {
+	if err := json.Unmarshal([]byte(`{"items":[{"name":"a"},{"name":"b"}]}`), &doc); err != nil {
 		t.Fatal(err)
 	}
 	got, err := CollectJSONPath("$.items[*].name", doc)
@@ -783,7 +783,7 @@ func TestCollectJSONPath(t *testing.T) {
 		t.Fatalf("CollectJSONPath: %v", err)
 	}
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("expected [a b], skipping the element without the field, got %v", got)
+		t.Fatalf("expected [a b], got %v", got)
 	}
 
 	var arr any
@@ -795,6 +795,14 @@ func TestCollectJSONPath(t *testing.T) {
 		t.Fatalf("expected [k1 k2] from a root array, got %v, %v", got, err)
 	}
 
+	var empty any
+	if err := json.Unmarshal([]byte(`{"items":[]}`), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := CollectJSONPath("$.items[*].name", empty); err != nil || len(got) != 0 {
+		t.Fatalf("an empty listing is an empty collection, got %v, %v", got, err)
+	}
+
 	if _, err := CollectJSONPath("$.items.name", doc); err == nil {
 		t.Fatal("expected an error for a path without a wildcard")
 	}
@@ -803,6 +811,32 @@ func TestCollectJSONPath(t *testing.T) {
 	}
 	if _, err := CollectJSONPath("$.missing[*].name", doc); err == nil {
 		t.Fatal("expected an error when the container is missing")
+	}
+}
+
+// TestCollectJSONPathRejectsElementWithoutField covers the false "gone": a
+// misspelled field, or a listing whose shape changed, must not collect to an
+// empty set that reads as "the resource is absent".
+func TestCollectJSONPathRejectsElementWithoutField(t *testing.T) {
+	var doc any
+	if err := json.Unmarshal([]byte(`[{"name":"still-live"}]`), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := CollectJSONPath("$[*].id", doc); err == nil {
+		t.Fatalf("expected an error for an element with no id, got %v", got)
+	}
+
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	entry := Entry{
+		Type:        "ssh-key",
+		Name:        "still-live",
+		CleanupArgv: []string{"0", "", ""},
+		VerifyGone:  &VerifyGone{Cmd: []string{"0", `[{"name":"still-live"}]`, ""}, AbsentFrom: "$[*].id"},
+	}
+	res := CleanupVerified(bin, []Entry{entry}, nil, fast)[0]
+	if res.Verified != VerifiedUnchecked || res.Err == nil {
+		t.Fatalf("expected unchecked with an error, got verified=%q err=%v", res.Verified, res.Err)
 	}
 }
 

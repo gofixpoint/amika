@@ -96,10 +96,11 @@ func readIndex(fullPath, s string) (idx int, remainder string, err error) {
 
 // CollectJSONPath evaluates a path with exactly one "[*]" wildcard, such as
 // "$.items[*].name" or "$[*].id", and returns the value the rest of the path
-// selects in every element of that array. An element where the rest of the
-// path does not resolve (a missing field) is skipped rather than failing the
-// whole collection, since listings may carry optional fields. A path with no
-// wildcard is an error: use ExtractJSONPath for a single value.
+// selects in every element of that array. Every element must have that
+// value: one that does not is an error, not a skip. A verify_gone listing
+// relies on this, since skipping would turn a misspelled field or a changed
+// response shape into an empty collection, which reads as "gone". A path
+// with no wildcard is an error: use ExtractJSONPath for a single value.
 func CollectJSONPath(path string, value any) ([]any, error) {
 	before, after, ok := strings.Cut(path, "[*]")
 	if !ok {
@@ -117,10 +118,10 @@ func CollectJSONPath(path string, value any) ([]any, error) {
 		return nil, fmt.Errorf("jsonpath %q: \"[*]\" applied to non-array (got %s)", path, typeName(container))
 	}
 	out := make([]any, 0, len(arr))
-	for _, element := range arr {
+	for i, element := range arr {
 		v, err := ExtractJSONPath("$"+after, element)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("jsonpath %q: element %d: %w", path, i, err)
 		}
 		out = append(out, v)
 	}
