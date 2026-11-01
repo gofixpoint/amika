@@ -185,6 +185,10 @@ type CleanupResult struct {
 	Stderr string `json:"stderr,omitempty"`
 	// Verified is one of the Verified* constants.
 	Verified string `json:"verified"`
+	// DeleteError is set when the cleanup command failed but the resource was
+	// verified gone anyway: a case deleted it explicitly, so this second
+	// delete found nothing. Kept so the audit shows what happened.
+	DeleteError string `json:"delete_error,omitempty"`
 }
 
 // VerifyPolicy is how long Cleanup keeps asking whether a deleted resource
@@ -229,6 +233,18 @@ func CleanupVerified(binPath string, entries []Entry, env []string, policy Verif
 		}
 		if err == nil {
 			result.Verified, result.Err = verifyGone(binPath, entry, cmdEnv, policy)
+		} else if entry.VerifyGone != nil {
+			// A failed delete may only mean the resource is already gone,
+			// for example deleted by an earlier step of the case. Ask once:
+			// a positive "does not exist" makes this a success. Anything else
+			// keeps the delete's own error. One check, not a poll: nothing is
+			// being deleted now, so waiting would not change the answer.
+			once := VerifyPolicy{Timeout: 0, Interval: policy.Interval}
+			if verified, verifyErr := verifyGone(binPath, entry, cmdEnv, once); verifyErr == nil && verified == VerifiedGone {
+				result.Verified = VerifiedGone
+				result.DeleteError = fmt.Sprintf("%v: %s", err, strings.TrimSpace(stderr))
+				result.Err = nil
+			}
 		}
 		if result.Err != nil {
 			result.Error = result.Err.Error()

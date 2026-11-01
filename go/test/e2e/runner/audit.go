@@ -27,7 +27,8 @@ type AuditRow struct {
 	Name          string `json:"name"`
 	CreatedByStep string `json:"created_by_step"`
 	Outcome       string `json:"outcome"`
-	// Detail is the error for a leaked resource; empty otherwise.
+	// Detail is the error for a leaked resource, or a note on how a deleted
+	// one was found gone; empty otherwise.
 	Detail string `json:"detail,omitempty"`
 }
 
@@ -50,6 +51,9 @@ func AuditRows(caseName string, results []CleanupResult) []AuditRow {
 			row.Detail = res.Err.Error()
 		case res.Verified == VerifiedGone:
 			row.Outcome = OutcomeDeleted
+			if res.DeleteError != "" {
+				row.Detail = "already gone; cleanup delete said: " + res.DeleteError
+			}
 		default:
 			row.Outcome = OutcomeDeletedUnverified
 		}

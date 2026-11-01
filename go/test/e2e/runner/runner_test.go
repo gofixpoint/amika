@@ -741,7 +741,7 @@ func TestCleanupVerifiesDeletion(t *testing.T) {
 		{Type: "snapshot", Name: "listing-broke", CleanupArgv: deleteOK, VerifyGone: listing("1", "", "list broke")},
 		{Type: "snapshot", Name: "listing-not-json", CleanupArgv: deleteOK, VerifyGone: listing("0", "No snapshots found.", "")},
 		{Type: "sandbox", Name: "blind", CleanupArgv: deleteOK},
-		{Type: "sandbox", Name: "undeletable", CleanupArgv: []string{"1", "", "boom"}, VerifyGone: lookup("1", "HTTP 404")},
+		{Type: "sandbox", Name: "undeletable", CleanupArgv: []string{"1", "", "boom"}, VerifyGone: lookup("0", "")},
 	}
 	byName := map[string]CleanupResult{}
 	for _, res := range CleanupVerified(bin, entries, nil, fast) {
@@ -770,6 +770,43 @@ func TestCleanupVerifiesDeletion(t *testing.T) {
 	}
 	if err := byName["looked-up-outage"].Err; err == nil || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Errorf("an outage must be reported with the lookup's stderr, got %v", err)
+	}
+}
+
+// TestCleanupAcceptsAFailedDeleteOfAnAlreadyGoneResource covers a case that
+// deletes a resource itself and leaves it registered: cleanup's second delete
+// gets a 404, and that must count as deleted when the resource is verified
+// gone, but not when it is still there or the check cannot answer.
+func TestCleanupAcceptsAFailedDeleteOfAnAlreadyGoneResource(t *testing.T) {
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	deleteFails := []string{"1", "", "remote delete sandbox: HTTP 404: not found"}
+	lookup := func(exit, stderr string) *VerifyGone {
+		return &VerifyGone{Cmd: []string{exit, "", stderr}, NotFound: "HTTP 404"}
+	}
+	entries := []Entry{
+		{Type: "sandbox", Name: "already-gone", CleanupArgv: deleteFails, VerifyGone: lookup("1", "HTTP 404")},
+		{Type: "sandbox", Name: "still-there", CleanupArgv: deleteFails, VerifyGone: lookup("0", "")},
+		{Type: "sandbox", Name: "unknown", CleanupArgv: deleteFails, VerifyGone: lookup("1", "HTTP 502")},
+		{Type: "sandbox", Name: "no-check", CleanupArgv: deleteFails},
+	}
+	byName := map[string]CleanupResult{}
+	for _, res := range CleanupVerified(bin, entries, nil, fast) {
+		byName[res.Entry.Name] = res
+	}
+
+	if res := byName["already-gone"]; res.Err != nil || res.Verified != VerifiedGone || !strings.Contains(res.DeleteError, "HTTP 404") {
+		t.Errorf("already-gone: want verified gone with the delete error kept, got %+v", res)
+	}
+	for _, name := range []string{"still-there", "unknown", "no-check"} {
+		if res := byName[name]; res.Err == nil || res.Verified != VerifiedUnchecked {
+			t.Errorf("%s: want the failed delete kept as unchecked, got verified=%q err=%v", name, res.Verified, res.Err)
+		}
+	}
+
+	rows := AuditRows("api-x", CleanupVerified(bin, entries[:1], nil, fast))
+	if rows[0].Outcome != OutcomeDeleted || !strings.Contains(rows[0].Detail, "already gone") {
+		t.Errorf("audit row: want deleted with an already-gone note, got %+v", rows[0])
 	}
 }
 
