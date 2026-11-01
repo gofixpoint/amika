@@ -57,6 +57,7 @@ export {
   type SimulateExecHandler,
   type SimulateOperation,
   type SimulateSnapshot,
+  type SimulateStreamChunk,
   type SimulateVm,
   type SimulateVmState,
 } from "./providers/simulate/provider";

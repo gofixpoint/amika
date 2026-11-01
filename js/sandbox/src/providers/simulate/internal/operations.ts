@@ -110,7 +110,11 @@ export function executeSimulateCommand(
   return world.perform("exec", () => world.exec(id, command, opts));
 }
 
-/** Run the command, then hand its output to the handlers in one chunk each. */
+/**
+ * Run the command, then deliver its output. A command with a stream script
+ * (`SimulateWorld.onStream`) delivers each chunk after its delay; any other
+ * command hands its `onExec` output to the handlers in one chunk each.
+ */
 export async function streamSimulateCommand(
   world: SimulateWorld,
   id: string,
@@ -118,8 +122,19 @@ export async function streamSimulateCommand(
   handlers: StreamCommandHandlers,
 ): Promise<void> {
   const result = await executeSimulateCommand(world, id, command);
-  if (result.stdout) handlers.onStdout(result.stdout);
-  if (result.stderr) handlers.onStderr?.(result.stderr);
+  const script = world.streamScriptFor(command);
+  if (!script) {
+    if (result.stdout) handlers.onStdout(result.stdout);
+    if (result.stderr) handlers.onStderr?.(result.stderr);
+    return;
+  }
+  for (const chunk of script) {
+    if (chunk.delayMs) {
+      await new Promise((resolve) => setTimeout(resolve, chunk.delayMs));
+    }
+    if (chunk.stdout) handlers.onStdout(chunk.stdout);
+    if (chunk.stderr) handlers.onStderr?.(chunk.stderr);
+  }
 }
 
 export function readSimulateFile(

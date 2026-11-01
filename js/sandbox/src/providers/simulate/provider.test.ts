@@ -95,6 +95,22 @@ describe("simulate scripted runtime", () => {
     ]);
   });
 
+  it("delivers a scripted stream chunk by chunk, with its delays", async () => {
+    const sandbox = await createSandbox();
+    getSimulateWorld(WORLD_ID).onStream("long", [
+      { stdout: "first" },
+      { stdout: "second", stderr: "warn", delayMs: 20 },
+    ]);
+    const seen: Array<[string, number]> = [];
+    const started = Date.now();
+    await sandbox.streamExec("long", {
+      onStdout: (c) => seen.push([c, Date.now() - started]),
+      onStderr: (c) => seen.push([`err:${c}`, Date.now() - started]),
+    });
+    expect(seen.map(([c]) => c)).toEqual(["first", "second", "err:warn"]);
+    expect(seen[1][1] - seen[0][1]).toBeGreaterThanOrEqual(15);
+  });
+
   it("refuses to exec in a stopped sandbox", async () => {
     const sandbox = await createSandbox();
     await sandbox.stop();

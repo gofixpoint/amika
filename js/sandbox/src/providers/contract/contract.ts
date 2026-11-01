@@ -13,6 +13,14 @@
  *   - `contract.test.ts` runs it against `simulate` on every `pnpm test`.
  *   - `contract.integration.test.ts` runs it against a real vendor named by
  *     `TEST_SANDBOX_CONTRACT_PROVIDER`.
+ *
+ * What the suite assumes about a sandbox booted from `bootSnapshot`. These
+ * are requirements on the test fixture, not on every Amika sandbox:
+ *   - commands run in a POSIX shell with `echo`, `printf`, `pwd`, `sleep`,
+ *     and `exit`;
+ *   - `/tmp` exists;
+ *   - `$HOME` is `provider.userHomeDir`, and the user can write files there;
+ *   - service URLs are `http://` or `https://`.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { fileSink, Ledger } from "./ledger";
@@ -52,12 +60,6 @@ export interface ProviderContractTarget {
    * `getSandboxAdapter` does. Set when the provider registers an adapter.
    */
   openAdapter?(providerSandboxId: string): Promise<SandboxAdapter>;
-  /**
-   * Script the output of `command` before the suite runs it. Only a provider
-   * with no real shell behind it needs this (`simulate`); a real vendor runs
-   * the command and leaves this unset.
-   */
-  scriptExec?(command: string, result: SandboxExecResult): void;
   /**
    * How long to keep polling for a change the vendor applies asynchronously,
    * such as a deleted sandbox leaving the account listing. Default 0: check
@@ -181,16 +183,6 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     return snapshot.providerSnapshotId!;
   }
 
-  function exec(
-    sandbox: Sandbox,
-    command: string,
-    want: SandboxExecResult,
-    opts?: ExecCommandOptions,
-  ): Promise<SandboxExecResult> {
-    target.scriptExec?.(command, want);
-    return sandbox.exec(command, opts);
-  }
-
   const eventually = <T>(check: () => Promise<T>) =>
     retryFor(target.settleMs ?? 0, check);
 
@@ -233,27 +225,26 @@ export function describeProviderContract(target: ProviderContractTarget): void {
       await sandbox.delete();
     });
 
-    describe.skipIf(!caps.lifecycle)("lifecycle", () => {
-      it("is running after create", async () => {
-        const sandbox = await createSandbox();
-        expect(await sandbox.getRuntimeState()).toBe("running");
-      });
-
+    describe.skipIf(!caps.exec)("exec", () => {
       it.each(EXEC_CASES)("$name", async ({ command, opts, want }) => {
         const sandbox = await createSandbox();
-        expect(await exec(sandbox, command, want, opts)).toEqual(want);
+        expect(await sandbox.exec(command, opts)).toEqual(want);
       });
 
       it("runs commands as the user whose home is userHomeDir", async () => {
         const sandbox = await createSandbox();
-        const want = {
+        expect(await sandbox.exec("printf '%s\\n' \"$HOME\"")).toEqual({
           exitCode: 0,
           stdout: `${provider.userHomeDir}\n`,
           stderr: "",
-        };
-        expect(await exec(sandbox, "printf '%s\\n' \"$HOME\"", want)).toEqual(
-          want,
-        );
+        });
+      });
+    });
+
+    describe.skipIf(!caps.lifecycle)("lifecycle", () => {
+      it("is running after create", async () => {
+        const sandbox = await createSandbox();
+        expect(await sandbox.getRuntimeState()).toBe("running");
       });
 
       it("stops and starts again", async () => {
@@ -262,8 +253,11 @@ export function describeProviderContract(target: ProviderContractTarget): void {
         expect(await sandbox.getRuntimeState()).toBe("stopped");
         await sandbox.start();
         expect(await sandbox.getRuntimeState()).toBe("running");
-        const want = { exitCode: 0, stdout: "back\n", stderr: "" };
-        expect(await exec(sandbox, "echo back", want)).toEqual(want);
+        expect(await sandbox.exec("echo back")).toEqual({
+          exitCode: 0,
+          stdout: "back\n",
+          stderr: "",
+        });
       });
 
       it("writes a file and reads it back", async () => {
@@ -315,9 +309,11 @@ export function describeProviderContract(target: ProviderContractTarget): void {
         it("runs a command", async () => {
           const sandbox = await createSandbox();
           const adapter = await target.openAdapter!(sandbox.id);
-          const want = { exitCode: 0, stdout: "via adapter\n", stderr: "" };
-          target.scriptExec?.("echo via adapter", want);
-          expect(await adapter.exec("echo via adapter")).toEqual(want);
+          expect(await adapter.exec("echo via adapter")).toEqual({
+            exitCode: 0,
+            stdout: "via adapter\n",
+            stderr: "",
+          });
         });
 
         it("uploads a file the sandbox can read, and downloads it back", async () => {
@@ -342,20 +338,30 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     describe.skipIf(!caps.streaming)("streaming", () => {
       it("streams stdout and stderr to their own handlers", async () => {
         const sandbox = await createSandbox();
-        const command = "echo out; echo err 1>&2";
-        target.scriptExec?.(command, {
-          exitCode: 0,
-          stdout: "out\n",
-          stderr: "err\n",
-        });
         const stdout: string[] = [];
         const stderr: string[] = [];
-        await sandbox.streamExec(command, {
+        await sandbox.streamExec("echo out; echo err 1>&2", {
           onStdout: (chunk) => stdout.push(chunk),
           onStderr: (chunk) => stderr.push(chunk),
         });
         expect(stdout.join("")).toBe("out\n");
         expect(stderr.join("")).toBe("err\n");
+      });
+
+      it("delivers output while the command is still running", async () => {
+        const sandbox = await createSandbox();
+        const chunks: string[] = [];
+        let firstChunkAt = 0;
+        await sandbox.streamExec("echo first; sleep 2; echo second", {
+          onStdout: (chunk) => {
+            firstChunkAt ||= Date.now();
+            chunks.push(chunk);
+          },
+        });
+        const finishedAt = Date.now();
+        expect(chunks.join("")).toBe("first\nsecond\n");
+        // "first" must arrive during `sleep 2`, not when the command ends.
+        expect(finishedAt - firstChunkAt).toBeGreaterThanOrEqual(1_000);
       });
     });
 
