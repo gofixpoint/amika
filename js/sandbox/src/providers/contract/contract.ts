@@ -15,6 +15,8 @@
  *     `TEST_SANDBOX_CONTRACT_PROVIDER`.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { fileSink, Ledger } from "./ledger";
+import { newRunId } from "./run-dir";
 import type { Logger, SandboxCtx } from "../../logger";
 import { SANDBOX_ORG_ID_LABEL } from "../../constants";
 import type { SandboxService } from "../../types";
@@ -57,6 +59,12 @@ export interface ProviderContractTarget {
    * once.
    */
   settleMs?: number;
+  /**
+   * Append every resource the suite creates, and its deletion outcome, to
+   * this JSON-lines file (see `./ledger.ts`). Unset keeps the ledger in
+   * memory only.
+   */
+  auditFile?: string;
 }
 
 /** The org id stamped on every sandbox the suite creates. */
@@ -109,42 +117,67 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     async (name) => snapshotIds.get(name) ?? null,
   );
   const caps = provider.capabilities;
-  const runId = `${Date.now().toString(36)}-${process.pid.toString(36)}`;
+  const runId = newRunId();
   let sequence = 0;
   const uniqueName = (kind: string) =>
     `contract-${kind}-${runId}-${(sequence += 1)}`;
 
-  // Everything created in a test, deleted in reverse order after it.
-  const cleanup: Array<() => Promise<void>> = [];
-  afterEach(async () => {
-    for (const release of cleanup.splice(0).reverse()) {
-      await release().catch((error: unknown) => {
-        console.warn(`contract cleanup failed: ${String(error)}`);
-      });
-    }
-  });
+  // Every resource a test creates is recorded here the moment it exists and
+  // deleted, newest first, after the test. The outcome of each delete is
+  // recorded too, so the file is a full audit of what the run touched.
+  const ledger = new Ledger(
+    provider.name,
+    target.auditFile ? fileSink(target.auditFile) : () => {},
+  );
+  afterEach(() => ledger.release());
+  const currentTest = () => expect.getState().currentTestName ?? "unknown";
 
   async function createSandbox(
     overrides: { services?: SandboxService[]; scrubSafe?: boolean } = {},
     snapshot: string = target.bootSnapshot,
   ): Promise<Sandbox> {
+    const name = uniqueName("sb");
     const sandbox = await provider.sandboxes.create(ctx, {
-      name: uniqueName("sb"),
+      name,
       snapshot,
       services: overrides.services ?? [],
       labels: { [SANDBOX_ORG_ID_LABEL]: ORG_ID },
       scrubSafe: overrides.scrubSafe,
     });
-    cleanup.push(() => sandbox.delete());
+    ledger.track({
+      kind: "sandbox",
+      id: sandbox.id,
+      name,
+      test: currentTest(),
+      delete: () => sandbox.delete(),
+      // Only a provider that can list its sandboxes can confirm one is gone.
+      verifyGone: caps.listSandboxes
+        ? () =>
+            isGone(async () => {
+              const listed = await provider.sandboxes.list();
+              return !listed.some((l) => l.providerSandboxId === sandbox.id);
+            })
+        : undefined,
+    });
     return sandbox;
   }
 
-  /** Capture a snapshot, record its id, and schedule its deletion. */
+  /** Record a captured snapshot so it is looked up by id and deleted after the test. */
   function trackSnapshot(snapshot: Snapshot): Snapshot {
     if (snapshot.providerSnapshotId) {
       snapshotIds.set(snapshot.name, snapshot.providerSnapshotId);
     }
-    cleanup.push(() => snapshot.delete());
+    ledger.track({
+      kind: "snapshot",
+      id: snapshot.providerSnapshotId ?? snapshot.name,
+      name: snapshot.name,
+      test: currentTest(),
+      delete: () => snapshot.delete(),
+      verifyGone: () =>
+        isGone(
+          async () => (await provider.snapshots!.get(snapshot.name)) === null,
+        ),
+    });
     return snapshot;
   }
 
@@ -167,6 +200,13 @@ export function describeProviderContract(target: ProviderContractTarget): void {
 
   const eventually = <T>(check: () => Promise<T>) =>
     retryFor(target.settleMs ?? 0, check);
+
+  /** Poll `check` for the settle window; `false` if it never reported gone. */
+  const isGone = (check: () => Promise<boolean>) =>
+    eventually(async () => {
+      if (!(await check())) throw new Error("still present");
+      return true;
+    }).catch(() => false);
 
   describe(`${provider.name} provider contract`, () => {
     it("is registered with the capability flags it was built with", () => {

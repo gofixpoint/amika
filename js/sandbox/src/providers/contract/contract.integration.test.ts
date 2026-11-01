@@ -9,7 +9,8 @@
  * uses (see `../../config-from-env.ts`). The suite turns the selected
  * provider's `*_ENABLED` flag on by itself. Every sandbox and snapshot the
  * suite creates is deleted after its test, and names carry a per-run id so
- * two runs never collide.
+ * two runs never collide. Every resource and its deletion outcome is recorded
+ * in `.contract-runs/<run id>/audit.jsonl` (see `./ledger.ts`).
  *
  * With `TEST_SANDBOX_CONTRACT_PROVIDER` unset this file skips.
  */
@@ -19,6 +20,7 @@ import type { SandboxProviderName } from "../../types";
 import { isSandboxProviderName } from "../capabilities";
 import { createSandboxProvider, getSandboxAdapter } from "../registry";
 import { describeProviderContract } from "./contract";
+import { auditFileFor, newRunId } from "./run-dir";
 
 /**
  * The env var that enables each provider in `sandboxProviderConfigsFromEnv`.
@@ -79,5 +81,6 @@ if (!providerName) {
     openAdapter: (id) => getSandboxAdapter(providerName, deps, id),
     bootSnapshot,
     settleMs: VENDOR_SETTLE_MS,
+    auditFile: auditFileFor(newRunId()),
   });
 }
