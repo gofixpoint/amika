@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "formatcheck": "prettier --check .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@amika/service-auth": "workspace:*",
