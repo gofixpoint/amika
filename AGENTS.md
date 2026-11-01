@@ -136,6 +136,10 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - The Amika API (amika-mono's control plane) and its clients here (the CLI, the TypeScript SDK) ship together, API first. Don't add extra requests, client-side checks, or fallbacks for older servers unless asked.
 - Ports 60899–60999 are reserved inside sandbox containers for Amika services. See `docs/sandbox-configuration.md` for the allocation table. Any command or API that accepts a user-specified container port must reject this range by calling `services.ValidatePort` (`go/internal/services`); keep client-side and server-side validation in sync.
 
+## Commits and Pull Requests
+
+Format PR titles and descriptions as git commit messages: squash-merging makes the PR message the commit message on `main`.
+
 ## Documentation Style
 
 For user-facing docs (`docs/`, README):
