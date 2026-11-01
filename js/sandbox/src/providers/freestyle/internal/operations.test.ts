@@ -70,7 +70,7 @@ function createInput(
   };
 }
 
-describe("createFreestyleSandbox org gating", () => {
+describe("createFreestyleSandbox naming", () => {
   beforeEach(() => {
     createVm.mockReset();
     refVm.mockReset();
@@ -80,12 +80,12 @@ describe("createFreestyleSandbox org gating", () => {
     createVm.mockResolvedValue({ vmId: "vm_1", domains: [] });
   });
 
-  it("folds the org id into the VM name", async () => {
+  it("names the VM with the caller's name, labels or not", async () => {
     await createFreestyleSandbox(ctx(), config, createInput());
 
     expect(createVm).toHaveBeenCalledTimes(1);
     expect(createVm.mock.calls[0][0]).toMatchObject({
-      name: "org_abc123/my-sandbox",
+      name: "my-sandbox",
       snapshotId: "snap_123",
     });
   });
@@ -100,16 +100,6 @@ describe("createFreestyleSandbox org gating", () => {
     expect(createVm.mock.calls[0][0]).toMatchObject({
       idleTimeoutSeconds: 365 * 24 * 60 * 60,
     });
-  });
-
-  it("falls back to the bare name when no org label is present", async () => {
-    await createFreestyleSandbox(
-      ctx(),
-      config,
-      createInput({ labels: undefined }),
-    );
-
-    expect(createVm.mock.calls[0][0]).toMatchObject({ name: "my-sandbox" });
   });
 
   it("never resizes the VM (size is baked into the snapshot)", async () => {
@@ -229,11 +219,9 @@ describe("listFreestyleSandboxes", () => {
 
   const sizing = { vcpuCount: 2, memSizeMib: 4096, rootfsSizeMb: 10240 };
 
-  it("maps each VM to its org (from the name), state, and GiB sizing", async () => {
+  it("maps each VM to its state and GiB sizing, with no org", async () => {
     listVms.mockResolvedValue({
-      vms: [
-        { id: "vm_1", name: `${"org_abc"}/my-box`, state: "running", sizing },
-      ],
+      vms: [{ id: "vm_1", name: "my-box", state: "running", sizing }],
     });
 
     const listings = await listFreestyleSandboxes(config);
@@ -241,20 +229,12 @@ describe("listFreestyleSandboxes", () => {
     expect(listings).toEqual([
       {
         providerSandboxId: "vm_1",
-        orgId: "org_abc",
+        orgId: null,
         state: "running",
         // 4096 MiB → 4 GiB, 10240 MiB → 10 GiB.
         sizing: { vcpus: 2, memoryGib: 4, diskGib: 10 },
       },
     ]);
-  });
-
-  it("reports a null org for a VM name with no org prefix", async () => {
-    listVms.mockResolvedValue({
-      vms: [{ id: "vm_1", name: "legacy-box", state: "running", sizing }],
-    });
-
-    expect((await listFreestyleSandboxes(config))[0]?.orgId).toBeNull();
   });
 
   it("skips soft-deleted VMs still lingering in the list", async () => {
