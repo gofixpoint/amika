@@ -325,7 +325,7 @@ func TestE2ECases(t *testing.T) {
 			// step failed or the test panicked.
 			t.Cleanup(func() {
 				results := runner.Cleanup(bin, r.Ledger().Entries(), r.CleanupEnv())
-				audit.add(runner.AuditRows(caseName, results))
+				audit.add(runner.AuditRows(caseName, results, r.Ledger().Released()))
 				if err := runner.WriteCleanupResults(runDir, results); err != nil {
 					t.Logf("write cleanup results: %v", err)
 				}

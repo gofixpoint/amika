@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAuditRowsReadOldestFirstWithOneOutcomeEach(t *testing.T) {
@@ -13,7 +14,7 @@ func TestAuditRowsReadOldestFirstWithOneOutcomeEach(t *testing.T) {
 		{Entry: Entry{Type: "sandbox", Name: "sb-2", CreatedByStep: "create second"}, Verified: VerifiedUnsupported},
 		{Entry: Entry{Type: "sandbox", Name: "sb-1", CreatedByStep: "create first"}, Verified: VerifiedGone},
 	}
-	rows := AuditRows("api-lifecycle", results)
+	rows := AuditRows("api-lifecycle", results, nil)
 	want := []AuditRow{
 		{Case: "api-lifecycle", Type: "sandbox", Name: "sb-1", CreatedByStep: "create first", Outcome: OutcomeDeleted},
 		{Case: "api-lifecycle", Type: "sandbox", Name: "sb-2", CreatedByStep: "create second", Outcome: OutcomeDeletedUnverified},
@@ -74,5 +75,29 @@ func TestRenderAuditMarkdownEscapesPipes(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("markdown audit missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestAuditRowsIncludeReleasedResourcesInCreationOrder(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	results := []CleanupResult{
+		{Entry: Entry{Type: "snapshot", Name: "snap", CreatedAt: t0.Add(2 * time.Minute)}, Verified: VerifiedGone},
+	}
+	released := []Entry{
+		{Type: "sandbox", Name: "source", CreatedByStep: "create", CreatedAt: t0, Released: &Release{ByStep: "scrub and delete", Verified: VerifiedGone}},
+		{Type: "ssh-key", Name: "k1", CreatedByStep: "push", CreatedAt: t0.Add(time.Minute), Released: &Release{ByStep: "delete key", Verified: VerifiedUnsupported}},
+	}
+	rows := AuditRows("api-x", results, released)
+	got := make([]string, len(rows))
+	for i, row := range rows {
+		got[i] = row.Name + "=" + row.Outcome + "|" + row.Detail
+	}
+	want := []string{
+		`source=deleted|consumed by step "scrub and delete"`,
+		`k1=deleted (unverified)|consumed by step "delete key"`,
+		"snap=deleted|",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("rows:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

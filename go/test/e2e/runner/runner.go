@@ -531,6 +531,9 @@ type Options struct {
 	// network) or a local filesystem path. Steps using expect.schema fail
 	// clearly if this is empty.
 	SchemaDoc string
+	// VerifyPolicy bounds the verify_gone poll a release_resource step runs.
+	// Zero uses DefaultVerifyPolicy.
+	VerifyPolicy VerifyPolicy
 	// RunID, if set, is exposed to every case as the `{{run_id}}` template
 	// variable. Cases that name a remote resource should build the name from
 	// it, so two runs sharing an account cannot collide with each other or
@@ -1083,18 +1086,49 @@ func substituteArgv(field string, argv []string, vars map[string]string) ([]stri
 	return out, nil
 }
 
+// releaseResource hands a resource that the step proved was consumed (for
+// example a source rig a scrub-and-delete snapshot removed) back from
+// cleanup. A step's own assertion is not trusted alone: when the resource has
+// a verify_gone check, it must confirm the resource is gone, or the resource
+// stays with cleanup and the step fails. The entry stays in the ledger as
+// history, so the audit still shows it.
 func (r *Runner) releaseResource(step Step) error {
 	if step.ReleaseResource == nil {
 		return nil
 	}
-	removed, err := r.ledger.Remove(step.ReleaseResource.Type, step.ReleaseResource.Name)
-	if err != nil {
-		return fmt.Errorf("release resource %s %q: %w", step.ReleaseResource.Type, step.ReleaseResource.Name, err)
+	ref := step.ReleaseResource
+	entry, ok := r.ledger.Pending(ref.Type, ref.Name)
+	if !ok {
+		return fmt.Errorf("release resource %s %q: no matching resource is registered", ref.Type, ref.Name)
 	}
-	if !removed {
-		return fmt.Errorf("release resource %s %q: no matching resource is registered", step.ReleaseResource.Type, step.ReleaseResource.Name)
+	verified := VerifiedUnsupported
+	if entry.VerifyGoneError != "" {
+		return fmt.Errorf("release resource %s %q: kept for cleanup, its verify_gone check could not be built: %s", ref.Type, ref.Name, entry.VerifyGoneError)
+	}
+	if entry.VerifyGone != nil {
+		env := mergeEnv(r.CleanupEnv(), entry.Env)
+		v, err := verifyGone(r.opts.BinPath, entry, env, r.verifyPolicy())
+		if err != nil {
+			return fmt.Errorf("release resource %s %q: kept for cleanup: %w", ref.Type, ref.Name, err)
+		}
+		verified = v
+	}
+	released, err := r.ledger.Release(ref.Type, ref.Name, Release{ByStep: step.Name, At: time.Now().UTC(), Verified: verified})
+	if err != nil {
+		return fmt.Errorf("release resource %s %q: %w", ref.Type, ref.Name, err)
+	}
+	if !released {
+		return fmt.Errorf("release resource %s %q: no matching resource is registered", ref.Type, ref.Name)
 	}
 	return nil
+}
+
+// verifyPolicy is how long a release waits for verify_gone to say "gone".
+func (r *Runner) verifyPolicy() VerifyPolicy {
+	if r.opts.VerifyPolicy == (VerifyPolicy{}) {
+		return DefaultVerifyPolicy
+	}
+	return r.opts.VerifyPolicy
 }
 
 // cleanupTargetEnvKeys are the environment variables that determine which

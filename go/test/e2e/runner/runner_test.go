@@ -589,7 +589,7 @@ func TestLedgerAppendPersistsToDisk(t *testing.T) {
 	}
 }
 
-func TestLedgerRemovePersistsToDisk(t *testing.T) {
+func TestLedgerReleaseKeepsHistoryOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	ledgerPath := filepath.Join(dir, "ledger.json")
 	l, err := NewLedger(ledgerPath)
@@ -605,23 +605,32 @@ func TestLedgerRemovePersistsToDisk(t *testing.T) {
 		}
 	}
 
-	removed, err := l.Remove("sandbox", "sb-1")
-	if err != nil {
-		t.Fatalf("Remove: %v", err)
+	released, err := l.Release("sandbox", "sb-1", Release{ByStep: "consume", Verified: VerifiedGone})
+	if err != nil || !released {
+		t.Fatalf("Release = %v, %v; want true, nil", released, err)
 	}
-	if !removed {
-		t.Fatal("expected matching resource to be removed")
+	if released, err := l.Release("sandbox", "sb-1", Release{}); err != nil || released {
+		t.Fatalf("releasing an already released entry = %v, %v; want false, nil", released, err)
 	}
-	if removed, err := l.Remove("sandbox", "missing"); err != nil || removed {
-		t.Fatalf("remove missing resource = %v, %v; want false, nil", removed, err)
+	if released, err := l.Release("sandbox", "missing", Release{}); err != nil || released {
+		t.Fatalf("release missing resource = %v, %v; want false, nil", released, err)
 	}
 
+	if pending := l.Entries(); len(pending) != 1 || pending[0].Name != "snap-1" {
+		t.Fatalf("expected only snap-1 pending, got %+v", pending)
+	}
+	if rel := l.Released(); len(rel) != 1 || rel[0].Name != "sb-1" || rel[0].Released.ByStep != "consume" {
+		t.Fatalf("expected sb-1 released by consume, got %+v", rel)
+	}
 	onDisk, err := LoadLedgerEntries(ledgerPath)
 	if err != nil {
 		t.Fatalf("LoadLedgerEntries: %v", err)
 	}
-	if len(onDisk) != 1 || onDisk[0].Name != "snap-1" {
-		t.Fatalf("unexpected on-disk entries after remove: %+v", onDisk)
+	if len(onDisk) != 2 || onDisk[0].Released == nil || onDisk[1].Released != nil {
+		t.Fatalf("expected both entries on disk, sb-1 marked released: %+v", onDisk)
+	}
+	if pending := PendingEntries(onDisk); len(pending) != 1 || pending[0].Name != "snap-1" {
+		t.Fatalf("expected the sweep to see only snap-1, got %+v", pending)
 	}
 }
 
@@ -804,7 +813,7 @@ func TestCleanupAcceptsAFailedDeleteOfAnAlreadyGoneResource(t *testing.T) {
 		}
 	}
 
-	rows := AuditRows("api-x", CleanupVerified(bin, entries[:1], nil, fast))
+	rows := AuditRows("api-x", CleanupVerified(bin, entries[:1], nil, fast), nil)
 	if rows[0].Outcome != OutcomeDeleted || !strings.Contains(rows[0].Detail, "already gone") {
 		t.Errorf("audit row: want deleted with an already-gone note, got %+v", rows[0])
 	}
@@ -966,7 +975,7 @@ func TestRegisterKeepsResourceWhenVerifyTemplateFails(t *testing.T) {
 	if res.Err == nil || res.Verified != VerifiedUnchecked {
 		t.Fatalf("expected the cleanup to count as a failure, got %+v", res)
 	}
-	if rows := AuditRows("c", []CleanupResult{res}); rows[0].Outcome != OutcomeLeaked {
+	if rows := AuditRows("c", []CleanupResult{res}, nil); rows[0].Outcome != OutcomeLeaked {
 		t.Fatalf("expected the audit to flag it, got %+v", rows[0])
 	}
 }
@@ -1153,7 +1162,11 @@ func TestRunnerReleasesResourceOnlyAfterAssertionsPass(t *testing.T) {
 			t.Fatalf("RunCase: %v", err)
 		}
 		if entries := r.Ledger().Entries(); len(entries) != 0 {
-			t.Fatalf("expected released resource to leave the ledger, got %+v", entries)
+			t.Fatalf("expected released resource to leave cleanup, got %+v", entries)
+		}
+		rel := r.Ledger().Released()
+		if len(rel) != 1 || rel[0].Released.ByStep != "confirm deletion" || rel[0].Released.Verified != VerifiedUnsupported {
+			t.Fatalf("expected the release kept as history, got %+v", rel)
 		}
 	})
 
@@ -1192,6 +1205,57 @@ func TestRunnerReleasesResourceOnlyAfterAssertionsPass(t *testing.T) {
 			t.Fatalf("expected failed assertion to retain cleanup resource, got %+v", entries)
 		}
 	})
+}
+
+// TestReleaseVerifiesBeforeHandingBackFromCleanup covers a release whose
+// resource has a verify_gone check: it is released only when the check says
+// gone, and otherwise stays with cleanup and fails the step.
+func TestReleaseVerifiesBeforeHandingBackFromCleanup(t *testing.T) {
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	run := func(lookupExit, lookupStderr string) (*Runner, error) {
+		r, err := New(Options{BinPath: bin, RunDir: t.TempDir(), VerifyPolicy: fast})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{
+			Name: "release with verify",
+			Steps: []Step{
+				{
+					Name: "create",
+					Cmd:  []string{"0", "", ""},
+					Resource: &Resource{
+						Type:       "sandbox",
+						Name:       "sb-1",
+						Cleanup:    []string{"0", "", ""},
+						VerifyGone: &VerifyGone{Cmd: []string{lookupExit, "", lookupStderr}, NotFound: "HTTP 404"},
+					},
+				},
+				{
+					Name:            "consume",
+					Cmd:             []string{"0", "", ""},
+					ReleaseResource: &ResourceRef{Type: "sandbox", Name: "sb-1"},
+				},
+			},
+		}
+		return r, r.RunCase(context.Background(), c)
+	}
+
+	r, err := run("1", "HTTP 404")
+	if err != nil {
+		t.Fatalf("expected a verified release, got %v", err)
+	}
+	if rel := r.Ledger().Released(); len(rel) != 1 || rel[0].Released.Verified != VerifiedGone {
+		t.Fatalf("expected sb-1 released as verified gone, got %+v", rel)
+	}
+
+	r, err = run("0", "")
+	if err == nil || !strings.Contains(err.Error(), "kept for cleanup") {
+		t.Fatalf("expected the release to fail while sb-1 still exists, got %v", err)
+	}
+	if pending := r.Ledger().Entries(); len(pending) != 1 {
+		t.Fatalf("expected sb-1 kept for cleanup, got %+v", pending)
+	}
 }
 
 // TestRunnerRegistersResourceFromSameStepCapture covers the common real-world

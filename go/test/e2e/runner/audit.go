@@ -2,7 +2,10 @@ package runner
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Audit outcomes. A row's Outcome is one of these.
@@ -32,11 +35,31 @@ type AuditRow struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// AuditRows turns one case's cleanup results into audit rows, in the order
-// the resources were created.
-func AuditRows(caseName string, results []CleanupResult) []AuditRow {
-	rows := make([]AuditRow, 0, len(results))
-	// Cleanup runs newest first; the audit reads better oldest first.
+// AuditRows turns one case's resources into audit rows, in the order they
+// were created: those cleanup deleted (results) and those a step released
+// after proving an operation consumed them (released).
+func AuditRows(caseName string, results []CleanupResult, released []Entry) []AuditRow {
+	type dated struct {
+		at  time.Time
+		row AuditRow
+	}
+	all := make([]dated, 0, len(results)+len(released))
+	for _, entry := range released {
+		row := AuditRow{
+			Case:          caseName,
+			Type:          entry.Type,
+			Name:          entry.Name,
+			CreatedByStep: entry.CreatedByStep,
+			Outcome:       OutcomeDeleted,
+			Detail:        "consumed by step " + strconv.Quote(entry.Released.ByStep),
+		}
+		if entry.Released.Verified != VerifiedGone {
+			row.Outcome = OutcomeDeletedUnverified
+		}
+		all = append(all, dated{entry.CreatedAt, row})
+	}
+	// Cleanup runs newest first; walk it backwards so equal timestamps keep
+	// creation order through the stable sort below.
 	for i := len(results) - 1; i >= 0; i-- {
 		res := results[i]
 		row := AuditRow{
@@ -57,7 +80,12 @@ func AuditRows(caseName string, results []CleanupResult) []AuditRow {
 		default:
 			row.Outcome = OutcomeDeletedUnverified
 		}
-		rows = append(rows, row)
+		all = append(all, dated{res.Entry.CreatedAt, row})
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+	rows := make([]AuditRow, len(all))
+	for i, d := range all {
+		rows[i] = d.row
 	}
 	return rows
 }

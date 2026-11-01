@@ -60,6 +60,30 @@ type Entry struct {
 	Env map[string]string `json:"env,omitempty"`
 	// CreatedAt is when the resource was registered.
 	CreatedAt time.Time `json:"created_at"`
+	// Released is set when a step proved an operation consumed the resource
+	// (release_resource), so cleanup no longer owns it. The entry stays in the
+	// ledger as history; cleanup and the sweep skip it.
+	Released *Release `json:"released,omitempty"`
+}
+
+// Release records how a resource left the cleanup ledger without cleanup.
+type Release struct {
+	ByStep string    `json:"by_step"`
+	At     time.Time `json:"at"`
+	// Verified is VerifiedGone when the entry's verify_gone check confirmed
+	// the resource was gone, VerifiedUnsupported when it has no check.
+	Verified string `json:"verified"`
+}
+
+// PendingEntries returns the entries cleanup still owns: those not released.
+func PendingEntries(entries []Entry) []Entry {
+	pending := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Released == nil {
+			pending = append(pending, entry)
+		}
+	}
+	return pending
 }
 
 // Ledger is an incremental, disk-backed record of resources created during
@@ -94,24 +118,35 @@ func (l *Ledger) Append(entry Entry) error {
 	return l.flushLocked()
 }
 
-// Remove deletes the most recently registered resource matching resourceType
-// and name, then flushes the updated ledger. It is used after a case verifies
-// that an operation consumed a previously registered resource. If the flush
-// fails, the in-memory ledger is restored so cleanup protection is retained.
-func (l *Ledger) Remove(resourceType, name string) (bool, error) {
+// Pending returns the most recently registered entry matching resourceType
+// and name that cleanup still owns.
+func (l *Ledger) Pending(resourceType, name string) (Entry, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for i := len(l.entries) - 1; i >= 0; i-- {
-		if l.entries[i].Type != resourceType || l.entries[i].Name != name {
+		e := l.entries[i]
+		if e.Type == resourceType && e.Name == name && e.Released == nil {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+// Release marks the most recently registered pending entry matching
+// resourceType and name as released, then flushes. The entry stays in the
+// ledger as history; cleanup skips it from now on. If the flush fails, the
+// mark is undone so cleanup protection is retained.
+func (l *Ledger) Release(resourceType, name string, release Release) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		e := &l.entries[i]
+		if e.Type != resourceType || e.Name != name || e.Released != nil {
 			continue
 		}
-		original := l.entries
-		updated := make([]Entry, 0, len(original)-1)
-		updated = append(updated, original[:i]...)
-		updated = append(updated, original[i+1:]...)
-		l.entries = updated
+		e.Released = &release
 		if err := l.flushLocked(); err != nil {
-			l.entries = original
+			e.Released = nil
 			return false, err
 		}
 		return true, nil
@@ -119,13 +154,24 @@ func (l *Ledger) Remove(resourceType, name string) (bool, error) {
 	return false, nil
 }
 
-// Entries returns a copy of the entries recorded so far, in registration
-// order.
+// Entries returns the entries cleanup still owns (not released), in
+// registration order.
 func (l *Ledger) Entries() []Entry {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := make([]Entry, len(l.entries))
-	copy(out, l.entries)
+	return PendingEntries(l.entries)
+}
+
+// Released returns the entries a step released, in registration order.
+func (l *Ledger) Released() []Entry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []Entry
+	for _, e := range l.entries {
+		if e.Released != nil {
+			out = append(out, e)
+		}
+	}
 	return out
 }
 
@@ -374,6 +420,7 @@ func CleanupFromLedgerFile(binPath, ledgerPath string, env []string) ([]CleanupR
 	if err != nil {
 		return nil, err
 	}
+	entries = PendingEntries(entries)
 	return Cleanup(binPath, entries, env), nil
 }
 
