@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // -----------------------------------------------------------------------
@@ -715,6 +716,45 @@ func TestCleanupRunsInReverseOrderAndContinuesOnFailure(t *testing.T) {
 	}
 }
 
+// TestCleanupVerifiesDeletionAgainstListing covers the four verification
+// outcomes: the listing no longer names the resource (gone), the entry has no
+// listing command (unsupported), the listing still names it when the poll
+// gives up (still_present, a failure), and the listing command itself fails
+// (unchecked, a failure).
+func TestCleanupVerifiesDeletionAgainstListing(t *testing.T) {
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	deleteOK := []string{"0", "", ""}
+
+	entries := []Entry{
+		{Type: "sandbox", Name: "gone-one", CleanupArgv: deleteOK, VerifyArgv: []string{"0", `[{"name":"someone-else"}]`, ""}},
+		{Type: "sandbox", Name: "blind", CleanupArgv: deleteOK},
+		{Type: "sandbox", Name: "sticky", CleanupArgv: deleteOK, VerifyArgv: []string{"0", `[{"name":"sticky"}]`, ""}},
+		{Type: "sandbox", Name: "unlistable", CleanupArgv: deleteOK, VerifyArgv: []string{"1", "", "list broke"}},
+		{Type: "sandbox", Name: "undeletable", CleanupArgv: []string{"1", "", "boom"}, VerifyArgv: []string{"0", "", ""}},
+	}
+	byName := map[string]CleanupResult{}
+	for _, res := range CleanupVerified(bin, entries, nil, fast) {
+		byName[res.Entry.Name] = res
+	}
+
+	if res := byName["gone-one"]; res.Verified != VerifiedGone || res.Err != nil {
+		t.Fatalf("expected gone-one verified gone, got %+v", res)
+	}
+	if res := byName["blind"]; res.Verified != VerifiedUnsupported || res.Err != nil {
+		t.Fatalf("expected blind to be unsupported and clean, got %+v", res)
+	}
+	if res := byName["sticky"]; res.Verified != VerifiedStillPresent || res.Err == nil {
+		t.Fatalf("expected sticky to be still present and failed, got %+v", res)
+	}
+	if res := byName["unlistable"]; res.Verified != VerifiedUnchecked || res.Err == nil || !strings.Contains(res.Err.Error(), "list broke") {
+		t.Fatalf("expected unlistable to be unchecked with the listing's stderr, got %+v", res)
+	}
+	if res := byName["undeletable"]; res.Verified != VerifiedUnchecked || res.Err == nil {
+		t.Fatalf("expected a failed delete to stay unchecked, got %+v", res)
+	}
+}
+
 func TestCleanupFromLedgerFile(t *testing.T) {
 	bin := stubScript(t)
 	dir := t.TempDir()
@@ -925,9 +965,10 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 				Expect:  Expectation{Exit: intPtr(0)},
 				Capture: map[string]string{"sandbox_name": "$.name"},
 				Resource: &Resource{
-					Type:    "sandbox",
-					Name:    "{{sandbox_name}}",
-					Cleanup: []string{"0", "deleted {{sandbox_name}}", ""},
+					Type:       "sandbox",
+					Name:       "{{sandbox_name}}",
+					Cleanup:    []string{"0", "deleted {{sandbox_name}}", ""},
+					VerifyGone: []string{"0", "listing without {{sandbox_name}}", ""},
 				},
 			},
 		},
@@ -946,6 +987,9 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 	}
 	if len(entries[0].CleanupArgv) != 3 || entries[0].CleanupArgv[1] != "deleted sb-xyz" {
 		t.Fatalf("expected cleanup argv templated with the same-step capture, got %#v", entries[0].CleanupArgv)
+	}
+	if len(entries[0].VerifyArgv) != 3 || entries[0].VerifyArgv[1] != "listing without sb-xyz" {
+		t.Fatalf("expected verify argv templated with the same-step capture, got %#v", entries[0].VerifyArgv)
 	}
 }
 

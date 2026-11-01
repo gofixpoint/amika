@@ -252,6 +252,12 @@ type Resource struct {
 	// Cleanup is the amika argv (not including the binary itself) that
 	// deletes the resource. Elements may contain "{{var}}" templates.
 	Cleanup []string `yaml:"cleanup"`
+	// VerifyGone is an optional amika argv that lists resources of this kind,
+	// e.g. [rig, list, -o, json]. After Cleanup runs, the runner polls this
+	// command until its stdout no longer contains Name, and records the
+	// resource as verified gone. A resource still listed when the poll gives
+	// up counts as a failed cleanup. Elements may contain "{{var}}" templates.
+	VerifyGone []string `yaml:"verify_gone"`
 	// RegisterOnFailure, when true, registers the resource for cleanup even if
 	// the creating step exits with an unexpected status. Off by default: an
 	// unexpected exit is ambiguous (the command may have failed before
@@ -934,19 +940,20 @@ func (r *Runner) registerResource(step Step) error {
 	if err != nil {
 		return fmt.Errorf("resource.name: %w", err)
 	}
-	cleanup := make([]string, len(step.Resource.Cleanup))
-	for i, arg := range step.Resource.Cleanup {
-		v, err := substituteString(arg, r.vars)
-		if err != nil {
-			return fmt.Errorf("resource.cleanup[%d]: %w", i, err)
-		}
-		cleanup[i] = v
+	cleanup, err := substituteArgv("resource.cleanup", step.Resource.Cleanup, r.vars)
+	if err != nil {
+		return err
+	}
+	verify, err := substituteArgv("resource.verify_gone", step.Resource.VerifyGone, r.vars)
+	if err != nil {
+		return err
 	}
 	entry := Entry{
 		Type:          step.Resource.Type,
 		Name:          name,
 		CreatedByStep: step.Name,
 		CleanupArgv:   cleanup,
+		VerifyArgv:    verify,
 		Env:           r.resourceEnv(step),
 		CreatedAt:     time.Now().UTC(),
 	}
@@ -954,6 +961,22 @@ func (r *Runner) registerResource(step Step) error {
 		return fmt.Errorf("register resource %q: %w", name, err)
 	}
 	return nil
+}
+
+// substituteArgv templates every element of argv. A nil argv stays nil.
+func substituteArgv(field string, argv []string, vars map[string]string) ([]string, error) {
+	if argv == nil {
+		return nil, nil
+	}
+	out := make([]string, len(argv))
+	for i, arg := range argv {
+		v, err := substituteString(arg, vars)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, i, err)
+		}
+		out[i] = v
+	}
+	return out, nil
 }
 
 func (r *Runner) releaseResource(step Step) error {
