@@ -5,12 +5,14 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -248,6 +250,11 @@ func TestE2ECases(t *testing.T) {
 		}
 	}()
 
+	// Every case's cleanup results feed one audit, printed after the last
+	// case so the whole run's resources are visible in one place.
+	audit := &auditCollector{}
+	t.Cleanup(func() { reportAudit(t, audit.rows(), runID, runsRoot) })
+
 	// The reserve exists to protect the deletion of real remote resources, so
 	// it is only enforced for a run that can create them. Offline cases finish
 	// in milliseconds and clean up nothing, and holding them to a multi-minute
@@ -318,6 +325,7 @@ func TestE2ECases(t *testing.T) {
 			// step failed or the test panicked.
 			t.Cleanup(func() {
 				results := runner.Cleanup(bin, r.Ledger().Entries(), r.CleanupEnv())
+				audit.add(runner.AuditRows(caseName, results))
 				if err := runner.WriteCleanupResults(runDir, results); err != nil {
 					t.Logf("write cleanup results: %v", err)
 				}
@@ -333,5 +341,67 @@ func TestE2ECases(t *testing.T) {
 				t.Fatalf("%v", err)
 			}
 		})
+	}
+}
+
+// auditCollector gathers audit rows from every case's cleanup. Cases run one
+// at a time, but their cleanups are registered on separate subtests, so a
+// lock keeps the collector safe either way.
+type auditCollector struct {
+	mu   sync.Mutex
+	list []runner.AuditRow
+}
+
+func (c *auditCollector) add(rows []runner.AuditRow) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.list = append(c.list, rows...)
+}
+
+func (c *auditCollector) rows() []runner.AuditRow {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]runner.AuditRow(nil), c.list...)
+}
+
+// reportAudit prints the run's resource audit to stdout, writes it beside
+// the ledgers, appends it to the GitHub Actions step summary when there is
+// one, and fails the run when any resource leaked. A leaked sandbox costs
+// money every hour, so the run must be red until someone looks.
+//
+// Offline runs create nothing and print nothing, unless real-API cases were
+// enabled, in which case the audit is printed even when empty so a reader
+// can see that nothing was created.
+func reportAudit(t *testing.T, rows []runner.AuditRow, runID, runsRoot string) {
+	t.Helper()
+	if len(rows) == 0 && os.Getenv(runAPIEnv) != "1" {
+		return
+	}
+	text := runner.RenderAuditText(rows, runID, runsRoot)
+	fmt.Print("\n" + text + "\n")
+
+	if err := os.WriteFile(filepath.Join(runsRoot, "audit.txt"), []byte(text), 0o644); err != nil {
+		t.Logf("write audit.txt: %v", err)
+	}
+	if data, err := json.MarshalIndent(rows, "", "  "); err == nil {
+		if err := os.WriteFile(filepath.Join(runsRoot, "audit.json"), data, 0o644); err != nil {
+			t.Logf("write audit.json: %v", err)
+		}
+	}
+	if summaryPath := os.Getenv("GITHUB_STEP_SUMMARY"); summaryPath != "" {
+		f, err := os.OpenFile(summaryPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+		if err == nil {
+			_, _ = f.WriteString(runner.RenderAuditMarkdown(rows, runID) + "\n\n")
+			_ = f.Close()
+		}
+	}
+	leaked := runner.LeakedRows(rows)
+	if os.Getenv("GITHUB_ACTIONS") != "" {
+		for _, row := range leaked {
+			fmt.Printf("::warning::leaked %s %q from case %s: %s\n", row.Type, row.Name, row.Case, row.Detail)
+		}
+	}
+	if len(leaked) > 0 {
+		t.Errorf("%d resource(s) leaked; see the audit above and %s", len(leaked), runsRoot)
 	}
 }
