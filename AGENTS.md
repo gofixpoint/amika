@@ -138,7 +138,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 
 ## Commits and Pull Requests
 
-Format PR titles and descriptions as git commit messages: squash-merging makes the PR message the commit message on `main`.
+Format PR titles and descriptions as git commit messages: merging a PR, squashed or not, makes the PR message the commit message on `main`.
 
 ## Documentation Style
 
