@@ -3,7 +3,7 @@
  * that creates them returns. Kept apart from the scenarios so the failure
  * paths (a capture that creates and then throws) can be tested directly.
  */
-import type { SandboxProvider, Snapshot } from "../provider";
+import type { MintedSshHandle, SandboxProvider, Snapshot } from "../provider";
 import type { Ledger } from "./ledger";
 
 export interface TrackingContext {
@@ -63,4 +63,31 @@ export function trackSnapshot(
     }
     return snapshot;
   };
+}
+
+let sshSequence = 0;
+
+/**
+ * Record SSH access the moment it is minted, so it is revoked after the test
+ * even when an assertion about it fails first. Revoking twice is fine: the
+ * contract makes `revoke` idempotent.
+ *
+ * The ledger gets a made-up id and the sandbox it belongs to, never the
+ * token. That keeps secrets off disk, and it means a killed run's access
+ * cannot be swept automatically; the sweep says so and names the sandbox.
+ */
+export function trackSshAccess(
+  context: TrackingContext,
+  sandboxId: string,
+  access: MintedSshHandle,
+): MintedSshHandle {
+  sshSequence += 1;
+  context.ledger.track({
+    kind: "ssh-access",
+    id: `${sandboxId}/ssh-${sshSequence}`,
+    name: `ssh access to ${sandboxId}`,
+    test: context.currentTest(),
+    delete: () => access.revoke(),
+  });
+  return access;
 }

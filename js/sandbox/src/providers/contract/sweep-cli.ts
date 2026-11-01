@@ -26,6 +26,7 @@ async function main(): Promise<void> {
   });
 
   const open = results.reduce((n, r) => n + r.leaked.length, 0);
+  const manual = results.reduce((n, r) => n + r.manual.length, 0);
   const failed = results
     .flatMap((r) => r.outcomes)
     .filter((o) => o.event === "delete_failed");
@@ -33,13 +34,18 @@ async function main(): Promise<void> {
     console.log(`No leaked resources under ${root}.`);
     return;
   }
+  if (manual > 0) process.exitCode = 1;
   if (dryRun) {
     console.log(
-      `${open} resource(s) would be deleted. Run without --dry-run to delete them.`,
+      `${open - manual} resource(s) would be deleted, ${manual} need manual action. ` +
+        "Run without --dry-run to delete them.",
     );
     return;
   }
-  console.log(`${open - failed.length} deleted, ${failed.length} failed.`);
+  const deleted = results.flatMap((r) => r.outcomes).length - failed.length;
+  console.log(
+    `${deleted} deleted, ${failed.length} failed, ${manual} need manual action.`,
+  );
   if (failed.length > 0) process.exitCode = 1;
 }
 

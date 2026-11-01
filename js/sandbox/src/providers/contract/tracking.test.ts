@@ -4,7 +4,11 @@ import type { SandboxProvider } from "../provider";
 import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 import { getSimulateWorld, resetSimulateWorlds } from "../simulate/provider";
 import { Ledger } from "./ledger";
-import { trackSnapshot, type TrackingContext } from "./tracking";
+import {
+  trackSnapshot,
+  trackSshAccess,
+  type TrackingContext,
+} from "./tracking";
 
 const WORLD_ID = "tracking-test";
 const DEPS: SandboxProviderDeps = {
@@ -109,5 +113,35 @@ describe("trackSnapshot", () => {
       event: "identified",
       providerId: "snap_99",
     });
+  });
+});
+
+describe("trackSshAccess", () => {
+  it("revokes access after the test without writing its token", async () => {
+    const provider = createSandboxProvider("simulate", DEPS);
+    const lines: string[] = [];
+    const tracking = {
+      ...context(provider),
+      ledger: new Ledger(provider.name, (l) => lines.push(l)),
+    };
+    const sandbox = await sourceSandbox(provider);
+    const access = trackSshAccess(
+      tracking,
+      sandbox.id,
+      await sandbox.ssh!.mint(15),
+    );
+    expect(getSimulateWorld(WORLD_ID).sshTokensFor(sandbox.id)).toEqual([
+      access.token,
+    ]);
+
+    await tracking.ledger.release();
+
+    expect(getSimulateWorld(WORLD_ID).sshTokensFor(sandbox.id)).toEqual([]);
+    expect(tracking.ledger.events.at(-1)).toMatchObject({
+      event: "deleted",
+      kind: "ssh-access",
+      verified: "unsupported",
+    });
+    expect(lines.join("\n")).not.toContain(access.token);
   });
 });

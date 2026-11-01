@@ -14,7 +14,13 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
-export type ResourceKind = "sandbox" | "snapshot";
+/**
+ * What the suite creates. `ssh-access` is a minted SSH credential; on some
+ * providers it is a separate identity that outlives the sandbox, so it is
+ * revoked and audited like any other resource. Its token is a secret and is
+ * never written to the ledger.
+ */
+export type ResourceKind = "sandbox" | "snapshot" | "ssh-access";
 
 export type LedgerEvent =
   | {

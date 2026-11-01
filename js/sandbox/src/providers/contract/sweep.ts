@@ -40,6 +40,8 @@ export interface SweepRunResult {
   runId: string;
   leaked: AuditRow[];
   outcomes: OutcomeEvent[];
+  /** Leaked resources the sweep cannot delete; a person must. */
+  manual: AuditRow[];
   skipped?: "alive";
 }
 
@@ -69,18 +71,27 @@ export async function sweepRun(
   const leaked = summarize(parseLedger(readFileSync(file, "utf8"))).rows.filter(
     (row) => row.outcome === "LEAKED",
   );
-  if (leaked.length === 0) return { runId, leaked, outcomes: [] };
+  if (leaked.length === 0) return { runId, leaked, outcomes: [], manual: [] };
   if (options.isRunAlive(runId)) {
     log(
       `run ${runId}: still running, skipped (${leaked.length} open resource(s))`,
     );
-    return { runId, leaked, outcomes: [], skipped: "alive" };
+    return { runId, leaked, outcomes: [], manual: [], skipped: "alive" };
   }
+  // SSH access is revoked with its token, which is never written to disk.
+  const manual = leaked.filter((row) => row.kind === "ssh-access");
+  for (const row of manual) {
+    log(
+      `run ${runId}: cannot revoke ${row.name} (${row.provider}) without its token; ` +
+        "revoke it in the vendor console, then delete this run's directory",
+    );
+  }
+  const sweepable = leaked.filter((row) => row.kind !== "ssh-access");
   if (options.dryRun) {
-    for (const row of leaked) {
+    for (const row of sweepable) {
       log(`run ${runId}: would delete ${row.kind} ${row.id} (${row.provider})`);
     }
-    return { runId, leaked, outcomes: [] };
+    return { runId, leaked, outcomes: [], manual };
   }
 
   // Snapshot names resolve to the ids the ledger recorded, so providers with
@@ -103,7 +114,7 @@ export async function sweepRun(
 
   const outcomes: OutcomeEvent[] = [];
   // Newest first, as the run itself would have deleted them.
-  for (const row of [...leaked].reverse()) {
+  for (const row of [...sweepable].reverse()) {
     const provider = providerFor(row.provider as SandboxProviderName);
     const ledger = new Ledger(row.provider, fileSink(file));
     const outcome = await ledger.sweep({
@@ -121,20 +132,32 @@ export async function sweepRun(
         : `run ${runId}: FAILED to delete ${row.kind} ${row.id} (${row.provider}): ${outcome.error}`,
     );
   }
-  return { runId, leaked, outcomes };
+  return { runId, leaked, outcomes, manual };
 }
 
 async function deleteResource(
   provider: SandboxProvider,
   row: AuditRow,
 ): Promise<void> {
-  if (row.kind === "sandbox") {
-    await provider.sandboxes.get(row.id).delete();
-    return;
+  switch (row.kind) {
+    case "sandbox":
+      await provider.sandboxes.get(row.id).delete();
+      return;
+    case "snapshot": {
+      // A snapshot already gone is a finished job, not an error.
+      const snapshot = await provider.snapshots?.get(row.name);
+      await snapshot?.delete();
+      return;
+    }
+    case "ssh-access":
+      throw new Error("ssh access cannot be swept; see `manual`");
+    default:
+      assertNever(row.kind);
   }
-  // A snapshot already gone is a finished job, not an error.
-  const snapshot = await provider.snapshots?.get(row.name);
-  await snapshot?.delete();
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled resource kind: ${String(value)}`);
 }
 
 function verifier(

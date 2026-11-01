@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { fileSink, Ledger } from "./ledger";
 import {
   trackSnapshot as trackSnapshotIn,
+  trackSshAccess,
   type TrackingContext,
 } from "./tracking";
 import { newRunId } from "./run-dir";
@@ -383,7 +384,12 @@ export function describeProviderContract(target: ProviderContractTarget): void {
       it("mints access that expires later and can be revoked", async () => {
         const sandbox = await createSandbox();
         const before = Date.now();
-        const access = await sandbox.ssh!.mint(15);
+        // Recorded before any assertion, so it is revoked even if one fails.
+        const access = trackSshAccess(
+          tracking,
+          sandbox.id,
+          await sandbox.ssh!.mint(15),
+        );
         expect(access.token).not.toBe("");
         expect(access.sshDestination).not.toBe("");
         expect(access.expiresAt.getTime()).toBeGreaterThan(before);

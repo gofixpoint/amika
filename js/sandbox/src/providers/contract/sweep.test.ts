@@ -124,7 +124,37 @@ describe("sweepRun", () => {
       runId: "clean",
       leaked: [],
       outcomes: [],
+      manual: [],
     });
+  });
+});
+
+describe("sweepRun with SSH access", () => {
+  it("leaves SSH access for a person and does not record an outcome", async () => {
+    const file = path.join(
+      mkdtempSync(path.join(tmpdir(), "sweep-")),
+      "audit.jsonl",
+    );
+    const line = JSON.stringify({
+      event: "created",
+      kind: "ssh-access",
+      provider: "simulate",
+      id: "sim-vm-000001/ssh-1",
+      name: "ssh access to sim-vm-000001",
+      test: "t",
+      at: "2026-11-01T12:00:00Z",
+    });
+    writeFileSync(file, `${line}\n`);
+    const lines: string[] = [];
+    const result = await sweepRun(
+      "dead-run",
+      file,
+      options({ log: (l) => lines.push(l) }),
+    );
+    expect(result.manual.map((r) => r.id)).toEqual(["sim-vm-000001/ssh-1"]);
+    expect(result.outcomes).toEqual([]);
+    expect(lines[0]).toMatch(/cannot revoke ssh access to sim-vm-000001/);
+    expect(readFileSync(file, "utf8")).toBe(`${line}\n`);
   });
 });
 
