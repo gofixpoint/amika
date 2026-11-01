@@ -51,6 +51,27 @@ describe("summarize", () => {
     expect(summary).toMatchObject({ created: 4, deleted: 2, leaked: 2 });
   });
 
+  it("shows the provider id learned after a resource was recorded", () => {
+    const summary = summarize([
+      created("snap-a", "snapshot"),
+      {
+        event: "identified",
+        kind: "snapshot",
+        id: "snap-a",
+        providerId: "snap_123",
+        at: AT,
+      },
+    ]);
+    expect(summary.rows[0]).toMatchObject({
+      id: "snap-a",
+      providerId: "snap_123",
+      outcome: "LEAKED",
+    });
+    expect(renderText(summary, { runId: "r", file: "f" })).toContain(
+      "snap_123",
+    );
+  });
+
   it("ignores outcomes for resources it never saw created", () => {
     const summary = summarize([
       {

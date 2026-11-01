@@ -16,6 +16,10 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { fileSink, Ledger } from "./ledger";
+import {
+  trackSnapshot as trackSnapshotIn,
+  type TrackingContext,
+} from "./tracking";
 import { newRunId } from "./run-dir";
 import type { Logger, SandboxCtx } from "../../logger";
 import { SANDBOX_ORG_ID_LABEL } from "../../constants";
@@ -162,25 +166,6 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     return sandbox;
   }
 
-  /** Record a captured snapshot so it is looked up by id and deleted after the test. */
-  function trackSnapshot(snapshot: Snapshot): Snapshot {
-    if (snapshot.providerSnapshotId) {
-      snapshotIds.set(snapshot.name, snapshot.providerSnapshotId);
-    }
-    ledger.track({
-      kind: "snapshot",
-      id: snapshot.providerSnapshotId ?? snapshot.name,
-      name: snapshot.name,
-      test: currentTest(),
-      delete: () => snapshot.delete(),
-      verifyGone: () =>
-        isGone(
-          async () => (await provider.snapshots!.get(snapshot.name)) === null,
-        ),
-    });
-    return snapshot;
-  }
-
   /** The value `create` accepts to boot from `snapshot`. */
   function bootRef(snapshot: Snapshot): string {
     if (!caps.snapshotIdsAreOpaque) return snapshot.name;
@@ -207,6 +192,16 @@ export function describeProviderContract(target: ProviderContractTarget): void {
       if (!(await check())) throw new Error("still present");
       return true;
     }).catch(() => false);
+
+  const tracking: TrackingContext = {
+    ledger,
+    provider,
+    snapshotIds,
+    currentTest,
+    isGone: (check) => isGone(check),
+  };
+  /** See `trackSnapshot` in `./tracking.ts`. */
+  const trackSnapshot = (name: string) => trackSnapshotIn(tracking, name);
 
   describe(`${provider.name} provider contract`, () => {
     it("is registered with the capability flags it was built with", () => {
@@ -448,11 +443,13 @@ export function describeProviderContract(target: ProviderContractTarget): void {
           await source.writeFile(path, "kept in snapshot");
 
           const name = uniqueName("snap");
-          const snapshot = trackSnapshot(await source.snapshots!.create(name));
+          const identify = trackSnapshot(name);
+          const snapshot = identify(await source.snapshots!.create(name));
           await snapshot.waitForActive();
           expect(snapshot.name).toBe(name);
           expect(await source.getRuntimeState()).toBe("running");
           expect(await provider.snapshots!.get(name)).not.toBeNull();
+          expect(await provider.snapshots!.find(name)).not.toBeNull();
 
           const restored = await createSandbox({}, bootRef(snapshot));
           expect(await restored.readFile(path)).toBe("kept in snapshot");
@@ -464,11 +461,12 @@ export function describeProviderContract(target: ProviderContractTarget): void {
         async () => {
           const source = await createSandbox();
           const name = uniqueName("snap");
-          const snapshot = trackSnapshot(await source.snapshots!.create(name));
+          const identify = trackSnapshot(name);
+          const snapshot = identify(await source.snapshots!.create(name));
           await snapshot.waitForActive();
           await snapshot.delete();
           await eventually(async () => {
-            expect(await provider.snapshots!.get(name)).toBeNull();
+            expect(await provider.snapshots!.find(name)).toBeNull();
           });
           await snapshot.delete();
         },
@@ -484,6 +482,7 @@ export function describeProviderContract(target: ProviderContractTarget): void {
           await source.writeFile(kept, "not a secret");
 
           const name = uniqueName("scrubbed");
+          const identify = trackSnapshot(name);
           const { snapshot, removedFiles } =
             await source.snapshots!.scrubAndCreate(name, {
               files: [secret],
@@ -491,9 +490,13 @@ export function describeProviderContract(target: ProviderContractTarget): void {
               sudoFileRestores: [],
               envVarNames: [],
             });
-          trackSnapshot(snapshot);
+          identify(snapshot);
           await snapshot.waitForActive();
           expect(removedFiles).toEqual([secret]);
+          // Looked up by name, as the control plane does. On a provider with
+          // opaque ids this goes through the recorded name -> id mapping.
+          expect(await provider.snapshots!.get(name)).not.toBeNull();
+          expect(await provider.snapshots!.find(name)).not.toBeNull();
 
           const restored = await createSandbox({}, bootRef(snapshot));
           expect(await restored.readFile(secret)).toBeNull();

@@ -122,6 +122,18 @@ describe("Ledger", () => {
     });
   });
 
+  it("does not treat an identified resource as settled", () => {
+    const { lines, ledger: l } = ledger();
+    l.track(resource("snap-a", { kind: "snapshot" }));
+    l.identify("snapshot", "snap-a", "snap_123");
+    expect(JSON.parse(lines[1])).toMatchObject({
+      event: "identified",
+      id: "snap-a",
+      providerId: "snap_123",
+    });
+    expect(l.leaked.map((e) => e.id)).toEqual(["snap-a"]);
+  });
+
   it("lists created resources with no outcome as leaked", async () => {
     const { ledger: l } = ledger();
     l.track(resource("gone"));

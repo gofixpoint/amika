@@ -28,6 +28,19 @@ export type LedgerEvent =
       at: string;
     }
   | {
+      /**
+       * The provider's own id for a resource recorded before it had one. A
+       * snapshot is recorded by name before capture, because a capture can
+       * create the snapshot and still throw; its bootable id follows here
+       * once capture returns.
+       */
+      event: "identified";
+      kind: ResourceKind;
+      id: string;
+      providerId: string;
+      at: string;
+    }
+  | {
       event: "deleted";
       kind: ResourceKind;
       id: string;
@@ -47,7 +60,10 @@ export type LedgerEvent =
     };
 
 /** The two ways a tracked resource ends up. */
-export type OutcomeEvent = Exclude<LedgerEvent, { event: "created" }>;
+export type OutcomeEvent = Extract<
+  LedgerEvent,
+  { event: "deleted" | "delete_failed" }
+>;
 
 /** One resource the suite created and must delete. */
 export interface TrackedResource {
@@ -92,6 +108,17 @@ export class Ledger {
       id: resource.id,
       name: resource.name,
       test: resource.test,
+      at: this.now().toISOString(),
+    });
+  }
+
+  /** Record the provider's own id for a resource tracked before it had one. */
+  identify(kind: ResourceKind, id: string, providerId: string): void {
+    this.write({
+      event: "identified",
+      kind,
+      id,
+      providerId,
       at: this.now().toISOString(),
     });
   }
@@ -143,7 +170,7 @@ export class Ledger {
   get leaked(): LedgerEvent[] {
     const settled = new Set(
       this.events
-        .filter((e) => e.event !== "created")
+        .filter((e) => e.event === "deleted" || e.event === "delete_failed")
         .map((e) => `${e.kind}:${e.id}`),
     );
     return this.events.filter(

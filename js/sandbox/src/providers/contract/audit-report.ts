@@ -11,6 +11,8 @@ export interface AuditRow {
   kind: ResourceKind;
   provider: string;
   id: string;
+  /** The provider's own id, when it was learned after the resource was recorded. */
+  providerId?: string;
   name: string;
   test: string;
   outcome: Outcome;
@@ -45,7 +47,9 @@ export function summarize(events: LedgerEvent[]): AuditSummary {
     }
     const row = rows.get(key);
     if (!row) continue;
-    if (event.event === "deleted") {
+    if (event.event === "identified") {
+      row.providerId = event.providerId;
+    } else if (event.event === "deleted") {
       row.outcome =
         event.verified === true ? "deleted" : "deleted (unverified)";
       row.detail = "";
@@ -66,7 +70,7 @@ export function summarize(events: LedgerEvent[]): AuditSummary {
 const COLUMNS: Array<[string, (r: AuditRow) => string]> = [
   ["KIND", (r) => r.kind],
   ["PROVIDER", (r) => r.provider],
-  ["ID", (r) => r.id],
+  ["ID", (r) => r.providerId ?? r.id],
   ["NAME", (r) => r.name],
   ["CREATED IN", (r) => r.test],
   ["OUTCOME", (r) => (r.detail ? `${r.outcome}: ${r.detail}` : r.outcome)],
