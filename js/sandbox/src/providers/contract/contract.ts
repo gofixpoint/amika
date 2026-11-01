@@ -15,7 +15,7 @@
  *     `TEST_SANDBOX_CONTRACT_PROVIDER`.
  *
  * What the suite assumes about a sandbox booted from `bootSnapshot`. These
- * are requirements on the test fixture, not on every Amika sandbox:
+ * are requirements on the test fixture, not on every sandbox a provider boots:
  *   - commands run in a POSIX shell with `echo`, `printf`, `pwd`, `sleep`,
  *     and `exit`;
  *   - `/tmp` exists;
@@ -31,7 +31,6 @@ import {
 } from "./tracking";
 import { newRunId } from "./run-dir";
 import type { Logger, SandboxCtx } from "../../logger";
-import { SANDBOX_ORG_ID_LABEL } from "../../constants";
 import type { SandboxService } from "../../types";
 import { SANDBOX_PROVIDER_CAPABILITIES } from "../capabilities";
 import type { SandboxAdapter } from "../shared/adapter";
@@ -80,8 +79,6 @@ export interface ProviderContractTarget {
   identity?: Record<string, string>;
 }
 
-/** The org id stamped on every sandbox the suite creates. */
-const ORG_ID = "contract-org";
 const SERVICE_PORT = 3000;
 
 interface ExecCase {
@@ -155,7 +152,6 @@ export function describeProviderContract(target: ProviderContractTarget): void {
       name,
       snapshot,
       services: overrides.services ?? [],
-      labels: { [SANDBOX_ORG_ID_LABEL]: ORG_ID },
       scrubSafe: overrides.scrubSafe,
     });
     ledger.track({
@@ -366,7 +362,7 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     });
 
     describe.skipIf(!caps.listSandboxes)("listing", () => {
-      it("lists a sandbox with its org and sizing", async () => {
+      it("lists a sandbox with its state and sizing", async () => {
         const sandbox = await createSandbox();
         const listed = await eventually(async () => {
           const entry = (await provider.sandboxes.list()).find(
@@ -375,7 +371,6 @@ export function describeProviderContract(target: ProviderContractTarget): void {
           expect(entry).toBeDefined();
           return entry!;
         });
-        expect(listed.orgId).toBe(ORG_ID);
         expect(listed.state).not.toBe("");
         expect(listed.sizing.vcpus).toBeGreaterThan(0);
         expect(listed.sizing.memoryGib).toBeGreaterThan(0);
@@ -512,8 +507,8 @@ export function describeProviderContract(target: ProviderContractTarget): void {
           identify(snapshot);
           await snapshot.waitForActive();
           expect(removedFiles).toEqual([secret]);
-          // Looked up by name, as the control plane does. On a provider with
-          // opaque ids this goes through the recorded name -> id mapping.
+          // Looked up by name, as a caller does. On a provider with opaque
+          // ids this goes through the recorded name -> id mapping.
           expect(await provider.snapshots!.get(name)).not.toBeNull();
           expect(await provider.snapshots!.find(name)).not.toBeNull();
 
