@@ -498,7 +498,7 @@ func newProviderCmd(p providerConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   p.Use,
 		Short: fmt.Sprintf("Manage %s credentials", p.DisplayName),
-		Long:  fmt.Sprintf("Push and list %s credentials for sandbox authentication.", p.DisplayName),
+		Long:  fmt.Sprintf("Push and list %s credentials for rig authentication.", p.DisplayName),
 	}
 }
 

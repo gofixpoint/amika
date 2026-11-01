@@ -45,7 +45,7 @@ func newSSHKeyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssh-key",
 		Short: "Manage user-owned SSH public keys",
-		Long: `Manage the SSH public keys that authorize access to your sandboxes.
+		Long: `Manage the SSH public keys that authorize access to your rigs.
 
 Only public keys are ever uploaded; private key material stays on this
 machine.`,
@@ -219,7 +219,7 @@ func newSSHKeyDeleteCmd() *cobra.Command {
 		Short:   "Delete an SSH public key by ID",
 		Long: `Delete an SSH public key by ID.
 
-Run "amika secret ssh-key list" to find the ID. Sandboxes that are already
+Run "amika secret ssh-key list" to find the ID. Rigs that are already
 running keep the key until they are provisioned again, so this does not end
 sessions that are already open.`,
 		Args: cobra.ExactArgs(1),

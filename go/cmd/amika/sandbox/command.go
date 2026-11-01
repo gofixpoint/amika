@@ -55,26 +55,26 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	addProviderFlag(sandboxCreateCmd)
 	// Superseded by the positional <name>; kept, hidden, so existing scripts
 	// that pass --name keep working.
-	sandboxCreateCmd.Flags().String("name", "", "Name for the sandbox (auto-generated if not set)")
+	sandboxCreateCmd.Flags().String("name", "", "Name for the rig (auto-generated if not set)")
 	_ = sandboxCreateCmd.Flags().MarkHidden("name")
 	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-plus-docker")`)
 	gitrepo.AddFlags(sandboxCreateCmd,
-		"Mount a git repo into the sandbox. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.",
-		"Skip git repo auto-detection; create a sandbox without mounting any repo.")
+		"Mount a git repo into the rig. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.",
+		"Skip git repo auto-detection; create a rig without mounting any repo.")
 	sandboxCreateCmd.Flags().String("host", "", "Run the rig on one of your organization's own hosts, by hostname or id (see \"amika host list\"). Omit it to run on Amika Cloud.")
-	sandboxCreateCmd.Flags().String("size", "", "Sandbox size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\"). With --host, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB.")
-	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the sandbox from a captured snapshot slug")
+	sandboxCreateCmd.Flags().String("size", "", "Rig size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\"). With --host, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB.")
+	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the rig from a captured snapshot slug")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")
 	sandboxCreateCmd.Flags().StringArray("agent-credential", nil, "Pin an agent credential by name (KIND=NAME, e.g. claude=personal-oauth). Repeatable per kind.")
 	sandboxCreateCmd.Flags().StringArray("agent-credential-type", nil, "Pin an agent credential by type (KIND=TYPE, type is oauth or api-key). Repeatable per kind.")
 	sandboxCreateCmd.Flags().StringArray("no-agent-credential", nil, "Skip injecting any credential of this kind (e.g. --no-agent-credential codex). Repeatable per kind.")
-	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the sandbox shell immediately after creation")
+	sandboxCreateCmd.Flags().Bool("connect", false, "Connect to the rig shell immediately after creation")
 	sandboxCreateCmd.Flags().String("setup-script", "", "Upload a local script file to run as /usr/local/etc/amikad/setup/setup.sh in the rig")
 	sandboxCreateCmd.Flags().Bool("no-setup", false, "Skip the setup script (uses a no-op script instead)")
 	sandboxCreateCmd.Flags().String("branch", "", "Check out this git branch, or create it if it doesn't exist.")
 	sandboxCreateCmd.Flags().String("new-branch", "", "Create a new git branch. With --branch, starts from that branch; otherwise starts from the current checkout.")
-	sandboxCreateCmd.Flags().String("github-auth-mode", "", "GitHub auth mode for the sandbox runtime: pat, app_token, or app-token (unset uses server default)")
+	sandboxCreateCmd.Flags().String("github-auth-mode", "", "GitHub auth mode for the rig runtime: pat, app_token, or app-token (unset uses server default)")
 	sandboxListCmd.Flags().BoolP("long", "l", false, "Show additional columns (ID, BASE_SNAPSHOT, PORTS, CREATED)")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	// `ssh` registers no flags of its own: it forwards everything after the
@@ -82,8 +82,8 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	// through untouched.
 	sandboxCodeV2Cmd.Flags().String("app", "cursor", "App or editor to open: \"cursor\", \"vscode\", \"claude\", \"codex\", \"paseo\", or \"herdr\"")
 	sandboxCodeV2Cmd.Flags().String("editor", "", "Alias for --app")
-	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the sandbox workspace root); ignored by paseo and herdr")
-	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another sandbox")
+	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the rig workspace root); ignored by paseo and herdr")
+	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another rig")
 	// --rig-by is superseded by the name=/id= prefixes on the rig reference;
 	// kept, hidden, so existing scripts keep working.
 	sandboxBindCmd.Flags().String("rig-by", "ref", "Resolve the rig by ref, name, or id")
@@ -99,7 +99,7 @@ The same forms work wherever a flag such as --rig names a rig.`,
 }
 
 func addProviderFlag(command *cobra.Command) {
-	command.Flags().String("provider", "", "Sandbox provider")
+	command.Flags().String("provider", "", "Rig provider")
 	// Provider selection is an internal/testing override for remote sandboxes.
 	// Normal users should let the control plane choose its configured default.
 	command.Flags().MarkHidden("provider")

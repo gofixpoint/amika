@@ -114,7 +114,7 @@ Every `sandbox` subcommand talks to the Amika API and requires you to be logged 
 
 ### `amika sandbox create`
 
-Create a new sandbox.
+Create a new rig.
 
 ```
 amika sandbox create [<name>] [flags]
@@ -179,19 +179,19 @@ amika sandbox create dev-sandbox --host alpha.lan --size small
 | Flag                    | Default              | Description                                                                                                                          |
 | ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `coder-plus-docker`. See [presets.md](presets.md)                                          |
-| `--size <size>`         | `m`                  | Sandbox size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m` |
+| `--size <size>`         | `m`                  | Rig size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m` |
 | `--host <hostname\|id>` |                      | Run the rig on one of your organization's own hosts rather than on Amika Cloud. See [`amika host`](#amika-host). With `--snapshot`, boots one of that host's own snapshots; a snapshot taken anywhere else is refused. The create fails if the control plane did not put the rig on that host |
 | `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory |
 | `--no-git`              | `false`              | Skip git auto-detection; create a sandbox without mounting any repo                                                                  |
 | `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                                 |
-| `--connect`             | `false`              | Connect to the sandbox shell immediately after creation                                                                              |
+| `--connect`             | `false`              | Connect to the rig shell immediately after creation                                                                                  |
 | `--setup-script <path>` |                      | Upload a local script to run as `/usr/local/etc/amikad/setup/setup.sh`. See [sandbox-configuration.md](sandbox-configuration.md)     |
 | `--no-setup`            | `false`              | Skip the setup script (uses a no-op script instead)                                                                                  |
 | `--branch <name>`       |                      | Check out this branch, or create it if it doesn't exist. Requires a git repo (auto-detected or via `--git`)                          |
 | `--new-branch <name>`  |                      | Create a new branch (errors if it already exists). Starts from `--branch` if set, otherwise from the base branch. Requires a git repo (auto-detected or via `--git`)  |
 | `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. See [secrets.md](secrets.md)                        |
 | `--snapshot <slug>`     |                      | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`)                                            |
-| `--github-auth-mode <mode>` |                  | GitHub auth mode for the sandbox runtime: `pat`, `app_token`, or `app-token`. Unset uses the server default                          |
+| `--github-auth-mode <mode>` |                  | GitHub auth mode for the rig runtime: `pat`, `app_token`, or `app-token`. Unset uses the server default                          |
 | `--agent-credential <KIND=NAME>` |             | Pin an agent credential by name (e.g. `claude=personal-oauth`). Repeatable per kind                                                  |
 | `--agent-credential-type <KIND=TYPE>` |        | Pin an agent credential by type (`oauth` or `api-key`). Repeatable per kind                                                          |
 | `--no-agent-credential <KIND>` |               | Skip injecting any credential of this kind (e.g. `--no-agent-credential codex`). Repeatable                                          |
@@ -236,7 +236,7 @@ amika sandbox connect dev-sandbox
 
 ### `amika sandbox delete`
 
-Delete one or more sandboxes. Aliases: `rm`, `remove`.
+Delete one or more rigs. Aliases: `rm`, `remove`.
 
 ```bash
 # Delete a sandbox (prompts for confirmation)
@@ -268,7 +268,7 @@ amika sandbox stop sandbox-1 sandbox-2
 
 ### `amika sandbox start`
 
-Start (resume) one or more stopped sandboxes.
+Start (resume) one or more stopped rigs.
 
 ```bash
 amika sandbox start dev-sandbox
@@ -324,7 +324,7 @@ and X11 forwarding are not supported.
 
 ### `amika sandbox open`
 
-Open a remote sandbox in an editor or coding agent over Amika's direct
+Open a remote rig in an editor or coding agent over Amika's direct
 WebSocket SSH transport. Remote sandboxes only; requires a signed-in Amika
 account and an SSH identity from `amika secret ssh-keygen`. `amika sandbox code`
 is an alias, and `--editor` is an alias for `--app`.
@@ -384,7 +384,7 @@ amika sandbox code my-sandbox --editor=vscode
 | ----------------- | -------- | -------------------------------------------------------- |
 | `--app <name>`    | `cursor` | App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
 | `--editor <name>` | —        | Alias for `--app`                                        |
-| `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the sandbox workspace root) |
+| `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the rig workspace root)     |
 
 ### `amika sandbox agent-send`
 
@@ -757,7 +757,7 @@ When multiple sources are used, positional arguments override `--from-file` valu
 
 ### `amika secret claude`
 
-Manage Claude Code credentials for sandbox authentication. Credentials pushed here can be injected into sandboxes at creation time.
+Manage Claude Code credentials for rig authentication. Credentials pushed here can be injected into sandboxes at creation time.
 
 #### `amika secret claude push`
 
@@ -837,7 +837,7 @@ Re-running this command is safe: an existing keypair at `~/.ssh/amika_id_ed25519
 
 ### `amika secret ssh-key`
 
-Manage the SSH public keys that authorize access to your sandboxes. Only public keys are uploaded; private key material stays on your machine.
+Manage the SSH public keys that authorize access to your rigs. Only public keys are uploaded; private key material stays on your machine.
 
 Keys are identified by name, and a name is unique per user.
 

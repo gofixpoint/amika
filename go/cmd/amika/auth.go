@@ -87,7 +87,7 @@ type authStatusJSON struct {
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Authentication credential commands",
-	Long:  `Discover and transform local credentials for agent and sandbox use.`,
+	Long:  `Discover and transform local credentials for agent and rig use.`,
 }
 
 var authLoginCmd = &cobra.Command{

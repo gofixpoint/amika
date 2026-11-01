@@ -160,9 +160,9 @@ func NewV2() *cobra.Command {
 		// "scpv2" is the pre-promotion name this command answered to; kept as
 		// an alias so scripts and docs written against it keep working.
 		Aliases: []string{"scpv2"},
-		Short:   "Copy files to or from sandboxes over SSH",
-		Long: `Copy files between the local machine, sandboxes, and SSH hosts using scp,
-over the same direct WebSocket transport as "amika sandbox ssh".
+		Short:   "Copy files to or from rigs over SSH",
+		Long: `Copy files between the local machine, rigs, and SSH hosts using scp,
+over the same direct WebSocket transport as "amika rig ssh".
 
 Operands take these forms:
 
@@ -177,21 +177,21 @@ Operands take these forms:
   scp://[user@]host[:port][/path]   a path on an arbitrary SSH host
 
 RIG is a name or ID, or name=<name> / id=<id> (see "amika rig --help"), as in
-"name=my-sandbox:out.txt". Each rig resolves to its
+"name=my-rig:out.txt". Each rig resolves to its
 "<name>.<id>.<environment>.amika" alias, and the connection settings come from
 the managed block in ~/.ssh/amika.conf, so a fresh session is created and the
 host key re-pinned per dial. Requires an SSH identity from
 "amika secret ssh-keygen".
 
 Examples:
-  # Upload a file into the sandbox home
-  amika scp ./local.txt my-sandbox:local.txt
+  # Upload a file into the rig home
+  amika scp ./local.txt my-rig:local.txt
 
-  # Recursively download an absolute directory from the sandbox
-  amika scp -r my-sandbox:/srv/out ./out
+  # Recursively download an absolute directory from the rig
+  amika scp -r my-rig:/srv/out ./out
 
   # Print the resolved scp command instead of running it
-  amika scp --print ./a.txt my-sandbox:a.txt`,
+  amika scp --print ./a.txt my-rig:a.txt`,
 		Args: cobra.MinimumNArgs(1),
 		// Every argument is forwarded to system scp, so
 		// scp's own single-dash options pass through untouched.

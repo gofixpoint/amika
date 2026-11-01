@@ -20,13 +20,13 @@ import (
 
 var snapshotCmd = &cobra.Command{
 	Use:   "snapshot",
-	Short: "Manage snapshots captured from running sandboxes",
+	Short: "Manage snapshots captured from running rigs",
 }
 
 var snapshotCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Capture a snapshot from a running sandbox",
-	Long: `Capture a snapshot from a running sandbox.
+	Short: "Capture a snapshot from a running rig",
+	Long: `Capture a snapshot from a running rig.
 
 By default this is interactive: it prompts for the capture mode and, for
 "scrub and delete", previews the injected secrets that will be removed and asks
@@ -39,7 +39,7 @@ requires --mode and --name).`,
 var snapshotListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List snapshots captured from sandboxes",
+	Short:   "List snapshots captured from rigs",
 	Args:    cobra.NoArgs,
 	RunE:    runSnapshotList,
 }
@@ -47,7 +47,7 @@ var snapshotListCmd = &cobra.Command{
 var snapshotDeleteCmd = &cobra.Command{
 	Use:     "delete <name-or-id> [<name-or-id>...]",
 	Aliases: []string{"rm", "remove"},
-	Short:   "Delete one or more sandbox snapshots",
+	Short:   "Delete one or more rig snapshots",
 	Args:    cobra.MinimumNArgs(1),
 	RunE:    runSnapshotDelete,
 }
