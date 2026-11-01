@@ -39,6 +39,11 @@ type Entry struct {
 	// VerifyGone, when set, is how cleanup confirms the resource is gone.
 	// See the VerifyGone type.
 	VerifyGone *VerifyGone `json:"verify_gone,omitempty"`
+	// VerifyGoneError is set when the case asked for a verify_gone check but
+	// it could not be built (a template that did not resolve). The resource
+	// is still registered so it is deleted, but its cleanup cannot be
+	// verified and is recorded as a failure.
+	VerifyGoneError string `json:"verify_gone_error,omitempty"`
 	// Env holds the environment overrides to apply when cleaning up this
 	// resource: the creating step's own env overrides (persisted verbatim)
 	// plus the resolved values of the cleanup target variables
@@ -231,7 +236,9 @@ func CleanupVerified(binPath string, entries []Entry, env []string, policy Verif
 			Stderr:   stderr,
 			Verified: VerifiedUnchecked,
 		}
-		if err == nil {
+		if err == nil && entry.VerifyGoneError != "" {
+			result.Err = fmt.Errorf("deleted, but its verify_gone check could not be built: %s", entry.VerifyGoneError)
+		} else if err == nil {
 			result.Verified, result.Err = verifyGone(binPath, entry, cmdEnv, policy)
 		} else if entry.VerifyGone != nil {
 			// A failed delete may only mean the resource is already gone,

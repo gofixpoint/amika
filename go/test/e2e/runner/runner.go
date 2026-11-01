@@ -383,6 +383,15 @@ func LoadCase(path string) (*Case, error) {
 			return nil, fmt.Errorf("case %s: %w", path, err)
 		}
 	}
+	// Template names a resource block may use: the runner's own, the case's
+	// declared vars, and every capture up to and including the step's own.
+	known := make(map[string]bool, len(reservedVarNames)+len(c.Vars))
+	for name := range reservedVarNames {
+		known[name] = true
+	}
+	for name := range c.Vars {
+		known[name] = true
+	}
 	for i, step := range c.Steps {
 		if step.Name == "" {
 			return nil, fmt.Errorf("case %s: step %d: \"name\" is required", path, i+1)
@@ -411,6 +420,7 @@ func LoadCase(path string) (*Case, error) {
 			if _, declared := c.Vars[name]; declared {
 				return nil, fmt.Errorf("case %s: step %d (%s): capture name %q shadows a declared var", path, i+1, step.Name, name)
 			}
+			known[name] = true
 		}
 		if step.Resource != nil {
 			// A resource with no cleanup argv would record an entry whose
@@ -427,6 +437,11 @@ func LoadCase(path string) (*Case, error) {
 				if err := step.Resource.VerifyGone.validate(); err != nil {
 					return nil, fmt.Errorf("case %s: step %d (%s): %w", path, i+1, step.Name, err)
 				}
+			}
+			// A typo in a resource block's templates would only show at run
+			// time, after the resource exists. Catch it here instead.
+			if err := checkResourceTemplates(step.Resource, known); err != nil {
+				return nil, fmt.Errorf("case %s: step %d (%s): %w", path, i+1, step.Name, err)
 			}
 		}
 		if step.ReleaseResource != nil {
@@ -991,13 +1006,18 @@ func (r *Runner) registerResource(step Step) error {
 	if err != nil {
 		return err
 	}
+	// The deletion target is complete at this point. A verify_gone that fails
+	// to template must not keep it off the ledger: register the resource
+	// without the check, mark why, and fail the step afterwards.
 	var verify *VerifyGone
+	var verifyErr error
 	if v := step.Resource.VerifyGone; v != nil {
 		cmd, err := substituteArgv("resource.verify_gone.cmd", v.Cmd, r.vars)
 		if err != nil {
-			return err
+			verifyErr = err
+		} else {
+			verify = &VerifyGone{Cmd: cmd, NotFound: v.NotFound, AbsentFrom: v.AbsentFrom}
 		}
-		verify = &VerifyGone{Cmd: cmd, NotFound: v.NotFound, AbsentFrom: v.AbsentFrom}
 	}
 	entry := Entry{
 		Type:          step.Resource.Type,
@@ -1008,8 +1028,41 @@ func (r *Runner) registerResource(step Step) error {
 		Env:           r.resourceEnv(step),
 		CreatedAt:     time.Now().UTC(),
 	}
+	if verifyErr != nil {
+		entry.VerifyGoneError = verifyErr.Error()
+	}
 	if err := r.ledger.Append(entry); err != nil {
 		return fmt.Errorf("register resource %q: %w", name, err)
+	}
+	if verifyErr != nil {
+		return fmt.Errorf("register resource %q: registered without its verify_gone check: %w", name, verifyErr)
+	}
+	return nil
+}
+
+// checkResourceTemplates reports a "{{var}}" in a resource block that names
+// nothing the case can have defined by the time the block is registered.
+func checkResourceTemplates(res *Resource, known map[string]bool) error {
+	fields := map[string][]string{
+		"resource.name":    {res.Name},
+		"resource.cleanup": res.Cleanup,
+	}
+	if res.VerifyGone != nil {
+		fields["resource.verify_gone.cmd"] = res.VerifyGone.Cmd
+	}
+	names := make([]string, 0, len(fields))
+	for field := range fields {
+		names = append(names, field)
+	}
+	sort.Strings(names)
+	for _, field := range names {
+		for _, value := range fields[field] {
+			for _, match := range templateVarPattern.FindAllStringSubmatch(value, -1) {
+				if !known[match[1]] {
+					return fmt.Errorf("%s uses {{%s}}, which no earlier capture, var, or runner value defines", field, match[1])
+				}
+			}
+		}
 	}
 	return nil
 }

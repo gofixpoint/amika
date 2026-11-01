@@ -877,6 +877,100 @@ func TestCollectJSONPathRejectsElementWithoutField(t *testing.T) {
 	}
 }
 
+// TestLoadCaseChecksResourceTemplateNames catches a typo in a resource block
+// before anything runs, while allowing every name a block can really see.
+func TestLoadCaseChecksResourceTemplateNames(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.yaml")
+	writeFile(t, good, `name: good
+vars:
+  size: m
+steps:
+  - name: make a key
+    cmd: [x]
+    capture:
+      key_id: $.id
+  - name: make a rig
+    cmd: [x]
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [rig, delete, "{{sandbox_name}}", "{{key_id}}", "{{size}}", "{{run_id}}", "{{sandbox_provider}}"]
+      verify_gone:
+        cmd: [rig, get, "{{sandbox_name}}"]
+        not_found: "HTTP 404"
+`)
+	if _, err := LoadCase(good); err != nil {
+		t.Fatalf("expected the case to load, got %v", err)
+	}
+
+	for field, block := range map[string]string{
+		"verify":  "      cleanup: [rig, delete, sb-1]\n      verify_gone:\n        cmd: [rig, get, \"{{missing}}\"]\n        not_found: \"HTTP 404\"\n",
+		"cleanup": "      cleanup: [rig, delete, \"{{missing}}\"]\n",
+		"later":   "      cleanup: [rig, delete, \"{{later_capture}}\"]\n",
+	} {
+		path := filepath.Join(dir, field+".yaml")
+		writeFile(t, path, `name: `+field+`
+steps:
+  - name: create
+    cmd: [x]
+    resource:
+      type: sandbox
+      name: sb-1
+`+block+`  - name: afterwards
+    cmd: [x]
+    capture:
+      later_capture: $.id
+`)
+		_, err := LoadCase(path)
+		if err == nil || !strings.Contains(err.Error(), "which no earlier capture") {
+			t.Errorf("%s: expected an undefined-template error, got %v", field, err)
+		}
+	}
+}
+
+// TestRegisterKeepsResourceWhenVerifyTemplateFails covers a verify_gone that
+// cannot be templated at run time: the resource must still be registered, so
+// it is deleted, and its cleanup must count as unverified-and-failed.
+func TestRegisterKeepsResourceWhenVerifyTemplateFails(t *testing.T) {
+	bin := stubScript(t)
+	r, err := New(Options{BinPath: bin, RunDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := &Case{
+		Name: "verify template typo",
+		Steps: []Step{{
+			Name:    "create",
+			Cmd:     []string{"0", `{"name":"sb-1"}`, ""},
+			Expect:  Expectation{Exit: intPtr(0)},
+			Capture: map[string]string{"sandbox_name": "$.name"},
+			Resource: &Resource{
+				Type:       "sandbox",
+				Name:       "{{sandbox_name}}",
+				Cleanup:    []string{"0", "", ""},
+				VerifyGone: &VerifyGone{Cmd: []string{"1", "", "{{missing}}"}, NotFound: "HTTP 404"},
+			},
+		}},
+	}
+	if err := r.RunCase(context.Background(), c); err == nil || !strings.Contains(err.Error(), "registered without its verify_gone check") {
+		t.Fatalf("expected the step to fail after registering, got %v", err)
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-1" || entries[0].VerifyGoneError == "" {
+		t.Fatalf("expected sb-1 registered with its verify error, got %+v", entries)
+	}
+	res := Cleanup(bin, entries, nil)[0]
+	if res.Err == nil || res.Verified != VerifiedUnchecked {
+		t.Fatalf("expected the cleanup to count as a failure, got %+v", res)
+	}
+	if rows := AuditRows("c", []CleanupResult{res}); rows[0].Outcome != OutcomeLeaked {
+		t.Fatalf("expected the audit to flag it, got %+v", rows[0])
+	}
+}
+
 func TestLoadCaseRejectsMalformedVerifyGone(t *testing.T) {
 	dir := t.TempDir()
 	cases := map[string]string{
