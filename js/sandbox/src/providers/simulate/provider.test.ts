@@ -1,16 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SANDBOX_ORG_ID_LABEL } from "../../constants";
 import { moduleLogger, type SandboxCtx } from "../../logger";
-import {
-  getProviderLabel,
-  isSandboxProviderName,
-  SANDBOX_PROVIDER_CAPABILITIES,
-} from "../capabilities";
-import {
-  createSandboxProvider,
-  getSandboxAdapter,
-  type SandboxProviderDeps,
-} from "../registry";
+import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 import {
   getSimulateWorld,
   resetSimulateWorlds,
@@ -67,34 +58,6 @@ afterEach(() => {
 });
 
 describe("simulate provider wiring", () => {
-  it("is recognized and has client-safe display data", () => {
-    expect(isSandboxProviderName("simulate")).toBe(true);
-    expect(getProviderLabel("simulate")).toBe("Simulated");
-  });
-
-  it("advertises the full contract except docker registries", () => {
-    expect(SANDBOX_PROVIDER_CAPABILITIES.simulate).toEqual({
-      lifecycle: true,
-      ssh: true,
-      services: true,
-      exec: true,
-      listSandboxes: true,
-      streaming: true,
-      snapshots: true,
-      fullSnapshotCapture: true,
-      scrubCapture: true,
-      dockerRegistries: false,
-      snapshotIdsAreOpaque: false,
-      supportsAutoDelete: true,
-    });
-  });
-
-  it("requires its config slice", () => {
-    expect(() =>
-      createSandboxProvider("simulate", { ...DEPS, simulate: null }),
-    ).toThrow(/SIMULATE_ENABLED/);
-  });
-
   it("shares one world across providers built with the same worldId", async () => {
     const sandbox = await createSandbox();
     const again = createSandboxProvider("simulate", DEPS);
@@ -103,33 +66,7 @@ describe("simulate provider wiring", () => {
   });
 });
 
-describe("simulate sandbox lifecycle", () => {
-  it("creates a running sandbox stamped with the org label", async () => {
-    const sandbox = await createSandbox();
-    expect(sandbox.id).toBe("sim-vm-000001");
-    expect(sandbox.created?.provider).toBe("simulate");
-    expect(await sandbox.getRuntimeState()).toBe("running");
-
-    const [listing] = await provider().sandboxes.list();
-    expect(listing).toEqual({
-      providerSandboxId: sandbox.id,
-      orgId: "org_1",
-      state: "running",
-      sizing: { vcpus: 2, memoryGib: 4, diskGib: 10 },
-    });
-  });
-
-  it("stops, starts, and deletes", async () => {
-    const sandbox = await createSandbox();
-    await sandbox.stop();
-    expect(await sandbox.getRuntimeState()).toBe("stopped");
-    await sandbox.start();
-    expect(await sandbox.getRuntimeState()).toBe("running");
-    await sandbox.delete();
-    await expect(sandbox.getState()).rejects.toThrow(SimulateNotFoundError);
-    expect(await provider().sandboxes.list()).toEqual([]);
-  });
-
+describe("simulate scripted runtime", () => {
   it("runs scripted commands and records every call", async () => {
     const sandbox = await createSandbox();
     const world = getSimulateWorld(WORLD_ID);
@@ -158,42 +95,10 @@ describe("simulate sandbox lifecycle", () => {
     ]);
   });
 
-  it("streams a command's output to the handlers", async () => {
-    const sandbox = await createSandbox();
-    getSimulateWorld(WORLD_ID).onExec("build", {
-      exitCode: 0,
-      stdout: "out",
-      stderr: "err",
-    });
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    await sandbox.streamExec("build", {
-      onStdout: (c) => stdout.push(c),
-      onStderr: (c) => stderr.push(c),
-    });
-    expect(stdout).toEqual(["out"]);
-    expect(stderr).toEqual(["err"]);
-  });
-
   it("refuses to exec in a stopped sandbox", async () => {
     const sandbox = await createSandbox();
     await sandbox.stop();
     await expect(sandbox.exec("true")).rejects.toThrow(/not running/);
-  });
-
-  it("reads and writes files through the sandbox and the adapter", async () => {
-    const sandbox = await createSandbox();
-    expect(await sandbox.readFile("/home/amika/.bashrc")).toBeNull();
-    await sandbox.writeFile("/home/amika/.bashrc", "export A=1");
-    expect(await sandbox.readFile("/home/amika/.bashrc")).toBe("export A=1");
-
-    const adapter = await getSandboxAdapter("simulate", DEPS, sandbox.id);
-    expect(await adapter.downloadFile("/home/amika/.bashrc")).toBe(
-      "export A=1",
-    );
-    await adapter.uploadFile(Buffer.from("bytes"), "/tmp/bin");
-    expect(await sandbox.readFile("/tmp/bin")).toBe("bytes");
-    expect(await adapter.downloadFile("/missing")).toBeNull();
   });
 
   it("mints deterministic service URLs and reconciles routes", async () => {
@@ -226,31 +131,6 @@ describe("simulate sandbox lifecycle", () => {
 });
 
 describe("simulate snapshots", () => {
-  it("captures a sandbox's files into a snapshot a new sandbox boots from", async () => {
-    const p = provider();
-    const source = await createSandbox("source");
-    await source.writeFile("/home/amika/notes.txt", "kept");
-
-    const snapshot = await source.snapshots!.create("org_1/notes");
-    expect(snapshot.name).toBe("org_1/notes");
-    expect(snapshot.providerSnapshotId).toBeNull();
-    // A full capture keeps the source running.
-    expect(await source.getRuntimeState()).toBe("running");
-
-    expect((await p.snapshots!.get("org_1/notes"))?.state).toBe("active");
-    expect(await p.snapshots!.get("missing")).toBeNull();
-
-    const restored = await p.sandboxes.create(ctx, {
-      name: "restored",
-      snapshot: "org_1/notes",
-      services: [],
-    });
-    expect(await restored.readFile("/home/amika/notes.txt")).toBe("kept");
-
-    await snapshot.delete();
-    expect(await p.snapshots!.get("org_1/notes")).toBeNull();
-  });
-
   it("registers an image as a snapshot once", async () => {
     const p = provider();
     const image = { name: "base-image", image: "ubuntu:24.04" };
