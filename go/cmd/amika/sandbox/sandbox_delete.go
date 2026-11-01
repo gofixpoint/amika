@@ -17,8 +17,8 @@ import (
 var sandboxDeleteCmd = &cobra.Command{
 	Use:     "delete <rig> [<rig>...]",
 	Aliases: []string{"rm", "remove"},
-	Short:   "Delete one or more sandboxes",
-	Long:    `Delete one or more sandboxes, each named by name or ID (see "amika rig --help").`,
+	Short:   "Delete one or more rigs",
+	Long:    `Delete one or more rigs, each named by name or ID (see "amika rig --help").`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		refs, err := rigref.ParseAll(args)

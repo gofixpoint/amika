@@ -12,7 +12,7 @@ import (
 
 var sandboxBindCmd = &cobra.Command{
 	Use:    "bind <rig> gh-branch:<owner>/<repo>/<branch>",
-	Short:  "Bind a remote sandbox to a resource",
+	Short:  "Bind a remote rig to a resource",
 	Hidden: true,
 	Args:   cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {

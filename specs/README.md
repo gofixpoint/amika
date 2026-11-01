@@ -38,6 +38,29 @@ Either way, Claude will:
 2. Create a new spec file with the standard template
 3. Open it for editing
 
+### Supporting Documents
+
+A spec can have a sibling `.d` directory for its supporting documents. The
+directory has the same name as the spec, but `.d` replaces `.md`:
+
+```
+003-file-based-rwcopy-mounts.md     <- the spec
+003-file-based-rwcopy-mounts.d/     <- its supporting documents
+```
+
+Examples of supporting documents are implementation plans, test plans,
+critiques, run evidence, and design notes. Do not create a `.d` directory
+until the spec has a supporting document.
+
+- The `.md` spec is the authority. If a `.d/` document does not agree with the
+  spec, the spec is correct.
+- Keep all design decisions in the spec. A reader must understand the spec
+  without `.d/`.
+- If you rename the spec, rename its `.d` directory too.
+- When a `.d` directory has more than two or three files, add a `README.md`
+  that links back to the spec and lists each document with its purpose.
+- Do not commit raw output, such as large logs or benchmark dumps.
+
 ### Guidelines
 
 - Specs should be human-readable and serve as documentation of decisions

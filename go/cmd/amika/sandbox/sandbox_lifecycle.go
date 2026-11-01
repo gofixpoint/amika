@@ -18,8 +18,8 @@ import (
 
 var sandboxStartCmd = &cobra.Command{
 	Use:   "start <rig> [<rig>...]",
-	Short: "Start one or more stopped sandboxes",
-	Long:  `Start (resume) one or more stopped sandboxes, each named by name or ID (see "amika rig --help").`,
+	Short: "Start one or more stopped rigs",
+	Long:  `Start (resume) one or more stopped rigs, each named by name or ID (see "amika rig --help").`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		refs, err := rigref.ParseAll(args)
@@ -73,8 +73,8 @@ var sandboxStartCmd = &cobra.Command{
 
 var sandboxStopCmd = &cobra.Command{
 	Use:   "stop <rig> [<rig>...]",
-	Short: "Stop one or more sandboxes",
-	Long:  `Stop one or more running sandboxes without removing them, each named by name or ID (see "amika rig --help").`,
+	Short: "Stop one or more rigs",
+	Long:  `Stop one or more running rigs without removing them, each named by name or ID (see "amika rig --help").`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		refs, err := rigref.ParseAll(args)
@@ -183,7 +183,7 @@ type sandboxListRow struct {
 var sandboxListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List all sandboxes",
+	Short:   "List all rigs",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		target, err := getRemoteTarget(cmd)
@@ -372,7 +372,7 @@ func repoBasenameFromURL(repoURL string) string {
 
 var sandboxConnectCmd = &cobra.Command{
 	Use:   "connect <rig>",
-	Short: "Connect to a sandbox console",
+	Short: "Connect to a rig console",
 	Long: `Open an interactive shell using the same direct WebSocket SSH transport as
 "amika rig ssh". Requires an SSH identity from "amika secret ssh-keygen".`,
 	Args: cobra.ExactArgs(1),

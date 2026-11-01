@@ -20,6 +20,7 @@ function deps(overrides: Partial<SandboxProviderDeps>): SandboxProviderDeps {
     vercel: null,
     smol: null,
     amikaHostd: null,
+    simulate: null,
     resolveSnapshotId: async () => null,
     ...overrides,
   };

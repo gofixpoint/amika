@@ -107,7 +107,7 @@ func TestHelpAllRevealsGCOnlyForThatInvocation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: %v", tt.args, err)
 		}
-		if got := helpLineContains(out, "gc", "Remove deleted sandboxes"); got != tt.want {
+		if got := helpLineContains(out, "gc", "Remove deleted rigs"); got != tt.want {
 			t.Fatalf("%v: gc visible = %v, want %v\n%s", tt.args, got, tt.want, out)
 		}
 		if !gcCmd.Hidden {

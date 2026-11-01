@@ -22,6 +22,7 @@ const DEPS: SandboxProviderDeps = {
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
   smol: {},
   amikaHostd: { secretKey: "s" },
+  simulate: {},
   resolveSnapshotId: async () => null,
 };
 
@@ -33,6 +34,7 @@ describe("createSandboxProvider construction", () => {
     "vercel",
     "smol",
     "amika-hostd",
+    "simulate",
   ];
 
   it.each(names)("constructs %s with a coherent object surface", (name) => {

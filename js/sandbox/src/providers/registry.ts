@@ -23,6 +23,8 @@ import type { DaytonaConfig } from "./daytona/config";
 import type { E2bConfig } from "./e2b/config";
 import type { FreestyleConfig } from "./freestyle/config";
 import type { VercelConfig } from "./vercel/config";
+import type { SimulateConfig } from "./simulate/config";
+import simulateProvider, { openSimulateAdapter } from "./simulate/provider";
 import type { SandboxProvider, SnapshotIdResolver } from "./provider";
 import { SandboxProviderUnsupportedError } from "./provider";
 import type { SandboxProviderName } from "../types";
@@ -52,6 +54,7 @@ export interface SandboxProviderDeps {
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
   amikaHostd: AmikaHostdConfig | null;
+  simulate: SimulateConfig | null;
   /**
    * Optional replacement for fetch, used by host daemon operations and adapters.
    * Callers can enforce which destinations requests may reach. For example,
@@ -88,6 +91,8 @@ const AMIKA_HOSTD_HINT =
 const SMOL_HINT = "Smol provider is not configured (set SMOL_ENABLED=true)";
 const E2B_HINT =
   "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
+const SIMULATE_HINT =
+  "Simulate provider is not configured (set SIMULATE_ENABLED=true)";
 
 /**
  * The provider table — the one registration point. A `null` entry keeps a
@@ -147,6 +152,12 @@ const PROVIDERS = {
       }),
     openAdapter: (deps, id) =>
       openVercelAdapter(requireConfig(deps.vercel, VERCEL_HINT), id),
+  },
+  simulate: {
+    create: (deps) =>
+      simulateProvider(requireConfig(deps.simulate, SIMULATE_HINT)),
+    openAdapter: (deps, id) =>
+      openSimulateAdapter(requireConfig(deps.simulate, SIMULATE_HINT), id),
   },
 } satisfies Record<SandboxProviderName, ProviderEntry | null>;
 
