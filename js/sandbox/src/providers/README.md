@@ -178,21 +178,29 @@ true`), implement the `SandboxAdapter` port (`shared/adapter.ts`: exec,
    - `src/index.ts` — re-export the config type
      (`export type { AcmeConfig } from "./providers/acme/config";`) so consumers
      get it from the package barrel
-   - `contract/contract.integration.test.ts` — add `acme: "ACME_ENABLED"` to
-     `ENABLE_VAR` so the contract suite can run against acme (the table is
-     exhaustive over the name union, so this is a compile error until done)
+   - `src/config-from-env.ts` — add `acme: AcmeConfig | null` to
+     `SandboxProviderConfigs` and read acme's env vars in
+     `sandboxProviderConfigsFromEnv`, gated on `ACME_ENABLED`. This is the
+     one env contract: the contract suite, the sweep, and the control plane
+     all build acme's config through it
+   - `contract/env-target.ts` — add acme to `ENABLE_VAR` (its enable flag),
+     `CONFIG_KEY` (its slice in `SandboxProviderConfigs`), and
+     `IDENTITY_FIELDS` (the config fields that decide which account and
+     endpoint acme's resources live in). All three are exhaustive over the
+     name union, so each is a compile error until done
    - `go/test/e2e/runner/runner.go` — add `"acme"` to
      `SupportedSandboxProviders` so the CLI e2e cases can select it
 
 3. **Run the contract suite against acme** (see "Testing a provider" below)
    until it is green. This is the fast loop: no control plane, minutes per
-   run.
+   run. It builds acme from the env vars you just wired up.
 
-4. **Wire the config through the caller** — the control plane constructs
-   `SandboxProviderDeps`, so its env builder needs to supply `deps.acme`.
+4. **Deploy the control plane with acme enabled.** It reads the same env
+   contract, so this is setting `ACME_ENABLED` and acme's credentials on the
+   deployment, not new code.
 
-5. **Run the CLI e2e cases against acme** on a deployment that has the new
-   provider wired in: `make test-e2e-api E2E_SANDBOX_PROVIDER=acme`.
+5. **Run the CLI e2e cases against acme** on that deployment:
+   `make test-e2e-api E2E_SANDBOX_PROVIDER=acme`.
 
 The registry table is exhaustive over the name union, so forgetting a
 registration fails to compile, and `defineProvider`'s capability
@@ -239,25 +247,48 @@ Two entry points run the same suite:
   is not run in CI against real vendors; run it by hand when adding or
   changing a provider.
 
+#### What the fixture must provide
+
+The suite assumes the sandbox booted from `TEST_SANDBOX_CONTRACT_SNAPSHOT`
+has a POSIX shell with `echo`, `printf`, `pwd`, `sleep`, and `exit`; that
+`/tmp` exists; that `$HOME` is the provider's `userHomeDir` and is writable;
+and that service URLs are `http://` or `https://`. These are requirements on
+the test fixture, stated at the top of `contract.ts`.
+
 #### The audit ledger
 
-Every sandbox and snapshot the suite creates is written, the moment the
-provider returns its id, as one JSON line in
-`.contract-runs/<run id>/audit.jsonl`. After each test the suite deletes
-what that test created, newest first, and appends the outcome. A delete is
-not trusted on its own: where the provider can list its sandboxes, the suite
-polls until the resource is gone and records `verified: true`; a resource
-still listed after the wait is recorded as `delete_failed`, the same as a
-delete that threw.
+Every resource the suite creates is written as one JSON line in
+`.contract-runs/<run id>/audit.jsonl`, and after each test the suite deletes
+what that test created, newest first, and appends the outcome:
+
+- **Sandboxes** are recorded the moment the provider returns their id.
+- **Snapshots** are recorded by name **before** capture, because a capture
+  can create the snapshot and still throw. An `identified` line adds the
+  bootable id once capture returns.
+- **SSH access** is recorded the moment it is minted, so it is revoked even
+  when an assertion about it fails. The token is a secret and is never
+  written; the line names the sandbox instead.
+
+The first line is a `run` header naming the provider and its target: the
+config fields that decide where resources live and a 12-character SHA-256
+prefix of each credential (`targetIdentity` in `env-target.ts`).
+
+A delete is not trusted on its own. Sandboxes are verified against the
+provider's listing; snapshots with `find`, which also sees one still
+registering. A resource still present after the wait is recorded as
+`delete_failed`, the same as a delete that threw. On a provider with opaque
+snapshot ids, a snapshot whose id was never returned cannot be looked up, so
+its cleanup fails rather than reporting it gone. If writing an outcome fails,
+the remaining resources are still deleted and the test fails.
 
 When the run ends it prints one table: every resource, the test that
 created it, and `deleted`, `deleted (unverified)`, or `LEAKED` with the
-reason. **Any leak fails the run.** A leaked sandbox costs money every hour,
-and nobody reads the output of a green run. On GitHub Actions the table is
-also appended to the step summary with a `::warning::` per leaked resource;
-upload `.contract-runs/` as an artifact with `if: always()` to keep the raw
-ledger. `TEST_SANDBOX_CONTRACT_RUNS_DIR` moves the run directory, for
-example onto a CI artifact path.
+reason. **Any leak fails the run**, and so does a ledger that cannot be read
+or a step summary that cannot be written: the teardown fails closed. On
+GitHub Actions the table is also appended to the step summary with a
+`::warning::` per leaked resource; upload `.contract-runs/` as an artifact
+with `if: always()` to keep the raw ledger. `TEST_SANDBOX_CONTRACT_RUNS_DIR`
+moves the run directory, for example onto a CI artifact path.
 
 A run that is killed (SIGKILL, a CI timeout) leaves `created` lines with no
 outcome. The next run warns about them. Delete them with:
@@ -267,11 +298,16 @@ pnpm --filter @amika/sandbox sweep:contract --dry-run   # list
 pnpm --filter @amika/sandbox sweep:contract             # delete
 ```
 
-The sweep needs the vendor credentials in env, deletes through the
-provider each ledger line names, verifies the same way, and appends the
-outcome to that ledger marked `swept`. It skips a run whose process is
-still alive. It is never automatic: an old ledger looks the same as one
-from a run still in progress.
+The sweep needs the vendor credentials in env. It refuses a run whose
+header is missing or whose target differs from the one it is configured
+for: in another account a by-name lookup finds nothing, which would mark a
+live resource deleted. It deletes through the provider, verifies the same
+way the run does, and appends each outcome marked `swept`. It skips a run
+whose process is still alive. SSH access cannot be swept, since its token is
+never on disk: the sweep names the sandbox and exits non-zero, and a person
+revokes it in the vendor console and then deletes that run's directory. The
+sweep is never automatic: an old ledger looks the same as one from a run
+still in progress.
 
 Keep the scenarios readable. One scenario is one `it` with no shared state
 beyond the sandbox it creates, and it asserts on outcomes a human can check

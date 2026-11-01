@@ -139,15 +139,21 @@ steps:
       name: "{{sandbox_name}}"
 ```
 
-Every field except `name` and `cmd` is optional on a step. `name` is
+Every field except `name` and `cmd` is optional on a step. `LoadCase` also
+rejects a `resource` block whose `name`, `cleanup`, or `verify_gone.cmd` uses
+a `{{var}}` that no runner value, declared var, or capture up to that step
+defines, so a typo cannot keep a created resource off the ledger. `name` is
 required at both the case and step level; every step needs a non-empty
 `cmd`. `LoadCase` validates this before running anything.
 
-`release_resource` removes a matching prior `resource` entry from the cleanup
-ledger only after the command and every assertion succeed. Use it when the
-operation under test consumes a resource, such as `snapshot create --mode
-scrub_and_delete` deleting its source sandbox. If the step fails, the ledger
-entry remains available for best-effort cleanup.
+`release_resource` hands a prior `resource` back from cleanup after the
+command and every assertion succeed. Use it when the operation under test
+consumes a resource, such as `snapshot create --mode scrub_and_delete`
+deleting its source sandbox. When the resource has a `verify_gone` check, the
+runner runs it first; if the resource is not confirmed gone, it stays with
+cleanup and the step fails. A released entry is marked, not removed: it stays
+in `ledger.json` as history and appears in the run's audit, while cleanup and
+the sweep skip it.
 
 ### Remote commands (`rig ssh`)
 
@@ -181,8 +187,10 @@ the login user's shell. Write the script directly, as above.
 
 ### Variable substitution
 
-Two variables are predefined: `{{run_id}}`, a timestamp unique to the whole
-run, and `{{sandbox_provider}}`, the provider selected for the run. A case that creates a **named** remote resource should build the name
+Three variables are predefined: `{{run_id}}`, a timestamp unique to the
+whole run; `{{run_slug}}`, the same value reduced to lowercase letters and
+digits so it can be part of a DNS label such as a rig name; and
+`{{sandbox_provider}}`, the provider selected for the run. A case that creates a **named** remote resource should build the name
 from it (`--name e2e-ssh-key-{{run_id}}`). Names are frequently upserted
 rather than rejected, so a fixed name lets a case adopt, mutate, and then
 delete a resource the account already had, and lets two concurrent runs
@@ -341,12 +349,29 @@ disk and can be cleaned up by hand or by a future run.
 A resource is registered when its step exits as expected, even if a later
 capture or content assertion in that same step then fails, so a resource
 that was really created is never orphaned. When the step exits with an
-**unexpected** status the outcome is ambiguous (the command may have failed
-before creating anything, such as a name collision), so the resource is
-registered only if the block sets `register_on_failure: true`. Leave that
-off unless the command is known to create the resource before it can fail;
-otherwise cleanup could delete a pre-existing resource this run does not
-own.
+**unexpected** status, or is killed (an interrupt, the step timeout, the run
+deadline), the outcome is ambiguous (the command may have failed before
+creating anything, such as a name collision), so the resource is registered
+only if the block sets `register_on_failure: true`. A killed step registers
+with whatever the command printed before it died.
+
+Use `register_on_failure` only with a name that is unique to the run, so
+cleanup can never delete a resource another run owns. That is how every
+`rig create` in the `api-*` cases works: `rig create` prints its JSON only
+after provisioning finishes, so a create that fails while waiting never
+reports its name. The cases name the rig up front instead:
+
+```yaml
+  - name: create a remote sandbox
+    cmd: [rig, create, "e2e-{{run_slug}}-lifecycle", --remote, ..., -o, json]
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-lifecycle"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-lifecycle", --remote, --force, -o, json]
+```
 
 `e2e_test.go` registers `t.Cleanup` for every case *before* running it, so
 cleanup always fires, even if the case fails partway through. Cleanup
@@ -390,12 +415,20 @@ command:
 
 The command must succeed and print JSON. `absent_from` is a JSONPath with
 one `[*]` wildcard; the resource is gone when no value at that path equals
-the resource `name` exactly. This is a structured comparison, not a text
+the resource `name` exactly. Every element must have that field: an element
+without it makes the check `unchecked`, so a misspelled field or a changed
+response shape cannot read as an empty listing. This is a structured comparison, not a text
 search, so a name mentioned in some other field (a snapshot's source rig, for
 example) cannot be mistaken for the resource itself.
 
 Deletion is asynchronous on every provider, so both forms poll every 5
-seconds for up to 2 minutes. Each `cleanup-results.json` entry records the
+seconds for up to 2 minutes.
+
+A cleanup delete that fails is checked once too. Cases often delete a
+resource themselves and leave it registered, so cleanup's delete gets a 404.
+If the check then says the resource does not exist, the cleanup counts as
+done: `verified` is `gone`, the delete's error is kept in `delete_error`, and
+the audit shows "already gone". Any other answer keeps the failure. Each `cleanup-results.json` entry records the
 result as `verified`:
 
 | Value           | Meaning                                                                          |
@@ -419,7 +452,8 @@ and services. Do the same for new resources.
 
 When the last case finishes, the run prints one table of every resource it
 created, the case and step that created it, and its outcome: `deleted`,
-`deleted (unverified)`, or `LEAKED` with the reason. The same table is
+`deleted (unverified)`, or `LEAKED` with the reason. Released resources are
+included, noting the step that consumed them. The same table is
 written to `.runs/<run-id>/audit.txt` and `audit.json`. On GitHub Actions it
 is also appended to the step summary, with a `::warning::` annotation per
 leaked resource.

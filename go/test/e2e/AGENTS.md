@@ -19,6 +19,9 @@ importing implementation packages.
 - Preserve enough timeout headroom for cleanup. A `go test` timeout kills the
   process before deferred cleanup can run.
 - Use run-unique names for upserted remote resources.
+- Name a resource up front (`{{run_slug}}` for DNS-label names) and set
+  `register_on_failure: true` when the create command can fail after the
+  resource exists, as every `rig create` in the `api-*` cases does.
 - Never put API keys or other secret values in case argv, transcripts, wrapper
   files, or committed fixtures.
 
