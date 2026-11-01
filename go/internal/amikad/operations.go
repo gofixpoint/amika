@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/amikad/norelay"
+	"github.com/gofixpoint/amika/go/internal/amikad/oomscore"
 	"github.com/gofixpoint/amika/go/internal/amikad/sshd"
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
 )
@@ -169,6 +170,10 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	if options.Background {
 		return o.serveBackground(ctx, options)
 	}
+	// Protect the process that will hold the SSH bridge. A --background
+	// launcher exits once its re-executed child is healthy, and that child
+	// protects itself here.
+	oomscore.ProtectSelf(o.logger)
 
 	handler := norelay.NewHandler(
 		norelay.Config{MaxConnections: options.MaxConnections, SSHDAddress: o.sshd.LoopbackAddress()},
