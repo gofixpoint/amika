@@ -716,42 +716,128 @@ func TestCleanupRunsInReverseOrderAndContinuesOnFailure(t *testing.T) {
 	}
 }
 
-// TestCleanupVerifiesDeletionAgainstListing covers the four verification
-// outcomes: the listing no longer names the resource (gone), the entry has no
-// listing command (unsupported), the listing still names it when the poll
-// gives up (still_present, a failure), and the listing command itself fails
-// (unchecked, a failure).
-func TestCleanupVerifiesDeletionAgainstListing(t *testing.T) {
+// TestCleanupVerifiesDeletion covers both check forms and every outcome. A
+// resource is "gone" only on a positive answer: a lookup that fails with the
+// not-found text, or a listing whose values do not include the name. Any
+// other failure is "unchecked", never "gone".
+func TestCleanupVerifiesDeletion(t *testing.T) {
 	bin := stubScript(t)
 	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
 	deleteOK := []string{"0", "", ""}
 
+	lookup := func(exit, stderr string) *VerifyGone {
+		return &VerifyGone{Cmd: []string{exit, "", stderr}, NotFound: "HTTP 404"}
+	}
+	listing := func(exit, stdout, stderr string) *VerifyGone {
+		return &VerifyGone{Cmd: []string{exit, stdout, stderr}, AbsentFrom: "$.items[*].name"}
+	}
+
 	entries := []Entry{
-		{Type: "sandbox", Name: "gone-one", CleanupArgv: deleteOK, VerifyArgv: []string{"0", `[{"name":"someone-else"}]`, ""}},
+		{Type: "sandbox", Name: "looked-up-gone", CleanupArgv: deleteOK, VerifyGone: lookup("1", "remote get sandbox: HTTP 404: not found")},
+		{Type: "sandbox", Name: "looked-up-present", CleanupArgv: deleteOK, VerifyGone: lookup("0", "")},
+		{Type: "sandbox", Name: "looked-up-outage", CleanupArgv: deleteOK, VerifyGone: lookup("1", "HTTP 401: bad key")},
+		{Type: "snapshot", Name: "listed-gone", CleanupArgv: deleteOK, VerifyGone: listing("0", `{"items":[{"name":"other"},{"name":"listed-gone-2"}]}`, "")},
+		{Type: "snapshot", Name: "listed-present", CleanupArgv: deleteOK, VerifyGone: listing("0", `{"items":[{"name":"listed-present"}]}`, "")},
+		{Type: "snapshot", Name: "listing-broke", CleanupArgv: deleteOK, VerifyGone: listing("1", "", "list broke")},
+		{Type: "snapshot", Name: "listing-not-json", CleanupArgv: deleteOK, VerifyGone: listing("0", "No snapshots found.", "")},
 		{Type: "sandbox", Name: "blind", CleanupArgv: deleteOK},
-		{Type: "sandbox", Name: "sticky", CleanupArgv: deleteOK, VerifyArgv: []string{"0", `[{"name":"sticky"}]`, ""}},
-		{Type: "sandbox", Name: "unlistable", CleanupArgv: deleteOK, VerifyArgv: []string{"1", "", "list broke"}},
-		{Type: "sandbox", Name: "undeletable", CleanupArgv: []string{"1", "", "boom"}, VerifyArgv: []string{"0", "", ""}},
+		{Type: "sandbox", Name: "undeletable", CleanupArgv: []string{"1", "", "boom"}, VerifyGone: lookup("1", "HTTP 404")},
 	}
 	byName := map[string]CleanupResult{}
 	for _, res := range CleanupVerified(bin, entries, nil, fast) {
 		byName[res.Entry.Name] = res
 	}
 
-	if res := byName["gone-one"]; res.Verified != VerifiedGone || res.Err != nil {
-		t.Fatalf("expected gone-one verified gone, got %+v", res)
+	want := map[string]struct {
+		verified string
+		failed   bool
+	}{
+		"looked-up-gone":    {VerifiedGone, false},
+		"looked-up-present": {VerifiedStillPresent, true},
+		"looked-up-outage":  {VerifiedUnchecked, true},
+		"listed-gone":       {VerifiedGone, false},
+		"listed-present":    {VerifiedStillPresent, true},
+		"listing-broke":     {VerifiedUnchecked, true},
+		"listing-not-json":  {VerifiedUnchecked, true},
+		"blind":             {VerifiedUnsupported, false},
+		"undeletable":       {VerifiedUnchecked, true},
 	}
-	if res := byName["blind"]; res.Verified != VerifiedUnsupported || res.Err != nil {
-		t.Fatalf("expected blind to be unsupported and clean, got %+v", res)
+	for name, w := range want {
+		res := byName[name]
+		if res.Verified != w.verified || (res.Err != nil) != w.failed {
+			t.Errorf("%s: verified=%q err=%v, want verified=%q failed=%v", name, res.Verified, res.Err, w.verified, w.failed)
+		}
 	}
-	if res := byName["sticky"]; res.Verified != VerifiedStillPresent || res.Err == nil {
-		t.Fatalf("expected sticky to be still present and failed, got %+v", res)
+	if err := byName["looked-up-outage"].Err; err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+		t.Errorf("an outage must be reported with the lookup's stderr, got %v", err)
 	}
-	if res := byName["unlistable"]; res.Verified != VerifiedUnchecked || res.Err == nil || !strings.Contains(res.Err.Error(), "list broke") {
-		t.Fatalf("expected unlistable to be unchecked with the listing's stderr, got %+v", res)
+}
+
+func TestCollectJSONPath(t *testing.T) {
+	var doc any
+	if err := json.Unmarshal([]byte(`{"items":[{"name":"a"},{"name":"b"},{"other":1}]}`), &doc); err != nil {
+		t.Fatal(err)
 	}
-	if res := byName["undeletable"]; res.Verified != VerifiedUnchecked || res.Err == nil {
-		t.Fatalf("expected a failed delete to stay unchecked, got %+v", res)
+	got, err := CollectJSONPath("$.items[*].name", doc)
+	if err != nil {
+		t.Fatalf("CollectJSONPath: %v", err)
+	}
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("expected [a b], skipping the element without the field, got %v", got)
+	}
+
+	var arr any
+	if err := json.Unmarshal([]byte(`[{"id":"k1"},{"id":"k2"}]`), &arr); err != nil {
+		t.Fatal(err)
+	}
+	got, err = CollectJSONPath("$[*].id", arr)
+	if err != nil || len(got) != 2 || got[1] != "k2" {
+		t.Fatalf("expected [k1 k2] from a root array, got %v, %v", got, err)
+	}
+
+	if _, err := CollectJSONPath("$.items.name", doc); err == nil {
+		t.Fatal("expected an error for a path without a wildcard")
+	}
+	if _, err := CollectJSONPath("$.items[*].name[*]", doc); err == nil {
+		t.Fatal("expected an error for two wildcards")
+	}
+	if _, err := CollectJSONPath("$.missing[*].name", doc); err == nil {
+		t.Fatal("expected an error when the container is missing")
+	}
+}
+
+func TestLoadCaseRejectsMalformedVerifyGone(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]string{
+		"no-cmd": `
+      verify_gone:
+        not_found: "HTTP 404"`,
+		"neither": `
+      verify_gone:
+        cmd: [rig, get, sb-1]`,
+		"both": `
+      verify_gone:
+        cmd: [rig, get, sb-1]
+        not_found: "HTTP 404"
+        absent_from: "$[*].name"`,
+		"no-wildcard": `
+      verify_gone:
+        cmd: [rig, list, -o, json]
+        absent_from: "$.name"`,
+	}
+	for name, block := range cases {
+		path := filepath.Join(dir, name+".yaml")
+		writeFile(t, path, `name: `+name+`
+steps:
+  - name: create
+    cmd: [rig, create]
+    resource:
+      type: sandbox
+      name: sb-1
+      cleanup: [rig, delete, sb-1]`+block+"\n")
+		if _, err := LoadCase(path); err == nil {
+			t.Errorf("%s: expected LoadCase to reject the verify_gone block", name)
+		}
 	}
 }
 
@@ -965,10 +1051,13 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 				Expect:  Expectation{Exit: intPtr(0)},
 				Capture: map[string]string{"sandbox_name": "$.name"},
 				Resource: &Resource{
-					Type:       "sandbox",
-					Name:       "{{sandbox_name}}",
-					Cleanup:    []string{"0", "deleted {{sandbox_name}}", ""},
-					VerifyGone: []string{"0", "listing without {{sandbox_name}}", ""},
+					Type:    "sandbox",
+					Name:    "{{sandbox_name}}",
+					Cleanup: []string{"0", "deleted {{sandbox_name}}", ""},
+					VerifyGone: &VerifyGone{
+						Cmd:      []string{"1", "", "lookup of {{sandbox_name}}: HTTP 404"},
+						NotFound: "HTTP 404",
+					},
 				},
 			},
 		},
@@ -988,8 +1077,8 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 	if len(entries[0].CleanupArgv) != 3 || entries[0].CleanupArgv[1] != "deleted sb-xyz" {
 		t.Fatalf("expected cleanup argv templated with the same-step capture, got %#v", entries[0].CleanupArgv)
 	}
-	if len(entries[0].VerifyArgv) != 3 || entries[0].VerifyArgv[1] != "listing without sb-xyz" {
-		t.Fatalf("expected verify argv templated with the same-step capture, got %#v", entries[0].VerifyArgv)
+	if v := entries[0].VerifyGone; v == nil || len(v.Cmd) != 3 || v.Cmd[2] != "lookup of sb-xyz: HTTP 404" || v.NotFound != "HTTP 404" {
+		t.Fatalf("expected verify_gone cmd templated with the same-step capture, got %#v", entries[0].VerifyGone)
 	}
 }
 

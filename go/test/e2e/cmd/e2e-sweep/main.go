@@ -105,7 +105,7 @@ func describeVerified(verified string) string {
 	case runner.VerifiedGone:
 		return "verified gone"
 	case runner.VerifiedUnsupported:
-		return "not verifiable: no verify_gone on this resource"
+		return "not verified: the resource has no verify_gone check"
 	default:
 		return verified
 	}
