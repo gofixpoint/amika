@@ -235,10 +235,43 @@ Two entry points run the same suite:
 
   Vendor credentials use the same env vars the control plane reads
   (`../config-from-env.ts`). The entry turns the provider's `*_ENABLED` flag
-  on itself. Every sandbox and snapshot the suite creates is deleted after
-  its test, and names carry a per-run id so two runs never collide. The
-  suite is not run in CI against real vendors; run it by hand when adding or
+  on itself. Names carry a per-run id so two runs never collide. The suite
+  is not run in CI against real vendors; run it by hand when adding or
   changing a provider.
+
+#### The audit ledger
+
+Every sandbox and snapshot the suite creates is written, the moment the
+provider returns its id, as one JSON line in
+`.contract-runs/<run id>/audit.jsonl`. After each test the suite deletes
+what that test created, newest first, and appends the outcome. A delete is
+not trusted on its own: where the provider can list its sandboxes, the suite
+polls until the resource is gone and records `verified: true`; a resource
+still listed after the wait is recorded as `delete_failed`, the same as a
+delete that threw.
+
+When the run ends it prints one table: every resource, the test that
+created it, and `deleted`, `deleted (unverified)`, or `LEAKED` with the
+reason. **Any leak fails the run.** A leaked sandbox costs money every hour,
+and nobody reads the output of a green run. On GitHub Actions the table is
+also appended to the step summary with a `::warning::` per leaked resource;
+upload `.contract-runs/` as an artifact with `if: always()` to keep the raw
+ledger. `TEST_SANDBOX_CONTRACT_RUNS_DIR` moves the run directory, for
+example onto a CI artifact path.
+
+A run that is killed (SIGKILL, a CI timeout) leaves `created` lines with no
+outcome. The next run warns about them. Delete them with:
+
+```bash
+pnpm --filter @amika/sandbox sweep:contract --dry-run   # list
+pnpm --filter @amika/sandbox sweep:contract             # delete
+```
+
+The sweep needs the vendor credentials in env, deletes through the
+provider each ledger line names, verifies the same way, and appends the
+outcome to that ledger marked `swept`. It skips a run whose process is
+still alive. It is never automatic: an old ledger looks the same as one
+from a run still in progress.
 
 Keep the scenarios readable. One scenario is one `it` with no shared state
 beyond the sandbox it creates, and it asserts on outcomes a human can check

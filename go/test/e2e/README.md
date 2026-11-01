@@ -130,6 +130,7 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
+      verify_gone: [rig, list, -o, json]                    # optional: after cleanup, poll until stdout no longer contains the name
       register_on_failure: false                            # optional: set true to register even on an unexpected exit (default false)
     release_resource:                                      # optional: retire a consumed resource after this step passes
       type: sandbox
@@ -351,6 +352,52 @@ replays the ledger in **reverse** registration order (last-created
 resources are deleted first) and keeps going even if one cleanup command
 fails, logging the failure via `t.Log` and recording it in
 `cleanup-results.json`.
+
+### Verifying a delete
+
+A delete command that exits 0 is not proof the resource is gone. Give the
+resource a `verify_gone` argv, a list command for that kind of resource:
+
+```yaml
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
+      verify_gone: [rig, list, -o, json]
+```
+
+After the cleanup command succeeds, the runner runs `verify_gone` and
+checks that its stdout no longer contains the resource `name`. Deletion is
+asynchronous on every provider, so it polls every 5 seconds for up to 2
+minutes. Each `cleanup-results.json` entry records the result as
+`verified`:
+
+| Value           | Meaning                                                              |
+| --------------- | -------------------------------------------------------------------- |
+| `gone`          | The listing no longer names the resource.                            |
+| `unsupported`   | The resource has no `verify_gone`; only the delete's exit status is known. |
+| `still_present` | The listing still named it when the poll gave up. Counts as a failure. |
+| `unchecked`     | The delete, or the listing itself, failed. Counts as a failure.      |
+
+Names are run-unique (see `{{run_id}}`), so a substring check on the
+listing is enough. Every `api-*` case declares `verify_gone` for each
+resource it creates; do the same for new ones.
+
+### The resource audit
+
+When the last case finishes, the run prints one table of every resource it
+created, the case and step that created it, and its outcome: `deleted`,
+`deleted (unverified)`, or `LEAKED` with the reason. The same table is
+written to `.runs/<run-id>/audit.txt` and `audit.json`. On GitHub Actions it
+is also appended to the step summary, with a `::warning::` annotation per
+leaked resource.
+
+**Any leaked resource fails the run.** A leaked sandbox costs money every
+hour, and nobody reads the output of a green run, so the run stays red until
+someone looks. `make test-e2e-api` passes `-v` so the table shows on a green
+run too; `go test` hides a passing package's stdout otherwise. To keep the
+audit files on a CI runner, upload `go/test/e2e/.runs/` as an artifact with
+`if: always()`.
 
 ### Finishing before `go test` kills the run
 

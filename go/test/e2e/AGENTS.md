@@ -10,6 +10,11 @@ importing implementation packages.
   behind both `AMIKA_RUN_E2E=1` and `AMIKA_RUN_E2E_API=1`.
 - Register every created resource immediately so the reverse-order cleanup
   ledger can delete it after a later failure.
+- Give every resource a `verify_gone` list command. Without it the run can
+  only trust the delete's exit status, and the audit marks the resource
+  `deleted (unverified)`.
+- A leaked resource fails the run. Read the audit table at the end of
+  `make test-e2e-api` before deciding a failure is a test bug.
 - Preserve enough timeout headroom for cleanup. A `go test` timeout kills the
   process before deferred cleanup can run.
 - Use run-unique names for upserted remote resources.
