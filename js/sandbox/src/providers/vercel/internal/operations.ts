@@ -182,11 +182,7 @@ export async function createVercelSandbox(
   );
 
   // The sandbox takes the caller's name, and that name is its id from here on
-  // (`providerSandboxId`). Vercel names are unique per project, so the caller
-  // must pass a name no other sandbox in the project uses; Vercel refuses a
-  // duplicate. Keep this a `Sandbox.create`, never `Sandbox.getOrCreate`: the
-  // latter returns an EXISTING sandbox with the same name, which would hand
-  // one caller a sandbox that belongs to another.
+  // (`providerSandboxId`). Vercel names are unique per project.
   //
   // Labels ride on tags (the Vercel analogue of Daytona's labels). The repo is
   // cloned inside the sandbox during initialization (like Freestyle), not via
