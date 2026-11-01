@@ -82,14 +82,7 @@ jobs:
             prerelease=true
           fi
 
-          if [ "$component" = "amikad" ]; then
-            # amikad's secure state operations are Linux-only. Do not publish
-            # Darwin archives that cannot configure a usable daemon.
-            # TODO(KAPRO-812): Re-enable Darwin after macOS secure state support.
-            build_matrix='{"include":[{"goos":"linux","goarch":"amd64"},{"goos":"linux","goarch":"arm64"}]}'
-          else
-            build_matrix='{"include":[{"goos":"linux","goarch":"amd64"},{"goos":"linux","goarch":"arm64"},{"goos":"darwin","goarch":"amd64"},{"goos":"darwin","goarch":"arm64"}]}'
-          fi
+          build_matrix='{"include":[{"goos":"linux","goarch":"amd64"},{"goos":"linux","goarch":"arm64"},{"goos":"darwin","goarch":"amd64"},{"goos":"darwin","goarch":"arm64"}]}'
 
           {
             echo "component=$component"
