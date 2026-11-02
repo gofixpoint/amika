@@ -113,6 +113,7 @@ describe("simulate sandbox lifecycle", () => {
     const [listing] = await provider().sandboxes.list();
     expect(listing).toEqual({
       providerSandboxId: sandbox.id,
+      name: "demo",
       orgId: "org_1",
       state: "running",
       sizing: { vcpus: 2, memoryGib: 4, diskGib: 10 },
