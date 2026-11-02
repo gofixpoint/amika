@@ -275,6 +275,22 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expectLauncherRuns(privateNode(), "24.22.1");
   });
 
+  it("installs a bare-metal host without the VM engine it never runs", () => {
+    writeSystemNode("24.22.1");
+    rmSync(path.join(root, "registry"), { recursive: true });
+    const result = install({}, ["--bare-metal"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain("engine");
+    expect(existsSync(path.join(hostdHome, "node_modules"))).toBe(false);
+    expectLauncherRuns(systemNode(), "24.22.1");
+  });
+
+  it("still needs the engine for a VM host", () => {
+    writeSystemNode("24.22.1");
+    rmSync(path.join(root, "registry"), { recursive: true });
+    expect(install().status).not.toBe(0);
+  });
+
   /** The installer failed before installing anything, naming the version. */
   function expectRefused(
     result: ReturnType<typeof spawnSync>,
@@ -288,8 +304,11 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expect(existsSync(launcher())).toBe(false);
   }
 
-  function install(extraEnv: Record<string, string> = {}) {
-    return spawnSync("sh", [installer, "--skip-smolvm"], {
+  function install(
+    extraEnv: Record<string, string> = {},
+    flags: string[] = ["--skip-smolvm"],
+  ) {
+    return spawnSync("sh", [installer, ...flags], {
       encoding: "utf8",
       env: {
         PATH: `${systemNodeDir}:${toolsDir}`,

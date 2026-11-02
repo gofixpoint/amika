@@ -80,9 +80,10 @@ Flags:
                         (default: ${DEFAULT_SMOLVM_VERSION}; "latest" for the newest)
   --skip-smolvm         Do not install smolvm
   --bare-metal          Set this host up as a bare-metal host, whose one rig
-                        is this machine: skip smolvm and the KVM and resize2fs
-                        checks, and seed host_type = "bare-metal" in a new
-                        config. \`amika-hostd setup\` installs amikad.
+                        is this machine: skip smolvm, the smolmachines
+                        engine and the KVM and resize2fs checks, and seed
+                        host_type = "bare-metal" in a new config.
+                        \`amika-hostd setup\` installs amikad.
   --uninstall           Remove amika-hostd instead of installing it. Finds
                         amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
                         asks you to confirm, stops the daemon, then deletes
@@ -134,7 +135,11 @@ main() {
   fi
   check_node_version
   detect_platform
-  engine_package
+  # A bare-metal host runs no VMs, so it needs no engine, and a platform the
+  # engine does not support (Intel macOS, musl Linux) can still be one.
+  if [ "$BARE_METAL" != "true" ]; then
+    engine_package
+  fi
 
   SMOLVM_VERSION="${SMOLVM_VERSION:-$DEFAULT_SMOLVM_VERSION}"
   SMOLVM_VERSION="${SMOLVM_VERSION#v}"
@@ -518,7 +523,9 @@ install_hostd() {
   install -m 0644 "$BUNDLE_PATH" "${HOSTD_HOME}/amika-hostd.mjs"
   install -m 0644 "${ARCHIVE_DIR}/config.example.toml" \
     "${HOSTD_HOME}/config.example.toml"
-  install_engine
+  if [ "$BARE_METAL" != "true" ]; then
+    install_engine
+  fi
 
   ensure_node
   write_launcher
@@ -616,8 +623,12 @@ describe_plan() {
   else
     echo "  smolvm:       not found; would run ${SMOLVM_INSTALL_URL} (version: ${SMOLVM_VERSION})"
   fi
-  echo "  Engine:       ${ENGINE_PACKAGE}, the version the release pins, from"
-  echo "                ${NPM_REGISTRY}, into ${HOSTD_HOME}/node_modules"
+  if [ "$BARE_METAL" = "true" ]; then
+    echo "  Engine:       skipped (--bare-metal)"
+  else
+    echo "  Engine:       ${ENGINE_PACKAGE}, the version the release pins, from"
+    echo "                ${NPM_REGISTRY}, into ${HOSTD_HOME}/node_modules"
+  fi
   config_paths
   if [ -e "$CONFIG_PATH" ]; then
     echo "  Config:       keep existing ${CONFIG_PATH}"
