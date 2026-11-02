@@ -75,7 +75,8 @@ export interface ProviderContractTarget {
   auditFile?: string;
   /**
    * The account and endpoint the provider points at (`targetIdentity`),
-   * written as the ledger's first line.
+   * written as the ledger's first line so the sweep can refuse to act on a
+   * different target.
    */
   identity?: Record<string, string>;
 }

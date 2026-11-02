@@ -153,7 +153,7 @@ let sshSequence = 0;
  *
  * The ledger gets a made-up id and the sandbox it belongs to, never the
  * token. That keeps secrets off disk, and it means a killed run's access
- * must be revoked by hand.
+ * cannot be swept automatically; the sweep says so and names the sandbox.
  */
 export function trackSshAccess(
   context: TrackingContext,

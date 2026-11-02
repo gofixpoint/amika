@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { providerDepsFromEnv, targetIdentity } from "./env-target";
+import {
+  identityDifferences,
+  providerDepsFromEnv,
+  targetIdentity,
+} from "./env-target";
 
 describe("targetIdentity", () => {
   it("records where resources live and only a hash of the credential", () => {
@@ -18,5 +22,22 @@ describe("targetIdentity", () => {
       apiKeySha256: expect.stringMatching(/^[0-9a-f]{12}$/),
     });
     expect(JSON.stringify(identity)).not.toContain("dtn_secret_value");
+  });
+
+  it("tells two accounts apart by their credentials alone", () => {
+    const a = targetIdentity(
+      "e2b",
+      providerDepsFromEnv("e2b", { E2B_API_KEY: "key-a" }),
+    );
+    const b = targetIdentity(
+      "e2b",
+      providerDepsFromEnv("e2b", { E2B_API_KEY: "key-b" }),
+    );
+    expect(identityDifferences(a, b)).toEqual([
+      expect.stringMatching(
+        /^apiKeySha256: run had "[0-9a-f]{12}", now "[0-9a-f]{12}"$/,
+      ),
+    ]);
+    expect(identityDifferences(a, a)).toEqual([]);
   });
 });

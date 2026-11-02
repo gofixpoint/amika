@@ -181,8 +181,8 @@ true`), implement the `SandboxAdapter` port (`shared/adapter.ts`: exec,
    - `src/config-from-env.ts` — add `acme: AcmeConfig | null` to
      `SandboxProviderConfigs` and read acme's env vars in
      `sandboxProviderConfigsFromEnv`, gated on `ACME_ENABLED`. This is the
-     one env contract: the contract suite and the control plane both build
-     acme's config through it
+     one env contract: the contract suite, the sweep, and the control plane
+     all build acme's config through it
    - `contract/env-target.ts` — add acme to `ENABLE_VAR` (its enable flag),
      `CONFIG_KEY` (its slice in `SandboxProviderConfigs`), and
      `IDENTITY_FIELDS` (the config fields that decide which account and
@@ -293,7 +293,23 @@ with `if: always()` to keep the raw ledger. `TEST_SANDBOX_CONTRACT_RUNS_DIR`
 moves the run directory, for example onto a CI artifact path.
 
 A run that is killed (SIGKILL, a CI timeout) leaves `created` lines with no
-outcome. The next run warns about them; delete them by hand.
+outcome. The next run warns about them. Delete them with:
+
+```bash
+pnpm --filter @amika/sandbox sweep:contract --dry-run   # list
+pnpm --filter @amika/sandbox sweep:contract             # delete
+```
+
+The sweep needs the vendor credentials in env. It refuses a run whose
+header is missing or whose target differs from the one it is configured
+for: in another account a by-name lookup finds nothing, which would mark a
+live resource deleted. It deletes through the provider, verifies the same
+way the run does, and appends each outcome marked `swept`. It skips a run
+whose process is still alive. SSH access cannot be swept, since its token is
+never on disk: the sweep names the sandbox and exits non-zero, and a person
+revokes it in the vendor console and then deletes that run's directory. The
+sweep is never automatic: an old ledger looks the same as one from a run
+still in progress.
 
 Keep the scenarios readable. One scenario is one `it` with no shared state
 beyond the sandbox it creates, and it asserts on outcomes a human can check
