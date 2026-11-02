@@ -57,8 +57,12 @@ describe("createSandboxProvider construction", () => {
     vercel: "vercel",
     smol: "smol",
     "amika-hostd": "amikaHostd",
+    "amika-hostd-bare-metal": "amikaHostd",
     simulate: "simulate",
-  } as const;
+  } as const satisfies Record<
+    Exclude<SandboxProviderName, "daytona">,
+    keyof SandboxProviderDeps
+  >;
 
   it.each(optional)(
     "throws a config hint when %s has no config slice",

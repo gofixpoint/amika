@@ -21,6 +21,7 @@ const ENABLE_VAR: Record<SandboxProviderName, string | null> = {
   vercel: "VERCEL_ENABLED",
   smol: "SMOL_ENABLED",
   "amika-hostd": "AMIKA_HOSTD_ENABLED",
+  "amika-hostd-bare-metal": "AMIKA_HOSTD_ENABLED",
   simulate: "SIMULATE_ENABLED",
 };
 
