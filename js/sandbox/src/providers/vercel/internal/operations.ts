@@ -142,11 +142,29 @@ function vercelTags(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+/**
+ * Vercel's rule for sandbox names: letters, digits, `_`, and `-`, at most 128
+ * characters. Names are also unique within a Vercel project.
+ */
+const VERCEL_SANDBOX_NAME = /^[a-zA-Z0-9_-]{1,128}$/;
+
+/**
+ * Throw a clear error for a name Vercel would refuse, before any request.
+ */
+export function assertVercelSandboxName(name: string): void {
+  if (!VERCEL_SANDBOX_NAME.test(name)) {
+    throw new Error(
+      `Vercel sandbox name ${JSON.stringify(name)} must be 1 to 128 letters, digits, "_", or "-"`,
+    );
+  }
+}
+
 export async function createVercelSandbox(
   ctx: SandboxCtx,
   config: VercelConfig,
   input: CreateSandboxProviderInput,
 ): Promise<CreatedProviderSandbox> {
+  assertVercelSandboxName(input.name);
   const services = input.services;
   const ports = resolveVercelPorts(services);
   const bootSource = resolveVercelBootSource(input.snapshot);
@@ -159,18 +177,21 @@ export async function createVercelSandbox(
     : undefined;
 
   ctx.logger.info(
-    { bootSource, ports, timeoutMs, resources },
+    { name: input.name, bootSource, ports, timeoutMs, resources },
     "Creating Vercel sandbox",
   );
 
-  // Org/user attribution rides on tags (the Vercel analogue of Daytona's
-  // labels); the name is left for Vercel to generate, since the generated name
-  // is the stable handle we reconnect by. The repo is cloned inside the sandbox
-  // during initialization (like Freestyle), not via Vercel's git `source`, so
-  // create only needs the prepared source, ports, timeout, resources, and tags.
+  // The sandbox takes the caller's name, and that name is its id from here on
+  // (`providerSandboxId`). Vercel names are unique per project.
+  //
+  // Labels ride on tags (the Vercel analogue of Daytona's labels). The repo is
+  // cloned inside the sandbox during initialization (like Freestyle), not via
+  // Vercel's git `source`, so create only needs the name, prepared source,
+  // ports, timeout, resources, and tags.
   const sandbox = await withStepContext("vercel create: create sandbox", () =>
     Sandbox.create({
       ...vercelCredentials(config),
+      name: input.name,
       ports,
       timeout: timeoutMs,
       ...(input.envVars ? { env: input.envVars } : {}),

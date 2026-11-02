@@ -46,8 +46,8 @@ var sandboxSSHV2Cmd = &cobra.Command{
 	// "sshv2" is the pre-promotion name this command answered to; kept as an
 	// alias so scripts and docs written against it keep working.
 	Aliases: []string{"sshv2"},
-	Short:   "SSH into a remote sandbox",
-	Long: `Open an SSH session to a remote sandbox over Amika's direct WebSocket
+	Short:   "SSH into a remote rig",
+	Long: `Open an SSH session to a remote rig over Amika's direct WebSocket
 transport. Requires an SSH identity from "amika secret ssh-keygen".
 
 Use it like ssh: options go before the rig, an optional command after it.
@@ -57,7 +57,7 @@ name=<name> / id=<id> (see "amika rig --help"); it is resolved to the rig's
 
 Amika's own flags go before "ssh":
 
-  amika sandbox --remote ssh -N -L 8080:localhost:80 my-sandbox
+  amika rig --remote ssh -N -L 8080:localhost:80 my-rig
 
 Local (-L), dynamic (-D), and isolated agent forwarding are supported. Amika
 enables agent forwarding through a dedicated agent containing only the Amika
@@ -65,16 +65,16 @@ SSH key. Remote forwarding (-R) and X11 forwarding are not supported.
 
 Examples:
   # Interactive shell
-  amika sandbox ssh my-sandbox
+  amika rig ssh my-rig
 
   # Run a command instead of opening a shell
-  amika sandbox ssh my-sandbox uptime
+  amika rig ssh my-rig uptime
 
-  # Forward local port 6789 to port 3010 inside the sandbox, no shell
-  amika sandbox ssh -N -L 6789:localhost:3010 my-sandbox
+  # Forward local port 6789 to port 3010 inside the rig, no shell
+  amika rig ssh -N -L 6789:localhost:3010 my-rig
 
   # SOCKS proxy on local port 1080
-  amika sandbox ssh -N -D 1080 my-sandbox`,
+  amika rig ssh -N -D 1080 my-rig`,
 	// Arguments after "ssh" belong to ssh, so Cobra must not parse them: it
 	// would reject "-L" and friends as unknown flags. RunE therefore parses the
 	// amika-owned portion itself, after splitting the two apart by position.
@@ -170,32 +170,32 @@ var sandboxCodeV2Cmd = &cobra.Command{
 	// scripts and docs written against them keep working.
 	Use:     "open <rig>",
 	Aliases: []string{"code", "codev2"},
-	Short:   "Open a remote sandbox in an editor or agent via SSH",
-	Long: `Open a remote sandbox in an editor or coding agent over Amika's direct
+	Short:   "Open a remote rig in an editor or agent via SSH",
+	Long: `Open a remote rig in an editor or coding agent over Amika's direct
 WebSocket SSH transport, bypassing provider-native SSH access. The rig is a
 name or ID, or name=<name> / id=<id> (see "amika rig --help").
 
 Supported --app values (--editor is an alias for --app):
-  cursor   launch Cursor connected to the sandbox (default)
-  vscode   launch VS Code connected to the sandbox
-  claude   register the sandbox as a Claude Desktop SSH environment
-  codex    expose the sandbox to Codex as an SSH connection
-  paseo    print instructions for adding the sandbox as a Paseo SSH host
-  herdr    add the sandbox to Herdr as a remote machine
+  cursor   launch Cursor connected to the rig (default)
+  vscode   launch VS Code connected to the rig
+  claude   register the rig as a Claude Desktop SSH environment
+  codex    expose the rig to Codex as an SSH connection
+  paseo    print instructions for adding the rig as a Paseo SSH host
+  herdr    add the rig to Herdr as a remote machine
 
 The command creates a managed SSH alias backed by Amika's WebSocket proxy, then
 hands that alias to the selected editor. It requires an SSH identity from
 "amika secret ssh-keygen".
 
 Examples:
-  amika sandbox open my-sandbox
-  amika sandbox open my-sandbox --app=cursor
-  amika sandbox open my-sandbox --app=vscode
-  amika sandbox open my-sandbox --app=claude
-  amika sandbox open my-sandbox --app=codex
-  amika sandbox open my-sandbox --app=paseo
-  amika sandbox open my-sandbox --app=herdr
-  amika sandbox code my-sandbox --editor=vscode`,
+  amika rig open my-rig
+  amika rig open my-rig --app=cursor
+  amika rig open my-rig --app=vscode
+  amika rig open my-rig --app=claude
+  amika rig open my-rig --app=codex
+  amika rig open my-rig --app=paseo
+  amika rig open my-rig --app=herdr
+  amika rig code my-rig --editor=vscode`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := output.RejectJSON(cmd); err != nil {

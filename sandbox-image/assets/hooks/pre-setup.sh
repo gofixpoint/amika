@@ -61,6 +61,15 @@ own_by_amika() {
   chown -R amika:amika "$@"
 }
 
+# TODO(CVE-2026-98432): remove with ipv4-options-guard.sh once rig kernels
+# are patched. systemd loads the guard at boot where it is PID 1; rigs without
+# systemd, such as smolvm, get it only here. A rig whose kernel or sandbox
+# refuses nftables (local Docker has no CAP_NET_ADMIN) still comes up, with
+# a warning in this hook's log.
+if ! /usr/lib/amikad/ipv4-options-guard.sh; then
+  echo "WARNING: could not load the CVE-2026-98432 IPv4 options guard" >&2
+fi
+
 if [[ -n "${AMIKA_AGENT_CWD:-}" ]]; then
   amika_agent_cwd="$AMIKA_AGENT_CWD"
 elif [[ -f "$AMIKA_CWD_FILE" ]]; then

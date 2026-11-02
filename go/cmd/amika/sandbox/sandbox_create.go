@@ -17,8 +17,8 @@ import (
 
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create [<name>]",
-	Short: "Create a new sandbox",
-	Long:  `Create a new sandbox. If <name> is omitted, a random name is generated.`,
+	Short: "Create a new rig",
+	Long:  `Create a new rig. If <name> is omitted, a random name is generated.`,
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := createName(cmd, args)

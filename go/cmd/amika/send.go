@@ -50,26 +50,26 @@ func stdoutIsTerminal() bool {
 
 var sendCmd = &cobra.Command{
 	Use:   "send [message]",
-	Short: "Send a message to a coding agent, creating a sandbox if needed",
+	Short: "Send a message to a coding agent, creating a rig if needed",
 	Long: `Send a message to a coding agent via the remote agent-sessions API.
 
-If neither --session-id nor --rig is given, a sandbox is created behind the
+If neither --session-id nor --rig is given, a rig is created behind the
 scenes and a new chat is started; the returned session id can be passed back as
 --session-id to continue the conversation. The agent (claude or codex) comes
 from --agent, else the organization's default, else claude.
 
 Run from inside a git repo and that repo's "origin" remote is cloned into
-the sandbox, the same way "amika sandbox create" picks up the repo you are
+the rig, the same way "amika rig create" picks up the repo you are
 standing in. Pass --git <path|url> to choose a different repo, or --no-git for
-a sandbox with no repo at all; --repo is accepted as an alias for --git.
+a rig with no repo at all; --repo is accepted as an alias for --git.
 
-The branch you have checked out is cloned too, so the sandbox holds the work
+The branch you have checked out is cloned too, so the rig holds the work
 you are looking at. --branch checks out a different one and --new-branch cuts
 a new branch; both mirror "amika rig create". A branch the remote does not
-have yet is refused, since the sandbox would otherwise come up on the default
+have yet is refused, since the rig would otherwise come up on the default
 branch without saying so.
 
-Repo and branch selection only apply to a sandbox this command creates, so
+Repo and branch selection only apply to a rig this command creates, so
 neither can be combined with --session-id or --rig.
 
 The message can be provided as a positional argument or piped via stdin.
@@ -79,7 +79,7 @@ terminal, and is buffered (printed once, whole) when stdout is piped or
 --output json is set. Use --stream / --stream=false to force either mode; JSON
 output is always buffered so the emitted object stays valid.
 
-In text output (the default) identifying metadata ("session_id: <id>", sandbox
+In text output (the default) identifying metadata ("session_id: <id>", rig
 progress) is written to stderr, keeping stdout the pure agent response. With
 --output json, a single JSON object matching the API's AgentSessionSendResponse
 is written to stdout instead.`,
@@ -610,10 +610,10 @@ func addSendFlags(cmd *cobra.Command) {
 	cmd.Flags().String("rig", "", "Send into this existing rig: a name or id, or name=<name> / id=<id> to match one field")
 	cmd.Flags().Bool("new-session", false, "Start a brand-new chat")
 	gitrepo.AddFlags(cmd,
-		"Clone a git repo into the sandbox this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",
-		"Skip git repo auto-detection; create a sandbox without any repo")
+		"Clone a git repo into the rig this command creates. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically",
+		"Skip git repo auto-detection; create a rig without any repo")
 	gitrepo.AddRepoAlias(cmd)
-	cmd.Flags().String(flagBranch, "", "Check out this git branch in the sandbox, or create it if it doesn't exist (default: the branch checked out locally)")
+	cmd.Flags().String(flagBranch, "", "Check out this git branch in the rig, or create it if it doesn't exist (default: the branch checked out locally)")
 	cmd.Flags().String(flagNewBranch, "", "Create a new git branch. With --branch, starts from that branch; otherwise from the current checkout")
 	cmd.Flags().Bool("stream", false, "Stream the reply as it is produced (default: on for a terminal, off when piped; always off with --output json)")
 }

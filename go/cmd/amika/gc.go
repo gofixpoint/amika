@@ -12,9 +12,9 @@ import (
 
 var gcCmd = &cobra.Command{
 	Use:   "gc",
-	Short: "Remove deleted sandboxes from the managed SSH config",
-	Long: `Remove deleted sandboxes from ~/.ssh/amika.conf using the current account's
-sandbox inventory. This runs immediately, regardless of entry count or the
+	Short: "Remove deleted rigs from the managed SSH config",
+	Long: `Remove deleted rigs from ~/.ssh/amika.conf using the current account's
+rig inventory. This runs immediately, regardless of entry count or the
 time of the previous cleanup.
 
 Entries belonging to other accounts or API endpoints, and older entries whose

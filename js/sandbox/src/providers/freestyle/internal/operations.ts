@@ -7,7 +7,6 @@
  * provisioning layer drives; it clones over that adapter's exec port, so
  * Freestyle needs no native clone primitive here).
  */
-import { SANDBOX_ORG_ID_LABEL } from "../../../constants";
 import { withStepContext } from "../../../util/errorutils";
 import type { SandboxCtx } from "../../../logger";
 import type { FreestyleConfig } from "../config";
@@ -29,7 +28,6 @@ import {
   FREESTYLE_CONTROL_PLANE_TIMEOUT_MS,
 } from "./client";
 import { FreestyleAdapter } from "./adapter";
-import { buildFreestyleVmName, freestyleVmNameOrgId } from "../naming";
 import { resolveFreestyleSnapshotRef } from "./snapshot-operations";
 
 /**
@@ -58,13 +56,6 @@ export async function createFreestyleSandbox(
 ): Promise<CreatedProviderSandbox> {
   const client = createFreestyleClient(config);
 
-  // Freestyle's `vms.create` has no label facet (unlike Daytona, which stamps
-  // `amika-org-id`), so org-gate the VM by folding the org id into its name.
-  // The org id rides along in `input.labels`; absent it (no expected caller),
-  // fall back to the bare name rather than minting an unscoped `/`-prefixed one.
-  const orgId = input.labels?.[SANDBOX_ORG_ID_LABEL];
-  const vmName = orgId ? buildFreestyleVmName(orgId, input.name) : input.name;
-
   // Resolve the snapshot reference to a bootable snapshot id. Preset references
   // are deterministic names (`amika-<preset>-<size>`); captured snapshots arrive
   // already resolved to ids. A preset name that resolves to nothing means the
@@ -82,13 +73,12 @@ export async function createFreestyleSandbox(
   }
 
   ctx.logger.info(
-    { name: vmName, snapshot: input.snapshot, snapshotId },
+    { name: input.name, snapshot: input.snapshot, snapshotId },
     "Creating Freestyle sandbox (cloning snapshot)",
   );
 
   // Clone the preset VM snapshot into a fresh VM. `persistent` so the sandbox
-  // survives stop/suspend. The org-scoped name is carried onto the VM so it's
-  // attributable to its org in `vms.get` and the dashboard. Service ports are
+  // survives stop/suspend. The VM takes the caller's name. Service ports are
   // exposed via domain mappings in `refreshFreestyleUrls`, not at create time.
   //
   // No post-create `vm.resize`: the requested size is baked into the per-size
@@ -101,7 +91,7 @@ export async function createFreestyleSandbox(
     () =>
       client.vms.create({
         snapshotId,
-        name: vmName,
+        name: input.name,
         persistence: { type: "persistent" },
         idleTimeoutSeconds: NEVER_IDLE_TIMEOUT_SECONDS,
       }),
@@ -338,7 +328,8 @@ export async function listFreestyleSandboxes(
     if (!vm.sizing) continue;
     listings.push({
       providerSandboxId: vm.id,
-      orgId: freestyleVmNameOrgId(vm.name ?? null),
+      // Freestyle VMs have no labels to carry an org.
+      orgId: null,
       state: vm.state,
       sizing: {
         vcpus: vm.sizing.vcpuCount,

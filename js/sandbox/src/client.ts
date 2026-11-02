@@ -8,14 +8,6 @@
  * (which pulls in the provider SDKs).
  */
 export * from "./providers/capabilities";
-// Pure Freestyle naming helpers (no SDK): reachable from client- and
-// edge-runtime code, so they must come through this SDK-free entry rather than
-// the root barrel.
-export {
-  buildFreestyleVmName,
-  freestyleVmNameOrgId,
-  freestyleVmBelongsToOrg,
-} from "./providers/freestyle/naming";
 export * from "./enums";
 // On-box runtime constants (reserved ports, lifecycle script paths, ownership
 // labels) are plain values with no SDK/`node:` dependency, so

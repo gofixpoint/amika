@@ -42,8 +42,7 @@ entries:
   browser bundle, and moving them into `internal/` would put them out of the
   client entry's reach.
 
-The fully grown Daytona provider shows the split; Freestyle additionally keeps
-its provider-resource `naming.ts` helper at the root:
+The fully grown Daytona provider shows the split:
 
 ```
 daytona/

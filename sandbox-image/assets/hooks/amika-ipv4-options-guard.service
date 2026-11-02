@@ -1,0 +1,17 @@
+# TODO(CVE-2026-98432): remove with ipv4-options-guard.sh once rig kernels
+# are patched; that script lists every piece of this mitigation.
+[Unit]
+Description=Drop IPv4 TCP packets with IP options (CVE-2026-98432)
+Documentation=https://ubuntu.com/security/CVE-2026-98432
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/amikad/ipv4-options-guard.sh
+
+[Install]
+WantedBy=sysinit.target
