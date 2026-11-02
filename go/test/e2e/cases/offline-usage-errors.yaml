@@ -46,7 +46,7 @@ steps:
     cmd: [rig, --help]
     expect:
       exit: 0
-      stdout_contains: "  ssh         SSH into a remote sandbox"
+      stdout_contains: "  ssh         SSH into a remote rig"
 
   - name: rig --help does NOT list the superseded sshv1
     cmd: [rig, --help]

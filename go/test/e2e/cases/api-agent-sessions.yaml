@@ -31,7 +31,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create the sandbox the chat will run in
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
+    cmd: [rig, create, "e2e-{{run_slug}}-sessions", --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -43,8 +43,12 @@ steps:
       sandbox_name: $.name
     resource:
       type: sandbox
-      name: "{{sandbox_name}}"
-      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-sessions"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-sessions", --remote, --force, -o, json]
+      verify_gone:
+        cmd: [rig, get, "e2e-{{run_slug}}-sessions", -o, json]
+        not_found: "HTTP 404"
 
   - name: send the first message and start a durable chat
     # --agent is pinned rather than left to the org default so `agent` below is

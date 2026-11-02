@@ -55,7 +55,20 @@ const varDefaultKey = "default"
 // break the uniqueness that remote resource names depend on.
 var reservedVarNames = map[string]bool{
 	"run_id":           true,
+	"run_slug":         true,
 	"sandbox_provider": true,
+}
+
+// RunSlug is run_id reduced to lowercase letters and digits, exposed as
+// {{run_slug}} for resource names that must be DNS labels, such as rig names.
+func RunSlug(runID string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(runID) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // VarSpec is one entry in a case's "vars" block: either a plain scalar (a
@@ -252,6 +265,9 @@ type Resource struct {
 	// Cleanup is the amika argv (not including the binary itself) that
 	// deletes the resource. Elements may contain "{{var}}" templates.
 	Cleanup []string `yaml:"cleanup"`
+	// VerifyGone, when set, is how the runner confirms the resource is really
+	// gone after Cleanup. See VerifyGone.
+	VerifyGone *VerifyGone `yaml:"verify_gone"`
 	// RegisterOnFailure, when true, registers the resource for cleanup even if
 	// the creating step exits with an unexpected status. Off by default: an
 	// unexpected exit is ambiguous (the command may have failed before
@@ -259,6 +275,51 @@ type Resource struct {
 	// run may not have created could delete one owned by another run. Enable it
 	// only for a command known to create the resource before it can fail.
 	RegisterOnFailure bool `yaml:"register_on_failure"`
+}
+
+// VerifyGone is a structured check that a deleted resource no longer exists.
+// Exactly one of NotFound or AbsentFrom must be set:
+//
+//	verify_gone:                                   # direct lookup
+//	  cmd: [rig, get, "{{sandbox_name}}", -o, json]
+//	  not_found: "HTTP 404"
+//
+//	verify_gone:                                   # exact match over a listing
+//	  cmd: [snapshot, list, -o, json]
+//	  absent_from: "$.items[*].snapshot"
+//
+// With NotFound the command must FAIL and its stderr must contain NotFound;
+// that is the only result read as "gone". A command that succeeds means the
+// resource still exists; one that fails any other way (auth, network) means
+// nothing is known, and the cleanup is recorded as unchecked rather than
+// gone. With AbsentFrom the command must succeed and print JSON; the
+// resource is gone when no value at that path equals the resource Name
+// exactly. Both forms are polled, because deletion is asynchronous.
+type VerifyGone struct {
+	// Cmd is the amika argv (not including the binary itself). Elements may
+	// contain "{{var}}" templates.
+	Cmd []string `yaml:"cmd" json:"cmd"`
+	// NotFound is the stderr text that means "does not exist".
+	NotFound string `yaml:"not_found,omitempty" json:"not_found,omitempty"`
+	// AbsentFrom is a JSONPath with one "[*]" wildcard over the listing.
+	AbsentFrom string `yaml:"absent_from,omitempty" json:"absent_from,omitempty"`
+}
+
+// validate rejects a VerifyGone that could never confirm anything.
+func (v *VerifyGone) validate() error {
+	if len(v.Cmd) == 0 {
+		return fmt.Errorf("verify_gone requires a non-empty \"cmd\" argv")
+	}
+	switch {
+	case v.NotFound == "" && v.AbsentFrom == "":
+		return fmt.Errorf("verify_gone requires \"not_found\" or \"absent_from\"")
+	case v.NotFound != "" && v.AbsentFrom != "":
+		return fmt.Errorf("verify_gone takes \"not_found\" or \"absent_from\", not both")
+	}
+	if v.AbsentFrom != "" && !strings.Contains(v.AbsentFrom, "[*]") {
+		return fmt.Errorf("verify_gone.absent_from %q needs a \"[*]\" wildcard", v.AbsentFrom)
+	}
+	return nil
 }
 
 // ResourceRef identifies a previously registered resource that a successful
@@ -335,6 +396,15 @@ func LoadCase(path string) (*Case, error) {
 			return nil, fmt.Errorf("case %s: %w", path, err)
 		}
 	}
+	// Template names a resource block may use: the runner's own, the case's
+	// declared vars, and every capture up to and including the step's own.
+	known := make(map[string]bool, len(reservedVarNames)+len(c.Vars))
+	for name := range reservedVarNames {
+		known[name] = true
+	}
+	for name := range c.Vars {
+		known[name] = true
+	}
 	for i, step := range c.Steps {
 		if step.Name == "" {
 			return nil, fmt.Errorf("case %s: step %d: \"name\" is required", path, i+1)
@@ -363,6 +433,7 @@ func LoadCase(path string) (*Case, error) {
 			if _, declared := c.Vars[name]; declared {
 				return nil, fmt.Errorf("case %s: step %d (%s): capture name %q shadows a declared var", path, i+1, step.Name, name)
 			}
+			known[name] = true
 		}
 		if step.Resource != nil {
 			// A resource with no cleanup argv would record an entry whose
@@ -374,6 +445,16 @@ func LoadCase(path string) (*Case, error) {
 			}
 			if len(step.Resource.Cleanup) == 0 {
 				return nil, fmt.Errorf("case %s: step %d (%s): resource requires a non-empty \"cleanup\" argv", path, i+1, step.Name)
+			}
+			if step.Resource.VerifyGone != nil {
+				if err := step.Resource.VerifyGone.validate(); err != nil {
+					return nil, fmt.Errorf("case %s: step %d (%s): %w", path, i+1, step.Name, err)
+				}
+			}
+			// A typo in a resource block's templates would only show at run
+			// time, after the resource exists. Catch it here instead.
+			if err := checkResourceTemplates(step.Resource, known); err != nil {
+				return nil, fmt.Errorf("case %s: step %d (%s): %w", path, i+1, step.Name, err)
 			}
 		}
 		if step.ReleaseResource != nil {
@@ -463,6 +544,9 @@ type Options struct {
 	// network) or a local filesystem path. Steps using expect.schema fail
 	// clearly if this is empty.
 	SchemaDoc string
+	// VerifyPolicy bounds the verify_gone poll a release_resource step runs.
+	// Zero uses DefaultVerifyPolicy.
+	VerifyPolicy VerifyPolicy
 	// RunID, if set, is exposed to every case as the `{{run_id}}` template
 	// variable. Cases that name a remote resource should build the name from
 	// it, so two runs sharing an account cannot collide with each other or
@@ -537,6 +621,7 @@ func New(opts Options) (*Runner, error) {
 	vars := map[string]string{}
 	if opts.RunID != "" {
 		vars["run_id"] = opts.RunID
+		vars["run_slug"] = RunSlug(opts.RunID)
 	}
 	if opts.SandboxProvider != "" {
 		vars["sandbox_provider"] = opts.SandboxProvider
@@ -625,7 +710,13 @@ func (r *Runner) runStep(ctx context.Context, index int, rawStep Step) error {
 
 	stdout, stderr, exitCode, err := r.execStep(ctx, step)
 	if err != nil {
-		return err
+		// The command was killed (interrupt, step timeout, run deadline). It
+		// may already have created its resource, so a step that opted into
+		// register_on_failure still registers it, with whatever the command
+		// printed before it died.
+		regErr := r.registerAfterAbort(step, stdout)
+		transcriptErr := r.writeTranscript(index, step.Name, stdout, stderr, exitCode)
+		return errors.Join(err, regErr, transcriptErr)
 	}
 
 	// A resource the command created must reach the ledger even when the step
@@ -934,40 +1025,150 @@ func (r *Runner) registerResource(step Step) error {
 	if err != nil {
 		return fmt.Errorf("resource.name: %w", err)
 	}
-	cleanup := make([]string, len(step.Resource.Cleanup))
-	for i, arg := range step.Resource.Cleanup {
-		v, err := substituteString(arg, r.vars)
+	cleanup, err := substituteArgv("resource.cleanup", step.Resource.Cleanup, r.vars)
+	if err != nil {
+		return err
+	}
+	// The deletion target is complete at this point. A verify_gone that fails
+	// to template must not keep it off the ledger: register the resource
+	// without the check, mark why, and fail the step afterwards.
+	var verify *VerifyGone
+	var verifyErr error
+	if v := step.Resource.VerifyGone; v != nil {
+		cmd, err := substituteArgv("resource.verify_gone.cmd", v.Cmd, r.vars)
 		if err != nil {
-			return fmt.Errorf("resource.cleanup[%d]: %w", i, err)
+			verifyErr = err
+		} else {
+			verify = &VerifyGone{Cmd: cmd, NotFound: v.NotFound, AbsentFrom: v.AbsentFrom}
 		}
-		cleanup[i] = v
 	}
 	entry := Entry{
 		Type:          step.Resource.Type,
 		Name:          name,
 		CreatedByStep: step.Name,
 		CleanupArgv:   cleanup,
+		VerifyGone:    verify,
 		Env:           r.resourceEnv(step),
 		CreatedAt:     time.Now().UTC(),
+	}
+	if verifyErr != nil {
+		entry.VerifyGoneError = verifyErr.Error()
 	}
 	if err := r.ledger.Append(entry); err != nil {
 		return fmt.Errorf("register resource %q: %w", name, err)
 	}
+	if verifyErr != nil {
+		return fmt.Errorf("register resource %q: registered without its verify_gone check: %w", name, verifyErr)
+	}
 	return nil
 }
 
+// checkResourceTemplates reports a "{{var}}" in a resource block that names
+// nothing the case can have defined by the time the block is registered.
+func checkResourceTemplates(res *Resource, known map[string]bool) error {
+	fields := map[string][]string{
+		"resource.name":    {res.Name},
+		"resource.cleanup": res.Cleanup,
+	}
+	if res.VerifyGone != nil {
+		fields["resource.verify_gone.cmd"] = res.VerifyGone.Cmd
+	}
+	names := make([]string, 0, len(fields))
+	for field := range fields {
+		names = append(names, field)
+	}
+	sort.Strings(names)
+	for _, field := range names {
+		for _, value := range fields[field] {
+			for _, match := range templateVarPattern.FindAllStringSubmatch(value, -1) {
+				if !known[match[1]] {
+					return fmt.Errorf("%s uses {{%s}}, which no earlier capture, var, or runner value defines", field, match[1])
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// substituteArgv templates every element of argv. A nil argv stays nil.
+func substituteArgv(field string, argv []string, vars map[string]string) ([]string, error) {
+	if argv == nil {
+		return nil, nil
+	}
+	out := make([]string, len(argv))
+	for i, arg := range argv {
+		v, err := substituteString(arg, vars)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, i, err)
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// registerAfterAbort registers a killed step's resource when the step opted
+// into register_on_failure. Captures are taken from the partial stdout when it
+// parses; a resource whose name depends on a capture the command never
+// printed cannot be registered, and that is returned as an error.
+func (r *Runner) registerAfterAbort(step Step, stdout []byte) error {
+	if step.Resource == nil || !step.Resource.RegisterOnFailure {
+		return nil
+	}
+	for name := range step.Capture {
+		delete(r.vars, name)
+	}
+	if parsed, err := parseStdout(step, stdout); err == nil {
+		_ = r.captureVars(step, parsed)
+	}
+	if err := r.registerResource(step); err != nil {
+		return fmt.Errorf("register resource after the command was killed: %w", err)
+	}
+	return nil
+}
+
+// releaseResource hands a resource that the step proved was consumed (for
+// example a source rig a scrub-and-delete snapshot removed) back from
+// cleanup. A step's own assertion is not trusted alone: when the resource has
+// a verify_gone check, it must confirm the resource is gone, or the resource
+// stays with cleanup and the step fails. The entry stays in the ledger as
+// history, so the audit still shows it.
 func (r *Runner) releaseResource(step Step) error {
 	if step.ReleaseResource == nil {
 		return nil
 	}
-	removed, err := r.ledger.Remove(step.ReleaseResource.Type, step.ReleaseResource.Name)
-	if err != nil {
-		return fmt.Errorf("release resource %s %q: %w", step.ReleaseResource.Type, step.ReleaseResource.Name, err)
+	ref := step.ReleaseResource
+	entry, ok := r.ledger.Pending(ref.Type, ref.Name)
+	if !ok {
+		return fmt.Errorf("release resource %s %q: no matching resource is registered", ref.Type, ref.Name)
 	}
-	if !removed {
-		return fmt.Errorf("release resource %s %q: no matching resource is registered", step.ReleaseResource.Type, step.ReleaseResource.Name)
+	verified := VerifiedUnsupported
+	if entry.VerifyGoneError != "" {
+		return fmt.Errorf("release resource %s %q: kept for cleanup, its verify_gone check could not be built: %s", ref.Type, ref.Name, entry.VerifyGoneError)
+	}
+	if entry.VerifyGone != nil {
+		env := mergeEnv(r.CleanupEnv(), entry.Env)
+		v, err := verifyGone(r.opts.BinPath, entry, env, r.verifyPolicy())
+		if err != nil {
+			return fmt.Errorf("release resource %s %q: kept for cleanup: %w", ref.Type, ref.Name, err)
+		}
+		verified = v
+	}
+	released, err := r.ledger.Release(ref.Type, ref.Name, Release{ByStep: step.Name, At: time.Now().UTC(), Verified: verified})
+	if err != nil {
+		return fmt.Errorf("release resource %s %q: %w", ref.Type, ref.Name, err)
+	}
+	if !released {
+		return fmt.Errorf("release resource %s %q: no matching resource is registered", ref.Type, ref.Name)
 	}
 	return nil
+}
+
+// verifyPolicy is how long a release waits for verify_gone to say "gone".
+func (r *Runner) verifyPolicy() VerifyPolicy {
+	if r.opts.VerifyPolicy == (VerifyPolicy{}) {
+		return DefaultVerifyPolicy
+	}
+	return r.opts.VerifyPolicy
 }
 
 // cleanupTargetEnvKeys are the environment variables that determine which
