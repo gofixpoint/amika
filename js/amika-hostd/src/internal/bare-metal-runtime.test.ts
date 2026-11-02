@@ -37,7 +37,8 @@ const RESOURCES = {
  * The fake amikad. Every run appends `{args, env, stdin, cwd}` to
  * `calls.jsonl` beside it. `serve` listens on `AMIKAD_LISTEN` and records
  * its pid in `serve.pid`, unless `crash-once` exists, which it removes
- * before exiting 3.
+ * before exiting 3. `setup` fails as sshd's StrictModes check does while
+ * `fail-setup` exists.
  */
 const FAKE_AMIKAD = `
 const fs = require("node:fs");
@@ -69,6 +70,10 @@ if (args[0] === "serve") {
   process.stdin.on("data", (chunk) => (stdin += chunk));
   process.stdin.on("end", () => {
     record();
+    if (args[0] === "setup" && fs.existsSync(path.join(dir, "fail-setup"))) {
+      process.stderr.write("directory is writable by other users: /home/jo/.local\\nmore\\n");
+      process.exit(1);
+    }
     process.stdout.write(args[0] === "host-key" ? "ssh-ed25519 AAAA\\n" : "");
   });
 }
@@ -91,6 +96,7 @@ function harness() {
   writeFileSync(amikad, `#!${process.execPath}\n${FAKE_AMIKAD}`, {
     mode: 0o755,
   });
+  const errs: string[] = [];
   const options = {
     rigFile: path.join(stateDir, "bare-metal-rig.json"),
     stateDir,
@@ -104,6 +110,7 @@ function harness() {
       restartDelayMs: 50,
       maxRestartDelayMs: 200,
     },
+    err: (line: string) => errs.push(line),
   };
   const open = () => {
     const runtime = bareMetalRuntime(options);
@@ -123,7 +130,7 @@ function harness() {
       .split("\n")
       .map((line) => JSON.parse(line));
   };
-  return { root, stateDir, bin, options, open, runtime: open(), calls };
+  return { root, stateDir, bin, options, open, runtime: open(), calls, errs };
 }
 
 const sh = (command: string) => ["/bin/sh", "-c", command];
@@ -357,6 +364,26 @@ describe("bareMetalRuntime: exec", () => {
     const error = await rejection(h.runtime.exec("rig", { command }));
     expect(error.status).toBe(403);
     expect(h.calls()).toEqual([]);
+  });
+
+  it("logs why an amikad command failed, since the control plane records only that it did", async () => {
+    const h = harness();
+    await created(h);
+    writeFileSync(path.join(h.bin, "fail-setup"), "");
+    const result = await h.runtime.exec("rig", {
+      command: sh("amikad setup sshd --force-overwrite"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(h.errs).toEqual([
+      "amika-hostd: amikad setup sshd --force-overwrite exited with code 1: directory is writable by other users: /home/jo/.local",
+    ]);
+  });
+
+  it("logs nothing for an amikad command that succeeds", async () => {
+    const h = harness();
+    await created(h);
+    await h.runtime.exec("rig", { command: sh("amikad host-key show") });
+    expect(h.errs).toEqual([]);
   });
 
   it("refuses exec on a rig that is not there", async () => {

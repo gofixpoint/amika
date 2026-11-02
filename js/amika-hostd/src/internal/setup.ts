@@ -14,6 +14,7 @@ import {
   setHostSecret as setHostSecretInAmika,
 } from "./amika-api.js";
 import { ensureAmikad } from "./amikad-install.js";
+import { daemonPaths } from "./daemon.js";
 import {
   ConfigError,
   ENV_NAMES,
@@ -32,6 +33,11 @@ import {
 import { isValidApiKey, type Secrets } from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
 import type { Prompt } from "./prompt.js";
+import {
+  describeStrictModesViolation,
+  strictModesViolation,
+  type StrictModesViolation,
+} from "./strict-modes.js";
 
 export interface SetupDeps {
   env: NodeJS.ProcessEnv;
@@ -62,6 +68,11 @@ export interface SetupDeps {
    * defaults to `ensureAmikad`.
    */
   installAmikad?: typeof ensureAmikad;
+  /**
+   * The directory above or at `dir` that sshd's StrictModes refuses, if any;
+   * defaults to checking this machine as the running account.
+   */
+  strictModesViolation?: (dir: string) => StrictModesViolation | undefined;
 }
 
 /**
@@ -383,8 +394,9 @@ async function askHostType(
 
 /**
  * What choosing bare metal needs: an OS that supports it, an `sshd` binary
- * for amikad to run, and amikad itself in hostd's data directory (no system
- * path, no `sudo`). Then shows what Amika will be told about the machine.
+ * for amikad to run, a state directory sshd's StrictModes accepts, and amikad
+ * itself in hostd's data directory (no system path, no `sudo`). Then shows
+ * what Amika will be told about the machine.
  */
 async function prepareBareMetal(
   config: { amikadPath?: string },
@@ -400,6 +412,16 @@ async function prepareBareMetal(
   if (sshd === undefined) {
     throw new ConfigError(
       `A bare-metal host needs an sshd binary, and none was found: ${platform.sshdInstallHint}. Then run \`amika-hostd setup\` again; nothing was changed.`,
+    );
+  }
+  const { amikadStateDir } = daemonPaths(deps.env);
+  const violation = (
+    deps.strictModesViolation ??
+    ((dir) => strictModesViolation(dir, { uid: process.getuid?.() ?? -1 }))
+  )(amikadStateDir);
+  if (violation !== undefined) {
+    throw new ConfigError(
+      describeStrictModesViolation(violation, amikadStateDir),
     );
   }
   const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {

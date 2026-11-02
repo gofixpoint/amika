@@ -13,6 +13,7 @@ import {
   suggestHostname,
   type SetupDeps,
 } from "./setup.js";
+import type { StrictModesViolation } from "./strict-modes.js";
 
 const PATH = "/config/amika-hostd/config.toml";
 const OLD_SECRET = "a".repeat(64);
@@ -1013,13 +1014,17 @@ describe("runSetup: host type", () => {
     const installAmikad = vi.fn(
       async (_config: { amikadPath?: string }) => "/data/amikad/0.3.0/amikad",
     );
+    const strictModesViolation = vi.fn(
+      (_dir: string): StrictModesViolation | undefined => undefined,
+    );
     const deps = {
       ...h.deps,
       platform,
       installAmikad,
       sshUser: () => "jakub",
+      strictModesViolation,
     };
-    return { ...h, deps, installAmikad };
+    return { ...h, deps, installAmikad, strictModesViolation };
   }
 
   it("keeps VMs by default, writing nothing about it", async () => {
@@ -1058,6 +1063,37 @@ describe("runSetup: host type", () => {
     expect(h.out).toContain(
       "Rig sizes: [sizes] is ignored on a bare-metal host.",
     );
+  });
+
+  it("checks amikad's state directory against sshd's StrictModes", async () => {
+    const h = bareMetalHarness({
+      answers: ["", "bare-metal"],
+      secrets: ["amk_123"],
+    });
+    await runSetup(h.deps);
+    expect(h.strictModesViolation).toHaveBeenCalledWith(
+      expect.stringMatching(/\/amika-hostd\/amikad$/),
+    );
+  });
+
+  it("refuses a state directory sshd's StrictModes rejects, changing nothing", async () => {
+    const h = bareMetalHarness({
+      answers: ["", "bare-metal"],
+      secrets: ["amk_123"],
+    });
+    h.strictModesViolation.mockReturnValue({
+      dir: "/home/jakub/.local",
+      problem: "writable",
+      owner: { uid: 1001, mode: 0o040775 },
+    });
+    const error = await runSetup(h.deps).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConfigError);
+    expect((error as Error).message).toMatch(
+      /\/home\/jakub\/.local is writable by its group.*`chmod go-w \/home\/jakub\/.local`/,
+    );
+    expect(h.written).toEqual({});
+    expect(h.store.set).not.toHaveBeenCalled();
+    expect(h.installAmikad).not.toHaveBeenCalled();
   });
 
   it("writes no default sizes for a new bare-metal host", async () => {
