@@ -155,6 +155,7 @@ export async function listDaytonaSandboxes(
   for await (const sandbox of daytona.list({ limit: DAYTONA_LIST_PAGE_SIZE })) {
     listings.push({
       providerSandboxId: sandbox.id,
+      name: sandbox.name ?? null,
       orgId: sandbox.labels?.[SANDBOX_ORG_ID_LABEL] ?? null,
       state: sandbox.state ?? "unknown",
       sizing: {

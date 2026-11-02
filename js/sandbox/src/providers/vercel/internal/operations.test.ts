@@ -452,6 +452,7 @@ describe("listVercelSandboxes", () => {
     expect(listings).toEqual([
       {
         providerSandboxId: "sbx-1",
+        name: "sbx-1",
         orgId: "org_abc",
         state: "running",
         // Vercel couples 2 GB/vCPU and a fixed 32 GB ephemeral disk.

@@ -29,6 +29,9 @@ import {
   getE2bSandboxDiskSizeMib,
 } from "./client";
 
+/** E2B has no sandbox names, so the requested name rides in metadata. */
+const E2B_NAME_METADATA_KEY = "amika-sandbox-name";
+
 export const E2B_URL_TTL_S = 24 * 60 * 60;
 export const E2B_MAX_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 export const E2B_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000;
@@ -56,7 +59,7 @@ export async function createE2bSandbox(
   );
   const metadata = {
     ...input.labels,
-    "amika-sandbox-name": input.name,
+    [E2B_NAME_METADATA_KEY]: input.name,
   };
   const sandbox = await Sandbox.create(input.snapshot, {
     ...e2bApiOptions(config),
@@ -332,6 +335,7 @@ export async function listE2bSandboxes(
           : (await getE2bSandboxDiskSizeMib(config, info.sandboxId)) / 1024;
       listings.push({
         providerSandboxId: info.sandboxId,
+        name: info.metadata[E2B_NAME_METADATA_KEY] ?? null,
         orgId: info.metadata[SANDBOX_ORG_ID_LABEL] ?? null,
         state: info.state,
         sizing: {

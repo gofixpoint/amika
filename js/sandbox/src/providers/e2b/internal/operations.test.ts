@@ -204,7 +204,7 @@ describe("E2B services and listing", () => {
       [
         {
           sandboxId: "sbx_1",
-          metadata: { "amika-org-id": "org_1" },
+          metadata: { "amika-org-id": "org_1", "amika-sandbox-name": "box-1" },
           state: "running",
           cpuCount: 2,
           memoryMB: 8192,
@@ -234,12 +234,14 @@ describe("E2B services and listing", () => {
     await expect(listE2bSandboxes(CONFIG)).resolves.toEqual([
       {
         providerSandboxId: "sbx_1",
+        name: "box-1",
         orgId: "org_1",
         state: "running",
         sizing: { vcpus: 2, memoryGib: 8, diskGib: 10 },
       },
       {
         providerSandboxId: "sbx_new",
+        name: null,
         orgId: null,
         state: "paused",
         sizing: { vcpus: 1, memoryGib: 1, diskGib: 20 },
