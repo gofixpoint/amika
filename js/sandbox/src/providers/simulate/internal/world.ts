@@ -130,6 +130,17 @@ export type SimulateExecHandler = (
   vm: SimulateVm,
 ) => SandboxExecResult;
 
+/**
+ * One piece of a scripted stream: output to deliver, after an optional
+ * real-time delay. A stream script is a list of these, delivered in order.
+ */
+export interface SimulateStreamChunk {
+  stdout?: string;
+  stderr?: string;
+  /** Real milliseconds to wait before delivering this chunk. */
+  delayMs?: number;
+}
+
 /** Thrown when an operation names a sandbox or snapshot the world lacks. */
 export class SimulateNotFoundError extends Error {
   readonly kind: "sandbox" | "snapshot";
@@ -165,6 +176,10 @@ export class SimulateWorld {
   private readonly execHandlers: Array<{
     matcher: string | RegExp;
     handler: SimulateExecHandler;
+  }> = [];
+  private readonly streamScripts: Array<{
+    matcher: string | RegExp;
+    chunks: SimulateStreamChunk[];
   }> = [];
   private readonly queuedFaults = new Map<SimulateOperation, string[]>();
   private readonly standingFaults = new Map<SimulateOperation, string>();
@@ -258,6 +273,38 @@ export class SimulateWorld {
   }
 
   /**
+   * Script how a streamed command delivers its output: chunk by chunk, with
+   * real delays between them, so a test can tell streaming from buffering.
+   * Commands with no stream script stream their `onExec` output in one
+   * chunk. The newest matching script wins. Returns a remover.
+   */
+  onStream(
+    matcher: string | RegExp,
+    chunks: SimulateStreamChunk[],
+  ): () => void {
+    const entry = { matcher, chunks };
+    this.streamScripts.push(entry);
+    return () => {
+      const index = this.streamScripts.indexOf(entry);
+      if (index >= 0) this.streamScripts.splice(index, 1);
+    };
+  }
+
+  /** The stream script for `command`, if one matches. */
+  streamScriptFor(command: string): SimulateStreamChunk[] | undefined {
+    for (let i = this.streamScripts.length - 1; i >= 0; i--) {
+      const { matcher, chunks } = this.streamScripts[i];
+      if (matcher instanceof RegExp) matcher.lastIndex = 0;
+      const matches =
+        typeof matcher === "string"
+          ? matcher === command
+          : matcher.test(command);
+      if (matches) return chunks;
+    }
+    return undefined;
+  }
+
+  /**
    * Remove a sandbox without a stop or delete call, as a provider outage or an
    * out-of-band deletion would. It drops out of listings and every later call
    * on it throws {@link SimulateNotFoundError}.
@@ -272,6 +319,7 @@ export class SimulateWorld {
     this.snapshotsByName.clear();
     this.sshTokens.clear();
     this.execHandlers.length = 0;
+    this.streamScripts.length = 0;
     this.execLog.length = 0;
     this.queuedFaults.clear();
     this.standingFaults.clear();
