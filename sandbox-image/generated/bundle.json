@@ -58,7 +58,8 @@
       "/usr/lib/amikad/opencode-setup.sh",
       "/usr/lib/amikad/pi-setup.sh",
       "/usr/lib/amikad/docker-setup.sh",
-      "/usr/lib/amikad/restore-setuid.sh"
+      "/usr/lib/amikad/restore-setuid.sh",
+      "/usr/lib/amikad/ipv4-options-guard.sh"
     ],
     "package_cache_paths": [
       "/var/lib/apt/lists",
@@ -169,9 +170,11 @@
         {
           "asset_argument": "assets/hooks",
           "assets": [
+            "assets/hooks/amika-ipv4-options-guard.service",
             "assets/hooks/amika-restore-setuid.service",
             "assets/hooks/bash-error-prelude.sh",
             "assets/hooks/docker-setup.sh",
+            "assets/hooks/ipv4-options-guard.sh",
             "assets/hooks/opencode-setup.sh",
             "assets/hooks/pi-setup.sh",
             "assets/hooks/post-setup.sh",
@@ -323,9 +326,11 @@
         {
           "asset_argument": "assets/hooks",
           "assets": [
+            "assets/hooks/amika-ipv4-options-guard.service",
             "assets/hooks/amika-restore-setuid.service",
             "assets/hooks/bash-error-prelude.sh",
             "assets/hooks/docker-setup.sh",
+            "assets/hooks/ipv4-options-guard.sh",
             "assets/hooks/opencode-setup.sh",
             "assets/hooks/pi-setup.sh",
             "assets/hooks/post-setup.sh",

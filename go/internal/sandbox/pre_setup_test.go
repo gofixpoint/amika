@@ -166,6 +166,21 @@ func TestPresetPreSetup_RegistersAmikalogHooksAsRuntimeUser(t *testing.T) {
 	}
 }
 
+// Rigs without systemd (smolvm) get the CVE-2026-98432 guard only from
+// pre-setup.sh, and a failure to load it must not stop the rig from booting.
+// TODO(CVE-2026-98432): remove with ipv4-options-guard.sh once rig kernels
+// are patched.
+func TestPresetPreSetup_LoadsIPv4OptionsGuardWithoutFailingBoot(t *testing.T) {
+	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	if !strings.Contains(string(data), "if ! /usr/lib/amikad/ipv4-options-guard.sh; then") {
+		t.Fatal("pre-setup.sh should load the IPv4 options guard and only warn when it fails")
+	}
+}
+
 func TestPresetRunHook_UsesAmikaForUserHooksAndMirrorsThemToAmikad(t *testing.T) {
 	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/run-hook.sh")
 	if err != nil {

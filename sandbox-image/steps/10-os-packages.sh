@@ -25,6 +25,7 @@ apt-get install -y --no-install-recommends \
   libssl-dev \
   nano \
   ncurses-term \
+  nftables \
   openssh-server \
   procps \
   python3 \
