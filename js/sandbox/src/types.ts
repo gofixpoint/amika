@@ -14,6 +14,7 @@ export const SANDBOX_PROVIDER_NAMES = [
   "freestyle",
   "vercel",
   "smol",
+  "lume",
   "amika-hostd",
   "amika-hostd-bare-metal",
   "simulate",
