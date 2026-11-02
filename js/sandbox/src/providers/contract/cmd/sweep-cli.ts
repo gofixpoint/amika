@@ -1,12 +1,12 @@
-/** Command-line entry for the sweep; see `./sweep.ts`. */
-import { createSandboxProvider } from "../registry";
+/** Command-line entry for the sweep; see `../sweep.ts`. */
+import { createSandboxProvider } from "../../registry";
 import {
   providerDepsFromEnv,
   realProviderName,
   targetIdentity,
-} from "./env-target";
-import { contractRunsRoot } from "./run-dir";
-import { runProcessAlive, sweepRuns } from "./sweep";
+} from "../env-target";
+import { contractRunsRoot } from "../run-dir";
+import { runProcessAlive, sweepRuns } from "../sweep";
 
 const VENDOR_SETTLE_MS = 2 * 60_000;
 
