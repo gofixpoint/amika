@@ -34,6 +34,7 @@ export function trackSandbox(
     name,
     test: context.currentTest(),
     delete: async () => {
+      let recovered = false;
       if (!sandboxId) {
         if (!provider.capabilities.listSandboxes) {
           throw new Error(
@@ -54,9 +55,14 @@ export function trackSandbox(
             `create never returned an id for sandbox ${name} and its name could not be found; check the provider by hand`,
           );
         }
-        ledger.identify("sandbox", name, sandboxId);
+        recovered = true;
       }
-      await provider.sandboxes.get(sandboxId).delete();
+      try {
+        if (recovered) ledger.identify("sandbox", name, sandboxId);
+      } finally {
+        // Audit failure must not prevent releasing a resource we can address.
+        await provider.sandboxes.get(sandboxId).delete();
+      }
     },
     verifyGone: provider.capabilities.listSandboxes
       ? () =>
@@ -101,7 +107,6 @@ export function trackSnapshot(
     const snapshot = await provider.snapshots!.find(name);
     if (snapshot?.providerSnapshotId && !snapshotIds.has(name)) {
       snapshotIds.set(name, snapshot.providerSnapshotId);
-      ledger.identify("snapshot", name, snapshot.providerSnapshotId);
     }
     if (
       !snapshot &&
@@ -120,7 +125,13 @@ export function trackSnapshot(
     name,
     test: context.currentTest(),
     delete: async () => {
-      await (await lookup())?.delete();
+      const snapshot = await lookup();
+      try {
+        if (snapshot?.providerSnapshotId)
+          ledger.identify("snapshot", name, snapshot.providerSnapshotId);
+      } finally {
+        await snapshot?.delete();
+      }
     },
     verifyGone: () => context.isGone(async () => (await lookup()) === null),
   });
