@@ -92,13 +92,19 @@ function hostdDefinition(
     requestTimeoutMs: config.requestTimeoutMs ?? 310_000,
   };
   const authenticated = withSecretKey(secretKey, fetcher);
-  const client = new SmolClient(smolConfig, authenticated, HOSTD_RIGS_PATH);
+  const client = new SmolClient(
+    smolConfig,
+    authenticated,
+    HOSTD_RIGS_PATH,
+    "amika-hostd",
+  );
   // The host's snapshots are its own collection, not a rig's, so they need
   // a client addressing that path rather than `/v0beta1/rigs`.
   const snapshotClient = new SmolClient(
     smolConfig,
     authenticated,
     HOSTD_SNAPSHOTS_PATH,
+    "amika-hostd",
   );
   const ops = smolOperations(smolConfig, client, {
     provider: name,

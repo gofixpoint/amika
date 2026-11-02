@@ -7,6 +7,7 @@ import { z } from "zod";
 import { requireSecretKey } from "./internal/auth.js";
 import {
   RuntimeError,
+  deadlineReason,
   type MachineRuntime,
 } from "./internal/machine-runtime.js";
 import {
@@ -65,6 +66,8 @@ export interface AppConfig {
    * 504. The runtime call itself carries on (an image pull, say).
    */
   requestTimeoutMs?: number;
+  /** smolvm's log, named in the reason a request that timed out gives. */
+  smolvmLogFile?: string;
   /**
    * Amika's URL, where a browser opening a preview is sent to log in
    * (`@amika/service-auth/gateway`). Without it hostd serves no previews.
@@ -106,6 +109,12 @@ export interface AppDeps {
    * list so Amika never sees them as rigs.
    */
   hiddenMachines?: () => ReadonlySet<string>;
+  /**
+   * The images pre-pull is caching right now (`prepull.ts`): a create of
+   * one is refused (`503`) until it is done, rather than left to wait out
+   * the request deadline behind the download.
+   */
+  pullingImages?: () => ReadonlySet<string>;
 }
 
 /** Build routes without opening a socket; the runtime is injectable. */
@@ -115,6 +124,7 @@ export function createApp(
     images = {},
     configPath,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    smolvmLogFile,
     amikaUrl,
     bareMetal = false,
   }: AppConfig,
@@ -124,6 +134,7 @@ export function createApp(
     snapshots: offered,
     fetch: fetcher = fetch,
     hiddenMachines = () => new Set(),
+    pullingImages = () => new Set(),
   }: AppDeps = {},
 ) {
   // A bare-metal host has no disk image to capture, whatever it was given.
@@ -135,7 +146,11 @@ export function createApp(
    * safe to pass on (see `RuntimeError.reason`): engine errors can echo
    * commands and environment values.
    */
-  const call = async (run: () => Promise<Response>): Promise<Response> => {
+  const call = async (
+    run: () => Promise<Response>,
+    /** A create or start, whose deadline a download may explain. */
+    { download = false } = {},
+  ): Promise<Response> => {
     let timer: NodeJS.Timeout | undefined;
     const timedOut = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => resolve("timeout"), timeoutMs);
@@ -146,8 +161,14 @@ export function createApp(
     try {
       const response = await Promise.race([result, timedOut]);
       if (response === "timeout") {
+        // A bare-metal host runs no smolvm, so there is no download to
+        // blame.
         return Response.json(
-          { error: "Smol runtime request timed out" },
+          {
+            error: bareMetal
+              ? "Smol runtime request timed out"
+              : `Smol runtime request timed out: ${deadlineReason(timeoutMs, smolvmLogFile, { download })}`,
+          },
           { status: 504 },
         );
       }
@@ -399,20 +420,37 @@ export function createApp(
       const source = bareMetal
         ? { image: named }
         : resolveSource(named, images, snapshotSource, configPath);
-      return call(async () => {
-        const created = await runtime.create({
-          ...machine,
-          ...source,
-          services,
-        });
-        // Record names only for a machine that now exists, replacing any a
-        // deleted machine of the same name left behind.
-        registry.set(
-          machine.name,
-          Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
+      // smolvm would answer only once the download is done, which can
+      // outlast the deadline; the caller is better told now, and when to
+      // try again.
+      if (source.image !== undefined && pullingImages().has(source.image)) {
+        return Response.json(
+          {
+            error: `image ${JSON.stringify(source.image)} is still downloading on this host; try again once it is cached`,
+          },
+          {
+            status: 503,
+            headers: { "Retry-After": String(PULLING_RETRY_AFTER_S) },
+          },
         );
-        return Response.json(created, { status: 201 });
-      });
+      }
+      return call(
+        async () => {
+          const created = await runtime.create({
+            ...machine,
+            ...source,
+            services,
+          });
+          // Record names only for a machine that now exists, replacing any a
+          // deleted machine of the same name left behind.
+          registry.set(
+            machine.name,
+            Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
+          );
+          return Response.json(created, { status: 201 });
+        },
+        { download: true },
+      );
     });
     app.get(`${machines}/:name`, (c) => {
       const name = machineName(c.req.param("name"));
@@ -458,7 +496,9 @@ export function createApp(
     for (const action of ["start", "stop"] as const) {
       app.post(`${machines}/:name/${action}`, (c) => {
         const name = machineName(c.req.param("name"));
-        return call(async () => Response.json(await runtime[action](name)));
+        return call(async () => Response.json(await runtime[action](name)), {
+          download: action === "start",
+        });
       });
     }
     app.post(`${machines}/:name/exec`, async (c) => {
@@ -496,6 +536,12 @@ export function createApp(
 
 /** Bounds a runtime call, including an image pull on first boot. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
+
+/**
+ * The `Retry-After` of a create refused while its image is downloading: an
+ * image of several GB takes minutes, so sooner would only be refused again.
+ */
+export const PULLING_RETRY_AFTER_S = 60;
 
 /** The versioned API this daemon serves. */
 export const API_VERSION = "v0beta1";

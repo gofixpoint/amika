@@ -935,7 +935,7 @@ async function dialOut(
   config: HostdConfigWith<"secretKey">,
   runtime: MachineRuntime,
   paths: DaemonPaths,
-  usedPrepullNames: ReadonlySet<string>,
+  prepull: PrepullProgress,
   deps: CliDeps,
   {
     secrets: handed,
@@ -963,7 +963,7 @@ async function dialOut(
     secrets,
     () => readTunnelEnrolment(enrolmentFile),
     {
-      ...handlerOptions(config, paths, usedPrepullNames, deps, packing),
+      ...handlerOptions(config, paths, prepull, deps, packing),
       // For the life of the daemon, not just startup: a tunnel that drops,
       // or that the gateway later refuses, must say so in the log.
       onEvent: (event) => logTunnelEvent(event, deps),
@@ -1304,9 +1304,12 @@ async function serveInForeground(
   let server:
     | { port?: number; connectionId?: string; close: () => Promise<void> }
     | undefined;
-  // Every throwaway machine name the pre-pull uses. Each is random, so
-  // hiding them all, deleted or not, never hides a rig.
-  const usedPrepullNames = new Set<string>();
+  const prepull: PrepullProgress = {
+    // Every throwaway machine name the pre-pull uses. Each is random, so
+    // hiding them all, deleted or not, never hides a rig.
+    used: new Set(),
+    pulling: new Set(),
+  };
   const stopAll = async () => {
     // However the daemon stops, not only on a signal, so the pre-pull never
     // goes on against a smolvm that is gone.
@@ -1338,17 +1341,18 @@ async function serveInForeground(
         providerRuntime({
           apiUrl: serving.smolApiUrl ?? DEFAULT_SMOL_API_URL,
           requestTimeoutMs: serving.smolRequestTimeoutMs,
+          logFile: runtime ? paths.smolvmLogFile : undefined,
         });
       // Only a daemon running its own smolvm can pack a snapshot: a pack
       // is a subprocess of that binary, reading the same machine state.
       server =
         config.transport === "tunnel"
-          ? await dialOut(serving, machines, paths, usedPrepullNames, deps, {
+          ? await dialOut(serving, machines, paths, prepull, deps, {
               smolvm: runtime?.binary,
               signal: interrupted.signal,
               secrets: tunnelSecrets,
             })
-          : await listen(serving, machines, paths, usedPrepullNames, deps, {
+          : await listen(serving, machines, paths, prepull, deps, {
               smolvm: runtime?.binary,
               signal: interrupted.signal,
             });
@@ -1386,7 +1390,8 @@ async function serveInForeground(
         out: deps.out,
         err: deps.err,
         signal: interrupted.signal,
-        used: usedPrepullNames,
+        used: prepull.used,
+        pulling: prepull.pulling,
       }).catch((error: unknown) => {
         // Never let the background pull take the daemon down with it.
         deps.err(
@@ -1475,7 +1480,7 @@ function announcePrepull(
     deps.out(`  ${presets.join(", ").padEnd(width)}  ${image}`);
   }
   deps.out(
-    "Each is several GB. Once an image has downloaded, its rigs start without downloading it again; a rig created before then may take minutes, or time out.",
+    "Each is several GB. Once an image has downloaded, its rigs start without downloading it again; until then, a rig of it is refused, saying the image is still downloading.",
   );
   // In the foreground the daemon reports progress here, not in the log.
   deps.out(
@@ -1533,11 +1538,20 @@ async function startSmolvm(
   return runtime;
 }
 
+/**
+ * What the daemon's pre-pull is doing, for the app to read: the throwaway
+ * machine names it has used, and the images it is caching right now.
+ */
+interface PrepullProgress {
+  used: Set<string>;
+  pulling: Set<string>;
+}
+
 async function listen(
   config: HostdConfigWith<"secretKey">,
   runtime: MachineRuntime,
   paths: DaemonPaths,
-  usedPrepullNames: ReadonlySet<string>,
+  prepull: PrepullProgress,
   deps: CliDeps,
   /** The smolvm a pack runs through, when this daemon started one. */
   packing: { smolvm?: string; signal?: AbortSignal } = {},
@@ -1546,7 +1560,7 @@ async function listen(
     return await (deps.startServer ?? startServerOnPort)(
       config,
       runtime,
-      handlerOptions(config, paths, usedPrepullNames, deps, packing),
+      handlerOptions(config, paths, prepull, deps, packing),
     );
   } catch (error) {
     throw new DaemonError(
@@ -1565,7 +1579,7 @@ async function listen(
 function handlerOptions(
   config: HostdConfigWith<"secretKey">,
   paths: DaemonPaths,
-  usedPrepullNames: ReadonlySet<string>,
+  prepull: PrepullProgress,
   deps: CliDeps,
   packing: { smolvm?: string; signal?: AbortSignal },
 ) {
@@ -1590,7 +1604,10 @@ function handlerOptions(
     // mid-create or mid-delete still hides them, and any an earlier run
     // left behind.
     hiddenMachines: () =>
-      new Set([...usedPrepullNames, ...prepullMachines(paths.prepullFile)]),
+      new Set([...prepull.used, ...prepullMachines(paths.prepullFile)]),
+    pullingImages: () => prepull.pulling,
+    // Only a daemon that started smolvm knows where its log is.
+    smolvmLogFile: packing.smolvm ? paths.smolvmLogFile : undefined,
   };
 }
 

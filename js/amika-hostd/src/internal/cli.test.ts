@@ -136,6 +136,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
         _options?: {
           servicesFile?: string;
           hiddenMachines?: () => ReadonlySet<string>;
+          pullingImages?: () => ReadonlySet<string>;
         },
       ) => server,
     ),
@@ -285,6 +286,10 @@ describe("runCli", () => {
         {
           servicesFile: "/state/amika-hostd/services.json",
           hiddenMachines: expect.any(Function),
+          pullingImages: expect.any(Function),
+          // Only a daemon that started smolvm knows its log.
+          smolvmLogFile:
+            args[0] === "up" ? "/state/amika-hostd/log/smolvm.log" : undefined,
           bareMetal: false,
           // Snapshots are served only by a daemon running its own smolvm:
           // a pack is a subprocess of that binary. Plain `serve` forwards to
@@ -1338,7 +1343,12 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
       err: deps.err,
       signal: expect.any(AbortSignal),
       used: expect.any(Set),
+      pulling: expect.any(Set),
     });
+    // The machine API reads the images being downloaded from the very set
+    // the pre-pull fills.
+    const { pulling } = deps.prepull.mock.calls[0][1];
+    expect(deps.startServer.mock.calls[0][2]?.pullingImages?.()).toBe(pulling);
     expect(deps.prepull.mock.invocationCallOrder[0]).toBeGreaterThan(
       deps.notifyReady.mock.invocationCallOrder[0],
     );

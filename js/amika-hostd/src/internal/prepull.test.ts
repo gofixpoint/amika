@@ -42,7 +42,9 @@ function fakeRuntime(machines: string[] = []) {
 function run(
   runtime: PrepullOptions["runtime"],
   file: string,
-  options: Partial<Pick<PrepullOptions, "signal" | "newSuffix" | "used">> = {},
+  options: Partial<
+    Pick<PrepullOptions, "signal" | "newSuffix" | "used" | "pulling">
+  > = {},
 ) {
   const out: string[] = [];
   const err: string[] = [];
@@ -226,17 +228,61 @@ describe("prepullImages", () => {
     const { runtime, names } = fakeRuntime();
     runtime.createUnstarted.mockImplementationOnce(async ({ name }) => {
       names.add(name);
-      throw new RuntimeError(504, "smolvm POST  timed out");
+      throw new RuntimeError(504, "smolvm POST /api/v1/machines timed out");
     });
     const file = stateFile();
     const { done, err } = run(runtime, file);
     await done;
     expect(err).toEqual([
-      `amika-hostd: could not cache ${CODER}: smolvm POST  timed out; rigs of it may pull it themselves, and the next \`amika-hostd up\` tries again`,
+      `amika-hostd: could not cache ${CODER}: smolvm POST /api/v1/machines timed out; rigs of it may pull it themselves, and the next \`amika-hostd up\` tries again`,
     ]);
     expect(runtime.remove).toHaveBeenCalledWith("amika-hostd-prepull-0");
     expect(pulledImages(file)).toEqual(new Set([DOCKER]));
     expect(names.size).toBe(0);
+  });
+
+  it("holds each image as downloading only while its create runs", async () => {
+    const { runtime } = fakeRuntime();
+    const pulling = new Set<string>();
+    const during: string[][] = [];
+    runtime.createUnstarted.mockImplementation(async () => {
+      during.push([...pulling]);
+    });
+    await run(runtime, stateFile(), { pulling }).done;
+    expect(during).toEqual([[CODER], [DOCKER]]);
+    expect(pulling).toEqual(new Set());
+  });
+
+  it("stops holding an image as downloading once its create fails", async () => {
+    const { runtime } = fakeRuntime();
+    const pulling = new Set<string>();
+    runtime.createUnstarted.mockRejectedValueOnce(
+      new RuntimeError(504, "timed out"),
+    );
+    await run(runtime, stateFile(), { pulling }).done;
+    expect(pulling).toEqual(new Set());
+  });
+
+  it("stops holding an image as downloading when another machine took the name", async () => {
+    const { runtime } = fakeRuntime();
+    const pulling = new Set<string>();
+    runtime.createUnstarted.mockRejectedValueOnce(
+      new RuntimeError(409, "machine amika-hostd-prepull-0 already exists"),
+    );
+    await run(runtime, stateFile(), { pulling }).done;
+    expect(pulling).toEqual(new Set());
+  });
+
+  it("stops holding an image as downloading when the daemon stops mid-create", async () => {
+    const { runtime } = fakeRuntime();
+    const pulling = new Set<string>();
+    const stopping = new AbortController();
+    runtime.createUnstarted.mockImplementationOnce(async () => {
+      stopping.abort();
+      throw new TypeError("fetch failed");
+    });
+    await run(runtime, stateFile(), { pulling, signal: stopping.signal }).done;
+    expect(pulling).toEqual(new Set());
   });
 
   it("never deletes a machine whose name another took first", async () => {

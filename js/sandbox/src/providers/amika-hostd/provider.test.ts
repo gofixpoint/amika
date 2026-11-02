@@ -94,7 +94,7 @@ interface Received {
  */
 function fakeSmolvm(
   initial: SmolMachine[],
-  respond?: (request: Received) => Response | undefined,
+  respond?: (request: Received) => Response | Promise<Response> | undefined,
 ) {
   const machines = new Map(initial.map((m) => [m.name, { ...m }]));
   const files = new Map<string, Buffer>();
@@ -216,10 +216,16 @@ function harness({
   amikaUrl,
   snapshots = false,
   pack = fakePack(),
+  pulling = new Set(),
+  requestTimeoutMs,
 }: {
   config?: AmikaHostdConfig;
   machines?: SmolMachine[];
-  respond?: (request: Received) => Response | undefined;
+  respond?: (request: Received) => Response | Promise<Response> | undefined;
+  /** The images hostd's pre-pull is downloading. */
+  pulling?: ReadonlySet<string>;
+  /** How long hostd waits on smolvm before answering 504. */
+  requestTimeoutMs?: number;
   /** hostd's Amika URL, which makes it serve previews. */
   amikaUrl?: string;
   /** Serve the snapshot routes, as a daemon running its own smolvm does. */
@@ -243,29 +249,34 @@ function harness({
       indexFile: path.join(root, "snapshots.json"),
     });
   }
-  const app = createApp({ secretKey: SECRET, amikaUrl }, runtime, {
-    fetch: guest,
-    ...(store
-      ? {
-          snapshots: {
-            store,
-            capture: async (rig: string, name: string) => {
-              const { done } = await startCapture(
-                { rig, name },
-                {
-                  runtime,
-                  store: store!,
-                  smolvm: "/usr/local/bin/smolvm",
-                  env: {},
-                  spawn: pack.spawn,
-                },
-              );
-              captures.push(done);
+  const app = createApp(
+    { secretKey: SECRET, amikaUrl, requestTimeoutMs },
+    runtime,
+    {
+      fetch: guest,
+      pullingImages: () => pulling,
+      ...(store
+        ? {
+            snapshots: {
+              store,
+              capture: async (rig: string, name: string) => {
+                const { done } = await startCapture(
+                  { rig, name },
+                  {
+                    runtime,
+                    store: store!,
+                    smolvm: "/usr/local/bin/smolvm",
+                    env: {},
+                    spawn: pack.spawn,
+                  },
+                );
+                captures.push(done);
+              },
             },
-          },
-        }
-      : {}),
-  });
+          }
+        : {}),
+    },
+  );
   const fetcher = vi.fn<typeof fetch>(async (url, init) =>
     app.request(new Request(url, init)),
   );
@@ -629,12 +640,37 @@ describe("amika-hostd provider", () => {
     });
   });
 
+  it("tells the caller a rig's image is still downloading on the host", async () => {
+    const { provider, received } = harness({
+      pulling: new Set(["ubuntu:24.04"]),
+    });
+    await expect(provider.sandboxes.create(ctx, INPUT)).rejects.toMatchObject({
+      status: 503,
+      message:
+        'amika-hostd POST /v0beta1/rigs failed (HTTP 503): image "ubuntu:24.04" is still downloading on this host; try again once it is cached',
+    });
+    expect(received).toEqual([]);
+  });
+
+  it("tells the caller why smolvm may have missed hostd's deadline", async () => {
+    const { provider } = harness({
+      requestTimeoutMs: 5,
+      respond: ({ method, path }) =>
+        method === "POST" && path === "" ? new Promise(() => {}) : undefined,
+    });
+    await expect(provider.sandboxes.create(ctx, INPUT)).rejects.toMatchObject({
+      status: 504,
+      message:
+        "amika-hostd POST /v0beta1/rigs failed (HTTP 504): Smol runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image",
+    });
+  });
+
   it("is rejected by hostd with the wrong secret key", async () => {
     const { provider, smolvm } = harness({ config: { secretKey: "wrong" } });
     const failure = provider.sandboxes.get("demo").getState();
     // hostd's reason comes through; the secret that was sent never does.
     await expect(failure).rejects.toThrow(
-      /^smolvm GET \/demo failed \(HTTP 401\): Unauthorized$/,
+      /^amika-hostd GET \/v0beta1\/rigs\/demo failed \(HTTP 401\): Unauthorized$/,
     );
     expect(smolvm).not.toHaveBeenCalled();
   });

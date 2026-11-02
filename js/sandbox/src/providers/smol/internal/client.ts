@@ -27,9 +27,14 @@ export class SmolApiError extends Error {
     readonly path: string,
     /** The response body's `error` message, when it is safe to surface. */
     readonly reason?: string,
+    /**
+     * Who answered and the machines path `path` is under, for the message
+     * only: a create's `path` is `""`, which alone reads as no path at all.
+     */
+    { server = "smolvm", machinesPath = "" } = {},
   ) {
     super(
-      `smolvm ${method} ${path} failed (HTTP ${status})${reason === undefined ? "" : `: ${reason}`}`,
+      `${server} ${method} ${machinesPath}${path} failed (HTTP ${status})${reason === undefined ? "" : `: ${reason}`}`,
     );
     this.name = "SmolApiError";
   }
@@ -44,6 +49,8 @@ export class SmolClient {
     private readonly fetcher = fetch,
     /** Where the machine API lives: smolvm's path, or a compatible one. */
     private readonly machinesPath = "/api/v1/machines",
+    /** Names the server in errors: smolvm, or what serves its API. */
+    private readonly server = "smolvm",
   ) {
     const url = new URL(config.apiUrl ?? "http://127.0.0.1:8080");
     if (
@@ -98,6 +105,7 @@ export class SmolClient {
         method,
         path,
         await errorReason(response, path),
+        { server: this.server, machinesPath: this.machinesPath },
       );
     }
     return response;
