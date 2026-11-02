@@ -65,6 +65,7 @@ const CONFIG_KEY: Record<SandboxProviderName, keyof SandboxProviderConfigs> = {
   vercel: "vercel",
   smol: "smol",
   "amika-hostd": "amikaHostd",
+  "amika-hostd-bare-metal": "amikaHostd",
   simulate: "simulate",
 };
 
@@ -80,6 +81,7 @@ const IDENTITY_FIELDS: Record<SandboxProviderName, string[]> = {
   vercel: ["teamId", "projectId"],
   smol: ["apiUrl"],
   "amika-hostd": ["apiUrl"],
+  "amika-hostd-bare-metal": ["apiUrl"],
   simulate: ["worldId"],
 };
 
