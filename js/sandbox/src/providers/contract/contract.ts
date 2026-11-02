@@ -9,7 +9,10 @@
  * scenarios run and must pass; a flag set to `false` skips them. That turns
  * the flags into promises a provider keeps, not just metadata.
  *
- * `contract.test.ts` runs it against `simulate` on every `pnpm test`.
+ * Two entry points run the suite:
+ *   - `contract.test.ts` runs it against `simulate` on every `pnpm test`.
+ *   - `contract.integration.test.ts` runs it against a real vendor named by
+ *     `TEST_SANDBOX_CONTRACT_PROVIDER`.
  *
  * What the suite assumes about a sandbox booted from `bootSnapshot`. These
  * are requirements on the test fixture, not on every sandbox a provider boots:
