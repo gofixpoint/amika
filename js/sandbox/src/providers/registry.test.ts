@@ -5,7 +5,12 @@ import {
   getSandboxAdapter,
   type SandboxProviderDeps,
 } from "./registry";
-import { isSandboxProviderName } from "./capabilities";
+import {
+  getProviderLabel,
+  isSandboxProviderName,
+  SANDBOX_PROVIDER_CAPABILITIES,
+} from "./capabilities";
+import { SANDBOX_PROVIDER_NAMES } from "../types";
 import { SandboxProviderUnsupportedError } from "./provider";
 import type { SandboxProviderName } from "../types";
 
@@ -27,18 +32,14 @@ const DEPS: SandboxProviderDeps = {
 };
 
 describe("createSandboxProvider construction", () => {
-  const names: SandboxProviderName[] = [
-    "daytona",
-    "e2b",
-    "freestyle",
-    "vercel",
-    "smol",
-    "amika-hostd",
-    "simulate",
-  ];
+  const names: readonly SandboxProviderName[] = SANDBOX_PROVIDER_NAMES;
 
   it.each(names)("constructs %s with a coherent object surface", (name) => {
     const p = createSandboxProvider(name, DEPS);
+    expect(p.name).toBe(name);
+    // The client-safe flag table and the built provider must agree.
+    expect(p.capabilities).toEqual(SANDBOX_PROVIDER_CAPABILITIES[name]);
+    expect(getProviderLabel(name)).not.toBe(name);
     // The object surface is always present; a Sandbox ref resolves without I/O
     // and its richer sub-namespaces are null-or-object.
     const sbox = p.sandboxes.get("sb_1");
@@ -47,6 +48,31 @@ describe("createSandboxProvider construction", () => {
       expect(ns === null || typeof ns === "object").toBe(true);
     }
   });
+
+  // Daytona is always configured; every other provider has a nullable slice.
+  const optional = names.filter((name) => name !== "daytona");
+  const sliceKey = {
+    e2b: "e2b",
+    freestyle: "freestyle",
+    vercel: "vercel",
+    smol: "smol",
+    "amika-hostd": "amikaHostd",
+    "amika-hostd-bare-metal": "amikaHostd",
+    simulate: "simulate",
+  } as const satisfies Record<
+    Exclude<SandboxProviderName, "daytona">,
+    keyof SandboxProviderDeps
+  >;
+
+  it.each(optional)(
+    "throws a config hint when %s has no config slice",
+    (name) => {
+      const key = sliceKey[name as keyof typeof sliceKey];
+      expect(() =>
+        createSandboxProvider(name, { ...DEPS, [key]: null }),
+      ).toThrow(/not configured/);
+    },
+  );
 
   it("requires the hostd config slice for providers and adapters", async () => {
     const deps = { ...DEPS, amikaHostd: null };

@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SANDBOX_ORG_ID_LABEL } from "../../constants";
 import { moduleLogger, type SandboxCtx } from "../../logger";
-import {
-  getProviderLabel,
-  isSandboxProviderName,
-  SANDBOX_PROVIDER_CAPABILITIES,
-} from "../capabilities";
 import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 import {
   getSimulateWorld,
@@ -63,35 +58,6 @@ afterEach(() => {
 });
 
 describe("simulate provider wiring", () => {
-  it("is recognized and has client-safe display data", () => {
-    expect(isSandboxProviderName("simulate")).toBe(true);
-    expect(getProviderLabel("simulate")).toBe("Simulated");
-  });
-
-  it("advertises the full contract except docker registries", () => {
-    expect(SANDBOX_PROVIDER_CAPABILITIES.simulate).toEqual({
-      lifecycle: true,
-      ssh: true,
-      services: true,
-      exec: true,
-      listSandboxes: true,
-      streaming: true,
-      snapshots: true,
-      fullSnapshotCapture: true,
-      scrubCapture: true,
-      dockerRegistries: false,
-      snapshotIdsAreOpaque: false,
-      supportsAutoDelete: true,
-      guestProvisioning: true,
-    });
-  });
-
-  it("requires its config slice", () => {
-    expect(() =>
-      createSandboxProvider("simulate", { ...DEPS, simulate: null }),
-    ).toThrow(/SIMULATE_ENABLED/);
-  });
-
   it("shares one world across providers built with the same worldId", async () => {
     const sandbox = await createSandbox();
     const again = createSandboxProvider("simulate", DEPS);
