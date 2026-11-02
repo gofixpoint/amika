@@ -182,6 +182,10 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 		// itself, with nothing cloned onto it, so running this command from
 		// inside a checkout is not a request for one.
 		gitURL, branch, newBranch = "", "", ""
+		// Likewise the default per-kind credential opt-ins: no credential
+		// flag was given (bareMetalCreateConflicts refuses them), and the
+		// server refuses a bare-metal create that names any credentials.
+		agentCreds = nil
 	}
 
 	req := apiclient.CreateSandboxRequest{

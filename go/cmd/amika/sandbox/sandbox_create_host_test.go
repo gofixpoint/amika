@@ -481,6 +481,44 @@ func TestResolveCreateHostReportsBareMetal(t *testing.T) {
 	}
 }
 
+// A name-only create on a bare-metal host must send only the name and host.
+// The server refuses a bare-metal create that names agent credentials, and
+// the CLI asks for its default ones when no credential flag is given.
+func TestCreateRemoteSandboxOnBareMetalSendsNoCredentials(t *testing.T) {
+	var createBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v0beta1/hosts":
+			io.WriteString(w, `[{"id":"host_9","hostname":"metal.lan","url":null,"org_id":"org_1",
+			  "sizes":{},"transport_mode":"tunnel","host_type":"bare_metal","ssh_user":"jo",
+			  "created_at":"","updated_at":""}]`)
+		case r.Method == "POST" && r.URL.Path == "/api/v0beta1/sandboxes":
+			json.NewDecoder(r.Body).Decode(&createBody)
+			io.WriteString(w, `{"name":"dev","state":"initializing"}`)
+		default:
+			io.WriteString(w, `{"name":"dev","state":"active","host_id":"host_9"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AMIKA_API_URL", srv.URL)
+	t.Setenv("AMIKA_API_KEY", "test-token")
+
+	c, _ := newCreateCmd(t)
+	c.Flags().Set("host", "metal.lan")
+	if err := createRemoteSandbox(c, "", "dev", gitrepo.Identity{Source: gitrepo.SourceNone}); err != nil {
+		t.Fatalf("createRemoteSandbox: %v", err)
+	}
+	if got := createBody["host_id"]; got != "host_9" {
+		t.Errorf("host_id = %v, want host_9 (body: %v)", got, createBody)
+	}
+	for _, forbidden := range []string{"agent_credentials", "repo_url", "size"} {
+		if _, ok := createBody[forbidden]; ok {
+			t.Errorf("body carries %q: %v", forbidden, createBody)
+		}
+	}
+}
+
 func TestBareMetalCreateConflicts(t *testing.T) {
 	newCmd := func() *cobra.Command {
 		cmd := &cobra.Command{Use: "create"}
