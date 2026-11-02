@@ -26,7 +26,8 @@ export type LedgerEvent =
   | {
       /**
        * The run's header: which account and endpoint it ran against (see
-       * `targetIdentity`). Written once, before anything is created.
+       * `targetIdentity`). Written once, before anything is created. The
+       * sweep refuses a ledger whose header does not match its own target.
        */
       event: "run";
       provider: string;
@@ -62,6 +63,8 @@ export type LedgerEvent =
       id: string;
       /** `true` once the provider confirmed it is gone; `"unsupported"` when it cannot be asked. */
       verified: true | "unsupported";
+      /** Set when the sweep, not the run itself, deleted it. */
+      swept?: true;
       at: string;
     }
   | {
@@ -69,6 +72,7 @@ export type LedgerEvent =
       kind: ResourceKind;
       id: string;
       error: string;
+      swept?: true;
       at: string;
     };
 
@@ -177,6 +181,19 @@ export class Ledger {
         `could not record ${writeErrors.length} cleanup outcome(s) in the audit ledger`,
       );
     }
+  }
+
+  /**
+   * Delete one resource an earlier run left behind and record the outcome,
+   * marked as swept. The resource's `created` line is already in the file.
+   */
+  async sweep(resource: TrackedResource): Promise<OutcomeEvent> {
+    const outcome = {
+      ...(await this.deleteAndVerify(resource)),
+      swept: true as const,
+    };
+    this.write(outcome);
+    return outcome;
   }
 
   /** Resources with a `created` event and no outcome yet. */
