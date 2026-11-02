@@ -46,9 +46,9 @@ export type LedgerEvent =
   | {
       /**
        * The provider's own id for a resource recorded before it had one. A
-       * snapshot is recorded by name before capture, because a capture can
-       * create the snapshot and still throw; its bootable id follows here
-       * once capture returns.
+       * sandbox or snapshot is recorded by name before create/capture can
+       * reach the vendor; its provider id follows once the call returns or
+       * cleanup recovers it by name.
        */
       event: "identified";
       kind: ResourceKind;

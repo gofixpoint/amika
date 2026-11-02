@@ -25,6 +25,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fileSink, Ledger } from "./ledger";
 import {
+  trackSandbox,
   trackSnapshot as trackSnapshotIn,
   trackSshAccess,
   type TrackingContext,
@@ -148,28 +149,15 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     snapshot: string = target.bootSnapshot,
   ): Promise<Sandbox> {
     const name = uniqueName("sb");
-    const sandbox = await provider.sandboxes.create(ctx, {
-      name,
-      snapshot,
-      services: overrides.services ?? [],
-      scrubSafe: overrides.scrubSafe,
-    });
-    ledger.track({
-      kind: "sandbox",
-      id: sandbox.id,
-      name,
-      test: currentTest(),
-      delete: () => sandbox.delete(),
-      // Only a provider that can list its sandboxes can confirm one is gone.
-      verifyGone: caps.listSandboxes
-        ? () =>
-            isGone(async () => {
-              const listed = await provider.sandboxes.list();
-              return !listed.some((l) => l.providerSandboxId === sandbox.id);
-            })
-        : undefined,
-    });
-    return sandbox;
+    const identify = trackSandbox(tracking, name);
+    return identify(
+      await provider.sandboxes.create(ctx, {
+        name,
+        snapshot,
+        services: overrides.services ?? [],
+        scrubSafe: overrides.scrubSafe,
+      }),
+    );
   }
 
   /** The value `create` accepts to boot from `snapshot`. */

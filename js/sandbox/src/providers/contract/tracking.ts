@@ -3,7 +3,12 @@
  * that creates them returns. Kept apart from the scenarios so the failure
  * paths (a capture that creates and then throws) can be tested directly.
  */
-import type { MintedSshHandle, SandboxProvider, Snapshot } from "../provider";
+import type {
+  MintedSshHandle,
+  Sandbox,
+  SandboxProvider,
+  Snapshot,
+} from "../provider";
 import type { Ledger } from "./ledger";
 
 export interface TrackingContext {
@@ -12,8 +17,62 @@ export interface TrackingContext {
   /** Snapshot name -> bootable id, read by the provider's `resolveSnapshotId`. */
   snapshotIds: Map<string, string>;
   currentTest(): string;
-  /** Poll `check` over the settle window; `false` if it never said gone. */
+  /** Poll until `check` returns true over the settle window; otherwise false. */
   isGone(check: () => Promise<boolean>): Promise<boolean>;
+}
+
+/** Record a sandbox by its unique name before create can reach the vendor. */
+export function trackSandbox(
+  context: TrackingContext,
+  name: string,
+): (sandbox: Sandbox) => Sandbox {
+  const { ledger, provider } = context;
+  let sandboxId: string | undefined;
+  ledger.track({
+    kind: "sandbox",
+    id: name,
+    name,
+    test: context.currentTest(),
+    delete: async () => {
+      if (!sandboxId) {
+        if (!provider.capabilities.listSandboxes) {
+          throw new Error(
+            `create never returned an id for sandbox ${name}; check the provider by hand`,
+          );
+        }
+        // A timed-out create can still be registering. Give its listing the
+        // same settle window as deletion before asking for manual recovery.
+        await context.isGone(async () => {
+          const found = (await provider.sandboxes.list()).find(
+            (s) => s.name === name,
+          );
+          if (found) sandboxId = found.providerSandboxId;
+          return sandboxId !== undefined;
+        });
+        if (!sandboxId) {
+          throw new Error(
+            `create never returned an id for sandbox ${name} and its name could not be found; check the provider by hand`,
+          );
+        }
+        ledger.identify("sandbox", name, sandboxId);
+      }
+      await provider.sandboxes.get(sandboxId).delete();
+    },
+    verifyGone: provider.capabilities.listSandboxes
+      ? () =>
+          context.isGone(
+            async () =>
+              !(await provider.sandboxes.list()).some(
+                (s) => s.providerSandboxId === sandboxId,
+              ),
+          )
+      : undefined,
+  });
+  return (sandbox) => {
+    sandboxId = sandbox.id;
+    ledger.identify("sandbox", name, sandboxId);
+    return sandbox;
+  };
 }
 
 /**
@@ -29,9 +88,9 @@ export interface TrackingContext {
  * test.
  *
  * Lookups use `find`, which also sees a snapshot that is still registering;
- * `get` may report one of those as absent. On a provider with opaque
- * snapshot ids, a snapshot whose id was never returned cannot be looked up
- * at all, so its cleanup fails rather than reporting it gone.
+ * `get` may report one of those as absent. Opaque ids do not rule out a
+ * name lookup (E2B and Freestyle support it). If that lookup also fails to
+ * recover an opaque id, cleanup fails rather than reporting it gone.
  */
 export function trackSnapshot(
   context: TrackingContext,
@@ -39,12 +98,21 @@ export function trackSnapshot(
 ): (snapshot: Snapshot) => Snapshot {
   const { ledger, provider, snapshotIds } = context;
   const lookup = async () => {
-    if (provider.capabilities.snapshotIdsAreOpaque && !snapshotIds.has(name)) {
+    const snapshot = await provider.snapshots!.find(name);
+    if (snapshot?.providerSnapshotId && !snapshotIds.has(name)) {
+      snapshotIds.set(name, snapshot.providerSnapshotId);
+      ledger.identify("snapshot", name, snapshot.providerSnapshotId);
+    }
+    if (
+      !snapshot &&
+      provider.capabilities.snapshotIdsAreOpaque &&
+      !snapshotIds.has(name)
+    ) {
       throw new Error(
         `capture never returned a bootable id for snapshot ${name}, so it cannot be looked up; check the provider by hand`,
       );
     }
-    return provider.snapshots!.find(name);
+    return snapshot;
   };
   ledger.track({
     kind: "snapshot",
