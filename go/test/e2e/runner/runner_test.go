@@ -812,6 +812,11 @@ func TestCleanupAcceptsAFailedDeleteOfAnAlreadyGoneResource(t *testing.T) {
 			t.Errorf("%s: want the failed delete kept as unchecked, got verified=%q err=%v", name, res.Verified, res.Err)
 		}
 	}
+
+	rows := AuditRows("api-x", CleanupVerified(bin, entries[:1], nil, fast), nil)
+	if rows[0].Outcome != OutcomeDeleted || !strings.Contains(rows[0].Detail, "already gone") {
+		t.Errorf("audit row: want deleted with an already-gone note, got %+v", rows[0])
+	}
 }
 
 // A hanging lookup or delete must not consume the older resource's budget.
@@ -1022,6 +1027,9 @@ func TestRegisterKeepsResourceWhenVerifyTemplateFails(t *testing.T) {
 	res := Cleanup(bin, entries, nil)[0]
 	if res.Err == nil || res.Verified != VerifiedUnchecked {
 		t.Fatalf("expected the cleanup to count as a failure, got %+v", res)
+	}
+	if rows := AuditRows("c", []CleanupResult{res}, nil); rows[0].Outcome != OutcomeLeaked {
+		t.Fatalf("expected the audit to flag it, got %+v", rows[0])
 	}
 }
 

@@ -12,7 +12,10 @@ importing implementation packages.
   ledger can delete it after a later failure.
 - Give every resource a `verify_gone` check: `rig get` + `not_found` for
   rigs, `absent_from` over a listing for kinds with no `get`. Without it the
-  run can only trust the delete's exit status.
+  run can only trust the delete's exit status, and the audit marks the
+  resource `deleted (unverified)`.
+- A leaked resource fails the run. Read the audit table at the end of
+  `make test-e2e-api` before deciding a failure is a test bug.
 - Preserve enough timeout headroom for cleanup. A `go test` timeout kills the
   process before deferred cleanup can run.
 - Use run-unique names for upserted remote resources.
