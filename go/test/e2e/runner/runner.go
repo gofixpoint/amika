@@ -1147,7 +1147,11 @@ func (r *Runner) releaseResource(step Step) error {
 	}
 	if entry.VerifyGone != nil {
 		env := mergeEnv(r.CleanupEnv(), entry.Env)
-		v, err := verifyGone(r.opts.BinPath, entry, env, r.verifyPolicy())
+		stepCtx, stepCancel := r.stepContext(context.Background())
+		defer stepCancel()
+		verifyCtx, verifyCancel := context.WithTimeout(stepCtx, DefaultCleanupTimeout)
+		defer verifyCancel()
+		v, err := verifyGoneContext(verifyCtx, r.opts.BinPath, entry, env, r.verifyPolicy())
 		if err != nil {
 			return fmt.Errorf("release resource %s %q: kept for cleanup: %w", ref.Type, ref.Name, err)
 		}

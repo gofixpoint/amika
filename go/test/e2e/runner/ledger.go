@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -250,6 +251,11 @@ type VerifyPolicy struct {
 	Interval time.Duration
 }
 
+// DefaultCleanupTimeout bounds all deletion and verification work for one
+// cleanup. It leaves ten seconds of the entry point's two-minute reserve for
+// recording results and terminating a process that ignores cancellation.
+const DefaultCleanupTimeout = 110 * time.Second
+
 // DefaultVerifyPolicy is what Cleanup uses.
 var DefaultVerifyPolicy = VerifyPolicy{Timeout: 2 * time.Minute, Interval: 5 * time.Second}
 
@@ -270,11 +276,30 @@ func Cleanup(binPath string, entries []Entry, env []string) []CleanupResult {
 
 // CleanupVerified is Cleanup with an explicit verification policy.
 func CleanupVerified(binPath string, entries []Entry, env []string, policy VerifyPolicy) []CleanupResult {
+	return cleanupVerifiedContext(context.Background(), binPath, entries, env, policy)
+}
+
+// CleanupContext is Cleanup bounded by the caller's deadline as well as
+// DefaultCleanupTimeout. The caller must supply a context independent of a
+// canceled case so cleanup still runs after a step timeout or interrupt.
+func CleanupContext(ctx context.Context, binPath string, entries []Entry, env []string) []CleanupResult {
+	return cleanupVerifiedContext(ctx, binPath, entries, env, DefaultVerifyPolicy)
+}
+
+func cleanupVerifiedContext(ctx context.Context, binPath string, entries []Entry, env []string, policy VerifyPolicy) []CleanupResult {
+	ctx, cancel := context.WithTimeout(ctx, DefaultCleanupTimeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
 	results := make([]CleanupResult, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
 		cmdEnv := mergeEnv(env, entry.Env)
-		stdout, stderr, err := runArgv(binPath, entry.CleanupArgv, cmdEnv)
+		// Bound the whole resource, including its subprocesses and polling.
+		// Share the remaining budget so one stalled check cannot keep the
+		// older resources from receiving their delete commands.
+		share := time.Until(deadline) / time.Duration(i+1)
+		resourceCtx, resourceCancel := context.WithTimeout(ctx, share)
+		stdout, stderr, err := runArgv(resourceCtx, binPath, entry.CleanupArgv, cmdEnv)
 		result := CleanupResult{
 			Entry:    entry,
 			Err:      err,
@@ -285,7 +310,7 @@ func CleanupVerified(binPath string, entries []Entry, env []string, policy Verif
 		if err == nil && entry.VerifyGoneError != "" {
 			result.Err = fmt.Errorf("deleted, but its verify_gone check could not be built: %s", entry.VerifyGoneError)
 		} else if err == nil {
-			result.Verified, result.Err = verifyGone(binPath, entry, cmdEnv, policy)
+			result.Verified, result.Err = verifyGoneContext(resourceCtx, binPath, entry, cmdEnv, policy)
 		} else if entry.VerifyGone != nil {
 			// A failed delete may only mean the resource is already gone,
 			// for example deleted by an earlier step of the case. Ask once:
@@ -293,7 +318,7 @@ func CleanupVerified(binPath string, entries []Entry, env []string, policy Verif
 			// keeps the delete's own error. One check, not a poll: nothing is
 			// being deleted now, so waiting would not change the answer.
 			once := VerifyPolicy{Timeout: 0, Interval: policy.Interval}
-			if verified, verifyErr := verifyGone(binPath, entry, cmdEnv, once); verifyErr == nil && verified == VerifiedGone {
+			if verified, verifyErr := verifyGoneContext(resourceCtx, binPath, entry, cmdEnv, once); verifyErr == nil && verified == VerifiedGone {
 				result.Verified = VerifiedGone
 				result.DeleteError = fmt.Sprintf("%v: %s", err, strings.TrimSpace(stderr))
 				result.Err = nil
@@ -302,24 +327,25 @@ func CleanupVerified(binPath string, entries []Entry, env []string, policy Verif
 		if result.Err != nil {
 			result.Error = result.Err.Error()
 		}
+		resourceCancel()
 		results = append(results, result)
 	}
 	return results
 }
 
-// verifyGone polls the entry's VerifyGone check until it reports the
+// verifyGoneContext polls the entry's VerifyGone check until it reports the
 // resource gone, or the policy's timeout passes. Only a positive "does not
 // exist" answer counts as gone; a check that cannot answer (the command
 // failed for another reason, or printed something unexpected) is unchecked,
 // never gone, so an API outage cannot make a leaked resource look deleted.
-func verifyGone(binPath string, entry Entry, env []string, policy VerifyPolicy) (string, error) {
+func verifyGoneContext(ctx context.Context, binPath string, entry Entry, env []string, policy VerifyPolicy) (string, error) {
 	check := entry.VerifyGone
 	if check == nil {
 		return VerifiedUnsupported, nil
 	}
 	deadline := time.Now().Add(policy.Timeout)
 	for {
-		exists, err := check.run(binPath, env, entry.Name)
+		exists, err := check.run(ctx, binPath, env, entry.Name)
 		if err != nil {
 			return VerifiedUnchecked, fmt.Errorf("verify deletion of %s %q: %w", entry.Type, entry.Name, err)
 		}
@@ -329,14 +355,24 @@ func verifyGone(binPath string, entry Entry, env []string, policy VerifyPolicy) 
 		if time.Now().After(deadline) {
 			return VerifiedStillPresent, errors.New("still exists after delete")
 		}
-		time.Sleep(policy.Interval)
+		timer := time.NewTimer(policy.Interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return VerifiedUnchecked, fmt.Errorf("verify deletion of %s %q: %w", entry.Type, entry.Name, ctx.Err())
+		case <-timer.C:
+		}
 	}
 }
 
 // run performs the check once. It returns whether the resource still exists,
 // or an error when the command's result answers neither way.
-func (v *VerifyGone) run(binPath string, env []string, name string) (exists bool, err error) {
-	stdout, stderr, runErr := runArgv(binPath, v.Cmd, env)
+func (v *VerifyGone) run(ctx context.Context, binPath string, env []string, name string) (exists bool, err error) {
+	stdout, stderr, runErr := runArgv(ctx, binPath, v.Cmd, env)
+	// Partial stderr from a killed lookup is not a positive absence result.
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
 	if v.NotFound != "" {
 		if runErr == nil {
 			return true, nil
@@ -365,9 +401,10 @@ func (v *VerifyGone) run(binPath string, env []string, name string) (exists bool
 	return false, nil
 }
 
-func runArgv(binPath string, argv, env []string) (stdout, stderr string, err error) {
+func runArgv(ctx context.Context, binPath string, argv, env []string) (stdout, stderr string, err error) {
 	var out, errOut bytes.Buffer
-	cmd := exec.Command(binPath, argv...)
+	cmd := exec.CommandContext(ctx, binPath, argv...)
+	cmd.WaitDelay = time.Second
 	cmd.Env = env
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut

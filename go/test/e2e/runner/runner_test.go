@@ -814,6 +814,59 @@ func TestCleanupAcceptsAFailedDeleteOfAnAlreadyGoneResource(t *testing.T) {
 	}
 }
 
+// A hanging lookup or delete must not consume the older resource's budget.
+func TestCleanupSharesDeadlineAcrossResources(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	for _, phase := range []string{"delete", "verify"} {
+		t.Run(phase, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "calls")
+			script := filepath.Join(dir, "cleanup.sh")
+			writeFile(t, script, "#!/bin/sh\necho \"$1 $2\" >> \"$CALLS\"\nif [ \"$2\" = newest ] && [ \"$1\" = \"$HANG\" ]; then exec sleep 30; fi\nif [ \"$1\" = verify ]; then echo 'HTTP 404' >&2; exit 1; fi\n")
+			if err := os.Chmod(script, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			entries := []Entry{}
+			for _, name := range []string{"oldest", "newest"} {
+				entries = append(entries, Entry{Type: "sandbox", Name: name, CleanupArgv: []string{"delete", name}, VerifyGone: &VerifyGone{Cmd: []string{"verify", name}, NotFound: "HTTP 404"}})
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			env := append(os.Environ(), "CALLS="+log, "HANG="+phase)
+			results := cleanupVerifiedContext(ctx, script, entries, env, DefaultVerifyPolicy)
+			if results[0].Err == nil || results[0].Verified == VerifiedGone {
+				t.Fatalf("hanging resource must fail closed: %+v", results[0])
+			}
+			if results[1].Err != nil || results[1].Verified != VerifiedGone {
+				t.Fatalf("older resource must still be deleted and verified: %+v", results[1])
+			}
+			calls, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(calls), "delete oldest") {
+				t.Fatalf("older delete missing: %s", calls)
+			}
+		})
+	}
+}
+
+func TestCleanupDeadlineInterruptsPollingSleep(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	entry := Entry{Type: "sandbox", Name: "still-there", CleanupArgv: []string{"0", "", ""}, VerifyGone: &VerifyGone{Cmd: []string{"0", "", ""}, NotFound: "HTTP 404"}}
+	started := time.Now()
+	results := cleanupVerifiedContext(ctx, stubScript(t), []Entry{entry}, nil, VerifyPolicy{Timeout: time.Minute, Interval: time.Minute})
+	if results[0].Err == nil || results[0].Verified == VerifiedGone {
+		t.Fatalf("expected a failed, unconfirmed deletion: %+v", results[0])
+	}
+	if time.Since(started) > 3*time.Second {
+		t.Fatal("polling sleep ignored the cleanup deadline")
+	}
+}
+
 func TestCollectJSONPath(t *testing.T) {
 	var doc any
 	if err := json.Unmarshal([]byte(`{"items":[{"name":"a"},{"name":"b"}]}`), &doc); err != nil {

@@ -453,6 +453,13 @@ without a further 5m of runway, so the run stops with a clear message naming
 how many cases went unrun instead of dying mid-step. Raise `-timeout` (see
 `E2E_API_TIMEOUT`) when that happens.
 
+Cleanup shares one 110-second budget across all pending resources, bounded
+also by the test deadline minus five seconds for recording results. Each
+resource gets a share of the remaining time for its delete and verification;
+a slow lookup or polling sleep cannot consume the older resources' shares.
+Delete and verification subprocesses are canceled when their share expires,
+and an interrupted check counts as unconfirmed, never gone.
+
 Independently, every step is bounded by `Options.StepTimeout` (10m by
 default), so one wedged command fails its own step instead of consuming the
 whole run's budget.
