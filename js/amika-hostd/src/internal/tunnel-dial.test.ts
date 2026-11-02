@@ -6,6 +6,7 @@
  * whether a revoked host retries for ever or tells its operator.
  */
 import { EventEmitter } from "node:events";
+import type { IncomingMessage } from "node:http";
 import type { WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import {
@@ -46,8 +47,47 @@ describe("the handshake the gateway reads", () => {
     expect(headers["x-amika-host-credential"]).toBe("cred-1");
     // Not a bearer token: the gateway passes the value on unread.
     expect(headers.authorization).toBeUndefined();
+    // No lane asked for: the bulk lane, which a relay without lanes expects.
+    expect(headers["x-amika-tunnel-lane"]).toBeUndefined();
+  });
+
+  it("names the lane when it dials one", () => {
+    let sent: ConnectOptions | undefined;
+    void dialTunnel(target, {
+      ...options,
+      lane: "interactive",
+      connect: (_url, settings) => {
+        sent = settings;
+        return new EventEmitter() as unknown as WebSocket;
+      },
+    });
+    const headers = sent?.headers as Record<string, string>;
+    expect(headers["x-amika-tunnel-lane"]).toBe("interactive");
+  });
+
+  it("reads the lanes a relay offers from its 101", async () => {
+    const ws = Object.assign(new EventEmitter(), {
+      protocol: TUNNEL_SUBPROTOCOL,
+    });
+    const dialed = dialTunnel(target, {
+      ...options,
+      connect: () => ws as unknown as WebSocket,
+    });
+    ws.emit("upgrade", {
+      headers: { "x-amika-tunnel-lanes": "interactive" },
+    } as unknown as IncomingMessage);
+    ws.emit("open");
+    expect((await dialed).lanes).toBe("interactive");
   });
 });
+
+const target = {
+  gatewayUrl: "wss://gateway.amika.test/v2/host-tunnel",
+  hostId: "host-1",
+  credential: "cred-1",
+  generation: 1,
+};
+const options = { handshakeTimeoutMs: 1_000, userAgent: "amika-hostd/test" };
 
 describe("what a gateway's status means", () => {
   it.each([401, 403, 404, 410, 426])(
