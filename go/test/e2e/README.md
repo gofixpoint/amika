@@ -145,7 +145,8 @@ consumes a resource, such as `snapshot create --mode scrub_and_delete`
 deleting its source sandbox. When the resource has a `verify_gone` check, the
 runner runs it first; if the resource is not confirmed gone, it stays with
 cleanup and the step fails. A released entry is marked, not removed: it stays
-in `ledger.json` as history, while cleanup and the sweep skip it.
+in `ledger.json` as history and appears in the run's audit, while cleanup and
+the sweep skip it.
 
 ### Remote commands (`rig ssh`)
 
@@ -419,8 +420,8 @@ seconds for up to 2 minutes.
 A cleanup delete that fails is checked once too. Cases often delete a
 resource themselves and leave it registered, so cleanup's delete gets a 404.
 If the check then says the resource does not exist, the cleanup counts as
-done: `verified` is `gone`, and the delete's error is kept in
-`delete_error`. Any other answer keeps the failure. Each `cleanup-results.json` entry records the
+done: `verified` is `gone`, the delete's error is kept in `delete_error`, and
+the audit shows "already gone". Any other answer keeps the failure. Each `cleanup-results.json` entry records the
 result as `verified`:
 
 | Value           | Meaning                                                                          |
@@ -439,6 +440,23 @@ checked directly by the provider contract suite, not here.
 The `api-*` cases use `rig get` + `not_found` for rigs, and `absent_from` on
 `$.items[*].snapshot`, `$[*].id`, and `$[*].service` for snapshots, SSH keys,
 and services. Do the same for new resources.
+
+### The resource audit
+
+When the last case finishes, the run prints one table of every resource it
+created, the case and step that created it, and its outcome: `deleted`,
+`deleted (unverified)`, or `LEAKED` with the reason. Released resources are
+included, noting the step that consumed them. The same table is
+written to `.runs/<run-id>/audit.txt` and `audit.json`. On GitHub Actions it
+is also appended to the step summary, with a `::warning::` annotation per
+leaked resource.
+
+**Any leaked resource fails the run.** A leaked sandbox costs money every
+hour, and nobody reads the output of a green run, so the run stays red until
+someone looks. `make test-e2e-api` passes `-v` so the table shows on a green
+run too; `go test` hides a passing package's stdout otherwise. To keep the
+audit files on a CI runner, upload `go/test/e2e/.runs/` as an artifact with
+`if: always()`.
 
 ### Finishing before `go test` kills the run
 
