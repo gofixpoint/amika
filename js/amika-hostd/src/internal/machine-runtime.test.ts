@@ -828,7 +828,7 @@ describe("providerRuntime", () => {
       const error = await failure(runtime.start("demo"));
       expect(error.status).toBe(status);
       expect(error.message).toBe(
-        `smolvm POST /demo/start failed (HTTP ${status}): refused`,
+        `smolvm POST /api/v1/machines/demo/start failed (HTTP ${status}): refused`,
       );
       expect(error.reason).toBe("refused");
     });
@@ -868,14 +868,45 @@ describe("providerRuntime", () => {
       expect(error.message).toBe("fetch failed");
     });
 
-    it("answers 504 when smolvm does not answer in time", async () => {
-      const runtime = providerRuntime({
-        apiUrl: API_URL,
-        fetch: async () => {
-          throw new DOMException("The operation timed out.", "TimeoutError");
-        },
+    describe("when smolvm does not answer in time", () => {
+      const timingOut = (logFile?: string) =>
+        providerRuntime({
+          apiUrl: API_URL,
+          requestTimeoutMs: 300_000,
+          logFile,
+          fetch: async () => {
+            throw new DOMException("The operation timed out.", "TimeoutError");
+          },
+        });
+
+      it("answers 504 for a create, saying its image may still be downloading", async () => {
+        const runtime = timingOut("/state/log/smolvm.log");
+        const error = await failure(
+          runtime.create({
+            name: "demo",
+            image: "ubuntu:24.04",
+            network: true,
+          }),
+        );
+        expect(error.status).toBe(504);
+        expect(error.reason).toBe(
+          "smolvm did not answer within 300s; it may still be downloading the image; see /state/log/smolvm.log",
+        );
       });
-      expect((await failure(runtime.list())).status).toBe(504);
+
+      it("blames no download for a request that pulls no image", async () => {
+        const error = await failure(timingOut("/state/log/smolvm.log").list());
+        expect(error.status).toBe(504);
+        expect(error.reason).toBe(
+          "smolvm did not answer within 300s; see /state/log/smolvm.log",
+        );
+      });
+
+      it("points to no log when hostd did not start smolvm", async () => {
+        expect((await failure(timingOut().list())).reason).toBe(
+          "smolvm did not answer within 300s",
+        );
+      });
     });
 
     it("gives each request the configured deadline", async () => {

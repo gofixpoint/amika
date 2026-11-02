@@ -134,6 +134,14 @@ export interface PrepullOptions {
    * any point in between (see `hiddenMachines`).
    */
   used?: Set<string>;
+  /**
+   * Holds each image while its throwaway create runs, that is while smolvm
+   * may be downloading it, so the machine API can refuse a rig of it at once
+   * (`503`) instead of letting the rig's create wait out its deadline. Kept
+   * in memory: it is live state, gone when the daemon is, which
+   * `prepull.json` is not.
+   */
+  pulling?: Set<string>;
 }
 
 /**
@@ -152,6 +160,7 @@ export async function prepullImages({
   now = Date.now,
   newSuffix = () => randomBytes(8).toString("hex"),
   used,
+  pulling,
 }: PrepullOptions): Promise<void> {
   const forget = (name: string) => {
     try {
@@ -206,6 +215,7 @@ export async function prepullImages({
       );
       continue;
     }
+    pulling?.add(image);
     try {
       // A disk smolvm seeds, so this create attaches the image's seed, and
       // builds it first if it is missing.
@@ -215,6 +225,7 @@ export async function prepullImages({
         storageGb: SMOLVM_SEED_MIN_DISK_GIB,
       });
     } catch (error) {
+      pulling?.delete(image);
       // The daemon stopping cuts the request short; that is no failure, and
       // the next start deletes the machine it recorded.
       if (signal?.aborted) return;
@@ -231,6 +242,7 @@ export async function prepullImages({
       }
       continue;
     }
+    pulling?.delete(image);
     await remove(name);
     try {
       updateState(stateFile, (state) => ({

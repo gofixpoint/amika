@@ -141,9 +141,11 @@ creates of one image share a single build.
     a missing seed before answering. The pre-pull stops whenever the daemon
     stops, quietly, leaving a machine it was creating recorded for the next
     start to delete; any other error from it is logged, never fatal to the
-    daemon. Rig creates keep their own timeout (`SMOL_REQUEST_TIMEOUT_MS`),
-    so a rig created while its image is still downloading may time out,
-    which the announcement says.
+    daemon. Rig creates keep their own timeout (`SMOL_REQUEST_TIMEOUT_MS`).
+  - While an image's create runs, a rig create of that image gets `503`
+    with `Retry-After: 60` instead of waiting out its deadline behind the
+    download. The images in flight are kept in memory (`pulling`), not in
+    `prepull.json`.
 - **The announcement.** `up` reads `prepull.json` before starting the daemon
   and, once it is ready, lists the images never pulled before and where
   progress is logged (the log file, or the terminal under `--fg`). It prints

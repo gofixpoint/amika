@@ -180,6 +180,52 @@ describe("machine API", () => {
       });
     });
 
+    describe("while pre-pull is downloading an image", () => {
+      function pulling(images: string[]) {
+        const runtime = fakeRuntime();
+        const pulls = new Set(images);
+        const app = authenticated(
+          createApp(
+            { secretKey: SECRET, images: { "amika-coder": CODER } },
+            runtime,
+            { pullingImages: () => pulls },
+          ),
+        );
+        return { app, runtime, pulls };
+      }
+
+      it.each(["amika-coder", CODER])(
+        "refuses a create of it (%s) at once, saying when to try again",
+        async (image) => {
+          const { app, runtime } = pulling([CODER]);
+          const response = await app.request(
+            ROOT,
+            json({ name: "demo", image }),
+          );
+          expect(response.status).toBe(503);
+          expect(response.headers.get("Retry-After")).toBe("60");
+          expect(await response.json()).toEqual({
+            error: `image "${CODER}" is still downloading on this host; try again once it is cached`,
+          });
+          expectUntouched(runtime);
+        },
+      );
+
+      it("creates a rig of another image", async () => {
+        const { app } = pulling(["ubuntu:24.04"]);
+        const input = { name: "demo", image: "amika-coder" };
+        expect((await app.request(ROOT, json(input))).status).toBe(201);
+      });
+
+      it("creates a rig of it once the download is done", async () => {
+        const { app, pulls } = pulling([CODER]);
+        const input = { name: "demo", image: "amika-coder" };
+        expect((await app.request(ROOT, json(input))).status).toBe(503);
+        pulls.delete(CODER);
+        expect((await app.request(ROOT, json(input))).status).toBe(201);
+      });
+    });
+
     it.each(["ubuntu:24.04", "ghcr.io/gofixpoint/amika-coder", CODER])(
       "passes full reference %s unchanged",
       async (image) => {
@@ -380,7 +426,7 @@ describe("machine API", () => {
     runtime.start.mockRejectedValueOnce(
       new RuntimeError(
         500,
-        "smolvm POST /demo/start failed (HTTP 500): resize2fs not found",
+        "smolvm POST /api/v1/machines/demo/start failed (HTTP 500): resize2fs not found",
         "resize2fs not found",
       ),
     );
@@ -418,11 +464,62 @@ describe("machine API", () => {
     });
   });
 
-  it("returns 504 when the runtime deadline expires", async () => {
+  it("returns 504 when the runtime deadline expires, saying why it may have", async () => {
+    const runtime = fakeRuntime();
+    runtime.create.mockReturnValueOnce(new Promise(() => {}));
+    const app = authenticated(
+      createApp(
+        {
+          secretKey: SECRET,
+          requestTimeoutMs: 5,
+          smolvmLogFile: "/state/log/smolvm.log",
+        },
+        runtime,
+      ),
+    );
+    const response = await app.request(
+      ROOT,
+      json({ name: "demo", image: "ubuntu:24.04" }),
+    );
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({
+      error:
+        "Smol runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image; see /state/log/smolvm.log",
+    });
+  });
+
+  it("blames no download for a deadline a request that pulls no image missed", async () => {
+    const runtime = fakeRuntime();
+    runtime.exec.mockReturnValueOnce(new Promise(() => {}));
+    const app = authenticated(
+      createApp(
+        {
+          secretKey: SECRET,
+          requestTimeoutMs: 5,
+          smolvmLogFile: "/state/log/smolvm.log",
+        },
+        runtime,
+      ),
+    );
+    const response = await app.request(
+      `${ROOT}/demo/exec`,
+      json({ command: ["true"] }),
+    );
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({
+      error:
+        "Smol runtime request timed out: smolvm did not answer within 5ms; see /state/log/smolvm.log",
+    });
+  });
+
+  it("blames no download for a bare-metal host's deadline", async () => {
     const runtime = fakeRuntime();
     runtime.list.mockReturnValueOnce(new Promise(() => {}));
     const app = authenticated(
-      createApp({ secretKey: SECRET, requestTimeoutMs: 5 }, runtime),
+      createApp(
+        { secretKey: SECRET, requestTimeoutMs: 5, bareMetal: true },
+        runtime,
+      ),
     );
     const response = await app.request(ROOT);
     expect(response.status).toBe(504);

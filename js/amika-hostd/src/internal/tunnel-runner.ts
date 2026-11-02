@@ -45,6 +45,8 @@ export interface RunningTunnel {
 export interface StartTunnelOptions {
   servicesFile?: string;
   hiddenMachines?: () => ReadonlySet<string>;
+  pullingImages?: () => ReadonlySet<string>;
+  smolvmLogFile?: string;
   snapshots?: SnapshotOptions;
   /** A bare-metal host: no files or snapshots (see `AppConfig`). */
   bareMetal?: boolean;
@@ -77,6 +79,8 @@ export function startTunnel(
   const { app, upgrade, tunnels } = buildHandlers(config, runtime, {
     servicesFile: options.servicesFile,
     hiddenMachines: options.hiddenMachines,
+    pullingImages: options.pullingImages,
+    smolvmLogFile: options.smolvmLogFile,
     snapshots: options.snapshots,
     bareMetal: options.bareMetal,
   });

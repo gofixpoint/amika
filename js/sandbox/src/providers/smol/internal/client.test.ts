@@ -28,7 +28,9 @@ describe("SmolClient", () => {
       );
     await expect(
       new SmolClient({}, fetcher).request("/machine/exec", "POST", {}),
-    ).rejects.toThrow(/^smolvm POST \/machine\/exec failed \(HTTP 500\)$/);
+    ).rejects.toThrow(
+      /^smolvm POST \/api\/v1\/machines\/machine\/exec failed \(HTTP 500\)$/,
+    );
   });
 
   it("surfaces the error message of a refused request", async () => {
@@ -42,7 +44,21 @@ describe("SmolClient", () => {
     ).rejects.toMatchObject({
       status: 400,
       reason: error,
-      message: `smolvm POST  failed (HTTP 400): ${error}`,
+      message: `smolvm POST /api/v1/machines failed (HTTP 400): ${error}`,
+    });
+  });
+
+  it("names the server and the whole path a create was sent to", async () => {
+    const error = 'image "ghcr.io/x:1" is still downloading on this host';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ error }, { status: 503 }));
+    const client = new SmolClient({}, fetcher, "/v0beta1/rigs", "amika-hostd");
+    await expect(client.request("", "POST", {})).rejects.toMatchObject({
+      status: 503,
+      path: "",
+      reason: error,
+      message: `amika-hostd POST /v0beta1/rigs failed (HTTP 503): ${error}`,
     });
   });
 
@@ -59,7 +75,9 @@ describe("SmolClient", () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response());
     await expect(
       new SmolClient({}, fetcher).request("/machine/start", "POST"),
-    ).rejects.toThrow(/^smolvm POST \/machine\/start failed \(HTTP 400\)$/);
+    ).rejects.toThrow(
+      /^smolvm POST \/api\/v1\/machines\/machine\/start failed \(HTTP 400\)$/,
+    );
   });
 
   it("never surfaces an exec error's message, which may echo the command", async () => {
@@ -74,7 +92,7 @@ describe("SmolClient", () => {
       {},
     );
     await expect(request).rejects.toThrow(
-      /^smolvm POST \/machine\/exec failed \(HTTP 500\)$/,
+      /^smolvm POST \/api\/v1\/machines\/machine\/exec failed \(HTTP 500\)$/,
     );
     await expect(request).rejects.toMatchObject({ reason: undefined });
   });
@@ -88,7 +106,7 @@ describe("SmolClient", () => {
     await expect(
       new SmolClient({}, fetcher).request(filePath("machine", "/tmp/exec")),
     ).rejects.toThrow(
-      /^smolvm GET \/machine\/files\/tmp\/exec failed \(HTTP 401\): Unauthorized$/,
+      /^smolvm GET \/api\/v1\/machines\/machine\/files\/tmp\/exec failed \(HTTP 401\): Unauthorized$/,
     );
   });
 
@@ -101,7 +119,7 @@ describe("SmolClient", () => {
       token: "do-not-print",
     });
     await expect(failure).rejects.toThrow(
-      "smolvm POST  failed (HTTP 400): Nope",
+      "smolvm POST /api/v1/machines failed (HTTP 400): Nope",
     );
     await expect(failure).rejects.not.toThrow(/do-not-print|Content-Type/);
   });

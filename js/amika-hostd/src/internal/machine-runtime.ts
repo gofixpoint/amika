@@ -170,6 +170,31 @@ export function surfaceable(
 }
 
 /**
+ * Why smolvm missed a request's deadline, as far as hostd can tell. Fixed
+ * text, so it carries nothing the request sent.
+ */
+export function deadlineReason(
+  timeoutMs: number | undefined,
+  logFile: string | undefined,
+  /**
+   * A create or start, which answers only once its image is downloaded:
+   * for an image of several GB that can outlast the deadline.
+   */
+  { download = false } = {},
+): string {
+  const within =
+    timeoutMs === undefined
+      ? "within the request deadline"
+      : timeoutMs < 1000
+        ? `within ${timeoutMs}ms`
+        : `within ${Math.round(timeoutMs / 1000)}s`;
+  const hint = download ? "; it may still be downloading the image" : "";
+  // Without a log hostd started, there is none to point to.
+  const see = logFile === undefined ? "" : `; see ${logFile}`;
+  return `smolvm did not answer ${within}${hint}${see}`;
+}
+
+/**
  * The runtime over smolvm, which can also create a machine without booting
  * it: smolvm attaches (building it first if need be) its image's cached
  * seed at create, so this fills the cache without starting a VM.
@@ -187,6 +212,8 @@ export interface ProviderRuntimeConfig {
   apiUrl: string;
   /** How long one smolvm request may take, an image pull included. */
   requestTimeoutMs?: number;
+  /** smolvm's log, named in the reason a request that timed out gives. */
+  logFile?: string;
   /** Reaches smolvm; tests inject a fake. */
   fetch?: typeof fetch;
 }
@@ -199,6 +226,7 @@ export interface ProviderRuntimeConfig {
 export function providerRuntime({
   apiUrl,
   requestTimeoutMs,
+  logFile,
   fetch: baseFetch = fetch,
 }: ProviderRuntimeConfig): ProviderRuntime {
   // Never follow a redirect from smolvm: it would resend exec bodies
@@ -228,6 +256,8 @@ export function providerRuntime({
     run: () => Promise<T>,
     /** Values the request sent in confidence, redacted from a reason. */
     secrets: readonly string[] = [],
+    /** A create or start, whose deadline a download may explain. */
+    download = false,
   ): Promise<T> => {
     try {
       return await run();
@@ -250,7 +280,11 @@ export function providerRuntime({
       // The request's deadline (`AbortSignal.timeout`) or an unreachable
       // smolvm.
       if (error instanceof Error && error.name === "TimeoutError") {
-        throw new RuntimeError(504, message);
+        throw new RuntimeError(
+          504,
+          message,
+          deadlineReason(requestTimeoutMs, logFile, { download }),
+        );
       }
       if (error instanceof TypeError) throw new RuntimeError(502, message);
       throw new RuntimeError(500, message);
@@ -289,12 +323,16 @@ export function providerRuntime({
             services: (machine.services ?? []).map(sandboxService),
           }),
         (machine.env ?? []).map((e) => e.value),
+        true,
       );
       return describe(machine.name);
     },
     createUnstarted: async ({ name, image, storageGb }) => {
-      await call(() =>
-        client.discard("", "POST", { name, image, storageGb, network: true }),
+      await call(
+        () =>
+          client.discard("", "POST", { name, image, storageGb, network: true }),
+        [],
+        true,
       );
     },
     // smolvm answers a start or stop with the machine, so a successful one
@@ -303,8 +341,11 @@ export function providerRuntime({
     // delete it.
     start: async (name) =>
       info(
-        await call(() =>
-          client.json(`${machinePath(name)}/start`, smolvmMachine, "POST"),
+        await call(
+          () =>
+            client.json(`${machinePath(name)}/start`, smolvmMachine, "POST"),
+          [],
+          true,
         ),
       ),
     stop: async (name) =>

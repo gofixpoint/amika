@@ -61,11 +61,17 @@ export function buildHandlers(
   {
     servicesFile,
     hiddenMachines,
+    pullingImages,
+    smolvmLogFile,
     snapshots,
     bareMetal = false,
   }: {
     servicesFile?: string;
     hiddenMachines?: () => ReadonlySet<string>;
+    /** Images pre-pull is caching now (see `AppDeps`). */
+    pullingImages?: () => ReadonlySet<string>;
+    /** The log of the smolvm this daemon started (see `AppConfig`). */
+    smolvmLogFile?: string;
     snapshots?: SnapshotOptions;
     /** A bare-metal host: no files or snapshots (see `AppConfig`). */
     bareMetal?: boolean;
@@ -91,6 +97,7 @@ export function buildHandlers(
       images: config.images,
       configPath: config.configPath,
       requestTimeoutMs: config.smolRequestTimeoutMs,
+      smolvmLogFile,
       amikaUrl: config.apiUrl,
       bareMetal,
     },
@@ -98,6 +105,7 @@ export function buildHandlers(
     {
       registry,
       hiddenMachines,
+      pullingImages,
       // Never on bare metal: there is no disk image to capture.
       snapshots: bareMetal ? undefined : snapshotSupport(runtime, snapshots),
     },
@@ -121,6 +129,8 @@ export function startServer(
     shutdownGraceMs = SHUTDOWN_GRACE_MS,
     servicesFile,
     hiddenMachines,
+    pullingImages,
+    smolvmLogFile,
     snapshots,
     bareMetal,
   }: {
@@ -131,6 +141,10 @@ export function startServer(
     servicesFile?: string;
     /** Machines left out of the machine list (see `AppDeps`). */
     hiddenMachines?: () => ReadonlySet<string>;
+    /** Images pre-pull is caching now (see `AppDeps`). */
+    pullingImages?: () => ReadonlySet<string>;
+    /** The log of the smolvm this daemon started (see `AppConfig`). */
+    smolvmLogFile?: string;
     /**
      * Where snapshots are kept and how they are packed. Only a daemon
      * running its own smolvm can supply this: a pack is a subprocess of
@@ -142,6 +156,8 @@ export function startServer(
   const { app, upgrade, tunnels } = buildHandlers(config, runtime, {
     servicesFile,
     hiddenMachines,
+    pullingImages,
+    smolvmLogFile,
     snapshots,
     bareMetal,
   });
