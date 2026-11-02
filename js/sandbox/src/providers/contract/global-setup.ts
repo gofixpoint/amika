@@ -123,7 +123,7 @@ function warnAboutEarlierRuns(root: string, currentRunId: string): void {
     if (leaked > 0) {
       console.warn(
         `earlier contract run ${entry.name} left ${leaked} resource(s); ` +
-          `delete them by hand; see ${file}`,
+          `run \`pnpm --filter @amika/sandbox sweep:contract\` to delete them`,
       );
     }
   }

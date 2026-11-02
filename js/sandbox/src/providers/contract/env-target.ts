@@ -1,7 +1,8 @@
 /**
- * Build a real provider from the environment, for the integration entry: the
- * provider named in env, enabled, with its credentials read the way the
- * control plane reads them (`../../config-from-env.ts`).
+ * Build a real provider from the environment, for the integration entry and
+ * the sweep. Both need the same thing: the provider named on the command
+ * line, enabled, with its credentials read the way the control plane reads
+ * them (`../../config-from-env.ts`).
  */
 import { createHash } from "node:crypto";
 import {
@@ -29,7 +30,7 @@ const ENABLE_VAR: Record<SandboxProviderName, string | null> = {
   simulate: "SIMULATE_ENABLED",
 };
 
-/** Parse a provider name from env; reject what the suite cannot run. */
+/** Parse a provider name from the command line or a ledger; reject what the suite cannot run. */
 export function realProviderName(raw: string): SandboxProviderName {
   if (!isSandboxProviderName(raw)) {
     throw new Error(`${raw} is not a known provider`);
@@ -90,8 +91,9 @@ const CREDENTIAL_FIELDS = ["apiKey", "secretKey"];
 
 /**
  * A non-secret description of the account and endpoint `deps` points at.
- * The run records it in its ledger, so the ledger says which account its
- * resources live in.
+ * The run records it in its ledger; the sweep refuses to touch a run whose
+ * identity differs from its own, because a by-name lookup in the wrong
+ * account finds nothing and would mark a live resource deleted.
  *
  * Credentials appear only as the first 12 hex characters of their SHA-256,
  * which tells two keys apart without revealing either.
@@ -118,4 +120,19 @@ export function targetIdentity(
     }
   }
   return identity;
+}
+
+/** The fields where two identities differ, for an error message. */
+export function identityDifferences(
+  recorded: Record<string, string>,
+  current: Record<string, string>,
+): string[] {
+  const keys = new Set([...Object.keys(recorded), ...Object.keys(current)]);
+  return [...keys]
+    .sort()
+    .filter((key) => recorded[key] !== current[key])
+    .map(
+      (key) =>
+        `${key}: run had ${JSON.stringify(recorded[key] ?? null)}, now ${JSON.stringify(current[key] ?? null)}`,
+    );
 }
