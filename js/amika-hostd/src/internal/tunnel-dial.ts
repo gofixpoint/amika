@@ -11,6 +11,8 @@ import {
   CONNECTION_ID_HEADER,
   CREDENTIAL_HEADER,
   HOST_ID_HEADER,
+  LANE_HEADER,
+  LANES_HEADER,
   MAX_FRAME_BYTES,
   TUNNEL_SUBPROTOCOL,
 } from "@amika/tunnel-protocol";
@@ -88,6 +90,11 @@ export interface DialedTunnel {
   connectionId?: string;
   /** The public address the gateway assigned this host, if it sent one. */
   publicUrl?: string;
+  /**
+   * The extra lanes the relay takes from this host, as its `101` named
+   * them (`LANES_HEADER`). Absent from a relay that has none.
+   */
+  lanes?: string;
 }
 
 export interface DialOptions {
@@ -95,6 +102,8 @@ export interface DialOptions {
   handshakeTimeoutMs: number;
   /** What this daemon calls itself to the gateway. */
   userAgent: string;
+  /** The lane this connection is, for a relay that offered it; else bulk. */
+  lane?: string;
   /** Injected in tests. */
   connect?: (url: string, options: ConnectOptions) => WebSocket;
 }
@@ -127,6 +136,7 @@ export async function dialTunnel(
       // control plane unread, so it asks for the value alone.
       [CREDENTIAL_HEADER]: target.credential,
       [HOST_ID_HEADER]: target.hostId,
+      ...(options.lane ? { [LANE_HEADER]: options.lane } : {}),
       "user-agent": options.userAgent,
     },
     // No frame is larger, so an inbound message above this is a peer that
@@ -186,6 +196,7 @@ export async function dialTunnel(
           ws,
           connectionId: header(handshake, CONNECTION_ID_HEADER),
           publicUrl: header(handshake, PUBLIC_URL_HEADER),
+          lanes: header(handshake, LANES_HEADER),
         });
       });
 

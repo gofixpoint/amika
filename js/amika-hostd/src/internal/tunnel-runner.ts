@@ -14,6 +14,7 @@
  * no socket under it.
  */
 import type { Duplex } from "node:stream";
+import { LANE_INTERACTIVE } from "@amika/tunnel-protocol";
 import { buildHandlers, type SnapshotOptions } from "./server.js";
 import { virtualServer } from "./tunnel-serving.js";
 import {
@@ -79,8 +80,12 @@ export function startTunnel(
   });
   const server = virtualServer({ fetch: app.fetch, upgrade });
 
-  const client =
-    options.client ??
+  // Both lanes are the same client but for the lane: each dials, serves
+  // and redials on its own, and both feed the one server.
+  const newClient = (
+    lane: string | undefined,
+    onEvent: StartTunnelOptions["onEvent"],
+  ) =>
     new TunnelClient({
       // Read per dial, not once. `resolveTunnelTarget` throws a
       // `ConfigError` naming what the operator must do when the host is
@@ -91,8 +96,25 @@ export function startTunnel(
       keepAliveIntervalMs: KEEP_ALIVE_INTERVAL_MS,
       pingTimeoutMs: PING_TIMEOUT_MS,
       drainMs: DRAIN_MS,
+      lane,
       onConnection: (socket: Duplex) => server.accept(socket),
-      onEvent: options.onEvent,
+      onEvent,
+    });
+
+  // The interactive lane is dialled only once a relay has offered it, so a
+  // relay without lanes sees exactly one connection, as before.
+  let interactive: TunnelClient | undefined;
+  const client =
+    options.client ??
+    newClient(undefined, (event) => {
+      if (
+        event.type === "attached" &&
+        event.info.lanes?.split(",").some((l) => l.trim() === LANE_INTERACTIVE)
+      ) {
+        interactive ??= newClient(LANE_INTERACTIVE, options.onEvent);
+        interactive.start();
+      }
+      options.onEvent?.(event);
     });
   client.start();
 
@@ -109,7 +131,7 @@ export function startTunnel(
       // requests still in flight, which is what the server below serves.
       // Closing the server first would leave the attachment opening
       // streams into a server that no longer serves them.
-      await client.stop();
+      await Promise.all([client.stop(), interactive?.stop()]);
       server.close();
     },
   };

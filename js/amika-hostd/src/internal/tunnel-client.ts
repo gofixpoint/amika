@@ -54,6 +54,8 @@ export interface OpenAttachment {
   readonly connectionId?: string;
   /** The public address Amika assigned this host, where it reports one. */
   readonly publicUrl?: string;
+  /** The extra lanes the relay takes from this host, where it offers any. */
+  readonly lanes?: string;
 }
 
 export interface AttachedInfo {
@@ -62,6 +64,8 @@ export interface AttachedInfo {
   connectionId?: string;
   /** The public address Amika assigned this host, where the gateway sends it. */
   publicUrl?: string;
+  /** The extra lanes the relay takes from this host, where it offers any. */
+  lanes?: string;
   /** The round trip of the ping that proved the tunnel works. */
   rttMs: number;
 }
@@ -107,6 +111,8 @@ export interface TunnelClientOptions extends Pick<
   backoff?: BackoffOptions;
   handshakeTimeoutMs: number;
   userAgent: string;
+  /** The lane this client attaches, for a relay that offered it; else bulk. */
+  lane?: string;
   /**
    * A session shorter than this, that served nothing, counts as a failure
    * to attach rather than as a disconnect.
@@ -317,6 +323,7 @@ export class TunnelClient {
         hostId: target.hostId,
         connectionId: attachment.connectionId,
         publicUrl: attachment.publicUrl,
+        lanes: attachment.lanes,
         rttMs: await attachment.acknowledge(),
       };
     } catch (error) {
@@ -390,6 +397,7 @@ export class TunnelClient {
     const dialed = await dialTunnel(target, {
       handshakeTimeoutMs: this.options.handshakeTimeoutMs,
       userAgent: this.options.userAgent,
+      lane: this.options.lane,
     });
     const attachment = new TunnelSession(dialed.ws, {
       keepAliveIntervalMs: this.options.keepAliveIntervalMs,
@@ -400,6 +408,7 @@ export class TunnelClient {
     return Object.assign(attachment, {
       connectionId: dialed.connectionId,
       publicUrl: dialed.publicUrl,
+      lanes: dialed.lanes,
     });
   }
 

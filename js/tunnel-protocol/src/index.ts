@@ -29,6 +29,19 @@ export const CREDENTIAL_HEADER = "x-amika-host-credential";
 export const CONNECTION_ID_HEADER = "x-amika-connection-id";
 
 /**
+ * Lanes. A relay that names `LANE_INTERACTIVE` in `LANES_HEADER` on its
+ * `101` takes a second connection from the same host, dialled with
+ * `LANE_HEADER`, and sends interactive streams (upgrades) down it. One TCP
+ * connection delivers in order, so a packet lost under a download stalls
+ * every stream behind it; a second connection keeps a terminal answering
+ * meanwhile. A relay that names no lanes gets one connection, as before,
+ * and a connection without `LANE_HEADER` is the bulk lane.
+ */
+export const LANES_HEADER = "x-amika-tunnel-lanes";
+export const LANE_HEADER = "x-amika-tunnel-lane";
+export const LANE_INTERACTIVE = "interactive";
+
+/**
  * The keep-alive. The host sends `PING` as a text message and the relay's
  * runtime answers `PONG` without waking the relay. These are the only text
  * messages on a tunnel.
