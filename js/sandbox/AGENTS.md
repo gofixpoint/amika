@@ -8,4 +8,5 @@
 - Install dependencies at the repo root. Run package checks with
   `pnpm --filter @amika/sandbox <script>`: `typecheck`, `lint`, `formatcheck`,
   and `test`. `test:integration` runs the provider contract suite against a
-  real vendor; it skips unless `TEST_SANDBOX_CONTRACT_PROVIDER` is set.
+  real vendor; it skips unless `TEST_SANDBOX_CONTRACT_PROVIDER` is set. It
+  fails when any resource it created could not be deleted.

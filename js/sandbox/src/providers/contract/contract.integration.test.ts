@@ -9,14 +9,20 @@
  * uses (see `../../config-from-env.ts`). The suite turns the selected
  * provider's `*_ENABLED` flag on by itself. Every sandbox and snapshot the
  * suite creates is deleted after its test, and names carry a per-run id so
- * two runs never collide.
+ * two runs never collide. Every resource and its deletion outcome is recorded
+ * in `.contract-runs/<run id>/audit.jsonl` (see `./ledger.ts`), and
+ * `./global-setup.ts` prints the summary when the run ends.
  *
  * With `TEST_SANDBOX_CONTRACT_PROVIDER` unset this file skips.
  */
-import { describe, it } from "vitest";
+import { describe, inject, it } from "vitest";
 import { createSandboxProvider, getSandboxAdapter } from "../registry";
 import { describeProviderContract } from "./contract";
-import { providerDepsFromEnv, realProviderName } from "./env-target";
+import {
+  providerDepsFromEnv,
+  realProviderName,
+  targetIdentity,
+} from "./env-target";
 
 /** How long to keep polling for a vendor-side change, such as a listing update. */
 const VENDOR_SETTLE_MS = 2 * 60_000;
@@ -43,5 +49,7 @@ if (!rawProviderName) {
     openAdapter: (id) => getSandboxAdapter(providerName, deps, id),
     bootSnapshot,
     settleMs: VENDOR_SETTLE_MS,
+    auditFile: inject("contractAuditFile"),
+    identity: targetIdentity(providerName, deps),
   });
 }
