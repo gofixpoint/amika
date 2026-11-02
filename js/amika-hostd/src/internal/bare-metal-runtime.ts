@@ -275,11 +275,20 @@ export function bareMetalRuntime({
       }
       // The request's user, workdir and env are ignored: amikad runs as the
       // operator, in its own state directory, with only its own settings.
-      return runAmikad(
+      const result = await runAmikad(
         allowed.args,
         allowed.stdin ? request.stdin : undefined,
         requireRig(),
       );
+      // The control plane records only that a bridge step failed, so this
+      // log is where the operator learns why.
+      if (result.exitCode !== 0) {
+        const reason = result.stderr.trim().split("\n")[0] ?? "";
+        err(
+          `amika-hostd: amikad ${allowed.args.join(" ")} exited with code ${result.exitCode}${reason ? `: ${reason}` : ""}`,
+        );
+      }
+      return result;
     },
     readFile: async () => {
       throw refused(404, "a bare-metal host serves no files");

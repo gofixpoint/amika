@@ -159,7 +159,9 @@ is `AMIKAD_STATE_DIR` (`<state dir>/amikad`, absolute and under `$HOME`,
 which selects amikad's user mode), `AMIKAD_LISTEN` (`127.0.0.1:<port>`),
 `AMIKAD_SSHD_PORT` (another free port) and
 `PATH=/usr/bin:/bin:/usr/sbin:/sbin` (so amikad finds `sshd`), and no secret
-of hostd's reaches it.
+of hostd's reaches it. A command that exits non-zero is logged with its exit
+code and the first line of its stderr: the control plane records only which
+SSH bridge step failed, so hostd's log is where the reason shows.
 
 `serve` is not run as sent: `--bg` would detach a process hostd could not
 stop. `src/internal/amikad-supervisor.ts` runs `amikad serve --beta-no-relay`

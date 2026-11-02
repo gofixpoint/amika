@@ -1,5 +1,10 @@
 #!/bin/sh
 set -eu
+# Nothing this script creates should be writable by the group. Ubuntu's
+# default umask (002) would leave directories such as ~/.local group-writable,
+# and sshd's StrictModes then refuses a bare-metal host's amikad state under
+# them.
+umask 022
 
 # amika-hostd ships as one bundled JavaScript file. It is installed into
 # HOSTD_HOME (default $XDG_DATA_HOME/amika-hostd), with a launcher on

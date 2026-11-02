@@ -32,8 +32,11 @@ Last it asks for the host type (`vm` or `bare-metal`), offering the
 configured one, else `vm`, as the default and the other as the alternative.
 End of input keeps the default, as for a yes/no question. Choosing bare metal
 first checks that the platform supports it (`HostPlatform.capabilities`), that
-an `sshd` binary exists (else it names how to install one), installs amikad
-into hostd's data directory (see
+an `sshd` binary exists (else it names how to install one), that every
+directory above amikad's state directory passes sshd's StrictModes (owned by
+root or the hostd account and not group- or world-writable, else it names the
+directory and the `chmod` that fixes it; `src/internal/strict-modes.ts`),
+installs amikad into hostd's data directory (see
 [Bare-metal runtime](runtime.md#bare-metal-runtime)) unless `amikad_path` is
 set, and prints the resources it detected and the account SSH logs in as.
 These run before anything is stored, so a machine that cannot be a bare-metal
