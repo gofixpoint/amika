@@ -219,6 +219,45 @@ describe("trackSnapshot", () => {
   });
 });
 
+describe("recovered identity audit failures", () => {
+  it.each(["sandbox", "snapshot"] as const)(
+    "still deletes a recovered %s when its identified event cannot be written",
+    async (kind) => {
+      const real = createSandboxProvider("simulate", DEPS);
+      const source = await sourceSandbox(real);
+      await source.snapshots!.create("recovered-snapshot");
+      const provider: SandboxProvider = {
+        ...real,
+        snapshots: {
+          ...real.snapshots!,
+          find: async (name) => {
+            const snapshot = await real.snapshots!.find(name);
+            return snapshot
+              ? { ...snapshot, providerSnapshotId: "snap-recovered" }
+              : null;
+          },
+        },
+      };
+      const tracking = {
+        ...context(provider),
+        ledger: new Ledger("simulate", (line) => {
+          if (JSON.parse(line).event === "identified")
+            throw new Error("identity write failed");
+        }),
+      };
+      if (kind === "sandbox") trackSandbox(tracking, "source");
+      else trackSnapshot(tracking, "recovered-snapshot");
+      await tracking.ledger.release();
+      if (kind === "sandbox") expect(await real.sandboxes.list()).toEqual([]);
+      else expect(await real.snapshots!.find("recovered-snapshot")).toBeNull();
+      expect(tracking.ledger.events.at(-1)).toMatchObject({
+        event: "delete_failed",
+        error: "identity write failed",
+      });
+    },
+  );
+});
+
 describe("trackSshAccess", () => {
   it("revokes access after the test without writing its token", async () => {
     const provider = createSandboxProvider("simulate", DEPS);
