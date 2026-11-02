@@ -46,8 +46,9 @@ export interface ProviderContractTarget {
   /** A snapshot or image the provider can boot a sandbox from. */
   bootSnapshot: string;
   /**
-   * Open the provisioning adapter for a sandbox, as the registry's
-   * `getSandboxAdapter` does. Set when the provider registers an adapter.
+   * Return an adapter for an existing sandbox. Setup code uses this adapter
+   * to run commands and read or write files. This does not create a sandbox
+   * or run setup. Omit this when the provider has no adapter.
    */
   openAdapter?(providerSandboxId: string): Promise<SandboxAdapter>;
   /**
