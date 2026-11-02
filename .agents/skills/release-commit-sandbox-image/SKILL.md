@@ -120,6 +120,6 @@ Do NOT include a `Co-Authored-By` line in the commit message.
    - A pull request for this commit should use the same
      `[release sandbox-image]` subject prefix; reuse the changelog from step 4
      as the PR body.
-   - After it merges to `main`, the new image is published by manually running
-     the **Build Daytona Snapshots** workflow
-     (`.github/workflows/build-daytona-snapshots.yml`) from `main`.
+   - After it merges to `main`, the new image is published by manually
+     running the **Build Base Snapshots** workflow with `amika_ref` set to
+     the merge commit, once per provider.
