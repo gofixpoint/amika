@@ -315,6 +315,97 @@ Keep the scenarios readable. One scenario is one `it` with no shared state
 beyond the sandbox it creates, and it asserts on outcomes a human can check
 (`stdout` is `hello\n`), never on vendor response shapes.
 
+#### GitHub Actions runs
+
+The manual **Sandbox provider contract** workflow runs vendor tests or
+reclaims vendor resources using ledgers saved by a finished Actions run.
+It runs only on the repository's default branch. It does not run vendor
+tests on pull requests.
+
+Create a `sandbox-contract` GitHub environment. In its **Secrets** settings,
+add the key for each provider you use: `DAYTONA_API_KEY`, `E2B_API_KEY`,
+`FREESTYLE_API_KEY`, or `VERCEL_TOKEN`. In its **Variables** settings, add any
+optional provider settings you need:
+
+- Daytona: `DAYTONA_API_URL`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_TARGET`,
+  `ENABLE_DAYTONA_VM`.
+- Freestyle: `FREESTYLE_API_URL`, `FREESTYLE_STAGING_SNAPSHOTS`.
+- Vercel: `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`.
+
+Use the same credentials and settings for tests and cleanup. The sweep
+compares them with the ledger's recorded target and credential hashes.
+
+In GitHub, open **Actions → Sandbox provider contract → Run workflow**.
+Select the default branch, set `operation` to `test`, choose `provider`,
+and enter its boot snapshot in `snapshot`. That input supplies
+`TEST_SANDBOX_CONTRACT_SNAPSHOT`. For example, with `gh` authenticated:
+
+```bash
+gh workflow run sandbox-contract.yml --repo gofixpoint/amika \
+  -f operation=test -f provider=daytona -f snapshot=YOUR_BOOT_SNAPSHOT
+```
+
+The examples use `gofixpoint/amika`; replace it if running in another repo.
+The workflow saves `sandbox-contract-ledgers-<attempt>` for 30 days. An
+attempt is a re-run of the same Actions run; the first attempt is `1`.
+Both test and sweep runs upload an artifact with this naming scheme,
+including hidden files and any cleanup results appended to the ledgers.
+The upload step uses `if: always()`, so an ordinary test failure still
+uploads its ledgers.
+
+To reclaim resources, open **Run workflow**, set `operation` to `sweep`,
+and enter `source_run_id`. Find that number in the source run's URL:
+`https://github.com/OWNER/REPO/actions/runs/123456789` has id `123456789`.
+Keep `dry_run` enabled to list resources without deleting them. Run again
+with it disabled to delete them. The `provider` and `snapshot` inputs are
+ignored for a sweep. You can also start a dry run with:
+
+```bash
+gh workflow run sandbox-contract.yml --repo gofixpoint/amika \
+  -f operation=sweep -f source_run_id=123456789 -F dry_run=true
+```
+
+The source is normally a test or sweep run of this workflow. The command
+also accepts ledgers uploaded by another trusted workflow, provided its run
+finished on the default branch after a push, schedule, or manual dispatch.
+Pull request and fork runs are refused. GitHub's finished status replaces
+the local process check: the old process id belongs to another runner.
+The account and credential checks still apply before any vendor deletion.
+
+By default the sweep downloads the source run's latest attempt artifact.
+Set `artifact_name` to `sandbox-contract-ledgers-1`, for example, to select
+the first attempt after the source run has been re-run.
+
+To download and sweep from a laptop, install `gh` and authenticate with
+`gh auth login`. The account or token needs read access to that repository's
+Actions artifacts (`actions:read` for a fine-grained token). Set the matching
+vendor credentials and settings, then run:
+
+```bash
+pnpm --filter @amika/sandbox sweep:contract:actions \
+  --repo gofixpoint/amika --run-id 123456789 \
+  --directory /tmp/contract-ledgers-123456789 --dry-run
+```
+
+Use a new or empty directory for each download. Omit `--dry-run` to delete.
+`--artifact-name` selects a different saved artifact. A missing, expired,
+empty, or malformed artifact fails the command; it never means cleanup
+succeeded. The downloaded files stay on disk with each cleanup result
+appended to its ledger.
+
+For another workflow cleanup attempt, use the most recent **sweep run's** id
+as `source_run_id`. Its artifact contains the updated ledgers, so successful
+deletes are not replayed from the original, unchanged test artifact. The
+latest-attempt rule applies to sweep runs too. For a local retry, keep the
+downloaded directory and run the local `sweep:contract` command with
+`TEST_SANDBOX_CONTRACT_RUNS_DIR` set to that directory.
+
+Uploads are best effort. A job timeout, cancellation, or runner failure can
+stop the runner before it uploads anything, even with `if: always()`. This
+cannot recover ledgers that were never uploaded or have expired. SSH access
+still needs manual revocation in the vendor console because its token is
+never stored in a ledger. The workflow does not run cleanup automatically.
+
 ### Per-provider unit tests
 
 A provider folder keeps unit tests only for logic the contract cannot see

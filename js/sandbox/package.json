@@ -17,7 +17,8 @@
     "formatcheck": "prettier --check .",
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "sweep:contract": "tsx src/providers/contract/cmd/sweep-cli.ts"
+    "sweep:contract": "tsx src/providers/contract/cmd/sweep-cli.ts",
+    "sweep:contract:actions": "tsx src/providers/contract/cmd/sweep-actions-cli.ts"
   },
   "dependencies": {
     "@amika/service-auth": "workspace:*",

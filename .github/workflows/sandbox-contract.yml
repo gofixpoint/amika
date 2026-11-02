@@ -1,0 +1,109 @@
+name: Sandbox provider contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Run vendor tests or sweep ledgers from a finished run
+        type: choice
+        options: [test, sweep]
+        required: true
+      provider:
+        description: Provider for a test run (ignored for sweep)
+        type: choice
+        options: [daytona, e2b, freestyle, vercel]
+        default: daytona
+      snapshot:
+        description: Boot snapshot for a test run
+        type: string
+      source_run_id:
+        description: Finished Actions run holding the ledgers to sweep
+        type: string
+      artifact_name:
+        description: Artifact name (empty uses sandbox-contract-ledgers-<attempt>)
+        type: string
+      dry_run:
+        description: Only list resources during a sweep
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+# Do not overlap resource creation and cleanup in the same vendor accounts.
+concurrency:
+  group: sandbox-provider-contract
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: sandbox-contract
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.4"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Set ledger directory
+        shell: bash
+        run: echo "TEST_SANDBOX_CONTRACT_RUNS_DIR=$RUNNER_TEMP/sandbox-contract-ledgers" >> "$GITHUB_ENV"
+      - name: Run tests or sweep saved ledgers
+        env:
+          OPERATION: ${{ inputs.operation }}
+          TEST_SANDBOX_CONTRACT_PROVIDER: ${{ inputs.provider }}
+          TEST_SANDBOX_CONTRACT_SNAPSHOT: ${{ inputs.snapshot }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ github.token }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
+          DAYTONA_ORGANIZATION_ID: ${{ vars.DAYTONA_ORGANIZATION_ID }}
+          DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
+          ENABLE_DAYTONA_VM: ${{ vars.ENABLE_DAYTONA_VM }}
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          FREESTYLE_API_URL: ${{ vars.FREESTYLE_API_URL }}
+          FREESTYLE_STAGING_SNAPSHOTS: ${{ vars.FREESTYLE_STAGING_SNAPSHOTS }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Empty settings must behave as unset; other providers do not need a Daytona key.
+          for key in DAYTONA_API_KEY DAYTONA_API_URL DAYTONA_ORGANIZATION_ID DAYTONA_TARGET FREESTYLE_API_URL; do
+            if [ -z "${!key}" ]; then unset "$key"; fi
+          done
+          if [ "$OPERATION" = test ]; then
+            if [ -z "$TEST_SANDBOX_CONTRACT_SNAPSHOT" ]; then
+              echo 'A boot snapshot is required for vendor tests.' >&2
+              exit 1
+            fi
+            pnpm --filter @amika/sandbox test:integration
+          elif [ "$OPERATION" = sweep ]; then
+            args=(--repo "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN_ID" --directory "$TEST_SANDBOX_CONTRACT_RUNS_DIR")
+            if [ -n "$ARTIFACT_NAME" ]; then args+=(--artifact-name "$ARTIFACT_NAME"); fi
+            if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+            pnpm --filter @amika/sandbox sweep:contract:actions "${args[@]}"
+          else
+            echo 'Unknown operation.' >&2
+            exit 1
+          fi
+      - name: Save ledgers for later cleanup
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-contract-ledgers-${{ github.run_attempt }}
+          path: ${{ env.TEST_SANDBOX_CONTRACT_RUNS_DIR }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30

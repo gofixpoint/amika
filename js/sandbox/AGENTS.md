@@ -11,3 +11,6 @@
   real vendor; it skips unless `TEST_SANDBOX_CONTRACT_PROVIDER` is set. It
   fails when any resource it created could not be deleted; `sweep:contract`
   deletes what a killed run left behind.
+
+- `sweep:contract:actions` downloads saved ledgers from a finished Actions run.
+  It requires `gh`, Actions read access, and matching vendor credentials.
