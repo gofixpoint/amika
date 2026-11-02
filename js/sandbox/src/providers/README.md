@@ -261,7 +261,9 @@ Every resource the suite creates is written as one JSON line in
 `.contract-runs/<run id>/audit.jsonl`, and after each test the suite deletes
 what that test created, newest first, and appends the outcome:
 
-- **Sandboxes** are recorded the moment the provider returns their id.
+- **Sandboxes** are recorded by their unique name before create. An
+  `identified` line adds the provider id when create returns or cleanup
+  recovers it from the listing. A lost create response stays auditable.
 - **Snapshots** are recorded by name **before** capture, because a capture
   can create the snapshot and still throw. An `identified` line adds the
   bootable id once capture returns.
@@ -276,9 +278,9 @@ prefix of each credential (`targetIdentity` in `env-target.ts`).
 A delete is not trusted on its own. Sandboxes are verified against the
 provider's listing; snapshots with `find`, which also sees one still
 registering. A resource still present after the wait is recorded as
-`delete_failed`, the same as a delete that threw. On a provider with opaque
-snapshot ids, a snapshot whose id was never returned cannot be looked up, so
-its cleanup fails rather than reporting it gone. If writing an outcome fails,
+`delete_failed`, the same as a delete that threw. An opaque snapshot id can also be recovered by name on E2B and Freestyle.
+If neither capture nor lookup yields an id on an opaque-id provider, cleanup
+fails rather than reporting it gone. If writing an outcome fails,
 the remaining resources are still deleted and the test fails.
 
 When the run ends it prints one table: every resource, the test that

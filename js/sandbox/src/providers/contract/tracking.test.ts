@@ -5,6 +5,7 @@ import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 import { getSimulateWorld, resetSimulateWorlds } from "../simulate/provider";
 import { Ledger } from "./ledger";
 import {
+  trackSandbox,
   trackSnapshot,
   trackSshAccess,
   type TrackingContext,
@@ -43,6 +44,80 @@ async function sourceSandbox(provider: SandboxProvider) {
   });
 }
 
+describe("trackSandbox", () => {
+  it("records before create and recovers a sandbox after the response is lost", async () => {
+    const provider = createSandboxProvider("simulate", DEPS);
+    const tracking = context(provider);
+    trackSandbox(tracking, "source");
+    expect(tracking.ledger.events[0]).toMatchObject({
+      event: "created",
+      kind: "sandbox",
+      id: "source",
+    });
+    // Create exists remotely, but its caller never received the result.
+    const sandbox = await sourceSandbox(provider);
+    await tracking.ledger.release();
+    expect(await provider.sandboxes.list()).toEqual([]);
+    expect(tracking.ledger.events).toContainEqual(
+      expect.objectContaining({
+        event: "identified",
+        kind: "sandbox",
+        id: "source",
+        providerId: sandbox.id,
+      }),
+    );
+    expect(tracking.ledger.events.at(-1)).toMatchObject({
+      event: "deleted",
+      verified: true,
+    });
+  });
+
+  it("uses the returned id even when no sandbox listing is available", async () => {
+    const real = createSandboxProvider("simulate", DEPS);
+    const provider = {
+      ...real,
+      capabilities: { ...real.capabilities, listSandboxes: false },
+    };
+    const tracking = context(provider);
+    const identify = trackSandbox(tracking, "source");
+    identify(await sourceSandbox(provider));
+    await tracking.ledger.release();
+    expect(await real.sandboxes.list()).toEqual([]);
+  });
+
+  it("fails closed when a failed create cannot be recovered by name", async () => {
+    const tracking = context(createSandboxProvider("simulate", DEPS));
+    trackSandbox(tracking, "missing");
+    await tracking.ledger.release();
+    expect(tracking.ledger.events.at(-1)).toMatchObject({
+      event: "delete_failed",
+      error: expect.stringContaining("check the provider by hand"),
+    });
+  });
+
+  it("keeps the returned id for cleanup when recording it fails", async () => {
+    const real = createSandboxProvider("simulate", DEPS);
+    const provider = {
+      ...real,
+      capabilities: { ...real.capabilities, listSandboxes: false },
+    };
+    let fail = false;
+    const tracking = {
+      ...context(provider),
+      ledger: new Ledger("simulate", () => {
+        if (fail) throw new Error("disk full");
+      }),
+    };
+    const identify = trackSandbox(tracking, "source");
+    const sandbox = await sourceSandbox(provider);
+    fail = true;
+    expect(() => identify(sandbox)).toThrow("disk full");
+    fail = false;
+    await tracking.ledger.release();
+    expect(await real.sandboxes.list()).toEqual([]);
+  });
+});
+
 describe("trackSnapshot", () => {
   it("deletes a snapshot whose capture created it and then threw", async () => {
     const provider = createSandboxProvider("simulate", DEPS);
@@ -79,6 +154,34 @@ describe("trackSnapshot", () => {
     await tracking.ledger.release();
 
     expect(getSimulateWorld(WORLD_ID).snapshot("snap-b")).toBeUndefined();
+    expect(tracking.ledger.events.at(-1)).toMatchObject({
+      event: "deleted",
+      verified: true,
+    });
+  });
+
+  it("recovers an opaque id by name when capture never returned it", async () => {
+    const real = createSandboxProvider("simulate", DEPS);
+    const source = await sourceSandbox(real);
+    await source.snapshots!.create("opaque-by-name");
+    const provider: SandboxProvider = {
+      ...real,
+      capabilities: { ...real.capabilities, snapshotIdsAreOpaque: true },
+      snapshots: {
+        ...real.snapshots!,
+        find: async (name) => {
+          const snapshot = await real.snapshots!.find(name);
+          return snapshot
+            ? { ...snapshot, providerSnapshotId: "snap-recovered" }
+            : null;
+        },
+      },
+    };
+    const tracking = context(provider);
+    trackSnapshot(tracking, "opaque-by-name");
+    await tracking.ledger.release();
+    expect(await real.snapshots!.find("opaque-by-name")).toBeNull();
+    expect(tracking.snapshotIds.get("opaque-by-name")).toBe("snap-recovered");
     expect(tracking.ledger.events.at(-1)).toMatchObject({
       event: "deleted",
       verified: true,
