@@ -229,17 +229,24 @@ async function deleteResource(
         throw new Error(
           `no provider id was recorded or recovered for sandbox ${row.name}; check the provider by hand`,
         );
-      if (!row.providerId) ledger.identify("sandbox", row.id, id);
-      row.providerId = id;
-      await provider.sandboxes.get(id).delete();
+      // An audit write failure must not prevent provider cleanup.
+      try {
+        if (!row.providerId) ledger.identify("sandbox", row.id, id);
+      } finally {
+        row.providerId = id;
+        await provider.sandboxes.get(id).delete();
+      }
       return;
     }
     case "snapshot": {
       // A snapshot already gone is a finished job, not an error.
       const snapshot = await findSnapshot(provider, row, snapshotIds);
-      if (snapshot?.providerSnapshotId)
-        ledger.identify("snapshot", row.id, snapshot.providerSnapshotId);
-      await snapshot?.delete();
+      try {
+        if (snapshot?.providerSnapshotId)
+          ledger.identify("snapshot", row.id, snapshot.providerSnapshotId);
+      } finally {
+        await snapshot?.delete();
+      }
       return;
     }
     case "ssh-access":

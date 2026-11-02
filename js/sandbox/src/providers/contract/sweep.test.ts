@@ -1,11 +1,11 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { moduleLogger, type SandboxCtx } from "../../logger";
 import { createSandboxProvider, type SandboxProviderDeps } from "../registry";
 import { getSimulateWorld, resetSimulateWorlds } from "../simulate/provider";
-import { parseLedger } from "./ledger";
+import { Ledger, parseLedger } from "./ledger";
 import { runProcessAlive, sweepRun, type SweepOptions } from "./sweep";
 
 const WORLD_ID = "sweep-test";
@@ -21,7 +21,10 @@ const DEPS: SandboxProviderDeps = {
 };
 const ctx: SandboxCtx = { logger: moduleLogger(), childCtx: () => ctx };
 
-afterEach(() => resetSimulateWorlds());
+afterEach(() => {
+  vi.restoreAllMocks();
+  resetSimulateWorlds();
+});
 
 const IDENTITY = { provider: "simulate", worldId: WORLD_ID };
 const HEADER = JSON.stringify({
@@ -126,6 +129,34 @@ describe("sweepRun", () => {
       });
     },
   );
+
+  it("deletes a recovered sandbox even when recording its id fails", async () => {
+    const { provider, sandbox } = await leakedLedger();
+    const file = ledgerFile({
+      event: "created",
+      kind: "sandbox",
+      provider: "simulate",
+      id: "leaked",
+      name: "leaked",
+      test: "t",
+      at: "2026-11-01T12:00:00Z",
+    });
+    const identify = vi
+      .spyOn(Ledger.prototype, "identify")
+      .mockImplementation(() => {
+        throw new Error("disk full");
+      });
+
+    const result = await sweepRun("dead-run", file, options());
+
+    expect(identify).toHaveBeenCalledWith("sandbox", "leaked", sandbox.id);
+    expect(await provider.sandboxes.list()).toEqual([]);
+    expect(result.outcomes[0]).toMatchObject({
+      event: "delete_failed",
+      error: "disk full",
+      swept: true,
+    });
+  });
 
   it("keeps an unresolved pre-create sandbox record failed", async () => {
     const file = ledgerFile({
@@ -307,6 +338,51 @@ describe("sweepRun with snapshots", () => {
         providerId: "snap-recovered",
       }),
     );
+  });
+
+  it("deletes a recovered snapshot even when recording its id fails", async () => {
+    const file = await leakedSnapshot("snap-write-fails");
+    const identify = vi
+      .spyOn(Ledger.prototype, "identify")
+      .mockImplementation(() => {
+        throw new Error("disk full");
+      });
+    const result = await sweepRun(
+      "dead-run",
+      file,
+      options({
+        providerFor: () => {
+          const real = createSandboxProvider("simulate", DEPS);
+          return {
+            ...real,
+            capabilities: { ...real.capabilities, snapshotIdsAreOpaque: true },
+            snapshots: {
+              ...real.snapshots!,
+              find: async (name) => {
+                const snapshot = await real.snapshots!.find(name);
+                return snapshot
+                  ? { ...snapshot, providerSnapshotId: "snap-recovered" }
+                  : null;
+              },
+            },
+          };
+        },
+      }),
+    );
+
+    expect(identify).toHaveBeenCalledWith(
+      "snapshot",
+      "snap-write-fails",
+      "snap-recovered",
+    );
+    expect(
+      getSimulateWorld(WORLD_ID).snapshot("snap-write-fails"),
+    ).toBeUndefined();
+    expect(result.outcomes[0]).toMatchObject({
+      event: "delete_failed",
+      error: "disk full",
+      swept: true,
+    });
   });
 
   it("fails rather than reports gone when an opaque id was never recorded", async () => {
