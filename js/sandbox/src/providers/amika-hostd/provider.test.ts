@@ -392,6 +392,7 @@ describe("amika-hostd provider", () => {
     expect(await provider.sandboxes.list()).toEqual([
       {
         providerSandboxId: "demo",
+        name: "demo",
         orgId: null,
         state: "stopped",
         sizing: { vcpus: 2, memoryGib: 1.5, diskGib: 20 },
