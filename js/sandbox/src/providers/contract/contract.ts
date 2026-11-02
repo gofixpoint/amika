@@ -23,6 +23,14 @@
  *   - service URLs are `http://` or `https://`.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { fileSink, Ledger } from "./ledger";
+import {
+  trackSandbox,
+  trackSnapshot as trackSnapshotIn,
+  trackSshAccess,
+  type TrackingContext,
+} from "./tracking";
+import { newRunId } from "./run-dir";
 import type { Logger, SandboxCtx } from "../../logger";
 import type { SandboxService } from "../../types";
 import { SANDBOX_PROVIDER_CAPABILITIES } from "../capabilities";
@@ -30,7 +38,6 @@ import type { SandboxAdapter } from "../shared/adapter";
 import {
   SandboxFileTooLargeError,
   type ExecCommandOptions,
-  type MintedSshHandle,
   type Sandbox,
   type SandboxExecResult,
   type SandboxProvider,
@@ -60,6 +67,17 @@ export interface ProviderContractTarget {
    * once.
    */
   settleMs?: number;
+  /**
+   * Append every resource the suite creates, and its deletion outcome, to
+   * this JSON-lines file (see `./ledger.ts`). Unset keeps the ledger in
+   * memory only.
+   */
+  auditFile?: string;
+  /**
+   * The account and endpoint the provider points at (`targetIdentity`),
+   * written as the ledger's first line.
+   */
+  identity?: Record<string, string>;
 }
 
 const SERVICE_PORT = 3000;
@@ -110,37 +128,36 @@ export function describeProviderContract(target: ProviderContractTarget): void {
     async (name) => snapshotIds.get(name) ?? null,
   );
   const caps = provider.capabilities;
-  const runId = `${Date.now().toString(36)}-${process.pid.toString(36)}`;
+  const runId = newRunId();
   let sequence = 0;
   const uniqueName = (kind: string) =>
     `contract-${kind}-${runId}-${(sequence += 1)}`;
 
   // Every resource a test creates is recorded here the moment it exists and
-  // deleted, newest first, after the test.
-  const cleanup: Array<() => Promise<void>> = [];
-  afterEach(async () => {
-    for (const release of cleanup.splice(0).reverse()) {
-      try {
-        await release();
-      } catch (error) {
-        console.warn(`contract cleanup failed: ${String(error)}`);
-      }
-    }
-  });
+  // deleted, newest first, after the test. The outcome of each delete is
+  // recorded too, so the file is a full audit of what the run touched.
+  const ledger = new Ledger(
+    provider.name,
+    target.auditFile ? fileSink(target.auditFile) : () => {},
+  );
+  if (target.identity) ledger.begin(target.identity);
+  afterEach(() => ledger.release());
+  const currentTest = () => expect.getState().currentTestName ?? "unknown";
 
   async function createSandbox(
     overrides: { services?: SandboxService[]; scrubSafe?: boolean } = {},
     snapshot: string = target.bootSnapshot,
   ): Promise<Sandbox> {
     const name = uniqueName("sb");
-    const sandbox = await provider.sandboxes.create(ctx, {
-      name,
-      snapshot,
-      services: overrides.services ?? [],
-      scrubSafe: overrides.scrubSafe,
-    });
-    cleanup.push(() => sandbox.delete());
-    return sandbox;
+    const identify = trackSandbox(tracking, name);
+    return identify(
+      await provider.sandboxes.create(ctx, {
+        name,
+        snapshot,
+        services: overrides.services ?? [],
+        scrubSafe: overrides.scrubSafe,
+      }),
+    );
   }
 
   /** The value `create` accepts to boot from `snapshot`. */
@@ -153,33 +170,22 @@ export function describeProviderContract(target: ProviderContractTarget): void {
   const eventually = <T>(check: () => Promise<T>) =>
     retryFor(target.settleMs ?? 0, check);
 
-  /**
-   * Record snapshot `name` before it is captured, and return the function
-   * that records its bootable id once capture returns:
-   *
-   *   const identify = trackSnapshot(name);
-   *   const snapshot = identify(await source.snapshots!.create(name));
-   *
-   * Recording first matters because a capture can create the snapshot and
-   * still throw. The snapshot is then still deleted after the test.
-   */
-  function trackSnapshot(name: string): (snapshot: Snapshot) => Snapshot {
-    cleanup.push(async () => {
-      await (await provider.snapshots!.find(name))?.delete();
-    });
-    return (snapshot) => {
-      if (snapshot.providerSnapshotId) {
-        snapshotIds.set(name, snapshot.providerSnapshotId);
-      }
-      return snapshot;
-    };
-  }
+  /** Poll `check` for the settle window; `false` if it never reported gone. */
+  const isGone = (check: () => Promise<boolean>) =>
+    eventually(async () => {
+      if (!(await check())) throw new Error("still present");
+      return true;
+    }).catch(() => false);
 
-  /** Revoke SSH access after the test, even when an assertion fails first. */
-  function trackSshAccess(access: MintedSshHandle): MintedSshHandle {
-    cleanup.push(() => access.revoke());
-    return access;
-  }
+  const tracking: TrackingContext = {
+    ledger,
+    provider,
+    snapshotIds,
+    currentTest,
+    isGone: (check) => isGone(check),
+  };
+  /** See `trackSnapshot` in `./tracking.ts`. */
+  const trackSnapshot = (name: string) => trackSnapshotIn(tracking, name);
 
   describe(`${provider.name} provider contract`, () => {
     it("is registered with the capability flags it was built with", () => {
@@ -375,7 +381,11 @@ export function describeProviderContract(target: ProviderContractTarget): void {
         const sandbox = await createSandbox();
         const before = Date.now();
         // Recorded before any assertion, so it is revoked even if one fails.
-        const access = trackSshAccess(await sandbox.ssh!.mint(15));
+        const access = trackSshAccess(
+          tracking,
+          sandbox.id,
+          await sandbox.ssh!.mint(15),
+        );
         expect(access.token).not.toBe("");
         expect(access.sshDestination).not.toBe("");
         expect(access.expiresAt.getTime()).toBeGreaterThan(before);
