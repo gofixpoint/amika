@@ -157,6 +157,8 @@ func TestKnownHostLinePinsTheAliasToTheExactHostKey(t *testing.T) {
 type fakeCreator struct {
 	calls   int
 	hostKey string
+	// sshUser is the descriptor's login account; empty means the VM default.
+	sshUser string
 }
 
 type fakePinStore struct {
@@ -195,13 +197,17 @@ func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
 
 func (c *fakeCreator) CreateSSHSession(name string) (*apiclient.SSHSession, error) {
 	c.calls++
+	user := c.sshUser
+	if user == "" {
+		user = apiclient.DefaultSSHUser
+	}
 	return &apiclient.SSHSession{
 		SessionID:         "sshs_1",
 		Transport:         "direct_ws",
 		ConnectURL:        "wss://sandbox.example/v1/ssh-sessions",
 		ConnectCredential: testConnectToken(),
 		SandboxID:         name,
-		SSHUser:           "amika",
+		SSHUser:           user,
 		HostPublicKey:     c.hostKey,
 	}, nil
 }

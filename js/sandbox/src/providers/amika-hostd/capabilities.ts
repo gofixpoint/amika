@@ -23,4 +23,21 @@ export const amikaHostdCapabilities: SandboxProviderCapabilities = {
   fullSnapshotCapture: false,
   scrubCapture: true,
   snapshotIdsAreOpaque: false,
+  guestProvisioning: true,
+};
+
+/**
+ * A bare-metal host, where the one rig is the host machine itself.
+ *
+ * hostd still backs start/stop, services and exec, but exec there accepts
+ * only the fixed `amikad` commands that set up the SSH bridge, and the files
+ * routes and snapshots are not served. `guestProvisioning` is false so the
+ * control plane copies nothing onto the machine: no environment, secrets,
+ * agent credentials, repositories or lifecycle hooks.
+ */
+export const amikaHostdBareMetalCapabilities: SandboxProviderCapabilities = {
+  ...amikaHostdCapabilities,
+  snapshots: false,
+  scrubCapture: false,
+  guestProvisioning: false,
 };

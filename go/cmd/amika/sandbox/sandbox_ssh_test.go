@@ -566,3 +566,64 @@ func TestAppFlagAcceptsEditorAlias(t *testing.T) {
 		})
 	}
 }
+
+func TestBareMetalTargetOpensNoAmikaWorkspace(t *testing.T) {
+	bareMetal := sandboxSSHAlias{alias: "metal.sb_abc.prod.amika", sandboxName: "metal", repoName: "biz", bareMetal: true}
+	for _, tt := range []struct {
+		pathOverride string
+		want         string
+	}{
+		{pathOverride: "", want: ""},
+		{pathOverride: "/Users/jakub/src", want: "/Users/jakub/src"},
+	} {
+		if got := bareMetal.remotePath(tt.pathOverride); got != tt.want {
+			t.Errorf("remotePath(%q) = %q, want %q", tt.pathOverride, got, tt.want)
+		}
+	}
+	if err := validateBareMetalPath(bareMetal, "src"); err == nil {
+		t.Error("relative --path on a bare-metal rig was accepted")
+	}
+	if err := validateBareMetalPath(bareMetal, "/srv"); err != nil {
+		t.Errorf("absolute --path on a bare-metal rig: %v", err)
+	}
+	vm := bareMetal
+	vm.bareMetal = false
+	if err := validateBareMetalPath(vm, "src"); err != nil {
+		t.Errorf("relative --path on a VM rig: %v", err)
+	}
+	if got := vm.remotePath(""); got != "/home/amika/workspace/biz" {
+		t.Errorf("VM remotePath = %q", got)
+	}
+}
+
+func TestOpenBareMetalSandboxInEditorOmitsRemoteFolder(t *testing.T) {
+	_, launched := stubWSLSeams(t)
+	paths, _ := testSSHPaths(t)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	target := sandboxSSHAlias{alias: "metal.sb_abc.prod.amika", sandboxName: "metal", repoName: "biz", bareMetal: true}
+	if err := openSandboxInEditor(cmd, "vscode", paths, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+	if len(*launched) != 1 {
+		t.Fatalf("launch calls = %d, want 1", len(*launched))
+	}
+	argv := (*launched)[0]
+	if len(argv) != 3 || argv[1] != "--remote" || argv[2] != "ssh-remote+metal.sb_abc.prod.amika" {
+		t.Fatalf("launch argv = %q, want no remote folder", argv)
+	}
+}
+
+func TestOpenBareMetalSandboxInPaseoOmitsAmikaUser(t *testing.T) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	target := sandboxSSHAlias{alias: "metal.sb_abc.prod.amika", sandboxName: "metal", bareMetal: true}
+	if err := openSandboxInEditor(cmd, "paseo", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+	if got := out.String(); !strings.HasSuffix(got, "\nssh://metal.sb_abc.prod.amika\n") {
+		t.Fatalf("output = %q", got)
+	}
+}

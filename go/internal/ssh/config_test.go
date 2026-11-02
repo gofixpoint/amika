@@ -203,6 +203,78 @@ func TestUpsertSessionHostRendersConcreteAliasBeforeWildcardSettings(t *testing.
 	}
 }
 
+func TestRenderSessionHostUserOverridesWildcardUser(t *testing.T) {
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+			KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+			AgentSocket:    "/home/user/.ssh/amika-agent.sock",
+		},
+		SessionProxyCommands: map[string]string{
+			"prod": "/usr/local/bin/amika plumbing ssh-stdio-proxy %h",
+		},
+		SessionHosts: []SessionHostEntry{
+			{Alias: "metal.sb_metal.prod.amika", User: "Jakub"},
+			{Alias: "vm.sb_vm.prod.amika"},
+		},
+	}
+	content := Render(state)
+	for _, want := range []string{
+		"# metal\nHost metal.sb_metal.prod.amika\n  User Jakub\n",
+		"# vm\nHost vm.sb_vm.prod.amika\n\n",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Index(content, "User Jakub") > strings.Index(content, "User amika") {
+		t.Fatalf("per-rig User must come before the wildcard User:\n%s", content)
+	}
+}
+
+func TestSaveStateRejectsUnsafeSessionHostUser(t *testing.T) {
+	paths := testPaths(t)
+	state := HostsState{
+		SessionConfig: &SessionConfig{
+			IdentityFile:   "/home/user/.ssh/amika_id_ed25519",
+			KnownHostsFile: "/home/user/.ssh/amika_known_hosts",
+		},
+		SessionHosts: []SessionHostEntry{{Alias: "metal.sb_metal.prod.amika", User: "x\n  ProxyCommand evil"}},
+	}
+	if err := SaveState(paths, state); err == nil {
+		t.Fatal("SaveState accepted an unsafe User")
+	}
+	if content := Render(state); strings.Contains(content, "evil") {
+		t.Fatalf("Render emitted an unsafe User:\n%s", content)
+	}
+}
+
+func TestSetSessionHostUser(t *testing.T) {
+	var state HostsState
+	if state.SetSessionHostUser("vm.sb_vm.prod.amika", "amika") || len(state.SessionHosts) != 0 {
+		t.Fatalf("default user added an entry: %#v", state.SessionHosts)
+	}
+	if !state.SetSessionHostUser("metal.sb_metal.prod.amika", "jakub") {
+		t.Fatal("bare-metal user did not change the state")
+	}
+	if state.SetSessionHostUser("metal.sb_metal.prod.amika", "jakub") {
+		t.Fatal("unchanged user reported a change")
+	}
+	revision := state.SessionHosts[0].Revision
+	if !state.SetSessionHostUser("metal.sb_metal.prod.amika", "amika") {
+		t.Fatal("switching back to the default did not change the state")
+	}
+	if got := state.SessionHosts[0]; got.User != "" || got.Revision != revision+1 {
+		t.Fatalf("entry = %#v, want cleared user and bumped revision", got)
+	}
+	state.UpsertSessionHost("other.sb_other.prod.amika")
+	state.SetSessionHostUser("other.sb_other.prod.amika", "ops")
+	state.UpsertSessionHost("other.sb_other.prod.amika")
+	if got := state.SessionHosts[1]; got.User != "ops" {
+		t.Fatalf("editor upsert dropped the user: %#v", got)
+	}
+}
+
 func TestEnsureIncludeCreatesMissingConfig(t *testing.T) {
 	paths := testPaths(t)
 	configPath, _ := paths.SSHConfigFile()
@@ -730,5 +802,41 @@ func TestEnsureIncludeMovesExistingIncludeAheadOfHostBlocks(t *testing.T) {
 	}
 	if !strings.Contains(content, "Host *\n  IdentityAgent /tmp/ordinary-agent.sock\n  ForwardAgent yes\n") {
 		t.Fatalf("existing host block was not preserved:\n%s", content)
+	}
+}
+
+func TestRecordSessionUserRewritesWindowsMirror(t *testing.T) {
+	paths := testPaths(t)
+	winSSH := filepath.Join(t.TempDir(), "winssh")
+	previousIsWSL, previousResolve, previousIcacls := isWSL, resolveWSLTarget, runIcacls
+	isWSL = func() bool { return true }
+	resolveWSLTarget = func() (wslbridge.Target, error) {
+		return windowsTestTarget(winSSH), nil
+	}
+	runIcacls = func(string, string) error { return nil }
+	t.Cleanup(func() {
+		isWSL, resolveWSLTarget, runIcacls = previousIsWSL, previousResolve, previousIcacls
+	})
+	originalStartAgent := startAgent
+	t.Cleanup(func() { startAgent = originalStartAgent })
+	startAgent = func(socketPath string) error {
+		serveTestAgent(t, socketPath, agent.NewKeyring())
+		return nil
+	}
+	if _, err := EnsureSessionConfig(paths); err != nil {
+		t.Fatalf("EnsureSessionConfig: %v", err)
+	}
+
+	// A bare-metal rig's account, recorded after the session config exists:
+	// editors launched on Windows read the mirror, so it must carry the line.
+	if err := recordSessionUser(paths, "metal.sb_metal.prod.amika", "jo"); err != nil {
+		t.Fatalf("recordSessionUser: %v", err)
+	}
+	windowsConfig, err := os.ReadFile(filepath.Join(winSSH, basedir.SSHAmikaConfigName()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(windowsConfig), "User jo") {
+		t.Fatalf("Windows mirror lacks the rig's User line:\n%s", windowsConfig)
 	}
 }

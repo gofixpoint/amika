@@ -15,6 +15,7 @@ export const SANDBOX_PROVIDER_NAMES = [
   "vercel",
   "smol",
   "amika-hostd",
+  "amika-hostd-bare-metal",
   "simulate",
 ] as const;
 

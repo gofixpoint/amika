@@ -52,13 +52,13 @@ func testOperations(t *testing.T) (*DaemonOperations, string, *fakeSSHDManager) 
 		manager,
 		store,
 		norelay.NewFileTokenVerifier(tokenPath, files),
-		tokenPath,
+		Layout{TokenPath: tokenPath},
 		logger,
 	), tokenPath, manager
 }
 
 func TestSetConnectTokenStoresCanonicalOwnerOnlyValue(t *testing.T) {
-	skipUnlessLinux(t)
+	skipUnlessSecureWrites(t)
 	operations, tokenPath, _ := testOperations(t)
 	token := base64.RawURLEncoding.EncodeToString(make([]byte, norelay.TokenBytes))
 	if err := operations.SetConnectToken(context.Background(), strings.NewReader(token+"\n")); err != nil {
@@ -137,17 +137,18 @@ func TestServeReadyRequiresNoRelayStatusOnExactPort(t *testing.T) {
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	if !serveReady(context.Background(), port) {
+	listen := (&DaemonOperations{}).resolveListen(port)
+	if !serveReady(context.Background(), listen) {
 		t.Fatal("no-relay status was not considered ready")
 	}
 }
 
-// skipUnlessLinux skips tests that write sensitive files through state.OSFiles,
-// which fails closed off Linux because its no-symlink fd-relative writes are
-// Linux-only (see state/os_files_other.go).
-func skipUnlessLinux(t *testing.T) {
+// skipUnlessSecureWrites skips tests that write sensitive files through
+// state.OSFiles, which fails closed off Linux and macOS because its
+// no-symlink fd-relative writes exist only there (see platform/other.go).
+func skipUnlessSecureWrites(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("amikad sensitive writes require Linux")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("amikad sensitive writes require Linux or macOS")
 	}
 }

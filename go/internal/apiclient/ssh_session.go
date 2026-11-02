@@ -49,7 +49,7 @@ func (s *SSHSession) Validate(expectedSandboxID string) error {
 	if s.SessionID == "" || len(s.SessionID) > 128 || !strings.HasPrefix(s.SessionID, "sshs_") {
 		return ErrInvalidSSHSession
 	}
-	if s.Transport != SSHSessionTransportDirectWS || s.SandboxID != expectedSandboxID || s.SSHUser != "amika" {
+	if s.Transport != SSHSessionTransportDirectWS || s.SandboxID != expectedSandboxID || !ValidSSHUser(s.SSHUser) {
 		return ErrInvalidSSHSession
 	}
 	if !isCanonicalConnectToken(s.ConnectCredential) || CanonicalEd25519PublicKey(s.HostPublicKey) == "" {

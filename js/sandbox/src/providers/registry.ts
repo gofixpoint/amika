@@ -17,7 +17,9 @@
  */
 import type { AmikaHostdConfig } from "./amika-hostd/config";
 import amikaHostdProvider, {
+  amikaHostdBareMetalProvider,
   openAmikaHostdAdapter,
+  openAmikaHostdBareMetalAdapter,
 } from "./amika-hostd/provider";
 import type { DaytonaConfig } from "./daytona/config";
 import type { E2bConfig } from "./e2b/config";
@@ -109,6 +111,19 @@ const PROVIDERS = {
       }),
     openAdapter: (deps, id) =>
       openAmikaHostdAdapter(
+        requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
+        id,
+        deps.amikaHostdFetcher,
+      ),
+  },
+  "amika-hostd-bare-metal": {
+    create: (deps) =>
+      amikaHostdBareMetalProvider({
+        config: requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
+        fetcher: deps.amikaHostdFetcher,
+      }),
+    openAdapter: (deps, id) =>
+      openAmikaHostdBareMetalAdapter(
         requireConfig(deps.amikaHostd, AMIKA_HOSTD_HINT),
         id,
         deps.amikaHostdFetcher,

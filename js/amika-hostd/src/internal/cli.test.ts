@@ -9,7 +9,12 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { AmikaApiError, HostTransportConflictError } from "./amika-api.js";
+import {
+  AmikaApiError,
+  HostTransportConflictError,
+  HostTypeConflictError,
+} from "./amika-api.js";
+import { hostPlatformFor } from "../platforms/index.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
 import {
   ConfigError,
@@ -253,6 +258,9 @@ describe("runCli", () => {
         prepullFile: "/state/amika-hostd/prepull.json",
         snapshotIndexFile: "/state/amika-hostd/snapshots.json",
         snapshotDir: "/state/amika-hostd/snapshots",
+        bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",
+        amikadStateDir: "/state/amika-hostd/amikad",
+        amikadLogFile: "/state/amika-hostd/log/amikad.log",
       },
       { isRunning: deps.isRunning, env: expect.any(Object), secretKey: SECRET },
     );
@@ -277,6 +285,7 @@ describe("runCli", () => {
         {
           servicesFile: "/state/amika-hostd/services.json",
           hiddenMachines: expect.any(Function),
+          bareMetal: false,
           // Snapshots are served only by a daemon running its own smolvm:
           // a pack is a subprocess of that binary. Plain `serve` forwards to
           // a smolvm it did not start, so it offers none.
@@ -1957,6 +1966,7 @@ describe("setup", () => {
     expect(await runCli(["up"], deps)).toBe(0);
     expect(deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      "Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig [vm/bare-metal]: ",
     ]);
     expect(deps.keychainSecret.value).toBe(SECRET);
     expect(files[CONFIG_PATH]).toMatch(/^secret_store = "keychain"$/m);
@@ -2216,5 +2226,166 @@ describe("setup", () => {
       { env: NodeJS.ProcessEnv },
     ];
     expect(Object.values(env[2].env)).not.toContain("amk_123");
+  });
+});
+
+describe("bare-metal hosts", () => {
+  const RESOURCES = {
+    vcpus: 8,
+    memoryGib: 16,
+    diskGib: 500,
+    os: "linux",
+    arch: "x64",
+  };
+  const REPORT = {
+    hostType: "bare_metal",
+    resources: RESOURCES,
+    sshUser: "jakub",
+  };
+  const PLATFORM = hostPlatformFor("linux", {
+    availableParallelism: () => 8,
+    totalmem: () => 16 * 1024 ** 3,
+    statfs: () => ({ bsize: 4096, blocks: (500 * 1024 ** 3) / 4096 }),
+    arch: () => "x64",
+  });
+  const SIZES = "[sizes.small]\nvcpus = 2\nmemory_gib = 4\ndisk_gib = 20\n";
+  const METAL_HOST = { ...HOST, host_type: "bare_metal" } as typeof HOST;
+
+  /** `harness` with a config file of `contents`, on a fake Linux machine. */
+  function configured(contents: string) {
+    const state = mkdtempSync(path.join(tmpdir(), "amika-hostd-state-"));
+    const h = harness({ ...ENV, XDG_STATE_HOME: state });
+    h.deps.loadConfigFile.mockReturnValue({
+      path: "/config/amika-hostd/config.toml",
+      contents,
+    });
+    const installAmikad = vi.fn(async () => "/data/amikad/0.3.0/amikad");
+    // As a control plane that knows bare-metal hosts records them.
+    h.deps.registerHost.mockResolvedValue({ host: METAL_HOST, created: true });
+    const setHostType = vi.fn(async () => METAL_HOST);
+    const deps = {
+      ...h.deps,
+      platform: PLATFORM,
+      sshUser: () => "jakub",
+      installAmikad,
+      setHostType,
+    };
+    return { ...h, deps, installAmikad, setHostType, state };
+  }
+
+  it("registers a new bare-metal host with its report and no sizes", async () => {
+    const h = configured(`host_type = "bare-metal"\n${SIZES}`);
+    expect(await runCli(["up"], h.deps)).toBe(0);
+    expect(h.deps.registerHost).toHaveBeenCalledWith(expect.anything(), {
+      hostname: "builder",
+      secretKey: SECRET,
+      sizes: {},
+      transportMode: "listen",
+      hostType: REPORT,
+    });
+    // Created with the report, so nothing more to put.
+    expect(h.setHostType).not.toHaveBeenCalled();
+    expect(h.installAmikad).toHaveBeenCalled();
+    expect(h.err).toContain(
+      "amika-hostd: [sizes] in /config/amika-hostd/config.toml is ignored on a bare-metal host, whose one rig is this machine as it is.",
+    );
+    // No smolvm: not checked, not started, nothing pre-pulled.
+    expect(h.deps.smolvmVersion).not.toHaveBeenCalled();
+    expect(h.deps.startSmolvm).not.toHaveBeenCalled();
+    expect(h.out.join("\n")).not.toMatch(/Downloading this host's rig images/);
+  });
+
+  it("refuses to come up when Amika keeps it as a VM host", async () => {
+    // A control plane predating bare-metal hosts drops the fields it does
+    // not know, so the record comes back without the type.
+    const h = configured(`host_type = "bare-metal"\n`);
+    h.deps.registerHost.mockResolvedValue({ host: HOST, created: false });
+    h.setHostType.mockResolvedValue(HOST);
+    expect(await runCli(["up"], h.deps)).not.toBe(0);
+    expect(h.err.join("\n")).toMatch(/did not record host .* as bare metal/);
+    expect(h.deps.setHostSizes).not.toHaveBeenCalled();
+  });
+
+  it("reports itself again on every `up`, before its sizes", async () => {
+    const h = configured(`host_type = "bare-metal"\n`);
+    h.deps.registerHost.mockResolvedValue({ host: HOST, created: false });
+    expect(await runCli(["up"], h.deps)).toBe(0);
+    expect(h.setHostType).toHaveBeenCalledWith(expect.anything(), HOST, REPORT);
+    expect(h.deps.setHostSizes).toHaveBeenCalledWith(
+      expect.anything(),
+      HOST,
+      {},
+    );
+    expect(h.setHostType.mock.invocationCallOrder[0]).toBeLessThan(
+      h.deps.setHostSizes.mock.invocationCallOrder[0],
+    );
+    expect(h.out).toContain(
+      "Reported host builder as bare metal (8 vCPUs, 16 GiB memory, 500 GiB disk, linux/x64; SSH as jakub)",
+    );
+  });
+
+  it("serves the bare-metal runtime in the foreground, without smolvm", async () => {
+    const h = configured(`host_type = "bare-metal"\n`);
+    expect(await runCli(["up", "--fg"], h.deps)).toBe(0);
+    expect(h.deps.startSmolvm).not.toHaveBeenCalled();
+    expect(h.deps.prepull).not.toHaveBeenCalled();
+    const [, runtime, options] = h.deps.startServer.mock.calls[0];
+    expect(options).toMatchObject({ bareMetal: true, snapshots: undefined });
+    expect(await runtime.list()).toEqual([]);
+  });
+
+  it("refuses bare metal on an OS without it", async () => {
+    const h = configured(`host_type = "bare-metal"\n`);
+    expect(
+      await runCli(["up"], { ...h.deps, platform: hostPlatformFor("win32") }),
+    ).toBe(1);
+    expect(h.err.join("\n")).toMatch(
+      /does not support bare-metal hosts on win32/,
+    );
+    expect(h.deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  it("says how to resolve a host type Amika refuses to change", async () => {
+    const h = configured(`host_type = "bare-metal"\n`);
+    h.deps.registerHost.mockResolvedValue({ host: HOST, created: false });
+    h.setHostType.mockRejectedValue(
+      new HostTypeConflictError(
+        "Amika cannot make host builder bare metal: this host still has rigs; delete them before changing host type",
+      ),
+    );
+    expect(await runCli(["up"], h.deps)).toBe(1);
+    expect(h.err).toContain(
+      "amika-hostd: Amika cannot make host builder bare metal: this host still has rigs; delete them before changing host type",
+    );
+    expect(h.deps.setHostSizes).not.toHaveBeenCalled();
+    expect(h.deps.startInBackground).not.toHaveBeenCalled();
+  });
+
+  it("sends a VM host's registration without any host type", async () => {
+    const h = configured(SIZES);
+    h.deps.registerHost.mockResolvedValue({ host: HOST, created: false });
+    expect(await runCli(["up"], h.deps)).toBe(0);
+    const [, input] = h.deps.registerHost.mock.calls[0] as unknown as [
+      unknown,
+      Record<string, unknown>,
+    ];
+    expect(input).not.toHaveProperty("hostType");
+    expect(h.setHostType).not.toHaveBeenCalled();
+    expect(h.installAmikad).not.toHaveBeenCalled();
+  });
+
+  it("switches a VM host Amika still has as bare metal back", async () => {
+    const h = configured(SIZES);
+    h.deps.registerHost.mockResolvedValue({
+      host: { ...HOST, host_type: "bare_metal" } as typeof HOST,
+      created: false,
+    });
+    expect(await runCli(["up"], h.deps)).toBe(0);
+    expect(h.setHostType).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: "host_1" }),
+      { hostType: "vm" },
+    );
+    expect(h.out).toContain("Switched host builder from bare metal to VMs");
   });
 });

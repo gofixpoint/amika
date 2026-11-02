@@ -36,6 +36,8 @@ describe("resolveConfig", () => {
       images: {},
       transport: "tunnel",
       tunnelGatewayUrl: undefined,
+      hostType: "vm",
+      amikadPath: undefined,
       configPath: undefined,
     });
   });
@@ -509,6 +511,34 @@ describe("the tunnel gateway URL", () => {
   });
 });
 
+describe("host_type", () => {
+  it("defaults to VMs", () => {
+    expect(resolveConfig({}).hostType).toBe("vm");
+  });
+
+  it.each(["vm", "bare-metal"] as const)("reads %s", (hostType) => {
+    expect(
+      resolveConfig({ file: file(`host_type = "${hostType}"\n`) }).hostType,
+    ).toBe(hostType);
+  });
+
+  it.each(["bare_metal", "baremetal", "VM", ""])("refuses %j", (value) => {
+    expect(() =>
+      resolveConfig({ file: file(`host_type = "${value}"\n`) }),
+    ).toThrow('host_type must be "vm" or "bare-metal"');
+  });
+
+  it("takes an absolute amikad_path, and refuses a relative one", () => {
+    expect(
+      resolveConfig({ file: file('amikad_path = "/opt/amikad/./amikad"\n') })
+        .amikadPath,
+    ).toBe("/opt/amikad/amikad");
+    expect(() =>
+      resolveConfig({ file: file('amikad_path = "bin/amikad"\n') }),
+    ).toThrow("Invalid amikad_path");
+  });
+});
+
 describe("config.example.toml", () => {
   const example = file(
     readFileSync(new URL("../../config.example.toml", import.meta.url), "utf8"),
@@ -530,6 +560,23 @@ describe("config.example.toml", () => {
       transport: "tunnel",
       tunnelGatewayUrl: undefined,
     });
+  });
+
+  it("documents the host type, leaving VMs", () => {
+    expect(example.contents).toMatch(/^# host_type = "vm"$/m);
+    expect(example.contents).toMatch(/^# host_type = "bare-metal"$/m);
+    expect(example.contents).toMatch(/^# amikad_path = /m);
+    expect(resolveConfig({ file: example })).toMatchObject({
+      hostType: "vm",
+      amikadPath: undefined,
+    });
+    const bareMetal = file(
+      example.contents.replace(
+        '# host_type = "bare-metal"',
+        'host_type = "bare-metal"',
+      ),
+    );
+    expect(resolveConfig({ file: bareMetal }).hostType).toBe("bare-metal");
   });
 
   it("documents listening as a line to uncomment", () => {

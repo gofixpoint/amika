@@ -504,6 +504,9 @@ describe("daemonPaths", () => {
       prepullFile: "/state/amika-hostd/prepull.json",
       snapshotIndexFile: "/state/amika-hostd/snapshots.json",
       snapshotDir: "/state/amika-hostd/snapshots",
+      bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",
+      amikadStateDir: "/state/amika-hostd/amikad",
+      amikadLogFile: "/state/amika-hostd/log/amikad.log",
     });
   });
 

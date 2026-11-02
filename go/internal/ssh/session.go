@@ -481,8 +481,11 @@ func canonicalHostPublicKey(value string) (string, error) {
 }
 
 // PrepareSessionTarget readies one sandbox for a v2 dial and returns its host
-// alias: it builds the alias, writes the strict wildcard session config, and
-// pins the sandbox's host key.
+// alias: it builds the alias, writes the strict wildcard session config, pins
+// the sandbox's host key, and records the rig's login account when it is not
+// the wildcard block's `amika` (a bare-metal rig logs in as the account that
+// runs amika-hostd), so every later dial of the alias, by any client, logs in
+// as the right user.
 //
 // Shared by every command that hands a `*.amika` alias to system OpenSSH
 // (`sandbox ssh`, `scp`), so they cannot drift in how the identity is
@@ -517,15 +520,37 @@ func PrepareSessionTarget(
 	}); err != nil {
 		return "", err
 	}
-	if _, err := PrepareSessionHost(
+	session, err := PrepareSessionHost(
 		creator,
 		FileHostKeyPinStore{Path: sessionConfig.KnownHostsFile},
 		sandboxID,
 		alias,
-	); err != nil {
+	)
+	if err != nil {
 		return "", err
 	}
+	if err := recordSessionUser(paths, alias, session.SSHUser); err != nil {
+		return "", fmt.Errorf("write SSH login user: %w", err)
+	}
 	return alias, nil
+}
+
+// recordSessionUser stores the alias's login account and regenerates the
+// managed config, writing nothing when the recorded account already matches.
+func recordSessionUser(paths basedir.Paths, alias, user string) error {
+	return withSessionLock(paths, func() error {
+		state, err := LoadState(paths)
+		if err != nil {
+			return err
+		}
+		if !state.SetSessionHostUser(alias, user) {
+			return nil
+		}
+		// Forced, so WSL's Windows-side mirror of the config is rewritten
+		// too: editors launched on Windows read that copy, and without the
+		// rig's own User line they would log in as amika and be refused.
+		return persistManagedStateLocked(paths, state, true)
+	})
 }
 
 // EnsureSessionConfig writes the wildcard session block for the environment

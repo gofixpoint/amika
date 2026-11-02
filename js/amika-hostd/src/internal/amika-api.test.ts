@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AmikaApiError,
   HostTransportConflictError,
+  HostTypeConflictError,
   registerHost,
   setHostSecret,
   setHostSizes,
   setHostTransport,
+  setHostType,
   setHostUrl,
 } from "./amika-api.js";
 
@@ -347,5 +349,106 @@ describe("setHostSecret", () => {
     expect(error).toBeInstanceOf(AmikaApiError);
     expect(String(error)).toContain("update the host's secret key");
     expect(String(error)).not.toContain("new-secret");
+  });
+});
+
+describe("host type", () => {
+  const RESOURCES = {
+    vcpus: 8,
+    memoryGib: 16,
+    diskGib: 460.4,
+    os: "linux",
+    arch: "x64",
+  };
+  const BARE_METAL = {
+    hostType: "bare_metal" as const,
+    resources: RESOURCES,
+    sshUser: "jakub",
+  };
+  const body = (fetcher: ReturnType<typeof responding>) =>
+    JSON.parse(String(fetcher.mock.calls[0][1]?.body));
+
+  it("sends none of the bare-metal fields for a VM host", async () => {
+    const fetcher = responding(Response.json(HOST, { status: 201 }));
+    await registerHost(API, INPUT, fetcher);
+    expect(Object.keys(body(fetcher)).sort()).toEqual([
+      "hostname",
+      "secret",
+      "sizes",
+    ]);
+  });
+
+  it("registers a bare-metal host with its resources and login account", async () => {
+    const fetcher = responding(
+      Response.json({ ...HOST, host_type: "bare_metal" }, { status: 201 }),
+    );
+    const { host } = await registerHost(
+      API,
+      { ...INPUT, sizes: {}, hostType: BARE_METAL },
+      fetcher,
+    );
+    expect(body(fetcher)).toEqual({
+      hostname: "builder",
+      secret: "host-secret",
+      sizes: {},
+      host_type: "bare_metal",
+      resources: RESOURCES,
+      ssh_user: "jakub",
+    });
+    expect(host.host_type).toBe("bare_metal");
+  });
+
+  it("reads a host record without host_type, from an older control plane", async () => {
+    const fetcher = responding(Response.json(HOST, { status: 200 }));
+    expect((await registerHost(API, INPUT, fetcher)).host.host_type).toBe(
+      undefined,
+    );
+  });
+
+  it("puts a bare-metal host's report, and a VM host's switch back", async () => {
+    const fetcher = responding(Response.json(HOST));
+    await setHostType(API, HOST, BARE_METAL, fetcher);
+    expect(fetcher.mock.calls[0][0]).toBe(
+      "https://app.amika.dev/api/v0beta1/hosts/host_1",
+    );
+    expect(fetcher.mock.calls[0][1]?.method).toBe("PUT");
+    expect(body(fetcher)).toEqual({
+      hostname: "builder",
+      host_type: "bare_metal",
+      resources: RESOURCES,
+      ssh_user: "jakub",
+    });
+    const back = responding(Response.json(HOST));
+    await setHostType(API, HOST, { hostType: "vm" }, back);
+    expect(body(back)).toEqual({ hostname: "builder", host_type: "vm" });
+  });
+
+  it.each(["setHostType", "registerHost"])(
+    "explains a host_type_conflict from %s",
+    async (name) => {
+      const fetcher = responding(
+        apiErrorBody(409, "host_type_conflict", "host has sandboxes"),
+      );
+      const call =
+        name === "setHostType"
+          ? setHostType(API, HOST, BARE_METAL, fetcher)
+          : registerHost(API, { ...INPUT, hostType: BARE_METAL }, fetcher);
+      const error = await call.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(HostTypeConflictError);
+      expect((error as Error).message).toBe(
+        "Amika cannot make host builder bare metal: this host still has rigs; delete them before changing host type",
+      );
+    },
+  );
+
+  it("explains a refused switch back to VMs", async () => {
+    const fetcher = responding(
+      apiErrorBody(409, "host_type_conflict", "host has sandboxes"),
+    );
+    await expect(
+      setHostType(API, HOST, { hostType: "vm" }, fetcher),
+    ).rejects.toThrow(
+      "Amika cannot make host builder a VM host: this host still has rigs; delete them before changing host type",
+    );
   });
 });

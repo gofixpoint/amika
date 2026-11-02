@@ -52,6 +52,7 @@ describe("e2b provider wiring", () => {
       dockerRegistries: false,
       snapshotIdsAreOpaque: true,
       supportsAutoDelete: false,
+      guestProvisioning: true,
     });
   });
 

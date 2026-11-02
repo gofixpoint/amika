@@ -19,7 +19,12 @@ func main() {
 		syscall.SIGTERM,
 	)
 	defer stop()
-	cmd := amikad.NewCommand(amikad.NewProductionOperations())
+	operations, err := amikad.NewProductionOperations()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	cmd := amikad.NewCommand(operations)
 	if err := cmd.ExecuteContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

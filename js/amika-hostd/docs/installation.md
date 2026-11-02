@@ -45,6 +45,12 @@ GitHub release, verifies it against `checksums.txt`, and installs:
 Its closing steps point the operator at `amika-hostd setup`, then
 `amika-hostd up` (which runs setup itself if it was skipped).
 
+`--bare-metal` sets up a [bare-metal host](runtime.md#bare-metal-runtime): it
+skips installing smolvm and the KVM and `resize2fs` checks below, seeds
+`host_type = "bare-metal"` in a new config, and its closing steps say to
+answer `bare-metal` at setup, which installs amikad. The machine engine is
+still installed, since the release carries it either way.
+
 On Linux it warns, without failing, when `/dev/kvm` is missing or not
 accessible. On every host it warns, again without failing, when smolvm cannot
 find `resize2fs` (from e2fsprogs) where it looks: smolvm copies each disk from

@@ -14,6 +14,8 @@ the first source that sets it: CLI flag, then environment, then TOML file.
 | Port         | `--port` | `AMIKA_HOSTD_PORT`                            | `port`                         | `3020`                  |
 | Snapshot dir |          | `AMIKA_HOSTD_SNAPSHOT_DIR`                    | `snapshot_dir`                 | in the state directory  |
 | Transport    |          | `AMIKA_HOSTD_TRANSPORT`                       | `transport`                    | `tunnel`                |
+| Host type    |          |                                               | `host_type`                    | `vm`                    |
+| amikad       |          |                                               | `amikad_path`                  | the one setup installs  |
 
 Setting both names of an aliased pair to different values is an error, never a
 silent pick. A blank variable (empty, or only whitespace) sets nothing; code
@@ -35,6 +37,21 @@ line, and only `hostname` and `secret_store` are commented. It holds no
 `secret_key`, since the secrets live in the keychain by default. Keep its comments short. `config.test.ts`
 resolves it as seeded, so keep it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
+
+## Host type
+
+`host_type` is `"vm"` (the default) or `"bare-metal"`, and anything else fails
+startup rather than run the machine in a mode the operator did not choose.
+Only TOML sets it: `setup` asks for it and writes it (only when it changes, so
+a VM host's file is left as it was), and `install-amika-hostd.sh --bare-metal`
+seeds it. A bare-metal host ignores `[sizes]`, warning on `up` when the file
+has any, and registers no sizes (see
+[Registration](commands-and-registration.md#registration)); smolvm is never
+started, nor its version checked, nor images pre-pulled. `amikad_path` names
+the amikad binary a bare-metal host runs instead of the release setup
+installs, for development. It must be absolute: hostd runs amikad by path,
+never through a shell or `PATH`. See
+[Bare-metal runtime](runtime.md#bare-metal-runtime).
 
 ## Images
 

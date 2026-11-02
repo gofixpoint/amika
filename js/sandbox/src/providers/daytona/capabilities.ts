@@ -25,4 +25,5 @@ export const daytonaCapabilities: SandboxProviderCapabilities = {
   snapshotIdsAreOpaque: false,
   // Daytona deletes idle sandboxes on the auto-delete interval.
   supportsAutoDelete: true,
+  guestProvisioning: true,
 };

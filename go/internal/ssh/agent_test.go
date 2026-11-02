@@ -387,6 +387,58 @@ func TestHostSessionIgnoresAnAmbientAmikaNamedAgent(t *testing.T) {
 	}
 }
 
+func TestPrepareSessionTargetWritesBareMetalLoginUserPerRig(t *testing.T) {
+	paths := testPaths(t)
+	t.Setenv(config.EnvAPIURL, "http://localhost:3011")
+	testBinary(t, "amika")
+	forwardAmikaAgent(t)
+
+	vmAlias, err := PrepareSessionTarget(paths, &fakeCreator{hostKey: testHostKey(t)}, "vm", "sbx_vm")
+	if err != nil {
+		t.Fatalf("PrepareSessionTarget VM: %v", err)
+	}
+	state, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.SessionHosts) != 0 {
+		t.Fatalf("VM rig recorded session hosts %#v, want none", state.SessionHosts)
+	}
+
+	hostKey := testHostKey(t)
+	metalAlias, err := PrepareSessionTarget(paths, &fakeCreator{hostKey: hostKey, sshUser: "Jakub"}, "metal", "sbx_metal")
+	if err != nil {
+		t.Fatalf("PrepareSessionTarget bare metal: %v", err)
+	}
+	configPath, _ := paths.SSHAmikaConfigFile()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	stanza := "Host " + metalAlias + "\n  User Jakub\n"
+	stanzaIndex := strings.Index(content, stanza)
+	wildcardIndex := strings.Index(content, "Host *.localhost-3011.amika\n  User amika\n")
+	if stanzaIndex < 0 || wildcardIndex < 0 || stanzaIndex > wildcardIndex {
+		t.Fatalf("bare-metal User stanza must precede the wildcard block:\n%s", content)
+	}
+	if strings.Contains(content, "Host "+vmAlias) {
+		t.Fatalf("VM rig must keep the wildcard User:\n%s", content)
+	}
+
+	state, err = LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := os.ReadFile(state.SessionConfig.KnownHostsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pinned), metalAlias+" "+hostKey) {
+		t.Fatalf("bare-metal host key not pinned under its alias:\n%s", pinned)
+	}
+}
+
 func TestNestedSessionAcceptsTheLegacySandboxMarker(t *testing.T) {
 	paths := testPaths(t)
 	t.Setenv(config.EnvAPIURL, "http://localhost:3011")

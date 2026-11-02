@@ -46,6 +46,7 @@ describe("freestyle provider wiring", () => {
       dockerRegistries: false,
       snapshotIdsAreOpaque: true,
       supportsAutoDelete: false,
+      guestProvisioning: true,
     });
   });
 

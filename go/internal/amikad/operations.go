@@ -27,23 +27,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/amikad/norelay"
+	"github.com/gofixpoint/amika/go/internal/amikad/platform"
 	"github.com/gofixpoint/amika/go/internal/amikad/sshd"
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
-)
-
-const (
-	defaultManifestPath = "/var/lib/amikad/injected-paths.json"
-	defaultTokenPath    = "/var/lib/amikad/connect-token"
-	defaultServeLogPath = "/var/log/amikad/no-relay.log"
 )
 
 // ErrNoServeMode marks a serve invocation with no explicitly enabled
@@ -67,34 +66,42 @@ type SSHDManager interface {
 
 // DaemonOperations implements the amikad command surface.
 type DaemonOperations struct {
-	sshd      SSHDManager
-	store     state.SensitiveStore
-	verifier  *norelay.FileTokenVerifier
-	tokenPath string
-	logger    *slog.Logger
+	sshd     SSHDManager
+	store    state.SensitiveStore
+	verifier *norelay.FileTokenVerifier
+	layout   Layout
+	logger   *slog.Logger
 }
 
 // NewDaemonOperations creates a command implementation around explicit
-// security-sensitive dependencies.
+// security-sensitive dependencies. layout supplies the token and log paths
+// and the HTTP listen address.
 func NewDaemonOperations(
 	sshdManager SSHDManager,
 	store state.SensitiveStore,
 	verifier *norelay.FileTokenVerifier,
-	tokenPath string,
+	layout Layout,
 	logger *slog.Logger,
 ) *DaemonOperations {
 	return &DaemonOperations{
-		sshd: sshdManager, store: store, verifier: verifier, tokenPath: tokenPath, logger: logger,
+		sshd: sshdManager, store: store, verifier: verifier, layout: layout, logger: logger,
 	}
 }
 
-// NewProductionOperations wires amikad to the host filesystem and image
-// OpenSSH binaries.
-func NewProductionOperations() *DaemonOperations {
+// NewProductionOperations wires amikad to the host filesystem and OpenSSH
+// binaries in the layout the environment selects (see ResolveLayout).
+func NewProductionOperations() (*DaemonOperations, error) {
+	layout, err := ResolveLayout(os.Getenv, user.Current)
+	if err != nil {
+		return nil, err
+	}
+	if err := PrepareStateDirectory(layout); err != nil {
+		return nil, fmt.Errorf("prepare %s: %w", EnvStateDir, err)
+	}
 	files := state.OSFiles{}
-	store := state.NewStore(defaultManifestPath, files)
+	store := state.NewStore(layout.ManifestPath, files)
 	manager := sshd.NewManager(
-		sshd.DefaultPaths(),
+		layout.SSHD,
 		store,
 		files,
 		sshd.Ed25519KeyGenerator{},
@@ -104,10 +111,10 @@ func NewProductionOperations() *DaemonOperations {
 	return NewDaemonOperations(
 		manager,
 		store,
-		norelay.NewFileTokenVerifier(defaultTokenPath, files),
-		defaultTokenPath,
+		norelay.NewFileTokenVerifier(layout.TokenPath, files),
+		layout,
 		logger,
-	)
+	), nil
 }
 
 // SetupSSHD installs the managed OpenSSH policy.
@@ -151,7 +158,7 @@ func (o *DaemonOperations) SetConnectToken(ctx context.Context, input io.Reader)
 	// every absolute path it lists, and fails snapshot capture closed if it
 	// can't confirm a path is gone. See package state's doc comment for the
 	// manifest format and the full mechanism.
-	return o.store.WriteAndRegister(ctx, o.tokenPath, strings.NewReader(token), 0o600)
+	return o.store.WriteAndRegister(ctx, o.layout.TokenPath, strings.NewReader(token), 0o600)
 }
 
 // Serve runs the no-relay HTTP bridge and the loopback OpenSSH child until
@@ -166,8 +173,9 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	if !o.verifier.Ready() {
 		return ErrUnsafeConnectToken
 	}
+	listen := o.resolveListen(options.Port)
 	if options.Background {
-		return o.serveBackground(ctx, options)
+		return o.serveBackground(ctx, options, listen)
 	}
 
 	handler := norelay.NewHandler(
@@ -197,11 +205,11 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 			Mode              string `json:"mode"`
 			Port              int    `json:"port"`
 			ActiveConnections int64  `json:"active_connections"`
-		}{Mode: "beta_no_relay", Port: options.Port, ActiveConnections: handler.ActiveConnections()})
+		}{Mode: "beta_no_relay", Port: listen.port, ActiveConnections: handler.ActiveConnections()})
 	})
 
 	server := &http.Server{
-		Addr:              ":" + strconv.Itoa(options.Port),
+		Addr:              listen.bind,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -236,14 +244,45 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	return fmt.Errorf("%s failed: %w", first.component, first.err)
 }
 
-func (o *DaemonOperations) serveBackground(ctx context.Context, options ServeOptions) error {
-	if serveReady(ctx, options.Port) {
+// serveListen is the effective HTTP listener: the bind address, the port
+// reported by /v1/status, and the address the readiness probe dials.
+type serveListen struct {
+	bind  string
+	port  int
+	probe string
+}
+
+// resolveListen applies the layout to serve's --port. Root mode binds every
+// interface on --port; user mode binds only its loopback host, on the
+// layout's port when EnvListen gave one.
+func (o *DaemonOperations) resolveListen(flagPort int) serveListen {
+	port := flagPort
+	if o.layout.ListenPort != 0 {
+		port = o.layout.ListenPort
+	}
+	probeHost := o.layout.ListenHost
+	if probeHost == "" {
+		probeHost = "127.0.0.1"
+	}
+	return serveListen{
+		bind:  net.JoinHostPort(o.layout.ListenHost, strconv.Itoa(port)),
+		port:  port,
+		probe: net.JoinHostPort(probeHost, strconv.Itoa(port)),
+	}
+}
+
+func (o *DaemonOperations) serveBackground(ctx context.Context, options ServeOptions, listen serveListen) error {
+	if serveReady(ctx, listen) {
 		return nil
 	}
-	if err := os.MkdirAll("/var/log/amikad", 0o755); err != nil {
+	logDirectoryMode := fs.FileMode(0o755)
+	if o.layout.UserMode {
+		logDirectoryMode = 0o700
+	}
+	if err := os.MkdirAll(filepath.Dir(o.layout.ServeLogPath), logDirectoryMode); err != nil {
 		return fmt.Errorf("prepare daemon log directory: %w", err)
 	}
-	logFile, err := os.OpenFile(defaultServeLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	logFile, err := os.OpenFile(o.layout.ServeLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open daemon log: %w", err)
 	}
@@ -259,7 +298,9 @@ func (o *DaemonOperations) serveBackground(ctx context.Context, options ServeOpt
 	command := exec.Command(executable, args...)
 	command.Stdout = logFile
 	command.Stderr = logFile
-	configureBackgroundProcess(command)
+	if err := platform.Current().DetachProcess(command); err != nil {
+		return fmt.Errorf("detach background amikad: %w", err)
+	}
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("start background amikad: %w", err)
 	}
@@ -278,20 +319,20 @@ func (o *DaemonOperations) serveBackground(ctx context.Context, options ServeOpt
 		case <-deadline.C:
 			return errors.New("background amikad did not become healthy")
 		case <-ticker.C:
-			if serveReady(ctx, options.Port) {
+			if serveReady(ctx, listen) {
 				return nil
 			}
 		}
 	}
 }
 
-func serveReady(ctx context.Context, port int) bool {
+func serveReady(ctx context.Context, listen serveListen) bool {
 	requestCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 	request, err := http.NewRequestWithContext(
 		requestCtx,
 		http.MethodGet,
-		"http://127.0.0.1:"+strconv.Itoa(port)+"/v1/status",
+		"http://"+listen.probe+"/v1/status",
 		nil,
 	)
 	if err != nil {
@@ -312,5 +353,5 @@ func serveReady(ctx context.Context, port int) bool {
 	if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&status); err != nil {
 		return false
 	}
-	return status.Mode == "beta_no_relay" && status.Port == port
+	return status.Mode == "beta_no_relay" && status.Port == listen.port
 }

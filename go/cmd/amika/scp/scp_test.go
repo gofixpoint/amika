@@ -162,8 +162,35 @@ func TestResolveSandboxScpPath(t *testing.T) {
 		{"/my/root/path", "/my/root/path"},
 	}
 	for _, tt := range tests {
-		if got := resolveSandboxScpPath(tt.in); got != tt.want {
+		if got := resolveSandboxScpPath(sandboxHome, tt.in); got != tt.want {
 			t.Errorf("resolveSandboxScpPath(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestResolveBareMetalScpPathStaysRelative checks that a bare-metal rig, whose
+// login home the CLI does not know, never gets /home/amika: relative and "~"
+// paths stay relative so scp resolves them against the login home.
+func TestResolveBareMetalScpPathStaysRelative(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"", ""},
+		{"~", ""},
+		{"~/x", "x"},
+		{"my/path", "my/path"},
+		{"/my/root/path", "/my/root/path"},
+	} {
+		if got := resolveSandboxScpPath("", tt.in); got != tt.want {
+			t.Errorf("resolveSandboxScpPath(\"\", %q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	for _, tt := range []struct{ in, want string }{
+		{"", ""},
+		{"/~", ""},
+		{"/~/my-file", "my-file"},
+		{"/my/root/path", "/my/root/path"},
+	} {
+		if got := resolveSandboxURIPath("", tt.in); got != tt.want {
+			t.Errorf("resolveSandboxURIPath(\"\", %q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -176,7 +203,7 @@ func TestResolveSandboxURIPath(t *testing.T) {
 		{"/my/root/path", "/my/root/path"},
 	}
 	for _, tt := range tests {
-		if got := resolveSandboxURIPath(tt.in); got != tt.want {
+		if got := resolveSandboxURIPath(sandboxHome, tt.in); got != tt.want {
 			t.Errorf("resolveSandboxURIPath(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}

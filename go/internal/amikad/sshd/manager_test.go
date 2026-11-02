@@ -64,6 +64,8 @@ func testManager(t *testing.T) (*Manager, Paths, *fakeKeyGenerator, *fakeProcess
 		RuntimeDirectory:  filepath.Join(directory, "run", "sshd"),
 		AuthorizedKeysUID: os.Getuid(),
 		AuthorizedKeysGID: os.Getgid(),
+		AllowUser:         "amika",
+		SSHD:              "/usr/sbin/sshd",
 		Port:              constants.ManagedSSHDPort,
 	}
 	if err := os.MkdirAll(filepath.Dir(paths.AuthorizedKeys), 0o700); err != nil {
@@ -106,7 +108,7 @@ func TestSetupRejectsSymlinkedAuthorizedKeysDirectoryWithoutChangingTarget(t *te
 }
 
 func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
-	skipUnlessLinux(t)
+	skipUnlessSecureWrites(t)
 	manager, paths, keygen, _ := testManager(t)
 	if err := manager.Setup(context.Background(), SetupOptions{}); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -168,7 +170,7 @@ func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
 }
 
 func TestSetupRefusesExistingUserConfigurationUnlessForced(t *testing.T) {
-	skipUnlessLinux(t)
+	skipUnlessSecureWrites(t)
 	manager, paths, _, _ := testManager(t)
 	if err := os.MkdirAll(filepath.Dir(paths.Config), 0o700); err != nil {
 		t.Fatal(err)
@@ -189,7 +191,7 @@ func TestSetupRefusesExistingUserConfigurationUnlessForced(t *testing.T) {
 }
 
 func TestSetupRefusesInvalidExistingHostKeyUnlessForced(t *testing.T) {
-	skipUnlessLinux(t)
+	skipUnlessSecureWrites(t)
 	manager, paths, keygen, _ := testManager(t)
 	if err := os.MkdirAll(filepath.Dir(paths.HostPrivateKey), 0o700); err != nil {
 		t.Fatal(err)
@@ -215,7 +217,7 @@ func TestSetupRefusesInvalidExistingHostKeyUnlessForced(t *testing.T) {
 }
 
 func TestAuthorizedKeysRejectsOptionsAndWritesCanonicalKeys(t *testing.T) {
-	skipUnlessLinux(t)
+	skipUnlessSecureWrites(t)
 	manager, paths, _, _ := testManager(t)
 	key := newTestAuthorizedKey(t)
 	optionBearing := "command=\"touch /tmp/pwned\" " + key
@@ -237,7 +239,7 @@ func TestAuthorizedKeysRejectsOptionsAndWritesCanonicalKeys(t *testing.T) {
 }
 
 func TestClearAuthorizedKeysOverwritesPriorKeysWithEmptySet(t *testing.T) {
-	skipUnlessLinux(t)
+	skipUnlessSecureWrites(t)
 	manager, paths, _, _ := testManager(t)
 	key := newTestAuthorizedKey(t)
 	if err := manager.SetAuthorizedKeys(context.Background(), strings.NewReader(key+"\n")); err != nil {
@@ -269,7 +271,7 @@ func newTestAuthorizedKey(t *testing.T) string {
 }
 
 func TestShowHostKeyAndServeUseOnlyPublicManagedState(t *testing.T) {
-	skipUnlessLinux(t)
+	skipUnlessSecureWrites(t)
 	manager, _, _, processes := testManager(t)
 	if err := manager.Setup(context.Background(), SetupOptions{}); err != nil {
 		t.Fatalf("Setup: %v", err)
@@ -284,7 +286,7 @@ func TestShowHostKeyAndServeUseOnlyPublicManagedState(t *testing.T) {
 	if err := manager.Serve(context.Background()); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
-	if processes.name != "sshd" || strings.Join(processes.args, " ") != "-D -e -f "+manager.paths.Config {
+	if processes.name != "/usr/sbin/sshd" || strings.Join(processes.args, " ") != "-D -e -f "+manager.paths.Config {
 		t.Fatalf("process = %q %#v", processes.name, processes.args)
 	}
 }
@@ -313,12 +315,12 @@ func TestManagedPortIsOffSystemSSHAndMatchesTheDialTarget(t *testing.T) {
 	}
 }
 
-// skipUnlessLinux skips tests that write sensitive files through state.OSFiles,
-// which fails closed off Linux because its no-symlink fd-relative writes are
-// Linux-only (see state/os_files_other.go).
-func skipUnlessLinux(t *testing.T) {
+// skipUnlessSecureWrites skips tests that write sensitive files through
+// state.OSFiles, which fails closed off Linux and macOS because its
+// no-symlink fd-relative writes exist only there (see platform/other.go).
+func skipUnlessSecureWrites(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("amikad sensitive writes require Linux")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("amikad sensitive writes require Linux or macOS")
 	}
 }

@@ -36,6 +36,19 @@ api_url = "https://app.amika.dev"
 # transport = "tunnel"
 # transport = "listen"
 
+# What this host runs rigs on.
+#   "vm" (the default) runs each rig as a smolvm VM, sized from [sizes].
+#   "bare-metal" runs exactly one rig, and that rig is this machine: Amika
+#     gets SSH to it, as your own account, and copies nothing onto it. It
+#     needs an sshd binary (not the system service) and ignores [sizes].
+# `amika-hostd setup` asks, and installs what bare metal needs.
+# host_type = "vm"
+# host_type = "bare-metal"
+
+# For development: the amikad binary a bare-metal host runs instead of the
+# one setup installs. An absolute path.
+# amikad_path = "/path/to/amikad"
+
 # The gateway this host attaches to in tunnel mode. Normally leave this unset:
 # Amika assigns the gateway for its environment when the host is enrolled, so
 # moving the gateway does not mean editing this file on every host. Set it for
