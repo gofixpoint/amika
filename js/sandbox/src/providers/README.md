@@ -184,9 +184,11 @@ true`), implement the `SandboxAdapter` port (`shared/adapter.ts`: exec,
      `sandboxProviderConfigsFromEnv`, gated on `ACME_ENABLED`. This is the
      one env contract: the contract suite and the control plane both build
      acme's config through it
-   - `contract/env-target.ts` — add acme to `ENABLE_VAR` (its enable flag).
-     It is exhaustive over the name union, so it is a compile error until
-     done
+   - `contract/env-target.ts` — add acme to `ENABLE_VAR` (its enable flag),
+     `CONFIG_KEY` (its slice in `SandboxProviderConfigs`), and
+     `IDENTITY_FIELDS` (the config fields that decide which account and
+     endpoint acme's resources live in). All three are exhaustive over the
+     name union, so each is a compile error until done
    - `go/test/e2e/runner/runner.go` — add `"acme"` to
      `SupportedSandboxProviders` so the CLI e2e cases can select it
 
@@ -253,6 +255,44 @@ has a POSIX shell with `echo`, `printf`, `pwd`, `sleep`, and `exit`; that
 `/tmp` exists; that `$HOME` is the provider's `userHomeDir` and is writable;
 and that service URLs are `http://` or `https://`. These are requirements on
 the test fixture, stated at the top of `contract.ts`.
+
+#### The audit ledger
+
+Every resource the suite creates is written as one JSON line in
+`.contract-runs/<run id>/audit.jsonl`, and after each test the suite deletes
+what that test created, newest first, and appends the outcome:
+
+- **Sandboxes** are recorded the moment the provider returns their id.
+- **Snapshots** are recorded by name **before** capture, because a capture
+  can create the snapshot and still throw. An `identified` line adds the
+  bootable id once capture returns.
+- **SSH access** is recorded the moment it is minted, so it is revoked even
+  when an assertion about it fails. The token is a secret and is never
+  written; the line names the sandbox instead.
+
+The first line is a `run` header naming the provider and its target: the
+config fields that decide where resources live and a 12-character SHA-256
+prefix of each credential (`targetIdentity` in `env-target.ts`).
+
+A delete is not trusted on its own. Sandboxes are verified against the
+provider's listing; snapshots with `find`, which also sees one still
+registering. A resource still present after the wait is recorded as
+`delete_failed`, the same as a delete that threw. On a provider with opaque
+snapshot ids, a snapshot whose id was never returned cannot be looked up, so
+its cleanup fails rather than reporting it gone. If writing an outcome fails,
+the remaining resources are still deleted and the test fails.
+
+When the run ends it prints one table: every resource, the test that
+created it, and `deleted`, `deleted (unverified)`, or `LEAKED` with the
+reason. **Any leak fails the run**, and so does a ledger that cannot be read
+or a step summary that cannot be written: the teardown fails closed. On
+GitHub Actions the table is also appended to the step summary with a
+`::warning::` per leaked resource; upload `.contract-runs/` as an artifact
+with `if: always()` to keep the raw ledger. `TEST_SANDBOX_CONTRACT_RUNS_DIR`
+moves the run directory, for example onto a CI artifact path.
+
+A run that is killed (SIGKILL, a CI timeout) leaves `created` lines with no
+outcome. The next run warns about them; delete them by hand.
 
 Keep the scenarios readable. One scenario is one `it` with no shared state
 beyond the sandbox it creates, and it asserts on outcomes a human can check

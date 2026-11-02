@@ -17,3 +17,6 @@ go/test/e2e/testdata/openapi.json
 !.env.example
 
 __pycache__
+
+# Audit ledgers written by the sandbox provider contract suite.
+js/sandbox/.contract-runs/
