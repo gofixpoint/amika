@@ -346,6 +346,7 @@ export async function listVercelSandboxes(
     if (sandbox.vcpus == null) continue;
     listings.push({
       providerSandboxId: sandbox.name,
+      name: sandbox.name,
       orgId: sandbox.tags?.[SANDBOX_ORG_ID_LABEL] ?? null,
       state: sandbox.status,
       sizing: {

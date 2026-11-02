@@ -328,6 +328,7 @@ export async function listFreestyleSandboxes(
     if (!vm.sizing) continue;
     listings.push({
       providerSandboxId: vm.id,
+      name: vm.name ?? null,
       // Freestyle VMs have no labels to carry an org.
       orgId: null,
       state: vm.state,

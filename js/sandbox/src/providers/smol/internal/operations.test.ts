@@ -415,6 +415,7 @@ describe("smol operations", () => {
     expect(await ops.list()).toEqual([
       {
         providerSandboxId: INPUT.name,
+        name: INPUT.name,
         state: "stopped",
         orgId: null,
         sizing: { vcpus: 2, memoryGib: 1.5, diskGib: 20 },

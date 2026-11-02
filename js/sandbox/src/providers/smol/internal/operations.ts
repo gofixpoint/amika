@@ -311,6 +311,7 @@ export function smolOperations(
           : [
               {
                 providerSandboxId: machine.name,
+                name: machine.name,
                 orgId: null,
                 state: machine.state,
                 sizing: {

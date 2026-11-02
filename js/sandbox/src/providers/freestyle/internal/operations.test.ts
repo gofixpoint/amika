@@ -229,6 +229,7 @@ describe("listFreestyleSandboxes", () => {
     expect(listings).toEqual([
       {
         providerSandboxId: "vm_1",
+        name: "my-box",
         orgId: null,
         state: "running",
         // 4096 MiB → 4 GiB, 10240 MiB → 10 GiB.

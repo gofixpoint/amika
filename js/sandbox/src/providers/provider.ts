@@ -193,6 +193,12 @@ export type ProviderSandboxSizing = SandboxResources;
  */
 export interface ProviderSandboxListing {
   providerSandboxId: string;
+  /**
+   * The name the sandbox was created with (the `name` passed to `create`),
+   * or `null` when the provider keeps no name. Lets a caller find a sandbox
+   * it named but whose `create` never returned an id.
+   */
+  name: string | null;
   orgId: string | null;
   state: string;
   sizing: ProviderSandboxSizing;
