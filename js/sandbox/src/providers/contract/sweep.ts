@@ -141,7 +141,7 @@ export async function sweepRun(
       id: row.id,
       name: row.name,
       test: row.test,
-      delete: () => deleteResource(provider, row, snapshotIds),
+      delete: () => deleteResource(provider, row, snapshotIds, ledger),
       verifyGone: verifier(provider, row, snapshotIds, options.settleMs ?? 0),
     });
     outcomes.push(outcome);
@@ -185,15 +185,19 @@ function refusal(
 
 /**
  * Find a snapshot by name with the registration-tolerant lookup. On a
- * provider with opaque ids, a snapshot whose id was never recorded cannot be
- * found, so that is an error rather than "absent".
+ * provider with opaque ids, try name lookup before requiring a recorded id.
+ * A null lookup without either id is ambiguous, so it fails closed.
  */
 async function findSnapshot(
   provider: SandboxProvider,
   row: AuditRow,
   snapshotIds: Map<string, string>,
 ) {
+  const snapshot = await provider.snapshots!.find(row.name);
+  if (snapshot?.providerSnapshotId)
+    snapshotIds.set(row.name, snapshot.providerSnapshotId);
   if (
+    !snapshot &&
     provider.capabilities.snapshotIdsAreOpaque &&
     !snapshotIds.has(row.name)
   ) {
@@ -201,21 +205,40 @@ async function findSnapshot(
       `no bootable id was recorded for snapshot ${row.name}, so it cannot be looked up; check the provider by hand`,
     );
   }
-  return provider.snapshots!.find(row.name);
+  return snapshot;
 }
 
 async function deleteResource(
   provider: SandboxProvider,
   row: AuditRow,
   snapshotIds: Map<string, string>,
+  ledger: Ledger,
 ): Promise<void> {
   switch (row.kind) {
-    case "sandbox":
-      await provider.sandboxes.get(row.id).delete();
+    case "sandbox": {
+      // New ledgers record the name before create and identify its id later.
+      // Older ledgers already used the provider id as their resource id.
+      let id = row.providerId ?? (row.id !== row.name ? row.id : undefined);
+      if (!id && provider.capabilities.listSandboxes) {
+        const found = (await provider.sandboxes.list()).find(
+          (s) => s.name === row.name,
+        );
+        id = found?.providerSandboxId;
+      }
+      if (!id)
+        throw new Error(
+          `no provider id was recorded or recovered for sandbox ${row.name}; check the provider by hand`,
+        );
+      if (!row.providerId) ledger.identify("sandbox", row.id, id);
+      row.providerId = id;
+      await provider.sandboxes.get(id).delete();
       return;
+    }
     case "snapshot": {
       // A snapshot already gone is a finished job, not an error.
       const snapshot = await findSnapshot(provider, row, snapshotIds);
+      if (snapshot?.providerSnapshotId)
+        ledger.identify("snapshot", row.id, snapshot.providerSnapshotId);
       await snapshot?.delete();
       return;
     }
@@ -241,7 +264,7 @@ function verifier(
       ? provider.capabilities.listSandboxes
         ? async () =>
             !(await provider.sandboxes.list()).some(
-              (l) => l.providerSandboxId === row.id,
+              (l) => l.providerSandboxId === (row.providerId ?? row.id),
             )
         : undefined
       : async () => (await findSnapshot(provider, row, snapshotIds)) === null;

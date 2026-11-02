@@ -93,6 +93,57 @@ describe("sweepRun", () => {
     });
   });
 
+  it.each([false, true])(
+    "sweeps a pre-create sandbox record (identified=%s)",
+    async (identified) => {
+      const { provider, sandbox } = await leakedLedger();
+      const events: object[] = [
+        {
+          event: "created",
+          kind: "sandbox",
+          provider: "simulate",
+          id: "leaked",
+          name: "leaked",
+          test: "t",
+          at: "2026-11-01T12:00:00Z",
+        },
+      ];
+      if (identified)
+        events.push({
+          event: "identified",
+          kind: "sandbox",
+          id: "leaked",
+          providerId: sandbox.id,
+          at: "2026-11-01T12:00:01Z",
+        });
+      const file = ledgerFile(...events);
+      const result = await sweepRun("dead-run", file, options());
+      expect(await provider.sandboxes.list()).toEqual([]);
+      expect(result.outcomes[0]).toMatchObject({
+        event: "deleted",
+        id: "leaked",
+        verified: true,
+      });
+    },
+  );
+
+  it("keeps an unresolved pre-create sandbox record failed", async () => {
+    const file = ledgerFile({
+      event: "created",
+      kind: "sandbox",
+      provider: "simulate",
+      id: "missing",
+      name: "missing",
+      test: "t",
+      at: "2026-11-01T12:00:00Z",
+    });
+    const result = await sweepRun("dead-run", file, options());
+    expect(result.outcomes[0]).toMatchObject({
+      event: "delete_failed",
+      error: expect.stringContaining("check the provider by hand"),
+    });
+  });
+
   it("skips a run whose process is still alive", async () => {
     const { provider, file } = await leakedLedger();
     const result = await sweepRun(
@@ -219,6 +270,45 @@ describe("sweepRun with snapshots", () => {
     });
   });
 
+  it("recovers an opaque snapshot by name after a killed capture", async () => {
+    const file = await leakedSnapshot("snap-recoverable");
+    const result = await sweepRun(
+      "dead-run",
+      file,
+      options({
+        providerFor: () => {
+          const real = createSandboxProvider("simulate", DEPS);
+          return {
+            ...real,
+            capabilities: { ...real.capabilities, snapshotIdsAreOpaque: true },
+            snapshots: {
+              ...real.snapshots!,
+              find: async (name) => {
+                const snapshot = await real.snapshots!.find(name);
+                return snapshot
+                  ? { ...snapshot, providerSnapshotId: "snap-recovered" }
+                  : null;
+              },
+            },
+          };
+        },
+      }),
+    );
+    expect(
+      getSimulateWorld(WORLD_ID).snapshot("snap-recoverable"),
+    ).toBeUndefined();
+    expect(result.outcomes[0]).toMatchObject({
+      event: "deleted",
+      verified: true,
+    });
+    expect(parseLedger(readFileSync(file, "utf8"))).toContainEqual(
+      expect.objectContaining({
+        event: "identified",
+        providerId: "snap-recovered",
+      }),
+    );
+  });
+
   it("fails rather than reports gone when an opaque id was never recorded", async () => {
     const file = await leakedSnapshot("snap-opaque");
     const result = await sweepRun(
@@ -233,6 +323,7 @@ describe("sweepRun with snapshots", () => {
           return {
             ...real,
             capabilities: { ...real.capabilities, snapshotIdsAreOpaque: true },
+            snapshots: { ...real.snapshots!, find: async () => null },
           };
         },
       }),
