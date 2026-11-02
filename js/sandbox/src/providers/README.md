@@ -322,7 +322,11 @@ reclaims vendor resources using ledgers saved by a finished Actions run.
 It runs only on the repository's default branch. It does not run vendor
 tests on pull requests.
 
-Create a `sandbox-contract` GitHub environment. In its **Secrets** settings,
+Create a `sandbox-contract` GitHub environment. Under **Deployment branches
+and tags**, restrict it to the default branch before adding secrets. A branch
+can change the workflow guard, so the environment policy enforces this
+restriction. Add required reviewers if your deployment policy needs them.
+In its **Secrets** settings,
 add the key for each provider you use: `DAYTONA_API_KEY`, `E2B_API_KEY`,
 `FREESTYLE_API_KEY`, or `VERCEL_TOKEN`. In its **Variables** settings, add any
 optional provider settings you need:
