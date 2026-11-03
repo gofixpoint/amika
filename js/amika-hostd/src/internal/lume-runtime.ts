@@ -243,8 +243,11 @@ export function lumeRuntime({
       }
       // The machine API takes argv; the guest runs one shell line.
       const line = request.command.map(shellQuote).join(" ");
-      // The request's own values win over the create's.
+      // The request's own values win over the create's. Commands get the GNU
+      // tools and bash 5 first in PATH, which the control plane's provisioning
+      // scripts are written for; user shells keep the macOS tools.
       const env = {
+        PATH: PROVISIONING_PATH,
         ...(await createEnv(name)),
         ...Object.fromEntries(
           (request.env ?? []).map((e) => [e.name, e.value]),
@@ -303,6 +306,20 @@ interface Forward {
   close: () => void;
   closed: Promise<void>;
 }
+
+/** The macOS image's GNU tools, then Homebrew, then the system's. */
+const PROVISIONING_PATH = [
+  "/opt/homebrew/opt/coreutils/libexec/gnubin",
+  "/opt/homebrew/opt/gnu-sed/libexec/gnubin",
+  "/opt/homebrew/opt/findutils/libexec/gnubin",
+  "/opt/homebrew/bin",
+  "/opt/homebrew/sbin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/usr/sbin",
+  "/sbin",
+].join(":");
 
 /** Virtualization.framework's error for a third macOS VM. */
 const VZ_LIMIT =

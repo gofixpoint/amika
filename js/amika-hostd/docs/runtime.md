@@ -114,7 +114,8 @@ directory. hostd turns off Lume's telemetry when Lume is on.
   a size with less disk is refused (`400`). The create's `env` is kept with
   the VM and given to each exec, as smolvm gives a machine's env.
 - Exec runs argv as `amika`, or as root for `user: "root"`; other users are
-  refused. Exec and file calls boot a stopped VM first, as smolvm's do.
+  refused. Its `PATH` puts the image's GNU tools and bash 5 first, which the
+  control plane's provisioning scripts are written for. Exec and file calls boot a stopped VM first, as smolvm's do.
 - A boot that macOS refuses because two macOS VMs already run answers
   `409` (`host is full`).
 - **Service ports go through SSH.** `hostPort` opens a loopback port with

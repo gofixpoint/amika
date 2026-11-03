@@ -33,6 +33,10 @@ already in Lume, so it never deletes a VM it did not make.
 - amikad in `/usr/local/bin`, and its launchd job in `/usr/local/lib/amikad`.
   launchd does not start amikad at boot. Provisioning loads the job after it
   sets new credentials.
+- Amika's lifecycle hooks in `/usr/local/lib/amikad` (`run-hook.sh`,
+  `pre-setup.sh`, `post-setup.sh`): `/usr/lib` is read-only on macOS.
+  `pre-setup.sh` is the Linux hook less Docker, Pi Web, amikalog, and the
+  Linux kernel guard. zsh reads Amika's env from `/etc/profile.d`.
 - The Xcode Command Line Tools (git, clang, python3), and Homebrew with GNU
   coreutils, sed, findutils, bash 5, and jq.
 - Node, npm, and the coding agents, at the pinned versions.

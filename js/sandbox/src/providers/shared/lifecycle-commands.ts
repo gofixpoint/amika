@@ -10,9 +10,7 @@
  * circular import.
  */
 import {
-  POST_SETUP_SCRIPT,
-  PRE_SETUP_SCRIPT,
-  RUN_HOOK_SCRIPT,
+  LINUX_HOOK_DIR,
   SANDBOX_SETUP_SCRIPT,
   SANDBOX_START_SCRIPT,
 } from "../../constants";
@@ -24,16 +22,20 @@ import {
  * package's `runLifecycleScripts` and by the Vercel resume path in
  * `@amika/sandbox` (which re-runs the start-phase hooks).
  */
-export function buildLifecycleCommands(): {
+export function buildLifecycleCommands(
+  /** Where the image keeps its hook scripts (`MACOS_HOOK_DIR` on macOS). */
+  hookDir: string = LINUX_HOOK_DIR,
+): {
   preSetup: string;
   setup: string;
   postSetup: string;
   start: string;
 } {
+  const runHook = `${hookDir}/run-hook.sh`;
   return {
-    preSetup: `${RUN_HOOK_SCRIPT} ${PRE_SETUP_SCRIPT}`,
-    setup: `${RUN_HOOK_SCRIPT} ${SANDBOX_SETUP_SCRIPT}`,
-    postSetup: `${RUN_HOOK_SCRIPT} ${POST_SETUP_SCRIPT}`,
-    start: `${RUN_HOOK_SCRIPT} ${SANDBOX_START_SCRIPT}`,
+    preSetup: `${runHook} ${hookDir}/pre-setup.sh`,
+    setup: `${runHook} ${SANDBOX_SETUP_SCRIPT}`,
+    postSetup: `${runHook} ${hookDir}/post-setup.sh`,
+    start: `${runHook} ${SANDBOX_START_SCRIPT}`,
   };
 }

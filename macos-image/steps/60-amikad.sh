@@ -17,6 +17,8 @@ install -m 644 -o root -g wheel \
 plutil -lint /usr/local/lib/amikad/com.amika.amikad.plist >/dev/null
 
 # amikad's secure writes refuse a symlink in a path, and /var is a symlink to
-# /private/var. So make the real directory that amikad writes to.
-install -d -m 700 -o root -g wheel /private/var/lib/amikad
+# /private/var. So make the real directory that amikad writes to. Its mode is
+# Linux's: hooks running as amika read agent-cwd there, and amikad's own
+# files in it are 0600.
+install -d -m 755 -o root -g wheel /private/var/lib/amikad
 install -d -m 755 -o root -g wheel /private/var/log/amikad
