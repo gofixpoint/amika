@@ -1,4 +1,5 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
+import { execFile } from "node:child_process";
 import { isIPv6 } from "node:net";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
@@ -45,6 +46,7 @@ import {
   runtimeRouter,
   type RuntimeRouter,
 } from "./runtime-router.js";
+import { lumeRuntime } from "./lume-runtime.js";
 import { writePrivateFile } from "./private-file.js";
 import path from "node:path";
 import { openSecrets as openSecretStore, type Secrets } from "./credentials.js";
@@ -204,6 +206,8 @@ export interface CliDeps {
   generateSecretKey?: SetupDeps["generateSecretKey"];
   /** Where the router records each machine's runtime; defaults to a file. */
   machineIndex?: typeof fileMachineIndex;
+  /** The Lume runtime, when Lume is on; tests inject a fake. */
+  lumeRuntime?: typeof lumeRuntime;
   /** Tunnel enrolment; defaults to the control plane and the record file. */
   enrol?: EnrolForTunnelDeps["enrol"];
   write?: EnrolForTunnelDeps["write"];
@@ -1327,8 +1331,18 @@ function machineRouter(
   paths: DaemonPaths,
   ownSmolvm: boolean,
   deps: CliDeps,
-): RuntimeRouter {
+): { router: RuntimeRouter; shutdown: () => Promise<void> } {
   const on = config.runtimes.runtimes;
+  const lume =
+    on.lume &&
+    (deps.lumeRuntime ?? lumeRuntime)({
+      storageDir: on.lume.storageDir!,
+      stateDir: paths.lumeStateDir,
+    });
+  // No usage data leaves the host.
+  if (lume && !deps.lumeRuntime) {
+    execFile("lume", ["config", "telemetry", "disable"], () => {});
+  }
   const router = runtimeRouter({
     runtimes: {
       ...(on.smol && {
@@ -1338,6 +1352,7 @@ function machineRouter(
           logFile: ownSmolvm ? paths.smolvmLogFile : undefined,
         }),
       }),
+      ...(lume && { lume }),
     },
     maxRunning: () =>
       Object.fromEntries(
@@ -1354,7 +1369,7 @@ function machineRouter(
       );
     });
   }
-  return router;
+  return { router, shutdown: async () => lume?.shutdown() };
 }
 
 async function serveInForeground(
@@ -1397,6 +1412,7 @@ async function serveInForeground(
   const interrupted = new AbortController();
   void signalled.then(() => interrupted.abort());
   let runtime: ManagedSmolvm | undefined;
+  let routed: ReturnType<typeof machineRouter> | undefined;
   /**
    * Whichever transport this host serves on.
    *
@@ -1421,6 +1437,7 @@ async function serveInForeground(
     } finally {
       try {
         await bareMetal?.shutdown();
+        await routed?.shutdown();
         await stopSmolvm(runtime, deps);
       } finally {
         release();
@@ -1439,8 +1456,10 @@ async function serveInForeground(
       // Machines run on the runtimes that are on: smol through the `smol`
       // provider, on the smolvm this daemon started (or `SMOL_API_URL`, for
       // plain `serve`).
-      const machines =
-        bareMetal ?? machineRouter(serving, paths, runtime !== undefined, deps);
+      routed = bareMetal
+        ? undefined
+        : machineRouter(serving, paths, runtime !== undefined, deps);
+      const machines = bareMetal ?? routed!.router;
       // Only a daemon running its own smolvm can pack a snapshot: a pack
       // is a subprocess of that binary, reading the same machine state.
       server =

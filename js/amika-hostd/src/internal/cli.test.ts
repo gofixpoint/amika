@@ -258,6 +258,7 @@ describe("runCli", () => {
         servicesFile: "/state/amika-hostd/services.json",
         prepullFile: "/state/amika-hostd/prepull.json",
         machineIndexFile: "/state/amika-hostd/machines.json",
+        lumeStateDir: "/state/amika-hostd/lume",
         snapshotIndexFile: "/state/amika-hostd/snapshots.json",
         snapshotDir: "/state/amika-hostd/snapshots",
         bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",

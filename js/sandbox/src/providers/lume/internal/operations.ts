@@ -1,5 +1,6 @@
 /** Rig lifecycle, exec, and files for macOS VMs that Lume runs. */
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, connect, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { z } from "zod";
 import type { LumeConfig } from "../config";
@@ -175,7 +176,48 @@ export function lumeOperations(
     );
   };
 
+  /**
+   * A loopback port on the host that reaches `guestPort` on the guest's
+   * loopback, through the VM's management key. `close` ends it; `closed`
+   * settles when it ends for any reason, such as the VM stopping.
+   */
+  const openForward = async (
+    id: string,
+    guestPort: number,
+  ): Promise<{ port: number; close: () => void; closed: Promise<void> }> => {
+    const guest = await running(id);
+    // ssh binds the port, so pick a free one, and try again if another
+    // program takes it first.
+    for (let attempt = 1; ; attempt++) {
+      const port = await freeLoopbackPort();
+      const child = ssh.forward(
+        guest,
+        paths(id).keyFile,
+        AMIKA_USER,
+        port,
+        guestPort,
+      );
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      const closed = new Promise<void>((resolve) =>
+        child.once("close", () => resolve()),
+      );
+      const ready = await Promise.race([
+        waitForPort(port, 15_000).then(() => true),
+        closed.then(() => false),
+      ]);
+      if (ready) return { port, close: () => child.kill(), closed };
+      child.kill();
+      if (attempt === 3) {
+        throw new Error(
+          `Failed to forward port ${guestPort} of Lume VM ${id}: ${stderr.trim()}`,
+        );
+      }
+    }
+  };
+
   return {
+    openForward,
     adapter: (id: string): SandboxAdapter => ({
       exec: (command, opts) => run(id, command, opts),
       uploadFile: (content, path) => write(id, path, content),
@@ -220,6 +262,8 @@ export function lumeOperations(
         password: config.bootstrapPassword ?? "lume",
       };
       await mkdir(vmsDir, { recursive: true, mode: 0o700 });
+      // Lume does not make the folder it clones into.
+      await mkdir(config.storageDir, { recursive: true });
       await cli.clone(input.snapshot, input.name);
       try {
         await rm(dir, { recursive: true, force: true });
@@ -329,3 +373,35 @@ dir=$(dirname -- "$1")
 sudo -n -u ${AMIKA_USER} mkdir -p -- "$dir" 2>/dev/null || mkdir -p -- "$dir"
 cat > "$1"
 chown -h -- ${AMIKA_USER}:staff "$1"`;
+
+/** A port on 127.0.0.1 that nothing listens on now. */
+function freeLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/** Resolve once a TCP connect to `port` on 127.0.0.1 works. */
+async function waitForPort(port: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const open = await new Promise<boolean>((resolve) => {
+      const socket = connect(port, "127.0.0.1");
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+    });
+    if (open) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for port ${port}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}

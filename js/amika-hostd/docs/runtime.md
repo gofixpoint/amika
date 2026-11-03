@@ -90,6 +90,32 @@ in the state directory that records which runtime owns each machine.
 `/health` names the `runtimes` feature on a VM host, so a control plane knows
 it can send `runtime`.
 
+## Lume runtime
+
+`src/internal/lume-runtime.ts` runs macOS rigs through the `lume` sandbox
+provider (`@amika/sandbox/lume`), when `[runtimes.lume]` is on. A Lume
+preset's `image` names a template VM in Lume's default storage, such as one
+`macos-image/build.sh` made. Each rig is a clone of it in `storage_dir`, and
+each VM's management key and known hosts are in `lume/` in the state
+directory. hostd turns off Lume's telemetry when Lume is on.
+
+- Create takes `cpus` and `memoryMb` together. The disk is the template's;
+  a size with less disk is refused (`400`), and so is any `env`.
+- Exec runs argv as `amika`, or as root for `user: "root"`; other users are
+  refused. Exec and file calls boot a stopped VM first, as smolvm's do.
+- A boot that macOS refuses because two macOS VMs already run answers
+  `409` (`host is full`).
+- **Service ports go through SSH.** `hostPort` opens a loopback port with
+  `ssh -L` over the VM's management key, to the port on the guest's own
+  loopback. It is opened on demand and ends when the VM stops, so a new guest
+  address after a boot, or a hostd restart, needs no repair. hostd cannot
+  connect to a guest's address itself: macOS refuses that to a program with
+  no Local Network grant (Node gets `EHOSTUNREACH`), but not to its own
+  `ssh`. Port 22 is never forwarded.
+
+`lume-runtime.integration.test.ts` checks this on a real VM
+(`TEST_LUME_IMAGE`, `TEST_LUME_DIR`).
+
 ## Machine runtime
 
 `src/internal/machine-runtime.ts` serves the machine API through the `smol`

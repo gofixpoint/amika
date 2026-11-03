@@ -39,6 +39,8 @@ export interface DaemonPaths {
   prepullFile: string;
   /** Which runtime owns each machine (`runtime-router.ts`). */
   machineIndexFile: string;
+  /** Each Lume VM's management key and known hosts (`lume-runtime.ts`). */
+  lumeStateDir: string;
   /** The snapshots this host holds (`snapshot-store.ts`). */
   snapshotIndexFile: string;
   /**
@@ -363,6 +365,7 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     servicesFile: path.join(dir, "services.json"),
     prepullFile: path.join(dir, "prepull.json"),
     machineIndexFile: path.join(dir, "machines.json"),
+    lumeStateDir: path.join(dir, "lume"),
     snapshotIndexFile: path.join(dir, "snapshots.json"),
     snapshotDir: path.join(dir, "snapshots"),
     bareMetalRigFile: path.join(dir, "bare-metal-rig.json"),

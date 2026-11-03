@@ -8,6 +8,7 @@
     "./client": "./src/client.ts",
     "./config-env": "./src/config-from-env.ts",
     "./smol": "./src/providers/smol/provider.ts",
+    "./lume": "./src/providers/lume/provider.ts",
     "./hostd-service-tokens": "./src/providers/amika-hostd/service-tokens.ts"
   },
   "scripts": {
