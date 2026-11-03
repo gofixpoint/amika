@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.amika.amikad</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/amikad</string>
+    <string>serve</string>
+    <string>--beta-no-relay</string>
+    <string>--port</string>
+    <string>60999</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>1</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/amikad/amikad.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/amikad/amikad.log</string>
+</dict>
+</plist>

@@ -123,7 +123,7 @@ lint: goenv
 	go -C $(GO_DIR) run github.com/mgechev/revive@v1.14.0 -set_exit_status -config revive.toml ./...
 
 shellcheck:
-	shellcheck bin/* sandbox-image/build.sh sandbox-image/steps/*.sh sandbox-image/assets/hooks/*.sh sandbox-image/assets/stable/welcome.sh sandbox-image/verify/run.sh sandbox-image/verify/checks/*.sh sandbox-image/verify/lib/check.sh scripts/test/*.sh install.sh install-amika-hostd.sh setup-repo.sh materialization-scripts/*.sh
+	shellcheck bin/* macos-image/build.sh macos-image/steps/*.sh sandbox-image/build.sh sandbox-image/steps/*.sh sandbox-image/assets/hooks/*.sh sandbox-image/assets/stable/welcome.sh sandbox-image/verify/run.sh sandbox-image/verify/checks/*.sh sandbox-image/verify/lib/check.sh scripts/test/*.sh install.sh install-amika-hostd.sh setup-repo.sh materialization-scripts/*.sh
 
 zizmor:
 	uvx zizmor@$(ZIZMOR_VERSION) .
