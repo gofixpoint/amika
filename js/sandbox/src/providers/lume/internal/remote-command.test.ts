@@ -1,6 +1,7 @@
 /**
  * The line runs here through a local shell, as sshd runs it in the guest
- * (`$SHELL -c <line>`), so the tests check what the command does.
+ * (`$SHELL -c <line>`), so the tests check what the command does. The guest
+ * is macOS with zsh, so the tests run only on macOS.
  */
 import { describe, expect, it } from "vitest";
 import { remoteCommand } from "./remote-command";
@@ -15,7 +16,7 @@ async function runLine(line: string) {
   };
 }
 
-describe("remoteCommand", () => {
+describe.runIf(process.platform === "darwin")("remoteCommand", () => {
   it("keeps the exit code and the two streams", async () => {
     expect(
       await runLine(remoteCommand("echo out; echo err 1>&2; exit 7")),
