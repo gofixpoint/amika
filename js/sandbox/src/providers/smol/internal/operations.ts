@@ -28,6 +28,11 @@ import {
 } from "./client";
 
 export interface SmolOperationsOptions {
+  /**
+   * The guest's user folders and file owner. Defaults to the Linux images'
+   * ({@link LINUX_GUEST_USER}).
+   */
+  guestUser?: SmolGuestUser;
   /** The provider named in created sandboxes and unsupported-operation errors. */
   provider?: string;
   /**
@@ -65,10 +70,30 @@ export type SmolCreateInput = Omit<CreateSandboxProviderInput, "resources"> & {
  */
 const AMIKA_USER = "amika";
 
+/** Where the guest's users live, and who owns the files written to it. */
+export interface SmolGuestUser {
+  /** `HOME` for an ordinary exec. */
+  home: string;
+  /** `HOME` for a `sudo: true` exec. */
+  rootHome: string;
+  /** The `user:group` a written file is given. */
+  fileOwner: string;
+}
+
+export const LINUX_GUEST_USER: SmolGuestUser = {
+  home: DEFAULT_HOME_DIR,
+  rootHome: "/root",
+  fileOwner: `${AMIKA_USER}:${AMIKA_USER}`,
+};
+
 export function smolOperations(
   config: SmolConfig,
   client = new SmolClient(config),
-  { provider = "smol", serviceRoutes }: SmolOperationsOptions = {},
+  {
+    provider = "smol",
+    serviceRoutes,
+    guestUser = LINUX_GUEST_USER,
+  }: SmolOperationsOptions = {},
 ) {
   const rejectTimer = (
     interval: number | null | undefined,
@@ -94,7 +119,7 @@ export function smolOperations(
       // the user, so a command never writes into another user's home; a
       // caller's own HOME still wins.
       env: Object.entries({
-        HOME: opts?.sudo ? "/root" : DEFAULT_HOME_DIR,
+        HOME: opts?.sudo ? guestUser.rootHome : guestUser.home,
         ...opts?.env,
       }).map(([name, value]) => ({ name, value })),
       stdin: opts?.input,
@@ -126,7 +151,7 @@ export function smolOperations(
     );
     const chown = await run(
       id,
-      `chown -h -- ${AMIKA_USER}:${AMIKA_USER} ${shellQuote(path)}`,
+      `chown -h -- ${guestUser.fileOwner} ${shellQuote(path)}`,
       { sudo: true },
     );
     if (chown.exitCode !== 0) {
