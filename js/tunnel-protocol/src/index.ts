@@ -25,8 +25,14 @@ export const LEGACY_HOST_TUNNEL_PATH = "/v1/host-tunnel";
 
 /** Handshake headers, in the spelling both ends read and write. */
 export const HOST_ID_HEADER = "x-amika-host-id";
-export const CREDENTIAL_HEADER = "x-amika-host-credential";
+export const CREDENTIAL_HEADER = "x-amika-host-token";
 export const CONNECTION_ID_HEADER = "x-amika-connection-id";
+
+/**
+ * Where amika-hostd 0.6.0 and earlier send the credential. The gateway
+ * still reads it, so those hosts keep attaching until they update.
+ */
+export const LEGACY_CREDENTIAL_HEADER = "x-amika-host-credential";
 
 /**
  * The keep-alive. The host sends `PING` as a text message and the relay's

@@ -43,7 +43,8 @@ describe("the handshake the gateway reads", () => {
     );
     const headers = sent?.headers as Record<string, string>;
     expect(headers["x-amika-host-id"]).toBe("host-1");
-    expect(headers["x-amika-host-credential"]).toBe("cred-1");
+    expect(headers["x-amika-host-token"]).toBe("cred-1");
+    expect(headers["x-amika-host-credential"]).toBeUndefined();
     // Not a bearer token: the gateway passes the value on unread.
     expect(headers.authorization).toBeUndefined();
   });
