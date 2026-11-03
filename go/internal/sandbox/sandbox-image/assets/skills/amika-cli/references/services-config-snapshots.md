@@ -31,8 +31,13 @@ setup_script = ".amika/setup.sh"
 port = 3000
 url_scheme = "http"
 
-[sandbox]
+[rig]                      # the old name, [sandbox], still works
 preset = "coder"
+size = "m"
+
+# For rigs on a host's Lume runtime, these replace [rig] whole.
+[runtimes.lume.rig]
+preset = "macos-coder"
 size = "m"
 
 [env]
