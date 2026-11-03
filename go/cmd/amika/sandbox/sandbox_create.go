@@ -248,8 +248,9 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 		return err
 	}
 
-	if sb.Runtime != nil && sb.Hostname != nil {
-		fmt.Fprintf(pw, "Rig %q created on %s (%s, %s, %s)\n", sb.Name, *sb.Hostname, *sb.Runtime, deref(sb.OS), dash(deref(sb.SandboxSize)))
+	// sb.Hostname is the rig's own DNS name; the host is the one --host named.
+	if sb.Runtime != nil && hostRef != "" {
+		fmt.Fprintf(pw, "Rig %q created on %s (%s, %s, %s)\n", sb.Name, hostRef, *sb.Runtime, deref(sb.OS), dash(deref(sb.SandboxSize)))
 	} else {
 		fmt.Fprintf(pw, "Rig %q created\n", sb.Name)
 	}
