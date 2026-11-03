@@ -1,5 +1,6 @@
 /** Exercise the daemon's HTTP boundary with an injected machine runtime. */
 import { signServiceToken } from "@amika/service-auth/credentials";
+import type { RuntimeConfig } from "./internal/runtimes.js";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import { memoryServiceRegistry } from "./internal/service-registry.js";
@@ -98,13 +99,42 @@ function json(body: unknown): RequestInit {
   };
 }
 
+/** A host with smol and lume on, and `images` as smol presets. */
+function smolPresets(images: Record<string, string>): () => RuntimeConfig {
+  const config: RuntimeConfig = {
+    runtimes: {
+      smol: { name: "smol", sizes: {} },
+      lume: { name: "lume", sizes: {}, maxRunning: 2 },
+    },
+    presets: {
+      ...Object.fromEntries(
+        Object.entries(images).map(([name, image]) => [
+          name,
+          {
+            os: "linux" as const,
+            defaultRuntime: "smol" as const,
+            images: { smol: image },
+          },
+        ]),
+      ),
+      "macos-coder": {
+        os: "macos",
+        defaultRuntime: "lume",
+        images: { lume: "amika-macos-coder" },
+      },
+    },
+    warnings: [],
+  };
+  return () => config;
+}
+
 describe("machine API", () => {
   it("keeps health independent of the runtime", async () => {
     const { app, runtime } = harness();
     expect(await (await app.request("/health")).json()).toEqual({
       status: "ok",
       apis: ["v0beta1"],
-      features: ["service-tokens"],
+      features: ["service-tokens", "runtimes"],
     });
     expectUntouched(runtime);
   });
@@ -126,6 +156,7 @@ describe("machine API", () => {
     expect(runtime.create).toHaveBeenCalledTimes(1);
     expect(runtime.create).toHaveBeenCalledWith({
       ...input,
+      runtime: "smol",
       services: undefined,
     });
     expect(runtime.start).not.toHaveBeenCalled();
@@ -138,7 +169,11 @@ describe("machine API", () => {
       const runtime = fakeRuntime();
       const app = authenticated(
         createApp(
-          { secretKey: SECRET, images: { "amika-coder": CODER }, configPath },
+          {
+            secretKey: SECRET,
+            runtimes: smolPresets({ coder: CODER }),
+            configPath,
+          },
           runtime,
         ),
       );
@@ -151,6 +186,50 @@ describe("machine API", () => {
       const input = { name: "demo", image: "amika-coder", cpus: 2 };
       expect((await app.request(ROOT, json(input))).status).toBe(201);
       expect(forwarded()).toBe(CODER);
+    });
+
+    it("takes a preset by Amika's own name too", async () => {
+      const { app, runtime, forwarded } = withImages();
+      const input = { name: "demo", image: "coder" };
+      expect((await app.request(ROOT, json(input))).status).toBe(201);
+      expect(forwarded()).toBe(CODER);
+      expect(runtime.create.mock.calls[0][0].runtime).toBe("smol");
+    });
+
+    it("creates on the preset's default runtime, or the one the request names", async () => {
+      const { app, runtime } = withImages();
+      const macos = { name: "mac", image: "macos-coder" };
+      expect((await app.request(ROOT, json(macos))).status).toBe(201);
+      expect(runtime.create.mock.calls[0][0]).toMatchObject({
+        image: "amika-macos-coder",
+        runtime: "lume",
+      });
+      const named = { ...macos, name: "mac2", runtime: "lume" };
+      expect((await app.request(ROOT, json(named))).status).toBe(201);
+      expect(runtime.create.mock.calls[1][0].runtime).toBe("lume");
+    });
+
+    it("refuses a runtime the preset does not have", async () => {
+      const { app, runtime } = withImages();
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: "coder", runtime: "lume" }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: 'preset "coder" has no lume runtime on this host; it has smol',
+      });
+      expectUntouched(runtime);
+    });
+
+    it("boots an image reference on smol only", async () => {
+      const { app, runtime } = withImages();
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: CODER, runtime: "lume" }),
+      );
+      expect(response.status).toBe(400);
+      expectUntouched(runtime);
     });
 
     it("refuses a name that isn't configured, naming the config file", async () => {
@@ -186,7 +265,7 @@ describe("machine API", () => {
         const pulls = new Set(images);
         const app = authenticated(
           createApp(
-            { secretKey: SECRET, images: { "amika-coder": CODER } },
+            { secretKey: SECRET, runtimes: smolPresets({ coder: CODER }) },
             runtime,
             { pullingImages: () => pulls },
           ),
@@ -1266,7 +1345,7 @@ describe("snapshots", () => {
     });
     const app = authenticated(
       createApp(
-        { secretKey: SECRET, images: { "amika-coder": "ghcr.io/x:1" } },
+        { secretKey: SECRET, runtimes: smolPresets({ coder: "ghcr.io/x:1" }) },
         runtime,
         { snapshots: { store: store as never, capture } },
       ),

@@ -37,6 +37,8 @@ export interface DaemonPaths {
   servicesFile: string;
   /** The preset images already pulled into smolvm's cache (`prepull.ts`). */
   prepullFile: string;
+  /** Which runtime owns each machine (`runtime-router.ts`). */
+  machineIndexFile: string;
   /** The snapshots this host holds (`snapshot-store.ts`). */
   snapshotIndexFile: string;
   /**
@@ -360,6 +362,7 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     smolvmLogFile: path.join(logDir, "smolvm.log"),
     servicesFile: path.join(dir, "services.json"),
     prepullFile: path.join(dir, "prepull.json"),
+    machineIndexFile: path.join(dir, "machines.json"),
     snapshotIndexFile: path.join(dir, "snapshots.json"),
     snapshotDir: path.join(dir, "snapshots"),
     bareMetalRigFile: path.join(dir, "bare-metal-rig.json"),

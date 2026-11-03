@@ -65,6 +65,31 @@ pidfile naming a live process that is not confirmed is left alone, and `down`
 says to remove it if it is stale, as `up` does. A `smolvm.pid` and
 `smolvm.url` naming a pid that has exited are removed.
 
+## Runtime router
+
+On a VM host, the machine API runs over `src/internal/runtime-router.ts`: one
+`MachineRuntime` for each runtime that is on (see
+[Runtimes](configuration.md#runtimes)), and a machine index in `machines.json`
+in the state directory that records which runtime owns each machine.
+
+- A create names its runtime (`runtime` in the request, else the preset's
+  default runtime; `resolveSource`). Snapshots and image references boot on
+  smol only. The machine is recorded before the runtime creates it, and is
+  forgotten if the create fails and leaves nothing.
+- A machine name is unique across all runtimes (`409`).
+- List merges every runtime's machines, and each one names its `runtime`.
+- With one runtime on, a machine the index lacks goes to that runtime, so a
+  host acts as it did before the index. With more, startup records each
+  runtime's machines that the index lacks.
+- A create, a start, and an exec or file call on a stopped machine answer
+  `409` (`host is full`) when the machine's runtime already runs
+  `max_running` machines.
+- A snapshot of a rig on a runtime that takes none (Lume) is refused (`409`).
+- smolvm starts only when smol is on.
+
+`/health` names the `runtimes` feature on a VM host, so a control plane knows
+it can send `runtime`.
+
 ## Machine runtime
 
 `src/internal/machine-runtime.ts` serves the machine API through the `smol`

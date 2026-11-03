@@ -42,7 +42,7 @@ GitHub release, verifies it against `checksums.txt`, and installs:
   `/etc`. It is never overwritten, and it holds no secret: `amika-hostd setup`
   keeps the secrets (see [Secret storage](setup-and-secrets.md#secret-storage)).
   An existing config is kept, and the installer runs `amika-hostd config
-  upgrade` on it, which rewrites tables the new daemon no longer reads
+upgrade` on it, which rewrites tables the new daemon no longer reads
   (`[preset_images]`). A failed upgrade is a warning, not a failed install.
 
 Its closing steps point the operator at `amika-hostd setup`, then

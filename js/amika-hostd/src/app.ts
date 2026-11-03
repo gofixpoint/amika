@@ -19,6 +19,7 @@ import {
   replaceServicesSchema,
   resolveSource,
 } from "./internal/requests.js";
+import type { RuntimeConfig } from "./internal/runtimes.js";
 import {
   fromRequest,
   hardenPreviewResponse,
@@ -57,8 +58,11 @@ export interface AppConfig {
    * preview routes.
    */
   secretKey: string;
-  /** Preset image names mapped to the OCI references machines boot. */
-  images?: Record<string, string>;
+  /**
+   * The runtimes that are on and the presets on them, read on each create
+   * so a reload takes effect at once. Defaults to smol with no presets.
+   */
+  runtimes?: () => RuntimeConfig;
   /** Named in errors for unconfigured images, so operators know what to edit. */
   configPath?: string;
   /**
@@ -121,7 +125,7 @@ export interface AppDeps {
 export function createApp(
   {
     secretKey,
-    images = {},
+    runtimes = () => SMOL_ONLY,
     configPath,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     smolvmLogFile,
@@ -271,7 +275,7 @@ export function createApp(
         ...FEATURES,
         ...(gateway.servesPreviews ? [BROWSER_LOGIN_FEATURE] : []),
         ...(snapshots ? [SNAPSHOTS_FEATURE] : []),
-        ...(bareMetal ? [BARE_METAL_FEATURE] : []),
+        ...(bareMetal ? [BARE_METAL_FEATURE] : [RUNTIMES_FEATURE]),
       ],
     }),
   );
@@ -414,12 +418,18 @@ export function createApp(
     );
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());
-      const { services, image: named, ...machine } = input;
+      const { services, image: named, runtime: requested, ...machine } = input;
       // The rig is this machine as it is, so a bare-metal host boots no
       // image: the name is passed along unresolved, and ignored.
       const source = bareMetal
         ? { image: named }
-        : resolveSource(named, images, snapshotSource, configPath);
+        : resolveSource(
+            named,
+            requested,
+            runtimes(),
+            snapshotSource,
+            configPath,
+          );
       // smolvm would answer only once the download is done, which can
       // outlast the deadline; the caller is better told now, and when to
       // try again.
@@ -546,6 +556,18 @@ export const PULLING_RETRY_AFTER_S = 60;
 /** The versioned API this daemon serves. */
 export const API_VERSION = "v0beta1";
 export const FEATURES = ["service-tokens"];
+/**
+ * Named in `/health` by a VM host: a create takes an optional `runtime`,
+ * and each machine names its own (spec 026 in amika-mono).
+ */
+export const RUNTIMES_FEATURE = "runtimes";
+
+/** A host's runtimes before its config names any: smol, with no presets. */
+const SMOL_ONLY: RuntimeConfig = {
+  runtimes: { smol: { name: "smol", sizes: {} } },
+  presets: {},
+  warnings: [],
+};
 const RIGS_ROUTE = `/${API_VERSION}/rigs`;
 /** This host's snapshots, which belong to the host rather than to one rig. */
 const SNAPSHOTS_ROUTE = `/${API_VERSION}/snapshots`;

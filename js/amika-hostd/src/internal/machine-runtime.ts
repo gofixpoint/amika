@@ -24,6 +24,7 @@ import smolProvider, {
   smolOperations,
 } from "@amika/sandbox/smol";
 import { z } from "zod";
+import type { RuntimeName } from "./runtimes.js";
 
 /**
  * A machine as the machine API reports it: `smolvm serve`'s whole object,
@@ -77,6 +78,8 @@ export interface CreateMachine {
   network: boolean;
   env?: EnvVar[];
   services?: ServicePort[];
+  /** The runtime to create it on, for a router (`runtime-router.ts`). */
+  runtime?: RuntimeName;
 }
 
 export interface ExecRequest {

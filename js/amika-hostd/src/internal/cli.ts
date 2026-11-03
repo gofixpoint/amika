@@ -40,6 +40,11 @@ import {
 } from "./config.js";
 import { checkRuntimesSupported, presetImages } from "./runtimes.js";
 import { upgradeConfigFile } from "./config-upgrade.js";
+import {
+  fileMachineIndex,
+  runtimeRouter,
+  type RuntimeRouter,
+} from "./runtime-router.js";
 import { writePrivateFile } from "./private-file.js";
 import path from "node:path";
 import { openSecrets as openSecretStore, type Secrets } from "./credentials.js";
@@ -197,6 +202,8 @@ export interface CliDeps {
   writeConfigFile?: SetupDeps["writeConfigFile"];
   systemHostname?: SetupDeps["systemHostname"];
   generateSecretKey?: SetupDeps["generateSecretKey"];
+  /** Where the router records each machine's runtime; defaults to a file. */
+  machineIndex?: typeof fileMachineIndex;
   /** Tunnel enrolment; defaults to the control plane and the record file. */
   enrol?: EnrolForTunnelDeps["enrol"];
   write?: EnrolForTunnelDeps["write"];
@@ -1314,6 +1321,42 @@ async function startBackground(
  * last, and stop serving if it exits. `afterStart` runs once the server is
  * listening (e.g. to complete registration); if it throws, the server stops.
  */
+/** One machine API over every runtime that is on (`runtime-router.ts`). */
+function machineRouter(
+  config: HostdConfigWith<"secretKey">,
+  paths: DaemonPaths,
+  ownSmolvm: boolean,
+  deps: CliDeps,
+): RuntimeRouter {
+  const on = config.runtimes.runtimes;
+  const router = runtimeRouter({
+    runtimes: {
+      ...(on.smol && {
+        smol: providerRuntime({
+          apiUrl: config.smolApiUrl ?? DEFAULT_SMOL_API_URL,
+          requestTimeoutMs: config.smolRequestTimeoutMs,
+          logFile: ownSmolvm ? paths.smolvmLogFile : undefined,
+        }),
+      }),
+    },
+    maxRunning: () =>
+      Object.fromEntries(
+        Object.values(on).map((runtime) => [runtime.name, runtime.maxRunning]),
+      ),
+    index: (deps.machineIndex ?? fileMachineIndex)(paths.machineIndexFile),
+  });
+  // With one runtime, every machine is its; with more, record the machines
+  // the index lacks (made before it existed, or a create cut short).
+  if (Object.keys(on).length > 1) {
+    void router.reconcile().catch((error: unknown) => {
+      deps.err(
+        `amika-hostd: could not list every runtime's machines: ${errorMessage(error)}`,
+      );
+    });
+  }
+  return router;
+}
+
 async function serveInForeground(
   config: HostdConfigWith<"secretKey">,
   deps: CliDeps,
@@ -1337,7 +1380,9 @@ async function serveInForeground(
     config.hostType === "bare-metal"
       ? bareMetalRuntimeFor(config, paths, deps)
       : undefined;
-  const runsSmolvm = smolvm && !bareMetal;
+  // smolvm runs only for the smol runtime.
+  const runsSmolvm =
+    smolvm && !bareMetal && config.runtimes.runtimes.smol !== undefined;
   if (!bareMetal) {
     checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
     for (const warning of config.runtimes.warnings) {
@@ -1391,15 +1436,11 @@ async function serveInForeground(
       const serving = runtime
         ? { ...config, smolApiUrl: runtime.apiUrl }
         : config;
-      // Machines run through the `smol` provider, on the smolvm this daemon
-      // started (or `SMOL_API_URL`, for plain `serve`).
+      // Machines run on the runtimes that are on: smol through the `smol`
+      // provider, on the smolvm this daemon started (or `SMOL_API_URL`, for
+      // plain `serve`).
       const machines =
-        bareMetal ??
-        providerRuntime({
-          apiUrl: serving.smolApiUrl ?? DEFAULT_SMOL_API_URL,
-          requestTimeoutMs: serving.smolRequestTimeoutMs,
-          logFile: runtime ? paths.smolvmLogFile : undefined,
-        });
+        bareMetal ?? machineRouter(serving, paths, runtime !== undefined, deps);
       // Only a daemon running its own smolvm can pack a snapshot: a pack
       // is a subprocess of that binary, reading the same machine state.
       server =

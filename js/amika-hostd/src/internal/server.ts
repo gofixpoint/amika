@@ -11,9 +11,9 @@ import {
 } from "./service-registry.js";
 import { createUpgradeHandler } from "./services.js";
 import type { MachineRuntime } from "./machine-runtime.js";
-import { requestImageNames } from "./requests.js";
-import { presetImages } from "./runtimes.js";
-import { openSnapshotStore } from "./snapshot-store.js";
+import type { RuntimeRouter } from "./runtime-router.js";
+import { RUNTIME_KINDS } from "./runtimes.js";
+import { openSnapshotStore, SnapshotConflictError } from "./snapshot-store.js";
 import { startCapture } from "./snapshots.js";
 
 export interface RunningServer {
@@ -96,7 +96,7 @@ export function buildHandlers(
   const app = createApp(
     {
       secretKey: config.secretKey,
-      images: requestImageNames(presetImages(config.runtimes, "smol")),
+      runtimes: () => config.runtimes,
       configPath: config.configPath,
       requestTimeoutMs: config.smolRequestTimeoutMs,
       smolvmLogFile,
@@ -209,6 +209,16 @@ function snapshotSupport(
   return {
     store,
     capture: async (rig: string, name: string) => {
+      // Only smol packs a rig into a snapshot (spec 026: none on Lume yet).
+      const owner =
+        "runtimeOf" in runtime
+          ? (runtime as RuntimeRouter).runtimeOf(rig)
+          : undefined;
+      if (owner !== undefined && !RUNTIME_KINDS[owner].snapshots) {
+        throw new SnapshotConflictError(
+          `rig ${rig} runs on ${owner}, which takes no snapshots`,
+        );
+      }
       await startCapture({ rig, name }, { runtime, store, ...capture });
     },
   };

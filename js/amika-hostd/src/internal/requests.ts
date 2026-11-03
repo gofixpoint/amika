@@ -3,6 +3,11 @@ import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { PREPULL_MACHINE_PREFIX } from "./prepull.js";
 import type { SnapshotState } from "./snapshot-store.js";
+import {
+  RUNTIME_NAMES,
+  type RuntimeConfig,
+  type RuntimeName,
+} from "./runtimes.js";
 
 const nameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/);
 const envSchema = z.array(
@@ -38,6 +43,8 @@ export const createMachineSchema = z.strictObject({
     `names starting with ${PREPULL_MACHINE_PREFIX} are reserved`,
   ),
   image: z.string().trim().min(1),
+  // Optional: a preset's default runtime when absent.
+  runtime: z.enum(RUNTIME_NAMES).optional(),
   // smolvm's limits (`VmResources::validate`): it supports at most 16 vCPUs
   // (only macOS actually caps there; we refuse more on every host) and can't
   // boot a VM with under 64 MiB.
@@ -63,21 +70,6 @@ export const createSnapshotSchema = z.strictObject({
   name: z.string().trim().min(1).max(200),
 });
 
-/**
- * The names a create request can give for each preset image: the preset's
- * own name (`coder`), and the `amika-<preset>` name that control planes send.
- */
-export function requestImageNames(
-  images: Record<string, string>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(images).flatMap(([preset, image]) => [
-      [preset, image],
-      [`amika-${preset}`, image],
-    ]),
-  );
-}
-
 /** Where a machine's filesystem comes from: an image, or a local snapshot. */
 export type MachineSource =
   | { image: string; from?: undefined }
@@ -90,27 +82,57 @@ export interface SnapshotSource {
 }
 
 /**
- * What smolvm should boot for a create request's `image`, in this order:
+ * The runtime a create request runs on, and what that runtime boots for its
+ * `image`, in this order:
  *
- * 1. A preset name (`requestImageNames`) becomes its smol image.
- * 2. A snapshot this host holds becomes its `.smolmachine` artifact. This is
- *    checked BEFORE the OCI passthrough below because Amika's snapshot names
- *    are namespaced (`org_abc123/sandbox/nightly`) and so contain slashes:
- *    left to the passthrough, every snapshot would be sent to a registry.
+ * 1. A preset name becomes the preset's image on the requested runtime, or
+ *    on the preset's default runtime when the request names none. The name
+ *    is Amika's (`coder`), or `amika-<preset>` as control planes send it.
+ * 2. A snapshot this host holds becomes its `.smolmachine` artifact, on
+ *    smol. This is checked BEFORE the OCI passthrough below because Amika's
+ *    snapshot names are namespaced (`org_abc123/sandbox/nightly`) and so
+ *    contain slashes: left to the passthrough, every snapshot would be sent
+ *    to a registry.
  * 3. Anything else that looks like a full OCI reference (a registry path or a
- *    tag) is forwarded unchanged, which keeps ad hoc images working for
- *    development.
+ *    tag) is forwarded unchanged to smol, which keeps ad hoc images working
+ *    for development.
  *
  * A bare name that is none of these is refused, so a host never silently
  * pulls `docker.io/library/<name>` in place of an Amika preset.
  */
 export function resolveSource(
   image: string,
-  images: Record<string, string>,
+  runtime: RuntimeName | undefined,
+  config: RuntimeConfig,
   snapshots: SnapshotSource,
   configPath: string | undefined,
-): MachineSource {
-  if (Object.hasOwn(images, image)) return { image: images[image] };
+): MachineSource & { runtime: RuntimeName } {
+  const presetName = Object.hasOwn(config.presets, image)
+    ? image
+    : image.startsWith("amika-") &&
+        Object.hasOwn(config.presets, image.slice("amika-".length))
+      ? image.slice("amika-".length)
+      : undefined;
+  if (presetName !== undefined) {
+    const preset = config.presets[presetName];
+    const target = runtime ?? preset.defaultRuntime;
+    const reference = preset.images[target];
+    if (reference === undefined) {
+      throw badRequest(
+        `preset ${JSON.stringify(presetName)} has no ${target} runtime on this host; it has ${Object.keys(preset.images).join(", ")}`,
+      );
+    }
+    return { image: reference, runtime: target };
+  }
+  // Snapshots and ad hoc references are smol's alone.
+  const onSmol = <T extends MachineSource>(source: T) => {
+    if (runtime !== undefined && runtime !== "smol") {
+      throw badRequest(
+        `image ${JSON.stringify(image)} is not a preset; only smol boots snapshots and image references`,
+      );
+    }
+    return { ...source, runtime: "smol" as const };
+  };
   const snapshot = snapshots.get(image);
   if (snapshot) {
     const from = snapshots.artifact(image);
@@ -123,9 +145,9 @@ export function resolveSource(
           : `snapshot ${JSON.stringify(image)} is not usable on this host (${snapshot.state})`,
       );
     }
-    return { from };
+    return onSmol({ from });
   }
-  if (image.includes("/") || image.includes(":")) return { image };
+  if (image.includes("/") || image.includes(":")) return onSmol({ image });
   throw badRequest(
     `image ${JSON.stringify(image)} is not configured on this host; add it under [presets.<name>.runtimes.smol] in ${configPath ?? "the amika-hostd config.toml"}`,
   );
