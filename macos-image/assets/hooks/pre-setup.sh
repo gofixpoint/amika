@@ -48,11 +48,11 @@ if command -v opencode &> /dev/null && [[ "${AMIKA_OPENCODE_WEB:-1}" != "0" ]]; 
   echo "$OPENCODE_WEB_PORT" > "$AMIKA_RUN_DIR/opencode-web.port"
 fi
 
-PNPM_HOME="/Users/amika/.local/share/pnpm"
-mkdir -p "$PNPM_HOME" /usr/local/etc/amikad/setup
+# Made as amika, not chowned after: a recursive chown of the home folder
+# fails on the parts of ~/Library that macOS protects even from root.
+sudo -u amika mkdir -p /Users/amika/.local/share/pnpm
+mkdir -p /usr/local/etc/amikad/setup
 cat > /usr/local/etc/amikad/setup/env.sh <<'ENVEOF'
 export PNPM_HOME="$HOME/.local/share/pnpm"
 export PATH="$PNPM_HOME:$PATH"
 ENVEOF
-
-chown -R amika:staff /Users/amika
