@@ -16,7 +16,9 @@ export function remoteCommand(
   command: string,
   { cwd, env = {}, sudo = false }: RemoteCommandOptions = {},
 ): string {
-  const lines: string[] = [];
+  // sshd gives the command a short default PATH. The image sets the rig's
+  // PATH in /etc/paths, as login shells on macOS read it.
+  const lines = ['eval "$(/usr/libexec/path_helper -s)"'];
   if (cwd !== undefined) lines.push(`cd -- ${shellQuote(cwd)} || exit 1`);
   for (const [name, value] of Object.entries(env)) {
     if (!ENV_NAME.test(name)) throw new Error(`Invalid env var name: ${name}`);
