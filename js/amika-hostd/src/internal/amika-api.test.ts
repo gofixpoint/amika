@@ -6,7 +6,7 @@ import {
   HostTypeConflictError,
   registerHost,
   setHostSecret,
-  setHostSizes,
+  setHostReport,
   setHostTransport,
   setHostType,
   setHostUrl,
@@ -248,15 +248,36 @@ describe("setHostUrl", () => {
   });
 });
 
-describe("setHostSizes", () => {
-  it("replaces the host's sizes, keeping its hostname", async () => {
+describe("setHostReport", () => {
+  it("replaces the host's sizes and capabilities, keeping its hostname", async () => {
     const fetcher = responding(Response.json(HOST));
-    await setHostSizes(API, HOST, { large: LARGE }, fetcher);
+    const capabilities = {
+      runtimes: {
+        smol: {
+          kind: "vm" as const,
+          os: "linux" as const,
+          arch: "arm64",
+          snapshots: true,
+          sizes: { large: LARGE },
+        },
+      },
+      presets: {},
+    };
+    await setHostReport(
+      API,
+      HOST,
+      { sizes: { large: LARGE }, capabilities },
+      fetcher,
+    );
     expect(fetcher).toHaveBeenCalledWith(
       "https://app.amika.dev/api/v0beta1/hosts/host_1",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ hostname: "builder", sizes: { large: LARGE } }),
+        body: JSON.stringify({
+          hostname: "builder",
+          sizes: { large: LARGE },
+          capabilities,
+        }),
         redirect: "error",
       }),
     );
@@ -266,7 +287,9 @@ describe("setHostSizes", () => {
     const fetcher = responding(
       apiErrorBody(400, "validation_failed", "Invalid host sizes"),
     );
-    await expect(setHostSizes(API, HOST, {}, fetcher)).rejects.toThrow(
+    await expect(
+      setHostReport(API, HOST, { sizes: {} }, fetcher),
+    ).rejects.toThrow(
       "failed to update the host's sizes (validation_failed: Invalid host sizes)",
     );
   });

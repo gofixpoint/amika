@@ -95,8 +95,11 @@ capabilities report (`capabilitiesOf` in `runtimes.ts`): each runtime's kind,
 guest OS, architecture, effective `max_running`, snapshot support and
 resolved sizes, and each preset's OS, runtimes and default runtime. Images
 stay on the host. `amika-hostd capabilities get [--json]` prints the same
-report from the config file. Registration still sends only `sizes` until
-Amika's hosts API takes `capabilities`.
+report from the config file. Registration sends it as `capabilities`, with
+each size in the API's `sizes` shape, and sends `sizes` too: a control plane
+that predates capabilities reads them as smol's sizes. The daemon holds no API
+key, so after a reload `amika-hostd reload` and `capabilities update` send the
+new report; a plain `kill -HUP` leaves that to the next `up` or `reload`.
 
 ## Lume runtime
 

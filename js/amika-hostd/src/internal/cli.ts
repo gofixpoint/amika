@@ -14,7 +14,7 @@ import {
   HostTransportConflictError,
   registerHost as registerHostWithAmika,
   setHostSecret as setHostSecretInAmika,
-  setHostSizes as setHostSizesInAmika,
+  setHostReport as setHostReportInAmika,
   setHostTransport as setHostTransportInAmika,
   setHostType as setHostTypeInAmika,
   setHostUrl as setHostUrlInAmika,
@@ -41,8 +41,10 @@ import {
   type HostdFlags,
 } from "./config.js";
 import {
+  apiCapabilitiesOf,
   capabilitiesOf,
   checkRuntimesSupported,
+  type ApiCapabilities,
   hostArch,
   presetImages,
   RUNTIME_NAMES,
@@ -210,7 +212,7 @@ export interface CliDeps {
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
   registerHost?: typeof registerHostWithAmika;
-  setHostSizes?: typeof setHostSizesInAmika;
+  setHostReport?: typeof setHostReportInAmika;
   setHostTransport?: typeof setHostTransportInAmika;
   setHostType?: typeof setHostTypeInAmika;
   setHostSecret?: typeof setHostSecretInAmika;
@@ -498,6 +500,7 @@ async function reloadDaemon(
   const result = await signalReload(pid, paths, deps);
   if (json) deps.out(JSON.stringify(result));
   else printReloadResult(result, deps);
+  if (result.ok) await reportToAmika(deps);
   return result.ok ? 0 : 1;
 }
 
@@ -645,6 +648,7 @@ async function updateCapabilities(
     deps.out(`Wrote ${file.path}.`);
     if (result) printReloadResult(result, deps);
   }
+  if (result?.ok) await reportToAmika(deps);
   return result === undefined || result.ok ? 0 : 1;
 }
 
@@ -1206,6 +1210,7 @@ async function register(
 ): Promise<RegisteredHost> {
   const api = { apiUrl: config.apiUrl, apiKey: config.apiKey };
   const sizes = registeredSizes(config);
+  const capabilities = registeredCapabilities(config);
   const report = hostTypeReport(config, deps);
   const { host, created } = await registerInTransport(config, deps, report);
   if (created) {
@@ -1240,8 +1245,12 @@ async function register(
     deps.out(
       "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
     );
-    // Nor its sizes, so bring those up to date with the config separately.
-    await (deps.setHostSizes ?? setHostSizesInAmika)(api, host, sizes);
+    // Nor its sizes and capabilities, so bring those up to date with the
+    // config separately.
+    await (deps.setHostReport ?? setHostReportInAmika)(api, host, {
+      sizes,
+      capabilities,
+    });
     if (!report) {
       deps.out(
         `Updated the sizes of host ${host.hostname} (${describeSizes(sizes)})`,
@@ -1293,6 +1302,7 @@ async function registerInTransport(
     hostname: config.hostname,
     secretKey: config.secretKey,
     sizes: registeredSizes(config),
+    capabilities: registeredCapabilities(config),
     ...(report === undefined ? {} : { hostType: report }),
   };
   const registerHost = deps.registerHost ?? registerHostWithAmika;
@@ -1307,9 +1317,62 @@ async function registerInTransport(
   }
 }
 
-/** The sizes Amika gets: none from a bare-metal host, which ignores them. */
+/**
+ * The sizes Amika gets: none from a bare-metal host, which ignores them.
+ * A control plane that predates capabilities reads them as smol's, so a host
+ * with smol on sends smol's list.
+ */
 function registeredSizes(config: HostdConfig): HostdConfig["sizes"] {
-  return config.hostType === "bare-metal" ? {} : config.sizes;
+  if (config.hostType === "bare-metal") return {};
+  return config.runtimes.runtimes.smol?.sizes ?? config.sizes;
+}
+
+/** What a VM host can run (`runtimes.ts`); a bare-metal host sends none. */
+function registeredCapabilities(
+  config: HostdConfig,
+): ApiCapabilities | undefined {
+  return config.hostType === "bare-metal"
+    ? undefined
+    : apiCapabilitiesOf(config.runtimes, hostArch());
+}
+
+/**
+ * Tell Amika what the host can run now, after a reload: the daemon holds no
+ * API key, so the command that asked for the reload does it. A failure is a
+ * warning: the daemon runs with the new settings, and the next `up` or
+ * `reload` tells Amika.
+ */
+async function reportToAmika(deps: CliDeps): Promise<void> {
+  try {
+    const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+    const config = requireSettings(
+      placedSecrets(
+        withSecrets(
+          resolveConfig({
+            env: deps.env,
+            file: file && withoutInvalidSecret(file),
+          }),
+          deps,
+        ),
+        deps,
+      ),
+      REGISTRATION_SETTINGS,
+    );
+    const { host } = await registerInTransport(config, deps);
+    await (deps.setHostReport ?? setHostReportInAmika)(
+      { apiUrl: config.apiUrl, apiKey: config.apiKey },
+      host,
+      {
+        sizes: registeredSizes(config),
+        capabilities: registeredCapabilities(config),
+      },
+    );
+    deps.out(`Sent the new capabilities to ${config.apiUrl}.`);
+  } catch (error) {
+    deps.err(
+      `amika-hostd: could not send the new capabilities to Amika (${errorMessage(error)}); the next \`amika-hostd up\` or \`reload\` sends them`,
+    );
+  }
 }
 
 /**

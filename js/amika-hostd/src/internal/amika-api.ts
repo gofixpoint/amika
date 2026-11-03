@@ -1,4 +1,5 @@
 /** The Amika control-plane endpoints the daemon calls, authenticated by API key. */
+import type { ApiCapabilities } from "./runtimes.js";
 import { z } from "zod";
 import type { HostResources } from "../platforms/index.js";
 import type { HostSize, TransportMode } from "./config.js";
@@ -94,6 +95,8 @@ export async function registerHost(
     hostname: string;
     secretKey: string;
     sizes: HostSizes;
+    /** Sent by a VM host: what it can run (`runtimes.ts`). */
+    capabilities?: ApiCapabilities;
     transportMode?: TransportMode;
     /** Sent by a bare-metal host only. */
     hostType?: HostTypeReport;
@@ -110,6 +113,9 @@ export async function registerHost(
       hostname: input.hostname,
       secret: input.secretKey,
       sizes: input.sizes,
+      ...(input.capabilities === undefined
+        ? {}
+        : { capabilities: input.capabilities }),
       ...(input.transportMode === undefined
         ? {}
         : { transport_mode: input.transportMode }),
@@ -159,14 +165,24 @@ export async function setHostUrl(
 }
 
 /**
- * Replace the sizes Amika stores for this host with the configured ones. An
- * existing host's registration leaves them unchanged, so this carries edits
- * to the TOML on later runs.
+ * What a host tells Amika it can run. `sizes` is for a control plane that
+ * predates `capabilities`, which reads it as the smol runtime's sizes and
+ * drops the field it does not know.
  */
-export async function setHostSizes(
+export interface HostReport {
+  sizes: HostSizes;
+  capabilities?: ApiCapabilities;
+}
+
+/**
+ * Replace the sizes and capabilities Amika stores for this host with the
+ * configured ones. An existing host's registration leaves them unchanged, so
+ * this carries edits to the TOML on later runs and reloads.
+ */
+export async function setHostReport(
   api: AmikaApiConfig,
   host: Pick<RegisteredHost, "id" | "hostname">,
-  sizes: HostSizes,
+  report: HostReport,
   fetcher: typeof fetch = fetch,
 ): Promise<RegisteredHost> {
   const response = await send(
@@ -174,7 +190,13 @@ export async function setHostSizes(
     fetcher,
     "PUT",
     `/api/v0beta1/hosts/${encodeURIComponent(host.id)}`,
-    { hostname: host.hostname, sizes },
+    {
+      hostname: host.hostname,
+      sizes: report.sizes,
+      ...(report.capabilities === undefined
+        ? {}
+        : { capabilities: report.capabilities }),
+    },
   );
   if (response.status !== 200) {
     throw await apiError("update the host's sizes", response);
