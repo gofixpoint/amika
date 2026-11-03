@@ -221,6 +221,8 @@ export function smolOperations(
         // smolvm refuses both together, so an artifact create sends no image.
         image: input.from ? undefined : input.snapshot,
         from: input.from,
+        // Only amika-hostd sets it; a plain smolvm never sees it.
+        runtime: input.runtime,
         cpus: resources?.vcpus,
         memoryMb:
           resources?.memoryGib === undefined

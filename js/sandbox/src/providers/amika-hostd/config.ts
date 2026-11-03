@@ -10,4 +10,9 @@ export interface AmikaHostdConfig extends SandboxConfigBase {
   network?: boolean;
   /** HTTP deadline. Defaults to 310000, allowing hostd's 300000 ms deadline. */
   requestTimeoutMs?: number;
+  /**
+   * The rig's guest OS, which sets its home folder: `/Users/amika` on
+   * macOS, `/home/amika` otherwise. Defaults to Linux.
+   */
+  guestOs?: "linux" | "macos";
 }

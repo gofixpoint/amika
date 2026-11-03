@@ -58,3 +58,5 @@ export const SANDBOX_ORG_ID_LABEL = "amika-org-id";
 export const SANDBOX_USER_ID_LABEL = "amika-user-id";
 
 export const DEFAULT_HOME_DIR = "/home/amika";
+/** The `amika` user's home folder in a macOS rig. */
+export const MACOS_HOME_DIR = "/Users/amika";

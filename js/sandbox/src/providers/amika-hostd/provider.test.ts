@@ -471,6 +471,23 @@ describe("amika-hostd provider", () => {
     expect(await adapter.exec("false")).toEqual(result);
   });
 
+  it("names the runtime to create on, when the caller chose one", async () => {
+    const { provider, fetcher } = harness();
+    await provider.sandboxes.create(ctx, { ...INPUT, runtime: "smol" });
+    const [, init] = fetcher.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      name: "demo",
+      runtime: "smol",
+    });
+  });
+
+  it("reports the amika user's home on a macOS rig", () => {
+    expect(
+      harness({ config: { secretKey: SECRET, guestOs: "macos" } }).provider
+        .userHomeDir,
+    ).toBe("/Users/amika");
+  });
+
   it("reports the amika user's home, as the cloud providers do", () => {
     expect(harness().provider.userHomeDir).toBe("/home/amika");
   });

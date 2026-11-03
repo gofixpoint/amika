@@ -1,5 +1,5 @@
 /** Sandbox resources backed by an Amika host daemon's versioned rig API. */
-import { DEFAULT_HOME_DIR } from "../../constants";
+import { DEFAULT_HOME_DIR, MACOS_HOME_DIR } from "../../constants";
 import type { AmikaHostdConfig } from "./config";
 import {
   amikaHostdBareMetalCapabilities,
@@ -113,7 +113,7 @@ function hostdDefinition(
   return {
     name,
     signedUrlTtlSeconds: HOSTD_SERVICE_URL_TTL_S,
-    userHomeDir: DEFAULT_HOME_DIR,
+    userHomeDir: config.guestOs === "macos" ? MACOS_HOME_DIR : DEFAULT_HOME_DIR,
     sandbox: {
       create: async (_ctx, input) => {
         try {
