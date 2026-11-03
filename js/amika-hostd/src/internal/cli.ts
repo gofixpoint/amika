@@ -39,7 +39,12 @@ import {
   type HostdConfigWith,
   type HostdFlags,
 } from "./config.js";
-import { checkRuntimesSupported, presetImages } from "./runtimes.js";
+import {
+  capabilitiesOf,
+  checkRuntimesSupported,
+  hostArch,
+  presetImages,
+} from "./runtimes.js";
 import { upgradeConfigFile } from "./config-upgrade.js";
 import {
   fileMachineIndex,
@@ -118,6 +123,8 @@ Commands:
   serve               Run the HTTP server in the foreground without registering
   config upgrade      Rewrite old tables in the config file in the current
                       format (the installer runs it on an upgrade)
+  capabilities get    Print the runtimes and presets this host offers Amika,
+                      as the config file sets them
   register-url <url>  Set a listening host's internet-facing URL (e.g. an
                       ngrok or Cloudflare Tunnel URL) to complete its
                       registration. A host whose address Amika assigns takes
@@ -133,6 +140,7 @@ Options:
                  (setup --non-interactive) This host's name in Amika
   --skill        (setup) Print how an AI agent sets up this host
   --fg           (up) Stay in the foreground instead of backgrounding
+  --json         (capabilities) Print JSON, for scripts and agents
   --smolvm       (serve) Also start smolvm, and stop it on exit, as \`up\` does
   --port <port>  Port a listening daemon binds (AMIKA_HOSTD_PORT, TOML port;
                  default 3020)
@@ -234,6 +242,9 @@ export async function runCli(
     if (parsed.command === "down") return await down(deps);
     if (parsed.command === "status") return status(deps);
     if (parsed.command === "config-upgrade") return upgradeConfigOnDisk(deps);
+    if (parsed.command === "capabilities-get") {
+      return printCapabilities(deps, parsed.json);
+    }
     if (parsed.command === "setup") {
       if (parsed.skill) {
         deps.out(setupSkill(skillContext(deps)));
@@ -394,6 +405,7 @@ type ParsedCommand =
   | { help: false; command: "status" }
   | { help: false; command: "version" }
   | { help: false; command: "config-upgrade" }
+  | { help: false; command: "capabilities-get"; json: boolean }
   | {
       help: false;
       command: "serve";
@@ -410,6 +422,54 @@ type RegistrationConfig = HostdConfigWith<
 >;
 
 class UsageError extends Error {}
+
+/**
+ * The capabilities report the config file gives (`runtimes.ts`), as `up`
+ * would send it. A runtime this machine cannot run is an error, as at `up`.
+ */
+function printCapabilities(deps: CliDeps, json: boolean): number {
+  const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  const config = resolveConfig({
+    env: deps.env,
+    file: file && withoutInvalidSecret(file),
+  });
+  if (config.hostType === "bare-metal") {
+    throw new ConfigError("A bare-metal host has no runtimes or presets.");
+  }
+  checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
+  const report = capabilitiesOf(config.runtimes, hostArch());
+  if (json) {
+    deps.out(JSON.stringify(report, null, 2));
+    return 0;
+  }
+  deps.out("Runtimes:");
+  for (const [name, runtime] of Object.entries(report.runtimes)) {
+    const limit =
+      runtime.max_running === undefined
+        ? "no limit"
+        : `at most ${runtime.max_running} running`;
+    deps.out(
+      `  ${name}  ${runtime.kind}, ${runtime.os}/${runtime.arch}, ${limit}, ${runtime.snapshots ? "snapshots" : "no snapshots"}`,
+    );
+    const sizes = Object.entries(runtime.sizes).map(
+      ([size, s]) =>
+        `${size} (${s.vcpus} vCPU, ${s.memory_gib} GiB, ${s.disk_gib} GiB disk)`,
+    );
+    deps.out(`    sizes: ${sizes.length ? sizes.join(", ") : "none"}`);
+  }
+  deps.out("Presets:");
+  const presets = Object.entries(report.presets);
+  if (presets.length === 0) deps.out("  none");
+  for (const [name, preset] of presets) {
+    deps.out(
+      `  ${name}  ${preset.os}, on ${preset.runtimes.join(", ")} (default ${preset.default_runtime})`,
+    );
+  }
+  for (const warning of config.runtimes.warnings) {
+    deps.err(`amika-hostd: ${warning}`);
+  }
+  return 0;
+}
 
 /**
  * Rewrite the config file's old tables (`config-upgrade.ts`). The result is
@@ -637,6 +697,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
         "non-interactive": { type: "boolean" },
         hostname: { type: "string" },
         skill: { type: "boolean" },
+        json: { type: "boolean" },
         // Internal: how `up` starts the background daemon (see startBackground).
         "secret-key-from-up": { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -652,6 +713,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
   switch (command) {
     case "setup":
       rejectOptions(command, values, [
+        "json",
         "fg",
         "smolvm",
         "port",
@@ -676,6 +738,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       };
     case "up":
       rejectOptions(command, values, [
+        "json",
         ...SETUP_ONLY,
         "smolvm",
         "secret-key-from-up",
@@ -686,6 +749,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
     case "status":
     case "version":
       rejectOptions(command, values, [
+        "json",
         ...SETUP_ONLY,
         "fg",
         "smolvm",
@@ -695,8 +759,26 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       ]);
       expectArguments(rest, 0);
       return { help: false, command };
+    case "capabilities":
+      rejectOptions(command, values, [
+        ...SETUP_ONLY,
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+      ]);
+      if (rest.length !== 1 || rest[0] !== "get") {
+        throw new UsageError("usage: amika-hostd capabilities get [--json]");
+      }
+      return {
+        help: false,
+        command: "capabilities-get",
+        json: values.json ?? false,
+      };
     case "config":
       rejectOptions(command, values, [
+        "json",
         ...SETUP_ONLY,
         "fg",
         "smolvm",
@@ -709,7 +791,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       }
       return { help: false, command: "config-upgrade" };
     case "serve":
-      rejectOptions(command, values, [...SETUP_ONLY, "fg"]);
+      rejectOptions(command, values, [...SETUP_ONLY, "fg", "json"]);
       expectArguments(rest, 0);
       return {
         help: false,
@@ -720,6 +802,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       };
     case "register-url": {
       rejectOptions(command, values, [
+        "json",
         ...SETUP_ONLY,
         "fg",
         "smolvm",

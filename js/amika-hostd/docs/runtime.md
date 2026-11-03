@@ -90,6 +90,14 @@ in the state directory that records which runtime owns each machine.
 `/health` names the `runtimes` feature on a VM host, so a control plane knows
 it can send `runtime`.
 
+`GET /capabilities` (with the host key, through either transport) returns the
+capabilities report (`capabilitiesOf` in `runtimes.ts`): each runtime's kind,
+guest OS, architecture, effective `max_running`, snapshot support and
+resolved sizes, and each preset's OS, runtimes and default runtime. Images
+stay on the host. `amika-hostd capabilities get [--json]` prints the same
+report from the config file. Registration still sends only `sizes` until
+Amika's hosts API takes `capabilities`.
+
 ## Lume runtime
 
 `src/internal/lume-runtime.ts` runs macOS rigs through the `lume` sandbox

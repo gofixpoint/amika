@@ -12,7 +12,7 @@ import {
 import { createUpgradeHandler } from "./services.js";
 import type { MachineRuntime } from "./machine-runtime.js";
 import type { RuntimeRouter } from "./runtime-router.js";
-import { RUNTIME_KINDS } from "./runtimes.js";
+import { RUNTIME_KINDS, capabilitiesOf, hostArch } from "./runtimes.js";
 import { openSnapshotStore, SnapshotConflictError } from "./snapshot-store.js";
 import { startCapture } from "./snapshots.js";
 
@@ -97,6 +97,9 @@ export function buildHandlers(
     {
       secretKey: config.secretKey,
       runtimes: () => config.runtimes,
+      capabilities: bareMetal
+        ? undefined
+        : () => capabilitiesOf(config.runtimes, hostArch()),
       configPath: config.configPath,
       requestTimeoutMs: config.smolRequestTimeoutMs,
       smolvmLogFile,

@@ -1563,6 +1563,70 @@ describe("down", () => {
   });
 });
 
+describe("capabilities get", () => {
+  function withConfig(contents: string) {
+    const h = harness();
+    h.deps.loadConfigFile.mockReturnValue({
+      path: "/config/amika-hostd/config.toml",
+      contents,
+    });
+    return h;
+  }
+  const CONFIG = `
+[sizes.m]
+vcpus = 4
+memory_gib = 8
+disk_gib = 20
+[runtimes.smol]
+max_running = 4
+[presets.coder.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder:latest"
+`;
+
+  it("prints the report the config gives, as JSON for agents", async () => {
+    const { deps, out } = withConfig(CONFIG);
+    expect(await runCli(["capabilities", "get", "--json"], deps)).toBe(0);
+    expect(JSON.parse(out.join("\n"))).toMatchObject({
+      runtimes: {
+        smol: {
+          kind: "vm",
+          os: "linux",
+          max_running: 4,
+          sizes: { m: { vcpus: 4, memory_gib: 8, disk_gib: 20 } },
+        },
+      },
+      presets: {
+        coder: { os: "linux", default_runtime: "smol", runtimes: ["smol"] },
+      },
+    });
+  });
+
+  it("prints it for a person", async () => {
+    const { deps, out } = withConfig(CONFIG);
+    expect(await runCli(["capabilities", "get"], deps)).toBe(0);
+    expect(out).toContain("  coder  linux, on smol (default smol)");
+    expect(out).toContain("    sizes: m (4 vCPU, 8 GiB, 20 GiB disk)");
+  });
+
+  it("refuses a runtime this machine cannot run, as `up` would", async () => {
+    const { deps, err } = withConfig(
+      `[runtimes.lume]\nstorage_dir = "/srv/lume"`,
+    );
+    expect(
+      await runCli(["capabilities", "get"], {
+        ...deps,
+        platform: hostPlatformFor("linux"),
+      }),
+    ).toBe(1);
+    expect(err.join("\n")).toContain("runtime lume cannot run on this machine");
+  });
+
+  it("takes --json only with capabilities", async () => {
+    const { deps } = harness();
+    expect(await runCli(["status", "--json"], deps)).toBe(2);
+  });
+});
+
 describe("status", () => {
   /** A state directory whose pidfiles name a daemon and a smolvm. */
   function running() {

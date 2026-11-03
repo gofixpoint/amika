@@ -19,7 +19,7 @@ import {
   replaceServicesSchema,
   resolveSource,
 } from "./internal/requests.js";
-import type { RuntimeConfig } from "./internal/runtimes.js";
+import type { Capabilities, RuntimeConfig } from "./internal/runtimes.js";
 import {
   fromRequest,
   hardenPreviewResponse,
@@ -63,6 +63,11 @@ export interface AppConfig {
    * so a reload takes effect at once. Defaults to smol with no presets.
    */
   runtimes?: () => RuntimeConfig;
+  /**
+   * What this host can run (spec 026, "Capabilities"), for
+   * `GET /capabilities`. Absent on a bare-metal host, which has no runtimes.
+   */
+  capabilities?: () => Capabilities;
   /** Named in errors for unconfigured images, so operators know what to edit. */
   configPath?: string;
   /**
@@ -126,6 +131,7 @@ export function createApp(
   {
     secretKey,
     runtimes = () => SMOL_ONLY,
+    capabilities,
     configPath,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     smolvmLogFile,
@@ -265,6 +271,9 @@ export function createApp(
   // `features` names what a control plane may rely on beyond the API itself:
   // `service-tokens`, service routes accepting `X-Amika-Authorization`, and
   // `browser-login`, previews behind a login through Amika.
+  if (capabilities) {
+    app.get("/capabilities", (c) => c.json(capabilities()));
+  }
   app.get("/health", (c) =>
     c.json({
       status: "ok",

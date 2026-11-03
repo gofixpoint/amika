@@ -129,6 +129,18 @@ function smolPresets(images: Record<string, string>): () => RuntimeConfig {
 }
 
 describe("machine API", () => {
+  it("serves the capabilities report, only to a caller with the key", async () => {
+    const report = { runtimes: {}, presets: {} };
+    const app = createApp(
+      { secretKey: SECRET, capabilities: () => report },
+      fakeRuntime(),
+    );
+    expect((await app.request("/capabilities")).status).toBe(401);
+    expect(
+      await (await authenticated(app).request("/capabilities")).json(),
+    ).toEqual(report);
+  });
+
   it("keeps health independent of the runtime", async () => {
     const { app, runtime } = harness();
     expect(await (await app.request("/health")).json()).toEqual({

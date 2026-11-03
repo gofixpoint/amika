@@ -6,6 +6,7 @@
  * `capabilitiesOf` turns those into what hostd tells Amika. Both are pure, so
  * startup, reload and `capabilities update` check a config the same way.
  */
+import os from "node:os";
 import path from "node:path";
 import { ConfigError, type HostSize } from "./config.js";
 
@@ -297,4 +298,9 @@ export function checkRuntimesSupported(
       );
     }
   }
+}
+
+/** This machine's CPU architecture, in Go's names as Amika's releases use. */
+export function hostArch(arch: string = os.arch()): string {
+  return arch === "x64" ? "amd64" : arch;
 }
