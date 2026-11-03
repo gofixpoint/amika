@@ -176,8 +176,8 @@ export function createApp(
         return Response.json(
           {
             error: bareMetal
-              ? "Smol runtime request timed out"
-              : `Smol runtime request timed out: ${deadlineReason(timeoutMs, smolvmLogFile, { download })}`,
+              ? "Runtime request timed out"
+              : `Runtime request timed out: ${deadlineReason(timeoutMs, smolvmLogFile, { download })}`,
           },
           { status: 504 },
         );
@@ -190,8 +190,8 @@ export function createApp(
         {
           error:
             reason === undefined
-              ? "Smol runtime request failed"
-              : `Smol runtime request failed: ${reason}`,
+              ? "Runtime request failed"
+              : `Runtime request failed: ${reason}`,
         },
         { status: error instanceof RuntimeError ? error.status : 500 },
       );
@@ -229,8 +229,8 @@ export function createApp(
         {
           error:
             error.reason === undefined
-              ? "Smol runtime request failed"
-              : `Smol runtime request failed: ${error.reason}`,
+              ? "Runtime request failed"
+              : `Runtime request failed: ${error.reason}`,
         },
         { status: error.status },
       );

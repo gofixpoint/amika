@@ -526,7 +526,7 @@ describe("machine API", () => {
     });
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
-      error: "Smol runtime request failed: resize2fs not found",
+      error: "Runtime request failed: resize2fs not found",
     });
   });
 
@@ -540,7 +540,7 @@ describe("machine API", () => {
       const response = await app.request(`${ROOT}/demo`);
       expect(response.status).toBe(status);
       expect(await response.json()).toEqual({
-        error: "Smol runtime request failed",
+        error: "Runtime request failed",
       });
     },
   );
@@ -551,7 +551,7 @@ describe("machine API", () => {
     const response = await app.request(ROOT);
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
-      error: "Smol runtime request failed",
+      error: "Runtime request failed",
     });
   });
 
@@ -575,7 +575,7 @@ describe("machine API", () => {
     expect(response.status).toBe(504);
     expect(await response.json()).toEqual({
       error:
-        "Smol runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image; see /state/log/smolvm.log",
+        "Runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image; see /state/log/smolvm.log",
     });
   });
 
@@ -599,7 +599,7 @@ describe("machine API", () => {
     expect(response.status).toBe(504);
     expect(await response.json()).toEqual({
       error:
-        "Smol runtime request timed out: smolvm did not answer within 5ms; see /state/log/smolvm.log",
+        "Runtime request timed out: smolvm did not answer within 5ms; see /state/log/smolvm.log",
     });
   });
 
@@ -615,7 +615,7 @@ describe("machine API", () => {
     const response = await app.request(ROOT);
     expect(response.status).toBe(504);
     expect(await response.json()).toEqual({
-      error: "Smol runtime request timed out",
+      error: "Runtime request timed out",
     });
   });
 
@@ -947,7 +947,7 @@ describe("replacing a machine's services", () => {
     expect(response.status).toBe(404);
     // Only a 409's message is passed on.
     expect(await response.json()).toEqual({
-      error: "Smol runtime request failed",
+      error: "Runtime request failed",
     });
     expect(registry.port("demo", "web")).toBe(3000);
   });
@@ -1701,7 +1701,7 @@ describe("a bare-metal host", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error:
-        "Smol runtime request failed: a bare-metal host runs only the amikad commands that set up SSH",
+        "Runtime request failed: a bare-metal host runs only the amikad commands that set up SSH",
     });
   });
 });

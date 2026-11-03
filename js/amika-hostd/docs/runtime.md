@@ -173,7 +173,7 @@ exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
   (1.22.1, at least) reports a missing file that way, and Amika reads only a
   `404` as "no such file", which a fresh rig's setup relies on. An
   unreachable smolvm answers `502`. The answer is
-  `Smol runtime request failed`, followed by smolvm's own reason
+  `Runtime request failed`, followed by smolvm's own reason
   (`: resize2fs not found`) as one line cut to 500 characters, so an
   operator sees why a start or an image pull failed. smolvm's reason is
   withheld for exec, whose errors can echo the command. A create's reason
@@ -184,7 +184,7 @@ exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
   included: the deadline, that a create or start may still be downloading
   its image, and smolvm's log when hostd started smolvm. hostd's own
   deadline, which usually fires first, prefixes it with
-  `Smol runtime request timed out: `. A bare-metal host gives no reason.
+  `Runtime request timed out: `. A bare-metal host gives no reason.
 - A create of an image pre-pull is caching answers `503` at once (see
   [Image cache](configuration.md#image-cache)).
 

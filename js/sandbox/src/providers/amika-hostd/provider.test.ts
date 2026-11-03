@@ -662,7 +662,7 @@ describe("amika-hostd provider", () => {
     await expect(provider.sandboxes.create(ctx, INPUT)).rejects.toMatchObject({
       status: 504,
       message:
-        "amika-hostd POST /v0beta1/rigs failed (HTTP 504): Smol runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image",
+        "amika-hostd POST /v0beta1/rigs failed (HTTP 504): Runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image",
     });
   });
 
