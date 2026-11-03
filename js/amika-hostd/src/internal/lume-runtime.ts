@@ -12,6 +12,8 @@
  * program with no Local Network grant. Port 22 is never forwarded, so users
  * reach a guest only through amikad's SSH bridge.
  */
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { Readable } from "node:stream";
 import { shellQuote } from "@amika/sandbox";
 import {
@@ -105,6 +107,19 @@ export function lumeRuntime({
       host: forward.port,
     })),
   });
+  /** The env a machine was created with; ops.remove deletes the file. */
+  const envFile = (name: string) =>
+    path.join(stateDir, "vms", name, "env.json");
+  const createEnv = async (name: string): Promise<Record<string, string>> => {
+    try {
+      return JSON.parse(await readFile(envFile(name), "utf8")) as Record<
+        string,
+        string
+      >;
+    } catch {
+      return {};
+    }
+  };
   /** Exec and file calls boot a stopped machine first, as smolvm's do. */
   const running = async (name: string) => {
     const vm = await find(name);
@@ -139,13 +154,6 @@ export function lumeRuntime({
     create: async (machine) => {
       if (machine.from !== undefined || machine.image === undefined) {
         throw new RuntimeError(400, "Lume boots a template, not a snapshot");
-      }
-      if (machine.env?.length) {
-        throw new RuntimeError(
-          400,
-          "Lume rigs take no env at create",
-          "Lume rigs take no env at create yet",
-        );
       }
       if ((machine.services ?? []).some((s) => s.port === SSH_PORT)) {
         throw new RuntimeError(400, "port 22 is never a service");
@@ -193,6 +201,15 @@ export function lumeRuntime({
           resources,
         }),
       );
+      // A VM has no environment of its own, so each exec gets the create's,
+      // as a smolvm machine's does.
+      await writeFile(
+        envFile(machine.name),
+        JSON.stringify(
+          Object.fromEntries((machine.env ?? []).map((e) => [e.name, e.value])),
+        ),
+        { mode: 0o600 },
+      );
       return info(await find(machine.name));
     },
     start: async (name) => {
@@ -226,12 +243,17 @@ export function lumeRuntime({
       }
       // The machine API takes argv; the guest runs one shell line.
       const line = request.command.map(shellQuote).join(" ");
+      // The request's own values win over the create's.
+      const env = {
+        ...(await createEnv(name)),
+        ...Object.fromEntries(
+          (request.env ?? []).map((e) => [e.name, e.value]),
+        ),
+      };
       const result = await call(() =>
         ops.run(name, line, {
           cwd: request.workdir,
-          env:
-            request.env &&
-            Object.fromEntries(request.env.map((e) => [e.name, e.value])),
+          env,
           sudo: request.user === "root",
           input: request.stdin,
         }),

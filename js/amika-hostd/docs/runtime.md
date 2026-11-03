@@ -111,7 +111,8 @@ each VM's management key and known hosts are in `lume/` in the state
 directory. hostd turns off Lume's telemetry when Lume is on.
 
 - Create takes `cpus` and `memoryMb` together. The disk is the template's;
-  a size with less disk is refused (`400`), and so is any `env`.
+  a size with less disk is refused (`400`). The create's `env` is kept with
+  the VM and given to each exec, as smolvm gives a machine's env.
 - Exec runs argv as `amika`, or as root for `user: "root"`; other users are
   refused. Exec and file calls boot a stopped VM first, as smolvm's do.
 - A boot that macOS refuses because two macOS VMs already run answers
