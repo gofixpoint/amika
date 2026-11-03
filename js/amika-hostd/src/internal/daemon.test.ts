@@ -504,6 +504,7 @@ describe("daemonPaths", () => {
       prepullFile: "/state/amika-hostd/prepull.json",
       machineIndexFile: "/state/amika-hostd/machines.json",
       lumeStateDir: "/state/amika-hostd/lume",
+      reloadResultFile: "/state/amika-hostd/reload-result.json",
       snapshotIndexFile: "/state/amika-hostd/snapshots.json",
       snapshotDir: "/state/amika-hostd/snapshots",
       bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",

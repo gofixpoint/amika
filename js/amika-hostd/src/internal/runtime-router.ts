@@ -32,6 +32,10 @@ export interface RuntimeRouter extends MachineRuntime {
    * last run did not finish recording.
    */
   reconcile(): Promise<void>;
+  /** Turn a runtime on (with its runtime) or off (undefined), on reload. */
+  setRuntime(name: RuntimeName, runtime: MachineRuntime | undefined): void;
+  /** Every machine the index records, and its runtime. */
+  indexed(): [string, RuntimeName][];
 }
 
 export interface RuntimeRouterConfig {
@@ -47,10 +51,12 @@ export interface RuntimeRouterConfig {
  * one with none goes to smol, as every create did before runtimes existed.
  */
 export function runtimeRouter({
-  runtimes,
+  runtimes: initial,
   maxRunning,
   index,
 }: RuntimeRouterConfig): RuntimeRouter {
+  // A reload adds and removes runtimes (`setRuntime`).
+  const runtimes = { ...initial };
   const on = () => RUNTIME_NAMES.filter((name) => runtimes[name] !== undefined);
   /**
    * The runtime that owns `name`. A machine the index does not know goes
@@ -92,6 +98,11 @@ export function runtimeRouter({
   });
 
   return {
+    setRuntime: (name, runtime) => {
+      if (runtime) runtimes[name] = runtime;
+      else delete runtimes[name];
+    },
+    indexed: () => index.entries(),
     runtimeOf: (name) => {
       try {
         return route(name)[0];

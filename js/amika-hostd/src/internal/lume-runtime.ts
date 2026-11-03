@@ -33,6 +33,8 @@ export interface LumeRuntimeConfig {
   storageDir: string;
   /** Where each VM's management key and known hosts are kept. */
   stateDir: string;
+  /** The `lume` binary; defaults to `lume` on `PATH`. */
+  lumeBin?: string;
 }
 
 /** The runtime over Lume, and a way to close its service forwards. */
@@ -49,12 +51,13 @@ const SSH_PORT = 22;
 export function lumeRuntime({
   storageDir,
   stateDir,
+  lumeBin,
 }: LumeRuntimeConfig): LumeRuntime {
-  const config: LumeConfig = { storageDir, stateDir };
+  const config: LumeConfig = { storageDir, stateDir, lumeBin };
   const ops = lumeOperations(config);
-  const cli = new LumeCli(storageDir);
+  const cli = new LumeCli(storageDir, lumeBin);
   // Templates live in Lume's default storage.
-  const templates = new LumeCli(undefined);
+  const templates = new LumeCli(undefined, lumeBin);
   const forwards = new Map<string, Map<number, Forward>>();
 
   /** Run a Lume call, as the machine API answers its failures. */

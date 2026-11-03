@@ -76,6 +76,10 @@ process.exitCode = await runCli(process.argv.slice(2), {
   err: (line) => console.error(stamp(line)),
   self: [process.execPath, ...process.execArgv, process.argv[1]],
   shutdownSignal,
+  reloadSignal: (handler) => {
+    process.on("SIGHUP", handler);
+    return () => process.off("SIGHUP", handler);
+  },
   ...(process.stdin.isTTY && process.stdout.isTTY
     ? {
         prompt: (question: string) => prompt(question),

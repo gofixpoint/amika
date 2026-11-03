@@ -1,5 +1,6 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { isIPv6 } from "node:net";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
@@ -44,6 +45,10 @@ import {
   checkRuntimesSupported,
   hostArch,
   presetImages,
+  RUNTIME_NAMES,
+  type RuntimeConfig,
+  type RuntimeName,
+  type RuntimeSettings,
 } from "./runtimes.js";
 import { upgradeConfigFile } from "./config-upgrade.js";
 import {
@@ -52,6 +57,13 @@ import {
   type RuntimeRouter,
 } from "./runtime-router.js";
 import { lumeRuntime } from "./lume-runtime.js";
+import {
+  checkReload,
+  readReloadResult,
+  writeReloadResult,
+  type ReloadResult,
+} from "./reload.js";
+import { updateRuntimes } from "./runtime-update.js";
 import { writePrivateFile } from "./private-file.js";
 import path from "node:path";
 import { openSecrets as openSecretStore, type Secrets } from "./credentials.js";
@@ -71,6 +83,7 @@ import {
   receiveSecrets as receiveSecretsFromUp,
   type HandedSecrets,
   readRunningPid,
+  hostdDataDir,
   removeSmolvmFiles,
   removeStaleSmolvmFiles,
   startInBackground as spawnInBackground,
@@ -82,7 +95,11 @@ import {
   startServer as startServerOnPort,
   type RunningServer,
 } from "./server.js";
-import { providerRuntime, type MachineRuntime } from "./machine-runtime.js";
+import {
+  providerRuntime,
+  type MachineRuntime,
+  type ProviderRuntimeConfig,
+} from "./machine-runtime.js";
 import {
   PREPULL_TIMEOUT_MS,
   SMOLVM_SEED_MIN_DISK_GIB,
@@ -125,6 +142,11 @@ Commands:
                       format (the installer runs it on an upgrade)
   capabilities get    Print the runtimes and presets this host offers Amika,
                       as the config file sets them
+  capabilities update --enable|--disable <runtime>
+                      Turn a runtime on or off in the config file, installing
+                      what it needs, and reload the running daemon
+  reload              Apply the config file's runtimes, presets, sizes and
+                      limits to the running daemon, with no restart
   register-url <url>  Set a listening host's internet-facing URL (e.g. an
                       ngrok or Cloudflare Tunnel URL) to complete its
                       registration. A host whose address Amika assigns takes
@@ -140,7 +162,9 @@ Options:
                  (setup --non-interactive) This host's name in Amika
   --skill        (setup) Print how an AI agent sets up this host
   --fg           (up) Stay in the foreground instead of backgrounding
-  --json         (capabilities) Print JSON, for scripts and agents
+  --json         (capabilities, reload) Print JSON, for scripts and agents
+  --dry-run      (capabilities update) Print the plan and change nothing
+  --yes          (capabilities update) Apply the plan without asking
   --smolvm       (serve) Also start smolvm, and stop it on exit, as \`up\` does
   --port <port>  Port a listening daemon binds (AMIKA_HOSTD_PORT, TOML port;
                  default 3020)
@@ -157,6 +181,13 @@ export interface CliDeps {
   self: readonly [string, ...string[]];
   /** Resolves when the foreground server should shut down (e.g. SIGTERM). */
   shutdownSignal: () => Promise<void>;
+  /**
+   * Calls `handler` on each reload request (`SIGHUP`) until the returned
+   * function is called. Without it the daemon does not reload.
+   */
+  reloadSignal?: (handler: () => void) => () => void;
+  /** Signals a process; defaults to `process.kill`. */
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
   loadConfigFile?: typeof loadConfigFileFromDisk;
   startServer?: typeof startServerOnPort;
   /** Serves over a tunnel instead of a port; defaults to `startTunnel`. */
@@ -216,6 +247,12 @@ export interface CliDeps {
   machineIndex?: typeof fileMachineIndex;
   /** The Lume runtime, when Lume is on; tests inject a fake. */
   lumeRuntime?: typeof lumeRuntime;
+  /** The smol runtime over smolvm; tests inject a fake. */
+  smolRuntime?: (config: ProviderRuntimeConfig) => MachineRuntime;
+  /** Installs Lume for `capabilities update`; tests inject a fake. */
+  installLume?: (deps: CliDeps) => Promise<void>;
+  /** Finds the `lume` binary; defaults to `findLume`. */
+  findLume?: (env: NodeJS.ProcessEnv) => string | undefined;
   /** Tunnel enrolment; defaults to the control plane and the record file. */
   enrol?: EnrolForTunnelDeps["enrol"];
   write?: EnrolForTunnelDeps["write"];
@@ -245,6 +282,10 @@ export async function runCli(
     if (parsed.command === "capabilities-get") {
       return printCapabilities(deps, parsed.json);
     }
+    if (parsed.command === "capabilities-update") {
+      return await updateCapabilities(deps, parsed);
+    }
+    if (parsed.command === "reload") return await reloadDaemon(deps, parsed);
     if (parsed.command === "setup") {
       if (parsed.skill) {
         deps.out(setupSkill(skillContext(deps)));
@@ -408,6 +449,16 @@ type ParsedCommand =
   | { help: false; command: "capabilities-get"; json: boolean }
   | {
       help: false;
+      command: "capabilities-update";
+      enable: RuntimeName[];
+      disable: RuntimeName[];
+      dryRun: boolean;
+      yes: boolean;
+      json: boolean;
+    }
+  | { help: false; command: "reload"; json: boolean }
+  | {
+      help: false;
       command: "serve";
       smolvm: boolean;
       secretKeyFromUp: boolean;
@@ -422,6 +473,224 @@ type RegistrationConfig = HostdConfigWith<
 >;
 
 class UsageError extends Error {}
+
+/** How long `reload` waits for the daemon's result. */
+const RELOAD_WAIT_MS = 60_000;
+
+/**
+ * Check the config file as the daemon will, then signal the running daemon
+ * to reload and print its result. An invalid file is reported here, and no
+ * signal is sent.
+ */
+async function reloadDaemon(
+  deps: CliDeps,
+  { json }: { json: boolean },
+): Promise<number> {
+  checkConfigForReload(deps);
+  const paths = daemonPaths(deps.env);
+  const pid = readRunningPid(paths.pidFile, deps.isRunning ?? isDaemonProcess);
+  if (pid === undefined) {
+    deps.err(
+      "amika-hostd: amika-hostd is not running; `amika-hostd up` reads the config",
+    );
+    return NOT_RUNNING_EXIT;
+  }
+  const result = await signalReload(pid, paths, deps);
+  if (json) deps.out(JSON.stringify(result));
+  else printReloadResult(result, deps);
+  return result.ok ? 0 : 1;
+}
+
+/** The resolved config file, checked as a reload checks it. */
+function checkConfigForReload(deps: CliDeps): HostdConfig {
+  const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  const config = resolveConfig({
+    env: deps.env,
+    file: file && withoutInvalidSecret(file),
+  });
+  if (config.hostType === "bare-metal") {
+    throw new ConfigError("A bare-metal host has no runtimes to reload.");
+  }
+  checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
+  return config;
+}
+
+/** Send `SIGHUP` and wait for the result of that reload. */
+async function signalReload(
+  pid: number,
+  paths: DaemonPaths,
+  deps: CliDeps,
+): Promise<ReloadResult> {
+  const before = readReloadResult(paths.reloadResultFile)?.seq ?? 0;
+  (deps.kill ?? process.kill.bind(process))(pid, "SIGHUP");
+  const deadline = Date.now() + RELOAD_WAIT_MS;
+  for (;;) {
+    const result = readReloadResult(paths.reloadResultFile);
+    if (result && result.seq > before) return result;
+    if (Date.now() >= deadline) {
+      throw new DaemonError(
+        `amika-hostd did not report the reload; see ${paths.logFile}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+function printReloadResult(result: ReloadResult, deps: CliDeps) {
+  for (const warning of result.warnings) deps.err(`amika-hostd: ${warning}`);
+  if (result.ok) deps.out("amika-hostd reloaded its runtime settings.");
+  else {
+    deps.err(
+      `amika-hostd: the reload failed, and the daemon kept its old settings: ${result.error ?? "unknown error"}`,
+    );
+  }
+}
+
+/** Lume's release that milestone 0 of spec 026 tested. */
+const LUME_VERSION = "0.6.1";
+
+/**
+ * Turn runtimes on or off (`runtime-update.ts`): show the plan, install what
+ * a runtime needs, write `[runtimes.*]`, and reload the running daemon. A
+ * second run with the same flags changes nothing.
+ */
+async function updateCapabilities(
+  deps: CliDeps,
+  options: {
+    enable: RuntimeName[];
+    disable: RuntimeName[];
+    dryRun: boolean;
+    yes: boolean;
+    json: boolean;
+  },
+): Promise<number> {
+  const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  if (!file) {
+    throw new ConfigError("No config file; run `amika-hostd setup` first.");
+  }
+  const paths = daemonPaths(deps.env);
+  const update = updateRuntimes(
+    file.contents,
+    options,
+    path.join(hostdDataDir(deps.env), "lume"),
+  );
+  const next = resolveConfig({
+    env: deps.env,
+    file: withoutInvalidSecret({ ...file, contents: update.contents }),
+  });
+  checkRuntimesSupported(next.runtimes, platformOf(deps).runtimes());
+  // A runtime with rigs stays on: hostd never stops a rig to change config.
+  const machines = fileMachineIndex(paths.machineIndexFile).entries();
+  for (const runtime of options.disable) {
+    const rigs = machines.filter(([, owner]) => owner === runtime);
+    if (rigs.length > 0 && update.steps.includes(`Turn off ${runtime}`)) {
+      throw new ConfigError(
+        `${runtime} has ${rigs.length} rig${rigs.length === 1 ? "" : "s"} (${rigs.map(([name]) => name).join(", ")}). Delete ${rigs.length === 1 ? "it" : "them"}, then try again.`,
+      );
+    }
+  }
+  const install =
+    options.enable.includes("lume") &&
+    next.runtimes.runtimes.lume &&
+    (deps.findLume ?? findLume)(deps.env) === undefined
+      ? [
+          `Install Lume ${LUME_VERSION} with its installer, into ~/.local/bin (downloads from GitHub; no sudo)`,
+        ]
+      : [];
+  const pid = readRunningPid(paths.pidFile, deps.isRunning ?? isDaemonProcess);
+  const plan = {
+    config: file.path,
+    changes: update.steps,
+    install,
+    reload: update.steps.length > 0 && pid !== undefined,
+  };
+  if (plan.changes.length === 0 && install.length === 0) {
+    if (options.json) deps.out(JSON.stringify({ plan, applied: false }));
+    else deps.out(`No change: ${file.path} already says this.`);
+    return 0;
+  }
+  if (!options.json) {
+    deps.out(`Plan for ${file.path}:`);
+    for (const step of [...install, ...plan.changes]) deps.out(`  - ${step}`);
+    deps.out(
+      plan.reload
+        ? "  - Reload the running amika-hostd"
+        : "  - amika-hostd is not running; `amika-hostd up` applies it",
+    );
+  }
+  if (options.dryRun) {
+    if (options.json) deps.out(JSON.stringify({ plan, applied: false }));
+    return 0;
+  }
+  if (!options.yes) {
+    if (!deps.prompt) {
+      throw new ConfigError(
+        "capabilities update asks before it changes anything; with no terminal, pass --yes to apply, or --dry-run to see the plan",
+      );
+    }
+    const answer = await deps.prompt("Apply this plan? [y/N] ");
+    if (!/^y(es)?$/i.test(answer?.trim() ?? "")) {
+      deps.out("Nothing was changed.");
+      return 0;
+    }
+  }
+  if (install.length > 0) await (deps.installLume ?? installLume)(deps);
+  (deps.writeConfigFile ?? writePrivateFile)(file.path, update.contents);
+  const result = plan.reload
+    ? await signalReload(pid!, paths, deps)
+    : undefined;
+  if (options.json) {
+    deps.out(JSON.stringify({ plan, applied: true, reload: result }));
+  } else {
+    deps.out(`Wrote ${file.path}.`);
+    if (result) printReloadResult(result, deps);
+  }
+  return result === undefined || result.ok ? 0 : 1;
+}
+
+/** Where `lume` is: on `PATH`, else where Lume's installer puts it. */
+export function findLume(env: NodeJS.ProcessEnv): string | undefined {
+  const dirs = [
+    ...(env.PATH ?? "").split(path.delimiter).filter(Boolean),
+    path.join(env.HOME || userInfo().homedir, ".local", "bin"),
+  ];
+  for (const dir of dirs) {
+    const candidate = path.join(dir, "lume");
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not here.
+    }
+  }
+  return undefined;
+}
+
+/** Run Lume's installer for `LUME_VERSION`, its output on stderr. */
+async function installLume(deps: CliDeps): Promise<void> {
+  const script = `https://raw.githubusercontent.com/trycua/cua/lume-v${LUME_VERSION}/libs/lume/scripts/install.sh`;
+  deps.out(`Installing Lume ${LUME_VERSION}...`);
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const child = spawn(
+      "/bin/bash",
+      [
+        "-c",
+        `set -o pipefail; curl -fsSL ${script} | bash -s -- --no-background-service`,
+      ],
+      {
+        env: { ...deps.env, LUME_VERSION },
+        stdio: ["ignore", process.stderr, process.stderr],
+      },
+    );
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+  if (code !== 0 || findLume(deps.env) === undefined) {
+    throw new DaemonError(
+      `Lume's installer failed (exit ${code}); nothing else was changed`,
+    );
+  }
+}
 
 /**
  * The capabilities report the config file gives (`runtimes.ts`), as `up`
@@ -698,6 +967,10 @@ function parseCommand(args: readonly string[]): ParsedCommand {
         hostname: { type: "string" },
         skill: { type: "boolean" },
         json: { type: "boolean" },
+        enable: { type: "string", multiple: true },
+        disable: { type: "string", multiple: true },
+        "dry-run": { type: "boolean" },
+        yes: { type: "boolean" },
         // Internal: how `up` starts the background daemon (see startBackground).
         "secret-key-from-up": { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -713,7 +986,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
   switch (command) {
     case "setup":
       rejectOptions(command, values, [
-        "json",
+        ...CAPABILITY_ONLY,
         "fg",
         "smolvm",
         "port",
@@ -738,7 +1011,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       };
     case "up":
       rejectOptions(command, values, [
-        "json",
+        ...CAPABILITY_ONLY,
         ...SETUP_ONLY,
         "smolvm",
         "secret-key-from-up",
@@ -749,7 +1022,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
     case "status":
     case "version":
       rejectOptions(command, values, [
-        "json",
+        ...CAPABILITY_ONLY,
         ...SETUP_ONLY,
         "fg",
         "smolvm",
@@ -759,7 +1032,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       ]);
       expectArguments(rest, 0);
       return { help: false, command };
-    case "capabilities":
+    case "capabilities": {
       rejectOptions(command, values, [
         ...SETUP_ONLY,
         "fg",
@@ -768,17 +1041,60 @@ function parseCommand(args: readonly string[]): ParsedCommand {
         "host",
         "secret-key-from-up",
       ]);
-      if (rest.length !== 1 || rest[0] !== "get") {
-        throw new UsageError("usage: amika-hostd capabilities get [--json]");
+      const json = values.json ?? false;
+      if (rest.length === 1 && rest[0] === "get") {
+        rejectOptions(`${command} get`, values, [
+          "enable",
+          "disable",
+          "dry-run",
+          "yes",
+        ]);
+        return { help: false, command: "capabilities-get", json };
       }
-      return {
-        help: false,
-        command: "capabilities-get",
-        json: values.json ?? false,
-      };
+      if (rest.length === 1 && rest[0] === "update") {
+        const enable = (values.enable ?? []).map(runtimeOption);
+        const disable = (values.disable ?? []).map(runtimeOption);
+        if (enable.length === 0 && disable.length === 0) {
+          throw new UsageError(
+            "capabilities update needs --enable <runtime> or --disable <runtime>",
+          );
+        }
+        const both = enable.find((name) => disable.includes(name));
+        if (both) {
+          throw new UsageError(`--enable and --disable both name ${both}`);
+        }
+        return {
+          help: false,
+          command: "capabilities-update",
+          enable,
+          disable,
+          dryRun: values["dry-run"] ?? false,
+          yes: values.yes ?? false,
+          json,
+        };
+      }
+      throw new UsageError(
+        "usage: amika-hostd capabilities get [--json], or capabilities update --enable|--disable <runtime> [--dry-run] [--yes] [--json]",
+      );
+    }
+    case "reload":
+      rejectOptions(command, values, [
+        ...SETUP_ONLY,
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+        "enable",
+        "disable",
+        "dry-run",
+        "yes",
+      ]);
+      expectArguments(rest, 0);
+      return { help: false, command, json: values.json ?? false };
     case "config":
       rejectOptions(command, values, [
-        "json",
+        ...CAPABILITY_ONLY,
         ...SETUP_ONLY,
         "fg",
         "smolvm",
@@ -791,7 +1107,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       }
       return { help: false, command: "config-upgrade" };
     case "serve":
-      rejectOptions(command, values, [...SETUP_ONLY, "fg", "json"]);
+      rejectOptions(command, values, [...SETUP_ONLY, "fg", ...CAPABILITY_ONLY]);
       expectArguments(rest, 0);
       return {
         help: false,
@@ -802,7 +1118,7 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       };
     case "register-url": {
       rejectOptions(command, values, [
-        "json",
+        ...CAPABILITY_ONLY,
         ...SETUP_ONLY,
         "fg",
         "smolvm",
@@ -833,6 +1149,24 @@ function expectArguments(rest: string[], count: number) {
 
 /** Options only `setup` takes. */
 const SETUP_ONLY = ["non-interactive", "hostname", "skill"] as const;
+
+/** Options only `capabilities` and `reload` take. */
+const CAPABILITY_ONLY = [
+  "json",
+  "enable",
+  "disable",
+  "dry-run",
+  "yes",
+] as const;
+
+function runtimeOption(name: string): RuntimeName {
+  if ((RUNTIME_NAMES as readonly string[]).includes(name)) {
+    return name as RuntimeName;
+  }
+  throw new UsageError(
+    `unknown runtime: ${name}; use ${RUNTIME_NAMES.join(" or ")}`,
+  );
+}
 
 function rejectOptions(
   command: string,
@@ -1408,28 +1742,84 @@ async function startBackground(
  * last, and stop serving if it exits. `afterStart` runs once the server is
  * listening (e.g. to complete registration); if it throws, the server stops.
  */
+/**
+ * Reload the runtime settings from the config file (`reload.ts`), and
+ * record the result where `amika-hostd reload` waits for it. A failure
+ * keeps the old settings, and is logged.
+ */
+async function reloadRuntimes(
+  serving: HostdConfigWith<"secretKey">,
+  routed: ReturnType<typeof machineRouter>,
+  paths: DaemonPaths,
+  deps: CliDeps,
+): Promise<void> {
+  const seq = (readReloadResult(paths.reloadResultFile)?.seq ?? 0) + 1;
+  let warnings: string[] = [];
+  try {
+    const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+    const next = resolveConfig({
+      env: deps.env,
+      file: file && withoutInvalidSecret(file),
+    });
+    checkRuntimesSupported(next.runtimes, platformOf(deps).runtimes());
+    const listed = await routed.router.list();
+    const machines = new Map([
+      ...routed.router.indexed(),
+      ...listed.map((m) => [m.name, m.runtime] as const),
+    ]);
+    const check = checkReload(serving, next, [...machines]);
+    warnings = [...check.warnings, ...next.runtimes.warnings];
+    if (check.error) throw new ConfigError(check.error);
+    routed.reload(next.runtimes);
+    serving.runtimes = next.runtimes;
+    for (const warning of warnings) deps.err(`amika-hostd: ${warning}`);
+    deps.out("amika-hostd reloaded its runtime settings");
+    writeReloadResult(paths.reloadResultFile, { seq, ok: true, warnings });
+  } catch (error) {
+    const message = errorMessage(error);
+    deps.err(
+      `amika-hostd: reload failed, keeping the old settings: ${message}`,
+    );
+    writeReloadResult(paths.reloadResultFile, {
+      seq,
+      ok: false,
+      error: message,
+      warnings,
+    });
+  }
+}
+
 /** One machine API over every runtime that is on (`runtime-router.ts`). */
 function machineRouter(
   config: HostdConfigWith<"secretKey">,
   paths: DaemonPaths,
   ownSmolvm: boolean,
   deps: CliDeps,
-): { router: RuntimeRouter; shutdown: () => Promise<void> } {
+): {
+  router: RuntimeRouter;
+  shutdown: () => Promise<void>;
+  /** Turn runtimes on and off as `next` says; `reload.ts` checked it. */
+  reload: (next: RuntimeConfig) => void;
+} {
   const on = config.runtimes.runtimes;
-  const lume =
-    on.lume &&
-    (deps.lumeRuntime ?? lumeRuntime)({
-      storageDir: on.lume.storageDir!,
+  const startLume = (settings: RuntimeSettings) => {
+    // A daemon's PATH can lack ~/.local/bin, where Lume installs.
+    const lumeBin = (deps.findLume ?? findLume)(deps.env) ?? "lume";
+    // No usage data leaves the host.
+    if (!deps.lumeRuntime) {
+      execFile(lumeBin, ["config", "telemetry", "disable"], () => {});
+    }
+    return (deps.lumeRuntime ?? lumeRuntime)({
+      storageDir: settings.storageDir!,
       stateDir: paths.lumeStateDir,
+      lumeBin,
     });
-  // No usage data leaves the host.
-  if (lume && !deps.lumeRuntime) {
-    execFile("lume", ["config", "telemetry", "disable"], () => {});
-  }
+  };
+  let lume = on.lume && startLume(on.lume);
   const router = runtimeRouter({
     runtimes: {
       ...(on.smol && {
-        smol: providerRuntime({
+        smol: (deps.smolRuntime ?? providerRuntime)({
           apiUrl: config.smolApiUrl ?? DEFAULT_SMOL_API_URL,
           requestTimeoutMs: config.smolRequestTimeoutMs,
           logFile: ownSmolvm ? paths.smolvmLogFile : undefined,
@@ -1437,9 +1827,13 @@ function machineRouter(
       }),
       ...(lume && { lume }),
     },
+    // Read on each call, so a reload's limits apply at once.
     maxRunning: () =>
       Object.fromEntries(
-        Object.values(on).map((runtime) => [runtime.name, runtime.maxRunning]),
+        Object.values(config.runtimes.runtimes).map((runtime) => [
+          runtime.name,
+          runtime.maxRunning,
+        ]),
       ),
     index: (deps.machineIndex ?? fileMachineIndex)(paths.machineIndexFile),
   });
@@ -1452,7 +1846,22 @@ function machineRouter(
       );
     });
   }
-  return { router, shutdown: async () => lume?.shutdown() };
+  return {
+    router,
+    shutdown: async () => lume?.shutdown(),
+    reload: (next) => {
+      if (next.runtimes.lume && !lume) {
+        lume = startLume(next.runtimes.lume);
+        router.setRuntime("lume", lume);
+      } else if (!next.runtimes.lume && lume) {
+        router.setRuntime("lume", undefined);
+        void lume.shutdown();
+        lume = undefined;
+      }
+      // smolvm runs on until the daemon stops; only the router lets go of it.
+      if (!next.runtimes.smol) router.setRuntime("smol", undefined);
+    },
+  };
 }
 
 async function serveInForeground(
@@ -1496,6 +1905,9 @@ async function serveInForeground(
   void signalled.then(() => interrupted.abort());
   let runtime: ManagedSmolvm | undefined;
   let routed: ReturnType<typeof machineRouter> | undefined;
+  /** The settings the daemon serves with; a reload replaces its runtimes. */
+  let serving: HostdConfigWith<"secretKey"> = config;
+  let stopReloads: (() => void) | undefined;
   /**
    * Whichever transport this host serves on.
    *
@@ -1515,6 +1927,7 @@ async function serveInForeground(
     // However the daemon stops, not only on a signal, so the pre-pull never
     // goes on against a smolvm that is gone.
     interrupted.abort();
+    stopReloads?.();
     try {
       await server?.close();
     } finally {
@@ -1533,9 +1946,7 @@ async function serveInForeground(
     }
     if (!interrupted.signal.aborted) {
       // Forward to wherever smolvm ended up, which may not be the default.
-      const serving = runtime
-        ? { ...config, smolApiUrl: runtime.apiUrl }
-        : config;
+      serving = runtime ? { ...config, smolApiUrl: runtime.apiUrl } : config;
       // Machines run on the runtimes that are on: smol through the `smol`
       // provider, on the smolvm this daemon started (or `SMOL_API_URL`, for
       // plain `serve`).
@@ -1582,6 +1993,16 @@ async function serveInForeground(
     // A rig that was running when the daemon stopped gets its SSH bridge
     // back, if it was provisioned.
     if (bareMetal) await bareMetal.resume();
+    if (routed && deps.reloadSignal) {
+      const reloader = routed;
+      let reloading = Promise.resolve();
+      stopReloads = deps.reloadSignal(() => {
+        // One at a time, in the order the signals came.
+        reloading = reloading.then(() =>
+          reloadRuntimes(serving, reloader, paths, deps),
+        );
+      });
+    }
     // Only a daemon running its own smolvm fills that smolvm's image cache.
     if (runtime) {
       (deps.prepull ?? prepullOn)(runtime.apiUrl, {

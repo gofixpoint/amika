@@ -259,6 +259,7 @@ describe("runCli", () => {
         prepullFile: "/state/amika-hostd/prepull.json",
         machineIndexFile: "/state/amika-hostd/machines.json",
         lumeStateDir: "/state/amika-hostd/lume",
+        reloadResultFile: "/state/amika-hostd/reload-result.json",
         snapshotIndexFile: "/state/amika-hostd/snapshots.json",
         snapshotDir: "/state/amika-hostd/snapshots",
         bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",
@@ -1624,6 +1625,233 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
   it("takes --json only with capabilities", async () => {
     const { deps } = harness();
     expect(await runCli(["status", "--json"], deps)).toBe(2);
+  });
+});
+
+describe("reloading runtimes", () => {
+  const BASE = `
+[presets.coder.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder:latest"
+`;
+  const MAC = hostPlatformFor("darwin", { arch: () => "arm64" } as never);
+
+  /** A harness with a real state directory, a config file, and a Mac. */
+  function reloadable(contents = BASE) {
+    const state = mkdtempSync(path.join(tmpdir(), "amika-hostd-reload-"));
+    const h = harness({ ...ENV, XDG_STATE_HOME: state, HOME: state });
+    const files = { config: contents };
+    const paths = daemonPaths(h.deps.env);
+    mkdirSync(path.dirname(paths.pidFile), { recursive: true });
+    const lume = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async (m: { name: string }) => ({
+        name: m.name,
+        state: "running",
+        cpus: 2,
+        memoryMb: 4096,
+        ports: [],
+      })),
+      shutdown: vi.fn(async () => {}),
+    };
+    const deps = {
+      ...h.deps,
+      platform: MAC,
+      loadConfigFile: vi.fn(() => ({
+        path: "/config/amika-hostd/config.toml",
+        contents: files.config,
+      })),
+      writeConfigFile: vi.fn((_file: string, contents: string) => {
+        files.config = contents;
+      }),
+      smolRuntime: () =>
+        ({ list: async () => [] }) as unknown as MachineRuntime,
+      lumeRuntime: vi.fn(() => lume as never),
+      findLume: () => "/usr/local/bin/lume",
+      installLume: vi.fn(async () => {}),
+    };
+    return { ...h, deps, files, paths, lume };
+  }
+
+  it("`reload` refuses an invalid config without signalling the daemon", async () => {
+    const { deps, err } = reloadable(`[runtimes.docker]`);
+    const kill = vi.fn();
+    expect(await runCli(["reload"], { ...deps, kill })).toBe(1);
+    expect(err.join("\n")).toContain('unknown runtime "docker"');
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("`reload` says when no daemon runs", async () => {
+    const { deps, err } = reloadable();
+    expect(await runCli(["reload"], deps)).toBe(3);
+    expect(err.join("\n")).toContain("amika-hostd is not running");
+  });
+
+  it("`reload` signals the daemon and prints the result it writes", async () => {
+    const { deps, out, err, paths } = reloadable();
+    writeFileSync(paths.pidFile, "4242\n");
+    const result = (ok: boolean, seq: number) =>
+      writeFileSync(
+        paths.reloadResultFile,
+        JSON.stringify({
+          seq,
+          ok,
+          warnings: [],
+          ...(ok
+            ? {}
+            : { error: "lume has 1 rig (mac). Delete it, then try again." }),
+        }),
+      );
+    const kill = vi.fn((_pid: number, _signal: string) => result(true, 1));
+    const running = { ...deps, kill, isRunning: () => true };
+    expect(await runCli(["reload"], running)).toBe(0);
+    expect(kill).toHaveBeenCalledWith(4242, "SIGHUP");
+    expect(out.at(-1)).toBe("amika-hostd reloaded its runtime settings.");
+
+    kill.mockImplementation(() => result(false, 2));
+    expect(await runCli(["reload"], running)).toBe(1);
+    expect(err.at(-1)).toContain("kept its old settings: lume has 1 rig");
+  });
+
+  it("the daemon adds lume on SIGHUP, with no restart, and keeps old settings on a bad reload", async () => {
+    const { deps, files, paths, lume } = reloadable();
+    let stop: () => void = () => {};
+    const stopped = new Promise<void>((resolve) => (stop = resolve));
+    let reload: () => void = () => {};
+    let registered: () => void = () => {};
+    const ready = new Promise<void>((resolve) => (registered = resolve));
+    const serving = runCli(["serve"], {
+      ...deps,
+      shutdownSignal: () => stopped,
+      reloadSignal: (handler: () => void) => {
+        reload = handler;
+        registered();
+        return () => {};
+      },
+    } as CliDeps);
+    await ready;
+    const router = deps.startServer.mock.calls[0][1];
+    const waitFor = async (seq: number) => {
+      for (let i = 0; i < 100; i++) {
+        if (existsSync(paths.reloadResultFile)) {
+          const result = JSON.parse(
+            readFileSync(paths.reloadResultFile, "utf8"),
+          );
+          if (result.seq === seq) return result;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("no reload result");
+    };
+
+    files.config = `${BASE}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+[presets.macos-coder.runtimes.lume]
+image = "amika-macos-coder"
+`;
+    reload();
+    expect(await waitFor(1)).toMatchObject({ ok: true });
+    await router.create({
+      name: "mac",
+      image: "amika-macos-coder",
+      network: true,
+      runtime: "lume",
+    });
+    expect(lume.create).toHaveBeenCalledOnce();
+
+    // Removing lume while it has a rig is refused, and lume stays on.
+    files.config = BASE;
+    reload();
+    expect(await waitFor(2)).toMatchObject({
+      ok: false,
+      error: "lume has 1 rig (mac). Delete it, then try again.",
+    });
+    await router.create({
+      name: "mac2",
+      image: "amika-macos-coder",
+      network: true,
+      runtime: "lume",
+    });
+    expect(lume.create).toHaveBeenCalledTimes(2);
+    expect(deps.startServer).toHaveBeenCalledOnce();
+
+    stop();
+    expect(await serving).toBe(0);
+    expect(lume.shutdown).toHaveBeenCalled();
+  });
+
+  describe("capabilities update", () => {
+    it("--dry-run prints the plan and changes nothing", async () => {
+      const { deps, out, files } = reloadable();
+      expect(
+        await runCli(
+          ["capabilities", "update", "--enable", "lume", "--dry-run"],
+          deps,
+        ),
+      ).toBe(0);
+      expect(out).toContain("  - Turn on lume");
+      expect(files.config).toBe(BASE);
+      expect(deps.installLume).not.toHaveBeenCalled();
+    });
+
+    it("needs --yes or --dry-run with no terminal", async () => {
+      const { deps, err, files } = reloadable();
+      expect(
+        await runCli(["capabilities", "update", "--enable", "lume"], deps),
+      ).toBe(1);
+      expect(err.join("\n")).toContain("pass --yes to apply, or --dry-run");
+      expect(files.config).toBe(BASE);
+    });
+
+    it("--yes writes the config, installs Lume when it is missing, and then makes no change", async () => {
+      const { deps, out, files } = reloadable();
+      const missing = { ...deps, findLume: () => undefined };
+      expect(
+        await runCli(
+          ["capabilities", "update", "--enable", "lume", "--yes"],
+          missing,
+        ),
+      ).toBe(0);
+      expect(deps.installLume).toHaveBeenCalledOnce();
+      expect(files.config).toContain("[runtimes.lume]");
+      expect(out).toContain(
+        "  - amika-hostd is not running; `amika-hostd up` applies it",
+      );
+      const written = files.config;
+      expect(
+        await runCli(
+          ["capabilities", "update", "--enable", "lume", "--yes", "--json"],
+          deps,
+        ),
+      ).toBe(0);
+      expect(files.config).toBe(written);
+      expect(JSON.parse(out.at(-1)!)).toMatchObject({
+        applied: false,
+        plan: { changes: [], install: [] },
+      });
+    });
+
+    it("refuses to turn off a runtime that has rigs, and lists them", async () => {
+      const { deps, err, paths } = reloadable(`${BASE}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+`);
+      writeFileSync(
+        paths.machineIndexFile,
+        JSON.stringify({ machines: { "ios-build": "lume" } }),
+      );
+      expect(
+        await runCli(
+          ["capabilities", "update", "--disable", "lume", "--yes"],
+          deps,
+        ),
+      ).toBe(1);
+      expect(err.join("\n")).toContain(
+        "lume has 1 rig (ios-build). Delete it, then try again.",
+      );
+    });
   });
 });
 
