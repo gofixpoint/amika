@@ -429,7 +429,7 @@ func TestStoreSerializesConcurrentManifestUpdates(t *testing.T) {
 
 func TestOSStoresSerializeManifestAcrossInstances(t *testing.T) {
 	skipUnlessSecureWrites(t)
-	directory := t.TempDir()
+	directory := realTempDir(t)
 	manifestPath := filepath.Join(directory, "injected-paths.json")
 	files := OSFiles{}
 	stores := []*Store{NewStore(manifestPath, files), NewStore(manifestPath, files)}

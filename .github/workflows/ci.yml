@@ -42,6 +42,23 @@ jobs:
       - name: Test
         run: make test
 
+  # amikad runs in macOS rigs, and its secure writes, locks, and sshd paths
+  # differ there, so its tests also run on macOS.
+  test-amikad-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Test
+        run: go -C go test ./internal/amikad/...
+
   # This repo owns `@amika/sandbox`, so this job answers "is this package
   # correct". amika-mono consumes it as a git submodule pinned to an exact
   # commit and does not duplicate these tests; its CI answers the separate

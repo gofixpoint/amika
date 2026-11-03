@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gofixpoint/amika/go/internal/amikad/platform"
 	"github.com/gofixpoint/amika/go/internal/constants"
 )
 
@@ -27,8 +28,8 @@ func TestResolveLayoutWithoutStateDirIsRootMode(t *testing.T) {
 	if layout.UserMode {
 		t.Fatal("root layout reported user mode")
 	}
-	if layout.ManifestPath != "/var/lib/amikad/injected-paths.json" ||
-		layout.TokenPath != "/var/lib/amikad/connect-token" ||
+	if layout.ManifestPath != platform.StateDirectory+"/injected-paths.json" ||
+		layout.TokenPath != platform.StateDirectory+"/connect-token" ||
 		layout.ServeLogPath != "/var/log/amikad/no-relay.log" {
 		t.Fatalf("root paths changed: %+v", layout)
 	}
