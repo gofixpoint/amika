@@ -7,7 +7,7 @@ import {
   SandboxProviderUnsupportedError,
 } from "../../provider";
 import type { SandboxService } from "../../../types";
-import { SmolPortsError, mapSmolState, smolOperations } from "./operations";
+import { mapSmolState, smolOperations } from "./operations";
 
 const INPUT: CreateSandboxProviderInput = {
   name: "local-test",
@@ -99,30 +99,48 @@ describe("smol services", () => {
     expect(services[1]).toEqual(service("other", 4000));
   });
 
-  it("accepts routes on exactly the published ports", async () => {
-    const { ops } = harness([json(PUBLISHED), json(PUBLISHED)]);
+  it("leaves routes on exactly the published ports alone", async () => {
+    const { ops, fetcher } = harness([json(PUBLISHED), json(PUBLISHED)]);
     await ops.syncRoutes(INPUT.name, [service("site", 3000)]);
     // Revoking one of two services on a port leaves the port routed.
     await ops.syncRoutes(INPUT.name, [
       service("site", 3000),
       service("admin", 3000),
     ]);
+    expect(fetcher.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual(
+      ["GET", "GET"],
+    );
   });
 
-  it.each([
-    [
-      "a port the machine did not publish",
-      [service("api", 4000)],
-      "does not publish 4000",
-    ],
-    ["dropping a published port", [], "still publishes 3000"],
-  ])("refuses %s", async (_label, desired, message) => {
-    const { ops } = harness([json(PUBLISHED)]);
-    const failure = await ops
-      .syncRoutes(INPUT.name, desired)
-      .catch((e: unknown) => e);
-    expect(failure).toBeInstanceOf(SmolPortsError);
-    expect((failure as Error).message).toContain(message);
+  it("publishes a new port on a free host port, keeping the published ones", async () => {
+    const { ops, fetcher } = harness([
+      json(PUBLISHED),
+      new Response(null, { status: 204 }),
+    ]);
+    await ops.syncRoutes(INPUT.name, [
+      service("site", 3000),
+      service("api", 4000),
+      service("api-alias", 4000),
+    ]);
+    expect(String(fetcher.mock.calls[1][0])).toMatch(
+      /\/api\/v1\/machines\/local-test\/ports$/,
+    );
+    expect(fetcher.mock.calls[1][1]?.method).toBe("PUT");
+    const { ports } = body(fetcher, 1);
+    expect(ports).toEqual([
+      { host: 41001, guest: 3000 },
+      { host: expect.any(Number), guest: 4000 },
+    ]);
+    expect(ports[1].host).not.toBe(41001);
+  });
+
+  it("unpublishes a dropped port", async () => {
+    const { ops, fetcher } = harness([
+      json(PUBLISHED),
+      new Response(null, { status: 204 }),
+    ]);
+    await ops.syncRoutes(INPUT.name, []);
+    expect(body(fetcher, 1)).toEqual({ ports: [] });
   });
 
   it("refuses a service switched to UDP without asking smolvm", async () => {

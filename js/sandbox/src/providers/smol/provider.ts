@@ -19,7 +19,6 @@ export {
   machineSchema,
 } from "./internal/client";
 export {
-  SmolPortsError,
   mapSmolState,
   smolOperations,
   type SmolCreateInput,
