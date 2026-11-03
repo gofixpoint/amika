@@ -10,6 +10,7 @@
  * chooses the OS rather than inheriting the machine's. Nothing outside
  * `src/platforms/` reads `process.platform` (enforced by lint).
  */
+import type { RuntimeName } from "../internal/runtimes.js";
 import type { Keychain, Runner } from "./keychains.js";
 
 /** What hostd can offer on an OS. */
@@ -61,6 +62,8 @@ export interface HostPlatform {
   readonly sshdInstallHint: string;
   /** The amikad release binary for this machine. */
   amikadAsset(): AmikadAsset;
+  /** The runtimes this machine can run rigs with. */
+  runtimes(): RuntimeName[];
   /**
    * The system keychain hostd keeps secrets in, or undefined where it
    * supports none (Linux without a session bus, say).

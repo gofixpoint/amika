@@ -15,6 +15,16 @@ import {
 } from "./setup.js";
 import type { StrictModesViolation } from "./strict-modes.js";
 
+/** The presets a config with the default preset images resolves to. */
+const DEFAULT_PRESETS = expect.objectContaining({
+  presets: Object.fromEntries(
+    Object.entries(DEFAULT_PRESET_IMAGES).map(([name, image]) => [
+      name,
+      { os: "linux", defaultRuntime: "smol", images: { smol: image } },
+    ]),
+  ),
+});
+
 const PATH = "/config/amika-hostd/config.toml";
 const OLD_SECRET = "a".repeat(64);
 const NEW_SECRET = "b".repeat(64);
@@ -154,7 +164,7 @@ describe("runSetup", () => {
       hostname: "jakubs-macbook-pro",
       secretKey: NEW_SECRET,
       sizes: DEFAULT_SIZES,
-      images: DEFAULT_PRESET_IMAGES,
+      runtimes: DEFAULT_PRESETS,
     });
     expect(h.store.set).toHaveBeenCalledWith("amk_123");
     expect(h.out).toContain("Stored the API key in the test store.");
@@ -807,7 +817,7 @@ describe("runSetup with the keychain store", () => {
     expect(h.config()).toMatchObject({
       hostname: "builder",
       sizes: DEFAULT_SIZES,
-      images: DEFAULT_PRESET_IMAGES,
+      runtimes: DEFAULT_PRESETS,
     });
     expect(h.keychainSecret.set).not.toHaveBeenCalled();
   });
@@ -933,7 +943,7 @@ describe("renderConfig", () => {
     expect(resolveConfig({ file: { path: PATH, contents } })).toMatchObject({
       hostname: "builder",
       secretKey: NEW_SECRET,
-      images: DEFAULT_PRESET_IMAGES,
+      runtimes: DEFAULT_PRESETS,
       sizes: DEFAULT_SIZES,
     });
   });
@@ -941,7 +951,7 @@ describe("renderConfig", () => {
   it("uses the same defaults the installer seeds from the example", () => {
     expect(
       resolveConfig({ file: { path: PATH, contents: EXAMPLE } }),
-    ).toMatchObject({ sizes: DEFAULT_SIZES, images: DEFAULT_PRESET_IMAGES });
+    ).toMatchObject({ sizes: DEFAULT_SIZES, runtimes: DEFAULT_PRESETS });
   });
 });
 

@@ -21,6 +21,7 @@ export function unsupportedPlatform(name: NodeJS.Platform): HostPlatform {
       throw new PlatformUnsupportedError(name, "amikad");
     },
     keychain: () => undefined,
+    runtimes: () => [],
     // `down` still confirms a pid before signalling it, as it always has.
     processCommand: (pid, field) => procCommand(pid) ?? psCommand(pid, field),
   };

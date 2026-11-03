@@ -11,6 +11,8 @@ import {
 } from "./service-registry.js";
 import { createUpgradeHandler } from "./services.js";
 import type { MachineRuntime } from "./machine-runtime.js";
+import { requestImageNames } from "./requests.js";
+import { presetImages } from "./runtimes.js";
 import { openSnapshotStore } from "./snapshot-store.js";
 import { startCapture } from "./snapshots.js";
 
@@ -94,7 +96,7 @@ export function buildHandlers(
   const app = createApp(
     {
       secretKey: config.secretKey,
-      images: config.images,
+      images: requestImageNames(presetImages(config.runtimes, "smol")),
       configPath: config.configPath,
       requestTimeoutMs: config.smolRequestTimeoutMs,
       smolvmLogFile,

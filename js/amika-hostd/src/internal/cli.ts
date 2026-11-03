@@ -38,6 +38,9 @@ import {
   type HostdConfigWith,
   type HostdFlags,
 } from "./config.js";
+import { checkRuntimesSupported, presetImages } from "./runtimes.js";
+import { upgradeConfigFile } from "./config-upgrade.js";
+import { writePrivateFile } from "./private-file.js";
 import path from "node:path";
 import { openSecrets as openSecretStore, type Secrets } from "./credentials.js";
 import { startTunnel as startTunnelOut } from "./tunnel-runner.js";
@@ -106,6 +109,8 @@ Commands:
   status              Say whether the daemon is running; exits 0 if it is, 3 if
                       it is not
   serve               Run the HTTP server in the foreground without registering
+  config upgrade      Rewrite old tables in the config file in the current
+                      format (the installer runs it on an upgrade)
   register-url <url>  Set a listening host's internet-facing URL (e.g. an
                       ngrok or Cloudflare Tunnel URL) to complete its
                       registration. A host whose address Amika assigns takes
@@ -217,6 +222,7 @@ export async function runCli(
     // Stopping and checking need only the pidfiles, not a valid configuration.
     if (parsed.command === "down") return await down(deps);
     if (parsed.command === "status") return status(deps);
+    if (parsed.command === "config-upgrade") return upgradeConfigOnDisk(deps);
     if (parsed.command === "setup") {
       if (parsed.skill) {
         deps.out(setupSkill(skillContext(deps)));
@@ -276,7 +282,10 @@ export async function runCli(
         // Read before the daemon starts, which records each image it pulls.
         const pending = bareMetal
           ? []
-          : pendingImages(config.images, daemonPaths(deps.env).prepullFile);
+          : pendingImages(
+              presetImages(config.runtimes, "smol"),
+              daemonPaths(deps.env).prepullFile,
+            );
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
         const finish = (port: number | undefined) => {
@@ -373,6 +382,7 @@ type ParsedCommand =
   | { help: false; command: "down" }
   | { help: false; command: "status" }
   | { help: false; command: "version" }
+  | { help: false; command: "config-upgrade" }
   | {
       help: false;
       command: "serve";
@@ -389,6 +399,33 @@ type RegistrationConfig = HostdConfigWith<
 >;
 
 class UsageError extends Error {}
+
+/**
+ * Rewrite the config file's old tables (`config-upgrade.ts`). The result is
+ * checked as `up` reads it before it replaces the file.
+ */
+function upgradeConfigOnDisk(deps: CliDeps): number {
+  const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  if (file === undefined) {
+    deps.out("No config file to upgrade.");
+    return 0;
+  }
+  const upgraded = upgradeConfigFile(file);
+  if (upgraded === file) {
+    deps.out(`${file.path} is current; nothing to upgrade.`);
+    return 0;
+  }
+  resolveConfig({ file: withoutInvalidSecret(upgraded) });
+  try {
+    (deps.writeConfigFile ?? writePrivateFile)(file.path, upgraded.contents);
+  } catch (error) {
+    throw new ConfigError(`Cannot write ${file.path}: ${errorMessage(error)}`);
+  }
+  deps.out(
+    `Rewrote [preset_images] in ${file.path} as [presets.<name>.runtimes.smol] tables.`,
+  );
+  return 0;
+}
 
 /** Run `setup`, reporting Ctrl-C as a setup that changed nothing. */
 async function setup(
@@ -497,7 +534,8 @@ function resolveTolerant(deps: CliDeps): HostdConfig {
   const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
   return resolveConfig({
     env: deps.env,
-    file: file && withoutInvalidSecret(file),
+    // Read as setup writes it: setup rewrites old tables.
+    file: file && withoutInvalidSecret(upgradeConfigFile(file)),
   });
 }
 
@@ -646,6 +684,19 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       ]);
       expectArguments(rest, 0);
       return { help: false, command };
+    case "config":
+      rejectOptions(command, values, [
+        ...SETUP_ONLY,
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+      ]);
+      if (rest.length !== 1 || rest[0] !== "upgrade") {
+        throw new UsageError("usage: amika-hostd config upgrade");
+      }
+      return { help: false, command: "config-upgrade" };
     case "serve":
       rejectOptions(command, values, [...SETUP_ONLY, "fg"]);
       expectArguments(rest, 0);
@@ -1287,6 +1338,12 @@ async function serveInForeground(
       ? bareMetalRuntimeFor(config, paths, deps)
       : undefined;
   const runsSmolvm = smolvm && !bareMetal;
+  if (!bareMetal) {
+    checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
+    for (const warning of config.runtimes.warnings) {
+      deps.err(`amika-hostd: ${warning}`);
+    }
+  }
   const claim = deps.claimPidFile ?? claimPidFileOnDisk;
   const release = claim(paths.pidFile, deps.isRunning);
   // Listen for the signal first, so Ctrl-C during startup (or during
@@ -1385,7 +1442,7 @@ async function serveInForeground(
     // Only a daemon running its own smolvm fills that smolvm's image cache.
     if (runtime) {
       (deps.prepull ?? prepullOn)(runtime.apiUrl, {
-        images: config.images,
+        images: presetImages(config.runtimes, "smol"),
         stateFile: paths.prepullFile,
         out: deps.out,
         err: deps.err,

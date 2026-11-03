@@ -845,11 +845,13 @@ seed_config() {
   config_paths
   if [ -e "$CONFIG_PATH" ]; then
     echo "Keeping existing config at ${CONFIG_PATH}"
+    upgrade_config
     return 0
   fi
   if [ -e "$SYSTEM_CONFIG_PATH" ]; then
     echo "Keeping existing config at ${SYSTEM_CONFIG_PATH}"
     CONFIG_PATH="$SYSTEM_CONFIG_PATH"
+    upgrade_config
     return 0
   fi
   mkdir -p "$(dirname "$CONFIG_PATH")"
@@ -877,6 +879,14 @@ seed_config() {
   )
   CONFIG_HOSTNAME="$host_name"
   echo "Wrote a config to ${CONFIG_PATH}"
+}
+
+# Rewrite the kept config's old tables in the current format, as the new
+# daemon reads it. A warning, not a failed install: the operator can run the
+# command again.
+upgrade_config() {
+  "${INSTALL_DIR}/amika-hostd" config upgrade ||
+    echo "Warning: could not upgrade ${CONFIG_PATH}; run \`amika-hostd config upgrade\`" >&2
 }
 
 # Lowercase letters, digits, and hyphens in dot-separated labels of 1-63

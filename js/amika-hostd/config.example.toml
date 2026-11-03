@@ -102,6 +102,24 @@ vcpus = 16
 memory_gib = 24
 disk_gib = 40
 
+# --- Runtimes -----------------------------------------------------------------
+#
+# The tools this host runs rigs with. With no [runtimes] table, only smol is
+# on. Lume runs macOS rigs, only on a Mac with Apple Silicon. A runtime's own
+# [runtimes.<name>.sizes] replaces [sizes] for its rigs.
+#
+# [runtimes.smol]
+# max_running = 4
+#
+# [runtimes.lume]
+# storage_dir = "/Users/you/amika-lume"
+# max_running = 2       # macOS runs 2 macOS VMs at most
+#
+# [runtimes.lume.sizes.medium]
+# vcpus = 4
+# memory_gib = 8
+# disk_gib = 80
+
 # --- Preset images ------------------------------------------------------------
 #
 # The image each Amika preset boots on this host. `:latest` follows each
@@ -109,6 +127,11 @@ disk_gib = 40
 # Every `amika-hostd up` makes sure each image is in smolvm's cache, in the
 # background: the first one downloads them, later ones only what changed.
 
-[preset_images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
-amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
+[presets.coder.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder:latest"
+
+[presets.coder-plus-docker.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
+
+# [presets.macos-coder.runtimes.lume]
+# image = "amika-macos-coder"

@@ -1261,10 +1261,12 @@ describe("managing smolvm", () => {
 });
 
 describe("pre-pulling images", () => {
-  const IMAGES = `[preset_images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
-coder = "ghcr.io/gofixpoint/amika-coder:latest"
-amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
+  const IMAGES = `[presets.coder.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder:latest"
+[presets.alias.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder:latest"
+[presets.coder-plus-docker.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
 `;
 
   /** A harness with a real state directory and `contents` as its config. */
@@ -1293,8 +1295,8 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
       ),
     );
     expect(out.slice(start + 1, start + 3)).toEqual([
-      "  amika-coder, coder       ghcr.io/gofixpoint/amika-coder:latest",
-      "  amika-coder-plus-docker  ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+      "  coder, alias       ghcr.io/gofixpoint/amika-coder:latest",
+      "  coder-plus-docker  ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
     ]);
     expect(out).toContain(`Progress: ${daemonPaths(deps.env).logFile}`);
   });
@@ -1308,7 +1310,7 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
     );
     expect(await runCli(["up"], deps)).toBe(0);
     expect(out).toContain(
-      "  amika-coder-plus-docker  ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+      "  coder-plus-docker  ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
     );
     expect(out.join("\n")).not.toContain("amika-coder:latest");
 
@@ -1333,9 +1335,9 @@ amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
     expect(await runCli(["up", "--fg"], deps)).toBe(0);
     expect(deps.prepull).toHaveBeenCalledWith("http://127.0.0.1:23021", {
       images: {
-        "amika-coder": "ghcr.io/gofixpoint/amika-coder:latest",
         coder: "ghcr.io/gofixpoint/amika-coder:latest",
-        "amika-coder-plus-docker":
+        alias: "ghcr.io/gofixpoint/amika-coder:latest",
+        "coder-plus-docker":
           "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
       },
       stateFile: prepullFile,
@@ -1674,6 +1676,47 @@ describe("setup", () => {
       "To stop the daemon and its VMs, run `amika-hostd down`.",
     );
     expect(deps.registerHost).not.toHaveBeenCalled();
+  });
+
+  describe("an old [preset_images] table", () => {
+    const OLD = `hostname = "builder"
+[preset_images]
+amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
+`;
+
+    it("`up` refuses it, naming the command that rewrites it", async () => {
+      const { deps, files, err } = unconfigured([]);
+      files[CONFIG_PATH] = OLD;
+      expect(await runCli(["up"], deps)).toBe(1);
+      expect(err.join("\n")).toContain(
+        "has the old [preset_images] table; run `amika-hostd config upgrade`",
+      );
+    });
+
+    it("`config upgrade` rewrites it once, and then has nothing to do", async () => {
+      const { deps, files, out } = unconfigured([]);
+      files[CONFIG_PATH] = OLD;
+      expect(await runCli(["config", "upgrade"], deps)).toBe(0);
+      expect(files[CONFIG_PATH]).toBe(`hostname = "builder"
+[presets.coder.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder:latest"
+`);
+      expect(out.at(-1)).toBe(
+        `Rewrote [preset_images] in ${CONFIG_PATH} as [presets.<name>.runtimes.smol] tables.`,
+      );
+      deps.writeConfigFile.mockClear();
+      expect(await runCli(["config", "upgrade"], deps)).toBe(0);
+      expect(deps.writeConfigFile).not.toHaveBeenCalled();
+      expect(out.at(-1)).toBe(`${CONFIG_PATH} is current; nothing to upgrade.`);
+    });
+
+    it("`setup` rewrites it as it writes the file", async () => {
+      const { deps, files } = unconfigured([""], ["amk_123"]);
+      files[CONFIG_PATH] = OLD;
+      expect(await runCli(["setup"], deps)).toBe(0);
+      expect(files[CONFIG_PATH]).not.toContain("[preset_images]");
+      expect(files[CONFIG_PATH]).toContain("[presets.coder.runtimes.smol]");
+    });
   });
 
   it("`setup` keeps the secret key in the config with the file store", async () => {

@@ -162,7 +162,7 @@ describe("machine API", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({
         error:
-          'image "amika-coder-plus-docker" is not configured on this host; add it under [preset_images] in /etc/amika-hostd/config.toml',
+          'image "amika-coder-plus-docker" is not configured on this host; add it under [presets.<name>.runtimes.smol] in /etc/amika-hostd/config.toml',
       });
       expectUntouched(runtime);
     });
@@ -176,7 +176,7 @@ describe("machine API", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({
         error:
-          'image "amika-coder" is not configured on this host; add it under [preset_images] in the amika-hostd config.toml',
+          'image "amika-coder" is not configured on this host; add it under [presets.<name>.runtimes.smol] in the amika-hostd config.toml',
       });
     });
 

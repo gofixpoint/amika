@@ -33,7 +33,18 @@ describe("resolveConfig", () => {
       smolApiUrl: undefined,
       smolRequestTimeoutMs: 300_000,
       sizes: {},
-      images: {},
+      runtimes: {
+        runtimes: {
+          smol: {
+            name: "smol",
+            maxRunning: undefined,
+            sizes: {},
+            storageDir: undefined,
+          },
+        },
+        presets: {},
+        warnings: [],
+      },
       transport: "tunnel",
       tunnelGatewayUrl: undefined,
       hostType: "vm",
@@ -210,40 +221,38 @@ disk_grow_only = true
     });
   });
 
-  it("reads image references from the [preset_images] table", () => {
+  it("reads preset images from [presets.<name>.runtimes.smol]", () => {
     const config = resolveConfig({
       file: file(`
-[preset_images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:0123456789ab"
-amika-coder-plus-docker = " ghcr.io/gofixpoint/amika-coder-plus-docker:0123456789ab "
+[presets.coder.runtimes.smol]
+image = " ghcr.io/gofixpoint/amika-coder:0123456789ab "
 `),
     });
-    expect(config.images).toEqual({
-      "amika-coder": "ghcr.io/gofixpoint/amika-coder:0123456789ab",
-      "amika-coder-plus-docker":
-        "ghcr.io/gofixpoint/amika-coder-plus-docker:0123456789ab",
+    expect(config.runtimes.presets).toEqual({
+      coder: {
+        os: "linux",
+        defaultRuntime: "smol",
+        images: { smol: "ghcr.io/gofixpoint/amika-coder:0123456789ab" },
+      },
     });
   });
 
   it.each([
-    ["an empty reference", `amika-coder = ""`, /preset_images\.amika-coder$/],
-    ["a blank reference", `amika-coder = "  "`, /preset_images\.amika-coder$/],
-    [
-      "a non-string reference",
-      `amika-coder = 1`,
-      /preset_images\.amika-coder$/,
-    ],
-    ["an empty name", `"" = "ghcr.io/x:y"`, /invalid settings: preset_images/],
-  ])("rejects a [preset_images] table with %s", (_label, line, message) => {
+    ["an empty image", `image = ""`],
+    ["a blank image", `image = "  "`],
+    ["a non-string image", `image = 1`],
+  ])("rejects a preset runtime with %s", (_label, line) => {
     expect(() =>
-      resolveConfig({ file: file(`[preset_images]\n${line}`) }),
-    ).toThrow(message);
+      resolveConfig({ file: file(`[presets.coder.runtimes.smol]\n${line}`) }),
+    ).toThrow(/presets\.coder\.runtimes\.smol\.image$/);
   });
 
-  it("rejects preset_images that aren't a table", () => {
+  it("refuses the old [preset_images] table, naming the command that rewrites it", () => {
     expect(() =>
-      resolveConfig({ file: file(`preset_images = "ghcr.io/x:y"`) }),
-    ).toThrow(/invalid settings: preset_images$/);
+      resolveConfig({
+        file: file(`[preset_images]\namika-coder = "ghcr.io/x:y"`),
+      }),
+    ).toThrow(/old \[preset_images\] table; run `amika-hostd config upgrade`/);
   });
 
   it("rejects the 0.1.0 [images] table", () => {
@@ -627,10 +636,22 @@ describe("config.example.toml", () => {
         large: { vcpus: 8, memoryGib: 16, diskGib: 40, diskGrowOnly: false },
         xlarge: { vcpus: 16, memoryGib: 24, diskGib: 40, diskGrowOnly: false },
       },
-      images: {
-        "amika-coder": "ghcr.io/gofixpoint/amika-coder:latest",
-        "amika-coder-plus-docker":
-          "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+      runtimes: {
+        presets: {
+          coder: {
+            os: "linux",
+            defaultRuntime: "smol",
+            images: { smol: "ghcr.io/gofixpoint/amika-coder:latest" },
+          },
+          "coder-plus-docker": {
+            os: "linux",
+            defaultRuntime: "smol",
+            images: {
+              smol: "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+            },
+          },
+        },
+        warnings: [],
       },
     });
   });

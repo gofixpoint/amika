@@ -63,6 +63,21 @@ export const createSnapshotSchema = z.strictObject({
   name: z.string().trim().min(1).max(200),
 });
 
+/**
+ * The names a create request can give for each preset image: the preset's
+ * own name (`coder`), and the `amika-<preset>` name that control planes send.
+ */
+export function requestImageNames(
+  images: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(images).flatMap(([preset, image]) => [
+      [preset, image],
+      [`amika-${preset}`, image],
+    ]),
+  );
+}
+
 /** Where a machine's filesystem comes from: an image, or a local snapshot. */
 export type MachineSource =
   | { image: string; from?: undefined }
@@ -77,7 +92,7 @@ export interface SnapshotSource {
 /**
  * What smolvm should boot for a create request's `image`, in this order:
  *
- * 1. A name configured under `[preset_images]` becomes its reference.
+ * 1. A preset name (`requestImageNames`) becomes its smol image.
  * 2. A snapshot this host holds becomes its `.smolmachine` artifact. This is
  *    checked BEFORE the OCI passthrough below because Amika's snapshot names
  *    are namespaced (`org_abc123/sandbox/nightly`) and so contain slashes:
@@ -112,7 +127,7 @@ export function resolveSource(
   }
   if (image.includes("/") || image.includes(":")) return { image };
   throw badRequest(
-    `image ${JSON.stringify(image)} is not configured on this host; add it under [preset_images] in ${configPath ?? "the amika-hostd config.toml"}`,
+    `image ${JSON.stringify(image)} is not configured on this host; add it under [presets.<name>.runtimes.smol] in ${configPath ?? "the amika-hostd config.toml"}`,
   );
 }
 
