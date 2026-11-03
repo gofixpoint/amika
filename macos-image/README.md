@@ -32,9 +32,17 @@ A failed build deletes its clone.
 - amikad in `/usr/local/bin`, and its launchd job in `/usr/local/lib/amikad`.
   launchd does not start amikad at boot. Provisioning loads the job after it
   sets new credentials.
+- The Xcode Command Line Tools (git, clang, python3), and Homebrew with GNU
+  coreutils, sed, findutils, bash 5, and jq.
+- Node, npm, and the coding agents, at the pinned versions.
 
-The rig's PATH comes from `/etc/paths`. The provider loads it before each
-command, as login shells do.
+`steps/90-verify.sh` fails the build when one of these is missing, or when
+the image has amikad state or SSH keys. A full build takes about 10 minutes
+and adds about 9 GB to the base VM's disk.
+
+The rig's PATH comes from `/etc/paths`, with Homebrew first. The provider
+loads it before each command, as login shells do. The GNU tools are not in
+it, so user shells keep the macOS tools.
 
 ## Test
 

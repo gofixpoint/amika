@@ -36,15 +36,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. Get amikad and the pinned versions.
+# 1. Get amikad.
 if [[ -z "${AMIKAD_BIN:-}" ]]; then
   AMIKAD_BIN="$work/amikad"
   GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
     go -C "$repo/go" build -o "$AMIKAD_BIN" ./cmd/amikad
 fi
-# shellcheck disable=SC1091  # pins shared with the Linux image
-source "$repo/sandbox-image/versions.env"
-
 # 2. Clone the base VM and boot the clone with no display.
 lume clone "$base" "$image"
 lume run "$image" --detach --display none --vnc disabled \
@@ -80,6 +77,8 @@ guest true
 tar -C "$here" -cf - steps assets | guest \
   'rm -rf /tmp/amika-image && mkdir /tmp/amika-image && tar -C /tmp/amika-image -xf -'
 guest 'cat > /tmp/amika-image/amikad' <"$AMIKAD_BIN"
+# The steps use the Linux image's version pins.
+guest 'cat > /tmp/amika-image/versions.env' <"$repo/sandbox-image/versions.env"
 if [[ -z "${STEPS:-}" ]]; then
   for file in "$here"/steps/*.sh; do
     STEPS="${STEPS:-} $(basename "$file" .sh)"
@@ -89,14 +88,22 @@ for step in $STEPS; do
   echo "==> $step"
   # sudo -S reads the password from stdin. The step does not read stdin.
   printf '%s\n' "$AMIKA_IMAGE_PASSWORD" | guest \
-    "sudo -S -p '' env NODE_VERSION=$NODE_VERSION NPM_VERSION=$NPM_VERSION" \
-    "CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION CODEX_VERSION=$CODEX_VERSION" \
-    "/bin/bash /tmp/amika-image/steps/$step.sh"
+    "sudo -S -p '' /bin/bash -c 'set -a; . /tmp/amika-image/versions.env;" \
+    "set +a; exec /bin/bash /tmp/amika-image/steps/$step.sh'"
 done
 
-# 5. Remove the build files, and shut the image down.
+# 5. Remove the build files, and shut the image down from inside, so its
+# disk is clean. `lume stop` ends the VM process when the guest does not
+# stop in 10 s.
 printf '%s\n' "$AMIKA_IMAGE_PASSWORD" | guest \
-  "sudo -S -p '' rm -rf /tmp/amika-image"
-lume stop "$image"
+  "sudo -S -p '' sh -c 'rm -rf /tmp/amika-image && shutdown -h now'" || true
+status=""
+for _ in $(seq 1 120); do
+  status="$(lume get "$image" --format json | python3 -c \
+    'import json, sys; print(json.load(sys.stdin)[0]["status"])')"
+  [[ "$status" == stopped ]] && break
+  sleep 1
+done
+[[ "$status" == stopped ]] || { echo "$image did not shut down" >&2; exit 1; }
 built=true
 echo "Built $image"
