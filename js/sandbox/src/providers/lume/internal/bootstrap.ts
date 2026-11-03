@@ -84,6 +84,16 @@ export async function waitForSsh(
 }
 
 /**
+ * The system sshd reads only this root-owned file for keys. amikad's own
+ * sshd reads `~/.ssh/authorized_keys`, and amikad replaces that file with
+ * the user's keys. So the management key and the user keys stay apart: a
+ * user key does not log in on port 22, and amikad cannot remove the
+ * management key.
+ */
+const MANAGEMENT_KEYS_DIR = "/private/var/db/amika";
+const MANAGEMENT_KEYS = `${MANAGEMENT_KEYS_DIR}/management_authorized_keys`;
+
+/**
  * Run as root. Adds `amika` when the template does not have it (with `dscl`,
  * since `sysadminctl` takes about 25 s), and lets it log in over SSH with
  * the key, and use `sudo` with no password. Remote Login on the template
@@ -106,9 +116,10 @@ if dscl . -read /Groups/com.apple.access_ssh >/dev/null 2>&1; then
   dseditgroup -o edit -a ${AMIKA_USER} -t user com.apple.access_ssh
 fi
 install -d -m 700 -o ${AMIKA_USER} -g staff ${AMIKA_HOME}/.ssh
-printf '%s\\n' ${shellQuote(publicKey)} > ${AMIKA_HOME}/.ssh/authorized_keys
-chown ${AMIKA_USER}:staff ${AMIKA_HOME}/.ssh/authorized_keys
-chmod 600 ${AMIKA_HOME}/.ssh/authorized_keys
+install -d -m 755 -o root -g wheel ${MANAGEMENT_KEYS_DIR}
+printf '%s\\n' ${shellQuote(publicKey)} > ${MANAGEMENT_KEYS}
+chmod 644 ${MANAGEMENT_KEYS}
+printf '%s\\n' 'AuthorizedKeysFile ${MANAGEMENT_KEYS}' > /etc/ssh/sshd_config.d/010-amika-keys.conf
 printf '%s\\n' '${AMIKA_USER} ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/${AMIKA_USER}
 chmod 440 /etc/sudoers.d/${AMIKA_USER}
 visudo -cf /etc/sudoers.d/${AMIKA_USER} >/dev/null
@@ -117,7 +128,7 @@ visudo -cf /etc/sudoers.d/${AMIKA_USER} >/dev/null
 
 /** Run as root. sshd reads `sshd_config.d` on start, so restart it. */
 const PASSWORD_OFF_SCRIPT = `set -eu
-printf '%s\\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' > /etc/ssh/sshd_config.d/010-amika.conf
+printf '%s\\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' > /etc/ssh/sshd_config.d/011-amika-password-off.conf
 launchctl kickstart -k system/com.openssh.sshd
 `;
 
