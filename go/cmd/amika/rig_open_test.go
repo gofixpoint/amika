@@ -7,13 +7,14 @@ import (
 
 // TestRigOpenAcceptsAppFlag runs `rig open` and its alias `rig code` through
 // the real command tree: --editor reaches the app validation that --app does,
-// and the two must agree when both are passed. Validation runs before
-// authentication, so no API is needed.
+// the two must agree when both are passed, and one of them is required.
+// Validation runs before authentication, so no API is needed.
 func TestRigOpenAcceptsAppFlag(t *testing.T) {
 	for _, tt := range []struct {
 		args    []string
 		wantErr string
 	}{
+		{args: []string{"rig", "open", "box"}, wantErr: "no app selected; pass --app"},
 		{args: []string{"rig", "open", "box", "--app=nope"}, wantErr: `unsupported app "nope"`},
 		{args: []string{"rig", "open", "box", "--app="}, wantErr: `unsupported app ""`},
 		{args: []string{"rig", "code", "box", "--editor=nope"}, wantErr: `unsupported app "nope"`},

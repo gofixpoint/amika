@@ -328,7 +328,8 @@ and X11 forwarding are not supported.
 Open a remote rig in an editor or coding agent over Amika's direct
 WebSocket SSH transport. Remote sandboxes only; requires a signed-in Amika
 account and an SSH identity from `amika secret ssh-keygen`. `amika sandbox code`
-is an alias, and `--editor` is an alias for `--app`.
+is an alias, and `--editor` is an alias for `--app`. `--app` is required:
+there is no default app.
 
 The command adds a named SSH connection to Amika's managed config (so editors
 such as Codex that enumerate `Host` entries can find it), then starts or
@@ -357,10 +358,8 @@ Before first use, create and upload an SSH key:
 amika secret ssh-keygen
 ```
 
-To use an existing key, pass `--import <public-key-file>` instead. Cursor is
-the default app; VS Code, Claude Desktop, Codex, Paseo, and Herdr are also
-available without an environment-variable feature gate. `--path` has no effect
-with `paseo` or `herdr`.
+To use an existing key, pass `--import <public-key-file>` instead. `--path` has
+no effect with `paseo` or `herdr`.
 
 A bare-metal rig (runtime `bare_metal`) logs in as the host's own account
 rather than `amika`, so it has no `/home/amika/workspace`. Without `--path`, Cursor and VS
@@ -376,7 +375,6 @@ with `--remote ssh-remote+<alias>`. This needs WSL interop (`cmd.exe`,
 `wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell sets it).
 
 ```bash
-amika sandbox open my-sandbox
 amika sandbox open my-sandbox --app=cursor
 amika sandbox open my-sandbox --app=vscode
 amika sandbox open my-sandbox --app=claude
@@ -388,7 +386,7 @@ amika sandbox code my-sandbox --editor=vscode
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
-| `--app <name>`    | `cursor` | App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
+| `--app <name>`    | —        | Required. App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
 | `--editor <name>` | —        | Alias for `--app`                                        |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the rig workspace root; must be absolute on a bare-metal rig) |
 

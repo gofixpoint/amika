@@ -175,8 +175,8 @@ var sandboxCodeV2Cmd = &cobra.Command{
 WebSocket SSH transport, bypassing provider-native SSH access. The rig is a
 name or ID, or name=<name> / id=<id> (see "amika rig --help").
 
-Supported --app values (--editor is an alias for --app):
-  cursor   launch Cursor connected to the rig (default)
+--app is required (--editor is an alias for --app). Supported values:
+  cursor   launch Cursor connected to the rig
   vscode   launch VS Code connected to the rig
   claude   register the rig as a Claude Desktop SSH environment
   codex    expose the rig to Codex as an SSH connection
@@ -188,7 +188,6 @@ hands that alias to the selected editor. It requires an SSH identity from
 "amika secret ssh-keygen".
 
 Examples:
-  amika rig open my-rig
   amika rig open my-rig --app=cursor
   amika rig open my-rig --app=vscode
   amika rig open my-rig --app=claude
@@ -240,11 +239,15 @@ Examples:
 	},
 }
 
-// appFlag reads the app from --app or its alias --editor. Passing both is
-// accepted only when they agree, so neither silently overrides the other.
+// appFlag reads the app from --app or its alias --editor. There is no default
+// app, so one of them is required. Passing both is accepted only when they
+// agree, so neither silently overrides the other.
 func appFlag(cmd *cobra.Command) (string, error) {
 	app, _ := cmd.Flags().GetString("app")
 	if !cmd.Flags().Changed("editor") {
+		if !cmd.Flags().Changed("app") {
+			return "", fmt.Errorf("no app selected; pass --app with one of %q", supportedEditors)
+		}
 		return app, nil
 	}
 	editor, _ := cmd.Flags().GetString("editor")

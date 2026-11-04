@@ -529,7 +529,7 @@ func TestSSHCommandNames(t *testing.T) {
 }
 
 // TestAppFlagAcceptsEditorAlias reads the app from --app or --editor, and
-// rejects the two only when they name different editors.
+// rejects a call that passes neither or names two different editors.
 func TestAppFlagAcceptsEditorAlias(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -537,7 +537,7 @@ func TestAppFlagAcceptsEditorAlias(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "default", args: nil, want: "cursor"},
+		{name: "missing", args: nil, wantErr: true},
 		{name: "app", args: []string{"--app=claude"}, want: "claude"},
 		{name: "editor", args: []string{"--editor=vscode"}, want: "vscode"},
 		{name: "both agree", args: []string{"--app=codex", "--editor=codex"}, want: "codex"},
@@ -545,7 +545,7 @@ func TestAppFlagAcceptsEditorAlias(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
-			cmd.Flags().String("app", "cursor", "")
+			cmd.Flags().String("app", "", "")
 			cmd.Flags().String("editor", "", "")
 			if err := cmd.Flags().Parse(tt.args); err != nil {
 				t.Fatalf("parse %v: %v", tt.args, err)
