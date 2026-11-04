@@ -19,12 +19,13 @@
  * "running" on E2B), while `status` is the same on every provider.
  */
 
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { beforeAll, expect, it } from "vitest";
 
 import { AmikaClient } from "@/index";
 import type { RemoteRig } from "@/index";
 
 import {
+  Cleanup,
   LONG_TIMEOUT_MS,
   TEST_RIG_PROVIDER,
   describeFunctional,
@@ -75,6 +76,7 @@ describeFunctional("Release test: create rig with example repo", () => {
   let client: AmikaClient;
   let rig: RemoteRig;
   const rigName = uniqueRigName("dylan-rls");
+  const cleanup = new Cleanup();
 
   beforeAll(async () => {
     client = makeClient();
@@ -84,13 +86,7 @@ describeFunctional("Release test: create rig with example repo", () => {
       repoUrl: EXAMPLE_REPO,
       preset: "coder",
     });
-    afterAll(async () => {
-      try {
-        await client.deleteRig(created.name);
-      } catch {
-        // Already deleted, or the server is unreachable; ignore.
-      }
-    });
+    cleanup.rig(client, created.name);
     rig = await client.waitForRig(created.name);
   }, LONG_TIMEOUT_MS);
 
@@ -120,6 +116,7 @@ describeFunctional("Release test: snapshot round-trip", () => {
   const sourceName = uniqueRigName("dylan-snap-src");
   const snapName = uniqueRigName("dylan-roundtrip");
   const fromSnapName = uniqueRigName("dylan-from-snap");
+  const cleanup = new Cleanup();
 
   beforeAll(async () => {
     client = makeClient();
@@ -131,13 +128,7 @@ describeFunctional("Release test: snapshot round-trip", () => {
       repoUrl: EXAMPLE_REPO,
       preset: "coder",
     });
-    afterAll(async () => {
-      try {
-        await client.deleteRig(sourceName);
-      } catch {
-        // Already deleted, or the server is unreachable; ignore.
-      }
-    });
+    cleanup.rig(client, sourceName);
     sourceRig = await client.waitForRig(created.name);
   }, LONG_TIMEOUT_MS);
 
@@ -158,6 +149,7 @@ describeFunctional("Release test: snapshot round-trip", () => {
       // Store slug for downstream tests
       snapshotSlug = snap.snapshot;
       expect(snapshotSlug).not.toBe("");
+      cleanup.later(() => client.deleteRigSnapshot(snapshotSlug));
 
       await waitForSnapshot(client, snapshotSlug, "active");
 
@@ -178,29 +170,13 @@ describeFunctional("Release test: snapshot round-trip", () => {
         preset: "coder",
         snapshot: snapshotSlug,
       });
-      afterAll(async () => {
-        try {
-          await client.deleteRig(fromSnapName);
-        } catch {
-          // Already deleted, or the server is unreachable; ignore.
-        }
-      });
+      cleanup.rig(client, fromSnapName);
 
       fromSnapRig = await client.waitForRig(created.name);
       expect(fromSnapRig.status).toBe("running");
     },
     LONG_TIMEOUT_MS,
   );
-
-  afterAll(async () => {
-    if (snapshotSlug) {
-      try {
-        await client.deleteRigSnapshot(snapshotSlug);
-      } catch {
-        // Already deleted, or the server is unreachable; ignore.
-      }
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -214,6 +190,7 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
 
   const sourceName = uniqueRigName("dylan-scrub-src");
   const snapName = uniqueRigName("dylan-scrub-rt");
+  const cleanup = new Cleanup();
 
   beforeAll(async () => {
     client = makeClient();
@@ -224,13 +201,8 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
       repoUrl: EXAMPLE_REPO,
       preset: "coder",
     });
-    afterAll(async () => {
-      try {
-        await client.deleteRig(created.name);
-      } catch {
-        // Already deleted by scrub-and-delete, or the server is unreachable; ignore.
-      }
-    });
+    // Scrub-and-delete removes it on success; this covers a failed run.
+    cleanup.rig(client, created.name);
     sourceRig = await client.waitForRig(created.name);
   }, LONG_TIMEOUT_MS);
 
@@ -247,6 +219,7 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
         mode: "scrub_and_delete",
       });
       snapshotSlug = snap.snapshot;
+      cleanup.later(() => client.deleteRigSnapshot(snapshotSlug));
 
       // The source rig should transition to "snapshotting" immediately
       const rigs = await client.listRigs();
@@ -265,14 +238,4 @@ describeFunctional("Release test: scrub-and-delete snapshot", () => {
     },
     LONG_TIMEOUT_MS,
   );
-
-  afterAll(async () => {
-    if (snapshotSlug) {
-      try {
-        await client.deleteRigSnapshot(snapshotSlug);
-      } catch {
-        // Already deleted, or the server is unreachable; ignore.
-      }
-    }
-  });
 });

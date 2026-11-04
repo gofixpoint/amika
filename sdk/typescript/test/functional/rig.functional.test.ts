@@ -5,6 +5,7 @@ import { AmikaHTTPError } from "@/index";
 import type { RemoteRig } from "@/index";
 
 import {
+  Cleanup,
   describeFunctional,
   ensureGitHubToken,
   LONG_TIMEOUT_MS,
@@ -17,14 +18,15 @@ import {
 describeFunctional("rig functional tests", () => {
   let client: AmikaClient;
   let rig: RemoteRig;
+  const cleanup = new Cleanup();
 
   beforeAll(async () => {
     client = makeClient();
-    await ensureGitHubToken(client);
+    await ensureGitHubToken(client, cleanup);
 
-    const credential = await resolveAgentCredential(client);
+    const credential = await resolveAgentCredential(client, cleanup);
 
-    rig = await provisionRig(client, {
+    rig = await provisionRig(client, cleanup, {
       agentCredentials: [credential],
     });
   }, LONG_TIMEOUT_MS);
@@ -118,7 +120,7 @@ describeFunctional("rig functional tests", () => {
   });
 
   // Runs last so every preceding test still has a rig to talk to. The
-  // afterAll registered by provisionRig is kept as a safety net for runs
+  // cleanup registered by provisionRig is kept as a safety net for runs
   // where this test is skipped or fails before deleting.
   describe("delete", () => {
     it("deleteRig removes the rig", async () => {

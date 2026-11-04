@@ -152,6 +152,7 @@ const PROVIDER_SECRET_VALUE = process.env["AMIKA_TEST_PROVIDER_SECRET_VALUE"];
  */
 export async function resolveAgentCredential(
   client: AmikaClient,
+  cleanup: Cleanup,
 ): Promise<AgentCredentialRef> {
   if (agentCredentialName) {
     return {
@@ -160,7 +161,7 @@ export async function resolveAgentCredential(
       type: agentCredentialType,
     };
   }
-  const registered = await ensureAgentCredential(client);
+  const registered = await ensureAgentCredential(client, cleanup);
   if (registered) return registered;
 
   const secrets = await client.listProviderSecrets(TEST_AGENT_NAME);
@@ -186,10 +187,11 @@ export async function resolveAgentCredential(
  * If AMIKA_TEST_PROVIDER_SECRET_VALUE is set, register it as a provider secret
  * for TEST_AGENT_NAME (default "claude") so the rig can authenticate agent
  * calls. Returns an `AgentCredentialRef` to pass into `createRig`, or null
- * when no value is configured. Registers afterAll cleanup.
+ * when no value is configured. Deletes the secret through `cleanup`.
  */
 export async function ensureAgentCredential(
   client: AmikaClient,
+  cleanup: Cleanup,
 ): Promise<AgentCredentialRef | null> {
   if (!PROVIDER_SECRET_VALUE) return null;
   const name = `ts-sdk-fn-agent-${uniqueSuffix()}`;
@@ -198,22 +200,19 @@ export async function ensureAgentCredential(
     value: PROVIDER_SECRET_VALUE,
     type: "api_key",
   });
-  afterAll(async () => {
-    try {
-      await client.deleteProviderSecret(TEST_AGENT_NAME, summary.id);
-    } catch {
-      // Already deleted, or the server is unreachable; ignore.
-    }
-  });
+  cleanup.later(() => client.deleteProviderSecret(TEST_AGENT_NAME, summary.id));
   return { kind: TEST_AGENT_NAME, name, type: "api_key" };
 }
 
 /**
  * If AMIKA_TEST_GITHUB_TOKEN is set, register it as a `github` provider secret
- * so the server can clone the test repo. Registers an afterAll cleanup. No-op
+ * so the server can clone the test repo, and delete it through `cleanup`. No-op
  * when the env var is unset (assumes the user already configured a token).
  */
-export async function ensureGitHubToken(client: AmikaClient): Promise<void> {
+export async function ensureGitHubToken(
+  client: AmikaClient,
+  cleanup: Cleanup,
+): Promise<void> {
   if (!TEST_GITHUB_TOKEN) return;
   const name = `ts-sdk-fn-gh-${uniqueSuffix()}`;
   const summary = await client.createProviderSecret("github", {
@@ -221,35 +220,64 @@ export async function ensureGitHubToken(client: AmikaClient): Promise<void> {
     value: TEST_GITHUB_TOKEN,
     type: "api_key",
   });
-  afterAll(async () => {
-    try {
-      await client.deleteProviderSecret("github", summary.id);
-    } catch {
-      // Already deleted, or the server is unreachable; ignore.
-    }
-  });
+  cleanup.later(() => client.deleteProviderSecret("github", summary.id));
 }
 
 /**
- * Create a rig, wait for it to become active, and register an afterAll hook
- * that deletes it (best-effort) when the test file finishes. Intended to be
- * called inside a `beforeAll` so the same rig is reused across `it` blocks.
+ * Create a rig, wait for it to become active, and delete it through `cleanup`
+ * when the describe block finishes. Intended to be called inside a `beforeAll`
+ * so the same rig is reused across `it` blocks.
  */
 export async function provisionRig(
   client: AmikaClient,
+  cleanup: Cleanup,
   overrides: Partial<CreateRigRequest> = {},
 ): Promise<RemoteRig> {
   const created = await client.createRig(buildCreateRigRequest(overrides));
   // Register cleanup immediately so a failure in waitForRig still tears
   // down the newly created rig.
-  afterAll(async () => {
-    try {
-      await client.deleteRig(created.name);
-    } catch {
-      // Already deleted by the test, or the server is unreachable; ignore.
-    }
-  });
+  cleanup.rig(client, created.name);
   return await client.waitForRig(created.name);
+}
+
+/**
+ * Best-effort teardown for one describe block. Create it at describe scope:
+ * vitest silently skips an `afterAll` registered inside `beforeAll` or `it`,
+ * so code that makes a resource there records the delete here instead.
+ * Rigs are deleted before everything else, because a snapshot delete fails
+ * while the rig it was captured from still exists.
+ */
+export class Cleanup {
+  private readonly rigTasks: Array<() => Promise<unknown>> = [];
+  private readonly laterTasks: Array<() => Promise<unknown>> = [];
+
+  constructor() {
+    afterAll(() => this.run(), LONG_TIMEOUT_MS);
+  }
+
+  /** Delete the named rig. */
+  rig(client: AmikaClient, name: string): void {
+    this.rigTasks.push(() => client.deleteRig(name));
+  }
+
+  /** Run `task` after every rig is deleted. */
+  later(task: () => Promise<unknown>): void {
+    this.laterTasks.push(task);
+  }
+
+  private async run(): Promise<void> {
+    const rigsFirst = [
+      ...[...this.rigTasks].reverse(),
+      ...[...this.laterTasks].reverse(),
+    ];
+    for (const task of rigsFirst) {
+      try {
+        await task();
+      } catch {
+        // Already deleted by the test, or the server is unreachable; ignore.
+      }
+    }
+  }
 }
 
 // Most operations finish in <1s, but rig provisioning, stop, start, and
