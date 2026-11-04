@@ -43,28 +43,28 @@ func TestResolveCreateHost(t *testing.T) {
 
 	t.Run("no --host leaves the rig on Amika Cloud", func(t *testing.T) {
 		// Resolved without a request: the empty id is what the create omits.
-		id, _, err := resolveCreateHost(nil, "")
+		id, err := resolveCreateHostID(nil, "")
 		if err != nil || id != "" {
 			t.Errorf("got %q, %v", id, err)
 		}
 	})
 
 	t.Run("resolves a hostname to its id", func(t *testing.T) {
-		id, _, err := resolveCreateHost(client, "alpha.lan")
+		id, err := resolveCreateHostID(client, "alpha.lan")
 		if err != nil || id != "host_1" {
 			t.Errorf("got %q, %v", id, err)
 		}
 	})
 
 	t.Run("accepts an id too", func(t *testing.T) {
-		id, _, err := resolveCreateHost(client, "host_1")
+		id, err := resolveCreateHostID(client, "host_1")
 		if err != nil || id != "host_1" {
 			t.Errorf("got %q, %v", id, err)
 		}
 	})
 
 	t.Run("refuses a host with no URL", func(t *testing.T) {
-		_, _, err := resolveCreateHost(client, "beta.lan")
+		_, err := resolveCreateHostID(client, "beta.lan")
 		if err == nil || !strings.Contains(err.Error(), "register-url") {
 			t.Errorf("err = %v, want one pointing at register-url", err)
 		}
@@ -74,7 +74,7 @@ func TestResolveCreateHost(t *testing.T) {
 		// Reading the URL alone would answer "run `amika-hostd register-url`",
 		// which the API refuses for this host. Its reachability is the
 		// control plane's to report, not something to guess at from here.
-		id, _, err := resolveCreateHost(client, "delta.lan")
+		id, err := resolveCreateHostID(client, "delta.lan")
 		if err != nil || id != "host_3" {
 			t.Errorf("got %q, %v; want host_3 and no error", id, err)
 		}
@@ -86,14 +86,14 @@ func TestResolveCreateHost(t *testing.T) {
 		// keep answering exactly as it did before the field existed. The
 		// `beta.lan` case above cannot show that: it is sent an explicit
 		// mode, so it would survive the check being inverted.
-		_, _, err := resolveCreateHost(client, "legacy.lan")
+		_, err := resolveCreateHostID(client, "legacy.lan")
 		if err == nil || !strings.Contains(err.Error(), "register-url") {
 			t.Errorf("err = %v, want one pointing at register-url", err)
 		}
 	})
 
 	t.Run("reports an unknown host", func(t *testing.T) {
-		_, _, err := resolveCreateHost(client, "gamma.lan")
+		_, err := resolveCreateHostID(client, "gamma.lan")
 		if err == nil || !strings.Contains(err.Error(), "alpha.lan") {
 			t.Errorf("err = %v, want one naming the known hosts", err)
 		}
@@ -105,7 +105,7 @@ func TestResolveCreateHost(t *testing.T) {
 func TestResolveCreateHostRejectsNamingAmikaCloud(t *testing.T) {
 	client := newHostListClient(t)
 	for _, ref := range []string{"amika-cloud", "Amika Cloud", "amika", "cloud", "AMIKACLOUD"} {
-		_, _, err := resolveCreateHost(client, ref)
+		_, err := resolveCreateHostID(client, ref)
 		if err == nil || !strings.Contains(err.Error(), "omit --host") {
 			t.Errorf("resolveCreateHost(%q) = %v, want the omit-the-flag error", ref, err)
 		}
@@ -229,7 +229,7 @@ func TestResolveCreateHostKeepsAListingFailure(t *testing.T) {
 	client := apiclient.NewClient(srv.URL, "tok")
 
 	for _, ref := range []string{"cloud", "alpha.lan"} {
-		_, _, err := resolveCreateHost(client, ref)
+		_, err := resolveCreateHostID(client, ref)
 		if err == nil {
 			t.Fatalf("resolveCreateHost(%q): want an error", ref)
 		}
@@ -254,7 +254,7 @@ func TestResolveCreateHostHintKeepsTheKnownHostnames(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := resolveCreateHost(apiclient.NewClient(srv.URL, "tok"), "amika")
+	_, err := resolveCreateHostID(apiclient.NewClient(srv.URL, "tok"), "amika")
 	if err == nil {
 		t.Fatal(`resolveCreateHost("amika"): want an error`)
 	}
@@ -278,14 +278,14 @@ func TestResolveCreateHostPrefersARealHostOverTheCloudHint(t *testing.T) {
 	defer srv.Close()
 	client := apiclient.NewClient(srv.URL, "tok")
 
-	id, _, err := resolveCreateHost(client, "cloud")
+	id, err := resolveCreateHostID(client, "cloud")
 	if err != nil || id != "host_7" {
 		t.Errorf("exact spelling: got %q, %v", id, err)
 	}
 
 	// And a typo in its casing is a typo, not an invitation to drop the flag:
 	// hostnames are stored lowercase, so `Cloud` means the host named `cloud`.
-	_, _, err = resolveCreateHost(client, "Cloud")
+	_, err = resolveCreateHostID(client, "Cloud")
 	if err == nil {
 		t.Fatal(`resolveCreateHost("Cloud"): want an error`)
 	}
@@ -493,34 +493,98 @@ func TestCreateRemoteSandboxFailsWhenTheHostWasIgnored(t *testing.T) {
 	}
 }
 
-func TestResolveCreateHostReportsBareMetal(t *testing.T) {
+// resolveCreateHostID is resolveCreateHost, reduced to the host's id.
+func resolveCreateHostID(client *apiclient.Client, ref string) (string, error) {
+	host, err := resolveCreateHost(client, ref)
+	if host == nil {
+		return "", err
+	}
+	return host.ID, err
+}
+
+// bareMetalHostJSON is a tunnelled host listing whose runtimes are
+// `runtimes`, a JSON object of runtime entries.
+func bareMetalHostJSON(runtimes string) string {
+	return `[{"id":"host_9","hostname":"metal.lan","url":null,"org_id":"org_1",
+	  "sizes":{},"transport_mode":"tunnel",
+	  "capabilities":{"runtimes":` + runtimes + `,"presets":{}},
+	  "created_at":"","updated_at":""}]`
+}
+
+const bareMetalRuntimeJSON = `"bare_metal":{"kind":"host","os":"linux","snapshots":false,"sizes":{},
+  "resources":{"vcpus":8,"memory_gib":16,"disk_gib":500},"ssh_user":"jo"}`
+
+func TestResolveCreateHostReadsBareMetal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `[
-		  {"id":"host_9","hostname":"metal.lan","url":null,"org_id":"org_1","sizes":{},
-		   "transport_mode":"tunnel","host_type":"bare_metal","ssh_user":"jo",
-		   "created_at":"","updated_at":""}
-		]`)
+		io.WriteString(w, bareMetalHostJSON(`{`+bareMetalRuntimeJSON+`}`))
 	}))
 	t.Cleanup(srv.Close)
-	id, hostType, err := resolveCreateHost(apiclient.NewClient(srv.URL, "tok"), "metal.lan")
-	if err != nil || id != "host_9" || hostType != apiclient.HostTypeBareMetal {
-		t.Fatalf("got %q, %q, %v", id, hostType, err)
+	host, err := resolveCreateHost(apiclient.NewClient(srv.URL, "tok"), "metal.lan")
+	if err != nil || host.ID != "host_9" || !host.OnlyBareMetal() {
+		t.Fatalf("got %+v, %v", host, err)
+	}
+	if bm := host.BareMetal(); bm.SSHUser != "jo" || bm.Resources.VCPUs != 8 {
+		t.Errorf("bare_metal = %+v", bm)
 	}
 }
 
-// A name-only create on a bare-metal host must send only the name and host.
-// The server refuses a bare-metal create that names agent credentials, and
-// the CLI asks for its default ones when no credential flag is given.
+// createOnHost runs a create on metal.lan, whose runtimes are `runtimes`,
+// with the flags set, and returns the create request's body.
+func createOnHost(t *testing.T, runtimes string, flags map[string]string) map[string]any {
+	t.Helper()
+	var createBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v0beta1/hosts":
+			io.WriteString(w, bareMetalHostJSON(runtimes))
+		case r.Method == "POST" && r.URL.Path == "/api/v0beta1/sandboxes":
+			json.NewDecoder(r.Body).Decode(&createBody)
+			io.WriteString(w, `{"name":"dev","state":"initializing"}`)
+		default:
+			io.WriteString(w, `{"name":"dev","state":"active","host_id":"host_9"}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AMIKA_API_URL", srv.URL)
+	t.Setenv("AMIKA_API_KEY", "test-token")
+
+	c, _ := newCreateCmd(t)
+	c.Flags().Set("host", "metal.lan")
+	for name, value := range flags {
+		c.Flags().Set(name, value)
+	}
+	if err := createRemoteSandbox(c, "", "dev", gitrepo.Identity{Source: gitrepo.SourceNone}); err != nil {
+		t.Fatalf("createRemoteSandbox: %v", err)
+	}
+	return createBody
+}
+
+// On a host that runs both, a create that names no runtime is the API's
+// to place, so the CLI names none.
+func TestCreateRemoteSandboxLeavesAMixedHostsRuntimeToTheAPI(t *testing.T) {
+	body := createOnHost(t, `{"smol":{"kind":"vm","os":"linux","snapshots":true,"sizes":{}},`+bareMetalRuntimeJSON+`}`, nil)
+	if _, ok := body["runtime"]; ok {
+		t.Errorf("body names a runtime: %v", body)
+	}
+	body = createOnHost(t, `{"smol":{"kind":"vm","os":"linux","snapshots":true,"sizes":{}},`+bareMetalRuntimeJSON+`}`, map[string]string{"runtime": "bare_metal"})
+	if body["runtime"] != "bare_metal" {
+		t.Errorf("runtime = %v, want bare_metal", body["runtime"])
+	}
+}
+
+// A name-only create on a bare-metal host must send only the name, the
+// host and the runtime. The server refuses a bare-metal create that names
+// agent credentials, and the CLI asks for its default ones when no
+// credential flag is given.
 func TestCreateRemoteSandboxOnBareMetalSendsNoCredentials(t *testing.T) {
 	var createBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/api/v0beta1/hosts":
-			io.WriteString(w, `[{"id":"host_9","hostname":"metal.lan","url":null,"org_id":"org_1",
-			  "sizes":{},"transport_mode":"tunnel","host_type":"bare_metal","ssh_user":"jo",
-			  "created_at":"","updated_at":""}]`)
+			io.WriteString(w, bareMetalHostJSON(`{`+bareMetalRuntimeJSON+`}`))
 		case r.Method == "POST" && r.URL.Path == "/api/v0beta1/sandboxes":
 			json.NewDecoder(r.Body).Decode(&createBody)
 			io.WriteString(w, `{"name":"dev","state":"initializing"}`)
@@ -539,6 +603,10 @@ func TestCreateRemoteSandboxOnBareMetalSendsNoCredentials(t *testing.T) {
 	}
 	if got := createBody["host_id"]; got != "host_9" {
 		t.Errorf("host_id = %v, want host_9 (body: %v)", got, createBody)
+	}
+	// Named, so the API agrees this is the bare_metal create the CLI made.
+	if got := createBody["runtime"]; got != "bare_metal" {
+		t.Errorf("runtime = %v, want bare_metal (body: %v)", got, createBody)
 	}
 	for _, forbidden := range []string{"agent_credentials", "repo_url", "size"} {
 		if _, ok := createBody[forbidden]; ok {
@@ -578,7 +646,7 @@ func TestBareMetalCreateConflicts(t *testing.T) {
 		if err == nil {
 			t.Fatal("want an error")
 		}
-		for _, want := range []string{"--git", "--secret", "--no-setup", "bare-metal"} {
+		for _, want := range []string{"--git", "--secret", "--no-setup", "bare_metal"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error %q does not mention %s", err, want)
 			}

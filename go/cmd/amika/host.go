@@ -97,9 +97,9 @@ func runHostList(cmd *cobra.Command, _ []string) error {
 	// command group accepts one, and `host get` (or -o json) has the id, the
 	// timestamps, and the per-size resources for the one host you care about.
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "HOSTNAME\tTYPE\tTRANSPORT\tURL\tSIZES")
+	fmt.Fprintln(w, "HOSTNAME\tRUNTIMES\tTRANSPORT\tURL\tSIZES")
 	for _, h := range hosts {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", h.Hostname, h.HostType, h.TransportMode, hostURL(h), hostSizesCell(h))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", h.Hostname, tableCell(strings.Join(h.RuntimeNames(), ",")), h.TransportMode, hostURL(h), hostSizesCell(h))
 	}
 	return w.Flush()
 }
@@ -125,19 +125,19 @@ func runHostGet(cmd *cobra.Command, args []string) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 	fmt.Fprintf(w, "Hostname:\t%s\n", host.Hostname)
 	fmt.Fprintf(w, "ID:\t%s\n", host.ID)
-	fmt.Fprintf(w, "Type:\t%s\n", host.HostType)
 	fmt.Fprintf(w, "Transport:\t%s\n", host.TransportMode)
 	fmt.Fprintf(w, "URL:\t%s\n", hostURL(*host))
-	if host.SSHUser != nil {
-		fmt.Fprintf(w, "SSH user:\t%s\n", tableCell(*host.SSHUser))
-	}
 	fmt.Fprintf(w, "Created:\t%s\n", host.CreatedAt)
 	fmt.Fprintf(w, "Updated:\t%s\n", host.UpdatedAt)
-	if r := host.DetectedResources; r != nil {
-		fmt.Fprintf(w, "CPUs:\t%d\n", r.VCPUs)
-		fmt.Fprintf(w, "Memory:\t%s GiB\n", formatGiB(r.MemoryGiB))
-		fmt.Fprintf(w, "Disk:\t%s GiB\n", formatGiB(r.DiskGiB))
-		fmt.Fprintf(w, "OS/Arch:\t%s\n", tableCell(resourcePlatform(*r)))
+	// The bare_metal rig is the machine itself, so the machine is its size.
+	if bm := host.BareMetal(); bm != nil {
+		fmt.Fprintf(w, "SSH user:\t%s\n", tableCell(orDash(bm.SSHUser)))
+		if r := bm.Resources; r != nil {
+			fmt.Fprintf(w, "CPUs:\t%d\n", r.VCPUs)
+			fmt.Fprintf(w, "Memory:\t%s GiB\n", formatGiB(r.MemoryGiB))
+			fmt.Fprintf(w, "Disk:\t%s GiB\n", formatGiB(r.DiskGiB))
+		}
+		fmt.Fprintf(w, "OS/Arch:\t%s/%s\n", tableCell(orDash(bm.OS)), tableCell(orDash(bm.Arch)))
 	}
 	if host.Capabilities != nil {
 		running, err := runningRigsByRuntime(host.ID)
@@ -147,12 +147,8 @@ func runHostGet(cmd *cobra.Command, args []string) error {
 		writeHostCapabilities(w, *host.Capabilities, running)
 		return w.Flush()
 	}
-	// A bare-metal host runs one rig on the whole machine rather than
-	// offering sizes, so its missing sizes are not worth a line.
 	if len(host.Sizes) == 0 {
-		if host.HostType != apiclient.HostTypeBareMetal {
-			fmt.Fprintf(w, "Sizes:\t-\n")
-		}
+		fmt.Fprintf(w, "Sizes:\t-\n")
 		return w.Flush()
 	}
 	fmt.Fprintln(w, "\nSIZE\tVCPU\tMEMORY\tDISK")
@@ -177,7 +173,11 @@ func writeHostCapabilities(w *tabwriter.Writer, c apiclient.HostCapabilities, ru
 		if r.MaxRunning != nil {
 			limit = strconv.Itoa(*r.MaxRunning)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d of %s\t%s\n", tableCell(name), tableCell(r.Kind), tableCell(r.OS), running[name], limit, tableCell(strings.Join(sortedSizeNames(r.Sizes), ", ")))
+		sizes := "-"
+		if len(r.Sizes) > 0 {
+			sizes = tableCell(strings.Join(sortedKeys(r.Sizes), ", "))
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d of %s\t%s\n", tableCell(name), tableCell(r.Kind), tableCell(r.OS), running[name], limit, sizes)
 	}
 	fmt.Fprintln(w, "\nPRESET\tRUNTIMES\tDEFAULT")
 	for _, name := range sortedKeys(c.Presets) {
@@ -327,28 +327,16 @@ func hostURL(h apiclient.Host) string {
 	return *h.URL
 }
 
-// hostSizesCell renders a listing's SIZES cell. A VM host lists its size
-// names; a bare-metal host offers no sizes, so it shows its detected
-// resources compactly instead, as one whitespace-free token
+// hostSizesCell renders a listing's SIZES cell. A host lists its size names.
+// A host that runs only bare_metal offers no sizes, so it shows the
+// machine's detected resources instead, as one whitespace-free token
 // ("8cpu/32GiB/500GiB") so the row keeps five fields.
 func hostSizesCell(h apiclient.Host) string {
-	if h.HostType == apiclient.HostTypeBareMetal && len(h.Sizes) == 0 && h.DetectedResources != nil {
-		r := h.DetectedResources
+	if bm := h.BareMetal(); h.OnlyBareMetal() && bm.Resources != nil {
+		r := bm.Resources
 		return fmt.Sprintf("%dcpu/%sGiB/%sGiB", r.VCPUs, formatGiB(r.MemoryGiB), formatGiB(r.DiskGiB))
 	}
 	return hostSizeNames(h)
-}
-
-// resourcePlatform renders a host's detected OS and architecture as
-// "os/arch", with "-" standing in for a part the host did not report.
-func resourcePlatform(r apiclient.HostResources) string {
-	platform := func(v string) string {
-		if v == "" {
-			return "-"
-		}
-		return v
-	}
-	return platform(r.OS) + "/" + platform(r.Arch)
 }
 
 // hostSizeNames renders a host's size names for a table cell, as "-" when the
@@ -375,6 +363,14 @@ func tableCell(value string) string {
 
 // formatGiB renders a size's memory without %g's exponent form, which turns
 // an implausible but legal `memoryGib` into "1.048576e+06".
+// orDash returns v, or "-" for a value the host did not report.
+func orDash(v string) string {
+	if v == "" {
+		return "-"
+	}
+	return v
+}
+
 func formatGiB(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }

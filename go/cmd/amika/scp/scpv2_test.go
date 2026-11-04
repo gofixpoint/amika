@@ -261,7 +261,7 @@ func TestRunSCPV2ParsesEveryReferenceBeforeAuth(t *testing.T) {
 func TestRunSCPV2KeepsBareMetalPathsRelative(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"sb_1","name":"box","state":"active","provider":"amika-hostd-bare-metal"}`))
+		_, _ = w.Write([]byte(`{"id":"sb_1","name":"box","state":"active","provider":"amika-hostd","runtime":"bare_metal"}`))
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("AMIKA_API_URL", server.URL)

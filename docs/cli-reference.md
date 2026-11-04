@@ -181,6 +181,7 @@ amika sandbox create dev-sandbox --host alpha.lan --size small
 | `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `coder-plus-docker`. See [presets.md](presets.md)                                          |
 | `--size <size>`         | `m`                  | Rig size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m` |
 | `--host <hostname\|id>` |                      | Run the rig on one of your organization's own hosts rather than on Amika Cloud. See [`amika host`](#amika-host). With `--snapshot`, boots one of that host's own snapshots; a snapshot taken anywhere else is refused. The create fails if the control plane did not put the rig on that host |
+| `--runtime <name>`      |                      | With `--host`, the host runtime to run the rig on: `smol`, `lume`, or `bare_metal`. Unset, the preset's default runtime; on a host whose only runtime is `bare_metal`, that one. `bare_metal` makes the rig the host machine itself, and takes only a name: no repo, preset, size, snapshot, secrets, or setup script. A repo detected from the working directory is dropped for it |
 | `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory |
 | `--no-git`              | `false`              | Skip git auto-detection; create a sandbox without mounting any repo                                                                  |
 | `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                                 |
@@ -361,8 +362,8 @@ the default app; VS Code, Claude Desktop, Codex, Paseo, and Herdr are also
 available without an environment-variable feature gate. `--path` has no effect
 with `paseo` or `herdr`.
 
-A rig on a bare-metal host logs in as the host's own account rather than
-`amika`, so it has no `/home/amika/workspace`. Without `--path`, Cursor and VS
+A bare-metal rig (runtime `bare_metal`) logs in as the host's own account
+rather than `amika`, so it has no `/home/amika/workspace`. Without `--path`, Cursor and VS
 Code connect to it without opening a folder, and Claude Desktop starts in the
 account's home directory; `--path` must be absolute for such a rig.
 
@@ -447,11 +448,11 @@ amika host delete alpha.lan
 
 ### `amika host list`
 
-Lists `HOSTNAME`, `TYPE`, `TRANSPORT`, `URL`, and `SIZES`. `TYPE` is `vm` for a host that runs each rig in its own VM, or `bare_metal` for one that runs a single rig directly on the machine's own account. A bare-metal host offers no sizes, so its `SIZES` cell shows the resources `amika-hostd` detected on it instead, as `<cpus>cpu/<memory>GiB/<disk>GiB` (for example `10cpu/32GiB/926.5GiB`). Read the `-` in `URL` against `TRANSPORT`: a `listen` host is reached at the URL it registered and cannot take rigs until it has one, while a `tunnel` host dials Amika instead, so Amika assigns its address and it has no URL to register. Ids and timestamps are not columns: a host is addressed by hostname wherever these commands take one, and `amika host get` or `-o json` has the rest for the host you care about.
+Lists `HOSTNAME`, `RUNTIMES`, `TRANSPORT`, `URL`, and `SIZES`. `RUNTIMES` names what the host runs rigs on, comma-separated: `smol` (Linux VMs), `lume` (macOS VMs), and `bare_metal` (one rig that is the machine itself, on its own account). A host whose `amika-hostd` predates runtimes shows `smol`. A host whose only runtime is `bare_metal` offers no sizes, so its `SIZES` cell shows the resources `amika-hostd` detected on it instead, as `<cpus>cpu/<memory>GiB/<disk>GiB` (for example `10cpu/32GiB/926.5GiB`). Read the `-` in `URL` against `TRANSPORT`: a `listen` host is reached at the URL it registered and cannot take rigs until it has one, while a `tunnel` host dials Amika instead, so Amika assigns its address and it has no URL to register. Ids and timestamps are not columns: a host is addressed by hostname wherever these commands take one, and `amika host get` or `-o json` has the rest for the host you care about.
 
 ### `amika host get <hostname-or-id>`
 
-Shows one host's details and the sizes it offers its rigs, including its `Type` and `Transport`: a `tunnel` host shows no URL, because Amika assigns its address and there is none to register. Those size names, not the cloud size vocabulary, are what `rig create --host ... --size ...` accepts. A bare-metal host instead shows the `SSH user` its rig logs in as and the resources `amika-hostd` detected on it: `CPUs`, `Memory`, `Disk`, and `OS/Arch`. With `-o json` these are the `host_type`, `ssh_user`, and `detected_resources` fields (`{vcpus, memoryGib, diskGib, os, arch}`, camelCase as the API returns it); `ssh_user` and `detected_resources` are `null` when the host has not reported them, and a host from a control plane that predates `host_type` reads as `vm`.
+Shows one host's details, its `Transport` (a `tunnel` host shows no URL, because Amika assigns its address and there is none to register), and its runtimes and presets, with the sizes of each runtime. Those size names, not the cloud size vocabulary, are what `rig create --host ... --size ...` accepts. A host with the `bare_metal` runtime also shows the `SSH user` its rig logs in as and the resources `amika-hostd` detected on it: `CPUs`, `Memory`, `Disk`, and `OS/Arch`. With `-o json` these are in `capabilities.runtimes.bare_metal`: `ssh_user`, `os`, `arch`, and `resources` (`{vcpus, memory_gib, disk_gib}`).
 
 ### `amika host delete <hostname-or-id> [...]`
 
@@ -534,7 +535,7 @@ touched.
 | `ProxyCommand`                                 | `amika plumbing …`     | Carry the session over Amika's WebSocket transport instead of a TCP dial   |
 | `ServerAliveInterval` / `ServerAliveCountMax`  | `15`, `3`                | Notice a dead transport instead of hanging                                 |
 
-A rig on a bare-metal host logs in as the account running `amika-hostd` on
+A bare-metal rig logs in as the account running `amika-hostd` on
 that machine, which the control plane reports with each SSH session. When
 `sandbox ssh`, `sandbox open`, `sandbox connect`, or `scp` prepares such a rig,
 Amika writes a `Host <alias>` stanza naming that `User` ahead of the wildcard
