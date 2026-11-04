@@ -28,10 +28,10 @@ in the environment is used instead, and setup does not ask. Before the prompt
 it names the page that creates one, `/settings/api-keys` on the configured
 API URL's origin.
 
-Last it asks for the host type (`vm` or `bare-metal`), offering the
-configured one, else `vm`, as the default and the other as the alternative.
-End of input keeps the default, as for a yes/no question. Choosing bare metal
-first checks that the platform supports it (`HostPlatform.capabilities`), that
+Setup asks nothing about runtimes: `capabilities update` turns them on and
+off (see [Reload and `capabilities update`](commands-and-registration.md#reload-and-capabilities-update)).
+With `[runtimes.bare_metal]` in the config, setup checks (`checkBareMetal`)
+that the platform runs it (`HostPlatform.runtimes`), that
 an `sshd` binary exists (else it names how to install one), that every
 directory above amikad's state directory passes sshd's StrictModes (owned by
 root or the hostd account and not group- or world-writable, else it names the
@@ -39,10 +39,9 @@ directory and the `chmod` that fixes it; `src/internal/strict-modes.ts`),
 installs amikad into hostd's data directory (see
 [Bare-metal runtime](runtime.md#bare-metal-runtime)) unless `amikad_path` is
 set, and prints the resources it detected and the account SSH logs in as.
-These run before anything is stored, so a machine that cannot be a bare-metal
-host is refused with nothing changed. A bare-metal config gets no default
-`[sizes]` or `[presets.*]`; switching back to VMs adds them when the file
-has none.
+These run before anything is stored, so a machine that cannot be a rig is
+refused with nothing changed. A config without smol gets no default
+`[sizes]` or `[presets.*]`.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping
@@ -82,7 +81,7 @@ restart a running daemon, which keeps the key `up` handed it.
 `amika-hostd setup --non-interactive` asks nothing, for an AI agent or a
 script. It runs the same setup, answering each question with its default: the
 hostname from `--hostname`, else the configured one or this machine's; the
-configured host type (still installing amikad for a bare-metal one); no to
+configured runtimes (still installing amikad when `bare_metal` is on); no to
 every yes/no question, so it never regenerates or replaces a secret key; and
 the API key from stdin when none is stored or set in the environment. An
 answer setup refuses (an invalid hostname, no API key on stdin) ends it with

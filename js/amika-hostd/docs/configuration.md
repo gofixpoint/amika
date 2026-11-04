@@ -14,7 +14,6 @@ the first source that sets it: CLI flag, then environment, then TOML file.
 | Port         | `--port` | `AMIKA_HOSTD_PORT`                            | `port`                         | `3020`                  |
 | Snapshot dir |          | `AMIKA_HOSTD_SNAPSHOT_DIR`                    | `snapshot_dir`                 | in the state directory  |
 | Transport    |          | `AMIKA_HOSTD_TRANSPORT`                       | `transport`                    | `tunnel`                |
-| Host type    |          |                                               | `host_type`                    | `vm`                    |
 | amikad       |          |                                               | `amikad_path`                  | the one setup installs  |
 
 Setting both names of an aliased pair to different values is an error, never a
@@ -38,26 +37,26 @@ line, and only `hostname` and `secret_store` are commented. It holds no
 resolves it as seeded, so keep it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
 
-## Host type
+## Bare metal
 
-`host_type` is `"vm"` (the default) or `"bare-metal"`, and anything else fails
-startup rather than run the machine in a mode the operator did not choose.
-Only TOML sets it: `setup` asks for it and writes it (only when it changes, so
-a VM host's file is left as it was), and `install-amika-hostd.sh --bare-metal`
-seeds it. A bare-metal host ignores `[sizes]`, warning on `up` when the file
-has any, and registers no sizes (see
-[Registration](commands-and-registration.md#registration)); smolvm is never
-started, nor its version checked, nor images pre-pulled. `amikad_path` names
-the amikad binary a bare-metal host runs instead of the release setup
-installs, for development. It must be absolute: hostd runs amikad by path,
-never through a shell or `PATH`. See
+`[runtimes.bare_metal]` makes this machine one rig, beside or instead of the
+VM runtimes. It takes only `enabled`: no `max_running` (it runs one rig) and
+no sizes (the rig is the machine, at its own size), and no preset names it,
+since it boots no image. `install-amika-hostd.sh --bare-metal` seeds a config
+with only this table, and `capabilities update --enable bare_metal` adds it.
+A host without smol starts no smolvm, checks no smolvm version and pre-pulls
+no images. The old `host_type` key fails startup, naming the table.
+`amikad_path` names the amikad binary the runtime runs instead of the release
+hostd installs, for development. It must be absolute: hostd runs amikad by
+path, never through a shell or `PATH`. See
 [Bare-metal runtime](runtime.md#bare-metal-runtime).
 
 ## Runtimes
 
 `src/internal/runtimes.ts` checks the runtime and preset tables (spec 026 in
-amika-mono). `[runtimes.<name>]` turns on a runtime: `smol` (Linux VMs) or
-`lume` (macOS VMs, on Apple Silicon only). With no `[runtimes]` table only
+amika-mono). `[runtimes.<name>]` turns on a runtime: `smol` (Linux VMs),
+`lume` (macOS VMs, on Apple Silicon only) or `bare_metal` (this machine; see
+[Bare metal](#bare-metal)). With no `[runtimes]` table only
 `smol` is on. A runtime with `enabled = false` is off. hostd refuses to start a
 runtime the machine cannot run (`HostPlatform.runtimes`).
 

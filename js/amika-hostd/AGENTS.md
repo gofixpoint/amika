@@ -149,13 +149,13 @@ Each of these is stated in full, with its reason, in the doc it links to.
 - **smolvm listens only on loopback**: its API has no authentication. It is
   never killed outright, and `down` signals a pid only once `/proc` or `ps`
   confirms its program. See [smolvm](docs/runtime.md#smolvm).
-- **A bare-metal host's exec runs only the amikad allowlist**: exactly
+- **A bare-metal rig's exec runs only the amikad allowlist**: exactly
   `["/bin/sh", "-c", C]` with `C` one of six fixed strings, decided by the
-  host's own `host_type`, never by the request; anything else is `403`.
-  amikad runs by absolute path with no shell, as the hostd user, with its own
-  minimal environment; the request's `user`, `workdir` and `env` are ignored.
-  No files or snapshot routes are served, and delete removes only amikad's
-  state directory inside hostd's. See
+  rig's runtime in hostd's machine index, never by the request; anything
+  else is `403`. amikad runs by absolute path with no shell, as the hostd
+  user, with its own minimal environment; the request's `user`, `workdir`
+  and `env` are ignored. Its files and snapshots are refused, and delete
+  removes only amikad's state directory inside hostd's. See
   [Bare-metal runtime](docs/runtime.md#bare-metal-runtime).
 - **Only `src/platforms/` reads `process.platform`** (lint). OS-dependent
   code goes behind `HostPlatform`, passed through `deps`. See
@@ -200,7 +200,7 @@ Each of these is stated in full, with its reason, in the doc it links to.
   cache and pre-pull (`prepull.ts`).
 - [docs/runtime.md](docs/runtime.md) — read when changing how smolvm is run
   (`smolvm-serve.ts`), the machine API on top of it (`machine-runtime.ts`),
-  a bare-metal host (`bare-metal-runtime.ts`, `amikad-supervisor.ts`,
+  the `bare_metal` runtime (`bare-metal-runtime.ts`, `amikad-supervisor.ts`,
   `amikad-install.ts`), or the platform layer (`src/platforms/`).
 - [docs/api-and-auth.md](docs/api-and-auth.md) — read when adding or
   changing a route, a `/health` feature, or how a request is authenticated

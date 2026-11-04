@@ -175,7 +175,28 @@ or not) with this one, or add it above the first \`[\` line:
 If \`AMIKA_HOSTD_TRANSPORT\` is set to \`tunnel\`, it overrides that line:
 tell the operator.
 
-## 4. Start the daemon
+## 4. Choose what the host runs
+
+The host runs rigs on runtimes. Ask the operator which they want. With no
+answer, keep what the config says (only \`smol\` when it lists none):
+
+- **smol**: Linux VMs. On by default.
+- **lume**: macOS VMs, only on a Mac with Apple Silicon.
+- **bare_metal**: this machine itself, as one rig. Amika gets SSH to it as
+  the operator's own account, and copies nothing onto it. It needs an
+  \`sshd\` binary (the system service need not run).
+
+Change them with \`capabilities update\`. Show the operator the plan first,
+then run the same flags with \`--yes\` once they agree:
+
+    amika-hostd capabilities update --enable bare_metal --dry-run --json
+    amika-hostd capabilities update --enable bare_metal --yes
+
+\`--disable <runtime>\` turns one off. It is refused while that runtime has
+rigs. To make this machine the host's only rig, also pass
+\`--disable smol\`.
+
+## 5. Start the daemon
 
     amika-hostd up
 
@@ -200,9 +221,9 @@ If it fails with:
   hosts. Tell the operator to enter their activation code in the Amika web
   app, under **Your hosts** in the create-rig form.
 
-## 5. Make the host reachable
+## 6. Make the host reachable
 
-If \`up\` printed "Amika assigns this host's address", skip to step 6:
+If \`up\` printed "Amika assigns this host's address", skip to step 7:
 there is nothing to expose or register, and \`register-url\` is refused.
 
 Otherwise the host is a listener, which Amika reaches over the internet. If
@@ -216,7 +237,7 @@ give Amika the tunnel's public URL:
 If \`up\` said instead that Amika reaches the host at a URL, make sure that
 URL still forwards to the daemon.
 
-## 6. Check it works
+## 7. Check it works
 
 - \`amika-hostd status\` says whether the daemon is running: it exits 0 if
   so and 3 if not.
