@@ -20,6 +20,7 @@
  */
 import type { AmikaHostdConfig } from "./providers/amika-hostd/config";
 import type { SmolConfig } from "./providers/smol/config";
+import type { LumeConfig } from "./providers/lume/config";
 import type { DaytonaConfig } from "./providers/daytona/config";
 import type { E2bConfig } from "./providers/e2b/config";
 import type { FreestyleConfig } from "./providers/freestyle/config";
@@ -33,6 +34,8 @@ export interface SandboxProviderConfigs {
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
   smol: SmolConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  lume?: LumeConfig | null;
   amikaHostd: AmikaHostdConfig | null;
   simulate: SimulateConfig | null;
 }
@@ -85,7 +88,7 @@ function hostdSecretKey(env: Env): string {
 /**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
- * Daytona is always configured (this contract requires its key). E2B/Freestyle/Vercel/Smol/AmikaHostd/Simulate are
+ * Daytona is always configured (this contract requires its key). E2B/Freestyle/Vercel/Smol/Lume/AmikaHostd/Simulate are
  * gated on their `*_ENABLED` variables being exactly `true` and are
  * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
  * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
@@ -134,6 +137,14 @@ export function sandboxProviderConfigsFromEnv(
     ? { apiUrl: env.SMOL_API_URL, network: parseBooleanLike(env.SMOL_NETWORK) }
     : null;
 
+  const lume: LumeConfig | null = isEnabled(env.LUME_ENABLED)
+    ? {
+        storageDir: required(env, "LUME_STORAGE_DIR"),
+        stateDir: required(env, "LUME_STATE_DIR"),
+        lumeBin: env.LUME_BIN,
+      }
+    : null;
+
   const amikaHostd: AmikaHostdConfig | null = isEnabled(env.AMIKA_HOSTD_ENABLED)
     ? {
         apiUrl: env.AMIKA_HOSTD_API_URL,
@@ -148,5 +159,5 @@ export function sandboxProviderConfigsFromEnv(
     ? { worldId: env.SIMULATE_WORLD_ID }
     : null;
 
-  return { daytona, e2b, freestyle, vercel, smol, amikaHostd, simulate };
+  return { daytona, e2b, freestyle, vercel, smol, lume, amikaHostd, simulate };
 }

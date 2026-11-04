@@ -43,6 +43,7 @@ export type { AmikaHostdConfig } from "./providers/amika-hostd/config";
 // control-plane code that dials hostd service URLs itself.
 export { HOSTD_SERVICE_KEY_HEADER } from "./providers/amika-hostd/provider";
 export type { SmolConfig } from "./providers/smol/config";
+export type { LumeConfig } from "./providers/lume/config";
 export type { SimulateConfig } from "./providers/simulate/config";
 // The simulate provider's control surface: a control plane or a test reaches
 // the in-memory world the provider runs on to script a scenario.

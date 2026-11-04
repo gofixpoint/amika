@@ -17,6 +17,7 @@ import {
   amikaHostdCapabilities,
 } from "./amika-hostd/capabilities";
 import { smolCapabilities } from "./smol/capabilities";
+import { lumeCapabilities } from "./lume/capabilities";
 import { daytonaCapabilities } from "./daytona/capabilities";
 import { e2bCapabilities } from "./e2b/capabilities";
 import { freestyleCapabilities } from "./freestyle/capabilities";
@@ -31,6 +32,7 @@ export const SANDBOX_PROVIDER_CAPABILITIES: Record<
   SandboxProviderCapabilities
 > = {
   smol: smolCapabilities,
+  lume: lumeCapabilities,
   "amika-hostd": amikaHostdCapabilities,
   "amika-hostd-bare-metal": amikaHostdBareMetalCapabilities,
   daytona: daytonaCapabilities,
@@ -60,6 +62,7 @@ export const SANDBOX_PROVIDER_DISPLAY: Record<
     badgeClassName: "bg-blue-900 text-white",
   },
   smol: { label: "Smol", badgeClassName: "bg-green-700 text-white" },
+  lume: { label: "Lume", badgeClassName: "bg-slate-700 text-white" },
   daytona: { label: "Daytona", badgeClassName: "bg-gray-900 text-white" },
   e2b: { label: "E2B", badgeClassName: "bg-orange-600 text-white" },
   freestyle: {
