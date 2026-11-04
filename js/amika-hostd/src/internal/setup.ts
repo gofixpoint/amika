@@ -27,7 +27,6 @@ import {
   type HostdConfig,
   type HostdConfigFile,
   type HostSize,
-  type HostType,
   type SecretStoreKind,
 } from "./config.js";
 import { presetImages } from "./runtimes.js";
@@ -66,8 +65,8 @@ export interface SetupDeps {
   /** The account a bare-metal rig's SSH sessions log in as. */
   sshUser?: () => string;
   /**
-   * Make sure a bare-metal host's amikad is installed and return its path;
-   * defaults to `ensureAmikad`.
+   * Make sure the amikad the `bare_metal` runtime runs is installed and
+   * return its path; defaults to `ensureAmikad`.
    */
   installAmikad?: typeof ensureAmikad;
   /**
@@ -219,10 +218,11 @@ export async function runSetup(
 
   const apiKey = await askApiKey(deps, effective.apiUrl);
 
-  const hostType = await askHostType(saved.hostType, deps);
-  // Before anything is stored, so a machine that cannot be a bare-metal
-  // host is refused with nothing changed.
-  if (hostType === "bare-metal") await prepareBareMetal(saved, deps);
+  // Runtimes are turned on and off with `capabilities update`; setup only
+  // checks the ones that are on. Before anything is stored, so a machine
+  // that cannot be a rig is refused with nothing changed.
+  const runtimesOn = saved.runtimes.runtimes;
+  if (runtimesOn.bare_metal) await prepareBareMetal(saved, deps);
 
   // The file names the store setup used whenever the file alone (its own
   // setting, else the default) would choose another, so a store chosen from
@@ -241,15 +241,12 @@ export async function runSetup(
         store === "keychain" || saved.secretStore !== store ? store : undefined,
       // In the keychain, the file keeps no secret key at all.
       secretKey: keychainSecret ? undefined : secret,
-      // Written only when it changes, so a VM host's file is left as it was.
-      hostType: hostType === saved.hostType ? undefined : hostType,
       // A config written from scratch always gets them, even when a secret
-      // survived in the keychain (the file was deleted, say), and so does a
-      // host switching from bare metal to VMs. A bare-metal host has no use
-      // for them.
+      // survived in the keychain (the file was deleted, say). Only smol
+      // uses them.
       addDefaults:
-        hostType === "vm" &&
-        (file === undefined || firstRun || saved.hostType !== hostType) &&
+        runtimesOn.smol !== undefined &&
+        (file === undefined || firstRun) &&
         Object.keys(saved.sizes).length === 0,
     });
   const contents = render(secretKey);
@@ -346,23 +343,26 @@ export async function runSetup(
   deps.out("");
   deps.out(`Wrote ${configPath}:`);
   deps.out(`  hostname  ${hostname}`);
-  deps.out(`  host type ${hostType}`);
+  deps.out(
+    `  runtimes  ${Object.keys(written.runtimes.runtimes).join(", ") || "none"}`,
+  );
   deps.out(
     keychainSecret
       ? `  secret    (in ${secretHome})`
       : "  secret    (in the file, readable only by you)",
   );
-  if (hostType === "vm") {
+  if (written.runtimes.runtimes.smol) {
     deps.out("Rig sizes:");
     for (const line of describeSizes(written.sizes)) deps.out(`  ${line}`);
     deps.out("Images:");
     for (const line of describeImages(presetImages(written.runtimes, "smol"))) {
       deps.out(`  ${line}`);
     }
-  } else if (Object.keys(written.sizes).length > 0) {
-    deps.out("Rig sizes: [sizes] is ignored on a bare-metal host.");
   }
   deps.out(`Edit ${configPath} to change these settings.`);
+  deps.out(
+    "Turn runtimes on or off with `amika-hostd capabilities update --enable <runtime>` (smol, lume, bare_metal).",
+  );
   warnAboutEnvironment(deps, secretHome);
   // `up` runs setup only with the daemon stopped.
   if (replaced !== undefined && !fromUp) deps.out(RESTART);
@@ -374,51 +374,25 @@ export async function runSetup(
 }
 
 /**
- * What this host runs rigs on. The default offered is the configured type,
- * the alternative the other one. End of input (and `--non-interactive`,
- * which answers blank) keeps the default, as a yes/no question's does.
+ * What the `bare_metal` runtime needs: an OS that runs it, an `sshd` binary
+ * for amikad to run, and a state directory sshd's StrictModes accepts.
+ * Returns the `sshd` found. Run before anything changes, by setup and by
+ * `capabilities update`, so a machine that cannot be a rig is refused with
+ * nothing changed.
  */
-async function askHostType(
-  current: HostType,
-  deps: SetupDeps,
-): Promise<HostType> {
-  const other: HostType = current === "vm" ? "bare-metal" : "vm";
-  for (;;) {
-    const answer = (
-      await deps.prompt(
-        `Host type: vm runs each rig as a VM, bare-metal makes this machine the one rig [${current}/${other}]: `,
-      )
-    )
-      ?.trim()
-      .toLowerCase();
-    if (answer === undefined || answer === "") return current;
-    if (answer === "vm" || answer === "bare-metal") return answer;
-    deps.err(
-      `Not a host type: ${JSON.stringify(answer)}. Answer vm or bare-metal.`,
-    );
-  }
-}
-
-/**
- * What choosing bare metal needs: an OS that supports it, an `sshd` binary
- * for amikad to run, a state directory sshd's StrictModes accepts, and amikad
- * itself in hostd's data directory (no system path, no `sudo`). Then shows
- * what Amika will be told about the machine.
- */
-async function prepareBareMetal(
-  config: { amikadPath?: string },
-  deps: SetupDeps,
-): Promise<void> {
+export function checkBareMetal(
+  deps: Pick<SetupDeps, "env" | "platform" | "strictModesViolation">,
+): string {
   const platform = deps.platform ?? currentHostPlatform();
-  if (!platform.capabilities.bareMetal) {
+  if (!platform.runtimes().includes("bare_metal")) {
     throw new ConfigError(
-      `amika-hostd does not support bare-metal hosts on ${platform.name}; nothing was changed`,
+      `amika-hostd cannot make this machine a rig on ${platform.name}; nothing was changed`,
     );
   }
   const sshd = platform.findSshd();
   if (sshd === undefined) {
     throw new ConfigError(
-      `A bare-metal host needs an sshd binary, and none was found: ${platform.sshdInstallHint}. Then run \`amika-hostd setup\` again; nothing was changed.`,
+      `The bare_metal runtime needs an sshd binary, and none was found: ${platform.sshdInstallHint}. Then try again; nothing was changed.`,
     );
   }
   const { amikadStateDir } = daemonPaths(deps.env);
@@ -431,6 +405,20 @@ async function prepareBareMetal(
       describeStrictModesViolation(violation, amikadStateDir),
     );
   }
+  return sshd;
+}
+
+/**
+ * Check the `bare_metal` runtime (`checkBareMetal`), install amikad into
+ * hostd's data directory (no system path, no `sudo`), and show what Amika
+ * will be told about the machine.
+ */
+async function prepareBareMetal(
+  config: { amikadPath?: string },
+  deps: SetupDeps,
+): Promise<void> {
+  const platform = deps.platform ?? currentHostPlatform();
+  const sshd = checkBareMetal(deps);
   const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {
     env: deps.env,
     platform,
@@ -634,7 +622,7 @@ export function suggestHostname(raw: string): string | undefined {
 }
 
 /**
- * Set `hostname`, and `secret_key`, `secret_store` and `host_type` when given, in
+ * Set `hostname`, and `secret_key` and `secret_store` when given, in
  * `contents`, keeping everything else the operator wrote. An existing
  * top-level line, or else a commented-out `# key = ...` one, is replaced in
  * place; otherwise the setting goes under the `hostname` line, or with no such
@@ -648,12 +636,9 @@ export function renderConfig(
     hostname,
     secretKey,
     secretStore,
-    hostType,
     addDefaults,
   }: {
     hostname: string;
-    /** `host_type` to set, if any; `undefined` leaves the file's as is. */
-    hostType?: HostType;
     /** `undefined` to keep no secret key in the file (the keychain has it). */
     secretKey: string | undefined;
     /** `secret_store` to set, if any; `undefined` leaves the file's as is. */
@@ -692,7 +677,6 @@ export function renderConfig(
   const settings: [string, string][] = [["hostname", hostname]];
   if (secretKey !== undefined) settings.push(["secret_key", secretKey]);
   if (secretStore !== undefined) settings.push(["secret_store", secretStore]);
-  if (hostType !== undefined) settings.push(["host_type", hostType]);
   for (const [key, value] of settings) {
     const line = `${key} = ${JSON.stringify(value)}`;
     const top = lines.slice(0, topEnd);

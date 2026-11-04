@@ -36,17 +36,8 @@ api_url = "https://app.amika.dev"
 # transport = "tunnel"
 # transport = "listen"
 
-# What this host runs rigs on.
-#   "vm" (the default) runs each rig as a smolvm VM, sized from [sizes].
-#   "bare-metal" runs exactly one rig, and that rig is this machine: Amika
-#     gets SSH to it, as your own account, and copies nothing onto it. It
-#     needs an sshd binary (not the system service) and ignores [sizes].
-# `amika-hostd setup` asks, and installs what bare metal needs.
-# host_type = "vm"
-# host_type = "bare-metal"
-
-# For development: the amikad binary a bare-metal host runs instead of the
-# one setup installs. An absolute path.
+# For development: the amikad binary the bare_metal runtime runs instead of
+# the one amika-hostd installs. An absolute path.
 # amikad_path = "/path/to/amikad"
 
 # The gateway this host attaches to in tunnel mode. Normally leave this unset:
@@ -105,11 +96,19 @@ disk_gib = 40
 # --- Runtimes -----------------------------------------------------------------
 #
 # The tools this host runs rigs with. With no [runtimes] table, only smol is
-# on. Lume runs macOS rigs, only on a Mac with Apple Silicon. A runtime's own
+# on; a listed table turns off every runtime not listed. Lume runs macOS
+# rigs, only on a Mac with Apple Silicon. A runtime's own
 # [runtimes.<name>.sizes] replaces [sizes] for its rigs.
+# `amika-hostd capabilities update --enable <runtime>` turns one on and
+# installs what it needs.
 #
 # [runtimes.smol]
 # max_running = 4
+#
+# bare_metal makes this machine itself one rig: Amika gets SSH to it, as
+# your own account, and copies nothing onto it. It needs an sshd binary (not
+# the system service), runs one rig, and takes no sizes or presets.
+# [runtimes.bare_metal]
 #
 # [runtimes.lume]
 # storage_dir = "/Users/you/amika-lume"

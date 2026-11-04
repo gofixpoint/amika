@@ -79,10 +79,10 @@ Flags:
   --smolvm-version      Install this smolvm version if smolvm is missing
                         (default: ${DEFAULT_SMOLVM_VERSION}; "latest" for the newest)
   --skip-smolvm         Do not install smolvm
-  --bare-metal          Set this host up as a bare-metal host, whose one rig
-                        is this machine: skip smolvm, the smolmachines
-                        engine and the KVM and resize2fs checks, and seed
-                        host_type = "bare-metal" in a new config.
+  --bare-metal          Make this machine the host's only rig: skip smolvm,
+                        the smolmachines engine and the KVM and resize2fs
+                        checks, and seed a new config with only the
+                        bare_metal runtime ([runtimes.bare_metal]).
                         \`amika-hostd setup\` installs amikad.
   --uninstall           Remove amika-hostd instead of installing it. Finds
                         amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
@@ -638,7 +638,7 @@ describe_plan() {
     echo "  Config:       would seed ${CONFIG_PATH} from config.example.toml"
   fi
   if [ "$BARE_METAL" = "true" ]; then
-    echo "  Host type:    bare-metal (no VMs; amika-hostd setup installs amikad)"
+    echo "  Runtimes:     bare_metal only (no VMs; amika-hostd setup installs amikad)"
   else
     check_kvm
     check_resize2fs
@@ -867,15 +867,20 @@ seed_config() {
   # `amika-hostd setup` keeps the secrets in the keychain by default, or adds
   # the secret key to it with `secret_store = "file"`; keep it to the
   # daemon's user either way.
-  type_line='# host_type = "vm"'
-  if [ "$BARE_METAL" = "true" ]; then
-    type_line='host_type = "bare-metal"'
-  fi
   (
     umask 077
-    sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
-      -e "s/^# host_type = \"vm\"\$/${type_line}/" \
-      "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
+    if [ "$BARE_METAL" = "true" ]; then
+      # Listing bare_metal alone turns smol off, so its preset images go
+      # too: they would only be warned about on every start.
+      sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
+        -e 's/^# \[runtimes\.bare_metal\]$/[runtimes.bare_metal]/' \
+        -e 's/^\[presets\./# [presets./' \
+        -e 's/^image = /# image = /' \
+        "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
+    else
+      sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
+        "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
+    fi
   )
   CONFIG_HOSTNAME="$host_name"
   echo "Wrote a config to ${CONFIG_PATH}"
@@ -1004,8 +1009,8 @@ print_next_steps() {
     echo "     secret_store = \"file\" to ${CONFIG_PATH}."
   fi
   if [ "$BARE_METAL" = "true" ]; then
-    echo "     Answer bare-metal when it asks for the host type. It checks for an"
-    echo "     sshd binary and installs amikad into ${HOSTD_HOME}."
+    echo "     It checks for an sshd binary and installs amikad into"
+    echo "     ${HOSTD_HOME}."
     echo "  2. Start the daemon (it runs setup first if you skipped step 1):"
     echo "       amika-hostd up"
     echo "  To stop the daemon and SSH to this machine, run \`amika-hostd down\`."

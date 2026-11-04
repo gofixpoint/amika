@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resolveConfig } from "./internal/config.js";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -283,6 +284,13 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expect(result.stdout).not.toContain("engine");
     expect(existsSync(path.join(hostdHome, "node_modules"))).toBe(false);
     expectLauncherRuns(systemNode(), "24.22.1");
+    // Only bare_metal is on, with no smol preset left to warn about.
+    const configPath = path.join(home, ".config/amika-hostd/config.toml");
+    const { runtimes } = resolveConfig({
+      file: { path: configPath, contents: readFileSync(configPath, "utf8") },
+    });
+    expect(Object.keys(runtimes.runtimes)).toEqual(["bare_metal"]);
+    expect(runtimes.warnings).toEqual([]);
   });
 
   it("still needs the engine for a VM host", () => {
@@ -388,7 +396,7 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     writeFileSync(path.join(archiveDir, "amika-hostd.mjs"), "// bundle\n");
     writeFileSync(
       path.join(archiveDir, "config.example.toml"),
-      '# hostname = "my-host"\n',
+      readFileSync(new URL("../config.example.toml", import.meta.url), "utf8"),
     );
     writeFileSync(
       path.join(archiveDir, "node_modules/smolmachines/package.json"),
