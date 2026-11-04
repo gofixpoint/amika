@@ -232,37 +232,6 @@ export interface MachineFacts {
   sshUser: string;
 }
 
-/**
- * The report as Amika's hosts API takes it: the same, with each size in the
- * shape of the API's `sizes` (`HostSize`).
- */
-export interface ApiCapabilities {
-  runtimes: Record<
-    string,
-    Omit<Capabilities["runtimes"][string], "sizes"> & {
-      sizes: Record<string, HostSize>;
-    }
-  >;
-  presets: Capabilities["presets"];
-}
-
-export function apiCapabilitiesOf(
-  config: RuntimeConfig,
-  arch: string,
-  machine: () => MachineFacts,
-): ApiCapabilities {
-  const report = capabilitiesOf(config, arch, machine);
-  return {
-    runtimes: Object.fromEntries(
-      Object.entries(report.runtimes).map(([name, runtime]) => [
-        name,
-        { ...runtime, sizes: config.runtimes[name as RuntimeName]!.sizes },
-      ]),
-    ),
-    presets: report.presets,
-  };
-}
-
 /** The report for `config` on a host of `arch`. Images stay on the host. */
 export function capabilitiesOf(
   config: RuntimeConfig,

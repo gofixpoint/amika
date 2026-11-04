@@ -1,5 +1,5 @@
 /** The Amika control-plane endpoints the daemon calls, authenticated by API key. */
-import type { ApiCapabilities } from "./runtimes.js";
+import type { Capabilities } from "./runtimes.js";
 import { z } from "zod";
 import type { HostSize, TransportMode } from "./config.js";
 
@@ -68,7 +68,7 @@ export async function registerHost(
     secretKey: string;
     sizes: HostSizes;
     /** What the host can run (`runtimes.ts`). */
-    capabilities?: ApiCapabilities;
+    capabilities?: Capabilities;
     transportMode?: TransportMode;
   },
   fetcher: typeof fetch = fetch,
@@ -137,7 +137,7 @@ export async function setHostUrl(
  */
 export interface HostReport {
   sizes: HostSizes;
-  capabilities?: ApiCapabilities;
+  capabilities?: Capabilities;
 }
 
 /**

@@ -35,13 +35,12 @@ import {
   type HostdFlags,
 } from "./config.js";
 import {
-  apiCapabilitiesOf,
   capabilitiesOf,
   checkRuntimesSupported,
-  type ApiCapabilities,
   hostArch,
   presetImages,
   RUNTIME_NAMES,
+  type Capabilities,
   type MachineFacts,
   type RuntimeConfig,
   type RuntimeName,
@@ -1314,8 +1313,8 @@ function registeredSizes(config: HostdConfig): HostdConfig["sizes"] {
 function registeredCapabilities(
   config: HostdConfig,
   deps: CliDeps,
-): ApiCapabilities {
-  return apiCapabilitiesOf(config.runtimes, hostArch(), machineFacts(deps));
+): Capabilities {
+  return capabilitiesOf(config.runtimes, hostArch(), machineFacts(deps));
 }
 
 /**

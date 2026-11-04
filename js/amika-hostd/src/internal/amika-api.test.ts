@@ -256,7 +256,7 @@ describe("setHostReport", () => {
           os: "linux" as const,
           arch: "arm64",
           snapshots: true,
-          sizes: { large: LARGE },
+          sizes: { large: { vcpus: 8, memory_gib: 32, disk_gib: 100 } },
         },
       },
       presets: {},

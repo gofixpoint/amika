@@ -448,7 +448,8 @@ describe("runCli", () => {
             smol: expect.objectContaining({
               kind: "vm",
               os: "linux",
-              sizes: { large },
+              // The report is snake_case, unlike the older `sizes`.
+              sizes: { large: { vcpus: 8, memory_gib: 32, disk_gib: 100 } },
             }),
           },
           presets: {},
