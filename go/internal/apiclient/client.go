@@ -1520,7 +1520,7 @@ func (h *Host) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// HostCapabilities is what a host can run (spec 026 in amika-mono).
+// HostCapabilities is what a host can run (spec 028 in amika-mono).
 type HostCapabilities struct {
 	Runtimes map[string]RuntimeCapability `json:"runtimes"`
 	Presets  map[string]PresetCapability  `json:"presets"`

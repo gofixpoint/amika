@@ -1,6 +1,6 @@
 /**
  * Checks on a real Lume VM that the provider contract does not make
- * (milestone 1 of spec 026). Run on an Apple Silicon Mac with Lume:
+ * (milestone 1 of spec 028). Run on an Apple Silicon Mac with Lume:
  *
  *   TEST_LUME_TEMPLATE=<a stopped template VM in Lume's default storage> \
  *   LUME_STORAGE_DIR=... LUME_STATE_DIR=... \

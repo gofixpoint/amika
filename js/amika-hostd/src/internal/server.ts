@@ -218,7 +218,7 @@ function snapshotSupport(
   return {
     store,
     capture: async (rig: string, name: string) => {
-      // Only smol packs a rig into a snapshot (spec 026: none on Lume yet).
+      // Only smol packs a rig into a snapshot (spec 028: none on Lume yet).
       const owner =
         "runtimeOf" in runtime
           ? (runtime as RuntimeRouter).runtimeOf(rig)

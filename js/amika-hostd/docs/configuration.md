@@ -53,7 +53,7 @@ path, never through a shell or `PATH`. See
 
 ## Runtimes
 
-`src/internal/runtimes.ts` checks the runtime and preset tables (spec 026 in
+`src/internal/runtimes.ts` checks the runtime and preset tables (spec 028 in
 amika-mono). `[runtimes.<name>]` turns on a runtime: `smol` (Linux VMs),
 `lume` (macOS VMs, on Apple Silicon only) or `bare_metal` (this machine; see
 [Bare metal](#bare-metal)). With no `[runtimes]` table only

@@ -1,6 +1,6 @@
 /**
  * The runtimes a host runs rigs on, the presets it offers on them, and the
- * capabilities report built from both (spec 026, "hostd config").
+ * capabilities report built from both (spec 028, "hostd config").
  *
  * `resolveRuntimes` turns the TOML tables into checked settings, and
  * `capabilitiesOf` turns those into what hostd tells Amika. Both are pure, so
@@ -184,7 +184,7 @@ export function resolveRuntimes({
   return { runtimes, presets, warnings };
 }
 
-/** What hostd tells Amika it can run (spec 026, "Capabilities"). */
+/** What hostd tells Amika it can run (spec 028, "Capabilities"). */
 export interface Capabilities {
   runtimes: Record<
     string,

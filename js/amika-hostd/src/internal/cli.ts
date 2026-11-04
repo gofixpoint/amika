@@ -549,7 +549,7 @@ function printReloadResult(result: ReloadResult, deps: CliDeps) {
   }
 }
 
-/** Lume's release that milestone 0 of spec 026 tested. */
+/** Lume's release that milestone 0 of spec 028 tested. */
 const LUME_VERSION = "0.6.1";
 
 /**

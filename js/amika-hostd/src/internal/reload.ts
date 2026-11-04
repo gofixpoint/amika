@@ -1,5 +1,5 @@
 /**
- * Reloading runtime settings with no restart (spec 026, "Reload"). A reload
+ * Reloading runtime settings with no restart (spec 028, "Reload"). A reload
  * can add a runtime and change presets, sizes and limits. It never stops a
  * rig, so it refuses to remove a runtime that has rigs.
  *

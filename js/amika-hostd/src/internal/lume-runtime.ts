@@ -1,6 +1,6 @@
 /**
  * The machine API's runtime for macOS rigs: the `lume` sandbox provider from
- * `@amika/sandbox` (spec 026, "The Lume runtime"). Each rig is a clone of a
+ * `@amika/sandbox` (spec 028, "The Lume runtime"). Each rig is a clone of a
  * template VM in Lume's default storage, kept in `storage_dir`, and hostd
  * reaches the guest over SSH with a key for that VM only.
  *

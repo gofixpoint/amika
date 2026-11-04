@@ -64,7 +64,7 @@ export interface AppConfig {
    */
   runtimes?: () => RuntimeConfig;
   /**
-   * What this host can run (spec 026, "Capabilities"), for
+   * What this host can run (spec 028, "Capabilities"), for
    * `GET /capabilities`.
    */
   capabilities?: () => Capabilities;
@@ -552,7 +552,7 @@ export const API_VERSION = "v0beta1";
 export const FEATURES = ["service-tokens"];
 /**
  * Named in `/health`: a create takes an optional `runtime`, and each
- * machine names its own (spec 026 in amika-mono).
+ * machine names its own (spec 028 in amika-mono).
  */
 export const RUNTIMES_FEATURE = "runtimes";
 

@@ -1,6 +1,6 @@
 /**
  * Checks a VM from a macOS image (`macos-image/build.sh`, milestone 2 of
- * spec 026): amikad does not run until the rig has new credentials, and
+ * spec 028): amikad does not run until the rig has new credentials, and
  * then it serves the SSH bridge under launchd. Run on an Apple Silicon Mac
  * with Lume:
  *

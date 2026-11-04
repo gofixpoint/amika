@@ -1,4 +1,4 @@
-/** Cover the runtime and preset rules of spec 026, and the capabilities report. */
+/** Cover the runtime and preset rules of spec 028, and the capabilities report. */
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "./config.js";
 import {
