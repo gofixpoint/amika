@@ -59,7 +59,7 @@ func providerFromEnv() string {
 	if provider := strings.TrimSpace(os.Getenv("E2E_SANDBOX_PROVIDER")); provider != "" {
 		return provider
 	}
-	return "daytona"
+	return "e2b"
 }
 
 func validSandboxProvider(provider string) bool {

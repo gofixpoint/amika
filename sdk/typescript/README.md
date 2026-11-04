@@ -342,6 +342,12 @@ AMIKA_API_TOKEN=amk_… \
 pnpm test:functional
 ```
 
+Rigs are created on E2B unless `AMIKA_TEST_RIG_PROVIDER` names another
+provider. The rig suite needs a Claude credential: set
+`AMIKA_TEST_PROVIDER_SECRET_VALUE` to a real API key to register a temporary
+one, set `AMIKA_TEST_AGENT_CREDENTIAL_NAME` to use an existing credential, or
+add an `api_key` credential to the target org.
+
 See [functional test helpers](test/functional/helpers.ts) for optional environment
 settings. Rig tests clean up their rigs; generic-secret tests can leave secrets
 because the current API has no generic-secret deletion endpoint.

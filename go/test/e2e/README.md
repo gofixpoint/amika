@@ -85,10 +85,10 @@ It is fetched at run time from `AMIKA_E2E_OPENAPI_URL`, defaulting to
 `https://app.amika.dev/api/openapi.json`, so schema assertions track the
 deployed API spec (see the schema section below).
 
-Every remote sandbox creation uses the same provider. It defaults to Daytona;
+Every remote sandbox creation uses the same provider. It defaults to E2B;
 set `E2E_SANDBOX_PROVIDER` through the Make target or pass
-`-sandbox-provider` to the entry package to select `e2b`, `freestyle`, or
-`vercel`. Cases receive the selection as `{{sandbox_provider}}`.
+`-sandbox-provider` to the entry package to select `daytona`, `freestyle`,
+or `vercel`. Cases receive the selection as `{{sandbox_provider}}`.
 
 Each run writes to `go/test/e2e/.runs/<run-id>/<case-name>/`:
 
