@@ -148,6 +148,19 @@ describe("amikadAsset", () => {
   });
 });
 
+describe("runtimes", () => {
+  it.each([
+    ["darwin", "arm64", ["smol", "lume"]],
+    ["darwin", "x64", ["smol"]],
+    ["linux", "arm64", ["smol"]],
+    ["freebsd", "x64", []],
+  ] as const)("offers on %s/%s %j", (os, arch, runtimes) => {
+    expect(
+      hostPlatformFor(os, fakeOs({ arch: () => arch })).runtimes(),
+    ).toEqual(runtimes);
+  });
+});
+
 describe("keychain", () => {
   it("is the Secret Service on Linux only with a session bus", () => {
     const linux = hostPlatformFor("linux");

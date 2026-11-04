@@ -1,5 +1,6 @@
 /** Exercise the daemon's HTTP boundary with an injected machine runtime. */
 import { signServiceToken } from "@amika/service-auth/credentials";
+import type { RuntimeConfig } from "./internal/runtimes.js";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import { memoryServiceRegistry } from "./internal/service-registry.js";
@@ -98,13 +99,54 @@ function json(body: unknown): RequestInit {
   };
 }
 
+/** A host with smol and lume on, and `images` as smol presets. */
+function smolPresets(images: Record<string, string>): () => RuntimeConfig {
+  const config: RuntimeConfig = {
+    runtimes: {
+      smol: { name: "smol", sizes: {} },
+      lume: { name: "lume", sizes: {}, maxRunning: 2 },
+    },
+    presets: {
+      ...Object.fromEntries(
+        Object.entries(images).map(([name, image]) => [
+          name,
+          {
+            os: "linux" as const,
+            defaultRuntime: "smol" as const,
+            images: { smol: image },
+          },
+        ]),
+      ),
+      "macos-coder": {
+        os: "macos",
+        defaultRuntime: "lume",
+        images: { lume: "amika-macos-coder" },
+      },
+    },
+    warnings: [],
+  };
+  return () => config;
+}
+
 describe("machine API", () => {
+  it("serves the capabilities report, only to a caller with the key", async () => {
+    const report = { runtimes: {}, presets: {} };
+    const app = createApp(
+      { secretKey: SECRET, capabilities: () => report },
+      fakeRuntime(),
+    );
+    expect((await app.request("/capabilities")).status).toBe(401);
+    expect(
+      await (await authenticated(app).request("/capabilities")).json(),
+    ).toEqual(report);
+  });
+
   it("keeps health independent of the runtime", async () => {
     const { app, runtime } = harness();
     expect(await (await app.request("/health")).json()).toEqual({
       status: "ok",
       apis: ["v0beta1"],
-      features: ["service-tokens"],
+      features: ["service-tokens", "runtimes"],
     });
     expectUntouched(runtime);
   });
@@ -126,6 +168,7 @@ describe("machine API", () => {
     expect(runtime.create).toHaveBeenCalledTimes(1);
     expect(runtime.create).toHaveBeenCalledWith({
       ...input,
+      runtime: "smol",
       services: undefined,
     });
     expect(runtime.start).not.toHaveBeenCalled();
@@ -138,7 +181,11 @@ describe("machine API", () => {
       const runtime = fakeRuntime();
       const app = authenticated(
         createApp(
-          { secretKey: SECRET, images: { "amika-coder": CODER }, configPath },
+          {
+            secretKey: SECRET,
+            runtimes: smolPresets({ coder: CODER }),
+            configPath,
+          },
           runtime,
         ),
       );
@@ -153,6 +200,50 @@ describe("machine API", () => {
       expect(forwarded()).toBe(CODER);
     });
 
+    it("takes a preset by Amika's own name too", async () => {
+      const { app, runtime, forwarded } = withImages();
+      const input = { name: "demo", image: "coder" };
+      expect((await app.request(ROOT, json(input))).status).toBe(201);
+      expect(forwarded()).toBe(CODER);
+      expect(runtime.create.mock.calls[0][0].runtime).toBe("smol");
+    });
+
+    it("creates on the preset's default runtime, or the one the request names", async () => {
+      const { app, runtime } = withImages();
+      const macos = { name: "mac", image: "macos-coder" };
+      expect((await app.request(ROOT, json(macos))).status).toBe(201);
+      expect(runtime.create.mock.calls[0][0]).toMatchObject({
+        image: "amika-macos-coder",
+        runtime: "lume",
+      });
+      const named = { ...macos, name: "mac2", runtime: "lume" };
+      expect((await app.request(ROOT, json(named))).status).toBe(201);
+      expect(runtime.create.mock.calls[1][0].runtime).toBe("lume");
+    });
+
+    it("refuses a runtime the preset does not have", async () => {
+      const { app, runtime } = withImages();
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: "coder", runtime: "lume" }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: 'preset "coder" has no lume runtime on this host; it has smol',
+      });
+      expectUntouched(runtime);
+    });
+
+    it("boots an image reference on smol only", async () => {
+      const { app, runtime } = withImages();
+      const response = await app.request(
+        ROOT,
+        json({ name: "demo", image: CODER, runtime: "lume" }),
+      );
+      expect(response.status).toBe(400);
+      expectUntouched(runtime);
+    });
+
     it("refuses a name that isn't configured, naming the config file", async () => {
       const { app, runtime } = withImages("/etc/amika-hostd/config.toml");
       const response = await app.request(
@@ -162,7 +253,7 @@ describe("machine API", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({
         error:
-          'image "amika-coder-plus-docker" is not configured on this host; add it under [preset_images] in /etc/amika-hostd/config.toml',
+          'image "amika-coder-plus-docker" is not configured on this host; add it under [presets.<name>.runtimes.smol] in /etc/amika-hostd/config.toml',
       });
       expectUntouched(runtime);
     });
@@ -176,7 +267,7 @@ describe("machine API", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({
         error:
-          'image "amika-coder" is not configured on this host; add it under [preset_images] in the amika-hostd config.toml',
+          'image "amika-coder" is not configured on this host; add it under [presets.<name>.runtimes.smol] in the amika-hostd config.toml',
       });
     });
 
@@ -186,7 +277,7 @@ describe("machine API", () => {
         const pulls = new Set(images);
         const app = authenticated(
           createApp(
-            { secretKey: SECRET, images: { "amika-coder": CODER } },
+            { secretKey: SECRET, runtimes: smolPresets({ coder: CODER }) },
             runtime,
             { pullingImages: () => pulls },
           ),
@@ -435,7 +526,7 @@ describe("machine API", () => {
     });
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
-      error: "Smol runtime request failed: resize2fs not found",
+      error: "Runtime request failed: resize2fs not found",
     });
   });
 
@@ -449,7 +540,7 @@ describe("machine API", () => {
       const response = await app.request(`${ROOT}/demo`);
       expect(response.status).toBe(status);
       expect(await response.json()).toEqual({
-        error: "Smol runtime request failed",
+        error: "Runtime request failed",
       });
     },
   );
@@ -460,7 +551,7 @@ describe("machine API", () => {
     const response = await app.request(ROOT);
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
-      error: "Smol runtime request failed",
+      error: "Runtime request failed",
     });
   });
 
@@ -484,7 +575,7 @@ describe("machine API", () => {
     expect(response.status).toBe(504);
     expect(await response.json()).toEqual({
       error:
-        "Smol runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image; see /state/log/smolvm.log",
+        "Runtime request timed out: smolvm did not answer within 5ms; it may still be downloading the image; see /state/log/smolvm.log",
     });
   });
 
@@ -508,7 +599,7 @@ describe("machine API", () => {
     expect(response.status).toBe(504);
     expect(await response.json()).toEqual({
       error:
-        "Smol runtime request timed out: smolvm did not answer within 5ms; see /state/log/smolvm.log",
+        "Runtime request timed out: smolvm did not answer within 5ms; see /state/log/smolvm.log",
     });
   });
 
@@ -524,7 +615,7 @@ describe("machine API", () => {
     const response = await app.request(ROOT);
     expect(response.status).toBe(504);
     expect(await response.json()).toEqual({
-      error: "Smol runtime request timed out",
+      error: "Runtime request timed out",
     });
   });
 
@@ -856,7 +947,7 @@ describe("replacing a machine's services", () => {
     expect(response.status).toBe(404);
     // Only a 409's message is passed on.
     expect(await response.json()).toEqual({
-      error: "Smol runtime request failed",
+      error: "Runtime request failed",
     });
     expect(registry.port("demo", "web")).toBe(3000);
   });
@@ -1266,7 +1357,7 @@ describe("snapshots", () => {
     });
     const app = authenticated(
       createApp(
-        { secretKey: SECRET, images: { "amika-coder": "ghcr.io/x:1" } },
+        { secretKey: SECRET, runtimes: smolPresets({ coder: "ghcr.io/x:1" }) },
         runtime,
         { snapshots: { store: store as never, capture } },
       ),
@@ -1610,7 +1701,7 @@ describe("a bare-metal host", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error:
-        "Smol runtime request failed: a bare-metal host runs only the amikad commands that set up SSH",
+        "Runtime request failed: a bare-metal host runs only the amikad commands that set up SSH",
     });
   });
 });

@@ -53,16 +53,38 @@ installs, for development. It must be absolute: hostd runs amikad by path,
 never through a shell or `PATH`. See
 [Bare-metal runtime](runtime.md#bare-metal-runtime).
 
+## Runtimes
+
+`src/internal/runtimes.ts` checks the runtime and preset tables (spec 026 in
+amika-mono). `[runtimes.<name>]` turns on a runtime: `smol` (Linux VMs) or
+`lume` (macOS VMs, on Apple Silicon only). With no `[runtimes]` table only
+`smol` is on. A runtime with `enabled = false` is off. hostd refuses to start a
+runtime the machine cannot run (`HostPlatform.runtimes`).
+
+- `max_running` limits the running rigs of a runtime. Lume's limit is the
+  smaller of the setting and 2, because macOS runs at most two macOS VMs.
+- `[runtimes.<name>.sizes.*]` replaces the default `[sizes]` list for that
+  runtime. The two lists are not merged.
+- `runtimes.lume.storage_dir` (absolute, required) is where hostd keeps its
+  Lume VMs, apart from other Lume VMs on the Mac.
+
 ## Images
 
-`[preset_images]` maps a preset name to the full OCI reference this host boots for it,
-so the host, not Amika, pins the version:
+`[presets.<name>.runtimes.<runtime>]` gives a preset's image on one runtime,
+so the host, not Amika, pins the version. Preset names are Amika's
+(`coder`). smol takes a full OCI reference:
 
 ```toml
-[preset_images]
-amika-coder = "ghcr.io/gofixpoint/amika-coder:latest"
-amika-coder-plus-docker = "ghcr.io/gofixpoint/amika-coder-plus-docker:latest"
+[presets.coder.runtimes.smol]
+image = "ghcr.io/gofixpoint/amika-coder:latest"
 ```
+
+A preset with two or more runtimes needs `default_runtime`. All runtimes of a
+preset must give one guest OS. An entry for a runtime that is off is ignored
+with a warning, and so is a preset with no runtime on.
+
+The old `[preset_images]` table fails startup. `amika-hostd config upgrade`
+rewrites it as `[presets.*]` tables.
 
 The seeded config tracks `:latest`, which every image release moves. A host
 that needs a fixed version pins the release's 12-character commit SHA instead.
@@ -70,7 +92,8 @@ smolvm's image cache (below) is keyed by the digest a reference points to, so
 a moved tag is pulled again rather than served stale.
 
 On create (`POST /v0beta1/rigs`), `resolveSource` (`src/internal/requests.ts`)
-swaps a configured name for its reference before forwarding to smolvm. A name
+swaps a preset name (`coder`, or `amika-coder` as control planes send it) for
+its smol image before forwarding to smolvm. A name
 this host holds as a snapshot is resolved to that artifact instead (see
 [Snapshots](snapshots.md)). Failing both, an `image` containing `/` or `:` is
 taken as a full reference and forwarded unchanged, for development. Any other

@@ -6,6 +6,13 @@ import { defineProvider } from "../shared/define-provider";
 import { AMIKA_HOME } from "./internal/bootstrap";
 import { lumeOperations, mapLumeState } from "./internal/operations";
 
+// The runtime primitives amika-hostd composes into its Lume runtime; routed
+// through here so the folder root stays the only public entry.
+export { AMIKA_USER } from "./internal/bootstrap";
+export { LumeCli, LumeCliError, type LumeVm } from "./internal/lume-cli";
+export { lumeOperations } from "./internal/operations";
+export type { LumeConfig } from "./config";
+
 export default function lumeProvider(config: LumeConfig): SandboxProvider {
   return createProvider(config);
 }

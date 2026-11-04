@@ -65,7 +65,7 @@ stub. `src/internal/snapshot-store.ts` keeps them.
   reaches the filesystem and two names that slugify alike keep their own
   files. The routes take the name as a trailing wildcard, decoded once.
 - **Resolving one at create.** `resolveSource`
-  (`src/internal/requests.ts`) checks `[preset_images]`, then this store,
+  (`src/internal/requests.ts`) checks the preset images, then this store,
   then the full-OCI-reference passthrough. The store has to come first,
   because a snapshot name contains slashes and would otherwise be forwarded
   to a registry.

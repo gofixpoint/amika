@@ -5,6 +5,7 @@
  * `IdentitiesOnly`). Each VM has its own known-hosts file, because clones of
  * one template share host keys and a deleted VM's IP goes to the next one.
  */
+import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runProcess, type ProcessResult, type ProcessRunner } from "./process";
@@ -41,6 +42,35 @@ export class GuestSsh {
         ...["-i", keyFile, `${user}@${guest.ip}`, line],
       ],
       { input },
+    );
+  }
+
+  /**
+   * Forward `localPort` on the host's loopback to `guestPort` on the guest's
+   * own loopback, until the returned process is killed. ssh, not hostd,
+   * makes the connection to the guest: macOS lets its own `ssh` reach a
+   * VM's address, but a program such as Node needs a Local Network grant
+   * that a background process cannot get.
+   */
+  forward(
+    guest: GuestAddress,
+    keyFile: string,
+    user: string,
+    localPort: number,
+    guestPort: number,
+  ): ChildProcess {
+    return spawn(
+      this.bin,
+      [
+        ...baseArgs(guest),
+        ...["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes"],
+        ...["-o", "PasswordAuthentication=no"],
+        ...["-o", "KbdInteractiveAuthentication=no"],
+        ...["-o", "ExitOnForwardFailure=yes", "-N"],
+        ...["-L", `127.0.0.1:${localPort}:localhost:${guestPort}`],
+        ...["-i", keyFile, `${user}@${guest.ip}`],
+      ],
+      { stdio: ["ignore", "ignore", "pipe"] },
     );
   }
 

@@ -23,6 +23,7 @@ export function linuxPlatform(deps: PlatformDeps = {}): HostPlatform {
     sshdInstallHint:
       "install OpenSSH's server (`sudo apt install openssh-server`, or `sudo dnf install openssh-server`); amika-hostd runs its own sshd, so the system service need not be enabled",
     amikadAsset: () => ({ os: "linux", arch: amikadArch("linux", deps) }),
+    runtimes: () => ["smol"],
     keychain: (env, run) =>
       // The Secret Service lives on the session's D-Bus. Without a session bus
       // (no desktop or user session) there is no keychain. With one but no

@@ -41,7 +41,7 @@ installs amikad into hostd's data directory (see
 set, and prints the resources it detected and the account SSH logs in as.
 These run before anything is stored, so a machine that cannot be a bare-metal
 host is refused with nothing changed. A bare-metal config gets no default
-`[sizes]` or `[preset_images]`; switching back to VMs adds them when the file
+`[sizes]` or `[presets.*]`; switching back to VMs adds them when the file
 has none.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
@@ -53,7 +53,7 @@ same way, except that a setting with no line of its own goes under the
 keychain has none (the keychain's own item wins otherwise). A `secret_key` too
 short to use, such as an old example's `REPLACE_ME`, counts as unset. A config
 written from scratch also gets the example's default `[sizes]` and
-`[preset_images]` (`DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES`, which
+`[presets.*]` (`DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES`, which
 `setup.test.ts` keeps in step with `config.example.toml`). It prints the
 result and where to edit it. The new contents are parsed before anything is
 written, and the file is replaced atomically with mode `0600`

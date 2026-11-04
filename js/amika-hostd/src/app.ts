@@ -19,6 +19,7 @@ import {
   replaceServicesSchema,
   resolveSource,
 } from "./internal/requests.js";
+import type { Capabilities, RuntimeConfig } from "./internal/runtimes.js";
 import {
   fromRequest,
   hardenPreviewResponse,
@@ -57,8 +58,16 @@ export interface AppConfig {
    * preview routes.
    */
   secretKey: string;
-  /** Preset image names mapped to the OCI references machines boot. */
-  images?: Record<string, string>;
+  /**
+   * The runtimes that are on and the presets on them, read on each create
+   * so a reload takes effect at once. Defaults to smol with no presets.
+   */
+  runtimes?: () => RuntimeConfig;
+  /**
+   * What this host can run (spec 026, "Capabilities"), for
+   * `GET /capabilities`. Absent on a bare-metal host, which has no runtimes.
+   */
+  capabilities?: () => Capabilities;
   /** Named in errors for unconfigured images, so operators know what to edit. */
   configPath?: string;
   /**
@@ -121,7 +130,8 @@ export interface AppDeps {
 export function createApp(
   {
     secretKey,
-    images = {},
+    runtimes = () => SMOL_ONLY,
+    capabilities,
     configPath,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     smolvmLogFile,
@@ -166,8 +176,8 @@ export function createApp(
         return Response.json(
           {
             error: bareMetal
-              ? "Smol runtime request timed out"
-              : `Smol runtime request timed out: ${deadlineReason(timeoutMs, smolvmLogFile, { download })}`,
+              ? "Runtime request timed out"
+              : `Runtime request timed out: ${deadlineReason(timeoutMs, smolvmLogFile, { download })}`,
           },
           { status: 504 },
         );
@@ -180,8 +190,8 @@ export function createApp(
         {
           error:
             reason === undefined
-              ? "Smol runtime request failed"
-              : `Smol runtime request failed: ${reason}`,
+              ? "Runtime request failed"
+              : `Runtime request failed: ${reason}`,
         },
         { status: error instanceof RuntimeError ? error.status : 500 },
       );
@@ -219,8 +229,8 @@ export function createApp(
         {
           error:
             error.reason === undefined
-              ? "Smol runtime request failed"
-              : `Smol runtime request failed: ${error.reason}`,
+              ? "Runtime request failed"
+              : `Runtime request failed: ${error.reason}`,
         },
         { status: error.status },
       );
@@ -261,6 +271,9 @@ export function createApp(
   // `features` names what a control plane may rely on beyond the API itself:
   // `service-tokens`, service routes accepting `X-Amika-Authorization`, and
   // `browser-login`, previews behind a login through Amika.
+  if (capabilities) {
+    app.get("/capabilities", (c) => c.json(capabilities()));
+  }
   app.get("/health", (c) =>
     c.json({
       status: "ok",
@@ -271,7 +284,7 @@ export function createApp(
         ...FEATURES,
         ...(gateway.servesPreviews ? [BROWSER_LOGIN_FEATURE] : []),
         ...(snapshots ? [SNAPSHOTS_FEATURE] : []),
-        ...(bareMetal ? [BARE_METAL_FEATURE] : []),
+        ...(bareMetal ? [BARE_METAL_FEATURE] : [RUNTIMES_FEATURE]),
       ],
     }),
   );
@@ -414,12 +427,18 @@ export function createApp(
     );
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());
-      const { services, image: named, ...machine } = input;
+      const { services, image: named, runtime: requested, ...machine } = input;
       // The rig is this machine as it is, so a bare-metal host boots no
       // image: the name is passed along unresolved, and ignored.
       const source = bareMetal
         ? { image: named }
-        : resolveSource(named, images, snapshotSource, configPath);
+        : resolveSource(
+            named,
+            requested,
+            runtimes(),
+            snapshotSource,
+            configPath,
+          );
       // smolvm would answer only once the download is done, which can
       // outlast the deadline; the caller is better told now, and when to
       // try again.
@@ -546,6 +565,18 @@ export const PULLING_RETRY_AFTER_S = 60;
 /** The versioned API this daemon serves. */
 export const API_VERSION = "v0beta1";
 export const FEATURES = ["service-tokens"];
+/**
+ * Named in `/health` by a VM host: a create takes an optional `runtime`,
+ * and each machine names its own (spec 026 in amika-mono).
+ */
+export const RUNTIMES_FEATURE = "runtimes";
+
+/** A host's runtimes before its config names any: smol, with no presets. */
+const SMOL_ONLY: RuntimeConfig = {
+  runtimes: { smol: { name: "smol", sizes: {} } },
+  presets: {},
+  warnings: [],
+};
 const RIGS_ROUTE = `/${API_VERSION}/rigs`;
 /** This host's snapshots, which belong to the host rather than to one rig. */
 const SNAPSHOTS_ROUTE = `/${API_VERSION}/snapshots`;

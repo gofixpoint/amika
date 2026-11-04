@@ -163,7 +163,7 @@ Each of these is stated in full, with its reason, in the doc it links to.
 - **Pre-pull deletes only the machines it recorded**, and hides only hostd's
   own from the machine list. See
   [Image cache](docs/configuration.md#image-cache).
-- **`resolveSource` checks `[preset_images]`, then the snapshot store, then
+- **`resolveSource` checks the preset images, then the snapshot store, then
   the full-reference passthrough**, so an unconfigured preset never falls
   through to a Docker Hub pull. A snapshot name never reaches the filesystem,
   and a rig being captured answers `409` to every route but reading it. See

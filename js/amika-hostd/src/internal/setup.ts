@@ -30,6 +30,8 @@ import {
   type HostType,
   type SecretStoreKind,
 } from "./config.js";
+import { presetImages } from "./runtimes.js";
+import { tomlKey, upgradeConfigFile } from "./config-upgrade.js";
 import { isValidApiKey, type Secrets } from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
 import type { Prompt } from "./prompt.js";
@@ -92,10 +94,10 @@ export const DEFAULT_SIZES: Record<string, HostSize> = {
   xlarge: { vcpus: 16, memoryGib: 24, diskGib: 40, diskGrowOnly: false },
 };
 
+/** The smol image of each preset a config written from scratch gets. */
 export const DEFAULT_PRESET_IMAGES: Record<string, string> = {
-  "amika-coder": "ghcr.io/gofixpoint/amika-coder:latest",
-  "amika-coder-plus-docker":
-    "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
+  coder: "ghcr.io/gofixpoint/amika-coder:latest",
+  "coder-plus-docker": "ghcr.io/gofixpoint/amika-coder-plus-docker:latest",
 };
 
 /**
@@ -106,7 +108,10 @@ export async function runSetup(
   deps: SetupDeps,
   { fromUp = false }: { fromUp?: boolean } = {},
 ): Promise<void> {
-  const file = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  // An old file's tables are rewritten first, so setup reads it, and writes
+  // it back in the current format.
+  const loaded = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
+  const file = loaded && upgradeConfigFile(loaded);
   const configPath = file?.path ?? configFilePaths(deps.env)[0];
   // The file's own values, which setup edits; the environment can override
   // them, which is reported below rather than written. A placeholder secret
@@ -351,7 +356,9 @@ export async function runSetup(
     deps.out("Rig sizes:");
     for (const line of describeSizes(written.sizes)) deps.out(`  ${line}`);
     deps.out("Images:");
-    for (const line of describeImages(written.images)) deps.out(`  ${line}`);
+    for (const line of describeImages(presetImages(written.runtimes, "smol"))) {
+      deps.out(`  ${line}`);
+    }
   } else if (Object.keys(written.sizes).length > 0) {
     deps.out("Rig sizes: [sizes] is ignored on a bare-metal host.");
   }
@@ -632,8 +639,8 @@ export function suggestHostname(raw: string): string | undefined {
  * top-level line, or else a commented-out `# key = ...` one, is replaced in
  * place; otherwise the setting goes under the `hostname` line, or with no such
  * line before the first table, where top-level keys must be. With
- * `addDefaults`, append the default sizes and, unless the file already
- * mentions `[preset_images]`, the default preset images.
+ * `addDefaults`, append the default sizes and, unless the file already has
+ * a `[presets.*]` table, the default preset images.
  */
 export function renderConfig(
   contents: string | undefined,
@@ -717,7 +724,7 @@ export function renderConfig(
   }
   if (addDefaults) {
     lines.push("", ...renderSizes(DEFAULT_SIZES));
-    if (!lines.some((line) => line.includes("[preset_images]"))) {
+    if (!lines.some((line) => /^\s*\[presets\./.test(line))) {
       lines.push("", ...renderPresetImages(DEFAULT_PRESET_IMAGES));
     }
   }
@@ -742,12 +749,12 @@ function renderPresetImages(images: Record<string, string>): string[] {
   return [
     "# The image each Amika preset boots on this host. `:latest` follows each",
     "# release; pin a 12-character commit SHA instead to hold a version still.",
-    "[preset_images]",
-    ...Object.entries(images).map(
-      ([preset, image]) =>
-        `${JSON.stringify(preset)} = ${JSON.stringify(image)}`,
-    ),
-  ];
+    ...Object.entries(images).flatMap(([preset, image]) => [
+      `[presets.${tomlKey(preset)}.runtimes.smol]`,
+      `image = ${JSON.stringify(image)}`,
+      "",
+    ]),
+  ].slice(0, -1);
 }
 
 /**
@@ -778,7 +785,7 @@ function describeImages(images: Record<string, string>): string[] {
   const entries = Object.entries(images);
   if (entries.length === 0) {
     return [
-      "none yet; set them under [preset_images] before creating rigs on this host",
+      "none yet; set them under [presets.<name>.runtimes.smol] before creating rigs on this host",
     ];
   }
   const width = Math.max(...entries.map(([name]) => name.length));

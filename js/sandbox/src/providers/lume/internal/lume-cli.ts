@@ -39,7 +39,8 @@ const CLI_TIMEOUT_MS = 120_000;
 
 export class LumeCli {
   constructor(
-    private readonly storageDir: string,
+    /** The storage folder; undefined is Lume's default storage. */
+    private readonly storageDir: string | undefined,
     private readonly bin = "lume",
     private readonly runner: ProcessRunner = runProcess,
   ) {}
@@ -65,10 +66,14 @@ export class LumeCli {
   async clone(template: string, name: string): Promise<void> {
     await this.call(
       "clone",
-      [template, name, "--dest-storage", this.storageDir],
-      {
-        storage: false,
-      },
+      [
+        template,
+        name,
+        ...(this.storageDir === undefined
+          ? []
+          : ["--dest-storage", this.storageDir]),
+      ],
+      { storage: false },
     );
   }
 
@@ -112,7 +117,13 @@ export class LumeCli {
   ): Promise<string> {
     const result = await this.runner(
       this.bin,
-      [subcommand, ...args, ...(storage ? ["--storage", this.storageDir] : [])],
+      [
+        subcommand,
+        ...args,
+        ...(storage && this.storageDir !== undefined
+          ? ["--storage", this.storageDir]
+          : []),
+      ],
       { timeoutMs: CLI_TIMEOUT_MS },
     );
     if (result.exitCode !== 0) {

@@ -48,6 +48,45 @@ with `node:util` `parseArgs` and takes every side effect as a dependency.
   (`src/internal/build-info.ts`), which `scripts/package-release.sh` sets; a
   build without them, or a run from source, reports `dev`.
 
+## Reload and `capabilities update`
+
+A reload applies the config file's runtime settings (`[runtimes.*]`,
+`[presets.*]`, `[sizes.*]`, `max_running`) to the running daemon with no
+restart, so rigs keep running and the tunnel and SSH sessions stay up
+(`src/internal/reload.ts`).
+
+- `SIGHUP` tells the daemon to reload. It reads the file, checks it as `up`
+  does, and replaces its runtime settings in one step: a create already
+  started uses the old ones. A reload can turn a runtime on (Lume starts at
+  once), and off when it has no rigs. It refuses to turn off a runtime that
+  has rigs, naming them, and to turn smol on, since smolvm starts only with
+  the daemon. Other changed settings (`transport`, `api_url`, and the rest)
+  are logged as waiting for a restart.
+- A failed reload keeps the old settings. Each reload's result, with a
+  number that goes up each time, is in `reload-result.json` in the state
+  directory, and in the log.
+- `amika-hostd reload [--json]` checks the file first, and with an invalid
+  one prints the error and sends no signal. Otherwise it signals the daemon
+  and prints the result it writes. It exits 3 when no daemon runs.
+
+`amika-hostd capabilities update --enable|--disable <runtime>` changes
+`[runtimes.*]` in `config.toml` and nothing else
+(`src/internal/runtime-update.ts`):
+
+1. It prints the plan. Turning on Lume adds `storage_dir` (in hostd's data
+   directory) and, unless a preset already uses Lume, the `macos-coder`
+   preset with template `amika-macos-coder`. With no `[runtimes]` table it
+   also lists smol, so smol stays on.
+2. It installs Lume `0.6.1` with Lume's own installer, into `~/.local/bin`
+   with no `sudo`, only when Lume is turned on and not found.
+3. It writes the file, and reloads a running daemon as `reload` does.
+
+It refuses to turn off a runtime with rigs, as recorded in `machines.json`.
+`--dry-run` prints the plan and changes nothing; `--yes` applies it without
+asking; with no terminal and neither flag, it exits with an error naming
+both. `--json` prints the plan and result as JSON. A second run with the
+same flags makes no change. `setup` never installs Lume.
+
 ## Registration
 
 Before starting the daemon, `up` calls `POST /api/v0beta1/hosts` on the Amika

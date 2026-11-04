@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
+import { resolveRuntimes, type RuntimeConfig } from "./runtimes.js";
 
 export const DEFAULT_API_URL = "https://app.amika.dev";
 export const DEFAULT_HOST = "127.0.0.1";
@@ -89,13 +90,16 @@ export interface HostdConfig {
   port: number;
   smolApiUrl?: string;
   smolRequestTimeoutMs: number;
-  /** The rig sizes this host offers, keyed by name. Only read from TOML. */
+  /**
+   * The default rig size list, keyed by name. A runtime's own list replaces
+   * it (`runtimes`). Only read from TOML.
+   */
   sizes: Record<string, HostSize>;
   /**
-   * Full OCI references for the preset images rigs boot, keyed by the name
-   * Amika sends (e.g. `amika-coder`). Only read from TOML.
+   * The runtimes that are on, and the presets and their images on each.
+   * Only read from TOML.
    */
-  images: Record<string, string>;
+  runtimes: RuntimeConfig;
   /**
    * Where this host keeps its snapshot artifacts. Each is gigabytes, so an
    * operator can point it at a larger disk; unset, the daemon uses its own
@@ -201,7 +205,18 @@ export function resolveConfig({
     smolApiUrl: nonEmpty(env.SMOL_API_URL),
     smolRequestTimeoutMs: parseTimeout(env.SMOL_REQUEST_TIMEOUT_MS),
     sizes: toHostSizes(toml.sizes ?? {}),
-    images: toml.preset_images ?? {},
+    runtimes: resolveRuntimes({
+      runtimes:
+        toml.runtimes &&
+        Object.fromEntries(
+          Object.entries(toml.runtimes).map(([name, table]) => [
+            name,
+            { ...table, sizes: table.sizes && toHostSizes(table.sizes) },
+          ]),
+        ),
+      presets: toml.presets,
+      sizes: toHostSizes(toml.sizes ?? {}),
+    }),
     snapshotDir: parseSnapshotDir(fromEnv("snapshotDir") ?? toml.snapshot_dir),
     transport: parseTransport(
       fromEnv("transport") ?? toml.transport ?? DEFAULT_TRANSPORT,
@@ -345,8 +360,30 @@ const configFileSchema = z.strictObject({
   host_type: z.string().optional(),
   amikad_path: z.string().trim().min(1).optional(),
   sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
-  preset_images: z
-    .record(z.string().min(1), z.string().trim().min(1))
+  runtimes: z
+    .record(
+      z.string().min(1),
+      z.strictObject({
+        enabled: z.boolean().optional(),
+        max_running: z.int().min(1).optional(),
+        storage_dir: z.string().trim().min(1).optional(),
+        sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
+      }),
+    )
+    .optional(),
+  presets: z
+    .record(
+      z.string().min(1),
+      z.strictObject({
+        default_runtime: z.string().min(1).optional(),
+        runtimes: z
+          .record(
+            z.string().min(1),
+            z.strictObject({ image: z.string().trim().min(1) }),
+          )
+          .optional(),
+      }),
+    )
     .optional(),
 });
 
@@ -361,6 +398,11 @@ function parseConfigFile(file: HostdConfigFile) {
   if (typeof raw === "object" && raw !== null && "api_key" in raw) {
     throw new ConfigError(
       `${file.path} must not contain api_key; run \`amika-hostd setup\` to store it, or set ${ENV_NAMES.apiKey[0]} in the environment`,
+    );
+  }
+  if (typeof raw === "object" && raw !== null && "preset_images" in raw) {
+    throw new ConfigError(
+      `${file.path} has the old [preset_images] table; run \`amika-hostd config upgrade\` to rewrite it as [presets.<name>.runtimes.smol]`,
     );
   }
   const parsed = configFileSchema.safeParse(raw);
