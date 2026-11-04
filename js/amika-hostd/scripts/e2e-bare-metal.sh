@@ -92,6 +92,10 @@ code=$(exec_rig "amikad serve --beta-no-relay --bg"); check "serve starts the su
 
 hc=$(curl -sS -o /dev/null -w '%{http_code}' "$RIGS/laptop/services/amikad/healthz" -H "X-Amika-Hostd-Key: $SECRET")
 check "hostd routes to amikad's loopback listener ($hc)" $([ "$hc" = 200 ]; echo $?)
+# The control plane hands out an SSH session only when amikad reports the
+# service port it published, whatever loopback port amikad binds.
+st=$(curl -sS "$RIGS/laptop/services/amikad/v1/status" -H "X-Amika-Hostd-Key: $SECRET")
+check "amikad reports the service port the control plane checks ($st)" $(echo "$st" | jq -e '.mode == "beta_no_relay" and .port == 60999' >/dev/null; echo $?)
 
 RIG_FILE=$(find "$ROOT/state" -name bare-metal-rig.json | head -1)
 SSHD_PORT=$(jq .sshdPort "$RIG_FILE")
@@ -109,4 +113,5 @@ code=$(api DELETE /v0beta1/rigs/laptop); check "delete ($code)" $([ "$code" = 20
 check "delete removed amikad's state and the record" $([ ! -e "$RIG_FILE" ] && [ ! -d "$(dirname "$RIG_FILE")/amikad" ]; echo $?)
 
 echo "---- $pass passed, $fail failed"
+if [ "$fail" != 0 ]; then echo "---- hostd log:"; tail -20 "$ROOT/hostd.log"; fi
 [ "$fail" = 0 ]
