@@ -1,10 +1,7 @@
 /** Sandbox resources backed by an Amika host daemon's versioned rig API. */
 import { MACOS_HOME_DIR } from "../../constants";
 import type { AmikaHostdConfig } from "./config";
-import {
-  amikaHostdBareMetalCapabilities,
-  amikaHostdCapabilities,
-} from "./capabilities";
+import { amikaHostdCapabilities } from "./capabilities";
 import type { SandboxProvider } from "../provider";
 import type { SandboxAdapter } from "../shared/adapter";
 import {
@@ -56,44 +53,16 @@ export default function amikaHostdProvider({
   return createProvider({ config, fetcher });
 }
 
-/**
- * The same daemon on a bare-metal host: one rig that is the host machine
- * itself. Its exec only accepts the fixed `amikad` SSH-bridge commands, and
- * it serves neither the files routes nor snapshots, so the provider omits
- * both namespaces.
- */
-export function amikaHostdBareMetalProvider({
-  config,
-  fetcher = fetch,
-}: AmikaHostdDeps): SandboxProvider {
-  return createBareMetalProvider({ config, fetcher });
-}
+const createProvider = defineProvider(amikaHostdCapabilities, hostdDefinition);
 
-const createProvider = defineProvider(
-  amikaHostdCapabilities,
-  (deps: { config: AmikaHostdConfig; fetcher: typeof fetch }) =>
-    hostdDefinition(deps, "amika-hostd"),
-);
-
-const createBareMetalProvider = defineProvider(
-  amikaHostdBareMetalCapabilities,
-  (deps: { config: AmikaHostdConfig; fetcher: typeof fetch }) => ({
-    ...hostdDefinition(deps, "amika-hostd-bare-metal"),
-    files: null,
-    snapshots: null,
-  }),
-);
-
-function hostdDefinition(
-  {
-    config: { secretKey, ...config },
-    fetcher,
-  }: {
-    config: AmikaHostdConfig;
-    fetcher: typeof fetch;
-  },
-  name: "amika-hostd" | "amika-hostd-bare-metal",
-): ProviderDefinition {
+function hostdDefinition({
+  config: { secretKey, ...config },
+  fetcher,
+}: {
+  config: AmikaHostdConfig;
+  fetcher: typeof fetch;
+}): ProviderDefinition {
+  const name = "amika-hostd";
   const smolConfig = {
     ...config,
     network: config.network ?? true,
@@ -129,16 +98,7 @@ function hostdDefinition(
     sandbox: {
       create: async (_ctx, input) => {
         try {
-          // A bare-metal rig is the host machine itself, so it has no size
-          // to ask for. The control plane records the host's detected
-          // resources on the rig, which are rarely within smol's VM limits
-          // (at most 16 vCPUs, whole-MiB memory, whole-GiB disk); hostd
-          // ignores them anyway, so they are never sent.
-          return await ops.create(
-            name === "amika-hostd-bare-metal"
-              ? { ...input, resources: undefined }
-              : input,
-          );
+          return await ops.create(input);
         } catch (error) {
           // The collection itself missing means the host predates v0beta1.
           if (
@@ -176,18 +136,6 @@ export async function openAmikaHostdAdapter(
   fetcher = fetch,
 ): Promise<SandboxAdapter> {
   return adapterFor(amikaHostdProvider({ config, fetcher }), id);
-}
-
-/**
- * The bare-metal adapter. Its file methods reach routes the host does not
- * serve, so a caller that tries to write onto the machine fails loudly.
- */
-export async function openAmikaHostdBareMetalAdapter(
-  config: AmikaHostdConfig,
-  id: string,
-  fetcher = fetch,
-): Promise<SandboxAdapter> {
-  return adapterFor(amikaHostdBareMetalProvider({ config, fetcher }), id);
 }
 
 function adapterFor(provider: SandboxProvider, id: string): SandboxAdapter {

@@ -27,7 +27,6 @@ const ENABLE_VAR: Record<SandboxProviderName, string | null> = {
   smol: "SMOL_ENABLED",
   lume: "LUME_ENABLED",
   "amika-hostd": "AMIKA_HOSTD_ENABLED",
-  "amika-hostd-bare-metal": "AMIKA_HOSTD_ENABLED",
   simulate: "SIMULATE_ENABLED",
 };
 
@@ -68,7 +67,6 @@ const CONFIG_KEY: Record<SandboxProviderName, keyof SandboxProviderConfigs> = {
   smol: "smol",
   lume: "lume",
   "amika-hostd": "amikaHostd",
-  "amika-hostd-bare-metal": "amikaHostd",
   simulate: "simulate",
 };
 
@@ -85,7 +83,6 @@ const IDENTITY_FIELDS: Record<SandboxProviderName, string[]> = {
   smol: ["apiUrl"],
   lume: ["storageDir"],
   "amika-hostd": ["apiUrl"],
-  "amika-hostd-bare-metal": ["apiUrl"],
   simulate: ["worldId"],
 };
 

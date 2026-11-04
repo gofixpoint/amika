@@ -59,7 +59,6 @@ describe("createSandboxProvider construction", () => {
     smol: "smol",
     lume: "lume",
     "amika-hostd": "amikaHostd",
-    "amika-hostd-bare-metal": "amikaHostd",
     simulate: "simulate",
   } as const satisfies Record<
     Exclude<SandboxProviderName, "daytona">,

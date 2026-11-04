@@ -14,5 +14,4 @@ export const smolCapabilities: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
-  guestProvisioning: true,
 };

@@ -28,5 +28,4 @@ export const freestyleCapabilities: SandboxProviderCapabilities = {
   snapshotIdsAreOpaque: true,
   // Persistent VMs suspend/resume rather than being auto-deleted.
   supportsAutoDelete: false,
-  guestProvisioning: true,
 };

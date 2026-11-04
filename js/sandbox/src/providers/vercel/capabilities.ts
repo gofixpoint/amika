@@ -32,5 +32,4 @@ export const vercelCapabilities: SandboxProviderCapabilities = {
   snapshotIdsAreOpaque: true,
   // Persistent microVMs suspend/resume on idle rather than being auto-deleted.
   supportsAutoDelete: false,
-  guestProvisioning: true,
 };
