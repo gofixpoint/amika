@@ -102,7 +102,7 @@ func TestRigReferenceParsedBeforeAuth(t *testing.T) {
 		{[]string{"rig", "stop", "id=_self"}, "not its id"},
 		{[]string{"rig", "delete", "--force", "box", "id="}, "no value"},
 		{[]string{"rig", "connect", "name="}, "no value"},
-		{[]string{"rig", "open", "id="}, "no value"},
+		{[]string{"rig", "open", "id=", "--app=cursor"}, "no value"},
 		{[]string{"rig", "bind", "id=", "gh-branch:o/r/b"}, "no value"},
 		{[]string{"rig", "bindings", "list", "--rig", "id="}, "no value"},
 		{[]string{"rig", "bindings", "delete", "--force", "name=", "gh-branch:o/r/b"}, "no value"},
