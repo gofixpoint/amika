@@ -95,8 +95,11 @@ capabilities report (`capabilitiesOf` in `runtimes.ts`): each runtime's kind,
 guest OS, architecture, effective `max_running`, snapshot support and
 resolved sizes, and each preset's OS, runtimes and default runtime. Images
 stay on the host. `amika-hostd capabilities get [--json]` prints the same
-report from the config file. Registration still sends only `sizes` until
-Amika's hosts API takes `capabilities`.
+report from the config file. Registration sends it as `capabilities`, with
+each size in the API's `sizes` shape, and sends `sizes` too: a control plane
+that predates capabilities reads them as smol's sizes. The daemon holds no API
+key, so after a reload `amika-hostd reload` and `capabilities update` send the
+new report; a plain `kill -HUP` leaves that to the next `up` or `reload`.
 
 ## Lume runtime
 
@@ -108,9 +111,11 @@ each VM's management key and known hosts are in `lume/` in the state
 directory. hostd turns off Lume's telemetry when Lume is on.
 
 - Create takes `cpus` and `memoryMb` together. The disk is the template's;
-  a size with less disk is refused (`400`), and so is any `env`.
+  a size with less disk is refused (`400`). The create's `env` is kept with
+  the VM and given to each exec, as smolvm gives a machine's env.
 - Exec runs argv as `amika`, or as root for `user: "root"`; other users are
-  refused. Exec and file calls boot a stopped VM first, as smolvm's do.
+  refused. Its `PATH` puts the image's GNU tools and bash 5 first, which the
+  control plane's provisioning scripts are written for. Exec and file calls boot a stopped VM first, as smolvm's do.
 - A boot that macOS refuses because two macOS VMs already run answers
   `409` (`host is full`).
 - **Service ports go through SSH.** `hostPort` opens a loopback port with

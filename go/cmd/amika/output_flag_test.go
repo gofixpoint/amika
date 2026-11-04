@@ -194,3 +194,12 @@ func TestBuildAuthStatusJSON(t *testing.T) {
 		})
 	}
 }
+
+// Refused before the auth gate, so a logged-out caller sees the flag error.
+func TestRigCreateRefusesARuntimeWithoutAHost(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	_, err := runRootCommandOutput(t, "rig", "create", "web", "--runtime", "lume", "--no-git")
+	if err == nil || !strings.Contains(err.Error(), "--runtime requires --host; cloud rigs do not take a runtime") {
+		t.Fatalf("err = %v", err)
+	}
+}

@@ -15,6 +15,24 @@ const DefaultCoderImage = "amika/coder:latest"
 // AllowedPresets lists the preset names available for user selection via --preset.
 var AllowedPresets = []string{"coder", "coder-plus-docker"}
 
+// RemotePresets lists the presets a remote rig can name: the local ones, and
+// macos-coder, which runs only on a host with a macOS runtime (Lume).
+var RemotePresets = append(append([]string{}, AllowedPresets...), "macos-coder")
+
+// ValidateRemotePreset returns an error if preset is non-empty and not in
+// RemotePresets.
+func ValidateRemotePreset(preset string) error {
+	if preset == "" {
+		return nil
+	}
+	for _, p := range RemotePresets {
+		if preset == p {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown preset %q; allowed presets: %s", preset, strings.Join(RemotePresets, ", "))
+}
+
 // ValidatePreset returns an error if preset is non-empty and not in AllowedPresets.
 func ValidatePreset(preset string) error {
 	if preset == "" {

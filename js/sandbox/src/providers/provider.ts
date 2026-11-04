@@ -73,6 +73,12 @@ export interface CreateSandboxProviderInput {
   name: string;
   snapshot: string;
   /**
+   * The host runtime to create on (`smol`, `lume`), for a provider that runs
+   * more than one. Only `amika-hostd` takes it; with none, the host uses the
+   * preset's default runtime.
+   */
+  runtime?: string;
+  /**
    * Literal resources selected by the caller. Providers that size at create
    * consume the supported dimensions directly; providers with pre-sized boot
    * sources receive the same allocation alongside the selected `snapshot`.

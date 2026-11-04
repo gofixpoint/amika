@@ -176,7 +176,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     isRunning: vi.fn(() => false),
     ...memorySecrets(),
     registerHost: vi.fn(async () => ({ host: HOST, created: true })),
-    setHostSizes: vi.fn(async () => HOST),
+    setHostReport: vi.fn(async () => HOST),
     setHostTransport: vi.fn(
       async (
         _api,
@@ -416,11 +416,15 @@ describe("runCli", () => {
         hostname: "builder",
         secretKey: SECRET,
         sizes: {},
+        capabilities: {
+          runtimes: { smol: expect.objectContaining({ os: "linux" }) },
+          presets: {},
+        },
         transportMode: "listen",
       },
     );
     // A new host was registered with its sizes; nothing to update.
-    expect(deps.setHostSizes).not.toHaveBeenCalled();
+    expect(deps.setHostReport).not.toHaveBeenCalled();
     expect(deps.setHostTransport).not.toHaveBeenCalled();
   });
 
@@ -432,10 +436,28 @@ describe("runCli", () => {
     });
     deps.registerHost.mockResolvedValueOnce({ host: HOST, created: false });
     await runCli(["up", "--fg"], deps);
-    expect(deps.setHostSizes).toHaveBeenCalledWith(
+    const large = {
+      vcpus: 8,
+      memoryGib: 32,
+      diskGib: 100,
+      diskGrowOnly: false,
+    };
+    expect(deps.setHostReport).toHaveBeenCalledWith(
       { apiUrl: "https://app.amika.dev", apiKey: "api-key" },
       HOST,
-      { large: { vcpus: 8, memoryGib: 32, diskGib: 100, diskGrowOnly: false } },
+      {
+        sizes: { large },
+        capabilities: {
+          runtimes: {
+            smol: expect.objectContaining({
+              kind: "vm",
+              os: "linux",
+              sizes: { large },
+            }),
+          },
+          presets: {},
+        },
+      },
     );
     expect(out).toContain("Updated the sizes of host builder (large)");
   });
@@ -1705,7 +1727,16 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
     const running = { ...deps, kill, isRunning: () => true };
     expect(await runCli(["reload"], running)).toBe(0);
     expect(kill).toHaveBeenCalledWith(4242, "SIGHUP");
-    expect(out.at(-1)).toBe("amika-hostd reloaded its runtime settings.");
+    expect(out).toContain("amika-hostd reloaded its runtime settings.");
+    // The daemon holds no API key, so `reload` tells Amika.
+    expect(deps.setHostReport).toHaveBeenCalledWith(
+      expect.anything(),
+      HOST,
+      expect.objectContaining({ capabilities: expect.any(Object) }),
+    );
+    expect(out.at(-1)).toBe(
+      "Sent the new capabilities to https://app.amika.dev.",
+    );
 
     kill.mockImplementation(() => result(false, 2));
     expect(await runCli(["reload"], running)).toBe(1);
@@ -2650,7 +2681,7 @@ describe("bare-metal hosts", () => {
     h.setHostType.mockResolvedValue(HOST);
     expect(await runCli(["up"], h.deps)).not.toBe(0);
     expect(h.err.join("\n")).toMatch(/did not record host .* as bare metal/);
-    expect(h.deps.setHostSizes).not.toHaveBeenCalled();
+    expect(h.deps.setHostReport).not.toHaveBeenCalled();
   });
 
   it("reports itself again on every `up`, before its sizes", async () => {
@@ -2658,13 +2689,12 @@ describe("bare-metal hosts", () => {
     h.deps.registerHost.mockResolvedValue({ host: HOST, created: false });
     expect(await runCli(["up"], h.deps)).toBe(0);
     expect(h.setHostType).toHaveBeenCalledWith(expect.anything(), HOST, REPORT);
-    expect(h.deps.setHostSizes).toHaveBeenCalledWith(
-      expect.anything(),
-      HOST,
-      {},
-    );
+    expect(h.deps.setHostReport).toHaveBeenCalledWith(expect.anything(), HOST, {
+      sizes: {},
+      capabilities: undefined,
+    });
     expect(h.setHostType.mock.invocationCallOrder[0]).toBeLessThan(
-      h.deps.setHostSizes.mock.invocationCallOrder[0],
+      h.deps.setHostReport.mock.invocationCallOrder[0],
     );
     expect(h.out).toContain(
       "Reported host builder as bare metal (8 vCPUs, 16 GiB memory, 500 GiB disk, linux/x64; SSH as jakub)",
@@ -2704,7 +2734,7 @@ describe("bare-metal hosts", () => {
     expect(h.err).toContain(
       "amika-hostd: Amika cannot make host builder bare metal: this host still has rigs; delete them before changing host type",
     );
-    expect(h.deps.setHostSizes).not.toHaveBeenCalled();
+    expect(h.deps.setHostReport).not.toHaveBeenCalled();
     expect(h.deps.startInBackground).not.toHaveBeenCalled();
   });
 

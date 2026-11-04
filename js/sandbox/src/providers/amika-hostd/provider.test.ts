@@ -471,6 +471,37 @@ describe("amika-hostd provider", () => {
     expect(await adapter.exec("false")).toEqual(result);
   });
 
+  it("names the runtime to create on, when the caller chose one", async () => {
+    const { provider, fetcher } = harness();
+    await provider.sandboxes.create(ctx, { ...INPUT, runtime: "smol" });
+    const [, init] = fetcher.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      name: "demo",
+      runtime: "smol",
+    });
+  });
+
+  it("runs as the macOS amika user, with its home and group", async () => {
+    const { provider, received, fetcher, config, setExecResult } = harness({
+      config: { secretKey: SECRET, guestOs: "macos" },
+      machines: [{ ...MACHINE, state: "running" }],
+    });
+    expect(provider.userHomeDir).toBe("/Users/amika");
+    setExecResult({ exitCode: 0, stdout: "", stderr: "" });
+    const adapter = await openAmikaHostdAdapter(config, "demo", fetcher);
+    await adapter.exec("true");
+    await adapter.exec("true", { sudo: true });
+    await adapter.uploadFile("x", "/Users/amika/a");
+    const execs = received
+      .filter(({ path }) => path === "/demo/exec")
+      .map(({ body }) => body as { command: string[]; env: unknown[] });
+    expect(execs[0]?.env).toEqual([{ name: "HOME", value: "/Users/amika" }]);
+    expect(execs[1]?.env).toEqual([{ name: "HOME", value: "/var/root" }]);
+    expect(execs.at(-1)?.command[2]).toBe(
+      "chown -h -- amika:staff '/Users/amika/a'",
+    );
+  });
+
   it("reports the amika user's home, as the cloud providers do", () => {
     expect(harness().provider.userHomeDir).toBe("/home/amika");
   });

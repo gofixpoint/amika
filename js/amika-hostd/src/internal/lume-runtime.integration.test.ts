@@ -31,6 +31,7 @@ describe.skipIf(!image || !dir)("lumeRuntime on a real VM", () => {
       cpus: 2,
       memoryMb: 4096,
       network: true,
+      env: [{ name: "AMIKA_RIG_NAME", value: name }],
       services: [{ name: "web", port: 8000 }],
     });
     expect(created).toMatchObject({ name, state: "running", cpus: 2 });
@@ -39,6 +40,20 @@ describe.skipIf(!image || !dir)("lumeRuntime on a real VM", () => {
     await runtime?.remove(name).catch(() => {});
     await runtime?.shutdown();
   }, 120_000);
+
+  it("gives each exec the create's env, under the request's own", async () => {
+    expect(
+      await runtime.exec(name, {
+        command: ["sh", "-c", 'echo "$AMIKA_RIG_NAME"'],
+      }),
+    ).toMatchObject({ stdout: `${name}\n` });
+    expect(
+      await runtime.exec(name, {
+        command: ["sh", "-c", 'echo "$AMIKA_RIG_NAME"'],
+        env: [{ name: "AMIKA_RIG_NAME", value: "override" }],
+      }),
+    ).toMatchObject({ stdout: "override\n" });
+  });
 
   it("runs argv as amika, or as root, with stdin and the image's PATH", async () => {
     expect(

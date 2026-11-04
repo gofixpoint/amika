@@ -373,7 +373,7 @@ func newCreateCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	c := &cobra.Command{}
 	for _, name := range []string{
 		"provider", "preset", "size", "snapshot", "setup-script",
-		"branch", "new-branch", "github-auth-mode", "host",
+		"branch", "new-branch", "github-auth-mode", "host", "runtime",
 	} {
 		c.Flags().String(name, "", "")
 	}
@@ -443,6 +443,34 @@ func TestCreateRemoteSandboxSendsHostID(t *testing.T) {
 		if _, ok := (*body)[forbidden]; ok {
 			t.Errorf("body carries %q: %v", forbidden, *body)
 		}
+	}
+}
+
+func TestCreateRemoteSandboxSendsTheRuntime(t *testing.T) {
+	body := stubCreateAPI(t, true)
+	c, _ := newCreateCmd(t)
+	c.Flags().Set("host", "alpha.lan")
+	c.Flags().Set("runtime", "lume")
+	c.Flags().Set("preset", "macos-coder")
+
+	if err := createRemoteSandbox(c, "", "dev", gitrepo.Identity{Source: gitrepo.SourceNone}); err != nil {
+		t.Fatalf("createRemoteSandbox: %v", err)
+	}
+	if (*body)["runtime"] != "lume" || (*body)["preset"] != "macos-coder" {
+		t.Errorf("body = %v, want runtime lume and preset macos-coder", *body)
+	}
+}
+
+func TestCreateRemoteSandboxSendsNoRuntimeUnlessAsked(t *testing.T) {
+	body := stubCreateAPI(t, true)
+	c, _ := newCreateCmd(t)
+	c.Flags().Set("host", "alpha.lan")
+
+	if err := createRemoteSandbox(c, "", "dev", gitrepo.Identity{Source: gitrepo.SourceNone}); err != nil {
+		t.Fatalf("createRemoteSandbox: %v", err)
+	}
+	if _, ok := (*body)["runtime"]; ok {
+		t.Errorf("body carries runtime: %v", *body)
 	}
 }
 

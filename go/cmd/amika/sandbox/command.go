@@ -57,13 +57,14 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	// that pass --name keep working.
 	sandboxCreateCmd.Flags().String("name", "", "Name for the rig (auto-generated if not set)")
 	_ = sandboxCreateCmd.Flags().MarkHidden("name")
-	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder" or "coder-plus-docker")`)
+	sandboxCreateCmd.Flags().String("preset", "", `Use a preset environment ("coder", "coder-plus-docker", or "macos-coder" on a host with macOS)`)
 	gitrepo.AddFlags(sandboxCreateCmd,
 		"Mount a git repo into the rig. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.",
 		"Skip git repo auto-detection; create a rig without mounting any repo.")
 	sandboxCreateCmd.Flags().String("host", "", "Run the rig on one of your organization's own hosts, by hostname or id (see \"amika host list\"). Omit it to run on Amika Cloud.")
 	sandboxCreateCmd.Flags().String("size", "", "Rig size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\"). With --host, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB.")
 	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the rig from a captured snapshot slug")
+	sandboxCreateCmd.Flags().String("runtime", "", "With --host, the host runtime to run the rig on (\"smol\" for Linux VMs, \"lume\" for macOS VMs). Omit it to use the preset's default runtime on that host.")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")
 	sandboxCreateCmd.Flags().StringArray("agent-credential", nil, "Pin an agent credential by name (KIND=NAME, e.g. claude=personal-oauth). Repeatable per kind.")
@@ -75,7 +76,7 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	sandboxCreateCmd.Flags().String("branch", "", "Check out this git branch, or create it if it doesn't exist.")
 	sandboxCreateCmd.Flags().String("new-branch", "", "Create a new git branch. With --branch, starts from that branch; otherwise starts from the current checkout.")
 	sandboxCreateCmd.Flags().String("github-auth-mode", "", "GitHub auth mode for the rig runtime: pat, app_token, or app-token (unset uses server default)")
-	sandboxListCmd.Flags().BoolP("long", "l", false, "Show additional columns (ID, BASE_SNAPSHOT, PORTS, CREATED)")
+	sandboxListCmd.Flags().BoolP("long", "l", false, "Show additional columns (ID, RUNTIME, BASE_SNAPSHOT, PORTS, CREATED)")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	// `ssh` registers no flags of its own: it forwards everything after the
 	// subcommand to ssh, so ssh's own -t (and every other option) passes

@@ -19,10 +19,12 @@ export {
   machineSchema,
 } from "./internal/client";
 export {
+  LINUX_GUEST_USER,
   SmolPortsError,
   mapSmolState,
   smolOperations,
   type SmolCreateInput,
+  type SmolGuestUser,
 } from "./internal/operations";
 
 /** Construct the public resource API, with an injectable HTTP transport. */

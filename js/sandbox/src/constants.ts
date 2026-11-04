@@ -16,6 +16,14 @@ export const SANDBOX_DELETE_INTERVAL_KEEP_ON_STOP = -1;
 
 export const SANDBOX_SETUP_SCRIPT = "/usr/local/etc/amikad/setup/setup.sh";
 export const SANDBOX_START_SCRIPT = "/usr/local/etc/amikad/setup/start.sh";
+/**
+ * Where a rig image keeps Amika's hook scripts. macOS has `/usr/lib`, but
+ * System Integrity Protection makes it read-only, also for root, so a macOS
+ * image keeps them in `/usr/local/lib/amikad`.
+ */
+export const LINUX_HOOK_DIR = "/usr/lib/amikad";
+export const MACOS_HOOK_DIR = "/usr/local/lib/amikad";
+
 export const PRE_SETUP_SCRIPT = "/usr/lib/amikad/pre-setup.sh";
 export const POST_SETUP_SCRIPT = "/usr/lib/amikad/post-setup.sh";
 export const RUN_HOOK_SCRIPT = "/usr/lib/amikad/run-hook.sh";
@@ -58,3 +66,5 @@ export const SANDBOX_ORG_ID_LABEL = "amika-org-id";
 export const SANDBOX_USER_ID_LABEL = "amika-user-id";
 
 export const DEFAULT_HOME_DIR = "/home/amika";
+/** The `amika` user's home folder in a macOS rig. */
+export const MACOS_HOME_DIR = "/Users/amika";

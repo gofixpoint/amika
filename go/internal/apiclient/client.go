@@ -57,6 +57,9 @@ type CreateSandboxRequest struct {
 	Branch             string               `json:"branch,omitempty"`
 	NewBranchName      string               `json:"new_branch_name,omitempty"`
 	GithubAuthMode     string               `json:"github_auth_mode,omitempty"`
+	// Runtime is the host runtime to run the rig on ("smol", "lume"). Only
+	// with HostID; omitted, the API uses the preset's default runtime.
+	Runtime string `json:"runtime,omitempty"`
 	// HostID runs the rig on one of the organization's own hosts
 	// (bring-your-own-compute) instead of an Amika Cloud provider. Empty is
 	// omitted, which is how a rig lands on Amika Cloud. With it set, Size
@@ -163,8 +166,12 @@ type RemoteSandbox struct {
 	Origin                   *string                   `json:"origin,omitempty"`
 	// HostID identifies the BYOC machine; Hostname is the rig's own DNS name.
 	// Older servers may not return Hostname.
-	HostID           *string         `json:"host_id,omitempty"`
-	Hostname         *string         `json:"hostname,omitempty"`
+	HostID   *string `json:"host_id,omitempty"`
+	Hostname *string `json:"hostname,omitempty"`
+	// Runtime and OS are a host rig's runtime ("smol", "lume") and guest OS
+	// ("linux", "macos"); nil for a cloud rig.
+	Runtime          *string         `json:"runtime,omitempty"`
+	OS               *string         `json:"os,omitempty"`
 	AgentCWD         *string         `json:"agent_cwd,omitempty"`
 	SSHKeyStatus     string          `json:"ssh_key_status,omitempty"`
 	AgentCredentials json.RawMessage `json:"agent_credentials,omitempty"`
@@ -1448,6 +1455,10 @@ type Host struct {
 	// host chose. Its keys, not the cloud size vocabulary, are what
 	// `rig create --host` accepts for --size.
 	Sizes map[string]HostSize `json:"sizes"`
+	// Capabilities is what the host reported it can run: its runtimes and
+	// the presets on them. Nil for a host whose daemon predates the report,
+	// which runs only Linux rigs, with Sizes.
+	Capabilities *HostCapabilities `json:"capabilities,omitempty"`
 	// HostType is what the host runs its rigs in: HostTypeVM for one VM per
 	// rig, HostTypeBareMetal for one rig directly on the machine's own
 	// account. Never empty: UnmarshalJSON reads a control plane's silence as
@@ -1496,6 +1507,33 @@ func (h *Host) UnmarshalJSON(data []byte) error {
 	}
 	*h = Host(decoded)
 	return nil
+}
+
+// HostCapabilities is what a host can run (spec 026 in amika-mono).
+type HostCapabilities struct {
+	Runtimes map[string]RuntimeCapability `json:"runtimes"`
+	Presets  map[string]PresetCapability  `json:"presets"`
+}
+
+// RuntimeCapability is one runtime a host runs rigs with ("smol", "lume").
+type RuntimeCapability struct {
+	// Kind is "vm" or "container".
+	Kind string `json:"kind"`
+	// OS is the guest OS: "linux" or "macos".
+	OS   string `json:"os"`
+	Arch string `json:"arch,omitempty"`
+	// MaxRunning is the most rigs of this runtime that run at once; nil is
+	// no limit.
+	MaxRunning *int                `json:"max_running,omitempty"`
+	Snapshots  bool                `json:"snapshots"`
+	Sizes      map[string]HostSize `json:"sizes"`
+}
+
+// PresetCapability is one preset a host offers, and its runtimes there.
+type PresetCapability struct {
+	OS             string   `json:"os"`
+	DefaultRuntime string   `json:"default_runtime"`
+	Runtimes       []string `json:"runtimes"`
 }
 
 // HostSize is one size a host offers its rigs. Unlike the rest of the API,

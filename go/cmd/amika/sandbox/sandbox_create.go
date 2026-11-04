@@ -37,8 +37,13 @@ var sandboxCreateCmd = &cobra.Command{
 		if err := sandbox.ValidateGithubAuthMode(githubAuthMode); err != nil {
 			return err
 		}
-		if _, err := createHostRef(cmd); err != nil {
+		hostRef, err := createHostRef(cmd)
+		if err != nil {
 			return err
+		}
+		// The API refuses it too; checked here so it fails before login.
+		if cmd.Flags().Changed("runtime") && hostRef == "" {
+			return fmt.Errorf("--runtime requires --host; cloud rigs do not take a runtime")
 		}
 
 		format, err := output.FormatFrom(cmd)
@@ -91,7 +96,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 	secretFlags, _ := cmd.Flags().GetStringArray("secret")
 	envFlags, _ := cmd.Flags().GetStringArray("env")
 	preset, _ := cmd.Flags().GetString("preset")
-	if err := sandbox.ValidatePreset(preset); err != nil {
+	if err := sandbox.ValidateRemotePreset(preset); err != nil {
 		return err
 	}
 	// Not validated here: the size vocabulary (generations, per-provider
@@ -106,6 +111,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 	branch, _ := cmd.Flags().GetString("branch")
 	newBranch, _ := cmd.Flags().GetString("new-branch")
 	snapshot, _ := cmd.Flags().GetString("snapshot")
+	runtime, _ := cmd.Flags().GetString("runtime")
 
 	if name == "" {
 		name = sandbox.GenerateName()
@@ -195,6 +201,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 		// forwarded for provider-specific operational and E2E checks.
 		Provider:         provider,
 		HostID:           hostID,
+		Runtime:          strings.TrimSpace(runtime),
 		RepoURL:          gitURL,
 		EnvVars:          envVars,
 		SecretEnvVars:    secretEnvVars,
@@ -241,7 +248,12 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 		return err
 	}
 
-	fmt.Fprintf(pw, "Rig %q created\n", sb.Name)
+	// sb.Hostname is the rig's own DNS name; the host is the one --host named.
+	if sb.Runtime != nil && hostRef != "" {
+		fmt.Fprintf(pw, "Rig %q created on %s (%s, %s, %s)\n", sb.Name, hostRef, *sb.Runtime, deref(sb.OS), dash(deref(sb.SandboxSize)))
+	} else {
+		fmt.Fprintf(pw, "Rig %q created\n", sb.Name)
+	}
 	printResolvedAgentCredentials(cmd, resolved)
 
 	if format.IsJSON() {

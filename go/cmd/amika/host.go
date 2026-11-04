@@ -139,6 +139,14 @@ func runHostGet(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(w, "Disk:\t%s GiB\n", formatGiB(r.DiskGiB))
 		fmt.Fprintf(w, "OS/Arch:\t%s\n", tableCell(resourcePlatform(*r)))
 	}
+	if host.Capabilities != nil {
+		running, err := runningRigsByRuntime(host.ID)
+		if err != nil {
+			return err
+		}
+		writeHostCapabilities(w, *host.Capabilities, running)
+		return w.Flush()
+	}
 	// A bare-metal host runs one rig on the whole machine rather than
 	// offering sizes, so its missing sizes are not worth a line.
 	if len(host.Sizes) == 0 {
@@ -157,6 +165,60 @@ func runHostGet(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(w, "%s\t%d\t%s GiB\t%s%d GiB\n", tableCell(name), s.VCPUs, formatGiB(s.MemoryGiB), grow, s.DiskGiB)
 	}
 	return w.Flush()
+}
+
+// writeHostCapabilities writes a host's runtimes, with how many rigs of each
+// run against its limit, and its presets.
+func writeHostCapabilities(w *tabwriter.Writer, c apiclient.HostCapabilities, running map[string]int) {
+	fmt.Fprintln(w, "\nRUNTIME\tKIND\tOS\tRUNNING\tSIZES")
+	for _, name := range sortedKeys(c.Runtimes) {
+		r := c.Runtimes[name]
+		limit := "-"
+		if r.MaxRunning != nil {
+			limit = strconv.Itoa(*r.MaxRunning)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d of %s\t%s\n", tableCell(name), tableCell(r.Kind), tableCell(r.OS), running[name], limit, tableCell(strings.Join(sortedSizeNames(r.Sizes), ", ")))
+	}
+	fmt.Fprintln(w, "\nPRESET\tRUNTIMES\tDEFAULT")
+	for _, name := range sortedKeys(c.Presets) {
+		p := c.Presets[name]
+		fmt.Fprintf(w, "%s\t%s\t%s\n", tableCell(name), tableCell(strings.Join(p.Runtimes, ", ")), tableCell(p.DefaultRuntime))
+	}
+}
+
+// runningRigsByRuntime counts the host's rigs that are not stopped, by
+// runtime, as the API counts them against a runtime's limit. A rig from
+// before runtimes ran on smol.
+func runningRigsByRuntime(hostID string) (map[string]int, error) {
+	rigs, err := runmode.NewRemoteClient().ListSandboxes()
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, rig := range rigs {
+		if rig.HostID == nil || *rig.HostID != hostID {
+			continue
+		}
+		switch rig.State {
+		case "stopped", "suspended", "failed", "errored":
+			continue
+		}
+		runtime := "smol"
+		if rig.Runtime != nil {
+			runtime = *rig.Runtime
+		}
+		counts[runtime]++
+	}
+	return counts, nil
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func runHostDelete(cmd *cobra.Command, args []string) error {

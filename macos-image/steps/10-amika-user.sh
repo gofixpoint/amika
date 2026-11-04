@@ -25,3 +25,7 @@ visudo -cf /etc/sudoers.d/amika >/dev/null
 
 install -d -m 700 -o amika -g staff /Users/amika/.ssh
 install -d -m 755 -o amika -g staff /Users/amika/workspace
+# Amika's own folders, as the Linux image makes them
+# (sandbox-image/steps/50-runtime-user.sh). Provisioning expects them.
+install -d -m 755 -o amika -g staff \
+  /usr/local/etc/amika /var/lib/amika /var/log/amika

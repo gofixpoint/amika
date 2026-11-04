@@ -178,6 +178,8 @@ type sandboxListRow struct {
 	ID string
 	// BaseSnapshot names the snapshot the sandbox was built from.
 	BaseSnapshot string
+	// Runtime is a host rig's runtime ("smol", "lume"); empty for a cloud rig.
+	Runtime string
 }
 
 var sandboxListCmd = &cobra.Command{
@@ -228,6 +230,7 @@ var sandboxListCmd = &cobra.Command{
 				},
 				ID:           rs.ID,
 				BaseSnapshot: remoteBaseSnapshot(rs),
+				Runtime:      deref(rs.Runtime),
 			})
 		}
 
@@ -256,9 +259,9 @@ var sandboxListCmd = &cobra.Command{
 		if long {
 			// ID sits beside NAME because they identify the same thing, and the
 			// base snapshot replaces IMAGE: it is the field's own name in the API.
-			fmt.Fprintln(w, "NAME\tID\tSTATE\tREPO\tBRANCH\tCREATOR\tBASE_SNAPSHOT\tPORTS\tCREATED")
+			fmt.Fprintln(w, "NAME\tID\tSTATE\tREPO\tBRANCH\tCREATOR\tRUNTIME\tBASE_SNAPSHOT\tPORTS\tCREATED")
 			for _, sb := range allItems {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, dash(sb.ID), sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy), dash(sb.BaseSnapshot), formatPortBindings(sb.Ports), sb.CreatedAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sb.Name, dash(sb.ID), sb.State, formatRepos(sb.Repos), sb.Branch, formatCreatedBy(sb.CreatedBy), dash(sb.Runtime), dash(sb.BaseSnapshot), formatPortBindings(sb.Ports), sb.CreatedAt)
 			}
 		} else {
 			fmt.Fprintln(w, "NAME\tSTATE\tREPO\tBRANCH\tCREATOR")

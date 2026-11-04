@@ -1,5 +1,5 @@
 /** Sandbox resources backed by an Amika host daemon's versioned rig API. */
-import { DEFAULT_HOME_DIR } from "../../constants";
+import { MACOS_HOME_DIR } from "../../constants";
 import type { AmikaHostdConfig } from "./config";
 import {
   amikaHostdBareMetalCapabilities,
@@ -12,10 +12,12 @@ import {
   type ProviderDefinition,
 } from "../shared/define-provider";
 import {
+  LINUX_GUEST_USER,
   SmolApiError,
   SmolClient,
   mapSmolState,
   smolOperations,
+  type SmolGuestUser,
 } from "../smol/provider";
 import {
   HOSTD_API_VERSION,
@@ -30,6 +32,13 @@ import { HOSTD_SNAPSHOTS_PATH, hostdSnapshots } from "./internal/snapshots";
 // host's secret key in this header; every other service URL is a preview,
 // which a browser logs in to. See `./internal/services`.
 export { HOSTD_SERVICE_KEY_HEADER } from "./internal/services";
+
+/** A macOS guest's `amika` is in `staff`, and root's home is `/var/root`. */
+const MACOS_GUEST_USER: SmolGuestUser = {
+  home: MACOS_HOME_DIR,
+  rootHome: "/var/root",
+  fileOwner: "amika:staff",
+};
 
 interface AmikaHostdDeps {
   config: AmikaHostdConfig;
@@ -106,14 +115,17 @@ function hostdDefinition(
     HOSTD_SNAPSHOTS_PATH,
     "amika-hostd",
   );
+  const guestUser =
+    config.guestOs === "macos" ? MACOS_GUEST_USER : LINUX_GUEST_USER;
   const ops = smolOperations(smolConfig, client, {
     provider: name,
     serviceRoutes: hostdServiceRoutes,
+    guestUser,
   });
   return {
     name,
     signedUrlTtlSeconds: HOSTD_SERVICE_URL_TTL_S,
-    userHomeDir: DEFAULT_HOME_DIR,
+    userHomeDir: guestUser.home,
     sandbox: {
       create: async (_ctx, input) => {
         try {

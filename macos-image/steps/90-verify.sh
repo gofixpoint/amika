@@ -34,6 +34,7 @@ check "codex $CODEX_VERSION" sh -c "codex --version | grep -q $CODEX_VERSION"
 check "opencode" opencode --version
 check "amikad" amikad --version
 check "amikad launchd job" plutil -lint /usr/local/lib/amikad/com.amika.amikad.plist
+check "lifecycle hooks" test -x /usr/local/lib/amikad/run-hook.sh -a -x /usr/local/lib/amikad/pre-setup.sh
 # The image must not carry credentials or start the SSH bridge.
 check "amikad not loaded" sh -c '! launchctl print system/com.amika.amikad'
 check "no amikad state" test -z "$(ls -A /private/var/lib/amikad)"

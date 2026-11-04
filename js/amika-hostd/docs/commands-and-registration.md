@@ -79,7 +79,8 @@ restart, so rigs keep running and the tunnel and SSH sessions stay up
    also lists smol, so smol stays on.
 2. It installs Lume `0.6.1` with Lume's own installer, into `~/.local/bin`
    with no `sudo`, only when Lume is turned on and not found.
-3. It writes the file, and reloads a running daemon as `reload` does.
+3. It writes the file, and reloads a running daemon as `reload` does,
+   which then sends Amika the new capabilities.
 
 It refuses to turn off a runtime with rigs, as recorded in `machines.json`.
 `--dry-run` prints the plan and changes nothing; `--yes` applies it without
