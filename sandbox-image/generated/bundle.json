@@ -191,10 +191,10 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.309",
-            "CODEX_VERSION": "0.164.0",
-            "OPENCODE_VERSION": "1.19.4",
-            "PI_VERSION": "1.3.0"
+            "CLAUDE_CODE_VERSION": "2.1.318",
+            "CODEX_VERSION": "0.166.0",
+            "OPENCODE_VERSION": "1.19.5",
+            "PI_VERSION": "1.4.0"
           }
         },
         {
@@ -210,9 +210,9 @@
           "id": "amika-clis",
           "script": "steps/85-amika-clis.sh",
           "versions": {
-            "AMIKAD_VERSION": "0.2.1",
+            "AMIKAD_VERSION": "0.3.0",
             "AMIKALOG_VERSION": "0.2.1",
-            "AMIKA_VERSION": "0.24.0"
+            "AMIKA_VERSION": "0.25.0"
           }
         },
         {
@@ -347,10 +347,10 @@
           "id": "agent-clis",
           "script": "steps/80-agent-clis.sh",
           "versions": {
-            "CLAUDE_CODE_VERSION": "2.1.309",
-            "CODEX_VERSION": "0.164.0",
-            "OPENCODE_VERSION": "1.19.4",
-            "PI_VERSION": "1.3.0"
+            "CLAUDE_CODE_VERSION": "2.1.318",
+            "CODEX_VERSION": "0.166.0",
+            "OPENCODE_VERSION": "1.19.5",
+            "PI_VERSION": "1.4.0"
           }
         },
         {
@@ -366,9 +366,9 @@
           "id": "amika-clis",
           "script": "steps/85-amika-clis.sh",
           "versions": {
-            "AMIKAD_VERSION": "0.2.1",
+            "AMIKAD_VERSION": "0.3.0",
             "AMIKALOG_VERSION": "0.2.1",
-            "AMIKA_VERSION": "0.24.0"
+            "AMIKA_VERSION": "0.25.0"
           }
         },
         {
