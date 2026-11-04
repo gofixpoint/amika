@@ -13,6 +13,7 @@ export const SANDBOX_PROVIDER_NAMES = [
   "e2b",
   "freestyle",
   "vercel",
+  "instabox",
   "smol",
   "lume",
   "amika-hostd",
