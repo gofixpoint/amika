@@ -24,11 +24,19 @@ repo="$(dirname "$here")"
 bootstrap_user=lume
 export AMIKA_IMAGE_PASSWORD=lume
 
+# The cleanup deletes the image VM on failure, so it must be one this run
+# made, never a VM that was there before.
+if lume get "$image" >/dev/null 2>&1; then
+  echo "$image already exists; delete it or choose another name" >&2
+  exit 1
+fi
+
 work="$(mktemp -d)"
+cloned=false
 built=false
 cleanup() {
   # A half-built image must not be used as a template.
-  if [[ "$built" != true ]] && lume get "$image" >/dev/null 2>&1; then
+  if [[ "$cloned" == true && "$built" != true ]]; then
     lume stop "$image" --force >/dev/null 2>&1 || true
     lume delete "$image" --force >/dev/null 2>&1 || true
   fi
@@ -44,6 +52,7 @@ if [[ -z "${AMIKAD_BIN:-}" ]]; then
 fi
 # 2. Clone the base VM and boot the clone with no display.
 lume clone "$base" "$image"
+cloned=true
 lume run "$image" --detach --display none --vnc disabled \
   --log-file "$work/lume.log"
 ip=""

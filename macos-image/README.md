@@ -22,7 +22,8 @@ storage. The base VM does not change.
   this checkout.
 - `STEPS="10-amika-user 60-amikad"` runs only those steps.
 
-A failed build deletes its clone.
+A failed build deletes its clone. The build refuses an image name that is
+already in Lume, so it never deletes a VM it did not make.
 
 ## What the image has
 
