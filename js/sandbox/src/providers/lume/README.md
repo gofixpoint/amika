@@ -16,7 +16,9 @@ the hosted app or the CLI yet.
 - On create, the **SSH bootstrap** logs in one time with the bootstrap
   password. It adds the `amika` user, installs a key for this VM only,
   gives `amika` `sudo` with no password, and then turns password login off.
-  It checks each step before the next one.
+  It checks each step before the next one. The key is in a root-owned file
+  that only the system sshd reads. amikad owns `~/.ssh/authorized_keys`,
+  so the user keys and the management key stay apart.
 - Commands and files go over the system `ssh` client with that key. The key,
   the VM's known hosts, and its Lume log are in `stateDir/vms/<name>/`.
 - Apple's Virtualization.framework runs at most two macOS VMs at a time. A

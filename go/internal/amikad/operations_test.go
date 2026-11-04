@@ -41,7 +41,7 @@ func (*fakeSSHDManager) LoopbackAddress() string { return "127.0.0.1:60997" }
 
 func testOperations(t *testing.T) (*DaemonOperations, string, *fakeSSHDManager) {
 	t.Helper()
-	directory := t.TempDir()
+	directory := realTempDir(t)
 	files := state.OSFiles{}
 	manifestPath := filepath.Join(directory, "injected-paths.json")
 	tokenPath := filepath.Join(directory, "connect-token")

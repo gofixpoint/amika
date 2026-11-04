@@ -33,3 +33,7 @@ func (unsupportedPlatform) SSHD() SSHD { return SSHD{} }
 
 // CheckStrictModesPath fails closed.
 func (unsupportedPlatform) CheckStrictModesPath(string, int) error { return ErrUnsupported }
+
+// StateDirectory holds root-mode amikad's state. Nothing is written here,
+// since every secure write fails closed.
+const StateDirectory = "/var/lib/amikad"

@@ -54,7 +54,7 @@ func (r *fakeProcessRunner) Run(_ context.Context, name string, args ...string) 
 
 func testManager(t *testing.T) (*Manager, Paths, *fakeKeyGenerator, *fakeProcessRunner) {
 	t.Helper()
-	directory := t.TempDir()
+	directory := realTempDir(t)
 	paths := Paths{
 		Config:            filepath.Join(directory, "state", "sshd_config"),
 		HostPrivateKey:    filepath.Join(directory, "state", "ssh_host_ed25519_key"),

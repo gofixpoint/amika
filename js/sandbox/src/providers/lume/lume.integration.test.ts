@@ -61,6 +61,13 @@ describe.skipIf(!template)("lume guest after the SSH bootstrap", () => {
     expect(String(result.stderr)).toMatch(/Permission denied \(publickey\)/);
   });
 
+  it("keeps the management key out of the file amikad owns", async () => {
+    const result = await sandbox.exec(
+      "test ! -e ~/.ssh/authorized_keys && grep -c ssh-ed25519 /private/var/db/amika/management_authorized_keys",
+    );
+    expect(result).toMatchObject({ exitCode: 0, stdout: "1\n" });
+  });
+
   it("gives written files to the amika user, also under a root-owned folder", async () => {
     const home = `${provider.userHomeDir}/owned.txt`;
     const system = "/usr/local/etc/amika-lume-check/owned.txt";

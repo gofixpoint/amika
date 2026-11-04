@@ -81,17 +81,20 @@ func DefaultPaths() Paths {
 	if username == "" {
 		username = "amika"
 	}
-	uid, gid := -1, -1
+	// An unknown user keeps uid -1, which Setup refuses in root mode.
+	uid, gid, home := -1, -1, "/home/"+username
 	if account, err := user.Lookup(username); err == nil {
 		uid, _ = strconv.Atoi(account.Uid)
 		gid, _ = strconv.Atoi(account.Gid)
+		home = account.HomeDir
 	}
+	state := platform.StateDirectory
 	return Paths{
-		Config:            "/var/lib/amikad/sshd_config",
-		HostPrivateKey:    "/var/lib/amikad/ssh_host_ed25519_key",
-		HostPublicKey:     "/var/lib/amikad/ssh_host_ed25519_key.pub",
-		AuthorizedKeys:    "/home/" + username + "/.ssh/authorized_keys",
-		PID:               "/var/lib/amikad/sshd.pid",
+		Config:            filepath.Join(state, "sshd_config"),
+		HostPrivateKey:    filepath.Join(state, "ssh_host_ed25519_key"),
+		HostPublicKey:     filepath.Join(state, "ssh_host_ed25519_key.pub"),
+		AuthorizedKeys:    filepath.Join(home, ".ssh", "authorized_keys"),
+		PID:               filepath.Join(state, "sshd.pid"),
 		RuntimeDirectory:  platform.Current().SSHD().PrivsepDirectory,
 		AuthorizedKeysUID: uid,
 		AuthorizedKeysGID: gid,

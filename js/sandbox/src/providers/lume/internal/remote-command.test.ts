@@ -27,6 +27,15 @@ describe.runIf(process.platform === "darwin")("remoteCommand", () => {
     });
   });
 
+  it("uses the PATH from /etc/paths, not the short one sshd gives", async () => {
+    const result = await runProcess(
+      "/bin/zsh",
+      ["-c", remoteCommand('echo "$PATH"')],
+      { env: { PATH: "/usr/bin:/bin" } },
+    );
+    expect(result.stdout.toString()).toContain("/usr/local/bin");
+  });
+
   it("runs in the working directory", async () => {
     expect(
       (await runLine(remoteCommand("pwd", { cwd: "/tmp" }))).stdout,

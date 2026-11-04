@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/gofixpoint/amika/go/internal/amikad/platform"
 	"github.com/gofixpoint/amika/go/internal/amikad/sshd"
 	"github.com/gofixpoint/amika/go/internal/constants"
 )
@@ -31,8 +32,8 @@ const (
 )
 
 const (
-	rootManifestPath = "/var/lib/amikad/injected-paths.json"
-	rootTokenPath    = "/var/lib/amikad/connect-token"
+	rootManifestPath = platform.StateDirectory + "/injected-paths.json"
+	rootTokenPath    = platform.StateDirectory + "/connect-token"
 	rootServeLogPath = "/var/log/amikad/no-relay.log"
 )
 

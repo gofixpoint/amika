@@ -9,3 +9,7 @@ var current Platform = unixPlatform{sshd: SSHD{
 	Candidates:       []string{"/usr/sbin/sshd", "/usr/bin/sshd"},
 	PrivsepDirectory: "/run/sshd",
 }}
+
+// StateDirectory holds root-mode amikad's state, under /var/lib per the
+// Filesystem Hierarchy Standard.
+const StateDirectory = "/var/lib/amikad"
