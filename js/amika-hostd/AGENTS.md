@@ -52,6 +52,11 @@ pnpm --filter @amika/hostd lint
 pnpm --filter @amika/hostd test
 ```
 
+To check the `bare_metal` runtime end to end on this machine, build amikad
+(`make build-amikad` at the repo root) and run
+`scripts/e2e-bare-metal.sh ../../dist/amikad`. It needs no control plane and
+no network.
+
 The test command allows an empty suite until behavior is added. Use `format` to
 apply formatting. `src/app.ts` defines routes without opening a socket;
 `src/internal/server.ts` binds the listener and bounds shutdown.
