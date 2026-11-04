@@ -108,7 +108,7 @@ func parseEnvVarFlags(flags []string) (map[string]string, error) {
 
 func formatRepoBanner(identity gitrepo.Identity) string {
 	if identity.Source == gitrepo.SourceNone {
-		return "Creating a bare rig with no repos."
+		return "Creating a rig with no repos."
 	}
 	return fmt.Sprintf("Creating rig with repo %s.", identity.Name)
 }
