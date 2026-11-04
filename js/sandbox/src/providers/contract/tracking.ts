@@ -95,7 +95,7 @@ export function trackSandbox(
  *
  * Lookups use `find`, which also sees a snapshot that is still registering;
  * `get` may report one of those as absent. Opaque ids do not rule out a
- * name lookup (E2B and Freestyle support it). If that lookup also fails to
+ * name lookup (E2B, Freestyle, and Instabox support it). If that lookup also fails to
  * recover an opaque id, cleanup fails rather than reporting it gone.
  */
 export function trackSnapshot(
