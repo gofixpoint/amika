@@ -12,7 +12,12 @@ import {
 import { createUpgradeHandler } from "./services.js";
 import type { MachineRuntime } from "./machine-runtime.js";
 import type { RuntimeRouter } from "./runtime-router.js";
-import { RUNTIME_KINDS, capabilitiesOf, hostArch } from "./runtimes.js";
+import {
+  RUNTIME_KINDS,
+  capabilitiesOf,
+  hostArch,
+  type MachineFacts,
+} from "./runtimes.js";
 import { openSnapshotStore, SnapshotConflictError } from "./snapshot-store.js";
 import { startCapture } from "./snapshots.js";
 
@@ -66,7 +71,7 @@ export function buildHandlers(
     pullingImages,
     smolvmLogFile,
     snapshots,
-    bareMetal = false,
+    machine = unknownMachine,
   }: {
     servicesFile?: string;
     hiddenMachines?: () => ReadonlySet<string>;
@@ -75,8 +80,8 @@ export function buildHandlers(
     /** The log of the smolvm this daemon started (see `AppConfig`). */
     smolvmLogFile?: string;
     snapshots?: SnapshotOptions;
-    /** A bare-metal host: no files or snapshots (see `AppConfig`). */
-    bareMetal?: boolean;
+    /** This machine, which the `bare_metal` runtime reports. */
+    machine?: () => MachineFacts;
   } = {},
 ): {
   app: ReturnType<typeof createApp>;
@@ -97,22 +102,18 @@ export function buildHandlers(
     {
       secretKey: config.secretKey,
       runtimes: () => config.runtimes,
-      capabilities: bareMetal
-        ? undefined
-        : () => capabilitiesOf(config.runtimes, hostArch()),
+      capabilities: () => capabilitiesOf(config.runtimes, hostArch(), machine),
       configPath: config.configPath,
       requestTimeoutMs: config.smolRequestTimeoutMs,
       smolvmLogFile,
       amikaUrl: config.apiUrl,
-      bareMetal,
     },
     runtime,
     {
       registry,
       hiddenMachines,
       pullingImages,
-      // Never on bare metal: there is no disk image to capture.
-      snapshots: bareMetal ? undefined : snapshotSupport(runtime, snapshots),
+      snapshots: snapshotSupport(runtime, snapshots),
     },
   );
   const tunnels = new Set<Duplex>();
@@ -137,11 +138,11 @@ export function startServer(
     pullingImages,
     smolvmLogFile,
     snapshots,
-    bareMetal,
+    machine,
   }: {
     shutdownGraceMs?: number;
-    /** A bare-metal host: no files or snapshots (see `AppConfig`). */
-    bareMetal?: boolean;
+    /** This machine, which the `bare_metal` runtime reports. */
+    machine?: () => MachineFacts;
     /** Persists service names across restarts; in memory without one. */
     servicesFile?: string;
     /** Machines left out of the machine list (see `AppDeps`). */
@@ -164,7 +165,7 @@ export function startServer(
     pullingImages,
     smolvmLogFile,
     snapshots,
-    bareMetal,
+    machine,
   });
   return new Promise((resolve, reject) => {
     // Only the default `http.Server` is used, never HTTP/2.
@@ -202,6 +203,11 @@ export function startServer(
  * Bind the store and the capture together for the app, or nothing when this
  * daemon cannot pack (no smolvm of its own).
  */
+/** For a daemon given no `machine`, which then cannot report `bare_metal`. */
+function unknownMachine(): MachineFacts {
+  throw new Error("amika-hostd was not told what this machine is");
+}
+
 function snapshotSupport(
   runtime: MachineRuntime,
   options: SnapshotOptions | undefined,
@@ -212,7 +218,7 @@ function snapshotSupport(
   return {
     store,
     capture: async (rig: string, name: string) => {
-      // Only smol packs a rig into a snapshot (spec 026: none on Lume yet).
+      // Only smol packs a rig into a snapshot (spec 028: none on Lume yet).
       const owner =
         "runtimeOf" in runtime
           ? (runtime as RuntimeRouter).runtimeOf(rig)

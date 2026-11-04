@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -168,8 +169,8 @@ type RemoteSandbox struct {
 	// Older servers may not return Hostname.
 	HostID   *string `json:"host_id,omitempty"`
 	Hostname *string `json:"hostname,omitempty"`
-	// Runtime and OS are a host rig's runtime ("smol", "lume") and guest OS
-	// ("linux", "macos"); nil for a cloud rig.
+	// Runtime and OS are a host rig's runtime ("smol", "lume", "bare_metal")
+	// and guest OS ("linux", "macos"); nil for a cloud rig.
 	Runtime          *string         `json:"runtime,omitempty"`
 	OS               *string         `json:"os,omitempty"`
 	AgentCWD         *string         `json:"agent_cwd,omitempty"`
@@ -177,15 +178,14 @@ type RemoteSandbox struct {
 	AgentCredentials json.RawMessage `json:"agent_credentials,omitempty"`
 }
 
-// ProviderHostdBareMetal is the provider of a rig that runs directly on a
-// bare-metal host's own account rather than in a VM. Such a rig has no
-// `/home/amika`: it logs in as the account running amika-hostd, in that
-// account's home directory.
-const ProviderHostdBareMetal = "amika-hostd-bare-metal"
+// RuntimeBareMetal is the runtime of a rig that is its host machine itself,
+// rather than a VM on it. Such a rig has no `/home/amika`: it logs in as the
+// account running amika-hostd, in that account's home directory.
+const RuntimeBareMetal = "bare_metal"
 
-// IsBareMetal reports whether the rig runs directly on a bare-metal host.
+// IsBareMetal reports whether the rig is its host machine itself.
 func (s *RemoteSandbox) IsBareMetal() bool {
-	return s.Provider != nil && *s.Provider == ProviderHostdBareMetal
+	return s.Runtime != nil && *s.Runtime == RuntimeBareMetal
 }
 
 // RemoteSandboxCreator describes the human who created a remote sandbox, as
@@ -1459,33 +1459,47 @@ type Host struct {
 	// the presets on them. Nil for a host whose daemon predates the report,
 	// which runs only Linux rigs, with Sizes.
 	Capabilities *HostCapabilities `json:"capabilities,omitempty"`
-	// HostType is what the host runs its rigs in: HostTypeVM for one VM per
-	// rig, HostTypeBareMetal for one rig directly on the machine's own
-	// account. Never empty: UnmarshalJSON reads a control plane's silence as
-	// HostTypeVM, the only kind a plane predating the field registers.
-	HostType string `json:"host_type"`
-	// DetectedResources is the machine's own CPU, memory, disk, and platform
-	// as amika-hostd detected them, or nil when the host has not reported
-	// them. A bare-metal host has no sizes, so this is its capacity.
-	DetectedResources *HostResources `json:"detected_resources"`
-	// SSHUser is the account a bare-metal host's rig logs in as (the one
-	// running amika-hostd), or nil for a VM host, whose rigs log in as
-	// `amika`.
-	SSHUser *string `json:"ssh_user"`
 	// CreatedAt is when the host was first registered.
 	CreatedAt string `json:"created_at"`
 	// UpdatedAt is when the host was last replaced or re-registered.
 	UpdatedAt string `json:"updated_at"`
 }
 
-// HostTypeVM marks a host that runs each rig in its own VM.
-const HostTypeVM = "vm"
+// RuntimeNames returns the runtimes the host runs rigs with, sorted. A host
+// whose daemon predates the capabilities report runs only smol.
+func (h Host) RuntimeNames() []string {
+	if h.Capabilities == nil {
+		return []string{"smol"}
+	}
+	names := make([]string, 0, len(h.Capabilities.Runtimes))
+	for name := range h.Capabilities.Runtimes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
-// HostTypeBareMetal marks a host that runs one rig directly on the machine.
-const HostTypeBareMetal = "bare_metal"
+// BareMetal returns the host's bare_metal runtime, or nil when the machine
+// itself is not one of its rigs.
+func (h Host) BareMetal() *RuntimeCapability {
+	if h.Capabilities == nil {
+		return nil
+	}
+	r, ok := h.Capabilities.Runtimes[RuntimeBareMetal]
+	if !ok {
+		return nil
+	}
+	return &r
+}
 
-// UnmarshalJSON decodes a host, reading an absent transport as "listen" and
-// an absent host type as "vm".
+// OnlyBareMetal reports whether bare_metal is the host's only runtime. The
+// API then puts a create that names no runtime and no preset on it.
+func (h Host) OnlyBareMetal() bool {
+	names := h.RuntimeNames()
+	return len(names) == 1 && names[0] == RuntimeBareMetal
+}
+
+// UnmarshalJSON decodes a host, reading an absent transport as "listen".
 //
 // The field is required in the current response schema, but a control plane
 // older than it omits the key entirely, and every host such a plane can serve
@@ -1502,31 +1516,50 @@ func (h *Host) UnmarshalJSON(data []byte) error {
 	if decoded.TransportMode == "" {
 		decoded.TransportMode = "listen"
 	}
-	if decoded.HostType == "" {
-		decoded.HostType = HostTypeVM
-	}
 	*h = Host(decoded)
 	return nil
 }
 
-// HostCapabilities is what a host can run (spec 026 in amika-mono).
+// HostCapabilities is what a host can run (spec 028 in amika-mono).
 type HostCapabilities struct {
 	Runtimes map[string]RuntimeCapability `json:"runtimes"`
 	Presets  map[string]PresetCapability  `json:"presets"`
 }
 
-// RuntimeCapability is one runtime a host runs rigs with ("smol", "lume").
+// RuntimeCapability is one runtime a host runs rigs with ("smol", "lume",
+// "bare_metal").
 type RuntimeCapability struct {
-	// Kind is "vm" or "container".
+	// Kind is "vm", "container", or "host" for bare_metal, whose one rig is
+	// the machine itself.
 	Kind string `json:"kind"`
 	// OS is the guest OS: "linux" or "macos".
 	OS   string `json:"os"`
 	Arch string `json:"arch,omitempty"`
 	// MaxRunning is the most rigs of this runtime that run at once; nil is
 	// no limit.
-	MaxRunning *int                `json:"max_running,omitempty"`
-	Snapshots  bool                `json:"snapshots"`
-	Sizes      map[string]HostSize `json:"sizes"`
+	MaxRunning *int                   `json:"max_running,omitempty"`
+	Snapshots  bool                   `json:"snapshots"`
+	Sizes      map[string]RuntimeSize `json:"sizes"`
+	// Resources is the machine's capacity as amika-hostd detected it, and
+	// SSHUser the account its rig logs in as; bare_metal only.
+	Resources *RuntimeResources `json:"resources,omitempty"`
+	SSHUser   string            `json:"ssh_user,omitempty"`
+}
+
+// RuntimeSize is one size a runtime offers its rigs. Unlike HostSize, the
+// capabilities report is snake_case.
+type RuntimeSize struct {
+	VCPUs        int     `json:"vcpus"`
+	MemoryGiB    float64 `json:"memory_gib"`
+	DiskGiB      int     `json:"disk_gib"`
+	DiskGrowOnly bool    `json:"disk_grow_only,omitempty"`
+}
+
+// RuntimeResources is the capacity amika-hostd detected on its machine.
+type RuntimeResources struct {
+	VCPUs     int     `json:"vcpus"`
+	MemoryGiB float64 `json:"memory_gib"`
+	DiskGiB   float64 `json:"disk_gib"`
 }
 
 // PresetCapability is one preset a host offers, and its runtimes there.
@@ -1547,22 +1580,6 @@ type HostSize struct {
 	DiskGiB int `json:"diskGib"`
 	// DiskGrowOnly reports that the disk is a minimum the rig may exceed.
 	DiskGrowOnly bool `json:"diskGrowOnly"`
-}
-
-// HostResources is the hardware and platform amika-hostd detected on a host.
-// Like HostSize, its fields are camelCase, matching the control plane's
-// stored shape: renaming one to snake_case would decode it as zero silently.
-type HostResources struct {
-	// VCPUs is the machine's logical CPU count.
-	VCPUs int `json:"vcpus"`
-	// MemoryGiB is the machine's memory in GiB.
-	MemoryGiB float64 `json:"memoryGib"`
-	// DiskGiB is the disk capacity in GiB.
-	DiskGiB float64 `json:"diskGib"`
-	// OS is the operating system, e.g. "linux" or "darwin".
-	OS string `json:"os"`
-	// Arch is the CPU architecture, e.g. "x86_64" or "arm64".
-	Arch string `json:"arch"`
 }
 
 // ListHosts fetches the organization's own hosts from the remote API. It

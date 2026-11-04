@@ -14,5 +14,4 @@ export const simulateCapabilities: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: true,
-  guestProvisioning: true,
 };

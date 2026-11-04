@@ -48,11 +48,12 @@ There is no `--host` value that selects Amika Cloud; omit the flag. With
 refused.
 
 ```bash
-amika host list                       # HOSTNAME, TYPE, TRANSPORT, URL, SIZES
+amika host list                       # HOSTNAME, RUNTIMES, TRANSPORT, URL, SIZES
 amika hosts list                      # "hosts" is an alias for "host"
 amika host list -o json               # ids, timestamps, per-size resources
-amika host get alpha.lan              # sizes, or a bare-metal host's resources
+amika host get alpha.lan              # runtimes, presets, sizes, machine resources
 amika rig create --host alpha.lan --size small
+amika rig create --host alpha.lan --runtime bare_metal   # the machine itself
 amika host delete alpha.lan --force   # refused while rigs still run on it
 ```
 
@@ -61,11 +62,12 @@ also where the secret lives, so there is no way to add one from this CLI. A
 host's TRANSPORT says how to read a `-` in its URL. A `listen` host showing
 `-` has not finished registering and cannot take rigs; a `tunnel` host always
 shows `-`, because Amika assigns its address and there is nothing to
-register, so it says nothing about whether the host is ready. TYPE is `vm`
-(one VM per rig) or `bare_metal` (one rig on the machine's own account); a
-bare-metal host has no sizes, so SIZES shows its detected resources, as in
-`10cpu/32GiB/926.5GiB`, and its rig logs in as the host's account, not
-`amika`, with no `/home/amika`.
+register, so it says nothing about whether the host is ready. RUNTIMES names
+what the host runs rigs on: `smol` (Linux VMs), `lume` (macOS VMs), and
+`bare_metal` (one rig on the machine's own account). A host whose only
+runtime is `bare_metal` has no sizes, so SIZES shows its detected resources,
+as in `10cpu/32GiB/926.5GiB`. A bare-metal rig takes only a name, and logs
+in as the host's account, not `amika`, with no `/home/amika`.
 
 ## Agent credentials and secrets
 

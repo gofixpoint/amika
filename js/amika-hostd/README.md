@@ -124,20 +124,26 @@ A host set up before the gateway was the default, whose config has no
 `transport` line, moves to the gateway on its next `up`, which drops its
 registered URL. Add `transport = "listen"` to keep it listening.
 
-## Bare-metal hosts
+## Bare metal
 
-A bare-metal host runs exactly one rig, and that rig is the machine itself:
-Amika gives you SSH and the web terminal to a machine you already set up,
-logged in as your own account, with no VM in between. Nothing is copied onto
-the machine (no secrets, agent credentials, repositories or setup scripts),
-and Amika cannot run commands on it beyond the fixed `amikad` commands that
-set up the SSH bridge. Agent sessions and reading rig files are not available
-on a bare-metal rig.
+The `bare_metal` runtime makes the machine itself one rig: Amika gives you
+SSH to a machine you already set up, logged in as your own account, with no
+VM in between. Nothing is copied onto the machine (no secrets, agent
+credentials, repositories or setup scripts), and Amika cannot run commands
+on it beyond the fixed `amikad` commands that set up the SSH bridge. Agent
+sessions, the web terminal and reading rig files are not available on a
+bare-metal rig.
 
 It runs on macOS and Linux, and needs an `sshd` binary (macOS ships one; on
 Linux install `openssh-server`; the system service need not run, since
-amika-hostd runs its own sshd unprivileged on loopback). Install without
-smolvm, then answer `bare-metal` when setup asks for the host type:
+amika-hostd runs its own sshd unprivileged on loopback). It runs beside VM
+rigs on the same host. To add it to a host:
+
+```bash
+amika-hostd capabilities update --enable bare_metal
+```
+
+For a host whose only rig is this machine, install without smolvm:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh -s -- --bare-metal
@@ -145,9 +151,9 @@ amika-hostd setup
 amika-hostd up
 ```
 
-Setup installs `amikad` into amika-hostd's own data directory (no `sudo`) and
-shows the CPUs, memory and disk Amika will report. `[sizes]` is ignored. A
-host can change type only while it has no rigs.
+Either way amika-hostd installs `amikad` into its own data directory (no
+`sudo`) and reports the CPUs, memory and disk it detects. Create the rig
+with `amika rig create --host <host> --runtime bare_metal`.
 
 ## Configuration
 

@@ -1,5 +1,5 @@
 /**
- * The SSH bootstrap of a new VM (spec 026, "Management access at first
+ * The SSH bootstrap of a new VM (spec 028, "Management access at first
  * boot"). The template has a bootstrap login with a known password; this
  * replaces it with a key that works for this VM only, then turns password
  * login off.

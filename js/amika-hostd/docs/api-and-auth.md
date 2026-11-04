@@ -10,11 +10,10 @@ get, delete, start, stop, exec, files, services), the service routes and
 the preview routes.
 `GET /health` lists the versions served and the features a control plane may
 rely on (`{ "status": "ok", "apis": ["v0beta1"], "features":
-["service-tokens", "snapshots"] }`). `snapshots` appears only on a daemon
-that can take them (see [Snapshots](snapshots.md)), and never on a bare-metal
-host, which names `bare-metal` instead: one rig, exec limited to the amikad
-commands that set up SSH, and no files routes (see
-[Bare-metal runtime](runtime.md#bare-metal-runtime)). `/api/v1/machines` serves the same machine routes, without
+["service-tokens", "snapshots", "runtimes"] }`). `snapshots` appears only
+on a daemon that can take them (see [Snapshots](snapshots.md)). What each
+runtime offers, `bare_metal` included, is in `GET /capabilities`, not in
+`/health`. `/api/v1/machines` serves the same machine routes, without
 service routes, for control planes on providers from before `v0beta1`; remove
 it once none are deployed. Change a version's contract only in a new version.
 

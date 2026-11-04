@@ -2,7 +2,7 @@
  * The `lume` CLI, for rig VMs in one storage folder.
  *
  * The CLI, not `lume serve`'s HTTP API: `lume run --detach` gives each VM its
- * own process, and milestone 0 of spec 026 showed that those keep running
+ * own process, and milestone 0 of spec 028 showed that those keep running
  * when the server restarts. A VM booted through the API was not checked.
  */
 import { z } from "zod";

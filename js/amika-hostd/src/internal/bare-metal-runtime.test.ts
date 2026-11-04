@@ -29,7 +29,7 @@ const RESOURCES = {
   vcpus: 8,
   memoryGib: 16,
   diskGib: 460.4,
-  os: "linux",
+  os: "linux" as const,
   arch: "x64",
 };
 

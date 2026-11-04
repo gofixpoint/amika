@@ -246,6 +246,11 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 
 // serveListen is the effective HTTP listener: the bind address, the port
 // reported by /v1/status, and the address the readiness probe dials.
+//
+// The reported port is the bridge's service port, --port, which the control
+// plane checks before it hands out an SSH session. In user mode the bind
+// port comes from EnvListen instead, and hostd publishes amikad on the
+// service port and forwards it to the bind port, so the two differ.
 type serveListen struct {
 	bind  string
 	port  int
@@ -256,18 +261,18 @@ type serveListen struct {
 // interface on --port; user mode binds only its loopback host, on the
 // layout's port when EnvListen gave one.
 func (o *DaemonOperations) resolveListen(flagPort int) serveListen {
-	port := flagPort
+	bindPort := flagPort
 	if o.layout.ListenPort != 0 {
-		port = o.layout.ListenPort
+		bindPort = o.layout.ListenPort
 	}
 	probeHost := o.layout.ListenHost
 	if probeHost == "" {
 		probeHost = "127.0.0.1"
 	}
 	return serveListen{
-		bind:  net.JoinHostPort(o.layout.ListenHost, strconv.Itoa(port)),
-		port:  port,
-		probe: net.JoinHostPort(probeHost, strconv.Itoa(port)),
+		bind:  net.JoinHostPort(o.layout.ListenHost, strconv.Itoa(bindPort)),
+		port:  flagPort,
+		probe: net.JoinHostPort(probeHost, strconv.Itoa(bindPort)),
 	}
 }
 

@@ -1,5 +1,5 @@
 /**
- * The config change `amika-hostd capabilities update` makes (spec 026,
+ * The config change `amika-hostd capabilities update` makes (spec 028,
  * "`amika-hostd capabilities`"): turn runtimes on or off in
  * `[runtimes.*]`, keeping everything else in `config.toml` as it is.
  */

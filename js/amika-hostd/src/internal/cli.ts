@@ -4,11 +4,7 @@ import { accessSync, constants } from "node:fs";
 import { isIPv6 } from "node:net";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
-import {
-  currentHostPlatform,
-  type HostPlatform,
-  type HostResources,
-} from "../platforms/index.js";
+import { currentHostPlatform, type HostPlatform } from "../platforms/index.js";
 import {
   AmikaApiError,
   HostTransportConflictError,
@@ -16,9 +12,7 @@ import {
   setHostSecret as setHostSecretInAmika,
   setHostReport as setHostReportInAmika,
   setHostTransport as setHostTransportInAmika,
-  setHostType as setHostTypeInAmika,
   setHostUrl as setHostUrlInAmika,
-  type BareMetalReport,
   type RegisteredHost,
 } from "./amika-api.js";
 import { amikadBinary, ensureAmikad } from "./amikad-install.js";
@@ -41,13 +35,13 @@ import {
   type HostdFlags,
 } from "./config.js";
 import {
-  apiCapabilitiesOf,
   capabilitiesOf,
   checkRuntimesSupported,
-  type ApiCapabilities,
   hostArch,
   presetImages,
   RUNTIME_NAMES,
+  type Capabilities,
+  type MachineFacts,
   type RuntimeConfig,
   type RuntimeName,
   type RuntimeSettings,
@@ -114,7 +108,12 @@ import {
 } from "./prepull.js";
 import { versionText } from "./build-info.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
-import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
+import {
+  checkBareMetal,
+  runSetup,
+  withoutInvalidSecret,
+  type SetupDeps,
+} from "./setup.js";
 import { setupSkill, type SkillContext } from "./setup-skill.js";
 import {
   DEFAULT_SMOL_API_URL,
@@ -214,7 +213,6 @@ export interface CliDeps {
   registerHost?: typeof registerHostWithAmika;
   setHostReport?: typeof setHostReportInAmika;
   setHostTransport?: typeof setHostTransportInAmika;
-  setHostType?: typeof setHostTypeInAmika;
   setHostSecret?: typeof setHostSecretInAmika;
   setHostUrl?: typeof setHostUrlInAmika;
   /** The OS hostd runs on, resolved once; defaults to this machine's. */
@@ -222,10 +220,12 @@ export interface CliDeps {
   /** The account a bare-metal rig's SSH sessions log in as. */
   sshUser?: () => string;
   /**
-   * Make sure a bare-metal host's amikad is installed, and return its path;
-   * defaults to `ensureAmikad`.
+   * Make sure the amikad the `bare_metal` runtime runs is installed, and
+   * return its path; defaults to `ensureAmikad`.
    */
   installAmikad?: SetupDeps["installAmikad"];
+  /** What sshd's StrictModes refuses (see `SetupDeps`). */
+  strictModesViolation?: SetupDeps["strictModesViolation"];
   /**
    * Ask the operator a question (see `Prompt`). Absent when stdin or stdout
    * is not a terminal, so `up` never blocks.
@@ -335,22 +335,25 @@ export async function runCli(
           placedSecrets(filled, deps),
           REGISTRATION_SETTINGS,
         );
-        const bareMetal = config.hostType === "bare-metal";
-        // A bare-metal host runs no smolvm, so neither smolvm warning applies.
-        if (bareMetal) await prepareBareMetal(config, deps);
-        else warnUncachedSizes(config, deps);
+        // Before registering, so Amika never hears of a runtime this
+        // machine cannot run.
+        checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
+        const on = config.runtimes.runtimes;
+        if (on.bare_metal) await prepareBareMetal(config, deps);
+        // smolvm runs only for smol, so its warnings apply only then.
+        if (on.smol) warnUncachedSizes(config, deps);
         // Alongside registration, so a slow smolvm never delays it.
-        const checkedSmolvm = bareMetal ? undefined : warnOldSmolvm(deps);
+        const checkedSmolvm = on.smol ? warnOldSmolvm(deps) : undefined;
         const host = await register(config, deps);
         if (config.transport === "tunnel") await enrol(config, host, deps);
         await checkedSmolvm;
         // Read before the daemon starts, which records each image it pulls.
-        const pending = bareMetal
-          ? []
-          : pendingImages(
+        const pending = on.smol
+          ? pendingImages(
               presetImages(config.runtimes, "smol"),
               daemonPaths(deps.env).prepullFile,
-            );
+            )
+          : [];
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
         const finish = (port: number | undefined) => {
@@ -511,9 +514,6 @@ function checkConfigForReload(deps: CliDeps): HostdConfig {
     env: deps.env,
     file: file && withoutInvalidSecret(file),
   });
-  if (config.hostType === "bare-metal") {
-    throw new ConfigError("A bare-metal host has no runtimes to reload.");
-  }
   checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
   return config;
 }
@@ -549,7 +549,7 @@ function printReloadResult(result: ReloadResult, deps: CliDeps) {
   }
 }
 
-/** Lume's release that milestone 0 of spec 026 tested. */
+/** Lume's release that milestone 0 of spec 028 tested. */
 const LUME_VERSION = "0.6.1";
 
 /**
@@ -592,14 +592,26 @@ async function updateCapabilities(
       );
     }
   }
-  const install =
+  const installsLume =
     options.enable.includes("lume") &&
-    next.runtimes.runtimes.lume &&
-    (deps.findLume ?? findLume)(deps.env) === undefined
+    next.runtimes.runtimes.lume !== undefined &&
+    (deps.findLume ?? findLume)(deps.env) === undefined;
+  const turnsOnBareMetal = update.steps.includes("Turn on bare_metal");
+  // Checked before the plan is shown: a machine that cannot be a rig
+  // (no sshd, a home sshd's StrictModes refuses) is refused unchanged.
+  if (turnsOnBareMetal) checkBareMetal(deps);
+  const install = [
+    ...(installsLume
       ? [
           `Install Lume ${LUME_VERSION} with its installer, into ~/.local/bin (downloads from GitHub; no sudo)`,
         ]
-      : [];
+      : []),
+    ...(turnsOnBareMetal
+      ? [
+          `Install amikad into ${hostdDataDir(deps.env)}, for SSH to this machine (no sudo)`,
+        ]
+      : []),
+  ];
   const pid = readRunningPid(paths.pidFile, deps.isRunning ?? isDaemonProcess);
   const plan = {
     config: file.path,
@@ -637,7 +649,8 @@ async function updateCapabilities(
       return 0;
     }
   }
-  if (install.length > 0) await (deps.installLume ?? installLume)(deps);
+  if (installsLume) await (deps.installLume ?? installLume)(deps);
+  if (turnsOnBareMetal) await prepareBareMetal(next, deps);
   (deps.writeConfigFile ?? writePrivateFile)(file.path, update.contents);
   const result = plan.reload
     ? await signalReload(pid!, paths, deps)
@@ -706,11 +719,12 @@ function printCapabilities(deps: CliDeps, json: boolean): number {
     env: deps.env,
     file: file && withoutInvalidSecret(file),
   });
-  if (config.hostType === "bare-metal") {
-    throw new ConfigError("A bare-metal host has no runtimes or presets.");
-  }
   checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
-  const report = capabilitiesOf(config.runtimes, hostArch());
+  const report = capabilitiesOf(
+    config.runtimes,
+    hostArch(),
+    machineFacts(deps),
+  );
   if (json) {
     deps.out(JSON.stringify(report, null, 2));
     return 0;
@@ -724,6 +738,13 @@ function printCapabilities(deps: CliDeps, json: boolean): number {
     deps.out(
       `  ${name}  ${runtime.kind}, ${runtime.os}/${runtime.arch}, ${limit}, ${runtime.snapshots ? "snapshots" : "no snapshots"}`,
     );
+    if (runtime.resources) {
+      const { vcpus, memory_gib, disk_gib } = runtime.resources;
+      deps.out(
+        `    this machine: ${vcpus} vCPU, ${memory_gib} GiB, ${disk_gib} GiB disk; SSH as ${runtime.ssh_user}`,
+      );
+      continue;
+    }
     const sizes = Object.entries(runtime.sizes).map(
       ([size, s]) =>
         `${size} (${s.vcpus} vCPU, ${s.memory_gib} GiB, ${s.disk_gib} GiB disk)`,
@@ -1210,33 +1231,13 @@ async function register(
 ): Promise<RegisteredHost> {
   const api = { apiUrl: config.apiUrl, apiKey: config.apiKey };
   const sizes = registeredSizes(config);
-  const capabilities = registeredCapabilities(config);
-  const report = hostTypeReport(config, deps);
-  const { host, created } = await registerInTransport(config, deps, report);
+  const capabilities = registeredCapabilities(config, deps);
+  const { host, created } = await registerInTransport(config, deps);
   if (created) {
-    if (report) assertRecordedAsBareMetal(host, config.apiUrl);
     deps.out(
       `Registered host ${host.hostname} with ${config.apiUrl} (${host.id})`,
     );
   } else {
-    // The type first: Amika refuses to change it while the host has rigs,
-    // and a refusal should leave the rest as it was. A bare-metal host
-    // reports itself on every `up`, so Amika sees its resources as they are
-    // now; a VM host says nothing unless Amika still has it as bare metal.
-    if (report) {
-      assertRecordedAsBareMetal(
-        await (deps.setHostType ?? setHostTypeInAmika)(api, host, report),
-        config.apiUrl,
-      );
-      deps.out(
-        `Reported host ${host.hostname} as bare metal (${describeResources(report.resources)}; SSH as ${report.sshUser})`,
-      );
-    } else if (host.host_type === "bare_metal") {
-      await (deps.setHostType ?? setHostTypeInAmika)(api, host, {
-        hostType: "vm",
-      });
-      deps.out(`Switched host ${host.hostname} from bare metal to VMs`);
-    }
     deps.out(
       `Host ${host.hostname} is already registered with ${config.apiUrl} (${host.id})`,
     );
@@ -1246,16 +1247,15 @@ async function register(
       "Amika keeps the secret key stored when the host was first registered; if yours has changed since, Amika's requests to this host will be rejected.",
     );
     // Nor its sizes and capabilities, so bring those up to date with the
-    // config separately.
+    // config separately. A bare-metal rig's capacity is detected, so this
+    // also tells Amika what the machine is now.
     await (deps.setHostReport ?? setHostReportInAmika)(api, host, {
       sizes,
       capabilities,
     });
-    if (!report) {
-      deps.out(
-        `Updated the sizes of host ${host.hostname} (${describeSizes(sizes)})`,
-      );
-    }
+    deps.out(
+      `Updated the runtimes of host ${host.hostname} (${Object.keys(capabilities.runtimes).join(", ") || "none"})`,
+    );
   }
   if (host.transport_mode === config.transport) return host;
   // The config is the source of truth for the transport, as for sizes.
@@ -1273,19 +1273,6 @@ async function register(
 }
 
 /**
- * Refuse to carry on when Amika did not record the host as bare metal. A
- * control plane that predates bare-metal hosts drops the fields it does not
- * know and keeps the host as a VM host, which would then send it VM rigs
- * this daemon refuses; saying so here beats reporting success.
- */
-function assertRecordedAsBareMetal(host: RegisteredHost, apiUrl: string): void {
-  if (host.host_type === "bare_metal") return;
-  throw new AmikaApiError(
-    `${apiUrl} did not record host ${host.hostname} as bare metal, so it does not support bare-metal hosts yet; set host_type = "vm" or use a newer Amika`,
-  );
-}
-
-/**
  * Register in the configured transport, so a new host is created in it. A
  * host Amika already has in another transport is refused rather than
  * returned, so register it again without one to learn which host it is;
@@ -1294,16 +1281,13 @@ function assertRecordedAsBareMetal(host: RegisteredHost, apiUrl: string): void {
 async function registerInTransport(
   config: RegistrationConfig,
   deps: CliDeps,
-  /** A bare-metal host's report; a VM host sends none. */
-  report?: BareMetalReport,
 ): Promise<{ host: RegisteredHost; created: boolean }> {
   const api = { apiUrl: config.apiUrl, apiKey: config.apiKey };
   const input = {
     hostname: config.hostname,
     secretKey: config.secretKey,
     sizes: registeredSizes(config),
-    capabilities: registeredCapabilities(config),
-    ...(report === undefined ? {} : { hostType: report }),
+    capabilities: registeredCapabilities(config, deps),
   };
   const registerHost = deps.registerHost ?? registerHostWithAmika;
   try {
@@ -1318,22 +1302,19 @@ async function registerInTransport(
 }
 
 /**
- * The sizes Amika gets: none from a bare-metal host, which ignores them.
- * A control plane that predates capabilities reads them as smol's, so a host
- * with smol on sends smol's list.
+ * The sizes Amika gets. A control plane that predates capabilities reads
+ * them as smol's, so a host with smol on sends smol's list.
  */
 function registeredSizes(config: HostdConfig): HostdConfig["sizes"] {
-  if (config.hostType === "bare-metal") return {};
   return config.runtimes.runtimes.smol?.sizes ?? config.sizes;
 }
 
-/** What a VM host can run (`runtimes.ts`); a bare-metal host sends none. */
+/** What the host can run (`runtimes.ts`). */
 function registeredCapabilities(
   config: HostdConfig,
-): ApiCapabilities | undefined {
-  return config.hostType === "bare-metal"
-    ? undefined
-    : apiCapabilitiesOf(config.runtimes, hostArch());
+  deps: CliDeps,
+): Capabilities {
+  return capabilitiesOf(config.runtimes, hostArch(), machineFacts(deps));
 }
 
 /**
@@ -1364,7 +1345,7 @@ async function reportToAmika(deps: CliDeps): Promise<void> {
       host,
       {
         sizes: registeredSizes(config),
-        capabilities: registeredCapabilities(config),
+        capabilities: registeredCapabilities(config, deps),
       },
     );
     deps.out(`Sent the new capabilities to ${config.apiUrl}.`);
@@ -1376,30 +1357,18 @@ async function reportToAmika(deps: CliDeps): Promise<void> {
 }
 
 /**
- * What a bare-metal host tells Amika about itself: its type, the resources
- * detected now, and the account SSH sessions log in as. Undefined for a VM
- * host, which sends none of it.
+ * This machine, as the `bare_metal` runtime reports it: detected each time
+ * it is asked, so a report says what the machine is now.
  */
-function hostTypeReport(
-  config: HostdConfig,
-  deps: CliDeps,
-): BareMetalReport | undefined {
-  if (config.hostType !== "bare-metal") return undefined;
-  return {
-    hostType: "bare_metal",
-    resources: platformOf(deps).detectResources(),
-    sshUser: (deps.sshUser ?? (() => userInfo().username))(),
+function machineFacts(
+  deps: Pick<CliDeps, "platform" | "sshUser">,
+): () => MachineFacts {
+  return () => {
+    const { os, vcpus, memoryGib, diskGib } =
+      platformOf(deps).detectResources();
+    const sshUser = (deps.sshUser ?? (() => userInfo().username))();
+    return { os, vcpus, memoryGib, diskGib, sshUser };
   };
-}
-
-function describeResources({
-  vcpus,
-  memoryGib,
-  diskGib,
-  os,
-  arch,
-}: HostResources): string {
-  return `${vcpus} vCPU${vcpus === 1 ? "" : "s"}, ${memoryGib} GiB memory, ${diskGib} GiB disk, ${os}/${arch}`;
 }
 
 function platformOf(deps: Pick<CliDeps, "platform">): HostPlatform {
@@ -1407,32 +1376,15 @@ function platformOf(deps: Pick<CliDeps, "platform">): HostPlatform {
 }
 
 /**
- * Before a bare-metal host registers: refuse on an OS without bare metal,
- * say that `[sizes]` is ignored, and make sure amikad is installed (a new
- * hostd may pin a newer one than setup installed).
+ * Before the `bare_metal` runtime runs: make sure amikad is installed (a new
+ * hostd may pin a newer one than the last install).
  */
 async function prepareBareMetal(config: HostdConfig, deps: CliDeps) {
-  const platform = platformOf(deps);
-  if (!platform.capabilities.bareMetal) {
-    throw new ConfigError(
-      `amika-hostd does not support bare-metal hosts on ${platform.name}; set host_type = "vm" in ${config.configPath ?? "the config file"}`,
-    );
-  }
-  if (Object.keys(config.sizes).length > 0) {
-    deps.err(
-      `amika-hostd: [sizes] in ${config.configPath ?? "the config file"} is ignored on a bare-metal host, whose one rig is this machine as it is.`,
-    );
-  }
   await (deps.installAmikad ?? ensureAmikad)(config, {
     env: deps.env,
-    platform,
+    platform: platformOf(deps),
     out: deps.out,
   });
-}
-
-function describeSizes(sizes: Record<string, unknown>): string {
-  const names = Object.keys(sizes);
-  return names.length === 0 ? "none" : names.join(", ");
 }
 
 /**
@@ -1861,6 +1813,7 @@ function machineRouter(
 ): {
   router: RuntimeRouter;
   shutdown: () => Promise<void>;
+  resume: () => Promise<void>;
   /** Turn runtimes on and off as `next` says; `reload.ts` checked it. */
   reload: (next: RuntimeConfig) => void;
 } {
@@ -1879,6 +1832,8 @@ function machineRouter(
     });
   };
   let lume = on.lume && startLume(on.lume);
+  const startBareMetal = () => bareMetalRuntimeFor(config, paths, deps);
+  let bareMetal = on.bare_metal && startBareMetal();
   const router = runtimeRouter({
     runtimes: {
       ...(on.smol && {
@@ -1889,6 +1844,7 @@ function machineRouter(
         }),
       }),
       ...(lume && { lume }),
+      ...(bareMetal && { bare_metal: bareMetal }),
     },
     // Read on each call, so a reload's limits apply at once.
     maxRunning: () =>
@@ -1911,7 +1867,13 @@ function machineRouter(
   }
   return {
     router,
-    shutdown: async () => lume?.shutdown(),
+    shutdown: async () => {
+      await lume?.shutdown();
+      await bareMetal?.shutdown();
+    },
+    // A bare-metal rig running when the daemon stopped gets its SSH bridge
+    // back, if it was provisioned.
+    resume: async () => bareMetal?.resume(),
     reload: (next) => {
       if (next.runtimes.lume && !lume) {
         lume = startLume(next.runtimes.lume);
@@ -1920,6 +1882,15 @@ function machineRouter(
         router.setRuntime("lume", undefined);
         void lume.shutdown();
         lume = undefined;
+      }
+      // Removing it is refused while it has its rig (`reload.ts`).
+      if (next.runtimes.bare_metal && !bareMetal) {
+        bareMetal = startBareMetal();
+        router.setRuntime("bare_metal", bareMetal);
+      } else if (!next.runtimes.bare_metal && bareMetal) {
+        router.setRuntime("bare_metal", undefined);
+        void bareMetal.shutdown();
+        bareMetal = undefined;
       }
       // smolvm runs on until the daemon stops; only the router lets go of it.
       if (!next.runtimes.smol) router.setRuntime("smol", undefined);
@@ -1945,19 +1916,11 @@ async function serveInForeground(
   } = {},
 ) {
   const paths = daemonPaths(deps.env);
-  // A bare-metal host runs no smolvm: its one rig is this machine.
-  const bareMetal =
-    config.hostType === "bare-metal"
-      ? bareMetalRuntimeFor(config, paths, deps)
-      : undefined;
   // smolvm runs only for the smol runtime.
-  const runsSmolvm =
-    smolvm && !bareMetal && config.runtimes.runtimes.smol !== undefined;
-  if (!bareMetal) {
-    checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
-    for (const warning of config.runtimes.warnings) {
-      deps.err(`amika-hostd: ${warning}`);
-    }
+  const runsSmolvm = smolvm && config.runtimes.runtimes.smol !== undefined;
+  checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
+  for (const warning of config.runtimes.warnings) {
+    deps.err(`amika-hostd: ${warning}`);
   }
   const claim = deps.claimPidFile ?? claimPidFileOnDisk;
   const release = claim(paths.pidFile, deps.isRunning);
@@ -1995,7 +1958,6 @@ async function serveInForeground(
       await server?.close();
     } finally {
       try {
-        await bareMetal?.shutdown();
         await routed?.shutdown();
         await stopSmolvm(runtime, deps);
       } finally {
@@ -2013,10 +1975,8 @@ async function serveInForeground(
       // Machines run on the runtimes that are on: smol through the `smol`
       // provider, on the smolvm this daemon started (or `SMOL_API_URL`, for
       // plain `serve`).
-      routed = bareMetal
-        ? undefined
-        : machineRouter(serving, paths, runtime !== undefined, deps);
-      const machines = bareMetal ?? routed!.router;
+      routed = machineRouter(serving, paths, runtime !== undefined, deps);
+      const machines = routed.router;
       // Only a daemon running its own smolvm can pack a snapshot: a pack
       // is a subprocess of that binary, reading the same machine state.
       server =
@@ -2053,9 +2013,7 @@ async function serveInForeground(
       );
       await (deps.notifyReady ?? notifyParent)({ port: server.port });
     }
-    // A rig that was running when the daemon stopped gets its SSH bridge
-    // back, if it was provisioned.
-    if (bareMetal) await bareMetal.resume();
+    await routed?.resume();
     if (routed && deps.reloadSignal) {
       const reloader = routed;
       let reloading = Promise.resolve();
@@ -2112,9 +2070,9 @@ async function serveInForeground(
 }
 
 /**
- * The runtime over this machine for a bare-metal host: the one rig's record
- * and amikad's state in the daemon's state directory, and the amikad setup
- * installed (or `amikad_path`).
+ * The `bare_metal` runtime: the one rig's record and amikad's state in the
+ * daemon's state directory, and the amikad hostd installed (or
+ * `amikad_path`).
  */
 function bareMetalRuntimeFor(
   config: HostdConfig,
@@ -2269,7 +2227,7 @@ function handlerOptions(
 ) {
   return {
     servicesFile: paths.servicesFile,
-    bareMetal: config.hostType === "bare-metal",
+    machine: machineFacts(deps),
     snapshots: packing.smolvm
       ? {
           directory: config.snapshotDir ?? paths.snapshotDir,

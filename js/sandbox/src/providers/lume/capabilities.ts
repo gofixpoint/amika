@@ -14,5 +14,4 @@ export const lumeCapabilities: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
-  guestProvisioning: false,
 };

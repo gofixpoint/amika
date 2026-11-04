@@ -5,8 +5,8 @@ import { PREPULL_MACHINE_PREFIX } from "./prepull.js";
 import type { SnapshotState } from "./snapshot-store.js";
 import {
   RUNTIME_NAMES,
+  type ImageRuntimeName,
   type RuntimeConfig,
-  type RuntimeName,
 } from "./runtimes.js";
 
 const nameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/);
@@ -102,11 +102,11 @@ export interface SnapshotSource {
  */
 export function resolveSource(
   image: string,
-  runtime: RuntimeName | undefined,
+  runtime: ImageRuntimeName | undefined,
   config: RuntimeConfig,
   snapshots: SnapshotSource,
   configPath: string | undefined,
-): MachineSource & { runtime: RuntimeName } {
+): MachineSource & { runtime: ImageRuntimeName } {
   const presetName = Object.hasOwn(config.presets, image)
     ? image
     : image.startsWith("amika-") &&

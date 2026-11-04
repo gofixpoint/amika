@@ -23,29 +23,12 @@ const fakeOs = (overrides: PlatformDeps = {}): PlatformDeps => ({
 });
 
 describe("hostPlatformFor", () => {
-  it.each(["linux", "darwin"] as const)(
-    "offers bare metal, VMs and a keychain on %s",
-    (name) => {
-      const platform = hostPlatformFor(name);
-      expect(platform.name).toBe(name);
-      expect(platform.capabilities).toEqual({
-        bareMetal: true,
-        vmRuntime: true,
-        keychain: true,
-      });
-    },
-  );
-
   it.each(["win32", "freebsd", "aix"] as const)(
-    "resolves %s to an unsupported platform that offers nothing",
+    "resolves %s to an unsupported platform that runs nothing",
     (name) => {
       const platform = hostPlatformFor(name);
       expect(platform.name).toBe(name);
-      expect(platform.capabilities).toEqual({
-        bareMetal: false,
-        vmRuntime: false,
-        keychain: false,
-      });
+      expect(platform.runtimes()).toEqual([]);
       expect(() => platform.detectResources()).toThrow(
         PlatformUnsupportedError,
       );
@@ -98,7 +81,7 @@ describe("detectResources", () => {
     expect(resources).toMatchObject({
       memoryGib: 16.1,
       diskGib: 476.8,
-      os: "darwin",
+      os: "macos",
       arch: "arm64",
     });
   });
@@ -150,9 +133,10 @@ describe("amikadAsset", () => {
 
 describe("runtimes", () => {
   it.each([
-    ["darwin", "arm64", ["smol", "lume"]],
-    ["darwin", "x64", ["smol"]],
-    ["linux", "arm64", ["smol"]],
+    ["darwin", "arm64", ["smol", "lume", "bare_metal"]],
+    ["darwin", "x64", ["smol", "bare_metal"]],
+    ["linux", "arm64", ["smol", "bare_metal"]],
+    ["linux", "x64", ["smol", "bare_metal"]],
     ["freebsd", "x64", []],
   ] as const)("offers on %s/%s %j", (os, arch, runtimes) => {
     expect(

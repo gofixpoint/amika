@@ -25,6 +25,7 @@ import { resolveTunnelTarget, type TunnelEnrolment } from "./tunnel-target.js";
 import type { HostdConfigWith } from "./config.js";
 import type { Secrets } from "./credentials.js";
 import type { MachineRuntime } from "./machine-runtime.js";
+import type { MachineFacts } from "./runtimes.js";
 
 /** How long the daemon waits to report that it is serving. */
 export const ATTACH_TIMEOUT_MS = 30_000;
@@ -48,8 +49,8 @@ export interface StartTunnelOptions {
   pullingImages?: () => ReadonlySet<string>;
   smolvmLogFile?: string;
   snapshots?: SnapshotOptions;
-  /** A bare-metal host: no files or snapshots (see `AppConfig`). */
-  bareMetal?: boolean;
+  /** This machine, which the `bare_metal` runtime reports. */
+  machine?: () => MachineFacts;
   onEvent?: (event: TunnelEvent) => void;
   /** What the gateway sees this daemon as. */
   userAgent?: string;
@@ -82,7 +83,7 @@ export function startTunnel(
     pullingImages: options.pullingImages,
     smolvmLogFile: options.smolvmLogFile,
     snapshots: options.snapshots,
-    bareMetal: options.bareMetal,
+    machine: options.machine,
   });
   const server = virtualServer({ fetch: app.fetch, upgrade });
 

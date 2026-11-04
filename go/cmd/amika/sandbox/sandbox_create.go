@@ -175,11 +175,22 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 	if err != nil {
 		return err
 	}
-	hostID, hostType, err := resolveCreateHost(client, hostRef)
+	host, err := resolveCreateHost(client, hostRef)
 	if err != nil {
 		return err
 	}
-	if hostType == apiclient.HostTypeBareMetal {
+	hostID := ""
+	if host != nil {
+		hostID = host.ID
+	}
+	runtime = strings.TrimSpace(runtime)
+	// A host whose only runtime is bare_metal takes the rig there when the
+	// create names no runtime and no preset, as the API does. Named here,
+	// so the CLI and the API agree that this is a bare-metal create.
+	if host != nil && runtime == "" && !cmd.Flags().Changed("preset") && host.OnlyBareMetal() {
+		runtime = apiclient.RuntimeBareMetal
+	}
+	if runtime == apiclient.RuntimeBareMetal {
 		if err := bareMetalCreateConflicts(cmd); err != nil {
 			return err
 		}
@@ -201,7 +212,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 		// forwarded for provider-specific operational and E2E checks.
 		Provider:         provider,
 		HostID:           hostID,
-		Runtime:          strings.TrimSpace(runtime),
+		Runtime:          runtime,
 		RepoURL:          gitURL,
 		EnvVars:          envVars,
 		SecretEnvVars:    secretEnvVars,
@@ -352,27 +363,27 @@ func bareMetalCreateConflicts(cmd *cobra.Command) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"%s cannot be used with a bare-metal host: its one rig is the host machine itself, and nothing is copied onto it; only the rig name can be set",
+		"%s cannot be used with the bare_metal runtime: its one rig is the host machine itself, and nothing is copied onto it; only the rig name can be set",
 		strings.Join(set, ", "),
 	)
 }
 
-// resolveCreateHost turns a --host value into the host id the API takes, or
-// "" for the absent flag that createHostRef reports as "". It also returns the
-// host's type, so the caller can apply a bare-metal host's rules. An empty id is
-// what puts the rig on Amika Cloud: --host names one of the organization's
-// *own* hosts and nothing else, so there is no spelling of it that selects
-// the cloud.
-func resolveCreateHost(client *apiclient.Client, ref string) (string, string, error) {
+// resolveCreateHost turns a --host value into the host the API takes the id
+// of, or nil for the absent flag that createHostRef reports as "". The caller
+// reads the host's runtimes to apply the bare_metal rules. No host is what
+// puts the rig on Amika Cloud: --host names one of the organization's *own*
+// hosts and nothing else, so there is no spelling of it that selects the
+// cloud.
+func resolveCreateHost(client *apiclient.Client, ref string) (*apiclient.Host, error) {
 	if ref == "" {
-		return "", "", nil
+		return nil, nil
 	}
 	// Listed and matched in two steps rather than through FindHost: only a
 	// ref that matched nothing earns the hint below. A listing that failed on
 	// auth, the network, or a bad response has to surface as itself.
 	hosts, err := client.ListHosts()
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	host, err := apiclient.MatchHost(hosts, ref)
 	if err != nil {
@@ -386,9 +397,9 @@ func resolveCreateHost(client *apiclient.Client, ref string) (string, string, er
 		// `--host amika` need to see that hostname, or they take the advice
 		// and land on the cloud compute they were trying to avoid.
 		if isAmikaCloudRef(ref) && !hasHostNamed(hosts, ref) {
-			return "", "", fmt.Errorf("%w (rigs run on Amika Cloud by default: omit --host rather than naming it)", err)
+			return nil, fmt.Errorf("%w (rigs run on Amika Cloud by default: omit --host rather than naming it)", err)
 		}
-		return "", "", err
+		return nil, err
 	}
 	// Only a listening host registers a URL, so only a listening host can be
 	// missing one. A tunnelled host never has one: Amika assigns its address
@@ -401,15 +412,15 @@ func resolveCreateHost(client *apiclient.Client, ref string) (string, string, er
 	// A control plane predating the field sends none, and `UnmarshalJSON`
 	// reads that as "listen", so the check below still applies there.
 	if host.TransportMode != "listen" {
-		return host.ID, host.HostType, nil
+		return host, nil
 	}
 	// The API stores a URL only after validating it, so in practice this is
 	// the nil case; the empty check is belt and braces against a host row
 	// that somehow carries one.
 	if host.URL == nil || *host.URL == "" {
-		return "", "", fmt.Errorf("host %q is registered but has no URL yet; run `amika-hostd register-url <url>` on it", host.Hostname)
+		return nil, fmt.Errorf("host %q is registered but has no URL yet; run `amika-hostd register-url <url>` on it", host.Hostname)
 	}
-	return host.ID, host.HostType, nil
+	return host, nil
 }
 
 // assertRigLandedOnHost checks that a rig asked for by --host actually got

@@ -78,7 +78,10 @@ restart, so rigs keep running and the tunnel and SSH sessions stay up
    preset with template `amika-macos-coder`. With no `[runtimes]` table it
    also lists smol, so smol stays on.
 2. It installs Lume `0.6.1` with Lume's own installer, into `~/.local/bin`
-   with no `sudo`, only when Lume is turned on and not found.
+   with no `sudo`, only when Lume is turned on and not found. Turning on
+   `bare_metal` first checks the machine as setup does (an `sshd` binary,
+   and sshd's StrictModes on amikad's state directory), and refuses with
+   nothing changed; then it installs amikad into hostd's data directory.
 3. It writes the file, and reloads a running daemon as `reload` does,
    which then sends Amika the new capabilities.
 
@@ -112,21 +115,14 @@ without `AMIKA_API_KEY`/`AMIKA_HOSTD_API_KEY`: it only serves, so the
 background daemon never holds the API key. `up` checks the pidfile before
 registering, so a second `up` fails without calling Amika.
 
-A bare-metal host (`host_type = "bare-metal"`) also sends `host_type:
-"bare_metal"`, `resources` (`{vcpus, memoryGib, diskGib, os, arch}`, detected
-through `HostPlatform.detectResources`: logical CPUs, total memory, and the
+Registration and that `PUT` also send `capabilities`, what the host can run
+(`runtimes.ts`). With `bare_metal` on, its entry carries what the machine is
+now: `os`, `resources` (`{vcpus, memory_gib, disk_gib}`, detected through
+`HostPlatform.detectResources`: logical CPUs, total memory, and the
 filesystem holding the home directory) and `ssh_user` (the account hostd runs
-as) on registration, with empty `sizes`, and on every `up` against an existing
-host sends them again with `PUT /api/v0beta1/hosts/{id}`, before the sizes,
-so a refused change leaves the rest alone. A VM host sends none of these
-fields, so hostd and the control plane can be released in either order, except
-that one whose registered record says `host_type: "bare_metal"` sends
-`host_type: "vm"` to switch back. Amika refuses a change of type while the
-host has rigs (`409 host_type_conflict`); hostd says so ("this host still has
-rigs; delete them before changing host type") and starts nothing. Before
-registering, `up` on a bare-metal host refuses an OS without bare metal,
-warns that `[sizes]` is ignored, and installs amikad if a newer hostd pins a
-version setup did not install.
+as), so every `up` tells Amika again. Before registering, `up` refuses a
+runtime this machine cannot run, and with `bare_metal` on installs amikad if
+a newer hostd pins a version not yet installed.
 
 The config is the source of truth for the transport too, but Amika never
 moves an existing host between transports on registration: it creates a new

@@ -603,22 +603,6 @@ describe("machine API", () => {
     });
   });
 
-  it("blames no download for a bare-metal host's deadline", async () => {
-    const runtime = fakeRuntime();
-    runtime.list.mockReturnValueOnce(new Promise(() => {}));
-    const app = authenticated(
-      createApp(
-        { secretKey: SECRET, requestTimeoutMs: 5, bareMetal: true },
-        runtime,
-      ),
-    );
-    const response = await app.request(ROOT);
-    expect(response.status).toBe(504);
-    expect(await response.json()).toEqual({
-      error: "Runtime request timed out",
-    });
-  });
-
   it("ignores a runtime call that fails after the deadline", async () => {
     const runtime = fakeRuntime();
     let fail: (error: Error) => void = () => {};
@@ -1607,81 +1591,43 @@ describe("snapshots", () => {
   });
 });
 
-describe("a bare-metal host", () => {
+describe("a bare-metal rig", () => {
   const RIGS = "/v0beta1/rigs";
-  const SNAPSHOTS = "/v0beta1/snapshots";
 
-  /** The app in bare-metal mode, even if handed snapshot support. */
   function bareMetal(runtime = fakeRuntime()) {
-    const store = {
-      list: vi.fn(() => []),
-      get: vi.fn(() => undefined),
-      artifact: vi.fn(() => undefined),
-      isCapturing: vi.fn(() => false),
-      remove: vi.fn(),
-    };
-    const capture = vi.fn(async () => {});
-    const app = authenticated(
-      createApp({ secretKey: SECRET, bareMetal: true }, runtime, {
-        snapshots: { store: store as never, capture },
-      }),
-    );
-    return { app, runtime, store, capture };
+    const app = authenticated(createApp({ secretKey: SECRET }, runtime));
+    return { app, runtime };
   }
-
-  it("names bare-metal in /health, and never snapshots", async () => {
-    const { app } = bareMetal();
-    expect(await (await app.request("/health")).json()).toEqual({
-      status: "ok",
-      apis: ["v0beta1"],
-      features: ["service-tokens", "bare-metal"],
-    });
-  });
-
-  it.each(["GET", "PUT"])(
-    "serves no files routes (%s), at either path",
-    async (method) => {
-      const { app, runtime } = bareMetal();
-      for (const root of [RIGS, ROOT]) {
-        const response = await app.request(`${root}/demo/files/etc/passwd`, {
-          method,
-          body: method === "PUT" ? "data" : undefined,
-        });
-        expect(response.status).toBe(404);
-      }
-      expect(runtime.readFile).not.toHaveBeenCalled();
-      expect(runtime.writeFile).not.toHaveBeenCalled();
-    },
-  );
-
-  it("serves no snapshot routes", async () => {
-    const { app, capture, store } = bareMetal();
-    expect((await app.request(SNAPSHOTS)).status).toBe(404);
-    expect((await app.request(`${SNAPSHOTS}/org/sandbox/x`)).status).toBe(404);
-    expect(
-      (await app.request(`${RIGS}/demo/snapshots`, json({ name: "org/x" })))
-        .status,
-    ).toBe(404);
-    expect(capture).not.toHaveBeenCalled();
-    expect(store.list).not.toHaveBeenCalled();
-  });
 
   it("creates without resolving an image, which the rig ignores", async () => {
     const { app, runtime } = bareMetal();
+    // No preset is configured, so resolving the image would refuse it.
     const response = await app.request(
       RIGS,
       json({
         name: "demo",
-        image: "amika-coder",
+        image: "bare-metal",
+        runtime: "bare_metal",
         services: [{ name: "amikad", port: 60999 }],
       }),
     );
     expect(response.status).toBe(201);
     expect(runtime.create.mock.calls[0][0]).toMatchObject({
       name: "demo",
-      image: "amika-coder",
+      image: "bare-metal",
+      runtime: "bare_metal",
       services: [{ name: "amikad", port: 60999 }],
     });
+  });
+
+  it("passes on the runtime's refusal of a file read", async () => {
+    const runtime = fakeRuntime();
+    runtime.readFile.mockRejectedValueOnce(
+      new RuntimeError(404, "refused", "a bare-metal host serves no files"),
+    );
+    const { app } = bareMetal(runtime);
+    const response = await app.request(`${RIGS}/demo/files/etc/passwd`);
+    expect(response.status).toBe(404);
   });
 
   it("passes on the runtime's refusal of an exec", async () => {

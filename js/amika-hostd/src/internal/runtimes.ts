@@ -1,6 +1,6 @@
 /**
  * The runtimes a host runs rigs on, the presets it offers on them, and the
- * capabilities report built from both (spec 026, "hostd config").
+ * capabilities report built from both (spec 028, "hostd config").
  *
  * `resolveRuntimes` turns the TOML tables into checked settings, and
  * `capabilitiesOf` turns those into what hostd tells Amika. Both are pure, so
@@ -10,19 +10,39 @@ import os from "node:os";
 import path from "node:path";
 import { ConfigError, type HostSize } from "./config.js";
 
-/** The tools hostd can run rigs with. */
-export const RUNTIME_NAMES = ["smol", "lume"] as const;
+/**
+ * The tools hostd can run rigs with. `bare_metal` is not a tool: its one rig
+ * is this machine itself, with only the SSH bridge on it
+ * (`bare-metal-runtime.ts`).
+ */
+export const RUNTIME_NAMES = ["smol", "lume", "bare_metal"] as const;
 export type RuntimeName = (typeof RUNTIME_NAMES)[number];
 
+/** The runtimes that boot an image, and so the only ones a preset names. */
+export type ImageRuntimeName = Exclude<RuntimeName, "bare_metal">;
+
 export type GuestOs = "linux" | "macos";
+
+/** How isolated a rig is: a VM, a container, or no isolation at all. */
+export type RuntimeKind = "vm" | "container" | "host";
 
 /** What each runtime is, whatever the config says. */
 export const RUNTIME_KINDS: Record<
   RuntimeName,
-  { kind: "vm" | "container"; os: GuestOs; snapshots: boolean }
+  { kind: RuntimeKind; snapshots: boolean }
 > = {
-  smol: { kind: "vm", os: "linux", snapshots: true },
-  lume: { kind: "vm", os: "macos", snapshots: false },
+  smol: { kind: "vm", snapshots: true },
+  lume: { kind: "vm", snapshots: false },
+  bare_metal: { kind: "host", snapshots: false },
+};
+
+/**
+ * The guest OS of each runtime that boots an image. A bare-metal rig's OS is
+ * this machine's (`MachineFacts`).
+ */
+export const GUEST_OS: Record<ImageRuntimeName, GuestOs> = {
+  smol: "linux",
+  lume: "macos",
 };
 
 /**
@@ -43,9 +63,9 @@ export interface RuntimeSettings {
 
 export interface PresetSettings {
   os: GuestOs;
-  defaultRuntime: RuntimeName;
+  defaultRuntime: ImageRuntimeName;
   /** The image for each runtime that is on, in that runtime's format. */
-  images: Partial<Record<RuntimeName, string>>;
+  images: Partial<Record<ImageRuntimeName, string>>;
 }
 
 export interface RuntimeConfig {
@@ -94,11 +114,20 @@ export function resolveRuntimes({
     if (table.storage_dir !== undefined && runtime !== "lume") {
       throw new ConfigError(`runtimes.${name}.storage_dir is only for lume`);
     }
+    // One rig, which is this machine at its own size.
+    if (
+      runtime === "bare_metal" &&
+      (table.max_running !== undefined || table.sizes !== undefined)
+    ) {
+      throw new ConfigError(
+        "runtimes.bare_metal takes only `enabled`: its one rig is this machine, at the machine's own size",
+      );
+    }
     if (table.enabled === false) continue;
     runtimes[runtime] = {
       name: runtime,
       maxRunning: maxRunning(runtime, table.max_running, warnings),
-      sizes: table.sizes ?? sizes,
+      sizes: runtime === "bare_metal" ? {} : (table.sizes ?? sizes),
       storageDir: table.storage_dir,
     };
     if (
@@ -116,7 +145,7 @@ export function resolveRuntimes({
     const entries = Object.entries(table.runtimes ?? {}).map(
       ([runtime, entry]) =>
         [
-          runtimeName(runtime, `presets.${name}.runtimes.${runtime}`),
+          imageRuntimeName(runtime, `presets.${name}.runtimes.${runtime}`),
           entry,
         ] as const,
     );
@@ -125,7 +154,7 @@ export function resolveRuntimes({
     }
     const defaultRuntime = presetDefault(name, table, entries);
     // A preset promises one OS, also through runtimes that are off.
-    const oses = new Set(entries.map(([runtime]) => RUNTIME_KINDS[runtime].os));
+    const oses = new Set(entries.map(([runtime]) => GUEST_OS[runtime]));
     if (oses.size > 1) {
       throw new ConfigError(
         `presets.${name} has runtimes with different guest OSes (${[...oses].join(", ")}); a preset must have one OS`,
@@ -155,12 +184,12 @@ export function resolveRuntimes({
   return { runtimes, presets, warnings };
 }
 
-/** What hostd tells Amika it can run (spec 026, "Capabilities"). */
+/** What hostd tells Amika it can run (spec 028, "Capabilities"). */
 export interface Capabilities {
   runtimes: Record<
     string,
     {
-      kind: "vm" | "container";
+      kind: RuntimeKind;
       os: GuestOs;
       arch: string;
       max_running?: number;
@@ -174,48 +203,40 @@ export interface Capabilities {
           disk_grow_only?: boolean;
         }
       >;
+      /** `bare_metal` only: this machine's capacity, detected. */
+      resources?: { vcpus: number; memory_gib: number; disk_gib: number };
+      /** `bare_metal` only: the account SSH sessions log in as. */
+      ssh_user?: string;
     }
   >;
   presets: Record<
     string,
-    { os: GuestOs; default_runtime: RuntimeName; runtimes: RuntimeName[] }
+    {
+      os: GuestOs;
+      default_runtime: ImageRuntimeName;
+      runtimes: ImageRuntimeName[];
+    }
   >;
 }
 
 /**
- * The report as Amika's hosts API takes it: the same, with each size in the
- * shape of the API's `sizes` (`HostSize`).
+ * What a bare-metal rig is: this machine, as hostd finds it when it builds
+ * a report. Read only when `bare_metal` is on.
  */
-export interface ApiCapabilities {
-  runtimes: Record<
-    string,
-    Omit<Capabilities["runtimes"][string], "sizes"> & {
-      sizes: Record<string, HostSize>;
-    }
-  >;
-  presets: Capabilities["presets"];
-}
-
-export function apiCapabilitiesOf(
-  config: RuntimeConfig,
-  arch: string,
-): ApiCapabilities {
-  const report = capabilitiesOf(config, arch);
-  return {
-    runtimes: Object.fromEntries(
-      Object.entries(report.runtimes).map(([name, runtime]) => [
-        name,
-        { ...runtime, sizes: config.runtimes[name as RuntimeName]!.sizes },
-      ]),
-    ),
-    presets: report.presets,
-  };
+export interface MachineFacts {
+  os: GuestOs;
+  vcpus: number;
+  memoryGib: number;
+  diskGib: number;
+  /** The account hostd runs as, which SSH sessions log in as. */
+  sshUser: string;
 }
 
 /** The report for `config` on a host of `arch`. Images stay on the host. */
 export function capabilitiesOf(
   config: RuntimeConfig,
   arch: string,
+  machine: () => MachineFacts,
 ): Capabilities {
   return {
     runtimes: Object.fromEntries(
@@ -223,6 +244,9 @@ export function capabilitiesOf(
         runtime.name,
         {
           ...RUNTIME_KINDS[runtime.name],
+          ...(runtime.name === "bare_metal"
+            ? bareMetalEntry(machine())
+            : { os: GUEST_OS[runtime.name] }),
           arch,
           ...(runtime.maxRunning === undefined
             ? {}
@@ -247,10 +271,25 @@ export function capabilitiesOf(
         {
           os: preset.os,
           default_runtime: preset.defaultRuntime,
-          runtimes: Object.keys(preset.images) as RuntimeName[],
+          runtimes: Object.keys(preset.images) as ImageRuntimeName[],
         },
       ]),
     ),
+  };
+}
+
+/** The report's facts about this machine, in its snake_case. */
+function bareMetalEntry({
+  os,
+  vcpus,
+  memoryGib,
+  diskGib,
+  sshUser,
+}: MachineFacts) {
+  return {
+    os,
+    resources: { vcpus, memory_gib: memoryGib, disk_gib: diskGib },
+    ssh_user: sshUser,
   };
 }
 
@@ -261,6 +300,17 @@ function runtimeName(name: string, setting: string): RuntimeName {
   throw new ConfigError(
     `${setting}: unknown runtime ${JSON.stringify(name)}; use ${RUNTIME_NAMES.join(" or ")}`,
   );
+}
+
+/** A runtime a preset can name: one that boots an image. */
+function imageRuntimeName(name: string, setting: string): ImageRuntimeName {
+  const runtime = runtimeName(name, setting);
+  if (runtime === "bare_metal") {
+    throw new ConfigError(
+      `${setting}: bare_metal boots no image, so no preset runs on it`,
+    );
+  }
+  return runtime;
 }
 
 /** Lume's limit is the smaller of the setting and 2, also with no setting. */
@@ -282,8 +332,8 @@ function maxRunning(
 function presetDefault(
   name: string,
   table: PresetTable,
-  entries: readonly (readonly [RuntimeName, unknown])[],
-): RuntimeName {
+  entries: readonly (readonly [ImageRuntimeName, unknown])[],
+): ImageRuntimeName {
   const listed = entries.map(([runtime]) => runtime);
   if (table.default_runtime === undefined) {
     if (listed.length === 1) return listed[0];
@@ -291,7 +341,7 @@ function presetDefault(
       `presets.${name}.default_runtime is required: the preset has runtimes ${listed.join(", ")}`,
     );
   }
-  const runtime = runtimeName(
+  const runtime = imageRuntimeName(
     table.default_runtime,
     `presets.${name}.default_runtime`,
   );
@@ -306,7 +356,7 @@ function presetDefault(
 /** Each preset's image on `runtime`, keyed by preset name. */
 export function presetImages(
   config: RuntimeConfig,
-  runtime: RuntimeName,
+  runtime: ImageRuntimeName,
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(config.presets).flatMap(([name, preset]) => {

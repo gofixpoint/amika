@@ -88,8 +88,13 @@ func TestResolveUserLayoutKeepsAllStateInStateDir(t *testing.T) {
 		t.Fatalf("sshd = %+v, want AllowUser Operator on port 41002", layout.SSHD)
 	}
 	listen := (&DaemonOperations{layout: layout}).resolveListen(DefaultPort)
-	if listen.bind != "127.0.0.1:41001" || listen.port != 41001 || listen.probe != "127.0.0.1:41001" {
-		t.Fatalf("user listen = %+v, want AMIKAD_LISTEN to override --port", listen)
+	if listen.bind != "127.0.0.1:41001" || listen.probe != "127.0.0.1:41001" {
+		t.Fatalf("user listen = %+v, want AMIKAD_LISTEN to override the bind port", listen)
+	}
+	// The control plane checks the reported port against the service port
+	// hostd publishes amikad on, not the loopback port it forwards to.
+	if listen.port != DefaultPort {
+		t.Fatalf("user listen port = %d, want the service port %d", listen.port, DefaultPort)
 	}
 }
 

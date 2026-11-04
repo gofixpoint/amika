@@ -1,31 +1,19 @@
 /**
- * What hostd asks of the operating system it runs on, behind one interface,
- * modelled on the sandbox provider library: an interface, one implementation
- * per OS, a capability table, and a registry (`./index.ts`) that picks one by
+ * What hostd asks of the operating system it runs on, behind one interface:
+ * one implementation per OS, and a registry (`./index.ts`) that picks one by
  * `process.platform`. Linux and macOS are implemented; anything else resolves
- * to an implementation that reports no capabilities and refuses what it
- * cannot do.
+ * to an implementation that runs no runtimes and refuses what it cannot do.
  *
  * Resolved once (`currentHostPlatform`) and passed through `deps`, so a test
  * chooses the OS rather than inheriting the machine's. Nothing outside
  * `src/platforms/` reads `process.platform` (enforced by lint).
  */
-import type { RuntimeName } from "../internal/runtimes.js";
+import type { GuestOs, RuntimeName } from "../internal/runtimes.js";
 import type { Keychain, Runner } from "./keychains.js";
 
-/** What hostd can offer on an OS. */
-export interface PlatformCapabilities {
-  /** Run one rig that is this machine itself (`host_type = "bare-metal"`). */
-  bareMetal: boolean;
-  /** Run rigs as smolvm VMs (`host_type = "vm"`). */
-  vmRuntime: boolean;
-  /** Keep secrets in a system keychain (where a session provides one). */
-  keychain: boolean;
-}
-
 /**
- * This machine's capacity, as a bare-metal host reports it to Amika. Always
- * detected, never configured.
+ * This machine's capacity, as the `bare_metal` runtime reports it to Amika.
+ * Always detected, never configured.
  */
 export interface HostResources {
   /** Logical CPUs. */
@@ -33,7 +21,8 @@ export interface HostResources {
   memoryGib: number;
   /** The size of the filesystem holding the operator's home directory. */
   diskGib: number;
-  os: string;
+  /** In the names Amika gives a rig's OS. */
+  os: GuestOs;
   arch: string;
 }
 
@@ -53,7 +42,6 @@ export type ProcessField =
 export interface HostPlatform {
   /** The `process.platform` this implementation is for. */
   readonly name: NodeJS.Platform;
-  readonly capabilities: PlatformCapabilities;
   /** Logical CPUs, total memory, and the home directory's filesystem. */
   detectResources(): HostResources;
   /** The absolute path of an `sshd` binary, or undefined if none is found. */
@@ -62,7 +50,7 @@ export interface HostPlatform {
   readonly sshdInstallHint: string;
   /** The amikad release binary for this machine. */
   amikadAsset(): AmikadAsset;
-  /** The runtimes this machine can run rigs with. */
+  /** The runtimes this machine can run rigs with; none on an unknown OS. */
   runtimes(): RuntimeName[];
   /**
    * The system keychain hostd keeps secrets in, or undefined where it

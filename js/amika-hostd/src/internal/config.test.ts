@@ -47,7 +47,6 @@ describe("resolveConfig", () => {
       },
       transport: "tunnel",
       tunnelGatewayUrl: undefined,
-      hostType: "vm",
       amikadPath: undefined,
       configPath: undefined,
     });
@@ -520,21 +519,11 @@ describe("the tunnel gateway URL", () => {
   });
 });
 
-describe("host_type", () => {
-  it("defaults to VMs", () => {
-    expect(resolveConfig({}).hostType).toBe("vm");
-  });
-
-  it.each(["vm", "bare-metal"] as const)("reads %s", (hostType) => {
-    expect(
-      resolveConfig({ file: file(`host_type = "${hostType}"\n`) }).hostType,
-    ).toBe(hostType);
-  });
-
-  it.each(["bare_metal", "baremetal", "VM", ""])("refuses %j", (value) => {
+describe("bare metal", () => {
+  it("refuses the old host_type, naming the runtime", () => {
     expect(() =>
-      resolveConfig({ file: file(`host_type = "${value}"\n`) }),
-    ).toThrow('host_type must be "vm" or "bare-metal"');
+      resolveConfig({ file: file('host_type = "bare-metal"\n') }),
+    ).toThrow(/no longer reads; remove it, and add a \[runtimes\.bare_metal\]/);
   });
 
   it("takes an absolute amikad_path, and refuses a relative one", () => {
@@ -571,21 +560,21 @@ describe("config.example.toml", () => {
     });
   });
 
-  it("documents the host type, leaving VMs", () => {
-    expect(example.contents).toMatch(/^# host_type = "vm"$/m);
-    expect(example.contents).toMatch(/^# host_type = "bare-metal"$/m);
+  it("documents bare metal as a table to uncomment", () => {
+    expect(example.contents).toMatch(/^# \[runtimes\.bare_metal\]$/m);
     expect(example.contents).toMatch(/^# amikad_path = /m);
     expect(resolveConfig({ file: example })).toMatchObject({
-      hostType: "vm",
       amikadPath: undefined,
     });
     const bareMetal = file(
       example.contents.replace(
-        '# host_type = "bare-metal"',
-        'host_type = "bare-metal"',
+        "# [runtimes.bare_metal]",
+        "[runtimes.bare_metal]",
       ),
     );
-    expect(resolveConfig({ file: bareMetal }).hostType).toBe("bare-metal");
+    expect(
+      Object.keys(resolveConfig({ file: bareMetal }).runtimes.runtimes),
+    ).toEqual(["bare_metal"]);
   });
 
   it("documents listening as a line to uncomment", () => {

@@ -1,4 +1,4 @@
-/** Cover the runtime and preset rules of spec 026, and the capabilities report. */
+/** Cover the runtime and preset rules of spec 028, and the capabilities report. */
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "./config.js";
 import {
@@ -25,6 +25,19 @@ const LUME = `
 storage_dir = "/Volumes/Data/amika-lume"
 `;
 
+/** A machine whose facts no report should need. */
+const noMachine = () => {
+  throw new Error("read the machine's facts with bare_metal off");
+};
+
+const MACHINE = {
+  os: "macos" as const,
+  vcpus: 10,
+  memoryGib: 32,
+  diskGib: 460.4,
+  sshUser: "jakub",
+};
+
 describe("resolveRuntimes", () => {
   it("turns on smol only when the file has no [runtimes] table", () => {
     expect(Object.keys(runtimesOf(SIZES).runtimes)).toEqual(["smol"]);
@@ -42,6 +55,49 @@ ${LUME}`);
     expect(() => runtimesOf("[runtimes.docker]")).toThrow(
       /runtimes\.docker: unknown runtime "docker"/,
     );
+  });
+
+  describe("bare_metal", () => {
+    it("turns on alone, leaving smol off", () => {
+      expect(
+        Object.keys(runtimesOf(`${SIZES}[runtimes.bare_metal]`).runtimes),
+      ).toEqual(["bare_metal"]);
+    });
+
+    it("runs beside smol and lume, with no sizes of its own", () => {
+      const config = runtimesOf(
+        `${SIZES}[runtimes.smol]\n${LUME}[runtimes.bare_metal]\n`,
+      );
+      expect(Object.keys(config.runtimes)).toEqual([
+        "smol",
+        "lume",
+        "bare_metal",
+      ]);
+      expect(config.runtimes.bare_metal).toEqual({
+        name: "bare_metal",
+        maxRunning: undefined,
+        sizes: {},
+        storageDir: undefined,
+      });
+    });
+
+    it.each([
+      "[runtimes.bare_metal]\nmax_running = 1",
+      "[runtimes.bare_metal.sizes.m]\nvcpus = 1\nmemory_gib = 1\ndisk_gib = 1",
+    ])("takes only enabled: %j", (contents) => {
+      expect(() => runtimesOf(contents)).toThrow(
+        "runtimes.bare_metal takes only `enabled`",
+      );
+    });
+
+    it.each([
+      `[runtimes.bare_metal]\n[presets.coder.runtimes.bare_metal]\nimage = "x"`,
+      `[runtimes.smol]\n[presets.coder]\ndefault_runtime = "bare_metal"\n[presets.coder.runtimes.smol]\nimage = "x"`,
+    ])("is no preset's runtime: %j", (contents) => {
+      expect(() => runtimesOf(contents)).toThrow(
+        "bare_metal boots no image, so no preset runs on it",
+      );
+    });
   });
 
   it("needs an absolute storage_dir for lume, and only for lume", () => {
@@ -207,7 +263,7 @@ image = "ghcr.io/gofixpoint/amika-coder:tag"
 [presets.macos-coder.runtimes.lume]
 image = "amika-macos-coder"
 `);
-    expect(capabilitiesOf(config, "arm64")).toEqual({
+    expect(capabilitiesOf(config, "arm64", noMachine)).toEqual({
       runtimes: {
         smol: {
           kind: "vm",
@@ -239,8 +295,26 @@ image = "amika-macos-coder"
 
   it("leaves out a limit that is not set", () => {
     expect(
-      capabilitiesOf(runtimesOf(SIZES), "x64").runtimes.smol,
+      capabilitiesOf(runtimesOf(SIZES), "x64", noMachine).runtimes.smol,
     ).not.toHaveProperty("max_running");
+  });
+
+  it("reports bare_metal as this machine, with no limit, sizes or snapshots", () => {
+    const report = capabilitiesOf(
+      runtimesOf(`${SIZES}[runtimes.smol]\n[runtimes.bare_metal]\n`),
+      "arm64",
+      () => MACHINE,
+    );
+    expect(report.runtimes.bare_metal).toEqual({
+      kind: "host",
+      os: "macos",
+      arch: "arm64",
+      snapshots: false,
+      sizes: {},
+      resources: { vcpus: 10, memory_gib: 32, disk_gib: 460.4 },
+      ssh_user: "jakub",
+    });
+    expect(report.runtimes.smol.os).toBe("linux");
   });
 });
 

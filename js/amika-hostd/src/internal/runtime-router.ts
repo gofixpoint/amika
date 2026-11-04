@@ -1,5 +1,5 @@
 /**
- * One machine API over all the runtimes that are on (spec 026, "hostd with
+ * One machine API over all the runtimes that are on (spec 028, "hostd with
  * more than one runtime"). Each call goes to the runtime that owns the
  * machine, which the machine index records.
  *

@@ -13,7 +13,6 @@ export {
   type AmikadAsset,
   type HostPlatform,
   type HostResources,
-  type PlatformCapabilities,
   type ProcessField,
 } from "./platform.js";
 export type { PlatformDeps } from "./shared.js";

@@ -1,8 +1,8 @@
 # Runtime
 
 How the daemon runs smolvm beside itself, and how it serves the machine API on
-top of that smolvm; and, on a bare-metal host, how it serves the machine API
-over the machine itself.
+top of that smolvm; and, for the `bare_metal` runtime, how it serves the
+machine API over the machine itself.
 
 ## smolvm
 
@@ -189,17 +189,22 @@ exec's exact `stdoutB64`/`stderrB64`) still reach the caller.
   included: the deadline, that a create or start may still be downloading
   its image, and smolvm's log when hostd started smolvm. hostd's own
   deadline, which usually fires first, prefixes it with
-  `Runtime request timed out: `. A bare-metal host gives no reason.
+  `Runtime request timed out: `.
 - A create of an image pre-pull is caching answers `503` at once (see
   [Image cache](configuration.md#image-cache)).
 
 ## Bare-metal runtime
 
-`src/internal/bare-metal-runtime.ts` is the machine runtime when `host_type =
-"bare-metal"`: `serveInForeground` builds it instead of the `smol` provider
-and starts no smolvm. The one rig is this machine, recorded in
+`src/internal/bare-metal-runtime.ts` is the `bare_metal` runtime, on when
+the config has a `[runtimes.bare_metal]` table. It runs beside smol and Lume:
+the runtime router (`runtime-router.ts`) sends each call for its rig to it,
+by the machine index, as for any runtime. A host with only `bare_metal` on
+starts no smolvm. The one rig is this machine, recorded in
 `bare-metal-rig.json` in the state directory (name, state, the loopback ports
 amikad and its sshd listen on, picked free at create, and the creation time).
+Its capabilities entry has `kind: "host"`, the machine's OS, its detected
+`resources` and the `ssh_user` sessions log in as, no sizes and no
+snapshots.
 
 | Event                   | hostd                                                                      |
 | ----------------------- | -------------------------------------------------------------------------- |
@@ -211,14 +216,16 @@ amikad and its sshd listen on, picked free at create, and the creation time).
 | `up` with a running rig | Restarts the child if `connect-token` is in amikad's state directory       |
 | `down`, shutdown        | Stops the child                                                            |
 
-Create ignores the image (the app does not resolve it), sizes and network,
+Create (`runtime: "bare_metal"`) ignores the image (the app does not
+resolve it), sizes and network,
 and accepts services only as `amikad` on 60999, which the service registry
 records as for a VM, so the keyless SSH upgrade and forwarding work
 unchanged: `hostPort(rig, 60999)` is amikad's loopback port while the rig
 runs. Get and list report the machine's detected CPUs and memory.
 
 **Exec runs only the allowlist** (`BARE_METAL_EXEC_ALLOWLIST`), decided by the
-host's own type and never by the request: `command` must be exactly
+rig's runtime, which the machine index recorded at create, and never by the
+request: `command` must be exactly
 `["/bin/sh", "-c", C]` with `C`, byte for byte, one of
 `amikad connect-token set`, `amikad setup sshd --force-overwrite`,
 `amikad authorized-keys set`, `amikad authorized-keys clear`,
@@ -242,9 +249,8 @@ as hostd's child, output appended to `log/amikad.log`, and answers once
 A child that exits as it starts is reported (exit 1) and not restarted; one
 that crashes later is restarted with doubling backoff (1s up to 30s).
 
-The files routes and snapshot routes are not served (`404`), and `/health`
-names `bare-metal` and never `snapshots` (see
-[API versions](api-and-auth.md#api-versions)). Delete removes amikad's state
+File reads and writes answer `404`, and a snapshot of the rig is refused
+(`409`, as for any runtime without snapshots). Delete removes amikad's state
 directory only after checking it resolves, links included, strictly inside
 hostd's state directory, and removes a link planted there rather than
 following it; the runtime refuses to start with any other layout.
@@ -261,8 +267,9 @@ release's `checksums.txt` before it is unpacked and moved into place whole.
 
 OS-dependent code sits behind `HostPlatform` in `src/platforms/`: one
 implementation per OS (Linux, macOS, and an unsupported one for anything
-else), a capability table (`bareMetal`, `vmRuntime`, `keychain`) and a
-registry keyed by `process.platform`. It is resolved once and passed through
+else) and a registry keyed by `process.platform`. Each names the runtimes it
+can run (`runtimes()`): `smol` and `bare_metal` on Linux and macOS, and `lume`
+too on Apple Silicon; the unsupported one runs none. It is resolved once and passed through
 `deps` (`CliDeps.platform`, `SetupDeps.platform`, `CredentialDeps.platform`),
 so tests choose the OS. It detects resources, finds `sshd`, names the amikad
 release asset, opens the keychain (`src/platforms/keychains.ts`), and reads a

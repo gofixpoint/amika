@@ -28,19 +28,6 @@ export type TransportMode = "listen" | "tunnel";
  */
 export const DEFAULT_TRANSPORT: TransportMode = "tunnel";
 
-/**
- * What this host runs rigs on.
- *
- * `vm` runs each rig as a smolvm VM. `bare-metal` runs exactly one rig, and
- * that rig is this machine itself: hostd serves only the SSH bridge
- * (amikad) on it, as the operator's own account, and copies nothing onto
- * it.
- */
-export type HostType = "vm" | "bare-metal";
-
-/** VMs, which is what every host ran before bare metal existed. */
-export const DEFAULT_HOST_TYPE: HostType = "vm";
-
 /** Settings accepted as command-line flags. */
 export interface HostdFlags {
   host?: string;
@@ -117,11 +104,9 @@ export interface HostdConfig {
    * while an incident is on.
    */
   tunnelGatewayUrl?: string;
-  /** What this host runs rigs on; see `HostType`. Only read from TOML. */
-  hostType: HostType;
   /**
-   * The amikad binary a bare-metal host runs, in place of the one setup
-   * installs into hostd's data directory. For development; absolute. Only
+   * The amikad binary the `bare_metal` runtime runs, in place of the one
+   * hostd installs into its data directory. For development; absolute. Only
    * read from TOML.
    */
   amikadPath?: string;
@@ -224,7 +209,6 @@ export function resolveConfig({
     tunnelGatewayUrl: parseGatewayUrl(
       fromEnv("tunnelGatewayUrl") ?? toml.tunnel_gateway_url,
     ),
-    hostType: parseHostType(toml.host_type ?? DEFAULT_HOST_TYPE),
     amikadPath: parseAmikadPath(toml.amikad_path),
     configPath: file?.path,
   };
@@ -290,20 +274,8 @@ function parseTransport(value: string): TransportMode {
 }
 
 /**
- * The host type, refusing a spelling this daemon has no code for, so a typo
- * never runs a machine the operator meant to keep to itself as VMs, or the
- * other way round.
- */
-function parseHostType(value: string): HostType {
-  if (value === "vm" || value === "bare-metal") return value;
-  throw new ConfigError(
-    `host_type must be "vm" or "bare-metal", not ${JSON.stringify(value)}`,
-  );
-}
-
-/**
- * The amikad override. Absolute, since a bare-metal host runs it by path
- * and never through a shell or `PATH`.
+ * The amikad override. Absolute, since the `bare_metal` runtime runs it by
+ * path and never through a shell or `PATH`.
  */
 function parseAmikadPath(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
@@ -357,7 +329,6 @@ const configFileSchema = z.strictObject({
   snapshot_dir: z.string().trim().min(1).optional(),
   transport: z.string().optional(),
   tunnel_gateway_url: z.string().trim().min(1).optional(),
-  host_type: z.string().optional(),
   amikad_path: z.string().trim().min(1).optional(),
   sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
   runtimes: z
@@ -398,6 +369,11 @@ function parseConfigFile(file: HostdConfigFile) {
   if (typeof raw === "object" && raw !== null && "api_key" in raw) {
     throw new ConfigError(
       `${file.path} must not contain api_key; run \`amika-hostd setup\` to store it, or set ${ENV_NAMES.apiKey[0]} in the environment`,
+    );
+  }
+  if (typeof raw === "object" && raw !== null && "host_type" in raw) {
+    throw new ConfigError(
+      `${file.path} sets host_type, which amika-hostd no longer reads; remove it, and add a [runtimes.bare_metal] table to make this machine a rig`,
     );
   }
   if (typeof raw === "object" && raw !== null && "preset_images" in raw) {

@@ -1,5 +1,4 @@
 /** hostd on macOS. */
-import { PLATFORM_CAPABILITIES } from "./capabilities.js";
 import { macOSKeychain } from "./keychains.js";
 import os from "node:os";
 import { amikadArch } from "./amikad-arch.js";
@@ -15,8 +14,7 @@ import {
 export function darwinPlatform(deps: PlatformDeps = {}): HostPlatform {
   return {
     name: "darwin",
-    capabilities: PLATFORM_CAPABILITIES.darwin,
-    detectResources: () => detectUnixResources("darwin", deps),
+    detectResources: () => detectUnixResources("macos", deps),
     // macOS ships one; amika-hostd runs its own copy of it, unprivileged.
     findSshd: () => findSshdIn(["/usr/sbin/sshd"], deps),
     sshdInstallHint:
@@ -24,7 +22,9 @@ export function darwinPlatform(deps: PlatformDeps = {}): HostPlatform {
     amikadAsset: () => ({ os: "darwin", arch: amikadArch("darwin", deps) }),
     // Lume runs macOS VMs with Virtualization.framework, on Apple Silicon only.
     runtimes: () =>
-      (deps.arch ?? os.arch)() === "arm64" ? ["smol", "lume"] : ["smol"],
+      (deps.arch ?? os.arch)() === "arm64"
+        ? ["smol", "lume", "bare_metal"]
+        : ["smol", "bare_metal"],
     keychain: (_env, run) => macOSKeychain(run),
     // macOS has no `/proc`; trying it first costs one failed open and keeps
     // the lookup identical to the one hostd made before platforms existed.

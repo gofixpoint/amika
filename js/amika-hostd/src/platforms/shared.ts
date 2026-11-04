@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { accessSync, constants, readFileSync, statfsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { GuestOs } from "../internal/runtimes.js";
 import type { HostResources, ProcessField } from "./platform.js";
 
 /** What resource detection reads from the OS. */
@@ -37,7 +38,7 @@ const GIB = 1024 ** 3;
  * home directory, each as the OS reports it. GiB are rounded to one decimal.
  */
 export function detectUnixResources(
-  osName: string,
+  osName: GuestOs,
   deps: ResourceDeps = {},
 ): HostResources {
   const home = (deps.homedir ?? os.homedir)();

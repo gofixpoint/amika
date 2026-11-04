@@ -1,6 +1,6 @@
 # macOS image for Lume rigs
 
-`build.sh` makes the macOS image that Lume rigs clone (spec 026 in
+`build.sh` makes the macOS image that Lume rigs clone (spec 028 in
 amika-mono). It is apart from the Linux OCI images in `sandbox-image/`, but
 uses the same version pins (`sandbox-image/versions.env`).
 
