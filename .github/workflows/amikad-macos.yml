@@ -1,0 +1,49 @@
+name: amikad on macOS
+
+# amikad runs in macOS rigs, and its secure writes, locks, and sshd paths
+# differ there, so its tests also run on macOS. macOS runners are scarce
+# and, on a private repo, cost about 10x Linux minutes, so this runs only
+# when amikad or a package it imports changes. Keep `paths` in sync with:
+#
+#   go -C go list -deps -test ./internal/amikad/...
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "go/internal/amikad/**"
+      - "go/internal/buildmeta/**"
+      - "go/internal/constants/**"
+      - "go/internal/wsstream/**"
+      - "go/go.mod"
+      - "go/go.sum"
+      - ".github/workflows/amikad-macos.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "go/internal/amikad/**"
+      - "go/internal/buildmeta/**"
+      - "go/internal/constants/**"
+      - "go/internal/wsstream/**"
+      - "go/go.mod"
+      - "go/go.sum"
+      - ".github/workflows/amikad-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Test
+        run: go -C go test ./internal/amikad/...
