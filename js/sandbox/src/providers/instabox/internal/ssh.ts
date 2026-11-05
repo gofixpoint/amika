@@ -50,7 +50,8 @@ export async function mintInstaboxSshAccess(
     sshTokenSchema,
     "POST",
     machinePath(machineId, "/ssh-tokens"),
-    { json: { name: "amika", ttlSeconds } },
+    // The key keeps a retry from making a second token.
+    { idempotent: true, json: { name: "amika", ttlSeconds } },
   );
   return {
     token: minted.id,

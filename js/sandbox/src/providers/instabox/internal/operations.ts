@@ -108,6 +108,10 @@ export async function createInstaboxSandbox(
     name,
     ...source,
     metadata: { ...input.labels, [INSTABOX_NAME_METADATA_KEY]: input.name },
+    // The machine belongs to a tenant, so it must not get the API key
+    // owner's personal Vault. We also send no `secrets` or `envSecrets`,
+    // so it gets no org Secrets.
+    vault: false,
     ...(autoSuspend !== undefined
       ? { autoSuspendAfterSeconds: autoSuspend }
       : {}),

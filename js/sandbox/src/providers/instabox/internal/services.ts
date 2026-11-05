@@ -63,6 +63,8 @@ async function publishPrivatePort(
     "POST",
     machinePath(machineId, "/ports"),
     {
+      // The key keeps a retry from rotating the token twice.
+      idempotent: true,
       json: {
         port: service.containerPort,
         name: portName(service),
