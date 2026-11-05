@@ -9,6 +9,7 @@
  * resumes a paused machine first. `start` boots a stopped machine and
  * resumes a paused one.
  */
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { SANDBOX_ORG_ID_LABEL } from "../../../constants";
 import type { SandboxCtx } from "../../../logger";
@@ -39,6 +40,12 @@ import { findInstaboxSnapshotByRawName } from "./snapshot-operations";
 
 /** Instabox keeps no name rules we can rely on, so the exact name rides here. */
 export const INSTABOX_NAME_METADATA_KEY = "amika-sandbox-name";
+
+/**
+ * A random id for one create call. When we cannot tell if a create
+ * worked, we find the machine by this label and delete it.
+ */
+const CREATE_ID_METADATA_KEY = "amika-create-id";
 
 /** The machine user's home (`/data` is the persistent disk). */
 export const INSTABOX_HOME_DIR = "/data/home";
@@ -104,10 +111,15 @@ export async function createInstaboxSandbox(
     "Creating Instabox machine",
   );
   const autoSuspend = autoSuspendSeconds(input.autoStopInterval);
+  const createId = randomUUID();
   const body: Record<string, unknown> = {
     name,
     ...source,
-    metadata: { ...input.labels, [INSTABOX_NAME_METADATA_KEY]: input.name },
+    metadata: {
+      ...input.labels,
+      [INSTABOX_NAME_METADATA_KEY]: input.name,
+      [CREATE_ID_METADATA_KEY]: createId,
+    },
     // The machine belongs to a tenant, so it must not get the API key
     // owner's personal Vault. We also send no `secrets` or `envSecrets`,
     // so it gets no org Secrets.
@@ -141,6 +153,23 @@ export async function createInstaboxSandbox(
   } catch (error) {
     if (error instanceof InstaboxOperationError && error.operation.machineId) {
       await deleteFailed(error.operation.machineId);
+    } else if (!(error instanceof InstaboxApiError && error.status < 500)) {
+      // We do not know if Instabox made the machine (network error, 5xx,
+      // timeout). The caller gets no id, so nothing else can delete it.
+      await listMachines(config)
+        .then((machines) =>
+          Promise.all(
+            machines
+              .filter((m) => m.metadata?.[CREATE_ID_METADATA_KEY] === createId)
+              .map((m) => deleteFailed(m.id)),
+          ),
+        )
+        .catch((cleanup: unknown) =>
+          ctx.logger.warn(
+            { err: cleanup, name },
+            "Could not look for a machine after a failed Instabox create",
+          ),
+        );
     }
     throw error;
   }
@@ -308,11 +337,11 @@ const machineListSchema = z.object({
 /** Stop paging after this many pages; a server bug must not loop forever. */
 const MAX_LIST_PAGES = 1000;
 
-/** Every machine in the account, with its Amika name, org, and size. */
-export async function listInstaboxSandboxes(
+/** Every machine in the account. */
+async function listMachines(
   config: InstaboxConfig,
-): Promise<ProviderSandboxListing[]> {
-  const listings: ProviderSandboxListing[] = [];
+): Promise<InstaboxMachine[]> {
+  const all: InstaboxMachine[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_LIST_PAGES; page++) {
     const { machines, nextCursor } = await requestJson(
@@ -322,29 +351,38 @@ export async function listInstaboxSandboxes(
       "/machines",
       { query: { limit: "100", cursor } },
     );
-    for (const machine of machines) {
-      // Without a size the machine cannot be priced; skip it.
-      if (!machine.spec) continue;
-      listings.push({
-        providerSandboxId: machine.id,
-        name: machine.metadata?.[INSTABOX_NAME_METADATA_KEY] ?? machine.name,
-        orgId: machine.metadata?.[SANDBOX_ORG_ID_LABEL] ?? null,
-        state: machine.state,
-        sizing: {
-          vcpus: machine.spec.vcpus,
-          memoryGib: machine.spec.memMiB / MIB_PER_GIB,
-          diskGib:
-            (machine.spec.persistentDiskGiB ?? 0) +
-            (machine.spec.rootDiskGiB ?? 0),
-        },
-      });
-    }
-    if (!nextCursor) return listings;
+    all.push(...machines);
+    if (!nextCursor) return all;
     cursor = nextCursor;
   }
   throw new Error(
     `Instabox machine listing did not end within ${MAX_LIST_PAGES} pages`,
   );
+}
+
+/** Every machine in the account, with its Amika name, org, and size. */
+export async function listInstaboxSandboxes(
+  config: InstaboxConfig,
+): Promise<ProviderSandboxListing[]> {
+  const listings: ProviderSandboxListing[] = [];
+  for (const machine of await listMachines(config)) {
+    // Without a size the machine cannot be priced; skip it.
+    if (!machine.spec) continue;
+    listings.push({
+      providerSandboxId: machine.id,
+      name: machine.metadata?.[INSTABOX_NAME_METADATA_KEY] ?? machine.name,
+      orgId: machine.metadata?.[SANDBOX_ORG_ID_LABEL] ?? null,
+      state: machine.state,
+      sizing: {
+        vcpus: machine.spec.vcpus,
+        memoryGib: machine.spec.memMiB / MIB_PER_GIB,
+        diskGib:
+          (machine.spec.persistentDiskGiB ?? 0) +
+          (machine.spec.rootDiskGiB ?? 0),
+      },
+    });
+  }
+  return listings;
 }
 
 /** Timeout for one file transfer. */
