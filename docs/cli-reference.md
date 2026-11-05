@@ -533,6 +533,10 @@ touched.
 | `ProxyCommand`                                 | `amika plumbing …`     | Carry the session over Amika's WebSocket transport instead of a TCP dial   |
 | `ServerAliveInterval` / `ServerAliveCountMax`  | `15`, `3`                | Notice a dead transport instead of hanging                                 |
 
+The `ProxyCommand` also checks the transport on its own. It sends a WebSocket
+ping every 15 seconds and exits with an error when one gets no answer in 30
+seconds, so a dead connection ends even with `ServerAliveInterval=0`.
+
 A bare-metal rig logs in as the account running `amika-hostd` on
 that machine, which the control plane reports with each SSH session. When
 `sandbox ssh`, `sandbox open`, `sandbox connect`, or `scp` prepares such a rig,

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -362,7 +363,8 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 
 // ProxySession creates a fresh descriptor, pins its host key, dials it with
 // header credentials, and copies opaque bytes between OpenSSH standard I/O and
-// the WebSocket.
+// the WebSocket. It returns when the WebSocket closes or stops answering pings,
+// so OpenSSH sees the end of a session even with its own keepalive off.
 //
 // Pinning here, and not only in the commands that prepare a target, is what
 // lets a connection nobody prepared succeed. The web app's editor deep links
@@ -405,30 +407,125 @@ func ProxySession(
 		return errors.New("failed to connect direct SSH transport")
 	}
 	defer stream.Close()
+	return carryStreams(ctx, stream, stdin, stdout, defaultProxyLiveness)
+}
 
-	type result struct{ err error }
-	results := make(chan result, 2)
+// proxyLiveness sets how often the stdio proxy pings its transport, and how
+// long it waits for each answer before it declares the transport dead.
+type proxyLiveness struct {
+	interval time.Duration
+	timeout  time.Duration
+}
+
+// defaultProxyLiveness finds a dead transport in 45 s or less, the same bound
+// as the managed config's `ServerAliveInterval 15` and `ServerAliveCountMax 3`.
+// It also applies when the user turns off the SSH keepalive.
+var defaultProxyLiveness = proxyLiveness{interval: 15 * time.Second, timeout: 30 * time.Second}
+
+// pingStream is a Stream that can prove that its transport still answers, and
+// can drop a transport that does not without a close handshake.
+type pingStream interface {
+	Stream
+	Ping(context.Context) error
+	CloseNow() error
+}
+
+// carryStreams copies bytes between OpenSSH and the transport until one side
+// ends, and pings the transport while it waits.
+//
+// When the transport ends first, it returns at once. OpenSSH closes the
+// proxy's stdin only after it reads EOF from the proxy's stdout, and that EOF
+// comes only when this process exits. A wait for stdin here would keep the
+// session open forever after the far end closed.
+func carryStreams(ctx context.Context, stream Stream, stdin io.Reader, stdout io.Writer, liveness proxyLiveness) error {
+	output := &busyWriter{writer: stdout}
+	fromOpenSSH := make(chan error, 1)
+	fromTransport := make(chan error, 1)
 	go func() {
 		buffer := make([]byte, proxyCopyBufferBytes)
 		_, copyErr := io.CopyBuffer(stream, stdin, buffer)
-		results <- result{err: copyErr}
+		fromOpenSSH <- copyErr
 	}()
 	go func() {
 		buffer := make([]byte, proxyCopyBufferBytes)
-		_, copyErr := io.CopyBuffer(stdout, stream, buffer)
-		results <- result{err: copyErr}
+		_, copyErr := io.CopyBuffer(output, stream, buffer)
+		fromTransport <- copyErr
 	}()
-	first := <-results
-	_ = stream.Close()
-	second := <-results
-	if !expectedStreamClose(first.err) {
-		return errors.New("direct SSH transport closed unexpectedly")
+	var silent chan error
+	if pinger, ok := stream.(pingStream); ok {
+		watchCtx, stopWatch := context.WithCancel(ctx)
+		defer stopWatch()
+		silent = make(chan error, 1)
+		go func() {
+			if err := watchTransport(watchCtx, pinger, output, liveness); err != nil {
+				silent <- err
+			}
+		}()
 	}
-	if !expectedStreamClose(second.err) {
-		return errors.New("direct SSH transport closed unexpectedly")
+
+	select {
+	case transportErr := <-fromTransport:
+		_ = stream.Close()
+		if !expectedStreamClose(transportErr) {
+			return errors.New("direct SSH transport closed unexpectedly")
+		}
+		return nil
+	case silentErr := <-silent:
+		_ = stream.(pingStream).CloseNow()
+		return silentErr
+	case openSSHErr := <-fromOpenSSH:
+		_ = stream.Close()
+		transportErr := <-fromTransport
+		if !expectedStreamClose(openSSHErr) || !expectedStreamClose(transportErr) {
+			return errors.New("direct SSH transport closed unexpectedly")
+		}
+		return nil
 	}
-	return nil
 }
+
+// watchTransport pings the transport at each interval. It returns an error
+// when a ping gets no answer in time, and nil when ctx ends or the transport
+// fails in a different way, because the read side then reports the failure.
+func watchTransport(ctx context.Context, pinger pingStream, output *busyWriter, liveness proxyLiveness) error {
+	ticker := time.NewTicker(liveness.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, liveness.timeout)
+		err := pinger.Ping(pingCtx)
+		cancel()
+		switch {
+		case err == nil:
+			continue
+		case ctx.Err() != nil || !errors.Is(err, context.DeadlineExceeded):
+			return nil
+		case output.busy():
+			// The proxy reads no frames while OpenSSH does not take its
+			// output, so the pong can wait behind that write. This is not
+			// evidence of a dead transport.
+			continue
+		}
+		return fmt.Errorf("direct SSH transport did not answer a ping in %s; closing the connection", liveness.timeout)
+	}
+}
+
+// busyWriter records whether a write to OpenSSH is in progress.
+type busyWriter struct {
+	writer  io.Writer
+	writing atomic.Bool
+}
+
+func (w *busyWriter) Write(p []byte) (int, error) {
+	w.writing.Store(true)
+	defer w.writing.Store(false)
+	return w.writer.Write(p)
+}
+
+func (w *busyWriter) busy() bool { return w.writing.Load() }
 
 func expectedStreamClose(err error) bool {
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
