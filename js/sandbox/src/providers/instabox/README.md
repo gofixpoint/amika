@@ -36,8 +36,9 @@ REST API (`https://api.instabox.sh/v1`) with the small client in
 - **Exec.** Always over the SSE stream, so output has no size cap. A command
   runs at most 10 minutes (exit code 124 after that). Run longer jobs in the
   background with their output in a file.
-- **Env vars.** Create-time `envVars` go to `/etc/profile.d/amika-env.sh`,
-  which login shells (exec, SSH) read.
+- **Env vars.** Instabox has no env field on create, so create ignores
+  `envVars` (as Freestyle does). Provisioning writes them to
+  `/etc/environment`.
 - **Names.** Instabox names are 1–63 of `a-z`, `0-9`, `-`. Other names map to
   a slug plus a hash (`internal/names.ts`). The exact sandbox name is kept in
   the `amika-sandbox-name` machine label, which the listing reports.
