@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SANDBOX_STATUS_VALUES } from "../../../sandbox-status";
 import { instaboxName } from "./names";
-import {
-  autoSuspendSeconds,
-  envProfileScript,
-  mapInstaboxSandboxState,
-} from "./operations";
+import { autoSuspendSeconds, mapInstaboxSandboxState } from "./operations";
 import { instaboxSshDestination } from "./ssh";
 import { mapInstaboxSnapshotStatus } from "./snapshot-operations";
 
@@ -71,20 +67,6 @@ describe("autoSuspendSeconds", () => {
     expect(autoSuspendSeconds(1)).toBe(300);
     expect(autoSuspendSeconds(15)).toBe(900);
     expect(autoSuspendSeconds(120)).toBe(1800);
-  });
-});
-
-describe("envProfileScript", () => {
-  it("exports each variable with shell quoting", () => {
-    expect(envProfileScript({ A: "it's", B: "$HOME" })).toBe(
-      "# Written by Amika at create.\n" +
-        "export A='it'\"'\"'s'\n" +
-        "export B='$HOME'\n",
-    );
-  });
-
-  it("refuses a bad variable name", () => {
-    expect(() => envProfileScript({ "A B": "x" })).toThrow(/Invalid/);
   });
 });
 

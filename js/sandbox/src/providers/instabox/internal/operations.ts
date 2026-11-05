@@ -34,7 +34,6 @@ import {
   send,
   type InstaboxMachine,
 } from "./client";
-import { execInstabox } from "./exec";
 import { instaboxName } from "./names";
 import { findInstaboxSnapshotByRawName } from "./snapshot-operations";
 
@@ -43,9 +42,6 @@ export const INSTABOX_NAME_METADATA_KEY = "amika-sandbox-name";
 
 /** The machine user's home (`/data` is the persistent disk). */
 export const INSTABOX_HOME_DIR = "/data/home";
-
-/** Login shells source this file, so it holds the create-time env vars. */
-const ENV_PROFILE_PATH = "/etc/profile.d/amika-env.sh";
 
 /** Instabox snapshot ids start with this; anything else is a template. */
 const SNAPSHOT_ID_PREFIX = "sn_";
@@ -88,22 +84,11 @@ async function bootSource(
   return snapshot ? { snapshotId: snapshot.id } : { templateId: ref };
 }
 
-/** Shell-quote a value for a POSIX `export` line. */
-function quoteValue(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-/** The `/etc/profile.d` script that exports `envVars`. Exported for tests. */
-export function envProfileScript(envVars: Record<string, string>): string {
-  const lines = Object.entries(envVars).map(([name, value]) => {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      throw new Error(`Invalid environment variable name: ${name}`);
-    }
-    return `export ${name}=${quoteValue(value)}`;
-  });
-  return `# Written by Amika at create.\n${lines.join("\n")}\n`;
-}
-
+/**
+ * Create a machine. Instabox has no env field on create, so `envVars` are
+ * not applied here. Provisioning writes them to `/etc/environment`, as it
+ * does on every provider.
+ */
 export async function createInstaboxSandbox(
   ctx: SandboxCtx,
   config: InstaboxConfig,
@@ -155,26 +140,11 @@ export async function createInstaboxSandbox(
   }
   if (!machineId) throw new Error("Instabox create returned no machine id");
 
-  const envVars = input.envVars ?? {};
-  if (Object.keys(envVars).length > 0) {
-    await withStepContext("instabox create: write env vars", async () => {
-      const result = await execInstabox(
-        config,
-        machineId,
-        `install -m 0644 /dev/stdin ${ENV_PROFILE_PATH}`,
-        { sudo: true, input: envProfileScript(envVars) },
-      );
-      if (result.exitCode !== 0) {
-        throw new Error(result.stderr.trim() || result.stdout.trim());
-      }
-    });
-  }
-
   return {
     provider: "instabox",
     providerSandboxId: machineId,
     services: input.services,
-    envVars,
+    envVars: {},
   };
 }
 
