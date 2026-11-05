@@ -36,6 +36,10 @@ REST API (`https://api.instabox.sh/v1`) with the small client in
 - **Exec.** Always over the SSE stream, so output has no size cap. A command
   runs at most 10 minutes (exit code 124 after that). Run longer jobs in the
   background with their output in a file.
+- **Disk.** Create takes only the default disk size (20 GiB, or a larger
+  snapshot's size). When `resources.diskGib` is larger, create grows the
+  disk with a PATCH right after. It never shrinks a disk. The free plan
+  refuses any change, so on it a request above 20 GiB fails.
 - **Env vars.** Instabox has no env field on create, so create ignores
   `envVars` (as Freestyle does). Provisioning writes them to
   `/etc/environment`.
