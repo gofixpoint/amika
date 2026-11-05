@@ -14,6 +14,7 @@ import { sandboxProviderConfigsFromEnv } from "../../config-from-env";
 import type { SandboxCtx } from "../../logger";
 import { moduleLogger } from "../../logger";
 import type { Sandbox } from "../provider";
+import type { LumeConfig } from "./config";
 import lumeProvider from "./provider";
 import { GuestSsh } from "./internal/guest-ssh";
 import { LumeCli } from "./internal/lume-cli";
@@ -21,12 +22,10 @@ import { LumeCli } from "./internal/lume-cli";
 const template = process.env.TEST_LUME_TEMPLATE;
 
 describe.skipIf(!template)("lume guest after the SSH bootstrap", () => {
-  const config = sandboxProviderConfigsFromEnv({
-    ...process.env,
-    DAYTONA_API_KEY: "unused",
-    LUME_ENABLED: "true",
-  }).lume!;
-  const provider = lumeProvider(config);
+  // Read the env in `beforeAll`: vitest runs this body even when the
+  // block is skipped, and the config read throws without the Lume env.
+  let config: LumeConfig;
+  let provider: ReturnType<typeof lumeProvider>;
   const ctx: SandboxCtx = {
     logger: moduleLogger({ test: "lume" }),
     childCtx: () => ctx,
@@ -35,6 +34,12 @@ describe.skipIf(!template)("lume guest after the SSH bootstrap", () => {
   let sandbox: Sandbox;
 
   beforeAll(async () => {
+    config = sandboxProviderConfigsFromEnv({
+      ...process.env,
+      DAYTONA_API_KEY: "unused",
+      LUME_ENABLED: "true",
+    }).lume!;
+    provider = lumeProvider(config);
     sandbox = await provider.sandboxes.create(ctx, {
       name,
       snapshot: template!,
