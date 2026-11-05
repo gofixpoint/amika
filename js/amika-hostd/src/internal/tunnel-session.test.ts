@@ -36,6 +36,10 @@ class RelayPeer {
   readonly frames = new Map<number, Frame[]>();
   readonly resets: Frame[] = [];
   answerPings = true;
+  /** Leave this many pings unanswered, then answer again. */
+  skipPings = 0;
+  /** Answer each ping this late. */
+  pongDelayMs = 0;
   pings = 0;
   private nextStreamId = 1;
   private readonly sendWindows = new Map<number, SendWindow>();
@@ -49,7 +53,13 @@ class RelayPeer {
       if (!isBinary) {
         if (data.toString() === PING) {
           this.pings += 1;
-          if (this.answerPings) ws.send(PONG);
+          if (!this.answerPings) return;
+          if (this.skipPings > 0) {
+            this.skipPings -= 1;
+            return;
+          }
+          if (this.pongDelayMs === 0) ws.send(PONG);
+          else setTimeout(() => ws.send(PONG), this.pongDelayMs);
         }
         return;
       }
@@ -214,6 +224,7 @@ async function attach(
   const session = new TunnelSession(dialed.ws, {
     keepAliveIntervalMs: options.keepAliveIntervalMs ?? 30_000,
     pingTimeoutMs: options.pingTimeoutMs ?? 2_000,
+    maxMissedPings: options.maxMissedPings ?? 1,
     drainMs: options.drainMs ?? 2_000,
     onConnection: (socket) => server.accept(socket),
   });
@@ -599,6 +610,46 @@ describe("the session", () => {
       session.onEnded(resolve),
     );
     expect(ended?.message).toContain("did not answer a tunnel ping");
+  });
+
+  it("ends only after maxMissedPings pings in a row go unanswered", async () => {
+    const { relay, session } = await attach({
+      keepAliveIntervalMs: 40,
+      pingTimeoutMs: 20,
+      maxMissedPings: 2,
+    });
+    await session.acknowledge();
+    relay.answerPings = false;
+    const ended = await new Promise<Error | undefined>((resolve) =>
+      session.onEnded(resolve),
+    );
+    expect(ended?.message).toContain("2 times in a row");
+    expect(relay.pings).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stays attached through one missed ping", async () => {
+    const { relay, session } = await attach({
+      keepAliveIntervalMs: 40,
+      pingTimeoutMs: 20,
+      maxMissedPings: 2,
+    });
+    await session.acknowledge();
+    relay.skipPings = 1;
+    await expect.poll(() => relay.pings, { timeout: 2_000 }).toBeGreaterThan(5);
+    expect(session.isEnded).toBe(false);
+  });
+
+  it("counts a late PONG as an answer", async () => {
+    const { relay, session } = await attach({
+      keepAliveIntervalMs: 40,
+      pingTimeoutMs: 20,
+      maxMissedPings: 2,
+    });
+    await session.acknowledge();
+    // Each ping times out, but its answer comes before the next one.
+    relay.pongDelayMs = 30;
+    await expect.poll(() => relay.pings, { timeout: 2_000 }).toBeGreaterThan(5);
+    expect(session.isEnded).toBe(false);
   });
 
   it("stays attached while the relay answers", async () => {
