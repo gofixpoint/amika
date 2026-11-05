@@ -92,6 +92,29 @@ describe("send", () => {
     );
     expect(calls).toHaveLength(1);
   });
+
+  it("does not retry a POST without a key, which may have run", async () => {
+    const calls = stubFetch([
+      503,
+      apiError("unavailable", { retryable: true }),
+    ]);
+    await expect(send(CONFIG, "POST", "/machines/m_1/exec")).rejects.toThrow(
+      /unavailable/,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("retries a POST without a key on 429, which ran nothing", async () => {
+    vi.useFakeTimers();
+    const calls = stubFetch(
+      [429, apiError("rate_limited", { retryable: true })],
+      [200, { ok: true }],
+    );
+    const pending = send(CONFIG, "POST", "/machines/m_1/exec");
+    await vi.runAllTimersAsync();
+    expect((await pending).status).toBe(200);
+    expect(calls).toHaveLength(2);
+  });
 });
 
 describe("retryDelayMs", () => {

@@ -146,12 +146,27 @@ export function retryDelayMs(error: InstaboxApiError, attempt: number): number {
   return Math.min(wanted, MAX_RETRY_WAIT_MS);
 }
 
+/** Methods that do the same thing when sent twice. */
+const REPEATABLE_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
+
+/**
+ * Whether to send a request again after a retryable error. A POST without
+ * an idempotency key (such as exec) may have run already, so we retry it
+ * only on 429, which the API sends before it does any work.
+ */
+function canRetry(method: string, opts: SendOptions, status: number): boolean {
+  return (
+    REPEATABLE_METHODS.has(method) || opts.idempotent === true || status === 429
+  );
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Send one request and return the response. A non-2xx answer throws an
  * {@link InstaboxApiError}. An error the API marks `retryable` (rate limit,
- * no capacity, host restart) is retried a few times.
+ * no capacity, host restart) is retried a few times, but only when a repeat
+ * cannot apply the change twice: see {@link canRetry}.
  */
 export async function send(
   config: InstaboxConfig,
@@ -185,7 +200,13 @@ export async function send(
     });
     if (res.ok) return res;
     const error = await toApiError(res);
-    if (!error.retryable || attempt >= MAX_ATTEMPTS) throw error;
+    if (
+      !error.retryable ||
+      !canRetry(method, opts, res.status) ||
+      attempt >= MAX_ATTEMPTS
+    ) {
+      throw error;
+    }
     await sleep(retryDelayMs(error, attempt));
   }
 }
