@@ -11,24 +11,3 @@ These files are consumed by `amika auth extract` when present:
 - `oauth.json`: `${XDG_STATE_HOME:-~/.local/state}/amika/oauth.json`
 
 Amika does not use a legacy `~/.amika` fallback for these files.
-
-## State Files
-
-- `sandboxes.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/sandboxes.jsonl`
-- `volumes.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/volumes.jsonl`
-- `rwcopy-mounts.jsonl`: `${XDG_STATE_HOME:-~/.local/state}/amika/rwcopy-mounts.jsonl`
-
-If `AMIKA_STATE_DIRECTORY` is set, state files are stored there instead:
-
-- `${AMIKA_STATE_DIRECTORY}/sandboxes.jsonl`
-- `${AMIKA_STATE_DIRECTORY}/volumes.jsonl`
-- `${AMIKA_STATE_DIRECTORY}/rwcopy-mounts.jsonl`
-
-## File Mount Copies
-
-When `rwcopy` mode is used with individual files (not directories), Amika copies the file into a local directory:
-
-- `${XDG_STATE_HOME:-~/.local/state}/amika/rwcopy-mounts.d/`
-- Or `${AMIKA_STATE_DIRECTORY}/rwcopy-mounts.d/` when the override is set
-
-These copies are cleaned up when the associated sandbox is deleted.

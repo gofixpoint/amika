@@ -87,24 +87,20 @@ For end-to-end smoke tests (Docker required), see [docs/development/testing.md](
 go/                      Go module (github.com/gofixpoint/amika/go)
   cmd/amika/             CLI commands (Cobra)
   internal/
-    sandbox/             Docker sandbox management, presets, volumes
+    sandbox/             Rig presets, rig names, embedded image bundle
     auth/                Credential discovery (Claude, Codex, OpenCode, Amp)
     config/              XDG path resolution, state file locations
     basedir/             XDG base directory resolution
-    app/                 Application service layer
-    ports/               Port interfaces for Docker and stores
-    materialize/         Local sandbox script execution (v0 legacy)
-  pkg/amika/             Public service API and types (used by the CLI)
+  pkg/amika/             Rig types the CLI renders
   test/                  Integration and contract tests
 sdk/typescript/          TypeScript SDK
-materialization-scripts/ Example scripts for pulling data
 docs/                    In-depth documentation
 ```
 
 ## Preset Images
 
-The `coder` and `coder-plus-docker` preset Docker images are auto-built on first use
-from the shared bundle in `sandbox-image/`. See
+The `coder` and `coder-plus-docker` preset images are built from the shared
+bundle in `sandbox-image/`. See
 [docs/presets.md](docs/presets.md) for usage and
 [sandbox-image/README.md](sandbox-image/README.md) for the image change
 workflow.

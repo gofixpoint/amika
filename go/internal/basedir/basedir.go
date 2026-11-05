@@ -8,32 +8,27 @@ import (
 )
 
 const (
-	appName             = "amika"
-	envCacheFile        = "env-cache.json"
-	keychainFile        = "keychain.json"
-	oauthFile           = "oauth.json"
-	mountsStateFile     = "mounts.jsonl"
-	sandboxesFile       = "sandboxes.jsonl"
-	volumesStateFile    = "volumes.jsonl"
-	fileMountsStateFile = "rwcopy-mounts.jsonl"
-	fileMountsDir       = "rwcopy-mounts.d"
-	workosSessionFile   = "workos-session.json"
-	apiKeyFile          = "api-key.json"
-	sshHostsStateFile   = "ssh-hosts.json"
-	sshDirName          = ".ssh"
-	sshConfigFile       = "config"
-	sshAmikaConfigFile  = "amika.conf"
-	sshKnownHostsFile   = "amika_known_hosts"
-	sshIdentityFile     = "amika_id_ed25519"
-	sshAgentSocketFile  = "amika_agent.sock"
-	claudeDirName       = ".claude"
-	claudeSettingsFile  = "settings.json"
-	codexDirName        = ".codex"
-	codexConfigFile     = "config.toml"
-	envXDGConfigHome    = "XDG_CONFIG_HOME"
-	envXDGDataHome      = "XDG_DATA_HOME"
-	envXDGCacheHome     = "XDG_CACHE_HOME"
-	envXDGStateHome     = "XDG_STATE_HOME"
+	appName            = "amika"
+	envCacheFile       = "env-cache.json"
+	keychainFile       = "keychain.json"
+	oauthFile          = "oauth.json"
+	workosSessionFile  = "workos-session.json"
+	apiKeyFile         = "api-key.json"
+	sshHostsStateFile  = "ssh-hosts.json"
+	sshDirName         = ".ssh"
+	sshConfigFile      = "config"
+	sshAmikaConfigFile = "amika.conf"
+	sshKnownHostsFile  = "amika_known_hosts"
+	sshIdentityFile    = "amika_id_ed25519"
+	sshAgentSocketFile = "amika_agent.sock"
+	claudeDirName      = ".claude"
+	claudeSettingsFile = "settings.json"
+	codexDirName       = ".codex"
+	codexConfigFile    = "config.toml"
+	envXDGConfigHome   = "XDG_CONFIG_HOME"
+	envXDGDataHome     = "XDG_DATA_HOME"
+	envXDGCacheHome    = "XDG_CACHE_HOME"
+	envXDGStateHome    = "XDG_STATE_HOME"
 )
 
 // Paths resolves XDG base directories and Amika-managed file locations.
@@ -52,11 +47,6 @@ type Paths interface {
 	AuthEnvCacheFile() (string, error)
 	AuthKeychainFile() (string, error)
 	AuthOAuthFile() (string, error)
-	MountsStateFile() (string, error)
-	SandboxesStateFile() (string, error)
-	VolumesStateFile() (string, error)
-	FileMountsStateFile() (string, error)
-	FileMountsDir() (string, error)
 	WorkOSAuthSessionFile() (string, error)
 	APIKeyFile() (string, error)
 
@@ -193,46 +183,6 @@ func (p *xdgPaths) AuthOAuthFile() (string, error) {
 	return filepath.Join(dir, oauthFile), nil
 }
 
-func (p *xdgPaths) MountsStateFile() (string, error) {
-	dir, err := p.AmikaStateDir()
-	if err != nil {
-		return "", err
-	}
-	return MountsStateFileIn(dir), nil
-}
-
-func (p *xdgPaths) SandboxesStateFile() (string, error) {
-	dir, err := p.AmikaStateDir()
-	if err != nil {
-		return "", err
-	}
-	return SandboxesStateFileIn(dir), nil
-}
-
-func (p *xdgPaths) VolumesStateFile() (string, error) {
-	dir, err := p.AmikaStateDir()
-	if err != nil {
-		return "", err
-	}
-	return VolumesStateFileIn(dir), nil
-}
-
-func (p *xdgPaths) FileMountsStateFile() (string, error) {
-	dir, err := p.AmikaStateDir()
-	if err != nil {
-		return "", err
-	}
-	return FileMountsStateFileIn(dir), nil
-}
-
-func (p *xdgPaths) FileMountsDir() (string, error) {
-	dir, err := p.AmikaStateDir()
-	if err != nil {
-		return "", err
-	}
-	return FileMountsDirIn(dir), nil
-}
-
 func (p *xdgPaths) WorkOSAuthSessionFile() (string, error) {
 	dir, err := p.AmikaStateDir()
 	if err != nil {
@@ -333,31 +283,6 @@ func (p *xdgPaths) CodexConfigFile() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, codexDirName, codexConfigFile), nil
-}
-
-// MountsStateFileIn returns the mounts state file path under the given state directory.
-func MountsStateFileIn(stateDir string) string {
-	return filepath.Join(stateDir, mountsStateFile)
-}
-
-// SandboxesStateFileIn returns the sandboxes state file path under the given state directory.
-func SandboxesStateFileIn(stateDir string) string {
-	return filepath.Join(stateDir, sandboxesFile)
-}
-
-// VolumesStateFileIn returns the volumes state file path under the given state directory.
-func VolumesStateFileIn(stateDir string) string {
-	return filepath.Join(stateDir, volumesStateFile)
-}
-
-// FileMountsStateFileIn returns the file mounts state file path under the given state directory.
-func FileMountsStateFileIn(stateDir string) string {
-	return filepath.Join(stateDir, fileMountsStateFile)
-}
-
-// FileMountsDirIn returns the file mounts directory path under the given state directory.
-func FileMountsDirIn(stateDir string) string {
-	return filepath.Join(stateDir, fileMountsDir)
 }
 
 // WorkOSAuthSessionFileIn returns the WorkOS auth session file path under the given state directory.
