@@ -199,7 +199,7 @@ func TestE2ECases(t *testing.T) {
 		t.Skipf("set %s=1 to run black-box E2E CLI cases", runE2EEnv)
 	}
 	if !validSandboxProvider(*sandboxProvider) {
-		t.Fatalf("invalid -sandbox-provider %q (want daytona, e2b, freestyle, or vercel)", *sandboxProvider)
+		t.Fatalf("invalid -sandbox-provider %q (want daytona, e2b, freestyle, instabox, or vercel)", *sandboxProvider)
 	}
 
 	bin := e2eBinary(t)
