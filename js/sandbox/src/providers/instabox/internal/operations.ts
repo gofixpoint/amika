@@ -115,7 +115,7 @@ export async function createInstaboxSandbox(
     ...(autoSuspend !== undefined
       ? { autoSuspendAfterSeconds: autoSuspend }
       : {}),
-    // Disk size is fixed at create; Instabox grows it later with PATCH.
+    // Create takes only the default disk size; growDisk sets a larger one.
     ...(input.resources
       ? {
           vcpus: input.resources.vcpus,
@@ -124,32 +124,68 @@ export async function createInstaboxSandbox(
       : {}),
   };
 
+  // A failed create can leave a machine behind. Delete it, so it does not
+  // count against the account's machine limit.
+  const deleteFailed = (id: string) =>
+    deleteInstaboxSandbox(config, id).catch((cleanup: unknown) =>
+      ctx.logger.warn(
+        { err: cleanup, machineId: id },
+        "Could not delete a failed Instabox machine",
+      ),
+    );
+
   let machineId: string | null | undefined;
   try {
     const op = await runOperation(config, "POST", "/machines", { json: body });
     machineId = op.machineId;
   } catch (error) {
-    // A failed create can leave a machine in `error`. Delete it, so it does
-    // not count against the account's machine limit.
     if (error instanceof InstaboxOperationError && error.operation.machineId) {
-      await deleteInstaboxSandbox(config, error.operation.machineId).catch(
-        (cleanup: unknown) =>
-          ctx.logger.warn(
-            { err: cleanup, machineId: error.operation.machineId },
-            "Could not delete a failed Instabox machine",
-          ),
-      );
+      await deleteFailed(error.operation.machineId);
     }
     throw error;
   }
   if (!machineId) throw new Error("Instabox create returned no machine id");
+  const id = machineId;
+
+  const resources = input.resources;
+  if (resources) {
+    try {
+      await withStepContext("instabox create: grow disk", () =>
+        growDisk(config, id, resources.diskGib),
+      );
+    } catch (error) {
+      await deleteFailed(id);
+      throw error;
+    }
+  }
 
   return {
     provider: "instabox",
-    providerSandboxId: machineId,
+    providerSandboxId: id,
     services: input.services,
     envVars: {},
   };
+}
+
+/**
+ * Grow the machine's disk (`/data`) to `diskGib`. A running machine grows
+ * with no restart. We never shrink: a machine from a larger snapshot keeps
+ * its larger disk. The free plan refuses any change (`spec_not_allowed`).
+ */
+async function growDisk(
+  config: InstaboxConfig,
+  machineId: string,
+  diskGib: number,
+): Promise<void> {
+  const machine = await getInstaboxMachine(config, machineId);
+  if (!machine) throw new Error(`Instabox machine ${machineId} is gone`);
+  const current = machine.spec?.persistentDiskGiB;
+  // When the size is unknown we send the PATCH; a shrink fails loudly.
+  if (current !== undefined && diskGib <= current) return;
+  await requestVoid(config, "PATCH", machinePath(machineId), {
+    idempotent: true,
+    json: { persistentDiskGiB: Math.ceil(diskGib) },
+  });
 }
 
 /** Get a machine; `null` when it does not exist. */
