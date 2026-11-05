@@ -120,7 +120,8 @@ async function toApiError(res: Response): Promise<InstaboxApiError> {
       res.status,
       "unknown",
       text.slice(0, 500) || res.statusText,
-      { retryable: res.status === 502 || res.status === 503 },
+      // A gateway error with no API body: the request may not have arrived.
+      { retryable: GATEWAY_STATUSES.has(res.status) },
     );
   }
   const { error } = parsed.data;
@@ -137,22 +138,32 @@ async function toApiError(res: Response): Promise<InstaboxApiError> {
   });
 }
 
-/** The wait before retry `attempt` (1-based) of a retryable error. */
-export function retryDelayMs(error: InstaboxApiError, attempt: number): number {
+/**
+ * The wait before retry `attempt` (1-based). `error` is null after a
+ * network error, which has no Retry-After.
+ */
+export function retryDelayMs(
+  error: InstaboxApiError | null,
+  attempt: number,
+): number {
   const wanted =
-    error.retryAfterSeconds != null
+    error?.retryAfterSeconds != null
       ? error.retryAfterSeconds * 1000
       : 1000 * 2 ** (attempt - 1);
   return Math.min(wanted, MAX_RETRY_WAIT_MS);
 }
 
+/** Gateway answers that carry no API error body. */
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
+
 /** Methods that do the same thing when sent twice. */
 const REPEATABLE_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
 
 /**
- * Whether to send a request again after a retryable error. A POST without
- * an idempotency key (such as exec) may have run already, so we retry it
- * only on 429, which the API sends before it does any work.
+ * Whether to send a request again after a retryable error or a network
+ * error (`status` 0). A POST without an idempotency key (such as exec) may
+ * have run already, so we retry it only on 429, which the API sends before
+ * it does any work.
  */
 function canRetry(method: string, opts: SendOptions, status: number): boolean {
   return (
@@ -165,8 +176,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /**
  * Send one request and return the response. A non-2xx answer throws an
  * {@link InstaboxApiError}. An error the API marks `retryable` (rate limit,
- * no capacity, host restart) is retried a few times, but only when a repeat
- * cannot apply the change twice: see {@link canRetry}.
+ * no capacity, host restart) or a network error (reset, timeout) is retried
+ * a few times with the same idempotency key, but only when a repeat cannot
+ * apply the change twice: see {@link canRetry}.
  */
 export async function send(
   config: InstaboxConfig,
@@ -192,12 +204,20 @@ export async function send(
     opts.timeoutMs === undefined ? REQUEST_TIMEOUT_MS : opts.timeoutMs;
 
   for (let attempt = 1; ; attempt++) {
-    const res = await fetch(apiUrl(config, path, opts.query), {
-      method,
-      headers,
-      body,
-      signal: timeoutMs === null ? undefined : AbortSignal.timeout(timeoutMs),
-    });
+    let res: Response;
+    try {
+      res = await fetch(apiUrl(config, path, opts.query), {
+        method,
+        headers,
+        body,
+        signal: timeoutMs === null ? undefined : AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      // The request may or may not have reached Instabox.
+      if (!canRetry(method, opts, 0) || attempt >= MAX_ATTEMPTS) throw error;
+      await sleep(retryDelayMs(null, attempt));
+      continue;
+    }
     if (res.ok) return res;
     const error = await toApiError(res);
     if (

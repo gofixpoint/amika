@@ -117,6 +117,68 @@ describe("send", () => {
   });
 });
 
+/**
+ * Stub `fetch` with steps given in order: an Error rejects, a number
+ * answers with that status and an HTML body. Return each call's headers.
+ */
+function stubRawFetch(
+  ...steps: Array<Error | number>
+): Record<string, string>[] {
+  const calls: Record<string, string>[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init: RequestInit) => {
+      calls.push(init.headers as Record<string, string>);
+      const step = steps.shift();
+      if (step === undefined) throw new Error("unexpected request");
+      if (step instanceof Error) throw step;
+      return new Response("<html>gateway</html>", { status: step });
+    }),
+  );
+  return calls;
+}
+
+describe("send without an API answer", () => {
+  it("retries a keyed POST after a non-JSON 504, with the same key", async () => {
+    vi.useFakeTimers();
+    const calls = stubRawFetch(504, 200);
+    const pending = send(CONFIG, "POST", "/machines", { idempotent: true });
+    await vi.runAllTimersAsync();
+    expect((await pending).status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]["Idempotency-Key"]).toBe(calls[0]["Idempotency-Key"]);
+  });
+
+  it("retries a keyed POST after a network error, with the same key", async () => {
+    vi.useFakeTimers();
+    const calls = stubRawFetch(new TypeError("fetch failed"), 200);
+    const pending = send(CONFIG, "POST", "/machines", { idempotent: true });
+    await vi.runAllTimersAsync();
+    expect((await pending).status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]["Idempotency-Key"]).toBe(calls[0]["Idempotency-Key"]);
+  });
+
+  it("does not retry an unkeyed POST after a network error", async () => {
+    const calls = stubRawFetch(new TypeError("fetch failed"));
+    await expect(send(CONFIG, "POST", "/machines/m_1/exec")).rejects.toThrow(
+      /fetch failed/,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("stops after the last attempt", async () => {
+    vi.useFakeTimers();
+    const calls = stubRawFetch(
+      ...Array.from({ length: 4 }, () => new TypeError("fetch failed")),
+    );
+    const pending = send(CONFIG, "GET", "/machines").catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    expect(await pending).toBeInstanceOf(TypeError);
+    expect(calls).toHaveLength(4);
+  });
+});
+
 describe("retryDelayMs", () => {
   it("uses Retry-After when present, else backs off, with a cap", () => {
     const withAfter = new InstaboxApiError(503, "x", "x", {
