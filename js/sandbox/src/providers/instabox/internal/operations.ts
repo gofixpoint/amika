@@ -266,33 +266,19 @@ export async function startInstaboxSandbox(
   }
 }
 
-/** Rounds of "wait, resume, stop" before `stop` gives up. */
-const MAX_STOP_ROUNDS = 4;
-
+/** Stop a machine. Instabox cannot stop a paused one, so we resume it first. */
 export async function stopInstaboxSandbox(
   config: InstaboxConfig,
   machineId: string,
 ): Promise<void> {
-  for (let round = 0; round < MAX_STOP_ROUNDS; round++) {
-    const machine = await getInstaboxMachine(config, machineId);
-    if (!machine) {
-      throw new Error(`Instabox machine ${machineId} does not exist`);
-    }
-    switch (machine.state) {
-      case "stopped":
-        return;
-      case "suspending":
-      case "suspended":
-        // Instabox cannot stop a paused machine. Resume it, then stop it.
-        await runOperation(config, "POST", machinePath(machineId, "/start"));
-        continue;
-      default:
-        // `runOperation` waits out an operation that is still running.
-        await runOperation(config, "POST", machinePath(machineId, "/stop"));
-        continue;
-    }
+  const machine = await getInstaboxMachine(config, machineId);
+  if (!machine) throw new Error(`Instabox machine ${machineId} does not exist`);
+  if (machine.state === "stopped") return;
+  if (machine.state === "suspending" || machine.state === "suspended") {
+    await runOperation(config, "POST", machinePath(machineId, "/start"));
   }
-  throw new Error(`Instabox machine ${machineId} did not reach "stopped"`);
+  // `runOperation` waits out an operation that is still running.
+  await runOperation(config, "POST", machinePath(machineId, "/stop"));
 }
 
 /** The raw machine state, or `unknown` when the machine does not exist. */
