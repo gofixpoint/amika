@@ -137,46 +137,6 @@ func StateDir() (string, error) {
 	return basedir.New("").AmikaStateDir()
 }
 
-// MountsStateFile returns the resolved mounts state file path.
-func MountsStateFile() (string, error) {
-	if dir := os.Getenv(EnvStateDirectory); dir != "" {
-		return basedir.MountsStateFileIn(dir), nil
-	}
-	return basedir.New("").MountsStateFile()
-}
-
-// SandboxesStateFile returns the resolved sandboxes state file path.
-func SandboxesStateFile() (string, error) {
-	if dir := os.Getenv(EnvStateDirectory); dir != "" {
-		return basedir.SandboxesStateFileIn(dir), nil
-	}
-	return basedir.New("").SandboxesStateFile()
-}
-
-// VolumesStateFile returns the resolved volumes state file path.
-func VolumesStateFile() (string, error) {
-	if dir := os.Getenv(EnvStateDirectory); dir != "" {
-		return basedir.VolumesStateFileIn(dir), nil
-	}
-	return basedir.New("").VolumesStateFile()
-}
-
-// FileMountsStateFile returns the resolved file mounts state file path.
-func FileMountsStateFile() (string, error) {
-	if dir := os.Getenv(EnvStateDirectory); dir != "" {
-		return basedir.FileMountsStateFileIn(dir), nil
-	}
-	return basedir.New("").FileMountsStateFile()
-}
-
-// FileMountsDir returns the resolved file mounts directory path.
-func FileMountsDir() (string, error) {
-	if dir := os.Getenv(EnvStateDirectory); dir != "" {
-		return basedir.FileMountsDirIn(dir), nil
-	}
-	return basedir.New("").FileMountsDir()
-}
-
 // WorkOSAuthSessionFile returns the resolved WorkOS auth session file path.
 func WorkOSAuthSessionFile() (string, error) {
 	if dir := os.Getenv(EnvStateDirectory); dir != "" {

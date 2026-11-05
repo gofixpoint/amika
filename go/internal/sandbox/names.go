@@ -37,28 +37,3 @@ func GenerateName() string {
 	city := cities[rand.Intn(len(cities))]
 	return fmt.Sprintf("%s-%s", color, city)
 }
-
-// GenerateUniqueName generates a sandbox name that does not collide with
-// existing names in the given store. It first tries plain {color}-{city}
-// names, then falls back to appending a random 4-digit suffix.
-func GenerateUniqueName(store Store) (string, error) {
-	exists := func(name string) bool {
-		_, err := store.Get(name)
-		return err == nil
-	}
-	// Try plain names first.
-	for range 10 {
-		name := GenerateName()
-		if !exists(name) {
-			return name, nil
-		}
-	}
-	// Fall back to names with a numeric suffix.
-	for range 10 {
-		name := fmt.Sprintf("%s-%04d", GenerateName(), rand.Intn(10000))
-		if !exists(name) {
-			return name, nil
-		}
-	}
-	return "", fmt.Errorf("failed to generate a unique sandbox name after many attempts")
-}

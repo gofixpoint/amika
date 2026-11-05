@@ -10,8 +10,6 @@ development tools and coding agent CLIs. Presets are selected with
 
 The default preset, used when no `--preset` flag is provided.
 
-**Image name:** `amika/coder:latest`
-
 **Base:** Ubuntu 24.04
 
 **Included tools:**
@@ -29,8 +27,6 @@ The default preset, used when no `--preset` flag is provided.
 ### `coder-plus-docker`
 
 A variant of `coder` that also includes Docker-in-Docker support.
-
-**Image name:** `amika/coder-plus-docker:latest`
 
 **Base:** Ubuntu 24.04
 

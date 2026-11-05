@@ -1,2 +1,2 @@
-// Package amika provides the public programmatic API for Amika operations.
+// Package amika defines the rig types the amika CLI renders.
 package amika

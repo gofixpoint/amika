@@ -165,13 +165,8 @@ func finishBatch(cmd *cobra.Command, format output.Format, items []any, failed [
 }
 
 // sandboxListRow is one line of `sandbox list` output: the sandbox as the
-// remote API returned it, plus the two columns the table shows that the
+// remote API returned it, plus the columns the table shows that the
 // response does not carry under those names.
-//
-// Deliberately not fields on `amika.Sandbox`: that type is the response body of
-// the public `amika.Service`, so a field there is advertised in the served
-// schema and has to be populated by every service mapping. These two belong to
-// the table instead.
 type sandboxListRow struct {
 	amika.Sandbox
 	// ID is the sandbox's control-plane id.

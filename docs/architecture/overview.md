@@ -36,18 +36,11 @@ go/
     sandbox.go           sandbox create/list/connect/delete commands
     auth.go              auth login/logout/status commands
   internal/
-    sandbox/             Docker sandbox management
-      sandbox.go           Sandbox paths and temp directory creation
-      docker.go            Docker container and volume operations
-      image_resolution.go  Preset image resolution and auto-build
-      names.go             Random sandbox name generation
-      store.go             Sandbox state persistence (JSONL)
-      volume_store.go      Volume state persistence (JSONL)
-      file_mount_store.go  File mount state persistence (JSONL)
-      presets.go           Embeds preset Dockerfiles via go:embed
-      presets/
-        coder/Dockerfile   Coder preset (Claude + Codex + OpenCode)
-        claude/Dockerfile  Claude-only preset
+    sandbox/             Client-side rig helpers
+      presets.go           Preset validation; embeds the sandbox image bundle
+      names.go             Random rig name generation
+      github_auth_mode.go  GitHub auth mode validation
+      agent_skill.go       amika-cli agent skill from the embedded bundle
 
     auth/                Credential discovery
       auth.go              CredentialSet type, env var rendering
@@ -55,15 +48,9 @@ go/
 
     config/              XDG path resolution and state file locations
     basedir/             XDG base directory resolution
-    app/                 Application service layer implementation
-    ports/               Port interfaces for Docker and store operations
 
-    materialize/         Local sandbox script execution (v0)
-
-  pkg/amika/             Public Go service API
-    service.go           Service interface and implementation
-    requests.go          Request types
-    responses.go         Response types
+  pkg/amika/             Rig types the CLI renders
+    types.go             Sandbox, PortBinding, SandboxCreator
 ```
 
 ## State Storage

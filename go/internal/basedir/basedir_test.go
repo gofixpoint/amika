@@ -60,21 +60,6 @@ func TestPaths_XDGOverrides(t *testing.T) {
 	if got, _ := p.AuthOAuthFile(); got != filepath.Join(state, "amika", "oauth.json") {
 		t.Fatalf("AuthOAuthFile = %q", got)
 	}
-	if got, _ := p.MountsStateFile(); got != filepath.Join(state, "amika", "mounts.jsonl") {
-		t.Fatalf("MountsStateFile = %q", got)
-	}
-	if got, _ := p.SandboxesStateFile(); got != filepath.Join(state, "amika", "sandboxes.jsonl") {
-		t.Fatalf("SandboxesStateFile = %q", got)
-	}
-	if got, _ := p.VolumesStateFile(); got != filepath.Join(state, "amika", "volumes.jsonl") {
-		t.Fatalf("VolumesStateFile = %q", got)
-	}
-	if got, _ := p.FileMountsStateFile(); got != filepath.Join(state, "amika", "rwcopy-mounts.jsonl") {
-		t.Fatalf("FileMountsStateFile = %q", got)
-	}
-	if got, _ := p.FileMountsDir(); got != filepath.Join(state, "amika", "rwcopy-mounts.d") {
-		t.Fatalf("FileMountsDir = %q", got)
-	}
 }
 
 func TestPaths_SSHPaths(t *testing.T) {
@@ -118,21 +103,6 @@ func TestStateFileHelpers(t *testing.T) {
 
 	if got := SSHHostsStateFileIn(stateDir); got != filepath.Join(stateDir, "ssh-hosts.json") {
 		t.Fatalf("SSHHostsStateFileIn = %q", got)
-	}
-	if got := MountsStateFileIn(stateDir); got != filepath.Join(stateDir, "mounts.jsonl") {
-		t.Fatalf("MountsStateFileIn = %q", got)
-	}
-	if got := SandboxesStateFileIn(stateDir); got != filepath.Join(stateDir, "sandboxes.jsonl") {
-		t.Fatalf("SandboxesStateFileIn = %q", got)
-	}
-	if got := VolumesStateFileIn(stateDir); got != filepath.Join(stateDir, "volumes.jsonl") {
-		t.Fatalf("VolumesStateFileIn = %q", got)
-	}
-	if got := FileMountsStateFileIn(stateDir); got != filepath.Join(stateDir, "rwcopy-mounts.jsonl") {
-		t.Fatalf("FileMountsStateFileIn = %q", got)
-	}
-	if got := FileMountsDirIn(stateDir); got != filepath.Join(stateDir, "rwcopy-mounts.d") {
-		t.Fatalf("FileMountsDirIn = %q", got)
 	}
 }
 

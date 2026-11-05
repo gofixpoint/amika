@@ -73,7 +73,7 @@ checked out as a sibling worktree rather than searching for those paths in this 
 
 ## Runtime Dependencies
 
-- The `amika` CLI itself is remote-only: every `rig`/`sandbox` command talks to the Amika API. The former `--local` mode, and the `volume` and `materialize` commands that served it, have been removed.
+- The `amika` CLI itself is remote-only: every `rig`/`sandbox` command talks to the Amika API. The former `--local` mode, the `volume` and `materialize` commands that served it, and the Docker-backed `pkg/amika.Service` behind them have been removed.
 
 ## Code Structure
 
@@ -95,23 +95,18 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `fetch.go` — `beta:fetch <destination>`, downloads the entire org storage bucket into a local directory, recreating the bucket key tree on disk (auth via `AMIKA_API_KEY` only; lists the bucket via `GET /api/v0beta1/storage/downloads`, paging through `next_cursor`, then GETs each object's signed download URL)
 
 ### Internal Packages (`go/internal/`)
-- `sandbox/` — Docker sandbox management, preset image resolution + auto-build, volume and file mount stores, random name generation
+- `sandbox/` — Rig preset and GitHub auth mode validation, random rig names, and the embedded sandbox image bundle
 - `auth/` — Multi-source credential discovery (Claude, Codex, OpenCode, Amp) with priority-based deduplication
 - `config/` — XDG path resolution, state file location helpers
 - `basedir/` — XDG base directory resolution
-- `app/` — Application service layer implementation
-- `ports/` — Port interfaces for Docker and store operations
 - `output/` — CLI output formatting for the `--output`/`-o` flag (`text`, `json`, `json-pretty`)
 - `services/` — Shared sandbox-service logic used by CLI and API, e.g. `ValidatePort` (rejects out-of-range and reserved container ports)
 - `rigref/` — Parses rig references (a name or id, `name=`/`id=` to pin the field, `_self` for the current rig); rules for commands that take a rig are in [`go/cmd/amika/AGENTS.md`](go/cmd/amika/AGENTS.md)
-- `materialize/` — Local sandbox script execution and rsync copying (v0 legacy)
 - `agentskill/` — Agent names, per-agent skill directories, and the copy behind `amika skill install`
 - `eventlog/` — amikalog's hook installer, event capture, and push (details in the package doc)
 
 ### Public Package (`go/pkg/amika/`)
-- `service.go` — Public service API and the request/response types the CLI uses
-- `requests.go` — Request types
-- `responses.go` — Response types
+- `types.go` — Rig types the CLI renders (`Sandbox`, `PortBinding`, `SandboxCreator`)
 
 ### Labs / Experimental Code (`go/labs/`)
 - Experimental, unstable code with **no compatibility guarantees**; stable code (`go/cmd/*`, `go/pkg/amika`, `go/internal/*`) must **not** import from it. Holds the `akfs` CLI and library plus the `amikalyze` frozen-path CLI and library.
@@ -122,7 +117,6 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `bin/amika` — Wrapper script that auto-builds and runs `dist/amika`
 - `bin/amikalog` — Wrapper script that auto-builds and runs `dist/amikalog`
 - `bin/amikalyze` — Wrapper script that auto-builds and runs `dist/amikalyze`
-- `materialization-scripts/` — Example data materialization scripts
 - `sandbox-image/` — Shared manifest, build steps, assets, verification suite, and generated Dockerfiles. It also holds generated copies of the `amika-cli` skill: edit only `.agents/skills/amika-cli/`, then run `python3 sandbox-image/generate.py` (CI fails on a stale copy). The copy in the Go-embed mirror is also what `amika skill install` writes, via `sandbox.AgentSkillFS`
 - `sdk/typescript/` — TypeScript SDK
 

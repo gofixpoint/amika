@@ -15,12 +15,9 @@ These shape the code under test, not the tests themselves.
 
 ### Prefer dependency injection over mocks
 
-Shape code so collaborators (Docker clients, stores, clocks, HTTP
+Shape code so collaborators (API clients, stores, clocks, HTTP
 clients) are passed in as arguments or carried on a context struct, and
 substitute a fake or real implementation at the call site.
-`go/internal/ports/` defines interfaces for Docker, store, clock,
-idgen, runner, and filesystem operations; production wiring lives in
-`go/internal/app/`, and tests pass fakes.
 
 Why:
 
