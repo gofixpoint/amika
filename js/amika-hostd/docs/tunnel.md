@@ -97,9 +97,13 @@ The normal way a tunnel dies is a closed laptop lid. The socket stays in
 reports anything. Only an unanswered round trip finds it.
 
 So `TunnelSession` sends the text message `PING` (`amika.tunnel.v2.ping`)
-every `KEEP_ALIVE_INTERVAL_MS` and ends the session when the text `PONG`
-(`amika.tunnel.v2.pong`) does not
-come back within `PING_TIMEOUT_MS`. The relay registers that pair with
+every `KEEP_ALIVE_INTERVAL_MS` (10 s). A ping is missed when the text
+`PONG` (`amika.tunnel.v2.pong`) does not come back within
+`PING_TIMEOUT_MS` (5 s). The session ends when `MAX_MISSED_PINGS` (2)
+pings in a row are missed, so a dead tunnel is found in at most about
+25 s. One late `PONG` does not end it: a ping shares the socket with
+stream data, and a `PONG` that comes late still resets the count. The
+relay registers that pair with
 Cloudflare's `setWebSocketAutoResponse`, so its runtime answers without
 waking the relay: an idle host costs nothing, and the relay is not billed a
 message for it. The relay also reads when it last answered, which is how it

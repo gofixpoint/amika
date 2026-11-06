@@ -14,6 +14,11 @@
  * no socket under it.
  */
 import type { Duplex } from "node:stream";
+import {
+  KEEP_ALIVE_INTERVAL_MS,
+  MAX_MISSED_PINGS,
+  PING_TIMEOUT_MS,
+} from "@amika/tunnel-protocol";
 import { buildHandlers, type SnapshotOptions } from "./server.js";
 import { virtualServer } from "./tunnel-serving.js";
 import {
@@ -98,6 +103,7 @@ export function startTunnel(
       userAgent: options.userAgent ?? "amika-hostd",
       keepAliveIntervalMs: KEEP_ALIVE_INTERVAL_MS,
       pingTimeoutMs: PING_TIMEOUT_MS,
+      maxMissedPings: MAX_MISSED_PINGS,
       drainMs: DRAIN_MS,
       onConnection: (socket: Duplex) => server.accept(socket),
       onEvent: options.onEvent,
@@ -131,24 +137,6 @@ export function startTunnel(
  * black-holing rather than a host that is unwelcome.
  */
 const HANDSHAKE_TIMEOUT_MS = 20_000;
-
-/**
- * How often to ping an idle tunnel.
- *
- * A tunnel is a WebSocket held open across whatever sits between a
- * customer's network and Amika, and an idle one is what a NAT or a load
- * balancer reaps first. This is the host's half of the same bargain
- * `GATEWAY_KEEP_ALIVE_INTERVAL_MS` makes on the gateway's side.
- */
-const KEEP_ALIVE_INTERVAL_MS = 30_000;
-
-/**
- * How long a ping may go unanswered before the tunnel is treated as gone.
- *
- * Shorter than the interval, so an unanswered ping is noticed before the
- * next one is due rather than queueing behind it.
- */
-const PING_TIMEOUT_MS = 10_000;
 
 /** How long a closing attachment may take to finish what it is serving. */
 const DRAIN_MS = 5_000;
