@@ -438,12 +438,13 @@ type pingStream interface {
 // comes only when this process exits. A wait for stdin here would keep the
 // session open forever after the far end closed.
 func carryStreams(ctx context.Context, stream Stream, stdin io.Reader, stdout io.Writer, liveness proxyLiveness) error {
+	input := &busyWriter{writer: stream}
 	output := &busyWriter{writer: stdout}
 	fromOpenSSH := make(chan error, 1)
 	fromTransport := make(chan error, 1)
 	go func() {
 		buffer := make([]byte, proxyCopyBufferBytes)
-		_, copyErr := io.CopyBuffer(stream, stdin, buffer)
+		_, copyErr := io.CopyBuffer(input, stdin, buffer)
 		fromOpenSSH <- copyErr
 	}()
 	go func() {
@@ -457,7 +458,7 @@ func carryStreams(ctx context.Context, stream Stream, stdin io.Reader, stdout io
 		defer stopWatch()
 		silent = make(chan error, 1)
 		go func() {
-			if err := watchTransport(watchCtx, pinger, output, liveness); err != nil {
+			if err := watchTransport(watchCtx, pinger, input, output, liveness); err != nil {
 				silent <- err
 			}
 		}()
@@ -484,9 +485,10 @@ func carryStreams(ctx context.Context, stream Stream, stdin io.Reader, stdout io
 }
 
 // watchTransport pings the transport at each interval. It returns an error
-// when a ping gets no answer in time, and nil when ctx ends or the transport
-// fails in a different way, because the read side then reports the failure.
-func watchTransport(ctx context.Context, pinger pingStream, output *busyWriter, liveness proxyLiveness) error {
+// when a ping gets no answer in time, or when the transport takes no data for
+// that time. It returns nil when ctx ends or the transport fails in a
+// different way, because the copy then reports the failure.
+func watchTransport(ctx context.Context, pinger pingStream, input, output *busyWriter, liveness proxyLiveness) error {
 	ticker := time.NewTicker(liveness.interval)
 	defer ticker.Stop()
 	for {
@@ -494,6 +496,14 @@ func watchTransport(ctx context.Context, pinger pingStream, output *busyWriter, 
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+		}
+		// A ping frame waits behind a data write, so a stalled write is
+		// the evidence to check. A write to a dead path has no deadline.
+		if stalled := input.busyFor(); stalled > 0 {
+			if stalled < liveness.timeout || output.busyFor() > 0 {
+				continue
+			}
+			return fmt.Errorf("direct SSH transport took no data in %s; closing the connection", liveness.timeout)
 		}
 		pingCtx, cancel := context.WithTimeout(ctx, liveness.timeout)
 		err := pinger.Ping(pingCtx)
@@ -503,7 +513,12 @@ func watchTransport(ctx context.Context, pinger pingStream, output *busyWriter, 
 			continue
 		case ctx.Err() != nil || !errors.Is(err, context.DeadlineExceeded):
 			return nil
-		case output.busy():
+		case !errors.Is(pingCtx.Err(), context.DeadlineExceeded):
+			// coder/websocket gives a ping frame 5 s to get past a data
+			// write. That write is still in progress, and the next tick
+			// checks it.
+			continue
+		case output.busyFor() > 0:
 			// The proxy reads no frames while OpenSSH does not take its
 			// output, so the pong can wait behind that write. This is not
 			// evidence of a dead transport.
@@ -513,19 +528,29 @@ func watchTransport(ctx context.Context, pinger pingStream, output *busyWriter, 
 	}
 }
 
-// busyWriter records whether a write to OpenSSH is in progress.
+// busyWriter records when its in-progress write started.
 type busyWriter struct {
-	writer  io.Writer
-	writing atomic.Bool
+	writer io.Writer
+	// since is the start of the in-progress write in Unix nanoseconds, or
+	// 0 when no write is in progress.
+	since atomic.Int64
 }
 
 func (w *busyWriter) Write(p []byte) (int, error) {
-	w.writing.Store(true)
-	defer w.writing.Store(false)
+	w.since.Store(time.Now().UnixNano())
+	defer w.since.Store(0)
 	return w.writer.Write(p)
 }
 
-func (w *busyWriter) busy() bool { return w.writing.Load() }
+// busyFor returns how long the in-progress write has run, or 0 when no write
+// is in progress.
+func (w *busyWriter) busyFor() time.Duration {
+	since := w.since.Load()
+	if since == 0 {
+		return 0
+	}
+	return max(time.Since(time.Unix(0, since)), time.Nanosecond)
+}
 
 func expectedStreamClose(err error) bool {
 	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {

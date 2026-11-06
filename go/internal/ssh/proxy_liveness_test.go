@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -86,6 +87,40 @@ func TestCarryStreamsDoesNotBlameTheTransportForABlockedOpenSSH(t *testing.T) {
 	}
 }
 
+func TestCarryStreamsDoesNotCountAPingThatWaitedBehindADataWrite(t *testing.T) {
+	// coder/websocket fails a ping after 5 s behind a data write, before the
+	// proxy's own timeout.
+	libraryLimit := fmt.Errorf("failed to write control frame ping: %w", context.DeadlineExceeded)
+	stream := newStalledStream(libraryLimit)
+	liveness := proxyLiveness{interval: 20 * time.Millisecond, timeout: time.Minute}
+	stdin, openSSH := io.Pipe()
+	defer openSSH.Close()
+	go func() { _, _ = openSSH.Write([]byte("to-sshd")) }()
+
+	done := make(chan error, 1)
+	go func() { done <- carryStreams(context.Background(), stream, stdin, io.Discard, liveness) }()
+	select {
+	case err := <-done:
+		t.Fatalf("carryStreams ended while a data write was in progress: %v", err)
+	case <-time.After(20 * liveness.interval):
+	}
+	_ = stream.Close()
+	<-done
+}
+
+func TestCarryStreamsExitsWhenTheTransportTakesNoData(t *testing.T) {
+	// The transport answers pings, but a data write to it never completes.
+	stream := newStalledStream(nil)
+	stdin, openSSH := io.Pipe()
+	defer openSSH.Close()
+	go func() { _, _ = openSSH.Write([]byte("to-sshd")) }()
+
+	err := carryWithin(t, 5*time.Second, stream, stdin, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "took no data") {
+		t.Fatalf("carryStreams error = %v, want a stalled write", err)
+	}
+}
+
 func carryWithin(t *testing.T, limit time.Duration, stream Stream, stdin io.Reader, stdout io.Writer) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -166,3 +201,34 @@ func (w *blockedWriter) Write(p []byte) (int, error) {
 	<-w.release
 	return len(p), nil
 }
+
+// stalledStream holds every write until Close. Its pings return pingErr at
+// once.
+type stalledStream struct {
+	pingErr   error
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newStalledStream(pingErr error) *stalledStream {
+	return &stalledStream{pingErr: pingErr, closed: make(chan struct{})}
+}
+
+func (s *stalledStream) Read([]byte) (int, error) {
+	<-s.closed
+	return 0, io.EOF
+}
+
+func (s *stalledStream) Write([]byte) (int, error) {
+	<-s.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (s *stalledStream) Close() error {
+	s.closeOnce.Do(func() { close(s.closed) })
+	return nil
+}
+
+func (s *stalledStream) CloseNow() error { return s.Close() }
+
+func (s *stalledStream) Ping(context.Context) error { return s.pingErr }
