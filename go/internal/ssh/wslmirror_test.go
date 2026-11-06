@@ -132,11 +132,39 @@ func TestRenderWindowsWithoutSession(t *testing.T) {
 	}
 }
 
-func TestRenderWindowsRejectsUnsafeTarget(t *testing.T) {
+// Apostrophes are legal in Windows usernames and stay literal inside the
+// double-quoted config values, as long as no backslash precedes them.
+func TestRenderWindowsAcceptsApostropheInProfile(t *testing.T) {
 	target := windowsTestTarget(t.TempDir())
-	target.SSHDirWindows = `C:\Users\bad%name\.ssh`
-	if _, err := RenderWindows(sessionTestState(t, testPaths(t)), target); err == nil {
-		t.Fatal("expected error for a directory with an unsafe character")
+	target.SSHDirWindows = `C:\Users\O'Brien Smith\.ssh`
+
+	content, err := RenderWindows(sessionTestState(t, testPaths(t)), target)
+	if err != nil {
+		t.Fatalf("RenderWindows: %v", err)
+	}
+	for _, want := range []string{
+		`IdentityFile "C:\Users\O'Brien Smith\.ssh\amika_id_ed25519"` + "\n",
+		`UserKnownHostsFile "C:\Users\O'Brien Smith\.ssh\amika_known_hosts"` + "\n",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, content)
+		}
+	}
+}
+
+func TestRenderWindowsRejectsUnsafeTarget(t *testing.T) {
+	for _, dir := range []string{
+		`C:\Users\bad%name\.ssh`,
+		`C:\Users\bad"name\.ssh`,
+		`C:\Users\bad` + "`" + `name\.ssh`,
+		"C:\\Users\\bad\tname\\.ssh",
+		`C:\Users\'Brien\.ssh`,
+	} {
+		target := windowsTestTarget(t.TempDir())
+		target.SSHDirWindows = dir
+		if _, err := RenderWindows(sessionTestState(t, testPaths(t)), target); err == nil {
+			t.Fatalf("expected error for %q", dir)
+		}
 	}
 }
 

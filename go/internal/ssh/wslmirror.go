@@ -20,8 +20,11 @@ import (
 )
 
 // safeWindowsConfigPath accepts an absolute Windows path whose characters
-// cannot alter ssh config parsing or OpenSSH %-token expansion.
-var safeWindowsConfigPath = regexp.MustCompile(`^[A-Za-z]:\\[^/*?:"<>|%\r\n\t'` + "`" + `]+$`)
+// cannot alter ssh config parsing or OpenSSH %-token expansion. An apostrophe
+// is literal inside the double quotes the path is rendered in, except after a
+// backslash: OpenSSH 8.7+ reads `\'` as an escaped quote and drops the
+// backslash, so RenderWindows also rejects that sequence.
+var safeWindowsConfigPath = regexp.MustCompile(`^[A-Za-z]:\\[^/*?:"<>|%\r\n\t` + "`" + `]+$`)
 
 // runIcacls is a seam over the Windows ACL tool, so tests observe the
 // permission hardening without a Windows side.
@@ -39,7 +42,7 @@ var runIcacls = func(path, user string) error {
 // the mirrored identity and pin files and dial through wsl.exe into the
 // distribution that owns the session state.
 func RenderWindows(state HostsState, target wslbridge.Target) (string, error) {
-	if !safeWindowsConfigPath.MatchString(target.SSHDirWindows) {
+	if !safeWindowsConfigPath.MatchString(target.SSHDirWindows) || strings.Contains(target.SSHDirWindows, `\'`) {
 		return "", fmt.Errorf("unsafe Windows .ssh directory %q", target.SSHDirWindows)
 	}
 	var b strings.Builder
