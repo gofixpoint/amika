@@ -14,6 +14,11 @@
  * no socket under it.
  */
 import type { Duplex } from "node:stream";
+import {
+  KEEP_ALIVE_INTERVAL_MS,
+  MAX_MISSED_PINGS,
+  PING_TIMEOUT_MS,
+} from "@amika/tunnel-protocol";
 import { buildHandlers, type SnapshotOptions } from "./server.js";
 import { virtualServer } from "./tunnel-serving.js";
 import {
@@ -132,40 +137,6 @@ export function startTunnel(
  * black-holing rather than a host that is unwelcome.
  */
 const HANDSHAKE_TIMEOUT_MS = 20_000;
-
-/**
- * How often to ping an idle tunnel.
- *
- * A tunnel is a WebSocket held open across whatever sits between a
- * customer's network and Amika, and an idle one is what a NAT or a load
- * balancer reaps first. This is the host's half of the same bargain
- * `GATEWAY_KEEP_ALIVE_INTERVAL_MS` makes on the gateway's side.
- *
- * It also sets how fast a tunnel that broke with no close event is found.
- * Until then, the relay sends new requests into the dead socket. With
- * `PING_TIMEOUT_MS` and `MAX_MISSED_PINGS`, a dead tunnel is found in at
- * most about 25 s. The relay's own limit (`HOST_SILENCE_MS`, 90 s) does
- * not depend on this value, so a shorter interval needs no relay change.
- */
-const KEEP_ALIVE_INTERVAL_MS = 10_000;
-
-/**
- * How long a ping may go unanswered before it counts as missed.
- *
- * Shorter than the interval, so a missed ping is counted before the next
- * one is due rather than queueing behind it.
- */
-const PING_TIMEOUT_MS = 5_000;
-
-/**
- * How many pings in a row may be missed before the tunnel is treated as
- * gone.
- *
- * A ping shares the socket with stream data, so during a large transfer
- * its `PONG` can come late. Ending the tunnel ends every stream on it, so
- * one late answer must not do that. A late `PONG` resets the count.
- */
-const MAX_MISSED_PINGS = 2;
 
 /** How long a closing attachment may take to finish what it is serving. */
 const DRAIN_MS = 5_000;
