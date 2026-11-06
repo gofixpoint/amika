@@ -60,13 +60,12 @@ func Distro() (string, error) {
 }
 
 // Target names the Windows side an editor launch needs: the user's .ssh
-// directory in both path spellings, the WSL distribution a proxy command must
-// re-enter, and the Windows account name used for ACL grants.
+// directory in both path spellings and the WSL distribution a proxy command
+// must re-enter.
 type Target struct {
 	SSHDir        string
 	SSHDirWindows string
 	Distro        string
-	User          string
 }
 
 // ResolveTarget collects the Windows-side facts the SSH mirror and the editor
@@ -85,11 +84,28 @@ func ResolveTarget() (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	user := profile[strings.LastIndexByte(profile, '\\')+1:]
-	if user == "" {
-		return Target{}, fmt.Errorf("derive Windows account name from profile %q", profile)
+	return Target{SSHDir: sshDir, SSHDirWindows: sshDirWindows, Distro: distro}, nil
+}
+
+// whoamiSIDField matches the SID column of `whoami /user /fo csv /nh`, the
+// last quoted field of its output.
+var whoamiSIDField = regexp.MustCompile(`"(S-1-[0-9]+(?:-[0-9]+)+)"$`)
+
+// UserSID returns the security identifier of the Windows user WSL interop
+// runs as. ACL grants name the user by SID because no name amika can read
+// reliably names the account: a renamed account keeps its old profile folder,
+// and domain and Microsoft accounts need a qualified name.
+func UserSID() (string, error) {
+	out, err := runInterop("whoami.exe", "/user", "/fo", "csv", "/nh")
+	if err != nil {
+		return "", fmt.Errorf("look up the Windows user's SID: %w", err)
 	}
-	return Target{SSHDir: sshDir, SSHDirWindows: sshDirWindows, Distro: distro, User: user}, nil
+	out = strings.TrimSpace(out)
+	match := whoamiSIDField.FindStringSubmatch(out)
+	if match == nil {
+		return "", fmt.Errorf("whoami.exe returned %q for the Windows user's SID", out)
+	}
+	return match[1], nil
 }
 
 // UserProfile returns the Windows user profile directory (for example

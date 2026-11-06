@@ -372,7 +372,8 @@ and host-key pins to the Windows side (`%USERPROFILE%\.ssh\amika.conf`, added
 via an `Include` line) with a `ProxyCommand` that re-enters your WSL
 distribution through `wsl.exe`, then launches the Windows editor directly
 with `--remote ssh-remote+<alias>`. This needs WSL interop (`cmd.exe`,
-`wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell sets it).
+`wslpath`, `whoami.exe`, `icacls.exe`) and `WSL_DISTRO_NAME` set (any
+interactive WSL shell sets it).
 
 ```bash
 amika sandbox open my-sandbox --app=cursor

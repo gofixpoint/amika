@@ -109,7 +109,6 @@ func TestResolveTarget(t *testing.T) {
 		SSHDir:        "/mnt/c/Users/hrishikesh/.ssh",
 		SSHDirWindows: `C:\Users\hrishikesh\.ssh`,
 		Distro:        "Ubuntu",
-		User:          "hrishikesh",
 	}
 	if target != want {
 		t.Fatalf("ResolveTarget = %+v, want %+v", target, want)
@@ -120,6 +119,31 @@ func TestResolveTargetRequiresDistro(t *testing.T) {
 	t.Setenv("WSL_DISTRO_NAME", "")
 	if _, err := ResolveTarget(); err == nil {
 		t.Fatal("expected error when WSL_DISTRO_NAME is unset")
+	}
+}
+
+func TestUserSID(t *testing.T) {
+	calls := stubInterop(t, map[string]string{
+		"whoami.exe": "\"desktop-lm41nop\\jane smith\",\"S-1-5-21-1004336348-1177238915-682003330-1001\"\r\n",
+	})
+	got, err := UserSID()
+	if err != nil {
+		t.Fatalf("UserSID: %v", err)
+	}
+	if want := "S-1-5-21-1004336348-1177238915-682003330-1001"; got != want {
+		t.Fatalf("UserSID = %q, want %q", got, want)
+	}
+	// Only the CSV format quotes the SID; the default table format would not
+	// parse.
+	if want := []string{"whoami.exe /user /fo csv /nh"}; !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("interop calls = %q, want %q", *calls, want)
+	}
+}
+
+func TestUserSIDRejectsOutputWithoutSID(t *testing.T) {
+	stubInterop(t, map[string]string{"whoami.exe": "\"desktop\\jane smith\"\r\n"})
+	if _, err := UserSID(); err == nil {
+		t.Fatal("expected error for output without a SID")
 	}
 }
 
