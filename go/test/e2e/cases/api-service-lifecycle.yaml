@@ -15,7 +15,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create a source sandbox and wait until it is provisioned
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
+    cmd: [rig, create, "e2e-{{run_slug}}-service", --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -28,8 +28,12 @@ steps:
       sandbox_name: $.name
     resource:
       type: sandbox
-      name: "{{sandbox_name}}"
-      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-service"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-service", --remote, --force, -o, json]
+      verify_gone:
+        cmd: [rig, get, "e2e-{{run_slug}}-service", -o, json]
+        not_found: "HTTP 404"
 
   - name: create a service on the running sandbox
     cmd: [service, create, --rig, "{{sandbox_name}}", --name, e2e-svc, --port, "3000", --url-scheme, http, -o, json]
@@ -45,6 +49,9 @@ steps:
       type: service
       name: e2e-svc
       cleanup: [service, delete, --rig, "{{sandbox_name}}", --name, e2e-svc, --force, -o, json]
+      verify_gone:
+        cmd: [service, list, --rig, "{{sandbox_name}}", -o, json]
+        absent_from: "$[*].service"
 
   - name: list services and confirm ours is present
     cmd: [service, list, --rig, "{{sandbox_name}}", -o, json]

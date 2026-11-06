@@ -20,7 +20,7 @@ vars:
     e2b: a1.tiny
 steps:
   - name: create a source sandbox and wait until it is provisioned
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
+    cmd: [rig, create, "e2e-{{run_slug}}-snapshot", --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Sandbox
@@ -31,8 +31,12 @@ steps:
       sandbox_name: $.name
     resource:
       type: sandbox
-      name: "{{sandbox_name}}"
-      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-snapshot"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-snapshot", --remote, --force, -o, json]
+      verify_gone:
+        cmd: [rig, get, "e2e-{{run_slug}}-snapshot", -o, json]
+        not_found: "HTTP 404"
 
   - name: capture a full snapshot and wait until it settles
     cmd: [snapshot, create, --no-interactive, --mode, full, --name, "e2e-{{sandbox_name}}", --rig, "{{sandbox_name}}", -o, json]
@@ -48,6 +52,9 @@ steps:
       type: snapshot
       name: "{{snapshot_ref}}"
       cleanup: [snapshot, delete, "{{snapshot_ref}}", --force, -o, json]
+      verify_gone:
+        cmd: [snapshot, list, -o, json]
+        absent_from: "$.items[*].snapshot"
 
   - name: list snapshots as json and confirm ours is present
     cmd: [snapshot, list, -o, json]

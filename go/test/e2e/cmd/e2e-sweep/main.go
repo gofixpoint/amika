@@ -81,7 +81,7 @@ func sweepAll(binPath string, stale []runner.StaleRun) error {
 		}
 		for _, cleanup := range result.Results {
 			if cleanup.Err == nil {
-				fmt.Printf("  deleted %s %q\n", cleanup.Entry.Type, cleanup.Entry.Name)
+				fmt.Printf("  deleted %s %q (%s)\n", cleanup.Entry.Type, cleanup.Entry.Name, describeVerified(cleanup.Verified))
 				continue
 			}
 			failed++
@@ -97,6 +97,18 @@ func sweepAll(binPath string, stale []runner.StaleRun) error {
 		return fmt.Errorf("%d resource(s) could not be deleted and need attention", failed)
 	}
 	return nil
+}
+
+// describeVerified is the human wording for a CleanupResult.Verified value.
+func describeVerified(verified string) string {
+	switch verified {
+	case runner.VerifiedGone:
+		return "verified gone"
+	case runner.VerifiedUnsupported:
+		return "not verified: the resource has no verify_gone check"
+	default:
+		return verified
+	}
 }
 
 func countEntries(stale []runner.StaleRun) int {
