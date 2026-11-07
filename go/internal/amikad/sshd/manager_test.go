@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/gofixpoint/amika/go/internal/amikad/platform"
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
 	"github.com/gofixpoint/amika/go/internal/constants"
 	"golang.org/x/crypto/ssh"
@@ -312,6 +314,37 @@ func TestManagedPortIsOffSystemSSHAndMatchesTheDialTarget(t *testing.T) {
 	}
 	if got, want := manager.LoopbackAddress(), fmt.Sprintf("127.0.0.1:%d", manager.paths.Port); got != want {
 		t.Fatalf("LoopbackAddress = %q, want %q", got, want)
+	}
+}
+
+func TestManagedSSHDClosesSessionsWhoseClientStopsAnswering(t *testing.T) {
+	skipUnlessSecureWrites(t)
+	binary, err := platform.FindSSHD(platform.Current())
+	if err != nil {
+		t.Skipf("sshd not installed: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		// A root sshd also checks the system privilege-separation user and
+		// directory, which a test machine does not always have.
+		t.Skip("sshd -T as root depends on system privilege-separation state")
+	}
+	manager, paths, _, _ := testManager(t)
+	if err := manager.Setup(context.Background(), SetupOptions{}); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	// Ask the real sshd for the settings it applies from the managed
+	// config. The client gets 4 probes, 15 s apart, before sshd closes the
+	// session.
+	output, err := exec.Command(binary, "-T", "-f", paths.Config).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sshd -T: %v\n%s", err, output)
+	}
+	effective := "\n" + string(output)
+	for _, setting := range []string{"clientaliveinterval 15", "clientalivecountmax 4"} {
+		if !strings.Contains(effective, "\n"+setting+"\n") {
+			t.Fatalf("sshd does not apply %q:\n%s", setting, output)
+		}
 	}
 }
 

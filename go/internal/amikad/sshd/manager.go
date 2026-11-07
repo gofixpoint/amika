@@ -489,6 +489,11 @@ func ValidateAllowUser(name string) error {
 }
 
 // RenderConfig returns the complete loopback-only sshd policy.
+//
+// A leg between the client and the rig can drop without a close reaching
+// the rig. ClientAliveInterval and ClientAliveCountMax make sshd probe the
+// client end to end through the bridge and close the session after about
+// 60 s without an answer.
 func RenderConfig(paths Paths) string {
 	return fmt.Sprintf(`Port %d
 ListenAddress 127.0.0.1
@@ -511,6 +516,8 @@ X11Forwarding no
 PermitTunnel no
 PermitUserEnvironment no
 UsePAM no
+ClientAliveInterval 15
+ClientAliveCountMax 4
 Subsystem sftp internal-sftp
 `, paths.Port, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys, paths.AllowUser)
 }
