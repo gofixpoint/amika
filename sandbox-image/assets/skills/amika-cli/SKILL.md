@@ -90,6 +90,10 @@ confirmation flags, and commands that reject JSON output.
 - `snapshot list -o json` returns `{"items": [...]}`; most list commands return
   a bare array.
 - `--secret env:KEY=NAME` refers to a stored secret name, not a literal value.
+- `amika send` needs `--agent claude` or `--agent codex` to start a new chat
+  (no `--session-id` or `--rig`, `--new-session`, or a `--rig` with no chat
+  yet). A continued chat keeps its agent; a different `--agent` there is an
+  error.
 - `amika send` can report an agent failure through `is_error`; inspect
   the result even when the request completed.
 - `.amika/config.toml` is the reviewable source for how a repository configures

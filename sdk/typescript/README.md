@@ -172,6 +172,10 @@ listed status matches.
 `client.agentSessions.send()` can continue a chat by `sessionId`, target an
 existing rig by `rig` (a `RigRef`), or let the server create a rig. `repoUrl` is used only
 when a rig must be created. `rig.send()` supplies the rig reference for you.
+Starting a new chat requires `agent` (`claude` or `codex`). A continued chat
+keeps the agent it started with, so `agent` is optional there and, if given,
+must match. A `rig` without a `sessionId` continues that rig's latest chat, or
+starts one (needing `agent`) if the rig has none.
 Both buffered and streaming sends have a 10-minute client timeout.
 To choose which credentials a rig receives, create it with `agentCredentials`
 before sending, as in the first example. The send request has no credential
