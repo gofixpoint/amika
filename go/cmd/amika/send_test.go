@@ -33,7 +33,7 @@ func TestSendAndSessionsCommandsRegistered(t *testing.T) {
 	}
 	for _, name := range []string{
 		"agent", "session-id", "rig", "new-session", "git", "repo",
-		"no-git", flagBranch, flagNewBranch, "stream",
+		"no-git", flagBranch, flagNewBranch, "stream", flagModel, flagEffort,
 	} {
 		if send.Flags().Lookup(name) == nil {
 			t.Errorf("send is missing --%s flag", name)
@@ -591,6 +591,115 @@ func TestRigAgentSendUsesSendAPI(t *testing.T) {
 			}
 			if results[0]["session_id"] != "chat_1" || results[0]["usage"] == nil {
 				t.Fatalf("missing API fields: %v", results[0])
+			}
+		})
+	}
+}
+
+// --model and --effort land in the request body as given, on both send
+// spellings and both transports, and an absent flag leaves its field out so the
+// server reads it as "inherit" rather than as a value.
+func TestSendModelAndEffort(t *testing.T) {
+	cases := []struct {
+		name  string
+		agent string
+		flags []string
+		want  map[string]any
+	}{
+		{
+			name:  "both",
+			agent: "codex",
+			flags: []string{"--model", "gpt-5.6-terra", "--effort", "xhigh"},
+			want:  map[string]any{"model": "gpt-5.6-terra", "effort": "xhigh"},
+		},
+		{
+			name:  "model only",
+			agent: "claude",
+			flags: []string{"--model", "sonnet"},
+			want:  map[string]any{"model": "sonnet"},
+		},
+		{
+			name:  "effort only",
+			agent: "claude",
+			flags: []string{"--effort", "max"},
+			want:  map[string]any{"effort": "max"},
+		},
+		{
+			// Not in the server's list today: the CLI passes it through rather
+			// than second-guess an allowlist that moves with server releases.
+			name:  "unknown model passes through",
+			agent: "claude",
+			flags: []string{"--model", "some-future-model"},
+			want:  map[string]any{"model": "some-future-model"},
+		},
+		{
+			name:  "neither",
+			agent: "claude",
+			want:  map[string]any{},
+		},
+	}
+	for _, tc := range cases {
+		for _, stream := range []bool{false, true} {
+			for _, base := range [][]string{
+				{"send", "hi", "--rig", "my-rig"},
+				{"rig", "agent-send", "my-rig", "hi"},
+			} {
+				t.Run(fmt.Sprintf("%s/stream=%t/%s", tc.name, stream, base[0]), func(t *testing.T) {
+					var got map[string]any
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+							t.Error(err)
+						}
+						if stream {
+							w.Header().Set("Content-Type", "text/event-stream")
+							fmt.Fprint(w, "event: done\ndata: {\"session_id\":\"chat_1\",\"response\":\"ok\",\"is_error\":false}\n\n")
+							return
+						}
+						w.Header().Set("Content-Type", "application/json")
+						fmt.Fprint(w, `{"session_id":"chat_1","sandbox_id":"sb_1","agent":"claude","response":"ok","is_error":false,"is_new_session":false,"created_sandbox":false}`)
+					}))
+					defer server.Close()
+					t.Setenv("AMIKA_API_URL", server.URL)
+					t.Setenv("AMIKA_API_KEY", "test-key")
+
+					args := append(append([]string{}, base...), "--agent", tc.agent)
+					args = append(append(args, tc.flags...), fmt.Sprintf("--stream=%t", stream))
+					if _, err := runRootCommandOutput(t, args...); err != nil {
+						t.Fatal(err)
+					}
+					want := map[string]any{"message": "hi", "agent": tc.agent, "sandbox_ref": "my-rig"}
+					for k, v := range tc.want {
+						want[k] = v
+					}
+					if !reflect.DeepEqual(got, want) {
+						t.Errorf("request=%v, want %v", got, want)
+					}
+				})
+			}
+		}
+	}
+}
+
+// A model the server's schema rejects comes back as Hono's raw validator body,
+// not the API's error envelope; the error still has to name the field and the
+// accepted values rather than dump escaped JSON.
+func TestSendSurfacesModelRejection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"success":false,"error":{"name":"ZodError","message":"[\n  {\n    \"code\": \"invalid_value\",\n    \"path\": [\"model\"],\n    \"message\": \"Invalid option: expected one of \\\"fable\\\"|\\\"opus\\\"\"\n  }\n]"}}`)
+	}))
+	defer server.Close()
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			_, err := runRootCommandOutput(t, "send", "hi", "--agent", "claude", "--rig", "my-rig",
+				"--model", "gpt-4", fmt.Sprintf("--stream=%t", stream))
+			want := `HTTP 400: Validation failed: model: Invalid option: expected one of "fable"|"opus"`
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want it to contain %q", err, want)
 			}
 		})
 	}
