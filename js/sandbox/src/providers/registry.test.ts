@@ -25,6 +25,7 @@ const DEPS: SandboxProviderDeps = {
   e2b: { apiKey: "k" },
   freestyle: { apiKey: "k" },
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
+  instabox: { apiKey: "k" },
   smol: {},
   lume: { storageDir: "/vms", stateDir: "/state" },
   amikaHostd: { secretKey: "s" },
@@ -56,6 +57,7 @@ describe("createSandboxProvider construction", () => {
     e2b: "e2b",
     freestyle: "freestyle",
     vercel: "vercel",
+    instabox: "instabox",
     smol: "smol",
     lume: "lume",
     "amika-hostd": "amikaHostd",
@@ -105,7 +107,13 @@ describe("createSandboxProvider construction", () => {
   });
 
   it("gives the three real providers the full capability set", () => {
-    for (const name of ["daytona", "e2b", "freestyle", "vercel"] as const) {
+    for (const name of [
+      "daytona",
+      "e2b",
+      "freestyle",
+      "vercel",
+      "instabox",
+    ] as const) {
       const p = createSandboxProvider(name, DEPS);
       expect(p.capabilities.lifecycle, name).toBe(true);
       expect(p.capabilities.exec, name).toBe(true);

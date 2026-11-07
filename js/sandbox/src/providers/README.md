@@ -278,7 +278,7 @@ prefix of each credential (`targetIdentity` in `env-target.ts`).
 A delete is not trusted on its own. Sandboxes are verified against the
 provider's listing; snapshots with `find`, which also sees one still
 registering. A resource still present after the wait is recorded as
-`delete_failed`, the same as a delete that threw. An opaque snapshot id can also be recovered by name on E2B and Freestyle.
+`delete_failed`, the same as a delete that threw. An opaque snapshot id can also be recovered by name on E2B, Freestyle, and Instabox.
 If neither capture nor lookup yields an id on an opaque-id provider, cleanup
 fails rather than reporting it gone. If writing an outcome fails,
 the remaining resources are still deleted and the test fails.
