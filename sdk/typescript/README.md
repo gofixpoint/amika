@@ -61,8 +61,10 @@ Rigs run on Amika Cloud unless you pass `hostId`, the ID of one of your
 organization's own hosts (bring-your-own compute), to place the rig there.
 The SDK cannot list hosts yet: `amika host get <hostname>` prints a host's ID
 and its sizes. With `hostId` set, `size` names one of that host's own sizes,
-and the server rejects `provider`, `snapshot`, `autoStopInterval`, and
-`autoDeleteInterval`.
+and `snapshot` must name a snapshot taken on that host. The server rejects
+`provider`, and an `autoStopInterval` other than 0, because a host rig has no
+idle timer. `autoDeleteInterval` applies: Amika deletes a stopped host rig when
+the interval ends.
 
 A control plane too old to support hosts ignores `hostId` and builds the rig on
 Amika Cloud. The create response may not report the host yet, so confirm the
