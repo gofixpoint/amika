@@ -26,7 +26,7 @@ export async function signWithContext(
 export function contextMessage(
   context: string,
   payloadBytes: Uint8Array,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   const prefix = new TextEncoder().encode(context);
   const message = new Uint8Array(prefix.length + 1 + payloadBytes.length);
   message.set(prefix, 0);
@@ -38,7 +38,7 @@ export function contextMessage(
 export async function verifyEd25519(
   keyHex: string,
   sig: string,
-  message: Uint8Array,
+  message: Uint8Array<ArrayBuffer>,
 ): Promise<boolean> {
   const keyBytes = fromHex(keyHex);
   const sigBytes = fromBase64Url(sig);
@@ -65,7 +65,9 @@ export async function publicKeyFromSeed(seed: Uint8Array): Promise<string> {
 
 /** SHA-256 of `bytes`, as 64 lowercase hex. */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+  // A copy, so its buffer is an `ArrayBuffer`, as DOM's `BufferSource` needs.
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+  return toHex(new Uint8Array(digest));
 }
 
 /** Whether two strings are equal, in time that depends only on length. */
@@ -92,8 +94,11 @@ async function importPrivateKey(seed: Uint8Array): Promise<SigningKey> {
 
 /** The public key of a private key, read from its JWK's `x`. */
 async function publicKeyOf(key: SigningKey): Promise<string> {
-  const jwk = await crypto.subtle.exportKey("jwk", key);
-  const publicKey = jwk.x === undefined ? null : fromBase64Url(jwk.x);
+  // Workers' types return `ArrayBuffer | JsonWebKey` for every format.
+  const jwk: unknown = await crypto.subtle.exportKey("jwk", key);
+  const x =
+    typeof jwk === "object" && jwk !== null && "x" in jwk ? jwk.x : null;
+  const publicKey = typeof x === "string" ? fromBase64Url(x) : null;
   if (publicKey === null || publicKey.length !== 32) {
     throw new Error("Web Crypto returned no Ed25519 public key");
   }

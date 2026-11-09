@@ -63,6 +63,8 @@ export async function rulesPublicKey(privateKey: Uint8Array): Promise<string> {
  * The bytes a signature covers: `amika-iroh-rules-v1`, one zero byte, then
  * the payload bytes.
  */
-export function signedMessage(payloadBytes: Uint8Array): Uint8Array {
+export function signedMessage(
+  payloadBytes: Uint8Array,
+): Uint8Array<ArrayBuffer> {
   return contextMessage(SIGNATURE_CONTEXT, payloadBytes);
 }

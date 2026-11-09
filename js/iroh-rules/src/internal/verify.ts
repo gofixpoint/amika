@@ -222,7 +222,9 @@ export function parseRulesPayload(
 /** Parse UTF-8 JSON bytes, or return `undefined` when they are not. */
 export function parseJson(bytes: Uint8Array): unknown {
   try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return JSON.parse(
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes),
+    );
   } catch (_error) {
     return undefined;
   }
