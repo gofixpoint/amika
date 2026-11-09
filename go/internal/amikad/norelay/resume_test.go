@@ -654,3 +654,29 @@ func TestResumableSessionLogsNoSecrets(t *testing.T) {
 		}
 	}
 }
+
+// A takeover waits for the old transport's reader, which may be stuck writing
+// to an sshd that reads nothing. Shutdown must still finish: it closes sshd,
+// which ends that write.
+func TestResumableShutdownDoesNotWaitForAStuckTakeover(t *testing.T) {
+	h := newResumeHarness(t, 64)
+	client, secret, _ := h.open()
+	// sshd never reads, so amikad's write of this DATA blocks.
+	client.Send(sshresume.Frame{Type: sshresume.FrameData, Payload: []byte("stuck")})
+	time.Sleep(20 * time.Millisecond)
+	takeover, _ := h.connect(resumetest.NoFault)
+	takeover.Send(sshresume.Frame{Type: sshresume.FrameHello, Mode: sshresume.HelloResume, Secret: secret})
+	time.Sleep(20 * time.Millisecond)
+
+	closed := make(chan struct{})
+	go func() {
+		h.handler.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown waited on a takeover stuck behind an sshd write")
+	}
+	eventually(t, func() bool { return h.handler.ActiveConnections() == 0 })
+}

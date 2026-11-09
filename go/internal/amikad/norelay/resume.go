@@ -283,20 +283,24 @@ func (h *Handler) finish(session *resumeSession) {
 
 // closeResumable sends ABORT on every session's transport and closes every
 // sshd connection, for daemon shutdown. Transports that wait for HELLO close.
+//
+// It takes no session lock: a takeover can hold one while it waits for a
+// write to sshd, and closing sshd here is what ends that write. A pending
+// grace timer then finds the session ended and does nothing. Sessions close
+// in parallel, so each one's bounded ABORT write does not add up.
 func (h *Handler) closeResumable() {
 	sessions, pending := h.resume.close()
 	for _, transport := range pending {
 		transport.Close(websocket.StatusGoingAway)
 	}
+	var closing sync.WaitGroup
 	for _, session := range sessions {
-		session.mu.Lock()
-		if session.grace != nil {
-			session.grace.Stop()
-		}
-		session.mu.Unlock()
-		session.stream.Abort(sshresume.AbortShutdown)
-		h.finish(session)
+		closing.Go(func() {
+			session.stream.Abort(sshresume.AbortShutdown)
+			h.finish(session)
+		})
 	}
+	closing.Wait()
 }
 
 func (h *Handler) refuseUnknown(transport sshresume.Transport) {
