@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use iroh::{Endpoint, SecretKey, endpoint::Connection};
+use iroh::{Endpoint, RelayUrl, SecretKey, endpoint::Connection};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -165,18 +165,64 @@ async fn a_lost_control_socket_refuses_new_streams_until_hostd_is_back() {
     echo(&mut send3, &mut recv3, b"after").await;
 }
 
+#[tokio::test]
+async fn an_open_stream_survives_relay_token_refreshes() {
+    // An n0 Pro host with a 2 s token, made from a throwaway API secret. Its
+    // relay does not answer; the client dials the loopback address.
+    let dir = std::env::temp_dir().join(format!("anh-{}-api", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let secret_file = dir.join("api-secret");
+    let api = iroh_services::api_secret::ApiSecret::new(
+        SecretKey::generate(),
+        SecretKey::generate().public(),
+    );
+    std::fs::write(&secret_file, api.to_string()).unwrap();
+    let args = EndpointArgs {
+        relay: Some(RelayChoice::N0Pro),
+        api_secret_file: Some(secret_file),
+        bind: Some("127.0.0.1:0".into()),
+        test_relay_token_ttl_secs: Some(2),
+        ..EndpointArgs::default()
+    };
+    let relay: RelayUrl = "http://127.0.0.1:9".parse().unwrap();
+    let bed = Bed::with("tok", args, &[relay]).await;
+    bed.hostd.allow(&bed.client.id());
+    let conn = bed.client.dial(&bed.host).await.unwrap();
+    let (mut send, mut recv) = connect::open_target(&conn, &rig(7)).await.unwrap();
+    echo(&mut send, &mut recv, b"before").await;
+
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while bed.host_relays.refreshes() < 2 {
+        assert!(tokio::time::Instant::now() < deadline, "no token refresh");
+        echo(&mut send, &mut recv, b"during").await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    echo(&mut send, &mut recv, b"after").await;
+    assert!(conn.close_reason().is_none());
+    // New streams and new connections still open.
+    open(&conn, "rig:r1:7").await.unwrap();
+    let conn2 = bed.client.dial(&bed.host).await.unwrap();
+    open(&conn2, "rig:r1:7").await.unwrap();
+}
+
 /// A host role with a fake hostd, a client endpoint, and an echo server
 /// that the fake hostd names for `rig:r1:7`.
 struct Bed {
     socket: PathBuf,
     hostd: FakeHostd,
     host: Endpoint,
+    host_relays: Arc<Relays>,
     client: Client,
     _serve: JoinHandle<()>,
 }
 
 impl Bed {
     async fn new(name: &str) -> Self {
+        Self::with(name, offline_args(), &[]).await
+    }
+
+    /// A bed whose host endpoint has these options and relay URLs.
+    async fn with(name: &str, host_args: EndpointArgs, relay_urls: &[RelayUrl]) -> Self {
         // Short: a Unix socket path has a limit of about 100 bytes.
         let dir = std::env::temp_dir().join(format!("anh-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -190,15 +236,17 @@ impl Bed {
         );
         let hostd = FakeHostd::listen(&socket, policy);
 
-        let (host, _) = endpoint(vec![ALPN.to_vec()]).await;
+        let (host, host_relays) = endpoint(&host_args, relay_urls, vec![ALPN.to_vec()]).await;
+        host_relays.spawn_refresh(host.clone());
         let registry = Registry::new();
         let control = Control::start(socket.clone(), host.clone(), registry.clone());
         let serve = tokio::spawn(serve(host.clone(), Authority::Hostd(control), registry));
-        let (ep, relays) = endpoint(vec![]).await;
+        let (ep, relays) = endpoint(&offline_args(), &[], vec![]).await;
         Self {
             socket,
             hostd,
             host,
+            host_relays,
             client: Client { ep, relays },
             _serve: serve,
         }
@@ -207,7 +255,7 @@ impl Bed {
 
 struct Client {
     ep: Endpoint,
-    relays: Relays,
+    relays: Arc<Relays>,
 }
 
 impl Client {
@@ -379,15 +427,23 @@ fn answer(policy: &Policy, msg: &Value) -> Option<Value> {
     }
 }
 
-async fn endpoint(alpns: Vec<Vec<u8>>) -> (Endpoint, Relays) {
-    let args = EndpointArgs {
+fn offline_args() -> EndpointArgs {
+    EndpointArgs {
         relay: Some(RelayChoice::None),
         bind: Some("127.0.0.1:0".into()),
         ..EndpointArgs::default()
-    };
+    }
+}
+
+async fn endpoint(
+    args: &EndpointArgs,
+    urls: &[RelayUrl],
+    alpns: Vec<Vec<u8>>,
+) -> (Endpoint, Arc<Relays>) {
     let secret = SecretKey::generate();
-    let relays = Relays::new(&args, RelayChoice::None, &secret).unwrap();
-    let ep = net::builder(&args, &relays, &[], secret)
+    let choice = args.relay_choice(!urls.is_empty());
+    let relays = Arc::new(Relays::new(args, choice, &secret).unwrap());
+    let ep = net::builder(args, &relays, urls, secret)
         .await
         .unwrap()
         .alpns(alpns)

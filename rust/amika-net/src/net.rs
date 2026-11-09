@@ -9,7 +9,10 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -24,6 +27,8 @@ use tracing::{info, warn};
 
 /// How long an n0 Pro relay token is valid. iroh-services uses the same.
 const N0_TOKEN_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// The share of a token's lifetime after which the endpoint makes a new one.
+const REFRESH_AT: f64 = 0.8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum RelayChoice {
@@ -63,6 +68,9 @@ pub struct EndpointArgs {
     /// Bind the IPv4 UDP socket here (host:port).
     #[arg(long)]
     pub bind: Option<String>,
+    /// The lifetime of an n0 Pro relay token, in seconds. For tests.
+    #[arg(long, hide = true)]
+    pub test_relay_token_ttl_secs: Option<u64>,
 }
 
 impl Default for EndpointArgs {
@@ -77,6 +85,7 @@ impl Default for EndpointArgs {
             idle_timeout_secs: 60,
             keepalive_secs: 5,
             bind: None,
+            test_relay_token_ttl_secs: None,
         }
     }
 }
@@ -120,28 +129,49 @@ impl EndpointArgs {
         if let Some(bind) = &self.bind {
             args.extend(["--bind".into(), bind.clone()]);
         }
+        if let Some(ttl) = self.test_relay_token_ttl_secs {
+            args.extend(["--test-relay-token-ttl-secs".into(), ttl.to_string()]);
+        }
         Ok(args)
     }
 }
 
 /// How this endpoint signs in to relays. A caller adds a host's relay to
 /// its relay map when it dials, so it signs in to that relay the same way.
+///
+/// An n0 Pro token expires, so [`Relays::spawn_refresh`] makes a new one at
+/// 80% of its lifetime and puts it in the relay map. iroh 1.4.1 reads the
+/// token only when it starts a relay connection, and keeps it for that
+/// connection's reconnects. See `AGENTS.md` for what that means for the
+/// home relay.
 #[derive(Debug)]
 pub struct Relays {
     choice: RelayChoice,
-    token: Option<String>,
+    /// The n0 Pro API secret and this endpoint's id, to make tokens.
+    n0_pro: Option<(iroh_services::api_secret::ApiSecret, iroh::EndpointId)>,
+    ttl: Duration,
+    token: Mutex<Option<String>>,
+    refreshes: AtomicU64,
     known: Mutex<HashSet<RelayUrl>>,
 }
 
 impl Relays {
     pub fn new(args: &EndpointArgs, choice: RelayChoice, secret: &SecretKey) -> Result<Self> {
+        let ttl = args
+            .test_relay_token_ttl_secs
+            .map_or(N0_TOKEN_TTL, Duration::from_secs);
+        let mut n0_pro = None;
         let token = match choice {
             RelayChoice::N0Pro => {
                 let path = args
                     .api_secret_file
                     .as_deref()
                     .context("--relay n0-pro needs --api-secret-file")?;
-                Some(n0_pro_token(&read_secret(path)?, secret)?)
+                let api = iroh_services::api_secret::ApiSecret::from_str(&read_secret(path)?)
+                    .map_err(|e| anyhow::anyhow!("the n0 API secret does not parse: {e}"))?;
+                let token = n0_pro_token(&api, secret.public(), ttl);
+                n0_pro = Some((api, secret.public()));
+                Some(token)
             }
             RelayChoice::Custom => match &args.relay_token_file {
                 Some(path) => Some(read_secret(path)?),
@@ -151,9 +181,58 @@ impl Relays {
         };
         Ok(Self {
             choice,
-            token,
+            n0_pro,
+            ttl,
+            token: Mutex::new(token),
+            refreshes: AtomicU64::new(0),
             known: Mutex::default(),
         })
+    }
+
+    /// How many times the token was refreshed.
+    pub fn refreshes(&self) -> u64 {
+        self.refreshes.load(Ordering::Relaxed)
+    }
+
+    /// For n0 Pro, makes a new token at 80% of each token's lifetime, and
+    /// puts it in the endpoint's relay map for every known relay. Open
+    /// connections and relay connections stay up. Returns at once for other
+    /// relay choices, and when the endpoint closes.
+    pub fn spawn_refresh(self: &Arc<Self>, ep: Endpoint) {
+        if self.n0_pro.is_none() {
+            return;
+        }
+        let relays = self.clone();
+        tokio::spawn(async move {
+            let every = relays.ttl.mul_f64(REFRESH_AT);
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep(every) => {}
+                    () = ep.closed() => return,
+                }
+                relays.refresh(&ep).await;
+            }
+        });
+    }
+
+    async fn refresh(&self, ep: &Endpoint) {
+        let Some((api, id)) = &self.n0_pro else {
+            return;
+        };
+        *self.token.lock().expect("poisoned") = Some(n0_pro_token(api, *id, self.ttl));
+        let urls: Vec<RelayUrl> = self
+            .known
+            .lock()
+            .expect("poisoned")
+            .iter()
+            .cloned()
+            .collect();
+        for url in &urls {
+            ep.insert_relay(url.clone(), Arc::new(self.config(url.clone())))
+                .await;
+        }
+        let n = self.refreshes.fetch_add(1, Ordering::Relaxed) + 1;
+        info!(relays = urls.len(), refreshes = n, "relay token refreshed");
     }
 
     /// The relay mode to bind with, from this endpoint's own relay URLs.
@@ -173,7 +252,8 @@ impl Relays {
                 n0_map()
             }
             RelayChoice::N0Pro if urls.is_empty() => {
-                n0_map().with_auth_token(self.token.clone().context("n0 Pro has no token")?)
+                let token = self.token.lock().expect("poisoned").clone();
+                n0_map().with_auth_token(token.context("n0 Pro has no token")?)
             }
             RelayChoice::N0Pro | RelayChoice::Custom => {
                 RelayMap::from_iter(urls.iter().map(|u| self.config(u.clone())))
@@ -208,8 +288,8 @@ impl Relays {
         if plain {
             cfg.quic = None;
         }
-        match &self.token {
-            Some(t) => cfg.with_auth_token(t.clone()),
+        match self.token.lock().expect("poisoned").clone() {
+            Some(t) => cfg.with_auth_token(t),
             None => cfg,
         }
     }
@@ -284,19 +364,21 @@ pub fn spawn_home_relay_logger(ep: &Endpoint) {
 }
 
 /// The relay token that iroh-services makes from an n0 project API secret:
-/// a capability to use the relays, issued to this endpoint.
-fn n0_pro_token(api_secret: &str, secret: &SecretKey) -> Result<String> {
-    let api = iroh_services::api_secret::ApiSecret::from_str(api_secret)
-        .map_err(|e| anyhow::anyhow!("the n0 API secret does not parse: {e}"))?;
+/// a capability to use the relays, issued to this endpoint, valid for `ttl`.
+fn n0_pro_token(
+    api: &iroh_services::api_secret::ApiSecret,
+    id: iroh::EndpointId,
+    ttl: Duration,
+) -> String {
     let token = iroh_services::caps::create_api_token_from_secret_key(
-        api.secret,
-        secret.public(),
-        N0_TOKEN_TTL,
+        api.secret.clone(),
+        id,
+        ttl,
         iroh_services::caps::Caps::relay_use(),
     );
-    Ok(data_encoding::BASE32_NOPAD
+    data_encoding::BASE32_NOPAD
         .encode(&token.encode())
-        .to_ascii_lowercase())
+        .to_ascii_lowercase()
 }
 
 fn transport_config(args: &EndpointArgs) -> Result<QuicTransportConfig> {
@@ -356,7 +438,10 @@ mod tests {
     fn custom_relays_carry_the_token_and_plain_http_has_no_quic() {
         let relays = Relays {
             choice: RelayChoice::Custom,
-            token: Some("t".into()),
+            n0_pro: None,
+            ttl: N0_TOKEN_TTL,
+            token: Mutex::new(Some("t".into())),
+            refreshes: AtomicU64::new(0),
             known: Mutex::default(),
         };
         let cfg = relays.config("http://127.0.0.1:3340".parse().unwrap());

@@ -31,9 +31,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use iroh::{
-    Endpoint, EndpointId, RelayUrl,
+    Endpoint, EndpointId, RelayUrl, Watcher,
     endpoint::{Connection, RecvStream, SendStream},
 };
+use n0_future::StreamExt;
 use tokio::{
     net::TcpStream,
     signal::unix::{SignalKind, signal},
@@ -94,13 +95,14 @@ pub async fn run(args: HostArgs) -> Result<()> {
         (None, None) => bail!("give --key-fd or --key-file"),
     };
     let choice = args.net.relay_choice(!args.relay_urls.is_empty());
-    let relays = Relays::new(&args.net, choice, &secret)?;
+    let relays = Arc::new(Relays::new(&args.net, choice, &secret)?);
     let ep = net::builder(&args.net, &relays, &args.relay_urls, secret)
         .await?
         .alpns(vec![ALPN.to_vec()])
         .bind()
         .await?;
     net::spawn_home_relay_logger(&ep);
+    relays.spawn_refresh(ep.clone());
     info!(id = %ep.id(), sockets = ?ep.bound_sockets(), relay = ?choice, "host bound");
     let ep2 = ep.clone();
     tokio::spawn(async move { net::report_online(&ep2, Duration::from_secs(15)).await });
@@ -120,10 +122,14 @@ pub async fn run(args: HostArgs) -> Result<()> {
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     tokio::select! {
-        () = serve(ep.clone(), authority, registry) => {}
+        () = serve(ep.clone(), authority, registry.clone()) => {}
         _ = term.recv() => info!("SIGTERM; exiting"),
         _ = int.recv() => info!("SIGINT; exiting"),
         () = parent_exit(watch_parent) => warn!("the parent process exited; exiting"),
+        () = stale_relay_token(&ep, &relays, &registry) => {
+            ep.close().await;
+            bail!("the home relay refused an old token; exiting so that hostd starts a new amika-net");
+        }
     }
     ep.close().await;
     Ok(())
@@ -343,6 +349,31 @@ async fn refuse(send: &mut SendStream, reason: Refusal) -> Result<()> {
 fn reset(send: &mut SendStream, recv: &mut RecvStream) {
     let _ = send.reset(RESET_BAD_HEADER.into());
     let _ = recv.stop(RESET_BAD_HEADER.into());
+}
+
+/// Returns when the home relay refuses this endpoint's token after a token
+/// refresh, and no connection is open.
+///
+/// iroh 1.4.1 keeps the token that a relay connection started with for all
+/// its reconnects, and the home relay connection never ends. So a home relay
+/// connection that drops after the first token expires cannot come back.
+/// Direct paths keep working, so the host waits for its open connections to
+/// end, then exits, and hostd starts it again with a new token.
+async fn stale_relay_token(ep: &Endpoint, relays: &Relays, registry: &Registry) {
+    let mut statuses = ep.home_relay_status().stream();
+    loop {
+        let Some(statuses) = statuses.next().await else {
+            return std::future::pending().await;
+        };
+        let denied = statuses.iter().any(|s| s.auth_denied_reason().is_some());
+        if denied && relays.refreshes() > 0 {
+            break;
+        }
+    }
+    warn!("the home relay refused the token; exiting when the open connections end");
+    while registry.open() > 0 {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 }
 
 /// Returns when the parent process exits. hostd starts a new `amika-net`

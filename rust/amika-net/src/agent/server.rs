@@ -68,12 +68,13 @@ pub async fn run(args: RunArgs) -> Result<()> {
     let relay = args.net.relay_choice(true);
     let config = super::agent_config(&args.key_file, &args.net, relay)?;
     let secret = keys::load(&args.key_file)?;
-    let relays = Relays::new(&args.net, relay, &secret)?;
+    let relays = Arc::new(Relays::new(&args.net, relay, &secret)?);
     let ep = net::builder(&args.net, &relays, &[], secret)
         .await?
         .bind()
         .await?;
     net::spawn_home_relay_logger(&ep);
+    relays.spawn_refresh(ep.clone());
     let ep2 = ep.clone();
     tokio::spawn(async move { net::report_online(&ep2, Duration::from_secs(15)).await });
 
@@ -132,7 +133,7 @@ fn bind_socket(path: &Path) -> Result<UnixListener> {
 
 struct Agent {
     ep: Endpoint,
-    relays: Relays,
+    relays: Arc<Relays>,
     build: String,
     proto: (u32, u32),
     config: String,
@@ -187,7 +188,7 @@ fn next_step(s: &State, now: Instant, idle_exit: Duration) -> Step {
 impl Agent {
     fn new(
         ep: Endpoint,
-        relays: Relays,
+        relays: Arc<Relays>,
         config: String,
         socket: PathBuf,
         socket_id: FileId,

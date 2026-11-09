@@ -125,3 +125,62 @@ fn a_session_goes_through_the_hosts_relay_with_no_lookup() {
     s.echo_for(3 * SECOND, Duration::from_millis(100)).unwrap();
     assert!(s.close().success());
 }
+
+/// A session over n0 Pro relays, relay-only, while both ends refresh their
+/// 20 s relay tokens. It runs past the first tokens' expiry. Needs the n0
+/// project API secret and relay URLs in files:
+///
+/// ```sh
+/// TEST_AMIKA_NET_N0_API_SECRET_FILE=... TEST_AMIKA_NET_N0_RELAY_URLS_FILE=... \
+///   cargo test --test e2e n0_pro -- --ignored
+/// ```
+///
+/// The relay URLs file has one URL per line. Neither value is printed.
+#[test]
+#[ignore = "needs the internet and the n0 project API secret"]
+fn an_n0_pro_session_survives_relay_token_refreshes() {
+    let (Ok(secret), Ok(urls)) = (
+        std::env::var("TEST_AMIKA_NET_N0_API_SECRET_FILE"),
+        std::env::var("TEST_AMIKA_NET_N0_RELAY_URLS_FILE"),
+    ) else {
+        panic!("set TEST_AMIKA_NET_N0_API_SECRET_FILE and TEST_AMIKA_NET_N0_RELAY_URLS_FILE");
+    };
+    let n0_pro = [
+        "--relay",
+        "n0-pro",
+        "--api-secret-file",
+        &secret,
+        "--relay-only",
+        "--test-relay-token-ttl-secs",
+        "20",
+    ]
+    .map(String::from)
+    .to_vec();
+    let mut host = n0_pro.clone();
+    for url in std::fs::read_to_string(&urls).unwrap().lines() {
+        if !url.trim().is_empty() {
+            host.extend(["--relay-url".to_string(), url.trim().to_string()]);
+        }
+    }
+    let bed = Bed::with(
+        "n0pro",
+        NetOpts {
+            host,
+            client: n0_pro,
+            host_addr: false,
+        },
+    );
+    let mut s = bed.session(&[], &[]);
+    s.echo(30 * SECOND).unwrap();
+    // 45 s: two refreshes, and past the first tokens' expiry.
+    let n = s.echo_for(45 * SECOND, Duration::from_millis(500)).unwrap();
+    assert!(n > 50);
+    let host_log = std::fs::read_to_string(bed.dir.join("host.log")).unwrap();
+    assert!(host_log.matches("relay token refreshed").count() >= 2);
+    assert!(bed.agent_log().matches("relay token refreshed").count() >= 2);
+    // A new session after the first tokens expired.
+    assert!(s.close().success());
+    let mut s = bed.session(&[], &[]);
+    s.echo(30 * SECOND).unwrap();
+    assert!(s.close().success());
+}

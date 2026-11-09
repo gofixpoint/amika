@@ -70,6 +70,12 @@ impl Registry {
         })
     }
 
+    /// How many connections are open.
+    pub fn open(&self) -> usize {
+        let inner = self.inner.lock().expect("poisoned");
+        inner.peers.values().map(|p| p.conns.len()).sum()
+    }
+
     /// Closes every connection from `peers`, and refuses the connections of
     /// these peers whose check 1 runs now. Returns how many it closed.
     pub fn revoke(&self, peers: &[EndpointId]) -> usize {
