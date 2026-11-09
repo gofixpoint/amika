@@ -11,6 +11,7 @@ use serde::Deserialize;
 struct Vectors {
     labels: Labels,
     proxy_forward_subjects: Vec<ProxySubject>,
+    proxy_dialer_subjects: Vec<DialerSubject>,
     forward_subjects: Vec<ForwardSubject>,
     subjects: Vec<Subject>,
     tokens: Vec<Token>,
@@ -21,6 +22,7 @@ struct Vectors {
 struct Labels {
     proxy_to_gateway: String,
     control_plane_to_gateway: String,
+    proxy_to_dialer: String,
 }
 
 #[derive(Deserialize)]
@@ -36,6 +38,24 @@ struct Claim {
 #[derive(Deserialize)]
 struct ProxySubject {
     claim: Claim,
+    subject: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DialerClaim {
+    host_id: String,
+    org_id: String,
+    rig: String,
+    service: String,
+    authority: String,
+    endpoint_id: String,
+    relay_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DialerSubject {
+    claim: DialerClaim,
     subject: String,
 }
 
@@ -71,10 +91,14 @@ fn vectors() -> Vectors {
 #[test]
 fn labels_match_the_hops() {
     let v = vectors();
-    assert_eq!(v.labels.proxy_to_gateway, forward::PROXY_LABEL);
+    assert_eq!(v.labels.proxy_to_dialer, forward::DIALER_LABEL);
+    assert_eq!(
+        v.labels.proxy_to_gateway,
+        "amika:reverse-proxy->gateway:forward-request:v2"
+    );
     assert_eq!(
         v.labels.control_plane_to_gateway,
-        forward::CONTROL_PLANE_LABEL
+        "amika:control-plane->gateway:forward-request:v1"
     );
 }
 
@@ -89,6 +113,20 @@ fn subjects_match() {
         let c = &s.claim;
         let parts = [&c.host_id, &c.org_id, &c.rig, &c.service, &c.authority];
         assert_eq!(token::claim_subject(&parts), s.subject);
+    }
+    assert!(!v.proxy_dialer_subjects.is_empty());
+    for s in &v.proxy_dialer_subjects {
+        let c = &s.claim;
+        let subject = forward::dialer_subject([
+            &c.host_id,
+            &c.org_id,
+            &c.rig,
+            &c.service,
+            &c.authority,
+            &c.endpoint_id,
+            c.relay_url.as_deref().unwrap_or(""),
+        ]);
+        assert_eq!(subject, s.subject);
     }
     for s in &v.forward_subjects {
         assert_eq!(token::claim_subject(&[&s.host_id, &s.org_id]), s.subject);

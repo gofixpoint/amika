@@ -11,8 +11,9 @@ here the same way.
 ## What it does
 
 1. The reverse proxy forwards a request for a rig on an iroh host to the
-   dialer. The request has the same signed headers that the gateway gets,
-   and two more: `x-amika-endpoint-id` and `x-amika-relay-url`.
+   dialer. The request has the headers that the gateway gets, and two
+   more: `x-amika-endpoint-id` and `x-amika-relay-url`. The assertion
+   covers all of them.
 2. The dialer checks the assertion (`src/forward.rs`, `src/token.rs`).
 3. The dialer opens a QUIC stream to the host's `hostd` target
    (`src/pool.rs`, `src/stream_header.rs`). It keeps one connection for
@@ -23,14 +24,18 @@ here the same way.
 
 ## Rules
 
-- Accept exactly the requests that the gateway accepts. `src/forward.rs`
-  is a port of `js/gateway-cloudflare/src/forward.ts` in amika-mono. When
-  that file changes, change this one.
+- Apply the gateway's checks. `src/forward.rs` is a port of
+  `js/gateway-cloudflare/src/forward.ts` in amika-mono, for the dialer
+  hop. When that file changes, change this one.
 - Keep `tests/service-token-vectors.json` byte-identical to
   `js/service-token/src/test-vectors.json` in amika-mono. Copy the file. Do
   not edit it here.
-- The assertion does not cover the endpoint id and the relay URL. Read
-  them only after the assertion verifies.
+- The assertion has the dialer hop's label,
+  `amika:reverse-proxy->dialer:forward-request:v1`. Its subject holds the
+  gateway hop's five values, then the endpoint id, then the relay URL (the
+  empty string for no relay). Dial only the endpoint and the relay in it.
+- Refuse the control plane's assertion. The dialer hop has no
+  control-plane label yet.
 - Dial a relay only when it is in `DIALER_RELAY_URLS`, or when that list is
   empty. Compare relay URLs without the trailing dot of the host name.
 - Do not log secrets, assertions or cookies.
@@ -51,7 +56,6 @@ copy here.
 |---------------------------------|----------------|------------------------------------------------------------------|
 | `DIALER_SECRET_KEY`             | required       | The endpoint key: 64 hex digits. Its public key is in the rules. |
 | `DIALER_PROXY_SECRET`           | required       | Verifies the proxy's assertions (`PROXY_DIALER_SECRET`).         |
-| `DIALER_CONTROL_PLANE_SECRET`   | unset          | Verifies the control plane's assertions. Unset refuses them.     |
 | `DIALER_LISTEN`                 | `0.0.0.0:8080` | The HTTP listener.                                               |
 | `DIALER_RELAY`                  | `n0-pro`       | `n0-pro`, `custom`, `n0` (tests only) or `none` (tests only).    |
 | `DIALER_RELAY_URLS`             | unset          | Comma-separated relay URLs. Required for `n0-pro` and `custom`.  |

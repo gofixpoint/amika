@@ -168,9 +168,9 @@ pub async fn handle(
             return plain(status, status.canonical_reason().unwrap_or("Error"));
         }
     };
-    // The endpoint holds tokens only for its own relays, and the dialer
-    // must not open connections to an address a header chose. The relay
-    // is dialed as configured, so iroh uses that relay's token.
+    // The proxy signed the relay, and the endpoint holds tokens only for
+    // its own relays. The relay is dialed as configured, so iroh uses that
+    // relay's token.
     let relay = match &checked.relay_url {
         None => None,
         Some(named) => match pick_relay(&dialer.relay_urls, named) {
@@ -193,7 +193,6 @@ pub async fn handle(
     info!(
         host = %checked.host_id,
         org = %checked.org_id,
-        caller = ?checked.caller,
         method = %checked.method,
         status,
         upgrade = checked.upgrade,
@@ -296,7 +295,6 @@ fn spawn_splice(
     checked: &ForwardRequestParsed,
 ) {
     let host = checked.host_id.clone();
-    let caller = checked.caller;
     dialer.upgrades.fetch_add(1, Ordering::SeqCst);
     tokio::spawn(async move {
         let _lease = lease;
@@ -311,9 +309,9 @@ fn spawn_splice(
         let secs = started.elapsed().as_secs();
         match result {
             Ok((to_host, to_caller)) => {
-                info!(%host, ?caller, to_host, to_caller, secs, "websocket closed")
+                info!(%host, to_host, to_caller, secs, "websocket closed")
             }
-            Err(e) => info!(%host, ?caller, error = %e, secs, "websocket ended with an error"),
+            Err(e) => info!(%host, error = %e, secs, "websocket ended with an error"),
         }
     });
 }

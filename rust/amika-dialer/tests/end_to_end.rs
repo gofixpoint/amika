@@ -20,8 +20,8 @@ use std::{
 
 use amika_dialer::{
     forward::{
-        AUTHORITY_HEADER, ENDPOINT_ID_HEADER, HOST_ID_HEADER, ORG_ID_HEADER,
-        PROXY_ASSERTION_HEADER, PROXY_LABEL, RIG_HEADER, SERVICE_HEADER, Secrets,
+        AUTHORITY_HEADER, DIALER_LABEL, ENDPOINT_ID_HEADER, HOST_ID_HEADER, ORG_ID_HEADER,
+        PROXY_ASSERTION_HEADER, RIG_HEADER, SERVICE_HEADER, Secrets, dialer_subject,
     },
     pool::{Pool, PoolOptions},
     server::{self, Dialer},
@@ -152,13 +152,13 @@ async fn bad_and_expired_assertions_never_reach_the_host() {
     assert_eq!(bed.raw_request("GET", "/echo", &headers).await, 401);
 
     let subject = bed.subject();
-    let expired = token::sign(PROXY_LABEL, PROXY_SECRET, &subject, now_ms() - 1);
+    let expired = token::sign(DIALER_LABEL, PROXY_SECRET, &subject, now_ms() - 1);
     let mut headers = bed.signed_headers();
     headers.retain(|(k, _)| k != PROXY_ASSERTION_HEADER);
     headers.push((PROXY_ASSERTION_HEADER.into(), expired));
     assert_eq!(bed.raw_request("GET", "/echo", &headers).await, 401);
 
-    let wrong_key = token::sign(PROXY_LABEL, "not-the-secret", &subject, now_ms() + 10_000);
+    let wrong_key = token::sign(DIALER_LABEL, "not-the-secret", &subject, now_ms() + 10_000);
     let mut headers = bed.signed_headers();
     headers.retain(|(k, _)| k != PROXY_ASSERTION_HEADER);
     headers.push((PROXY_ASSERTION_HEADER.into(), wrong_key));
@@ -196,11 +196,16 @@ async fn a_host_refusal_is_a_502() {
 async fn an_unknown_host_is_a_bad_gateway() {
     let bed = Bed::start(HostRules::default()).await;
     let stranger = SecretKey::from_bytes(&[9u8; 32]).public();
-    let mut headers = bed.signed_headers();
-    headers.retain(|(k, _)| k != ENDPOINT_ID_HEADER);
-    headers.push((ENDPOINT_ID_HEADER.into(), stranger.to_string()));
+    let headers = bed.signed_headers_for(&stranger.to_string());
     let status = bed.raw_request("GET", "/echo", &headers).await;
     assert!(status == 502 || status == 504, "{status}");
+
+    // The host's endpoint under an assertion signed for the stranger.
+    let mut headers = bed.signed_headers_for(&stranger.to_string());
+    headers.retain(|(k, _)| k != ENDPOINT_ID_HEADER);
+    headers.push((ENDPOINT_ID_HEADER.into(), bed.host.id.to_string()));
+    assert_eq!(bed.raw_request("GET", "/echo", &headers).await, 401);
+    assert_eq!(bed.host.connections.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -312,7 +317,6 @@ impl Bed {
             pool.clone(),
             Secrets {
                 proxy: PROXY_SECRET.into(),
-                control_plane: None,
             },
             Vec::new(),
             Duration::from_secs(10),
@@ -334,15 +338,27 @@ impl Bed {
     }
 
     fn subject(&self) -> String {
-        token::claim_subject(&["host_01", "org_01", "my-rig", "web", AUTHORITY])
+        self.subject_for(&self.host.id.to_string())
+    }
+
+    /// The dialer hop's subject for a host at `endpoint`, with no relay.
+    fn subject_for(&self, endpoint: &str) -> String {
+        dialer_subject([
+            "host_01", "org_01", "my-rig", "web", AUTHORITY, endpoint, "",
+        ])
     }
 
     /// The headers the reverse proxy sends, with a fresh assertion.
     fn signed_headers(&self) -> Vec<(String, String)> {
+        self.signed_headers_for(&self.host.id.to_string())
+    }
+
+    /// The headers for a host at `endpoint`, signed for it.
+    fn signed_headers_for(&self, endpoint: &str) -> Vec<(String, String)> {
         let assertion = token::sign(
-            PROXY_LABEL,
+            DIALER_LABEL,
             PROXY_SECRET,
-            &self.subject(),
+            &self.subject_for(endpoint),
             now_ms() + 10_000,
         );
         [
@@ -352,7 +368,7 @@ impl Bed {
             (SERVICE_HEADER, "web".to_string()),
             (AUTHORITY_HEADER, AUTHORITY.to_string()),
             (PROXY_ASSERTION_HEADER, assertion),
-            (ENDPOINT_ID_HEADER, self.host.id.to_string()),
+            (ENDPOINT_ID_HEADER, endpoint.to_string()),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))

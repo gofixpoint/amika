@@ -1,10 +1,9 @@
-//! What the reverse proxy or the control plane sends the dialer, and
-//! whether to believe it.
+//! What the reverse proxy sends the dialer, and whether to believe it.
 //!
 //! A port of `readForwardRequest` in amika-mono's
 //! `js/gateway-cloudflare/src/forward.ts`, and of the header rules in its
-//! `request-headers.ts`. The dialer replaces the gateway for hosts on iroh,
-//! so it accepts exactly the requests the gateway accepts:
+//! `request-headers.ts`, for the dialer hop (`PROXY_TO_DIALER` in
+//! `@amika/service-token/hops`):
 //!
 //! ```text
 //! x-amika-host-id:      the host the proxy resolved
@@ -12,24 +11,25 @@
 //! x-amika-rig:          the rig, as the hostname named it
 //! x-amika-service:      the service on it, likewise
 //! x-amika-authority:    the address the caller asked the proxy for
-//! x-amika-proxy-token:  a service token over all five
+//! x-amika-endpoint-id:  the host's iroh endpoint id
+//! x-amika-relay-url:    the host's home relay, absent when it has none
+//! x-amika-proxy-token:  a service token over all seven
 //! ```
 //!
-//! The control plane sends `x-amika-control-plane-token` in place of the
-//! proxy's, with only the host and the organization. Exactly one assertion
-//! must be present. Each is also read under its earlier name, but not under
-//! both names at once.
+//! The token has the dialer hop's own label. Its subject is the gateway
+//! hop's five values, then the endpoint id, then the relay URL (the empty
+//! string when there is none). So the dialer dials only the endpoint and
+//! the relay that the proxy signed for.
 //!
-//! The dialer also reads two headers that the gateway does not need:
-//! `x-amika-endpoint-id`, the host's iroh endpoint id, and
-//! `x-amika-relay-url`, its home relay. The assertion does not cover them:
-//! the contract keeps the gateway's signed headers unchanged. They are read
-//! only after the assertion verifies.
+//! The dialer does not serve the control plane yet. A request with the
+//! control plane's assertion is refused, as the gateway refuses one when
+//! it has no secret for it. Exactly one assertion must be present, and
+//! each is also read under its earlier name, but not under both.
 //!
 //! Header values are read as the Fetch `Headers` object reads them: a
 //! repeated header is one value joined with `", "`, and each byte is one
 //! character (a `ByteString`). So a value checks and signs here exactly as
-//! it does in the gateway.
+//! it does in the proxy.
 
 use std::str::FromStr;
 
@@ -58,36 +58,24 @@ pub const ASSERTION_HEADERS: [&str; 4] = [
     LEGACY_CONTROL_PLANE_ASSERTION_HEADER,
 ];
 
-/// `PROXY_TO_GATEWAY.label` in `@amika/service-token/hops`.
-pub const PROXY_LABEL: &str = "amika:reverse-proxy->gateway:forward-request:v2";
-/// `CONTROL_PLANE_TO_GATEWAY.label` in `@amika/service-token/hops`.
-pub const CONTROL_PLANE_LABEL: &str = "amika:control-plane->gateway:forward-request:v1";
+/// `PROXY_TO_DIALER.label` in `@amika/service-token/hops`.
+pub const DIALER_LABEL: &str = "amika:reverse-proxy->dialer:forward-request:v1";
 
-/// Who may ask the dialer to reach a host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Caller {
-    Proxy,
-    ControlPlane,
-}
-
-/// The secrets that verify who is forwarding.
+/// The secret that verifies the proxy's assertions.
 #[derive(Debug, Clone)]
 pub struct Secrets {
-    /// Verifies the proxy's assertions.
+    /// `PROXY_DIALER_SECRET` on the proxy's side.
     pub proxy: String,
-    /// Verifies the control plane's. `None` refuses every such request.
-    pub control_plane: Option<String>,
 }
 
 /// A forwarding instruction the dialer has checked.
 ///
-/// `Parsed` because it is stronger than what arrived: the host id and the
-/// organization are the pair the caller signed, the target is origin-form,
-/// and the headers carry nothing from Amika's own namespace except the
-/// rig and the service the proxy signed.
+/// `Parsed` because it is stronger than what arrived: every value is one
+/// the proxy signed, the target is origin-form, and the headers carry
+/// nothing from Amika's own namespace except the rig and the service the
+/// proxy signed.
 #[derive(Debug, Clone)]
 pub struct ForwardRequestParsed {
-    pub caller: Caller,
     pub host_id: String,
     pub org_id: String,
     /// Presented to the host as `Host`.
@@ -99,9 +87,10 @@ pub struct ForwardRequestParsed {
     pub upgrade: bool,
     /// What the host receives, `Host` included.
     pub headers: HeaderMap,
-    /// The host's iroh endpoint.
+    /// The host's iroh endpoint, as the proxy signed it.
     pub endpoint_id: EndpointId,
-    /// The host's home relay, when the caller named one.
+    /// The host's home relay, as the proxy signed it, or `None` when the
+    /// proxy signed for no relay.
     pub relay_url: Option<RelayUrl>,
 }
 
@@ -155,32 +144,27 @@ pub fn read_forward_request(
         CONTROL_PLANE_ASSERTION_HEADER,
         LEGACY_CONTROL_PLANE_ASSERTION_HEADER,
     )?;
-    let claim = match (proxy_assertion, control_plane_assertion) {
+    let assertion = match (proxy_assertion, control_plane_assertion) {
         (Some(_), Some(_)) => return refuse(400, "two assertions"),
-        (Some(assertion), None) => proxy_claim(headers, &host_id, &org_id, assertion, secrets)?,
-        (None, Some(assertion)) => {
-            control_plane_claim(parts, &host_id, &org_id, assertion, secrets)
-        }
+        (Some(assertion), None) => assertion,
+        (None, Some(_)) => return refuse(401, "control-plane forwarding is not configured"),
         (None, None) => return refuse(401, format!("{PROXY_ASSERTION_HEADER} is absent")),
     };
-    let Some(secret) = claim.secret else {
-        return refuse(401, "control-plane forwarding is not configured");
-    };
+    let claim = proxy_claim(headers, &host_id, &org_id)?;
     if let Err(failure) = token::verify(
-        claim.label,
-        secret,
+        DIALER_LABEL,
+        &secrets.proxy,
         &claim.subject,
-        &claim.assertion,
+        &assertion,
         now_ms,
     ) {
         // One status for all three failures. Which it was goes to the log.
         return refuse(401, format!("assertion {}", failure.as_str()));
     }
 
-    let authority = match claim.authority {
-        Some(a) if is_authority(&a) => a,
-        _ => return refuse(400, "Host is absent or malformed"),
-    };
+    if !is_authority(&claim.authority) {
+        return refuse(400, "Host is absent or malformed");
+    }
     let target = parts
         .uri
         .path_and_query()
@@ -189,23 +173,22 @@ pub fn read_forward_request(
     if !is_origin_form(&target) {
         return refuse(400, "request target is not a path");
     }
-    let (endpoint_id, relay_url) = read_endpoint(headers)?;
 
     let upgrade = get(headers, "upgrade")
         .map(|v| trim_js(&v).eq_ignore_ascii_case("websocket"))
         .unwrap_or(false);
-    let headers = host_headers(headers, &authority, claim.rig_service.as_ref(), upgrade)?;
+    let rig_service = (claim.rig, claim.service);
+    let headers = host_headers(headers, &claim.authority, Some(&rig_service), upgrade)?;
     Ok(ForwardRequestParsed {
-        caller: claim.caller,
         host_id,
         org_id,
-        authority,
+        authority: claim.authority,
         method: parts.method.clone(),
         target,
         upgrade,
         headers,
-        endpoint_id,
-        relay_url,
+        endpoint_id: claim.endpoint_id,
+        relay_url: claim.relay_url,
     })
 }
 
@@ -215,26 +198,27 @@ pub fn has_assertion(headers: &HeaderMap) -> bool {
     ASSERTION_HEADERS.iter().any(|n| headers.contains_key(*n))
 }
 
-struct Claim<'a> {
-    caller: Caller,
-    assertion: String,
-    label: &'static str,
-    secret: Option<&'a str>,
-    subject: String,
-    authority: Option<String>,
-    rig_service: Option<(String, String)>,
+/// The subject of the dialer hop's assertion, as `proxyDialerSubject`
+/// builds it: the gateway hop's five values, the endpoint id, then the
+/// relay URL, or the empty string for no relay.
+pub fn dialer_subject(parts: [&str; 7]) -> String {
+    token::claim_subject(&parts)
 }
 
-/// What the proxy claims. The rig, the service and the authority are
-/// required: a proxy that sent none would have the host serve its own API
-/// to a browser.
-fn proxy_claim<'a>(
-    headers: &HeaderMap,
-    host_id: &str,
-    org_id: &str,
-    assertion: String,
-    secrets: &'a Secrets,
-) -> Result<Claim<'a>, Refusal> {
+struct Claim {
+    subject: String,
+    rig: String,
+    service: String,
+    authority: String,
+    endpoint_id: EndpointId,
+    relay_url: Option<RelayUrl>,
+}
+
+/// What the proxy claims, checked for shape. The rig, the service and the
+/// authority are required: a proxy that sent none would have the host
+/// serve its own API to a browser. The endpoint id is required: without it
+/// there is nothing to dial.
+fn proxy_claim(headers: &HeaderMap, host_id: &str, org_id: &str) -> Result<Claim, Refusal> {
     let (Some(rig), Some(service), Some(authority)) = (
         single(get(headers, RIG_HEADER)),
         single(get(headers, SERVICE_HEADER)),
@@ -248,60 +232,44 @@ fn proxy_claim<'a>(
     if !is_name(&rig) || !is_name(&service) {
         return refuse(400, "rig or service is not a name");
     }
-    Ok(Claim {
-        caller: Caller::Proxy,
-        assertion,
-        label: PROXY_LABEL,
-        secret: Some(&secrets.proxy),
-        subject: token::claim_subject(&[host_id, org_id, &rig, &service, &authority]),
-        authority: Some(authority),
-        rig_service: Some((rig, service)),
-    })
-}
-
-/// What the control plane claims: a host and an organization, and no rig.
-/// The authority is the address the request was sent to, which the host's
-/// API does not route by.
-fn control_plane_claim<'a>(
-    parts: &Parts,
-    host_id: &str,
-    org_id: &str,
-    assertion: String,
-    secrets: &'a Secrets,
-) -> Claim<'a> {
-    let authority = single(get(&parts.headers, "host"))
-        .or_else(|| parts.uri.authority().map(|a| a.as_str().to_string()));
-    Claim {
-        caller: Caller::ControlPlane,
-        assertion,
-        label: CONTROL_PLANE_LABEL,
-        secret: secrets.control_plane.as_deref(),
-        subject: token::claim_subject(&[host_id, org_id]),
-        authority,
-        rig_service: None,
-    }
-}
-
-/// The host's endpoint id and home relay. The id is required: without it
-/// there is nothing to dial.
-fn read_endpoint(headers: &HeaderMap) -> Result<(EndpointId, Option<RelayUrl>), Refusal> {
-    let Some(raw) = single(get(headers, ENDPOINT_ID_HEADER)) else {
+    let Some(endpoint) = single(get(headers, ENDPOINT_ID_HEADER)) else {
         return refuse(400, format!("{ENDPOINT_ID_HEADER} is required"));
     };
-    if raw.len() != 64 || !raw.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+    if endpoint.len() != 64
+        || !endpoint
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
         return refuse(400, "endpoint id is not 64 lowercase hex digits");
     }
-    let Ok(endpoint_id) = EndpointId::from_str(&raw) else {
+    let Ok(endpoint_id) = EndpointId::from_str(&endpoint) else {
         return refuse(400, "endpoint id is not a public key");
     };
-    let relay_url = match single(get(headers, RELAY_URL_HEADER)) {
+    let relay = single(get(headers, RELAY_URL_HEADER));
+    let relay_url = match &relay {
         None => None,
-        Some(raw) => match RelayUrl::from_str(&raw) {
+        Some(raw) => match RelayUrl::from_str(raw) {
             Ok(url) if matches!(url.scheme(), "http" | "https") => Some(url),
             _ => return refuse(400, "relay url is malformed"),
         },
     };
-    Ok((endpoint_id, relay_url))
+    let subject = dialer_subject([
+        host_id,
+        org_id,
+        &rig,
+        &service,
+        &authority,
+        &endpoint,
+        relay.as_deref().unwrap_or(""),
+    ]);
+    Ok(Claim {
+        subject,
+        rig,
+        service,
+        authority,
+        endpoint_id,
+        relay_url,
+    })
 }
 
 /// The value under `name` or under `legacy`. A request that sends both is
@@ -514,10 +482,11 @@ mod tests {
     const NOW: u64 = 1_794_200_000_000;
     const ENDPOINT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+    const RELAY: &str = "https://relay.example./";
+
     fn secrets() -> Secrets {
         Secrets {
             proxy: "proxy-secret".into(),
-            control_plane: Some("cp-secret".into()),
         }
     }
 
@@ -526,15 +495,23 @@ mod tests {
         iroh::SecretKey::from_bytes(&[7u8; 32]).public().to_string()
     }
 
-    fn proxy_request(extra: &[(&str, &str)]) -> http::request::Builder {
-        let subject = token::claim_subject(&[
+    fn other_endpoint() -> String {
+        iroh::SecretKey::from_bytes(&[8u8; 32]).public().to_string()
+    }
+
+    /// A request signed as the proxy signs the dialer hop, for `endpoint`
+    /// and `relay`.
+    fn signed(endpoint: &str, relay: Option<&str>) -> http::request::Builder {
+        let subject = dialer_subject([
             "h1",
             "o1",
             "my-rig",
             "web",
             "web--my-rig.r.acme.o.amika.run",
+            endpoint,
+            relay.unwrap_or(""),
         ]);
-        let assertion = token::sign(PROXY_LABEL, "proxy-secret", &subject, NOW + 10_000);
+        let assertion = token::sign(DIALER_LABEL, "proxy-secret", &subject, NOW + 10_000);
         let mut b = http::Request::builder()
             .method("GET")
             .uri("/index.html?q=1")
@@ -545,7 +522,15 @@ mod tests {
             .header(SERVICE_HEADER, "web")
             .header(AUTHORITY_HEADER, "web--my-rig.r.acme.o.amika.run")
             .header(PROXY_ASSERTION_HEADER, assertion)
-            .header(ENDPOINT_ID_HEADER, endpoint());
+            .header(ENDPOINT_ID_HEADER, endpoint);
+        if let Some(relay) = relay {
+            b = b.header(RELAY_URL_HEADER, relay);
+        }
+        b
+    }
+
+    fn proxy_request(extra: &[(&str, &str)]) -> http::request::Builder {
+        let mut b = signed(&endpoint(), Some(RELAY));
         for (k, v) in extra {
             b = b.header(*k, *v);
         }
@@ -560,7 +545,6 @@ mod tests {
     #[test]
     fn a_signed_proxy_request_reads_with_host_headers() {
         let r = read(proxy_request(&[
-            ("x-amika-relay-url", "https://relay.example/"),
             ("cookie", "a=b"),
             ("x-forwarded-for", "1.2.3.4"),
             ("cf-connecting-ip", "1.2.3.4"),
@@ -570,11 +554,10 @@ mod tests {
             ("fly-client-ip", "1.2.3.4"),
         ]))
         .unwrap();
-        assert_eq!(r.caller, Caller::Proxy);
         assert_eq!(r.target, "/index.html?q=1");
         assert_eq!(r.authority, "web--my-rig.r.acme.o.amika.run");
         assert_eq!(r.endpoint_id.to_string(), endpoint());
-        assert_eq!(r.relay_url.unwrap().to_string(), "https://relay.example/");
+        assert_eq!(r.relay_url.unwrap().to_string(), RELAY);
         let names: Vec<&str> = r.headers.keys().map(|k| k.as_str()).collect();
         assert!(names.contains(&"cookie"));
         for gone in [
@@ -583,6 +566,7 @@ mod tests {
             "x-amika-extra",
             "x-amika-proxy-token",
             "x-amika-endpoint-id",
+            "x-amika-relay-url",
             "x-amika-host-id",
             "connection",
             "x-drop-me",
@@ -653,7 +637,7 @@ mod tests {
         // A target that reads as an authority.
         let b = proxy_request(&[]).uri("//evil.example/x");
         assert_eq!(status(b), 400);
-        // No endpoint id, or a bad one, after the assertion verifies.
+        // No endpoint id, or a bad one.
         let mut b = proxy_request(&[]);
         b.headers_mut().unwrap().remove(ENDPOINT_ID_HEADER);
         assert_eq!(status(b), 400);
@@ -662,10 +646,56 @@ mod tests {
             .unwrap()
             .insert(ENDPOINT_ID_HEADER, ENDPOINT.to_uppercase().parse().unwrap());
         assert_eq!(status(b), 400);
-        assert_eq!(
-            status(proxy_request(&[(RELAY_URL_HEADER, "ftp://relay.example")])),
-            400
+        let mut b = proxy_request(&[]);
+        b.headers_mut()
+            .unwrap()
+            .insert(RELAY_URL_HEADER, "ftp://relay.example".parse().unwrap());
+        assert_eq!(status(b), 400);
+    }
+
+    #[test]
+    fn the_endpoint_and_the_relay_are_signed() {
+        // Another endpoint or relay than the proxy signed for.
+        let status = |b| read(b).unwrap_err().status;
+        let mut b = proxy_request(&[]);
+        b.headers_mut()
+            .unwrap()
+            .insert(ENDPOINT_ID_HEADER, other_endpoint().parse().unwrap());
+        assert_eq!(status(b), 401);
+        let mut b = proxy_request(&[]);
+        b.headers_mut().unwrap().insert(
+            RELAY_URL_HEADER,
+            "https://other-relay.example./".parse().unwrap(),
         );
+        assert_eq!(status(b), 401);
+        // A relay left out of a request signed with one.
+        let mut b = proxy_request(&[]);
+        b.headers_mut().unwrap().remove(RELAY_URL_HEADER);
+        assert_eq!(status(b), 401);
+        // A relay added to a request signed with none.
+        let b = signed(&endpoint(), None).header(RELAY_URL_HEADER, RELAY);
+        assert_eq!(status(b), 401);
+        // Signed with no relay, read with no relay.
+        let r = read(signed(&endpoint(), None)).unwrap();
+        assert!(r.relay_url.is_none());
+    }
+
+    #[test]
+    fn a_gateway_token_is_refused() {
+        let subject = token::claim_subject(&[
+            "h1",
+            "o1",
+            "my-rig",
+            "web",
+            "web--my-rig.r.acme.o.amika.run",
+        ]);
+        let gateway_label = "amika:reverse-proxy->gateway:forward-request:v2";
+        let assertion = token::sign(gateway_label, "proxy-secret", &subject, NOW + 10_000);
+        let mut b = signed(&endpoint(), None);
+        b.headers_mut()
+            .unwrap()
+            .insert(PROXY_ASSERTION_HEADER, assertion.parse().unwrap());
+        assert_eq!(read(b).unwrap_err().status, 401);
     }
 
     #[test]
@@ -676,42 +706,23 @@ mod tests {
         assert_eq!(late.reason, "assertion expired");
         let other = Secrets {
             proxy: "other".into(),
-            control_plane: None,
         };
         let forged = read_forward_request(&parts, &other, NOW).unwrap_err();
         assert_eq!(forged.reason, "assertion invalid");
     }
 
     #[test]
-    fn the_control_plane_reaches_the_host_api_without_a_rig() {
-        let subject = token::claim_subject(&["h1", "o1"]);
-        let assertion = token::sign(CONTROL_PLANE_LABEL, "cp-secret", &subject, NOW + 10_000);
+    fn a_control_plane_assertion_is_refused() {
+        // The dialer hop has no control-plane label yet.
         let b = http::Request::builder()
             .method("POST")
             .uri("/v0beta1/rigs")
-            .header("host", "dialer.example")
             .header(HOST_ID_HEADER, "h1")
             .header(ORG_ID_HEADER, "o1")
-            .header(CONTROL_PLANE_ASSERTION_HEADER, assertion.clone())
+            .header(CONTROL_PLANE_ASSERTION_HEADER, "v1.1.x")
             .header(ENDPOINT_ID_HEADER, endpoint());
-        let r = read(b).unwrap();
-        assert_eq!(r.caller, Caller::ControlPlane);
-        assert_eq!(r.authority, "dialer.example");
-        assert!(!r.headers.contains_key(RIG_HEADER));
-
-        let b = http::Request::builder()
-            .uri("/")
-            .header("host", "dialer.example")
-            .header(HOST_ID_HEADER, "h1")
-            .header(ORG_ID_HEADER, "o1")
-            .header(CONTROL_PLANE_ASSERTION_HEADER, assertion)
-            .header(ENDPOINT_ID_HEADER, endpoint());
-        let (parts, ()) = b.body(()).unwrap().into_parts();
-        let off = Secrets {
-            proxy: "proxy-secret".into(),
-            control_plane: None,
-        };
-        let r = read_forward_request(&parts, &off, NOW).unwrap_err();
+        let r = read(b).unwrap_err();
+        assert_eq!(r.status, 401);
         assert_eq!(r.reason, "control-plane forwarding is not configured");
     }
 

@@ -2,7 +2,8 @@
   "comment": "Made by @amika/service-token. js/service-token/src/test-vectors.test.ts in amika-mono checks them against the TS code; rust/amika-dialer checks its port against the same file.",
   "labels": {
     "proxyToGateway": "amika:reverse-proxy->gateway:forward-request:v2",
-    "controlPlaneToGateway": "amika:control-plane->gateway:forward-request:v1"
+    "controlPlaneToGateway": "amika:control-plane->gateway:forward-request:v1",
+    "proxyToDialer": "amika:reverse-proxy->dialer:forward-request:v1"
   },
   "proxyForwardSubjects": [
     {
@@ -14,6 +15,32 @@
         "authority": "web--my-rig.r.acme.o.amika.run"
       },
       "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run"
+    }
+  ],
+  "proxyDialerSubjects": [
+    {
+      "claim": {
+        "hostId": "host_01",
+        "orgId": "org_01",
+        "rig": "my-rig",
+        "service": "web",
+        "authority": "web--my-rig.r.acme.o.amika.run",
+        "endpointId": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+        "relayUrl": "https://relay.example.test./"
+      },
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n28\nhttps://relay.example.test./"
+    },
+    {
+      "claim": {
+        "hostId": "host_01",
+        "orgId": "org_01",
+        "rig": "my-rig",
+        "service": "web",
+        "authority": "web--my-rig.r.acme.o.amika.run",
+        "endpointId": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+        "relayUrl": null
+      },
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n0\n"
     }
   ],
   "forwardSubjects": [
@@ -135,6 +162,87 @@
       "assertion": "v1.1794200010000.2buxxz7Q9t4n1xSjZUqDm4dEjhRbjJkjB8sbUnYKL4g",
       "now": 1794200000000,
       "expect": "invalid"
+    },
+    {
+      "name": "dialer token",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n28\nhttps://relay.example.test./",
+      "assertion": "v1.1794200010000.OqfVLp3Z46a28hjU0-6rU_G1Afwpwu1aF7B2bs8aV9o",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "dialer token after expiry",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n28\nhttps://relay.example.test./",
+      "assertion": "v1.1794200010000.OqfVLp3Z46a28hjU0-6rU_G1Afwpwu1aF7B2bs8aV9o",
+      "now": 1794200010000,
+      "expect": "expired"
+    },
+    {
+      "name": "dialer token under the gateway label",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n28\nhttps://relay.example.test./",
+      "assertion": "v1.1794200010000.OqfVLp3Z46a28hjU0-6rU_G1Afwpwu1aF7B2bs8aV9o",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "dialer token as a gateway subject",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.OqfVLp3Z46a28hjU0-6rU_G1Afwpwu1aF7B2bs8aV9o",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "gateway token at the dialer",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "dialer token for another endpoint",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n4b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n28\nhttps://relay.example.test./",
+      "assertion": "v1.1794200010000.OqfVLp3Z46a28hjU0-6rU_G1Afwpwu1aF7B2bs8aV9o",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "dialer token for another relay",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n28\nhttps://relay.example.tess./",
+      "assertion": "v1.1794200010000.OqfVLp3Z46a28hjU0-6rU_G1Afwpwu1aF7B2bs8aV9o",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "dialer token with the relay left out",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n0\n",
+      "assertion": "v1.1794200010000.OqfVLp3Z46a28hjU0-6rU_G1Afwpwu1aF7B2bs8aV9o",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "dialer token for a host with no relay",
+      "label": "amika:reverse-proxy->dialer:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run\n64\n3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29\n0\n",
+      "assertion": "v1.1794200010000.clwbp8jyuuYycw608jn3h2W3bgPSDkHGs6bW4le4MFg",
+      "now": 1794200000000,
+      "expect": "ok"
     },
     {
       "name": "subject [\"a\",\"b:c\"]",

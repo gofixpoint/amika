@@ -91,12 +91,6 @@ impl Config {
         };
         let secret_key = r.secret_key("DIALER_SECRET_KEY");
         let proxy = r.required("DIALER_PROXY_SECRET");
-        let control_plane = r.optional("DIALER_CONTROL_PLANE_SECRET");
-        if let (Some(p), Some(c)) = (&proxy, &control_plane)
-            && p == c
-        {
-            r.fault("DIALER_PROXY_SECRET and DIALER_CONTROL_PLANE_SECRET must differ");
-        }
         let listen = r.parsed("DIALER_LISTEN", "0.0.0.0:8080");
         let mode = r.parsed("DIALER_RELAY", "n0-pro");
         let urls = r.relay_urls("DIALER_RELAY_URLS");
@@ -131,7 +125,6 @@ impl Config {
             secret_key: secret_key.expect("checked"),
             secrets: Secrets {
                 proxy: proxy.expect("checked"),
-                control_plane,
             },
             listen: listen.expect("checked"),
             relay: RelayConfig {
@@ -274,7 +267,6 @@ mod tests {
         assert_eq!(c.relay.urls.len(), 2);
         assert_eq!(c.listen, "0.0.0.0:8080".parse().unwrap());
         assert_eq!(format_secret_key(&c.secret_key), KEY);
-        assert!(c.secrets.control_plane.is_none());
     }
 
     #[test]
@@ -290,18 +282,5 @@ mod tests {
         assert!(err.contains("DIALER_PROXY_SECRET is required"));
         assert!(err.contains("n0-pro needs"));
         assert!(!err.contains("not-a-key-but-secret"));
-    }
-
-    #[test]
-    fn the_two_secrets_must_differ() {
-        let err = Config::from_env(env(&[
-            ("DIALER_SECRET_KEY", KEY),
-            ("DIALER_PROXY_SECRET", "same"),
-            ("DIALER_CONTROL_PLANE_SECRET", "same"),
-            ("DIALER_RELAY", "none"),
-        ]))
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("must differ"));
     }
 }
