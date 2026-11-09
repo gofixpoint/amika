@@ -62,21 +62,31 @@ export function parseServicePath(pathname: string): ServiceRoute | null {
 }
 
 /**
+ * amikad's SSH WebSocket routes: `/v1` carries raw SSH bytes, and `/v2` the
+ * resumable stream that lets a session outlive a dropped WebSocket. Both take
+ * the same connect token, which amikad checks before it accepts the socket.
+ */
+const AMIKAD_SSH_PATHS = ["/v1/ssh-sessions", "/v2/ssh-sessions"] as const;
+
+/**
  * Whether this upgrade is the one service request that needs no host key:
  * the SSH WebSocket a user's `amika sandbox ssh` opens to the rig's amikad,
- * exactly `GET /v0beta1/rigs/<rig>/services/amikad/v1/ssh-sessions`, no query,
- * as a WebSocket upgrade. The control plane hands the CLI that URL and the
- * rig's connect token, never the host key; amikad verifies the token before
- * it accepts the WebSocket, and sshd then checks the user's SSH key. Every
- * other path, method, service and plain HTTP request still needs the key.
+ * exactly `GET /v0beta1/rigs/<rig>/services/amikad/v1/ssh-sessions` (or its
+ * `/v2` twin), no query, as a WebSocket upgrade. The control plane hands the
+ * CLI that URL and the rig's connect token, never the host key; amikad
+ * verifies the token before it accepts the WebSocket, and sshd then checks
+ * the user's SSH key. Every other path, method, service and plain HTTP
+ * request still needs the key.
  */
 export function isAmikadSshUpgrade(request: GatewayRequest): boolean {
   const route = parseServicePath(request.url.pathname);
   return (
     route !== null &&
-    isSshWebSocket(
-      request,
-      `/v0beta1/rigs/${route.machine}/services/${AMIKAD_SERVICE}/v1/ssh-sessions`,
+    AMIKAD_SSH_PATHS.some((path) =>
+      isSshWebSocket(
+        request,
+        `/v0beta1/rigs/${route.machine}/services/${AMIKAD_SERVICE}${path}`,
+      ),
     )
   );
 }
@@ -84,14 +94,15 @@ export function isAmikadSshUpgrade(request: GatewayRequest): boolean {
 /**
  * The same upgrade made to amikad at the rig's own address,
  * `amikad--<rig>.r.<org>.o.<zone>`, where a tunnel host's rigs are reached:
- * exactly `GET /v1/ssh-sessions`, no query, as a WebSocket upgrade. It is
- * the only request amikad answers at its name, and it is authenticated as
- * the service route's is, by amikad's connect token and then sshd.
+ * exactly `GET /v1/ssh-sessions` or `GET /v2/ssh-sessions`, no query, as a
+ * WebSocket upgrade. It is the only request amikad answers at its name, and
+ * it is authenticated as the service route's is, by amikad's connect token
+ * and then sshd.
  */
 export function isNamedAmikadSshUpgrade(request: GatewayRequest): boolean {
   return (
     request.named?.service === AMIKAD_SERVICE &&
-    isSshWebSocket(request, "/v1/ssh-sessions")
+    AMIKAD_SSH_PATHS.some((path) => isSshWebSocket(request, path))
   );
 }
 
