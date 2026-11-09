@@ -182,8 +182,10 @@ When a v3 socket ends, `TunnelSession` detaches instead of ending: every
 stream and its connection to the rig stay open, and a 60 s grace starts.
 `TunnelClient` dials again at once (if the socket had settled, so a socket
 that dies on attaching cannot loop with no wait), then on its backoff,
-capped at a sixth of the grace while the session waits, with
-`x-amika-tunnel-session` (the relay's connection id) and
+capped at a sixth of the grace while the session waits. Each of those dials
+gives up after 6 s rather than the usual 20 s, so a dial made during a
+silent break, and stuck in TCP's retries, gives way to a fresh one soon after
+the path is back. Each dial carries `x-amika-tunnel-session` (the relay's connection id) and
 `x-amika-tunnel-received` (this side's received count). A `101` with the
 same connection id resumes: the session checks the relay's received count,
 resends from its log every frame after it, and carries on. Anything else

@@ -47,6 +47,7 @@ import { virtualServer } from "./tunnel-serving.js";
 const FAST_RESUME: ResumeSettings = {
   keepAliveIntervalMs: 40,
   pingTimeoutMs: 30,
+  handshakeTimeoutMs: 250,
   graceMs: 1_000,
   maxReplayBytes: 32 * 1024 * 1024,
   pauseReplayBytes: 16 * 1024 * 1024,
@@ -462,6 +463,16 @@ describe("a v3 session across a dropped socket", () => {
       connectionId,
       reason: "closed 1006",
     });
+  });
+
+  it("dials a resume with a short handshake timeout, and a fresh session with the usual one", async () => {
+    const { relay, events } = await attach();
+    relay.pipe!.cut();
+    await expect.poll(() => ofType(events, "tunnel_resumed").length).toBe(1);
+    expect(relay.dials.map((dial) => dial.handshakeTimeoutMs)).toEqual([
+      1_000,
+      FAST_RESUME.handshakeTimeoutMs,
+    ]);
   });
 
   it("relays every WebSocket message both ways, once and in order, across many cuts", async () => {
