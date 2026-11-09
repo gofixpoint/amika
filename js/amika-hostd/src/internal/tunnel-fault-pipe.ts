@@ -55,10 +55,7 @@ export class FaultPipe {
   toHost(data: Uint8Array | string): void {
     if (!this.open || this.silent) return;
     const copy = typeof data === "string" ? data : Buffer.from(data);
-    this.enqueue(() => {
-      if (this.host.readyState !== OPEN) return;
-      this.host.emit("message", copy, typeof copy !== "string");
-    });
+    this.enqueue(() => this.host.deliver(copy));
     if (typeof data !== "string") this.counted();
   }
 
@@ -139,6 +136,12 @@ export class FakeHostSocket extends EventEmitter {
   readyState = OPEN;
   /** What `ws` would hold unsent. A test sets it to simulate a backlog. */
   bufferedAmount = 0;
+  /**
+   * Starts paused, as `dialTunnel` leaves a real socket: nothing is emitted
+   * until `TunnelLink` resumes it.
+   */
+  private paused = true;
+  private held: Array<Uint8Array | string> = [];
 
   constructor(
     private readonly pipe: FaultPipe,
@@ -150,6 +153,27 @@ export class FakeHostSocket extends EventEmitter {
   send(data: Uint8Array | string): void {
     if (this.readyState !== OPEN) return;
     this.pipe.fromHost(data);
+  }
+
+  pause(): void {
+    this.paused = true;
+  }
+
+  resume(): void {
+    this.paused = false;
+    const held = this.held;
+    this.held = [];
+    for (const data of held) this.deliver(data);
+  }
+
+  /** One message from the relay arrives. */
+  deliver(data: Uint8Array | string): void {
+    if (this.readyState !== OPEN) return;
+    if (this.paused) {
+      this.held.push(data);
+      return;
+    }
+    this.emit("message", data, typeof data !== "string");
   }
 
   close(code = 1005): void {
