@@ -1,0 +1,51 @@
+# The dialer on Fly.io. AGENTS.md beside this file gives the setup.
+#
+# Deploy from this directory:
+#
+#   fly deploy --app <app>
+#
+# Secrets are not here: set them with `fly secrets set`. The relay URLs
+# are secrets too, because this repository is public.
+
+app = "amika-dialer-staging"
+primary_region = "iad"
+
+# A deploy sends SIGTERM. The dialer stops accepting, then waits up to
+# DIALER_SHUTDOWN_GRACE_SECS for open requests and WebSockets.
+kill_signal = "SIGTERM"
+kill_timeout = "300s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DIALER_LISTEN = "0.0.0.0:8080"
+  # Outbound UDP works on either address. This one gave a lower RTT in
+  # the spike (iroh-spike-results.md, test 6).
+  DIALER_UDP_BIND = "fly-global-services:0"
+  DIALER_RELAY = "n0-pro"
+  DIALER_SHUTDOWN_GRACE_SECS = "280"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # A stopped machine ends every preview WebSocket on it.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 2
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 2000
+    hard_limit = 4000
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "2s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1gb"
