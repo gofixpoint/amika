@@ -214,6 +214,11 @@ export async function dialTunnel(
           );
           return;
         }
+        // Paused until a `TunnelLink` takes the socket. `ws` emits the frames
+        // that arrived in the same read as the `101` on a later tick, before
+        // the code awaiting this dial can listen, and a v3 relay sends its
+        // resend there. `TunnelLink` resumes it.
+        ws.pause();
         resolve({
           ws,
           protocol: ws.protocol,

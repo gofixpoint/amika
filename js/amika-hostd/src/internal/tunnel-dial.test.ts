@@ -64,6 +64,10 @@ describe("the v3 offer and the resume handshake", () => {
     const socket = Object.assign(new EventEmitter(), {
       protocol,
       close: () => {},
+      paused: false,
+      pause() {
+        this.paused = true;
+      },
     });
     const connect = (_url: string, options: ConnectOptions) => {
       sent = options;
@@ -88,6 +92,8 @@ describe("the v3 offer and the resume handshake", () => {
     expect(headers["x-amika-tunnel-session"]).toBeUndefined();
     expect(headers["x-amika-tunnel-received"]).toBeUndefined();
     expect(dialed.protocol).toBe(TUNNEL_SUBPROTOCOL);
+    // Paused until a link takes it, so no frame is emitted unheard.
+    expect((dialed.ws as unknown as { paused: boolean }).paused).toBe(true);
   });
 
   it("offers v3 first, names the session to resume, and reads the answer", async () => {

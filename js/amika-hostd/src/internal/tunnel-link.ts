@@ -67,6 +67,9 @@ export class TunnelLink {
         summary: "socket error",
       }),
     );
+    // The dial pauses the socket so that no frame is emitted before these
+    // listeners exist. Now they do.
+    ws.resume();
   }
 
   get isEnded(): boolean {

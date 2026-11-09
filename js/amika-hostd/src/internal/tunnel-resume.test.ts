@@ -8,7 +8,9 @@
  * integration test.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { createServer, type AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import {
@@ -507,6 +509,84 @@ interface TunnelSessionView {
   congested(): boolean;
   writable(): Promise<void>;
 }
+
+describe("a real socket", () => {
+  it("serves a frame that arrives in the same read as the 101", async () => {
+    // A relay that resumes, or wakes a waiting request, sends frames just
+    // before its `101`, and the network can deliver both in one read.
+    const sockets = new Set<Duplex>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.once("data", (request) => {
+        const key = /sec-websocket-key: (.*)\r\n/i.exec(
+          request.toString(),
+        )![1]!;
+        const accept = createHash("sha1")
+          .update(`${key.trim()}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+          .digest("base64");
+        const open = Buffer.from(
+          encodeFrame({
+            type: "open",
+            streamId: 1,
+            head: {
+              method: "GET",
+              target: "/",
+              headers: [["host", "rig.test"]],
+              upgrade: false,
+            },
+          }),
+        );
+        socket.write(
+          Buffer.concat([
+            Buffer.from(
+              "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                `Sec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Protocol: ${TUNNEL_SUBPROTOCOL_V3}\r\n` +
+                "x-amika-connection-id: conn-1\r\n\r\n",
+            ),
+            Buffer.from([0x82, 126, open.length >> 8, open.length & 0xff]),
+            open,
+          ]),
+        );
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    cleanups.push(
+      () => new Promise<void>((resolve) => server.close(() => resolve())),
+    );
+    let served = 0;
+    const client = new TunnelClient({
+      target: () => ({
+        gatewayUrl: `ws://127.0.0.1:${(server.address() as AddressInfo).port}/v2/host-tunnel`,
+        hostId: "host_1",
+        credential: "credential",
+        generation: 1,
+      }),
+      handshakeTimeoutMs: 2_000,
+      userAgent: "test",
+      keepAliveIntervalMs: 60_000,
+      pingTimeoutMs: 60_000,
+      drainMs: 10,
+      onConnection: (socket) => {
+        served += 1;
+        socket.destroy();
+      },
+      resume: {
+        ...FAST_RESUME,
+        keepAliveIntervalMs: 60_000,
+        pingTimeoutMs: 60_000,
+      },
+    });
+    client.start();
+    cleanups.push(() => client.stop());
+    // First, so the stop does not wait out a close nobody answers.
+    cleanups.push(() => {
+      for (const socket of sockets) socket.destroy();
+    });
+    await expect.poll(() => served).toBe(1);
+  });
+});
 
 describe("when the session cannot go on", () => {
   it("starts fresh and resets every stream when the relay does not resume", async () => {
