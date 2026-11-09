@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -193,13 +194,17 @@ func BuildProxyCommand(binaryPath string) (string, error) {
 	return binaryPath + proxyCommandSuffix, nil
 }
 
-// TransportProxyCommandOption returns the ssh `-o` value for one session's
-// ProxyCommand that passes `--transport` to the stdio proxy. `rig ssh
-// --transport` puts it on the ssh command line, where it wins over the
-// managed config's ProxyCommand; the managed config never holds it.
-func TransportProxyCommandOption(transport ProxyTransport) (string, error) {
-	if transport != TransportIroh && transport != TransportDirectWS {
-		return "", fmt.Errorf("unknown SSH transport %q", transport)
+// ProxyCommandOption returns the ssh `-o` value for one session's
+// ProxyCommand that passes `--transport` and `--verbose` to the stdio
+// proxy, or "" when neither is asked for. `rig ssh` puts it on the ssh
+// command line, where it wins over the managed config's ProxyCommand; the
+// managed config never holds it.
+func ProxyCommandOption(transport ProxyTransport, verbose bool) (string, error) {
+	if _, err := ParseProxyTransport(string(transport)); err != nil {
+		return "", err
+	}
+	if transport == TransportAuto && !verbose {
+		return "", nil
 	}
 	binaryPath, err := config.BinaryPath()
 	if err != nil {
@@ -208,7 +213,14 @@ func TransportProxyCommandOption(transport ProxyTransport) (string, error) {
 	if !safeProxyBinaryPath(binaryPath) {
 		return "", ErrUnsafeBinaryPath
 	}
-	return "ProxyCommand=" + binaryPath + " plumbing ssh-stdio-proxy --transport " + string(transport) + " %h", nil
+	command := binaryPath + " plumbing ssh-stdio-proxy"
+	if transport != TransportAuto {
+		command += " --transport " + string(transport)
+	}
+	if verbose {
+		command += " --verbose"
+	}
+	return "ProxyCommand=" + command + " %h", nil
 }
 
 // ParseProxyCommand returns the executable path from a managed ProxyCommand
@@ -458,12 +470,13 @@ func ProxySession(
 				events.Info("ssh_transport_failed", slog.String("transport", string(session.Transport)), slog.String("reason", reason))
 				return &irohDialError{Reason: reason}
 			}
-			events.Info("ssh_transport_fallback", slog.String("from", string(session.Transport)), slog.String("reason", reason))
-			events.Info("ssh_transport", slog.String("transport", string(apiclient.SSHSessionTransportDirectWS)))
-			return proxyOver(ctx, dialer, session, stdin, stdout, events)
+			return proxyDirect(ctx, dialer, session, stdin, stdout, events, options, reason)
 		}
 		events.Info("ssh_transport", slog.String("transport", string(session.Transport)))
-		err := proxyOver(ctx, irohDialer{route: *options.Iroh, target: *session.Iroh}, session, stdin, stdout, events)
+		iroh := &noticeDialer{ProxyDialer: irohDialer{route: *options.Iroh, target: *session.Iroh}, opened: func() {
+			options.notice(apiclient.SSHSessionTransportIroh, "")
+		}}
+		err := proxyOver(ctx, iroh, session, stdin, stdout, events)
 		var irohErr *irohDialError
 		if !errors.As(err, &irohErr) {
 			return err
@@ -475,10 +488,44 @@ func ProxySession(
 			events.Info("ssh_transport_failed", slog.String("transport", string(session.Transport)), slog.String("reason", irohErr.Reason))
 			return irohErr
 		}
-		events.Info("ssh_transport_fallback", slog.String("from", string(session.Transport)), slog.String("reason", irohErr.Reason))
+		return proxyDirect(ctx, dialer, session, stdin, stdout, events, options, irohErr.Reason)
 	}
+	options.notice(apiclient.SSHSessionTransportDirectWS, options.IrohUnavailable)
 	events.Info("ssh_transport", slog.String("transport", string(apiclient.SSHSessionTransportDirectWS)))
 	return proxyOver(ctx, dialer, session, stdin, stdout, events)
+}
+
+// proxyDirect falls back from an iroh descriptor to its direct_ws route,
+// and logs why.
+func proxyDirect(ctx context.Context, dialer ProxyDialer, session *apiclient.SSHSession, stdin io.Reader, stdout io.Writer, events *slog.Logger, options ProxyOptions, reason string) error {
+	events.Info("ssh_transport_fallback", slog.String("from", string(apiclient.SSHSessionTransportIroh)), slog.String("reason", reason))
+	options.notice(apiclient.SSHSessionTransportDirectWS, "fallback from iroh: "+reason)
+	events.Info("ssh_transport", slog.String("transport", string(apiclient.SSHSessionTransportDirectWS)))
+	return proxyOver(ctx, dialer, session, stdin, stdout, events)
+}
+
+// noticeDialer calls opened once, after its first dial succeeds, so the
+// verbose line names iroh only when iroh carries the session.
+type noticeDialer struct {
+	ProxyDialer
+	once   sync.Once
+	opened func()
+}
+
+func (d *noticeDialer) DialTransport(ctx context.Context, connectURL, credential string) (sshresume.Transport, error) {
+	transport, err := d.ProxyDialer.DialTransport(ctx, connectURL, credential)
+	if err == nil {
+		d.once.Do(d.opened)
+	}
+	return transport, err
+}
+
+func (d *noticeDialer) Dial(ctx context.Context, connectURL, credential string) (Stream, error) {
+	stream, err := d.ProxyDialer.Dial(ctx, connectURL, credential)
+	if err == nil {
+		d.once.Do(d.opened)
+	}
+	return stream, err
 }
 
 // explainTransport names the flag when the server cannot give the one

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -61,6 +62,24 @@ type ProxyOptions struct {
 	Transport ProxyTransport
 	// Iroh is nil when amika-net cannot be used.
 	Iroh *IrohRoute
+	// IrohUnavailable says why Iroh is nil, for Notice.
+	IrohUnavailable string
+	// Notice, if set, gets one line once the transport is settled: the
+	// transport, and why it is not iroh when the CLI knows. `rig ssh -v`
+	// sets it to stderr. It never gets a key, a token or a secret.
+	Notice io.Writer
+}
+
+// notice writes the transport line, if asked for.
+func (o ProxyOptions) notice(transport apiclient.SSHSessionTransport, why string) {
+	if o.Notice == nil {
+		return
+	}
+	line := "amika: SSH transport: " + string(transport)
+	if why != "" {
+		line += " (" + why + ")"
+	}
+	_, _ = fmt.Fprintln(o.Notice, line)
 }
 
 // transports is the list the session create request sends.
@@ -106,26 +125,37 @@ type IrohSetup struct {
 	Registrar amikanet.Registrar
 	// FindBinary locates amika-net. Nil is amikanet.FindBinary.
 	FindBinary func() (string, error)
+	// Stderr gets the one-time notice that the user removed this device.
+	// Nil discards it.
+	Stderr io.Writer
 }
 
 // PrepareIrohRoute finds amika-net, makes the device key on first use, and
-// registers it once for the account. It returns nil, after one line in
-// events, when iroh cannot be used: amika-net is missing, or the key is
-// registered to another user. That is an error only when transport is
-// TransportIroh.
-func PrepareIrohRoute(setup IrohSetup, transport ProxyTransport, events *slog.Logger) (*IrohRoute, error) {
+// registers it once for the account. It returns a nil route, after one
+// line in events, when iroh cannot be used: amika-net is missing, or the
+// control plane refuses the key. The string says why, for verbose output.
+// That is an error only when transport is TransportIroh.
+//
+// When the control plane first refuses the key because the user removed
+// this device, Stderr gets one line that says so and how to make a new
+// key. Later runs read the refusal from the record and stay quiet.
+func PrepareIrohRoute(setup IrohSetup, transport ProxyTransport, events *slog.Logger) (*IrohRoute, string, error) {
 	if transport == TransportDirectWS {
-		return nil, nil
+		return nil, "", nil
 	}
 	route, reason, err := prepareIrohRoute(setup)
 	if err == nil {
-		return route, nil
+		return route, "", nil
 	}
 	events.Info("iroh_unavailable", slog.String("reason", reason), slog.String("error", err.Error()))
-	if transport == TransportIroh {
-		return nil, fmt.Errorf("--transport iroh: %w", err)
+	var refused *amikanet.RefusedError
+	if errors.As(err, &refused) && refused.Fresh && errors.Is(err, amikanet.ErrKeyRevoked) && setup.Stderr != nil {
+		_, _ = fmt.Fprintln(setup.Stderr, "amika: this device's amika-net key was removed from your Amika account. To use iroh again, make a new key with: amika rig --new-device-key ssh <rig>")
 	}
-	return nil, nil
+	if transport == TransportIroh {
+		return nil, "", fmt.Errorf("--transport iroh: %w", err)
+	}
+	return nil, "iroh unavailable: " + err.Error(), nil
 }
 
 func prepareIrohRoute(setup IrohSetup) (*IrohRoute, string, error) {
@@ -152,6 +182,9 @@ func prepareIrohRoute(setup IrohSetup) (*IrohRoute, string, error) {
 	if _, err := registrations.Ensure(setup.Account, setup.Registrar, key); err != nil {
 		if errors.Is(err, amikanet.ErrKeyTaken) {
 			return nil, "device_key_taken", err
+		}
+		if errors.Is(err, amikanet.ErrKeyRevoked) {
+			return nil, "device_revoked", err
 		}
 		return nil, "device_registration", err
 	}

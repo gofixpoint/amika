@@ -2,8 +2,11 @@ package sandboxcmd
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"time"
 
+	"github.com/gofixpoint/amika/go/internal/amikanet"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/cliargs"
@@ -48,6 +51,25 @@ func init() {
 	// still decides, so the flag cannot turn iroh on for a rig.
 	sandboxSSHV2Cmd.Flags().String("transport", "", "use one SSH transport: iroh or direct_ws")
 	_ = sandboxSSHV2Cmd.Flags().MarkHidden("transport")
+}
+
+// makeNewDeviceKey is a seam over replacing the amika-net device key, so
+// tests do not touch the real config directory.
+var makeNewDeviceKey = func(stderr io.Writer) error {
+	path, err := amikanet.DeviceKeyFile(basedir.New(""))
+	if err != nil {
+		return err
+	}
+	old, err := amikanet.NewDeviceKey(path, time.Now())
+	if err != nil {
+		return err
+	}
+	if old != "" {
+		fmt.Fprintf(stderr, "Made a new amika-net device key; the old one is at %s\n", old)
+	} else {
+		fmt.Fprintln(stderr, "Made a new amika-net device key")
+	}
+	return nil
 }
 
 var sandboxSSHV2Cmd = &cobra.Command{
@@ -150,6 +172,11 @@ Examples:
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
+		if newKey, _ := cmd.Flags().GetBool("new-device-key"); newKey {
+			if err := makeNewDeviceKey(cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+		}
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
 			return err
@@ -177,11 +204,13 @@ Examples:
 			return err
 		}
 		argv := ssh.BuildSessionSSHArgv(forward, nameIdx, alias)
-		if transport != ssh.TransportAuto {
-			option, err := ssh.TransportProxyCommandOption(transport)
-			if err != nil {
-				return err
-			}
+		// ssh's own -v also makes the proxy name the transport on stderr.
+		verbose := cliargs.HasShortOption(forward[:nameIdx], 'v', cliargs.SSHArgLetters)
+		option, err := ssh.ProxyCommandOption(transport, verbose)
+		if err != nil {
+			return err
+		}
+		if option != "" {
 			argv = append([]string{"-o", option}, argv...)
 		}
 		return execSessionSSH(alias, argv)
