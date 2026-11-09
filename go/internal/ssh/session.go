@@ -449,6 +449,19 @@ func ProxySession(
 		return explainTransport(options.Transport, err)
 	}
 	if session.Transport == apiclient.SSHSessionTransportIroh && options.Iroh != nil {
+		// amika-net dials only the relay the descriptor names, so a host
+		// with none cannot be reached over iroh. The contract says the
+		// control plane never sends one; this is the defense.
+		if session.Iroh.RelayURL == nil {
+			const reason = "the iroh descriptor has no relay_url"
+			if options.Transport == TransportIroh {
+				events.Info("ssh_transport_failed", slog.String("transport", string(session.Transport)), slog.String("reason", reason))
+				return &irohDialError{Reason: reason}
+			}
+			events.Info("ssh_transport_fallback", slog.String("from", string(session.Transport)), slog.String("reason", reason))
+			events.Info("ssh_transport", slog.String("transport", string(apiclient.SSHSessionTransportDirectWS)))
+			return proxyOver(ctx, dialer, session, stdin, stdout, events)
+		}
 		events.Info("ssh_transport", slog.String("transport", string(session.Transport)))
 		err := proxyOver(ctx, irohDialer{route: *options.Iroh, target: *session.Iroh}, session, stdin, stdout, events)
 		var irohErr *irohDialError

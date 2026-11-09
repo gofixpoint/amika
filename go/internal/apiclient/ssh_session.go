@@ -56,7 +56,10 @@ type SSHSessionIroh struct {
 	// EndpointID is the host's iroh endpoint id: its Ed25519 public key as
 	// 64 lowercase hex characters.
 	EndpointID string `json:"endpoint_id"`
-	// RelayURL is the host's home relay, or nil when the host reported none.
+	// RelayURL is the host's home relay. The control plane never sends an
+	// iroh descriptor without one. Nil still decodes, and leaves only the
+	// descriptor's direct_ws route usable: the proxy uses that and logs
+	// why.
 	RelayURL *string `json:"relay_url"`
 	// RigID is hostd's id for the rig.
 	RigID string `json:"rig_id"`
