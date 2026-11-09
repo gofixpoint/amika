@@ -266,21 +266,26 @@ describe("createUpgradeHandler", () => {
   describe("amikad's SSH upgrade without the key", () => {
     const sshPath = validPath("/v1/ssh-sessions");
 
-    it("tunnels it with the caller's connect token", async () => {
-      const target = await guest();
-      const { port } = await hostd(target.port);
-      const socket = await open(port, sshPath, { key: "" });
-      expect(await read(socket)).toBe(
-        "HTTP/1.1 101 Switching Protocols\r\n\r\n",
-      );
-      expect(target.handshake()).toBe(
-        "GET /v1/ssh-sessions HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAuthorization: Bearer connect-token\r\n\r\n",
-      );
-    });
+    // `/v2` is amikad's resumable route, authenticated the same way.
+    it.each(["/v1/ssh-sessions", "/v2/ssh-sessions"])(
+      "tunnels %s with the caller's connect token",
+      async (route) => {
+        const target = await guest();
+        const { port } = await hostd(target.port);
+        const socket = await open(port, validPath(route), { key: "" });
+        expect(await read(socket)).toBe(
+          "HTTP/1.1 101 Switching Protocols\r\n\r\n",
+        );
+        expect(target.handshake()).toBe(
+          `GET ${route} HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAuthorization: Bearer connect-token\r\n\r\n`,
+        );
+      },
+    );
 
     it.each([
       ["a query", validPath("/v1/ssh-sessions?x=1"), {}],
       ["another amikad path", validPath("/v1/status"), {}],
+      ["another SSH version", validPath("/v3/ssh-sessions"), {}],
       ["a trailing slash", validPath("/v1/ssh-sessions/"), {}],
       ["an encoded path", validPath("/v1/ssh%2Dsessions"), {}],
       [
