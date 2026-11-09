@@ -294,21 +294,18 @@ func TestResumeProxyExits255OnTheRigsAbort(t *testing.T) {
 	}
 }
 
-// The design's exit table, for a drop the proxy cannot resume.
+// The design's exit table, for a drop the proxy cannot resume while
+// OpenSSH is still there. stdin's end is the case below the table.
 func TestResumeProxyExitTable(t *testing.T) {
 	for name, tc := range map[string]struct {
 		// restart: amikad restarts while the transport is down, so the
 		// resume finds no session.
 		restart     bool
 		refuse      func() error
-		closeStdin  bool
 		wantCode    int
 		wantRefusal string
 	}{
 		"unknown session": {restart: true, wantCode: 255, wantRefusal: "unknown"},
-		"unknown session after stdin ended": {
-			restart: true, closeStdin: true, wantCode: 0, wantRefusal: "unknown",
-		},
 		"connect token rotated": {
 			refuse:   func() error { return &DialStatusError{StatusCode: http.StatusUnauthorized} },
 			wantCode: 255, wantRefusal: "token_rotated",
@@ -320,7 +317,7 @@ func TestResumeProxyExitTable(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rig := newTestRig(t, fastResumeTiming())
-			openssh, result, events := startProxy(t, rig, nil)
+			_, result, events := startProxy(t, rig, nil)
 			rig.nextSSHD()
 			waitOpen(t, events)
 			var down atomic.Bool
@@ -335,9 +332,6 @@ func TestResumeProxyExitTable(t *testing.T) {
 				return nil
 			}
 			rig.cutCurrent()
-			if tc.closeStdin {
-				openssh.Close()
-			}
 			if tc.restart {
 				rig.restart()
 			}
@@ -387,9 +381,53 @@ func TestResumeProxyGivesUpAtTheGracePeriod(t *testing.T) {
 	}
 }
 
-// stdin's EOF sends GOODBYE; with no ACK within goodbyeWait, across a
-// resume, the proxy still exits 0, because OpenSSH has already closed its
-// side.
+// These tests order every event they depend on, and run the proxy's timers
+// on a fake clock, so a loaded machine cannot change their outcome:
+//
+//   - The proxy dials at once after a drop. A test that changes what the rig
+//     answers waits until the proxy is asleep after that dial (its backoff
+//     timer is the one pending timer), so the change reaches only the dials
+//     it means.
+//   - Asleep between two resume dials, the proxy wakes when stdin ends and
+//     dials again. That dial (refused or not) shows the proxy has seen
+//     stdin end, and set its goodbye deadline from the fake clock. stdin
+//     must end while the proxy sleeps: had it ended earlier, the proxy
+//     would sleep without waking for it.
+//   - The fake clock moves only as far as the design allows (goodbyeWait),
+//     and the test then waits in real time for the proxy to exit.
+
+// stdin ends while the proxy resumes, and amikad (restarted meanwhile) no
+// longer has the session. The proxy sent its GOODBYE (stdin ended), so the
+// exit table gives 0.
+func TestResumeProxyExitsZeroWhenItsSessionIsGoneAfterStdinEnds(t *testing.T) {
+	rig := newTestRig(t, fastResumeTiming())
+	clock := resumetest.NewFakeClock()
+	openssh, result, events := startProxy(t, rig, func(p *resumeProxy) { p.clock = clock })
+	rig.nextSSHD()
+	waitOpen(t, events)
+	var down atomic.Bool
+	down.Store(true)
+	rig.refuse = func(int) error {
+		if down.Load() {
+			return errors.New("network down")
+		}
+		return nil
+	}
+	rig.cutCurrent()
+	waitAsleep(t, rig, clock)
+	rig.restart()
+	down.Store(false)
+	closeStdinWhileResuming(t, rig, openssh)
+	if err := waitResult(t, result); err != nil {
+		t.Fatalf("exit = %v, want 0", err)
+	}
+	if !strings.Contains(events.String(), `"reason":"unknown"`) {
+		t.Fatalf("events lack the unknown refusal:\n%s", events.String())
+	}
+}
+
+// stdin ends while the transport is silent, so the GOODBYE gets no ACK. The
+// proxy exits 0 within goodbyeWait, across the resume the silence leads to.
 func TestResumeProxyWaitsAtMostGoodbyeWaitAfterStdinEnds(t *testing.T) {
 	rig := newTestRig(t, fastResumeTiming())
 	clock := resumetest.NewFakeClock()
@@ -397,24 +435,21 @@ func TestResumeProxyWaitsAtMostGoodbyeWaitAfterStdinEnds(t *testing.T) {
 	rig.nextSSHD()
 	waitOpen(t, events)
 	rig.refuse = func(int) error { return errors.New("network down") }
-	rig.cutCurrent()
+	rig.endsMu.Lock()
+	rig.ends[len(rig.ends)-1].Silence()
+	rig.endsMu.Unlock()
+	// Bytes the rig never acknowledges: with none, writing GOODBYE would
+	// end the session at once, as every byte would already be acked.
+	if _, err := openssh.Write([]byte("never acknowledged")); err != nil {
+		t.Fatal(err)
+	}
+	// Without a tick of the fake clock, only the proxy's goodbye timer can
+	// add a pending timer: it shows the proxy has seen stdin end.
+	pending := clock.Pending()
 	openssh.Close()
-	for elapsed := time.Duration(0); ; elapsed += 50 * time.Millisecond {
-		select {
-		case err := <-result:
-			if err != nil {
-				t.Fatalf("exit = %v, want 0", err)
-			}
-			if elapsed > goodbyeWait {
-				t.Fatalf("exited after %s, want at most %s", elapsed, goodbyeWait)
-			}
-			return
-		case <-time.After(5 * time.Millisecond):
-		}
-		if elapsed > 2*goodbyeWait {
-			t.Fatal("the proxy kept waiting after stdin ended")
-		}
-		clock.Advance(50 * time.Millisecond)
+	eventually(t, func() bool { return clock.Pending() > pending })
+	if err := exitWithin(t, clock, result, goodbyeWait); err != nil {
+		t.Fatalf("exit = %v, want 0", err)
 	}
 }
 
@@ -429,32 +464,64 @@ func TestResumeProxyStopsResumingSoonAfterStdinEnds(t *testing.T) {
 	waitOpen(t, events)
 	rig.refuse = func(int) error { return errors.New("network down") }
 	rig.cutCurrent()
-	deadline := time.Now().Add(5 * time.Second)
-	for !strings.Contains(events.String(), "ssh_resume_detach") {
-		if time.Now().After(deadline) {
-			t.Fatal("the proxy did not start resuming")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitAsleep(t, rig, clock)
 	clock.Advance(time.Second)
+	waitAsleep(t, rig, clock)
+	closeStdinWhileResuming(t, rig, openssh)
+	if err := exitWithin(t, clock, result, goodbyeWait); err != nil {
+		t.Fatalf("exit = %v, want 0", err)
+	}
+}
+
+// waitDials waits until the rig has seen n dials, refused ones included.
+func waitDials(t *testing.T, rig *testRig, n int32) {
+	t.Helper()
+	eventually(t, func() bool { return rig.dials.Load() >= n })
+}
+
+// waitAsleep waits until the proxy, resuming after a drop, has made its
+// first resume dial and sleeps before the next: its backoff timer is then
+// the one timer pending on the fake clock (a finished attachment's timers
+// are stopped, and a refused dial sets none).
+func waitAsleep(t *testing.T, rig *testRig, clock *resumetest.FakeClock) {
+	t.Helper()
+	eventually(t, func() bool { return rig.dials.Load() >= 2 && clock.Pending() == 1 })
+}
+
+// closeStdinWhileResuming ends the proxy's stdin while it sleeps between
+// resume dials, and waits for the dial its wake-up makes.
+func closeStdinWhileResuming(t *testing.T, rig *testRig, openssh net.Conn) {
+	t.Helper()
+	before := rig.dials.Load()
 	openssh.Close()
-	time.Sleep(20 * time.Millisecond)
-	for elapsed := time.Duration(0); ; elapsed += 50 * time.Millisecond {
+	waitDials(t, rig, before+1)
+}
+
+// exitWithin moves the fake clock forward by d, a step at a time, then waits
+// in real time for the proxy to exit. The proxy must decide to exit with no
+// more than d of its own time passing.
+func exitWithin(t *testing.T, clock *resumetest.FakeClock, result <-chan error, d time.Duration) error {
+	t.Helper()
+	const step = 50 * time.Millisecond
+	for moved := time.Duration(0); moved < d; moved += step {
 		select {
 		case err := <-result:
-			if err != nil {
-				t.Fatalf("exit = %v, want 0", err)
-			}
-			if elapsed > goodbyeWait+50*time.Millisecond {
-				t.Fatalf("exited %s after stdin ended, want at most %s", elapsed, goodbyeWait)
-			}
-			return
-		case <-time.After(5 * time.Millisecond):
+			return err
+		case <-time.After(2 * time.Millisecond):
 		}
-		if elapsed > 3*goodbyeWait {
-			t.Fatal("the proxy kept resuming after stdin ended")
+		clock.Advance(step)
+	}
+	return waitResult(t, result)
+}
+
+func eventually(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for condition")
 		}
-		clock.Advance(50 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 }
 
