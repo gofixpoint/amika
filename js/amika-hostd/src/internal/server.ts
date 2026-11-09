@@ -19,6 +19,7 @@ import {
   type MachineFacts,
 } from "./runtimes.js";
 import { openSnapshotStore, SnapshotConflictError } from "./snapshot-store.js";
+import type { RigOwners } from "./rig-owners.js";
 import { startCapture } from "./snapshots.js";
 
 export interface RunningServer {
@@ -67,6 +68,7 @@ export function buildHandlers(
   runtime: MachineRuntime,
   {
     servicesFile,
+    owners,
     hiddenMachines,
     pullingImages,
     smolvmLogFile,
@@ -74,6 +76,8 @@ export function buildHandlers(
     machine = unknownMachine,
   }: {
     servicesFile?: string;
+    /** Who owns each rig; in memory without it. */
+    owners?: RigOwners;
     hiddenMachines?: () => ReadonlySet<string>;
     /** Images pre-pull is caching now (see `AppDeps`). */
     pullingImages?: () => ReadonlySet<string>;
@@ -111,6 +115,7 @@ export function buildHandlers(
     runtime,
     {
       registry,
+      owners,
       hiddenMachines,
       pullingImages,
       snapshots: snapshotSupport(runtime, snapshots),
@@ -134,6 +139,7 @@ export function startServer(
   {
     shutdownGraceMs = SHUTDOWN_GRACE_MS,
     servicesFile,
+    owners,
     hiddenMachines,
     pullingImages,
     smolvmLogFile,
@@ -145,6 +151,8 @@ export function startServer(
     machine?: () => MachineFacts;
     /** Persists service names across restarts; in memory without one. */
     servicesFile?: string;
+    /** Who owns each rig; in memory without it. */
+    owners?: RigOwners;
     /** Machines left out of the machine list (see `AppDeps`). */
     hiddenMachines?: () => ReadonlySet<string>;
     /** Images pre-pull is caching now (see `AppDeps`). */
@@ -159,20 +167,41 @@ export function startServer(
     snapshots?: SnapshotOptions;
   } = {},
 ): Promise<RunningServer> {
-  const { app, upgrade, tunnels } = buildHandlers(config, runtime, {
+  const handlers = buildHandlers(config, runtime, {
     servicesFile,
+    owners,
     hiddenMachines,
     pullingImages,
     smolvmLogFile,
     snapshots,
     machine,
   });
+  return serveHandlers(handlers, {
+    hostname: config.host,
+    port: config.port,
+    shutdownGraceMs,
+  });
+}
+
+/**
+ * Listen with handlers `buildHandlers` made. A tunnel daemon that runs
+ * `amika-net` also serves its handlers this way, on a loopback port, for
+ * `amika-net`'s `hostd` target.
+ */
+export function serveHandlers(
+  { app, upgrade, tunnels }: ReturnType<typeof buildHandlers>,
+  {
+    hostname,
+    port,
+    shutdownGraceMs = SHUTDOWN_GRACE_MS,
+  }: { hostname: string; port: number; shutdownGraceMs?: number },
+): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     // Only the default `http.Server` is used, never HTTP/2.
     const server = serve({
       fetch: app.fetch,
-      hostname: config.host,
-      port: config.port,
+      hostname,
+      port,
     }) as Server;
     server.on("upgrade", upgrade);
     server.once("error", reject);

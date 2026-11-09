@@ -89,6 +89,15 @@ function harness({
       attachmentCredential.value = value;
     }),
   };
+  /** The iroh host key, which setup does not touch. */
+  const irohKey = {
+    description: "the test store (iroh host key)",
+    value: undefined as string | undefined,
+    get: vi.fn(() => irohKey.value),
+    set: vi.fn((value: string) => {
+      irohKey.value = value;
+    }),
+  };
   const deps = {
     env: { XDG_CONFIG_HOME: "/config", ...env },
     out: (line: string) => out.push(line),
@@ -100,6 +109,7 @@ function harness({
       apiKey: store,
       secretKey: kind === "keychain" ? keychainSecret : undefined,
       attachmentCredential,
+      irohKey,
     },
     loadConfigFile: vi.fn((): HostdConfigFile | undefined =>
       file === undefined ? undefined : { path: PATH, contents: file },

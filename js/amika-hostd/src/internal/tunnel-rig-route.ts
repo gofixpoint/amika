@@ -80,6 +80,23 @@ export function routeRigService(request: IncomingMessage): RigRouteOutcome {
 }
 
 /**
+ * Remove every `x-amika-` header but the rig and the service from a
+ * request, as the gateway does before it writes those two. For a hop that
+ * vouches for the two and nothing else: the dialer, which reaches hostd
+ * through `amika-net` (spec 035, `iroh-contracts.md`). Call it before
+ * `routeRigService`.
+ */
+export function dropForeignAmikaHeaders(request: IncomingMessage): void {
+  const foreign = Object.keys(request.headers).filter(
+    (name) =>
+      name.startsWith("x-amika-") &&
+      name !== RIG_HEADER &&
+      name !== SERVICE_HEADER,
+  );
+  if (foreign.length > 0) dropHeaders(request, foreign);
+}
+
+/**
  * The rig and service the tunnel named `request` for, or undefined for a
  * request it did not: one for this daemon's API, or one that did not come
  * down the tunnel at all.

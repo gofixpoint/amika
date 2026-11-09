@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import { PREPULL_MACHINE_PREFIX } from "./prepull.js";
+import { ownerSchema } from "./rig-owners.js";
 import type { SnapshotState } from "./snapshot-store.js";
 import {
   RUNTIME_NAMES,
@@ -54,6 +55,9 @@ export const createMachineSchema = z.strictObject({
   network: z.boolean().default(true),
   env: envSchema.optional(),
   services: servicesSchema.optional(),
+  // The principal who owns the rig, for the iroh transport's check 2
+  // (`rig-owners.ts`). A kind this host does not know is refused.
+  owner: ownerSchema.optional(),
 });
 
 /** A machine's full service set, replacing the one it was created with. */

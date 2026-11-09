@@ -38,7 +38,7 @@ const HOST = {
   id: "host_1",
   hostname: "builder",
   url: "https://builder.example.com" as string | null,
-  transport_mode: "listen" as "listen" | "tunnel",
+  transport_mode: "listen" as "listen" | "tunnel" | "tunnel_iroh",
 };
 const NEW_HOST = { ...HOST, url: null };
 /** A host Amika reaches over its own gateway, so it registers no URL. */
@@ -80,17 +80,25 @@ function memorySecrets() {
   const credentials = memoryStore();
   const keychainSecret = memoryStore(undefined, "the test keychain");
   const attachmentCredential = memoryStore();
+  const irohKey = memoryStore(undefined, "the test store (iroh host key)");
   const openSecrets = vi.fn((kind: "keychain" | "file") =>
     kind === "file"
-      ? { kind, apiKey: credentials, attachmentCredential }
+      ? { kind, apiKey: credentials, attachmentCredential, irohKey }
       : {
           kind,
           apiKey: credentials,
           secretKey: keychainSecret,
           attachmentCredential,
+          irohKey,
         },
   );
-  return { credentials, keychainSecret, attachmentCredential, openSecrets };
+  return {
+    credentials,
+    keychainSecret,
+    attachmentCredential,
+    irohKey,
+    openSecrets,
+  };
 }
 
 /**
@@ -177,11 +185,11 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
       async (
         _api,
         host: { id: string; hostname: string },
-        transportMode: "listen" | "tunnel",
+        transportMode: "listen" | "tunnel" | "tunnel_iroh",
       ) => ({
         ...HOST,
         ...host,
-        url: transportMode === "tunnel" ? null : HOST.url,
+        url: transportMode === "listen" ? HOST.url : null,
         transport_mode: transportMode,
       }),
     ),
@@ -261,6 +269,11 @@ describe("runCli", () => {
         bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",
         amikadStateDir: "/state/amika-hostd/amikad",
         amikadLogFile: "/state/amika-hostd/log/amikad.log",
+        rigOwnersFile: "/state/amika-hostd/rig-owners.json",
+        amikaNetSocket: "/state/amika-hostd/amika-net/control.sock",
+        amikaNetStateFile: "/state/amika-hostd/amika-net.json",
+        irohRulesFile: "/state/amika-hostd/iroh-rules.json",
+        amikaNetLogFile: "/state/amika-hostd/log/amika-net.log",
       },
       { isRunning: deps.isRunning, env: expect.any(Object), secretKey: SECRET },
     );
@@ -284,6 +297,7 @@ describe("runCli", () => {
         expect.anything(),
         {
           servicesFile: "/state/amika-hostd/services.json",
+          owners: expect.any(Object),
           hiddenMachines: expect.any(Function),
           pullingImages: expect.any(Function),
           // Only a daemon that started smolvm knows its log.
@@ -417,6 +431,7 @@ describe("runCli", () => {
           presets: {},
         },
         transportMode: "listen",
+        irohRules: { formats: [1], features: [] },
       },
     );
     // A new host was registered with its sizes; nothing to update.
@@ -2777,5 +2792,198 @@ describe("the bare_metal runtime", () => {
     const h = configured(SIZES);
     expect(await runCli(["up"], h.deps)).toBe(0);
     expect(h.installAmikad).not.toHaveBeenCalled();
+  });
+});
+
+describe("a tunnel_iroh host", () => {
+  const IROH_HOST = {
+    ...TUNNEL_HOST,
+    transport_mode: "tunnel_iroh" as const,
+    org_id: "org_1",
+    org_allowed_transport_modes: ["listen", "tunnel", "tunnel_iroh"],
+  };
+  const ENROLMENT = {
+    credential: "amkht_b3JnXzE.s3cret",
+    generation: 1,
+    gateway_url: "wss://gateway.example/v2/host-tunnel",
+    transport_mode: "tunnel" as const,
+  };
+
+  function irohHost(host: Record<string, unknown> = IROH_HOST) {
+    const h = harness({ ...ENV, AMIKA_HOSTD_TRANSPORT: "tunnel_iroh" });
+    h.deps.registerHost.mockResolvedValue({
+      host: host as never,
+      created: true,
+    });
+    h.deps.startInBackground.mockResolvedValue({ pid: 77 } as never);
+    const stopIroh = vi.fn(async () => {});
+    const deps = {
+      ...h.deps,
+      enrol: vi.fn(async () => ENROLMENT),
+      write: () => {},
+      findAmikaNet: vi.fn(() => "/opt/amika/amika-net"),
+      startIrohTransport: vi.fn(async () => ({
+        stop: stopIroh,
+        stopped: new Promise<void>(() => {}),
+      })),
+    };
+    return { ...h, deps, stopIroh };
+  }
+
+  /** Every line `up` and the daemon printed. */
+  const printed = (h: { out: string[]; err: string[] }) =>
+    [...h.out, ...h.err].join("\n");
+
+  it("registers in tunnel_iroh mode, enrols for the tunnel, and hands over the key", async () => {
+    const h = irohHost();
+    expect(await runCli(["up"], h.deps)).toBe(0);
+    expect(h.deps.registerHost).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        transportMode: "tunnel_iroh",
+        irohRules: { formats: [1], features: [] },
+      }),
+    );
+    expect(h.deps.enrol).toHaveBeenCalled();
+    // The key is made once, kept in the secret store, never in config.
+    const stored = h.deps.irohKey.value!;
+    expect(stored).toMatch(/^[0-9a-f]{64}$/);
+    expect(h.deps.irohKey.set).toHaveBeenCalledOnce();
+    const background = h.deps.startInBackground.mock.calls as unknown as Array<
+      [unknown, unknown, Record<string, unknown>]
+    >;
+    expect(background[0]![2]).toMatchObject({
+      attachmentCredential: ENROLMENT.credential,
+      iroh: {
+        hostKey: stored,
+        apiKey: "api-key",
+        hostId: "host_1",
+        hostname: "builder",
+        orgId: "org_1",
+      },
+    });
+    // The daemon is spawned without the API key in its environment.
+    expect(background[0]![2].env).not.toHaveProperty("AMIKA_API_KEY");
+    expect(printed(h)).not.toContain(stored);
+
+    // A second `up` reuses the stored key.
+    await runCli(["up"], h.deps);
+    expect(h.deps.irohKey.set).toHaveBeenCalledOnce();
+    expect(background[1]![2]).toMatchObject({ iroh: { hostKey: stored } });
+  });
+
+  it("starts amika-net in the daemon when the org allows the mode", async () => {
+    const h = irohHost();
+    expect(await runCli(["up", "--fg"], h.deps)).toBe(0);
+    expect(h.deps.startIrohTransport).toHaveBeenCalledOnce();
+    const [options] = h.deps.startIrohTransport.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+    ];
+    expect(options).toMatchObject({
+      binary: "/opt/amika/amika-net",
+      orgId: "org_1",
+      // No built-in key for this API yet, and none configured.
+      trustedKeys: [],
+    });
+    expect(Buffer.from(options.hostKey as Uint8Array).toString("hex")).toBe(
+      h.deps.irohKey.value,
+    );
+    // amika-net never gets the daemon's keys in its environment.
+    expect(options.env).not.toHaveProperty("AMIKA_API_KEY");
+    expect(options.env).not.toHaveProperty("AMIKA_HOSTD_SECRET_KEY");
+    // The gateway tunnel runs too.
+    expect(h.deps.startTunnel).toHaveBeenCalledOnce();
+    expect(h.stopIroh).toHaveBeenCalledOnce();
+    expect(printed(h)).not.toContain(h.deps.irohKey.value!);
+  });
+
+  it("reports amika_net with the configured sizes, and reads the org's answer", async () => {
+    const h = irohHost();
+    await runCli(["up", "--fg"], h.deps);
+    const [options] = h.deps.startIrohTransport.mock.calls[0] as unknown as [
+      {
+        report: (n: {
+          endpoint_id: string;
+          relay_url: string | null;
+          version: string;
+        }) => Promise<{ allowed: boolean }>;
+      },
+    ];
+    const amikaNet = {
+      endpoint_id: "ab".repeat(32),
+      relay_url: null,
+      version: "0.1.0",
+    };
+    h.deps.setHostReport.mockResolvedValueOnce({
+      ...IROH_HOST,
+      org_allowed_transport_modes: ["listen", "tunnel"],
+    } as never);
+    expect(await options.report(amikaNet)).toEqual({ allowed: false });
+    expect(h.deps.setHostReport).toHaveBeenLastCalledWith(
+      { apiUrl: "https://app.amika.dev", apiKey: "api-key" },
+      { id: "host_1", hostname: "builder" },
+      expect.objectContaining({
+        capabilities: expect.objectContaining({ amika_net: amikaNet }),
+      }),
+    );
+  });
+
+  it("leaves amika-net off when the org does not allow the mode", async () => {
+    const h = irohHost({
+      ...IROH_HOST,
+      org_allowed_transport_modes: ["listen", "tunnel"],
+    });
+    expect(await runCli(["up", "--fg"], h.deps)).toBe(0);
+    expect(h.deps.startIrohTransport).not.toHaveBeenCalled();
+    expect(h.deps.irohKey.set).not.toHaveBeenCalled();
+    expect(h.deps.startTunnel).toHaveBeenCalledOnce();
+    expect(printed(h)).toContain("does not allow tunnel_iroh");
+  });
+
+  it("leaves amika-net off for a tunnel host", async () => {
+    const h = irohHost(TUNNEL_HOST);
+    const deps = {
+      ...h.deps,
+      env: { ...h.deps.env, AMIKA_HOSTD_TRANSPORT: "tunnel" },
+    };
+    expect(await runCli(["up", "--fg"], deps)).toBe(0);
+    expect(h.deps.startIrohTransport).not.toHaveBeenCalled();
+    expect(h.deps.irohKey.get).not.toHaveBeenCalled();
+  });
+
+  it("runs without amika-net, saying so once, when it is not installed", async () => {
+    const h = irohHost();
+    h.deps.findAmikaNet.mockReturnValue(undefined as never);
+    expect(await runCli(["up", "--fg"], h.deps)).toBe(0);
+    expect(h.deps.startIrohTransport).not.toHaveBeenCalled();
+    expect(
+      h.err.filter((line) => line.includes("amika-net is not next to")),
+    ).toHaveLength(1);
+    expect(h.deps.startTunnel).toHaveBeenCalledOnce();
+  });
+
+  it("starts amika-net in a background daemon from what `up` handed it", async () => {
+    const h = irohHost();
+    const hostKey = "4c".repeat(32);
+    const receiveSecrets = vi.fn(async () => ({
+      secretKey: SECRET,
+      attachmentCredential: "handed-credential",
+      iroh: {
+        hostKey,
+        apiKey: "handed-api-key",
+        hostId: "host_1",
+        hostname: "builder",
+        orgId: "org_1",
+      },
+    }));
+    await runCli(["serve", "--secret-key-from-up"], {
+      ...h.deps,
+      receiveSecrets,
+    });
+    expect(h.deps.openSecrets).not.toHaveBeenCalled();
+    const [options] = h.deps.startIrohTransport.mock.calls[0] as unknown as [
+      { hostKey: Uint8Array },
+    ];
+    expect(Buffer.from(options.hostKey).toString("hex")).toBe(hostKey);
   });
 });

@@ -48,6 +48,7 @@ import {
   type ServiceRegistry,
 } from "./internal/service-registry.js";
 import { namedRoute, type NamedRoute } from "./internal/tunnel-rig-route.js";
+import { memoryRigOwners, type RigOwners } from "./internal/rig-owners.js";
 
 export interface AppConfig {
   /**
@@ -102,6 +103,8 @@ export interface SnapshotSupport {
 export interface AppDeps {
   /** Where each machine's service names map to guest ports. */
   registry?: ServiceRegistry;
+  /** Who owns each rig, as the create request named it. */
+  owners?: RigOwners;
   /** This host's snapshots; without it, rigs cannot be snapshotted. */
   snapshots?: SnapshotSupport;
   /** Reaches a machine's published guest ports for service routes. */
@@ -133,6 +136,7 @@ export function createApp(
   runtime: MachineRuntime,
   {
     registry = memoryServiceRegistry(),
+    owners = memoryRigOwners(),
     snapshots,
     fetch: fetcher = fetch,
     hiddenMachines = () => new Set(),
@@ -271,6 +275,7 @@ export function createApp(
         ...(gateway.servesPreviews ? [BROWSER_LOGIN_FEATURE] : []),
         ...(snapshots ? [SNAPSHOTS_FEATURE] : []),
         RUNTIMES_FEATURE,
+        RIG_OWNER_FEATURE,
       ],
     }),
   );
@@ -413,7 +418,13 @@ export function createApp(
     );
     app.post(machines, async (c) => {
       const input = createMachineSchema.parse(await c.req.json());
-      const { services, image: named, runtime: requested, ...machine } = input;
+      const {
+        services,
+        owner,
+        image: named,
+        runtime: requested,
+        ...machine
+      } = input;
       // A bare-metal rig is this machine as it is, so it boots no image:
       // the name is passed along unresolved, and ignored.
       const source =
@@ -453,6 +464,7 @@ export function createApp(
             machine.name,
             Object.fromEntries((services ?? []).map((s) => [s.name, s.port])),
           );
+          owners.set(machine.name, owner);
           return Response.json(created, { status: 201 });
         },
         { download: true },
@@ -470,10 +482,12 @@ export function createApp(
         } catch (error) {
           if (error instanceof RuntimeError && error.status === 404) {
             registry.remove(name);
+            owners.remove(name);
           }
           throw error;
         }
         registry.remove(name);
+        owners.remove(name);
         return new Response(null, { status: 204 });
       });
     });
@@ -555,6 +569,12 @@ export const FEATURES = ["service-tokens"];
  * machine names its own (spec 028 in amika-mono).
  */
 export const RUNTIMES_FEATURE = "runtimes";
+/**
+ * Named in `/health`: a create takes an optional `owner`, which the iroh
+ * transport's check 2 reads (spec 035). A control plane sends `owner` only
+ * to a host that names this, since an older one refuses the field.
+ */
+export const RIG_OWNER_FEATURE = "rig-owner";
 
 /** A host's runtimes before its config names any: smol, with no presets. */
 const SMOL_ONLY: RuntimeConfig = {

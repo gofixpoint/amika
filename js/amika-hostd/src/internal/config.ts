@@ -16,8 +16,27 @@ export const DEFAULT_PORT = 3020;
  * `listen` binds a port and the operator exposes it, through ngrok, a
  * router or cloudflared. `tunnel` binds nothing and dials out to Amika's
  * gateway instead, which is what a machine behind a home router needs.
+ * `tunnel_iroh` is `tunnel` that also runs `amika-net` beside the tunnel,
+ * when the host's org allows the mode (spec 035, `transport-switch.md`). It
+ * is not documented for users.
  */
-export type TransportMode = "listen" | "tunnel";
+export type TransportMode = "listen" | "tunnel" | "tunnel_iroh";
+
+/**
+ * Whether a host in `mode` dials Amika's gateway. A `tunnel_iroh` host
+ * keeps the gateway tunnel in every case, so the tunnel always works.
+ */
+export function dialsGateway(mode: TransportMode): boolean {
+  switch (mode) {
+    case "tunnel":
+    case "tunnel_iroh":
+      return true;
+    case "listen":
+      return false;
+    default:
+      return assertNever(mode);
+  }
+}
 
 /**
  * Tunnelling, because it needs nothing from the operator: no port to
@@ -110,6 +129,17 @@ export interface HostdConfig {
    * read from TOML.
    */
   amikadPath?: string;
+  /**
+   * The public keys (64 lowercase hex) that may sign iroh rules, in place
+   * of the built-in list for the API environment (`iroh-rules-sync.ts`).
+   * For tests and local development. Only read from TOML.
+   */
+  irohRulesTrustedKeys?: string[];
+  /**
+   * The relay `amika-net` uses, passed as `--relay-url`. Unset, `amika-net`
+   * chooses. Only read from TOML.
+   */
+  irohRelayUrl?: string;
   /** The TOML file the settings were read from, if one was found. */
   configPath?: string;
 }
@@ -210,6 +240,8 @@ export function resolveConfig({
       fromEnv("tunnelGatewayUrl") ?? toml.tunnel_gateway_url,
     ),
     amikadPath: parseAmikadPath(toml.amikad_path),
+    irohRulesTrustedKeys: toml.iroh_rules_trusted_keys,
+    irohRelayUrl: parseRelayUrl(toml.iroh_relay_url),
     configPath: file?.path,
   };
 }
@@ -267,7 +299,11 @@ export function loadConfigFile(
  * closed, nor a host whose config says a mode a newer daemon understands.
  */
 function parseTransport(value: string): TransportMode {
-  if (value === "listen" || value === "tunnel") return value;
+  // `tunnel_iroh` is accepted, and left out of the message: it is not
+  // documented for users.
+  if (value === "listen" || value === "tunnel" || value === "tunnel_iroh") {
+    return value;
+  }
   throw new ConfigError(
     `transport must be "listen" or "tunnel", not ${JSON.stringify(value)}`,
   );
@@ -285,6 +321,21 @@ function parseAmikadPath(value: string | undefined): string | undefined {
     );
   }
   return path.normalize(value);
+}
+
+/** `iroh_relay_url`: an http(s) URL, as `amika-net` takes it. */
+function parseRelayUrl(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ConfigError("iroh_relay_url is not a URL");
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username) {
+    throw new ConfigError("iroh_relay_url must be an http(s) URL");
+  }
+  return url.toString();
 }
 
 /**
@@ -330,6 +381,10 @@ const configFileSchema = z.strictObject({
   transport: z.string().optional(),
   tunnel_gateway_url: z.string().trim().min(1).optional(),
   amikad_path: z.string().trim().min(1).optional(),
+  iroh_rules_trusted_keys: z
+    .array(z.string().regex(/^[0-9a-f]{64}$/))
+    .optional(),
+  iroh_relay_url: z.string().trim().min(1).optional(),
   sizes: z.record(z.string().min(1), tomlSizeSchema).optional(),
   runtimes: z
     .record(

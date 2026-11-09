@@ -24,6 +24,7 @@ const RESTART_SETTINGS = [
   "transport",
   "tunnelGatewayUrl",
   "amikadPath",
+  "irohRelayUrl",
 ] as const satisfies readonly (keyof HostdConfig)[];
 
 /**

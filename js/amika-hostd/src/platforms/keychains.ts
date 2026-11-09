@@ -18,7 +18,11 @@ export interface Keychain {
   set(name: SecretName, value: string): void;
 }
 
-export type SecretName = "api-key" | "secret-key" | "attachment-credential";
+export type SecretName =
+  | "api-key"
+  | "secret-key"
+  | "attachment-credential"
+  | "iroh-key";
 
 /** The result of running a program, as `spawnSync` reports it. */
 export interface RunResult {
@@ -49,6 +53,7 @@ const LABELS: Record<SecretName, string> = {
   "api-key": "Amika API key for amika-hostd",
   "secret-key": "amika-hostd secret key",
   "attachment-credential": "amika-hostd tunnel attachment credential",
+  "iroh-key": "amika-hostd iroh host key",
 };
 /** Long enough for a keychain to ask the operator to unlock it. */
 const KEYCHAIN_TIMEOUT_MS = 60_000;

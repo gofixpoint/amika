@@ -5,6 +5,7 @@ import {
   ConfigError,
   DEFAULT_API_URL,
   configFilePaths,
+  dialsGateway,
   envName,
   loadConfigFile,
   requireSettings,
@@ -491,6 +492,52 @@ describe("the transport", () => {
     expect(() =>
       resolveConfig({ file: file('transport = "tunel"\n') }),
     ).toThrow(/must be "listen" or "tunnel"/);
+  });
+});
+
+describe("the iroh transport settings", () => {
+  it("accepts tunnel_iroh, and leaves it out of the error for a typo", () => {
+    expect(
+      resolveConfig({ file: file('transport = "tunnel_iroh"\n') }).transport,
+    ).toBe("tunnel_iroh");
+    expect(
+      resolveConfig({ env: { AMIKA_HOSTD_TRANSPORT: "tunnel_iroh" } })
+        .transport,
+    ).toBe("tunnel_iroh");
+    expect(() =>
+      resolveConfig({ file: file('transport = "tunnel_irho"\n') }),
+    ).toThrow(/^transport must be "listen" or "tunnel", not "tunnel_irho"$/);
+  });
+
+  it("dials the gateway in tunnel_iroh mode as in tunnel mode", () => {
+    expect(dialsGateway("tunnel_iroh")).toBe(true);
+    expect(dialsGateway("tunnel")).toBe(true);
+    expect(dialsGateway("listen")).toBe(false);
+  });
+
+  it("reads the trusted rules keys and the relay URL from TOML", () => {
+    const key =
+      "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    const config = resolveConfig({
+      file: file(
+        `iroh_rules_trusted_keys = ["${key}"]\niroh_relay_url = "https://relay.test"\n`,
+      ),
+    });
+    expect(config.irohRulesTrustedKeys).toEqual([key]);
+    expect(config.irohRelayUrl).toBe("https://relay.test/");
+    expect(resolveConfig({}).irohRulesTrustedKeys).toBeUndefined();
+  });
+
+  it("refuses a trusted key that is not 64 lowercase hex, by name", () => {
+    expect(() =>
+      resolveConfig({ file: file('iroh_rules_trusted_keys = ["ABC"]\n') }),
+    ).toThrow(/invalid settings: iroh_rules_trusted_keys\.0$/);
+  });
+
+  it("refuses a relay URL that is not http(s)", () => {
+    expect(() =>
+      resolveConfig({ file: file('iroh_relay_url = "ftp://relay.test"\n') }),
+    ).toThrow(/iroh_relay_url must be an http\(s\) URL/);
   });
 });
 

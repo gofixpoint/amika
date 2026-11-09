@@ -134,7 +134,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
 - **The daemon holds only the secret key, and never reads the store.** `up`
   reads the secrets and hands the secret key over IPC, with the tunnel
   attachment credential in tunnel mode; no secret goes in the daemon's
-  environment. smolvm, rigs, the snapshot pack subprocess and
+  environment. The one exception is a `tunnel_iroh` host whose org allows
+  the mode: `up` also hands over the API key and the iroh host key, which
+  `amika-net` gets on fd 3 only. See [The iroh transport](docs/iroh.md). smolvm, rigs, the snapshot pack subprocess and
   the smolvm version check never see either secret.
 - **Secrets stay out of files and messages they do not belong in.** The API
   key never comes from TOML. Config and secret files are replaced atomically
@@ -217,6 +219,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
 - [docs/snapshots.md](docs/snapshots.md) — read when changing snapshot capture
   or storage (`snapshots.ts`, `snapshot-store.ts`) or how a create resolves
   its source (`requests.ts`).
+- [docs/iroh.md](docs/iroh.md) — read when changing the iroh transport
+  (`amika-net-*.ts`, `iroh-*.ts`, `rig-owners.ts`): when `amika-net` runs,
+  the host key, the control socket, the rules and rig owners.
 - [docs/tunnel.md](docs/tunnel.md) — read when changing the outbound tunnel
   (`tunnel-*.ts`): the WSS handshake, the framed session, liveness,
   reconnection, or where the attachment credential and gateway address come

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AmikaApiError,
   HostTransportConflictError,
+  fetchIrohRules,
   registerHost,
   setHostSecret,
   setHostReport,
@@ -75,6 +76,7 @@ describe("registerHost", () => {
         hostname: "builder",
         url: null,
         transport_mode: "listen",
+        org_id: "org_1",
       },
       created,
     });
@@ -220,6 +222,7 @@ describe("setHostUrl", () => {
       hostname: "builder",
       url: "https://abc.ngrok.app",
       transport_mode: "listen",
+      org_id: "org_1",
     });
     expect(fetcher).toHaveBeenCalledWith(
       "https://app.amika.dev/api/v0beta1/hosts/host_1",
@@ -370,5 +373,106 @@ describe("setHostSecret", () => {
     expect(error).toBeInstanceOf(AmikaApiError);
     expect(String(error)).toContain("update the host's secret key");
     expect(String(error)).not.toContain("new-secret");
+  });
+});
+
+describe("registerHost and iroh", () => {
+  it("sends the iroh rules formats and features it reads", async () => {
+    const fetcher = responding(Response.json(HOST, { status: 201 }));
+    await registerHost(
+      API,
+      { ...INPUT, irohRules: { formats: [1], features: [] } },
+      fetcher,
+    );
+    const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
+    expect(body.iroh_rules).toEqual({ formats: [1], features: [] });
+  });
+
+  it("reads the org's allowed transport modes from the answer", async () => {
+    const fetcher = responding(
+      Response.json(
+        {
+          ...HOST,
+          transport_mode: "tunnel_iroh",
+          org_allowed_transport_modes: ["listen", "tunnel", "tunnel_iroh"],
+        },
+        { status: 200 },
+      ),
+    );
+    const { host } = await registerHost(API, INPUT, fetcher);
+    expect(host.org_allowed_transport_modes).toContain("tunnel_iroh");
+    expect(host.org_id).toBe("org_1");
+  });
+});
+
+describe("setHostReport and iroh", () => {
+  it("sends amika_net inside the capabilities", async () => {
+    const fetcher = responding(Response.json(HOST));
+    const amikaNet = {
+      endpoint_id: "ab".repeat(32),
+      relay_url: null,
+      version: "0.1.0",
+    };
+    await setHostReport(
+      API,
+      HOST,
+      {
+        sizes: {},
+        capabilities: { runtimes: {}, presets: {}, amika_net: amikaNet },
+      },
+      fetcher,
+    );
+    const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
+    expect(body.capabilities.amika_net).toEqual(amikaNet);
+  });
+});
+
+describe("fetchIrohRules", () => {
+  it("asks with the version it has, as a GET with no body", async () => {
+    const fetcher = responding(new Response(null, { status: 204 }));
+    expect(await fetchIrohRules(API, "host_1", 42, fetcher)).toEqual({
+      kind: "unchanged",
+    });
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(url).toBe(
+      "https://app.amika.dev/api/v0beta1/hosts/host_1/iroh-rules?have=42",
+    );
+    expect(init).toMatchObject({ method: "GET", redirect: "error" });
+    expect(init?.body).toBeUndefined();
+    expect(init?.headers).toEqual({
+      Authorization: "Bearer api-key",
+      Accept: "application/json",
+    });
+  });
+
+  it("leaves out have when it has no rules", async () => {
+    const fetcher = responding(new Response(null, { status: 204 }));
+    await fetchIrohRules(API, "host_1", null, fetcher);
+    expect(fetcher.mock.calls[0]![0]).toBe(
+      "https://app.amika.dev/api/v0beta1/hosts/host_1/iroh-rules",
+    );
+  });
+
+  it("returns the envelope from a 200, unverified", async () => {
+    const envelope = { payload: "x", signatures: [] };
+    const fetcher = responding(Response.json(envelope));
+    expect(await fetchIrohRules(API, "host_1", null, fetcher)).toEqual({
+      kind: "rules",
+      envelope,
+    });
+  });
+
+  it("reads a 404 as the org not allowing tunnel_iroh", async () => {
+    const fetcher = responding(new Response(null, { status: 404 }));
+    expect(await fetchIrohRules(API, "host_1", 1, fetcher)).toEqual({
+      kind: "not_allowed",
+    });
+  });
+
+  it("explains any other answer", async () => {
+    const fetcher = responding(apiErrorBody(500, "internal", "boom"));
+    await expect(fetchIrohRules(API, "host_1", 1, fetcher)).rejects.toThrow(
+      AmikaApiError,
+    );
   });
 });

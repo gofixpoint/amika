@@ -1,7 +1,7 @@
 /** The Amika control-plane endpoints the daemon calls, authenticated by API key. */
 import type { Capabilities } from "./runtimes.js";
 import { z } from "zod";
-import type { HostSize, TransportMode } from "./config.js";
+import { dialsGateway, type HostSize, type TransportMode } from "./config.js";
 
 export interface AmikaApiConfig {
   apiUrl: string;
@@ -22,6 +22,12 @@ export const registeredHostSchema = z.object({
   // for the listening hosts on it. Callers test for the transport they
   // handle and leave the rest to the control plane, as the Go client does.
   transport_mode: z.string().default("listen"),
+  /** The host's org. Rules for another org are refused. */
+  org_id: z.string().optional(),
+  // The transport modes the host's org allows. hostd runs `amika-net` only
+  // when this lists `tunnel_iroh`. Absent from a control plane older than
+  // the field, which allows no `tunnel_iroh`.
+  org_allowed_transport_modes: z.array(z.string()).optional(),
 });
 export type RegisteredHost = z.infer<typeof registeredHostSchema>;
 
@@ -70,6 +76,8 @@ export async function registerHost(
     /** What the host can run (`runtimes.ts`). */
     capabilities?: Capabilities;
     transportMode?: TransportMode;
+    /** The iroh rules formats and features this host reads. */
+    irohRules?: IrohRulesSupport;
   },
   fetcher: typeof fetch = fetch,
   cancel?: AbortSignal,
@@ -89,6 +97,7 @@ export async function registerHost(
       ...(input.transportMode === undefined
         ? {}
         : { transport_mode: input.transportMode }),
+      ...(input.irohRules === undefined ? {} : { iroh_rules: input.irohRules }),
     },
     cancel,
   );
@@ -189,7 +198,7 @@ export async function setHostTransport(
     {
       hostname: host.hostname,
       transport_mode: transportMode,
-      ...(transportMode === "tunnel" ? { url: null } : {}),
+      ...(dialsGateway(transportMode) ? { url: null } : {}),
     },
   );
   if (response.status !== 200) {
@@ -295,6 +304,62 @@ export async function enrolHostTunnel(
   return parsed.data;
 }
 
+/**
+ * The iroh rules a host reads, sent at registration so the control plane
+ * sends only records the host understands (`iroh-contracts.md`).
+ */
+export interface IrohRulesSupport {
+  formats: readonly number[];
+  features: readonly string[];
+}
+
+/** What the control plane answered for the host's iroh rules. */
+export type IrohRulesAnswer =
+  /** A higher version than `have`: the envelope, still to be verified. */
+  | { kind: "rules"; envelope: unknown }
+  /** No version higher than `have`. */
+  | { kind: "unchanged" }
+  /** The host's org does not allow `tunnel_iroh`. */
+  | { kind: "not_allowed" };
+
+/**
+ * Ask for rules newer than `have`, the version this host holds (`null` for
+ * none). The answer is unverified: `verifyRules` checks it.
+ */
+export async function fetchIrohRules(
+  api: AmikaApiConfig,
+  hostId: string,
+  have: number | null,
+  fetcher: typeof fetch = fetch,
+  cancel?: AbortSignal,
+): Promise<IrohRulesAnswer> {
+  const query = have === null ? "" : `?have=${have}`;
+  const response = await send(
+    api,
+    fetcher,
+    "GET",
+    `/api/v0beta1/hosts/${encodeURIComponent(hostId)}/iroh-rules${query}`,
+    undefined,
+    cancel,
+  );
+  switch (response.status) {
+    case 200:
+      try {
+        return { kind: "rules", envelope: await response.json() };
+      } catch {
+        throw new AmikaApiError("Amika's iroh rules answer was not JSON");
+      }
+    case 204:
+      await response.body?.cancel();
+      return { kind: "unchanged" };
+    case 404:
+      await response.body?.cancel();
+      return { kind: "not_allowed" };
+    default:
+      throw await apiError("fetch this host's iroh rules", response);
+  }
+}
+
 type HostSizes = Record<string, HostSize>;
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -304,6 +369,7 @@ async function send(
   fetcher: typeof fetch,
   method: string,
   path: string,
+  /** Undefined sends no body, as for a `GET`. */
   body: unknown,
   /** Stops the request early, e.g. on the operator's Ctrl-C. */
   cancel?: AbortSignal,
@@ -314,10 +380,10 @@ async function send(
       method,
       headers: {
         Authorization: `Bearer ${api.apiKey}`,
-        "Content-Type": "application/json",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         Accept: "application/json",
       },
-      body: JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       // A redirect would resend the API key and secret to another origin.
       redirect: "error",
       signal: cancel ? AbortSignal.any([timeout, cancel]) : timeout,

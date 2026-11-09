@@ -217,6 +217,20 @@ export interface Capabilities {
       runtimes: ImageRuntimeName[];
     }
   >;
+  /**
+   * The `amika-net` this host runs beside the tunnel, once it is ready.
+   * Absent when it is not running (spec 035, `transport-switch.md`).
+   */
+  amika_net?: AmikaNetReport;
+}
+
+/** What `amika-net` said in its last `ready` and `home_relay`. */
+export interface AmikaNetReport {
+  /** The host's endpoint id: its public key, as 64 lowercase hex. */
+  endpoint_id: string;
+  /** The home relay, or null before `amika-net` has one. */
+  relay_url: string | null;
+  version: string;
 }
 
 /**
