@@ -72,6 +72,21 @@ fn the_host_reports_ready_and_runs_check_1_once_per_connection() {
 }
 
 #[test]
+fn connect_exits_after_its_agent_closes_while_stdin_stays_open() {
+    let bed = Bed::new("remote-end");
+    let mut session = bed.session(&[], &[]);
+    session.echo(10 * SECOND).unwrap();
+    let pid = bed.status().unwrap().pid;
+    // SAFETY: this is the child agent started by this test bed.
+    assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGKILL) }, 0);
+    let status = common::wait_timeout(&mut session.child, 3 * SECOND);
+    assert!(
+        status.is_some(),
+        "connect waited for stdin after its agent ended"
+    );
+}
+
+#[test]
 fn a_caller_that_hostd_refuses_gets_no_stream() {
     let bed = Bed::new("stranger");
     let other = bed.dir.join("other.key");

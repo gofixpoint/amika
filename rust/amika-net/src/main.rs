@@ -42,10 +42,21 @@ enum Cmd {
     Agent(agent::AgentCmd),
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
     init_logging(&cli.cmd)?;
+    let connect = matches!(&cli.cmd, Cmd::Connect(_));
+    let runtime = tokio::runtime::Runtime::new()?;
+    let result = runtime.block_on(run(cli));
+    // Tokio's stdin read can stay blocked after the remote stream ends.
+    // Connect must exit without waiting for that read to finish.
+    if connect {
+        runtime.shutdown_background();
+    }
+    result
+}
+
+async fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Id { key_file } => {
             println!("{}", keys::load_or_create(&key_file)?.public());
