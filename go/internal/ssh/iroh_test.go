@@ -45,6 +45,8 @@ const (
 	// fakeAmikaNetCutFirstEnv cuts the first process's stream after this
 	// many bytes from the rig, as a lost iroh connection ends it.
 	fakeAmikaNetCutFirstEnv = "TEST_FAKE_AMIKA_NET_CUT_FIRST"
+	// fakeAmikaNetStallEnv leaves the child alive until the proxy kills it.
+	fakeAmikaNetStallEnv = "TEST_FAKE_AMIKA_NET_STALL"
 )
 
 func TestMain(m *testing.M) {
@@ -55,6 +57,11 @@ func TestMain(m *testing.M) {
 }
 
 func runFakeAmikaNet(args []string) int {
+	if os.Getenv(fakeAmikaNetStallEnv) == "1" {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	index := 0
 	if logPath := os.Getenv(fakeAmikaNetLogEnv); logPath != "" {
 		if previous, err := os.ReadFile(logPath); err == nil {
@@ -90,6 +97,31 @@ func runFakeAmikaNet(args []string) int {
 	}
 	_, _ = io.Copy(os.Stdout, conn)
 	return 0
+}
+
+func TestConnectProcessCloseReapsAnUnresponsiveHelper(t *testing.T) {
+	t.Setenv(fakeAmikaNetEnv, "1")
+	t.Setenv(fakeAmikaNetStallEnv, "1")
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	process, err := startConnectProcess(binary, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = process.cmd.Process.Kill()
+		<-process.exited
+	})
+	if err := process.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-process.exited:
+	default:
+		t.Fatal("Close returned before the helper was reaped")
+	}
 }
 
 // irohRig is amikad's real handler, served over plain HTTP for the fake

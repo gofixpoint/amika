@@ -397,13 +397,12 @@ func (p *connectProcess) Close() error {
 	p.closeOnce.Do(func() {
 		_ = p.stdin.Close()
 		_ = p.stdout.Close()
-		go func() {
-			select {
-			case <-p.exited:
-			case <-time.After(connectExitWait):
-				_ = p.cmd.Process.Kill()
-			}
-		}()
+		select {
+		case <-p.exited:
+		case <-time.After(connectExitWait):
+			_ = p.cmd.Process.Kill()
+			<-p.exited
+		}
 	})
 	return nil
 }
