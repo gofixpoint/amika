@@ -1,0 +1,356 @@
+{
+  "comment": "Made by @amika/service-token. js/service-token/src/test-vectors.test.ts in amika-mono checks them against the TS code; rust/amika-dialer checks its port against the same file.",
+  "labels": {
+    "proxyToGateway": "amika:reverse-proxy->gateway:forward-request:v2",
+    "controlPlaneToGateway": "amika:control-plane->gateway:forward-request:v1"
+  },
+  "proxyForwardSubjects": [
+    {
+      "claim": {
+        "hostId": "host_01",
+        "orgId": "org_01",
+        "rig": "my-rig",
+        "service": "web",
+        "authority": "web--my-rig.r.acme.o.amika.run"
+      },
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run"
+    }
+  ],
+  "forwardSubjects": [
+    {
+      "hostId": "host_01",
+      "orgId": "org_01",
+      "subject": "7\nhost_01\n6\norg_01"
+    }
+  ],
+  "subjects": [
+    {
+      "parts": ["a", "b:c"],
+      "subject": "1\na\n3\nb:c"
+    },
+    {
+      "parts": ["a:b", "c"],
+      "subject": "3\na:b\n1\nc"
+    },
+    {
+      "parts": ["hôst", "org"],
+      "subject": "4\nhôst\n3\norg"
+    },
+    {
+      "parts": ["😀", ""],
+      "subject": "2\n😀\n0\n"
+    },
+    {
+      "parts": [],
+      "subject": ""
+    }
+  ],
+  "tokens": [
+    {
+      "name": "proxy token",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "proxy token one ms before expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200009999,
+      "expect": "ok"
+    },
+    {
+      "name": "proxy token at expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200010000,
+      "expect": "expired"
+    },
+    {
+      "name": "proxy token after expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200010001,
+      "expect": "expired"
+    },
+    {
+      "name": "proxy token under the control-plane label",
+      "label": "amika:control-plane->gateway:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "proxy token with another secret",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "another-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "proxy token for another host of the same length",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_02\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "proxy token for another rig",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rih\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "control-plane token",
+      "label": "amika:control-plane->gateway:forward-request:v1",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01",
+      "assertion": "v1.1794200010000.2buxxz7Q9t4n1xSjZUqDm4dEjhRbjJkjB8sbUnYKL4g",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "control-plane token under the proxy label",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01",
+      "assertion": "v1.1794200010000.2buxxz7Q9t4n1xSjZUqDm4dEjhRbjJkjB8sbUnYKL4g",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "subject [\"a\",\"b:c\"]",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "1\na\n3\nb:c",
+      "assertion": "v1.1794200010000.j9eZlP69RL_NWzTzhZdhFT1P2rxK2V0qq5vFSJFDzwE",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "subject [\"a:b\",\"c\"]",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "3\na:b\n1\nc",
+      "assertion": "v1.1794200010000.lmEaX2H0s1eEpQvLgijjBAtJwlX60Lp8pzFZ8LRvl5A",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "subject [\"hôst\",\"org\"]",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "4\nhôst\n3\norg",
+      "assertion": "v1.1794200010000.w5s75i6uHVTdDO1JmOMPaesZ-o12lYJC5aqHFfK51-Q",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "subject [\"😀\",\"\"]",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "2\n😀\n0\n",
+      "assertion": "v1.1794200010000.jMyeO7huKoaSoxRxA7qKEyG3iFuwkdGiIlY2KXNBBl4",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "subject []",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "",
+      "assertion": "v1.1794200010000.kaJ3mSIXzRFmL5ucix45zd3Q1bxN6dMVPgWgc9XL8k4",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "non-ASCII secret",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "sécret-🔑",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.NBM_hI5Mzb2AD392qJHa7_lVxCylWUA0vMOCnlbwc3o",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "expiry zero",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.0.qJdKFnt-jFVArewegsHkMVFxANI2xpY9k5YjdmYClnQ",
+      "now": 1794200000000,
+      "expect": "expired"
+    },
+    {
+      "name": "largest expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.999999999999999.9_AafgijhvsjNUOfAGhE9SHLD8SGQpfJoaxzkv50SLE",
+      "now": 1794200000000,
+      "expect": "ok"
+    },
+    {
+      "name": "malformed: empty",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: two fields",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: four fields",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8.x",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: version v2",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v2.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: leading zero expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.01794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: sixteen digit expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1001794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: expiry with a letter",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000a.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: negative expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.-1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: empty expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1..oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: 42 character signature",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.BfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: 44 character signature",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8A",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: signature with plus",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.+BfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "malformed: padded signature",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.BfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8=",
+      "now": 1794200000000,
+      "expect": "malformed"
+    },
+    {
+      "name": "non-canonical signature",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n9",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "tampered signature",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010000.pBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "invalid"
+    },
+    {
+      "name": "tampered expiry",
+      "label": "amika:reverse-proxy->gateway:forward-request:v2",
+      "secret": "proxy-to-gateway-test-secret",
+      "subject": "7\nhost_01\n6\norg_01\n6\nmy-rig\n3\nweb\n30\nweb--my-rig.r.acme.o.amika.run",
+      "assertion": "v1.1794200010001.oBfvCuNyfTLIkInwjDB7QBXChQS9V4ak6YmCv44U4n8",
+      "now": 1794200000000,
+      "expect": "invalid"
+    }
+  ]
+}
