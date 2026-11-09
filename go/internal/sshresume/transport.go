@@ -2,6 +2,7 @@ package sshresume
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -13,7 +14,9 @@ import (
 // goroutine and writes from up to two at once.
 type Transport interface {
 	// ReadFrame returns the next message. It returns an error once the
-	// transport has ended, or for a message that is not binary.
+	// transport has ended, and an error wrapping ErrProtocol for a message
+	// the protocol forbids (text, or over MaxFrameBytes), which ends the
+	// session rather than only the transport.
 	ReadFrame() ([]byte, error)
 	// WriteFrame sends one message. The transport does not keep frame.
 	WriteFrame(frame []byte) error
@@ -48,11 +51,13 @@ type webSocketTransport struct {
 
 func (t *webSocketTransport) ReadFrame() ([]byte, error) {
 	messageType, message, err := t.connection.Read(t.ctx)
+	if errors.Is(err, websocket.ErrMessageTooBig) {
+		return nil, fmt.Errorf("%w: message over %d bytes", ErrProtocol, MaxFrameBytes)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if messageType != websocket.MessageBinary {
-		t.Close(websocket.StatusUnsupportedData)
 		return nil, fmt.Errorf("%w: text message", ErrProtocol)
 	}
 	return message, nil

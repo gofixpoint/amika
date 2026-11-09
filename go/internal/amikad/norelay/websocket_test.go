@@ -148,3 +148,50 @@ func TestHandlerServesBothRoutes(t *testing.T) {
 		t.Fatalf("unknown route status = %d", response.Code)
 	}
 }
+
+// S-A2-6 over a real WebSocket: a text message, or one over the frame limit,
+// breaks the protocol. amikad ends the session with ABORT at once, rather
+// than keeping it for a resume as it would after a dropped connection.
+func TestResumableRouteEndsTheSessionOnAForbiddenMessage(t *testing.T) {
+	for name, send := range map[string]func(*websocket.Conn) error{
+		"text": func(c *websocket.Conn) error {
+			return c.Write(context.Background(), websocket.MessageText, []byte("hello"))
+		},
+		"oversized": func(c *websocket.Conn) error {
+			return c.Write(context.Background(), websocket.MessageBinary, make([]byte, sshresume.MaxFrameBytes+1))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dialer := &pipeDialer{sshd: make(chan net.Conn, 1)}
+			handler := NewHandler(Config{}, Dependencies{
+				Verifier:      tokenVerifier{},
+				FrameUpgrader: WebSocketUpgrader{},
+				Dialer:        dialer,
+			})
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			defer handler.Close()
+			header := http.Header{}
+			header.Set("Authorization", "Bearer "+testToken)
+			connection, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http")+ResumableSSHSessionsPath, &websocket.DialOptions{HTTPHeader: header})
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer connection.CloseNow()
+			hello, _ := sshresume.MarshalFrame(sshresume.Frame{Type: sshresume.FrameHello, Mode: sshresume.HelloNew})
+			if err := connection.Write(context.Background(), websocket.MessageBinary, hello); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := connection.Read(context.Background()); err != nil {
+				t.Fatalf("read WELCOME: %v", err)
+			}
+			sshd := <-dialer.sshd
+			defer sshd.Close()
+			if err := send(connection); err != nil {
+				t.Fatal(err)
+			}
+			waitClosed(t, sshd)
+			eventually(t, func() bool { return handler.ActiveConnections() == 0 })
+		})
+	}
+}

@@ -2,6 +2,7 @@ package sshresume
 
 import (
 	"encoding/binary"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -158,6 +159,12 @@ func (a *Attachment) beginCloseLocked(cause DetachCause) bool {
 func (a *Attachment) readLoop() {
 	for {
 		message, err := a.t.ReadFrame()
+		if errors.Is(err, ErrProtocol) {
+			// A text or oversized message: the peer broke the protocol,
+			// which ends the session, not only this transport.
+			a.s.fail(AbortProtocol)
+			return
+		}
 		if err != nil {
 			a.drop()
 			return
