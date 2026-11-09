@@ -1,6 +1,7 @@
 /**
- * Byte encodings for the envelope: base64url with no padding, and lowercase
- * hex. Plain `Uint8Array` code, so it runs in a Worker as well as Node.
+ * Byte encodings for the envelope: base64url with no padding, lowercase
+ * hex, and lowercase base32 for fingerprints and recovery codes. Plain
+ * `Uint8Array` code, so it runs in a Worker as well as Node.
  */
 
 /** Encode `bytes` as base64url with no padding. */
@@ -60,6 +61,55 @@ export function fromHex(text: string): Uint8Array<ArrayBuffer> | null {
   }
   return out;
 }
+
+/** Encode `bytes` as RFC 4648 base32, lowercase, with no padding. */
+export function toBase32(bytes: Uint8Array): string {
+  let out = "";
+  let buffer = 0;
+  let bits = 0;
+  for (const byte of bytes) {
+    buffer = ((buffer << 8) | byte) & 0xfff;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += BASE32[(buffer >> bits) & 0x1f];
+    }
+  }
+  if (bits > 0) out += BASE32[(buffer << (5 - bits)) & 0x1f];
+  return out;
+}
+
+/**
+ * Decode lowercase RFC 4648 base32 with no padding. Returns `null` for any
+ * other text, a length that no byte string encodes to, or nonzero unused
+ * bits.
+ */
+export function fromBase32(text: string): Uint8Array<ArrayBuffer> | null {
+  if (BASE32_BAD_LENGTHS.has(text.length % 8)) return null;
+  const out = new Uint8Array(Math.floor((text.length * 5) / 8));
+  let buffer = 0;
+  let bits = 0;
+  let index = 0;
+  for (const char of text) {
+    const value = BASE32_DECODE.get(char);
+    if (value === undefined) return null;
+    buffer = ((buffer << 5) | value) & 0xfff;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      out[index++] = (buffer >> bits) & 0xff;
+    }
+  }
+  if ((buffer & ((1 << bits) - 1)) !== 0) return null;
+  return out;
+}
+
+const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
+
+const BASE32_DECODE = new Map([...BASE32].map((char, value) => [char, value]));
+
+/** Lengths mod 8 that no byte string encodes to. */
+const BASE32_BAD_LENGTHS = new Set([1, 3, 6]);
 
 const ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

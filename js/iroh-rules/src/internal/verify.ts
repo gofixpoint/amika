@@ -1,6 +1,7 @@
 /** The host's side: check a rules envelope's signatures, then read it. */
 import { z } from "zod";
-import { fromBase64Url, fromHex } from "./encoding";
+import { verifyEd25519 } from "./crypto";
+import { fromBase64Url } from "./encoding";
 import {
   envelopeSchema,
   payloadHeaderSchema,
@@ -90,7 +91,10 @@ export async function verifyRules(
 
 type Refused = { ok: false; reason: VerifyRefusal; detail: string };
 
-function refuse(reason: VerifyRefusal, detail: string): Refused {
+function refuse<R extends VerifyRefusal>(
+  reason: R,
+  detail: string,
+): { ok: false; reason: R; detail: string } {
   return { ok: false, reason, detail };
 }
 
@@ -148,65 +152,18 @@ const CLOSENESS: Record<SignatureRefusal, number> = {
   untrusted_kind: 3,
 };
 
-/** Verify `sig` (base64url) over `message` with the hex public key. */
-async function verifyEd25519(
-  keyHex: string,
-  sig: string,
-  message: Uint8Array<ArrayBuffer>,
-): Promise<boolean> {
-  const keyBytes = fromHex(keyHex);
-  const sigBytes = fromBase64Url(sig);
-  if (keyBytes?.length !== 32 || sigBytes?.length !== 64) return false;
-  try {
-    const key = await crypto.subtle.importKey(
-      "raw",
-      keyBytes,
-      "Ed25519",
-      false,
-      ["verify"],
-    );
-    return await crypto.subtle.verify("Ed25519", key, sigBytes, message);
-  } catch (_error) {
-    // A key that is not a curve point, for example.
-    return false;
-  }
-}
-
 /** Parse signed payload bytes and check them against the host's state. */
 function readPayload(
   bytes: Uint8Array,
   options: VerifyOptions,
 ): { ok: true; rules: RulesPayload } | Refused {
-  let json: unknown;
-  try {
-    json = JSON.parse(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes),
-    );
-  } catch (_error) {
-    return refuse("malformed", "payload is not UTF-8 JSON");
-  }
-  const header = payloadHeaderSchema.safeParse(json);
-  if (!header.success) {
-    return refuse("malformed", `payload: ${describe(header.error)}`);
-  }
-  if (!options.knownFormats.includes(header.data.format)) {
-    return refuse("unknown_format", `format ${header.data.format}`);
-  }
-  const features = requiredFeaturesSchema.safeParse(json);
-  if (!features.success) {
-    return refuse("malformed", `payload: ${describe(features.error)}`);
-  }
-  const unknown = features.data.required_features.filter(
-    (feature) => !options.knownFeatures.includes(feature),
+  const parsed = parseRulesPayload(
+    bytes,
+    options.knownFormats,
+    options.knownFeatures,
   );
-  if (unknown.length > 0) {
-    return refuse("unknown_feature", `required: ${unknown.join(", ")}`);
-  }
-  const payload = payloadSchema.safeParse(json);
-  if (!payload.success) {
-    return refuse("malformed", `payload: ${describe(payload.error)}`);
-  }
-  const rules = payload.data;
+  if (!parsed.ok) return parsed;
+  const rules = parsed.rules;
   if (rules.org_id !== options.orgId) {
     return refuse("wrong_org", `org ${rules.org_id}`);
   }
@@ -219,7 +176,61 @@ function readPayload(
   return { ok: true, rules };
 }
 
-function describe(error: z.ZodError): string {
+/**
+ * Parse signed payload bytes, in this order: UTF-8 JSON, a known format,
+ * known required features, then the format 1 shape.
+ */
+export function parseRulesPayload(
+  bytes: Uint8Array,
+  knownFormats: readonly number[],
+  knownFeatures: readonly string[],
+):
+  | { ok: true; rules: RulesPayload }
+  | {
+      ok: false;
+      reason: "malformed" | "unknown_format" | "unknown_feature";
+      detail: string;
+    } {
+  const json = parseJson(bytes);
+  if (json === undefined) {
+    return refuse("malformed", "payload is not UTF-8 JSON");
+  }
+  const header = payloadHeaderSchema.safeParse(json);
+  if (!header.success) {
+    return refuse("malformed", `payload: ${describe(header.error)}`);
+  }
+  if (!knownFormats.includes(header.data.format)) {
+    return refuse("unknown_format", `format ${header.data.format}`);
+  }
+  const features = requiredFeaturesSchema.safeParse(json);
+  if (!features.success) {
+    return refuse("malformed", `payload: ${describe(features.error)}`);
+  }
+  const unknown = features.data.required_features.filter(
+    (feature) => !knownFeatures.includes(feature),
+  );
+  if (unknown.length > 0) {
+    return refuse("unknown_feature", `required: ${unknown.join(", ")}`);
+  }
+  const payload = payloadSchema.safeParse(json);
+  if (!payload.success) {
+    return refuse("malformed", `payload: ${describe(payload.error)}`);
+  }
+  return { ok: true, rules: payload.data };
+}
+
+/** Parse UTF-8 JSON bytes, or return `undefined` when they are not. */
+export function parseJson(bytes: Uint8Array): unknown {
+  try {
+    return JSON.parse(
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes),
+    );
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+export function describe(error: z.ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
     .join("; ");
