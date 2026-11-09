@@ -1,4 +1,12 @@
 /** Exercise the daemon's HTTP boundary with an injected machine runtime. */
+import {
+  createServer,
+  get,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import type { AddressInfo } from "node:net";
+import { getRequestListener } from "@hono/node-server";
 import { signServiceToken } from "@amika/service-auth/credentials";
 import type { RuntimeConfig } from "./internal/runtimes.js";
 import { describe, expect, it, vi } from "vitest";
@@ -1651,3 +1659,156 @@ describe("a bare-metal rig", () => {
     });
   });
 });
+
+// The service routes against a real service, through the default
+// `fetch`. hostd passes a response on at its caller's pace, so these read
+// slowly, as a caller behind a busy tunnel does.
+describe("service routes to a real service", () => {
+  const BODY_BYTES = 256 * 1024;
+
+  it("passes on the whole response when the service closes the connection while it is read", async () => {
+    // Node's server closes an idle kept-alive connection once its
+    // keep-alive timeout passes after the response is written. The caller
+    // is still reading then.
+    const service = await serve((request, response) => {
+      response.writeHead(200, { "content-length": String(BODY_BYTES) });
+      response.on("finish", () => {
+        setTimeout(() => {
+          service.closedEarly = true;
+          request.socket.destroy();
+        }, 50);
+      });
+      response.end(Buffer.alloc(BODY_BYTES, 7));
+    });
+    try {
+      const response = await serviceRequest(service.port, "/blob");
+      expect(response.status).toBe(200);
+      expect(await readSlowly(response.body!, { stallMs: 300 })).toBe(
+        BODY_BYTES,
+      );
+      expect(service.closedEarly).toBe(true);
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("passes on the whole response from a service that closes after each one", async () => {
+    const service = await serve((_request, response) => {
+      response.writeHead(200, {
+        "content-length": String(BODY_BYTES),
+        connection: "close",
+      });
+      response.end(Buffer.alloc(BODY_BYTES, 7));
+    });
+    try {
+      const response = await serviceRequest(service.port, "/blob");
+      expect(response.status).toBe(200);
+      expect(await readSlowly(response.body!, { stallMs: 50 })).toBe(
+        BODY_BYTES,
+      );
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("cuts off a response the service stops sending part way", async () => {
+    const service = await serve((request, response) => {
+      response.writeHead(200, { "content-length": String(BODY_BYTES) });
+      response.write(Buffer.alloc(BODY_BYTES / 4, 7), () => {
+        setTimeout(() => request.socket.destroy(), 20);
+      });
+    });
+    // The tunnel serves the app over HTTP as this does, and reads the
+    // answer with `node:http`: a response it does not see complete, it
+    // resets.
+    const hostd = await serve(
+      getRequestListener(
+        createApp({ secretKey: SECRET }, serviceRuntime(service.port), {
+          registry: serviceRegistry(),
+        }).fetch,
+      ),
+    );
+    try {
+      const answer = await new Promise<{ complete: boolean; bytes: number }>(
+        (resolve, reject) => {
+          get(
+            `http://127.0.0.1:${hostd.port}${SERVICE_ROUTE}/blob`,
+            { headers: { "X-Amika-Hostd-Key": SECRET } },
+            (response) => {
+              let bytes = 0;
+              response.on("data", (chunk: Buffer) => (bytes += chunk.length));
+              response.on("error", () => {});
+              response.on("close", () =>
+                resolve({ complete: response.complete, bytes }),
+              );
+            },
+          ).on("error", reject);
+        },
+      );
+      expect(answer.complete).toBe(false);
+      expect(answer.bytes).toBeLessThan(BODY_BYTES);
+    } finally {
+      await hostd.close();
+      await service.close();
+    }
+  });
+});
+
+const SERVICE_ROUTE = "/v0beta1/rigs/demo/services/web";
+
+/** A request on the service route to a service on `port`, with the key. */
+function serviceRequest(port: number, path: string): Promise<Response> {
+  const app = createApp({ secretKey: SECRET }, serviceRuntime(port), {
+    registry: serviceRegistry(),
+  });
+  return Promise.resolve(
+    app.request(`${SERVICE_ROUTE}${path}`, {
+      headers: { "X-Amika-Hostd-Key": SECRET },
+    }),
+  );
+}
+
+function serviceRuntime(port: number): FakeRuntime {
+  const runtime = fakeRuntime();
+  runtime.hostPort.mockResolvedValue(port);
+  return runtime;
+}
+
+function serviceRegistry() {
+  const registry = memoryServiceRegistry();
+  registry.set("demo", { web: 3000 });
+  return registry;
+}
+
+/** Read a body to its end, pausing after the first chunk, then after each. */
+async function readSlowly(
+  body: ReadableStream<Uint8Array>,
+  { stallMs, gapMs = 5 }: { stallMs: number; gapMs?: number },
+): Promise<number> {
+  const reader = body.getReader();
+  let bytes = 0;
+  let pause = stallMs;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return bytes;
+    bytes += value.byteLength;
+    await new Promise((resolve) => setTimeout(resolve, pause));
+    pause = gapMs;
+  }
+}
+
+/** A real HTTP server on a free loopback port. */
+async function serve(
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<{ port: number; closedEarly: boolean; close: () => Promise<void> }> {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    port: (server.address() as AddressInfo).port,
+    closedEarly: false,
+    close: () => {
+      server.closeAllConnections();
+      return new Promise((resolve) => server.close(() => resolve()));
+    },
+  };
+}
