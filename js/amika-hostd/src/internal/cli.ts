@@ -1659,17 +1659,20 @@ async function startIroh(
     fetchRules: (have) =>
       (deps.fetchIrohRules ?? fetchIrohRulesFromAmika)(api, iroh.hostId, have),
     report: async (amikaNet) => {
-      const answer = await (deps.setHostReport ?? setHostReportInAmika)(
-        api,
-        host,
-        {
+      let runtimes: RuntimeConfig;
+      let answer: RegisteredHost;
+      do {
+        runtimes = config.runtimes;
+        answer = await (deps.setHostReport ?? setHostReportInAmika)(api, host, {
           sizes: registeredSizes(config),
           capabilities: {
             ...registeredCapabilities(config, deps),
             amika_net: amikaNet,
           },
-        },
-      );
+        });
+        // A reload's report can arrive before this older request. Send
+        // the current runtime settings again if they changed in flight.
+      } while (allowsIroh(answer) && config.runtimes !== runtimes);
       return { allowed: allowsIroh(answer) };
     },
     access: {

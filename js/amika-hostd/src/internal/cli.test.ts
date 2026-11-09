@@ -9,7 +9,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { AmikaApiError, HostTransportConflictError } from "./amika-api.js";
+import {
+  AmikaApiError,
+  HostTransportConflictError,
+  type HostReport,
+} from "./amika-api.js";
 import { hostPlatformFor } from "../platforms/index.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
 import {
@@ -2929,6 +2933,83 @@ describe("a tunnel_iroh host", () => {
         capabilities: expect.objectContaining({ amika_net: amikaNet }),
       }),
     );
+  });
+
+  it("restores current runtimes when an older iroh report finishes after reload", async () => {
+    const state = mkdtempSync(path.join(tmpdir(), "hd-report-"));
+    const h = irohHost(IROH_HOST, { XDG_STATE_HOME: state, HOME: state });
+    const paths = daemonPaths(h.deps.env);
+    mkdirSync(path.dirname(paths.pidFile), { recursive: true });
+    let contents = "[runtimes.smol]\nmax_running = 1\n";
+    let stop: () => void = () => {};
+    const stopped = new Promise<void>((resolve) => (stop = resolve));
+    let reload: () => void = () => {};
+    let registered: () => void = () => {};
+    const ready = new Promise<void>((resolve) => (registered = resolve));
+    let started: () => void = () => {};
+    const firstRequest = new Promise<void>((resolve) => (started = resolve));
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const reports: HostReport[] = [];
+    let stored: HostReport | undefined;
+    const setHostReport = vi.fn(
+      async (_api: unknown, _host: unknown, report: HostReport) => {
+        reports.push(report);
+        if (reports.length === 1) {
+          started();
+          await held;
+        }
+        stored = report;
+        return IROH_HOST;
+      },
+    );
+    const deps: CliDeps = {
+      ...h.deps,
+      loadConfigFile: () => ({ path: "/config.toml", contents }),
+      smolRuntime: () =>
+        ({ list: async () => [] }) as unknown as MachineRuntime,
+      setHostReport,
+      shutdownSignal: () => stopped,
+      reloadSignal: (handler) => {
+        reload = handler;
+        registered();
+        return () => {};
+      },
+    };
+    const serving = runCli(["up", "--fg"], deps);
+    try {
+      await ready;
+      const [options] = h.deps.startIrohTransport.mock.calls[0] as unknown as [
+        { report: (report: object) => Promise<{ allowed: boolean }> },
+      ];
+      const pending = options.report({
+        endpoint_id: "ab".repeat(32),
+        relay_url: null,
+        version: "0.1.0",
+      });
+      await firstRequest;
+      expect(reports[0].capabilities?.runtimes.smol.max_running).toBe(1);
+
+      contents = "[runtimes.smol]\nmax_running = 2\n";
+      writeFileSync(paths.pidFile, "4242\n");
+      expect(
+        await runCli(["reload"], {
+          ...deps,
+          isRunning: () => true,
+          kill: () => reload(),
+        }),
+      ).toBe(0);
+      expect(stored?.capabilities?.runtimes.smol.max_running).toBe(2);
+
+      release();
+      await pending;
+      expect(reports).toHaveLength(3);
+      expect(stored?.capabilities?.runtimes.smol.max_running).toBe(2);
+    } finally {
+      release();
+      stop();
+      await serving;
+    }
   });
 
   it("leaves amika-net off when the org does not allow the mode", async () => {
