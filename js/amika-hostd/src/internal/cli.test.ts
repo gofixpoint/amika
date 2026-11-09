@@ -3034,12 +3034,27 @@ describe("a tunnel_iroh host", () => {
       expect(existsSync(state.file)).toBe(false);
     });
 
-    it("is forgotten when amika-net is not installed", async () => {
+    it("is omitted from registration and reports when amika-net is not installed", async () => {
       const state = stateWithAmikaNet();
       const h = irohHost(IROH_HOST, state.env);
       h.deps.findAmikaNet.mockReturnValue(undefined as never);
-      await runCli(["up", "--fg"], h.deps);
+      h.deps.registerHost.mockResolvedValue({
+        host: IROH_HOST as never,
+        created: false,
+      });
+      expect(await runCli(["up", "--fg"], h.deps)).toBe(0);
       expect(existsSync(state.file)).toBe(false);
+      const [, registration] = h.deps.registerHost.mock.calls[0] as unknown as [
+        unknown,
+        { capabilities: Record<string, unknown> },
+      ];
+      expect(registration.capabilities).not.toHaveProperty("amika_net");
+      const [, , report] = h.deps.setHostReport.mock.calls[0] as unknown as [
+        unknown,
+        unknown,
+        { capabilities: Record<string, unknown> },
+      ];
+      expect(report.capabilities).not.toHaveProperty("amika_net");
     });
   });
 

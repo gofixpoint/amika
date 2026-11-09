@@ -1353,7 +1353,13 @@ function registeredCapabilities(
     hostArch(),
     machineFacts(deps),
   );
-  if (config.transport !== "tunnel_iroh") return capabilities;
+  if (
+    config.transport !== "tunnel_iroh" ||
+    (deps.findAmikaNet ?? findAmikaNet)(deps.env, selfDir(deps.self)) ===
+      undefined
+  ) {
+    return capabilities;
+  }
   const amikaNet = readAmikaNetState(daemonPaths(deps.env).amikaNetStateFile);
   return amikaNet === undefined
     ? capabilities
