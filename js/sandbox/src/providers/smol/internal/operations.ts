@@ -248,6 +248,8 @@ export function smolOperations(
         from: input.from,
         // Only amika-hostd sets it; a plain smolvm never sees it.
         runtime: input.runtime,
+        // Only amika-hostd sets it, and only for a daemon that accepts it.
+        owner: input.owner,
         cpus: resources?.vcpus,
         memoryMb:
           resources?.memoryGib === undefined

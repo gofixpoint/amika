@@ -171,6 +171,19 @@ describe("smol operations", () => {
     });
   });
 
+  it("sends the rig's owner only when the caller names one", async () => {
+    const { ops, fetcher } = harness([
+      json(MACHINE),
+      json({ ...MACHINE, state: "running" }),
+      json(MACHINE),
+      json({ ...MACHINE, state: "running" }),
+    ]);
+    await ops.create({ ...INPUT, owner: { kind: "user", id: "user_1" } });
+    await ops.create(INPUT);
+    expect(body(fetcher, 0).owner).toEqual({ kind: "user", id: "user_1" });
+    expect(body(fetcher, 2)).not.toHaveProperty("owner");
+  });
+
   it("cleans up a machine when starting fails", async () => {
     const { ops, fetcher } = harness([json(MACHINE), json({}, 500), json({})]);
     await expect(ops.create(INPUT)).rejects.toThrow("HTTP 500");

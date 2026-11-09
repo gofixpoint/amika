@@ -62,6 +62,12 @@ export interface ReadFileBytesOptions {
   maxBytes?: number;
 }
 
+/** A rig's owner: a principal, as a kind and an id. Only `user` exists. */
+export interface SandboxOwner {
+  kind: "user";
+  id: string;
+}
+
 /**
  * Request to provision a new provider sandbox.
  *
@@ -78,6 +84,12 @@ export interface CreateSandboxProviderInput {
    * preset's default runtime.
    */
   runtime?: string;
+  /**
+   * The principal who owns the rig, for a provider that limits access to a
+   * rig by its owner. Only `amika-hostd` takes it. With none, the rig has
+   * no owner.
+   */
+  owner?: SandboxOwner;
   /**
    * Literal resources selected by the caller. Providers that size at create
    * consume the supported dimensions directly; providers with pre-sized boot
