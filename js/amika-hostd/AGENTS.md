@@ -102,6 +102,12 @@ Each of these is stated in full, with its reason, in the doc it links to.
   Node has taken the bytes, and hostd never sends past what the relay
   granted. The relay cannot push back on a caller, so this is what bounds
   a download in its memory.
+- **A v3 session outlives its socket; a v2 one does not.** On a drop, a
+  v3 session keeps every stream for the grace and redials with the resume
+  headers. It never drops a frame on a count the relay could not have
+  reached, and when in doubt it starts fresh and resets every stream. A
+  stop of hostd ends the session. `AMIKA_HOSTD_TUNNEL_RESUME=0` offers v2
+  alone. See [A session that outlives its socket](docs/tunnel.md#a-session-that-outlives-its-socket).
 
 **Credentials reaching hostd**
 

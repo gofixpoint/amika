@@ -147,6 +147,11 @@ export const RESUME_GRACE_MS = 60_000;
  */
 export const RESUME_KEEP_ALIVE_INTERVAL_MS = 10_000;
 export const RESUME_PING_TIMEOUT_MS = 5_000;
+/**
+ * v3: how many pings in a row a socket may miss. v2 allows
+ * `MAX_MISSED_PINGS`, because a drop there ends every stream.
+ */
+export const RESUME_MAX_MISSED_PINGS = 1;
 
 /**
  * Close codes the relay sends on the host socket. hostd redials after each;

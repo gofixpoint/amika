@@ -22,6 +22,7 @@ import {
 import { buildHandlers, type SnapshotOptions } from "./server.js";
 import { virtualServer } from "./tunnel-serving.js";
 import {
+  DEFAULT_RESUME,
   TunnelClient,
   type AttachedInfo,
   type TunnelEvent,
@@ -107,6 +108,9 @@ export function startTunnel(
       pingTimeoutMs: PING_TIMEOUT_MS,
       maxMissedPings: MAX_MISSED_PINGS,
       drainMs: DRAIN_MS,
+      // v3 resumes a session after a drop. `AMIKA_HOSTD_TUNNEL_RESUME=0`
+      // offers v2 alone.
+      resume: config.tunnelResume ? DEFAULT_RESUME : undefined,
       onConnection: (socket: Duplex) => server.accept(socket),
       onEvent: options.onEvent,
     });
