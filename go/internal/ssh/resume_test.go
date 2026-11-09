@@ -418,6 +418,46 @@ func TestResumeProxyWaitsAtMostGoodbyeWaitAfterStdinEnds(t *testing.T) {
 	}
 }
 
+// stdin can end while the proxy is already resuming. The goodbye deadline
+// still applies: the proxy must not try for the whole grace period after
+// OpenSSH has gone.
+func TestResumeProxyStopsResumingSoonAfterStdinEnds(t *testing.T) {
+	rig := newTestRig(t, fastResumeTiming())
+	clock := resumetest.NewFakeClock()
+	openssh, result, events := startProxy(t, rig, func(p *resumeProxy) { p.clock = clock })
+	rig.nextSSHD()
+	waitOpen(t, events)
+	rig.refuse = func(int) error { return errors.New("network down") }
+	rig.cutCurrent()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(events.String(), "ssh_resume_detach") {
+		if time.Now().After(deadline) {
+			t.Fatal("the proxy did not start resuming")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	clock.Advance(time.Second)
+	openssh.Close()
+	time.Sleep(20 * time.Millisecond)
+	for elapsed := time.Duration(0); ; elapsed += 50 * time.Millisecond {
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("exit = %v, want 0", err)
+			}
+			if elapsed > goodbyeWait+50*time.Millisecond {
+				t.Fatalf("exited %s after stdin ended, want at most %s", elapsed, goodbyeWait)
+			}
+			return
+		case <-time.After(5 * time.Millisecond):
+		}
+		if elapsed > 3*goodbyeWait {
+			t.Fatal("the proxy kept resuming after stdin ended")
+		}
+		clock.Advance(50 * time.Millisecond)
+	}
+}
+
 func TestResumeProxyReportsABusyRig(t *testing.T) {
 	rig := newTestRig(t, fastResumeTiming())
 	rig.handler = norelay.NewHandler(norelay.Config{MaxConnections: 1}, norelay.Dependencies{

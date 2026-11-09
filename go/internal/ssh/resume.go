@@ -125,7 +125,7 @@ func (p *resumeProxy) run(ctx context.Context, stdin io.Reader, stdout io.Writer
 // amikad path but /v1. The same token then goes to /v1, so falling back
 // widens nothing.
 func (p *resumeProxy) dialNew(ctx context.Context) (sshresume.Transport, sshresume.Frame, error) {
-	transport, welcome, err := p.dial(ctx, sshresume.Frame{Type: sshresume.FrameHello, Mode: sshresume.HelloNew})
+	transport, welcome, err := p.dial(ctx, sshresume.Frame{Type: sshresume.FrameHello, Mode: sshresume.HelloNew}, p.timing.DialTimeout)
 	var status *DialStatusError
 	switch {
 	case errors.As(err, &status) && (status.StatusCode == http.StatusNotFound || status.StatusCode == http.StatusUnauthorized):
@@ -147,9 +147,10 @@ func (p *resumeProxy) dialNew(ctx context.Context) (sshresume.Transport, sshresu
 }
 
 // dial sends hello on a new transport and returns amikad's WELCOME. The whole
-// dial, from the request to the WELCOME, is bounded by DialTimeout.
-func (p *resumeProxy) dial(ctx context.Context, hello sshresume.Frame) (sshresume.Transport, sshresume.Frame, error) {
-	dialCtx, cancel := context.WithTimeout(ctx, p.timing.DialTimeout)
+// dial, from the request to the WELCOME, is bounded by timeout: DialTimeout,
+// or less when a deadline is nearer.
+func (p *resumeProxy) dial(ctx context.Context, hello sshresume.Frame, timeout time.Duration) (sshresume.Transport, sshresume.Frame, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	transport, err := p.dialer.DialTransport(dialCtx, p.url, p.credential)
 	if err != nil {
@@ -161,7 +162,7 @@ func (p *resumeProxy) dial(ctx context.Context, hello sshresume.Frame) (sshresum
 		return nil, sshresume.Frame{}, err
 	}
 	defer clear(encoded)
-	timer := p.clock.AfterFunc(p.timing.DialTimeout, func() { transport.Close(websocket.StatusNormalClosure) })
+	timer := p.clock.AfterFunc(timeout, func() { transport.Close(websocket.StatusNormalClosure) })
 	if err := transport.WriteFrame(encoded); err != nil {
 		timer.Stop()
 		transport.Close(websocket.StatusNormalClosure)
@@ -204,6 +205,10 @@ type clientSession struct {
 	stream        *sshresume.Stream
 	resumes       int
 	detachedTotal time.Duration
+	// goodbyeDeadline is goodbyeWait after the proxy saw stdin end: the
+	// latest it waits for amikad to acknowledge its GOODBYE, across a resume
+	// if one is needed. Zero while stdin is open.
+	goodbyeDeadline time.Time
 }
 
 // resumeOutcome is why the proxy stopped trying to resume.
@@ -221,29 +226,23 @@ const (
 // exit the design's table gives once the session ends or cannot resume.
 func (c *clientSession) carry(ctx context.Context, attachment *sshresume.Attachment) *ProxyExitError {
 	p := c.proxy
-	// After stdin ends, the stream sends GOODBYE; the proxy then waits at
-	// most goodbyeWait for its ACK, across a resume if one is needed.
 	sourceEnded := c.stream.SourceEnded()
-	var goodbyeDeadline time.Time
 	var goodbyeTimer <-chan struct{}
 	stopGoodbyeTimer := func() {}
+	defer func() { stopGoodbyeTimer() }()
 	for {
 		select {
 		case <-attachment.Done():
 		case <-sourceEnded:
 			sourceEnded = nil
-			goodbyeDeadline = p.clock.Now().Add(goodbyeWait)
-			goodbyeTimer, stopGoodbyeTimer = p.after(goodbyeWait)
+			goodbyeTimer, stopGoodbyeTimer = p.after(c.stdinEnded().Sub(p.clock.Now()))
 			continue
 		case <-goodbyeTimer:
-			stopGoodbyeTimer()
 			return c.end(outcomeStdinDone)
 		case <-ctx.Done():
-			stopGoodbyeTimer()
 			return c.end(outcomeGaveUp)
 		}
 		if isDone(c.stream.Done()) {
-			stopGoodbyeTimer()
 			return c.end(0)
 		}
 		droppedAt := p.clock.Now()
@@ -254,14 +253,9 @@ func (c *clientSession) carry(ctx context.Context, attachment *sshresume.Attachm
 			slog.Uint64("unacked_to_rig", counters.Sent-counters.Acked),
 			slog.Uint64("unacked_from_rig", attachment.UnackedReceived()),
 		)
-		deadline := droppedAt.Add(c.grace)
-		if !goodbyeDeadline.IsZero() && goodbyeDeadline.Before(deadline) {
-			deadline = goodbyeDeadline
-		}
-		next, outcome := c.resume(ctx, deadline)
+		next, outcome := c.resume(ctx, droppedAt.Add(c.grace))
 		if next == nil {
-			stopGoodbyeTimer()
-			if !goodbyeDeadline.IsZero() && outcome == outcomeGaveUp {
+			if !c.goodbyeDeadline.IsZero() && outcome == outcomeGaveUp {
 				outcome = outcomeStdinDone
 			}
 			return c.end(outcome)
@@ -278,17 +272,40 @@ func (c *clientSession) carry(ctx context.Context, attachment *sshresume.Attachm
 	}
 }
 
+// stdinEnded records that stdin has ended, and returns the goodbye deadline.
+func (c *clientSession) stdinEnded() time.Time {
+	if c.goodbyeDeadline.IsZero() {
+		c.goodbyeDeadline = c.proxy.clock.Now().Add(goodbyeWait)
+	}
+	return c.goodbyeDeadline
+}
+
 // resume dials again until amikad takes the session back, says it no longer
-// has it, or the deadline passes.
-func (c *clientSession) resume(ctx context.Context, deadline time.Time) (*sshresume.Attachment, resumeOutcome) {
+// has it, or the deadline passes. Once stdin has ended, the goodbye deadline
+// applies too, so a proxy whose OpenSSH has gone does not try for the whole
+// grace period.
+func (c *clientSession) resume(ctx context.Context, graceDeadline time.Time) (*sshresume.Attachment, resumeOutcome) {
 	p := c.proxy
 	for attempt := 0; ; attempt++ {
+		deadline := graceDeadline
+		wake := c.stream.SourceEnded()
+		if isDone(wake) {
+			wake = nil
+			if goodbye := c.stdinEnded(); goodbye.Before(deadline) {
+				deadline = goodbye
+			}
+		}
 		wait := p.jitter(resumeBackoff[min(attempt, len(resumeBackoff)-1)])
 		if !p.clock.Now().Add(wait).Before(deadline) {
 			return nil, outcomeGaveUp
 		}
-		if !p.sleep(ctx, wait) {
+		// stdin's end wakes the wait early, so the goodbye deadline applies
+		// to this attempt.
+		if !p.sleep(ctx, wait, wake) {
 			return nil, outcomeGaveUp
+		}
+		if isDone(c.stream.SourceEnded()) && c.stdinEnded().Before(deadline) {
+			deadline = c.goodbyeDeadline
 		}
 		hello := sshresume.Frame{
 			Type:   sshresume.FrameHello,
@@ -296,7 +313,7 @@ func (c *clientSession) resume(ctx context.Context, deadline time.Time) (*sshres
 			Secret: c.secret,
 			Count:  c.stream.Received(),
 		}
-		transport, welcome, err := p.dial(ctx, hello)
+		transport, welcome, err := p.dial(ctx, hello, min(p.timing.DialTimeout, deadline.Sub(p.clock.Now())))
 		var status *DialStatusError
 		switch {
 		case errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized:
@@ -380,8 +397,9 @@ func (p *resumeProxy) after(d time.Duration) (<-chan struct{}, func()) {
 	return fired, func() { timer.Stop() }
 }
 
-// sleep waits d on the proxy's clock, and reports false if ctx ended first.
-func (p *resumeProxy) sleep(ctx context.Context, d time.Duration) bool {
+// sleep waits d on the proxy's clock, or until wake closes. It reports false
+// if ctx ended first.
+func (p *resumeProxy) sleep(ctx context.Context, d time.Duration, wake <-chan struct{}) bool {
 	if d <= 0 {
 		return ctx.Err() == nil
 	}
@@ -389,6 +407,8 @@ func (p *resumeProxy) sleep(ctx context.Context, d time.Duration) bool {
 	defer stop()
 	select {
 	case <-fired:
+		return true
+	case <-wake:
 		return true
 	case <-ctx.Done():
 		return false
