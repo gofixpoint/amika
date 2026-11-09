@@ -179,7 +179,7 @@ fn a_host_refusal_reaches_connect() {
     let bed = Bed::new("refuse");
     let out = bed.connect_cmd("rig:r1:8", &[]).output().unwrap();
     assert!(!out.status.success());
-    assert!(common::stderr(&out).contains("PortNotAllowed"));
+    assert!(common::stderr(&out).contains("rig:r1:8: port_not_allowed"));
     // The refused stream did not hurt the agent.
     let mut s = bed.session(&[], &[]);
     s.echo(10 * SECOND).unwrap();

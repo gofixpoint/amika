@@ -1,25 +1,10 @@
-//! amika-net: a spike prototype of the iroh transport in spec 035.
-//!
-//! Roles:
-//! - `host` accepts QUIC streams and forwards each to a TCP target.
-//! - `connect` is the SSH `ProxyCommand` on a caller. It goes through the
-//!   per-user `agent`, which holds the device key.
-//! - `probe` and `dial` are measurement modes for the spike.
-
-#[cfg(unix)]
-mod agent;
-mod connect;
-mod frame;
-mod header;
-mod host;
-mod keys;
-mod net;
-mod paths;
-mod pipe;
-mod probe;
+//! The `amika-net` command line. The roles live in the library.
 
 use std::{io::IsTerminal, path::PathBuf};
 
+use amika_net::{VERSION, connect, keys};
+#[cfg(unix)]
+use amika_net::{agent, host};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -27,33 +12,34 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(
     name = "amika-net",
-    version,
-    about = "SSH and TCP streams to Amika hosts over iroh (spike)"
+    version = VERSION,
+    about = "SSH and TCP streams to Amika hosts over iroh"
 )]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
 }
 
+// Without the Unix-only roles, `Connect` is much larger than `Id`. The value
+// is parsed once.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Make a key file if it is missing, and print its endpoint id.
+    /// Print the endpoint id of a key file. Makes the file if it is missing.
     Id {
         #[arg(long)]
         key_file: PathBuf,
     },
-    /// Run the host role.
+    /// Run the host role beside hostd.
+    #[cfg(unix)]
     Host(host::HostArgs),
-    /// Dial a host and pipe stdin and stdout to a target (SSH ProxyCommand).
+    /// Open a stream to a target on a host, and pipe stdin and stdout
+    /// through it (SSH ProxyCommand).
     Connect(connect::ConnectArgs),
     /// The per-user agent that holds the device key for `connect`.
     #[cfg(unix)]
     #[command(subcommand)]
     Agent(agent::AgentCmd),
-    /// Make many short connections and report the path of each (test 3).
-    Probe(probe::ProbeArgs),
-    /// Run as a long-lived dialer that reports path and RTT (test 6).
-    Dial(probe::DialArgs),
 }
 
 #[tokio::main]
@@ -65,12 +51,11 @@ async fn main() -> Result<()> {
             println!("{}", keys::load_or_create(&key_file)?.public());
             Ok(())
         }
+        #[cfg(unix)]
         Cmd::Host(args) => host::run(args).await,
         Cmd::Connect(args) => connect::run(args).await,
         #[cfg(unix)]
         Cmd::Agent(cmd) => agent::run(cmd).await,
-        Cmd::Probe(args) => probe::run_probe(args).await,
-        Cmd::Dial(args) => probe::run_dial(args).await,
     }
 }
 

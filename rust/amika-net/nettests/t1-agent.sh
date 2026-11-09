@@ -12,7 +12,7 @@
 #   RUN_USER      the user who runs connect and its agent
 #   AN_DIR        where t1-netns.sh, stamp.py and gaps.py live; results too
 #   AN_BIN        the amika-net binary
-#   CONNECT_ARGS  connect's flags: --key-file, --host-id, --host-relay,
+#   CONNECT_ARGS  connect's flags: --key-file, --endpoint, --relay-url,
 #                 --target, --agent-dir, --agent-log-file, endpoint options
 # Optional: STREAMS (default 2).
 set -uo pipefail

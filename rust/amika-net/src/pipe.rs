@@ -43,36 +43,65 @@ where
     R: AsyncRead + Unpin + ?Sized,
     W: AsyncWrite + Unpin + ?Sized,
 {
+    let mut total = 0;
+    copy_counted(r, w, &mut total).await?;
+    Ok(total)
+}
+
+/// Copies until `r` ends, flushing after each write, and adds each write's
+/// size to `total`, so the count survives an error.
+async fn copy_counted<R, W>(r: &mut R, w: &mut W, total: &mut u64) -> io::Result<()>
+where
+    R: AsyncRead + Unpin + ?Sized,
+    W: AsyncWrite + Unpin + ?Sized,
+{
     let mut buf = vec![0u8; 64 * 1024];
-    let mut total = 0u64;
     loop {
         let n = r.read(&mut buf).await?;
         if n == 0 {
-            return Ok(total);
+            return Ok(());
         }
         w.write_all(&buf[..n]).await?;
         w.flush().await?;
-        total += n as u64;
+        *total += n as u64;
     }
+}
+
+/// What a splice moved, and why it ended.
+#[derive(Debug, Default)]
+pub struct Spliced {
+    /// Bytes from the QUIC stream to the local stream.
+    pub to_local: u64,
+    /// Bytes from the local stream to the QUIC stream.
+    pub to_remote: u64,
+    /// The first error in either direction. `None` for a clean end.
+    pub error: Option<String>,
 }
 
 /// Copies both ways between a local byte stream (a TCP or Unix socket) and a
 /// QUIC stream until both directions end. Each side's end of input closes
-/// the other side's write half. Returns (bytes to local, bytes to QUIC).
-pub async fn splice<S>(local: S, mut send: SendStream, mut recv: RecvStream) -> (u64, u64)
+/// the other side's write half.
+pub async fn splice<S>(local: S, mut send: SendStream, mut recv: RecvStream) -> Spliced
 where
     S: AsyncRead + AsyncWrite,
 {
     let (mut local_r, mut local_w) = io::split(local);
+    let mut to_local = 0;
+    let mut to_remote = 0;
     let up = async {
-        let n = copy_flush(&mut recv, &mut local_w).await.unwrap_or(0);
+        let r = copy_counted(&mut recv, &mut local_w, &mut to_local).await;
         let _ = local_w.shutdown().await;
-        n
+        r
     };
     let down = async {
-        let n = copy_flush(&mut local_r, &mut send).await.unwrap_or(0);
+        let r = copy_counted(&mut local_r, &mut send, &mut to_remote).await;
         let _ = send.finish();
-        n
+        r
     };
-    tokio::join!(up, down)
+    let (up, down) = tokio::join!(up, down);
+    Spliced {
+        to_local,
+        to_remote,
+        error: up.err().or(down.err()).map(|e| e.to_string()),
+    }
 }

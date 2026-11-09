@@ -1,6 +1,6 @@
 //! A test bed on one machine: a TCP echo server, a host role in front of
-//! it, and a client key on the host's allowlist. Clients run the real
-//! `amika-net` binary.
+//! it, and a fake hostd on the host's control socket that allows one client
+//! key. Clients run the real `amika-net` binary.
 
 #![allow(dead_code)]
 
@@ -8,12 +8,21 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener},
+    os::{
+        fd::{AsRawFd, OwnedFd},
+        unix::{
+            net::{UnixListener, UnixStream},
+            process::CommandExt,
+        },
+    },
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Output, Stdio},
-    sync::mpsc,
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
+
+use serde_json::{Value, json};
 
 pub const BIN: &str = env!("CARGO_BIN_EXE_amika-net");
 
@@ -30,9 +39,7 @@ pub struct NetOpts {
 impl NetOpts {
     /// No relays: every connection is direct on loopback.
     pub fn offline() -> Self {
-        let none = ["--relay", "none", "--no-lookup"]
-            .map(String::from)
-            .to_vec();
+        let none = ["--relay", "none"].map(String::from).to_vec();
         Self {
             host: none.clone(),
             client: none,
@@ -46,8 +53,11 @@ pub struct Bed {
     pub agent_dir: PathBuf,
     pub log: PathBuf,
     pub client_key: PathBuf,
+    pub client_id: String,
     pub host_id: String,
     pub host_relay: Option<String>,
+    /// Every message the fake hostd got.
+    pub hostd: Arc<Mutex<Vec<Value>>>,
     host_port: u16,
     host: Child,
     opts: NetOpts,
@@ -67,40 +77,34 @@ impl Bed {
         fs::create_dir_all(&dir).unwrap();
         let echo = start_echo_server();
         let client_key = dir.join("client.key");
-        let host_key = dir.join("host.key");
         let client_id = key_id(&client_key);
-        let host_id = key_id(&host_key);
-        let config = dir.join("host.toml");
-        fs::write(
-            &config,
-            format!("allowed_callers = [\"{client_id}\"]\n[rigs.r1]\n7 = \"{echo}\"\n"),
-        )
-        .unwrap();
+        let socket = dir.join("hostd.sock");
+        let hostd = start_fake_hostd(&socket, client_id.clone(), echo);
         let host_log = fs::File::create(dir.join("host.log")).unwrap();
-        let host = Command::new(BIN)
-            .args(["host", "--key-file"])
-            .arg(&host_key)
-            .arg("--config")
-            .arg(&config)
-            .args(["--bind", "127.0.0.1:0"])
+        let mut cmd = Command::new(BIN);
+        cmd.args(["host", "--control-socket"])
+            .arg(&socket)
+            .args(["--key-fd", "3", "--bind", "127.0.0.1:0"])
             .args(&opts.host)
-            .stderr(host_log)
-            .spawn()
-            .unwrap();
+            .stderr(host_log);
+        let _key_pipe = pass_key_on_fd_3(&mut cmd);
+        let host = cmd.spawn().unwrap();
         let mut bed = Self {
             agent_dir: dir.join("agent"),
             log: dir.join("agent.log"),
             dir,
             client_key,
-            host_id,
+            client_id,
+            host_id: String::new(),
             host_relay: None,
+            hostd,
             host_port: 0,
             host,
             opts,
             seen: Default::default(),
         };
         bed.host_port = bed.wait_for_bind();
-        bed.host_relay = bed.wait_for_host();
+        (bed.host_id, bed.host_relay) = bed.wait_for_ready();
         bed
     }
 
@@ -126,50 +130,70 @@ impl Bed {
         panic!("host did not bind:\n{}", fs::read_to_string(&log).unwrap());
     }
 
-    /// Waits for the host to come online, and returns its home relay if it
-    /// has one.
-    fn wait_for_host(&self) -> Option<String> {
-        let log = self.dir.join("host.log");
+    /// Waits for the host's `ready` on the control socket, and returns its
+    /// endpoint id and, unless clients dial the loopback address, its home
+    /// relay.
+    fn wait_for_ready(&self) -> (String, Option<String>) {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
-            let text = fs::read_to_string(&log).unwrap_or_default();
-            if let Some(line) = text.lines().find(|l| l.contains("endpoint online")) {
-                return line
-                    .split("relay=Some(\"")
-                    .nth(1)
-                    .and_then(|r| r.split('"').next())
-                    .map(str::to_string);
+            let msgs = self.hostd.lock().unwrap().clone();
+            let id = msgs
+                .iter()
+                .find(|m| m["type"] == "ready")
+                .and_then(|m| m["endpoint_id"].as_str())
+                .map(str::to_string);
+            let relay = msgs
+                .iter()
+                .filter_map(|m| m["relay_url"].as_str())
+                .next_back()
+                .map(str::to_string);
+            match (id, relay) {
+                (Some(id), _) if self.opts.host_addr => return (id, None),
+                (Some(id), Some(relay)) => return (id, Some(relay)),
+                _ => thread::sleep(Duration::from_millis(100)),
             }
-            if self.opts.host_addr {
-                // An offline host never goes online; it is ready once bound.
-                return None;
-            }
-            thread::sleep(Duration::from_millis(100));
         }
         panic!(
-            "host did not come online:\n{}",
-            fs::read_to_string(&log).unwrap()
+            "host did not report ready with a relay:\n{}",
+            fs::read_to_string(self.dir.join("host.log")).unwrap()
         );
+    }
+
+    /// The messages of one type that the fake hostd got.
+    pub fn hostd_messages(&self, kind: &str) -> Vec<Value> {
+        let msgs = self.hostd.lock().unwrap();
+        msgs.iter().filter(|m| m["type"] == kind).cloned().collect()
     }
 
     /// The `connect` command line, through the agent unless `extra` says
     /// `--direct`.
     pub fn connect_cmd(&self, target: &str, extra: &[&str]) -> Command {
+        self.connect_cmd_as(&self.client_key, &self.agent_dir, target, extra)
+    }
+
+    /// The `connect` command line with another device key and agent.
+    pub fn connect_cmd_as(
+        &self,
+        key: &Path,
+        agent_dir: &Path,
+        target: &str,
+        extra: &[&str],
+    ) -> Command {
         let mut cmd = Command::new(BIN);
         cmd.args(["connect", "--key-file"])
-            .arg(&self.client_key)
-            .args(["--host-id", &self.host_id, "--target", target])
+            .arg(key)
+            .args(["--endpoint", &self.host_id, "--target", target])
             .arg("--agent-dir")
-            .arg(&self.agent_dir)
+            .arg(agent_dir)
             .arg("--agent-log-file")
             .arg(&self.log)
             .args(&self.opts.client)
             .args(extra);
         if self.opts.host_addr {
-            cmd.args(["--host-addr", &format!("127.0.0.1:{}", self.host_port)]);
+            cmd.args(["--direct-addr", &format!("127.0.0.1:{}", self.host_port)]);
         }
         if let Some(relay) = &self.host_relay {
-            cmd.args(["--host-relay", relay]);
+            cmd.args(["--relay-url", relay]);
         }
         cmd
     }
@@ -441,4 +465,85 @@ fn next_id() -> usize {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
     N.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Gives the child a random host key on file descriptor 3, as hostd does.
+/// Returns the pipe's read end, which must live until the spawn.
+fn pass_key_on_fd_3(cmd: &mut Command) -> OwnedFd {
+    let mut key = [0u8; 32];
+    fs::File::open("/dev/urandom")
+        .unwrap()
+        .read_exact(&mut key)
+        .unwrap();
+    let (r, mut w) = std::io::pipe().unwrap();
+    w.write_all(&key).unwrap();
+    drop(w);
+    let r = OwnedFd::from(r);
+    let fd = r.as_raw_fd();
+    // SAFETY: the closure runs in the child between fork and exec, and calls
+    // only dup2 and fcntl, which are async-signal-safe.
+    unsafe {
+        cmd.pre_exec(move || {
+            let ok = if fd == 3 {
+                libc::fcntl(3, libc::F_SETFD, 0) != -1
+            } else {
+                libc::dup2(fd, 3) != -1
+            };
+            if ok {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    r
+}
+
+/// A fake hostd on `socket`. It allows the client key, maps `rig:r1:7` to
+/// the echo server, and refuses other targets. It records every message.
+fn start_fake_hostd(socket: &Path, client_id: String, echo: SocketAddr) -> Arc<Mutex<Vec<Value>>> {
+    let listener = UnixListener::bind(socket).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen2 = seen.clone();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            serve_hostd(stream, &client_id, echo, &seen2);
+        }
+    });
+    seen
+}
+
+fn serve_hostd(stream: UnixStream, client_id: &str, echo: SocketAddr, seen: &Mutex<Vec<Value>>) {
+    let mut out = stream.try_clone().unwrap();
+    for line in BufReader::new(stream).lines() {
+        let Ok(line) = line else { return };
+        let msg: Value = serde_json::from_str(&line).unwrap();
+        seen.lock().unwrap().push(msg.clone());
+        let reply = match msg["type"].as_str() {
+            Some("check_peer") => json!({
+                "id": msg["id"],
+                "allowed": msg["endpoint_id"] == client_id,
+                "kind": "device",
+                "principal": { "kind": "user", "id": "user_1" },
+            }),
+            Some("open") => {
+                let target = msg["target"].as_str().unwrap_or_default();
+                let mut reply = match target {
+                    "rig:r1:7" => json!({ "ok": true, "connect": echo.to_string() }),
+                    t if t.starts_with("rig:r1:") => {
+                        json!({ "ok": false, "reason": "port_not_allowed" })
+                    }
+                    "hostd" => json!({ "ok": false, "reason": "not_allowed" }),
+                    _ => json!({ "ok": false, "reason": "unknown_rig" }),
+                };
+                reply["id"] = msg["id"].clone();
+                reply
+            }
+            _ => continue,
+        };
+        if writeln!(out, "{reply}").is_err() {
+            return;
+        }
+    }
 }

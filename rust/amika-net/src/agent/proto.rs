@@ -23,7 +23,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use iroh::{EndpointId, RelayUrl};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{connect::HostAddrArgs, frame, header::Target};
+use super::frame;
+use crate::{connect::HostAddrArgs, header::Target};
 
 /// The oldest local protocol version this build speaks.
 pub const PROTO_MIN: u32 = 1;
@@ -293,11 +294,11 @@ fn encode_request(req: &Request) -> Result<String> {
     Ok(match req {
         Request::Stop => "op stop\n".to_string(),
         Request::Connect { host, target } => {
-            let mut s = format!("op connect\nhost {}\n", host.host_id);
-            if let Some(relay) = &host.host_relay {
+            let mut s = format!("op connect\nhost {}\n", host.endpoint);
+            if let Some(relay) = &host.relay_url {
                 s.push_str(&format!("relay {relay}\n"));
             }
-            for addr in &host.host_addr {
+            for addr in &host.direct_addrs {
                 s.push_str(&format!("addr {addr}\n"));
             }
             s.push_str(&format!("target {target}\n"));
@@ -312,12 +313,12 @@ fn parse_request(body: &[u8]) -> Result<Request> {
         "stop" => Ok(Request::Stop),
         "connect" => {
             let host = HostAddrArgs {
-                host_id: field(&fields, "host")?.parse().context("bad host id")?,
-                host_relay: optional(&fields, "relay")
+                endpoint: field(&fields, "host")?.parse().context("bad host id")?,
+                relay_url: optional(&fields, "relay")
                     .map(str::parse::<RelayUrl>)
                     .transpose()
                     .context("bad relay URL")?,
-                host_addr: fields
+                direct_addrs: fields
                     .iter()
                     .filter(|(k, _)| *k == "addr")
                     .map(|(_, v)| v.parse::<SocketAddr>())
@@ -526,9 +527,9 @@ mod tests {
         let host_id = iroh::SecretKey::generate().public();
         let req = Request::Connect {
             host: HostAddrArgs {
-                host_id,
-                host_relay: Some("https://relay.example/".parse().unwrap()),
-                host_addr: vec!["127.0.0.1:5000".parse().unwrap()],
+                endpoint: host_id,
+                relay_url: Some("https://relay.example/".parse().unwrap()),
+                direct_addrs: vec!["127.0.0.1:5000".parse().unwrap()],
             },
             target: "rig:r1:22".parse().unwrap(),
         };
@@ -536,12 +537,12 @@ mod tests {
         let Request::Connect { host, target } = parsed else {
             panic!("expected a connect request");
         };
-        assert_eq!(host.host_id, host_id);
+        assert_eq!(host.endpoint, host_id);
         assert_eq!(
-            host.host_relay.unwrap().to_string(),
+            host.relay_url.unwrap().to_string(),
             "https://relay.example/"
         );
-        assert_eq!(host.host_addr, vec!["127.0.0.1:5000".parse().unwrap()]);
+        assert_eq!(host.direct_addrs, vec!["127.0.0.1:5000".parse().unwrap()]);
         assert_eq!(target.to_string(), "rig:r1:22");
 
         assert!(matches!(

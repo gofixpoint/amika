@@ -20,7 +20,11 @@ use super::{
     rundir::{self, AgentPaths, SocketState},
     server,
 };
-use crate::{connect::HostAddrArgs, header::Target, net, pipe};
+use crate::{
+    connect::ConnectArgs,
+    net::{self, EndpointArgs, RelayChoice},
+    pipe,
+};
 
 /// How many times `connect` looks for a usable agent before it gives up.
 const MAX_ATTEMPTS: usize = 5;
@@ -50,31 +54,28 @@ pub struct AgentOpts {
     pub agent_log_file: Option<PathBuf>,
 }
 
-/// Asks the agent for a stream to `target` on `host`, then pipes stdin and
-/// stdout through it. Starts an agent if none answers.
-pub async fn connect(
-    opts: &AgentOpts,
-    key_file: &Path,
-    net: &net::NetArgs,
-    host: &HostAddrArgs,
-    target: &Target,
-) -> Result<()> {
+/// Asks the agent for a stream to the target on the host, then pipes stdin
+/// and stdout through it. Starts an agent if none answers.
+pub async fn connect(args: &ConnectArgs) -> Result<()> {
+    let opts = &args.agent;
+    let key_file = args.key_file.as_path();
+    let relay = args.relay_choice();
     let paths = AgentPaths::new(opts.agent_dir.as_deref())?;
     rundir::ensure_private_dir(&paths.dir)?;
     let log_file = match &opts.agent_log_file {
         Some(p) => std::path::absolute(p)?,
         None => rundir::default_log_file(|k| std::env::var_os(k))?,
     };
-    let hello = ClientHello::this_process(Some(super::agent_config(key_file, net)?));
+    let hello = ClientHello::this_process(Some(super::agent_config(key_file, &args.net, relay)?));
     let start = StartSpec {
-        args: agent_args(opts, &paths, &log_file, key_file, net)?,
+        args: agent_args(opts, &paths, &log_file, key_file, &args.net, relay)?,
         log_file,
     };
     let mut stream = open_session(&paths, &hello, Some(&start)).await?;
 
     let request = Request::Connect {
-        host: host.clone(),
-        target: target.clone(),
+        host: args.host.clone(),
+        target: args.target.clone(),
     };
     proto::write_request(&mut stream, &request).await?;
     let reply = tokio::time::timeout(REPLY_TIMEOUT, proto::read_reply(&mut stream))
@@ -243,7 +244,8 @@ fn agent_args(
     paths: &AgentPaths,
     log_file: &Path,
     key_file: &Path,
-    net: &net::NetArgs,
+    net: &EndpointArgs,
+    relay: RelayChoice,
 ) -> Result<Vec<String>> {
     let mut args = vec![
         "agent".to_string(),
@@ -257,6 +259,6 @@ fn agent_args(
         "--log-file".into(),
         net::absolute(log_file)?,
     ];
-    args.extend(net.to_args()?);
+    args.extend(net.to_args(relay)?);
     Ok(args)
 }

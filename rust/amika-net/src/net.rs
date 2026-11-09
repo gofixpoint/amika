@@ -1,7 +1,17 @@
-//! Endpoint options shared by every role: which relays, relay-only mode,
-//! address lookup, QUIC timeouts, and the UDP bind address.
+//! Endpoint options shared by every role: which relays and how to sign in
+//! to them, QUIC timeouts, and the UDP bind address.
+//!
+//! Address lookup is always off. A caller learns a host's endpoint id and
+//! relay URL from Amika's control plane, not from n0's lookup service.
 
-use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
+use std::{
+    collections::HashSet,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
@@ -12,93 +22,84 @@ use iroh::{
 use n0_future::StreamExt;
 use tracing::{info, warn};
 
+/// How long an n0 Pro relay token is valid. iroh-services uses the same.
+const N0_TOKEN_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum RelayChoice {
-    /// n0's free public relays.
+    /// n0's free public relays. For development only.
     N0,
-    /// n0 Pro project relays: `--relay-url` plus `--api-secret-file`.
+    /// n0 Pro relays, with a token from the n0 project API secret
+    /// (`--api-secret-file`). With no relay URL, n0's public relay list.
     N0Pro,
-    /// Self-hosted `iroh-relay` servers given with `--relay-url`.
+    /// The relay URLs given, with an optional shared token
+    /// (`--relay-token-file`).
     Custom,
-    /// No relays. Peers must give direct addresses. For tests on one machine.
+    /// No relays. Peers need direct addresses. For tests on one machine.
     None,
 }
 
 #[derive(Debug, Clone, Args)]
-pub struct NetArgs {
-    /// Which relays this endpoint uses.
-    #[arg(long, value_enum, default_value_t = RelayChoice::N0)]
-    pub relay: RelayChoice,
-    /// Relay URLs for `n0-pro` and `custom`. Repeat for more than one.
-    #[arg(long = "relay-url")]
-    pub relay_urls: Vec<RelayUrl>,
-    /// File that holds the n0 project API secret (for `n0-pro`).
-    #[arg(long)]
+pub struct EndpointArgs {
+    /// Which relays to use, and how to sign in to them. Default: `custom`
+    /// when a relay URL is given, else `n0`.
+    #[arg(long, value_enum, env = "AMIKA_NET_RELAY")]
+    pub relay: Option<RelayChoice>,
+    /// The file that holds the n0 project API secret (for `n0-pro`).
+    #[arg(long, env = "AMIKA_NET_API_SECRET_FILE")]
     pub api_secret_file: Option<PathBuf>,
-    /// File that holds a shared token for self-hosted relays (for `custom`).
-    #[arg(long)]
+    /// The file that holds a shared token for the relays (for `custom`).
+    #[arg(long, env = "AMIKA_NET_RELAY_TOKEN_FILE")]
     pub relay_token_file: Option<PathBuf>,
-    /// Send every packet through the relay. No direct UDP paths.
-    #[arg(long)]
+    /// Send every packet through the relay, with no direct paths. For tests.
+    #[arg(long, hide = true)]
     pub relay_only: bool,
-    /// Turn off n0's address lookup. Callers must then give the host's relay URL.
-    #[arg(long)]
-    pub no_lookup: bool,
-    /// QUIC idle timeout for the connection, in seconds.
+    /// QUIC idle timeout, in seconds.
     #[arg(long, default_value_t = 60)]
     pub idle_timeout_secs: u64,
     /// QUIC keep-alive interval, in seconds.
     #[arg(long, default_value_t = 5)]
     pub keepalive_secs: u64,
-    /// Bind the IPv4 UDP socket here (host:port). On Fly.io, use
-    /// `fly-global-services:0`.
+    /// Bind the IPv4 UDP socket here (host:port).
     #[arg(long)]
     pub bind: Option<String>,
 }
 
-/// Builds an endpoint builder with the relay, lookup and QUIC options set.
-/// The caller adds its ALPNs and hooks, then binds.
-pub async fn builder(net: &NetArgs, secret: SecretKey) -> Result<Builder> {
-    let mut b = match net.relay {
-        RelayChoice::N0 => Endpoint::builder(presets::N0).secret_key(secret),
-        RelayChoice::Custom => {
-            let map = custom_relay_map(net)?;
-            Endpoint::builder(presets::N0)
-                .secret_key(secret)
-                .relay_mode(RelayMode::Custom(map))
+impl Default for EndpointArgs {
+    /// The command-line defaults: no relay choice, a 60 s idle timeout and
+    /// a 5 s keep-alive.
+    fn default() -> Self {
+        Self {
+            relay: None,
+            api_secret_file: None,
+            relay_token_file: None,
+            relay_only: false,
+            idle_timeout_secs: 60,
+            keepalive_secs: 5,
+            bind: None,
         }
-        RelayChoice::N0Pro => Endpoint::builder(n0_pro_preset(net, secret)?),
-        RelayChoice::None => Endpoint::builder(presets::N0)
-            .secret_key(secret)
-            .relay_mode(RelayMode::Disabled),
-    };
-    if net.no_lookup {
-        b = b.clear_address_lookup();
     }
-    if net.relay_only {
-        b = b.clear_ip_transports();
-    }
-    if let Some(bind) = &net.bind {
-        let addr = resolve_v4(bind).await?;
-        b = b.bind_addr(addr)?;
-    }
-    Ok(b.transport_config(transport_config(net)?))
 }
 
-#[cfg_attr(not(unix), allow(dead_code))] // Only the agent uses these.
-impl NetArgs {
-    /// Renders the options as command-line arguments, with absolute paths.
-    /// The agent is started with them, and they are part of the agent's
-    /// config, so two equal option sets give equal argument lists.
-    pub fn to_args(&self) -> Result<Vec<String>> {
-        let relay = self
-            .relay
+impl EndpointArgs {
+    /// The relay choice: the one given, else the default for whether relay
+    /// URLs are given.
+    pub fn relay_choice(&self, have_urls: bool) -> RelayChoice {
+        self.relay.unwrap_or(if have_urls {
+            RelayChoice::Custom
+        } else {
+            RelayChoice::N0
+        })
+    }
+
+    /// Renders the options as command-line arguments, with the relay choice
+    /// stated and absolute paths. The agent starts with them, and they are
+    /// part of its config, so equal options give equal argument lists.
+    pub fn to_args(&self, relay: RelayChoice) -> Result<Vec<String>> {
+        let name = relay
             .to_possible_value()
             .context("relay choice has no name")?;
-        let mut args = vec!["--relay".to_string(), relay.get_name().to_string()];
-        for url in &self.relay_urls {
-            args.extend(["--relay-url".to_string(), url.to_string()]);
-        }
+        let mut args = vec!["--relay".to_string(), name.get_name().to_string()];
         for (flag, path) in [
             ("--api-secret-file", &self.api_secret_file),
             ("--relay-token-file", &self.relay_token_file),
@@ -109,9 +110,6 @@ impl NetArgs {
         }
         if self.relay_only {
             args.push("--relay-only".into());
-        }
-        if self.no_lookup {
-            args.push("--no-lookup".into());
         }
         args.extend([
             "--idle-timeout-secs".into(),
@@ -126,9 +124,120 @@ impl NetArgs {
     }
 }
 
+/// How this endpoint signs in to relays. A caller adds a host's relay to
+/// its relay map when it dials, so it signs in to that relay the same way.
+#[derive(Debug)]
+pub struct Relays {
+    choice: RelayChoice,
+    token: Option<String>,
+    known: Mutex<HashSet<RelayUrl>>,
+}
+
+impl Relays {
+    pub fn new(args: &EndpointArgs, choice: RelayChoice, secret: &SecretKey) -> Result<Self> {
+        let token = match choice {
+            RelayChoice::N0Pro => {
+                let path = args
+                    .api_secret_file
+                    .as_deref()
+                    .context("--relay n0-pro needs --api-secret-file")?;
+                Some(n0_pro_token(&read_secret(path)?, secret)?)
+            }
+            RelayChoice::Custom => match &args.relay_token_file {
+                Some(path) => Some(read_secret(path)?),
+                None => None,
+            },
+            RelayChoice::N0 | RelayChoice::None => None,
+        };
+        Ok(Self {
+            choice,
+            token,
+            known: Mutex::default(),
+        })
+    }
+
+    /// The relay mode to bind with, from this endpoint's own relay URLs.
+    fn mode(&self, urls: &[RelayUrl]) -> Result<RelayMode> {
+        let n0_map = || iroh::endpoint::default_relay_mode().relay_map();
+        let map = match self.choice {
+            RelayChoice::None => {
+                if !urls.is_empty() {
+                    bail!("--relay none takes no --relay-url");
+                }
+                return Ok(RelayMode::Disabled);
+            }
+            RelayChoice::N0 => {
+                if !urls.is_empty() {
+                    bail!("--relay n0 takes no --relay-url; use --relay custom");
+                }
+                n0_map()
+            }
+            RelayChoice::N0Pro if urls.is_empty() => {
+                n0_map().with_auth_token(self.token.clone().context("n0 Pro has no token")?)
+            }
+            RelayChoice::N0Pro | RelayChoice::Custom => {
+                RelayMap::from_iter(urls.iter().map(|u| self.config(u.clone())))
+            }
+        };
+        self.known
+            .lock()
+            .expect("poisoned")
+            .extend(map.urls::<Vec<_>>());
+        Ok(RelayMode::Custom(map))
+    }
+
+    /// Adds `url` to the endpoint's relay map, with this endpoint's token,
+    /// unless the map has it. iroh can send through any relay, but it signs
+    /// in only to relays in its map.
+    pub async fn ensure(&self, ep: &Endpoint, url: &RelayUrl) {
+        if self.choice == RelayChoice::None {
+            return;
+        }
+        if !self.known.lock().expect("poisoned").insert(url.clone()) {
+            return;
+        }
+        info!(relay = %url, "adding the host's relay");
+        ep.insert_relay(url.clone(), Arc::new(self.config(url.clone())))
+            .await;
+    }
+
+    fn config(&self, url: RelayUrl) -> RelayConfig {
+        // QUIC address discovery needs TLS, so a plain-HTTP relay gets none.
+        let plain = url.scheme() == "http";
+        let mut cfg = RelayConfig::from(url);
+        if plain {
+            cfg.quic = None;
+        }
+        match &self.token {
+            Some(t) => cfg.with_auth_token(t.clone()),
+            None => cfg,
+        }
+    }
+}
+
+/// Makes an endpoint builder with the relay and QUIC options set, and
+/// address lookup off. The caller adds its ALPNs, then binds.
+pub async fn builder(
+    args: &EndpointArgs,
+    relays: &Relays,
+    urls: &[RelayUrl],
+    secret: SecretKey,
+) -> Result<Builder> {
+    let mut b = Endpoint::builder(presets::N0)
+        .secret_key(secret)
+        .relay_mode(relays.mode(urls)?)
+        .clear_address_lookup();
+    if args.relay_only {
+        b = b.clear_ip_transports();
+    }
+    if let Some(bind) = &args.bind {
+        b = b.bind_addr(resolve_v4(bind).await?)?;
+    }
+    Ok(b.transport_config(transport_config(args)?))
+}
+
 /// Returns `path` as an absolute path string. It does not touch the file.
-#[cfg_attr(not(unix), allow(dead_code))]
-pub fn absolute(path: &std::path::Path) -> Result<String> {
+pub fn absolute(path: &Path) -> Result<String> {
     let abs =
         std::path::absolute(path).with_context(|| format!("making {} absolute", path.display()))?;
     abs.into_os_string()
@@ -136,9 +245,9 @@ pub fn absolute(path: &std::path::Path) -> Result<String> {
         .map_err(|p| anyhow::anyhow!("path {p:?} is not UTF-8"))
 }
 
-/// Waits up to `timeout` for a home relay, then logs the endpoint's id, home
-/// relay and network report. Returns the home relay URL if there is one.
-pub async fn report_online(ep: &Endpoint, timeout: Duration) -> Option<RelayUrl> {
+/// Waits up to `timeout` for a home relay, then logs the endpoint's id,
+/// home relay and network report.
+pub async fn report_online(ep: &Endpoint, timeout: Duration) {
     if tokio::time::timeout(timeout, ep.online()).await.is_err() {
         warn!("endpoint not online after {timeout:?}");
     }
@@ -154,10 +263,9 @@ pub async fn report_online(ep: &Endpoint, timeout: Duration) -> Option<RelayUrl>
             "net report"
         );
     }
-    relay
 }
 
-/// Logs each change of the home relay until the endpoint closes.
+/// Logs each change of the home relay status until the endpoint closes.
 pub fn spawn_home_relay_logger(ep: &Endpoint) {
     let mut stream = ep.home_relay_status().stream();
     tokio::spawn(async move {
@@ -175,55 +283,34 @@ pub fn spawn_home_relay_logger(ep: &Endpoint) {
     });
 }
 
-fn custom_relay_map(net: &NetArgs) -> Result<RelayMap> {
-    if net.relay_urls.is_empty() {
-        bail!("--relay custom needs at least one --relay-url");
-    }
-    let token = match &net.relay_token_file {
-        Some(path) => Some(read_secret(path)?),
-        None => None,
-    };
-    let configs = net.relay_urls.iter().map(|url| {
-        // QUIC address discovery needs TLS, so a plain-HTTP relay gets none.
-        let mut cfg = RelayConfig::from(url.clone());
-        if url.scheme() == "http" {
-            cfg.quic = None;
-        }
-        match &token {
-            Some(t) => cfg.with_auth_token(t.clone()),
-            None => cfg,
-        }
-    });
-    Ok(RelayMap::from_iter(configs))
+/// The relay token that iroh-services makes from an n0 project API secret:
+/// a capability to use the relays, issued to this endpoint.
+fn n0_pro_token(api_secret: &str, secret: &SecretKey) -> Result<String> {
+    let api = iroh_services::api_secret::ApiSecret::from_str(api_secret)
+        .map_err(|e| anyhow::anyhow!("the n0 API secret does not parse: {e}"))?;
+    let token = iroh_services::caps::create_api_token_from_secret_key(
+        api.secret,
+        secret.public(),
+        N0_TOKEN_TTL,
+        iroh_services::caps::Caps::relay_use(),
+    );
+    Ok(data_encoding::BASE32_NOPAD
+        .encode(&token.encode())
+        .to_ascii_lowercase())
 }
 
-fn n0_pro_preset(net: &NetArgs, secret: SecretKey) -> Result<iroh_services::IrohServicesPreset> {
-    let path = net
-        .api_secret_file
-        .as_ref()
-        .context("--relay n0-pro needs --api-secret-file")?;
-    let api_secret = read_secret(path)?;
-    let mut preset = iroh_services::preset().secret_key(secret);
-    if net.relay_urls.is_empty() {
-        warn!("--relay n0-pro with no --relay-url uses n0's public relays with a project token");
-    } else {
-        preset = preset.relays(net.relay_urls.iter().map(|u| u.to_string()))?;
-    }
-    Ok(preset.api_secret_from_str(&api_secret)?.build()?)
-}
-
-fn transport_config(net: &NetArgs) -> Result<QuicTransportConfig> {
-    let idle = Duration::from_secs(net.idle_timeout_secs)
+fn transport_config(args: &EndpointArgs) -> Result<QuicTransportConfig> {
+    let idle = Duration::from_secs(args.idle_timeout_secs)
         .try_into()
         .context("idle timeout is out of range")?;
     Ok(QuicTransportConfig::builder()
         .max_idle_timeout(Some(idle))
-        .keep_alive_interval(Duration::from_secs(net.keepalive_secs))
+        .keep_alive_interval(Duration::from_secs(args.keepalive_secs))
         .build())
 }
 
 /// Reads a secret from a file. Never logs the value.
-fn read_secret(path: &PathBuf) -> Result<String> {
+fn read_secret(path: &Path) -> Result<String> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     Ok(text.trim().to_string())
@@ -238,4 +325,69 @@ async fn resolve_v4(addr: &str) -> Result<SocketAddr> {
         .with_context(|| format!("resolving {addr}"))?
         .find(SocketAddr::is_ipv4)
         .with_context(|| format!("{addr} has no IPv4 address"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(relay: Option<RelayChoice>) -> EndpointArgs {
+        EndpointArgs {
+            relay,
+            ..EndpointArgs::default()
+        }
+    }
+
+    #[test]
+    fn relay_urls_default_to_custom_relays() {
+        assert_eq!(args(None).relay_choice(true), RelayChoice::Custom);
+        assert_eq!(args(None).relay_choice(false), RelayChoice::N0);
+        let pro = args(Some(RelayChoice::N0Pro));
+        assert_eq!(pro.relay_choice(true), RelayChoice::N0Pro);
+    }
+
+    #[test]
+    fn n0_pro_needs_an_api_secret() {
+        let secret = SecretKey::generate();
+        assert!(Relays::new(&args(None), RelayChoice::N0Pro, &secret).is_err());
+    }
+
+    #[test]
+    fn custom_relays_carry_the_token_and_plain_http_has_no_quic() {
+        let relays = Relays {
+            choice: RelayChoice::Custom,
+            token: Some("t".into()),
+            known: Mutex::default(),
+        };
+        let cfg = relays.config("http://127.0.0.1:3340".parse().unwrap());
+        assert_eq!(cfg.auth_token.as_deref(), Some("t"));
+        assert!(cfg.quic.is_none());
+        let cfg = relays.config("https://relay.example".parse().unwrap());
+        assert!(cfg.quic.is_some());
+
+        let RelayMode::Custom(map) = relays
+            .mode(&["https://relay.example".parse().unwrap()])
+            .unwrap()
+        else {
+            panic!("expected a custom relay map");
+        };
+        assert_eq!(map.len(), 1);
+        assert!(
+            relays
+                .known
+                .lock()
+                .unwrap()
+                .contains(&"https://relay.example".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn n0_and_none_take_no_relay_urls() {
+        let url: RelayUrl = "https://relay.example".parse().unwrap();
+        for choice in [RelayChoice::N0, RelayChoice::None] {
+            let relays = Relays::new(&args(None), choice, &SecretKey::generate()).unwrap();
+            assert!(relays.mode(std::slice::from_ref(&url)).is_err());
+            assert!(relays.mode(&[]).is_ok());
+        }
+    }
 }

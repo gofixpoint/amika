@@ -39,6 +39,7 @@
 //! `DETACHED_PROCESS` for the start, and the same protocol on top.
 
 pub mod client;
+pub mod frame;
 mod peer;
 pub mod proto;
 pub mod rundir;
@@ -49,7 +50,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::net::{self, NetArgs};
+use crate::net::{self, EndpointArgs, RelayChoice};
 
 /// The agent exits after this many seconds with no clients.
 pub const DEFAULT_IDLE_EXIT_SECS: u64 = 600;
@@ -90,8 +91,8 @@ pub async fn run(cmd: AgentCmd) -> Result<()> {
 
 /// The agent config: the key file and endpoint options. A client and an
 /// agent with different configs never share the agent.
-pub fn agent_config(key_file: &Path, net: &NetArgs) -> Result<String> {
+pub fn agent_config(key_file: &Path, net: &EndpointArgs, relay: RelayChoice) -> Result<String> {
     let mut parts = vec!["--key-file".to_string(), net::absolute(key_file)?];
-    parts.extend(net.to_args()?);
+    parts.extend(net.to_args(relay)?);
     Ok(parts.join(" "))
 }

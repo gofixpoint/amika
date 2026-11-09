@@ -31,7 +31,9 @@ use super::{
 use crate::{
     connect::{self, HostAddrArgs},
     header::Target,
-    keys, net, paths, pipe,
+    keys,
+    net::{self, Relays},
+    paths, pipe,
 };
 
 /// How long a client may take to send its hello and its request.
@@ -43,7 +45,7 @@ const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone, Args)]
 pub struct RunArgs {
-    /// The device's endpoint key file (made with mode 600 if missing).
+    /// The device's key file: the 32-byte seed as base64, mode 0600.
     #[arg(long)]
     pub key_file: PathBuf,
     /// The agent's directory (socket and start lock).
@@ -56,15 +58,21 @@ pub struct RunArgs {
     #[arg(long)]
     pub log_file: Option<PathBuf>,
     #[command(flatten)]
-    pub net: net::NetArgs,
+    pub net: net::EndpointArgs,
 }
 
 pub async fn run(args: RunArgs) -> Result<()> {
     let paths = AgentPaths::new(args.agent_dir.as_deref())?;
     rundir::ensure_private_dir(&paths.dir)?;
-    let config = super::agent_config(&args.key_file, &args.net)?;
-    let secret = keys::load_or_create(&args.key_file)?;
-    let ep = net::builder(&args.net, secret).await?.bind().await?;
+    // The agent's own relay map starts empty. Each dial adds the host's relay.
+    let relay = args.net.relay_choice(true);
+    let config = super::agent_config(&args.key_file, &args.net, relay)?;
+    let secret = keys::load(&args.key_file)?;
+    let relays = Relays::new(&args.net, relay, &secret)?;
+    let ep = net::builder(&args.net, &relays, &[], secret)
+        .await?
+        .bind()
+        .await?;
     net::spawn_home_relay_logger(&ep);
     let ep2 = ep.clone();
     tokio::spawn(async move { net::report_online(&ep2, Duration::from_secs(15)).await });
@@ -72,6 +80,7 @@ pub async fn run(args: RunArgs) -> Result<()> {
     let listener = bind_socket(&paths.socket)?;
     let agent = Arc::new(Agent::new(
         ep.clone(),
+        relays,
         config,
         paths.socket.clone(),
         FileId::of(&paths.socket)?,
@@ -123,6 +132,7 @@ fn bind_socket(path: &Path) -> Result<UnixListener> {
 
 struct Agent {
     ep: Endpoint,
+    relays: Relays,
     build: String,
     proto: (u32, u32),
     config: String,
@@ -175,9 +185,16 @@ fn next_step(s: &State, now: Instant, idle_exit: Duration) -> Step {
 }
 
 impl Agent {
-    fn new(ep: Endpoint, config: String, socket: PathBuf, socket_id: FileId) -> Self {
+    fn new(
+        ep: Endpoint,
+        relays: Relays,
+        config: String,
+        socket: PathBuf,
+        socket_id: FileId,
+    ) -> Self {
         Self {
             ep,
+            relays,
             build: proto::build(),
             proto: proto::proto_range(),
             config,
@@ -314,15 +331,22 @@ impl Agent {
         let (send, recv) = match self.open(host, target).await {
             Ok(s) => s,
             Err(e) => {
-                info!(host = %host.host_id, %target, error = %format!("{e:#}"), "stream failed");
+                info!(host = %host.endpoint, %target, error = %format!("{e:#}"), "stream failed");
                 return proto::write_reply(&mut stream, &Reply::Error(format!("{e:#}"))).await;
             }
         };
         proto::write_reply(&mut stream, &Reply::Ok).await?;
         let _stream = self.track(|s| &mut s.streams);
-        info!(host = %host.host_id, %target, "stream opened");
-        let (to_client, to_host) = pipe::splice(stream, send, recv).await;
-        info!(host = %host.host_id, %target, to_client, to_host, "stream finished");
+        info!(host = %host.endpoint, %target, "stream opened");
+        let spliced = pipe::splice(stream, send, recv).await;
+        info!(
+            host = %host.endpoint,
+            %target,
+            to_client = spliced.to_local,
+            to_host = spliced.to_remote,
+            close = spliced.error.as_deref().unwrap_or("finished"),
+            "stream finished"
+        );
         Ok(())
     }
 
@@ -332,7 +356,7 @@ impl Agent {
         let conn = self.connection(host).await?;
         match connect::open_target(&conn, target).await {
             Err(_) if conn.close_reason().is_some() => {
-                info!(host = %host.host_id, "the host connection closed; dialing again");
+                info!(host = %host.endpoint, "the host connection closed; dialing again");
                 let conn = self.connection(host).await?;
                 connect::open_target(&conn, target).await
             }
@@ -347,14 +371,14 @@ impl Agent {
             .hosts
             .lock()
             .expect("poisoned")
-            .entry(host.host_id)
+            .entry(host.endpoint)
             .or_default()
             .clone();
         let mut cached = slot.lock().await;
         if let Some(conn) = cached.as_ref().filter(|c| c.close_reason().is_none()) {
             return Ok(conn.clone());
         }
-        let conn = connect::dial(&self.ep, host).await?;
+        let conn = connect::dial(&self.ep, &self.relays, host).await?;
         paths::spawn_logger(&conn, "agent");
         *cached = Some(conn.clone());
         Ok(conn)

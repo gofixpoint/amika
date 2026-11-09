@@ -19,11 +19,12 @@ use common::{Bed, NetOpts};
 
 const SECOND: Duration = Duration::from_secs(1);
 
+/// The host homes on n0's public relays. Clients dial by the endpoint id and
+/// the relay URL that the host reports, as in production.
 fn relay_only() -> NetOpts {
-    let flags = ["--relay", "n0", "--relay-only"].map(String::from).to_vec();
     NetOpts {
-        host: flags.clone(),
-        client: flags,
+        host: ["--relay", "n0", "--relay-only"].map(String::from).to_vec(),
+        client: vec!["--relay-only".into()],
         host_addr: false,
     }
 }
