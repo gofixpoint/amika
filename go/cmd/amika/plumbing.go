@@ -4,6 +4,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/gofixpoint/amika/go/internal/amikanet"
+	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/ssh"
@@ -42,9 +44,12 @@ var sshStdioProxyCmd = &cobra.Command{
 		events, closeEvents := ssh.OpenProxyEventLog(paths)
 		defer closeEvents()
 		client := runmode.NewRemoteClient()
+		// An identity that cannot be read leaves UserID empty, and the
+		// registration then fails and is logged: SSH goes over direct_ws.
+		userID, _ := apiclient.CredentialIdentity()
 		iroh, err := ssh.PrepareIrohRoute(ssh.IrohSetup{
 			Paths:     paths,
-			APIURL:    client.BaseURL,
+			Account:   amikanet.Account{APIURL: client.BaseURL, UserID: userID},
 			Registrar: client,
 		}, transport, events)
 		if err != nil {
