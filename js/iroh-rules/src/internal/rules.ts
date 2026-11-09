@@ -30,6 +30,11 @@ export interface DeviceRule {
   device_id: string;
   endpoint_id: string;
   principal: Principal;
+  /**
+   * The device signing key, as 64 lowercase hex (phase 1b). It verifies
+   * the device's signed requests. It is not the iroh key.
+   */
+  signing_key?: string;
 }
 
 /** Which rigs a role reaches: every rig, or rigs the principal owns. */
@@ -50,6 +55,26 @@ export interface ServiceRule {
   targets: string[];
 }
 
+/** The lock, and the lock log `seq`, that a locked org's signer used. */
+export interface LockRef {
+  /** SHA-256 of the genesis payload bytes, as 64 lowercase hex. */
+  lock_id: string;
+  seq: number;
+}
+
+/** In an Amika-signed record: tells a `lock_v1` host to accept this lock. */
+export interface LockOffer {
+  lock_id: string;
+}
+
+/** What a locked org lets Amika do in one rig with the host key only. */
+export type AmikaAccessKind = "exec" | "files" | "previews";
+
+export interface AmikaAccessGrant {
+  rig_id: string;
+  allow: AmikaAccessKind[];
+}
+
 /** The signed payload: one org's rules at one version. */
 export interface RulesPayload {
   format: number;
@@ -62,11 +87,17 @@ export interface RulesPayload {
   devices: DeviceRule[];
   roles: Record<string, RoleRule>;
   services: ServiceRule[];
+  /** Locked orgs only. `required_features` then holds `lock_v1`. */
+  lock?: LockRef;
+  /** Amika-signed records only. Not a required feature. */
+  lock_offer?: LockOffer;
+  /** Locked orgs only. Per-rig grants to Amika. */
+  amika_access?: AmikaAccessGrant[];
 }
 
 /** One signature in the envelope, and who made it. */
 export interface RulesSignature {
-  /** `amika` or `org`. A verifier refuses a kind it does not trust. */
+  /** `amika`, `org` or `device`. A verifier refuses a kind it does not trust. */
   kind: string;
   /** The signing public key, as 64 lowercase hex characters. */
   key_id: string;
@@ -85,7 +116,12 @@ export interface RulesEnvelope {
 
 const endpointIdSchema = z.string().regex(ENDPOINT_ID);
 
-const principalSchema = z.object({
+/** A SHA-256 hash or an Ed25519 public key: 64 lowercase hex characters. */
+export const hex64Schema = z.string().regex(ENDPOINT_ID);
+
+const seqSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+export const principalSchema = z.object({
   kind: z.literal("user"),
   id: z.string().min(1),
 });
@@ -129,6 +165,7 @@ export const payloadSchema: z.ZodType<RulesPayload> = z
         device_id: z.string().regex(DEVICE_ID),
         endpoint_id: endpointIdSchema,
         principal: principalSchema,
+        signing_key: hex64Schema.optional(),
       }),
     ),
     roles: z.record(z.string().min(1), roleSchema),
@@ -141,6 +178,16 @@ export const payloadSchema: z.ZodType<RulesPayload> = z
         ),
       }),
     ),
+    lock: z.object({ lock_id: hex64Schema, seq: seqSchema }).optional(),
+    lock_offer: z.object({ lock_id: hex64Schema }).optional(),
+    amika_access: z
+      .array(
+        z.object({
+          rig_id: z.string().min(1),
+          allow: z.array(z.enum(["exec", "files", "previews"])),
+        }),
+      )
+      .optional(),
   })
   .superRefine((payload, ctx) => {
     for (const message of duplicates(payload)) {

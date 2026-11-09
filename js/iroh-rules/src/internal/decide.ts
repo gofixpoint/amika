@@ -114,7 +114,7 @@ function checkDeviceTarget(
 }
 
 /** The principal's role rule, or undefined when it has none. */
-function roleOf(rules: RulesPayload, principal: Principal) {
+export function roleOf(rules: RulesPayload, principal: Principal) {
   const key = principalKey(principal);
   const entry = rules.principals.find((p) => principalKey(p) === key);
   if (entry === undefined || !Object.hasOwn(rules.roles, entry.role)) {
