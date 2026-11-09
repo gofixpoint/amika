@@ -47,8 +47,10 @@ import { TunnelLink, type LinkEnd } from "./tunnel-link.js";
 export interface TunnelSessionOptions {
   /** How often to ping the relay on each socket. See `TunnelLink`. */
   keepAliveIntervalMs: number;
-  /** How long a ping may go unanswered before the socket counts as dead. */
+  /** How long a ping may go unanswered before it counts as missed. */
   pingTimeoutMs: number;
+  /** How many pings in a row may be missed before the socket counts as dead. */
+  maxMissedPings: number;
   /** How long `close` lets streams in flight finish. */
   drainMs: number;
   /** Hand one inbound connection to whatever serves HTTP on this host. */
@@ -387,6 +389,7 @@ export class TunnelSession implements StreamCarrier {
       {
         keepAliveIntervalMs: this.options.keepAliveIntervalMs,
         pingTimeoutMs: this.options.pingTimeoutMs,
+        maxMissedPings: this.options.maxMissedPings,
       },
       (bytes) => {
         // A replaced socket's late frames are not this session's.

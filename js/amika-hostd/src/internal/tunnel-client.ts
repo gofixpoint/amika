@@ -36,6 +36,7 @@ import {
   ACK_DELAY_MS,
   RESUME_GRACE_MS,
   RESUME_KEEP_ALIVE_INTERVAL_MS,
+  RESUME_MAX_MISSED_PINGS,
   RESUME_PING_TIMEOUT_MS,
   TUNNEL_SUBPROTOCOL,
   TUNNEL_SUBPROTOCOL_V3,
@@ -89,8 +90,10 @@ export interface OpenAttachment {
 export interface ResumeSettings extends ResumeLimits {
   /** How often to ping a v3 socket. */
   keepAliveIntervalMs: number;
-  /** A v3 socket ends at its first ping unanswered this long. */
+  /** How long a v3 socket waits for a `PONG` before the ping counts as missed. */
   pingTimeoutMs: number;
+  /** How many pings in a row a v3 socket may miss: 1, as a drop costs a resume. */
+  maxMissedPings: number;
 }
 
 /** The most unacknowledged bytes hostd keeps for a resend. */
@@ -99,6 +102,7 @@ export const HOSTD_MAX_REPLAY_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_RESUME: ResumeSettings = {
   keepAliveIntervalMs: RESUME_KEEP_ALIVE_INTERVAL_MS,
   pingTimeoutMs: RESUME_PING_TIMEOUT_MS,
+  maxMissedPings: RESUME_MAX_MISSED_PINGS,
   graceMs: RESUME_GRACE_MS,
   maxReplayBytes: HOSTD_MAX_REPLAY_BYTES,
   // Half the log: upstream WebSockets pause well before it drops frames.
@@ -149,7 +153,11 @@ export type TunnelEvent =
 
 export interface TunnelClientOptions extends Pick<
   TunnelSessionOptions,
-  "keepAliveIntervalMs" | "pingTimeoutMs" | "drainMs" | "onConnection"
+  | "keepAliveIntervalMs"
+  | "pingTimeoutMs"
+  | "maxMissedPings"
+  | "drainMs"
+  | "onConnection"
 > {
   /**
    * Where to attach, and with what. Read again before **every** dial, so a
@@ -543,6 +551,8 @@ export class TunnelClient {
           : this.options.keepAliveIntervalMs,
       pingTimeoutMs:
         v3 && resume ? resume.pingTimeoutMs : this.options.pingTimeoutMs,
+      maxMissedPings:
+        v3 && resume ? resume.maxMissedPings : this.options.maxMissedPings,
       drainMs: this.options.drainMs,
       onConnection: this.options.onConnection,
       resume:

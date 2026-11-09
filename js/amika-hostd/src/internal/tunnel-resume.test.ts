@@ -45,6 +45,7 @@ import { virtualServer } from "./tunnel-serving.js";
 const FAST_RESUME: ResumeSettings = {
   keepAliveIntervalMs: 40,
   pingTimeoutMs: 30,
+  maxMissedPings: 1,
   graceMs: 1_000,
   maxReplayBytes: 32 * 1024 * 1024,
   pauseReplayBytes: 16 * 1024 * 1024,
@@ -359,6 +360,7 @@ async function attach(
     userAgent: "test",
     keepAliveIntervalMs: 60_000,
     pingTimeoutMs: 1_000,
+    maxMissedPings: 2,
     drainMs: 200,
     onConnection: (socket) => server.accept(socket),
     resume:
@@ -567,6 +569,7 @@ describe("a real socket", () => {
       userAgent: "test",
       keepAliveIntervalMs: 60_000,
       pingTimeoutMs: 60_000,
+      maxMissedPings: 2,
       drainMs: 10,
       onConnection: (socket) => {
         served += 1;

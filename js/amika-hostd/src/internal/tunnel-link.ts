@@ -13,8 +13,10 @@ import { PING, PONG, ProtocolError } from "@amika/tunnel-protocol";
 export interface LinkOptions {
   /** How often to ping the relay. See `watchLiveness`. */
   keepAliveIntervalMs: number;
-  /** How long a ping may go unanswered before the link counts as dead. */
+  /** How long a ping may go unanswered before it counts as missed. */
   pingTimeoutMs: number;
+  /** How many pings in a row may be missed before the link counts as dead. */
+  maxMissedPings: number;
 }
 
 /** Why a link ended, in words safe to log: never a close reason's text. */
@@ -30,6 +32,8 @@ export class TunnelLink {
   private ended?: LinkEnd;
   private readonly endListeners = new Set<(error: Error) => void>();
   private keepAlive?: NodeJS.Timeout;
+  /** Pings in a row with no `PONG`. Any `PONG` resets it. */
+  private missedPings = 0;
   /** The ping awaiting its `PONG`, if any. */
   private pending?: {
     sentAt: number;
@@ -187,6 +191,8 @@ export class TunnelLink {
   }
 
   private onPong(): void {
+    // A late answer still shows that the tunnel carries traffic.
+    this.missedPings = 0;
     const pending = this.pending;
     if (!pending) return;
     this.pending = undefined;
@@ -195,7 +201,8 @@ export class TunnelLink {
   }
 
   /**
-   * Ping on a fixed interval, and end the link when one goes unanswered.
+   * Ping on a fixed interval, and end the link when `maxMissedPings` pings
+   * in a row go unanswered.
    *
    * A text `PING` and not a WebSocket ping frame. The relay's runtime
    * answers it without waking the relay, so an idle host costs nothing, and
@@ -215,7 +222,14 @@ export class TunnelLink {
       if (this.ended || this.pending) return;
       this.ping().catch((error: Error) => {
         if (this.ended) return;
-        this.end({ error, summary: "missed ping" });
+        this.missedPings += 1;
+        if (this.missedPings < this.options.maxMissedPings) return;
+        this.end({
+          error: new Error(
+            `${error.message}, ${this.missedPings} times in a row`,
+          ),
+          summary: "missed ping",
+        });
         this.ws.terminate();
       });
     }, this.options.keepAliveIntervalMs);

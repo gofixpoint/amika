@@ -93,6 +93,7 @@ function harness(
     onConnection: () => {},
     keepAliveIntervalMs: 1_000,
     pingTimeoutMs: 100,
+    maxMissedPings: 1,
     drainMs: 100,
     handshakeTimeoutMs: 1_000,
     userAgent: "amika-hostd/test",
