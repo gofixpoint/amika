@@ -7,7 +7,7 @@
  */
 import { EventEmitter, once } from "node:events";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { WebSocket as WebSocketClient, type WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import {
@@ -195,6 +195,35 @@ describe("a gateway that refuses the upgrade", () => {
       // `ws` emits `error` and then `close` on a later tick. An `error`
       // with no listener throws there, and `close` never comes.
       await closed;
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("a dial the network holds", () => {
+  it("gives up within its handshake timeout", async () => {
+    // Accepts the connection and never answers, as a path that dropped
+    // the handshake's packets looks from here.
+    const server = createNetServer(() => {});
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as AddressInfo;
+    const started = Date.now();
+    try {
+      await expect(
+        dialTunnel(
+          {
+            gatewayUrl: `ws://127.0.0.1:${port}/v2/host-tunnel`,
+            hostId: "host-1",
+            credential: "cred-1",
+            generation: 1,
+          },
+          { handshakeTimeoutMs: 200, userAgent: "amika-hostd/test" },
+        ),
+      ).rejects.toBeInstanceOf(TunnelUnavailable);
+      expect(Date.now() - started).toBeLessThan(2_000);
     } finally {
       server.close();
     }
