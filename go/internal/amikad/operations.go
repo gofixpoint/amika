@@ -181,14 +181,16 @@ func (o *DaemonOperations) Serve(ctx context.Context, options ServeOptions) erro
 	handler := norelay.NewHandler(
 		norelay.Config{MaxConnections: options.MaxConnections, SSHDAddress: o.sshd.LoopbackAddress()},
 		norelay.Dependencies{
-			Verifier: o.verifier,
-			Upgrader: norelay.WebSocketUpgrader{},
-			Dialer:   &norelay.NetDialer{},
-			Logger:   o.logger,
+			Verifier:      o.verifier,
+			Upgrader:      norelay.WebSocketUpgrader{},
+			FrameUpgrader: norelay.WebSocketUpgrader{},
+			Dialer:        &norelay.NetDialer{},
+			Logger:        o.logger,
 		},
 	)
 	mux := http.NewServeMux()
 	mux.Handle(norelay.SSHSessionsPath, handler)
+	mux.Handle(norelay.ResumableSSHSessionsPath, handler)
 	// "healthz" follows the Kubernetes/Google convention for a liveness
 	// endpoint (distinct from an app-level "/health" that might carry richer
 	// status); the control plane's own e2e checks already probe this exact
