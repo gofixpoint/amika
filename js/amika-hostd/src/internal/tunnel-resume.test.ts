@@ -31,6 +31,7 @@ import { AckSchedule, ReplayLog } from "@amika/tunnel-protocol/resume";
 import { ReceiveWindow, SendWindow } from "@amika/tunnel-protocol/window";
 import { DEFAULT_BACKOFF, type BackoffOptions } from "./tunnel-backoff.js";
 import {
+  DEFAULT_RESUME,
   TunnelClient,
   type ResumeSettings,
   type TunnelEvent,
@@ -519,6 +520,19 @@ interface TunnelSessionView {
 }
 
 describe("a busy session on a slow link", () => {
+  /**
+   * The production limits, with times scaled down. The ping timeout must
+   * be well above the time one whole frame takes to cross: 64 KiB at
+   * 2 MiB/s is 32 ms. In production it is 5 s.
+   */
+  const SLOW_LINK: ResumeSettings = {
+    ...DEFAULT_RESUME,
+    keepAliveIntervalMs: 120,
+    pingTimeoutMs: 100,
+    graceMs: 1_000,
+    ackDelayMs: 5,
+  };
+
   /** An upload echoed back and a download, at the same time. */
   async function bulk(relay: SimRelay, size: number): Promise<void> {
     const body = pattern(size, 3);
@@ -539,8 +553,8 @@ describe("a busy session on a slow link", () => {
 
   it("keeps its socket while pings wait behind data", async () => {
     const relay = new SimRelay();
-    relay.bytesPerSecond = 4 * 1024 * 1024;
-    const { events } = await attach({ relay });
+    relay.bytesPerSecond = 2 * 1024 * 1024;
+    const { events } = await attach({ relay, resume: SLOW_LINK });
     await bulk(relay, 3 * 1024 * 1024);
     expect(ofType(events, "tunnel_detached")).toEqual([]);
     expect(relay.dials).toHaveLength(1);
@@ -548,8 +562,8 @@ describe("a busy session on a slow link", () => {
 
   it("resumes once after a cut, and the resumed socket sticks", async () => {
     const relay = new SimRelay();
-    relay.bytesPerSecond = 4 * 1024 * 1024;
-    const { events } = await attach({ relay });
+    relay.bytesPerSecond = 2 * 1024 * 1024;
+    const { events } = await attach({ relay, resume: SLOW_LINK });
     const transfer = bulk(relay, 3 * 1024 * 1024);
     await new Promise((resolve) => setTimeout(resolve, 200));
     relay.pipe!.cut();
