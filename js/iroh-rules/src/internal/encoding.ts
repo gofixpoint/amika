@@ -24,7 +24,7 @@ export function toBase64Url(bytes: Uint8Array): string {
  * no byte string encodes to, or nonzero unused bits. So each byte string has
  * exactly one accepted encoding.
  */
-export function fromBase64Url(text: string): Uint8Array | null {
+export function fromBase64Url(text: string): Uint8Array<ArrayBuffer> | null {
   if (text.length % 4 === 1) return null;
   const out = new Uint8Array(Math.floor((text.length * 3) / 4));
   let buffer = 0;
@@ -52,7 +52,7 @@ export function toHex(bytes: Uint8Array): string {
 }
 
 /** Decode lowercase hex. Returns `null` for any other text. */
-export function fromHex(text: string): Uint8Array | null {
+export function fromHex(text: string): Uint8Array<ArrayBuffer> | null {
   if (!/^(?:[0-9a-f]{2})*$/.test(text)) return null;
   const out = new Uint8Array(text.length / 2);
   for (let i = 0; i < out.length; i++) {

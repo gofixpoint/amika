@@ -101,6 +101,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20261015.1
+        version: 5.20261015.1
       '@eslint/js':
         specifier: ^9.39.2
         version: 9.39.5
@@ -340,6 +343,9 @@ packages:
 
   '@bufbuild/protobuf@2.13.0':
     resolution: {integrity: sha512-acq7c49vxfm1ggJ95P70TX7ABDM0vxr1SYD3BB0o0jnBLB4OAqeHyKuN+cD3w80gXEDQ2zxHpR6CUeA+O/aU9g==}
+
+  '@cloudflare/workers-types@5.20261015.1':
+    resolution: {integrity: sha512-ef6KOceBMzxf1O/CelPF2ei8Mtlaw+7vQ9cdaUKFG8CC0xAe8/SuPdRpmbogEE18u6JbfFWWAOGQLaav8UTFWg==}
 
   '@connectrpc/connect-web@2.2.0':
     resolution: {integrity: sha512-uuBUcBTYfb/r1o98LzCCZk1H90yx0vmZ5m21dpw/q4EUwsKwkCDGI8H0aEdjcZld+Q2jJ5A5ADvPqfb6lzQ/sg==}
@@ -2464,6 +2470,8 @@ snapshots:
   '@aws/lambda-invoke-store@0.3.0': {}
 
   '@bufbuild/protobuf@2.13.0': {}
+
+  '@cloudflare/workers-types@5.20261015.1': {}
 
   '@connectrpc/connect-web@2.2.0(@bufbuild/protobuf@2.13.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.13.0))':
     dependencies:
