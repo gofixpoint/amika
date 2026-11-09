@@ -648,7 +648,7 @@ func TestEnsureSessionConfigWritesTheBlockWithoutAnyKeyMaterial(t *testing.T) {
 		"  UserKnownHostsFile " + knownHostsPath + "\n" +
 		"  ProxyCommand " + binary + " plumbing ssh-stdio-proxy %h\n" +
 		"  ServerAliveInterval 15\n" +
-		"  ServerAliveCountMax 3\n"
+		"  ServerAliveCountMax 5\n"
 	if !strings.Contains(string(conf), want) {
 		t.Errorf("amika.conf missing the session block:\nwant:\n%s\ngot:\n%s", want, conf)
 	}

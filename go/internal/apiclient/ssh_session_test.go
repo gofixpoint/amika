@@ -113,3 +113,19 @@ func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 		})
 	}
 }
+
+func TestSSHSessionResumeSwitchDefaultsOn(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{}`:                   true,
+		`{"ssh_resume":true}`:  true,
+		`{"ssh_resume":false}`: false,
+	} {
+		var session SSHSession
+		if err := json.Unmarshal([]byte(body), &session); err != nil {
+			t.Fatal(err)
+		}
+		if got := session.ResumeEnabled(); got != want {
+			t.Errorf("%s: ResumeEnabled = %v, want %v", body, got, want)
+		}
+	}
+}
