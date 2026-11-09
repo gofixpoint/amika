@@ -1,6 +1,9 @@
 package apiclient
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 
@@ -77,4 +80,31 @@ func (s *resolvedTokenSource) Token() (string, error) {
 		return "", fmt.Errorf("no usable credential: stored API key unreadable (%v); %w", keyErr, sessErr)
 	}
 	return "", sessErr
+}
+
+// CredentialIdentity names the account the resolved credential belongs to,
+// in the precedence NewResolvedTokenSource uses. A WorkOS session gives
+// `user:<user id>`. An API key gives `api_key:` and a hash of the key,
+// because the CLI cannot read the key's user without a request. The value
+// is local only, for records kept per account, and holds no secret.
+func CredentialIdentity() (string, error) {
+	if key := os.Getenv(config.EnvAPIKey); key != "" {
+		return apiKeyIdentity(key), nil
+	}
+	if stored, err := auth.LoadAPIKey(); err == nil && stored != nil {
+		return apiKeyIdentity(stored.Key), nil
+	}
+	session, err := auth.LoadSession()
+	if err != nil {
+		return "", err
+	}
+	if session == nil || session.UserID == "" {
+		return "", errors.New("not logged in")
+	}
+	return "user:" + session.UserID, nil
+}
+
+func apiKeyIdentity(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return "api_key:" + hex.EncodeToString(sum[:16])
 }

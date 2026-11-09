@@ -99,17 +99,20 @@ func (c forcedTransportCreator) CreateSSHSession(sandboxID string, _ []apiclient
 // IrohSetup is what PrepareIrohRoute needs from the CLI.
 type IrohSetup struct {
 	Paths basedir.Paths
-	// APIURL names the control plane, which keys the registration record.
-	APIURL    string
+	// Account is the control plane and logged-in user the device key is
+	// registered for. A second account on the machine registers for
+	// itself.
+	Account   amikanet.Account
 	Registrar amikanet.Registrar
 	// FindBinary locates amika-net. Nil is amikanet.FindBinary.
 	FindBinary func() (string, error)
 }
 
 // PrepareIrohRoute finds amika-net, makes the device key on first use, and
-// registers it with the control plane once. It returns nil, after one line
-// in events, when iroh cannot be used. That is an error only when
-// transport is TransportIroh.
+// registers it once for the account. It returns nil, after one line in
+// events, when iroh cannot be used: amika-net is missing, or the key is
+// registered to another user. That is an error only when transport is
+// TransportIroh.
 func PrepareIrohRoute(setup IrohSetup, transport ProxyTransport, events *slog.Logger) (*IrohRoute, error) {
 	if transport == TransportDirectWS {
 		return nil, nil
@@ -146,13 +149,16 @@ func prepareIrohRoute(setup IrohSetup) (*IrohRoute, string, error) {
 	if err != nil {
 		return nil, "device_registration", err
 	}
-	if _, err := registrations.Ensure(setup.APIURL, setup.Registrar, key); err != nil {
+	if _, err := registrations.Ensure(setup.Account, setup.Registrar, key); err != nil {
+		if errors.Is(err, amikanet.ErrKeyTaken) {
+			return nil, "device_key_taken", err
+		}
 		return nil, "device_registration", err
 	}
 	return &IrohRoute{
 		Binary:  binary,
 		KeyFile: keyFile,
-		Forget:  func() { _ = registrations.Forget(setup.APIURL) },
+		Forget:  func() { _ = registrations.Forget(setup.Account) },
 	}, "", nil
 }
 

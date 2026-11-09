@@ -177,22 +177,41 @@ type Registrar interface {
 	RegisterDevice(apiclient.RegisterDeviceRequest) (*apiclient.Device, error)
 }
 
-// Registrations records which control planes know this machine's device
-// key, so the CLI registers it once per control plane. The file holds no
+// ErrKeyTaken means the control plane refused to register the device key
+// because another user registered it: two Amika accounts on one machine
+// share the key file. That account uses direct_ws.
+var ErrKeyTaken = errors.New("the amika-net device key is registered to another user")
+
+// Account names who registers the key: a control plane and a user on it.
+// A second account on the same machine registers for itself.
+type Account struct {
+	// APIURL is the control plane's API base URL.
+	APIURL string
+	// UserID identifies the logged-in user.
+	UserID string
+}
+
+func (a Account) recordKey() string { return a.APIURL + " " + a.UserID }
+
+// Registrations records which accounts have registered this machine's
+// device key, so the CLI registers it once per account. The file holds no
 // secret.
 type Registrations struct {
 	path string
 }
 
-// registration is one control plane's record.
+// registration is one account's record.
 type registration struct {
 	EndpointID string `json:"endpoint_id"`
-	DeviceID   string `json:"device_id"`
+	DeviceID   string `json:"device_id,omitempty"`
+	// Taken records a refusal because another user has the key, so the
+	// CLI does not ask again on every run.
+	Taken bool `json:"taken,omitempty"`
 }
 
 type registrationsFile struct {
-	// ByAPIURL maps a control plane's API base URL to its record.
-	ByAPIURL map[string]registration `json:"by_api_url"`
+	// ByAccount maps "<API URL> <user id>" to its record.
+	ByAccount map[string]registration `json:"by_account"`
 }
 
 // OpenRegistrations returns the registration records beside the device key.
@@ -204,40 +223,59 @@ func OpenRegistrations(paths basedir.Paths) (Registrations, error) {
 	return Registrations{path: filepath.Join(dir, dirName, registrationsName)}, nil
 }
 
-// Ensure registers key with the control plane at apiURL unless a record
-// says that control plane already has this endpoint id. It returns the
-// device id.
-func (r Registrations) Ensure(apiURL string, registrar Registrar, key ed25519.PrivateKey) (string, error) {
+// Ensure registers key for account unless a record says the account
+// already has this endpoint id. It returns the device id. It returns
+// ErrKeyTaken, without a request after the first, when the control plane
+// answers 409 because another user has the key.
+func (r Registrations) Ensure(account Account, registrar Registrar, key ed25519.PrivateKey) (string, error) {
+	if account.APIURL == "" || account.UserID == "" {
+		return "", errors.New("register device: no logged-in account")
+	}
 	endpointID := EndpointID(key)
-	records := r.load()
-	if record, ok := records.ByAPIURL[apiURL]; ok && record.EndpointID == endpointID && record.DeviceID != "" {
-		return record.DeviceID, nil
+	if record, ok := r.load().ByAccount[account.recordKey()]; ok && record.EndpointID == endpointID {
+		if record.Taken {
+			return "", ErrKeyTaken
+		}
+		if record.DeviceID != "" {
+			return record.DeviceID, nil
+		}
 	}
 	device, err := registrar.RegisterDevice(apiclient.RegisterDeviceRequest{
 		EndpointID: endpointID,
 		Name:       deviceName(),
 		Platform:   runtime.GOOS,
 	})
+	var httpErr *apiclient.HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == 409 {
+		if saveErr := r.put(account, registration{EndpointID: endpointID, Taken: true}); saveErr != nil {
+			return "", fmt.Errorf("record device registration: %w", saveErr)
+		}
+		return "", ErrKeyTaken
+	}
 	if err != nil {
 		return "", err
 	}
-	records = r.load()
-	records.ByAPIURL[apiURL] = registration{EndpointID: endpointID, DeviceID: device.DeviceID}
-	if err := r.save(records); err != nil {
+	if err := r.put(account, registration{EndpointID: endpointID, DeviceID: device.DeviceID}); err != nil {
 		return "", fmt.Errorf("record device registration: %w", err)
 	}
 	return device.DeviceID, nil
 }
 
-// Forget drops the record for apiURL, so the next Ensure registers again.
-// The CLI calls it when the host refuses the device, which is what a
-// control plane that no longer knows the device looks like.
-func (r Registrations) Forget(apiURL string) error {
+// Forget drops account's record, so the next Ensure registers again. The
+// CLI calls it when the host refuses the device, which is what a control
+// plane that no longer knows the device looks like.
+func (r Registrations) Forget(account Account) error {
 	records := r.load()
-	if _, ok := records.ByAPIURL[apiURL]; !ok {
+	if _, ok := records.ByAccount[account.recordKey()]; !ok {
 		return nil
 	}
-	delete(records.ByAPIURL, apiURL)
+	delete(records.ByAccount, account.recordKey())
+	return r.save(records)
+}
+
+func (r Registrations) put(account Account, record registration) error {
+	records := r.load()
+	records.ByAccount[account.recordKey()] = record
 	return r.save(records)
 }
 
@@ -248,8 +286,8 @@ func (r Registrations) load() registrationsFile {
 	if data, err := os.ReadFile(r.path); err == nil {
 		_ = json.Unmarshal(data, &records)
 	}
-	if records.ByAPIURL == nil {
-		records.ByAPIURL = map[string]registration{}
+	if records.ByAccount == nil {
+		records.ByAccount = map[string]registration{}
 	}
 	return records
 }

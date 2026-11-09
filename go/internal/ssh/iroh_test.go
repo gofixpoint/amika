@@ -519,12 +519,20 @@ func TestIrohWebSocketURLKeepsOnlyAmikadsRoute(t *testing.T) {
 	}
 }
 
-type countingRegistrar struct{ calls int }
+type countingRegistrar struct {
+	calls int
+	err   error
+}
 
 func (r *countingRegistrar) RegisterDevice(apiclient.RegisterDeviceRequest) (*apiclient.Device, error) {
 	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
 	return &apiclient.Device{DeviceID: "dev_01"}, nil
 }
+
+var testAccount = amikanet.Account{APIURL: "https://app.amika.dev", UserID: "user:u_1"}
 
 func TestPrepareIrohRouteMakesAndRegistersTheDeviceKey(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
@@ -532,7 +540,7 @@ func TestPrepareIrohRouteMakesAndRegistersTheDeviceKey(t *testing.T) {
 	registrar := &countingRegistrar{}
 	setup := IrohSetup{
 		Paths:      paths,
-		APIURL:     "https://app.amika.dev",
+		Account:    testAccount,
 		Registrar:  registrar,
 		FindBinary: func() (string, error) { return "/opt/amika/amika-net", nil },
 	}
@@ -558,7 +566,7 @@ func TestPrepareIrohRouteReportsAMissingBinaryOnce(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	missing := IrohSetup{
 		Paths:      basedir.New(t.TempDir()),
-		APIURL:     "https://app.amika.dev",
+		Account:    testAccount,
 		Registrar:  &countingRegistrar{},
 		FindBinary: func() (string, error) { return "", amikanet.ErrNotInstalled },
 	}
@@ -579,5 +587,32 @@ func TestPrepareIrohRouteReportsAMissingBinaryOnce(t *testing.T) {
 	missing.FindBinary = func() (string, error) { looked = true; return "", amikanet.ErrNotInstalled }
 	if route, err := PrepareIrohRoute(missing, TransportDirectWS, slog.New(slog.DiscardHandler)); route != nil || err != nil || looked {
 		t.Fatalf("--transport direct_ws: route %+v, err %v, looked %v", route, err, looked)
+	}
+}
+
+func TestPrepareIrohRouteUsesDirectWSWhenAnotherUserHasTheKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	registrar := &countingRegistrar{err: &apiclient.HTTPError{StatusCode: 409, Body: `{"code":"device_endpoint_taken","message":"taken"}`}}
+	setup := IrohSetup{
+		Paths:      basedir.New(t.TempDir()),
+		Account:    testAccount,
+		Registrar:  registrar,
+		FindBinary: func() (string, error) { return "/opt/amika/amika-net", nil },
+	}
+	events := &lockedBuffer{}
+	for range 3 {
+		route, err := PrepareIrohRoute(setup, TransportAuto, slog.New(slog.NewJSONHandler(events, nil)))
+		if err != nil || route != nil {
+			t.Fatalf("route = %+v, %v", route, err)
+		}
+	}
+	if registrar.calls != 1 {
+		t.Fatalf("registrations = %d, want 1: a refusal must not be asked again", registrar.calls)
+	}
+	if !strings.Contains(events.String(), `"reason":"device_key_taken"`) {
+		t.Fatalf("events = %s", events.String())
+	}
+	if _, err := PrepareIrohRoute(setup, TransportIroh, slog.New(slog.DiscardHandler)); !errors.Is(err, amikanet.ErrKeyTaken) {
+		t.Fatalf("--transport iroh: err = %v", err)
 	}
 }

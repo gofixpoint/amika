@@ -200,18 +200,29 @@ func (r *fakeRegistrar) RegisterDevice(request apiclient.RegisterDeviceRequest) 
 	return &apiclient.Device{DeviceID: "dev_01"}, nil
 }
 
-func TestRegistrationHappensOncePerControlPlane(t *testing.T) {
-	paths := basedir.New(t.TempDir())
+var (
+	prodUser    = Account{APIURL: "https://app.amika.dev", UserID: "user:u_1"}
+	stagingUser = Account{APIURL: "https://staging.amika.dev", UserID: "user:u_1"}
+	otherUser   = Account{APIURL: "https://app.amika.dev", UserID: "user:u_2"}
+)
+
+func testRegistrations(t *testing.T) Registrations {
+	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", "")
-	registrations, err := OpenRegistrations(paths)
+	registrations, err := OpenRegistrations(basedir.New(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
+	return registrations
+}
+
+func TestRegistrationHappensOncePerAccount(t *testing.T) {
+	registrations := testRegistrations(t)
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
 	registrar := &fakeRegistrar{}
 
 	for range 2 {
-		id, err := registrations.Ensure("https://app.amika.dev", registrar, key)
+		id, err := registrations.Ensure(prodUser, registrar, key)
 		if err != nil || id != "dev_01" {
 			t.Fatalf("Ensure = %q, %v", id, err)
 		}
@@ -220,39 +231,69 @@ func TestRegistrationHappensOncePerControlPlane(t *testing.T) {
 		t.Fatalf("registrations = %d, want 1", len(registrar.requests))
 	}
 	request := registrar.requests[0]
-	if request.EndpointID != EndpointID(key) || request.Platform != runtime.GOOS || request.Name == "" {
+	if request.EndpointID != EndpointID(key) || request.Platform != runtime.GOOS || request.Name == "" || len(request.Name) > 64 {
 		t.Fatalf("request = %+v", request)
 	}
 
-	if _, err := registrations.Ensure("https://staging.amika.dev", registrar, key); err != nil {
-		t.Fatal(err)
-	}
-	if len(registrar.requests) != 2 {
-		t.Fatalf("a second control plane did not register: %d", len(registrar.requests))
+	for _, account := range []Account{stagingUser, otherUser} {
+		before := len(registrar.requests)
+		if _, err := registrations.Ensure(account, registrar, key); err != nil {
+			t.Fatal(err)
+		}
+		if len(registrar.requests) != before+1 {
+			t.Fatalf("%+v did not register for itself", account)
+		}
 	}
 
 	otherKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
-	if _, err := registrations.Ensure("https://app.amika.dev", registrar, otherKey); err != nil {
+	before := len(registrar.requests)
+	if _, err := registrations.Ensure(prodUser, registrar, otherKey); err != nil {
 		t.Fatal(err)
 	}
-	if len(registrar.requests) != 3 {
-		t.Fatalf("a new key did not register: %d", len(registrar.requests))
+	if len(registrar.requests) != before+1 {
+		t.Fatal("a new key did not register")
+	}
+}
+
+func TestEnsureNeedsALoggedInUser(t *testing.T) {
+	registrations := testRegistrations(t)
+	registrar := &fakeRegistrar{}
+	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	if _, err := registrations.Ensure(Account{APIURL: prodUser.APIURL}, registrar, key); err == nil || len(registrar.requests) != 0 {
+		t.Fatalf("err = %v, requests = %d", err, len(registrar.requests))
+	}
+}
+
+func TestAKeyTakenByAnotherUserIsAskedForOnce(t *testing.T) {
+	registrations := testRegistrations(t)
+	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	taken := &fakeRegistrar{err: &apiclient.HTTPError{StatusCode: 409, Body: `{"code":"device_endpoint_taken","message":"taken"}`}}
+	for range 3 {
+		if _, err := registrations.Ensure(otherUser, taken, key); !errors.Is(err, ErrKeyTaken) {
+			t.Fatalf("err = %v, want ErrKeyTaken", err)
+		}
+	}
+	if len(taken.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(taken.requests))
+	}
+	// The refusal is the other user's alone.
+	working := &fakeRegistrar{}
+	if _, err := registrations.Ensure(prodUser, working, key); err != nil || len(working.requests) != 1 {
+		t.Fatalf("first user: %v, %d requests", err, len(working.requests))
 	}
 }
 
 func TestForgetMakesTheNextEnsureRegisterAgain(t *testing.T) {
-	paths := basedir.New(t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", "")
-	registrations, _ := OpenRegistrations(paths)
+	registrations := testRegistrations(t)
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
 	registrar := &fakeRegistrar{}
-	if _, err := registrations.Ensure("https://app.amika.dev", registrar, key); err != nil {
+	if _, err := registrations.Ensure(prodUser, registrar, key); err != nil {
 		t.Fatal(err)
 	}
-	if err := registrations.Forget("https://app.amika.dev"); err != nil {
+	if err := registrations.Forget(prodUser); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registrations.Ensure("https://app.amika.dev", registrar, key); err != nil {
+	if _, err := registrations.Ensure(prodUser, registrar, key); err != nil {
 		t.Fatal(err)
 	}
 	if len(registrar.requests) != 2 {
@@ -261,16 +302,14 @@ func TestForgetMakesTheNextEnsureRegisterAgain(t *testing.T) {
 }
 
 func TestAFailedRegistrationIsNotRecorded(t *testing.T) {
-	paths := basedir.New(t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", "")
-	registrations, _ := OpenRegistrations(paths)
+	registrations := testRegistrations(t)
 	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
-	failing := &fakeRegistrar{err: errors.New("HTTP 503")}
-	if _, err := registrations.Ensure("https://app.amika.dev", failing, key); err == nil {
-		t.Fatal("Ensure succeeded")
+	failing := &fakeRegistrar{err: &apiclient.HTTPError{StatusCode: 503}}
+	if _, err := registrations.Ensure(prodUser, failing, key); err == nil || errors.Is(err, ErrKeyTaken) {
+		t.Fatalf("Ensure err = %v", err)
 	}
 	working := &fakeRegistrar{}
-	if _, err := registrations.Ensure("https://app.amika.dev", working, key); err != nil || len(working.requests) != 1 {
+	if _, err := registrations.Ensure(prodUser, working, key); err != nil || len(working.requests) != 1 {
 		t.Fatalf("retry: %v, %d requests", err, len(working.requests))
 	}
 }
