@@ -154,6 +154,10 @@ export class TunnelLink {
 
   private onMessage(data: RawData, isBinary: boolean): void {
     if (this.ended) return;
+    // Anything from the relay answers a ping: the link carries traffic.
+    // A `PONG` queues behind the frames sent before it, both ways, so on a
+    // busy link it can come long after the relay has proved it is there.
+    this.heard();
     const bytes = Array.isArray(data)
       ? Buffer.concat(data)
       : Buffer.isBuffer(data)
@@ -162,8 +166,9 @@ export class TunnelLink {
     if (!isBinary) {
       // The only text this end expects is the relay's answer to a ping.
       // Anything else means a peer that is not speaking this protocol.
-      if (bytes.toString("utf8") === PONG) this.onPong();
-      else this.drop(new ProtocolError("unexpected text message"));
+      if (bytes.toString("utf8") !== PONG) {
+        this.drop(new ProtocolError("unexpected text message"));
+      }
       return;
     }
     this.onFrame(bytes);
@@ -171,7 +176,10 @@ export class TunnelLink {
 
   // --- Liveness -------------------------------------------------------
 
-  /** One ping, resolved with its round trip or rejected at the deadline. */
+  /**
+   * One ping, resolved when anything arrives from the relay after it, or
+   * rejected at the deadline if nothing does.
+   */
   private ping(): Promise<number> {
     if (this.ended) return Promise.reject(this.ended.error);
     if (this.pending) return Promise.reject(new Error("a ping is in flight"));
@@ -190,7 +198,8 @@ export class TunnelLink {
     });
   }
 
-  private onPong(): void {
+  /** Something arrived from the relay: the ping in flight is answered. */
+  private heard(): void {
     // A late answer still shows that the tunnel carries traffic.
     this.missedPings = 0;
     const pending = this.pending;
@@ -202,14 +211,16 @@ export class TunnelLink {
 
   /**
    * Ping on a fixed interval, and end the link when `maxMissedPings` pings
-   * in a row go unanswered.
+   * in a row pass their deadline with nothing at all arriving from the
+   * relay.
    *
    * A text `PING` and not a WebSocket ping frame. The relay's runtime
    * answers it without waking the relay, so an idle host costs nothing, and
    * the relay can read when it last answered to tell a live host from one
    * whose laptop lid closed. The normal way a tunnel dies is that lid: the
    * socket stays in `ESTABLISHED`, the kernel accepts writes, and nothing
-   * reports anything. Only an unanswered round trip finds it.
+   * reports anything. Only a ping that nothing answers finds it. On a busy
+   * link the `PONG` waits behind data, so any frame answers too.
    *
    * The interval doubles as the idle keep-alive that NATs and load
    * balancers need between here and the relay.

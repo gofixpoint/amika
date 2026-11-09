@@ -1,12 +1,14 @@
 /**
- * Test support: an in-memory tunnel WebSocket that a test can cut, or make
- * silent, at any frame. No production code imports this module.
+ * Test support: an in-memory tunnel WebSocket that a test can cut, slow, or
+ * make silent, at any frame. No production code imports this module.
  *
  * hostd's end is a `FakeHostSocket`, which looks to `TunnelLink` like the
  * `ws` client it normally gets. The relay's end is whatever the test
  * attaches: a simulated relay here, the real one in amika-mono's
- * integration test. Messages cross on a later turn of the event loop, in
- * order, so a cut loses what is still in flight, as a real one does.
+ * integration test. Each direction is one queue, delivered on a later turn
+ * of the event loop and in order, text and binary alike, so a cut loses
+ * what is still in flight and a slow link holds a ping behind the data
+ * sent before it, as real ones do.
  */
 import { EventEmitter } from "node:events";
 import type { WebSocket } from "ws";
@@ -19,6 +21,14 @@ export interface PipeRelayEnd {
   closed(code: number): void;
 }
 
+/** One direction's queue. */
+interface Lane {
+  queue: Array<{ deliver: () => void; bytes: number }>;
+  queuedBytes: number;
+  budget: number;
+  refilledAt: number;
+}
+
 export class FaultPipe {
   readonly host: FakeHostSocket;
   /**
@@ -28,9 +38,12 @@ export class FaultPipe {
   silent = false;
   /** Cut once this many more binary messages have crossed, either way. */
   cutAfter?: number;
+  /** Carry at most this many bytes a second each way. Unset is unlimited. */
+  bytesPerSecond?: number;
   private relayEnd?: PipeRelayEnd;
   private open = true;
-  private readonly queue: Array<() => void> = [];
+  private readonly toHostLane = lane();
+  private readonly toRelayLane = lane();
   private scheduled = false;
 
   constructor(protocol: string) {
@@ -46,6 +59,11 @@ export class FaultPipe {
     return this.open;
   }
 
+  /** Bytes hostd sent that have not reached the relay yet. */
+  get queuedFromHost(): number {
+    return this.toRelayLane.queuedBytes;
+  }
+
   /** Attach the relay's end. Messages before this are delivered to it. */
   attach(relayEnd: PipeRelayEnd): void {
     this.relayEnd = relayEnd;
@@ -55,7 +73,7 @@ export class FaultPipe {
   toHost(data: Uint8Array | string): void {
     if (!this.open || this.silent) return;
     const copy = typeof data === "string" ? data : Buffer.from(data);
-    this.enqueue(() => this.host.deliver(copy));
+    this.enqueue(this.toHostLane, () => this.host.deliver(copy), sizeOf(data));
     if (typeof data !== "string") this.counted();
   }
 
@@ -63,7 +81,7 @@ export class FaultPipe {
   closeFromRelay(code: number, reason = ""): void {
     if (!this.open) return;
     this.open = false;
-    this.enqueue(() => this.host.closed(code, reason));
+    this.enqueue(this.toHostLane, () => this.host.closed(code, reason), 0);
   }
 
   /**
@@ -73,7 +91,10 @@ export class FaultPipe {
   cut(): void {
     if (!this.open) return;
     this.open = false;
-    this.queue.length = 0;
+    for (const each of [this.toHostLane, this.toRelayLane]) {
+      each.queue.length = 0;
+      each.queuedBytes = 0;
+    }
     const tellRelay = !this.silent;
     setImmediate(() => {
       this.host.closed(1006, "");
@@ -85,7 +106,11 @@ export class FaultPipe {
   fromHost(data: Uint8Array | string): void {
     if (!this.open || this.silent) return;
     const copy = typeof data === "string" ? data : new Uint8Array(data);
-    this.enqueue(() => this.relayEnd?.message(copy));
+    this.enqueue(
+      this.toRelayLane,
+      () => this.relayEnd?.message(copy),
+      sizeOf(data),
+    );
     if (typeof data !== "string") this.counted();
   }
 
@@ -93,10 +118,14 @@ export class FaultPipe {
   closeFromHost(code: number): void {
     if (!this.open) return;
     this.open = false;
-    this.enqueue(() => {
-      this.relayEnd?.closed(code);
-      this.host.closed(code, "");
-    });
+    this.enqueue(
+      this.toRelayLane,
+      () => {
+        this.relayEnd?.closed(code);
+        this.host.closed(code, "");
+      },
+      0,
+    );
   }
 
   private counted(): void {
@@ -108,18 +137,59 @@ export class FaultPipe {
     }
   }
 
-  private enqueue(deliver: () => void): void {
-    this.queue.push(deliver);
+  private enqueue(into: Lane, deliver: () => void, bytes: number): void {
+    into.queue.push({ deliver, bytes });
+    into.queuedBytes += bytes;
+    this.schedule(0);
+  }
+
+  private schedule(delayMs: number): void {
     if (this.scheduled) return;
     this.scheduled = true;
-    setImmediate(() => this.drain());
+    const run = () => {
+      this.scheduled = false;
+      this.drain();
+    };
+    if (delayMs === 0) setImmediate(run);
+    else setTimeout(run, delayMs);
   }
 
   private drain(): void {
-    this.scheduled = false;
-    // One at a time, so a cut that a delivery causes drops the rest.
-    while (this.queue.length > 0) this.queue.shift()!();
+    for (const each of [this.toRelayLane, this.toHostLane])
+      this.drainLane(each);
+    if (this.toRelayLane.queue.length > 0 || this.toHostLane.queue.length > 0) {
+      this.schedule(this.bytesPerSecond === undefined ? 0 : 5);
+    }
   }
+
+  /** Deliver what the rate allows, one at a time, so a cut drops the rest. */
+  private drainLane(from: Lane): void {
+    const rate = this.bytesPerSecond;
+    if (rate !== undefined) {
+      const now = Date.now();
+      // A burst of at most 20 ms of the rate.
+      from.budget = Math.min(
+        rate / 50,
+        from.budget + ((now - from.refilledAt) * rate) / 1000,
+      );
+      from.refilledAt = now;
+    }
+    while (from.queue.length > 0) {
+      if (rate !== undefined && from.budget <= 0) return;
+      const next = from.queue.shift()!;
+      from.queuedBytes -= next.bytes;
+      from.budget -= next.bytes;
+      next.deliver();
+    }
+  }
+}
+
+function lane(): Lane {
+  return { queue: [], queuedBytes: 0, budget: 0, refilledAt: Date.now() };
+}
+
+function sizeOf(data: Uint8Array | string): number {
+  return typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
 }
 
 const CONNECTING = 0;
@@ -134,8 +204,6 @@ export class FakeHostSocket extends EventEmitter {
   readonly CLOSING = CLOSING;
   readonly CLOSED = CLOSED;
   readyState = OPEN;
-  /** What `ws` would hold unsent. A test sets it to simulate a backlog. */
-  bufferedAmount = 0;
   /**
    * Starts paused, as `dialTunnel` leaves a real socket: nothing is emitted
    * until `TunnelLink` resumes it.
@@ -148,6 +216,11 @@ export class FakeHostSocket extends EventEmitter {
     readonly protocol: string,
   ) {
     super();
+  }
+
+  /** What `ws` would hold unsent: what has not crossed the pipe yet. */
+  get bufferedAmount(): number {
+    return this.pipe.queuedFromHost;
   }
 
   send(data: Uint8Array | string): void {
