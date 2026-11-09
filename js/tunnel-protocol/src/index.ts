@@ -1,6 +1,10 @@
 /**
- * `amika.tunnel.v2`: what amika-hostd and Amika's per-host relay say to each
- * other over the host's WebSocket.
+ * `amika.tunnel.v2` and `amika.tunnel.v3`: what amika-hostd and Amika's
+ * per-host relay say to each other over the host's WebSocket.
+ *
+ * v3 is v2 plus a cumulative `ACK` frame and a resume handshake on the
+ * dial-out, so that a tunnel session outlives one WebSocket. The counting
+ * and the replay log are in `./resume.ts`.
  *
  * Both ends import this module, so a constant that has to agree at both ends
  * is defined here and nowhere else.
@@ -12,6 +16,14 @@ import { z } from "zod";
 
 /** The WebSocket subprotocol. The version is in the name. */
 export const TUNNEL_SUBPROTOCOL = "amika.tunnel.v2";
+
+/**
+ * The resumable subprotocol. A host offers it before v2 on the same path,
+ * and the relay selects it only when resume is switched on. Every gateway
+ * that accepts v2 lets the offer through, so a host can offer both to any
+ * relay.
+ */
+export const TUNNEL_SUBPROTOCOL_V3 = "amika.tunnel.v3";
 
 /** Where a host dials. */
 export const HOST_TUNNEL_PATH = "/v2/host-tunnel";
@@ -33,6 +45,14 @@ export const CONNECTION_ID_HEADER = "x-amika-connection-id";
  * still reads it, so those hosts keep attaching until they update.
  */
 export const LEGACY_CREDENTIAL_HEADER = "x-amika-host-credential";
+
+/**
+ * The v3 resume handshake. On a redial, the host names the session to
+ * continue and its received count. The relay answers a resumed `101` with
+ * the same connection id and its own received count.
+ */
+export const TUNNEL_SESSION_HEADER = "x-amika-tunnel-session";
+export const TUNNEL_RECEIVED_HEADER = "x-amika-tunnel-received";
 
 /**
  * The keep-alive. The host sends `PING` as a text message and the relay's
@@ -82,6 +102,27 @@ export const MAX_TARGET_LENGTH = 16 * 1024;
 export const MAX_CONCURRENT_STREAMS = 256;
 
 /**
+ * v3: a side acknowledges once it has processed this many bytes of frames
+ * since its last `ACK`, or `ACK_DELAY_MS` after the first frame it has not
+ * acknowledged, whichever comes first. An idle tunnel sends no `ACK`, so
+ * the relay can hibernate.
+ */
+export const ACK_BYTES = 256 * 1024;
+export const ACK_DELAY_MS = 200;
+/**
+ * v3: how long each side keeps a session after its socket ends, waiting for
+ * the host to dial again and resume it.
+ */
+export const RESUME_GRACE_MS = 60_000;
+/**
+ * v3: hostd's keep-alive. With resume, ending a socket early costs a resume
+ * and not every stream, so a v3 socket ends at its first missed `PONG`, and
+ * a silent break is found in about 15 s.
+ */
+export const RESUME_KEEP_ALIVE_INTERVAL_MS = 10_000;
+export const RESUME_PING_TIMEOUT_MS = 5_000;
+
+/**
  * Close codes the relay sends on the host socket. hostd redials after each;
  * they exist so that a log says why.
  */
@@ -89,6 +130,12 @@ export const CLOSE_REPLACED = 4001;
 export const CLOSE_REVOKED = 4003;
 export const CLOSE_LEASE_EXPIRED = 4008;
 export const CLOSE_SILENT = 4009;
+/**
+ * v3: the sender ends the tunnel session, not only the socket. The peer
+ * resets every stream at once and keeps nothing for a resume. hostd sends
+ * it when it shuts down.
+ */
+export const CLOSE_SESSION_ENDED = 4010;
 
 const FRAME_TYPE = {
   open: 1,
@@ -100,6 +147,8 @@ const FRAME_TYPE = {
   text: 7,
   binary: 8,
   close: 9,
+  /** v3 only, and only on stream id 0. */
+  ack: 10,
 } as const;
 
 const HEADER_BYTES = 5;
@@ -146,6 +195,15 @@ export type Frame =
   /** One WebSocket message: a string for text, bytes for binary. */
   | { type: "message"; streamId: number; data: string | Uint8Array }
   | { type: "close"; streamId: number; code: number; reason: string };
+
+/**
+ * v3: a cumulative acknowledgement. `count` is how many counted frames (every
+ * binary frame but `ACK`) the sender has processed in the session.
+ */
+export interface AckFrame {
+  type: "ack";
+  count: number;
+}
 
 /** A frame that cannot be read. The peer is not speaking this protocol. */
 export class ProtocolError extends Error {
@@ -301,6 +359,44 @@ export function decodeFrame(bytes: Uint8Array): Frame {
       throw new ProtocolError(`unknown frame type ${type}`);
   }
 }
+
+/**
+ * Read one binary WebSocket message as v3 reads it: a stream frame as in v2,
+ * or an `ACK`. v3 allows stream id 0 for `ACK` only. Throws `ProtocolError`.
+ */
+export function decodeFrameV3(bytes: Uint8Array): Frame | AckFrame {
+  if (bytes.byteLength < HEADER_BYTES || bytes[0] !== FRAME_TYPE.ack) {
+    return decodeFrame(bytes);
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const streamId = view.getUint32(1);
+  if (streamId !== 0) throw new ProtocolError(`ACK on stream ${streamId}`);
+  if (bytes.byteLength !== HEADER_BYTES + 8) {
+    throw new ProtocolError("ACK payload is not 8 bytes");
+  }
+  // A u64, read as two halves so it never leaves exact integers.
+  const high = view.getUint32(HEADER_BYTES);
+  const low = view.getUint32(HEADER_BYTES + 4);
+  if (high > MAX_SAFE_HIGH_WORD) throw new ProtocolError("ACK count too large");
+  return { type: "ack", count: high * 2 ** 32 + low };
+}
+
+/** One `ACK` as the bytes of one binary WebSocket message. */
+export function encodeAck(count: number): Uint8Array {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new RangeError(`ACK count out of range: ${count}`);
+  }
+  const frame = new Uint8Array(HEADER_BYTES + 8);
+  const view = new DataView(frame.buffer);
+  view.setUint8(0, FRAME_TYPE.ack);
+  view.setUint32(1, 0);
+  view.setUint32(HEADER_BYTES, Math.floor(count / 2 ** 32));
+  view.setUint32(HEADER_BYTES + 4, count % 2 ** 32);
+  return frame;
+}
+
+/** The high word of `Number.MAX_SAFE_INTEGER` as a u64. */
+const MAX_SAFE_HIGH_WORD = 0x1fffff;
 
 /**
  * A close code one end may send on its own WebSocket, for one the other end

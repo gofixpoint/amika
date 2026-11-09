@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   closeReason,
   decodeFrame,
+  decodeFrameV3,
+  encodeAck,
   encodeFrame,
   isSendableRequestHead,
   isSendableResponseHead,
@@ -150,6 +152,68 @@ describe("frames", () => {
       encodeFrame({ type: "data", streamId: 1, bytes: big }),
     ).toThrow(RangeError);
   });
+});
+
+describe("v3 frames", () => {
+  it.each([0, 1, 2 ** 32 - 1, 2 ** 32, Number.MAX_SAFE_INTEGER])(
+    "round-trips an ACK of %d on stream id 0",
+    (count) => {
+      const bytes = encodeAck(count);
+      expect(bytes.subarray(0, 5)).toEqual(new Uint8Array([10, 0, 0, 0, 0]));
+      expect(decodeFrameV3(bytes)).toEqual({ type: "ack", count });
+    },
+  );
+
+  it("reads every v2 frame as v2 does", () => {
+    const frame: Frame = {
+      type: "data",
+      streamId: 3,
+      bytes: new Uint8Array([7]),
+    };
+    expect(decodeFrameV3(encodeFrame(frame))).toEqual(frame);
+  });
+
+  it("refuses stream id 0 for every type but ACK", () => {
+    for (let type = 1; type <= 9; type += 1) {
+      expect(() =>
+        decodeFrameV3(new Uint8Array([type, 0, 0, 0, 0, 0, 0])),
+      ).toThrow(ProtocolError);
+    }
+  });
+
+  it("refuses an ACK on any stream but 0", () => {
+    const bytes = encodeAck(5);
+    bytes[4] = 1;
+    expect(() => decodeFrameV3(bytes)).toThrow(/ACK on stream 1/);
+  });
+
+  it("refuses an ACK whose payload is not 8 bytes", () => {
+    const bytes = encodeAck(5);
+    expect(() => decodeFrameV3(bytes.subarray(0, 12))).toThrow(ProtocolError);
+    const long = new Uint8Array(14);
+    long.set(bytes);
+    expect(() => decodeFrameV3(long)).toThrow(ProtocolError);
+  });
+
+  it("refuses an ACK count past the exact integers", () => {
+    // A negative count in a peer's own arithmetic arrives as a huge u64.
+    const bytes = encodeAck(0);
+    bytes.set([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], 5);
+    expect(() => decodeFrameV3(bytes)).toThrow(/too large/);
+    bytes.set([0, 0x20, 0, 0, 0, 0, 0, 0], 5);
+    expect(() => decodeFrameV3(bytes)).toThrow(/too large/);
+  });
+
+  it("is not a frame v2 reads", () => {
+    expect(() => decodeFrame(encodeAck(1))).toThrow(ProtocolError);
+  });
+
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
+    "refuses to encode an ACK of %d",
+    (count) => {
+      expect(() => encodeAck(count)).toThrow(RangeError);
+    },
+  );
 });
 
 describe("keep-alive", () => {
