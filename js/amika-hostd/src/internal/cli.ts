@@ -1,6 +1,6 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
 import { execFile, spawn } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, rmSync } from "node:fs";
 import { isIPv6 } from "node:net";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
@@ -1337,12 +1337,27 @@ function registeredSizes(config: HostdConfig): HostdConfig["sizes"] {
   return config.runtimes.runtimes.smol?.sizes ?? config.sizes;
 }
 
-/** What the host can run (`runtimes.ts`). */
+/**
+ * What the host can run (`runtimes.ts`). On a `tunnel_iroh` host, also
+ * what `amika-net` last reported (`iroh-transport.ts`). Each report
+ * replaces the stored one, so leaving it out would make Amika forget the
+ * endpoint while `up` restarts the daemon, and a session in that gap would
+ * not use iroh. The daemon reports again once `amika-net` is ready.
+ */
 function registeredCapabilities(
   config: HostdConfig,
   deps: CliDeps,
 ): Capabilities {
-  return capabilitiesOf(config.runtimes, hostArch(), machineFacts(deps));
+  const capabilities = capabilitiesOf(
+    config.runtimes,
+    hostArch(),
+    machineFacts(deps),
+  );
+  if (config.transport !== "tunnel_iroh") return capabilities;
+  const amikaNet = readAmikaNetState(daemonPaths(deps.env).amikaNetStateFile);
+  return amikaNet === undefined
+    ? capabilities
+    : { ...capabilities, amika_net: amikaNet };
 }
 
 /**
@@ -1368,18 +1383,12 @@ async function reportToAmika(deps: CliDeps): Promise<void> {
       REGISTRATION_SETTINGS,
     );
     const { host } = await registerInTransport(config, deps);
-    // The daemon reports its `amika-net` itself; this report replaces the
-    // stored one, so it carries what `amika-net` last said.
-    const amikaNet = readAmikaNetState(daemonPaths(deps.env).amikaNetStateFile);
     await (deps.setHostReport ?? setHostReportInAmika)(
       { apiUrl: config.apiUrl, apiKey: config.apiKey },
       host,
       {
         sizes: registeredSizes(config),
-        capabilities: {
-          ...registeredCapabilities(config, deps),
-          ...(amikaNet === undefined ? {} : { amika_net: amikaNet }),
-        },
+        capabilities: registeredCapabilities(config, deps),
       },
     );
     deps.out(`Sent the new capabilities to ${config.apiUrl}.`);
@@ -1558,6 +1567,7 @@ function irohHandoff(
     deps.out(
       `This host's org does not allow tunnel_iroh, so amika-net stays off; host ${host.hostname} is served over the gateway tunnel.`,
     );
+    forgetAmikaNet(deps);
     return undefined;
   }
   if (host.org_id === undefined) {
@@ -1575,6 +1585,11 @@ function irohHandoff(
     hostname: host.hostname,
     orgId: host.org_id,
   };
+}
+
+/** Report no `amika-net` from now on: it will not run. */
+function forgetAmikaNet(deps: Pick<CliDeps, "env">): void {
+  rmSync(daemonPaths(deps.env).amikaNetStateFile, { force: true });
 }
 
 /** Whether Amika's answer says the host's org allows `tunnel_iroh`. */
@@ -1612,6 +1627,7 @@ async function startIroh(
     deps.err(
       "amika-hostd: amika-net is not next to amika-hostd or on PATH, so this host runs without it; the gateway tunnel serves it.",
     );
+    forgetAmikaNet(deps);
     return undefined;
   }
   const hostKey = parseIrohKey(iroh.hostKey);

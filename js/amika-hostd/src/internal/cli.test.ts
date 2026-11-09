@@ -2809,8 +2809,11 @@ describe("a tunnel_iroh host", () => {
     transport_mode: "tunnel" as const,
   };
 
-  function irohHost(host: Record<string, unknown> = IROH_HOST) {
-    const h = harness({ ...ENV, AMIKA_HOSTD_TRANSPORT: "tunnel_iroh" });
+  function irohHost(
+    host: Record<string, unknown> = IROH_HOST,
+    env: NodeJS.ProcessEnv = {},
+  ) {
+    const h = harness({ ...ENV, AMIKA_HOSTD_TRANSPORT: "tunnel_iroh", ...env });
     h.deps.registerHost.mockResolvedValue({
       host: host as never,
       created: true,
@@ -2960,6 +2963,84 @@ describe("a tunnel_iroh host", () => {
       h.err.filter((line) => line.includes("amika-net is not next to")),
     ).toHaveLength(1);
     expect(h.deps.startTunnel).toHaveBeenCalledOnce();
+  });
+
+  describe("what amika-net last reported", () => {
+    const AMIKA_NET = {
+      endpoint_id: "5e".repeat(32),
+      relay_url: "https://relay.test/",
+      version: "0.1.0",
+    };
+
+    /** A state directory holding `amika-net.json`, as a stopped daemon leaves it. */
+    function stateWithAmikaNet(): { env: NodeJS.ProcessEnv; file: string } {
+      const dir = mkdtempSync(path.join(tmpdir(), "hd-state-"));
+      mkdirSync(path.join(dir, "amika-hostd"));
+      const file = path.join(dir, "amika-hostd", "amika-net.json");
+      writeFileSync(file, JSON.stringify(AMIKA_NET));
+      return { env: { XDG_STATE_HOME: dir }, file };
+    }
+
+    it("is carried in up's registration and report, so the endpoint never drops", async () => {
+      const state = stateWithAmikaNet();
+      const h = irohHost(IROH_HOST, state.env);
+      h.deps.registerHost.mockResolvedValue({
+        host: IROH_HOST as never,
+        created: false,
+      });
+      expect(await runCli(["up"], h.deps)).toBe(0);
+      expect(h.deps.registerHost).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          capabilities: expect.objectContaining({ amika_net: AMIKA_NET }),
+        }),
+      );
+      expect(h.deps.setHostReport).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          capabilities: expect.objectContaining({ amika_net: AMIKA_NET }),
+        }),
+      );
+      expect(existsSync(state.file)).toBe(true);
+    });
+
+    it("is not carried by a host that left tunnel_iroh", async () => {
+      const state = stateWithAmikaNet();
+      const h = irohHost(TUNNEL_HOST, {
+        ...state.env,
+        AMIKA_HOSTD_TRANSPORT: "tunnel",
+      });
+      h.deps.registerHost.mockResolvedValue({
+        host: TUNNEL_HOST,
+        created: false,
+      });
+      await runCli(["up"], h.deps);
+      const [, , report] = h.deps.setHostReport.mock.calls[0] as unknown as [
+        unknown,
+        unknown,
+        { capabilities: Record<string, unknown> },
+      ];
+      expect(report.capabilities).not.toHaveProperty("amika_net");
+    });
+
+    it("is forgotten once the org does not allow the mode", async () => {
+      const state = stateWithAmikaNet();
+      const h = irohHost(
+        { ...IROH_HOST, org_allowed_transport_modes: ["listen", "tunnel"] },
+        state.env,
+      );
+      await runCli(["up"], h.deps);
+      expect(existsSync(state.file)).toBe(false);
+    });
+
+    it("is forgotten when amika-net is not installed", async () => {
+      const state = stateWithAmikaNet();
+      const h = irohHost(IROH_HOST, state.env);
+      h.deps.findAmikaNet.mockReturnValue(undefined as never);
+      await runCli(["up", "--fg"], h.deps);
+      expect(existsSync(state.file)).toBe(false);
+    });
   });
 
   it("starts amika-net in a background daemon from what `up` handed it", async () => {
