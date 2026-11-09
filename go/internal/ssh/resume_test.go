@@ -385,11 +385,14 @@ func TestResumeProxyGivesUpAtTheGracePeriod(t *testing.T) {
 // on a fake clock, so a loaded machine cannot change their outcome:
 //
 //   - The proxy dials at once after a drop. A test that changes what the rig
-//     answers waits until that dial was refused, so the change reaches only
-//     the dials it means.
+//     answers waits until the proxy is asleep after that dial (its backoff
+//     timer is the one pending timer), so the change reaches only the dials
+//     it means.
 //   - Asleep between two resume dials, the proxy wakes when stdin ends and
 //     dials again. That dial (refused or not) shows the proxy has seen
-//     stdin end, and set its goodbye deadline from the fake clock.
+//     stdin end, and set its goodbye deadline from the fake clock. stdin
+//     must end while the proxy sleeps: had it ended earlier, the proxy
+//     would sleep without waking for it.
 //   - The fake clock moves only as far as the design allows (goodbyeWait),
 //     and the test then waits in real time for the proxy to exit.
 
@@ -411,7 +414,7 @@ func TestResumeProxyExitsZeroWhenItsSessionIsGoneAfterStdinEnds(t *testing.T) {
 		return nil
 	}
 	rig.cutCurrent()
-	waitDials(t, rig, 2)
+	waitAsleep(t, rig, clock)
 	rig.restart()
 	down.Store(false)
 	closeStdinWhileResuming(t, rig, openssh)
@@ -461,8 +464,9 @@ func TestResumeProxyStopsResumingSoonAfterStdinEnds(t *testing.T) {
 	waitOpen(t, events)
 	rig.refuse = func(int) error { return errors.New("network down") }
 	rig.cutCurrent()
-	waitDials(t, rig, 2)
+	waitAsleep(t, rig, clock)
 	clock.Advance(time.Second)
+	waitAsleep(t, rig, clock)
 	closeStdinWhileResuming(t, rig, openssh)
 	if err := exitWithin(t, clock, result, goodbyeWait); err != nil {
 		t.Fatalf("exit = %v, want 0", err)
@@ -473,6 +477,15 @@ func TestResumeProxyStopsResumingSoonAfterStdinEnds(t *testing.T) {
 func waitDials(t *testing.T, rig *testRig, n int32) {
 	t.Helper()
 	eventually(t, func() bool { return rig.dials.Load() >= n })
+}
+
+// waitAsleep waits until the proxy, resuming after a drop, has made its
+// first resume dial and sleeps before the next: its backoff timer is then
+// the one timer pending on the fake clock (a finished attachment's timers
+// are stopped, and a refused dial sets none).
+func waitAsleep(t *testing.T, rig *testRig, clock *resumetest.FakeClock) {
+	t.Helper()
+	eventually(t, func() bool { return rig.dials.Load() >= 2 && clock.Pending() == 1 })
 }
 
 // closeStdinWhileResuming ends the proxy's stdin while it sleeps between
