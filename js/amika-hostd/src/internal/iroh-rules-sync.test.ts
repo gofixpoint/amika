@@ -30,7 +30,8 @@ function harness(answers: IrohRulesAnswer[] = []) {
       answers.shift() ?? { kind: "unchanged" },
   );
   const revoke = vi.fn((_ids: string[]) => {});
-  const notAllowed = vi.fn(() => {});
+  const orgAllows = vi.fn((_allowed: boolean) => {});
+  const refusalChanged = vi.fn((_refusal: unknown) => {});
   const make = () =>
     rulesSync({
       file,
@@ -38,11 +39,22 @@ function harness(answers: IrohRulesAnswer[] = []) {
       trustedKeys: [AMIKA_KEY.public_hex],
       fetchRules,
       revoke,
-      notAllowed,
+      orgAllows,
+      refusalChanged,
       out: (line) => out.push(line),
       err: (line) => err.push(line),
     });
-  return { file, out, err, fetchRules, revoke, notAllowed, make, answers };
+  return {
+    file,
+    out,
+    err,
+    fetchRules,
+    revoke,
+    orgAllows,
+    refusalChanged,
+    make,
+    answers,
+  };
 }
 
 function version(n: number, edit: (p: RulesPayload) => void = () => {}) {
@@ -196,9 +208,10 @@ describe("rulesSync", () => {
     expect(sync.rules()?.version).toBe(42);
   });
 
-  it("stops and says so when the org no longer allows tunnel_iroh", async () => {
+  it("says when the org stops and starts allowing tunnel_iroh, and goes on asking", async () => {
     const h = harness([
       { kind: "rules", envelope: await signed(version(42)) },
+      { kind: "not_allowed" },
       { kind: "not_allowed" },
     ]);
     const sync = rulesSync({
@@ -207,17 +220,62 @@ describe("rulesSync", () => {
       trustedKeys: [AMIKA_KEY.public_hex],
       fetchRules: h.fetchRules,
       revoke: h.revoke,
-      notAllowed: h.notAllowed,
+      orgAllows: h.orgAllows,
       out: () => {},
       err: () => {},
       intervalMs: 5,
     });
     sync.start();
-    await vi.waitFor(() => expect(h.notAllowed).toHaveBeenCalledOnce());
-    expect(h.fetchRules).toHaveBeenCalledTimes(2);
+    // Then 204s, from the default answer.
+    await vi.waitFor(() =>
+      expect(h.orgAllows.mock.calls.length).toBeGreaterThanOrEqual(4),
+    );
+    sync.stop();
+    expect(h.orgAllows.mock.calls.slice(0, 4)).toEqual([
+      [true],
+      [false],
+      [false],
+      [true],
+    ]);
     expect(sync.rules()?.version).toBe(42);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(h.fetchRules).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a refusal to report, with the refused version, until a record is accepted", async () => {
+    const unknownFeature = version(43, (p) => {
+      p.required_features = ["future_limit"];
+    });
+    const h = harness([
+      { kind: "rules", envelope: await signed(version(42)) },
+      { kind: "rules", envelope: await signed(unknownFeature) },
+      { kind: "rules", envelope: await signed(unknownFeature) },
+      { kind: "rules", envelope: await signed(version(44)) },
+    ]);
+    const sync = h.make();
+    await sync.sync();
+    expect(sync.refusal()).toBeNull();
+    const before = Date.now();
+    await sync.sync();
+    const refusal = sync.refusal();
+    expect(refusal).toMatchObject({ reason: "unknown_feature", version: 43 });
+    expect(refusal!.at).toBeGreaterThanOrEqual(before);
+    // The same record again is the same refusal: reported once.
+    await sync.sync();
+    expect(h.refusalChanged).toHaveBeenCalledOnce();
+    await sync.sync();
+    expect(sync.refusal()).toBeNull();
+    expect(h.refusalChanged).toHaveBeenLastCalledWith(null);
+  });
+
+  it("reports a null version when the refused record cannot be read", async () => {
+    const h = harness([
+      { kind: "rules", envelope: { payload: "%%%", signatures: [{}] } },
+    ]);
+    const sync = h.make();
+    expect(await sync.sync()).toBe("refused");
+    expect(sync.refusal()).toMatchObject({
+      reason: "malformed",
+      version: null,
+    });
   });
 });
 

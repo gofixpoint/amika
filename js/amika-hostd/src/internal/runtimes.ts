@@ -231,6 +231,11 @@ export interface AmikaNetReport {
   /** The home relay, or null before `amika-net` has one. */
   relay_url: string | null;
   version: string;
+  /**
+   * The last iroh rules record hostd refused, until it accepts one
+   * (`iroh-rules-sync.ts`). `at` is milliseconds since the Unix epoch.
+   */
+  rules_refusal?: { reason: string; version: number | null; at: number };
 }
 
 /**

@@ -9,19 +9,23 @@
  *   this host knows, this host's org, and a higher version.
  * - The newest accepted record is kept on disk (mode 0600) and verified
  *   again when the daemon starts.
- * - A refused record leaves the old rules in place. The refusal is logged.
+ * - A refused record leaves the old rules in place. The refusal is logged,
+ *   and reported in the next `amika_net` report (`rules_refusal`) until a
+ *   record is accepted.
  * - When new rules drop a device or a service, `amika-net` is told to
  *   close its connections at once (`revoke`).
  *
  * The signer and version of each accepted record are logged, for audit.
  */
 import { readFileSync } from "node:fs";
+import { z } from "zod";
 import {
   AMIKA_SIGNER_KIND,
   SUPPORTED_FEATURES,
   SUPPORTED_FORMATS,
   verifyRules,
   type RulesPayload,
+  type VerifyRefusal,
   type VerifyResult,
 } from "@amika/iroh-rules";
 import type { IrohRulesAnswer } from "./amika-api.js";
@@ -64,11 +68,26 @@ export interface RulesSyncOptions {
   fetchRules: (have: number | null) => Promise<IrohRulesAnswer>;
   /** Close every connection from these endpoints (`revoke`). */
   revoke: (endpointIds: string[]) => void;
-  /** The org no longer allows `tunnel_iroh`. The loop has stopped. */
-  notAllowed: () => void;
+  /**
+   * What each answer says about the org: `false` for a `404` (the org does
+   * not allow `tunnel_iroh`), `true` for any other answer. The loop goes
+   * on either way, so it sees the org allow the mode again.
+   */
+  orgAllows?: (allowed: boolean) => void;
+  /** The refusal to report changed: a new one, or null once one is accepted. */
+  refusalChanged?: (refusal: RulesRefusal | null) => void;
   out: (line: string) => void;
   err: (line: string) => void;
   intervalMs?: number;
+}
+
+/** A refused record, as the `amika_net` report's `rules_refusal` says it. */
+export interface RulesRefusal {
+  reason: VerifyRefusal;
+  /** The refused record's version, or null when it could not be read. */
+  version: number | null;
+  /** When hostd refused it, in milliseconds since the Unix epoch. */
+  at: number;
 }
 
 /** What one round of `sync` did. */
@@ -82,6 +101,8 @@ export type SyncOutcome =
 export interface RulesSync {
   /** The rules held now, or null before any were accepted. */
   rules(): RulesPayload | null;
+  /** The last refusal, until a record is accepted. */
+  refusal(): RulesRefusal | null;
   /** Read and verify the rules kept on disk. */
   load(): Promise<void>;
   /** Ask once for newer rules, and apply them. */
@@ -94,6 +115,7 @@ export interface RulesSync {
 export function rulesSync(options: RulesSyncOptions): RulesSync {
   const intervalMs = options.intervalMs ?? RULES_FETCH_INTERVAL_MS;
   let current: RulesPayload | null = null;
+  let refusal: RulesRefusal | null = null;
   let timer: NodeJS.Timeout | undefined;
   let running = false;
   let inFlight: Promise<SyncOutcome> | undefined;
@@ -106,6 +128,7 @@ export function rulesSync(options: RulesSyncOptions): RulesSync {
 
   return {
     rules: () => current,
+    refusal: () => refusal,
     async load() {
       let envelope: unknown;
       try {
@@ -136,10 +159,8 @@ export function rulesSync(options: RulesSyncOptions): RulesSync {
       const tick = () => {
         void sync().then((outcome) => {
           if (!running) return;
-          if (outcome === "not_allowed") {
-            running = false;
-            options.notAllowed();
-            return;
+          if (outcome !== "failed") {
+            options.orgAllows?.(outcome !== "not_allowed");
           }
           timer = setTimeout(tick, intervalMs);
           timer.unref();
@@ -184,6 +205,12 @@ export function rulesSync(options: RulesSyncOptions): RulesSync {
       options.err(
         `amika-hostd: refused iroh rules (${result.reason}: ${result.detail}); keeping ${before === null ? "no rules" : `version ${before.version}`}`,
       );
+      const version = readableVersion(envelope);
+      // The same record refused again is the same refusal, with its time.
+      if (refusal?.reason !== result.reason || refusal.version !== version) {
+        refusal = { reason: result.reason, version, at: Date.now() };
+        options.refusalChanged?.(refusal);
+      }
       return "refused";
     }
     try {
@@ -195,6 +222,10 @@ export function rulesSync(options: RulesSyncOptions): RulesSync {
       );
     }
     current = result.rules;
+    if (refusal !== null) {
+      refusal = null;
+      options.refusalChanged?.(null);
+    }
     options.out(
       `amika-hostd: accepted iroh rules version ${result.rules.version}, signed by ${signerText(result)}`,
     );
@@ -221,6 +252,27 @@ export function rulesSync(options: RulesSyncOptions): RulesSync {
       knownFeatures: SUPPORTED_FEATURES,
     });
   }
+}
+
+/**
+ * The `version` of a refused envelope's payload, read without trusting it,
+ * or null when it cannot be read. Only for the report.
+ */
+function readableVersion(envelope: unknown): number | null {
+  const outer = z.object({ payload: z.string() }).safeParse(envelope);
+  if (!outer.success) return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(
+      Buffer.from(outer.data.payload, "base64url").toString("utf8"),
+    );
+  } catch {
+    return null;
+  }
+  const inner = z
+    .object({ version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) })
+    .safeParse(json);
+  return inner.success ? inner.data.version : null;
 }
 
 /** The devices and services in `before` that `after` leaves out. */

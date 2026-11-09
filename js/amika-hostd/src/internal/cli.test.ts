@@ -2824,7 +2824,7 @@ describe("a tunnel_iroh host", () => {
       findAmikaNet: vi.fn(() => "/opt/amika/amika-net"),
       startIrohTransport: vi.fn(async () => ({
         stop: stopIroh,
-        stopped: new Promise<void>(() => {}),
+        active: true,
       })),
     };
     return { ...h, deps, stopIroh };

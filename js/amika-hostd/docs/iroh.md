@@ -20,7 +20,9 @@ Change them there first.
   (`findAmikaNet`). Without it, the daemon logs one line and runs without
   it.
 - The daemon stops `amika-net` when the rules answer `404`, or when a
-  report's answer leaves `tunnel_iroh` out. The next `up` starts it again.
+  report's answer leaves `tunnel_iroh` out. The rules loop goes on. When
+  an answer shows the org allows the mode again, the daemon starts
+  `amika-net` again.
 
 ## Keys and secrets
 
@@ -66,6 +68,11 @@ Change them there first.
   every 60 s. It leaves out `have` when it holds no rules.
 - It verifies each record with `verifyRules`. A refused record leaves the
   old rules in place, and the reason goes to the log.
+- The next report carries the refusal in the `amika_net` entry:
+  `rules_refusal: { reason, version, at }`. `version` is the refused
+  record's version, or null when it cannot be read. `at` is milliseconds
+  since the Unix epoch. The same record refused again keeps its first
+  `at`. The field is cleared when a record is accepted.
 - It keeps the newest accepted envelope in `<state dir>/iroh-rules.json`,
   mode 0600, and verifies it again at start.
 - It logs the version and signer of each accepted record, for audit.
@@ -91,9 +98,9 @@ Change them there first.
   `capabilities.amika_net: { endpoint_id, relay_url, version }` when
   `amika-net` sends `ready`, and again on `home_relay`. A failed report is
   sent again after 60 s.
-- The daemon writes the last report to `<state dir>/amika-net.json`.
-  `reportToAmika` (after `amika-hostd reload`) reads it, so its report
-  keeps the entry. The daemon removes the file when `amika-net` stops.
+- The daemon writes the last report to `<state dir>/amika-net.json`. The
+  file stays when the daemon stops. The daemon removes it when the org
+  stops allowing the mode.
 
 ## Tests
 

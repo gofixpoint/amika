@@ -47,7 +47,10 @@ async function harness({
     async (_have: number | null): Promise<IrohRulesAnswer> =>
       answers.shift() ?? { kind: "unchanged" },
   );
-  const report = vi.fn(async (_amikaNet: AmikaNetReport) => ({ allowed }));
+  const org = { allowed };
+  const report = vi.fn(async (_amikaNet: AmikaNetReport) => ({
+    allowed: org.allowed,
+  }));
   const paths = {
     socketPath: path.join(dir, "amika-net", "control.sock"),
     rulesFile: path.join(dir, "iroh-rules.json"),
@@ -92,6 +95,7 @@ async function harness({
       .map((line) => JSON.parse(line) as { key: string; pid: number });
   return {
     transport,
+    org,
     answers,
     fetchRules,
     report,
@@ -147,21 +151,72 @@ describe("startIrohTransport", () => {
     await vi.waitFor(() => expect(h.starts().length).toBeGreaterThan(2));
   });
 
-  it("stops amika-net when the org no longer allows tunnel_iroh", async () => {
+  it("stops amika-net when the org no longer allows tunnel_iroh, and starts it again", async () => {
     const h = await harness();
     await vi.waitFor(() => expect(h.report).toHaveBeenCalled());
     h.answers.push({ kind: "not_allowed" });
-    await h.transport.stopped;
+    await vi.waitFor(() => expect(h.transport.active).toBe(false));
     expect(() => process.kill(h.starts()[0].pid, 0)).toThrow();
     expect(existsSync(h.paths.stateFile)).toBe(false);
     expect(existsSync(h.paths.socketPath)).toBe(false);
     expect(h.out.join("\n")).toContain("no longer allows tunnel_iroh");
+    // The next answers are 204s: the org allows the mode again.
+    await vi.waitFor(() => expect(h.starts()).toHaveLength(2));
+    await vi.waitFor(() => expect(h.report).toHaveBeenCalledTimes(2));
+    expect(h.transport.active).toBe(true);
+    expect(h.starts()[1].key).toBe(HOST_KEY_HEX);
   });
 
-  it("stops amika-net when a report says the org no longer allows it", async () => {
+  it("stops amika-net when a report says the org no longer allows it, and starts it again", async () => {
     const h = await harness({ allowed: false });
-    await h.transport.stopped;
-    expect(h.report).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(h.report).toHaveBeenCalled());
+    await vi.waitFor(() => expect(h.transport.active).toBe(false));
     expect(() => process.kill(h.starts()[0].pid, 0)).toThrow();
+    h.org.allowed = true;
+    await vi.waitFor(() => expect(h.transport.active).toBe(true));
+    await vi.waitFor(() =>
+      expect(h.report.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
+  });
+
+  it("reports a rules refusal, and clears it once a record is accepted", async () => {
+    const refused = basePayload();
+    refused.version = 50;
+    refused.required_features = ["future_limit"];
+    const h = await harness();
+    await vi.waitFor(() => expect(h.report).toHaveBeenCalled());
+    h.answers.push({ kind: "rules", envelope: await signed(refused) });
+    await vi.waitFor(() =>
+      expect(h.report).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          endpoint_id: FAKE_ENDPOINT_ID,
+          rules_refusal: {
+            reason: "unknown_feature",
+            version: 50,
+            at: expect.any(Number),
+          },
+        }),
+      ),
+    );
+    expect(readAmikaNetState(h.paths.stateFile)?.rules_refusal).toMatchObject({
+      reason: "unknown_feature",
+      version: 50,
+    });
+    h.answers.push({ kind: "rules", envelope: await signed(basePayload()) });
+    await vi.waitFor(() =>
+      expect(h.report.mock.calls.at(-1)![0]).not.toHaveProperty(
+        "rules_refusal",
+      ),
+    );
+  });
+
+  it("keeps what amika-net reported when the daemon stops, for the next up", async () => {
+    const h = await harness();
+    await vi.waitFor(() => expect(h.report).toHaveBeenCalled());
+    await h.transport.stop();
+    expect(() => process.kill(h.starts()[0].pid, 0)).toThrow();
+    expect(readAmikaNetState(h.paths.stateFile)).toMatchObject({
+      endpoint_id: FAKE_ENDPOINT_ID,
+    });
   });
 });

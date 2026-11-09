@@ -5,9 +5,17 @@
  *
  * The daemon starts this only when `up` found the host in `tunnel_iroh`
  * mode and its org allowing the mode. It runs beside the gateway tunnel,
- * which keeps running in every case. It stops itself when Amika says the
- * org no longer allows the mode: the rules answer `404`, or a report's
- * answer leaves `tunnel_iroh` out. The next `up` starts it again.
+ * which keeps running in every case.
+ *
+ * It stops `amika-net` when Amika says the org no longer allows the mode:
+ * the rules answer `404`, or a report's answer leaves `tunnel_iroh` out.
+ * The rules loop goes on, and when an answer shows the org allows the mode
+ * again, `amika-net` starts again.
+ *
+ * What `amika-net` last reported stays on disk when the daemon stops, so
+ * the next `up` reports the same endpoint and the control plane never
+ * loses it during a restart. It is removed when the org stops allowing the
+ * mode.
  */
 import { readFileSync, rmSync } from "node:fs";
 import { parseEndpointId } from "@amika/iroh-rules";
@@ -18,9 +26,9 @@ import {
   amikaNetSupervisor,
   type AmikaNetSupervisorOptions,
 } from "./amika-net-supervisor.js";
-import { startControlServer } from "./amika-net-control.js";
+import { startControlServer, type ControlServer } from "./amika-net-control.js";
 import { irohAccess, type IrohAccessDeps } from "./iroh-access.js";
-import { rulesSync } from "./iroh-rules-sync.js";
+import { rulesSync, type RulesRefusal } from "./iroh-rules-sync.js";
 import { writePrivateFile } from "./private-file.js";
 import type { AmikaNetReport } from "./runtimes.js";
 
@@ -71,25 +79,32 @@ export interface IrohTransportPaths {
 export interface IrohTransport {
   /** Stop `amika-net`, the rules loop and the control socket. */
   stop(): Promise<void>;
-  /** Resolves once it has stopped, by `stop` or because Amika said so. */
-  readonly stopped: Promise<void>;
+  /** Whether `amika-net` runs: false while the org does not allow it. */
+  readonly active: boolean;
 }
 
 export async function startIrohTransport(
   options: IrohTransportOptions,
 ): Promise<IrohTransport> {
   const { out, err, paths } = options;
-  let stopping: Promise<void> | undefined;
-  let markStopped: () => void = () => {};
-  const stopped = new Promise<void>((resolve) => (markStopped = resolve));
+  let control: ControlServer | undefined;
+  let active = false;
+  let stopped = false;
+  // One change at a time, in order: a start never races a stop.
+  let changing = Promise.resolve();
+  const change = (step: () => Promise<void>) => {
+    changing = changing.then(step);
+    return changing;
+  };
 
   const rules = rulesSync({
     file: paths.rulesFile,
     orgId: options.orgId,
     trustedKeys: options.trustedKeys,
     fetchRules: options.fetchRules,
-    revoke: (ids) => control.revoke(ids),
-    notAllowed: () => void disallowed(),
+    revoke: (ids) => control?.revoke(ids),
+    orgAllows: (allowed) => void (allowed ? activate() : deactivate()),
+    refusalChanged: (refusal) => reporter.refusal(refusal),
     out,
     err,
     intervalMs: options.rulesIntervalMs,
@@ -101,19 +116,7 @@ export async function startIrohTransport(
     );
   }
   const access = irohAccess({ ...options.access, rules: rules.rules });
-  const reporter = amikaNetReporter(options, () => void disallowed());
-  const control = await startControlServer(paths.socketPath, {
-    ready: (info) =>
-      reporter.update({
-        endpoint_id: info.endpointId,
-        relay_url: info.relayUrl,
-        version: info.version,
-      }),
-    homeRelay: (relayUrl) => reporter.relay(relayUrl),
-    checkPeer: (endpointId) => access.checkPeer(endpointId),
-    open: (endpointId, target) => access.open(endpointId, target),
-    warn: (line) => err(`amika-hostd: ${line}`),
-  });
+  const reporter = amikaNetReporter(options, () => void deactivate());
   const supervisor = amikaNetSupervisor({
     binary: options.binary,
     args: amikaNetArgs(paths.socketPath, options.relayUrl),
@@ -124,36 +127,69 @@ export async function startIrohTransport(
     err,
     ...options.supervisor,
   });
-  supervisor.start();
+  await activate();
   rules.start();
 
-  const stop = () => {
-    stopping ??= (async () => {
-      rules.stop();
-      reporter.stop();
-      await supervisor.stop();
-      await control.close();
-      rmSync(paths.stateFile, { force: true });
-      markStopped();
-    })();
-    return stopping;
-  };
-
-  async function disallowed(): Promise<void> {
-    if (stopping) return;
-    out(
-      "amika-hostd: this host's org no longer allows tunnel_iroh; stopping amika-net. The gateway tunnel keeps running.",
-    );
-    await stop();
+  function activate(): Promise<void> {
+    return change(async () => {
+      if (stopped || active) return;
+      control = await startControlServer(paths.socketPath, {
+        ready: (info) =>
+          reporter.update({
+            endpoint_id: info.endpointId,
+            relay_url: info.relayUrl,
+            version: info.version,
+          }),
+        homeRelay: (relayUrl) => reporter.relay(relayUrl),
+        checkPeer: (endpointId) => access.checkPeer(endpointId),
+        open: (endpointId, target) => access.open(endpointId, target),
+        warn: (line) => err(`amika-hostd: ${line}`),
+      });
+      reporter.resume();
+      supervisor.start();
+      active = true;
+    });
   }
 
-  return { stop, stopped };
+  function deactivate(): Promise<void> {
+    return change(async () => {
+      if (stopped || !active) return;
+      out(
+        "amika-hostd: this host's org no longer allows tunnel_iroh; stopping amika-net. The gateway tunnel keeps running.",
+      );
+      active = false;
+      reporter.pause();
+      await supervisor.stop();
+      await control?.close();
+      control = undefined;
+      // Started again once an answer shows the org allows the mode.
+      out("amika-hostd: amika-net starts again if the org allows tunnel_iroh");
+    });
+  }
+
+  return {
+    get active() {
+      return active;
+    },
+    stop: () => {
+      stopped = true;
+      rules.stop();
+      reporter.stop();
+      return change(async () => {
+        active = false;
+        await supervisor.stop();
+        await control?.close();
+        control = undefined;
+      });
+    },
+  };
 }
 
 /**
- * Report `amika-net` to Amika when it says it is ready and when its home
- * relay changes, and again later if a report fails. A report that says the
- * org no longer allows `tunnel_iroh` calls `disallowed`.
+ * Report `amika-net` to Amika when it says it is ready, when its home relay
+ * changes and when the rules refusal changes, and again later if a report
+ * fails. A report that says the org no longer allows `tunnel_iroh` calls
+ * `disallowed`.
  */
 function amikaNetReporter(
   options: Pick<
@@ -163,10 +199,12 @@ function amikaNetReporter(
   disallowed: () => void,
 ) {
   const retryMs = options.reportRetryMs ?? 60_000;
-  let latest: AmikaNetReport | undefined;
+  let latest: Omit<AmikaNetReport, "rules_refusal"> | undefined;
+  let refusal: RulesRefusal | null = null;
   let reported: string | undefined;
   let retry: NodeJS.Timeout | undefined;
   let stopped = false;
+  let paused = false;
   let sending = Promise.resolve();
 
   const send = () => {
@@ -175,7 +213,7 @@ function amikaNetReporter(
   };
 
   return {
-    update(next: AmikaNetReport) {
+    update(next: Omit<AmikaNetReport, "rules_refusal">) {
       if (parseEndpointId(next.endpoint_id) === null) {
         options.err(
           "amika-hostd: amika-net reported an endpoint id that is not 64 hex characters; not reporting it",
@@ -190,6 +228,20 @@ function amikaNetReporter(
       latest = { ...latest, relay_url: relayUrl };
       send();
     },
+    refusal(next: RulesRefusal | null) {
+      refusal = next;
+      send();
+    },
+    /** `amika-net` stopped for the org: forget it, and remove its state. */
+    pause() {
+      paused = true;
+      reported = undefined;
+      clearTimeout(retry);
+      rmSync(options.paths.stateFile, { force: true });
+    },
+    resume() {
+      paused = false;
+    },
     stop() {
       stopped = true;
       clearTimeout(retry);
@@ -198,8 +250,11 @@ function amikaNetReporter(
 
   async function sendLatest(): Promise<void> {
     clearTimeout(retry);
-    if (stopped || latest === undefined) return;
-    const report = latest;
+    if (stopped || paused || latest === undefined) return;
+    const report: AmikaNetReport = {
+      ...latest,
+      ...(refusal === null ? {} : { rules_refusal: refusal }),
+    };
     const key = JSON.stringify(report);
     if (key === reported) return;
     try {
@@ -222,7 +277,7 @@ function amikaNetReporter(
     options.out(
       `amika-hostd: reported amika-net ${report.version} as endpoint ${report.endpoint_id}${report.relay_url === null ? "" : ` on relay ${report.relay_url}`}`,
     );
-    if (!answer.allowed) disallowed();
+    if (!answer.allowed && !paused) disallowed();
   }
 }
 
@@ -249,4 +304,11 @@ const stateSchema = z.object({
   endpoint_id: z.string().regex(/^[0-9a-f]{64}$/),
   relay_url: z.string().nullable(),
   version: z.string(),
+  rules_refusal: z
+    .object({
+      reason: z.string(),
+      version: z.number().int().nullable(),
+      at: z.number().int(),
+    })
+    .optional(),
 });
