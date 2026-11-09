@@ -6,6 +6,7 @@
  * whether a revoked host retries for ever or tells its operator.
  */
 import { EventEmitter } from "node:events";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import type { WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import {
@@ -146,6 +147,35 @@ describe("the v3 offer and the resume handshake", () => {
         connect: socket.connect,
       }),
     ).rejects.toBeInstanceOf(TunnelUnavailable);
+  });
+});
+
+describe("a dial the network holds", () => {
+  it("gives up within its handshake timeout", async () => {
+    // Accepts the connection and never answers, as a path that dropped
+    // the handshake's packets looks from here.
+    const server = createNetServer(() => {});
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as AddressInfo;
+    const started = Date.now();
+    try {
+      await expect(
+        dialTunnel(
+          {
+            gatewayUrl: `ws://127.0.0.1:${port}/v2/host-tunnel`,
+            hostId: "host-1",
+            credential: "cred-1",
+            generation: 1,
+          },
+          { handshakeTimeoutMs: 200, userAgent: "amika-hostd/test" },
+        ),
+      ).rejects.toBeInstanceOf(TunnelUnavailable);
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      server.close();
+    }
   });
 });
 
