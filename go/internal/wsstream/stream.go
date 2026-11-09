@@ -73,11 +73,30 @@ func (s *Stream) Write(buffer []byte) (int, error) {
 	return len(buffer), nil
 }
 
+// Ping sends a WebSocket ping control frame and waits for the pong. The pong
+// arrives on the read side, so a concurrent Read must run. A control frame is
+// not a message, so it adds no bytes to the stream at either end.
+func (s *Stream) Ping(ctx context.Context) error {
+	return s.connection.Ping(ctx)
+}
+
 // Close cancels active I/O and performs a normal WebSocket close handshake.
 func (s *Stream) Close() error {
 	var closeErr error
 	s.closeOnce.Do(func() {
 		closeErr = s.connection.Close(websocket.StatusNormalClosure, "")
+		s.cancel()
+	})
+	return closeErr
+}
+
+// CloseNow cancels active I/O and closes the connection without a close
+// handshake. Use it for a peer that does not answer: the handshake would wait
+// for that peer until its own timeout.
+func (s *Stream) CloseNow() error {
+	var closeErr error
+	s.closeOnce.Do(func() {
+		closeErr = s.connection.CloseNow()
 		s.cancel()
 	})
 	return closeErr
