@@ -39,6 +39,15 @@ var sshV2OwnValueFlags = map[string]bool{
 	"--output":        true,
 	"-o":              true,
 	"--remote-target": true,
+	"--transport":     true,
+}
+
+func init() {
+	// Testing only, so hidden: `amika rig --transport iroh ssh <rig>` uses
+	// iroh alone, with no fallback, and `direct_ws` skips iroh. The server
+	// still decides, so the flag cannot turn iroh on for a rig.
+	sandboxSSHV2Cmd.Flags().String("transport", "", "use one SSH transport: iroh or direct_ws")
+	_ = sandboxSSHV2Cmd.Flags().MarkHidden("transport")
 }
 
 var sandboxSSHV2Cmd = &cobra.Command{
@@ -133,6 +142,11 @@ Examples:
 		if err != nil {
 			return err
 		}
+		transportFlag, _ := cmd.Flags().GetString("transport")
+		transport, err := ssh.ParseProxyTransport(transportFlag)
+		if err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
 		}
@@ -151,16 +165,26 @@ Examples:
 		if err != nil {
 			return rigref.Explain(ref, err)
 		}
+		// With --transport, the create request asks for that transport alone,
+		// so one the server cannot give fails here, before ssh starts.
 		alias, err := prepareSessionTarget(
 			basedir.New(""),
-			client,
+			ssh.WithTransport(client, transport),
 			sandbox.Name,
 			sandbox.ID,
 		)
 		if err != nil {
 			return err
 		}
-		return execSessionSSH(alias, ssh.BuildSessionSSHArgv(forward, nameIdx, alias))
+		argv := ssh.BuildSessionSSHArgv(forward, nameIdx, alias)
+		if transport != ssh.TransportAuto {
+			option, err := ssh.TransportProxyCommandOption(transport)
+			if err != nil {
+				return err
+			}
+			argv = append([]string{"-o", option}, argv...)
+		}
+		return execSessionSSH(alias, argv)
 	},
 }
 

@@ -27,6 +27,11 @@ var sshStdioProxyCmd = &cobra.Command{
 		// grace period. With SIGPIPE ignored, a write to a closed stdout
 		// fails instead of killing the process mid-GOODBYE.
 		signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
+		flag, _ := cmd.Flags().GetString("transport")
+		transport, err := ssh.ParseProxyTransport(flag)
+		if err != nil {
+			return err
+		}
 		paths := basedir.New("")
 		// Stderr, not stdout: stdout is the SSH transport, and a byte of
 		// diagnostics on it would corrupt the connection it describes.
@@ -36,15 +41,25 @@ var sshStdioProxyCmd = &cobra.Command{
 		}
 		events, closeEvents := ssh.OpenProxyEventLog(paths)
 		defer closeEvents()
+		client := runmode.NewRemoteClient()
+		iroh, err := ssh.PrepareIrohRoute(ssh.IrohSetup{
+			Paths:     paths,
+			APIURL:    client.BaseURL,
+			Registrar: client,
+		}, transport, events)
+		if err != nil {
+			return err
+		}
 		return ssh.ProxySession(
 			cmd.Context(),
-			runmode.NewRemoteClient(),
+			client,
 			ssh.WebSocketDialer{},
 			pins,
 			args[0],
 			cmd.InOrStdin(),
 			cmd.OutOrStdout(),
 			events,
+			ssh.ProxyOptions{Transport: transport, Iroh: iroh},
 		)
 	},
 }
@@ -52,4 +67,7 @@ var sshStdioProxyCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(plumbingCmd)
 	plumbingCmd.AddCommand(sshStdioProxyCmd)
+	// Testing only: `amika rig ssh --transport` passes it on.
+	sshStdioProxyCmd.Flags().String("transport", "", "use one SSH transport: iroh or direct_ws")
+	_ = sshStdioProxyCmd.Flags().MarkHidden("transport")
 }

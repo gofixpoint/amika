@@ -98,6 +98,8 @@ type stubV2SSHClient struct {
 	sandbox *apiclient.RemoteSandbox
 	// looked records every selector GetSandbox was asked for.
 	looked []apiclient.SandboxSelector
+	// transports records the last session create request's list.
+	transports []apiclient.SSHSessionTransport
 }
 
 func (s *stubV2SSHClient) GetSandbox(sel apiclient.SandboxSelector) (*apiclient.RemoteSandbox, error) {
@@ -105,7 +107,8 @@ func (s *stubV2SSHClient) GetSandbox(sel apiclient.SandboxSelector) (*apiclient.
 	return s.sandbox, nil
 }
 
-func (s *stubV2SSHClient) CreateSSHSession(_ string) (*apiclient.SSHSession, error) {
+func (s *stubV2SSHClient) CreateSSHSession(_ string, transports []apiclient.SSHSessionTransport) (*apiclient.SSHSession, error) {
+	s.transports = transports
 	return nil, nil
 }
 
