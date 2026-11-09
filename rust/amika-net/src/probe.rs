@@ -229,3 +229,94 @@ fn emit(label: &str, kind: &str, mut body: serde_json::Value) {
     body["label"] = json!(label);
     println!("{body}");
 }
+
+#[derive(Debug, Clone, Args)]
+pub struct SinkArgs {
+    #[arg(long)]
+    pub key_file: Option<PathBuf>,
+    #[command(flatten)]
+    pub host: HostAddrArgs,
+    /// More hosts. Connection `i` goes to host `i` modulo the host count,
+    /// starting with `--host-id`.
+    #[arg(long)]
+    pub also_host_id: Vec<iroh::EndpointId>,
+    /// A target that sends bytes without end, for example a zero source.
+    #[arg(long)]
+    pub target: Target,
+    /// QUIC connections from this one endpoint.
+    #[arg(long, default_value_t = 1)]
+    pub connections: usize,
+    /// Streams on each connection.
+    #[arg(long, default_value_t = 1)]
+    pub streams: usize,
+    /// Seconds to read for.
+    #[arg(long, default_value_t = 30)]
+    pub secs: u64,
+    #[arg(long, default_value = "")]
+    pub label: String,
+    #[command(flatten)]
+    pub net: net::NetArgs,
+}
+
+/// Throughput from one endpoint: opens `connections` connections with
+/// `streams` streams each, reads from all of them for `secs`, and prints
+/// the bytes and MB/s of each stream and the total.
+pub async fn run_sink(args: SinkArgs) -> Result<()> {
+    let secret = connect::device_key(args.key_file.as_deref())?;
+    let ep = net::builder(&args.net, secret).await?.bind().await?;
+    net::report_online(&ep, Duration::from_secs(15)).await;
+    let hosts: Vec<_> = std::iter::once(args.host.host_id)
+        .chain(args.also_host_id.iter().copied())
+        .collect();
+    let mut conns = Vec::new();
+    for i in 0..args.connections {
+        let conn = connect::dial_id(&ep, &args.host, hosts[i % hosts.len()]).await?;
+        paths::spawn_logger(&conn, "sink");
+        conns.push(conn);
+    }
+    let deadline = Instant::now() + Duration::from_secs(args.secs);
+    let mut tasks = tokio::task::JoinSet::new();
+    for (ci, conn) in conns.iter().enumerate() {
+        for si in 0..args.streams {
+            let (_send, mut recv) = connect::open_target(conn, &args.target).await?;
+            tasks.spawn(async move {
+                let mut buf = vec![0u8; 64 * 1024];
+                let mut total = 0u64;
+                let started = Instant::now();
+                while let Ok(Ok(Some(n))) =
+                    tokio::time::timeout_at(deadline.into(), recv.read(&mut buf)).await
+                {
+                    total += n as u64;
+                }
+                drop(_send);
+                (ci, si, total, started.elapsed().as_secs_f64())
+            });
+        }
+    }
+    let mut sum = 0u64;
+    while let Some(res) = tasks.join_next().await {
+        let (ci, si, bytes, secs) = res?;
+        sum += bytes;
+        emit(
+            &args.label,
+            "sink-stream",
+            json!({ "conn": ci, "stream": si, "bytes": bytes, "MBps": (bytes as f64 / secs / 1e6 * 100.0).round() / 100.0 }),
+        );
+    }
+    for conn in &conns {
+        let sel = paths::selected(conn);
+        emit(
+            &args.label,
+            "sink-path",
+            json!({ "kind": sel.kind, "rtt_ms": sel.rtt_ms }),
+        );
+        conn.close(0u32.into(), b"sink done");
+    }
+    emit(
+        &args.label,
+        "sink-total",
+        json!({ "bytes": sum, "secs": args.secs, "MBps": (sum as f64 / args.secs as f64 / 1e6 * 100.0).round() / 100.0 }),
+    );
+    ep.close().await;
+    Ok(())
+}

@@ -46,6 +46,9 @@ enum Cmd {
     Probe(probe::ProbeArgs),
     /// Run as a long-lived dialer that reports path and RTT (test 6).
     Dial(probe::DialArgs),
+    /// Measure throughput from a byte source, over many streams or
+    /// connections from one endpoint (test 9).
+    Sink(probe::SinkArgs),
 }
 
 #[tokio::main]
@@ -69,5 +72,6 @@ async fn main() -> Result<()> {
         Cmd::Connect(args) => connect::run(args).await,
         Cmd::Probe(args) => probe::run_probe(args).await,
         Cmd::Dial(args) => probe::run_dial(args).await,
+        Cmd::Sink(args) => probe::run_sink(args).await,
     }
 }

@@ -30,6 +30,13 @@ pub struct NetArgs {
     /// Relay URLs for `n0-pro` and `custom`. Repeat for more than one.
     #[arg(long = "relay-url")]
     pub relay_urls: Vec<RelayUrl>,
+    /// File with relay URLs, one per line, added to `--relay-url`. Keeps
+    /// private relay URLs off the command line.
+    #[arg(long)]
+    pub relay_urls_file: Option<PathBuf>,
+    /// Use only these lines (1-based) of `--relay-urls-file`. Repeatable.
+    #[arg(long = "relay-line")]
+    pub relay_lines: Vec<usize>,
     /// File that holds the n0 project API secret (for `n0-pro`).
     #[arg(long)]
     pub api_secret_file: Option<PathBuf>,
@@ -119,15 +126,52 @@ pub fn spawn_home_relay_logger(ep: &Endpoint) {
     });
 }
 
+/// Returns `--relay-url` values plus the chosen lines of `--relay-urls-file`.
+pub fn relay_urls(net: &NetArgs) -> Result<Vec<RelayUrl>> {
+    let mut urls = net.relay_urls.clone();
+    if let Some(path) = &net.relay_urls_file {
+        urls.extend(read_url_lines(path, &net.relay_lines)?);
+    }
+    Ok(urls)
+}
+
+/// Reads relay URLs from a file, one per line. `lines` picks 1-based lines;
+/// empty means all. Never logs the URLs.
+pub fn read_url_lines(path: &PathBuf, lines: &[usize]) -> Result<Vec<RelayUrl>> {
+    let text = read_secret(path)?;
+    let all: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let picked: Vec<&str> = if lines.is_empty() {
+        all
+    } else {
+        lines
+            .iter()
+            .map(|n| {
+                all.get(n.wrapping_sub(1))
+                    .copied()
+                    .with_context(|| format!("no line {n} in the relay URL file"))
+            })
+            .collect::<Result<_>>()?
+    };
+    picked
+        .into_iter()
+        .map(|u| u.parse::<RelayUrl>().context("bad relay URL in file"))
+        .collect()
+}
+
 fn custom_relay_map(net: &NetArgs) -> Result<RelayMap> {
-    if net.relay_urls.is_empty() {
+    let urls = relay_urls(net)?;
+    if urls.is_empty() {
         bail!("--relay custom needs at least one --relay-url");
     }
     let token = match &net.relay_token_file {
         Some(path) => Some(read_secret(path)?),
         None => None,
     };
-    let configs = net.relay_urls.iter().map(|url| {
+    let configs = urls.iter().map(|url| {
         // QUIC address discovery needs TLS, so a plain-HTTP relay gets none.
         let mut cfg = RelayConfig::from(url.clone());
         if url.scheme() == "http" {
@@ -148,10 +192,11 @@ fn n0_pro_preset(net: &NetArgs, secret: SecretKey) -> Result<iroh_services::Iroh
         .context("--relay n0-pro needs --api-secret-file")?;
     let api_secret = read_secret(path)?;
     let mut preset = iroh_services::preset().secret_key(secret);
-    if net.relay_urls.is_empty() {
+    let urls = relay_urls(net)?;
+    if urls.is_empty() {
         warn!("--relay n0-pro with no --relay-url uses n0's public relays with a project token");
     } else {
-        preset = preset.relays(net.relay_urls.iter().map(|u| u.to_string()))?;
+        preset = preset.relays(urls.iter().map(|u| u.to_string()))?;
     }
     Ok(preset.api_secret_from_str(&api_secret)?.build()?)
 }

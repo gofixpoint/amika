@@ -32,6 +32,25 @@ pub struct HostAddrArgs {
     /// Direct addresses of the host (ip:port). Optional.
     #[arg(long)]
     pub host_addr: Vec<SocketAddr>,
+    /// Read the host's relay URL from this line (1-based) of this file,
+    /// instead of `--host-relay`. Format: `<file>:<line>`.
+    #[arg(long)]
+    pub host_relay_from: Option<String>,
+}
+
+impl HostAddrArgs {
+    /// The host's relay URL, from `--host-relay` or `--host-relay-from`.
+    pub fn relay(&self) -> Result<Option<RelayUrl>> {
+        if let Some(spec) = &self.host_relay_from {
+            let (file, line) = spec
+                .rsplit_once(':')
+                .context("--host-relay-from needs <file>:<line>")?;
+            let line: usize = line.parse().context("bad line in --host-relay-from")?;
+            let urls = net::read_url_lines(&file.into(), &[line])?;
+            return Ok(urls.into_iter().next());
+        }
+        Ok(self.host_relay.clone())
+    }
 }
 
 #[derive(Debug, Clone, Args)]
@@ -104,20 +123,25 @@ pub fn device_key(path: Option<&std::path::Path>) -> Result<SecretKey> {
 
 /// Dials the host and logs the first selected path.
 pub async fn dial(ep: &Endpoint, host: &HostAddrArgs) -> Result<Connection> {
+    dial_id(ep, host, host.host_id).await
+}
+
+/// Dials `id`, with the relay and addresses in `host`.
+pub async fn dial_id(ep: &Endpoint, host: &HostAddrArgs, id: EndpointId) -> Result<Connection> {
     let addrs = host
         .host_addr
         .iter()
         .copied()
         .map(TransportAddr::Ip)
-        .chain(host.host_relay.iter().cloned().map(TransportAddr::Relay));
-    let addr = EndpointAddr::from_parts(host.host_id, addrs);
+        .chain(host.relay()?.into_iter().map(TransportAddr::Relay));
+    let addr = EndpointAddr::from_parts(id, addrs);
     let started = std::time::Instant::now();
     let conn = tokio::time::timeout(DIAL_TIMEOUT, ep.connect(addr, ALPN))
         .await
         .context("dial timed out")?
         .context("dial failed")?;
     info!(
-        host = %host.host_id,
+        host = %id,
         connect_ms = paths::ms(started.elapsed()),
         selected = ?paths::selected(&conn),
         "connected"
