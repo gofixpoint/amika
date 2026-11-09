@@ -84,6 +84,11 @@ export interface OpenAttachment {
    * the loop dials again at once rather than after its backoff.
    */
   readonly resumable?: boolean;
+  /**
+   * It continued a session the relay already knew, which proves the relay
+   * accepted this host. It never counts toward `suspect-credential`.
+   */
+  readonly resumed?: boolean;
 }
 
 /** How a v3 session is kept: its socket's keep-alive and its limits. */
@@ -105,8 +110,10 @@ export const DEFAULT_RESUME: ResumeSettings = {
   maxMissedPings: RESUME_MAX_MISSED_PINGS,
   graceMs: RESUME_GRACE_MS,
   maxReplayBytes: HOSTD_MAX_REPLAY_BYTES,
-  // Half the log: upstream WebSockets pause well before it drops frames.
-  pauseReplayBytes: HOSTD_MAX_REPLAY_BYTES / 2,
+  // Producers pause once this much is unacknowledged, far below the log's
+  // limit. It bounds what waits ahead of anything new on the link, and
+  // what a resume sends again.
+  pauseReplayBytes: 2 * 1024 * 1024,
   ackBytes: ACK_BYTES,
   ackDelayMs: ACK_DELAY_MS,
 };
@@ -416,13 +423,21 @@ export class TunnelClient {
         error instanceof Error ? error : new Error("Attachment failed"),
       );
       this.attachment = undefined;
-      this.shortSessions += 1;
-      this.reportSuspicion();
+      if (!attachment.resumed) {
+        this.shortSessions += 1;
+        this.reportSuspicion();
+      }
       throw new TunnelUnavailable(
         `The gateway accepted the connection but did not answer the attachment ping: ${describe(error)}`,
       );
     }
 
+    // A resume that answered proves the gateway is up and knows this
+    // session. Waits after a later drop start again from the shortest.
+    if (attachment.resumed) {
+      this.backoff.reset();
+      this.shortSessions = 0;
+    }
     this.setState({ state: "attached", since: startedAt, info });
     this.emit({ type: "attached", info });
     for (const waiter of this.attachedWaiters) waiter.resolve(info);
@@ -430,8 +445,12 @@ export class TunnelClient {
 
     const error = await ended;
     this.attachment = undefined;
-    if (attachment.resumable) this.redialAtOnce = true;
     const uptimeMs = this.now() - startedAt;
+    // At once only after a socket that settled: one that dies straight
+    // after attaching must not become a reconnect loop with no wait.
+    if (attachment.resumable && uptimeMs >= this.settleMs) {
+      this.redialAtOnce = true;
+    }
     const served = attachment.servedConnections;
     const reason = error ? error.message : "the gateway closed the tunnel";
     this.emit({
@@ -445,7 +464,7 @@ export class TunnelClient {
     // relay that cannot keep this host looks like from this end. It is
     // also what a flapping network looks like, so this counts rather than
     // concludes.
-    if (served === 0 && uptimeMs < this.settleMs) {
+    if (served === 0 && uptimeMs < this.settleMs && !attachment.resumed) {
       this.shortSessions += 1;
       this.reportSuspicion();
     } else {
@@ -516,7 +535,7 @@ export class TunnelClient {
           `The gateway resumed the tunnel session, but this host cannot continue from its count (${resumed.reason}); starting a fresh session`,
         );
       }
-      return attachmentOf(previous, dialed);
+      return attachmentOf(previous, dialed, true);
     }
 
     if (previous && !previous.isEnded) {
@@ -577,7 +596,13 @@ export class TunnelClient {
   }
 
   private async waitBeforeRetry(reason: string): Promise<void> {
-    const delayMs = this.backoff.nextDelayMs();
+    let delayMs = this.backoff.nextDelayMs();
+    // A detached session is lost at the end of its grace, so the waits
+    // while one waits for a resume stay well inside it.
+    const resume = this.options.resume;
+    if (resume && this.session?.isDetached) {
+      delayMs = Math.min(delayMs, resume.graceMs / 6);
+    }
     const attempt = this.backoff.attempts;
     this.setState({ state: "waiting", attempt, delayMs, reason });
     this.emit({ type: "waiting", attempt, delayMs, reason });
@@ -621,6 +646,7 @@ export class TunnelClient {
 function attachmentOf(
   session: TunnelSession,
   dialed: Pick<DialedTunnel, "connectionId" | "publicUrl">,
+  resumed = false,
 ): OpenAttachment {
   const link = session.currentLink;
   const servedBefore = session.servedConnections;
@@ -645,6 +671,7 @@ function attachmentOf(
     get resumable() {
       return session.isDetached;
     },
+    resumed,
   };
 }
 

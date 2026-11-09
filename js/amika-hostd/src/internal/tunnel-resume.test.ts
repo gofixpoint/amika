@@ -29,7 +29,9 @@ import {
 } from "@amika/tunnel-protocol";
 import { AckSchedule, ReplayLog } from "@amika/tunnel-protocol/resume";
 import { ReceiveWindow, SendWindow } from "@amika/tunnel-protocol/window";
+import { DEFAULT_BACKOFF, type BackoffOptions } from "./tunnel-backoff.js";
 import {
+  DEFAULT_RESUME,
   TunnelClient,
   type ResumeSettings,
   type TunnelEvent,
@@ -71,6 +73,8 @@ class SimRelay {
   /** Stop acknowledging, as a relay that is slow or hostile does. */
   acknowledge = true;
   answerPings = true;
+  /** Limit each new socket to this many bytes a second each way. */
+  bytesPerSecond?: number;
 
   readonly dials: DialOptions[] = [];
   readonly frames = new Map<number, Frame[]>();
@@ -96,6 +100,7 @@ class SimRelay {
     const v3 =
       this.resumeOn && options.protocols?.includes(TUNNEL_SUBPROTOCOL_V3);
     const pipe = new FaultPipe(v3 ? TUNNEL_SUBPROTOCOL_V3 : TUNNEL_SUBPROTOCOL);
+    pipe.bytesPerSecond = this.bytesPerSecond;
     const previous = this.pipe;
     this.pipe = pipe;
     // The old socket is released: whatever it still carries is ignored.
@@ -316,7 +321,11 @@ afterEach(async () => {
 
 /** The daemon's side: its own server, a client, and the simulated relay. */
 async function attach(
-  options: { resume?: ResumeSettings | false; relay?: SimRelay } = {},
+  options: {
+    resume?: ResumeSettings | false;
+    relay?: SimRelay;
+    backoff?: BackoffOptions;
+  } = {},
 ): Promise<{
   relay: SimRelay;
   client: TunnelClient;
@@ -365,7 +374,7 @@ async function attach(
     onConnection: (socket) => server.accept(socket),
     resume:
       options.resume === false ? undefined : (options.resume ?? FAST_RESUME),
-    backoff: {
+    backoff: options.backoff ?? {
       minDelayMs: 1,
       initialDelayMs: 5,
       maxDelayMs: 20,
@@ -512,6 +521,61 @@ interface TunnelSessionView {
   writable(): Promise<void>;
 }
 
+describe("a busy session on a slow link", () => {
+  /**
+   * The production limits, with times scaled down. The ping timeout must
+   * be well above the time one whole frame takes to cross: 64 KiB at
+   * 2 MiB/s is 32 ms. In production it is 5 s.
+   */
+  const SLOW_LINK: ResumeSettings = {
+    ...DEFAULT_RESUME,
+    keepAliveIntervalMs: 120,
+    pingTimeoutMs: 100,
+    graceMs: 1_000,
+    ackDelayMs: 5,
+  };
+
+  /** An upload echoed back and a download, at the same time. */
+  async function bulk(relay: SimRelay, size: number): Promise<void> {
+    const body = pattern(size, 3);
+    const echo = relay.open("/echo", {
+      method: "POST",
+      headers: [["content-length", String(size)]],
+    });
+    void relay.body(echo, body);
+    const download = relay.open(`/bytes?n=${size}`);
+    relay.send({ type: "end", streamId: download });
+    const [echoed, downloaded] = await Promise.all([
+      relay.responseBody(echo),
+      relay.responseBody(download),
+    ]);
+    expect(echoed.equals(Buffer.from(body))).toBe(true);
+    expect(downloaded.equals(Buffer.from(pattern(size)))).toBe(true);
+  }
+
+  it("keeps its socket while pings wait behind data", async () => {
+    const relay = new SimRelay();
+    relay.bytesPerSecond = 2 * 1024 * 1024;
+    const { events } = await attach({ relay, resume: SLOW_LINK });
+    await bulk(relay, 3 * 1024 * 1024);
+    expect(ofType(events, "tunnel_detached")).toEqual([]);
+    expect(relay.dials).toHaveLength(1);
+  });
+
+  it("resumes once after a cut, and the resumed socket sticks", async () => {
+    const relay = new SimRelay();
+    relay.bytesPerSecond = 2 * 1024 * 1024;
+    const { events } = await attach({ relay, resume: SLOW_LINK });
+    const transfer = bulk(relay, 3 * 1024 * 1024);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    relay.pipe!.cut();
+    await transfer;
+    expect(ofType(events, "tunnel_detached")).toHaveLength(1);
+    expect(ofType(events, "tunnel_resumed")).toHaveLength(1);
+    expect(ofType(events, "tunnel_session_ended")).toEqual([]);
+  });
+});
+
 describe("a real socket", () => {
   it("serves a frame that arrives in the same read as the 101", async () => {
     // A relay that resumes, or wakes a waiting request, sends frames just
@@ -624,6 +688,24 @@ describe("when the session cannot go on", () => {
     relay.unreachable = false;
     await expect.poll(() => relay.pipe !== undefined).toBe(true);
     expect(relay.dials.at(-1)?.resume).toBeUndefined();
+  });
+
+  it("keeps each wait while detached well inside the grace", async () => {
+    // The production schedule: windows of 2 s, 4 s, 8 s and more.
+    const graceMs = 3_000;
+    const { relay, events } = await attach({
+      resume: { ...FAST_RESUME, graceMs },
+      backoff: { ...DEFAULT_BACKOFF, random: () => 1 },
+    });
+    relay.unreachable = true;
+    relay.pipe!.cut();
+    await expect
+      .poll(() => ofType(events, "waiting").length, { timeout: 5_000 })
+      .toBeGreaterThan(3);
+    for (const wait of ofType(events, "waiting")) {
+      expect(wait.delayMs).toBe(graceMs / 6);
+    }
+    relay.unreachable = false;
   });
 
   it("ends the session on an ACK of a frame it never sent", async () => {

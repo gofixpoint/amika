@@ -99,14 +99,15 @@ The normal way a tunnel dies is a closed laptop lid. The socket stays in
 `ESTABLISHED`, the kernel accepts writes, and no WebSocket or TCP event
 reports anything. Only an unanswered round trip finds it.
 
-So `TunnelSession` sends the text message `PING` (`amika.tunnel.v2.ping`)
-every `KEEP_ALIVE_INTERVAL_MS` (10 s). A ping is missed when the text
-`PONG` (`amika.tunnel.v2.pong`) does not come back within
-`PING_TIMEOUT_MS` (5 s). The session ends when `MAX_MISSED_PINGS` (2)
-pings in a row are missed, so a dead tunnel is found in at most about
-25 s. One late `PONG` does not end it: a ping shares the socket with
-stream data, and a `PONG` that comes late still resets the count. The
-relay registers that pair with
+So `TunnelLink` sends the text message `PING` (`amika.tunnel.v2.ping`)
+every `KEEP_ALIVE_INTERVAL_MS` (10 s). A ping is missed when nothing at all
+arrives from the relay within `PING_TIMEOUT_MS` (5 s): neither the text
+`PONG` (`amika.tunnel.v2.pong`) nor any frame. Any message answers, because
+the `PING` queues behind the frames sent before it, and the `PONG` behind
+the relay's. A v2 socket ends when `MAX_MISSED_PINGS` (2) pings in a row
+are missed, so a dead tunnel is found in at most about 25 s; a v3 socket
+ends at the first (`RESUME_MAX_MISSED_PINGS`), because a drop there costs
+a resume and not every stream. The relay registers that pair with
 Cloudflare's `setWebSocketAutoResponse`, so its runtime answers without
 waking the relay: an idle host costs nothing, and the relay is not billed a
 message for it. The relay also reads when it last answered, which is how it
@@ -181,7 +182,9 @@ order, so a frame's position is its number.
 
 When a v3 socket ends, `TunnelSession` detaches instead of ending: every
 stream and its connection to the rig stay open, and a 60 s grace starts.
-`TunnelClient` dials again at once, then on its backoff, with
+`TunnelClient` dials again at once (if the socket had settled, so a socket
+that dies on attaching cannot loop with no wait), then on its backoff,
+capped at a sixth of the grace while the session waits, with
 `x-amika-tunnel-session` (the relay's connection id) and
 `x-amika-tunnel-received` (this side's received count). A `101` with the
 same connection id resumes: the session checks the relay's received count,
@@ -196,12 +199,18 @@ shutdown, which closes with `CLOSE_SESSION_ENDED` so the relay does not hold
 the session for a resume that will not come. A stop or restart of the daemon
 ends its sessions: the state is in memory only.
 
-While detached, and while the log holds more than 16 MiB, the session
+While detached, and while more than 2 MiB is unacknowledged, the session
 reports itself congested, so upstream WebSockets pause and bodies wait:
-messages carry no credit, and this is what bounds a drop's cost here.
+messages carry no credit, and this is what bounds what waits ahead of new
+traffic on the link and what a resume sends again.
 
-A v3 socket pings every 10 s and ends at its first `PONG` missed by 5 s,
-because ending a socket early now costs a resume rather than every stream.
+A resume that answers resets the backoff, and a resumed socket never counts
+toward the "credential may have been revoked" warning: the relay knew the
+session, so it accepted this host.
+
+A v3 socket pings every 10 s and ends at its first ping that nothing answers
+within 5 s, because ending a socket early now costs a resume rather than
+every stream.
 
 `AMIKA_HOSTD_TUNNEL_RESUME=0` offers v2 alone. The relay has its own switch,
 so either end can turn resume off without the other.
