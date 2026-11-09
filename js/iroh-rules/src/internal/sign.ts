@@ -61,7 +61,9 @@ export async function rulesPublicKey(privateKey: Uint8Array): Promise<string> {
  * The bytes a signature covers: `amika-iroh-rules-v1`, one zero byte, then
  * the payload bytes.
  */
-export function signedMessage(payloadBytes: Uint8Array): Uint8Array {
+export function signedMessage(
+  payloadBytes: Uint8Array,
+): Uint8Array<ArrayBuffer> {
   const prefix = new TextEncoder().encode(SIGNATURE_CONTEXT);
   const message = new Uint8Array(prefix.length + 1 + payloadBytes.length);
   message.set(prefix, 0);
@@ -85,8 +87,11 @@ async function importPrivateKey(seed: Uint8Array): Promise<SigningKey> {
 
 /** The public key of a private key, read from its JWK's `x`. */
 async function publicKeyOf(key: SigningKey): Promise<string> {
-  const jwk = await crypto.subtle.exportKey("jwk", key);
-  const publicKey = jwk.x === undefined ? null : fromBase64Url(jwk.x);
+  // Workers' types return `ArrayBuffer | JsonWebKey` for every format.
+  const jwk: unknown = await crypto.subtle.exportKey("jwk", key);
+  const x =
+    typeof jwk === "object" && jwk !== null && "x" in jwk ? jwk.x : null;
+  const publicKey = typeof x === "string" ? fromBase64Url(x) : null;
   if (publicKey === null || publicKey.length !== 32) {
     throw new Error("Web Crypto returned no Ed25519 public key");
   }

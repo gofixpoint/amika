@@ -152,7 +152,7 @@ const CLOSENESS: Record<SignatureRefusal, number> = {
 async function verifyEd25519(
   keyHex: string,
   sig: string,
-  message: Uint8Array,
+  message: Uint8Array<ArrayBuffer>,
 ): Promise<boolean> {
   const keyBytes = fromHex(keyHex);
   const sigBytes = fromBase64Url(sig);
@@ -179,7 +179,9 @@ function readPayload(
 ): { ok: true; rules: RulesPayload } | Refused {
   let json: unknown;
   try {
-    json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    json = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes),
+    );
   } catch (_error) {
     return refuse("malformed", "payload is not UTF-8 JSON");
   }
