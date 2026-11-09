@@ -334,14 +334,14 @@ func TestManagedSSHDClosesSessionsWhoseClientStopsAnswering(t *testing.T) {
 	}
 
 	// Ask the real sshd for the settings it applies from the managed
-	// config. The client gets 4 probes, 15 s apart, before sshd closes the
-	// session.
+	// config. The client gets 5 probes, 15 s apart, before sshd closes the
+	// session: 75 s, past the bridge's 60 s resume grace.
 	output, err := exec.Command(binary, "-T", "-f", paths.Config).CombinedOutput()
 	if err != nil {
 		t.Fatalf("sshd -T: %v\n%s", err, output)
 	}
 	effective := "\n" + string(output)
-	for _, setting := range []string{"clientaliveinterval 15", "clientalivecountmax 4"} {
+	for _, setting := range []string{"clientaliveinterval 15", "clientalivecountmax 5"} {
 		if !strings.Contains(effective, "\n"+setting+"\n") {
 			t.Fatalf("sshd does not apply %q:\n%s", setting, output)
 		}

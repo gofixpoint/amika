@@ -432,19 +432,24 @@ describe("a request named by its hostname", () => {
       named: { machine: "demo", service: "amikad" },
     });
 
-    expect(
-      await gateway.authorize(ssh("/v1/ssh-sessions"), { upgrade: true }),
-    ).toEqual({
-      kind: "forward",
-      surface: "service",
-      route: { machine: "demo", service: "amikad", path: "/v1/ssh-sessions" },
-      keyless: true,
-      setCookies: [],
-    });
+    // `/v2` is the resumable route, authenticated the same way.
+    for (const path of ["/v1/ssh-sessions", "/v2/ssh-sessions"]) {
+      expect(await gateway.authorize(ssh(path), { upgrade: true })).toEqual({
+        kind: "forward",
+        surface: "service",
+        route: { machine: "demo", service: "amikad", path },
+        keyless: true,
+        setCookies: [],
+      });
+    }
     // Nothing else: not as a plain request, not on another path, method
     // or query, and not on another service's name.
     const refused: [GatewayRequest, boolean][] = [
       [ssh("/v1/ssh-sessions"), false],
+      [ssh("/v2/ssh-sessions"), false],
+      [ssh("/v3/ssh-sessions"), true],
+      [ssh("/v2/ssh-sessions/"), true],
+      [ssh("/v2/ssh-sessions?x=1"), true],
       [ssh("/v1/exec"), true],
       [ssh("/v1/ssh-sessions/"), true],
       [ssh("/v1/ssh%2Dsessions"), true],

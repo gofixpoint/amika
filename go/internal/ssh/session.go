@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/config"
 	"github.com/gofixpoint/amika/go/internal/rigref"
+	"github.com/gofixpoint/amika/go/internal/sshresume"
 	"github.com/gofixpoint/amika/go/internal/wsstream"
 	cryptossh "golang.org/x/crypto/ssh"
 )
@@ -102,6 +104,13 @@ type Stream interface {
 // SessionDialer opens a binary stream with a credential sent outside argv.
 type SessionDialer interface {
 	Dial(context.Context, string, string) (Stream, error)
+}
+
+// ProxyDialer opens what the stdio proxy dials: a frame transport to amikad's
+// resumable route, or a byte stream to its /v1 route.
+type ProxyDialer interface {
+	SessionDialer
+	TransportDialer
 }
 
 // HostKeyPinStore atomically creates or verifies an alias-keyed known-host pin.
@@ -263,7 +272,7 @@ func renderSessionBlock(environment, proxyCommand, identityFile, knownHostsFile,
   UserKnownHostsFile %s
   ProxyCommand %s
   ServerAliveInterval 15
-  ServerAliveCountMax 3
+  ServerAliveCountMax 5
 `, knownHostsFile, proxyCommand)
 }
 
@@ -362,9 +371,17 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 }
 
 // ProxySession creates a fresh descriptor, pins its host key, dials it with
-// header credentials, and copies opaque bytes between OpenSSH standard I/O and
-// the WebSocket. It returns when the WebSocket closes or stops answering pings,
-// so OpenSSH sees the end of a session even with its own keepalive off.
+// header credentials, and carries OpenSSH's standard I/O to the rig's sshd.
+//
+// It dials amikad's resumable route first, unless the descriptor's
+// ssh_resume is false. That route outlives a dropped WebSocket: the proxy
+// keeps stdin and stdout open and resumes the session within amikad's grace
+// period, so OpenSSH sees only a pause. An amikad or hostd from before resume
+// answers 404 or 401 there, and the proxy then uses /v1, which carries raw
+// bytes and ends with its WebSocket. On /v1 the proxy returns when the
+// WebSocket closes or stops answering pings, so OpenSSH sees the end of a
+// session even with its own keepalive off. events gets one line per session
+// event; it never gets a secret, a token or session bytes.
 //
 // Pinning here, and not only in the commands that prepare a target, is what
 // lets a connection nobody prepared succeed. The web app's editor deep links
@@ -388,12 +405,16 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 func ProxySession(
 	ctx context.Context,
 	creator SessionCreator,
-	dialer SessionDialer,
+	dialer ProxyDialer,
 	pins HostKeyPinStore,
 	alias string,
 	stdin io.Reader,
 	stdout io.Writer,
+	events *slog.Logger,
 ) error {
+	if events == nil {
+		events = slog.New(slog.DiscardHandler)
+	}
 	parsed, err := ParseSessionAlias(alias)
 	if err != nil {
 		return err
@@ -402,6 +423,19 @@ func ProxySession(
 	if err != nil {
 		return err
 	}
+	if url, ok := resumeURL(session.ConnectURL); ok && session.ResumeEnabled() {
+		err := newResumeProxy(dialer, url, session.ConnectCredential, events).run(ctx, stdin, stdout)
+		if !errors.Is(err, errResumeUnsupported) {
+			return err
+		}
+	}
+	events.Info("ssh_bridge_open", slog.String("mode", "raw"))
+	return proxyRaw(ctx, dialer, session, stdin, stdout)
+}
+
+// proxyRaw copies opaque bytes between OpenSSH's standard I/O and amikad's
+// /v1 route until either side closes.
+func proxyRaw(ctx context.Context, dialer SessionDialer, session *apiclient.SSHSession, stdin io.Reader, stdout io.Writer) error {
 	stream, err := dialer.Dial(ctx, session.ConnectURL, session.ConnectCredential)
 	if err != nil {
 		return errors.New("failed to connect direct SSH transport")
@@ -417,9 +451,10 @@ type proxyLiveness struct {
 	timeout  time.Duration
 }
 
-// defaultProxyLiveness finds a dead transport in 45 s or less, the same bound
-// as the managed config's `ServerAliveInterval 15` and `ServerAliveCountMax 3`.
-// It also applies when the user turns off the SSH keepalive.
+// defaultProxyLiveness finds a dead /v1 transport in 45 s or less, inside the
+// managed config's 75 s keepalive (`ServerAliveInterval 15`,
+// `ServerAliveCountMax 5`). It also applies when the user turns off the SSH
+// keepalive. The resumable route has its own liveness, in sshresume.
 var defaultProxyLiveness = proxyLiveness{interval: 15 * time.Second, timeout: 30 * time.Second}
 
 // pingStream is a Stream that can prove that its transport still answers, and
@@ -564,6 +599,25 @@ func expectedStreamClose(err error) bool {
 // header and disables compression for opaque SSH ciphertext.
 type WebSocketDialer struct {
 	HTTPClient *http.Client
+}
+
+// DialTransport opens one frame transport to amikad's resumable route. A
+// refusal with an HTTP status comes back as a DialStatusError.
+func (d WebSocketDialer) DialTransport(ctx context.Context, connectURL, credential string) (sshresume.Transport, error) {
+	header := make(http.Header)
+	header.Set("Authorization", "Bearer "+credential)
+	connection, response, err := websocket.Dial(ctx, connectURL, &websocket.DialOptions{
+		HTTPClient:      d.HTTPClient,
+		HTTPHeader:      header,
+		CompressionMode: websocket.CompressionDisabled,
+	})
+	if err != nil {
+		if response != nil {
+			return nil, &DialStatusError{StatusCode: response.StatusCode}
+		}
+		return nil, errors.New("WebSocket SSH handshake failed")
+	}
+	return sshresume.NewWebSocketTransport(connection), nil
 }
 
 // Dial opens one bounded binary WebSocket stream.

@@ -376,8 +376,8 @@ session for that origin and nothing else:
   reverse proxy and the gateway both drop from what a caller sends, so
   neither reaches a name. A scripted caller uses the service route.
 - `amikad` takes no browser session. At its name it answers one request:
-  its SSH WebSocket, `GET /v1/ssh-sessions` as an upgrade, without the
-  host key, as at its service route. A tunnel host has no other address
+  its SSH WebSocket, `GET /v1/ssh-sessions` or `GET /v2/ssh-sessions` as
+  an upgrade, without the host key, as at its service route. A tunnel host has no other address
   an SSH client can dial, and amikad checks the connect token before it
   accepts the socket. Everything else at `amikad--<rig>` is `404`.
 
