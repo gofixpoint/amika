@@ -577,6 +577,10 @@ func TestStreamResumeSendsWelcomeThenResends(t *testing.T) {
 // FuzzStreamFrames sends arbitrary frame sequences to amikad's side of a
 // session. It must never panic. A model of the rules predicts which DATA
 // reach the sink and how the session ends; the stream must agree.
+//
+// Each input ends with a sentinel ABORT rather than a close: a closed peer
+// makes this side's next write fail, which drops the transport and rightly
+// leaves later frames unread, so the outcome would depend on timing.
 func FuzzStreamFrames(f *testing.F) {
 	encode := func(frames ...sshresume.Frame) []byte {
 		var input []byte
@@ -591,8 +595,9 @@ func FuzzStreamFrames(f *testing.F) {
 	f.Add(encode(sshresume.Frame{Type: sshresume.FramePing, Nonce: 1}, sshresume.Frame{Type: sshresume.FrameAck}))
 	f.Add(encode(sshresume.Frame{Type: sshresume.FrameData, Offset: 1, Payload: []byte("x")}))
 	f.Add([]byte{0, 2, 9, 9})
+	sentinel, _ := sshresume.MarshalFrame(sshresume.Frame{Type: sshresume.FrameAbort, Reason: fuzzSentinelReason})
 	f.Fuzz(func(t *testing.T, input []byte) {
-		frames := splitFrames(input)
+		frames := append(splitFrames(input), sentinel)
 		want := modelServer(frames)
 
 		sink := &syncBuffer{}
@@ -600,6 +605,7 @@ func FuzzStreamFrames(f *testing.F) {
 		defer sourceWriter.Close()
 		stream := sshresume.NewStream(sshresume.RoleServer, source, sink, sshresume.Options{Clock: resumetest.NewFakeClock()})
 		clientEnd, serverEnd := resumetest.Pipe(resumetest.NoFault)
+		defer clientEnd.Close(websocket.StatusNormalClosure)
 		attachment, err := stream.Attach(serverEnd, 0, false)
 		if err != nil {
 			t.Fatal(err)
@@ -616,19 +622,20 @@ func FuzzStreamFrames(f *testing.F) {
 				break
 			}
 		}
-		clientEnd.Close(websocket.StatusNormalClosure)
 		waitDone(t, attachment.Done(), "attachment")
 
 		if !bytes.Equal(sink.Bytes(), want.sink) {
 			t.Fatalf("sink has %d bytes, the model %d", sink.Len(), len(want.sink))
 		}
 		end, ended := stream.End()
-		if ended != want.ended || (ended && end != want.end) {
-			t.Fatalf("end = %v %s, the model %v %s", ended, end.Name(), want.ended, want.end.Name())
+		if !ended || end != want.end {
+			t.Fatalf("end = %v %s, the model %s", ended, end.Name(), want.end.Name())
 		}
-		stream.Expire()
 	})
 }
+
+// fuzzSentinelReason marks the ABORT FuzzStreamFrames appends to each input.
+const fuzzSentinelReason sshresume.AbortReason = 0xee
 
 func splitFrames(input []byte) [][]byte {
 	var frames [][]byte
