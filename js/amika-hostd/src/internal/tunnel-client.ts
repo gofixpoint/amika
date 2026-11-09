@@ -99,6 +99,12 @@ export interface ResumeSettings extends ResumeLimits {
   pingTimeoutMs: number;
   /** How many pings in a row a v3 socket may miss: 1, as a drop costs a resume. */
   maxMissedPings: number;
+  /**
+   * How long a dial made while the session waits for a resume may take.
+   * Short, so a dial stuck in TCP's retries during a silent break gives way
+   * to a fresh one soon after the path is back.
+   */
+  handshakeTimeoutMs: number;
 }
 
 /** The most unacknowledged bytes hostd keeps for a resend. */
@@ -108,6 +114,9 @@ export const DEFAULT_RESUME: ResumeSettings = {
   keepAliveIntervalMs: RESUME_KEEP_ALIVE_INTERVAL_MS,
   pingTimeoutMs: RESUME_PING_TIMEOUT_MS,
   maxMissedPings: RESUME_MAX_MISSED_PINGS,
+  // Above the relay's own wait for the control plane's answer (5 s), so a
+  // slow authorization still completes.
+  handshakeTimeoutMs: 6_000,
   graceMs: RESUME_GRACE_MS,
   maxReplayBytes: HOSTD_MAX_REPLAY_BYTES,
   // Producers pause once this much is unacknowledged, far below the log's
@@ -505,7 +514,12 @@ export class TunnelClient {
     const offer = this.session?.resumeOffer();
     const resume = this.options.resume;
     const dialed = await (this.options.dial ?? dialTunnel)(target, {
-      handshakeTimeoutMs: this.options.handshakeTimeoutMs,
+      // While a session waits for a resume, a dial must not wait out TCP's
+      // retries of a path that has since come back.
+      handshakeTimeoutMs:
+        offer && resume
+          ? resume.handshakeTimeoutMs
+          : this.options.handshakeTimeoutMs,
       userAgent: this.options.userAgent,
       protocols: resume
         ? [TUNNEL_SUBPROTOCOL_V3, TUNNEL_SUBPROTOCOL]
