@@ -103,7 +103,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `services/` — Shared sandbox-service logic used by CLI and API, e.g. `ValidatePort` (rejects out-of-range and reserved container ports)
 - `rigref/` — Parses rig references (a name or id, `name=`/`id=` to pin the field, `_self` for the current rig); rules for commands that take a rig are in [`go/cmd/amika/AGENTS.md`](go/cmd/amika/AGENTS.md)
 - `agentskill/` — Agent names, per-agent skill directories, and the copy behind `amika skill install`
-- `amikanet/` — The CLI's side of the `amika-net` iroh sidecar: finds the binary, keeps the device key, registers it with the control plane. `internal/ssh` runs SSH over `amika-net connect`
+- `amikanet/`: The CLI's side of the `amika-net` iroh sidecar: finds the binary, keeps the device key, registers it with the control plane. `internal/ssh` runs SSH over `amika-net connect`
 - `eventlog/` — amikalog's hook installer, event capture, and push (details in the package doc)
 
 ### Public Package (`go/pkg/amika/`)
