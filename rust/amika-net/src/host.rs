@@ -71,6 +71,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         .bind()
         .await?;
     net::spawn_home_relay_logger(&ep);
+    info!(id = %ep.id(), sockets = ?ep.bound_sockets(), "host bound");
     // Accept at once; a host with no relay never goes online.
     let ep2 = ep.clone();
     tokio::spawn(async move { net::report_online(&ep2, Duration::from_secs(15)).await });

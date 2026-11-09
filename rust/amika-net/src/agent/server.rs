@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -94,7 +94,8 @@ pub async fn run(args: RunArgs) -> Result<()> {
     result
 }
 
-/// Opens the agent's log file for appending. Moves a large old file aside.
+/// Opens the agent's log file for appending, with mode 0600: it names hosts
+/// and targets. Moves a large old file aside.
 pub fn open_log(path: &Path) -> Result<fs::File> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -105,6 +106,7 @@ pub fn open_log(path: &Path) -> Result<fs::File> {
     fs::OpenOptions::new()
         .create(true)
         .append(true)
+        .mode(0o600)
         .open(path)
         .with_context(|| format!("opening {}", path.display()))
 }

@@ -7,7 +7,7 @@
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpListener, UdpSocket},
+    net::{SocketAddr, TcpListener},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Output, Stdio},
     sync::mpsc,
@@ -76,14 +76,13 @@ impl Bed {
             format!("allowed_callers = [\"{client_id}\"]\n[rigs.r1]\n7 = \"{echo}\"\n"),
         )
         .unwrap();
-        let host_port = free_udp_port();
         let host_log = fs::File::create(dir.join("host.log")).unwrap();
         let host = Command::new(BIN)
             .args(["host", "--key-file"])
             .arg(&host_key)
             .arg("--config")
             .arg(&config)
-            .args(["--bind", &format!("127.0.0.1:{host_port}")])
+            .args(["--bind", "127.0.0.1:0"])
             .args(&opts.host)
             .stderr(host_log)
             .spawn()
@@ -95,16 +94,40 @@ impl Bed {
             client_key,
             host_id,
             host_relay: None,
-            host_port,
+            host_port: 0,
             host,
             opts,
             seen: Default::default(),
         };
+        bed.host_port = bed.wait_for_bind();
         bed.host_relay = bed.wait_for_host();
         bed
     }
 
-    /// Waits for the host to bind, and returns its home relay if it has one.
+    /// Waits for the host to bind, and returns its IPv4 UDP port. The host
+    /// picks the port itself: a port picked here could be taken by another
+    /// test's endpoint before the host binds it.
+    fn wait_for_bind(&self) -> u16 {
+        let log = self.dir.join("host.log");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            let text = fs::read_to_string(&log).unwrap_or_default();
+            let port = text
+                .lines()
+                .find(|l| l.contains("host bound"))
+                .and_then(|l| l.split("127.0.0.1:").nth(1))
+                .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|p| p.parse().ok());
+            if let Some(port) = port {
+                return port;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("host did not bind:\n{}", fs::read_to_string(&log).unwrap());
+    }
+
+    /// Waits for the host to come online, and returns its home relay if it
+    /// has one.
     fn wait_for_host(&self) -> Option<String> {
         let log = self.dir.join("host.log");
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -117,9 +140,8 @@ impl Bed {
                     .and_then(|r| r.split('"').next())
                     .map(str::to_string);
             }
-            if self.opts.host_addr && !self.opts.host.contains(&"--relay-only".to_string()) {
+            if self.opts.host_addr {
                 // An offline host never goes online; it is ready once bound.
-                thread::sleep(Duration::from_millis(300));
                 return None;
             }
             thread::sleep(Duration::from_millis(100));
@@ -413,14 +435,6 @@ fn start_echo_server() -> SocketAddr {
         }
     });
     addr
-}
-
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 fn next_id() -> usize {
