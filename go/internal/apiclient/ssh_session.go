@@ -28,7 +28,15 @@ type SSHSession struct {
 	SandboxID         string              `json:"sandbox_id"`
 	SSHUser           string              `json:"ssh_user"`
 	HostPublicKey     string              `json:"host_public_key"`
+	// SSHResume is the control plane's switch for end-to-end SSH resume. Nil
+	// (an older control plane) and true dial amikad's /v2 route; false dials
+	// /v1 at once.
+	SSHResume *bool `json:"ssh_resume,omitempty"`
 }
+
+// ResumeEnabled reports whether the proxy should try amikad's resumable
+// route first.
+func (s *SSHSession) ResumeEnabled() bool { return s.SSHResume == nil || *s.SSHResume }
 
 // CreateSSHPublicKeyRequest uploads one user-owned public key.
 type CreateSSHPublicKeyRequest struct {

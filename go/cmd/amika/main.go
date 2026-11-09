@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -58,6 +59,16 @@ func versionString() string {
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitCode is 1, or the status an error carries: the SSH stdio proxy exits
+// 255 when a session it could not resume ends.
+func exitCode(err error) int {
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		return coded.ExitCode()
+	}
+	return 1
 }

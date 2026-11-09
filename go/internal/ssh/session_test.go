@@ -8,11 +8,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/coder/websocket"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
+	"github.com/gofixpoint/amika/go/internal/sshresume"
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
@@ -89,6 +91,9 @@ func TestRenderSessionConfigScopesTheWildcardToOneEnvironment(t *testing.T) {
 		"UserKnownHostsFile /home/user/.ssh/amika_known_hosts",
 		"ProxyCommand /Users/dev/bin/amika-local plumbing ssh-stdio-proxy %h",
 		"ServerAliveInterval 15",
+		// 75 s: longer than amikad's 60 s resume grace, so the proxy's own
+		// limit decides first.
+		"ServerAliveCountMax 5",
 	} {
 		if !strings.Contains(config, line) {
 			t.Errorf("config missing %q:\n%s", line, config)
@@ -159,6 +164,8 @@ type fakeCreator struct {
 	hostKey string
 	// sshUser is the descriptor's login account; empty means the VM default.
 	sshUser string
+	// resume is the descriptor's ssh_resume; nil omits it.
+	resume *bool
 }
 
 type fakePinStore struct {
@@ -209,6 +216,7 @@ func (c *fakeCreator) CreateSSHSession(name string) (*apiclient.SSHSession, erro
 		SandboxID:         name,
 		SSHUser:           user,
 		HostPublicKey:     c.hostKey,
+		SSHResume:         c.resume,
 	}, nil
 }
 
@@ -228,11 +236,19 @@ func (s *proxyStream) Read(p []byte) (int, error) {
 func (s *proxyStream) Write(p []byte) (int, error) { return s.writes.Write(p) }
 func (s *proxyStream) Close() error                { return nil }
 
+// fakeSessionDialer serves /v1 only: its resumable route answers 404, as an
+// amikad from before resume does.
 type fakeSessionDialer struct {
 	stream     *proxyStream
 	url        string
 	credential string
 	calls      int
+	v2URL      string
+}
+
+func (d *fakeSessionDialer) DialTransport(_ context.Context, url, _ string) (sshresume.Transport, error) {
+	d.v2URL = url
+	return nil, &DialStatusError{StatusCode: http.StatusNotFound}
 }
 
 func (d *fakeSessionDialer) Dial(_ context.Context, url, credential string) (Stream, error) {
@@ -257,6 +273,7 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader("from-openssh"),
 		&stdout,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ProxySession: %v", err)
@@ -268,6 +285,9 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	// writes the known-hosts entry OpenSSH's strict checking demands.
 	if pins.calls != 1 || pins.alias != "my.team.sbx_123.localhost-3011.amika" || pins.key != creator.hostKey {
 		t.Fatalf("pin calls = %d alias = %q key = %q", pins.calls, pins.alias, pins.key)
+	}
+	if dialer.v2URL != "wss://sandbox.example/v2/ssh-sessions" {
+		t.Fatalf("resumable dial = %q", dialer.v2URL)
 	}
 	if dialer.url != "wss://sandbox.example/v1/ssh-sessions" || dialer.credential != testConnectToken() {
 		t.Fatalf("dial = %q credential %q", dialer.url, dialer.credential)
@@ -296,6 +316,7 @@ func TestProxySessionAcceptsNormalWebSocketClosure(t *testing.T) {
 		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader(""),
 		io.Discard,
+		nil,
 	); err != nil {
 		t.Fatalf("ProxySession normal close: %v", err)
 	}
@@ -314,6 +335,7 @@ func TestProxySessionRefusesToDialWhenTheHostKeyChanged(t *testing.T) {
 		"my.team.sbx_123.localhost-3011.amika",
 		strings.NewReader(""),
 		io.Discard,
+		nil,
 	)
 	if !errors.Is(err, ErrHostKeyMismatch) {
 		t.Fatalf("ProxySession error = %v, want %v", err, ErrHostKeyMismatch)
