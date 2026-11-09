@@ -51,6 +51,11 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	sandboxCmd.PersistentFlags().MarkHidden("local")
 	sandboxCmd.PersistentFlags().String("remote-target", "", "Operate on a specific named remote target")
 	sandboxCmd.PersistentFlags().MarkHidden("remote-target")
+	// Only `rig ssh` reads it. It is here, not on `ssh`, because amika's
+	// flags go before "ssh", and Cobra must know it takes no value to find
+	// the subcommand after it.
+	sandboxCmd.PersistentFlags().Bool("new-device-key", false, "Replace this machine's amika-net device key before connecting")
+	sandboxCmd.PersistentFlags().MarkHidden("new-device-key")
 
 	addProviderFlag(sandboxCreateCmd)
 	// Superseded by the positional <name>; kept, hidden, so existing scripts

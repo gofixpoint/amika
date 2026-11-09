@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
@@ -311,6 +312,70 @@ func TestAFailedRegistrationIsNotRecorded(t *testing.T) {
 	working := &fakeRegistrar{}
 	if _, err := registrations.Ensure(prodUser, working, key); err != nil || len(working.requests) != 1 {
 		t.Fatalf("retry: %v, %d requests", err, len(working.requests))
+	}
+}
+
+func TestARevokedKeyStaysRefusedUntilTheKeyChanges(t *testing.T) {
+	for _, body := range []string{`{"error":"device_revoked"}`, `{"code":"device_revoked"}`} {
+		t.Run(body, func(t *testing.T) {
+			registrations := testRegistrations(t)
+			key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+			registrar := &fakeRegistrar{err: &apiclient.HTTPError{StatusCode: 409, Body: body}}
+			for i := range 3 {
+				_, err := registrations.Ensure(prodUser, registrar, key)
+				var refused *RefusedError
+				if !errors.Is(err, ErrKeyRevoked) || !errors.As(err, &refused) || refused.Fresh != (i == 0) {
+					t.Fatalf("run %d: err = %v", i, err)
+				}
+			}
+			if len(registrar.requests) != 1 {
+				t.Fatalf("requests = %d, want 1", len(registrar.requests))
+			}
+			working := &fakeRegistrar{}
+			newKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, ed25519.SeedSize))
+			if _, err := registrations.Ensure(prodUser, working, newKey); err != nil || len(working.requests) != 1 {
+				t.Fatalf("new key: err = %v, requests = %d", err, len(working.requests))
+			}
+		})
+	}
+}
+
+func TestNewDeviceKeyPreservesTheOldKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "amika-net", "device.key")
+	key, err := LoadOrCreateDeviceKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 9, 20, 0, 0, 0, time.UTC)
+	old, err := NewDeviceKey(path, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := loadDeviceKey(old)
+	if err != nil || !backup.Equal(key) {
+		t.Fatal("the old key was not preserved")
+	}
+	current, err := loadDeviceKey(path)
+	if err != nil || current.Equal(key) {
+		t.Fatal("the replacement key is missing or unchanged")
+	}
+	if _, err := NewDeviceKey(path, now); err == nil {
+		t.Fatal("replacing a key overwrote an existing backup")
+	}
+	again, err := loadDeviceKey(path)
+	if err != nil || !again.Equal(current) {
+		t.Fatal("a failed backup changed the current key")
+	}
+}
+
+func TestNewDeviceKeyCanCreateTheFirstKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "amika-net", "device.key")
+	old, err := NewDeviceKey(path, time.Now())
+	if err != nil || old != "" {
+		t.Fatalf("old = %q, err = %v", old, err)
+	}
+	if _, err := loadDeviceKey(path); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -8,6 +8,7 @@ package sandboxcmd
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"reflect"
 	"slices"
@@ -56,6 +57,7 @@ func sshV2TestTree() (*cobra.Command, *cobra.Command) {
 		// Mirrors the real tree's hidden registration of the retired --local.
 		sshV2Parent.PersistentFlags().Bool("local", false, "Removed; rigs are always remote")
 		sshV2Parent.PersistentFlags().MarkHidden("local")
+		sshV2Parent.PersistentFlags().Bool("new-device-key", false, "Replace the device key")
 		sshV2Root.AddCommand(sshV2Parent)
 	})
 	return sshV2Root, sshV2Parent
@@ -99,7 +101,7 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 	// the command's parse and its reads go through Flags(), so resetting there
 	// is what the command actually observes.
 	_ = sandboxSSHV2Cmd.InheritedFlags()
-	for _, name := range []string{"local", "remote", "remote-target", "output", "transport"} {
+	for _, name := range []string{"local", "remote", "remote-target", "output", "transport", "new-device-key"} {
 		resetSSHV2Flag(t, sandboxSSHV2Cmd.Flags().Lookup(name))
 	}
 
@@ -109,6 +111,52 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 	// procArgs carries the binary path at index 0; Cobra wants only the rest.
 	root.SetArgs(procArgs[1:])
 	return root, h, out
+}
+
+func TestSSHV2VerbosePassesToTheProxy(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMIKA_BINARY_PATH", binary)
+	for _, option := range []string{"-v", "-Nvvv"} {
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", option, "my-box"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"-o", "ProxyCommand=" + binary + " plumbing ssh-stdio-proxy --verbose %h", option, testV2Alias}
+		if !reflect.DeepEqual(h.argv, want) {
+			t.Fatalf("ssh argv = %q, want %q", h.argv, want)
+		}
+	}
+}
+
+func TestSSHV2NewDeviceKeyIsExplicit(t *testing.T) {
+	previous := makeNewDeviceKey
+	t.Cleanup(func() { makeNewDeviceKey = previous })
+	calls := 0
+	makeNewDeviceKey = func(io.Writer) error { calls++; return nil }
+	for _, replace := range []bool{false, true} {
+		args := []string{"amika", "sandbox"}
+		if replace {
+			args = append(args, "--new-device-key")
+		}
+		args = append(args, "ssh", "my-box")
+		root, h, _ := newSSHV2Harness(t, args)
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(h.argv, []string{testV2Alias}) {
+			t.Fatalf("ssh argv = %q", h.argv)
+		}
+		wantCalls := 0
+		if replace {
+			wantCalls = 1
+		}
+		if calls != wantCalls {
+			t.Fatalf("key replacements = %d, want %d", calls, wantCalls)
+		}
+	}
 }
 
 // resetSSHV2Flag restores a flag to its declared default and clears Changed.

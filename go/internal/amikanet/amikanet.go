@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
@@ -167,6 +168,29 @@ func createDeviceKey(path string) (ed25519.PrivateKey, error) {
 	return loadDeviceKey(path)
 }
 
+// NewDeviceKey moves the key file at path aside, to
+// `device.key.old-<UTC time>`, and makes a new key there. It returns where
+// the old file went, or "" when there was none. The new key's endpoint id
+// is new, so the next run registers it as a new device.
+func NewDeviceKey(path string, now time.Time) (string, error) {
+	old := ""
+	if _, err := os.Lstat(path); err == nil {
+		old = path + ".old-" + now.UTC().Format("20060102T150405Z")
+		if err := os.Link(path, old); err != nil {
+			return "", fmt.Errorf("back up the old device key: %w", err)
+		}
+		if err := os.Remove(path); err != nil {
+			return old, fmt.Errorf("remove the old device key: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if _, err := createDeviceKey(path); err != nil {
+		return old, err
+	}
+	return old, nil
+}
+
 // EndpointID is the key's iroh endpoint id: its public key in lowercase hex.
 func EndpointID(key ed25519.PrivateKey) string {
 	return hex.EncodeToString(key.Public().(ed25519.PublicKey))
@@ -181,6 +205,21 @@ type Registrar interface {
 // because another user registered it: two Amika accounts on one machine
 // share the key file. That account uses direct_ws.
 var ErrKeyTaken = errors.New("the amika-net device key is registered to another user")
+
+// ErrKeyRevoked means the user deleted this device, so the control plane
+// refuses its key. A new key (NewDeviceKey) registers as a new device.
+var ErrKeyRevoked = errors.New("this device's amika-net key was removed from the account")
+
+// RefusedError is a registration the control plane refused: Err is
+// ErrKeyTaken or ErrKeyRevoked. Fresh is true only for the run that got
+// the refusal from the control plane; later runs read it from the record.
+type RefusedError struct {
+	Err   error
+	Fresh bool
+}
+
+func (e *RefusedError) Error() string { return e.Err.Error() }
+func (e *RefusedError) Unwrap() error { return e.Err }
 
 // Account names who registers the key: a control plane and a user on it.
 // A second account on the same machine registers for itself.
@@ -207,6 +246,8 @@ type registration struct {
 	// Taken records a refusal because another user has the key, so the
 	// CLI does not ask again on every run.
 	Taken bool `json:"taken,omitempty"`
+	// Revoked records a refusal because the user deleted this device.
+	Revoked bool `json:"revoked,omitempty"`
 }
 
 type registrationsFile struct {
@@ -225,16 +266,20 @@ func OpenRegistrations(paths basedir.Paths) (Registrations, error) {
 
 // Ensure registers key for account unless a record says the account
 // already has this endpoint id. It returns the device id. It returns
-// ErrKeyTaken, without a request after the first, when the control plane
-// answers 409 because another user has the key.
+// a RefusedError, without a request after the first, when the control
+// plane answers 409: `device_revoked` for a deleted device, and any other
+// 409 (`device_key_taken`) because another user has the key.
 func (r Registrations) Ensure(account Account, registrar Registrar, key ed25519.PrivateKey) (string, error) {
 	if account.APIURL == "" || account.UserID == "" {
 		return "", errors.New("register device: no logged-in account")
 	}
 	endpointID := EndpointID(key)
 	if record, ok := r.load().ByAccount[account.recordKey()]; ok && record.EndpointID == endpointID {
+		if record.Revoked {
+			return "", &RefusedError{Err: ErrKeyRevoked}
+		}
 		if record.Taken {
-			return "", ErrKeyTaken
+			return "", &RefusedError{Err: ErrKeyTaken}
 		}
 		if record.DeviceID != "" {
 			return record.DeviceID, nil
@@ -247,10 +292,15 @@ func (r Registrations) Ensure(account Account, registrar Registrar, key ed25519.
 	})
 	var httpErr *apiclient.HTTPError
 	if errors.As(err, &httpErr) && httpErr.StatusCode == 409 {
-		if saveErr := r.put(account, registration{EndpointID: endpointID, Taken: true}); saveErr != nil {
+		record := registration{EndpointID: endpointID, Taken: true}
+		refusal := ErrKeyTaken
+		if refusalCode(httpErr) == "device_revoked" {
+			record, refusal = registration{EndpointID: endpointID, Revoked: true}, ErrKeyRevoked
+		}
+		if saveErr := r.put(account, record); saveErr != nil {
 			return "", fmt.Errorf("record device registration: %w", saveErr)
 		}
-		return "", ErrKeyTaken
+		return "", &RefusedError{Err: refusal, Fresh: true}
 	}
 	if err != nil {
 		return "", err
@@ -259,6 +309,21 @@ func (r Registrations) Ensure(account Account, registrar Registrar, key ed25519.
 		return "", fmt.Errorf("record device registration: %w", err)
 	}
 	return device.DeviceID, nil
+}
+
+// refusalCode is the 409 body's code: `{"error": "<code>"}` from the
+// devices contract, or the API's usual `code` field.
+func refusalCode(httpErr *apiclient.HTTPError) string {
+	var body struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal([]byte(httpErr.Body), &body) == nil {
+		var code string
+		if json.Unmarshal(body.Error, &code) == nil && code != "" {
+			return code
+		}
+	}
+	return httpErr.Code()
 }
 
 // Forget drops account's record, so the next Ensure registers again. The

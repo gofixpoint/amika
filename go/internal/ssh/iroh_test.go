@@ -285,12 +285,16 @@ func TestProxySessionCarriesSSHOverIroh(t *testing.T) {
 	creator := &irohCreator{rig: rig}
 	direct := &countingDialer{WebSocketDialer: WebSocketDialer{HTTPClient: rig.tls.Client()}}
 
-	events, err := sshThroughProxy(t, rig, creator, direct, ProxyOptions{Iroh: rig.route()}, []byte("over iroh"))
+	notice := &bytes.Buffer{}
+	events, err := sshThroughProxy(t, rig, creator, direct, ProxyOptions{Iroh: rig.route(), Notice: notice}, []byte("over iroh"))
 	if err != nil {
 		t.Fatalf("proxy exit = %v", err)
 	}
 	if direct.dials.Load() != 0 {
 		t.Fatalf("direct_ws dials = %d, want 0", direct.dials.Load())
+	}
+	if notice.String() != "amika: SSH transport: iroh\n" {
+		t.Fatalf("notice = %q", notice.String())
 	}
 	wantTransports := []apiclient.SSHSessionTransport{apiclient.SSHSessionTransportDirectWS, apiclient.SSHSessionTransportIroh}
 	if !reflect.DeepEqual(creator.transports, [][]apiclient.SSHSessionTransport{wantTransports}) {
@@ -328,7 +332,8 @@ func TestProxySessionUsesDirectWSForAnIrohDescriptorWithNoRelay(t *testing.T) {
 	var forgot atomic.Int32
 	route.Forget = func() { forgot.Add(1) }
 
-	events, err := sshThroughProxy(t, rig, &noRelayCreator{irohCreator{rig: rig}}, direct, ProxyOptions{Iroh: route}, []byte("no relay"))
+	notice := &bytes.Buffer{}
+	events, err := sshThroughProxy(t, rig, &noRelayCreator{irohCreator{rig: rig}}, direct, ProxyOptions{Iroh: route, Notice: notice}, []byte("no relay"))
 	if err != nil {
 		t.Fatalf("proxy exit = %v", err)
 	}
@@ -337,6 +342,9 @@ func TestProxySessionUsesDirectWSForAnIrohDescriptorWithNoRelay(t *testing.T) {
 	}
 	if !strings.Contains(events, `"msg":"ssh_transport_fallback","from":"iroh","reason":"the iroh descriptor has no relay_url"`) {
 		t.Fatalf("events = %s", events)
+	}
+	if notice.String() != "amika: SSH transport: direct_ws (fallback from iroh: the iroh descriptor has no relay_url)\n" {
+		t.Fatalf("notice = %q", notice.String())
 	}
 
 	events, err = sshThroughProxy(t, rig, &noRelayCreator{irohCreator{rig: rig}}, direct, ProxyOptions{Transport: TransportIroh, Iroh: route}, nil)
@@ -486,21 +494,32 @@ func TestProxySessionNamesTheFlagWhenTheServerCannotGiveIroh(t *testing.T) {
 	}
 }
 
-func TestTransportProxyCommandOption(t *testing.T) {
+func TestProxyCommandOption(t *testing.T) {
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AMIKA_BINARY_PATH", binary)
-	option, err := TransportProxyCommandOption(TransportIroh)
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		transport ProxyTransport
+		verbose   bool
+		flags     string
+	}{
+		{TransportIroh, false, " --transport iroh"},
+		{TransportDirectWS, true, " --transport direct_ws --verbose"},
+		{TransportAuto, true, " --verbose"},
+	} {
+		option, err := ProxyCommandOption(tc.transport, tc.verbose)
+		want := "ProxyCommand=" + binary + " plumbing ssh-stdio-proxy" + tc.flags + " %h"
+		if err != nil || option != want {
+			t.Fatalf("option = %q, %v; want %q", option, err, want)
+		}
 	}
-	if option != "ProxyCommand="+binary+" plumbing ssh-stdio-proxy --transport iroh %h" {
-		t.Fatalf("option = %q", option)
+	if option, err := ProxyCommandOption(TransportAuto, false); err != nil || option != "" {
+		t.Fatalf("auto option = %q, %v", option, err)
 	}
-	if _, err := TransportProxyCommandOption(TransportAuto); err == nil {
-		t.Fatal("TransportAuto gave an option")
+	if _, err := ProxyCommandOption(ProxyTransport("unknown"), false); err == nil {
+		t.Fatal("an unknown transport gave an option")
 	}
 }
 
@@ -545,8 +564,8 @@ func TestPrepareIrohRouteMakesAndRegistersTheDeviceKey(t *testing.T) {
 		FindBinary: func() (string, error) { return "/opt/amika/amika-net", nil },
 	}
 	for range 2 {
-		route, err := PrepareIrohRoute(setup, TransportAuto, slog.New(slog.DiscardHandler))
-		if err != nil || route == nil || route.Binary != "/opt/amika/amika-net" {
+		route, why, err := PrepareIrohRoute(setup, TransportAuto, slog.New(slog.DiscardHandler))
+		if err != nil || why != "" || route == nil || route.Binary != "/opt/amika/amika-net" {
 			t.Fatalf("route = %+v, %v", route, err)
 		}
 		keyFile, _ := amikanet.DeviceKeyFile(paths)
@@ -571,21 +590,21 @@ func TestPrepareIrohRouteReportsAMissingBinaryOnce(t *testing.T) {
 		FindBinary: func() (string, error) { return "", amikanet.ErrNotInstalled },
 	}
 	events := &lockedBuffer{}
-	route, err := PrepareIrohRoute(missing, TransportAuto, slog.New(slog.NewJSONHandler(events, nil)))
-	if err != nil || route != nil {
+	route, why, err := PrepareIrohRoute(missing, TransportAuto, slog.New(slog.NewJSONHandler(events, nil)))
+	if err != nil || route != nil || !strings.Contains(why, "amika-net") {
 		t.Fatalf("route = %+v, %v", route, err)
 	}
 	if strings.Count(events.String(), "\n") != 1 || !strings.Contains(events.String(), `"reason":"amika_net_missing"`) {
 		t.Fatalf("events = %s", events.String())
 	}
 
-	if _, err := PrepareIrohRoute(missing, TransportIroh, slog.New(slog.DiscardHandler)); !errors.Is(err, amikanet.ErrNotInstalled) {
+	if _, _, err := PrepareIrohRoute(missing, TransportIroh, slog.New(slog.DiscardHandler)); !errors.Is(err, amikanet.ErrNotInstalled) {
 		t.Fatalf("--transport iroh: err = %v", err)
 	}
 
 	looked := false
 	missing.FindBinary = func() (string, error) { looked = true; return "", amikanet.ErrNotInstalled }
-	if route, err := PrepareIrohRoute(missing, TransportDirectWS, slog.New(slog.DiscardHandler)); route != nil || err != nil || looked {
+	if route, why, err := PrepareIrohRoute(missing, TransportDirectWS, slog.New(slog.DiscardHandler)); route != nil || why != "" || err != nil || looked {
 		t.Fatalf("--transport direct_ws: route %+v, err %v, looked %v", route, err, looked)
 	}
 }
@@ -601,7 +620,7 @@ func TestPrepareIrohRouteUsesDirectWSWhenAnotherUserHasTheKey(t *testing.T) {
 	}
 	events := &lockedBuffer{}
 	for range 3 {
-		route, err := PrepareIrohRoute(setup, TransportAuto, slog.New(slog.NewJSONHandler(events, nil)))
+		route, _, err := PrepareIrohRoute(setup, TransportAuto, slog.New(slog.NewJSONHandler(events, nil)))
 		if err != nil || route != nil {
 			t.Fatalf("route = %+v, %v", route, err)
 		}
@@ -612,7 +631,30 @@ func TestPrepareIrohRouteUsesDirectWSWhenAnotherUserHasTheKey(t *testing.T) {
 	if !strings.Contains(events.String(), `"reason":"device_key_taken"`) {
 		t.Fatalf("events = %s", events.String())
 	}
-	if _, err := PrepareIrohRoute(setup, TransportIroh, slog.New(slog.DiscardHandler)); !errors.Is(err, amikanet.ErrKeyTaken) {
+	if _, _, err := PrepareIrohRoute(setup, TransportIroh, slog.New(slog.DiscardHandler)); !errors.Is(err, amikanet.ErrKeyTaken) {
 		t.Fatalf("--transport iroh: err = %v", err)
+	}
+}
+
+func TestPrepareIrohRouteExplainsARevokedKeyOnce(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	stderr := &bytes.Buffer{}
+	registrar := &countingRegistrar{err: &apiclient.HTTPError{StatusCode: 409, Body: `{"error":"device_revoked"}`}}
+	setup := IrohSetup{
+		Paths: basedir.New(t.TempDir()), Account: testAccount, Registrar: registrar,
+		FindBinary: func() (string, error) { return "/opt/amika/amika-net", nil },
+		Stderr:     stderr,
+	}
+	for range 3 {
+		route, why, err := PrepareIrohRoute(setup, TransportAuto, slog.New(slog.DiscardHandler))
+		if route != nil || err != nil || !strings.Contains(why, "removed") {
+			t.Fatalf("route = %+v, reason = %q, err = %v", route, why, err)
+		}
+	}
+	if registrar.calls != 1 || strings.Count(stderr.String(), "--new-device-key") != 1 {
+		t.Fatalf("registrations = %d, stderr = %q", registrar.calls, stderr.String())
+	}
+	if _, _, err := PrepareIrohRoute(setup, TransportIroh, slog.New(slog.DiscardHandler)); !errors.Is(err, amikanet.ErrKeyRevoked) {
+		t.Fatalf("forced iroh error = %v", err)
 	}
 }

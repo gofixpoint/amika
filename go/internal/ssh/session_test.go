@@ -417,6 +417,7 @@ func TestProxySessionExitsWhenTheTransportClosesFirst(t *testing.T) {
 					stdin,
 					&stdout,
 					nil,
+					ProxyOptions{},
 				)
 			}()
 			select {

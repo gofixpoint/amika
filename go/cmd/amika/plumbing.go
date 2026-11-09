@@ -47,13 +47,18 @@ var sshStdioProxyCmd = &cobra.Command{
 		// An identity that cannot be read leaves UserID empty, and the
 		// registration then fails and is logged: SSH goes over direct_ws.
 		userID, _ := apiclient.CredentialIdentity()
-		iroh, err := ssh.PrepareIrohRoute(ssh.IrohSetup{
+		iroh, irohUnavailable, err := ssh.PrepareIrohRoute(ssh.IrohSetup{
 			Paths:     paths,
 			Account:   amikanet.Account{APIURL: client.BaseURL, UserID: userID},
 			Registrar: client,
+			Stderr:    cmd.ErrOrStderr(),
 		}, transport, events)
 		if err != nil {
 			return err
+		}
+		options := ssh.ProxyOptions{Transport: transport, Iroh: iroh, IrohUnavailable: irohUnavailable}
+		if verbose, _ := cmd.Flags().GetBool("verbose"); verbose {
+			options.Notice = cmd.ErrOrStderr()
 		}
 		return ssh.ProxySession(
 			cmd.Context(),
@@ -64,7 +69,7 @@ var sshStdioProxyCmd = &cobra.Command{
 			cmd.InOrStdin(),
 			cmd.OutOrStdout(),
 			events,
-			ssh.ProxyOptions{Transport: transport, Iroh: iroh},
+			options,
 		)
 	},
 }
@@ -75,4 +80,7 @@ func init() {
 	// Testing only: `amika rig ssh --transport` passes it on.
 	sshStdioProxyCmd.Flags().String("transport", "", "use one SSH transport: iroh or direct_ws")
 	_ = sshStdioProxyCmd.Flags().MarkHidden("transport")
+	// `amika rig ssh -v` passes it on: one stderr line names the transport.
+	sshStdioProxyCmd.Flags().Bool("verbose", false, "print the SSH transport on stderr")
+	_ = sshStdioProxyCmd.Flags().MarkHidden("verbose")
 }
