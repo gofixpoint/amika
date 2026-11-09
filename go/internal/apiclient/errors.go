@@ -46,6 +46,16 @@ func (e *HTTPError) UserMessage() string {
 	return e.Body
 }
 
+// message returns the human-readable message alone, or the raw body when
+// the response has none.
+func (e *HTTPError) message() string {
+	var resp APIErrorResponse
+	if json.Unmarshal([]byte(e.Body), &resp) == nil && resp.Message != "" {
+		return resp.Message
+	}
+	return e.Body
+}
+
 // Code returns the stable machine-readable error code from a structured API
 // error response, or "" when the body carries none.
 func (e *HTTPError) Code() string {

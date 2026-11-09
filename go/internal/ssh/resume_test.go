@@ -492,7 +492,7 @@ func TestProxySessionFallsBackToV1(t *testing.T) {
 			stream := &proxyStream{read: bytes.NewReader([]byte("from-sshd"))}
 			dialer := &statusDialer{status: tc.status, v1: &fakeSessionDialer{stream: stream}}
 			var stdout bytes.Buffer
-			err := ProxySession(context.Background(), creator, dialer, &fakePinStore{}, "my.team.sbx_123.localhost-3011.amika", strings.NewReader("x"), &stdout, nil)
+			err := ProxySession(context.Background(), creator, dialer, &fakePinStore{}, "my.team.sbx_123.localhost-3011.amika", strings.NewReader("x"), &stdout, nil, ProxyOptions{})
 			if err != nil {
 				t.Fatalf("ProxySession: %v", err)
 			}
@@ -747,7 +747,7 @@ type urlCreator struct {
 	hostKey    string
 }
 
-func (c urlCreator) CreateSSHSession(id string) (*apiclient.SSHSession, error) {
+func (c urlCreator) CreateSSHSession(id string, _ []apiclient.SSHSessionTransport) (*apiclient.SSHSession, error) {
 	return &apiclient.SSHSession{
 		SessionID:         "sshs_1",
 		Transport:         apiclient.SSHSessionTransportDirectWS,
@@ -846,7 +846,7 @@ func TestProxySessionResumesOverRealWebSockets(t *testing.T) {
 	proxyEnd, opensshEnd := net.Pipe()
 	result := make(chan error, 1)
 	go func() {
-		result <- ProxySession(context.Background(), creator, dialer, &fakePinStore{}, "my.team.sbx_123.localhost-3011.amika", proxyEnd, proxyEnd, nil)
+		result <- ProxySession(context.Background(), creator, dialer, &fakePinStore{}, "my.team.sbx_123.localhost-3011.amika", proxyEnd, proxyEnd, nil, ProxyOptions{})
 	}()
 
 	connection, channels, requests, err := cryptossh.NewClientConn(opensshEnd, "rig", &cryptossh.ClientConfig{
@@ -908,7 +908,7 @@ func TestProxySessionUsesV1AgainstAnOldAmikad(t *testing.T) {
 	events := &lockedBuffer{}
 	result := make(chan error, 1)
 	go func() {
-		result <- ProxySession(context.Background(), creator, WebSocketDialer{HTTPClient: server.Client()}, &fakePinStore{}, "my.team.sbx_123.localhost-3011.amika", proxyEnd, proxyEnd, slog.New(slog.NewJSONHandler(events, nil)))
+		result <- ProxySession(context.Background(), creator, WebSocketDialer{HTTPClient: server.Client()}, &fakePinStore{}, "my.team.sbx_123.localhost-3011.amika", proxyEnd, proxyEnd, slog.New(slog.NewJSONHandler(events, nil)), ProxyOptions{})
 	}()
 	connection, channels, requests, err := cryptossh.NewClientConn(opensshEnd, "rig", &cryptossh.ClientConfig{
 		User:            "amika",

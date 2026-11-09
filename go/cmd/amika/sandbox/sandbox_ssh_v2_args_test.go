@@ -8,6 +8,7 @@ package sandboxcmd
 
 import (
 	"bytes"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -30,6 +31,10 @@ type sshV2Harness struct {
 	argv  []string
 	alias string
 	ran   bool
+	// creator is what prepareSessionTarget received, and client the API
+	// client behind it.
+	creator ssh.SessionCreator
+	client  *stubV2SSHClient
 }
 
 // sandboxSSHV2Cmd is a package-level singleton and New() may be called only
@@ -73,10 +78,10 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 		h.ran, h.alias, h.argv = true, alias, argv
 		return nil
 	}
-	newSSHV2Client = func(string) (sshV2Client, error) {
-		return &stubV2SSHClient{sandbox: &apiclient.RemoteSandbox{Name: "my-box", ID: "sb_abc"}}, nil
-	}
-	prepareSessionTarget = func(basedir.Paths, ssh.SessionCreator, string, string) (string, error) {
+	h.client = &stubV2SSHClient{sandbox: &apiclient.RemoteSandbox{Name: "my-box", ID: "sb_abc"}}
+	newSSHV2Client = func(string) (sshV2Client, error) { return h.client, nil }
+	prepareSessionTarget = func(_ basedir.Paths, creator ssh.SessionCreator, _, _ string) (string, error) {
+		h.creator = creator
 		return testV2Alias, nil
 	}
 	t.Cleanup(func() {
@@ -94,7 +99,7 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 	// the command's parse and its reads go through Flags(), so resetting there
 	// is what the command actually observes.
 	_ = sandboxSSHV2Cmd.InheritedFlags()
-	for _, name := range []string{"local", "remote", "remote-target", "output"} {
+	for _, name := range []string{"local", "remote", "remote-target", "output", "transport"} {
 		resetSSHV2Flag(t, sandboxSSHV2Cmd.Flags().Lookup(name))
 	}
 
@@ -349,4 +354,52 @@ func TestSSHV2ForwardsRemoteCommandLocalFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The hidden --transport goes into the session's own ProxyCommand on the ssh
+// command line, and the create request at prepare time asks for that
+// transport alone, so one the server cannot give fails before ssh starts.
+func TestSSHV2TransportFlag(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMIKA_BINARY_PATH", binary)
+	for _, transport := range []string{"iroh", "direct_ws"} {
+		t.Run(transport, func(t *testing.T) {
+			root, h, out := newSSHV2Harness(t, []string{"amika", "sandbox", "--transport", transport, "ssh", "-N", "my-box"})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("Execute: %v (output %q)", err, out.String())
+			}
+			wantArgv := []string{"-o", "ProxyCommand=" + binary + " plumbing ssh-stdio-proxy --transport " + transport + " %h", "-N", testV2Alias}
+			if !reflect.DeepEqual(h.argv, wantArgv) {
+				t.Fatalf("ssh argv = %#v, want %#v", h.argv, wantArgv)
+			}
+			_, _ = h.creator.CreateSSHSession("sb_abc", nil)
+			want := []apiclient.SSHSessionTransport{apiclient.SSHSessionTransport(transport)}
+			if !reflect.DeepEqual(h.client.transports, want) {
+				t.Fatalf("create request transports = %v, want %v", h.client.transports, want)
+			}
+		})
+	}
+
+	t.Run("no flag keeps the managed ProxyCommand", func(t *testing.T) {
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", "my-box"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(h.argv, []string{testV2Alias}) {
+			t.Fatalf("ssh argv = %#v", h.argv)
+		}
+	})
+
+	t.Run("unknown transport", func(t *testing.T) {
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--transport", "tunnel", "ssh", "my-box"})
+		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown --transport") {
+			t.Fatalf("err = %v", err)
+		}
+		if h.ran {
+			t.Fatal("ssh ran")
+		}
+	})
 }

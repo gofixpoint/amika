@@ -89,8 +89,10 @@ type SessionConfig struct {
 }
 
 // SessionCreator creates a fresh transport descriptor for each SSH dial.
+// transports lists the transports the caller can use; nil asks for the
+// server's default, direct_ws.
 type SessionCreator interface {
-	CreateSSHSession(string) (*apiclient.SSHSession, error)
+	CreateSSHSession(sandboxID string, transports []apiclient.SSHSessionTransport) (*apiclient.SSHSession, error)
 }
 
 // Stream is the binary WebSocket abstraction used by the stdio proxy.
@@ -189,6 +191,24 @@ func BuildProxyCommand(binaryPath string) (string, error) {
 		return "", ErrUnsafeBinaryPath
 	}
 	return binaryPath + proxyCommandSuffix, nil
+}
+
+// TransportProxyCommandOption returns the ssh `-o` value for one session's
+// ProxyCommand that passes `--transport` to the stdio proxy. `rig ssh
+// --transport` puts it on the ssh command line, where it wins over the
+// managed config's ProxyCommand; the managed config never holds it.
+func TransportProxyCommandOption(transport ProxyTransport) (string, error) {
+	if transport != TransportIroh && transport != TransportDirectWS {
+		return "", fmt.Errorf("unknown SSH transport %q", transport)
+	}
+	binaryPath, err := config.BinaryPath()
+	if err != nil {
+		return "", err
+	}
+	if !safeProxyBinaryPath(binaryPath) {
+		return "", ErrUnsafeBinaryPath
+	}
+	return "ProxyCommand=" + binaryPath + " plumbing ssh-stdio-proxy --transport " + string(transport) + " %h", nil
 }
 
 // ParseProxyCommand returns the executable path from a managed ProxyCommand
@@ -295,12 +315,13 @@ func PrepareSessionHost(
 	pins HostKeyPinStore,
 	sandboxID string,
 	alias string,
+	transports []apiclient.SSHSessionTransport,
 ) (*apiclient.SSHSession, error) {
 	parsed, err := ParseSessionAlias(alias)
 	if err != nil || parsed.ID != sandboxID {
 		return nil, ErrHostKeyMismatch
 	}
-	session, err := creator.CreateSSHSession(sandboxID)
+	session, err := creator.CreateSSHSession(sandboxID, transports)
 	if err != nil {
 		return nil, err
 	}
@@ -380,6 +401,12 @@ func PrepareProxy(paths basedir.Paths, warnings io.Writer) (HostKeyPinStore, err
 // bytes and ends with its WebSocket. events gets one line per session event;
 // it never gets a secret, a token or session bytes.
 //
+// options picks the transports the create request lists. For an iroh
+// descriptor the proxy runs the same WebSocket client over
+// `amika-net connect`, one process per dial. If that path fails before a
+// WebSocket opens, the proxy uses the descriptor's direct_ws route and logs
+// why, unless options asks for iroh alone.
+//
 // Pinning here, and not only in the commands that prepare a target, is what
 // lets a connection nobody prepared succeed. The web app's editor deep links
 // (`cursor://vscode-remote/ssh-remote+<alias>`, `cmux://ssh?host=<alias>`)
@@ -408,6 +435,7 @@ func ProxySession(
 	stdin io.Reader,
 	stdout io.Writer,
 	events *slog.Logger,
+	options ProxyOptions,
 ) error {
 	if events == nil {
 		events = slog.New(slog.DiscardHandler)
@@ -416,10 +444,44 @@ func ProxySession(
 	if err != nil {
 		return err
 	}
-	session, err := PrepareSessionHost(creator, pins, parsed.ID, alias)
+	session, err := PrepareSessionHost(creator, pins, parsed.ID, alias, options.transports())
 	if err != nil {
-		return err
+		return explainTransport(options.Transport, err)
 	}
+	if session.Transport == apiclient.SSHSessionTransportIroh && options.Iroh != nil {
+		events.Info("ssh_transport", slog.String("transport", string(session.Transport)))
+		err := proxyOver(ctx, irohDialer{route: *options.Iroh, target: *session.Iroh}, session, stdin, stdout, events)
+		var irohErr *irohDialError
+		if !errors.As(err, &irohErr) {
+			return err
+		}
+		if options.Iroh.Forget != nil {
+			options.Iroh.Forget()
+		}
+		if options.Transport == TransportIroh {
+			events.Info("ssh_transport_failed", slog.String("transport", string(session.Transport)), slog.String("reason", irohErr.Reason))
+			return irohErr
+		}
+		events.Info("ssh_transport_fallback", slog.String("from", string(session.Transport)), slog.String("reason", irohErr.Reason))
+	}
+	events.Info("ssh_transport", slog.String("transport", string(apiclient.SSHSessionTransportDirectWS)))
+	return proxyOver(ctx, dialer, session, stdin, stdout, events)
+}
+
+// explainTransport names the flag when the server cannot give the one
+// transport it asked for.
+func explainTransport(transport ProxyTransport, err error) error {
+	if transport != TransportAuto && errors.Is(err, apiclient.ErrSSHTransportUnavailable) {
+		return fmt.Errorf("--transport %s: %w", transport, err)
+	}
+	return err
+}
+
+// proxyOver carries the session over one dialer: amikad's resumable route
+// first, then /v1. An iroh dial that fails before any WebSocket opens
+// returns an irohDialError, before the proxy reads stdin, so the caller
+// can still use another transport.
+func proxyOver(ctx context.Context, dialer ProxyDialer, session *apiclient.SSHSession, stdin io.Reader, stdout io.Writer, events *slog.Logger) error {
 	if url, ok := resumeURL(session.ConnectURL); ok && session.ResumeEnabled() {
 		err := newResumeProxy(dialer, url, session.ConnectCredential, events).run(ctx, stdin, stdout)
 		if !errors.Is(err, errResumeUnsupported) {
@@ -435,6 +497,10 @@ func ProxySession(
 func proxyRaw(ctx context.Context, dialer SessionDialer, session *apiclient.SSHSession, stdin io.Reader, stdout io.Writer) error {
 	stream, err := dialer.Dial(ctx, session.ConnectURL, session.ConnectCredential)
 	if err != nil {
+		var irohErr *irohDialError
+		if errors.As(err, &irohErr) {
+			return err
+		}
 		return errors.New("failed to connect direct SSH transport")
 	}
 	defer stream.Close()
@@ -577,6 +643,7 @@ func PrepareSessionTarget(
 		FileHostKeyPinStore{Path: sessionConfig.KnownHostsFile},
 		sandboxID,
 		alias,
+		nil,
 	)
 	if err != nil {
 		return "", err

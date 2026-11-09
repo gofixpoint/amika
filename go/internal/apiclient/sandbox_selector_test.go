@@ -116,7 +116,7 @@ func TestRoutesThatAlwaysSendTheKind(t *testing.T) {
 // id cannot make the request ambiguous.
 func TestCreateSSHSessionSelectsByID(t *testing.T) {
 	c, got := recordRequests(t)
-	_, _ = c.CreateSSHSession("sbx_123")
+	_, _ = c.CreateSSHSession("sbx_123", nil)
 	if want := []string{"POST /api/v0beta1/sandboxes/sbx_123/ssh-sessions?sandbox_by=id"}; !reflect.DeepEqual(*got, want) {
 		t.Fatalf("requests = %q, want %q", *got, want)
 	}
