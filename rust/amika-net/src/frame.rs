@@ -34,6 +34,7 @@ pub async fn read<R: AsyncRead + Unpin>(r: &mut R, max: usize) -> Result<Vec<u8>
 
 /// Splits a frame body into `key value` lines. Empty lines are skipped. A
 /// line with no space is a key with an empty value.
+#[cfg_attr(not(unix), allow(dead_code))] // Only the agent uses it.
 pub fn lines(body: &[u8]) -> Result<Vec<(&str, &str)>> {
     let text = std::str::from_utf8(body).context("frame is not UTF-8")?;
     Ok(text

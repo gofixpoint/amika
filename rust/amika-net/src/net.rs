@@ -85,6 +85,7 @@ pub async fn builder(net: &NetArgs, secret: SecretKey) -> Result<Builder> {
     Ok(b.transport_config(transport_config(net)?))
 }
 
+#[cfg_attr(not(unix), allow(dead_code))] // Only the agent uses these.
 impl NetArgs {
     /// Renders the options as command-line arguments, with absolute paths.
     /// The agent is started with them, and they are part of the agent's
@@ -126,6 +127,7 @@ impl NetArgs {
 }
 
 /// Returns `path` as an absolute path string. It does not touch the file.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn absolute(path: &std::path::Path) -> Result<String> {
     let abs =
         std::path::absolute(path).with_context(|| format!("making {} absolute", path.display()))?;
