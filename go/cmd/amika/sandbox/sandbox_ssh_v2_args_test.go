@@ -8,9 +8,13 @@ package sandboxcmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -132,10 +136,12 @@ func TestSSHV2VerbosePassesToTheProxy(t *testing.T) {
 }
 
 func TestSSHV2NewDeviceKeyIsExplicit(t *testing.T) {
-	previous := makeNewDeviceKey
-	t.Cleanup(func() { makeNewDeviceKey = previous })
+	previous, previousStop := makeNewDeviceKey, stopDeviceAgent
+	t.Cleanup(func() { makeNewDeviceKey, stopDeviceAgent = previous, previousStop })
 	calls := 0
-	makeNewDeviceKey = func(io.Writer) error { calls++; return nil }
+	var steps []string
+	stopDeviceAgent = func(context.Context) error { steps = append(steps, "stop"); return nil }
+	makeNewDeviceKey = func(io.Writer) error { calls++; steps = append(steps, "replace"); return nil }
 	for _, replace := range []bool{false, true} {
 		args := []string{"amika", "sandbox"}
 		if replace {
@@ -156,6 +162,54 @@ func TestSSHV2NewDeviceKeyIsExplicit(t *testing.T) {
 		if calls != wantCalls {
 			t.Fatalf("key replacements = %d, want %d", calls, wantCalls)
 		}
+	}
+	if !reflect.DeepEqual(steps, []string{"stop", "replace"}) {
+		t.Fatalf("key replacement steps = %q", steps)
+	}
+}
+
+func TestSSHV2LeavesTheKeyWhenTheAgentCannotStop(t *testing.T) {
+	previous, previousStop := makeNewDeviceKey, stopDeviceAgent
+	t.Cleanup(func() { makeNewDeviceKey, stopDeviceAgent = previous, previousStop })
+	stopErr := errors.New("agent did not stop")
+	stopDeviceAgent = func(context.Context) error { return stopErr }
+	makeNewDeviceKey = func(io.Writer) error { t.Fatal("replaced the key after agent stop failed"); return nil }
+	root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--new-device-key", "ssh", "my-box"})
+	if err := root.Execute(); !errors.Is(err, stopErr) || h.ran {
+		t.Fatalf("err = %v, ran SSH = %v", err, h.ran)
+	}
+}
+
+func TestStopDeviceAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent role")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	argv := filepath.Join(dir, "argv")
+	t.Setenv("TEST_AGENT_ARGV", argv)
+	binary := filepath.Join(dir, "amika-net")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TEST_AGENT_ARGV\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopDeviceAgent(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argv)
+	if err != nil || string(args) != "agent\nstop\n" {
+		t.Fatalf("agent argv = %q, err = %v", args, err)
+	}
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 7\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopDeviceAgent(context.Background()); err == nil {
+		t.Fatal("ignored an agent stop failure")
+	}
+	if err := os.Remove(binary); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopDeviceAgent(context.Background()); err != nil {
+		t.Fatalf("a missing amika-net should leave the new key ready for later: %v", err)
 	}
 }
 
