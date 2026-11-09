@@ -42,6 +42,8 @@ Amika is a Go module that lets people control sandboxed AI agents, focused on us
 
 The repo also ships `amikalog`, a separate, separately-installed CLI that captures Claude Code and Codex hook activity (with the git state of each hook's working directory) as raw append-only events under the amika state directory. Run `amikalog start` once to install the hooks. It is versioned and released independently of `amika` (tags `amikalog@v*`).
 
+The repo also ships `amika-net` (`rust/amika-net/`), a Rust binary that carries SSH and TCP streams to hosts over iroh. `amika-hostd` runs its host role, and the CLI runs its connect role. It is released independently (tags `amika-net@v*`). See [`rust/amika-net/AGENTS.md`](rust/amika-net/AGENTS.md) for its commands and rules.
+
 This repository is an OSS monorepo. Go sources live under `go/`. Other
 language SDKs live under `sdk/` (e.g. `sdk/typescript/`). TypeScript packages
 that are consumed as source rather than published live under `js/`: among them
