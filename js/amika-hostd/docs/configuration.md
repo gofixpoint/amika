@@ -14,6 +14,7 @@ the first source that sets it: CLI flag, then environment, then TOML file.
 | Port         | `--port` | `AMIKA_HOSTD_PORT`                            | `port`                         | `3020`                  |
 | Snapshot dir |          | `AMIKA_HOSTD_SNAPSHOT_DIR`                    | `snapshot_dir`                 | in the state directory  |
 | Transport    |          | `AMIKA_HOSTD_TRANSPORT`                       | `transport`                    | `tunnel`                |
+| Resume       |          | `AMIKA_HOSTD_TUNNEL_RESUME`                   |                                | `1`                     |
 | amikad       |          |                                               | `amikad_path`                  | the one setup installs  |
 
 Setting both names of an aliased pair to different values is an error, never a
@@ -30,7 +31,10 @@ two are not merged, and unknown keys are rejected. `SMOL_API_URL` (where `up`
 and `serve --smolvm` start smolvm, by default the first free port from
 `http://127.0.0.1:23020`, see [smolvm](runtime.md#smolvm); plain `serve` forwards to a
 fixed `http://127.0.0.1:23020`) and `SMOL_REQUEST_TIMEOUT_MS` remain
-environment-only. `config.example.toml`
+environment-only. So does `AMIKA_HOSTD_TUNNEL_RESUME`, the kill switch for
+the resumable tunnel: `0` offers `amika.tunnel.v2` alone, `1` (the default)
+offers v3 first, and anything else fails startup (see
+[A session that outlives its socket](tunnel.md#a-session-that-outlives-its-socket)). `config.example.toml`
 is the template the installer seeds: every setting with a default is a live
 line, and only `hostname` and `secret_store` are commented. It holds no
 `secret_key`, since the secrets live in the keychain by default. Keep its comments short. `config.test.ts`

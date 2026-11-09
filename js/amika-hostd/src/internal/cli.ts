@@ -1589,6 +1589,28 @@ function logTunnelEvent(event: TunnelEvent, deps: CliDeps): void {
         `amika-hostd: the gateway refused this host and it will not retry: ${event.reason}`,
       );
       return;
+    // The resume events, with named fields that join the relay's log. The
+    // health number is `tunnel_resumed` over `tunnel_detached`.
+    case "tunnel_detached":
+      deps.err(
+        `amika-hostd: tunnel_detached connection=${event.connectionId} reason="${event.reason}" open_streams=${event.openStreams} unacked_frames=${event.unackedFrames} unacked_bytes=${event.unackedBytes}`,
+      );
+      return;
+    case "tunnel_resumed":
+      deps.out(
+        `amika-hostd: tunnel_resumed connection=${event.connectionId} detached_ms=${event.detachedMs} resent_frames=${event.resentFrames}`,
+      );
+      return;
+    case "tunnel_resume_refused":
+      deps.err(
+        `amika-hostd: tunnel_resume_refused connection=${event.connectionId} reason=${event.reason}`,
+      );
+      return;
+    case "tunnel_session_ended":
+      deps.err(
+        `amika-hostd: tunnel_session_ended connection=${event.connectionId} reason=${event.reason}`,
+      );
+      return;
     default:
       assertNever(event);
   }

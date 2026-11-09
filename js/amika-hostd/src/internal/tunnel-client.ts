@@ -24,8 +24,29 @@
  * immediately died is still counted, as a fallback: it is what a relay that
  * accepts and then cannot keep the host looks like, and the operator is
  * told what the loop suspects rather than left with a silent retry.
+ *
+ * **Can the session go on.** With resume on, the loop offers
+ * `amika.tunnel.v3`. A v3 session outlives its socket: when the socket ends,
+ * the loop dials again at once, then with its backoff, and asks the relay to
+ * continue the session. A `101` with the same connection id resumes it. Any
+ * other answer is a fresh session, and the old one's streams reset.
  */
-import { TunnelSession, type TunnelSessionOptions } from "./tunnel-session.js";
+import {
+  ACK_BYTES,
+  ACK_DELAY_MS,
+  RESUME_GRACE_MS,
+  RESUME_KEEP_ALIVE_INTERVAL_MS,
+  RESUME_PING_TIMEOUT_MS,
+  TUNNEL_SUBPROTOCOL,
+  TUNNEL_SUBPROTOCOL_V3,
+} from "@amika/tunnel-protocol";
+import { parseCount } from "@amika/tunnel-protocol/resume";
+import {
+  TunnelSession,
+  type ResumeLimits,
+  type SessionEvent,
+  type TunnelSessionOptions,
+} from "./tunnel-session.js";
 import {
   Backoff,
   DEFAULT_BACKOFF,
@@ -35,6 +56,9 @@ import {
   dialTunnel,
   TunnelRejected,
   TunnelUnavailable,
+  type DialedTunnel,
+  type DialOptions,
+  type ResumeRequest,
   type TunnelTarget,
 } from "./tunnel-dial.js";
 
@@ -54,7 +78,34 @@ export interface OpenAttachment {
   readonly connectionId?: string;
   /** The public address Amika assigned this host, where it reports one. */
   readonly publicUrl?: string;
+  /**
+   * After it ended: its v3 session is detached and waits for a resume, so
+   * the loop dials again at once rather than after its backoff.
+   */
+  readonly resumable?: boolean;
 }
+
+/** How a v3 session is kept: its socket's keep-alive and its limits. */
+export interface ResumeSettings extends ResumeLimits {
+  /** How often to ping a v3 socket. */
+  keepAliveIntervalMs: number;
+  /** A v3 socket ends at its first ping unanswered this long. */
+  pingTimeoutMs: number;
+}
+
+/** The most unacknowledged bytes hostd keeps for a resend. */
+export const HOSTD_MAX_REPLAY_BYTES = 32 * 1024 * 1024;
+
+export const DEFAULT_RESUME: ResumeSettings = {
+  keepAliveIntervalMs: RESUME_KEEP_ALIVE_INTERVAL_MS,
+  pingTimeoutMs: RESUME_PING_TIMEOUT_MS,
+  graceMs: RESUME_GRACE_MS,
+  maxReplayBytes: HOSTD_MAX_REPLAY_BYTES,
+  // Half the log: upstream WebSockets pause well before it drops frames.
+  pauseReplayBytes: HOSTD_MAX_REPLAY_BYTES / 2,
+  ackBytes: ACK_BYTES,
+  ackDelayMs: ACK_DELAY_MS,
+};
 
 export interface AttachedInfo {
   hostId: string;
@@ -92,7 +143,9 @@ export type TunnelEvent =
    * so this is the daemon saying what the pattern looks like.
    */
   | { type: "suspect-credential"; consecutiveShortSessions: number }
-  | { type: "stopped" };
+  | { type: "stopped" }
+  /** What happened to a v3 session. The relay logs the same names. */
+  | SessionEvent;
 
 export interface TunnelClientOptions extends Pick<
   TunnelSessionOptions,
@@ -116,10 +169,20 @@ export interface TunnelClientOptions extends Pick<
   suspectAfter?: number;
   onEvent?: (event: TunnelEvent) => void;
   /**
+   * Offer `amika.tunnel.v3`, and resume a session after a drop. Unset, the
+   * daemon offers v2 alone (`AMIKA_HOSTD_TUNNEL_RESUME=0`).
+   */
+  resume?: ResumeSettings;
+  /**
    * Open one attachment. The default dials the gateway over WSS and builds
    * a `TunnelSession` on it; a test replaces the whole transport here.
    */
   connect?: (target: TunnelTarget) => Promise<OpenAttachment>;
+  /**
+   * Open one WebSocket to the gateway. The default is `dialTunnel`. A test
+   * replaces the network here and keeps the sessions and resume above it.
+   */
+  dial?: (target: TunnelTarget, options: DialOptions) => Promise<DialedTunnel>;
   now?: () => number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -137,6 +200,13 @@ export class TunnelClient {
 
   private state: TunnelStatus = { state: "starting" };
   private attachment?: OpenAttachment;
+  /**
+   * The tunnel session, when the default transport is in use. A v3 session
+   * outlives the attachment that opened it.
+   */
+  private session?: TunnelSession;
+  /** The last socket ended with its session detached: dial again now. */
+  private redialAtOnce = false;
   private loop?: Promise<void>;
   private stopping = new AbortController();
   /** Aborted to end the current wait early; replaced for each wait. */
@@ -252,6 +322,10 @@ export class TunnelClient {
     // to notice a dead socket. Aborting instead loses every request sent in
     // that window.
     if (attachment) await attachment.close().catch(() => {});
+    // A detached session has no attachment, and still holds streams.
+    const session = this.session;
+    this.session = undefined;
+    if (session) await session.close().catch(() => {});
     await this.loop;
     this.setState({ state: "stopped" });
     this.emit({ type: "stopped" });
@@ -270,7 +344,10 @@ export class TunnelClient {
       } catch (error) {
         if (error instanceof TunnelRejected) {
           // Final. Retrying cannot change the answer, and retrying anyway
-          // is how a revoked host turns into an unread log line.
+          // is how a revoked host turns into an unread log line. A session
+          // waiting for a resume will not get one.
+          this.session?.abort(error);
+          this.session = undefined;
           this.setState({ state: "rejected", reason: error.message });
           this.emit({ type: "rejected", reason: error.message });
           for (const waiter of this.attachedWaiters) waiter.reject(error);
@@ -280,6 +357,13 @@ export class TunnelClient {
         reason = error instanceof Error ? error.message : String(error);
       }
       if (this.stopping.signal.aborted) break;
+      if (this.redialAtOnce) {
+        // Once: the session waits for a resume, and the grace is short.
+        // Every later attempt keeps the backoff, so a gateway that is down
+        // is not dialled in a hot loop.
+        this.redialAtOnce = false;
+        continue;
+      }
       await this.waitBeforeRetry(reason);
     }
   }
@@ -338,6 +422,7 @@ export class TunnelClient {
 
     const error = await ended;
     this.attachment = undefined;
+    if (attachment.resumable) this.redialAtOnce = true;
     const uptimeMs = this.now() - startedAt;
     const served = attachment.servedConnections;
     const reason = error ? error.message : "the gateway closed the tunnel";
@@ -385,22 +470,92 @@ export class TunnelClient {
     return target;
   }
 
-  /** The real transport: one WSS handshake, one framed session on it. */
+  /**
+   * The real transport: one WSS handshake, and a session on it. A redial
+   * of a detached v3 session asks the relay to resume it.
+   */
   private async dialAndAttach(target: TunnelTarget): Promise<OpenAttachment> {
-    const dialed = await dialTunnel(target, {
+    const offer = this.session?.resumeOffer();
+    const resume = this.options.resume;
+    const dialed = await (this.options.dial ?? dialTunnel)(target, {
       handshakeTimeoutMs: this.options.handshakeTimeoutMs,
       userAgent: this.options.userAgent,
+      protocols: resume
+        ? [TUNNEL_SUBPROTOCOL_V3, TUNNEL_SUBPROTOCOL]
+        : [TUNNEL_SUBPROTOCOL],
+      resume: offer,
     });
-    const attachment = new TunnelSession(dialed.ws, {
-      keepAliveIntervalMs: this.options.keepAliveIntervalMs,
-      pingTimeoutMs: this.options.pingTimeoutMs,
+    return this.adopt(dialed, offer);
+  }
+
+  /**
+   * Serve on a socket the gateway accepted: resume the detached session
+   * when the relay answered with its id, or start a fresh one.
+   */
+  private adopt(
+    dialed: DialedTunnel,
+    offer: ResumeRequest | undefined,
+  ): OpenAttachment {
+    const v3 = dialed.protocol === TUNNEL_SUBPROTOCOL_V3;
+    const previous = this.session;
+    if (previous && offer && v3 && dialed.connectionId === offer.connectionId) {
+      const resumed = previous.resume(dialed.ws, parseCount(dialed.received));
+      if (!resumed.ok) {
+        // The session has ended and reset its streams; dial a fresh one.
+        this.session = undefined;
+        this.redialAtOnce = true;
+        throw new TunnelUnavailable(
+          `The gateway resumed the tunnel session, but this host cannot continue from its count (${resumed.reason}); starting a fresh session`,
+        );
+      }
+      return attachmentOf(previous, dialed);
+    }
+
+    if (previous && !previous.isEnded) {
+      if (offer) {
+        this.emit({
+          type: "tunnel_resume_refused",
+          connectionId: offer.connectionId,
+          reason: v3 ? "refused_by_relay" : "switched_off",
+        });
+      }
+      previous.abort(
+        new Error("the gateway started a fresh tunnel session"),
+        "fresh_attach",
+      );
+    }
+    this.session = undefined;
+
+    const resume = this.options.resume;
+    if (v3 && (!resume || !dialed.connectionId)) {
+      // A v3 session is named by its connection id; without one it could
+      // never be resumed, and the relay always sends one.
+      dialed.ws.on("error", () => {});
+      dialed.ws.close(1002, "no connection id");
+      throw new TunnelUnavailable(
+        "The gateway selected amika.tunnel.v3 without naming the connection",
+      );
+    }
+    const session = new TunnelSession(dialed.ws, {
+      keepAliveIntervalMs:
+        v3 && resume
+          ? resume.keepAliveIntervalMs
+          : this.options.keepAliveIntervalMs,
+      pingTimeoutMs:
+        v3 && resume ? resume.pingTimeoutMs : this.options.pingTimeoutMs,
       drainMs: this.options.drainMs,
       onConnection: this.options.onConnection,
+      resume:
+        v3 && resume && dialed.connectionId
+          ? {
+              ...resume,
+              connectionId: dialed.connectionId,
+              onEvent: (event) => this.emit(event),
+            }
+          : undefined,
     });
-    return Object.assign(attachment, {
-      connectionId: dialed.connectionId,
-      publicUrl: dialed.publicUrl,
-    });
+    this.session = session;
+    return attachmentOf(session, dialed);
   }
 
   private reportSuspicion(): void {
@@ -447,6 +602,40 @@ export class TunnelClient {
       // Deliberate: see above.
     }
   }
+}
+
+/**
+ * One socket's attachment of a session, as the loop sees it. It ends when
+ * that socket ends, whether or not the session goes on.
+ */
+function attachmentOf(
+  session: TunnelSession,
+  dialed: Pick<DialedTunnel, "connectionId" | "publicUrl">,
+): OpenAttachment {
+  const link = session.currentLink;
+  const servedBefore = session.servedConnections;
+  return {
+    acknowledge: () => session.acknowledge(),
+    onEnded: (listener) => {
+      if (link) link.onEnded(listener);
+      else session.onEnded(listener);
+    },
+    close: () => session.close(),
+    abort: (error) => {
+      // Drops this socket only. A v3 session then detaches and waits for a
+      // resume; a v2 one ends with it.
+      if (link) link.drop(error);
+      else session.abort(error);
+    },
+    get servedConnections() {
+      return session.servedConnections - servedBefore;
+    },
+    connectionId: dialed.connectionId,
+    publicUrl: dialed.publicUrl,
+    get resumable() {
+      return session.isDetached;
+    },
+  };
 }
 
 function describe(error: unknown): string {

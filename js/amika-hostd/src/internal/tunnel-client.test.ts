@@ -19,6 +19,8 @@ import { TunnelRejected, TunnelUnavailable } from "./tunnel-dial.js";
 class FakeAttachment implements OpenAttachment {
   servedConnections = 0;
   closed = false;
+  /** After it ends, its session waits for a resume. */
+  resumable = false;
   aborted?: Error;
   private listeners: Array<(error?: Error) => void> = [];
   private ended = false;
@@ -171,6 +173,27 @@ describe("a tunnel that drops", () => {
         .filter((event) => event.type === "attached")
         .map((event) => event.info.connectionId),
     ).toEqual(["conn-1", "conn-2"]);
+    await client.stop();
+  });
+
+  it("dials again at once when the session waits for a resume, then backs off", async () => {
+    const first = new FakeAttachment("conn-1");
+    const { client, waits, connects } = harness([
+      first,
+      new Error("ECONNREFUSED"),
+      new FakeAttachment("conn-1"),
+    ]);
+    client.start();
+    await settle();
+
+    first.resumable = true;
+    first.end(new Error("gateway restarted"));
+    await settle();
+
+    // No wait before the first redial; the failed one waits as usual.
+    expect(connects()).toBe(3);
+    expect(waits).toEqual([1_000]);
+    expect(client.status.state).toBe("attached");
     await client.stop();
   });
 
