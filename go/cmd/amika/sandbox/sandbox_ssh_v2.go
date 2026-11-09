@@ -1,9 +1,13 @@
 package sandboxcmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/gofixpoint/amika/go/internal/amikanet"
@@ -68,6 +72,27 @@ var makeNewDeviceKey = func(stderr io.Writer) error {
 		fmt.Fprintf(stderr, "Made a new amika-net device key; the old one is at %s\n", old)
 	} else {
 		fmt.Fprintln(stderr, "Made a new amika-net device key")
+	}
+	return nil
+}
+
+// stopDeviceAgent drains the agent before the key at its path changes.
+// The next connection starts an agent that reads the replacement key.
+var stopDeviceAgent = func(ctx context.Context) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	binary, err := amikanet.FindBinary()
+	if errors.Is(err, amikanet.ErrNotInstalled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, binary, "agent", "stop").Run(); err != nil {
+		return fmt.Errorf("stop amika-net before replacing its device key: %w", err)
 	}
 	return nil
 }
@@ -173,6 +198,9 @@ Examples:
 			return err
 		}
 		if newKey, _ := cmd.Flags().GetBool("new-device-key"); newKey {
+			if err := stopDeviceAgent(cmd.Context()); err != nil {
+				return err
+			}
 			if err := makeNewDeviceKey(cmd.ErrOrStderr()); err != nil {
 				return err
 			}
