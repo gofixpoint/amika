@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./resume": "./src/resume.ts",
     "./window": "./src/window.ts"
   },
   "scripts": {
