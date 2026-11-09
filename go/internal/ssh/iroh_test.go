@@ -311,12 +311,40 @@ func TestProxySessionCarriesSSHOverIroh(t *testing.T) {
 	}
 }
 
-func TestProxySessionOmitsTheRelayURLWhenTheHostHasNone(t *testing.T) {
-	route := IrohRoute{Binary: "amika-net", KeyFile: "/k"}
-	args := irohDialer{route: route, target: apiclient.SSHSessionIroh{EndpointID: testEndpointID, RigID: "r", Port: 22}}.connectArgs()
-	want := []string{"connect", "--key-file", "/k", "--endpoint", testEndpointID, "--target", "rig:r:22"}
-	if !reflect.DeepEqual(args, want) {
-		t.Fatalf("args = %q", args)
+// noRelayCreator hands out an iroh descriptor with a null relay_url,
+// which the contract says the control plane never sends.
+type noRelayCreator struct{ irohCreator }
+
+func (c *noRelayCreator) CreateSSHSession(id string, transports []apiclient.SSHSessionTransport) (*apiclient.SSHSession, error) {
+	session, err := c.irohCreator.CreateSSHSession(id, transports)
+	session.Iroh.RelayURL = nil
+	return session, err
+}
+
+func TestProxySessionUsesDirectWSForAnIrohDescriptorWithNoRelay(t *testing.T) {
+	rig := newIrohRig(t)
+	direct := &countingDialer{WebSocketDialer: WebSocketDialer{HTTPClient: rig.tls.Client()}}
+	route := rig.route()
+	var forgot atomic.Int32
+	route.Forget = func() { forgot.Add(1) }
+
+	events, err := sshThroughProxy(t, rig, &noRelayCreator{irohCreator{rig: rig}}, direct, ProxyOptions{Iroh: route}, []byte("no relay"))
+	if err != nil {
+		t.Fatalf("proxy exit = %v", err)
+	}
+	if direct.dials.Load() == 0 || len(rig.connects(t)) != 0 || forgot.Load() != 0 {
+		t.Fatalf("direct_ws dials = %d, connects = %d, forgot = %d", direct.dials.Load(), len(rig.connects(t)), forgot.Load())
+	}
+	if !strings.Contains(events, `"msg":"ssh_transport_fallback","from":"iroh","reason":"the iroh descriptor has no relay_url"`) {
+		t.Fatalf("events = %s", events)
+	}
+
+	events, err = sshThroughProxy(t, rig, &noRelayCreator{irohCreator{rig: rig}}, direct, ProxyOptions{Transport: TransportIroh, Iroh: route}, nil)
+	if err == nil || !strings.Contains(err.Error(), "no relay_url") || len(rig.connects(t)) != 0 {
+		t.Fatalf("--transport iroh: err = %v, connects = %d", err, len(rig.connects(t)))
+	}
+	if !strings.Contains(events, `"msg":"ssh_transport_failed"`) {
+		t.Fatalf("events = %s", events)
 	}
 }
 

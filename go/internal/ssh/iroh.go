@@ -171,13 +171,16 @@ type irohDialer struct {
 	target apiclient.SSHSessionIroh
 }
 
-// connectArgs is the `amika-net connect` argv from the contract.
+// connectArgs is the `amika-net connect` argv from the contract. The
+// caller has checked that the descriptor has a relay URL.
 func (d irohDialer) connectArgs() []string {
-	args := []string{"connect", "--key-file", d.route.KeyFile, "--endpoint", d.target.EndpointID}
-	if d.target.RelayURL != nil {
-		args = append(args, "--relay-url", *d.target.RelayURL)
+	return []string{
+		"connect",
+		"--key-file", d.route.KeyFile,
+		"--endpoint", d.target.EndpointID,
+		"--relay-url", *d.target.RelayURL,
+		"--target", "rig:" + d.target.RigID + ":" + strconv.Itoa(d.target.Port),
 	}
-	return append(args, "--target", "rig:"+d.target.RigID+":"+strconv.Itoa(d.target.Port))
 }
 
 // DialTransport opens one frame transport to amikad's resumable route over
