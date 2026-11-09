@@ -21,6 +21,8 @@ class FakeAttachment implements OpenAttachment {
   closed = false;
   /** After it ends, its session waits for a resume. */
   resumable = false;
+  /** It continued a session the relay already knew. */
+  resumed = false;
   aborted?: Error;
   private listeners: Array<(error?: Error) => void> = [];
   private ended = false;
@@ -178,7 +180,7 @@ describe("a tunnel that drops", () => {
 
   it("dials again at once when the session waits for a resume, then backs off", async () => {
     const first = new FakeAttachment("conn-1");
-    const { client, waits, connects } = harness([
+    const { client, waits, connects, advance } = harness([
       first,
       new Error("ECONNREFUSED"),
       new FakeAttachment("conn-1"),
@@ -187,6 +189,7 @@ describe("a tunnel that drops", () => {
     await settle();
 
     first.resumable = true;
+    advance(10_000);
     first.end(new Error("gateway restarted"));
     await settle();
 
@@ -194,6 +197,62 @@ describe("a tunnel that drops", () => {
     expect(connects()).toBe(3);
     expect(waits).toEqual([1_000]);
     expect(client.status.state).toBe("attached");
+    await client.stop();
+  });
+
+  it("waits before redialling a resumable socket that died straight after attaching", async () => {
+    // A socket that dies at once, every time, must not reconnect in a loop
+    // with no wait at all.
+    const first = new FakeAttachment("conn-1");
+    const { client, waits, connects } = harness([
+      first,
+      new FakeAttachment("conn-1"),
+    ]);
+    client.start();
+    await settle();
+    first.resumable = true;
+    first.end(new Error("dropped at once"));
+    await settle();
+    expect(connects()).toBe(2);
+    expect(waits).toEqual([1_000]);
+    await client.stop();
+  });
+
+  it("starts the schedule again after a resume answers", async () => {
+    const resumed = new FakeAttachment("conn-1");
+    resumed.resumed = true;
+    const { client, waits } = harness([
+      new Error("ECONNREFUSED"),
+      new Error("ECONNREFUSED"),
+      resumed,
+      new Error("ECONNREFUSED"),
+      new FakeAttachment("conn-1"),
+    ]);
+    client.start();
+    await settle();
+    resumed.end(new Error("dropped"));
+    await settle();
+    // 1 s and 2 s before the resume; 1 s again after it.
+    expect(waits).toEqual([1_000, 2_000, 1_000, 2_000]);
+    await client.stop();
+  });
+
+  it("never counts a resumed socket toward the credential warning", async () => {
+    const outcomes = Array.from({ length: 4 }, () => {
+      const attachment = new FakeAttachment("conn-1");
+      attachment.resumed = true;
+      return attachment;
+    });
+    const { client, events, opened } = harness(outcomes);
+    client.start();
+    await settle();
+    for (let index = 0; index < 3; index += 1) {
+      opened[index]!.end(new Error("dropped"));
+      await settle();
+    }
+    expect(events.some((event) => event.type === "suspect-credential")).toBe(
+      false,
+    );
     await client.stop();
   });
 

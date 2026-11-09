@@ -87,7 +87,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
   strings from `@amika/tunnel-protocol`, because the runtime's answer
   covers relayed WebSockets too and a bare `ping` would swallow a
   service's own heartbeat. A closed laptop lid leaves a socket that looks
-  alive, and only an unanswered round trip finds it.
+  alive, and only a ping that nothing answers finds it. Any message from
+  the relay answers a ping, because on a busy link the `PONG` waits behind
+  data in both directions.
 - **Shutdown closes the WebSocket**, which is what makes the relay give
   up the route. Dropping the connection loses every request sent before the
   relay notices.
