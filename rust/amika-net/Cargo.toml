@@ -9,6 +9,7 @@ license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1"
+libc = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
 iroh = { version = "1.4.1", features = ["unstable-net-report"] }
 iroh-services = "2.0.0"

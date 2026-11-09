@@ -1,11 +1,11 @@
 //! The endpoint key file: 32 secret-key bytes as hex, in a mode-600 file.
+//!
+//! On Windows the file has the default ACL of its directory, and nothing
+//! checks it. A Windows build must restrict the ACL to the user first.
 
-use std::{
-    fs,
-    io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::Path,
-};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::{fs, io::Write, path::Path};
 
 use anyhow::{Context, Result, bail};
 use iroh::SecretKey;
@@ -20,13 +20,16 @@ pub fn load_or_create(path: &Path) -> Result<SecretKey> {
 }
 
 fn load(path: &Path) -> Result<SecretKey> {
-    let mode = fs::metadata(path)?.permissions().mode();
-    if mode & 0o077 != 0 {
-        bail!(
-            "key file {} has mode {:o}; it must be 600",
-            path.display(),
-            mode & 0o777
-        );
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(path)?.permissions().mode();
+        if mode & 0o077 != 0 {
+            bail!(
+                "key file {} has mode {:o}; it must be 600",
+                path.display(),
+                mode & 0o777
+            );
+        }
     }
     let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let bytes = decode_hex(text.trim()).context("key file is not 64 hex characters")?;
@@ -38,10 +41,11 @@ fn create(path: &Path) -> Result<SecretKey> {
         fs::create_dir_all(dir)?;
     }
     let key = SecretKey::generate();
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
         .open(path)
         .with_context(|| format!("creating {}", path.display()))?;
     writeln!(file, "{}", encode_hex(&key.to_bytes()))?;
@@ -63,7 +67,7 @@ fn decode_hex(s: &str) -> Result<[u8; 32]> {
     Ok(out)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

@@ -71,7 +71,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
         .bind()
         .await?;
     net::spawn_home_relay_logger(&ep);
-    net::report_online(&ep, Duration::from_secs(15)).await;
+    // Accept at once; a host with no relay never goes online.
+    let ep2 = ep.clone();
+    tokio::spawn(async move { net::report_online(&ep2, Duration::from_secs(15)).await });
 
     while let Some(incoming) = ep.accept().await {
         let config = config.clone();
@@ -207,7 +209,7 @@ async fn serve_stream(
     };
     tcp.set_nodelay(true)?;
     header::write_status(&mut send, &Status::Ok).await?;
-    let (up, down) = pipe::splice_tcp(tcp, send, recv).await;
+    let (up, down) = pipe::splice(tcp, send, recv).await;
     info!(%target, bytes_up = up, bytes_down = down, "stream finished");
     Ok(())
 }

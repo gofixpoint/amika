@@ -54,6 +54,7 @@ dependencies = [
  "clap",
  "iroh",
  "iroh-services",
+ "libc",
  "n0-future",
  "serde",
  "serde_json",

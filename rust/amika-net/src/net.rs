@@ -20,6 +20,8 @@ pub enum RelayChoice {
     N0Pro,
     /// Self-hosted `iroh-relay` servers given with `--relay-url`.
     Custom,
+    /// No relays. Peers must give direct addresses. For tests on one machine.
+    None,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -66,6 +68,9 @@ pub async fn builder(net: &NetArgs, secret: SecretKey) -> Result<Builder> {
                 .relay_mode(RelayMode::Custom(map))
         }
         RelayChoice::N0Pro => Endpoint::builder(n0_pro_preset(net, secret)?),
+        RelayChoice::None => Endpoint::builder(presets::N0)
+            .secret_key(secret)
+            .relay_mode(RelayMode::Disabled),
     };
     if net.no_lookup {
         b = b.clear_address_lookup();
@@ -78,6 +83,55 @@ pub async fn builder(net: &NetArgs, secret: SecretKey) -> Result<Builder> {
         b = b.bind_addr(addr)?;
     }
     Ok(b.transport_config(transport_config(net)?))
+}
+
+impl NetArgs {
+    /// Renders the options as command-line arguments, with absolute paths.
+    /// The agent is started with them, and they are part of the agent's
+    /// config, so two equal option sets give equal argument lists.
+    pub fn to_args(&self) -> Result<Vec<String>> {
+        let relay = self
+            .relay
+            .to_possible_value()
+            .context("relay choice has no name")?;
+        let mut args = vec!["--relay".to_string(), relay.get_name().to_string()];
+        for url in &self.relay_urls {
+            args.extend(["--relay-url".to_string(), url.to_string()]);
+        }
+        for (flag, path) in [
+            ("--api-secret-file", &self.api_secret_file),
+            ("--relay-token-file", &self.relay_token_file),
+        ] {
+            if let Some(path) = path {
+                args.extend([flag.to_string(), absolute(path)?]);
+            }
+        }
+        if self.relay_only {
+            args.push("--relay-only".into());
+        }
+        if self.no_lookup {
+            args.push("--no-lookup".into());
+        }
+        args.extend([
+            "--idle-timeout-secs".into(),
+            self.idle_timeout_secs.to_string(),
+            "--keepalive-secs".into(),
+            self.keepalive_secs.to_string(),
+        ]);
+        if let Some(bind) = &self.bind {
+            args.extend(["--bind".into(), bind.clone()]);
+        }
+        Ok(args)
+    }
+}
+
+/// Returns `path` as an absolute path string. It does not touch the file.
+pub fn absolute(path: &std::path::Path) -> Result<String> {
+    let abs =
+        std::path::absolute(path).with_context(|| format!("making {} absolute", path.display()))?;
+    abs.into_os_string()
+        .into_string()
+        .map_err(|p| anyhow::anyhow!("path {p:?} is not UTF-8"))
 }
 
 /// Waits up to `timeout` for a home relay, then logs the endpoint's id, home

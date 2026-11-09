@@ -1,5 +1,9 @@
-//! The connect role: the SSH `ProxyCommand`. Dials a host, opens one stream
-//! to a target, and pipes stdin and stdout through it.
+//! The connect role: the SSH `ProxyCommand`. Opens one stream to a target on
+//! a host, and pipes stdin and stdout through it.
+//!
+//! With a key file, the stream goes through the per-user agent (see
+//! [`crate::agent`]), which holds the device key. `--direct`, or no key
+//! file, dials from this process with its own endpoint.
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -9,7 +13,6 @@ use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr,
     endpoint::{Connection, RecvStream, SendStream},
 };
-use tokio::io::{self, AsyncWriteExt};
 use tracing::info;
 
 use crate::{
@@ -36,9 +39,17 @@ pub struct HostAddrArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct ConnectArgs {
-    /// This device's key file. Without it, the connect role uses a new key.
+    /// This device's key file. With it, connect goes through the agent.
+    /// Without it, connect dials directly with a new key.
     #[arg(long)]
     pub key_file: Option<PathBuf>,
+    /// Dial from this process, without the agent. Two direct connects with
+    /// the same key collide at the relay, so use this only for tests.
+    #[arg(long)]
+    pub direct: bool,
+    #[cfg(unix)]
+    #[command(flatten)]
+    pub agent: crate::agent::client::AgentOpts,
     #[command(flatten)]
     pub host: HostAddrArgs,
     /// The target on the host, for example `rig:<id>:22`.
@@ -49,6 +60,21 @@ pub struct ConnectArgs {
 }
 
 pub async fn run(args: ConnectArgs) -> Result<()> {
+    #[cfg(unix)]
+    if let (Some(key_file), false) = (&args.key_file, args.direct) {
+        return crate::agent::client::connect(
+            &args.agent,
+            key_file,
+            &args.net,
+            &args.host,
+            &args.target,
+        )
+        .await;
+    }
+    run_direct(args).await
+}
+
+async fn run_direct(args: ConnectArgs) -> Result<()> {
     let secret = device_key(args.key_file.as_deref())?;
     let ep = net::builder(&args.net, secret).await?.bind().await?;
     net::spawn_home_relay_logger(&ep);
@@ -60,30 +86,8 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
 async fn session(ep: &Endpoint, args: &ConnectArgs) -> Result<()> {
     let conn = dial(ep, &args.host).await?;
     paths::spawn_logger(&conn, "connect");
-    let (mut send, mut recv) = open_target(&conn, &args.target).await?;
-
-    let mut stdin = io::stdin();
-    let mut stdout = io::stdout();
-    let to_host = async {
-        let r = pipe::copy_flush(&mut stdin, &mut send).await;
-        let _ = send.finish();
-        r
-    };
-    let from_host = async {
-        let r = pipe::copy_flush(&mut recv, &mut stdout).await;
-        let _ = stdout.flush().await;
-        r
-    };
-    // The session ends when the host side ends. Our stdin closing only
-    // finishes our half; the host still sends its final bytes.
-    tokio::pin!(to_host);
-    tokio::select! {
-        r = from_host => { r?; }
-        r = &mut to_host => {
-            r?;
-            pipe::copy_flush(&mut recv, &mut stdout).await?;
-        }
-    }
+    let (send, recv) = open_target(&conn, &args.target).await?;
+    pipe::stdio(send, recv).await?;
     let stats = conn.stats();
     info!(
         udp_rx = stats.udp_rx.bytes,

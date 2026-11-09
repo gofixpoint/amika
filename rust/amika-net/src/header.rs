@@ -8,7 +8,9 @@
 use std::{fmt, str::FromStr};
 
 use anyhow::{Context, Result, anyhow, bail};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
+
+use crate::frame;
 
 /// The ALPN that every amika-net connection uses.
 pub const ALPN: &[u8] = b"amika/net/1";
@@ -180,27 +182,11 @@ fn parse_status(body: &[u8]) -> Result<Status> {
 }
 
 async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, body: &[u8]) -> Result<()> {
-    if body.len() > MAX_FRAME {
-        bail!("frame of {} bytes is too large", body.len());
-    }
-    let mut buf = Vec::with_capacity(2 + body.len());
-    buf.extend_from_slice(&(body.len() as u16).to_be_bytes());
-    buf.extend_from_slice(body);
-    w.write_all(&buf).await?;
-    w.flush().await?;
-    Ok(())
+    frame::write(w, body, MAX_FRAME).await
 }
 
 async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>> {
-    let len = r.read_u16().await.context("reading frame length")? as usize;
-    if len > MAX_FRAME {
-        bail!("frame of {len} bytes is too large");
-    }
-    let mut body = vec![0u8; len];
-    r.read_exact(&mut body)
-        .await
-        .context("reading frame body")?;
-    Ok(body)
+    frame::read(r, MAX_FRAME).await
 }
 
 #[cfg(test)]
