@@ -208,11 +208,13 @@ func (e *irohDialError) Error() string { return "SSH over iroh failed: " + e.Rea
 type irohDialer struct {
 	route  IrohRoute
 	target apiclient.SSHSessionIroh
+	// processes holds live helpers, including ones closing on a dial timer.
+	processes sync.Map
 }
 
 // connectArgs is the `amika-net connect` argv from the contract. The
 // caller has checked that the descriptor has a relay URL.
-func (d irohDialer) connectArgs() []string {
+func (d *irohDialer) connectArgs() []string {
 	return []string{
 		"connect",
 		"--key-file", d.route.KeyFile,
@@ -224,38 +226,79 @@ func (d irohDialer) connectArgs() []string {
 
 // DialTransport opens one frame transport to amikad's resumable route over
 // a new connect process.
-func (d irohDialer) DialTransport(ctx context.Context, connectURL, credential string) (sshresume.Transport, error) {
-	connection, err := d.handshake(ctx, connectURL, credential)
+func (d *irohDialer) DialTransport(ctx context.Context, connectURL, credential string) (sshresume.Transport, error) {
+	connection, process, err := d.handshake(ctx, connectURL, credential)
 	if err != nil {
 		return nil, err
 	}
-	return sshresume.NewWebSocketTransport(connection), nil
+	return &irohTransport{Transport: sshresume.NewWebSocketTransport(connection), process: process}, nil
+}
+
+// irohTransport reaps its helper before a failed frame operation returns.
+// Resume's dial timer can close the WebSocket from another goroutine.
+type irohTransport struct {
+	sshresume.Transport
+	process *connectProcess
+}
+
+func (t *irohTransport) ReadFrame() ([]byte, error) {
+	frame, err := t.Transport.ReadFrame()
+	if err != nil {
+		_ = t.process.Close()
+	}
+	return frame, err
+}
+
+func (t *irohTransport) WriteFrame(frame []byte) error {
+	err := t.Transport.WriteFrame(frame)
+	if err != nil {
+		_ = t.process.Close()
+	}
+	return err
+}
+
+func (t *irohTransport) Close(code websocket.StatusCode) {
+	t.Transport.Close(code)
+	_ = t.process.Close()
 }
 
 // Dial opens one byte stream to amikad's /v1 route over a new connect
 // process.
-func (d irohDialer) Dial(ctx context.Context, connectURL, credential string) (Stream, error) {
+func (d *irohDialer) Dial(ctx context.Context, connectURL, credential string) (Stream, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	connection, err := d.handshake(dialCtx, connectURL, credential)
+	connection, _, err := d.handshake(dialCtx, connectURL, credential)
 	if err != nil {
 		return nil, err
 	}
 	return wsstream.New(ctx, connection, 64*1024), nil
 }
 
+// Close reaps every helper before the stdio proxy returns.
+func (d *irohDialer) Close() {
+	d.processes.Range(func(key, _ any) bool {
+		_ = key.(*connectProcess).Close()
+		return true
+	})
+}
+
 // handshake starts a connect process and upgrades to a WebSocket over it.
 // The stream ends at amikad itself, so the request names amikad's own route
 // with no TLS: the iroh connection is already encrypted end to end.
-func (d irohDialer) handshake(ctx context.Context, connectURL, credential string) (*websocket.Conn, error) {
+func (d *irohDialer) handshake(ctx context.Context, connectURL, credential string) (*websocket.Conn, *connectProcess, error) {
 	wsURL, err := irohWebSocketURL(connectURL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	process, err := startConnectProcess(d.route.Binary, d.connectArgs())
 	if err != nil {
-		return nil, &irohDialError{Reason: "could not start amika-net"}
+		return nil, nil, &irohDialError{Reason: "could not start amika-net"}
 	}
+	d.processes.Store(process, struct{}{})
+	go func() {
+		<-process.exited
+		d.processes.Delete(process)
+	}()
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+credential)
 	client := &http.Client{Transport: &http.Transport{
@@ -268,17 +311,17 @@ func (d irohDialer) handshake(ctx context.Context, connectURL, credential string
 		CompressionMode: websocket.CompressionDisabled,
 	})
 	if err == nil {
-		return connection, nil
+		return connection, process, nil
 	}
 	// amikad answered with a status, so the iroh path works: the caller
 	// treats it as it treats the same answer over direct_ws.
 	if response != nil {
 		_ = process.Close()
-		return nil, &DialStatusError{StatusCode: response.StatusCode}
+		return nil, nil, &DialStatusError{StatusCode: response.StatusCode}
 	}
 	reason := process.failure(ctx)
 	_ = process.Close()
-	return nil, &irohDialError{Reason: reason}
+	return nil, nil, &irohDialError{Reason: reason}
 }
 
 // irohWebSocketURL is the descriptor's route with amikad's own path: the

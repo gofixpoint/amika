@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/gofixpoint/amika/go/internal/amikad/norelay"
 	"github.com/gofixpoint/amika/go/internal/amikanet"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
@@ -122,6 +123,78 @@ func TestConnectProcessCloseReapsAnUnresponsiveHelper(t *testing.T) {
 	default:
 		t.Fatal("Close returned before the helper was reaped")
 	}
+}
+
+// openedFrameDialer returns an already upgraded transport, so the test's
+// short WELCOME deadline does not also bound process startup.
+type openedFrameDialer struct {
+	ProxyDialer
+	transport sshresume.Transport
+}
+
+func (d openedFrameDialer) DialTransport(context.Context, string, string) (sshresume.Transport, error) {
+	return d.transport, nil
+}
+
+func TestIrohWelcomeTimeoutReapsTheUpgradedHelper(t *testing.T) {
+	_, transport := stalledIrohTransport(t)
+	process := transport.process
+	proxy := newResumeProxy(openedFrameDialer{transport: transport}, "wss://rig.example/v2/ssh-sessions", testConnectToken(), slog.New(slog.DiscardHandler))
+	_, _, err := proxy.dial(t.Context(), sshresume.Frame{Type: sshresume.FrameHello, Mode: sshresume.HelloNew}, 50*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "no WELCOME") {
+		t.Fatalf("dial error = %v", err)
+	}
+	select {
+	case <-process.exited:
+	default:
+		t.Fatal("the WELCOME timeout returned before its helper was reaped")
+	}
+}
+
+func TestIrohDialerReapsHelpersBeforeACloseCallbackStarts(t *testing.T) {
+	dialer, transport := stalledIrohTransport(t)
+	// A dial timer may be scheduled without having started its Close call.
+	// Final proxy teardown must not depend on that callback running first.
+	dialer.Close()
+	select {
+	case <-transport.process.exited:
+	default:
+		t.Fatal("final proxy teardown returned before its helper was reaped")
+	}
+}
+
+func stalledIrohTransport(t *testing.T) (*irohDialer, *irohTransport) {
+	t.Helper()
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		// Ignore HELLO and the close handshake. The helper must be killed.
+		<-release
+	}))
+	t.Cleanup(func() { close(release); server.Close() })
+	t.Setenv(fakeAmikaNetEnv, "1")
+	t.Setenv(fakeAmikaNetAddrEnv, server.Listener.Addr().String())
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay := "https://relay.example"
+	dialer := &irohDialer{
+		route:  IrohRoute{Binary: binary, KeyFile: filepath.Join(t.TempDir(), "device.key")},
+		target: apiclient.SSHSessionIroh{EndpointID: testEndpointID, RelayURL: &relay, RigID: "rig_1", Port: 60899},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	transport, err := dialer.DialTransport(ctx, "wss://rig.example/v2/ssh-sessions", testConnectToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(dialer.Close)
+	return dialer, transport.(*irohTransport)
 }
 
 // irohRig is amikad's real handler, served over plain HTTP for the fake

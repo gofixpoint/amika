@@ -473,7 +473,9 @@ func ProxySession(
 			return proxyDirect(ctx, dialer, session, stdin, stdout, events, options, reason)
 		}
 		events.Info("ssh_transport", slog.String("transport", string(session.Transport)))
-		iroh := &noticeDialer{ProxyDialer: irohDialer{route: *options.Iroh, target: *session.Iroh}, opened: func() {
+		path := &irohDialer{route: *options.Iroh, target: *session.Iroh}
+		defer path.Close()
+		iroh := &noticeDialer{ProxyDialer: path, opened: func() {
 			options.notice(apiclient.SSHSessionTransportIroh, "")
 		}}
 		err := proxyOver(ctx, iroh, session, stdin, stdout, events)
