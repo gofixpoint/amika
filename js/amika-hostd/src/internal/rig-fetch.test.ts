@@ -144,9 +144,10 @@ describe("createRigFetch", () => {
         expect(decoded.readableLength).toBeLessThanOrEqual(
           decoded.readableHighWaterMark * 2,
         );
-        expect(
-          Buffer.from(await settlesWithin(response.arrayBuffer(), 2_000)),
-        ).toEqual(bytes);
+        const received = Buffer.from(
+          await settlesWithin(response.arrayBuffer(), 2_000),
+        );
+        expect(received.equals(bytes)).toBe(true);
       } finally {
         decoded?.destroy();
         webAdapter.mockRestore();
