@@ -264,6 +264,7 @@ func TestResumableSessionResumesAfterADrop(t *testing.T) {
 	if got := readExactly(t, sshd, 5); string(got) != "after" {
 		t.Fatalf("sshd read %q", got)
 	}
+	eventually(t, func() bool { return len(h.logs.events("ssh_resume_attach")) == 1 })
 	attach := h.logs.events("ssh_resume_attach")
 	if len(attach) != 1 || attach[0]["detached_ms"].(float64) != float64((sshresume.ResumeGrace-time.Second).Milliseconds()) {
 		t.Fatalf("attach events = %v", attach)
@@ -680,3 +681,32 @@ func TestResumableShutdownDoesNotWaitForAStuckTakeover(t *testing.T) {
 	}
 	eventually(t, func() bool { return h.handler.ActiveConnections() == 0 })
 }
+
+// The handshake discards plaintext before a handler carries the attachment.
+func TestReadHelloClearsTheEncodedSecret(t *testing.T) {
+	h := newResumeHarness(t, 1)
+	var secret sshresume.Secret
+	for i := range secret {
+		secret[i] = byte(i + 1)
+	}
+	encoded, err := sshresume.MarshalFrame(sshresume.Frame{
+		Type: sshresume.FrameHello, Mode: sshresume.HelloResume, Secret: secret, Count: 7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello, refusal := h.handler.readHello(&capturedHelloTransport{message: encoded})
+	if refusal != "" || hello.mode != sshresume.HelloResume || hello.hash != secret.Hash() || hello.count != 7 {
+		t.Fatalf("HELLO fields or refusal differ: %q", refusal)
+	}
+	if !bytes.Equal(encoded, make([]byte, len(encoded))) {
+		t.Fatal("encoded HELLO still holds secret bytes")
+	}
+}
+
+type capturedHelloTransport struct {
+	sshresume.Transport
+	message []byte
+}
+
+func (t *capturedHelloTransport) ReadFrame() ([]byte, error) { return t.message, nil }

@@ -57,8 +57,8 @@ func (h *Handler) serveResumable(w http.ResponseWriter, request *http.Request) {
 		transport.Close(websocket.StatusPolicyViolation)
 		return
 	}
-	if hello.Mode == sshresume.HelloResume {
-		h.resumeSession(transport, hello)
+	if hello.mode == sshresume.HelloResume {
+		h.resumeSession(transport, hello.hash, hello.count)
 		return
 	}
 	h.openSession(request.Context(), transport)
@@ -66,22 +66,25 @@ func (h *Handler) serveResumable(w http.ResponseWriter, request *http.Request) {
 
 // readHello waits HelloTimeout for a valid HELLO. It returns a refusal reason
 // for anything else.
-func (h *Handler) readHello(transport sshresume.Transport) (sshresume.Frame, string) {
+func (h *Handler) readHello(transport sshresume.Transport) (resumeHello, string) {
 	timer := h.deps.Clock.AfterFunc(h.config.ResumeTiming.HelloTimeout, func() {
 		transport.Close(websocket.StatusPolicyViolation)
 	})
 	message, err := transport.ReadFrame()
+	defer clear(message)
 	if !timer.Stop() {
-		return sshresume.Frame{}, "hello_timeout"
+		return resumeHello{}, "hello_timeout"
 	}
 	if err != nil {
-		return sshresume.Frame{}, "closed_before_hello"
+		return resumeHello{}, "closed_before_hello"
 	}
 	frame, err := sshresume.ParseFrame(message)
 	if err != nil || frame.Type != sshresume.FrameHello {
-		return sshresume.Frame{}, "bad_hello"
+		return resumeHello{}, "bad_hello"
 	}
-	return frame, ""
+	hello := resumeHello{mode: frame.Mode, hash: frame.Secret.Hash(), count: frame.Count}
+	clear(frame.Secret[:])
+	return hello, ""
 }
 
 // openSession takes a capacity slot, dials sshd, and hands the client a new
@@ -115,6 +118,7 @@ func (h *Handler) openSession(ctx context.Context, transport sshresume.Transport
 		transport.Close(websocket.StatusInternalError)
 		return
 	}
+	defer clear(secret[:])
 	stream := sshresume.NewStream(sshresume.RoleServer, sshd, sshd, sshresume.Options{
 		Timing: h.config.ResumeTiming,
 		Clock:  h.deps.Clock,
@@ -164,8 +168,8 @@ func (h *Handler) openSession(ctx context.Context, transport sshresume.Transport
 // names. The newest valid resume wins: an attached transport is closed with
 // sshresume.CloseTakeover first. A wrong secret gets the same answer as an
 // ended session: Unknown.
-func (h *Handler) resumeSession(transport sshresume.Transport, hello sshresume.Frame) {
-	session := h.resume.find(hello.Secret.Hash())
+func (h *Handler) resumeSession(transport sshresume.Transport, hash sshresume.SecretHash, count uint64) {
+	session := h.resume.find(hash)
 	if session == nil {
 		h.refuseUnknown(transport)
 		return
@@ -189,7 +193,7 @@ func (h *Handler) resumeSession(transport sshresume.Transport, hello sshresume.F
 		session.detachedTotal += detached
 		session.detachedAt = time.Time{}
 	}
-	attachment, err := session.stream.Attach(transport, hello.Count, true)
+	attachment, err := session.stream.Attach(transport, count, true)
 	if err != nil {
 		session.mu.Unlock()
 		h.refuseResume("bad_resume_count")
@@ -444,4 +448,11 @@ func (r *resumeRegistry) close() ([]*resumeSession, []sshresume.Transport) {
 		pending = append(pending, transport)
 	}
 	return sessions, pending
+}
+
+// resumeHello holds only the non-secret fields needed after authentication.
+type resumeHello struct {
+	mode  sshresume.HelloMode
+	hash  sshresume.SecretHash
+	count uint64
 }
