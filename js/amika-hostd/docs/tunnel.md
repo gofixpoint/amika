@@ -316,7 +316,7 @@ session for that origin and nothing else:
   its SSH WebSocket, `GET /v1/ssh-sessions` as an upgrade, without the
   host key, as at its service route. A tunnel host has no other address
   an SSH client can dial, and amikad checks the connect token before it
-  accepts the socket. Everything else at `amikad--<rig>` is `404`.
+  accepts the socket. Everything else at `s-amikad--<rig>--<org>` is `404`.
 
 The service is told its public address the way a reverse proxy tells an
 app behind it: `X-Forwarded-Host` (the signed name) and `X-Forwarded-Proto:
