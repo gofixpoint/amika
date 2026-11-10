@@ -17,6 +17,7 @@
     "formatcheck": "prettier --check ."
   },
   "dependencies": {
+    "@amika/iroh-rules": "workspace:*",
     "@amika/sandbox": "workspace:*",
     "@amika/service-auth": "workspace:*",
     "@amika/tunnel-protocol": "workspace:*",

@@ -25,13 +25,21 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { getRequestListener } from "@hono/node-server";
-import { routeRigService } from "./tunnel-rig-route.js";
+import {
+  dropForeignAmikaHeaders,
+  routeRigService,
+} from "./tunnel-rig-route.js";
 
 export interface VirtualServerOptions {
   /** The Hono app's handler, the same one `startServer` serves. */
   fetch: Parameters<typeof getRequestListener>[0];
   /** The same upgrade handler a listening daemon installs. */
   upgrade?: (request: IncomingMessage, socket: Duplex, head: Buffer) => void;
+  /**
+   * Remove every `x-amika-` header but the rig and the service first, as
+   * the gateway does on its side. For the dialer's hop, which removes none.
+   */
+  dropForeignAmikaHeaders?: boolean;
 }
 
 export interface VirtualServer {
@@ -55,7 +63,10 @@ export interface VirtualServer {
  */
 export function virtualServer(options: VirtualServerOptions): VirtualServer {
   const serve = getRequestListener(options.fetch);
-  const route = routeRigService;
+  const route = (request: IncomingMessage) => {
+    if (options.dropForeignAmikaHeaders) dropForeignAmikaHeaders(request);
+    return routeRigService(request);
+  };
   const server: Server = createServer((request, response) => {
     const outcome = route(request);
     if (outcome.kind === "refuse") {

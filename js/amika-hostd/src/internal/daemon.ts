@@ -61,6 +61,19 @@ export interface DaemonPaths {
   amikadStateDir: string;
   /** The supervised `amikad serve`'s output on a bare-metal host. */
   amikadLogFile: string;
+  /** Who owns each rig (`rig-owners.ts`). */
+  rigOwnersFile: string;
+  /**
+   * The control socket `amika-net` connects to, in a directory of its own
+   * that hostd keeps mode 0700 (`amika-net-control.ts`).
+   */
+  amikaNetSocket: string;
+  /** What `amika-net` last reported, while it runs (`iroh-transport.ts`). */
+  amikaNetStateFile: string;
+  /** The newest accepted iroh rules (`iroh-rules-sync.ts`). */
+  irohRulesFile: string;
+  /** The supervised `amika-net host`'s output. */
+  amikaNetLogFile: string;
 }
 
 export type Spawn = (
@@ -86,6 +99,25 @@ export interface BackgroundDeps {
    * to answer a keychain prompt.
    */
   attachmentCredential?: string;
+  /**
+   * In `tunnel_iroh` mode, when the org allows it, what the daemon needs to
+   * run `amika-net` (`HandedIroh`).
+   */
+  iroh?: HandedIroh;
+}
+
+/**
+ * What `up` hands a `tunnel_iroh` daemon whose org allows the mode. The
+ * daemon passes the host key to `amika-net` on fd 3, and uses the API key
+ * to fetch the rules and report `amika-net` to Amika.
+ */
+export interface HandedIroh {
+  /** The host's iroh key, the 32-byte seed in hex. */
+  hostKey: string;
+  apiKey: string;
+  hostId: string;
+  hostname: string;
+  orgId: string;
 }
 
 /**
@@ -104,6 +136,7 @@ export async function startInBackground(
     env = process.env,
     secretKey,
     attachmentCredential,
+    iroh,
   }: BackgroundDeps = {},
 ): Promise<{ pid: number; port?: number }> {
   ensureNotRunning(paths.pidFile, isRunning);
@@ -128,6 +161,7 @@ export async function startInBackground(
       type: "secret-key",
       secretKey,
       ...(attachmentCredential === undefined ? {} : { attachmentCredential }),
+      ...(iroh === undefined ? {} : { iroh }),
     } satisfies SecretKeyMessage);
   };
   child.on("message", answer);
@@ -150,6 +184,8 @@ export interface HandedSecrets {
   secretKey: string;
   /** In tunnel mode, the tunnel attachment credential. */
   attachmentCredential?: string;
+  /** In `tunnel_iroh` mode, when the org allows it. */
+  iroh?: HandedIroh;
 }
 
 /**
@@ -178,12 +214,12 @@ export function receiveSecrets(
       const parsed = secretKeyMessageSchema.safeParse(message);
       if (!parsed.success) return;
       cleanup();
-      const { secretKey, attachmentCredential } = parsed.data;
-      resolve(
-        attachmentCredential === undefined
-          ? { secretKey }
-          : { secretKey, attachmentCredential },
-      );
+      const { secretKey, attachmentCredential, iroh } = parsed.data;
+      resolve({
+        secretKey,
+        ...(attachmentCredential === undefined ? {} : { attachmentCredential }),
+        ...(iroh === undefined ? {} : { iroh }),
+      });
     };
     const onDisconnect = () =>
       fail(
@@ -374,6 +410,11 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     bareMetalRigFile: path.join(dir, "bare-metal-rig.json"),
     amikadStateDir: path.join(dir, "amikad"),
     amikadLogFile: path.join(logDir, "amikad.log"),
+    rigOwnersFile: path.join(dir, "rig-owners.json"),
+    amikaNetSocket: path.join(dir, "amika-net", "control.sock"),
+    amikaNetStateFile: path.join(dir, "amika-net.json"),
+    irohRulesFile: path.join(dir, "iroh-rules.json"),
+    amikaNetLogFile: path.join(logDir, "amika-net.log"),
   };
 }
 
@@ -469,6 +510,15 @@ const secretKeyMessageSchema = z.object({
   type: z.literal("secret-key"),
   secretKey: z.string().min(1),
   attachmentCredential: z.string().min(1).optional(),
+  iroh: z
+    .object({
+      hostKey: z.string().regex(/^[0-9a-f]{64}$/),
+      apiKey: z.string().min(1),
+      hostId: z.string().min(1),
+      hostname: z.string().min(1),
+      orgId: z.string().min(1),
+    })
+    .optional(),
 });
 
 type SecretKeyMessage = z.infer<typeof secretKeyMessageSchema>;

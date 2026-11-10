@@ -30,6 +30,9 @@ importers:
 
   js/amika-hostd:
     dependencies:
+      '@amika/iroh-rules':
+        specifier: workspace:*
+        version: link:../iroh-rules
       '@amika/sandbox':
         specifier: workspace:*
         version: link:../sandbox

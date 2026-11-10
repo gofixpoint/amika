@@ -4,6 +4,7 @@ import type { RuntimeConfig } from "./internal/runtimes.js";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import { memoryServiceRegistry } from "./internal/service-registry.js";
+import { memoryRigOwners } from "./internal/rig-owners.js";
 import { SnapshotConflictError } from "./internal/snapshot-store.js";
 import {
   RuntimeError,
@@ -146,7 +147,7 @@ describe("machine API", () => {
     expect(await (await app.request("/health")).json()).toEqual({
       status: "ok",
       apis: ["v0beta1"],
-      features: ["service-tokens", "runtimes"],
+      features: ["service-tokens", "runtimes", "rig-owner"],
     });
     expectUntouched(runtime);
   });
@@ -172,6 +173,52 @@ describe("machine API", () => {
       services: undefined,
     });
     expect(runtime.start).not.toHaveBeenCalled();
+  });
+
+  describe("rig owners", () => {
+    function withOwners() {
+      const runtime = fakeRuntime();
+      const owners = memoryRigOwners();
+      const app = authenticated(
+        createApp({ secretKey: SECRET }, runtime, { owners }),
+      );
+      return { app, runtime, owners };
+    }
+    const create = { name: "demo", image: "ubuntu:24.04" };
+
+    it("stores the owner a create names, and never passes it on", async () => {
+      const { app, runtime, owners } = withOwners();
+      const owner = { kind: "user", id: "user_1" };
+      const response = await app.request(ROOT, json({ ...create, owner }));
+      expect(response.status).toBe(201);
+      expect(owners.get("demo")).toEqual(owner);
+      expect(runtime.create.mock.calls[0][0]).not.toHaveProperty("owner");
+    });
+
+    it("keeps no owner for a create without one", async () => {
+      const { app, owners } = withOwners();
+      owners.set("demo", { kind: "user", id: "earlier" });
+      expect((await app.request(ROOT, json(create))).status).toBe(201);
+      expect(owners.get("demo")).toBeNull();
+    });
+
+    it("refuses an owner kind it does not know", async () => {
+      const { app, runtime } = withOwners();
+      const response = await app.request(
+        ROOT,
+        json({ ...create, owner: { kind: "team", id: "t" } }),
+      );
+      expect(response.status).toBe(400);
+      expect(runtime.create).not.toHaveBeenCalled();
+    });
+
+    it("forgets the owner when the rig is deleted", async () => {
+      const { app, owners } = withOwners();
+      owners.set("demo", { kind: "user", id: "user_1" });
+      const response = await app.request(`${ROOT}/demo`, { method: "DELETE" });
+      expect(response.status).toBe(204);
+      expect(owners.get("demo")).toBeNull();
+    });
   });
 
   describe("image resolution", () => {

@@ -510,6 +510,11 @@ describe("daemonPaths", () => {
       bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",
       amikadStateDir: "/state/amika-hostd/amikad",
       amikadLogFile: "/state/amika-hostd/log/amikad.log",
+      rigOwnersFile: "/state/amika-hostd/rig-owners.json",
+      amikaNetSocket: "/state/amika-hostd/amika-net/control.sock",
+      amikaNetStateFile: "/state/amika-hostd/amika-net.json",
+      irohRulesFile: "/state/amika-hostd/iroh-rules.json",
+      amikaNetLogFile: "/state/amika-hostd/log/amika-net.log",
     });
   });
 

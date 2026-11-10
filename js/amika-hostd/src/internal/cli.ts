@@ -1,13 +1,18 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
 import { execFile, spawn } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, rmSync } from "node:fs";
 import { isIPv6 } from "node:net";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
 import { currentHostPlatform, type HostPlatform } from "../platforms/index.js";
 import {
+  SUPPORTED_FEATURES as IROH_RULES_FEATURES,
+  SUPPORTED_FORMATS as IROH_RULES_FORMATS,
+} from "@amika/iroh-rules";
+import {
   AmikaApiError,
   HostTransportConflictError,
+  fetchIrohRules as fetchIrohRulesFromAmika,
   registerHost as registerHostWithAmika,
   setHostSecret as setHostSecretInAmika,
   setHostReport as setHostReportInAmika,
@@ -26,6 +31,7 @@ import {
   DEFAULT_PORT,
   ENV_NAMES,
   configFilePaths,
+  dialsGateway,
   loadConfigFile as loadConfigFileFromDisk,
   requireSettings,
   resolveConfig,
@@ -77,6 +83,7 @@ import {
   isSmolvmRunning as isSmolvmProcess,
   notifyReady as notifyParent,
   receiveSecrets as receiveSecretsFromUp,
+  type HandedIroh,
   type HandedSecrets,
   readRunningPid,
   hostdDataDir,
@@ -88,10 +95,22 @@ import {
 } from "./daemon.js";
 import {
   SHUTDOWN_GRACE_MS,
+  buildHandlers,
   startServer as startServerOnPort,
   type RunningServer,
 } from "./server.js";
+import { findAmikaNet } from "./amika-net-supervisor.js";
+import { startIrohListeners, type IrohListeners } from "./iroh-listeners.js";
+import { hostIrohKey, parseIrohKey } from "./iroh-host-key.js";
+import { trustedRulesKeys } from "./iroh-rules-sync.js";
 import {
+  readAmikaNetState,
+  startIrohTransport,
+  type IrohTransport,
+} from "./iroh-transport.js";
+import { fileRigOwners, type RigOwners } from "./rig-owners.js";
+import {
+  RuntimeError,
   providerRuntime,
   type MachineRuntime,
   type ProviderRuntimeConfig,
@@ -257,6 +276,11 @@ export interface CliDeps {
   findLume?: (env: NodeJS.ProcessEnv) => string | undefined;
   /** Tunnel enrolment; defaults to the control plane and the record file. */
   enrol?: EnrolForTunnelDeps["enrol"];
+  /** Finds the `amika-net` binary; defaults to `findAmikaNet`. */
+  findAmikaNet?: typeof findAmikaNet;
+  /** Runs `amika-net` and its control socket; tests inject a fake. */
+  startIrohTransport?: typeof startIrohTransport;
+  fetchIrohRules?: typeof fetchIrohRulesFromAmika;
   write?: EnrolForTunnelDeps["write"];
 }
 
@@ -345,7 +369,8 @@ export async function runCli(
         // Alongside registration, so a slow smolvm never delays it.
         const checkedSmolvm = on.smol ? warnOldSmolvm(deps) : undefined;
         const host = await register(config, deps);
-        if (config.transport === "tunnel") await enrol(config, host, deps);
+        if (dialsGateway(config.transport)) await enrol(config, host, deps);
+        const iroh = irohHandoff(config, host, deps);
         await checkedSmolvm;
         // Read before the daemon starts, which records each image it pulls.
         const pending = on.smol
@@ -364,10 +389,11 @@ export async function runCli(
           await serveInForeground(config, deps, {
             smolvm: true,
             afterStart: finish,
+            iroh,
           });
           break;
         }
-        const port = await startBackground(parsed.flags, config, deps);
+        const port = await startBackground(parsed.flags, config, deps, iroh);
         try {
           return (await finish(port)) ? 0 : 1;
         } catch (error) {
@@ -394,6 +420,7 @@ export async function runCli(
         await serveInForeground(requireSettings(config, ["secretKey"]), deps, {
           smolvm: parsed.smolvm,
           tunnelSecrets: handed && handedTunnelSecrets(handed),
+          iroh: handed?.iroh,
         });
         break;
       }
@@ -1288,6 +1315,7 @@ async function registerInTransport(
     secretKey: config.secretKey,
     sizes: registeredSizes(config),
     capabilities: registeredCapabilities(config, deps),
+    irohRules: { formats: IROH_RULES_FORMATS, features: IROH_RULES_FEATURES },
   };
   const registerHost = deps.registerHost ?? registerHostWithAmika;
   try {
@@ -1309,12 +1337,33 @@ function registeredSizes(config: HostdConfig): HostdConfig["sizes"] {
   return config.runtimes.runtimes.smol?.sizes ?? config.sizes;
 }
 
-/** What the host can run (`runtimes.ts`). */
+/**
+ * What the host can run (`runtimes.ts`). On a `tunnel_iroh` host, also
+ * what `amika-net` last reported (`iroh-transport.ts`). Each report
+ * replaces the stored one, so leaving it out would make Amika forget the
+ * endpoint while `up` restarts the daemon, and a session in that gap would
+ * not use iroh. The daemon reports again once `amika-net` is ready.
+ */
 function registeredCapabilities(
   config: HostdConfig,
   deps: CliDeps,
 ): Capabilities {
-  return capabilitiesOf(config.runtimes, hostArch(), machineFacts(deps));
+  const capabilities = capabilitiesOf(
+    config.runtimes,
+    hostArch(),
+    machineFacts(deps),
+  );
+  if (
+    config.transport !== "tunnel_iroh" ||
+    (deps.findAmikaNet ?? findAmikaNet)(deps.env, selfDir(deps.self)) ===
+      undefined
+  ) {
+    return capabilities;
+  }
+  const amikaNet = readAmikaNetState(daemonPaths(deps.env).amikaNetStateFile);
+  return amikaNet === undefined
+    ? capabilities
+    : { ...capabilities, amika_net: amikaNet };
 }
 
 /**
@@ -1430,19 +1479,27 @@ async function dialOut(
   runtime: MachineRuntime,
   paths: DaemonPaths,
   prepull: PrepullProgress,
+  owners: RigOwners,
   deps: CliDeps,
   {
     secrets: handed,
+    loopback = false,
     ...packing
   }: {
     smolvm?: string;
     signal: AbortSignal;
     /** What `up` handed a background daemon; else the store is opened. */
     secrets?: Pick<Secrets, "attachmentCredential">;
+    /**
+     * Also serve the same handlers on the loopback listeners `amika-net`'s
+     * `hostd` target reaches (`iroh-listeners.ts`).
+     */
+    loopback?: boolean;
   },
 ): Promise<{
   port?: undefined;
   connectionId?: string;
+  irohListeners?: IrohListeners;
   close: () => Promise<void>;
 }> {
   // The same runtime a listener uses: a tunnel changes how the daemon is
@@ -1451,18 +1508,33 @@ async function dialOut(
     handed ??
     (deps.openSecrets ?? openSecretStore)(config.secretStore, deps.env);
   const enrolmentFile = enrolmentFileFor(config, deps);
+  const options = handlerOptions(config, paths, prepull, owners, deps, packing);
+  // One set of handlers for all, so the loopback listeners serve the same
+  // routes, services registry and rig owners as the tunnel.
+  const handlers = loopback
+    ? buildHandlers(config, runtime, options)
+    : undefined;
+  const local = handlers ? await startIrohListeners(handlers) : undefined;
   const tunnel = (deps.startTunnel ?? startTunnelOut)(
     config,
     runtime,
     secrets,
     () => readTunnelEnrolment(enrolmentFile),
     {
-      ...handlerOptions(config, paths, prepull, deps, packing),
+      ...options,
+      handlers,
       // For the life of the daemon, not just startup: a tunnel that drops,
       // or that the gateway later refuses, must say so in the log.
       onEvent: (event) => logTunnelEvent(event, deps),
     },
   );
+  const closeAll = async () => {
+    try {
+      await tunnel.close();
+    } finally {
+      await local?.close();
+    }
+  };
   try {
     // A shutdown during startup ends the wait at once, rather than after
     // the attach timeout while the gateway is unreachable.
@@ -1472,14 +1544,165 @@ async function dialOut(
     ]);
     return {
       connectionId: attached.connectionId,
-      close: () => tunnel.close(),
+      irohListeners: local,
+      close: closeAll,
     };
   } catch (error) {
     // Nothing is serving, so leave nothing dialling behind.
-    await tunnel.close();
+    await closeAll();
     if (packing.signal.aborted) return { close: async () => {} };
     throw error;
   }
+}
+
+/**
+ * What a `tunnel_iroh` daemon needs to run `amika-net`, or undefined when
+ * it should not run it. Run by `up`, which holds the API key and can reach
+ * the secret store: the host key is read there, or made on first use.
+ *
+ * `amika-net` runs only when the host is in `tunnel_iroh` mode and the
+ * registration answer says its org allows the mode.
+ */
+function irohHandoff(
+  config: RegistrationConfig,
+  host: RegisteredHost,
+  deps: CliDeps,
+): HandedIroh | undefined {
+  if (config.transport !== "tunnel_iroh") return undefined;
+  if (!allowsIroh(host)) {
+    deps.out(
+      `This host's org does not allow tunnel_iroh, so amika-net stays off; host ${host.hostname} is served over the gateway tunnel.`,
+    );
+    forgetAmikaNet(deps);
+    return undefined;
+  }
+  if (host.org_id === undefined) {
+    deps.err(
+      "amika-hostd: Amika's registration answer names no org, so amika-net stays off.",
+    );
+    return undefined;
+  }
+  const { key, created } = hostIrohKey(secretsFor(config, deps).irohKey);
+  if (created) deps.out("Made this host's iroh key and stored it.");
+  return {
+    hostKey: Buffer.from(key).toString("hex"),
+    apiKey: config.apiKey,
+    hostId: host.id,
+    hostname: host.hostname,
+    orgId: host.org_id,
+  };
+}
+
+/** Report no `amika-net` from now on: it will not run. */
+function forgetAmikaNet(deps: Pick<CliDeps, "env">): void {
+  rmSync(daemonPaths(deps.env).amikaNetStateFile, { force: true });
+}
+
+/** Whether Amika's answer says the host's org allows `tunnel_iroh`. */
+function allowsIroh(host: RegisteredHost): boolean {
+  return host.org_allowed_transport_modes?.includes("tunnel_iroh") ?? false;
+}
+
+/**
+ * Start `amika-net` and what it talks to (`iroh-transport.ts`), beside the
+ * gateway tunnel. Without the `amika-net` binary the daemon runs on
+ * without it, and says so once.
+ */
+async function startIroh(
+  config: HostdConfigWith<"secretKey">,
+  iroh: HandedIroh,
+  {
+    runtime,
+    owners,
+    listeners,
+    paths,
+    deps,
+  }: {
+    runtime: MachineRuntime;
+    owners: RigOwners;
+    listeners: IrohListeners | undefined;
+    paths: DaemonPaths;
+    deps: CliDeps;
+  },
+): Promise<IrohTransport | undefined> {
+  const binary = (deps.findAmikaNet ?? findAmikaNet)(
+    deps.env,
+    selfDir(deps.self),
+  );
+  if (binary === undefined) {
+    deps.err(
+      "amika-hostd: amika-net is not next to amika-hostd or on PATH, so this host runs without it; the gateway tunnel serves it.",
+    );
+    forgetAmikaNet(deps);
+    return undefined;
+  }
+  const hostKey = parseIrohKey(iroh.hostKey);
+  if (hostKey === undefined) {
+    throw new DaemonError("the iroh host key `up` handed over is not a key");
+  }
+  const api = { apiUrl: config.apiUrl, apiKey: iroh.apiKey };
+  const host = { id: iroh.hostId, hostname: iroh.hostname };
+  return (deps.startIrohTransport ?? startIrohTransport)({
+    hostKey,
+    binary,
+    relayUrl: config.irohRelayUrl,
+    orgId: iroh.orgId,
+    trustedKeys: trustedRulesKeys(config.apiUrl, config.irohRulesTrustedKeys),
+    paths: {
+      socketPath: paths.amikaNetSocket,
+      rulesFile: paths.irohRulesFile,
+      stateFile: paths.amikaNetStateFile,
+      logFile: paths.amikaNetLogFile,
+    },
+    // As smolvm's: never the daemon's keys.
+    env: withoutEnv(deps.env, [...ENV_NAMES.apiKey, ...ENV_NAMES.secretKey]),
+    fetchRules: (have) =>
+      (deps.fetchIrohRules ?? fetchIrohRulesFromAmika)(api, iroh.hostId, have),
+    report: async (amikaNet) => {
+      let runtimes: RuntimeConfig;
+      let answer: RegisteredHost;
+      do {
+        runtimes = config.runtimes;
+        answer = await (deps.setHostReport ?? setHostReportInAmika)(api, host, {
+          sizes: registeredSizes(config),
+          capabilities: {
+            ...registeredCapabilities(config, deps),
+            amika_net: amikaNet,
+          },
+        });
+        // A reload's report can arrive before this older request. Send
+        // the current runtime settings again if they changed in flight.
+      } while (allowsIroh(answer) && config.runtimes !== runtimes);
+      return { allowed: allowsIroh(answer) };
+    },
+    access: {
+      owners,
+      rigExists: async (rig) => {
+        try {
+          await runtime.get(rig);
+          return true;
+        } catch (error) {
+          if (error instanceof RuntimeError && error.status === 404) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      hostPort: (rig, port) => runtime.hostPort(rig, port),
+      apiPort: () => listeners?.apiPort,
+      admitPreview: () => listeners?.admitPreview(),
+    },
+    out: deps.out,
+    err: deps.err,
+  });
+}
+
+/** The directory of the hostd script `self` runs, for `findAmikaNet`. */
+function selfDir(self: CliDeps["self"]): string | undefined {
+  const script = self[self.length - 1];
+  return self.length > 1 && path.isAbsolute(script)
+    ? path.dirname(script)
+    : undefined;
 }
 
 /**
@@ -1718,6 +1941,8 @@ async function startBackground(
   flags: HostdFlags,
   config: HostdConfigWith<"secretKey">,
   deps: CliDeps,
+  /** What the daemon needs to run `amika-net`, when it should. */
+  iroh: HandedIroh | undefined,
 ) {
   const paths = daemonPaths(deps.env);
   const forwarded = [
@@ -1733,13 +1958,13 @@ async function startBackground(
       secretKey: config.secretKey,
       // Read here, where a keychain prompt can reach the operator, and
       // handed over with the secret key.
-      attachmentCredential:
-        config.transport === "tunnel"
-          ? (deps.openSecrets ?? openSecretStore)(
-              config.secretStore,
-              deps.env,
-            ).attachmentCredential.get()
-          : undefined,
+      attachmentCredential: dialsGateway(config.transport)
+        ? (deps.openSecrets ?? openSecretStore)(
+            config.secretStore,
+            deps.env,
+          ).attachmentCredential.get()
+        : undefined,
+      iroh,
     },
   );
   deps.out(
@@ -1905,6 +2130,7 @@ async function serveInForeground(
     smolvm = false,
     afterStart,
     tunnelSecrets,
+    iroh,
   }: {
     smolvm?: boolean;
     afterStart?: (port: number | undefined) => Promise<unknown>;
@@ -1913,6 +2139,11 @@ async function serveInForeground(
      * daemon runs by hand, and reads the secret store itself.
      */
     tunnelSecrets?: Pick<Secrets, "attachmentCredential">;
+    /**
+     * What `amika-net` needs, when `up` found the host in `tunnel_iroh`
+     * mode and its org allowing it. Absent otherwise: no `amika-net`.
+     */
+    iroh?: HandedIroh;
   } = {},
 ) {
   const paths = daemonPaths(deps.env);
@@ -1941,8 +2172,16 @@ async function serveInForeground(
    * it binds nothing. Everything after startup needs only `close`.
    */
   let server:
-    | { port?: number; connectionId?: string; close: () => Promise<void> }
+    | {
+        port?: number;
+        connectionId?: string;
+        /** The loopback listeners `amika-net`'s `hostd` target reaches. */
+        irohListeners?: IrohListeners;
+        close: () => Promise<void>;
+      }
     | undefined;
+  let irohRunning: IrohTransport | undefined;
+  const owners = fileRigOwners(paths.rigOwnersFile);
   const prepull: PrepullProgress = {
     // Every throwaway machine name the pre-pull uses. Each is random, so
     // hiding them all, deleted or not, never hides a rig.
@@ -1955,6 +2194,7 @@ async function serveInForeground(
     interrupted.abort();
     stopReloads?.();
     try {
+      await irohRunning?.stop();
       await server?.close();
     } finally {
       try {
@@ -1979,17 +2219,17 @@ async function serveInForeground(
       const machines = routed.router;
       // Only a daemon running its own smolvm can pack a snapshot: a pack
       // is a subprocess of that binary, reading the same machine state.
-      server =
-        config.transport === "tunnel"
-          ? await dialOut(serving, machines, paths, prepull, deps, {
-              smolvm: runtime?.binary,
-              signal: interrupted.signal,
-              secrets: tunnelSecrets,
-            })
-          : await listen(serving, machines, paths, prepull, deps, {
-              smolvm: runtime?.binary,
-              signal: interrupted.signal,
-            });
+      server = dialsGateway(config.transport)
+        ? await dialOut(serving, machines, paths, prepull, owners, deps, {
+            smolvm: runtime?.binary,
+            signal: interrupted.signal,
+            secrets: tunnelSecrets,
+            loopback: iroh !== undefined && config.transport === "tunnel_iroh",
+          })
+        : await listen(serving, machines, paths, prepull, owners, deps, {
+            smolvm: runtime?.binary,
+            signal: interrupted.signal,
+          });
     }
     // Signalled during startup: stop without telling `up` it is ready.
     if (server === undefined || interrupted.signal.aborted) {
@@ -2014,6 +2254,15 @@ async function serveInForeground(
       await (deps.notifyReady ?? notifyParent)({ port: server.port });
     }
     await routed?.resume();
+    if (routed && iroh && config.transport === "tunnel_iroh") {
+      irohRunning = await startIroh(serving, iroh, {
+        runtime: routed.router,
+        owners,
+        listeners: server.irohListeners,
+        paths,
+        deps,
+      });
+    }
     if (routed && deps.reloadSignal) {
       const reloader = routed;
       let reloading = Promise.resolve();
@@ -2194,6 +2443,7 @@ async function listen(
   runtime: MachineRuntime,
   paths: DaemonPaths,
   prepull: PrepullProgress,
+  owners: RigOwners,
   deps: CliDeps,
   /** The smolvm a pack runs through, when this daemon started one. */
   packing: { smolvm?: string; signal?: AbortSignal } = {},
@@ -2202,7 +2452,7 @@ async function listen(
     return await (deps.startServer ?? startServerOnPort)(
       config,
       runtime,
-      handlerOptions(config, paths, prepull, deps, packing),
+      handlerOptions(config, paths, prepull, owners, deps, packing),
     );
   } catch (error) {
     throw new DaemonError(
@@ -2222,11 +2472,13 @@ function handlerOptions(
   config: HostdConfigWith<"secretKey">,
   paths: DaemonPaths,
   prepull: PrepullProgress,
+  owners: RigOwners,
   deps: CliDeps,
   packing: { smolvm?: string; signal?: AbortSignal },
 ) {
   return {
     servicesFile: paths.servicesFile,
+    owners,
     machine: machineFacts(deps),
     snapshots: packing.smolvm
       ? {

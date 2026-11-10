@@ -26,6 +26,7 @@ import type { HostdConfigWith } from "./config.js";
 import type { Secrets } from "./credentials.js";
 import type { MachineRuntime } from "./machine-runtime.js";
 import type { MachineFacts } from "./runtimes.js";
+import type { RigOwners } from "./rig-owners.js";
 
 /** How long the daemon waits to report that it is serving. */
 export const ATTACH_TIMEOUT_MS = 30_000;
@@ -44,7 +45,14 @@ export interface RunningTunnel {
 }
 
 export interface StartTunnelOptions {
+  /**
+   * Handlers already built, shared with another listener (the loopback
+   * port `amika-net` reaches). Built here when absent.
+   */
+  handlers?: ReturnType<typeof buildHandlers>;
   servicesFile?: string;
+  /** Who owns each rig; in memory without it. */
+  owners?: RigOwners;
   hiddenMachines?: () => ReadonlySet<string>;
   pullingImages?: () => ReadonlySet<string>;
   smolvmLogFile?: string;
@@ -77,14 +85,17 @@ export function startTunnel(
   readEnrolment: () => TunnelEnrolment | undefined,
   options: StartTunnelOptions = {},
 ): RunningTunnel {
-  const { app, upgrade, tunnels } = buildHandlers(config, runtime, {
-    servicesFile: options.servicesFile,
-    hiddenMachines: options.hiddenMachines,
-    pullingImages: options.pullingImages,
-    smolvmLogFile: options.smolvmLogFile,
-    snapshots: options.snapshots,
-    machine: options.machine,
-  });
+  const { app, upgrade, tunnels } =
+    options.handlers ??
+    buildHandlers(config, runtime, {
+      servicesFile: options.servicesFile,
+      owners: options.owners,
+      hiddenMachines: options.hiddenMachines,
+      pullingImages: options.pullingImages,
+      smolvmLogFile: options.smolvmLogFile,
+      snapshots: options.snapshots,
+      machine: options.machine,
+    });
   const server = virtualServer({ fetch: app.fetch, upgrade });
 
   const client =

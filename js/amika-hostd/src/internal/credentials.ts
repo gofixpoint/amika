@@ -53,6 +53,12 @@ export interface Secrets {
    */
   readonly attachmentCredential: Secret;
   /**
+   * The host's iroh key, in `tunnel_iroh` mode: the 32-byte Ed25519 seed
+   * `amika-net` serves as, in hex (`iroh-host-key.ts`). Never in
+   * config.toml, and never read by the daemon: `up` hands it over.
+   */
+  readonly irohKey: Secret;
+  /**
    * In the keychain, the secret key is a keychain item. With the file store
    * it is `secret_key` in config.toml, which setup writes with the rest of
    * the config, so there is no separate secret here.
@@ -96,6 +102,11 @@ export function attachmentCredentialFilePath(env: NodeJS.ProcessEnv): string {
   return secretFilePath(env, "attachment-credential");
 }
 
+/** The file the iroh host key is kept in with the file store. */
+export function irohKeyFilePath(env: NodeJS.ProcessEnv): string {
+  return secretFilePath(env, "iroh-key");
+}
+
 function secretFilePath(env: NodeJS.ProcessEnv, name: SecretName): string {
   return path.join(path.dirname(configFilePaths(env)[0]), name);
 }
@@ -115,6 +126,7 @@ export function openSecrets(
       kind,
       apiKey: fileSecret(apiKeyFilePath(env), deps),
       attachmentCredential: fileSecret(attachmentCredentialFilePath(env), deps),
+      irohKey: fileSecret(irohKeyFilePath(env), deps),
     };
   }
   const keychain =
@@ -137,6 +149,7 @@ export function openSecrets(
       "attachment-credential",
       "tunnel attachment credential",
     ),
+    irohKey: item("iroh-key", "iroh host key"),
   };
 }
 
