@@ -61,6 +61,49 @@ func TestCarryStreamsKeepsAnAnsweringTransportOpen(t *testing.T) {
 	}
 }
 
+func TestCarryStreamsCountsIncomingDataAsLiveness(t *testing.T) {
+	release := make(chan struct{})
+	stream := dialTestTransport(t, func(ctx context.Context, connection *websocket.Conn) {
+		// Keep sending data without reading the ping. A pong queued behind
+		// a large transfer can be late even while data keeps arriving.
+		ticker := time.NewTicker(testLiveness.interval / 2)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-release:
+				// Stop data but keep the socket open without answering pings.
+				<-ctx.Done()
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := connection.Write(ctx, websocket.MessageBinary, []byte("from-sshd")); err != nil {
+					return
+				}
+			}
+		}
+	})
+	stdin, openSSH := io.Pipe()
+	defer openSSH.Close()
+
+	done := make(chan error, 1)
+	go func() { done <- carryStreams(context.Background(), stream, stdin, io.Discard, testLiveness) }()
+	select {
+	case err := <-done:
+		t.Fatalf("carryStreams ended while transport data kept arriving: %v", err)
+	case <-time.After(10 * testLiveness.timeout):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "did not answer a ping") {
+			t.Fatalf("carryStreams error after data stopped = %v, want a ping timeout", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("carryStreams did not notice the silent transport")
+	}
+}
+
 func TestCarryStreamsDoesNotBlameTheTransportForABlockedOpenSSH(t *testing.T) {
 	stream := newSilentStream("from-sshd")
 	stdout := &blockedWriter{release: make(chan struct{})}
@@ -87,21 +130,27 @@ func TestCarryStreamsDoesNotBlameTheTransportForABlockedOpenSSH(t *testing.T) {
 	}
 }
 
-func TestCarryStreamsDoesNotCountAPingThatWaitedBehindADataWrite(t *testing.T) {
+func TestCarryStreamsDoesNotCountAPingThatHitTheLibraryLimit(t *testing.T) {
 	// coder/websocket fails a ping after 5 s behind a data write, before the
-	// proxy's own timeout.
+	// proxy's own timeout. Keep stdin idle so the watcher actually pings.
 	libraryLimit := fmt.Errorf("failed to write control frame ping: %w", context.DeadlineExceeded)
 	stream := newStalledStream(libraryLimit)
 	liveness := proxyLiveness{interval: 20 * time.Millisecond, timeout: time.Minute}
 	stdin, openSSH := io.Pipe()
 	defer openSSH.Close()
-	go func() { _, _ = openSSH.Write([]byte("to-sshd")) }()
 
 	done := make(chan error, 1)
 	go func() { done <- carryStreams(context.Background(), stream, stdin, io.Discard, liveness) }()
 	select {
+	case <-stream.pinged:
 	case err := <-done:
-		t.Fatalf("carryStreams ended while a data write was in progress: %v", err)
+		t.Fatalf("carryStreams ended before the watcher pinged: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the watcher did not ping")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("carryStreams counted the library's ping limit as a miss: %v", err)
 	case <-time.After(20 * liveness.interval):
 	}
 	_ = stream.Close()
@@ -206,12 +255,13 @@ func (w *blockedWriter) Write(p []byte) (int, error) {
 // once.
 type stalledStream struct {
 	pingErr   error
+	pinged    chan struct{}
 	closed    chan struct{}
 	closeOnce sync.Once
 }
 
 func newStalledStream(pingErr error) *stalledStream {
-	return &stalledStream{pingErr: pingErr, closed: make(chan struct{})}
+	return &stalledStream{pingErr: pingErr, pinged: make(chan struct{}, 1), closed: make(chan struct{})}
 }
 
 func (s *stalledStream) Read([]byte) (int, error) {
@@ -231,4 +281,10 @@ func (s *stalledStream) Close() error {
 
 func (s *stalledStream) CloseNow() error { return s.Close() }
 
-func (s *stalledStream) Ping(context.Context) error { return s.pingErr }
+func (s *stalledStream) Ping(context.Context) error {
+	select {
+	case s.pinged <- struct{}{}:
+	default:
+	}
+	return s.pingErr
+}
