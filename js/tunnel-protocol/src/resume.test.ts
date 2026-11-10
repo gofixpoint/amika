@@ -134,6 +134,35 @@ describe("the replay log", () => {
     expect(log.refusal(100_000 - log.frames - 1)).toBe("log_truncated");
   });
 
+  it("bounds tiny-frame metadata before the byte limit", () => {
+    // Empty WebSocket messages encode as five-byte tunnel frames. Their
+    // objects can exhaust the relay's heap before its 16 MiB byte limit.
+    const log = new ReplayLog(16 * 1024 * 1024);
+    for (let count = 1; count <= 65_537; count += 1) {
+      log.append(frame(count, 5));
+    }
+    expect(log.sent).toBe(65_537);
+    expect(log.frames).toBe(65_536);
+    expect(log.bytes).toBe(65_536 * 5);
+    expect(log.refusal(0)).toBe("log_truncated");
+    expect(() => log.resume(0)).toThrow(ProtocolError);
+    const retained = log.resume(1);
+    expect(new DataView(retained[0]!.buffer).getUint32(0)).toBe(2);
+    expect(new DataView(retained.at(-1)!.buffer).getUint32(0)).toBe(65_537);
+  });
+
+  it("keeps counting after frame-limit truncation and acknowledgement", () => {
+    const log = logWith(65_538, 16 * 1024 * 1024);
+    log.acknowledge(65_537);
+    expect(log.frames).toBe(1);
+    log.append(frame(65_539));
+    expect(log.sent).toBe(65_539);
+    expect(countsOf(log.resume(65_537))).toEqual([65_538, 65_539]);
+    log.acknowledge(65_539);
+    expect(log.frames).toBe(0);
+    expect(log.bytes).toBe(0);
+  });
+
   it("restored from counts, resends nothing it held before", () => {
     const log = new ReplayLog(1024, { sent: 7, acked: 4 });
     expect(log.sent).toBe(7);

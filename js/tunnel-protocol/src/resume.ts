@@ -25,9 +25,9 @@ export type ResumeRefusal =
 /**
  * The counted frames this side sent that the peer has not acknowledged.
  *
- * It holds at most `maxBytes`. Past that it drops the oldest frames and
- * records the highest count it dropped, so a later resume that needs one is
- * refused rather than resumed with a gap.
+ * It holds at most `maxBytes` and 65,536 frames. Past either limit it drops
+ * the oldest frames and records the highest count it dropped. A resume that
+ * needs a dropped frame is refused rather than resumed with a gap.
  */
 export class ReplayLog {
   /** Held frames, oldest first, from `head`. Taken from the front in O(1). */
@@ -81,7 +81,10 @@ export class ReplayLog {
     this.sentCount += 1;
     this.items.push(frame);
     this.heldBytes += frame.byteLength;
-    while (this.heldBytes > this.maxBytes && this.frames > 0) {
+    while (
+      (this.heldBytes > this.maxBytes || this.frames > MAX_REPLAY_FRAMES) &&
+      this.frames > 0
+    ) {
       this.lostThrough = this.floor() + 1;
       this.shift();
     }
@@ -225,3 +228,6 @@ export function parseCount(
   const count = Number(value);
   return Number.isSafeInteger(count) ? count : undefined;
 }
+
+/** Bound per-frame object overhead separately from retained payload bytes. */
+const MAX_REPLAY_FRAMES = 65_536;

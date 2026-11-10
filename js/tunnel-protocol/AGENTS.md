@@ -29,6 +29,8 @@ amika-mono's `specs/035-host-connection-drops.d/resumable-tunnel.md`.
   refuse the old one with `426`.
 - **v3 allows stream id 0 for `ACK` only.** Read v3 with `decodeFrameV3`.
   `decodeFrame` reads v2 and refuses an `ACK`.
+- **Bound replay payloads and frame counts.** Keep at most 65,536 frames,
+  within the configured byte limit. Reject recovery if it needs a dropped frame.
 - **A side never drops a frame on a bad count.** An `ACK` or a resume count
   above the sent count, or below the last count acknowledged, is a protocol
   error. `ReplayLog` enforces this.

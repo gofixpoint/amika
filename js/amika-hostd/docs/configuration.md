@@ -31,10 +31,15 @@ two are not merged, and unknown keys are rejected. `SMOL_API_URL` (where `up`
 and `serve --smolvm` start smolvm, by default the first free port from
 `http://127.0.0.1:23020`, see [smolvm](runtime.md#smolvm); plain `serve` forwards to a
 fixed `http://127.0.0.1:23020`) and `SMOL_REQUEST_TIMEOUT_MS` remain
-environment-only. So does `AMIKA_HOSTD_TUNNEL_RESUME`, the kill switch for
-the resumable tunnel: `0` offers `amika.tunnel.v2` alone, `1` (the default)
-offers v3 first, and anything else fails startup (see
-[A session that outlives its socket](tunnel.md#a-session-that-outlives-its-socket)). `config.example.toml`
+environment-only.
+
+Set `AMIKA_HOSTD_TUNNEL_RESUME=0` to offer only `amika.tunnel.v2`.
+Set it to `1`, or leave it unset, to offer v3 first and v2 second.
+A nonblank value other than `0` or `1` prevents startup.
+This setting is available only through the environment.
+See [Session recovery](tunnel.md#session-recovery).
+
+`config.example.toml`
 documents every setting: each setting with a default is a live line, and
 only `hostname` and `secret_store` are commented. It holds no `secret_key`,
 since the secrets live in the keychain by default. Keep its comments short.
