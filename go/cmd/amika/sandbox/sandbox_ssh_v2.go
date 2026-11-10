@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/cliargs"
 	"github.com/gofixpoint/amika/go/internal/cliflags"
+	"github.com/gofixpoint/amika/go/internal/filelock"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
@@ -198,10 +200,7 @@ Examples:
 			return err
 		}
 		if newKey, _ := cmd.Flags().GetBool("new-device-key"); newKey {
-			if err := stopDeviceAgent(cmd.Context()); err != nil {
-				return err
-			}
-			if err := makeNewDeviceKey(cmd.ErrOrStderr()); err != nil {
+			if err := replaceDeviceKey(cmd.Context(), cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 		}
@@ -243,6 +242,68 @@ Examples:
 		}
 		return execSessionSSH(alias, argv)
 	},
+}
+
+// replaceDeviceKey holds the sidecar's start lock until the key is replaced.
+// A concurrent connection can start its next agent only after that write.
+func replaceDeviceKey(ctx context.Context, stderr io.Writer) error {
+	if runtime.GOOS != "windows" {
+		dir, err := deviceAgentDir(os.LookupEnv)
+		if err != nil {
+			return err
+		}
+		if err := ensurePrivateAgentDir(dir); err != nil {
+			return err
+		}
+		lockCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		lock, err := filelock.Acquire(lockCtx, filepath.Join(dir, "agent.lock"))
+		cancel()
+		if err != nil {
+			return fmt.Errorf("lock amika-net before replacing its device key: %w", err)
+		}
+		defer lock.Close()
+	}
+	if err := stopDeviceAgent(ctx); err != nil {
+		return err
+	}
+	return makeNewDeviceKey(stderr)
+}
+
+// deviceAgentDir matches amika-net's agent directory selection.
+func deviceAgentDir(env func(string) (string, bool)) (string, error) {
+	if dir, set := env("AMIKA_NET_AGENT_DIR"); set {
+		return filepath.Abs(dir)
+	}
+	if dir, _ := env("XDG_RUNTIME_DIR"); dir != "" {
+		return filepath.Join(dir, "amika-net"), nil
+	}
+	cache, _ := env("XDG_CACHE_HOME")
+	if cache == "" {
+		home, _ := env("HOME")
+		if home == "" {
+			return "", errors.New("HOME is not set")
+		}
+		cache = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(cache, "amika", "amika-net"), nil
+}
+
+// ensurePrivateAgentDir uses the sidecar's ownership and permissions checks.
+func ensurePrivateAgentDir(dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("amika-net directory %s must be a private directory with mode 0700", dir)
+	}
+	return checkAgentDirectoryOwner(dir, info)
 }
 
 var sandboxCodeV2Cmd = &cobra.Command{
