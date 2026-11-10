@@ -19,7 +19,7 @@ function incoming(
 describe("routeRigService", () => {
   it("names the request for its rig and service, and keeps its path", () => {
     const request = incoming("/a/b?q=1", [
-      ["Host", "web--hacks.r.acme.o.amika.run"],
+      ["Host", "s-web--hacks--acme.amika.run"],
       ["X-Amika-Rig", "hacks"],
       ["x-amika-service", "web"],
     ]);
@@ -35,7 +35,7 @@ describe("routeRigService", () => {
 
   it("removes both headers from both views of the request", () => {
     const request = incoming("/", [
-      ["Host", "web--hacks.r.acme.o.amika.run"],
+      ["Host", "s-web--hacks--acme.amika.run"],
       ["X-Amika-Rig", "hacks"],
       ["x-amika-service", "web"],
       ["Accept", "text/html"],
@@ -44,12 +44,12 @@ describe("routeRigService", () => {
     routeRigService(request);
 
     expect(request.headers).toEqual({
-      host: "web--hacks.r.acme.o.amika.run",
+      host: "s-web--hacks--acme.amika.run",
       accept: "text/html",
     });
     expect(request.rawHeaders).toEqual([
       "Host",
-      "web--hacks.r.acme.o.amika.run",
+      "s-web--hacks--acme.amika.run",
       "Accept",
       "text/html",
     ]);

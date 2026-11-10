@@ -83,7 +83,7 @@ export function isAmikadSshUpgrade(request: GatewayRequest): boolean {
 
 /**
  * The same upgrade made to amikad at the rig's own address,
- * `amikad--<rig>.r.<org>.o.<zone>`, where a tunnel host's rigs are reached:
+ * `s-amikad--<rig>--<org>.<zone>`, where a tunnel host's rigs are reached:
  * exactly `GET /v1/ssh-sessions`, no query, as a WebSocket upgrade. It is
  * the only request amikad answers at its name, and it is authenticated as
  * the service route's is, by amikad's connect token and then sshd.

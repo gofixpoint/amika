@@ -90,7 +90,7 @@ class RelayPeer {
       method: options.method ?? "GET",
       target,
       headers: [
-        ["host", "web--rig.r.org.o.amika.test"],
+        ["host", "s-web--rig--org.amika.test"],
         ...(options.headers ?? []),
       ],
       upgrade: options.upgrade ?? false,
@@ -277,7 +277,7 @@ describe("a plain request", () => {
     // https, because the public request reached the gateway over TLS, and
     // the authority is the one the relay presented as `Host`.
     expect(response.body).toBe(
-      "hello https://web--rig.r.org.o.amika.test/hello?x=1",
+      "hello https://s-web--rig--org.amika.test/hello?x=1",
     );
     expect(session.servedConnections).toBe(1);
   });
@@ -521,7 +521,7 @@ describe("a request the relay names by rig and service", () => {
     relay.send({ type: "end", streamId: id });
     expect(JSON.parse((await relay.response(id)).body)).toEqual({
       path: "/app/page?q=1",
-      host: "web--rig.r.org.o.amika.test",
+      host: "s-web--rig--org.amika.test",
       named: { machine: "hacks", service: "web" },
       // Read, then removed: the service does not see them.
       amika: [],
@@ -624,7 +624,7 @@ describe("the session", () => {
       head: {
         method: "GET",
         target: "/hello",
-        headers: [["host", "web--rig.r.org.o.amika.test"]],
+        headers: [["host", "s-web--rig--org.amika.test"]],
         upgrade: false,
       },
     });
@@ -655,7 +655,7 @@ describe("the session", () => {
       head: {
         method: "GET",
         target: "/hello",
-        headers: [["host", "web--rig.r.org.o.amika.test"]],
+        headers: [["host", "s-web--rig--org.amika.test"]],
         upgrade: false,
       },
     });
