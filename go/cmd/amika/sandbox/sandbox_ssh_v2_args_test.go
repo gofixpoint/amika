@@ -19,9 +19,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/gofixpoint/amika/go/internal/amikanet"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/filelock"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -77,6 +80,7 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 	// AMIKA_API_KEY short-circuits RequireAuth, so the command reaches the
 	// argv-building step without a login.
 	t.Setenv("AMIKA_API_KEY", "test-key")
+	t.Setenv("AMIKA_NET_AGENT_DIR", filepath.Join(t.TempDir(), "agent"))
 
 	prevArgs, prevExec, prevClient, prevPrepare := osArgs, execSessionSSH, newSSHV2Client, prepareSessionTarget
 	osArgs = func() []string { return procArgs }
@@ -210,6 +214,153 @@ func TestStopDeviceAgent(t *testing.T) {
 	}
 	if err := stopDeviceAgent(context.Background()); err != nil {
 		t.Fatalf("a missing amika-net should leave the new key ready for later: %v", err)
+	}
+}
+
+func TestReplaceDeviceKeyExcludesConcurrentAgentStartup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent")
+	}
+	dir := t.TempDir()
+	t.Setenv("AMIKA_NET_AGENT_DIR", filepath.Join(dir, "agent"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	keyFile, err := amikanet.DeviceKeyFile(basedir.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := amikanet.LoadOrCreateDeviceKey(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	seen := make(chan string, 1)
+	previous := stopDeviceAgent
+	t.Cleanup(func() { stopDeviceAgent = previous })
+	stopDeviceAgent = func(context.Context) error {
+		lockPath := filepath.Join(dir, "agent", "agent.lock")
+		competingCtx, competingCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer competingCancel()
+		lock, err := filelock.Acquire(competingCtx, lockPath)
+		if err == nil {
+			_ = lock.Close()
+			return errors.New("agent startup entered the key replacement gap")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		go func() {
+			lock, err := filelock.Acquire(ctx, lockPath)
+			if err != nil {
+				seen <- "lock failed"
+				return
+			}
+			defer lock.Close()
+			key, err := amikanet.LoadOrCreateDeviceKey(keyFile)
+			if err != nil {
+				seen <- "key load failed"
+				return
+			}
+			seen <- amikanet.EndpointID(key)
+		}()
+		return nil
+	}
+	if err := replaceDeviceKey(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	current, err := amikanet.LoadOrCreateDeviceKey(keyFile)
+	if err != nil || current.Equal(old) {
+		t.Fatal("the device key was not replaced")
+	}
+	select {
+	case endpoint := <-seen:
+		if endpoint != amikanet.EndpointID(current) {
+			t.Fatal("the concurrent agent did not load the replacement key")
+		}
+	case <-ctx.Done():
+		t.Fatal("the agent-start lock was not released after replacement")
+	}
+}
+
+func TestReplaceDeviceKeyBoundsItsLockWait(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent")
+	}
+	dir := filepath.Join(t.TempDir(), "agent")
+	t.Setenv("AMIKA_NET_AGENT_DIR", dir)
+	if err := ensurePrivateAgentDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := filelock.Acquire(context.Background(), filepath.Join(dir, "agent.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	previous, previousStop := makeNewDeviceKey, stopDeviceAgent
+	t.Cleanup(func() { makeNewDeviceKey, stopDeviceAgent = previous, previousStop })
+	stopDeviceAgent = func(context.Context) error { t.Fatal("stopped the agent without the lock"); return nil }
+	makeNewDeviceKey = func(io.Writer) error { t.Fatal("replaced the key without the lock"); return nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := replaceDeviceKey(ctx, io.Discard); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lock wait error = %v", err)
+	}
+}
+
+func TestDeviceAgentDirectorySelection(t *testing.T) {
+	for _, tc := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"AMIKA_NET_AGENT_DIR": "agent", "XDG_RUNTIME_DIR": "/run/u"}, "agent"},
+		{map[string]string{"AMIKA_NET_AGENT_DIR": ""}, "."},
+		{map[string]string{"XDG_RUNTIME_DIR": "/run/u", "XDG_CACHE_HOME": "/cache"}, filepath.Join("/run/u", "amika-net")},
+		{map[string]string{"XDG_RUNTIME_DIR": "", "XDG_CACHE_HOME": "/cache", "HOME": "/home/u"}, filepath.Join("/cache", "amika", "amika-net")},
+		{map[string]string{"XDG_CACHE_HOME": "", "HOME": "/home/u"}, filepath.Join("/home/u", ".cache", "amika", "amika-net")},
+	} {
+		got, err := deviceAgentDir(func(key string) (string, bool) { v, set := tc.env[key]; return v, set })
+		want, _ := filepath.Abs(tc.want)
+		absolute, _ := filepath.Abs(got)
+		if err != nil || absolute != want {
+			t.Fatalf("env = %v: directory = %q, err = %v, want %q", tc.env, got, err, want)
+		}
+	}
+	if _, err := deviceAgentDir(func(string) (string, bool) { return "", false }); err == nil {
+		t.Fatal("accepted an unset HOME without another agent directory")
+	}
+}
+
+func TestAgentDirectoryMustBePrivateAndOwned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent")
+	}
+	dir := t.TempDir()
+	private := filepath.Join(dir, "private")
+	if err := ensurePrivateAgentDir(private); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(dir, "shared")
+	if err := os.Mkdir(shared, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateAgentDir(shared); err == nil {
+		t.Fatal("accepted an agent directory another user can open")
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateAgentDir(link); err == nil {
+		t.Fatal("accepted a symlink as the agent directory")
+	}
+	if os.Geteuid() != 0 {
+		root, err := os.Stat("/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := checkAgentDirectoryOwner("/", root); err == nil {
+			t.Fatal("accepted an agent directory owned by root")
+		}
 	}
 }
 
