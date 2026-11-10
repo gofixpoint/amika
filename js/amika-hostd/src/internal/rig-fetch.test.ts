@@ -9,8 +9,9 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Readable } from "node:stream";
 import zlib from "node:zlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRigFetch } from "./rig-fetch.js";
 
 const rigFetch = createRigFetch();
@@ -77,6 +78,20 @@ describe("createRigFetch", () => {
     expect(response.headers.get("location")).toBe("/elsewhere");
   });
 
+  it("rejects an unsolicited upgrade instead of leaving the request pending", async () => {
+    const port = await serve((_request, response) => {
+      response
+        .writeHead(101, {
+          connection: "Upgrade",
+          upgrade: "websocket",
+        })
+        .end();
+    });
+    await expect(
+      settlesWithin(rigFetch(`http://127.0.0.1:${port}/`), 2_000),
+    ).rejects.toThrow(/closed before sending a response/);
+  });
+
   it("gives no body for HEAD or a 204", async () => {
     const port = await serve((request, response) => {
       response.writeHead(request.method === "HEAD" ? 200 : 204).end();
@@ -108,6 +123,62 @@ describe("createRigFetch", () => {
     });
     const response = await rigFetch(`http://127.0.0.1:${port}/`);
     expect(await response.text()).toBe(text);
+  });
+
+  it.each([zlib.deflateSync, zlib.deflateRawSync])(
+    "bounds decoded deflate buffering while a reader is paused and resumes without losing bytes",
+    async (encode) => {
+      const bytes = Buffer.alloc(16 * 1024 * 1024, 7);
+      const encoded = encode(bytes);
+      const port = await serve((_request, response) => {
+        response.writeHead(200, { "content-encoding": "deflate" });
+        response.end(encoded);
+      });
+      // Observe the real decoder queue without replacing the stream adapter.
+      const webAdapter = vi.spyOn(Readable, "toWeb");
+      let decoded: Readable | undefined;
+      try {
+        const response = await rigFetch(`http://127.0.0.1:${port}/`);
+        decoded = webAdapter.mock.calls[0][0];
+        await sleep(250);
+        expect(decoded.readableLength).toBeLessThanOrEqual(
+          decoded.readableHighWaterMark * 2,
+        );
+        expect(
+          Buffer.from(await settlesWithin(response.arrayBuffer(), 2_000)),
+        ).toEqual(bytes);
+      } finally {
+        decoded?.destroy();
+        webAdapter.mockRestore();
+      }
+    },
+  );
+
+  it("destroys a paused deflate decoder when the caller cancels", async () => {
+    const encoded = zlib.deflateSync(Buffer.alloc(16 * 1024 * 1024, 7));
+    let serviceClosed!: Promise<void>;
+    const port = await serve((request, response) => {
+      serviceClosed = closeOf(request);
+      response.writeHead(200, { "content-encoding": "deflate" });
+      response.write(encoded);
+    });
+    // Observe the real inflater without replacing its implementation.
+    const produced = vi.spyOn(zlib.Inflate.prototype, "push");
+    let response: Response | undefined;
+    try {
+      response = await rigFetch(`http://127.0.0.1:${port}/`);
+      await vi.waitFor(() =>
+        expect(produced.mock.contexts.length).toBeGreaterThan(0),
+      );
+      const inflater = produced.mock.contexts[0] as zlib.Inflate;
+      await vi.waitFor(() => expect(inflater.isPaused()).toBe(true));
+      await response.body!.cancel();
+      await vi.waitFor(() => expect(inflater.destroyed).toBe(true));
+      await settlesWithin(serviceClosed, 2_000);
+    } finally {
+      await response?.body?.cancel();
+      produced.mockRestore();
+    }
   });
 
   it("leaves a body in a coding fetch does not know as it came", async () => {
@@ -171,6 +242,35 @@ describe("createRigFetch timeouts", () => {
     ).rejects.toThrow(/no response head/);
     expect(Date.now() - started).toBeGreaterThanOrEqual(SHORT_MS - 10);
     await serviceClosed;
+  });
+
+  it("allows an upload that progresses longer than the response head timeout", async () => {
+    let received = 0;
+    const port = await serve((request, response) => {
+      request.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+      });
+      request.on("end", () => response.end(String(received)));
+    });
+    let chunks = 6;
+    const response = await settlesWithin(
+      timed(`http://127.0.0.1:${port}/`, {
+        method: "POST",
+        body: new ReadableStream({
+          async pull(controller) {
+            if (chunks-- === 0) {
+              controller.close();
+              return;
+            }
+            await sleep(SHORT_MS / 3);
+            controller.enqueue(new Uint8Array(1024));
+          },
+        }),
+        duplex: "half",
+      } as RequestInit),
+      2_000,
+    );
+    expect(await response.text()).toBe(String(6 * 1024));
   });
 
   it("fails a body whose service sends no data in time", async () => {

@@ -22,10 +22,10 @@
  *   `python3 -m http.server`, also closes the connection after each
  *   response.
  *
- * Node 22 and 24 have both failures. Node 26 does not stop the process,
- * but it can still discard the end of the response. undici fixed the
- * crash in https://github.com/nodejs/undici/pull/5474 (issue #5360). The
- * backport to undici 7, which Node 24 uses, is not merged
+ * Reproductions on 2026-11-09 found both failures in Node 22.23.4 and
+ * 24.22.2. Node 26.13.0 kept running, but discarded response bytes.
+ * undici fixed the crash in https://github.com/nodejs/undici/pull/5474
+ * (issue #5360). On 2026-11-10, the undici 7 backport was still open
  * (https://github.com/nodejs/undici/pull/5553).
  *
  * `node:http` parses all bytes that it received before it reports the end
@@ -44,8 +44,8 @@
  * It has the two timeouts of Node's `fetch`. Each is 300 s by default:
  *
  * - `headersTimeoutMs`: the time for the service to send the response
- *   head. When this time ends, the request fails and hostd closes the
- *   socket to the service. `proxyService` then answers 502.
+ *   head after the request body finishes. When this time ends, the
+ *   request fails and hostd closes the socket to the service. `proxyService` then answers 502.
  * - `bodyTimeoutMs`: the time between two chunks of the body. When this
  *   time ends, the body fails and hostd closes the socket to the service.
  *   The timer runs only while hostd waits for data from the service. It
@@ -118,14 +118,20 @@ function rigFetch(
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const forget = () => signal?.removeEventListener("abort", onAbort);
-    // Destroying the request also destroys its socket to the service.
-    const headersTimer = setTimeout(() => {
-      outgoing.destroy(
-        new Error(
-          `the service sent no response head in ${headersTimeoutMs} ms`,
-        ),
-      );
-    }, headersTimeoutMs).unref();
+    let receivedResponse = false;
+    let headersTimer: NodeJS.Timeout | undefined;
+    // A service can wait for the whole upload before it sends headers.
+    outgoing.once("finish", () => {
+      if (receivedResponse) return;
+      // Destroying the request also destroys its socket to the service.
+      headersTimer = setTimeout(() => {
+        outgoing.destroy(
+          new Error(
+            `the service sent no response head in ${headersTimeoutMs} ms`,
+          ),
+        );
+      }, headersTimeoutMs).unref();
+    });
 
     // `on`, not `once`: a socket that fails after the response has begun
     // reports it here too, and the response's own reader hears it there.
@@ -134,7 +140,16 @@ function rigFetch(
       forget();
       reject(error);
     });
+    outgoing.once("close", () => {
+      clearTimeout(headersTimer);
+      forget();
+      // An unsolicited upgrade closes without a response or an error.
+      if (!receivedResponse) {
+        reject(new Error("the service closed before sending a response"));
+      }
+    });
     outgoing.once("response", (response) => {
+      receivedResponse = true;
       clearTimeout(headersTimer);
       response.once("close", forget);
       try {
@@ -351,11 +366,26 @@ class InflateEither extends Transform {
         (chunk[0] & 0x0f) === 0x08
           ? zlib.createInflate(this.options)
           : zlib.createInflateRaw(this.options);
-      inflate.on("data", (data: Buffer) => this.push(data));
+      inflate.on("data", (data: Buffer) => {
+        if (!this.push(data)) inflate.pause();
+      });
       inflate.on("error", (error) => this.destroy(error));
       this.inflate = inflate;
     }
     this.inflate.write(chunk, callback);
+  }
+
+  override _read(size: number): void {
+    super._read(size);
+    this.inflate?.resume();
+  }
+
+  override _destroy(
+    error: Error | null,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.inflate?.destroy(error ?? undefined);
+    callback(error);
   }
 
   override _flush(callback: TransformCallback): void {
