@@ -155,14 +155,16 @@ func TestPresetPiSetup_ServesPiWebAuthenticatedOnEveryInterface(t *testing.T) {
 	}
 }
 
-func TestPresetPreSetup_RegistersAmikalogHooksAsRuntimeUser(t *testing.T) {
+// The image does not install amikalog, so boot must not register its Claude
+// Code and Codex hooks.
+func TestPresetPreSetup_DoesNotRegisterAgentHooks(t *testing.T) {
 	data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/pre-setup.sh")
 	if err != nil {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
 
-	if !strings.Contains(string(data), "sudo -H -u amika /usr/local/bin/amikalog start") {
-		t.Fatal("pre-setup.sh should register amikalog hooks as the runtime user")
+	if strings.Contains(string(data), "amikalog") {
+		t.Fatal("pre-setup.sh should not run amikalog")
 	}
 }
 

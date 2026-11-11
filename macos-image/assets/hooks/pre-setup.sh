@@ -2,7 +2,7 @@
 
 # pre-setup.sh runs as root before setup.sh, on a macOS rig. It is the Linux
 # hook (sandbox-image/assets/hooks/pre-setup.sh) less what a macOS rig does
-# not have: Docker, Pi Web, amikalog, and the Linux kernel guard.
+# not have: Docker, Pi Web, and the Linux kernel guard.
 
 set -euo pipefail
 

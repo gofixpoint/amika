@@ -1,10 +1,9 @@
 #!/bin/bash
-# Installs pinned Amika, amikalog, and amikad release binaries.
+# Installs pinned Amika and amikad release binaries.
 
 set -euo pipefail
 
 : "${AMIKA_VERSION:?AMIKA_VERSION must be set}"
-: "${AMIKALOG_VERSION:?AMIKALOG_VERSION must be set}"
 : "${AMIKAD_VERSION:?AMIKAD_VERSION must be set}"
 
 temporary_dir="$(mktemp -d)"
@@ -15,5 +14,4 @@ curl -fsSL \
   "https://raw.githubusercontent.com/gofixpoint/amika/amika%40v${AMIKA_VERSION}/install.sh" \
   -o "$installer"
 sh "$installer" --install-version "$AMIKA_VERSION"
-sh "$installer" --component amikalog --install-version "$AMIKALOG_VERSION"
 sh "$installer" --component amikad --install-version "$AMIKAD_VERSION"

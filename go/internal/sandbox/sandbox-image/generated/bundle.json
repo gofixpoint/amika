@@ -94,7 +94,6 @@
         "pi",
         "pi-web",
         "amika",
-        "amikalog",
         "amikad"
       ],
       "steps": [
@@ -211,7 +210,6 @@
           "script": "steps/85-amika-clis.sh",
           "versions": {
             "AMIKAD_VERSION": "0.3.0",
-            "AMIKALOG_VERSION": "0.2.1",
             "AMIKA_VERSION": "0.25.0"
           }
         },
@@ -249,7 +247,6 @@
         "pi",
         "pi-web",
         "amika",
-        "amikalog",
         "amikad",
         "docker"
       ],
@@ -367,7 +364,6 @@
           "script": "steps/85-amika-clis.sh",
           "versions": {
             "AMIKAD_VERSION": "0.3.0",
-            "AMIKALOG_VERSION": "0.2.1",
             "AMIKA_VERSION": "0.25.0"
           }
         },
