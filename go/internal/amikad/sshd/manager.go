@@ -506,8 +506,10 @@ func RenderConfig(paths Paths) string {
 	config := renderBaseConfig(paths)
 	if paths.TerminfoDirectory != "" {
 		// The trailing ":" keeps the system terminfo database on the search
-		// path after the bundled entries.
-		config += fmt.Sprintf("SetEnv TERMINFO_DIRS=%s:\n", paths.TerminfoDirectory)
+		// path after the bundled entries. The quotes keep a state directory
+		// with a space in it as one value: sshd splits an unquoted one into
+		// two and refuses the config ("Invalid environment").
+		config += fmt.Sprintf("SetEnv \"TERMINFO_DIRS=%s:\"\n", paths.TerminfoDirectory)
 	}
 	return config
 }
