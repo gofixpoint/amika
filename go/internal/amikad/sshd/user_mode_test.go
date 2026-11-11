@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,6 +122,34 @@ func TestUserModeSetupKeepsStateInStateDirectory(t *testing.T) {
 	}
 	if err := manager.ClearAuthorizedKeys(context.Background()); err != nil {
 		t.Fatalf("ClearAuthorizedKeys: %v", err)
+	}
+}
+
+func TestUserModeSetupMakesBundledTerminfoResolvable(t *testing.T) {
+	skipUnlessSecureWrites(t)
+	manager, paths, _ := testUserManager(t)
+	if err := manager.Setup(context.Background(), SetupOptions{ForceOverwrite: true}); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	config, err := os.ReadFile(paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setEnv := "SetEnv TERMINFO_DIRS=" + paths.TerminfoDirectory + ":\n"
+	if !strings.Contains(string(config), setEnv) {
+		t.Fatalf("config missing %q:\n%s", setEnv, config)
+	}
+
+	infocmp, err := exec.LookPath("infocmp")
+	if err != nil {
+		t.Skip("infocmp not installed")
+	}
+	for _, term := range []string{"xterm-ghostty", "ghostty"} {
+		command := exec.Command(infocmp, term)
+		command.Env = []string{"TERMINFO_DIRS=" + paths.TerminfoDirectory + ":"}
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("infocmp %s: %v\n%s", term, err, output)
+		}
 	}
 }
 
