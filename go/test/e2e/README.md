@@ -453,7 +453,7 @@ steps:
     cmd: [rig, create, --remote, --preset, claude, -o, json]
     expect:
       exit: 0
-      schema: Sandbox
+      schema: Rig
     capture:
       sandbox_name: $.name
     resource:
