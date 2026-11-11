@@ -135,7 +135,11 @@ func TestUserModeSetupMakesBundledTerminfoResolvable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setEnv := "SetEnv TERMINFO_DIRS=" + paths.TerminfoDirectory + ":\n"
+	if !strings.Contains(string(config), "AcceptEnv LANG LC_*\n") ||
+		strings.Contains(string(config), "SetEnv LANG=") {
+		t.Fatalf("bare-metal config must accept the client's locale:\n%s", config)
+	}
+	setEnv := "SetEnv \"TERMINFO_DIRS=" + paths.TerminfoDirectory + ":\"\n"
 	if !strings.Contains(string(config), setEnv) {
 		t.Fatalf("config missing %q:\n%s", setEnv, config)
 	}
@@ -162,5 +166,13 @@ func TestUserModeSetupFailsWhenStrictModesWouldRejectKeys(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.Config); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("config written despite insecure directory: %v", err)
+	}
+}
+
+func TestRenderConfigKeepsTerminfoDirectoryWithSpaceAsOneValue(t *testing.T) {
+	paths := UserPaths("/home/a b/state", "alice", 2222)
+	want := "SetEnv \"TERMINFO_DIRS=/home/a b/state/terminfo:\"\n"
+	if config := RenderConfig(paths); !strings.Contains(config, want) {
+		t.Fatalf("config missing %q:\n%s", want, config)
 	}
 }
