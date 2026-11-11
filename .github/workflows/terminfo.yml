@@ -1,0 +1,32 @@
+name: terminfo
+
+# amikad embeds a compiled terminfo entry. This checks that it matches its
+# source. It compiles with the macOS tic, which writes the legacy format
+# that every ncurses reads, so it runs on macOS, and only when the entry,
+# its source, or this workflow changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "go/internal/amikad/sshd/terminfo/**"
+      - ".github/workflows/terminfo.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "go/internal/amikad/sshd/terminfo/**"
+      - ".github/workflows/terminfo.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the compiled entry matches its source
+        run: go/internal/amikad/sshd/terminfo/compile.sh --check
