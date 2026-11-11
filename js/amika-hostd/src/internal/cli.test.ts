@@ -1922,7 +1922,7 @@ image = "amika-macos-coder"
         ).toBe(1);
         expect(files.config).toBe(BASE);
         expect(err.join("\n")).toContain(
-          "run `amika-hostd capabilities update --enable lume` to try again",
+          "run `amika-hostd capabilities update --enable lume` to build it",
         );
       });
 

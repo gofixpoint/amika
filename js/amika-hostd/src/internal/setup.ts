@@ -146,7 +146,7 @@ export async function buildMissingImages(
       throw error;
     }
     throw new ConfigError(
-      `${error.message}. Lume is on, but its rigs cannot start until ${current} is built; run \`amika-hostd capabilities update --enable lume\` to try again.`,
+      `${error.message}. ${current} is not built yet; run \`amika-hostd capabilities update --enable lume\` to build it, which resumes where this stopped.`,
       { cause: error },
     );
   }
@@ -477,7 +477,32 @@ export async function runSetup(
   // Last, since it takes a long time: everything above is saved whether or
   // not it works, and `capabilities update --enable lume` retries it.
   if (written.runtimes.runtimes.lume) {
-    await buildMissingImages(written, deps);
+    try {
+      await buildMissingImages(written, deps);
+    } catch (error) {
+      if (
+        !(error instanceof ConfigError) ||
+        !runtimeChange.enable.includes("lume")
+      ) {
+        throw error;
+      }
+      // Lume turned on here stays off until its image is built, so `up`
+      // never offers Amika macOS rigs with nothing to boot. Its table and
+      // preset stay, and the retry turns it on once the build works.
+      writeConfig(
+        write,
+        configPath,
+        updateRuntimes(
+          contents,
+          { enable: [], disable: ["lume"] },
+          path.join(hostdDataDir(deps.env), "lume"),
+        ).contents,
+      );
+      throw new ConfigError(
+        `${error.message} Until then Lume stays off; the rest of the setup is saved.`,
+        { cause: error },
+      );
+    }
   }
   // `up` runs setup only with the daemon stopped.
   if (replaced !== undefined && !fromUp) deps.out(RESTART);

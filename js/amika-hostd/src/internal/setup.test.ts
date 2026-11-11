@@ -1206,16 +1206,49 @@ describe("runSetup: choosing runtimes", () => {
     );
   });
 
-  it("keeps the saved setup when the image build fails, and says how to retry", async () => {
+  it("keeps the rest of setup but turns Lume back off when the image build fails", async () => {
     const h = macHarness(["", "", "", "", "y", ""], {
       lumeInstalled: true,
       buildFails: true,
     });
     await expect(runSetup(h.deps)).rejects.toThrow(
+      /amika-hostd capabilities update --enable lume.* Until then Lume stays off; the rest of the setup is saved\.$/,
+    );
+    // Off, so `up` does not offer Amika macOS rigs with no image; the table
+    // and preset stay for the retry to turn back on.
+    expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["smol"]);
+    expect(h.written[PATH]).toMatch(/\[runtimes\.lume\]\nenabled = false\n/);
+    expect(h.written[PATH]).toContain("[presets.macos-coder.runtimes.lume]");
+    expect(h.config().hostname).toBe("builder");
+    expect(h.deps.installLume).not.toHaveBeenCalled();
+  });
+
+  it("leaves Lume on when it was on before setup and the build fails", async () => {
+    const h = harness({
+      answers: ["", "", ""],
+      file: `${FILE_CONFIGURED}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+
+[presets.macos-coder.runtimes.lume]
+image = "amika-macos-coder"
+`,
+      storedKey: "k",
+      platform: MAC,
+    });
+    const deps = {
+      ...h.deps,
+      findLume: () => "/usr/local/bin/lume",
+      missingMacosImages: vi.fn(async () => ["amika-macos-coder"]),
+      buildMacosImage: vi.fn(async () => {
+        throw new ConfigError("`lume create` failed (exit 1)");
+      }),
+    };
+    await expect(runSetup(deps)).rejects.toThrow(
       /amika-hostd capabilities update --enable lume/,
     );
-    expect(h.written[PATH]).toContain("[runtimes.lume]");
-    expect(h.deps.installLume).not.toHaveBeenCalled();
+    expect(h.config().runtimes.runtimes).toHaveProperty("lume");
   });
 
   it("says how to retry when Lume cannot even be checked for the image", async () => {

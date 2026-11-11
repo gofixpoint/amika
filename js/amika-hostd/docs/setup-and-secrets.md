@@ -62,7 +62,10 @@ Lume does not have yet (`buildMissingImages`; see
 [Lume runtime](runtime.md#lume-runtime)). It runs after everything else is
 stored, because it is long: if it fails, the rest of setup is kept, and the
 error names `amika-hostd capabilities update --enable lume`, which builds it
-again from where it stopped.
+again from where it stopped. If this run turned Lume on, setup turns it back
+off (`enabled = false`, keeping its table and preset), so `up` does not offer
+Amika macOS rigs with no image to boot; the retry turns it on once the
+image is built. Lume that was already on stays on.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping
