@@ -207,3 +207,24 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run test
       - run: pnpm run build
+
+  check-amika-net:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust/amika-net
+    env:
+      # Keep in sync with RUST_TOOLCHAIN in release.yml and release-tag.yml.
+      RUST_TOOLCHAIN: "1.93.1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal -c rustfmt,clippy
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked

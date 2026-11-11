@@ -4,7 +4,8 @@ name: Release
 # release-tag.yml. The workflow:
 # 1. Parses the component and semver from tags like amika@v1.2.3-rc.1
 # 2. Builds only that component for linux/darwin on amd64 and arm64
-#    (amika-hostd, a Node.js bundle, builds one platform-independent tarball)
+#    (amika-hostd, a Node.js bundle, builds one platform-independent tarball;
+#    amika-net, a Rust binary, builds natively on each platform's runner)
 # 3. Injects version, full commit SHA, and build date into the binary metadata
 # 4. Uploads platform tarballs plus a shared checksums.txt file
 # 5. Marks the GitHub Release as a prerelease when the tag contains a semver
@@ -20,6 +21,7 @@ on:
       - "amikad@v*"
       - "amikalog@v*"
       - "amika-hostd@v*"
+      - "amika-net@v*"
 
 permissions:
   contents: read
@@ -63,6 +65,10 @@ jobs:
               component="amika-hostd"
               binary_name="amika-hostd"
               ;;
+            amika-net@*)
+              component="amika-net"
+              binary_name="amika-net"
+              ;;
             *)
               echo "Unsupported tag format: $TAG" >&2
               exit 1
@@ -97,7 +103,7 @@ jobs:
 
   build:
     needs: metadata
-    if: needs.metadata.outputs.component != 'amika-hostd'
+    if: needs.metadata.outputs.component != 'amika-hostd' && needs.metadata.outputs.component != 'amika-net'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -208,12 +214,75 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  # amika-net is Rust. Linux builds are static musl binaries, so they run
+  # on any distribution. The macOS binaries are unsigned: install.sh removes
+  # the quarantine flag, as for the CLI.
+  build-amika-net:
+    needs: metadata
+    if: needs.metadata.outputs.component == 'amika-net'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, runner: ubuntu-24.04, target: x86_64-unknown-linux-musl }
+          - { goos: linux, goarch: arm64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { goos: darwin, goarch: amd64, runner: macos-15, target: x86_64-apple-darwin }
+          - { goos: darwin, goarch: arm64, runner: macos-15, target: aarch64-apple-darwin }
+    env:
+      # Keep in sync with RUST_TOOLCHAIN in ci.yml and release-tag.yml.
+      RUST_TOOLCHAIN: "1.93.1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "$TARGET"
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      # ring compiles C, so a musl build needs a musl C compiler.
+      - name: Install musl tools
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build archive
+        working-directory: rust/amika-net
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          if [ "$GOOS" = linux ]; then
+            export "CC_${TARGET//-/_}=musl-gcc"
+          fi
+          AMIKA_NET_VERSION="${VERSION#v}" cargo build --locked --release --target "$TARGET"
+
+          archive_base="amika-net_${VERSION#v}_${GOOS}_${GOARCH}"
+          staging_dir="../../dist/${archive_base}"
+          mkdir -p "$staging_dir"
+          cp "target/${TARGET}/release/amika-net" "${staging_dir}/amika-net"
+          "${staging_dir}/amika-net" --version
+          tar -C ../../dist -czf "../../dist/${archive_base}.tar.gz" "${archive_base}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: amika-net-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
   publish:
     needs:
       - metadata
       - build
       - build-hostd
-    # Exactly one of the build jobs runs; the other is skipped.
+      - build-amika-net
+    # Exactly one of the build jobs runs; the others are skipped.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     permissions:

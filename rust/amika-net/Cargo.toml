@@ -1,0 +1,29 @@
+[package]
+name = "amika-net"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+publish = false
+description = "SSH and TCP streams to Amika hosts over iroh"
+license = "Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+data-encoding = "2"
+# Pinned: the relay and path behavior that the network tests measured comes
+# from iroh internals. Run the scripts in nettests/ again on each upgrade.
+iroh = { version = "=1.4.1", features = ["unstable-net-report"] }
+iroh-services = "2.0.0"
+libc = "0.2"
+n0-future = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+strip = true
+lto = "thin"

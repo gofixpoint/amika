@@ -6,6 +6,8 @@ GITHUB_REPO="gofixpoint/amika"
 DEFAULT_VERSION="0.25.0"
 DEFAULT_AMIKALOG_VERSION="0.2.1"
 DEFAULT_AMIKAD_VERSION="0.3.0"
+# amika-net has no release yet. Until it has one, pass --install-version.
+DEFAULT_AMIKA_NET_VERSION=""
 COMPONENT="amika"
 INSTALL_VERSION=""
 DRY_RUN=false
@@ -21,9 +23,11 @@ Usage:
   sh install.sh [--help] [--component NAME] [--install-version VERSION] [--dry-run]
 
 Flags:
-  --component           Component to install: amika (default), amikad, or amikalog
+  --component           Component to install: amika (default), amikad, amikalog,
+                        or amika-net
   --install-version     Install a specific version
-                        (amika: ${DEFAULT_VERSION}; amikad: ${DEFAULT_AMIKAD_VERSION}; amikalog: ${DEFAULT_AMIKALOG_VERSION})
+                        (amika: ${DEFAULT_VERSION}; amikad: ${DEFAULT_AMIKAD_VERSION}; amikalog: ${DEFAULT_AMIKALOG_VERSION};
+                        amika-net: ${DEFAULT_AMIKA_NET_VERSION:-none yet, required})
   --dry-run             Show what would be done without downloading or installing
 
 Environment variables:
@@ -34,6 +38,7 @@ Examples:
   sh install.sh --install-version 0.1.0-rc.1
   sh install.sh --component amikalog --install-version 0.2.0
   sh install.sh --component amikad --install-version 0.1.0
+  sh install.sh --component amika-net --install-version 0.1.0
   AMIKA_INSTALL_DIR=~/.local/bin sh install.sh
 EOF
 }
@@ -129,8 +134,9 @@ set_install_version() {
     amika) ;;
     amikad) ;;
     amikalog) ;;
+    amika-net) ;;
     *)
-      echo "Error: unsupported component: $COMPONENT (want amika, amikad, or amikalog)" >&2
+      echo "Error: unsupported component: $COMPONENT (want amika, amikad, amikalog, or amika-net)" >&2
       exit 1
       ;;
   esac
@@ -140,7 +146,13 @@ set_install_version() {
       amika)    INSTALL_VERSION="$DEFAULT_VERSION" ;;
       amikad)   INSTALL_VERSION="$DEFAULT_AMIKAD_VERSION" ;;
       amikalog) INSTALL_VERSION="$DEFAULT_AMIKALOG_VERSION" ;;
+      amika-net) INSTALL_VERSION="$DEFAULT_AMIKA_NET_VERSION" ;;
     esac
+  fi
+
+  if [ -z "$INSTALL_VERSION" ]; then
+    echo "Error: ${COMPONENT} has no default version yet; pass --install-version" >&2
+    exit 1
   fi
 
   VERSION="${INSTALL_VERSION#v}"
