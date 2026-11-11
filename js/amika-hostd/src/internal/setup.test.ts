@@ -1125,7 +1125,8 @@ describe("runSetup: the bare_metal runtime", () => {
     [
       "an OS without bare metal",
       hostPlatformFor("win32"),
-      /cannot make this machine a rig on win32/,
+      // Refused with the other runtimes this machine cannot run.
+      /config turns on bare_metal, which this machine cannot run/,
     ],
     [
       "a machine with no sshd",
@@ -1227,6 +1228,27 @@ describe("runSetup: choosing runtimes", () => {
     expect(questions).not.toContain(`${RUNTIME_QUESTIONS.smol} [Y/n] `);
     expect(questions).toContain(`${RUNTIME_QUESTIONS.bare_metal} [y/N] `);
     expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["lume"]);
+  });
+
+  it("refuses a copied config's Lume on Linux before installing anything", async () => {
+    const file = `${FILE_CONFIGURED}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+`;
+    const h = harness({ answers: ["", "", ""], file, storedKey: "k" });
+    const deps = {
+      ...h.deps,
+      findLume: () => undefined,
+      installLume: vi.fn(async () => {}),
+      buildMacosImage: vi.fn(async () => {}),
+    };
+    await expect(runSetup(deps)).rejects.toThrow(
+      "The config turns on lume, which this machine cannot run",
+    );
+    expect(deps.installLume).not.toHaveBeenCalled();
+    expect(deps.buildMacosImage).not.toHaveBeenCalled();
+    expect(h.written).toEqual({});
   });
 
   it("refuses to turn off a runtime that has rigs, changing nothing", async () => {

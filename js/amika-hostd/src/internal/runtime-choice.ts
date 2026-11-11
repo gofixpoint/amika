@@ -25,8 +25,8 @@ export type AskYesNo = (question: string, current: boolean) => Promise<boolean>;
  * The change to the runtimes that are `on`: each runtime `given` names is
  * set as given, and each other one this machine can run is asked about
  * through `ask` (or kept as it is without `ask`). A runtime this machine
- * cannot run is never asked about, and one `given` names is refused.
- * Leaving no runtime on is refused.
+ * cannot run is never asked about; turning one on, or leaving one on that
+ * is not `given` as disabled, is refused. Leaving no runtime on is refused.
  */
 export async function chooseRuntimes(
   supported: readonly RuntimeName[],
@@ -48,6 +48,17 @@ export async function chooseRuntimes(
       if (await ask(RUNTIME_QUESTIONS[name], on.has(name))) next.add(name);
       else next.delete(name);
     }
+  }
+  // A config copied from another machine (Lume from an Apple Silicon Mac,
+  // say) can have one on that this machine cannot run, which is never asked
+  // about. Refused here, before anything is installed for it.
+  const stranded = RUNTIME_NAMES.find(
+    (name) => next.has(name) && !supported.includes(name),
+  );
+  if (stranded !== undefined) {
+    throw new ConfigError(
+      `The config turns on ${stranded}, which this machine cannot run${stranded === "lume" ? " (it needs macOS on Apple Silicon)" : ""}. Pass --disable ${stranded}, or turn it off in [runtimes.${stranded}]. Nothing was changed.`,
+    );
   }
   if (next.size === 0) {
     throw new ConfigError(

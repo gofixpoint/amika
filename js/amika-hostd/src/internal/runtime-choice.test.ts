@@ -77,6 +77,22 @@ describe("chooseRuntimes", () => {
     );
   });
 
+  it("refuses keeping a runtime on that this machine cannot run, unless disabled", async () => {
+    // A config copied from an Apple Silicon Mac, on Linux.
+    const ask = vi.fn(async (_q: string, current: boolean) => current);
+    await expect(
+      chooseRuntimes(LINUX, on("smol", "lume"), ask),
+    ).rejects.toThrow(
+      "The config turns on lume, which this machine cannot run (it needs macOS on Apple Silicon). Pass --disable lume",
+    );
+    expect(
+      await chooseRuntimes(LINUX, on("smol", "lume"), ask, {
+        enable: [],
+        disable: ["lume"],
+      }),
+    ).toEqual({ enable: [], disable: ["lume"] });
+  });
+
   it("refuses leaving no runtime on", async () => {
     await expect(
       chooseRuntimes(LINUX, on("smol"), async () => false),

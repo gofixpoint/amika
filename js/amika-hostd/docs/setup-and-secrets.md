@@ -36,8 +36,10 @@ already says, so on a new host only smol is on, and a rerun that answers
 nothing changes nothing. The Lume question says what turning it on costs
 (`MACOS_IMAGE_COST`: a download of about 20 GB, about 60 GB of disk, 30
 minutes or more), since that is when setup builds the macOS image. Setup
-refuses to leave no runtime on, and to turn off a runtime that has rigs in
-`machines.json`, with nothing changed. The answers go into the file as
+refuses to leave no runtime on, to keep on a runtime this machine cannot run
+(Lume in a config copied from an Apple Silicon Mac, say; `--disable` turns it
+off), and to turn off a runtime that has rigs in `machines.json`, with
+nothing changed. The answers go into the file as
 `capabilities update` writes them (`updateRuntimes`), so turning on Lume adds
 its `storage_dir` and the `macos-coder` preset.
 
