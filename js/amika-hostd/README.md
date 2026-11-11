@@ -49,7 +49,11 @@ amika-hostd setup
 ```
 
 It asks for the host's name and your Amika API key, and generates the secret
-key the control plane uses to reach this daemon. Secrets go in the system
+key the control plane uses to reach this daemon. It then asks which runtimes
+the host runs, of those this machine can: Linux VMs (`smol`, on by default),
+macOS VMs (`lume`, on an Apple Silicon Mac only, off by default; see
+[macOS rigs](#macos-rigs-lume)), and the machine itself (`bare_metal`, off by
+default). It installs what each one you turn on needs. Secrets go in the system
 keychain. On a server with no keychain, set `secret_store = "file"` in the
 config first. Edit the file the installer printed: the daemon reads
 `$XDG_CONFIG_HOME/amika-hostd/config.toml` (`~/.config/...` by default) if it
@@ -154,6 +158,26 @@ amika-hostd up
 Either way amika-hostd installs `amikad` into its own data directory (no
 `sudo`) and reports the CPUs, memory and disk it detects. Create the rig
 with `amika rig create --host <host> --runtime bare_metal`.
+
+## macOS rigs (Lume)
+
+On an Apple Silicon Mac, the `lume` runtime runs macOS rigs as VMs, through
+[Lume](https://github.com/trycua/cua/tree/main/libs/lume). Each rig is a clone
+of a macOS image built on that Mac. Building it is large: it downloads a
+macOS restore image from Apple (about 20 GB), needs about 60 GB of free disk,
+and takes 30 minutes or more. So Lume is off unless you turn it on, by
+answering yes when `amika-hostd setup` asks, or later with:
+
+```bash
+amika-hostd capabilities update --enable lume
+```
+
+Either way amika-hostd installs Lume into `~/.local/bin` if it is missing (no
+`sudo`), adds the `macos-coder` preset, and builds its image,
+`amika-macos-coder`. If the build fails, run the same command again: it picks
+up where it stopped. Then create a rig with
+`amika rig create --host <host> --runtime lume`. macOS runs at most two macOS
+VMs at a time, and Lume rigs have no snapshots.
 
 ## Configuration
 

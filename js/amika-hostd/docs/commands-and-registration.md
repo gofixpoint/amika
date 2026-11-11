@@ -71,17 +71,26 @@ restart, so rigs keep running and the tunnel and SSH sessions stay up
 
 `amika-hostd capabilities update --enable|--disable <runtime>` changes
 `[runtimes.*]` in `config.toml` and nothing else
-(`src/internal/runtime-update.ts`):
+(`src/internal/runtime-update.ts`). With no runtime named it asks about each
+one this machine can run, as setup does (`src/internal/runtime-choice.ts`);
+without a terminal it then exits with an error naming the flags.
 
 1. It prints the plan. Turning on Lume adds `storage_dir` (in hostd's data
    directory) and, unless a preset already uses Lume, the `macos-coder`
    preset with template `amika-macos-coder`. With no `[runtimes]` table it
-   also lists smol, so smol stays on.
+   also lists smol, so smol stays on. When Lume is asked for, each template
+   a Lume preset boots that Lume does not have is a step of its own, with
+   what building it costs (`MACOS_IMAGE_COST`), even when Lume is already
+   on: that is how a failed build is retried.
 2. It installs Lume `0.6.1` with Lume's own installer, into `~/.local/bin`
-   with no `sudo`, only when Lume is turned on and not found. Turning on
-   `bare_metal` first checks the machine as setup does (an `sshd` binary,
-   and sshd's StrictModes on amikad's state directory), and refuses with
-   nothing changed; then it installs amikad into hostd's data directory.
+   with no `sudo`, when Lume is asked for and not found. It then builds the
+   missing images (`src/internal/lume-setup.ts`, see
+   [Lume runtime](runtime.md#lume-runtime)) before it changes the file, so a
+   build that fails leaves the file as it was, and Amika is never offered
+   Lume rigs with no image to boot. Turning on `bare_metal` first checks the
+   machine as setup does (an `sshd` binary, and sshd's StrictModes on
+   amikad's state directory), and refuses with nothing changed; then it
+   installs amikad into hostd's data directory.
 3. It writes the file, and reloads a running daemon as `reload` does,
    which then sends Amika the new capabilities.
 
@@ -89,7 +98,8 @@ It refuses to turn off a runtime with rigs, as recorded in `machines.json`.
 `--dry-run` prints the plan and changes nothing; `--yes` applies it without
 asking; with no terminal and neither flag, it exits with an error naming
 both. `--json` prints the plan and result as JSON. A second run with the
-same flags makes no change. `setup` never installs Lume.
+same flags makes no change. Setup installs and builds the same things for
+the runtimes it turns on.
 
 ## Registration
 

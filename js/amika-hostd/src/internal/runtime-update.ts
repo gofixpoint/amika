@@ -3,6 +3,7 @@
  * "`amika-hostd capabilities`"): turn runtimes on or off in
  * `[runtimes.*]`, keeping everything else in `config.toml` as it is.
  */
+import { ConfigError } from "./config.js";
 import { tomlKey } from "./config-upgrade.js";
 import { RUNTIME_NAMES, type RuntimeName } from "./runtimes.js";
 
@@ -99,4 +100,23 @@ export function updateRuntimes(
     contents: steps.length ? `${lines.join("\n")}\n` : contents,
     steps,
   };
+}
+
+/**
+ * Refuse to turn off a runtime that still has rigs, naming them: hostd never
+ * stops a rig to change its config. `machines` is the machine index's
+ * entries, each rig with the runtime that owns it.
+ */
+export function refuseTurningOffWithRigs(
+  disable: readonly RuntimeName[],
+  machines: readonly (readonly [string, RuntimeName])[],
+): void {
+  for (const runtime of disable) {
+    const rigs = machines.filter(([, owner]) => owner === runtime);
+    if (rigs.length > 0) {
+      throw new ConfigError(
+        `${runtime} has ${rigs.length} rig${rigs.length === 1 ? "" : "s"} (${rigs.map(([name]) => name).join(", ")}). Delete ${rigs.length === 1 ? "it" : "them"}, then try again.`,
+      );
+    }
+  }
 }

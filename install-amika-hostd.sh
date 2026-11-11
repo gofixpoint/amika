@@ -523,6 +523,12 @@ install_hostd() {
   install -m 0644 "$BUNDLE_PATH" "${HOSTD_HOME}/amika-hostd.mjs"
   install -m 0644 "${ARCHIVE_DIR}/config.example.toml" \
     "${HOSTD_HOME}/config.example.toml"
+  # What `amika-hostd setup` runs to build the macOS image Lume rigs boot,
+  # replaced whole so a step a newer release dropped does not linger.
+  rm -rf "${HOSTD_HOME}/macos-image"
+  if [ "$OS" = "darwin" ] && [ -d "${ARCHIVE_DIR}/macos-image" ]; then
+    cp -R "${ARCHIVE_DIR}/macos-image" "${HOSTD_HOME}/macos-image"
+  fi
   if [ "$BARE_METAL" != "true" ]; then
     install_engine
   fi
@@ -1000,6 +1006,13 @@ print_next_steps() {
     echo "     in ${CONFIG_PATH}:"
   fi
   echo "       amika-hostd setup"
+  echo "     It also asks which runtimes this host runs, of those this machine"
+  if [ "$OS" = "darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+    echo "     can: Linux VMs (smol), macOS VMs (lume, a large download and"
+    echo "     build), and this machine itself (bare_metal)."
+  else
+    echo "     can: Linux VMs (smol) and this machine itself (bare_metal)."
+  fi
   if [ "$OS" = "linux" ] && { [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] ||
     ! command -v secret-tool >/dev/null 2>&1; }; then
     echo "     amika-hostd keeps its secrets in the desktop keyring through"

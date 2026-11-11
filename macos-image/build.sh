@@ -10,6 +10,9 @@
 #   AMIKAD_BIN  amikad for darwin/arm64. Default: build it from this checkout.
 #   STEPS       Step names to run, for example "10-amika-user 60-amikad".
 #               Default: every step, in order.
+#   VERSIONS_ENV  The version pins the steps read. Default: this checkout's
+#               sandbox-image/versions.env. amika-hostd's release ships a copy
+#               beside this script and sets this to it.
 
 set -euo pipefail
 
@@ -87,7 +90,8 @@ tar -C "$here" -cf - steps assets | guest \
   'rm -rf /tmp/amika-image && mkdir /tmp/amika-image && tar -C /tmp/amika-image -xf -'
 guest 'cat > /tmp/amika-image/amikad' <"$AMIKAD_BIN"
 # The steps use the Linux image's version pins.
-guest 'cat > /tmp/amika-image/versions.env' <"$repo/sandbox-image/versions.env"
+guest 'cat > /tmp/amika-image/versions.env' \
+  <"${VERSIONS_ENV:-$repo/sandbox-image/versions.env}"
 if [[ -z "${STEPS:-}" ]]; then
   for file in "$here"/steps/*.sh; do
     STEPS="${STEPS:-} $(basename "$file" .sh)"

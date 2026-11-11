@@ -6,6 +6,11 @@ uses the same version pins (`sandbox-image/versions.env`).
 
 ## Build
 
+amika-hostd builds this image itself when Lume is turned on, with
+`amika-hostd setup` or `amika-hostd capabilities update --enable lume`: it
+ships this directory and runs the steps below. Build it by hand to work on
+the image.
+
 You need an Apple Silicon Mac with Lume, and a base VM from Lume's
 unattended install:
 
@@ -21,6 +26,8 @@ storage. The base VM does not change.
 - `AMIKAD_BIN` sets the amikad binary. By default, the build makes it from
   this checkout.
 - `STEPS="10-amika-user 60-amikad"` runs only those steps.
+- `VERSIONS_ENV` sets the version pins file. By default, the build reads
+  this checkout's `sandbox-image/versions.env`.
 
 A failed build deletes its clone. The build refuses an image name that is
 already in Lume, so it never deletes a VM it did not make.

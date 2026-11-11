@@ -93,8 +93,11 @@ TypeScript source resolved bundler-style, so hostd typechecks with
 `moduleResolution: "bundler"` and has no `tsc` emit. `scripts/package-release.sh
 <version> [out-dir]` wraps the bundle, the example config, the `smolmachines`
 package at the exact version `package.json` pins, and `engines.sha256` (each
-platform's engine package, fetched with `npm pack`) in one tarball for every
-platform, and writes `checksums.txt`. It stamps the bundle with
+platform's engine package, fetched with `npm pack`), and `macos-image/`
+(the repository's `macos-image/build.sh`, its steps and assets, with
+`sandbox-image/versions.env` beside them) in one tarball for every platform,
+and writes `checksums.txt`. On macOS the installer copies `macos-image/` next
+to the bundle, replacing the old copy, for setup to build Lume's image with. It stamps the bundle with
 `v<version>`, the checkout's commit and the build time, which
 `amika-hostd version` prints. The Release workflow
 runs it for an `amika-hostd@v*` tag. To test the installer against a local

@@ -11,6 +11,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError, HostTransportConflictError } from "./amika-api.js";
 import { hostPlatformFor } from "../platforms/index.js";
+import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
 import {
   ConfigError,
@@ -1687,6 +1688,9 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
       lumeRuntime: vi.fn(() => lume as never),
       findLume: () => "/usr/local/bin/lume",
       installLume: vi.fn(async () => {}),
+      // Lume has every image unless a test says otherwise.
+      missingMacosImages: vi.fn(async (): Promise<string[]> => []),
+      buildMacosImage: vi.fn(async () => {}),
     };
     return { ...h, deps, files, paths, lume };
   }
@@ -1857,6 +1861,128 @@ image = "amika-macos-coder"
       expect(JSON.parse(out.at(-1)!)).toMatchObject({
         applied: false,
         plan: { changes: [], install: [] },
+      });
+    });
+
+    describe("--enable lume, with its image missing", () => {
+      const missingImage = (
+        deps: ReturnType<typeof reloadable>["deps"],
+        build: () => Promise<void> = async () => {},
+      ) => ({
+        ...deps,
+        missingMacosImages: vi.fn(async () => ["amika-macos-coder"]),
+        buildMacosImage: vi.fn(build),
+      });
+
+      it("plans the build with what it costs, and --dry-run builds nothing", async () => {
+        const { deps, out } = reloadable();
+        const missing = missingImage(deps);
+        expect(
+          await runCli(
+            ["capabilities", "update", "--enable", "lume", "--dry-run"],
+            missing,
+          ),
+        ).toBe(0);
+        expect(out.join("\n")).toMatch(
+          /- Build the macOS image amika-macos-coder\. This downloads .*about 20 GB/,
+        );
+        expect(missing.buildMacosImage).not.toHaveBeenCalled();
+      });
+
+      it("builds the image before it writes the config", async () => {
+        const { deps, files } = reloadable();
+        const missing = missingImage(deps);
+        expect(
+          await runCli(
+            ["capabilities", "update", "--enable", "lume", "--yes"],
+            missing,
+          ),
+        ).toBe(0);
+        expect(missing.buildMacosImage).toHaveBeenCalledWith(
+          "amika-macos-coder",
+          expect.anything(),
+          expect.anything(),
+        );
+        expect(files.config).toContain("[runtimes.lume]");
+        expect(
+          missing.buildMacosImage.mock.invocationCallOrder[0],
+        ).toBeLessThan(missing.writeConfigFile.mock.invocationCallOrder[0]);
+      });
+
+      it("leaves the config as it was when the build fails, naming the retry", async () => {
+        const { deps, err, files } = reloadable();
+        const missing = missingImage(deps, async () => {
+          throw new DaemonError("`lume create` failed (exit 1)");
+        });
+        expect(
+          await runCli(
+            ["capabilities", "update", "--enable", "lume", "--yes"],
+            missing,
+          ),
+        ).toBe(1);
+        expect(files.config).toBe(BASE);
+        expect(err.join("\n")).toContain(
+          "run `amika-hostd capabilities update --enable lume` to try again",
+        );
+      });
+
+      it("only builds the image when Lume is already on", async () => {
+        const { deps, files } = reloadable(`${BASE}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+
+[presets.macos-coder.runtimes.lume]
+image = "amika-macos-coder"
+`);
+        const before = files.config;
+        const missing = missingImage(deps);
+        expect(
+          await runCli(
+            ["capabilities", "update", "--enable", "lume", "--yes"],
+            missing,
+          ),
+        ).toBe(0);
+        expect(missing.buildMacosImage).toHaveBeenCalledOnce();
+        expect(missing.writeConfigFile).not.toHaveBeenCalled();
+        expect(files.config).toBe(before);
+      });
+    });
+
+    describe("with no runtime named", () => {
+      it("asks about each runtime this machine can run", async () => {
+        const { deps, files } = reloadable();
+        // smol: keep; lume: no; bare_metal: yes; then apply.
+        const answers = ["", "n", "y", "y"];
+        const asking = {
+          ...deps,
+          prompt: vi.fn(async (_q: string) => answers.shift()),
+          installAmikad: vi.fn(async () => "/data/amikad/amikad"),
+          strictModesViolation: vi.fn(() => undefined),
+          platform: hostPlatformFor("darwin", {
+            arch: () => "arm64",
+            path: "",
+            isExecutable: (file) => file === "/usr/sbin/sshd",
+          }),
+        };
+        expect(await runCli(["capabilities", "update"], asking)).toBe(0);
+        expect(asking.prompt.mock.calls.map(([q]) => q)).toEqual([
+          `${RUNTIME_QUESTIONS.smol} [Y/n] `,
+          `${RUNTIME_QUESTIONS.lume} [y/N] `,
+          `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+          "Apply this plan? [y/N] ",
+        ]);
+        expect(files.config).toContain("[runtimes.bare_metal]");
+        expect(files.config).not.toContain("[runtimes.lume]");
+      });
+
+      it("needs a terminal", async () => {
+        const { deps, err, files } = reloadable();
+        expect(await runCli(["capabilities", "update"], deps)).toBe(1);
+        expect(err.join("\n")).toContain(
+          "with no terminal, pass --enable <runtime> or --disable <runtime>",
+        );
+        expect(files.config).toBe(BASE);
       });
     });
 
@@ -2190,6 +2316,41 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
       expect(deps.credentials.value).toBe("amk_123");
     });
 
+    it("turns runtimes on and off with --enable and --disable, asking nothing", async () => {
+      const h = piped("amk_123");
+      const deps = {
+        ...h.deps,
+        platform: hostPlatformFor("darwin", { arch: () => "arm64" } as never),
+        findLume: () => "/usr/local/bin/lume",
+        missingMacosImages: vi.fn(async () => ["amika-macos-coder"]),
+        buildMacosImage: vi.fn(async () => {}),
+      };
+      expect(
+        await runCli(["setup", "--non-interactive", "--enable", "lume"], deps),
+      ).toBe(0);
+      expect(h.files[CONFIG_PATH]).toContain("[runtimes.lume]");
+      expect(h.files[CONFIG_PATH]).toContain("[runtimes.smol]");
+      expect(deps.buildMacosImage).toHaveBeenCalledOnce();
+    });
+
+    it("refuses --enable for a runtime this machine cannot run, writing nothing", async () => {
+      const h = piped("amk_123");
+      const deps = { ...h.deps, platform: hostPlatformFor("linux") };
+      expect(
+        await runCli(["setup", "--non-interactive", "--enable", "lume"], deps),
+      ).toBe(1);
+      expect(h.err.join("\n")).toContain("This machine cannot run lume");
+      expect(h.files).toEqual({});
+    });
+
+    it("takes no --enable with --skill", async () => {
+      const { deps, err } = piped("");
+      expect(await runCli(["setup", "--skill", "--enable", "lume"], deps)).toBe(
+        2,
+      );
+      expect(err[0]).toContain("--skill takes no --enable or --disable");
+    });
+
     it("defaults to this machine's hostname", async () => {
       const { deps, files } = piped("amk_123");
       expect(await runCli(["setup", "--non-interactive"], deps)).toBe(0);
@@ -2385,11 +2546,14 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
       path.join(import.meta.dirname, "../../config.example.toml"),
       "utf8",
     ).replace('# hostname = "my-host"', 'hostname = "builder"');
-    const { deps, files } = unconfigured([""], ["amk_123"]);
+    const { deps: base, files } = unconfigured([""], ["amk_123"]);
+    const deps = { ...base, platform: hostPlatformFor("linux") };
     files[CONFIG_PATH] = seeded;
     expect(await runCli(["up"], deps)).toBe(0);
     expect(deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      `${RUNTIME_QUESTIONS.smol} [Y/n] `,
+      `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
     ]);
     expect(deps.keychainSecret.value).toBe(SECRET);
     expect(files[CONFIG_PATH]).toMatch(/^secret_store = "keychain"$/m);

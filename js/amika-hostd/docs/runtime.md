@@ -129,6 +129,28 @@ directory. hostd turns off Lume's telemetry when Lume is on.
 `lume-runtime.integration.test.ts` checks this on a real VM
 (`TEST_LUME_IMAGE`, `TEST_LUME_DIR`).
 
+### Building the template
+
+Setup and `capabilities update` build each template a Lume preset boots
+that Lume's default storage does not have (`src/internal/lume-setup.ts`),
+when Lume is turned on, so a host never offers Lume to Amika with nothing
+to boot. hostd downloads no image; it builds one:
+
+1. `lume create --ipsw <restore image> --unattended tahoe amika-macos-base`
+   makes the base VM, unless it is already there. The restore image is the
+   newest one Lume supports, unless `AMIKA_HOSTD_MACOS_IPSW` names a file or
+   URL.
+2. `macos-image/build.sh amika-macos-base <template>` clones the base VM and
+   installs Amika's tools in the clone, with the amikad release hostd
+   installs for bare metal (`ensureAmikad`, as `AMIKAD_BIN`) and the version
+   pins shipped beside the script (`VERSIONS_ENV`). hostd finds the script
+   in `macos-image/` beside the bundle in a release, else in the checkout it
+   runs from (`findMacosImageFiles`).
+
+Each step's output goes to stderr. A step whose result exists is skipped, so
+running the same command again after a failure resumes it. The base VM is
+kept for later builds; build.sh deletes a half-built template itself.
+
 ## Machine runtime
 
 `src/internal/machine-runtime.ts` serves the machine API through the `smol`

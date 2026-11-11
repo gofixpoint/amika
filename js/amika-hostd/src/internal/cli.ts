@@ -1,6 +1,5 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
-import { execFile, spawn } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { execFile } from "node:child_process";
 import { isIPv6 } from "node:net";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
@@ -54,12 +53,24 @@ import {
 } from "./runtime-router.js";
 import { lumeRuntime } from "./lume-runtime.js";
 import {
+  findLume,
+  installLume,
+  LUME_VERSION,
+  MACOS_IMAGE_COST,
+  missingMacosImages,
+} from "./lume-setup.js";
+import {
   checkReload,
   readReloadResult,
   writeReloadResult,
   type ReloadResult,
 } from "./reload.js";
-import { updateRuntimes } from "./runtime-update.js";
+import {
+  refuseTurningOffWithRigs,
+  updateRuntimes,
+  type RuntimeChange,
+} from "./runtime-update.js";
+import { askYesNo, chooseRuntimes } from "./runtime-choice.js";
 import { writePrivateFile } from "./private-file.js";
 import path from "node:path";
 import { openSecrets as openSecretStore, type Secrets } from "./credentials.js";
@@ -109,6 +120,7 @@ import {
 import { versionText } from "./build-info.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
 import {
+  buildMissingImages,
   checkBareMetal,
   runSetup,
   withoutInvalidSecret,
@@ -130,6 +142,7 @@ export const USAGE = `Usage: amika-hostd <command> [options]
 
 Commands:
   setup               Set this host's hostname, secret key and Amika API key,
+                      choose the runtimes it runs (installing what they need),
                       and write default rig sizes to the config file
   up                  Register this host with Amika, then start smolvm and the
                       daemon in the background (running setup first if needed).
@@ -143,9 +156,10 @@ Commands:
                       format (the installer runs it on an upgrade)
   capabilities get    Print the runtimes and presets this host offers Amika,
                       as the config file sets them
-  capabilities update --enable|--disable <runtime>
+  capabilities update [--enable|--disable <runtime>]
                       Turn a runtime on or off in the config file, installing
-                      what it needs, and reload the running daemon
+                      what it needs, and reload the running daemon. With no
+                      runtime named, ask about each one, as setup does
   reload              Apply the config file's runtimes, presets, sizes and
                       limits to the running daemon, with no restart
   register-url <url>  Set a listening host's internet-facing URL (e.g. an
@@ -162,6 +176,9 @@ Options:
   --hostname <name>
                  (setup --non-interactive) This host's name in Amika
   --skill        (setup) Print how an AI agent sets up this host
+  --enable <runtime>, --disable <runtime>
+                 (setup, capabilities update) Turn this runtime on or off
+                 without asking: smol, lume or bare_metal. Repeatable
   --fg           (up) Stay in the foreground instead of backgrounding
   --json         (capabilities, reload) Print JSON, for scripts and agents
   --dry-run      (capabilities update) Print the plan and change nothing
@@ -251,10 +268,14 @@ export interface CliDeps {
   lumeRuntime?: typeof lumeRuntime;
   /** The smol runtime over smolvm; tests inject a fake. */
   smolRuntime?: (config: ProviderRuntimeConfig) => MachineRuntime;
-  /** Installs Lume for `capabilities update`; tests inject a fake. */
-  installLume?: (deps: CliDeps) => Promise<void>;
+  /** Installs Lume for setup and `capabilities update`; tests inject a fake. */
+  installLume?: SetupDeps["installLume"];
   /** Finds the `lume` binary; defaults to `findLume`. */
-  findLume?: (env: NodeJS.ProcessEnv) => string | undefined;
+  findLume?: SetupDeps["findLume"];
+  /** The Lume templates not built yet; tests inject a fake. */
+  missingMacosImages?: SetupDeps["missingMacosImages"];
+  /** Builds a Lume template; tests inject a fake. */
+  buildMacosImage?: SetupDeps["buildMacosImage"];
   /** Tunnel enrolment; defaults to the control plane and the record file. */
   enrol?: EnrolForTunnelDeps["enrol"];
   write?: EnrolForTunnelDeps["write"];
@@ -297,6 +318,7 @@ export async function runCli(
         parsed.nonInteractive
           ? { ...deps, ...unattended(deps, parsed.hostname) }
           : deps,
+        { runtimes: parsed.runtimes },
       );
     }
     // `up` reads a placeholder secret (the example's `REPLACE_ME`) as unset,
@@ -445,6 +467,7 @@ type ParsedCommand =
       skill: boolean;
       nonInteractive: boolean;
       hostname?: string;
+      runtimes: RuntimeChange;
     }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
@@ -549,13 +572,12 @@ function printReloadResult(result: ReloadResult, deps: CliDeps) {
   }
 }
 
-/** Lume's release that milestone 0 of spec 028 tested. */
-const LUME_VERSION = "0.6.1";
-
 /**
  * Turn runtimes on or off (`runtime-update.ts`): show the plan, install what
- * a runtime needs, write `[runtimes.*]`, and reload the running daemon. A
- * second run with the same flags changes nothing.
+ * a runtime needs, build the macOS image Lume boots, write `[runtimes.*]`,
+ * and reload the running daemon. With no `--enable` or `--disable`, it asks
+ * about each runtime this machine can run, as setup does. A second run with
+ * the same flags changes nothing.
  */
 async function updateCapabilities(
   deps: CliDeps,
@@ -572,30 +594,52 @@ async function updateCapabilities(
     throw new ConfigError("No config file; run `amika-hostd setup` first.");
   }
   const paths = daemonPaths(deps.env);
+  const platform = platformOf(deps);
+  const asked = options.enable.length === 0 && options.disable.length === 0;
+  let change: RuntimeChange = options;
+  if (asked) {
+    if (!deps.prompt) {
+      throw new ConfigError(
+        "capabilities update asks which runtimes to run; with no terminal, pass --enable <runtime> or --disable <runtime>",
+      );
+    }
+    const current = resolveConfig({
+      env: deps.env,
+      file: withoutInvalidSecret(file),
+    });
+    change = await chooseRuntimes(
+      platform.runtimes(),
+      new Set(Object.keys(current.runtimes.runtimes) as RuntimeName[]),
+      askYesNo(deps.prompt),
+    );
+  }
   const update = updateRuntimes(
     file.contents,
-    options,
+    change,
     path.join(hostdDataDir(deps.env), "lume"),
   );
   const next = resolveConfig({
     env: deps.env,
     file: withoutInvalidSecret({ ...file, contents: update.contents }),
   });
-  checkRuntimesSupported(next.runtimes, platformOf(deps).runtimes());
+  checkRuntimesSupported(next.runtimes, platform.runtimes());
   // A runtime with rigs stays on: hostd never stops a rig to change config.
-  const machines = fileMachineIndex(paths.machineIndexFile).entries();
-  for (const runtime of options.disable) {
-    const rigs = machines.filter(([, owner]) => owner === runtime);
-    if (rigs.length > 0 && update.steps.includes(`Turn off ${runtime}`)) {
-      throw new ConfigError(
-        `${runtime} has ${rigs.length} rig${rigs.length === 1 ? "" : "s"} (${rigs.map(([name]) => name).join(", ")}). Delete ${rigs.length === 1 ? "it" : "them"}, then try again.`,
-      );
-    }
-  }
+  refuseTurningOffWithRigs(
+    change.disable.filter((name) => update.steps.includes(`Turn off ${name}`)),
+    fileMachineIndex(paths.machineIndexFile).entries(),
+  );
+  const lumeOn = next.runtimes.runtimes.lume !== undefined;
+  // Lume asked for, or kept on when asked: what it needs is installed even
+  // when the file already has it on, so this also finishes a failed build.
+  const wantsLume = lumeOn && (asked || change.enable.includes("lume"));
   const installsLume =
-    options.enable.includes("lume") &&
-    next.runtimes.runtimes.lume !== undefined &&
-    (deps.findLume ?? findLume)(deps.env) === undefined;
+    wantsLume && (deps.findLume ?? findLume)(deps.env) === undefined;
+  const images = wantsLume
+    ? await (deps.missingMacosImages ?? missingMacosImages)(
+        Object.values(presetImages(next.runtimes, "lume")),
+        deps,
+      )
+    : [];
   const turnsOnBareMetal = update.steps.includes("Turn on bare_metal");
   // Checked before the plan is shown: a machine that cannot be a rig
   // (no sshd, a home sshd's StrictModes refuses) is refused unchanged.
@@ -606,6 +650,9 @@ async function updateCapabilities(
           `Install Lume ${LUME_VERSION} with its installer, into ~/.local/bin (downloads from GitHub; no sudo)`,
         ]
       : []),
+    ...images.map(
+      (image) => `Build the macOS image ${image}. ${MACOS_IMAGE_COST}`,
+    ),
     ...(turnsOnBareMetal
       ? [
           `Install amikad into ${hostdDataDir(deps.env)}, for SSH to this machine (no sudo)`,
@@ -627,11 +674,13 @@ async function updateCapabilities(
   if (!options.json) {
     deps.out(`Plan for ${file.path}:`);
     for (const step of [...install, ...plan.changes]) deps.out(`  - ${step}`);
-    deps.out(
-      plan.reload
-        ? "  - Reload the running amika-hostd"
-        : "  - amika-hostd is not running; `amika-hostd up` applies it",
-    );
+    if (plan.changes.length > 0) {
+      deps.out(
+        plan.reload
+          ? "  - Reload the running amika-hostd"
+          : "  - amika-hostd is not running; `amika-hostd up` applies it",
+      );
+    }
   }
   if (options.dryRun) {
     if (options.json) deps.out(JSON.stringify({ plan, applied: false }));
@@ -650,7 +699,16 @@ async function updateCapabilities(
     }
   }
   if (installsLume) await (deps.installLume ?? installLume)(deps);
+  // Before the file changes, so Amika is never offered Lume rigs that have
+  // no image to boot; a failed build leaves the file as it was.
+  if (images.length > 0) {
+    await buildMissingImages(next, { ...deps, platform });
+  }
   if (turnsOnBareMetal) await prepareBareMetal(next, deps);
+  if (plan.changes.length === 0) {
+    if (options.json) deps.out(JSON.stringify({ plan, applied: true }));
+    return 0;
+  }
   (deps.writeConfigFile ?? writePrivateFile)(file.path, update.contents);
   const result = plan.reload
     ? await signalReload(pid!, paths, deps)
@@ -663,50 +721,6 @@ async function updateCapabilities(
   }
   if (result?.ok) await reportToAmika(deps);
   return result === undefined || result.ok ? 0 : 1;
-}
-
-/** Where `lume` is: on `PATH`, else where Lume's installer puts it. */
-export function findLume(env: NodeJS.ProcessEnv): string | undefined {
-  const dirs = [
-    ...(env.PATH ?? "").split(path.delimiter).filter(Boolean),
-    path.join(env.HOME || userInfo().homedir, ".local", "bin"),
-  ];
-  for (const dir of dirs) {
-    const candidate = path.join(dir, "lume");
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Not here.
-    }
-  }
-  return undefined;
-}
-
-/** Run Lume's installer for `LUME_VERSION`, its output on stderr. */
-async function installLume(deps: CliDeps): Promise<void> {
-  const script = `https://raw.githubusercontent.com/trycua/cua/lume-v${LUME_VERSION}/libs/lume/scripts/install.sh`;
-  deps.out(`Installing Lume ${LUME_VERSION}...`);
-  const code = await new Promise<number | null>((resolve, reject) => {
-    const child = spawn(
-      "/bin/bash",
-      [
-        "-c",
-        `set -o pipefail; curl -fsSL ${script} | bash -s -- --no-background-service`,
-      ],
-      {
-        env: { ...deps.env, LUME_VERSION },
-        stdio: ["ignore", process.stderr, process.stderr],
-      },
-    );
-    child.once("error", reject);
-    child.once("close", resolve);
-  });
-  if (code !== 0 || findLume(deps.env) === undefined) {
-    throw new DaemonError(
-      `Lume's installer failed (exit ${code}); nothing else was changed`,
-    );
-  }
 }
 
 /**
@@ -795,7 +809,7 @@ function upgradeConfigOnDisk(deps: CliDeps): number {
 /** Run `setup`, reporting Ctrl-C as a setup that changed nothing. */
 async function setup(
   deps: CliDeps,
-  options: { fromUp?: boolean } = {},
+  options: { fromUp?: boolean; runtimes?: RuntimeChange } = {},
 ): Promise<number> {
   if (!deps.prompt || !deps.promptSecret) {
     throw new ConfigError(
@@ -891,6 +905,7 @@ function skillContext(deps: CliDeps): SkillContext {
     configPath: file?.path ?? configFilePaths(deps.env)[0],
     logFile: daemonPaths(deps.env).logFile,
     localUrl: localUrl(reachable, port),
+    runtimes: platformOf(deps).runtimes(),
   };
 }
 
@@ -1009,9 +1024,11 @@ function parseCommand(args: readonly string[]): ParsedCommand {
   const [command, ...rest] = positionals;
   const flags = { port: values.port, host: values.host };
   switch (command) {
-    case "setup":
+    case "setup": {
       rejectOptions(command, values, [
-        ...CAPABILITY_ONLY,
+        "json",
+        "dry-run",
+        "yes",
         "fg",
         "smolvm",
         "port",
@@ -1027,13 +1044,24 @@ function parseCommand(args: readonly string[]): ParsedCommand {
           "--skill and --non-interactive do not go together",
         );
       }
+      const enable = (values.enable ?? []).map(runtimeOption);
+      const disable = (values.disable ?? []).map(runtimeOption);
+      if (values.skill && (enable.length > 0 || disable.length > 0)) {
+        throw new UsageError("--skill takes no --enable or --disable");
+      }
+      const both = enable.find((name) => disable.includes(name));
+      if (both) {
+        throw new UsageError(`--enable and --disable both name ${both}`);
+      }
       return {
         help: false,
         command,
         skill: values.skill ?? false,
         nonInteractive: values["non-interactive"] ?? false,
         hostname: values.hostname,
+        runtimes: { enable, disable },
       };
+    }
     case "up":
       rejectOptions(command, values, [
         ...CAPABILITY_ONLY,
@@ -1079,11 +1107,6 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       if (rest.length === 1 && rest[0] === "update") {
         const enable = (values.enable ?? []).map(runtimeOption);
         const disable = (values.disable ?? []).map(runtimeOption);
-        if (enable.length === 0 && disable.length === 0) {
-          throw new UsageError(
-            "capabilities update needs --enable <runtime> or --disable <runtime>",
-          );
-        }
         const both = enable.find((name) => disable.includes(name));
         if (both) {
           throw new UsageError(`--enable and --disable both name ${both}`);

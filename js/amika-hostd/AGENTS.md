@@ -185,6 +185,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
   setting through `envName`.
 - The bundle runs under plain `node` with no `node_modules`
   (`src/bundle.test.ts`).
+- `macos-image/` in the release (`scripts/package-release.sh`) with where
+  `findMacosImageFiles` looks for it (`src/internal/lume-setup.ts`), by hand:
+  `lume-setup.test.ts` checks only the checkout layout.
 
 ## Detail docs
 
@@ -198,12 +201,14 @@ Each of these is stated in full, with its reason, in the doc it links to.
   `up`, `serve` and `down` start and stop, registration with Amika
   (`amika-api.ts`), `register-url`, or the pidfile.
 - [docs/setup-and-secrets.md](docs/setup-and-secrets.md) — read when changing
-  `amika-hostd setup` (`setup.ts`, `setup-skill.ts`), secret-key regeneration,
-  or where secrets are kept (`credentials.ts`).
+  `amika-hostd setup` (`setup.ts`, `setup-skill.ts`), the runtime questions
+  it shares with `capabilities update` (`runtime-choice.ts`), secret-key
+  regeneration, or where secrets are kept (`credentials.ts`).
 - [docs/configuration.md](docs/configuration.md) — read when changing a
   setting (`config.ts`, `config.example.toml`), preset images, or the image
   cache and pre-pull (`prepull.ts`).
-- [docs/runtime.md](docs/runtime.md) — read when changing how smolvm is run
+- [docs/runtime.md](docs/runtime.md) — read when changing how Lume and its
+  macOS image are installed (`lume-setup.ts`), how smolvm is run
   (`smolvm-serve.ts`), the machine API on top of it (`machine-runtime.ts`),
   the `bare_metal` runtime (`bare-metal-runtime.ts`, `amikad-supervisor.ts`,
   `amikad-install.ts`), or the platform layer (`src/platforms/`).

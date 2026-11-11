@@ -7,6 +7,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { hostname as osHostname, userInfo } from "node:os";
+import path from "node:path";
 import { currentHostPlatform, type HostPlatform } from "../platforms/index.js";
 import {
   type RegisteredHost,
@@ -14,7 +15,20 @@ import {
   setHostSecret as setHostSecretInAmika,
 } from "./amika-api.js";
 import { ensureAmikad } from "./amikad-install.js";
-import { daemonPaths } from "./daemon.js";
+import { DaemonError, daemonPaths, hostdDataDir } from "./daemon.js";
+import {
+  buildMacosImage,
+  findLume,
+  installLume,
+  missingMacosImages,
+} from "./lume-setup.js";
+import { askYesNo, chooseRuntimes } from "./runtime-choice.js";
+import { fileMachineIndex } from "./runtime-router.js";
+import {
+  refuseTurningOffWithRigs,
+  updateRuntimes,
+  type RuntimeChange,
+} from "./runtime-update.js";
 import {
   ConfigError,
   ENV_NAMES,
@@ -29,7 +43,7 @@ import {
   type HostSize,
   type SecretStoreKind,
 } from "./config.js";
-import { presetImages } from "./runtimes.js";
+import { presetImages, type RuntimeName } from "./runtimes.js";
 import { tomlKey, upgradeConfigFile } from "./config-upgrade.js";
 import { isValidApiKey, type Secrets } from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
@@ -74,6 +88,64 @@ export interface SetupDeps {
    * defaults to checking this machine as the running account.
    */
   strictModesViolation?: (dir: string) => StrictModesViolation | undefined;
+  /** Finds the `lume` binary; defaults to `findLume`. */
+  findLume?: typeof findLume;
+  /** Installs Lume when it is turned on and missing; defaults to `installLume`. */
+  installLume?: typeof installLume;
+  /** The Lume templates not built yet; defaults to `missingMacosImages`. */
+  missingMacosImages?: (
+    templates: readonly string[],
+    deps: ImageBuildDeps,
+  ) => Promise<string[]>;
+  /** Builds one Lume template; defaults to `buildMacosImage`. */
+  buildMacosImage?: (
+    template: string,
+    config: { amikadPath?: string },
+    deps: ImageBuildDeps,
+  ) => Promise<void>;
+}
+
+/** What building the Lume presets' macOS images needs. */
+export type ImageBuildDeps = Pick<
+  SetupDeps,
+  | "env"
+  | "out"
+  | "platform"
+  | "findLume"
+  | "installAmikad"
+  | "missingMacosImages"
+  | "buildMacosImage"
+>;
+
+/**
+ * Build each macOS image a Lume preset boots that Lume does not have yet.
+ * Each build is long, and resumes where a failed one stopped; a failure
+ * names the command that tries again.
+ */
+export async function buildMissingImages(
+  config: HostdConfig,
+  deps: ImageBuildDeps,
+): Promise<void> {
+  const templates = Object.values(presetImages(config.runtimes, "lume"));
+  const missing = await (deps.missingMacosImages ?? missingMacosImages)(
+    templates,
+    deps,
+  );
+  for (const template of missing) {
+    try {
+      await (deps.buildMacosImage ?? buildMacosImage)(template, config, {
+        ...deps,
+        platform: deps.platform ?? currentHostPlatform(),
+      });
+    } catch (error) {
+      if (!(error instanceof DaemonError || error instanceof ConfigError)) {
+        throw error;
+      }
+      throw new ConfigError(
+        `${error.message}. Lume is on, but its rigs cannot start until ${template} is built; run \`amika-hostd capabilities update --enable lume\` to try again.`,
+      );
+    }
+  }
 }
 
 /**
@@ -101,11 +173,16 @@ export const DEFAULT_PRESET_IMAGES: Record<string, string> = {
 
 /**
  * Run setup. With `fromUp`, `up` called it because settings were missing, so
- * it does not tell the operator to run `up` next.
+ * it does not tell the operator to run `up` next. `runtimes` sets those
+ * runtimes on or off without asking (`setup --non-interactive --enable`);
+ * setup asks about each other one this machine can run.
  */
 export async function runSetup(
   deps: SetupDeps,
-  { fromUp = false }: { fromUp?: boolean } = {},
+  {
+    fromUp = false,
+    runtimes: givenRuntimes,
+  }: { fromUp?: boolean; runtimes?: RuntimeChange } = {},
 ): Promise<void> {
   // An old file's tables are rewritten first, so setup reads it, and writes
   // it back in the current format.
@@ -218,11 +295,34 @@ export async function runSetup(
 
   const apiKey = await askApiKey(deps, effective.apiUrl);
 
-  // Runtimes are turned on and off with `capabilities update`; setup only
-  // checks the ones that are on. Before anything is stored, so a machine
-  // that cannot be a rig is refused with nothing changed.
-  const runtimesOn = saved.runtimes.runtimes;
-  if (runtimesOn.bare_metal) await prepareBareMetal(saved, deps);
+  // Which runtimes run, of those this machine can: each defaults to what the
+  // file says, so a rerun that answers nothing changes nothing.
+  const platform = deps.platform ?? currentHostPlatform();
+  const wasOn = new Set(Object.keys(saved.runtimes.runtimes) as RuntimeName[]);
+  const runtimeChange = await chooseRuntimes(
+    platform.runtimes(),
+    wasOn,
+    askYesNo(deps.prompt),
+    givenRuntimes,
+  );
+  const runtimesOn = new Set(wasOn);
+  for (const name of runtimeChange.enable) runtimesOn.add(name);
+  for (const name of runtimeChange.disable) runtimesOn.delete(name);
+  if (runtimeChange.disable.length > 0) {
+    refuseTurningOffWithRigs(
+      runtimeChange.disable,
+      fileMachineIndex(daemonPaths(deps.env).machineIndexFile).entries(),
+    );
+  }
+  // Before anything is stored, so a machine that cannot be a rig, or a Lume
+  // that will not install, is refused with nothing changed.
+  if (runtimesOn.has("bare_metal")) await prepareBareMetal(saved, deps);
+  if (
+    runtimesOn.has("lume") &&
+    (deps.findLume ?? findLume)(deps.env) === undefined
+  ) {
+    await (deps.installLume ?? installLume)(deps);
+  }
 
   // The file names the store setup used whenever the file alone (its own
   // setting, else the default) would choose another, so a store chosen from
@@ -235,20 +335,26 @@ export async function runSetup(
       ? saved.secretStore
       : undefined;
   const render = (secret: string) =>
-    renderConfig(file?.contents, {
-      hostname,
-      secretStore:
-        store === "keychain" || saved.secretStore !== store ? store : undefined,
-      // In the keychain, the file keeps no secret key at all.
-      secretKey: keychainSecret ? undefined : secret,
-      // A config written from scratch always gets them, even when a secret
-      // survived in the keychain (the file was deleted, say). Only smol
-      // uses them.
-      addDefaults:
-        runtimesOn.smol !== undefined &&
-        (file === undefined || firstRun) &&
-        Object.keys(saved.sizes).length === 0,
-    });
+    updateRuntimes(
+      renderConfig(file?.contents, {
+        hostname,
+        secretStore:
+          store === "keychain" || saved.secretStore !== store
+            ? store
+            : undefined,
+        // In the keychain, the file keeps no secret key at all.
+        secretKey: keychainSecret ? undefined : secret,
+        // A config written from scratch always gets them, even when a secret
+        // survived in the keychain (the file was deleted, say). Only smol
+        // uses them.
+        addDefaults:
+          runtimesOn.has("smol") &&
+          (file === undefined || firstRun) &&
+          Object.keys(saved.sizes).length === 0,
+      }),
+      runtimeChange,
+      path.join(hostdDataDir(deps.env), "lume"),
+    ).contents;
   const contents = render(secretKey);
   // Check the result parses before anything changes, here or in Amika.
   const written = resolveConfig({ file: { path: configPath, contents } });
@@ -361,9 +467,14 @@ export async function runSetup(
   }
   deps.out(`Edit ${configPath} to change these settings.`);
   deps.out(
-    "Turn runtimes on or off with `amika-hostd capabilities update --enable <runtime>` (smol, lume, bare_metal).",
+    "Turn runtimes on or off later with `amika-hostd capabilities update` (smol, lume, bare_metal).",
   );
   warnAboutEnvironment(deps, secretHome);
+  // Last, since it takes a long time: everything above is saved whether or
+  // not it works, and `capabilities update --enable lume` retries it.
+  if (written.runtimes.runtimes.lume) {
+    await buildMissingImages(written, deps);
+  }
   // `up` runs setup only with the daemon stopped.
   if (replaced !== undefined && !fromUp) deps.out(RESTART);
   deps.out("");
