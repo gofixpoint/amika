@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError, HostTransportConflictError } from "./amika-api.js";
 import { hostPlatformFor } from "../platforms/index.js";
 import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
+import type { BackgroundImageOptions } from "./lume-setup.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
 import {
   ConfigError,
@@ -1690,7 +1691,7 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
       installLume: vi.fn(async () => {}),
       // Lume has every image unless a test says otherwise.
       missingMacosImages: vi.fn(async (): Promise<string[]> => []),
-      buildMacosImage: vi.fn(async () => {}),
+      buildMacosImages: vi.fn(async (_options: BackgroundImageOptions) => {}),
     };
     return { ...h, deps, files, paths, lume };
   }
@@ -1782,8 +1783,17 @@ storage_dir = "/srv/lume"
 [presets.macos-coder.runtimes.lume]
 image = "amika-macos-coder"
 `;
+    // Started with smol only, so nothing to build yet.
+    expect(deps.buildMacosImages).not.toHaveBeenCalled();
     reload();
     expect(await waitFor(1)).toMatchObject({ ok: true });
+    // The reload turned Lume on, so the daemon builds its images now.
+    await vi.waitFor(() =>
+      expect(deps.buildMacosImages).toHaveBeenCalledOnce(),
+    );
+    expect(deps.buildMacosImages.mock.calls[0][0]).toMatchObject({
+      templates: ["amika-macos-coder"],
+    });
     await router.create({
       name: "mac",
       image: "amika-macos-coder",
@@ -1811,6 +1821,43 @@ image = "amika-macos-coder"
     stop();
     expect(await serving).toBe(0);
     expect(lume.shutdown).toHaveBeenCalled();
+  });
+
+  it("the daemon builds Lume's missing images in the background, refusing their rigs meanwhile", async () => {
+    const { deps } = reloadable(`${BASE}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+[presets.macos-coder.runtimes.lume]
+image = "amika-macos-coder"
+`);
+    let finish: () => void = () => {};
+    const built = new Promise<void>((resolve) => (finish = resolve));
+    const buildMacosImages = vi.fn(async (options: BackgroundImageOptions) => {
+      options.building?.add("amika-macos-coder");
+      await built;
+      options.building?.delete("amika-macos-coder");
+    });
+    let stop: () => void = () => {};
+    const stopped = new Promise<void>((resolve) => (stop = resolve));
+    const serving = runCli(["serve"], {
+      ...deps,
+      buildMacosImages,
+      shutdownSignal: () => stopped,
+    } as CliDeps);
+    await vi.waitFor(() => expect(buildMacosImages).toHaveBeenCalledOnce());
+    // Serving already: the build holds nothing up but the rigs of its image.
+    const pulling = deps.startServer.mock.calls[0][2]?.pullingImages?.();
+    expect(pulling?.has("amika-macos-coder")).toBe(true);
+    const options = buildMacosImages.mock.calls[0][0];
+    expect(options.templates).toEqual(["amika-macos-coder"]);
+    expect(options.signal?.aborted).toBe(false);
+    finish();
+    await vi.waitFor(() => expect(pulling?.size).toBe(0));
+    stop();
+    expect(await serving).toBe(0);
+    // Stopping the daemon stops a build still running.
+    expect(options.signal?.aborted).toBe(true);
   });
 
   describe("capabilities update", () => {
@@ -1865,69 +1912,30 @@ image = "amika-macos-coder"
     });
 
     describe("--enable lume, with its image missing", () => {
-      const missingImage = (
-        deps: ReturnType<typeof reloadable>["deps"],
-        build: () => Promise<void> = async () => {},
-      ) => ({
+      const missingImage = (deps: ReturnType<typeof reloadable>["deps"]) => ({
         ...deps,
         missingMacosImages: vi.fn(async () => ["amika-macos-coder"]),
-        buildMacosImage: vi.fn(build),
       });
 
-      it("plans the build with what it costs, and --dry-run builds nothing", async () => {
-        const { deps, out } = reloadable();
+      it("plans the background build with what it costs, and turns Lume on without waiting for it", async () => {
+        const { deps, out, files } = reloadable();
         const missing = missingImage(deps);
         expect(
           await runCli(
-            ["capabilities", "update", "--enable", "lume", "--dry-run"],
+            ["capabilities", "update", "--enable", "lume", "--yes"],
             missing,
           ),
         ).toBe(0);
         expect(out.join("\n")).toMatch(
-          /- Build the macOS image amika-macos-coder\. This downloads .*about 20 GB/,
-        );
-        expect(missing.buildMacosImage).not.toHaveBeenCalled();
-      });
-
-      it("builds the image before it writes the config", async () => {
-        const { deps, files } = reloadable();
-        const missing = missingImage(deps);
-        expect(
-          await runCli(
-            ["capabilities", "update", "--enable", "lume", "--yes"],
-            missing,
-          ),
-        ).toBe(0);
-        expect(missing.buildMacosImage).toHaveBeenCalledWith(
-          "amika-macos-coder",
-          expect.anything(),
-          expect.anything(),
+          /- Build the macOS image amika-macos-coder in amika-hostd's background, refusing macOS rigs until it is done\. This downloads .*about 20 GB/,
         );
         expect(files.config).toContain("[runtimes.lume]");
-        expect(
-          missing.buildMacosImage.mock.invocationCallOrder[0],
-        ).toBeLessThan(missing.writeConfigFile.mock.invocationCallOrder[0]);
+        // The daemon builds it, not this command.
+        expect(missing.buildMacosImages).not.toHaveBeenCalled();
       });
 
-      it("leaves the config as it was when the build fails, naming the retry", async () => {
-        const { deps, err, files } = reloadable();
-        const missing = missingImage(deps, async () => {
-          throw new DaemonError("`lume create` failed (exit 1)");
-        });
-        expect(
-          await runCli(
-            ["capabilities", "update", "--enable", "lume", "--yes"],
-            missing,
-          ),
-        ).toBe(1);
-        expect(files.config).toBe(BASE);
-        expect(err.join("\n")).toContain(
-          "run `amika-hostd capabilities update --enable lume` to build it",
-        );
-      });
-
-      it("only builds the image when Lume is already on", async () => {
-        const { deps, files } = reloadable(`${BASE}
+      it("with Lume already on, changes no file and leaves the build to the next start", async () => {
+        const { deps, out, files } = reloadable(`${BASE}
 [runtimes.smol]
 [runtimes.lume]
 storage_dir = "/srv/lume"
@@ -1943,8 +1951,10 @@ image = "amika-macos-coder"
             missing,
           ),
         ).toBe(0);
-        expect(missing.buildMacosImage).toHaveBeenCalledOnce();
         expect(missing.writeConfigFile).not.toHaveBeenCalled();
+        expect(out).toContain(
+          "  - amika-hostd is not running; `amika-hostd up` applies it",
+        );
         expect(files.config).toBe(before);
       });
     });
@@ -2321,15 +2331,12 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
         ...h.deps,
         platform: hostPlatformFor("darwin", { arch: () => "arm64" } as never),
         findLume: () => "/usr/local/bin/lume",
-        missingMacosImages: vi.fn(async () => ["amika-macos-coder"]),
-        buildMacosImage: vi.fn(async () => {}),
       };
       expect(
         await runCli(["setup", "--non-interactive", "--enable", "lume"], deps),
       ).toBe(0);
       expect(h.files[CONFIG_PATH]).toContain("[runtimes.lume]");
       expect(h.files[CONFIG_PATH]).toContain("[runtimes.smol]");
-      expect(deps.buildMacosImage).toHaveBeenCalledOnce();
     });
 
     it("refuses --enable for a runtime this machine cannot run, writing nothing", async () => {

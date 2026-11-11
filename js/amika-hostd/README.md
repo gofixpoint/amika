@@ -173,9 +173,12 @@ amika-hostd capabilities update --enable lume
 ```
 
 Either way amika-hostd installs Lume into `~/.local/bin` if it is missing (no
-`sudo`), adds the `macos-coder` preset, and builds its image,
-`amika-macos-coder`. If the build fails, run the same command again: it picks
-up where it stopped. Then create a rig with
+`sudo`) and adds the `macos-coder` preset. The daemon then builds its image,
+`amika-macos-coder`, in the background, as it downloads Linux rig images:
+setup does not wait for it. Until it is built, a macOS rig is refused, saying
+Lume has not finished setting up; the daemon's log shows the progress. A
+failed build is logged, and the next `amika-hostd up` or `reload` picks up
+where it stopped. Then create a rig with
 `amika rig create --host <host> --runtime lume`. macOS runs at most two macOS
 VMs at a time, and Lume rigs have no snapshots.
 

@@ -112,7 +112,8 @@ export interface AppDeps {
    */
   hiddenMachines?: () => ReadonlySet<string>;
   /**
-   * The images pre-pull is caching right now (`prepull.ts`): a create of
+   * The images pre-pull is caching right now (`prepull.ts`), and the Lume
+   * templates the daemon is building (`lume-setup.ts`): a create of
    * one is refused (`503`) until it is done, rather than left to wait out
    * the request deadline behind the download.
    */
@@ -426,6 +427,23 @@ export function createApp(
               snapshotSource,
               configPath,
             );
+      // A Lume template the daemon is still building (`lume-setup.ts`) does
+      // not exist yet; the caller is better told why, and when to try again.
+      if (
+        source.runtime === "lume" &&
+        source.image !== undefined &&
+        pullingImages().has(source.image)
+      ) {
+        return Response.json(
+          {
+            error: `Lume has not finished setting up on this host: the macOS image ${JSON.stringify(source.image)} is still being built; try again once it is ready`,
+          },
+          {
+            status: 503,
+            headers: { "Retry-After": String(LUME_BUILDING_RETRY_AFTER_S) },
+          },
+        );
+      }
       // smolvm would answer only once the download is done, which can
       // outlast the deadline; the caller is better told now, and when to
       // try again.
@@ -546,6 +564,12 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
  * image of several GB takes minutes, so sooner would only be refused again.
  */
 export const PULLING_RETRY_AFTER_S = 60;
+
+/**
+ * How long a caller refused because Lume's macOS image is still being built
+ * should wait: the build takes half an hour or more.
+ */
+export const LUME_BUILDING_RETRY_AFTER_S = 300;
 
 /** The versioned API this daemon serves. */
 export const API_VERSION = "v0beta1";

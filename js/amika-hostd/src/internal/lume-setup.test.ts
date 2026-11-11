@@ -4,6 +4,7 @@ import { hostPlatformFor } from "../platforms/index.js";
 import { DaemonError } from "./daemon.js";
 import {
   buildMacosImage,
+  buildMacosImagesInBackground,
   findMacosImageFiles,
   installLume,
   MACOS_BASE_VM,
@@ -202,5 +203,85 @@ describe("installLume", () => {
         LUME_TELEMETRY_ENABLED: "false",
       }),
     ]);
+  });
+});
+
+describe("buildMacosImagesInBackground", () => {
+  /** A Mac missing `missing`, whose build of each runs `build`. */
+  function background(
+    missing: string[],
+    build: (template: string) => Promise<void> = async () => {},
+  ) {
+    const { deps, out } = mac({
+      vms: ["amika-macos-coder", "other"].filter((t) => !missing.includes(t)),
+    });
+    const err: string[] = [];
+    const building = new Set<string>();
+    const seen: string[][] = [];
+    const options = {
+      ...deps,
+      templates: ["amika-macos-coder", "other"],
+      config: {},
+      err: (line: string) => err.push(line),
+      building,
+      build: vi.fn(async (template: string) => {
+        seen.push([...building]);
+        await build(template);
+      }),
+    };
+    return { options, out, err, building, seen };
+  }
+
+  it("builds only the missing templates, holding each as building meanwhile", async () => {
+    const { options, out, building, seen } = background(["other"]);
+    await buildMacosImagesInBackground(options);
+    expect(options.build).toHaveBeenCalledOnce();
+    expect(options.build.mock.calls[0][0]).toBe("other");
+    expect(seen).toEqual([["other"]]);
+    expect(building.size).toBe(0);
+    expect(out.at(-1)).toMatch(/^Built the macOS image other for Lume rigs/);
+  });
+
+  it("logs a failed build, names the retry, and goes on", async () => {
+    const { options, err, building } = background(
+      ["amika-macos-coder", "other"],
+      async (template) => {
+        if (template === "amika-macos-coder") {
+          throw new DaemonError("`lume create` failed (exit 1)");
+        }
+      },
+    );
+    await buildMacosImagesInBackground(options);
+    expect(options.build).toHaveBeenCalledTimes(2);
+    expect(err).toEqual([
+      "amika-hostd: could not build the macOS image amika-macos-coder: `lume create` failed (exit 1); Lume rigs of it fail until it is built, and the next `amika-hostd up` or `amika-hostd reload` tries again",
+    ]);
+    expect(building.size).toBe(0);
+  });
+
+  it("stops quietly once the daemon stops", async () => {
+    const stopping = new AbortController();
+    const { options, err } = background(
+      ["amika-macos-coder", "other"],
+      async () => {
+        stopping.abort();
+        throw new DaemonError("Starting lume failed: aborted");
+      },
+    );
+    await buildMacosImagesInBackground({ ...options, signal: stopping.signal });
+    expect(options.build).toHaveBeenCalledOnce();
+    expect(err).toEqual([]);
+  });
+
+  it("logs Lume failing to say what is missing, and never throws", async () => {
+    const { options, err } = background([]);
+    await buildMacosImagesInBackground({
+      ...options,
+      hasLumeVm: async () => {
+        throw new Error("lume get failed");
+      },
+    });
+    expect(options.build).not.toHaveBeenCalled();
+    expect(err[0]).toMatch(/could not check Lume for its macOS images/);
   });
 });

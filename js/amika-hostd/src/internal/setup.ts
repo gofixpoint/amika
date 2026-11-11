@@ -15,13 +15,8 @@ import {
   setHostSecret as setHostSecretInAmika,
 } from "./amika-api.js";
 import { ensureAmikad } from "./amikad-install.js";
-import { DaemonError, daemonPaths, hostdDataDir } from "./daemon.js";
-import {
-  buildMacosImage,
-  findLume,
-  installLume,
-  missingMacosImages,
-} from "./lume-setup.js";
+import { daemonPaths, hostdDataDir } from "./daemon.js";
+import { findLume, installLume } from "./lume-setup.js";
 import { askYesNo, chooseRuntimes } from "./runtime-choice.js";
 import { fileMachineIndex } from "./runtime-router.js";
 import {
@@ -92,64 +87,6 @@ export interface SetupDeps {
   findLume?: typeof findLume;
   /** Installs Lume when it is turned on and missing; defaults to `installLume`. */
   installLume?: typeof installLume;
-  /** The Lume templates not built yet; defaults to `missingMacosImages`. */
-  missingMacosImages?: (
-    templates: readonly string[],
-    deps: ImageBuildDeps,
-  ) => Promise<string[]>;
-  /** Builds one Lume template; defaults to `buildMacosImage`. */
-  buildMacosImage?: (
-    template: string,
-    config: { amikadPath?: string },
-    deps: ImageBuildDeps,
-  ) => Promise<void>;
-}
-
-/** What building the Lume presets' macOS images needs. */
-export type ImageBuildDeps = Pick<
-  SetupDeps,
-  | "env"
-  | "out"
-  | "platform"
-  | "findLume"
-  | "installAmikad"
-  | "missingMacosImages"
-  | "buildMacosImage"
->;
-
-/**
- * Build each macOS image a Lume preset boots that Lume does not have yet.
- * Each build is long, and resumes where a failed one stopped; a failure
- * names the command that tries again.
- */
-export async function buildMissingImages(
-  config: HostdConfig,
-  deps: ImageBuildDeps,
-): Promise<void> {
-  const templates = Object.values(presetImages(config.runtimes, "lume"));
-  /** The template being worked on, for the error. */
-  let current = templates.join(", ");
-  try {
-    const missing = await (deps.missingMacosImages ?? missingMacosImages)(
-      templates,
-      deps,
-    );
-    for (const template of missing) {
-      current = template;
-      await (deps.buildMacosImage ?? buildMacosImage)(template, config, {
-        ...deps,
-        platform: deps.platform ?? currentHostPlatform(),
-      });
-    }
-  } catch (error) {
-    if (!(error instanceof DaemonError || error instanceof ConfigError)) {
-      throw error;
-    }
-    throw new ConfigError(
-      `${error.message}. ${current} is not built yet; run \`amika-hostd capabilities update --enable lume\` to build it, which resumes where this stopped.`,
-      { cause: error },
-    );
-  }
 }
 
 /**
@@ -474,35 +411,12 @@ export async function runSetup(
     "Turn runtimes on or off later with `amika-hostd capabilities update` (smol, lume, bare_metal).",
   );
   warnAboutEnvironment(deps, secretHome);
-  // Last, since it takes a long time: everything above is saved whether or
-  // not it works, and `capabilities update --enable lume` retries it.
   if (written.runtimes.runtimes.lume) {
-    try {
-      await buildMissingImages(written, deps);
-    } catch (error) {
-      if (
-        !(error instanceof ConfigError) ||
-        !runtimeChange.enable.includes("lume")
-      ) {
-        throw error;
-      }
-      // Lume turned on here stays off until its image is built, so `up`
-      // never offers Amika macOS rigs with nothing to boot. Its table and
-      // preset stay, and the retry turns it on once the build works.
-      writeConfig(
-        write,
-        configPath,
-        updateRuntimes(
-          contents,
-          { enable: [], disable: ["lume"] },
-          path.join(hostdDataDir(deps.env), "lume"),
-        ).contents,
-      );
-      throw new ConfigError(
-        `${error.message} Until then Lume stays off; the rest of the setup is saved.`,
-        { cause: error },
-      );
-    }
+    // Not here: the download and build would hold setup up for half an
+    // hour. The daemon does it in the background, as it pre-pulls images.
+    deps.out(
+      "Lume rigs boot a macOS image this Mac builds once. amika-hostd builds it in the background when it starts, and refuses macOS rigs until it is done.",
+    );
   }
   // `up` runs setup only with the daemon stopped.
   if (replaced !== undefined && !fromUp) deps.out(RESTART);

@@ -59,15 +59,10 @@ machine that cannot be a rig, or a Lume that will not install, is refused
 with nothing changed. A config without smol gets no default `[sizes]` or
 `[presets.*]`.
 
-With Lume on, setup's last step builds each image a Lume preset boots that
-Lume does not have yet (`buildMissingImages`; see
-[Lume runtime](runtime.md#lume-runtime)). It runs after everything else is
-stored, because it is long: if it fails, the rest of setup is kept, and the
-error names `amika-hostd capabilities update --enable lume`, which builds it
-again from where it stopped. If this run turned Lume on, setup turns it back
-off (`enabled = false`, keeping its table and preset), so `up` does not offer
-Amika macOS rigs with no image to boot; the retry turns it on once the
-image is built. Lume that was already on stays on.
+Setup does not build the macOS image a Lume preset boots: that takes half
+an hour or more, and would hold setup up. The daemon builds it in the
+background once it starts, and refuses macOS rigs until it is done (see
+[Building the template](runtime.md#building-the-template)); setup says so.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping

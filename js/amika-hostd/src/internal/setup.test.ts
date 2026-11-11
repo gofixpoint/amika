@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { hostPlatformFor, type HostPlatform } from "../platforms/index.js";
 import { ConfigError, resolveConfig, type HostdConfigFile } from "./config.js";
-import { DaemonError, daemonPaths } from "./daemon.js";
+import { daemonPaths } from "./daemon.js";
 import { PromptCancelled } from "./prompt.js";
 import {
   DEFAULT_PRESET_IMAGES,
@@ -1148,10 +1148,10 @@ describe("runSetup: choosing runtimes", () => {
   const MAC = hostPlatformFor("darwin", { arch: () => "arm64" } as never);
   const LUME_PROMPT = `${RUNTIME_QUESTIONS.lume} [y/N] `;
 
-  /** Setup on an Apple Silicon Mac, with Lume and its image build faked. */
+  /** Setup on an Apple Silicon Mac, with Lume's installer faked. */
   function macHarness(
     answers: (string | undefined)[],
-    { lumeInstalled = false, buildFails = false } = {},
+    { lumeInstalled = false } = {},
   ) {
     const h = harness({
       answers,
@@ -1163,12 +1163,6 @@ describe("runSetup: choosing runtimes", () => {
       ...h.deps,
       findLume: () => (lumeInstalled ? "/usr/local/bin/lume" : undefined),
       installLume: vi.fn(async () => {}),
-      missingMacosImages: vi.fn(async (templates: readonly string[]) => [
-        ...templates,
-      ]),
-      buildMacosImage: vi.fn(async () => {
-        if (buildFails) throw new ConfigError("`lume create` failed (exit 1)");
-      }),
     };
     return { ...h, deps };
   }
@@ -1180,10 +1174,9 @@ describe("runSetup: choosing runtimes", () => {
     expect(LUME_PROMPT).toMatch(/about 20 GB.*30 minutes or more/);
     expect(h.written[PATH]).toBe(FILE_CONFIGURED);
     expect(h.deps.installLume).not.toHaveBeenCalled();
-    expect(h.deps.buildMacosImage).not.toHaveBeenCalled();
   });
 
-  it("with a yes to Lume, installs it, turns it on, and builds the image after saving", async () => {
+  it("with a yes to Lume, installs it and turns it on, leaving the image to the daemon", async () => {
     // Hostname, regenerate, API key, lume, bare_metal.
     const h = macHarness(["", "", "", "y", ""]);
     await runSetup(h.deps);
@@ -1193,71 +1186,9 @@ describe("runSetup: choosing runtimes", () => {
       '[presets.macos-coder.runtimes.lume]\nimage = "amika-macos-coder"',
     );
     expect(h.config().runtimes.runtimes).toHaveProperty("smol");
-    expect(h.deps.buildMacosImage).toHaveBeenCalledWith(
-      "amika-macos-coder",
-      expect.anything(),
-      expect.anything(),
-    );
-    expect(h.deps.writeConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
-      h.deps.buildMacosImage.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("keeps the rest of setup but turns Lume back off when the image build fails", async () => {
-    const h = macHarness(["", "", "", "y", ""], {
-      lumeInstalled: true,
-      buildFails: true,
-    });
-    await expect(runSetup(h.deps)).rejects.toThrow(
-      /amika-hostd capabilities update --enable lume.* Until then Lume stays off; the rest of the setup is saved\.$/,
-    );
-    // Off, so `up` does not offer Amika macOS rigs with no image; the table
-    // and preset stay for the retry to turn back on.
-    expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["smol"]);
-    expect(h.written[PATH]).toMatch(/\[runtimes\.lume\]\nenabled = false\n/);
-    expect(h.written[PATH]).toContain("[presets.macos-coder.runtimes.lume]");
-    expect(h.config().hostname).toBe("builder");
-    expect(h.deps.installLume).not.toHaveBeenCalled();
-  });
-
-  it("leaves Lume on when it was on before setup and the build fails", async () => {
-    const h = harness({
-      answers: ["", "", ""],
-      file: `${FILE_CONFIGURED}
-[runtimes.smol]
-[runtimes.lume]
-storage_dir = "/srv/lume"
-
-[presets.macos-coder.runtimes.lume]
-image = "amika-macos-coder"
-`,
-      storedKey: "k",
-      platform: MAC,
-    });
-    const deps = {
-      ...h.deps,
-      findLume: () => "/usr/local/bin/lume",
-      missingMacosImages: vi.fn(async () => ["amika-macos-coder"]),
-      buildMacosImage: vi.fn(async () => {
-        throw new ConfigError("`lume create` failed (exit 1)");
-      }),
-    };
-    await expect(runSetup(deps)).rejects.toThrow(
-      /amika-hostd capabilities update --enable lume/,
-    );
-    expect(h.config().runtimes.runtimes).toHaveProperty("lume");
-  });
-
-  it("says how to retry when Lume cannot even be checked for the image", async () => {
-    const h = macHarness(["", "", "", "y", ""], { lumeInstalled: true });
-    const deps = {
-      ...h.deps,
-      missingMacosImages: vi.fn(async (): Promise<string[]> => {
-        throw new DaemonError("Checking Lume for amika-macos-coder failed");
-      }),
-    };
-    await expect(runSetup(deps)).rejects.toThrow(
-      /Checking Lume for amika-macos-coder failed\. .*capabilities update --enable lume/,
+    // The build would hold setup up for half an hour; the daemon does it.
+    expect(h.out).toContain(
+      "Lume rigs boot a macOS image this Mac builds once. amika-hostd builds it in the background when it starts, and refuses macOS rigs until it is done.",
     );
   });
 
@@ -1283,13 +1214,11 @@ storage_dir = "/srv/lume"
       ...h.deps,
       findLume: () => undefined,
       installLume: vi.fn(async () => {}),
-      buildMacosImage: vi.fn(async () => {}),
     };
     await expect(runSetup(deps)).rejects.toThrow(
       "The config turns on lume, which this machine cannot run",
     );
     expect(deps.installLume).not.toHaveBeenCalled();
-    expect(deps.buildMacosImage).not.toHaveBeenCalled();
     expect(h.written).toEqual({});
   });
 

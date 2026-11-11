@@ -213,11 +213,13 @@ rigs. To make this machine the host's only rig, also pass
 ${
   runtimes.includes("lume")
     ? `
-With \`--enable lume\`, the command builds the macOS image before it
-changes the config, and that takes 30 minutes or more. Run it with a long
-timeout or in the background, and tell the operator it is still going. If
-it fails, the config is unchanged, and the same command resumes the build
-where it stopped.
+With Lume on, the daemon builds the macOS image in the background once it
+runs (after \`up\`, or the reload \`capabilities update\` sends a running
+daemon), and that takes 30 minutes or more. Nothing waits for it, but until
+it is built a macOS rig is refused, saying Lume has not finished setting up.
+Tell the operator, and point them at the daemon's log for its progress:
+${logFile}. A failed build is logged there, and the next \`up\` or
+\`amika-hostd reload\` tries again.
 `
     : ""
 }

@@ -135,10 +135,16 @@ turning Lume on sends nothing even when the daemon never starts.
 
 ### Building the template
 
-Setup and `capabilities update` build each template a Lume preset boots
-that Lume's default storage does not have (`src/internal/lume-setup.ts`),
-when Lume is turned on, so a host never offers Lume to Amika with nothing
-to boot. hostd downloads no image; it builds one:
+The daemon builds each template a Lume preset boots that Lume's default
+storage does not have (`buildMacosImagesInBackground` in
+`src/internal/lume-setup.ts`), in the background, as it pre-pulls smol's
+images: after it starts, and after each reload, which may have turned Lume
+on, one build at a time. Setup and `capabilities update` only turn Lume on;
+`up` announces the build, with what it costs and where its progress is
+logged. While a template is being built it is in the same set as the images
+pre-pull is downloading, and a create of a Lume rig of it is refused at once
+(`503`, `Retry-After: 300`, "Lume has not finished setting up on this
+host"); Linux rigs are not held up. hostd downloads no image; it builds one:
 
 1. `lume create --ipsw <restore image> --unattended tahoe amika-macos-base`
    makes the base VM, unless it is already there. The restore image is the
@@ -153,9 +159,12 @@ to boot. hostd downloads no image; it builds one:
    in `macos-image/` beside the bundle in a release, else in the checkout it
    runs from (`findMacosImageFiles`).
 
-Each step's output goes to stderr. A step whose result exists is skipped, so
-running the same command again after a failure resumes it. The base VM is
-kept for later builds; build.sh deletes a half-built template itself.
+Each step's output goes to the daemon's log. A failed build is logged, and
+until the next `up` or `reload` tries again a create fails on the missing
+template, with a message that points at the log. A step whose result exists
+is skipped, so the next try resumes where a failed one stopped. The base VM
+is kept for later builds; build.sh deletes a half-built template itself.
+Stopping the daemon stops the build.
 
 ## Machine runtime
 

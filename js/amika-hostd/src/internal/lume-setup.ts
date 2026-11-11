@@ -131,6 +131,8 @@ export interface MacosImageDeps {
   imageFiles?: () => MacosImageFiles | undefined;
   /** Installs the amikad the image carries; defaults to `ensureAmikad`. */
   installAmikad?: typeof ensureAmikad;
+  /** Stops the build's commands once this aborts (the daemon is stopping). */
+  signal?: AbortSignal;
 }
 
 /** Of `templates`, the ones Lume's default storage does not have. */
@@ -180,9 +182,13 @@ export async function buildMacosImage(
     );
   }
   const runCommand = deps.run ?? runToStderr;
-  const run: typeof runToStderr = (command, args, env) =>
+  const run = (
+    command: string,
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+  ) =>
     reported(`Starting ${path.basename(command)}`, () =>
-      runCommand(command, args, env),
+      runCommand(command, args, env, deps.signal),
     );
   const hasVm =
     deps.hasLumeVm ??
@@ -260,6 +266,70 @@ async function reported<T>(what: string, work: () => Promise<T>): Promise<T> {
   }
 }
 
+export interface BackgroundImageOptions extends Omit<
+  MacosImageDeps,
+  "platform"
+> {
+  platform: HostPlatform;
+  /** The templates the Lume presets boot. */
+  templates: readonly string[];
+  /** Where `amikad_path` points, if set; else hostd's own amikad release. */
+  config: { amikadPath?: string };
+  err: (line: string) => void;
+  /**
+   * Holds each template while it is built, so the machine API can refuse a
+   * Lume rig of it at once (`503`) instead of failing on a missing template.
+   * Kept in memory: it is live state, gone when the daemon is.
+   */
+  building?: Set<string>;
+  /** Builds one template; defaults to `buildMacosImage`. */
+  build?: typeof buildMacosImage;
+}
+
+/**
+ * Build each template a Lume preset boots that Lume does not have, one at a
+ * time, as the daemon pre-pulls smol's images: in the background, so nothing
+ * waits on it. Never throws: a failure is logged, and the next
+ * `amika-hostd up` or `reload` tries again. The daemon stopping stops it.
+ */
+export async function buildMacosImagesInBackground(
+  options: BackgroundImageOptions,
+): Promise<void> {
+  const { templates, config, out, err, signal, building } = options;
+  let missing: string[];
+  try {
+    missing = await missingMacosImages(templates, options);
+  } catch (error) {
+    err(
+      `amika-hostd: could not check Lume for its macOS images: ${errorText(error)}; the next \`amika-hostd up\` tries again`,
+    );
+    return;
+  }
+  for (const template of missing) {
+    if (signal?.aborted) return;
+    building?.add(template);
+    const started = Date.now();
+    try {
+      await (options.build ?? buildMacosImage)(template, config, options);
+      out(
+        `Built the macOS image ${template} for Lume rigs (${Math.round((Date.now() - started) / 60_000)} min)`,
+      );
+    } catch (error) {
+      // The daemon stopping cuts the build short; that is no failure.
+      if (signal?.aborted) return;
+      err(
+        `amika-hostd: could not build the macOS image ${template}: ${errorText(error)}; Lume rigs of it fail until it is built, and the next \`amika-hostd up\` or \`amika-hostd reload\` tries again`,
+      );
+    } finally {
+      building?.delete(template);
+    }
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function hasLumeVm(
   lume: string,
   name: string,
@@ -308,10 +378,13 @@ export function runToStderr(
   command: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
+  /** Ends the command once this aborts. */
+  signal?: AbortSignal,
 ): Promise<number | null> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       env,
+      signal,
       stdio: ["ignore", process.stderr, process.stderr],
     });
     child.once("error", reject);

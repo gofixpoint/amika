@@ -6,10 +6,10 @@ uses the same version pins (`sandbox-image/versions.env`).
 
 ## Build
 
-amika-hostd builds this image itself when Lume is turned on, with
-`amika-hostd setup` or `amika-hostd capabilities update --enable lume`: it
-ships this directory and runs the steps below. Build it by hand to work on
-the image.
+amika-hostd builds this image itself once Lume is turned on (with
+`amika-hostd setup` or `amika-hostd capabilities update --enable lume`): the
+daemon runs the steps below in the background, from a copy of this
+directory its release ships. Build it by hand to work on the image.
 
 You need an Apple Silicon Mac with Lume, and a base VM from Lume's
 unattended install:

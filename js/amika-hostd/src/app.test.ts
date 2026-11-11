@@ -317,6 +317,34 @@ describe("machine API", () => {
       });
     });
 
+    describe("while the daemon is building Lume's macOS image", () => {
+      it("refuses a macOS rig at once, saying Lume has not finished setting up", async () => {
+        const runtime = fakeRuntime();
+        const building = new Set(["amika-macos-coder"]);
+        const app = authenticated(
+          createApp(
+            { secretKey: SECRET, runtimes: smolPresets({ coder: CODER }) },
+            runtime,
+            { pullingImages: () => building },
+          ),
+        );
+        const mac = { name: "mac", image: "macos-coder" };
+        const response = await app.request(ROOT, json(mac));
+        expect(response.status).toBe(503);
+        expect(response.headers.get("Retry-After")).toBe("300");
+        expect(await response.json()).toEqual({
+          error:
+            'Lume has not finished setting up on this host: the macOS image "amika-macos-coder" is still being built; try again once it is ready',
+        });
+        expectUntouched(runtime);
+        // Linux rigs are not held up by it.
+        const linux = { name: "demo", image: "amika-coder" };
+        expect((await app.request(ROOT, json(linux))).status).toBe(201);
+        building.clear();
+        expect((await app.request(ROOT, json(mac))).status).toBe(201);
+      });
+    });
+
     it.each(["ubuntu:24.04", "ghcr.io/gofixpoint/amika-coder", CODER])(
       "passes full reference %s unchanged",
       async (image) => {

@@ -82,18 +82,18 @@ without a terminal it then exits with an error naming the flags.
    also lists smol, so smol stays on. When Lume is asked for, each template
    a Lume preset boots that Lume does not have is a step of its own, with
    what building it costs (`MACOS_IMAGE_COST`), even when Lume is already
-   on: that is how a failed build is retried.
+   on. The daemon builds it in the background
+   ([Building the template](runtime.md#building-the-template)); this command
+   does not wait for it.
 2. It installs Lume `0.6.1` with Lume's own installer, into `~/.local/bin`
-   with no `sudo`, when Lume is asked for and not found. It then builds the
-   missing images (`src/internal/lume-setup.ts`, see
-   [Lume runtime](runtime.md#lume-runtime)) before it changes the file, so a
-   build that fails leaves the file as it was, and Amika is never offered
-   Lume rigs with no image to boot. Turning on `bare_metal` first checks the
-   machine as setup does (an `sshd` binary, and sshd's StrictModes on
-   amikad's state directory), and refuses with nothing changed; then it
-   installs amikad into hostd's data directory.
+   with no `sudo`, when Lume is asked for and not found. Turning on
+   `bare_metal` first checks the machine as setup does (an `sshd` binary,
+   and sshd's StrictModes on amikad's state directory), and refuses with
+   nothing changed; then it installs amikad into hostd's data directory.
 3. It writes the file, and reloads a running daemon as `reload` does,
-   which then sends Amika the new capabilities.
+   which then sends Amika the new capabilities. With a template to build it
+   reloads a running daemon even when the file does not change, since a
+   reload starts the build.
 
 It refuses to turn off a runtime with rigs, as recorded in `machines.json`.
 `--dry-run` prints the plan and changes nothing; `--yes` applies it without
