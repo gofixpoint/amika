@@ -28,6 +28,9 @@ storage. The base VM does not change.
 - `STEPS="10-amika-user 60-amikad"` runs only those steps.
 - `VERSIONS_ENV` sets the version pins file. By default, the build reads
   this checkout's `sandbox-image/versions.env`.
+- `NODE` names a Node.js binary to read Lume's JSON output with. Without it
+  the build uses `python3`, which a Mac has only with the Xcode Command Line
+  Tools. amika-hostd sets it to its own Node.
 
 A failed build deletes its clone. The build refuses an image name that is
 already in Lume, so it never deletes a VM it did not make.

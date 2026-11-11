@@ -77,6 +77,8 @@ describe("buildMacosImage", () => {
     expect(env).toMatchObject({
       AMIKAD_BIN: "/data/amikad/0.3.0/amikad",
       VERSIONS_ENV: FILES.versionsEnv,
+      // build.sh parses Lume's JSON with it, needing no python3.
+      NODE: process.execPath,
     });
     // build.sh calls `lume` by name.
     expect(env.PATH?.split(path.delimiter)[0]).toBe(path.dirname(LUME));

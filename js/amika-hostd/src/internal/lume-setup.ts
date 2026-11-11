@@ -198,7 +198,14 @@ export async function buildMacosImage(
   const code = await run(
     "/bin/bash",
     [files.buildScript, MACOS_BASE_VM, template],
-    { ...env, AMIKAD_BIN: amikad, VERSIONS_ENV: files.versionsEnv },
+    // NODE: build.sh reads Lume's JSON with hostd's own Node, so a Mac
+    // without python3 (no Command Line Tools) can build the image.
+    {
+      ...env,
+      AMIKAD_BIN: amikad,
+      VERSIONS_ENV: files.versionsEnv,
+      NODE: process.execPath,
+    },
   );
   if (code !== 0) {
     throw new DaemonError(

@@ -142,8 +142,10 @@ to boot. hostd downloads no image; it builds one:
    URL.
 2. `macos-image/build.sh amika-macos-base <template>` clones the base VM and
    installs Amika's tools in the clone, with the amikad release hostd
-   installs for bare metal (`ensureAmikad`, as `AMIKAD_BIN`) and the version
-   pins shipped beside the script (`VERSIONS_ENV`). hostd finds the script
+   installs for bare metal (`ensureAmikad`, as `AMIKAD_BIN`), the version
+   pins shipped beside the script (`VERSIONS_ENV`), and hostd's own Node to
+   read Lume's JSON with (`NODE`), so the build needs no `python3`, which a
+   Mac without the Command Line Tools lacks. hostd finds the script
    in `macos-image/` beside the bundle in a release, else in the checkout it
    runs from (`findMacosImageFiles`).
 

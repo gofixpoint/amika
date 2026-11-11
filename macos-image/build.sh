@@ -13,6 +13,9 @@
 #   VERSIONS_ENV  The version pins the steps read. Default: this checkout's
 #               sandbox-image/versions.env. amika-hostd's release ships a copy
 #               beside this script and sets this to it.
+#   NODE        A Node.js binary to read Lume's JSON with. amika-hostd sets
+#               it to its own Node; without it the build uses python3, which
+#               a Mac has only with the Xcode Command Line Tools.
 
 set -euo pipefail
 
@@ -33,6 +36,29 @@ if lume get "$image" >/dev/null 2>&1; then
   echo "$image already exists; delete it or choose another name" >&2
   exit 1
 fi
+
+# Print field `ip` (the address once the VM runs, else empty) or `status`
+# of the image VM, from `lume get`.
+vm_field() {
+  local json
+  json="$(lume get "$image" --format json)"
+  if [[ -n "${NODE:-}" ]]; then
+    "$NODE" -e '
+      const vm = JSON.parse(process.argv[2])[0];
+      const field = process.argv[1];
+      console.log(field === "ip"
+        ? (vm.status === "running" && vm.ipAddress) || ""
+        : vm.status);' "$1" "$json"
+  else
+    python3 -c '
+import json, sys
+vm = json.loads(sys.argv[2])[0]
+if sys.argv[1] == "ip":
+    print(vm.get("ipAddress") or "" if vm["status"] == "running" else "")
+else:
+    print(vm["status"])' "$1" "$json"
+  fi
+}
 
 work="$(mktemp -d)"
 cloned=false
@@ -60,8 +86,7 @@ lume run "$image" --detach --display none --vnc disabled \
   --log-file "$work/lume.log"
 ip=""
 for _ in $(seq 1 120); do
-  ip="$(lume get "$image" --format json | python3 -c \
-    'import json, sys; vm = json.load(sys.stdin)[0]; print(vm.get("ipAddress") or "" if vm["status"] == "running" else "")')"
+  ip="$(vm_field ip)"
   [[ -n "$ip" ]] && break
   sleep 1
 done
@@ -112,8 +137,7 @@ printf '%s\n' "$AMIKA_IMAGE_PASSWORD" | guest \
   "sudo -S -p '' sh -c 'rm -rf /tmp/amika-image && shutdown -h now'" || true
 status=""
 for _ in $(seq 1 120); do
-  status="$(lume get "$image" --format json | python3 -c \
-    'import json, sys; print(json.load(sys.stdin)[0]["status"])')"
+  status="$(vm_field status)"
   [[ "$status" == stopped ]] && break
   sleep 1
 done
