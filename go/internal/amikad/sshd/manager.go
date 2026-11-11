@@ -65,6 +65,10 @@ type Paths struct {
 	// truth for the loopback address: the rendered config listens on it and
 	// the no-relay bridge dials it, so the two can never drift apart.
 	Port int
+	// TerminfoDirectory receives the bundled terminfo entries, and sessions
+	// search it before the system database (TERMINFO_DIRS). Empty installs
+	// none: root mode serves rigs whose image ships the entries itself.
+	TerminfoDirectory string
 }
 
 // EnvManagedUser overrides the account whose UID/GID own the managed sshd's
@@ -118,6 +122,7 @@ func UserPaths(stateDirectory, username string, port int) Paths {
 		AllowUser:         username,
 		Unprivileged:      true,
 		Port:              port,
+		TerminfoDirectory: filepath.Join(stateDirectory, "terminfo"),
 	}
 }
 
@@ -217,6 +222,11 @@ func (m *Manager) Setup(ctx context.Context, options SetupOptions) error {
 		return err
 	default:
 		if err := m.files.WriteFileAtomic(m.paths.Config, desiredConfig, 0o600); err != nil {
+			return err
+		}
+	}
+	if m.paths.TerminfoDirectory != "" {
+		if err := installTerminfo(m.files, m.paths.TerminfoDirectory); err != nil {
 			return err
 		}
 	}
@@ -456,6 +466,9 @@ func validatePaths(paths Paths) error {
 	if paths.RuntimeDirectory != "" {
 		required = append(required, paths.RuntimeDirectory)
 	}
+	if paths.TerminfoDirectory != "" {
+		required = append(required, paths.TerminfoDirectory)
+	}
 	for _, path := range required {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return fmt.Errorf("invalid sshd path: %w", state.ErrInvalidPath)
@@ -490,6 +503,16 @@ func ValidateAllowUser(name string) error {
 
 // RenderConfig returns the complete loopback-only sshd policy.
 func RenderConfig(paths Paths) string {
+	config := renderBaseConfig(paths)
+	if paths.TerminfoDirectory != "" {
+		// The trailing ":" keeps the system terminfo database on the search
+		// path after the bundled entries.
+		config += fmt.Sprintf("SetEnv TERMINFO_DIRS=%s:\n", paths.TerminfoDirectory)
+	}
+	return config
+}
+
+func renderBaseConfig(paths Paths) string {
 	return fmt.Sprintf(`Port %d
 ListenAddress 127.0.0.1
 Protocol 2
