@@ -209,8 +209,8 @@
           "id": "amika-clis",
           "script": "steps/85-amika-clis.sh",
           "versions": {
-            "AMIKAD_VERSION": "0.3.0",
-            "AMIKA_VERSION": "0.25.0"
+            "AMIKAD_VERSION": "0.3.1",
+            "AMIKA_VERSION": "0.26.0"
           }
         },
         {
@@ -363,8 +363,8 @@
           "id": "amika-clis",
           "script": "steps/85-amika-clis.sh",
           "versions": {
-            "AMIKAD_VERSION": "0.3.0",
-            "AMIKA_VERSION": "0.25.0"
+            "AMIKAD_VERSION": "0.3.1",
+            "AMIKA_VERSION": "0.26.0"
           }
         },
         {
