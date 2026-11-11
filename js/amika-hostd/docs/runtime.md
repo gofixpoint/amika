@@ -108,7 +108,11 @@ provider (`@amika/sandbox/lume`), when `[runtimes.lume]` is on. A Lume
 preset's `image` names a template VM in Lume's default storage, such as one
 `macos-image/build.sh` made. Each rig is a clone of it in `storage_dir`, and
 each VM's management key and known hosts are in `lume/` in the state
-directory. hostd turns off Lume's telemetry when Lume is on.
+directory. hostd turns off Lume's telemetry when Lume is on. The `lume` it
+runs before the daemon starts (Lume's installer, which runs the new binary
+once to record an installation event, `lume get`, and each step of the
+image build) gets `LUME_TELEMETRY_ENABLED=false` (`LUME_NO_TELEMETRY`), so
+turning Lume on sends nothing even when the daemon never starts.
 
 - Create takes `cpus` and `memoryMb` together. The disk is the template's;
   a size with less disk is refused (`400`). The create's `env` is kept with

@@ -9,7 +9,7 @@
  * tools in the clone. Both are slow and large, so callers warn first
  * (`MACOS_IMAGE_COST`).
  */
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
@@ -34,6 +34,14 @@ export const MACOS_BASE_VM = "amika-macos-base";
 export const MACOS_IMAGE_COST =
   "This downloads a macOS restore image from Apple (about 20 GB), needs about 60 GB of free disk, and takes 30 minutes or more.";
 
+/**
+ * Lume's opt-out from its usage telemetry, set for every `lume` hostd runs
+ * here: the installer's first run of the new binary (which records an
+ * installation event), `lume get`, and each build step. The daemon also
+ * turns it off for good when Lume is on; these run before it starts.
+ */
+export const LUME_NO_TELEMETRY = { LUME_TELEMETRY_ENABLED: "false" } as const;
+
 /** Where `lume` is: on `PATH`, else where Lume's installer puts it. */
 export function findLume(env: NodeJS.ProcessEnv): string | undefined {
   const dirs = [
@@ -56,16 +64,19 @@ export function findLume(env: NodeJS.ProcessEnv): string | undefined {
 export async function installLume(deps: {
   env: NodeJS.ProcessEnv;
   out: (line: string) => void;
+  /** Runs the installer; defaults to `runToStderr`. */
+  run?: typeof runToStderr;
 }): Promise<void> {
   const script = `https://raw.githubusercontent.com/trycua/cua/lume-v${LUME_VERSION}/libs/lume/scripts/install.sh`;
   deps.out(`Installing Lume ${LUME_VERSION}...`);
-  const code = await runToStderr(
+  const code = await (deps.run ?? runToStderr)(
     "/bin/bash",
     [
       "-c",
       `set -o pipefail; curl -fsSL ${script} | bash -s -- --no-background-service`,
     ],
-    { ...deps.env, LUME_VERSION },
+    // The installer runs the new binary once, which honours the opt-out.
+    { ...deps.env, LUME_VERSION, ...LUME_NO_TELEMETRY },
   );
   if (code !== 0 || findLume(deps.env) === undefined) {
     throw new DaemonError(
@@ -130,7 +141,9 @@ export async function missingMacosImages(
   const lume = (deps.findLume ?? findLume)(deps.env);
   // With no Lume there are no VMs either.
   if (lume === undefined) return [...templates];
-  const has = deps.hasLumeVm ?? hasLumeVm;
+  const has =
+    deps.hasLumeVm ??
+    ((lumeBin: string, name: string) => hasLumeVm(lumeBin, name, deps.env));
   const missing: string[] = [];
   for (const template of new Set(templates)) {
     const found = await reported(`Checking Lume for ${template}`, () =>
@@ -171,13 +184,16 @@ export async function buildMacosImage(
     reported(`Starting ${path.basename(command)}`, () =>
       runCommand(command, args, env),
     );
-  const hasVm = deps.hasLumeVm ?? hasLumeVm;
+  const hasVm =
+    deps.hasLumeVm ??
+    ((lumeBin: string, name: string) => hasLumeVm(lumeBin, name, deps.env));
   const has = (lumeBin: string, name: string) =>
     reported(`Checking Lume for ${name}`, () => hasVm(lumeBin, name));
   // build.sh calls `lume` by name, and the installer puts it in ~/.local/bin,
   // which a daemon's or an agent's PATH can lack.
   const env = {
     ...deps.env,
+    ...LUME_NO_TELEMETRY,
     PATH: [path.dirname(lume), deps.env.PATH]
       .filter(Boolean)
       .join(path.delimiter),
@@ -244,8 +260,47 @@ async function reported<T>(what: string, work: () => Promise<T>): Promise<T> {
   }
 }
 
-async function hasLumeVm(lume: string, name: string): Promise<boolean> {
-  return (await new LumeCli(undefined, lume).get(name)) !== null;
+async function hasLumeVm(
+  lume: string,
+  name: string,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  return (
+    (await new LumeCli(undefined, lume, quietLumeRunner(env)).get(name)) !==
+    null
+  );
+}
+
+/**
+ * How `LumeCli` runs `lume` for hostd here: as its own runner does, but
+ * with `env` and the telemetry opt-out, since its default inherits this
+ * process's environment.
+ */
+function quietLumeRunner(
+  env: NodeJS.ProcessEnv,
+): ConstructorParameters<typeof LumeCli>[2] {
+  return (command, args, opts = {}) =>
+    new Promise((resolve, reject) => {
+      execFile(
+        command,
+        args,
+        {
+          env: { ...(opts.env ?? env), ...LUME_NO_TELEMETRY },
+          encoding: "buffer",
+          timeout: opts.timeoutMs,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => {
+          // A numeric code is the exit status; anything else (ENOENT, a
+          // timeout's kill) is a failure to run it at all.
+          if (error && typeof error.code !== "number") {
+            reject(error);
+            return;
+          }
+          resolve({ exitCode: error ? Number(error.code) : 0, stdout, stderr });
+        },
+      );
+    });
 }
 
 /** Run `command`, its output on stderr; resolve to its exit code. */

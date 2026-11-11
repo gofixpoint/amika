@@ -5,6 +5,7 @@ import { DaemonError } from "./daemon.js";
 import {
   buildMacosImage,
   findMacosImageFiles,
+  installLume,
   MACOS_BASE_VM,
   missingMacosImages,
   type MacosImageDeps,
@@ -116,6 +117,11 @@ describe("buildMacosImage", () => {
       VERSIONS_ENV: FILES.versionsEnv,
       // build.sh parses Lume's JSON with it, needing no python3.
       NODE: process.execPath,
+      LUME_TELEMETRY_ENABLED: "false",
+    });
+    // `lume create` too, which runs before the daemon turns telemetry off.
+    expect(run.mock.calls[0][2]).toMatchObject({
+      LUME_TELEMETRY_ENABLED: "false",
     });
     // build.sh calls `lume` by name.
     expect(env.PATH?.split(path.delimiter)[0]).toBe(path.dirname(LUME));
@@ -172,5 +178,29 @@ describe("findMacosImageFiles", () => {
 
   it("finds nothing where neither layout is", () => {
     expect(findMacosImageFiles("/nonexistent/a/b/c/d")).toBeUndefined();
+  });
+});
+
+describe("installLume", () => {
+  it("runs the pinned installer with Lume's telemetry off", async () => {
+    // The installer runs the new binary once, which records an install
+    // event unless the opt-out is set.
+    const run = vi.fn(async () => 1 as number | null);
+    await expect(
+      installLume({ env: { HOME: "/home/op" }, out: () => {}, run }),
+    ).rejects.toThrow(DaemonError);
+    expect(run.mock.calls[0]).toEqual([
+      "/bin/bash",
+      [
+        "-c",
+        expect.stringContaining(
+          "https://raw.githubusercontent.com/trycua/cua/lume-v0.6.1/",
+        ),
+      ],
+      expect.objectContaining({
+        LUME_VERSION: "0.6.1",
+        LUME_TELEMETRY_ENABLED: "false",
+      }),
+    ]);
   });
 });
