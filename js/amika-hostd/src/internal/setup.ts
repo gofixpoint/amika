@@ -127,24 +127,28 @@ export async function buildMissingImages(
   deps: ImageBuildDeps,
 ): Promise<void> {
   const templates = Object.values(presetImages(config.runtimes, "lume"));
-  const missing = await (deps.missingMacosImages ?? missingMacosImages)(
-    templates,
-    deps,
-  );
-  for (const template of missing) {
-    try {
+  /** The template being worked on, for the error. */
+  let current = templates.join(", ");
+  try {
+    const missing = await (deps.missingMacosImages ?? missingMacosImages)(
+      templates,
+      deps,
+    );
+    for (const template of missing) {
+      current = template;
       await (deps.buildMacosImage ?? buildMacosImage)(template, config, {
         ...deps,
         platform: deps.platform ?? currentHostPlatform(),
       });
-    } catch (error) {
-      if (!(error instanceof DaemonError || error instanceof ConfigError)) {
-        throw error;
-      }
-      throw new ConfigError(
-        `${error.message}. Lume is on, but its rigs cannot start until ${template} is built; run \`amika-hostd capabilities update --enable lume\` to try again.`,
-      );
     }
+  } catch (error) {
+    if (!(error instanceof DaemonError || error instanceof ConfigError)) {
+      throw error;
+    }
+    throw new ConfigError(
+      `${error.message}. Lume is on, but its rigs cannot start until ${current} is built; run \`amika-hostd capabilities update --enable lume\` to try again.`,
+      { cause: error },
+    );
   }
 }
 

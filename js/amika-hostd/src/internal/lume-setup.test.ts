@@ -62,6 +62,43 @@ describe("missingMacosImages", () => {
   });
 });
 
+describe("Lume failures", () => {
+  it("reports one from checking an image as an error the CLI prints", async () => {
+    const { deps } = mac();
+    const cause = new Error("lume get failed (exit 1): permission denied");
+    const failing = {
+      ...deps,
+      hasLumeVm: vi.fn(async () => {
+        throw cause;
+      }),
+    };
+    const error = await missingMacosImages(
+      ["amika-macos-coder"],
+      failing,
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DaemonError);
+    expect((error as Error).message).toBe(
+      "Checking Lume for amika-macos-coder failed: lume get failed (exit 1): permission denied",
+    );
+    expect((error as Error).cause).toBe(cause);
+  });
+
+  it("reports a build step that will not start", async () => {
+    const { deps } = mac();
+    const failing = {
+      ...deps,
+      run: vi.fn(async () => {
+        throw new Error("spawn /bin/bash ENOENT");
+      }),
+    };
+    await expect(
+      buildMacosImage("amika-macos-coder", {}, failing),
+    ).rejects.toThrow(
+      new DaemonError("Starting lume failed: spawn /bin/bash ENOENT"),
+    );
+  });
+});
+
 describe("buildMacosImage", () => {
   it("makes the base VM, then runs build.sh with hostd's amikad and pins", async () => {
     const { deps, run } = mac();

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { LumeCli } from "@amika/sandbox/lume";
 import type { HostPlatform } from "../platforms/index.js";
 import { ensureAmikad } from "./amikad-install.js";
+import { ConfigError } from "./config.js";
 import { DaemonError } from "./daemon.js";
 
 /** Lume's release that milestone 0 of spec 028 tested. */
@@ -132,7 +133,10 @@ export async function missingMacosImages(
   const has = deps.hasLumeVm ?? hasLumeVm;
   const missing: string[] = [];
   for (const template of new Set(templates)) {
-    if (!(await has(lume, template))) missing.push(template);
+    const found = await reported(`Checking Lume for ${template}`, () =>
+      has(lume, template),
+    );
+    if (!found) missing.push(template);
   }
   return missing;
 }
@@ -162,8 +166,14 @@ export async function buildMacosImage(
       "this amika-hostd has no macOS image build files (macos-image/); reinstall amika-hostd",
     );
   }
-  const run = deps.run ?? runToStderr;
-  const has = deps.hasLumeVm ?? hasLumeVm;
+  const runCommand = deps.run ?? runToStderr;
+  const run: typeof runToStderr = (command, args, env) =>
+    reported(`Starting ${path.basename(command)}`, () =>
+      runCommand(command, args, env),
+    );
+  const hasVm = deps.hasLumeVm ?? hasLumeVm;
+  const has = (lumeBin: string, name: string) =>
+    reported(`Checking Lume for ${name}`, () => hasVm(lumeBin, name));
   // build.sh calls `lume` by name, and the installer puts it in ~/.local/bin,
   // which a daemon's or an agent's PATH can lack.
   const env = {
@@ -213,6 +223,25 @@ export async function buildMacosImage(
     );
   }
   deps.out(`Built the macOS image ${template}.`);
+}
+
+/**
+ * `work`, with a failure the CLI would not report (Lume's own, such as
+ * storage it cannot read, or a command that will not start) turned into a
+ * `DaemonError` naming `what`, which it prints. The original is its cause.
+ */
+async function reported<T>(what: string, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof DaemonError || error instanceof ConfigError) {
+      throw error;
+    }
+    throw new DaemonError(
+      `${what} failed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
 }
 
 async function hasLumeVm(lume: string, name: string): Promise<boolean> {

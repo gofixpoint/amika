@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { hostPlatformFor, type HostPlatform } from "../platforms/index.js";
 import { ConfigError, resolveConfig, type HostdConfigFile } from "./config.js";
-import { daemonPaths } from "./daemon.js";
+import { DaemonError, daemonPaths } from "./daemon.js";
 import { PromptCancelled } from "./prompt.js";
 import {
   DEFAULT_PRESET_IMAGES,
@@ -1216,6 +1216,19 @@ describe("runSetup: choosing runtimes", () => {
     );
     expect(h.written[PATH]).toContain("[runtimes.lume]");
     expect(h.deps.installLume).not.toHaveBeenCalled();
+  });
+
+  it("says how to retry when Lume cannot even be checked for the image", async () => {
+    const h = macHarness(["", "", "", "", "y", ""], { lumeInstalled: true });
+    const deps = {
+      ...h.deps,
+      missingMacosImages: vi.fn(async (): Promise<string[]> => {
+        throw new DaemonError("Checking Lume for amika-macos-coder failed");
+      }),
+    };
+    await expect(runSetup(deps)).rejects.toThrow(
+      /Checking Lume for amika-macos-coder failed\. .*capabilities update --enable lume/,
+    );
   });
 
   it("takes --enable and --disable without asking about those runtimes", async () => {
