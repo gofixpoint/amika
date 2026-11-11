@@ -135,6 +135,10 @@ func TestUserModeSetupMakesBundledTerminfoResolvable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(config), "AcceptEnv LANG LC_*\n") ||
+		strings.Contains(string(config), "SetEnv LANG=") {
+		t.Fatalf("bare-metal config must accept the client's locale:\n%s", config)
+	}
 	setEnv := "SetEnv \"TERMINFO_DIRS=" + paths.TerminfoDirectory + ":\"\n"
 	if !strings.Contains(string(config), setEnv) {
 		t.Fatalf("config missing %q:\n%s", setEnv, config)

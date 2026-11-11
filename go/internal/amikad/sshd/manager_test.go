@@ -134,6 +134,8 @@ func TestSetupCreatesLoopbackPolicyAndIsIdempotent(t *testing.T) {
 		"GatewayPorts no",
 		"X11Forwarding no",
 		"PermitTunnel no",
+		// A VM rig image has no en_US.UTF-8, so the client's locale is not used.
+		"SetEnv LANG=C.UTF-8",
 	} {
 		if !strings.Contains(string(config), directive+"\n") {
 			t.Fatalf("config missing %q:\n%s", directive, config)

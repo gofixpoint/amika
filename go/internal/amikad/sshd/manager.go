@@ -504,6 +504,19 @@ func ValidateAllowUser(name string) error {
 // RenderConfig returns the complete loopback-only sshd policy.
 func RenderConfig(paths Paths) string {
 	config := renderBaseConfig(paths)
+	if paths.Unprivileged {
+		// A bare-metal host is the user's own machine, so a session takes the
+		// locale that their client sends. Without this the session runs in the
+		// C locale: UTF-8 text renders wrongly and zsh repaints the line on
+		// every backspace.
+		config += "AcceptEnv LANG LC_*\n"
+	} else {
+		// A VM rig's image ships only C.UTF-8, so a client's en_US.UTF-8 would
+		// name a locale that does not exist: text would still render wrongly,
+		// and perl would warn. SetEnv beats what the client sends.
+		// TODO: Install more locales in the images, then accept the client's.
+		config += "SetEnv LANG=C.UTF-8\n"
+	}
 	if paths.TerminfoDirectory != "" {
 		// The trailing ":" keeps the system terminfo database on the search
 		// path after the bundled entries. The quotes keep a state directory
