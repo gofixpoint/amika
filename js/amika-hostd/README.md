@@ -49,11 +49,11 @@ amika-hostd setup
 ```
 
 It asks for the host's name and your Amika API key, and generates the secret
-key the control plane uses to reach this daemon. It then asks which runtimes
-the host runs, of those this machine can: Linux VMs (`smol`, on by default),
-macOS VMs (`lume`, on an Apple Silicon Mac only, off by default; see
-[macOS rigs](#macos-rigs-lume)), and the machine itself (`bare_metal`, off by
-default). It installs what each one you turn on needs. Secrets go in the system
+key the control plane uses to reach this daemon. Linux VMs (`smol`) are always
+on. It then asks whether the host also runs macOS VMs (`lume`, on an Apple
+Silicon Mac only; see [macOS rigs](#macos-rigs-lume)) and the machine itself
+(`bare_metal`), both off by default, and installs what each one you turn on
+needs. Secrets go in the system
 keychain. On a server with no keychain, set `secret_store = "file"` in the
 config first. Edit the file the installer printed: the daemon reads
 `$XDG_CONFIG_HOME/amika-hostd/config.toml` (`~/.config/...` by default) if it

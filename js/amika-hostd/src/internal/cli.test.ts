@@ -1952,8 +1952,8 @@ image = "amika-macos-coder"
     describe("with no runtime named", () => {
       it("asks about each runtime this machine can run", async () => {
         const { deps, files } = reloadable();
-        // smol: keep; lume: no; bare_metal: yes; then apply.
-        const answers = ["", "n", "y", "y"];
+        // lume: no; bare_metal: yes; then apply. smol is not asked about.
+        const answers = ["n", "y", "y"];
         const asking = {
           ...deps,
           prompt: vi.fn(async (_q: string) => answers.shift()),
@@ -1967,7 +1967,6 @@ image = "amika-macos-coder"
         };
         expect(await runCli(["capabilities", "update"], asking)).toBe(0);
         expect(asking.prompt.mock.calls.map(([q]) => q)).toEqual([
-          `${RUNTIME_QUESTIONS.smol} [Y/n] `,
           `${RUNTIME_QUESTIONS.lume} [y/N] `,
           `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
           "Apply this plan? [y/N] ",
@@ -2552,7 +2551,6 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
     expect(await runCli(["up"], deps)).toBe(0);
     expect(deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
-      `${RUNTIME_QUESTIONS.smol} [Y/n] `,
       `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
     ]);
     expect(deps.keychainSecret.value).toBe(SECRET);

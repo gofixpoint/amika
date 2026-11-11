@@ -22,7 +22,7 @@ export interface SkillContext {
 
 /** How step 4 describes each runtime to the agent. */
 const RUNTIME_NOTES: Record<RuntimeName, string> = {
-  smol: "- **smol**: Linux VMs. On by default.",
+  smol: "- **smol**: Linux VMs. Always on; do not ask about it.",
   lume: `- **lume**: macOS VMs. Off by default. Turning it on installs Lume and
   builds a macOS image on this Mac. ${MACOS_IMAGE_COST} Tell the operator
   this before asking, and turn it on only if they say yes to it.`,
@@ -194,8 +194,8 @@ tell the operator.
 ## 4. Choose what the host runs
 
 The host runs rigs on runtimes. This machine can run ${runtimes.map((name) => `\`${name}\``).join(", ") || "none"}.
-Ask the operator about each of them, one at a time. With no answer, keep
-what the config says (on a new host, only \`smol\` is on):
+Ask the operator about each of them but \`smol\`, one at a time. With no
+answer, keep what the config says (on a new host, only \`smol\` is on):
 
 ${runtimes.map((name) => RUNTIME_NOTES[name]).join("\n")}
 

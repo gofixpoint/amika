@@ -30,10 +30,12 @@ API URL's origin.
 
 Then it asks which runtimes the host runs (`src/internal/runtime-choice.ts`):
 one yes/no question for each runtime this machine can run
-(`HostPlatform.runtimes`: smol and bare_metal everywhere hostd runs, lume only
-on Apple Silicon), never about one it cannot. Each defaults to what the config
-already says, so on a new host only smol is on, and a rerun that answers
-nothing changes nothing. The Lume question says what turning it on costs
+(`HostPlatform.runtimes`: bare_metal everywhere hostd runs, lume only on
+Apple Silicon), never about one it cannot. It never asks about smol, which
+stays as the config has it: on for every new host, and off only with
+`--disable smol` (a host the installer set up with `--bare-metal` has no
+smolvm). Each question defaults to what the config already says, so a rerun
+that answers nothing changes nothing. The Lume question says what turning it on costs
 (`MACOS_IMAGE_COST`: a download of about 20 GB, about 60 GB of disk, 30
 minutes or more), since that is when setup builds the macOS image. Setup
 refuses to leave no runtime on, to keep on a runtime this machine cannot run

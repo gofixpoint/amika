@@ -72,7 +72,8 @@ restart, so rigs keep running and the tunnel and SSH sessions stay up
 `amika-hostd capabilities update --enable|--disable <runtime>` changes
 `[runtimes.*]` in `config.toml` and nothing else
 (`src/internal/runtime-update.ts`). With no runtime named it asks about each
-one this machine can run, as setup does (`src/internal/runtime-choice.ts`);
+one this machine can run but smol, as setup does
+(`src/internal/runtime-choice.ts`);
 without a terminal it then exits with an error naming the flags.
 
 1. It prints the plan. Turning on Lume adds `storage_dir` (in hostd's data

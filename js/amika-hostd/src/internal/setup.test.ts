@@ -18,11 +18,8 @@ import {
 import type { StrictModesViolation } from "./strict-modes.js";
 import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
 
-/** The runtime questions setup asks on Linux, keeping smol and nothing else. */
-const LINUX_RUNTIME_PROMPTS = [
-  `${RUNTIME_QUESTIONS.smol} [Y/n] `,
-  `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
-];
+/** The runtime questions setup asks on Linux: only bare_metal, as smol stays on. */
+const LINUX_RUNTIME_PROMPTS = [`${RUNTIME_QUESTIONS.bare_metal} [y/N] `];
 
 /** The presets a config with the default preset images resolves to. */
 const DEFAULT_PRESETS = expect.objectContaining({
@@ -1187,8 +1184,8 @@ describe("runSetup: choosing runtimes", () => {
   });
 
   it("with a yes to Lume, installs it, turns it on, and builds the image after saving", async () => {
-    // Hostname, regenerate, API key, smol, lume, bare_metal.
-    const h = macHarness(["", "", "", "", "y", ""]);
+    // Hostname, regenerate, API key, lume, bare_metal.
+    const h = macHarness(["", "", "", "y", ""]);
     await runSetup(h.deps);
     expect(h.deps.installLume).toHaveBeenCalledOnce();
     expect(h.written[PATH]).toContain("[runtimes.lume]");
@@ -1207,7 +1204,7 @@ describe("runSetup: choosing runtimes", () => {
   });
 
   it("keeps the rest of setup but turns Lume back off when the image build fails", async () => {
-    const h = macHarness(["", "", "", "", "y", ""], {
+    const h = macHarness(["", "", "", "y", ""], {
       lumeInstalled: true,
       buildFails: true,
     });
@@ -1252,7 +1249,7 @@ image = "amika-macos-coder"
   });
 
   it("says how to retry when Lume cannot even be checked for the image", async () => {
-    const h = macHarness(["", "", "", "", "y", ""], { lumeInstalled: true });
+    const h = macHarness(["", "", "", "y", ""], { lumeInstalled: true });
     const deps = {
       ...h.deps,
       missingMacosImages: vi.fn(async (): Promise<string[]> => {
@@ -1271,7 +1268,6 @@ image = "amika-macos-coder"
     });
     const questions = h.deps.prompt.mock.calls.map(([q]) => q);
     expect(questions).not.toContain(LUME_PROMPT);
-    expect(questions).not.toContain(`${RUNTIME_QUESTIONS.smol} [Y/n] `);
     expect(questions).toContain(`${RUNTIME_QUESTIONS.bare_metal} [y/N] `);
     expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["lume"]);
   });
@@ -1300,7 +1296,7 @@ storage_dir = "/srv/lume"
   it("refuses to turn off a runtime that has rigs, changing nothing", async () => {
     const state = mkdtempSync(path.join(tmpdir(), "amika-hostd-setup-"));
     const h = harness({
-      answers: ["", "", "", "n"],
+      answers: ["", "", ""],
       file: FILE_CONFIGURED,
       storedKey: "k",
       env: { XDG_STATE_HOME: state },
@@ -1309,7 +1305,9 @@ storage_dir = "/srv/lume"
     mkdirSync(path.dirname(index), { recursive: true });
     writeFileSync(index, JSON.stringify({ machines: { dev: "smol" } }));
     await expect(
-      runSetup(h.deps, { runtimes: { enable: ["bare_metal"], disable: [] } }),
+      runSetup(h.deps, {
+        runtimes: { enable: ["bare_metal"], disable: ["smol"] },
+      }),
     ).rejects.toThrow("smol has 1 rig (dev). Delete it, then try again.");
     expect(h.written).toEqual({});
   });

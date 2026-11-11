@@ -1,30 +1,36 @@
 /**
  * Which runtimes a host runs: asked by `amika-hostd setup` and by
  * `capabilities update` run in a terminal, or given as `--enable` and
- * `--disable`. Only the runtimes this machine can run are offered, and each
- * defaults to what the config already says, so on a new host only smol is
- * on, and answering nothing changes nothing.
+ * `--disable`. Only the runtimes this machine can run are offered, never
+ * smol, which stays on, and each defaults to what the config already says,
+ * so answering nothing changes nothing.
  */
 import { ConfigError } from "./config.js";
 import { MACOS_IMAGE_COST } from "./lume-setup.js";
 import type { RuntimeChange } from "./runtime-update.js";
 import { RUNTIME_NAMES, type RuntimeName } from "./runtimes.js";
 
-/** What each runtime is, as setup asks about it. */
-export const RUNTIME_QUESTIONS: Record<RuntimeName, string> = {
-  smol: "Run Linux rigs, in VMs with smolvm?",
+/**
+ * The runtimes setup asks about, and what each one is. smol is not asked
+ * about: it stays as the config has it, on for every new host, and only
+ * `--disable smol` turns it off (a bare-metal-only host has no smolvm).
+ */
+export const RUNTIME_QUESTIONS: Record<AskedRuntime, string> = {
   lume: `Run macOS rigs, in VMs with Lume? This installs Lume and builds a macOS image on this Mac. ${MACOS_IMAGE_COST}`,
   bare_metal:
     "Make this machine itself a rig (bare_metal)? Amika gets SSH to it as your own account, with no VM in between.",
 };
+
+/** A runtime setup asks about. */
+export type AskedRuntime = Exclude<RuntimeName, "smol">;
 
 /** Asks a yes/no question; `current` is the answer an empty reply gives. */
 export type AskYesNo = (question: string, current: boolean) => Promise<boolean>;
 
 /**
  * The change to the runtimes that are `on`: each runtime `given` names is
- * set as given, and each other one this machine can run is asked about
- * through `ask` (or kept as it is without `ask`). A runtime this machine
+ * set as given, and each other one this machine can run, except smol, is
+ * asked about through `ask` (or kept as it is without `ask`). A runtime this machine
  * cannot run is never asked about; turning one on, or leaving one on that
  * is not `given` as disabled, is refused. Leaving no runtime on is refused.
  */
@@ -44,7 +50,7 @@ export async function chooseRuntimes(
   for (const name of RUNTIME_NAMES) {
     if (given.enable.includes(name)) next.add(name);
     else if (given.disable.includes(name)) next.delete(name);
-    else if (ask && supported.includes(name)) {
+    else if (ask && name !== "smol" && supported.includes(name)) {
       if (await ask(RUNTIME_QUESTIONS[name], on.has(name))) next.add(name);
       else next.delete(name);
     }

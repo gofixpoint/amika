@@ -12,17 +12,30 @@ const LINUX: RuntimeName[] = ["smol", "bare_metal"];
 const on = (...names: RuntimeName[]) => new Set(names);
 
 describe("chooseRuntimes", () => {
-  it("asks about each runtime this machine can run, offering what is on", async () => {
+  it("asks about each runtime this machine can run but smol, offering what is on", async () => {
     const ask = vi.fn(async (_question: string, current: boolean) => current);
     expect(await chooseRuntimes(MAC, on("smol"), ask)).toEqual({
       enable: [],
       disable: [],
     });
     expect(ask.mock.calls).toEqual([
-      [RUNTIME_QUESTIONS.smol, true],
       [RUNTIME_QUESTIONS.lume, false],
       [RUNTIME_QUESTIONS.bare_metal, false],
     ]);
+  });
+
+  it("keeps smol as it is, turning it off only when given", async () => {
+    const no = async () => false;
+    expect(await chooseRuntimes(MAC, on("smol", "lume"), no)).toEqual({
+      enable: [],
+      disable: ["lume"],
+    });
+    expect(
+      await chooseRuntimes(LINUX, on("smol"), undefined, {
+        enable: ["bare_metal"],
+        disable: ["smol"],
+      }),
+    ).toEqual({ enable: ["bare_metal"], disable: ["smol"] });
   });
 
   it("never asks about lume where it cannot run", async () => {
@@ -31,18 +44,21 @@ describe("chooseRuntimes", () => {
       enable: ["bare_metal"],
       disable: [],
     });
-    expect(ask).toHaveBeenCalledTimes(2);
+    expect(ask).toHaveBeenCalledOnce();
   });
 
   it("turns on and off what the answers say", async () => {
     const answers: Record<string, boolean> = {
-      [RUNTIME_QUESTIONS.smol]: false,
       [RUNTIME_QUESTIONS.lume]: true,
-      [RUNTIME_QUESTIONS.bare_metal]: true,
+      [RUNTIME_QUESTIONS.bare_metal]: false,
     };
     expect(
-      await chooseRuntimes(MAC, on("smol"), async (q) => answers[q]),
-    ).toEqual({ enable: ["lume", "bare_metal"], disable: ["smol"] });
+      await chooseRuntimes(
+        MAC,
+        on("smol", "bare_metal"),
+        async (q) => answers[q],
+      ),
+    ).toEqual({ enable: ["lume"], disable: ["bare_metal"] });
   });
 
   it("takes given runtimes without asking about them", async () => {
@@ -54,7 +70,6 @@ describe("chooseRuntimes", () => {
       }),
     ).toEqual({ enable: ["lume"], disable: [] });
     expect(ask.mock.calls.map(([q]) => q)).toEqual([
-      RUNTIME_QUESTIONS.smol,
       RUNTIME_QUESTIONS.bare_metal,
     ]);
   });
@@ -95,7 +110,10 @@ describe("chooseRuntimes", () => {
 
   it("refuses leaving no runtime on", async () => {
     await expect(
-      chooseRuntimes(LINUX, on("smol"), async () => false),
+      chooseRuntimes(LINUX, on("smol"), async () => false, {
+        enable: [],
+        disable: ["smol"],
+      }),
     ).rejects.toThrow(ConfigError);
   });
 });
