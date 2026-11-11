@@ -29,7 +29,7 @@ import { hostdDataDir } from "./daemon.js";
  * user mode (`AMIKAD_STATE_DIR`) and a darwin build. Bump it with each
  * amikad release hostd is tested with.
  */
-export const DEFAULT_AMIKAD_VERSION = "0.3.0";
+export const DEFAULT_AMIKAD_VERSION = "0.3.1";
 
 /** Where amikad's releases are published, one directory per tag. */
 export const AMIKAD_RELEASES_URL =
