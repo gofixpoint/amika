@@ -22,7 +22,7 @@ The default preset, used when no `--preset` flag is provided.
 - Codex (`@openai/codex`)
 - OpenCode (`opencode-ai`)
 - Pi (`@earendil-works/pi-coding-agent`)
-- amika, amikalog, and amikad CLIs
+- amika and amikad CLIs
 
 ### `coder-plus-docker`
 

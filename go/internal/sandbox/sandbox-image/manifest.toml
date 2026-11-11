@@ -133,7 +133,7 @@ assets = []
 
 [steps.amika-clis]
 script = "steps/85-amika-clis.sh"
-versions = ["AMIKA_VERSION", "AMIKALOG_VERSION", "AMIKAD_VERSION"]
+versions = ["AMIKA_VERSION", "AMIKAD_VERSION"]
 assets = []
 
 [steps.dind]
@@ -228,7 +228,6 @@ binaries = [
   "pi",
   "pi-web",
   "amika",
-  "amikalog",
   "amikad",
 ]
 
@@ -264,7 +263,6 @@ binaries = [
   "pi",
   "pi-web",
   "amika",
-  "amikalog",
   "amikad",
   "docker",
 ]
@@ -335,11 +333,6 @@ command = ["npm", "ls", "-g", "--depth=0", "@agegr/pi-web"]
 id = "amika"
 env = "AMIKA_VERSION"
 command = ["amika", "--version"]
-
-[[version_checks]]
-id = "amikalog"
-env = "AMIKALOG_VERSION"
-command = ["amikalog", "--version"]
 
 [[version_checks]]
 id = "amikad"

@@ -35,8 +35,8 @@ already in Lume, so it never deletes a VM it did not make.
   sets new credentials.
 - Amika's lifecycle hooks in `/usr/local/lib/amikad` (`run-hook.sh`,
   `pre-setup.sh`, `post-setup.sh`): `/usr/lib` is read-only on macOS.
-  `pre-setup.sh` is the Linux hook less Docker, Pi Web, amikalog, and the
-  Linux kernel guard. zsh reads Amika's env from `/etc/profile.d`.
+  `pre-setup.sh` is the Linux hook less Docker, Pi Web, and the Linux kernel
+  guard. zsh reads Amika's env from `/etc/profile.d`.
 - The Xcode Command Line Tools (git, clang, python3), and Homebrew with GNU
   coreutils, sed, findutils, bash 5, and jq.
 - Node, npm, and the coding agents, at the pinned versions.

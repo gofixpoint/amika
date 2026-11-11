@@ -57,8 +57,8 @@ junk such as `__pycache__/`.
    pin's lowercased, human name (e.g. `CLAUDE_CODE_VERSION` -> `claude-code`,
    `PI_WEB_VERSION` -> `pi-web`, `UBUNTU_TAG` -> `ubuntu`).
 2. Keep the order they appear in `versions.env`.
-3. For Amika's own components (`AMIKA_VERSION`, `AMIKALOG_VERSION`,
-   `AMIKAD_VERSION`), the released tags exist in this repo — if
+3. For Amika's own components (`AMIKA_VERSION`, `AMIKAD_VERSION`), the
+   released tags exist in this repo — if
    `git log --oneline <symbol>@v<OLD>..<symbol>@v<NEW>` is short and
    informative, you may add a one-line summary of what that bump brings. Skip
    it if the log is long or noisy.
