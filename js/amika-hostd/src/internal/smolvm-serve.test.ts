@@ -380,7 +380,7 @@ describe("startSmolvm", () => {
   it("says how to install a missing smolvm", async () => {
     const deps = fakeDeps(fakeChild(), { findSmolvm: () => undefined });
     await expect(startSmolvm(undefined, paths(), {}, deps)).rejects.toThrow(
-      /smolvm not found .*install-amika-hostd\.sh/,
+      /smolvm not found .*capabilities update --enable smol/,
     );
   });
 

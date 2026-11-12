@@ -4,6 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { hostPlatformFor, type HostPlatform } from "../platforms/index.js";
+
+/** A machine with everything smol needs: glibc 2.34+, KVM and resize2fs. */
+const SMOL_READY = {
+  glibcVersion: () => "2.39",
+  kvm: () => "ok" as const,
+  hasResize2fs: () => true,
+};
 import { ConfigError, resolveConfig, type HostdConfigFile } from "./config.js";
 import { daemonPaths } from "./daemon.js";
 import { PromptCancelled } from "./prompt.js";
@@ -18,8 +25,11 @@ import {
 import type { StrictModesViolation } from "./strict-modes.js";
 import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
 
-/** The runtime questions setup asks on Linux: only bare_metal, as smol stays on. */
-const LINUX_RUNTIME_PROMPTS = [`${RUNTIME_QUESTIONS.bare_metal} [y/N] `];
+/** The runtime questions setup asks on Linux, with smol on by default. */
+const LINUX_RUNTIME_PROMPTS = [
+  `${RUNTIME_QUESTIONS.smol} [Y/n] `,
+  `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+];
 
 /** The presets a config with the default preset images resolves to. */
 const DEFAULT_PRESETS = expect.objectContaining({
@@ -54,7 +64,7 @@ function harness({
   storedSecret,
   kind = "file",
   env = {},
-  platform = hostPlatformFor("linux"),
+  platform = hostPlatformFor("linux", SMOL_READY),
 }: {
   answers?: (string | undefined)[];
   secrets?: (string | undefined)[];
@@ -123,6 +133,9 @@ function harness({
       written[name] = contents;
     }),
     platform,
+    // smol's installs are there, so setup installs nothing for it.
+    findSmolvm: vi.fn(() => "/opt/smolvm/smolvm"),
+    engineFiles: vi.fn(() => undefined),
     systemHostname: () => "Jakubs-MacBook-Pro.local",
     generateSecretKey: vi.fn(() => NEW_SECRET),
     registerHost: vi.fn(
@@ -1021,6 +1034,7 @@ describe("runSetup: the bare_metal runtime", () => {
   /** A Linux machine with an sshd, unless `sshd` is false. */
   function linux({ sshd = true } = {}): HostPlatform {
     return hostPlatformFor("linux", {
+      ...SMOL_READY,
       availableParallelism: () => 8,
       totalmem: () => 16 * 1024 ** 3,
       statfs: () => ({ bsize: 4096, blocks: (500 * 1024 ** 3) / 4096 }),
@@ -1035,7 +1049,11 @@ describe("runSetup: the bare_metal runtime", () => {
     options: Parameters<typeof harness>[0],
     platform = linux(),
   ) {
-    const h = harness(options);
+    // Where the fake installs amikad.
+    const h = harness({
+      ...options,
+      env: { AMIKA_HOSTD_HOME: "/data", ...options.env },
+    });
     const installAmikad = vi.fn(
       async (_config: { amikadPath?: string }) => "/data/amikad/0.3.0/amikad",
     );
@@ -1145,7 +1163,10 @@ describe("runSetup: the bare_metal runtime", () => {
 
 describe("runSetup: choosing runtimes", () => {
   const FILE_CONFIGURED = `secret_store = "file"\n${CONFIGURED}`;
-  const MAC = hostPlatformFor("darwin", { arch: () => "arm64" } as never);
+  const MAC = hostPlatformFor("darwin", {
+    ...SMOL_READY,
+    arch: () => "arm64",
+  } as never);
   const LUME_PROMPT = `${RUNTIME_QUESTIONS.lume} [y/N] `;
 
   /** Setup on an Apple Silicon Mac, with Lume's installer faked. */
@@ -1177,8 +1198,8 @@ describe("runSetup: choosing runtimes", () => {
   });
 
   it("with a yes to Lume, installs it and turns it on, leaving the image to the daemon", async () => {
-    // Hostname, regenerate, API key, lume, bare_metal.
-    const h = macHarness(["", "", "", "y", ""]);
+    // Hostname, regenerate, API key, smol, lume, bare_metal.
+    const h = macHarness(["", "", "", "", "y", ""]);
     await runSetup(h.deps);
     expect(h.deps.installLume).toHaveBeenCalledOnce();
     expect(h.written[PATH]).toContain("[runtimes.lume]");

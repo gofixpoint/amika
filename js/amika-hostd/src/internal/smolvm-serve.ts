@@ -121,7 +121,7 @@ export async function startSmolvm(
   const binary = find(env);
   if (binary === undefined) {
     throw new DaemonError(
-      "smolvm not found on PATH, in ~/.smolvm or in ~/.local/bin; re-run install-amika-hostd.sh to install it",
+      "smolvm not found on PATH, in ~/.smolvm or in ~/.local/bin; run `amika-hostd capabilities update --enable smol` to install it",
     );
   }
 

@@ -11,6 +11,13 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError, HostTransportConflictError } from "./amika-api.js";
 import { hostPlatformFor } from "../platforms/index.js";
+
+/** A machine with everything smol needs: glibc 2.34+, KVM and resize2fs. */
+const SMOL_READY = {
+  glibcVersion: () => "2.39",
+  kvm: () => "ok" as const,
+  hasResize2fs: () => true,
+};
 import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
 import type { BackgroundImageOptions } from "./lume-setup.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
@@ -165,6 +172,9 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
     ),
     isSmolvmRunning: vi.fn(() => false),
     isAmikadRunning: vi.fn(() => false),
+    // smol's installs are there, so `up` and setup install nothing.
+    findSmolvm: vi.fn(() => "/opt/smolvm/smolvm"),
+    engineFiles: vi.fn(() => undefined),
     smolvmVersion: vi.fn(
       async (_env: NodeJS.ProcessEnv): Promise<string | undefined> => "1.25.0",
     ),
@@ -1653,7 +1663,7 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
     expect(
       await runCli(["capabilities", "get"], {
         ...deps,
-        platform: hostPlatformFor("linux"),
+        platform: hostPlatformFor("linux", SMOL_READY),
       }),
     ).toBe(1);
     expect(err.join("\n")).toContain("runtime lume cannot run on this machine");
@@ -1670,7 +1680,10 @@ describe("reloading runtimes", () => {
 [presets.coder.runtimes.smol]
 image = "ghcr.io/gofixpoint/amika-coder:latest"
 `;
-  const MAC = hostPlatformFor("darwin", { arch: () => "arm64" } as never);
+  const MAC = hostPlatformFor("darwin", {
+    ...SMOL_READY,
+    arch: () => "arm64",
+  } as never);
 
   /** A harness with a real state directory, a config file, and a Mac. */
   function reloadable(contents = BASE) {
@@ -2086,14 +2099,15 @@ image = "amika-macos-coder"
     describe("with no runtime named", () => {
       it("asks about each runtime this machine can run", async () => {
         const { deps, files } = reloadable();
-        // lume: no; bare_metal: yes; then apply. smol is not asked about.
-        const answers = ["n", "y", "y"];
+        // smol: keep; lume: no; bare_metal: yes; then apply.
+        const answers = ["", "n", "y", "y"];
         const asking = {
           ...deps,
           prompt: vi.fn(async (_q: string) => answers.shift()),
           installAmikad: vi.fn(async () => "/data/amikad/amikad"),
           strictModesViolation: vi.fn(() => undefined),
           platform: hostPlatformFor("darwin", {
+            ...SMOL_READY,
             arch: () => "arm64",
             path: "",
             isExecutable: (file) => file === "/usr/sbin/sshd",
@@ -2101,6 +2115,7 @@ image = "amika-macos-coder"
         };
         expect(await runCli(["capabilities", "update"], asking)).toBe(0);
         expect(asking.prompt.mock.calls.map(([q]) => q)).toEqual([
+          `${RUNTIME_QUESTIONS.smol} [Y/n] `,
           `${RUNTIME_QUESTIONS.lume} [y/N] `,
           `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
           "Apply this plan? [y/N] ",
@@ -2123,6 +2138,7 @@ image = "amika-macos-coder"
       /** A Mac with an sshd, unless `sshd` is false. */
       const mac = ({ sshd = true } = {}) =>
         hostPlatformFor("darwin", {
+          ...SMOL_READY,
           arch: () => "arm64",
           path: "",
           isExecutable: (file) => sshd && file === "/usr/sbin/sshd",
@@ -2150,7 +2166,7 @@ image = "amika-macos-coder"
         expect(metal.installAmikad).toHaveBeenCalledOnce();
         expect(files.config).toContain("[runtimes.smol]");
         expect(files.config).toContain("[runtimes.bare_metal]");
-        expect(out.join("\n")).toMatch(/Install amikad into .*no sudo/);
+        expect(out.join("\n")).toMatch(/Install amikad \S+ into .*no sudo/);
       });
 
       it("refuses a machine with no sshd, changing nothing", async () => {
@@ -2453,7 +2469,10 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
       const h = piped("amk_123");
       const deps = {
         ...h.deps,
-        platform: hostPlatformFor("darwin", { arch: () => "arm64" } as never),
+        platform: hostPlatformFor("darwin", {
+          ...SMOL_READY,
+          arch: () => "arm64",
+        } as never),
         findLume: () => "/usr/local/bin/lume",
       };
       expect(
@@ -2465,7 +2484,10 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
 
     it("refuses --enable for a runtime this machine cannot run, writing nothing", async () => {
       const h = piped("amk_123");
-      const deps = { ...h.deps, platform: hostPlatformFor("linux") };
+      const deps = {
+        ...h.deps,
+        platform: hostPlatformFor("linux", SMOL_READY),
+      };
       expect(
         await runCli(["setup", "--non-interactive", "--enable", "lume"], deps),
       ).toBe(1);
@@ -2670,18 +2692,18 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
     );
   });
 
-  it("`up` sets up a fresh install from the installer's config without asking about the secret key", async () => {
-    // The installer seeds the example with this machine's hostname.
+  it("`up` sets up a config that names only a hostname without asking about the secret key", async () => {
     const seeded = readFileSync(
       path.join(import.meta.dirname, "../../config.example.toml"),
       "utf8",
     ).replace('# hostname = "my-host"', 'hostname = "builder"');
     const { deps: base, files } = unconfigured([""], ["amk_123"]);
-    const deps = { ...base, platform: hostPlatformFor("linux") };
+    const deps = { ...base, platform: hostPlatformFor("linux", SMOL_READY) };
     files[CONFIG_PATH] = seeded;
     expect(await runCli(["up"], deps)).toBe(0);
     expect(deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      `${RUNTIME_QUESTIONS.smol} [Y/n] `,
       `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
     ]);
     expect(deps.keychainSecret.value).toBe(SECRET);
@@ -2947,6 +2969,7 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
 
 describe("the bare_metal runtime", () => {
   const PLATFORM = hostPlatformFor("linux", {
+    ...SMOL_READY,
     availableParallelism: () => 8,
     totalmem: () => 16 * 1024 ** 3,
     statfs: () => ({ bsize: 4096, blocks: (500 * 1024 ** 3) / 4096 }),
