@@ -36,6 +36,26 @@ enabled = false
     expect(config(contents).runtimes.runtimes.lume?.storageDir).toBe(STORAGE);
   });
 
+  it.each([`"storage_dir"`, `'storage_dir'`])(
+    "keeps a storage_dir written as the quoted key %s",
+    (key) => {
+      const off = `${PRESETS}
+[runtimes.lume]
+enabled = false
+${key} = "/srv/lume"
+`;
+      const { contents } = updateRuntimes(
+        off,
+        { enable: ["lume"], disable: [] },
+        STORAGE,
+      );
+      expect(contents).not.toContain(STORAGE);
+      expect(config(contents).runtimes.runtimes.lume?.storageDir).toBe(
+        "/srv/lume",
+      );
+    },
+  );
+
   it("keeps the storage_dir a turned-off Lume table already has", () => {
     const off = `${PRESETS}
 [runtimes.lume]

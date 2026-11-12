@@ -38,7 +38,12 @@ export function updateRuntimes(
   const keyLine = (at: number, key: string) => {
     let end = at + 1;
     while (end < lines.length && !/^\s*\[/.test(lines[end])) {
-      if (new RegExp(`^\\s*${key}\\s*=`).test(lines[end])) return end;
+      // Bare, or quoted as TOML allows (`"key"` or `'key'`).
+      if (
+        new RegExp(`^\\s*(?:${key}|"${key}"|'${key}')\\s*=`).test(lines[end])
+      ) {
+        return end;
+      }
       end++;
     }
     return -1;
