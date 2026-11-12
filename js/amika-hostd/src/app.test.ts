@@ -325,7 +325,7 @@ describe("machine API", () => {
           createApp(
             { secretKey: SECRET, runtimes: smolPresets({ coder: CODER }) },
             runtime,
-            { pullingImages: () => building },
+            { buildingLumeImages: () => building },
           ),
         );
         const mac = { name: "mac", image: "macos-coder" };
@@ -342,6 +342,29 @@ describe("machine API", () => {
         expect((await app.request(ROOT, json(linux))).status).toBe(201);
         building.clear();
         expect((await app.request(ROOT, json(mac))).status).toBe(201);
+      });
+
+      it("never confuses a smol image and a Lume template that share a name", async () => {
+        // Contrived, but each runtime's markers are its own.
+        const runtime = fakeRuntime();
+        const shared = "amika-macos-coder";
+        const app = (pulling: string[], building: string[]) =>
+          authenticated(
+            createApp(
+              { secretKey: SECRET, runtimes: smolPresets({ coder: shared }) },
+              runtime,
+              {
+                pullingImages: () => new Set(pulling),
+                buildingLumeImages: () => new Set(building),
+              },
+            ),
+          );
+        const mac = json({ name: "mac", image: "macos-coder" });
+        const linux = json({ name: "demo", image: "coder" });
+        // A smol pull of that name holds up neither a ready Lume template...
+        expect((await app([shared], []).request(ROOT, mac)).status).toBe(201);
+        // ...nor does a Lume build hold up the smol image.
+        expect((await app([], [shared]).request(ROOT, linux)).status).toBe(201);
       });
     });
 

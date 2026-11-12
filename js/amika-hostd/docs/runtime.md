@@ -141,8 +141,9 @@ storage does not have (`buildMacosImagesInBackground` in
 images: after it starts, and after each reload, which may have turned Lume
 on, one build at a time. Setup and `capabilities update` only turn Lume on;
 `up` announces the build, with what it costs and where its progress is
-logged. While a template is being built it is in the same set as the images
-pre-pull is downloading, and a create of a Lume rig of it is refused at once
+logged. While a template is being built (`buildingLumeImages`, a set apart
+from the images pre-pull is downloading, so the two never hold up each
+other), a create of a Lume rig of it is refused at once
 (`503`, `Retry-After: 300`, "Lume has not finished setting up on this
 host"); Linux rigs are not held up. hostd downloads no image; it builds one:
 
@@ -172,8 +173,10 @@ template, with a message that points at the log. A step whose result exists
 is skipped, so the next try resumes where a failed one stopped. The base VM
 is kept for later builds; build.sh deletes a half-built template itself.
 Every missing template is refused from the start of the queue, not only
-the one being built. Stopping the daemon stops the build, and so does a
-reload that turns Lume off; a reload during a build that leaves Lume on
+the one being built. Stopping the daemon stops the build, and waits for
+its commands to exit, so build.sh has deleted a half-built template before
+the daemon is gone and a quick restart cannot take it for a finished one.
+A reload that turns Lume off stops the build too; a reload during a build that leaves Lume on
 is looked at again once the build is done, so a preset it added is built
 too. The installer and the build run without Amika's API key and secret
 key in their environment.

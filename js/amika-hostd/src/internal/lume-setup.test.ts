@@ -1,3 +1,5 @@
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { hostPlatformFor } from "../platforms/index.js";
@@ -5,6 +7,7 @@ import { DaemonError } from "./daemon.js";
 import {
   buildMacosImage,
   buildMacosImagesInBackground,
+  runToStderr,
   unattendedPreset,
   findMacosImageFiles,
   installLume,
@@ -419,5 +422,26 @@ describe("Amika's secrets", () => {
         expect(env).not.toHaveProperty(name);
       }
     }
+  });
+});
+
+describe("runToStderr", () => {
+  it("on abort, settles only once the command has run its own cleanup and exited", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "amika-hostd-run-"));
+    const marker = path.join(dir, "cleaned");
+    // As build.sh does: clean up on the way out, here slowly.
+    const script = `trap 'sleep 0.3; : > "${marker}"; exit 143' TERM; sleep 30 & wait`;
+    const stopping = new AbortController();
+    const running = runToStderr(
+      "/bin/bash",
+      ["-c", script],
+      process.env,
+      stopping.signal,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    stopping.abort();
+    const code = await running;
+    expect(existsSync(marker)).toBe(true);
+    expect(code).toBe(143);
   });
 });

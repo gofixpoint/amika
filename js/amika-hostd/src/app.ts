@@ -112,12 +112,19 @@ export interface AppDeps {
    */
   hiddenMachines?: () => ReadonlySet<string>;
   /**
-   * The images pre-pull is caching right now (`prepull.ts`), and the Lume
-   * templates the daemon is building (`lume-setup.ts`): a create of
+   * The images pre-pull is caching right now (`prepull.ts`): a create of
    * one is refused (`503`) until it is done, rather than left to wait out
    * the request deadline behind the download.
    */
   pullingImages?: () => ReadonlySet<string>;
+  /**
+   * The Lume templates the daemon is building, or has yet to build
+   * (`lume-setup.ts`): a create of a Lume rig of one is refused (`503`),
+   * since the template does not exist yet. Apart from `pullingImages`, so
+   * a smol image and a Lume template that share a name never hold up each
+   * other.
+   */
+  buildingLumeImages?: () => ReadonlySet<string>;
 }
 
 /** Build routes without opening a socket; the runtime is injectable. */
@@ -138,6 +145,7 @@ export function createApp(
     fetch: fetcher = fetch,
     hiddenMachines = () => new Set(),
     pullingImages = () => new Set(),
+    buildingLumeImages = () => new Set(),
   }: AppDeps = {},
 ) {
   const timeoutMs = z.number().int().positive().parse(requestTimeoutMs);
@@ -432,7 +440,7 @@ export function createApp(
       if (
         source.runtime === "lume" &&
         source.image !== undefined &&
-        pullingImages().has(source.image)
+        buildingLumeImages().has(source.image)
       ) {
         return Response.json(
           {
@@ -447,7 +455,11 @@ export function createApp(
       // smolvm would answer only once the download is done, which can
       // outlast the deadline; the caller is better told now, and when to
       // try again.
-      if (source.image !== undefined && pullingImages().has(source.image)) {
+      if (
+        source.runtime === "smol" &&
+        source.image !== undefined &&
+        pullingImages().has(source.image)
+      ) {
         return Response.json(
           {
             error: `image ${JSON.stringify(source.image)} is still downloading on this host; try again once it is cached`,

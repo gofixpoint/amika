@@ -1965,11 +1965,14 @@ async function serveInForeground(
   let server:
     | { port?: number; connectionId?: string; close: () => Promise<void> }
     | undefined;
+  /** The background build of Lume's missing templates, while it runs. */
+  let buildingLume: Promise<void> | undefined;
   const prepull: PrepullProgress = {
     // Every throwaway machine name the pre-pull uses. Each is random, so
     // hiding them all, deleted or not, never hides a rig.
     used: new Set(),
     pulling: new Set(),
+    buildingLume: new Set(),
   };
   const stopAll = async () => {
     // However the daemon stops, not only on a signal, so the pre-pull never
@@ -1980,6 +1983,11 @@ async function serveInForeground(
       await server?.close();
     } finally {
       try {
+        // The build was told to stop above; its commands clean up as they
+        // exit (build.sh deletes a half-built template), and that must be
+        // done before the daemon is, or a quick restart would find the
+        // half-built template and take it for a finished one.
+        await buildingLume;
         await routed?.shutdown();
         await stopSmolvm(runtime, deps);
       } finally {
@@ -2036,8 +2044,6 @@ async function serveInForeground(
       await (deps.notifyReady ?? notifyParent)({ port: server.port });
     }
     await routed?.resume();
-    /** The background build of Lume's missing templates, while it runs. */
-    let buildingLume: Promise<void> | undefined;
     // As the pre-pull below, but for Lume: build each macOS template its
     // presets boot that Lume lacks, after startup and after each reload
     // (which may have turned Lume on), one build at a time.
@@ -2070,7 +2076,7 @@ async function serveInForeground(
         platform: platformOf(deps),
         findLume: deps.findLume,
         signal: controller.signal,
-        building: prepull.pulling,
+        building: prepull.buildingLume,
       })
         .catch((error: unknown) => {
           // Never let the background build take the daemon down with it.
@@ -2297,11 +2303,14 @@ async function startSmolvm(
 
 /**
  * What the daemon's pre-pull is doing, for the app to read: the throwaway
- * machine names it has used, and the images it is caching right now.
+ * machine names it has used, the images it is caching right now, and the
+ * Lume templates it is building.
  */
 interface PrepullProgress {
   used: Set<string>;
   pulling: Set<string>;
+  /** The Lume templates the daemon is building or has yet to build. */
+  buildingLume: Set<string>;
 }
 
 async function listen(
@@ -2363,6 +2372,7 @@ function handlerOptions(
     hiddenMachines: () =>
       new Set([...prepull.used, ...prepullMachines(paths.prepullFile)]),
     pullingImages: () => prepull.pulling,
+    buildingLumeImages: () => prepull.buildingLume,
     // Only a daemon that started smolvm knows where its log is.
     smolvmLogFile: packing.smolvm ? paths.smolvmLogFile : undefined,
   };

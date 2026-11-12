@@ -135,6 +135,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
           servicesFile?: string;
           hiddenMachines?: () => ReadonlySet<string>;
           pullingImages?: () => ReadonlySet<string>;
+          buildingLumeImages?: () => ReadonlySet<string>;
         },
       ) => server,
     ),
@@ -288,6 +289,7 @@ describe("runCli", () => {
           servicesFile: "/state/amika-hostd/services.json",
           hiddenMachines: expect.any(Function),
           pullingImages: expect.any(Function),
+          buildingLumeImages: expect.any(Function),
           // Only a daemon that started smolvm knows its log.
           smolvmLogFile:
             args[0] === "up" ? "/state/amika-hostd/log/smolvm.log" : undefined,
@@ -1847,8 +1849,14 @@ image = "amika-macos-coder"
     } as CliDeps);
     await vi.waitFor(() => expect(buildMacosImages).toHaveBeenCalledOnce());
     // Serving already: the build holds nothing up but the rigs of its image.
-    const pulling = deps.startServer.mock.calls[0][2]?.pullingImages?.();
+    const pulling = deps.startServer.mock.calls[0][2]?.buildingLumeImages?.();
     expect(pulling?.has("amika-macos-coder")).toBe(true);
+    // Lume's own set: smol's pre-pull set never holds a Lume template.
+    expect(
+      deps.startServer.mock.calls[0][2]
+        ?.pullingImages?.()
+        .has("amika-macos-coder"),
+    ).toBe(false);
     const options = buildMacosImages.mock.calls[0][0];
     expect(options.templates).toEqual(["amika-macos-coder"]);
     expect(options.signal?.aborted).toBe(false);
@@ -1931,14 +1939,19 @@ image = "amika-macos-xcode"
       await d.finish();
     });
 
-    it("stops a build still running when the daemon stops", async () => {
+    it("stops a build still running when the daemon stops, and waits for its cleanup", async () => {
       const d = serving(LUME_ON);
       await vi.waitFor(() => expect(d.buildMacosImages).toHaveBeenCalledOnce());
       const { signal } = d.buildMacosImages.mock.calls[0][0];
-      const finished = d.finish();
+      let done = false;
+      const finished = d.finish().then(() => (done = true));
       await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+      // The build is still cleaning up, so the daemon has not stopped.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(done).toBe(false);
       d.releases[0]();
       await finished;
+      expect(done).toBe(true);
     });
 
     it("stops the build when a reload turns Lume off", async () => {

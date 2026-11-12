@@ -456,16 +456,29 @@ export function runToStderr(
   command: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
-  /** Ends the command once this aborts. */
+  /**
+   * Sends the command `SIGTERM` once this aborts. The promise still settles
+   * only when the command has exited, so its own cleanup (build.sh deletes a
+   * half-built template on exit) is done by then.
+   */
   signal?: AbortSignal,
 ): Promise<number | null> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       env,
-      signal,
       stdio: ["ignore", process.stderr, process.stderr],
     });
-    child.once("error", reject);
-    child.once("close", resolve);
+    const stop = () => child.kill("SIGTERM");
+    if (signal?.aborted) stop();
+    else signal?.addEventListener("abort", stop, { once: true });
+    const settle = () => signal?.removeEventListener("abort", stop);
+    child.once("error", (error) => {
+      settle();
+      reject(error);
+    });
+    child.once("close", (code) => {
+      settle();
+      resolve(code);
+    });
   });
 }
