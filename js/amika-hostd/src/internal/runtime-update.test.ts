@@ -16,6 +16,63 @@ function config(contents: string) {
 }
 
 describe("updateRuntimes", () => {
+  it("adds storage_dir when it turns back on a Lume table that had none", () => {
+    // Valid while off: only a turned-on Lume table needs storage_dir.
+    const off = `${PRESETS}
+[runtimes.smol]
+
+[runtimes.lume]
+enabled = false
+`;
+    expect(Object.keys(config(off).runtimes.runtimes)).toEqual(["smol"]);
+    const { contents } = updateRuntimes(
+      off,
+      { enable: ["lume"], disable: [] },
+      STORAGE,
+    );
+    expect(contents).toContain(
+      `[runtimes.lume]\nstorage_dir = "${STORAGE}"\nenabled = true\n`,
+    );
+    expect(config(contents).runtimes.runtimes.lume?.storageDir).toBe(STORAGE);
+  });
+
+  it.each([`"storage_dir"`, `'storage_dir'`, String.raw`"storage\u005fdir"`])(
+    "keeps a storage_dir written as the quoted key %s",
+    (key) => {
+      const off = `${PRESETS}
+[runtimes.lume]
+enabled = false
+${key} = "/srv/lume"
+`;
+      const { contents } = updateRuntimes(
+        off,
+        { enable: ["lume"], disable: [] },
+        STORAGE,
+      );
+      expect(contents).not.toContain(STORAGE);
+      expect(config(contents).runtimes.runtimes.lume?.storageDir).toBe(
+        "/srv/lume",
+      );
+    },
+  );
+
+  it("keeps the storage_dir a turned-off Lume table already has", () => {
+    const off = `${PRESETS}
+[runtimes.lume]
+enabled = false
+storage_dir = "/srv/lume"
+`;
+    const { contents } = updateRuntimes(
+      off,
+      { enable: ["lume"], disable: [] },
+      STORAGE,
+    );
+    expect(contents).not.toContain(STORAGE);
+    expect(config(contents).runtimes.runtimes.lume?.storageDir).toBe(
+      "/srv/lume",
+    );
+  });
+
   it("turns lume on, keeps smol on, and adds the macOS preset", () => {
     const { contents, steps } = updateRuntimes(
       PRESETS,
