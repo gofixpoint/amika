@@ -1,0 +1,23 @@
+#!/bin/sh
+# Install amika-hostd from this checkout instead of a GitHub release.
+#
+# Usage: bin/install-amika-hostd-from-checkout [INSTALLER_FLAGS...]
+#
+# Builds the release tarball with js/amika-hostd/scripts/package-release.sh
+# into a temporary directory, then runs install-amika-hostd.sh against it
+# through AMIKA_RELEASE_URL. Extra arguments go to the installer (e.g.
+# --dry-run). The installer's environment variables (AMIKA_INSTALL_DIR,
+# AMIKA_HOSTD_HOME) apply as usual. Run `amika-hostd setup` afterwards.
+#
+# VERSION (default 0.0.0-dev) is what `amika-hostd version` prints.
+set -eu
+
+version="${VERSION:-0.0.0-dev}"
+repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
+release_dir="$(mktemp -d)"
+trap 'rm -rf "$release_dir"' EXIT
+
+(cd "$repo_dir" && pnpm install --frozen-lockfile)
+"${repo_dir}/js/amika-hostd/scripts/package-release.sh" "$version" "$release_dir"
+AMIKA_RELEASE_URL="file://${release_dir}" \
+  sh "${repo_dir}/install-amika-hostd.sh" --install-version "$version" "$@"
