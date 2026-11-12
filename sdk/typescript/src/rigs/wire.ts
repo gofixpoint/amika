@@ -1,4 +1,5 @@
 import {
+  type AgentCredentialRef,
   type CreateRigRequest,
   type RemoteRigService,
   type MountedSecret,
@@ -13,6 +14,7 @@ import {
   nullableStr,
   mapArray,
   optionalStr,
+  optionalNum,
   optionalBool,
   optionalStrArray,
   optionalArray,
@@ -42,6 +44,41 @@ export function createRigRequestToWire(
     github_auth_mode: r.githubAuthMode,
     host_id: r.hostId,
   });
+}
+
+/**
+ * The inverse of {@link createRigRequestToWire}, for a create body the server
+ * echoes back, such as a job step's `rig_create`. Fields the SDK does not
+ * model are dropped.
+ */
+export function createRigRequestFromWire(
+  w: Record<string, unknown>,
+): CreateRigRequest {
+  const record = (v: unknown) =>
+    typeof v === "object" && v !== null && !Array.isArray(v)
+      ? (v as Record<string, string>)
+      : undefined;
+  return omitUndefined({
+    name: optionalStr(w["name"]),
+    provider: optionalStr(w["provider"]),
+    repoUrl: optionalStr(w["repo_url"]),
+    autoStopInterval: optionalNum(w["auto_stop_interval"]),
+    autoDeleteInterval: optionalNum(w["auto_delete_interval"]),
+    envVars: record(w["env_vars"]),
+    secretEnvVars: record(w["secret_env_vars"]),
+    preset: optionalStr(w["preset"]),
+    size: optionalStr(w["size"]),
+    // Keep an explicit null: it opts out of the default snapshot.
+    snapshot: w["snapshot"] === null ? null : optionalStr(w["snapshot"]),
+    setupScriptText: optionalStr(w["setup_script_text"]),
+    agentCredentials: Array.isArray(w["agent_credentials"])
+      ? (w["agent_credentials"] as AgentCredentialRef[])
+      : undefined,
+    branch: optionalStr(w["branch"]),
+    newBranchName: optionalStr(w["new_branch_name"]),
+    githubAuthMode: optionalStr(w["github_auth_mode"]),
+    hostId: optionalStr(w["host_id"]),
+  }) as CreateRigRequest;
 }
 
 export function remoteRigServiceFromWire(
