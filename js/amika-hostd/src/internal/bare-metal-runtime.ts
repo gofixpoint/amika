@@ -124,6 +124,8 @@ export interface BareMetalRuntimeOptions {
   amikad: string;
   /** Where `amikad serve`'s output goes. */
   logFile: string;
+  /** Holds `amikad serve`'s pid while it runs (see `AmikadSupervisorOptions`). */
+  pidFile?: string;
   /** This machine's capacity, reported as the rig's size. */
   resources: () => HostResources;
   /** A free loopback port; tests inject a fake. */
@@ -154,6 +156,7 @@ export function bareMetalRuntime({
   amikadStateDir,
   amikad,
   logFile,
+  pidFile,
   resources,
   freePort = freeLoopbackPort,
   execTimeoutMs = 60_000,
@@ -175,6 +178,7 @@ export function bareMetalRuntime({
     env: () => amikadEnv(requireRig()),
     cwd: amikadStateDir,
     logFile,
+    pidFile,
     healthUrl: () => `http://127.0.0.1:${requireRig().amikadPort}/healthz`,
     err,
     spawn,

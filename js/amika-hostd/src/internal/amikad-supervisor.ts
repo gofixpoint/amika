@@ -10,7 +10,12 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { closeSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
-import { openLogFile, type Spawn } from "./daemon.js";
+import {
+  openLogFile,
+  removePidFile,
+  writePidFile,
+  type Spawn,
+} from "./daemon.js";
 
 export interface AmikadSupervisor {
   /**
@@ -34,6 +39,11 @@ export interface AmikadSupervisorOptions {
   cwd: string;
   /** Where its output is appended. */
   logFile: string;
+  /**
+   * Holds its pid while it runs, so `down` can stop one a crashed daemon left
+   * behind.
+   */
+  pidFile?: string;
   /** amikad's `/healthz`, on its loopback listener. */
   healthUrl: () => string;
   /** How long `start` waits for `/healthz`; a running child is ok after. */
@@ -56,6 +66,7 @@ export function amikadSupervisor({
   env,
   cwd,
   logFile,
+  pidFile,
   healthUrl,
   readyTimeoutMs = 10_000,
   restartDelayMs = 1_000,
@@ -111,11 +122,21 @@ export function amikadSupervisor({
     }
     const startedAt = Date.now();
     child = spawned;
+    if (pidFile !== undefined && spawned.pid !== undefined) {
+      try {
+        writePidFile(pidFile, spawned.pid);
+      } catch (error) {
+        err(`amika-hostd: ${describe(error)}`);
+      }
+    }
     // A spawn failure (no such binary) arrives as `error`, then `close`.
     spawned.on("error", (error) => {
       err(`amika-hostd: amikad serve failed: ${describe(error)}`);
     });
     spawned.on("close", (code, signal) => {
+      if (pidFile !== undefined && spawned.pid !== undefined) {
+        removePidFile(pidFile, spawned.pid);
+      }
       if (child !== spawned) return;
       child = undefined;
       if (!wanted) return;
